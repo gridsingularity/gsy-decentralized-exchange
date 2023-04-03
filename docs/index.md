@@ -1,16 +1,15 @@
-# Decentralized Energy Exchange Reference Architecture
+# Decentralized Energy Exchange
 
 ## Introduction
 
+
 The Decentralized Energy Exchange (DEX) system aims to revolutionize the way energy is traded and managed by leveraging the power of distributed ledger technology, such as blockchain, and advanced distributed runtime functionalities. 
 
-This document presents a reference architecture for the DEX system, which serves as a blueprint for designing, developing, and implementing a robust, secure, and efficient platform for energy trading in a decentralized environment.
+The target of the decentralized energy exchange is to design, develop, and implement a robust, secure, and efficient platform for energy trading in a decentralized environment. 
 
-The reference architecture is intended for developers, architects, stakeholders, and decision-makers involved in the DEX system. 
+The DEX system can effectively facilitate peer-to-peer energy trading, optimize energy consumption and generation, and ultimately contribute to a more sustainable and resilient energy infrastructure.
 
-It outlines the key components, interactions, and design principles that guide the development and implementation of the system, ensuring its scalability, modularity, and interoperability while maintaining high security and data privacy standards. 
-
-By following this reference architecture, the DEX system can effectively facilitate peer-to-peer energy trading, optimize energy consumption and generation, and ultimately contribute to a more sustainable and resilient energy infrastructure.
+The documentation is intended for developers, architects, stakeholders, and decision-makers involved in the DEX system. It outlines the key components, interactions, and design principles that guide the development and implementation of the system, ensuring its scalability, modularity, and interoperability while maintaining high security and data privacy standards.
 
 For more info about Grid Singularity please visit the <a href="https://gridsingularity.com/" target="_blank">Grid Singularity website</a>.
 
