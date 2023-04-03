@@ -1,0 +1,28 @@
+site_name: 'GSy DEX'
+site_description: 'Documentation for the Grid Singularity Decentralized Exchange'
+site_author: 'Grid Singularity'
+nav:
+    - Home: index.md
+    - Deployment and operation:
+      - Intro: setup/installation.md
+      - Rust Setup: setup/rust-setup.md
+      - Run: setup/run.md
+      - Build: setup/build.md
+      - Connect UI: setup/connect-ui.md
+      - Docker: setup/docker.md
+    - Node Structure:
+        - Node: node/node.md
+        - Runtime: node/runtime.md
+        - Pallets: node/pallets.md
+        - Primitives: node/primitives.md
+    - System Architecture:
+        - High Level Architecture: architecture.md
+
+theme:
+  name: readthedocs
+  favicon: images/Profile.png
+  logo: images/Profile.png
+
+plugins:
+  - search
+  - mermaid2

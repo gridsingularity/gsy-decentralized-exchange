@@ -1,0 +1,8 @@
+[workspace]
+members = [
+    "node",
+    "modules/orderbook-registry",
+    "runtime",
+]
+[profile.release]
+panic = "unwind"

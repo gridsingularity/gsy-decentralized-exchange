@@ -1,0 +1,14 @@
+version: "3.2"
+
+services:
+  dev:
+    container_name: gsy-node
+    image: rust_build_image:staging
+    working_dir: /var/www/gsy-node
+    ports:
+      - "9944:9944"
+    environment:
+      - CARGO_HOME=/var/www/gsy-node/.cargo
+    volumes:
+      - ./gsy-node:/var/www/gsy-node
+    command: bash -c "cargo build --release && ./target/release/gsy-node --dev --ws-external"
