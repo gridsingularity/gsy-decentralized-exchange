@@ -5,8 +5,8 @@ First, install <a href="https://docs.docker.com/get-docker/" target="_blank">Doc
 Build and tag the docker image:
 
 ```bash
-docker build -t rust_build_image .
-docker tag rust_build_image:latest rust_build_image:staging
+docker build -t gsy_dex_image .
+docker tag gsy_dex_image:latest gsy_dex_image:staging
 ```
 and start docker-compose:
 

@@ -25,14 +25,6 @@ sudo apt update
 sudo apt install -y git clang curl libssl-dev llvm libudev-dev
 ```
 
-### Arch Linux
-
-Run these commands from a terminal:
-
-```bash
-pacman -Syu --needed --noconfirm curl git clang
-```
-
 ### Fedora
 
 Run these commands from a terminal:
@@ -40,14 +32,6 @@ Run these commands from a terminal:
 ```bash
 sudo dnf update
 sudo dnf install clang curl git openssl-devel
-```
-
-### OpenSUSE
-
-Run these commands from a terminal:
-
-```bash
-sudo zypper install clang curl git openssl-devel llvm-devel libudev-devel
 ```
 
 ### macOS
@@ -68,16 +52,12 @@ brew update
 brew install openssl
 ```
 
-### Windows
-
-**_PLEASE NOTE:_** Native Windows development of Substrate is _not_ very well supported! It is _highly_
-recommend to use <a href="https://docs.microsoft.com/en-us/windows/wsl/install-win10" target="_blank">Windows Subsystem Linux</a>
-(WSL) and follow the instructions for [Ubuntu/Debian](#ubuntudebian).
-Please refer to the separate <a href="https://docs.substrate.io/main-docs/install/windows/" target="_blank">guide for native Windows development</a>.
-
 ## Rust developer environment
 
+If you want to develop and extend the Decentralized Energy Exchange you might want to follow this guide.
+
 This guide uses <https://rustup.rs> installer and the `rustup` tool to manage the Rust toolchain.
+
 First install and configure `rustup`:
 
 ```bash

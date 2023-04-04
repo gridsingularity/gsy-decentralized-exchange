@@ -41,5 +41,3 @@ The terminal should display output similar to this:
 ```
 
 If the number after finalized is increasing, your blockchain is producing new blocks and reaching consensus about the state they describe.
-
-We'll explore the details of the log output in a later tutorial. For now, it's only important to know that your node is running and producing blocks.

@@ -3,7 +3,7 @@ version: "3.2"
 services:
   dev:
     container_name: gsy-node
-    image: rust_build_image:staging
+    image: gsy_dex_image:staging
     working_dir: /var/www/gsy-node
     ports:
       - "9944:9944"
