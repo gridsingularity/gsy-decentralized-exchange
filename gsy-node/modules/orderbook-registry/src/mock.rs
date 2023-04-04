@@ -1,5 +1,5 @@
 use crate as orderbook_registry;
-use frame_support::{parameter_types, PalletId};
+use frame_support::parameter_types;
 use frame_system as system;
 use gsy_primitives::v0::AccountId;
 use sp_core::H256;

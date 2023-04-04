@@ -34,7 +34,7 @@ mod tests;
 #[frame_support::pallet]
 pub mod pallet {
 	use frame_support::sp_runtime::traits::Hash;
-	use frame_support::{dispatch::DispatchResult, pallet_prelude::*};
+	use frame_support::{dispatch::DispatchResult, dispatch::Vec, pallet_prelude::*};
 	use frame_support::{require_transactional, traits::Currency, transactional};
 	use frame_system::pallet_prelude::*;
 	use gsy_primitives::v0::{OrderReference, OrderStatus};
@@ -174,18 +174,22 @@ pub mod pallet {
 		/// `order_hash`: The hash of the order.
 		#[transactional]
 		#[pallet::weight(29_000_000)]
-		pub fn insert_orders(user_account: OriginFor<T>, order_hash: T::Hash) -> DispatchResult {
+		pub fn insert_orders(user_account: OriginFor<T>, orders_hash: Vec<T::Hash>) -> DispatchResult {
 			let user_account = ensure_signed(user_account)?;
 			// Verify that the user is a registered account.
 			ensure!(Self::is_registered_user(&user_account), <Error<T>>::NotARegisteredUserAccount);
-			let order_ref =
-				OrderReference { user_id: user_account.clone(), hash: order_hash.clone() };
-			let order_status = OrderStatus::Open;
-			// Verify that the order is not already inserted.
-			ensure!(!Self::is_order_registered(&order_ref), <Error<T>>::OrderAlreadyInserted);
-			log::info!("inserting order: {:?} - status: {:?}", order_ref, order_status);
-			<OrdersRegistry<T>>::insert(order_ref, order_status);
-			Self::deposit_event(Event::NewOrderInserted(user_account, order_hash));
+			for order_hash in orders_hash {
+				let order_ref =
+					OrderReference {user_id: user_account.clone(), hash: order_hash.clone()};
+				let order_status = OrderStatus::Open;
+				// Verify that the order is not already inserted.
+				ensure!(!Self::is_order_registered(&order_ref), <Error<T>>::OrderAlreadyInserted);
+				log::info!("inserting order: {:?} - status: {:?}", order_ref, order_status);
+				<OrdersRegistry<T>>::insert(order_ref, order_status);
+				Self::deposit_event(
+					Event::NewOrderInserted(user_account.clone(), order_hash)
+				);
+			}
 			Ok(())
 		}
 
@@ -198,27 +202,30 @@ pub mod pallet {
 		#[transactional]
 		#[pallet::weight(29_000_000)]
 		pub fn insert_orders_by_proxy(
-			delegator: OriginFor<T>,
-			proxy_account: T::AccountId,
-			order_hash: T::Hash,
+			proxy_account: OriginFor<T>,
+			delegator: T::AccountId,
+			orders_hash: Vec<T::Hash>
 		) -> DispatchResult {
-			let delegator = ensure_signed(delegator)?;
+			let proxy_account = ensure_signed(proxy_account)?;
 			// Verify that the user is a registered proxy account.
 			ensure!(
 				Self::is_registered_proxy_account(&delegator, proxy_account.clone()),
 				<Error<T>>::NotARegisteredUserOrProxyAccount
 			);
-			let order_ref = OrderReference { user_id: delegator.clone(), hash: order_hash.clone() };
-			let order_status = OrderStatus::Open;
-			// Verify that the order is not already inserted.
-			ensure!(!Self::is_order_registered(&order_ref), <Error<T>>::OrderAlreadyInserted);
-			log::info!("inserting order: {:?} - status: {:?}", order_ref, order_status);
-			<OrdersRegistry<T>>::insert(order_ref, order_status);
-			Self::deposit_event(Event::NewOrderInsertedByProxy(
-				delegator,
-				proxy_account,
-				order_hash,
-			));
+			for order_hash in orders_hash {
+				let order_ref =
+					OrderReference {user_id: delegator.clone(), hash: order_hash.clone()};
+				let order_status = OrderStatus::Open;
+				// Verify that the order is not already inserted.
+				ensure!(!Self::is_order_registered(&order_ref), <Error<T>>::OrderAlreadyInserted);
+				log::info!("inserting order: {:?} - status: {:?}", order_ref, order_status);
+				<OrdersRegistry<T>>::insert(order_ref, order_status);
+				Self::deposit_event(Event::NewOrderInsertedByProxy(
+					delegator.clone(),
+					proxy_account.clone(),
+					order_hash,
+				));
+			}
 			Ok(())
 		}
 
@@ -229,18 +236,22 @@ pub mod pallet {
 		/// `order_hash`: The hash of the order.
 		#[transactional]
 		#[pallet::weight(29_000_000)]
-		pub fn delete_order(user_account: OriginFor<T>, order_hash: T::Hash) -> DispatchResult {
+		pub fn delete_orders(user_account: OriginFor<T>, orders_hash: Vec<T::Hash>) -> DispatchResult {
 			let user_account = ensure_signed(user_account)?;
 			// Verify that the user is a registered account.
 			ensure!(Self::is_registered_user(&user_account), <Error<T>>::NotARegisteredUserAccount);
-			let order_ref =
-				OrderReference { user_id: user_account.clone(), hash: order_hash.clone() };
-			let updated_order_status = OrderStatus::Deleted;
-			// Verify that the order is already inserted.
-			ensure!(Self::is_order_registered(&order_ref), <Error<T>>::OpenOrderNotFound);
-			log::info!("deleting order: {:?} - status: {:?}", order_ref, updated_order_status);
-			Self::update_order_status(order_ref.clone(), updated_order_status.clone())?;
-			Self::deposit_event(Event::OrderDeleted(order_ref.user_id, order_ref.hash));
+			for order_hash in orders_hash {
+				let order_ref =
+					OrderReference {user_id: user_account.clone(), hash: order_hash.clone()};
+				let updated_order_status = OrderStatus::Deleted;
+				// Verify that the order is already inserted.
+				ensure!(Self::is_order_registered(&order_ref), <Error<T>>::OpenOrderNotFound);
+				log::info!("deleting order: {:?} - status: {:?}", order_ref, updated_order_status);
+				Self::update_order_status(order_ref.clone(), updated_order_status.clone())?;
+				Self::deposit_event(
+					Event::OrderDeleted(order_ref.user_id, order_ref.hash)
+				);
+			}
 			Ok(())
 		}
 
@@ -252,24 +263,29 @@ pub mod pallet {
 		/// `order_hash`: The hash of the order.
 		#[transactional]
 		#[pallet::weight(29_000_000)]
-		pub fn delete_order_by_proxy(
-			delegator: OriginFor<T>,
-			proxy_account: T::AccountId,
-			order_hash: T::Hash,
+		pub fn delete_orders_by_proxy(
+			proxy_account: OriginFor<T>,
+			delegator: T::AccountId,
+			orders_hash: Vec<T::Hash>,
 		) -> DispatchResult {
-			let delegator = ensure_signed(delegator)?;
+			let proxy_account = ensure_signed(proxy_account)?;
 			// Verify that the user is a registered proxy account.
 			ensure!(
-				Self::is_registered_proxy_account(&delegator,proxy_account.clone()),
+				Self::is_registered_proxy_account(&delegator, proxy_account.clone()),
 				<Error<T>>::NotARegisteredUserOrProxyAccount
 			);
-			let order_ref = OrderReference { user_id: delegator.clone(), hash: order_hash.clone() };
-			let updated_order_status = OrderStatus::Deleted;
-			// Verify that the order is already inserted.
-			ensure!(Self::is_order_registered(&order_ref), <Error<T>>::OpenOrderNotFound);
-			log::info!("deleting order: {:?} - status: {:?}", order_ref, updated_order_status);
-			Self::update_order_status(order_ref.clone(), updated_order_status.clone())?;
-			Self::deposit_event(Event::OrderDeleted(order_ref.user_id, order_ref.hash));
+			for order_hash in orders_hash {
+				let order_ref =
+					OrderReference {user_id: delegator.clone(), hash: order_hash.clone()};
+				let updated_order_status = OrderStatus::Deleted;
+				// Verify that the order is already inserted.
+				ensure!(Self::is_order_registered(&order_ref), <Error<T>>::OpenOrderNotFound);
+				log::info!("deleting order: {:?} - status: {:?}", order_ref, updated_order_status);
+				Self::update_order_status(order_ref.clone(), updated_order_status.clone())?;
+				Self::deposit_event(
+					Event::OrderDeleted(order_ref.user_id, order_ref.hash)
+				);
+			}
 			Ok(())
 		}
 
@@ -443,10 +459,10 @@ pub mod pallet {
 		/// - `user_account`: The account of the user.
 		/// - `proxy_account`: The account of the user.
 		pub fn is_registered_proxy_account(
-			user_account: &T::AccountId,
+			delegator: &T::AccountId,
 			proxy_account: T::AccountId,
 		) -> bool {
-			ProxyAccounts::<T>::get(user_account)
+			ProxyAccounts::<T>::get(delegator)
 				.contains(&ProxyDefinition { proxy: proxy_account })
 		}
 
