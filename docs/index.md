@@ -69,8 +69,7 @@ Please to fine more info about the node in the [Node Section](./node/node.md).
 
 - [Installation](./setup/installation.md)
   - [Rust Setup](./setup/rust-setup.md)
-  - [Run](./setup/run.md)
-  - [Build](./setup/build.md)
+  - [Build & Run](./setup/build.md)
   - [Test](./setup/test.md)
   - [Connect UI](./setup/connect-ui.md)
   - [Docker](./setup/docker.md)
