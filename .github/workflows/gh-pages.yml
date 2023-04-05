@@ -1,4 +1,4 @@
-name: Deploy docs to gs-pages
+name: Deploy docs to gh-pages
 
 on:
   push:

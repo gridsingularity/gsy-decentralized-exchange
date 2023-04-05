@@ -1,2 +1,0 @@
-# GSy Node
-
