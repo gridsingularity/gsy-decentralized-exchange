@@ -23,7 +23,7 @@ This chapter describes the core components, interactions, and design principles 
 
 3. **Establishing design principles and best practices**: A set of design principles, patterns, and best practices that guide the development and implementation of the Decentralized Energy Exchange, promoting modularity, scalability, security, and maintainability.
 
-4. **Addressing security and privacy concerns**: The Decentralized Energy Exchange highlights the importance of data privacy and security in the Decentralized Energy Exchange, outlining measures and techniques to safeguard sensitive information and ensure the integrity of the platform.
+4. **Addressing security and privacy concerns**: Measures and techniques to safeguard sensitive information and ensure the integrity of the Decentralized Energy Exchange are highlighted and implemented, in order to ensure data privacy and security of the users.
 
 5. **Facilitating interoperability and integration**: The Decentralized Energy Exchange promotes the use of open standards, protocols, and APIs, enabling seamless integration with other systems, platforms, and technologies in the energy sector.
 
