@@ -1,0 +1,118 @@
+[package]
+name = 'trades-settlement'
+version = '4.0.0-dev'
+description = 'Trades-settlement module for handling the GSy-Decentralized Exchange trades settlement system'
+authors = ['Grid Singularity <https://github.com/gridsingularity>']
+homepage = 'https://gridsingularity.com/'
+edition = '2021'
+license = 'Unlicense'
+publish = false
+repository = 'https://github.com/gridsingularity/gsy-node'
+
+[package.metadata.docs.rs]
+targets = ['x86_64-unknown-linux-gnu']
+
+[dependencies.codec]
+default-features = false
+features = ['derive']
+package = 'parity-scale-codec'
+version = '2.0.0'
+
+[dependencies.frame-benchmarking]
+default-features = false
+git = 'https://github.com/paritytech/substrate.git'
+optional = true
+tag = 'monthly-2021-11-1'
+version = '4.0.0-dev'
+
+[dependencies.frame-support]
+default-features = false
+git = 'https://github.com/paritytech/substrate.git'
+tag = 'monthly-2021-11-1'
+version = '4.0.0-dev'
+
+[dependencies.frame-system]
+default-features = false
+git = 'https://github.com/paritytech/substrate.git'
+tag = 'monthly-2021-11-1'
+version = '4.0.0-dev'
+
+[dependencies.gsy-collateral]
+default-features = false
+path = '../gsy-collateral'
+version = '4.0.0-dev'
+
+[dependencies.gsy-primitives]
+default-features = false
+path = '../../primitives'
+version = '0.0.1'
+
+[dependencies.orderbook-registry]
+default-features = false
+path = '../orderbook-registry'
+version = '4.0.0-dev'
+
+[dependencies.orderbook-worker]
+default-features = false
+path = '../orderbook-worker'
+version = '4.0.0-dev'
+
+[dependencies.log]
+default-features = false
+version = "0.4.14"
+
+[dependencies.pallet-balances]
+default-features = false
+git = 'https://github.com/paritytech/substrate.git'
+tag = 'monthly-2021-11-1'
+version = '4.0.0-dev'
+
+[dependencies.scale-info]
+default-features = false
+features = ['derive']
+version = '1.0'
+
+[dependencies.sp-core]
+default-features = false
+git = 'https://github.com/paritytech/substrate.git'
+tag = 'monthly-2021-11-1'
+version = '4.0.0-dev'
+
+[dependencies.sp-std]
+default-features = false
+git = 'https://github.com/paritytech/substrate.git'
+tag = 'monthly-2021-11-1'
+version = '4.0.0-dev'
+
+
+[dependencies.sp-io]
+default-features = false
+git = 'https://github.com/paritytech/substrate.git'
+tag = 'monthly-2021-11-1'
+version = '4.0.0-dev'
+
+[dependencies.sp-runtime]
+default-features = false
+git = 'https://github.com/paritytech/substrate.git'
+tag = 'monthly-2021-11-1'
+version = '4.0.0-dev'
+
+[dev-dependencies.test-helpers]
+default-features = false
+path = '../../primitives/test-helpers'
+version = '0.0.1'
+
+[features]
+default = ['std']
+runtime-benchmarks = ['frame-benchmarking']
+std = [
+    'codec/std',
+    'scale-info/std',
+    'frame-support/std',
+    'frame-system/std',
+    'frame-benchmarking/std',
+	'orderbook-registry/std',
+	'orderbook-worker/std',
+	'pallet-balances/std',
+]
+try-runtime = ['frame-support/try-runtime']

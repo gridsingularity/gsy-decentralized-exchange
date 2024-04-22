@@ -2785,6 +2785,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "gsy-collateral"
+version = "0.0.2"
+dependencies = [
+ "frame-benchmarking",
+ "frame-support",
+ "frame-system",
+ "gsy-primitives",
+ "log",
+ "num-traits",
+ "parity-scale-codec",
+ "scale-info",
+ "sp-core",
+ "sp-io",
+ "sp-runtime",
+ "sp-std 14.0.0 (git+https://github.com/paritytech/polkadot-sdk.git?tag=polkadot-v1.9.0)",
+]
+
+[[package]]
 name = "gsy-node"
 version = "0.0.2"
 dependencies = [
@@ -2845,6 +2863,7 @@ dependencies = [
  "frame-system-benchmarking",
  "frame-system-rpc-runtime-api",
  "frame-try-runtime",
+ "gsy-collateral",
  "gsy-primitives",
  "orderbook-registry",
  "pallet-aura",
@@ -2877,6 +2896,7 @@ dependencies = [
 name = "gsy-primitives"
 version = "0.0.2"
 dependencies = [
+ "bitflags 1.3.2",
  "frame-support",
  "parity-scale-codec",
  "scale-info",

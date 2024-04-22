@@ -167,6 +167,7 @@ impl frame_system::Config for Runtime {
 
     /// The block type for the runtime.
     type Block = Block;
+
     /// Block & extrinsics weights: base values and limits.
     type BlockWeights = BlockWeights;
     /// The maximum length of a block (in bytes).
