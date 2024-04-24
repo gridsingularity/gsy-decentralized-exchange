@@ -63,7 +63,9 @@ pub use sp_runtime::{Perbill, Permill};
 
 /// Import the orderbook-registry pallet.
 pub use orderbook_registry;
-
+pub use gsy_collateral;
+pub use orderbook_worker;
+pub use trades_settlement;
 pub use gsy_primitives::v0::{AccountId, Balance, BlockNumber, Hash, Signature, Nonce};
 
 /// Index of a transaction in the chain.
@@ -187,6 +189,9 @@ impl frame_system::Config for Runtime {
     /// This is used as an identifier of the chain. 42 is the generic substrate prefix.
     type SS58Prefix = SS58Prefix;
     type MaxConsumers = frame_support::traits::ConstU32<16>;
+
+	/// The origin account
+	type RuntimeOrigin = RuntimeOrigin;
 }
 
 impl pallet_aura::Config for Runtime {

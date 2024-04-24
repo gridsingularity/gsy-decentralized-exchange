@@ -26,7 +26,7 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
-pub use crate::weights::WeightInfo;
+pub use crate::weights::TradeSettlementWeightInfo;
 pub use pallet::*;
 
 #[cfg(test)]
@@ -41,19 +41,20 @@ pub mod weights;
 
 #[frame_support::pallet]
 pub mod pallet {
-	use crate::weights::WeightInfo;
-	use frame_support::dispatch::Vec;
-	use frame_support::{dispatch::DispatchResult, pallet_prelude::*, traits::UnixTime};
+	use crate::weights::TradeSettlementWeightInfo;
+	use frame_support::{dispatch::DispatchResult, pallet_prelude::*, traits::UnixTime, dispatch::RawOrigin};
 	use frame_support::{sp_runtime::traits::Hash, transactional};
 	use frame_system::{ensure_signed, pallet_prelude::*};
+	use scale_info::prelude::vec::Vec;
 	use gsy_primitives::v0::{Bid, BidOfferMatch, Offer, Order, OrderComponent, Validator};
 
 	#[pallet::config]
 	pub trait Config:
 		frame_system::Config + orderbook_registry::Config + orderbook_worker::Config
 	{
-		type Event: From<Event<Self>> + IsType<<Self as frame_system::Config>::Event>;
-		type WeightInfo: WeightInfo;
+		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
+
+		type TradeSettlementWeightInfo: TradeSettlementWeightInfo;
 
 		/// The length of the market slot in seconds.
 		#[pallet::constant]
@@ -98,7 +99,8 @@ pub mod pallet {
 		/// `origin`: The origin of the extrinsic. The Matching Engine operator who wants to settle the matches.
 		/// `proposed_matches`: Vector of BidOfferMatch structures. Recommended matches for potential trades.
 		#[transactional]
-		#[pallet::weight(< T as Config >::WeightInfo::settle_trades())]
+		#[pallet::weight(< T as Config >::TradeSettlementWeightInfo::settle_trades())]
+		#[pallet::call_index(0)]
 		pub fn settle_trades(
 			origin: OriginFor<T>,
 			proposed_matches: Vec<BidOfferMatch<T::AccountId>>,
@@ -115,9 +117,9 @@ pub mod pallet {
 					// Check residual orders and add them to storage.
 					if let Some(residual_bid) = valid_match.residual_bid {
 						// Add residual bid in the orderbook registry.
-						<orderbook_registry::Pallet<T>>::add_order(
-							residual_bid.buyer.clone(),
-							T::Hashing::hash_of(&Order::Bid(residual_bid.clone())),
+						<orderbook_registry::Pallet<T>>::insert_orders(
+							RawOrigin::Signed(residual_bid.buyer.clone()).into(),
+							vec![T::Hashing::hash_of(&Order::Bid(residual_bid.clone()))],
 						)?;
 						// Add residual in the orderbook worker.
 						<orderbook_worker::Pallet<T>>::add_order(
@@ -127,9 +129,9 @@ pub mod pallet {
 					}
 					if let Some(residual_offer) = valid_match.residual_offer {
 						// Add residual in the orderbook registry.
-						<orderbook_registry::Pallet<T>>::add_order(
-							residual_offer.seller.clone(),
-							T::Hashing::hash_of(&Order::Offer(residual_offer.clone())),
+						<orderbook_registry::Pallet<T>>::insert_orders(
+							RawOrigin::Signed(residual_offer.seller.clone()).into(),
+							vec![T::Hashing::hash_of(&Order::Offer(residual_offer.clone()))],
 						)?;
 						// Add residual in the orderbook worker.
 						<orderbook_worker::Pallet<T>>::add_order(

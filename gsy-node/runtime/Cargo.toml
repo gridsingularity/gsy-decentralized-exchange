@@ -58,6 +58,7 @@ sp-genesis-builder = { workspace = true }
 orderbook-registry = { version = "0.0.2", default-features = false, path = "../modules/orderbook-registry" }
 orderbook-worker = { version = "0.0.2", default-features = false, path = "../modules/orderbook-worker" }
 gsy-collateral = { version = "0.0.2", default-features = false, path = "../modules/gsy-collateral" }
+trades-settlement = { version = "0.0.2", default-features = false, path = "../modules/trades-settlement" }
 
 # Used for the GSy node's RPCs
 frame-system-rpc-runtime-api = { workspace = true }
