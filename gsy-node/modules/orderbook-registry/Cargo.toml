@@ -19,6 +19,7 @@ frame-support = { workspace = true }
 frame-system = { workspace = true }
 sp-runtime = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.9.0", default-features = false }
 gsy-primitives = { workspace = true }
+gsy-collateral = { version = '0.0.2', default-features = false, path = '../gsy-collateral' }
 
 frame-benchmarking = { default-features = false, git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.9.0", optional = true }
 log = { version = "0.4.21", default-features = false }

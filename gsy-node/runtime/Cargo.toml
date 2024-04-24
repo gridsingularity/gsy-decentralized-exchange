@@ -56,6 +56,7 @@ sp-genesis-builder = { workspace = true }
 
 # Custom Pallets
 orderbook-registry = { version = "0.0.2", default-features = false, path = "../modules/orderbook-registry" }
+orderbook-worker = { version = "0.0.2", default-features = false, path = "../modules/orderbook-worker" }
 gsy-collateral = { version = "0.0.2", default-features = false, path = "../modules/gsy-collateral" }
 
 # Used for the GSy node's RPCs

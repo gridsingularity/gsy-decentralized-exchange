@@ -44,7 +44,6 @@ pub mod pallet {
 		pallet_prelude::*,
 		sp_runtime::DispatchError
 	};
-	use sp_runtime::traits::AccountIdConversion;
 	use frame_support::{
 		require_transactional,
 		sp_runtime::traits::Hash,
@@ -56,7 +55,7 @@ pub mod pallet {
 	use gsy_primitives::v0::{CollateralInfo, Vault, VaultInfo, VaultStatus, VaultWithStatus};
 	use num_traits::{ One, Zero};
 	use scale_info::TypeInfo;
-	use crate::weights::WeightInfo;
+	use crate::weights::CollateralWeightInfo;
 
 	pub type BalanceOf<T> =
 	<<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
@@ -112,7 +111,7 @@ pub mod pallet {
 		+ Into<u128>
 		+ From<u64>;
 
-		type WeightInfo: WeightInfo;
+		type CollateralWeightInfo: CollateralWeightInfo;
 	}
 
 	#[pallet::pallet]
@@ -235,7 +234,7 @@ pub mod pallet {
 		/// * `origin`: The origin of the extrinsic. Account that is depositing the collateral.
 		/// * `amount`: The amount of collateral to deposit.
 		#[transactional]
-		#[pallet::weight(<T as Config>::WeightInfo::deposit_collateral())]
+		#[pallet::weight(<T as Config>::CollateralWeightInfo::deposit_collateral())]
 		#[pallet::call_index(0)]
 		pub fn deposit_collateral(origin: OriginFor<T>, amount: BalanceOf<T>) -> DispatchResult {
 			let depositor = ensure_signed(origin)?;
@@ -253,7 +252,7 @@ pub mod pallet {
 		/// * `origin`: The origin of the extrinsic. The user account that is registering the proxy account.
 		/// * `proxy_account`: The proxy account that is being registered.
 		#[transactional]
-		#[pallet::weight(<T as Config>::WeightInfo::register_proxy_account())]
+		#[pallet::weight(<T as Config>::CollateralWeightInfo::register_proxy_account())]
 		#[pallet::call_index(1)]
 		pub fn register_proxy_account(
 			origin: OriginFor<T>,
@@ -274,7 +273,7 @@ pub mod pallet {
 		/// * `origin`: The origin of the extrinsic. The root user.
 		/// * `matching_engine_operator_account`: The matching_engine operator account that is being registered.
 		#[transactional]
-		#[pallet::weight(<T as Config>::WeightInfo::register_matching_engine_operator())]
+		#[pallet::weight(<T as Config>::CollateralWeightInfo::register_matching_engine_operator())]
 		#[pallet::call_index(2)]
 		pub fn register_matching_engine_operator(
 			origin: OriginFor<T>,
@@ -292,7 +291,7 @@ pub mod pallet {
 		/// * `origin`: The origin of the extrinsic. The root user.
 		/// * `user_account`: The account of the new user.
 		#[transactional]
-		#[pallet::weight(<T as Config>::WeightInfo::register_user())]
+		#[pallet::weight(<T as Config>::CollateralWeightInfo::register_user())]
 		#[pallet::call_index(3)]
 		pub fn register_user(origin: OriginFor<T>, user_account: T::AccountId) -> DispatchResult {
 			// Verify that the user is root.
@@ -310,7 +309,7 @@ pub mod pallet {
 		/// * `origin`: The origin of the extrinsic. The root user.
 		/// * `user_account`: The account of the user that is restarting the vault.
 		#[transactional]
-		#[pallet::weight(<T as Config>::WeightInfo::restart_vault())]
+		#[pallet::weight(<T as Config>::CollateralWeightInfo::restart_vault())]
 		#[pallet::call_index(4)]
 		pub fn restart_vault(origin: OriginFor<T>, user_account: T::AccountId) -> DispatchResult {
 			// Verify that the user is root.
@@ -327,7 +326,7 @@ pub mod pallet {
 		/// * `origin`: The origin of the extrinsic. The root user.
 		/// * `user_account`: The user account that owns the vault.
 		#[transactional]
-		#[pallet::weight(<T as Config>::WeightInfo::shutdown_vault())]
+		#[pallet::weight(<T as Config>::CollateralWeightInfo::shutdown_vault())]
 		#[pallet::call_index(5)]
 		pub fn shutdown_vault(origin: OriginFor<T>, user_account: T::AccountId) -> DispatchResult {
 			// Verify that the user is root.
@@ -344,7 +343,7 @@ pub mod pallet {
 		/// * `origin`: The origin of the extrinsic. The user account that is unregistering the proxy account.
 		/// * `proxy_account`: The proxy account that is being unregistered.
 		#[transactional]
-		#[pallet::weight(<T as Config>::WeightInfo::unregister_proxy_account())]
+		#[pallet::weight(<T as Config>::CollateralWeightInfo::unregister_proxy_account())]
 		#[pallet::call_index(6)]
 		pub fn unregister_proxy_account(
 			origin: OriginFor<T>,
@@ -365,7 +364,7 @@ pub mod pallet {
 		/// * `origin`: The origin of the extrinsic. The user account that is withdrawing the collateral.
 		/// * `amount`: The amount of collateral to be withdrawn.
 		#[transactional]
-		#[pallet::weight(<T as Config>::WeightInfo::withdraw_collateral())]
+		#[pallet::weight(<T as Config>::CollateralWeightInfo::withdraw_collateral())]
 		#[pallet::call_index(7)]
 		pub fn withdraw_collateral(origin: OriginFor<T>, amount: BalanceOf<T>) -> DispatchResult {
 			let user_account = ensure_signed(origin)?;

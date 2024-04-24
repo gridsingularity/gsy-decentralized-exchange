@@ -10,7 +10,6 @@ pub use pallet::*;
 pub use sp_core::offchain::Timestamp;
 use sp_runtime::offchain::{http, Duration};
 pub use sp_std::sync::Arc;
-use spin::Mutex;
 
 pub mod configuration;
 use configuration::OrderBookServiceURL;
@@ -60,7 +59,7 @@ pub mod crypto {
 pub mod pallet {
 	use super::*;
 	use frame_support::{
-		dispatch::Vec, pallet_prelude::*, require_transactional, sp_runtime::traits::Hash,
+		pallet_prelude::*, require_transactional, sp_runtime::traits::Hash,
 		transactional,
 	};
 	use frame_system::{
@@ -84,21 +83,23 @@ pub mod pallet {
 		+ SendTransactionTypes<Call<Self>>
 		+ frame_system::Config
 		+ orderbook_registry::Config
+		+ gsy_collateral::Config
 	{
 		type AuthorityId: AppCrypto<Self::Public, Self::Signature>;
 
-		type Event: From<Event<Self>>
-			+ IsType<<Self as frame_system::Config>::Event>
-			+ Into<<Self as frame_system::Config>::Event>;
+		type RuntimeEvent: From<Event<Self>>
+			+ IsType<<Self as frame_system::Config>::RuntimeEvent>
+			+ Into<<Self as frame_system::Config>::RuntimeEvent>;
 
 		/// A dispatchable call type. We need to define it for the Orderbook worker to
 		/// reference the `send_response` function it wants to call.
-		type Call: From<Call<Self>> + Into<<Self as frame_system::Config>::Call>;
+		type Call: From<Call<Self>> + Into<<Self as frame_system::Config>::RuntimeCall>;
 
 		#[pallet::constant]
 		type UnsignedPriority: Get<TransactionPriority>;
 
 		type WeightInfo: WeightInfo;
+
 	}
 
 	#[pallet::pallet]
@@ -147,7 +148,7 @@ pub mod pallet {
 
 	#[pallet::hooks]
 	impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
-		fn offchain_worker(_block_number: T::BlockNumber) {
+		fn offchain_worker(_block_number: BlockNumberFor<T>) {
 			log::info!("Entering offchain worker...");
 			Self::offchain_process();
 		}
@@ -160,21 +161,21 @@ pub mod pallet {
 		/// # Parameters
 		/// `origin`: The origin of the extrinsic. The user who wants to insert the orders.
 		/// `orders`: The batch of orders order.
+
 		#[transactional]
 		#[pallet::weight(< T as Config >::WeightInfo::insert_orders())]
+		#[pallet::call_index(0)]
 		pub fn insert_orders(
 			origin: OriginFor<T>,
 			orders: Vec<InputOrder<T::AccountId>>,
 		) -> DispatchResult {
-			let sender = ensure_signed(origin)?;
+			let sender = ensure_signed(origin.clone())?;
 			log::info!("add orders: {:?} for the user: {:?}", orders, sender);
+			let hashed_orders = Self::create_hash_vec_from_order_list(orders.clone());
+			// TODO: Refactor this method to add all orders in one go.
+			let _ = <orderbook_registry::Pallet<T>>::insert_orders(origin, hashed_orders);
 			for order in orders {
-				let order = Self::input_order_to_order(order);
-				<orderbook_registry::Pallet<T>>::add_order(
-					sender.clone(),
-					T::Hashing::hash_of(&order),
-				)?;
-				Self::add_order(sender.clone(), order)?;
+				Self::add_order(sender.clone(), Self::input_order_to_order(order))?;
 			}
 			Ok(())
 		}
@@ -187,26 +188,24 @@ pub mod pallet {
 		/// `orders`: The batch of orders order.
 		#[transactional]
 		#[pallet::weight(< T as Config >::WeightInfo::insert_orders_by_proxy())]
+		#[pallet::call_index(1)]
 		pub fn insert_orders_by_proxy(
 			origin: OriginFor<T>,
 			delegator: T::AccountId,
 			orders: Vec<InputOrder<T::AccountId>>,
 		) -> DispatchResult {
-			let sender = ensure_signed(origin)?;
+			let sender = ensure_signed(origin.clone())?;
 			log::info!(
 				"add orders: {:?} for the user: {:?} - by the proxy {:?}",
 				orders,
 				delegator,
 				sender
 			);
+			let hashed_orders = Self::create_hash_vec_from_order_list(orders.clone());
+			let _ = <orderbook_registry::Pallet<T>>::insert_orders_by_proxy(
+				origin, delegator.clone(), hashed_orders);
 			for order in orders {
-				let order = Self::input_order_to_order(order);
-				<orderbook_registry::Pallet<T>>::add_order_by_proxy(
-					sender.clone(),
-					delegator.clone(),
-					T::Hashing::hash_of(&order),
-				)?;
-				Self::add_order(delegator.clone(), order)?;
+				Self::add_order(delegator.clone(), Self::input_order_to_order(order))?;
 			}
 			Ok(())
 		}
@@ -218,18 +217,14 @@ pub mod pallet {
 		/// `orders_hash`: The batch of orders hash to remove.
 		#[transactional]
 		#[pallet::weight(< T as Config >::WeightInfo::remove_orders())]
+		#[pallet::call_index(2)]
 		pub fn remove_orders(
 			origin: OriginFor<T>,
 			orders_hash: Vec<T::Hash>,
 		) -> DispatchResult {
-			let sender = ensure_signed(origin)?;
+			let sender = ensure_signed(origin.clone())?;
 			log::info!("remove orders: {:?} for the user: {:?}", orders_hash, sender);
-			for order_hash in orders_hash {
-				<orderbook_registry::Pallet<T>>::delete_order(
-					sender.clone(),
-					order_hash.clone(),
-				)?;
-			}
+			let _ = <orderbook_registry::Pallet<T>>::delete_orders(origin, orders_hash);
 			Ok(())
 		}
 
@@ -239,22 +234,25 @@ pub mod pallet {
 		/// # Parameters
 		/// `origin`: The origin of the extrinsic. The user who wants to remove the order.
 		/// `order_hash`: The hash of the order to remove.
-		#[pallet::weight(0)]
+		#[pallet::weight(< T as Config >::WeightInfo::zero_weight())]
+		#[pallet::call_index(3)]
 		pub fn remove_order_by_order_reference(
 			origin: OriginFor<T>,
 			order_payload: Payload<T::Public, T::AccountId, T::Hash>,
 			_signature: T::Signature,
 		) -> DispatchResult {
-			ensure_none(origin)?;
+			ensure_none(origin.clone())?;
 			for payload in order_payload.order_reference {
 				log::info!(
 					"remove order by hash: {:?} for the user: {:?}",
 					payload.hash,
 					payload.user_id
 				);
-				<orderbook_registry::Pallet<T>>::delete_order(
-					payload.user_id.clone(),
-					payload.hash,
+				let mut hash_vector = Vec::<T::Hash>::new();
+				hash_vector.push(payload.hash);
+				<orderbook_registry::Pallet<T>>::delete_orders(
+					origin.clone(),
+					hash_vector,
 				)?;
 				Self::delete_order(payload)?;
 			}
@@ -267,7 +265,8 @@ pub mod pallet {
 		/// # Parameters
 		/// `origin`: The origin of the extrinsic. The user who wants to remove the order.
 		/// `order_hash`: The hash of the order to remove.
-		#[pallet::weight(0)]
+		#[pallet::weight(< T as Config >::WeightInfo::zero_weight())]
+		#[pallet::call_index(4)]
 		pub fn remove_local_order_by_order_reference(
 			origin: OriginFor<T>,
 			order_payload: Payload<T::Public, T::AccountId, T::Hash>,
@@ -293,25 +292,22 @@ pub mod pallet {
 		/// `orders_hash`: The batch of orders hash to remove.
 		#[transactional]
 		#[pallet::weight(< T as Config >::WeightInfo::remove_orders_by_proxy())]
+		#[pallet::call_index(5)]
 		pub fn remove_orders_by_proxy(
 			origin: OriginFor<T>,
 			delegator: T::AccountId,
 			orders_hash: Vec<T::Hash>,
 		) -> DispatchResult {
-			let sender = ensure_signed(origin)?;
+			let sender = ensure_signed(origin.clone())?;
 			log::info!(
 				"remove orders: {:?} for the user: {:?} - by the proxy {:?}",
 				orders_hash,
 				delegator,
 				sender
 			);
-			for order_hash in orders_hash {
-				<orderbook_registry::Pallet<T>>::delete_order_by_proxy(
-					sender.clone(),
-					delegator.clone(),
-					order_hash.clone(),
-				)?;
-			}
+
+			let _ = <orderbook_registry::Pallet<T>>::delete_orders_by_proxy(
+				origin, delegator.clone(), orders_hash.clone());
 			Ok(())
 		}
 	}
@@ -542,7 +538,7 @@ pub mod pallet {
 			order: Order<T::AccountId>,
 		) -> DispatchResult {
 			ensure!(
-				<orderbook_registry::Pallet<T>>::is_collateral_amount_sufficient(
+				<gsy_collateral::Pallet<T>>::verify_collateral_amount(
 					Self::get_order_amount(order.clone()),
 					&sender
 				),
@@ -622,5 +618,15 @@ pub mod pallet {
 					.unwrap(),
 			}
 		}
+
+		pub fn create_hash_vec_from_order_list(orders: Vec<InputOrder<T::AccountId>>) -> Vec<T::Hash> {
+			return orders
+				.clone()
+				.into_iter()
+				.map(|order| Self::input_order_to_order(order))
+				.map(|order| T::Hashing::hash_of(&order))
+				.collect();
+		}
+
 	}
 }

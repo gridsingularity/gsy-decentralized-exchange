@@ -34,12 +34,16 @@ pub use weights::*;
 pub mod pallet {
 	// Import various useful types required by all FRAME pallets.
 	use super::*;
-	use frame_support::{pallet_prelude::*, require_transactional, traits::Currency, transactional};
+	use frame_support::{pallet_prelude::*, require_transactional, traits::Currency,
+						transactional, traits::UnixTime};
 	use frame_system::pallet_prelude::*;
 	use sp_runtime::traits::Hash;
+	use sp_runtime::SaturatedConversion;
 	use frame_support::dispatch::DispatchResult;
-	use gsy_primitives::v0::{OrderReference, OrderStatus};
+	use gsy_primitives::v0::{
+		OrderReference, OrderStatus, BidOfferMatch, Order, Trade, TradeParameters};
 	use scale_info::{TypeInfo, prelude::vec::Vec};
+
 
 	pub type BalanceOf<T> =
 			<<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
@@ -68,7 +72,7 @@ pub mod pallet {
 
 	/// Configure the pallet by specifying the parameters and types on which it depends.
 	#[pallet::config]
-	pub trait Config: frame_system::Config {
+	pub trait Config: frame_system::Config + gsy_collateral::Config {
 		/// Because this pallet emits events, it depends on the runtime's definition of an event.
 		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
 
@@ -78,10 +82,11 @@ pub mod pallet {
 		/// A type representing the weights required by the dispatchables of this pallet.
 		type WeightInfo: WeightInfo;
 
-
 		/// The maximum number of proxy account a registered user can have.
 		#[pallet::constant]
-		type ProxyAccountLimit: Get<u32>;
+		type RegistryProxyAccountLimit: Get<u32>;
+
+		type TimeProvider: UnixTime;
 	}
 
 	#[pallet::storage]
@@ -103,7 +108,7 @@ pub mod pallet {
 		_,
 		Twox64Concat,
 		T::AccountId,
-		BoundedVec<ProxyDefinition<T::AccountId>, T::ProxyAccountLimit>,
+		BoundedVec<ProxyDefinition<T::AccountId>, T::RegistryProxyAccountLimit>,
 		ValueQuery,
 	>;
 
@@ -112,7 +117,14 @@ pub mod pallet {
 	#[pallet::getter(fn order_registry)]
 	/// Keeps track of the orders for each registered user.
 	pub type OrdersRegistry<T: Config> =
-			StorageMap<_, Twox64Concat, OrderReference<T::AccountId, T::Hash>, OrderStatus, ValueQuery>;
+			StorageMap<_, Twox64Concat, OrderReference<T::AccountId, T::Hash>,
+				OrderStatus<T::Hash>, ValueQuery>;
+
+	#[pallet::storage]
+	#[pallet::getter(fn executed_trades)]
+	/// Keeps track of the executed trades by each registered matching_engine operator.
+	pub type TradesRegistry<T: Config> =
+	StorageMap<_, Twox64Concat, T::AccountId, T::Hash, ValueQuery>;
 
 	#[pallet::event]
 	#[pallet::generate_deposit(pub(super) fn deposit_event)]
@@ -133,6 +145,10 @@ pub mod pallet {
 		ProxyAccountUnregistered(T::AccountId, T::AccountId),
 		/// User has been registered. \[user_account\]
 		UserRegistered(T::AccountId),
+		/// Order has been executed. \[depositor, hash, selected_energy, energy_rate, time_slot\]
+		OrderExecuted(Trade<T::AccountId, T::Hash>),
+		/// Trade has been cleared.
+		TradeCleared(T::Hash),
 	}
 
 	// Errors inform users that something went wrong.
@@ -162,8 +178,10 @@ pub mod pallet {
 		OrderAlreadyExecuted,
 		/// Ensure the order has not been already inserted.
 		OrderAlreadyInserted,
-		/// An account cannot have more proxy than `ProxyAccountLimit`.
+		/// An account cannot have more proxy than `RegistryProxyAccountLimit`.
 		ProxyAccountsLimitReached,
+		/// Ensure the transfer has been successful.
+		UnableToCompleteTransfer,
 	}
 
 	// Dispatchable functions allows users to interact with the pallet and invoke state changes.
@@ -525,7 +543,7 @@ pub mod pallet {
 		/// `order_status`: The new order status.
 		pub fn update_order_status(
 			order_ref: OrderReference<T::AccountId, T::Hash>,
-			updated_order_status: OrderStatus,
+			updated_order_status: OrderStatus<T::Hash>,
 		) -> DispatchResult {
 			// Verify that the bid and offer have already been inserted.
 			ensure!(Self::is_order_registered(&order_ref), <Error<T>>::OpenOrderNotFound);
@@ -534,7 +552,7 @@ pub mod pallet {
 				if let OrderStatus::Open = order_status {
 					*order_status = updated_order_status.clone();
 					Ok(())
-				} else if let OrderStatus::Executed = order_status {
+				} else if let OrderStatus::Executed(_) = order_status {
 					Err(<Error<T>>::OrderAlreadyExecuted)?
 				} else if let OrderStatus::Deleted = order_status {
 					Err(<Error<T>>::OrderAlreadyDeleted)?
@@ -543,5 +561,124 @@ pub mod pallet {
 				}
 			})
 		}
+
+
+		/// Execute a batch of orders.
+		///
+		/// Parameters
+		/// `matching_engine_account`: The user who proposes tha trade match to execute the order.
+		/// `proposed_matches`: The proposed match batch.
+		#[require_transactional]
+		pub fn clear_orders_batch(
+			matching_engine_account: T::AccountId,
+			proposed_matches: Vec<BidOfferMatch<T::AccountId>>,
+		) -> DispatchResult {
+			for proposed_match in proposed_matches {
+				Self::clear_order(matching_engine_account.clone(), proposed_match)?;
+			}
+			Ok(())
+		}
+
+		/// Execute an order.
+		///
+		/// Parameters
+		/// `matching_engine_account`: The user who proposes tha trade match to execute the order.
+		/// `proposed_match`: The proposed match structure containing the bid and offer.
+		#[require_transactional]
+		pub fn clear_order(
+			matching_engine_account: T::AccountId,
+			proposed_match: BidOfferMatch<T::AccountId>,
+		) -> DispatchResult {
+			// Verify that the user is a registered matching_engine operator account.
+			ensure!(
+				Self::is_registered_matching_engine_operator(&matching_engine_account),
+				<Error<T>>::NotARegisteredMatchingEngineOperator
+			);
+
+			let bid: Order<T::AccountId> = Order::Bid(proposed_match.bid.clone());
+			let offer: Order<T::AccountId> = Order::Offer(proposed_match.offer.clone());
+
+			let bid_ref = OrderReference {
+				user_id: proposed_match.bid.buyer.clone(),
+				hash: T::Hashing::hash_of(&bid),
+			};
+
+			let offer_ref = OrderReference {
+				user_id: proposed_match.offer.seller.clone(),
+				hash: T::Hashing::hash_of(&offer),
+			};
+
+			let mut orders_ref: Vec<OrderReference<T::AccountId, T::Hash>> = Vec::new();
+			orders_ref.push(bid_ref.clone());
+			orders_ref.push(offer_ref.clone());
+
+			let trade_parameters = TradeParameters {
+				selected_energy: proposed_match.selected_energy,
+				energy_rate: proposed_match.energy_rate,
+				trade_uuid: T::Hashing::hash_of(&proposed_match),
+			};
+
+			let trade = Trade {
+				seller: proposed_match.offer.seller.clone(),
+				buyer: proposed_match.bid.buyer.clone(),
+				market_id: proposed_match.market_id,
+				time_slot: proposed_match.time_slot,
+				trade_uuid: T::Hashing::hash_of(&proposed_match),
+				creation_time: T::TimeProvider::now().as_secs(),
+				offer: proposed_match.offer.clone(),
+				offer_hash: offer_ref.hash.clone(),
+				bid: proposed_match.bid.clone(),
+				bid_hash: bid_ref.hash.clone(),
+				residual_offer: proposed_match.residual_offer.clone(),
+				residual_bid: proposed_match.residual_bid.clone(),
+				parameters: trade_parameters,
+			};
+
+			let updated_order_status = OrderStatus::Executed(trade_parameters.clone());
+
+			log::info!(
+				"executing trade with bid and offer: {:?} - status: {:?}",
+				orders_ref,
+				updated_order_status
+			);
+
+
+			for order_ref in orders_ref {
+				ensure!(Self::is_order_registered(&order_ref), <Error<T>>::OpenOrderNotFound);
+				Self::update_order_status(order_ref, updated_order_status.clone())?;
+			}
+
+			if proposed_match.bid.buyer.clone() != proposed_match.offer.seller.clone() {
+				// Settle the trade with amount transferred from buyer to seller.
+
+				<gsy_collateral::Pallet<T>>::transfer_collateral(
+					&proposed_match.bid.buyer,
+					&proposed_match.offer.seller,
+					(proposed_match.selected_energy
+						.checked_mul(proposed_match.energy_rate)
+						.ok_or(<Error<T>>::OrderAlreadyInserted)?).saturated_into(),
+				)?;
+			}
+
+			// Add trade in the trade registry.
+			<TradesRegistry<T>>::insert(matching_engine_account, T::Hashing::hash_of(&proposed_match));
+
+			Self::deposit_event(Event::TradeCleared(T::Hashing::hash_of(&proposed_match)));
+
+			Self::deposit_event(Event::OrderExecuted(trade));
+
+			Ok(())
+		}
+
+		/// Helper function to check if a given order has already been inserted.
+		///
+		/// Parameters
+		/// `amount`: The order reference.
+		/// `vault_owner`: AccountId of the vault owner.
+		pub fn is_collateral_amount_sufficient(amount: u64, vault_owner: &T::AccountId) -> bool {
+			<gsy_collateral::Pallet<T>>::verify_collateral_amount(amount, vault_owner)
+		}
+
+
 	}
 }

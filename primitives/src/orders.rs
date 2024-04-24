@@ -1,10 +1,10 @@
 use crate::trades::TradeParameters;
 use crate::v0::{AccountId, Hash};
-use codec::{Decode, Encode};
+use codec::{Decode, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
 use sp_runtime::traits::{BlakeTwo256, Hash as HashT};
 
-#[derive(Debug, Encode, Decode, Clone, PartialEq, Eq, TypeInfo)]
+#[derive(Debug, Encode, Decode, Clone, PartialEq, Eq, TypeInfo, MaxEncodedLen)]
 #[cfg_attr(feature = "std", derive(Hash))]
 pub enum Order<AccountId> {
 	Bid(Bid<AccountId>),
@@ -19,7 +19,7 @@ pub enum InputOrder<AccountId> {
 }
 
 /// Order component struct
-#[derive(Debug, Encode, Decode, Clone, PartialEq, Eq, TypeInfo)]
+#[derive(Debug, Encode, Decode, Clone, PartialEq, Eq, TypeInfo, MaxEncodedLen)]
 #[cfg_attr(feature = "std", derive(Hash, Default))]
 pub struct OrderComponent {
 	pub area_uuid: u64,
@@ -53,7 +53,7 @@ pub struct InputBid<AccountId> {
 }
 
 /// Bid order struct
-#[derive(Debug, Encode, Decode, Clone, PartialEq, Eq, TypeInfo)]
+#[derive(Debug, Encode, Decode, Clone, PartialEq, Eq, TypeInfo, MaxEncodedLen)]
 #[cfg_attr(feature = "std", derive(Hash, Default))]
 pub struct Bid<AccountId> {
 	pub buyer: AccountId,
@@ -77,7 +77,7 @@ pub struct InputOffer<AccountId> {
 }
 
 /// Offer (Ask) order struct
-#[derive(Debug, Encode, Decode, Clone, PartialEq, Eq, TypeInfo)]
+#[derive(Debug, Encode, Decode, Clone, PartialEq, Eq, TypeInfo, MaxEncodedLen)]
 #[cfg_attr(feature = "std", derive(Hash, Default))]
 pub struct Offer<AccountId> {
 	pub seller: AccountId,
@@ -108,7 +108,8 @@ impl<Hash> Default for OrderStatus<Hash> {
 	}
 }
 
-#[derive(Debug, Encode, Decode, Clone, Copy, Eq, PartialEq, Ord, PartialOrd, TypeInfo)]
+#[derive(Debug, Encode, Decode, Clone, Copy, Eq, PartialEq, Ord, PartialOrd,
+		 TypeInfo, MaxEncodedLen)]
 pub struct OrderReference<AccountId, Hash> {
 	// The account id of the user who created the order.
 	pub user_id: AccountId,

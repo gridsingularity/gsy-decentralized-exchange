@@ -10,6 +10,7 @@ pub trait WeightInfo {
 	fn insert_orders_by_proxy() -> Weight;
 	fn remove_orders() -> Weight;
 	fn remove_orders_by_proxy() -> Weight;
+	fn zero_weight() -> Weight;
 }
 
 /// Weight functions for `orderbook_worker`.
@@ -19,32 +20,39 @@ impl<T: frame_system::Config> WeightInfo for SubstrateWeightInfo<T> {
 	// Storage: OrderbookRegistry OrdersRegistry (r:100 w:100)
 	// Storage: OrderbookWorker Orderbook (r:0 w:100)
 	fn insert_orders() -> Weight {
-		(2_495_000_000 as Weight)
-			.saturating_add(T::DbWeight::get().reads(101 as Weight))
-			.saturating_add(T::DbWeight::get().writes(200 as Weight))
+		Weight::from_parts(2_495_000_000, 0)
+			.saturating_add(T::DbWeight::get().reads(101))
+			.saturating_add(T::DbWeight::get().writes(200))
 	}
 	// Storage: GsyCollateral ProxyAccounts (r:1 w:0)
 	// Storage: OrderbookRegistry OrdersRegistry (r:100 w:100)
 	// Storage: OrderbookWorker Orderbook (r:0 w:100)
 	fn insert_orders_by_proxy() -> Weight {
-		(2_582_000_000 as Weight)
-			.saturating_add(T::DbWeight::get().reads(101 as Weight))
-			.saturating_add(T::DbWeight::get().writes(200 as Weight))
+		Weight::from_parts(2_582_000_000, 0)
+			.saturating_add(T::DbWeight::get().reads(101))
+			.saturating_add(T::DbWeight::get().writes(200))
 	}
 	// Storage: GsyCollateral RegisteredUser (r:1 w:0)
 	// Storage: OrderbookRegistry OrdersRegistry (r:100 w:100)
 	// Storage: OrderbookWorker Orderbook (r:0 w:100)
 	fn remove_orders() -> Weight {
-		(2_675_000_000 as Weight)
-			.saturating_add(T::DbWeight::get().reads(101 as Weight))
-			.saturating_add(T::DbWeight::get().writes(200 as Weight))
+		Weight::from_parts(2_675_000_000, 0)
+			.saturating_add(T::DbWeight::get().reads(101))
+			.saturating_add(T::DbWeight::get().writes(200))
 	}
 	// Storage: GsyCollateral ProxyAccounts (r:1 w:0)
 	// Storage: OrderbookRegistry OrdersRegistry (r:100 w:100)
 	// Storage: OrderbookWorker Orderbook (r:0 w:100)
 	fn remove_orders_by_proxy() -> Weight {
-		(2_724_000_000 as Weight)
-			.saturating_add(T::DbWeight::get().reads(101 as Weight))
-			.saturating_add(T::DbWeight::get().writes(200 as Weight))
+		Weight::from_parts(2_724_000_000, 0)
+			.saturating_add(T::DbWeight::get().reads(101))
+			.saturating_add(T::DbWeight::get().writes(200))
+	}
+
+	// zero weight method for calls that do not require weight
+	fn zero_weight() -> Weight {
+		Weight::from_parts(0, 0)
+			.saturating_add(T::DbWeight::get().reads(101))
+			.saturating_add(T::DbWeight::get().writes(200))
 	}
 }

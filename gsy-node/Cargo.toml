@@ -3,6 +3,7 @@ members = [
     "node",
     "modules/orderbook-registry",
     "modules/gsy-collateral",
+    "modules/orderbook-worker",
     "runtime",
 ]
 resolver = "1"

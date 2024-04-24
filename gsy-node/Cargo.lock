@@ -2866,6 +2866,7 @@ dependencies = [
  "gsy-collateral",
  "gsy-primitives",
  "orderbook-registry",
+ "orderbook-worker",
  "pallet-aura",
  "pallet-balances",
  "pallet-grandpa",
@@ -4895,6 +4896,7 @@ dependencies = [
  "frame-benchmarking",
  "frame-support",
  "frame-system",
+ "gsy-collateral",
  "gsy-primitives",
  "log",
  "parity-scale-codec",
@@ -4902,6 +4904,29 @@ dependencies = [
  "sp-core",
  "sp-io",
  "sp-runtime",
+]
+
+[[package]]
+name = "orderbook-worker"
+version = "0.0.2"
+dependencies = [
+ "frame-benchmarking",
+ "frame-support",
+ "frame-system",
+ "gsy-collateral",
+ "gsy-primitives",
+ "log",
+ "num-traits",
+ "orderbook-registry",
+ "pallet-balances",
+ "parity-scale-codec",
+ "scale-info",
+ "serde_json",
+ "sp-core",
+ "sp-io",
+ "sp-runtime",
+ "sp-std 14.0.0 (git+https://github.com/paritytech/polkadot-sdk.git?tag=polkadot-v1.9.0)",
+ "spin 0.9.8",
 ]
 
 [[package]]
