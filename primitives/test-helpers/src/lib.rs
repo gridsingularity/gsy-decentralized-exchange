@@ -15,6 +15,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#![cfg_attr(not(feature = "std"), no_std)]
 //! A set of test helpers to aid in crating meaningful test cases.
 
 use gsy_primitives::v0::{AccountId, Bid, Hash, Offer, OrderComponent, Trade, TradeParameters};

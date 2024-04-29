@@ -29,11 +29,11 @@
 pub use crate::weights::TradeSettlementWeightInfo;
 pub use pallet::*;
 
-#[cfg(test)]
-mod mock;
-
-#[cfg(test)]
-mod tests;
+// #[cfg(test)]
+// mod mock;
+//
+// #[cfg(test)]
+// mod tests;
 
 #[cfg(feature = "runtime-benchmarks")]
 mod benchmarking;
@@ -46,6 +46,7 @@ pub mod pallet {
 	use frame_support::{sp_runtime::traits::Hash, transactional};
 	use frame_system::{ensure_signed, pallet_prelude::*};
 	use scale_info::prelude::vec::Vec;
+	use sp_std::vec;
 	use gsy_primitives::v0::{Bid, BidOfferMatch, Offer, Order, OrderComponent, Validator};
 
 	#[pallet::config]

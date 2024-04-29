@@ -2865,6 +2865,7 @@ dependencies = [
  "frame-try-runtime",
  "gsy-collateral",
  "gsy-primitives",
+ "log",
  "orderbook-registry",
  "orderbook-worker",
  "pallet-aura",
@@ -8985,17 +8986,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3369f5ac52d5eb6ab48c6b4ffdc8efbcad6b89c765749064ba298f2c68a16a76"
 
 [[package]]
-name = "test-helpers"
-version = "0.0.2"
-dependencies = [
- "gsy-primitives",
- "rand",
- "sp-api",
- "sp-core",
- "sp-runtime",
-]
-
-[[package]]
 name = "thiserror"
 version = "1.0.59"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9439,7 +9429,6 @@ dependencies = [
  "sp-io",
  "sp-runtime",
  "sp-std 14.0.0 (git+https://github.com/paritytech/polkadot-sdk.git?tag=polkadot-v1.9.0)",
- "test-helpers",
 ]
 
 [[package]]

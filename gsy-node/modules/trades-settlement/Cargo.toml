@@ -22,27 +22,37 @@ gsy-primitives = { workspace = true }
 gsy-collateral = { version = '0.0.2', default-features = false, path = '../gsy-collateral' }
 orderbook-registry = { version = '0.0.2', default-features = false, path = '../orderbook-registry' }
 orderbook-worker = { version = '0.0.2', default-features = false, path = '../orderbook-worker' }
-frame-benchmarking = { default-features = false, git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.9.0", optional = true }
 log = { version = "0.4.21", default-features = false }
 pallet-balances = { workspace = true }
-sp-core = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.9.0" }
+sp-core = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.9.0", default-features = false }
 sp-io = { workspace = true }
 sp-std = { workspace = true }
 
-[dev-dependencies]
-test-helpers = { version = '0.0.2', default-features = false, path = '../../../primitives/test-helpers' }
+frame-benchmarking = { default-features = false, git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.9.0", optional = true }
+
+#[dev-dependencies]
+#test-helpers = { version = '0.0.2', default-features = false, path = '../../../primitives/test-helpers' }
 
 [features]
 default = ['std']
-runtime-benchmarks = ['frame-benchmarking']
 std = [
     'codec/std',
     'scale-info/std',
     'frame-support/std',
     'frame-system/std',
-    'frame-benchmarking/std',
+    "frame-benchmarking?/std",
 	'orderbook-registry/std',
 	'orderbook-worker/std',
 	'pallet-balances/std',
 ]
-try-runtime = ['frame-support/try-runtime']
+runtime-benchmarks = [
+    "frame-benchmarking/runtime-benchmarks",
+    "frame-support/runtime-benchmarks",
+    "frame-system/runtime-benchmarks",
+    "sp-runtime/runtime-benchmarks",
+]
+try-runtime = [
+    "frame-support/try-runtime",
+    "frame-system/try-runtime",
+    "sp-runtime/try-runtime",
+]

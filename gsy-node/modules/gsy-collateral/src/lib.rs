@@ -55,7 +55,7 @@ pub mod pallet {
 	use gsy_primitives::v0::{CollateralInfo, Vault, VaultInfo, VaultStatus, VaultWithStatus};
 	use num_traits::{ One, Zero};
 	use scale_info::TypeInfo;
-	use crate::weights::CollateralWeightInfo;
+	use crate::weights::WeightInfo;
 
 	pub type BalanceOf<T> =
 	<<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
@@ -83,7 +83,8 @@ pub mod pallet {
 	#[pallet::config]
 	pub trait Config: frame_system::Config {
 		/// Because this pallet emits events, it depends on the runtime's definition of an event.
-		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
+		type RuntimeEvent: From<Event<Self>>
+			+ IsType<<Self as frame_system::Config>::RuntimeEvent>;
 		/// The Currency handler for the gsy-collateral pallet.
 		type Currency: Currency<Self::AccountId>;
 
@@ -111,7 +112,7 @@ pub mod pallet {
 		+ Into<u128>
 		+ From<u64>;
 
-		type CollateralWeightInfo: CollateralWeightInfo;
+		type WeightInfo: WeightInfo;
 	}
 
 	#[pallet::pallet]
@@ -234,7 +235,7 @@ pub mod pallet {
 		/// * `origin`: The origin of the extrinsic. Account that is depositing the collateral.
 		/// * `amount`: The amount of collateral to deposit.
 		#[transactional]
-		#[pallet::weight(<T as Config>::CollateralWeightInfo::deposit_collateral())]
+		#[pallet::weight(<T as Config>::WeightInfo::deposit_collateral())]
 		#[pallet::call_index(0)]
 		pub fn deposit_collateral(origin: OriginFor<T>, amount: BalanceOf<T>) -> DispatchResult {
 			let depositor = ensure_signed(origin)?;
@@ -242,7 +243,7 @@ pub mod pallet {
 			ensure!(Self::is_registered_user(&depositor), <Error<T>>::NotARegisteredUserAccount);
 			log::info!("Depositing collateral for user: {:?} with amount: {:?}", depositor, amount);
 			let balance = <Self as Vault>::deposit(&depositor, amount)?;
-			Self::deposit_event(Event::CollateralDeposited(depositor, balance));
+			Self::deposit_event(Event::<T>::CollateralDeposited(depositor, balance));
 			Ok(())
 		}
 
@@ -252,7 +253,7 @@ pub mod pallet {
 		/// * `origin`: The origin of the extrinsic. The user account that is registering the proxy account.
 		/// * `proxy_account`: The proxy account that is being registered.
 		#[transactional]
-		#[pallet::weight(<T as Config>::CollateralWeightInfo::register_proxy_account())]
+		#[pallet::weight(<T as Config>::WeightInfo::register_proxy_account())]
 		#[pallet::call_index(1)]
 		pub fn register_proxy_account(
 			origin: OriginFor<T>,
@@ -273,7 +274,7 @@ pub mod pallet {
 		/// * `origin`: The origin of the extrinsic. The root user.
 		/// * `matching_engine_operator_account`: The matching_engine operator account that is being registered.
 		#[transactional]
-		#[pallet::weight(<T as Config>::CollateralWeightInfo::register_matching_engine_operator())]
+		#[pallet::weight(<T as Config>::WeightInfo::register_matching_engine_operator())]
 		#[pallet::call_index(2)]
 		pub fn register_matching_engine_operator(
 			origin: OriginFor<T>,
@@ -291,7 +292,7 @@ pub mod pallet {
 		/// * `origin`: The origin of the extrinsic. The root user.
 		/// * `user_account`: The account of the new user.
 		#[transactional]
-		#[pallet::weight(<T as Config>::CollateralWeightInfo::register_user())]
+		#[pallet::weight(<T as Config>::WeightInfo::register_user())]
 		#[pallet::call_index(3)]
 		pub fn register_user(origin: OriginFor<T>, user_account: T::AccountId) -> DispatchResult {
 			// Verify that the user is root.
@@ -299,7 +300,7 @@ pub mod pallet {
 			log::info!("Registering user - {:?} ", user_account);
 			Self::add_user(user_account.clone())?;
 			let id = <Self as Vault>::create(user_account.clone())?;
-			Self::deposit_event(Event::VaultCreated(id, user_account));
+			Self::deposit_event(Event::<T>::VaultCreated(id, user_account));
 			Ok(())
 		}
 
@@ -309,14 +310,14 @@ pub mod pallet {
 		/// * `origin`: The origin of the extrinsic. The root user.
 		/// * `user_account`: The account of the user that is restarting the vault.
 		#[transactional]
-		#[pallet::weight(<T as Config>::CollateralWeightInfo::restart_vault())]
+		#[pallet::weight(<T as Config>::WeightInfo::restart_vault())]
 		#[pallet::call_index(4)]
 		pub fn restart_vault(origin: OriginFor<T>, user_account: T::AccountId) -> DispatchResult {
 			// Verify that the user is root.
 			ensure_root(origin)?;
 			log::info!("Restarting vault for user - {:?} ", user_account);
 			<Self as VaultWithStatus>::unfreeze(&user_account)?;
-			Self::deposit_event(Event::VaultRestarted(user_account));
+			Self::deposit_event(Event::<T>::VaultRestarted(user_account));
 			Ok(())
 		}
 
@@ -326,14 +327,14 @@ pub mod pallet {
 		/// * `origin`: The origin of the extrinsic. The root user.
 		/// * `user_account`: The user account that owns the vault.
 		#[transactional]
-		#[pallet::weight(<T as Config>::CollateralWeightInfo::shutdown_vault())]
+		#[pallet::weight(<T as Config>::WeightInfo::shutdown_vault())]
 		#[pallet::call_index(5)]
 		pub fn shutdown_vault(origin: OriginFor<T>, user_account: T::AccountId) -> DispatchResult {
 			// Verify that the user is root.
 			ensure_root(origin)?;
 			log::info!("Shutting down the vault for user - {:?} ", user_account);
 			<Self as VaultWithStatus>::freeze(&user_account)?;
-			Self::deposit_event(Event::VaultShutdown(user_account));
+			Self::deposit_event(Event::<T>::VaultShutdown(user_account));
 			Ok(())
 		}
 
@@ -343,7 +344,7 @@ pub mod pallet {
 		/// * `origin`: The origin of the extrinsic. The user account that is unregistering the proxy account.
 		/// * `proxy_account`: The proxy account that is being unregistered.
 		#[transactional]
-		#[pallet::weight(<T as Config>::CollateralWeightInfo::unregister_proxy_account())]
+		#[pallet::weight(<T as Config>::WeightInfo::unregister_proxy_account())]
 		#[pallet::call_index(6)]
 		pub fn unregister_proxy_account(
 			origin: OriginFor<T>,
@@ -364,7 +365,7 @@ pub mod pallet {
 		/// * `origin`: The origin of the extrinsic. The user account that is withdrawing the collateral.
 		/// * `amount`: The amount of collateral to be withdrawn.
 		#[transactional]
-		#[pallet::weight(<T as Config>::CollateralWeightInfo::withdraw_collateral())]
+		#[pallet::weight(<T as Config>::WeightInfo::withdraw_collateral())]
 		#[pallet::call_index(7)]
 		pub fn withdraw_collateral(origin: OriginFor<T>, amount: BalanceOf<T>) -> DispatchResult {
 			let user_account = ensure_signed(origin)?;
@@ -372,7 +373,7 @@ pub mod pallet {
 			ensure!(Self::is_registered_user(&user_account), <Error<T>>::NotARegisteredUserAccount);
 			log::info!("Withdrawing collateral: {:?} for user: {:?} ", amount, user_account);
 			let balance = <Self as Vault>::withdraw(&user_account, amount)?;
-			Self::deposit_event(Event::CollateralWithdrawn(user_account, balance));
+			Self::deposit_event(Event::<T>::CollateralWithdrawn(user_account, balance));
 			Ok(())
 		}
 	}
@@ -391,7 +392,7 @@ pub mod pallet {
 			log::info!("Account Hash - {:?} ", account_hash);
 			<RegisteredMatchingEngine<T>>::insert(&matching_engine_operator_account, account_hash);
 			// Deposit the MatchingEngineOperatorRegistered event.
-			Self::deposit_event(Event::MatchingEngineOperatorRegistered(matching_engine_operator_account));
+			Self::deposit_event(Event::<T>::MatchingEngineOperatorRegistered(matching_engine_operator_account));
 			Ok(())
 		}
 
@@ -407,7 +408,7 @@ pub mod pallet {
 			log::info!("Account Hash - {:?} ", account_hash);
 			<RegisteredUser<T>>::insert(&user_account, account_hash);
 			// Deposit the UserRegistered event.
-			Self::deposit_event(Event::UserRegistered(user_account));
+			Self::deposit_event(Event::<T>::UserRegistered(user_account));
 			Ok(())
 		}
 
@@ -434,7 +435,7 @@ pub mod pallet {
 				proxy_accounts
 					.try_insert(i, proxy_definition)
 					.map_err(|_| <Error<T>>::ProxyAccountsLimitReached)?;
-				Self::deposit_event(Event::ProxyAccountRegistered(
+				Self::deposit_event(Event::<T>::ProxyAccountRegistered(
 					delegator.clone(),
 					proxy_account,
 				));
@@ -598,7 +599,7 @@ pub mod pallet {
 				if !proxy_accounts.is_empty() {
 					*x = Some(proxy_accounts)
 				}
-				Self::deposit_event(Event::ProxyAccountUnregistered(
+				Self::deposit_event(Event::<T>::ProxyAccountUnregistered(
 					delegator.clone(),
 					proxy_account,
 				));

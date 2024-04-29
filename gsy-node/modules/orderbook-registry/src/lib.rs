@@ -74,19 +74,17 @@ pub mod pallet {
 	#[pallet::config]
 	pub trait Config: frame_system::Config + gsy_collateral::Config {
 		/// Because this pallet emits events, it depends on the runtime's definition of an event.
-		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
-
+		type RuntimeEvent: From<Event<Self>>
+			+ IsType<<Self as frame_system::Config>::RuntimeEvent>;
 		/// The Currency handler.
 		type Currency: Currency<Self::AccountId>;
-
-		/// A type representing the weights required by the dispatchables of this pallet.
-		type WeightInfo: WeightInfo;
 
 		/// The maximum number of proxy account a registered user can have.
 		#[pallet::constant]
 		type RegistryProxyAccountLimit: Get<u32>;
-
 		type TimeProvider: UnixTime;
+		/// A type representing the weights required by the dispatchables of this pallet.
+		type WeightInfo: WeightInfo;
 	}
 
 	#[pallet::storage]
@@ -196,7 +194,7 @@ pub mod pallet {
 		/// `order_hash`: The hash of the order.
 		#[transactional]
 		#[pallet::call_index(0)]
-		#[pallet::weight(T::WeightInfo::orderbook_registry_weight())]
+		#[pallet::weight(<T as Config>::WeightInfo::orderbook_registry_weight())]
 		pub fn insert_orders(user_account: OriginFor<T>, orders_hash: Vec<T::Hash>) -> DispatchResult {
 			let user_account = ensure_signed(user_account).unwrap();
 			// Verify that the user is a registered account.
@@ -224,7 +222,7 @@ pub mod pallet {
 		/// `order_hash`: The hash of the order.
 		#[transactional]
 		#[pallet::call_index(1)]
-		#[pallet::weight(T::WeightInfo::orderbook_registry_weight())]
+		#[pallet::weight(<T as Config>::WeightInfo::orderbook_registry_weight())]
 		pub fn insert_orders_by_proxy(
 			proxy_account: OriginFor<T>,
 			delegator: T::AccountId,
@@ -260,7 +258,7 @@ pub mod pallet {
 		/// `order_hash`: The hash of the order.
 		#[transactional]
 		#[pallet::call_index(2)]
-		#[pallet::weight(T::WeightInfo::orderbook_registry_weight())]
+		#[pallet::weight(<T as Config>::WeightInfo::orderbook_registry_weight())]
 		pub fn delete_orders(user_account: OriginFor<T>, orders_hash: Vec<T::Hash>) -> DispatchResult {
 			let user_account = ensure_signed(user_account).unwrap();
 			// Verify that the user is a registered account.
@@ -288,7 +286,7 @@ pub mod pallet {
 		/// `order_hash`: The hash of the order.
 		#[transactional]
 		#[pallet::call_index(3)]
-		#[pallet::weight(T::WeightInfo::orderbook_registry_weight())]
+		#[pallet::weight(<T as Config>::WeightInfo::orderbook_registry_weight())]
 		pub fn delete_orders_by_proxy(
 			proxy_account: OriginFor<T>,
 			delegator: T::AccountId,
@@ -322,7 +320,7 @@ pub mod pallet {
 		/// * `proxy_account`: The proxy account that is being registered.
 		#[transactional]
 		#[pallet::call_index(4)]
-		#[pallet::weight(T::WeightInfo::orderbook_registry_weight())]
+		#[pallet::weight(<T as Config>::WeightInfo::orderbook_registry_weight())]
 		pub fn register_proxy_account(
 			origin: OriginFor<T>,
 			proxy_account: T::AccountId,
@@ -343,7 +341,7 @@ pub mod pallet {
 		/// * `matching_engine_operator_account`: The matching_engine operator account that is being registered.
 		#[transactional]
 		#[pallet::call_index(5)]
-		#[pallet::weight(T::WeightInfo::orderbook_registry_weight())]
+		#[pallet::weight(<T as Config>::WeightInfo::orderbook_registry_weight())]
 		pub fn register_matching_engine_operator(
 			origin: OriginFor<T>,
 			matching_engine_operator_account: T::AccountId,
@@ -364,7 +362,7 @@ pub mod pallet {
 		/// * `user_account`: The account of the new user.
 		#[transactional]
 		#[pallet::call_index(6)]
-		#[pallet::weight(T::WeightInfo::orderbook_registry_weight())]
+		#[pallet::weight(<T as Config>::WeightInfo::orderbook_registry_weight())]
 		pub fn register_user(origin: OriginFor<T>, user_account: T::AccountId) -> DispatchResult {
 			// Verify that the user is root.
 			ensure_root(origin).unwrap();
@@ -380,7 +378,7 @@ pub mod pallet {
 		/// * `proxy_account`: The proxy account that is being unregistered.
 		#[transactional]
 		#[pallet::call_index(7)]
-		#[pallet::weight(T::WeightInfo::orderbook_registry_weight())]
+		#[pallet::weight(<T as Config>::WeightInfo::orderbook_registry_weight())]
 		pub fn unregister_proxy_account(
 			origin: OriginFor<T>,
 			proxy_account: T::AccountId,

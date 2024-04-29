@@ -5,7 +5,7 @@
 use frame_support::{traits::Get, weights::Weight};
 use sp_std::marker::PhantomData;
 
-pub trait CollateralWeightInfo {
+pub trait WeightInfo {
 	fn deposit_collateral() -> Weight;
 	fn register_proxy_account() -> Weight;
 	fn register_matching_engine_operator() -> Weight;
@@ -17,7 +17,7 @@ pub trait CollateralWeightInfo {
 }
 /// Weight functions for `gsy_collateral`.
 pub struct SubstrateWeightInfo<T>(PhantomData<T>);
-impl<T: frame_system::Config> CollateralWeightInfo for SubstrateWeightInfo<T> {
+impl<T: frame_system::Config> WeightInfo for SubstrateWeightInfo<T> {
 	// Storage: GsyCollateral RegisteredUser (r:1 w:0)
 	// Storage: GsyCollateral Vaults (r:1 w:1)
 	// Storage: System Account (r:1 w:1)
