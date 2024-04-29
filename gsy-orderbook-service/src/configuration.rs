@@ -30,9 +30,11 @@ pub fn get_configuration() -> Result<Settings, config::ConfigError> {
     match envy::from_env::<Settings>() {
         Ok(settings) => Ok(settings),
         Err(_) => {
-            let mut settings = config::Config::default();
-            settings.merge(config::File::with_name("configuration"))?;
-            settings.try_into()
+            return config::Config::builder()
+                .add_source(config::File::from_str("configuration", config::FileFormat::Yaml))
+                .build().unwrap().try_deserialize();
+            // settings.merge(config::File::with_name("configuration"))?;
+            // settings.try_into()
         }
     }
 }
