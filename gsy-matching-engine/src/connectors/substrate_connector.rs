@@ -17,6 +17,8 @@ use subxt::{
 };
 use tracing::{error, info};
 
+const MATCH_PER_NR_BLOCKS: u8 = 4;
+
 #[subxt::subxt(runtime_metadata_path = "metadata.scale")]
 pub mod gsy_node {}
 
@@ -40,7 +42,7 @@ pub async fn substrate_subscribe(orderbook_url: String, node_url: String) -> Res
 
         let matches = Arc::new(Mutex::new(Vec::new()));
 
-        if (block.number() as u64) % 4 == 0 {
+        if (block.number() as u64) % MATCH_PER_NR_BLOCKS == 0 {
             info!("Starting matching cycle");
 
             let orderbook_url_clone = Arc::clone(&orderbook_url);
