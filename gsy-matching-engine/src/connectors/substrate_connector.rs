@@ -9,11 +9,11 @@ use codec::{Decode, Encode};
 use sp_keyring::AccountKeyring;
 use std::sync::{Arc, Mutex};
 use std::{thread, time};
-use subxt::sp_runtime::AccountId32;
 use subxt::{
-    rpc::Subscription,
-    sp_runtime::{generic::Header, traits::BlakeTwo256},
-    ClientBuilder, DefaultConfig, PairSigner, PolkadotExtrinsicParams, SubstrateExtrinsicParams,
+    SubstrateConfig,
+    OnlineClient,
+    tx::PairSigner,
+    utils::AccountId32
 };
 use tracing::{error, info};
 
@@ -28,24 +28,19 @@ use crate::connectors::substrate_connector::gsy_node::runtime_types::gsy_primiti
 pub async fn substrate_subscribe(orderbook_url: String, node_url: String) -> Result<(), Error> {
     info!("Connecting to {}", node_url);
 
-    let api = ClientBuilder::new()
-        .set_url(node_url.clone())
-        .build()
-        .await?
-        .to_runtime_api::<gsy_node::RuntimeApi<DefaultConfig, SubstrateExtrinsicParams<DefaultConfig>>>();
+    let api = OnlineClient::<SubstrateConfig>::from_url(node_url.clone()).await?;
 
-    let mut gsy_blocks_events: Subscription<Header<u32, BlakeTwo256>> =
-        api.client.rpc().subscribe_finalized_blocks().await?;
+    let mut gsy_blocks_events = api.blocks().subscribe_finalized().await?;
 
     let orderbook_url = Arc::new(Mutex::new(orderbook_url));
     let node_url = Arc::new(Mutex::new(node_url.clone()));
 
     while let Some(Ok(block)) = gsy_blocks_events.next().await {
-        info!("Block {:?} finalized: {:?}", block.number, block.hash());
+        info!("Block {:?} finalized: {:?}", block.number(), block.hash());
 
         let matches = Arc::new(Mutex::new(Vec::new()));
 
-        if (block.number as u64) % 4 == 0 {
+        if (block.number() as u64) % 4 == 0 {
             info!("Starting matching cycle");
 
             let orderbook_url_clone = Arc::clone(&orderbook_url);
@@ -135,19 +130,14 @@ async fn send_settle_trades_extrinsic(
 ) -> Result<(), Error> {
     let signer = PairSigner::new(AccountKeyring::Alice.pair());
     info!("Signer: {:?}", signer.account_id());
-    let api = ClientBuilder::new()
-        .set_url(url)
-        .build()
-        .await?
-        .to_runtime_api::<gsy_node::RuntimeApi<
-            DefaultConfig,
-            PolkadotExtrinsicParams<DefaultConfig>,
-        >>();
 
-    let order_transfer = api.tx().trades_settlement().settle_trades(matches)?;
+    let api = OnlineClient::<SubstrateConfig>::from_url(url).await?;
 
-    let order_submit_and_watch = order_transfer
-        .sign_and_submit_then_watch_default(&signer)
+    let trade_settlement_tx = gsy_node::tx().trades_settlement().settle_trades(matches);
+
+    let order_submit_and_watch = api
+        .tx()
+        .sign_and_submit_then_watch_default(&trade_settlement_tx, &signer)
         .await?
         .wait_for_finalized_success()
         .await?;

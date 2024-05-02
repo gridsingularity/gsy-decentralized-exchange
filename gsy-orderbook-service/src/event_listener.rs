@@ -15,9 +15,9 @@ pub async fn init_event_listener(db: DbRef, node_url: String) -> Result<(), Erro
 
     let api = OnlineClient::<SubstrateConfig>::from_url(format!("ws://{}", node_url)).await?;
 
-    let mut gsy_node_events = api.blocks().subscribe_all().await?;
+    let mut gsy_node_blocks = api.blocks().subscribe_all().await?;
 
-    while let Some(block) = gsy_node_events.next().await {
+    while let Some(block) = gsy_node_blocks.next().await {
         let block = block?;
 
         // Ask for the events for this block.

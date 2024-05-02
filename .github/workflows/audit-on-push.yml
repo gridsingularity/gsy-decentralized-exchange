@@ -15,7 +15,7 @@ jobs:
           override: true
           components: clippy
           target: wasm32-unknown-unknown
-      - run: cd $GITHUB_WORKSPACE && cp -r ./gsy-node/* . && rm -rf ./gsy-node
+      - run: cd $GITHUB_WORKSPACE
       - uses: actions-rs/audit-check@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}

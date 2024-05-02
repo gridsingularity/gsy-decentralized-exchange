@@ -2,8 +2,8 @@ use crate::algorithms::PayAsBid;
 use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use subxt::sp_core::H256;
-use subxt::sp_runtime::traits::{BlakeTwo256, Hash};
+use subxt::ext::sp_core::H256;
+use subxt::ext::sp_runtime::traits::{BlakeTwo256, Hash};
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 #[serde(tag = "type", content = "data")]
