@@ -15,25 +15,25 @@ name = "gsy-orderbook-service"
 
 [dependencies]
 anyhow = "1"
-actix-web = "4"
-chrono = "0.4.22"
-codec = { package = "parity-scale-codec", version = "3.0.0", default-features = false, features = ["derive", "full", "bit-vec"] }
-config = "0.11"
+actix-web = "4.5.1"
+chrono = "0.4.38"
+codec = { package = "parity-scale-codec", version = "3.6.9", default-features = false, features = ["derive", "full", "bit-vec"] }
+config = "0.14"
 dotenv = "0"
 envy = "0.4"
-futures = "0.3.21"
-mongodb = "2.1.0"
+futures = "0.3.30"
+mongodb = "2.8.2"
 serde = { version = "1.0", features = ["derive"] }
-serde_json = {verison = "1.0"}
-subxt = "0.20"
+serde_json = {version = "1.0"}
+subxt = { version = "0.35.1", features = ["substrate-compat"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 tokio_schedule = "0.3.0"
 tracing = { version = "0.1", features = ["log"] }
-tracing-actix-web = "0.5"
+tracing-actix-web = "0.7"
 tracing-bunyan-formatter = "0.3"
-tracing-log = "0.1"
+tracing-log = "0.2"
 tracing-subscriber = { version = "0.3", features = ["registry", "env-filter"] }
 
 [dev-dependencies]
 once_cell = "1"
-reqwest = {version = "0.11", features = ["json"]}
+reqwest = {version = "0.12", features = ["json"]}

@@ -1,0 +1,25 @@
+[package]
+name = "gsy-primitives"
+version = "0.0.2"
+authors = ['Grid Singularity <https://github.com/gridsingularity>']
+edition = "2021"
+
+[dependencies]
+sp-core = { default-features = false, git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.9.0" }
+sp-std = { default-features = false, git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.9.0" }
+frame-support = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.9.0", default-features = false, features = ["experimental"] }
+sp-runtime = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.9.0", default-features = false }
+codec = { package = "parity-scale-codec", version = "3.6.9", default-features = false, features = ["derive"] }
+scale-info = { version = "2.11.2", default-features = false, features = ["derive"] }
+bitflags = { version = "1.3.2", default-features = false }
+
+[features]
+default = [ "std" ]
+std = [
+	"frame-support/std",
+	"sp-core/std",
+	"sp-runtime/std",
+	"sp-std/std",
+	"scale-info/std",
+	"codec/std",
+]

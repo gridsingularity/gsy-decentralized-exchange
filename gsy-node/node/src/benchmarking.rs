@@ -119,7 +119,7 @@ impl frame_benchmarking_cli::ExtrinsicBuilder for TransferKeepAliveBuilder {
 pub fn create_benchmark_extrinsic(
 	client: &FullClient,
 	sender: sp_core::sr25519::Pair,
-	call: runtime::Call,
+	call: runtime::RuntimeCall,
 	nonce: u32,
 ) -> runtime::UncheckedExtrinsic {
 	let genesis_hash = client.block_hash(0).ok().flatten().expect("Genesis block exists; qed");
@@ -130,8 +130,8 @@ pub fn create_benchmark_extrinsic(
 		.checked_next_power_of_two()
 		.map(|c| c / 2)
 		.unwrap_or(2) as u64;
+
 	let extra: runtime::SignedExtra = (
-		frame_system::CheckNonZeroSender::<runtime::Runtime>::new(),
 		frame_system::CheckSpecVersion::<runtime::Runtime>::new(),
 		frame_system::CheckTxVersion::<runtime::Runtime>::new(),
 		frame_system::CheckGenesis::<runtime::Runtime>::new(),
@@ -148,7 +148,6 @@ pub fn create_benchmark_extrinsic(
 		call.clone(),
 		extra.clone(),
 		(
-			(),
 			runtime::VERSION.spec_version,
 			runtime::VERSION.transaction_version,
 			genesis_hash,
@@ -176,8 +175,7 @@ pub fn inherent_benchmark_data() -> Result<InherentData> {
 	let d = Duration::from_millis(0);
 	let timestamp = sp_timestamp::InherentDataProvider::new(d.into());
 
-	timestamp
-		.provide_inherent_data(&mut inherent_data)
+	futures::executor::block_on(timestamp.provide_inherent_data(&mut inherent_data))
 		.map_err(|e| format!("creating inherent data: {:?}", e))?;
 	Ok(inherent_data)
 }

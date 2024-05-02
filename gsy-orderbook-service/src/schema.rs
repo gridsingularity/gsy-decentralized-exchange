@@ -1,7 +1,7 @@
 use codec::Encode;
 use serde::{Deserialize, Serialize};
-use subxt::sp_core::H256;
-use subxt::sp_runtime::traits::{BlakeTwo256, Hash};
+use subxt::ext::sp_core::H256;
+use subxt::ext::sp_runtime::traits::{BlakeTwo256, Hash};
 
 #[derive(Serialize, Deserialize, Debug, Encode, Clone, PartialEq)]
 #[serde(tag = "type", content = "data")]
