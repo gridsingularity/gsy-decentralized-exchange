@@ -1,5 +1,7 @@
 use actix_web::{web::Json, HttpResponse, Responder};
-use subxt::{sp_runtime::AccountId32, sp_core::H256};
+use subxt::utils::AccountId32;
+use subxt::ext::sp_core::H256;
+
 use crate::db::DbRef;
 use crate::schema::OrderSchema;
 use crate::schema_insert_order::OrderSchema as OtherOrderSchema;

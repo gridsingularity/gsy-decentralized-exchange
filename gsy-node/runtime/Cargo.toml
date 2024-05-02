@@ -56,10 +56,15 @@ sp-genesis-builder = { workspace = true }
 
 # Custom Pallets
 orderbook-registry = { version = "0.0.2", default-features = false, path = "../modules/orderbook-registry" }
+orderbook-worker = { version = "0.0.2", default-features = false, path = "../modules/orderbook-worker" }
+gsy-collateral = { version = "0.0.2", default-features = false, path = "../modules/gsy-collateral" }
+trades-settlement = { version = "0.0.2", default-features = false, path = "../modules/trades-settlement" }
 
 # Used for the GSy node's RPCs
 frame-system-rpc-runtime-api = { workspace = true }
 pallet-transaction-payment-rpc-runtime-api = { workspace = true }
+
+log = { version = "0.4.21", default-features = false }
 
 # Used for runtime benchmarking
 frame-benchmarking = { default-features = false, git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.9.0" }

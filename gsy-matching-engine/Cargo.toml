@@ -1,6 +1,6 @@
 [package]
 name = "gsy-matching-engine"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Grid Singularity <info@gridsingularity.com>"]
 description = "Matching engine client for the Grid Singularity Energy Exchange"
 edition = "2021"
@@ -18,20 +18,21 @@ name = "gsy-matching-engine"
 anyhow = "1"
 async-recursion = "1"
 chrono = { version = "0.4", features = ["serde", "rustc-serialize"]}
-clap = { version = "3", features = ["derive"]}
-codec = { package = "parity-scale-codec", version = "3.0.0", default-features = false, features = ["derive", "full", "bit-vec"] }
+clap = { version = "4", features = ["derive"]}
+codec = { package = "parity-scale-codec", version = "3.6.9", default-features = false, features = ["derive", "full", "bit-vec"] }
 futures = "0"
 reqwest = { version = "0", features = ["json"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "*"
-subxt = "0.21"
-sp-keyring = "6.0.0"
+subxt = { version = "0.35.1", features = ["substrate-compat"] }
+# Needs to not conflict with the subxt version
+sp-keyring = { version = "34.0.0" }
 tokio = { version = "*", features = ["full"] }
 tracing = { version = "0.1", features = ["log"] }
 tracing-bunyan-formatter = "0.3"
-tracing-log = "0.1"
+tracing-log = "0.2"
 tracing-subscriber = { version = "0.3", features = ["registry", "env-filter"] }
-uuid = { version = "0.8.2", features = ["v4"] }
+uuid = { version = "1.8.0", features = ["v4"] }
 
 [dependencies.redis]
 git = "https://github.com/mitsuhiko/redis-rs.git"

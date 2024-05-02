@@ -21,16 +21,21 @@
 #[cfg(feature = "std")]
 include!(concat!(env!("OUT_DIR"), "/wasm_binary.rs"));
 
+use codec::Encode;
 use pallet_grandpa::AuthorityId as GrandpaId;
 use sp_api::impl_runtime_apis;
 use sp_consensus_aura::sr25519::AuthorityId as AuraId;
 use sp_core::{crypto::KeyTypeId, OpaqueMetadata};
 use sp_runtime::{
     create_runtime_str, generic, impl_opaque_keys,
-    traits::{BlakeTwo256, Block as BlockT, NumberFor, One,
-			 AccountIdLookup},
-    transaction_validity::{TransactionSource, TransactionValidity}, ApplyExtrinsicResult,
+    transaction_validity::{TransactionPriority, TransactionSource, TransactionValidity}, ApplyExtrinsicResult,
+	traits::{
+		self, AccountIdConversion, BlakeTwo256, Block as BlockT, Bounded, ConvertInto, NumberFor,
+		OpaqueKeys, SaturatedConversion, StaticLookup, One, AccountIdLookup
+	},
+	generic::Era,
 };
+
 use sp_std::prelude::*;
 #[cfg(feature = "std")]
 use sp_version::NativeVersion;
@@ -51,6 +56,7 @@ pub use frame_support::{
     },
     StorageValue,
 };
+use frame_support::PalletId;
 pub use frame_system::Call as SystemCall;
 pub use pallet_balances::Call as BalancesCall;
 pub use pallet_timestamp::Call as TimestampCall;
@@ -63,7 +69,9 @@ pub use sp_runtime::{Perbill, Permill};
 
 /// Import the orderbook-registry pallet.
 pub use orderbook_registry;
-
+pub use gsy_collateral;
+pub use orderbook_worker;
+pub use trades_settlement;
 pub use gsy_primitives::v0::{AccountId, Balance, BlockNumber, Hash, Signature, Nonce};
 
 /// Index of a transaction in the chain.
@@ -129,6 +137,12 @@ pub const MINUTES: BlockNumber = 60_000 / (MILLISECS_PER_BLOCK as BlockNumber);
 pub const HOURS: BlockNumber = MINUTES * 60;
 pub const DAYS: BlockNumber = HOURS * 24;
 
+/// This determines the length of the market slot.
+///
+/// Change this to adjust the market slot length.
+pub const SECS_PER_MARKET_SLOT: u64 = 900;
+
+
 /// The version information used to identify this runtime when compiled natively.
 #[cfg(feature = "std")]
 pub fn native_version() -> NativeVersion {
@@ -156,7 +170,7 @@ parameter_types! {
 impl frame_system::Config for Runtime {
 	/// The basic call filter to use in dispatchable.
 	type BaseCallFilter = frame_support::traits::Everything;
-
+	type RuntimeCall = RuntimeCall;
 	type PalletInfo = PalletInfo;
 	/// The hashing algorithm used.
 	type Hashing = BlakeTwo256;
@@ -167,6 +181,7 @@ impl frame_system::Config for Runtime {
 
     /// The block type for the runtime.
     type Block = Block;
+
     /// Block & extrinsics weights: base values and limits.
     type BlockWeights = BlockWeights;
     /// The maximum length of a block (in bytes).
@@ -186,6 +201,9 @@ impl frame_system::Config for Runtime {
     /// This is used as an identifier of the chain. 42 is the generic substrate prefix.
     type SS58Prefix = SS58Prefix;
     type MaxConsumers = frame_support::traits::ConstU32<16>;
+
+	/// The origin account
+	type RuntimeOrigin = RuntimeOrigin;
 }
 
 impl pallet_aura::Config for Runtime {
@@ -255,18 +273,126 @@ impl pallet_sudo::Config for Runtime {
     type WeightInfo = pallet_sudo::weights::SubstrateWeight<Runtime>;
 }
 
-/// Configure the pallet-template in pallets/template.
-impl orderbook_registry::Config for Runtime {
-    type RuntimeEvent = RuntimeEvent;
-    type WeightInfo = orderbook_registry::weights::SubstrateWeight<Runtime>;
-
-	/// The Currency handler.
-	type Currency = Balances;
-
-	/// The maximum number of proxy account a registered user can have.
-	type ProxyAccountLimit = ConstU32<32>;
-
+parameter_types! {
+	// A registered user can add at most 3 Proxy accounts.
+	pub const ProxyAccountLimit: u32 = 3;
+	pub const VaultPalletId: PalletId = PalletId(*b"collater");
 }
+
+impl orderbook_registry::Config for Runtime {
+	type RuntimeEvent = RuntimeEvent;
+	type Currency = Balances;
+	type RegistryProxyAccountLimit = ConstU32<32>;
+	type WeightInfo = ();
+	type TimeProvider = pallet_timestamp::Pallet<Runtime>;
+}
+
+
+/// Configure the gsy-collateral in modules/gsy-collateral.
+impl gsy_collateral::Config for Runtime {
+	type RuntimeEvent = RuntimeEvent;
+	type Currency = Balances;
+	type ProxyAccountLimit = ProxyAccountLimit;
+	type PalletId = VaultPalletId;
+	type VaultId = u64;
+	type WeightInfo = gsy_collateral::weights::SubstrateWeightInfo<Runtime>;
+}
+
+
+parameter_types! {
+	// The length (in seconds) of a market slot
+	pub const MarketSlotDuration: u64 = SECS_PER_MARKET_SLOT;
+}
+
+impl trades_settlement::Config for Runtime {
+	type RuntimeEvent = RuntimeEvent;
+	type MarketSlotDuration = MarketSlotDuration;
+	type TradeSettlementWeightInfo = trades_settlement::weights::SubstrateWeightInfo<Runtime>;
+}
+
+parameter_types! {
+	// Priority for a transaction. Additive. Higher is better.
+	pub const UnsignedPriority: u64 = 1 << 20;
+}
+impl orderbook_worker::Config for Runtime {
+	type AuthorityId = orderbook_worker::crypto::TestAuthId;
+	type RuntimeEvent = RuntimeEvent;
+
+	type Call = RuntimeCall;
+	type UnsignedPriority = UnsignedPriority;
+	type WeightInfo = orderbook_worker::weights::SubstrateWeightInfo<Runtime>;
+}
+
+
+impl<C> frame_system::offchain::SendTransactionTypes<C> for Runtime
+	where
+		RuntimeCall: From<C>,
+{
+	type Extrinsic = UncheckedExtrinsic;
+	type OverarchingCall = RuntimeCall;
+}
+
+impl frame_system::offchain::SigningTypes for Runtime {
+	type Public = <Signature as traits::Verify>::Signer;
+	type Signature = Signature;
+}
+
+parameter_types! {
+	pub const ImOnlineUnsignedPriority: TransactionPriority = TransactionPriority::max_value();
+	/// We prioritize im-online heartbeats over election solution submission.
+	pub const StakingUnsignedPriority: TransactionPriority = TransactionPriority::max_value() / 2;
+	pub const MaxAuthorities: u32 = 100;
+	pub const MaxKeys: u32 = 10_000;
+	pub const MaxPeerInHeartbeats: u32 = 10_000;
+	pub const MaxPeerDataEncodingSize: u32 = 1_000;
+}
+
+impl<LocalCall> frame_system::offchain::CreateSignedTransaction<LocalCall> for Runtime
+	where
+		RuntimeCall: From<LocalCall>,
+{
+	fn create_transaction<C: frame_system::offchain::AppCrypto<Self::Public, Self::Signature>>(
+		call: RuntimeCall,
+		public: <Signature as traits::Verify>::Signer,
+		account: AccountId,
+		nonce: Index,
+	) -> Option<(RuntimeCall, <UncheckedExtrinsic as traits::Extrinsic>::SignaturePayload)> {
+		let tip = 0;
+		// take the biggest period possible.
+		let period =
+			BlockHashCount::get().checked_next_power_of_two().map(|c| c / 2).unwrap_or(2) as u64;
+		let current_block = System::block_number()
+			.saturated_into::<u64>()
+			// The `System::block_number` is initialized with `n+1`,
+			// so the actual block number is `n`.
+			.saturating_sub(1);
+		let era = Era::mortal(period, current_block);
+		let extra = (
+			frame_system::CheckSpecVersion::<Runtime>::new(),
+			frame_system::CheckTxVersion::<Runtime>::new(),
+			frame_system::CheckGenesis::<Runtime>::new(),
+			frame_system::CheckEra::<Runtime>::from(era),
+			frame_system::CheckNonce::<Runtime>::from(nonce),
+			frame_system::CheckWeight::<Runtime>::new(),
+			pallet_transaction_payment::ChargeTransactionPayment::<Runtime>::from(tip),
+		);
+
+		#[cfg_attr(not(feature = "std"), allow(unused_variables))]
+			let raw_payload = SignedPayload::new(call, extra)
+			.map_err(|e| {
+				log::warn!("Unable to create signed payload: {:?}", e);
+			})
+			.ok()?;
+		let signature = raw_payload.using_encoded(|payload| C::sign(payload, public))?;
+		let address  = <<Runtime as frame_system::Config>::Lookup as StaticLookup>::unlookup(account);
+		let (call, extra, _) = raw_payload.deconstruct();
+		Some((call, (address, signature.into(), extra)))
+	}
+}
+
+
+
+
 
 // Create the runtime by composing the FRAME pallets that were previously configured.
 #[frame_support::runtime]
@@ -309,6 +435,18 @@ mod runtime {
     // Include the custom logic from the orderbook-registry in the runtime.
     #[runtime::pallet_index(7)]
     pub type OrderbookRegistry = orderbook_registry;
+
+	// Include the custom logic from the gsy-collateral in the runtime.
+	#[runtime::pallet_index(8)]
+	pub type GsyCollateral = gsy_collateral;
+
+	// Include the custom logic from the gsy-collateral in the runtime.
+	#[runtime::pallet_index(9)]
+	pub type OrderbookWorker = orderbook_worker;
+
+	// Include the custom logic from the gsy-collateral in the runtime.
+	#[runtime::pallet_index(10)]
+	pub type TradesSettlement = trades_settlement;
 }
 
 /// The address format for describing accounts.
@@ -319,7 +457,7 @@ pub type Header = generic::Header<BlockNumber, BlakeTwo256>;
 pub type Block = generic::Block<Header, UncheckedExtrinsic>;
 /// The SignedExtension to the basic transaction logic.
 pub type SignedExtra = (
-    frame_system::CheckNonZeroSender<Runtime>,
+    // frame_system::CheckNonZeroSender<Runtime>,
     frame_system::CheckSpecVersion<Runtime>,
     frame_system::CheckTxVersion<Runtime>,
     frame_system::CheckGenesis<Runtime>,
@@ -336,10 +474,10 @@ pub type SignedExtra = (
 type Migrations = ();
 
 /// Unchecked extrinsic type as expected by this runtime.
-pub type UncheckedExtrinsic =
-generic::UncheckedExtrinsic<Address, RuntimeCall, Signature, SignedExtra>;
+pub type UncheckedExtrinsic = generic::UncheckedExtrinsic<Address, RuntimeCall, Signature, SignedExtra>;
 /// The payload being signed in transactions.
 pub type SignedPayload = generic::SignedPayload<RuntimeCall, SignedExtra>;
+
 /// Executive: handles dispatch to the various modules.
 pub type Executive = frame_executive::Executive<
     Runtime,
@@ -359,6 +497,7 @@ mod benches {
 		[pallet_timestamp, Timestamp]
 		[pallet_sudo, Sudo]
 		[orderbook_registry, OrderbookRegistry]
+		[gsy_collateral, GsyCollateral]
 	);
 }
 
