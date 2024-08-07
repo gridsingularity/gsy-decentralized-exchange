@@ -6,7 +6,7 @@ use crate::{
 };
 use frame_benchmarking_cli::{BenchmarkCmd, ExtrinsicFactory, SUBSTRATE_REFERENCE_HARDWARE};
 use gsy_node_runtime::{Block, EXISTENTIAL_DEPOSIT};
-use sc_cli::{ChainSpec, RuntimeVersion, SubstrateCli};
+use sc_cli::SubstrateCli;
 use sc_service::PartialComponents;
 use sp_keyring::Sr25519Keyring;
 
@@ -43,10 +43,6 @@ impl SubstrateCli for Cli {
 				Box::new(chain_spec::ChainSpec::from_json_file(std::path::PathBuf::from(path))?)
 			},
 		})
-	}
-
-	fn native_runtime_version(_: &Box<dyn ChainSpec>) -> &'static RuntimeVersion {
-		&gsy_node_runtime::VERSION
 	}
 }
 
@@ -100,7 +96,7 @@ pub fn run() -> sc_cli::Result<()> {
 				let PartialComponents { client, task_manager, backend, .. } =
 					service::new_partial(&config)?;
 				let aux_revert = Box::new(|client, _, blocks| {
-					sc_finality_grandpa::revert(client, blocks)?;
+					sc_consensus_grandpa::revert(client, blocks)?;
 					Ok(())
 				});
 				Ok((cmd.run(client, backend, Some(aux_revert)), task_manager))
@@ -122,12 +118,18 @@ pub fn run() -> sc_cli::Result<()> {
 							);
 						}
 
-						cmd.run::<Block, service::ExecutorDispatch>(config)
+						cmd.run::<sp_runtime::traits::HashingFor<Block>, ()>(config)
 					},
 					BenchmarkCmd::Block(cmd) => {
 						let PartialComponents { client, .. } = service::new_partial(&config)?;
 						cmd.run(client)
 					},
+					#[cfg(not(feature = "runtime-benchmarks"))]
+					BenchmarkCmd::Storage(_) => Err(
+						"Storage benchmarking can be enabled with `--features runtime-benchmarks`."
+							.into(),
+					),
+					#[cfg(feature = "runtime-benchmarks")]
 					BenchmarkCmd::Storage(cmd) => {
 						let PartialComponents { client, backend, .. } =
 							service::new_partial(&config)?;
