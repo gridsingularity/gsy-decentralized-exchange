@@ -24,7 +24,7 @@ envy = "0.4"
 futures = "0.3.30"
 mongodb = "2.8.2"
 serde = { version = "1.0", features = ["derive"] }
-serde_json = {version = "1.0"}
+serde_json = { version = "1.0"}
 subxt = { version = "0.35.1", features = ["substrate-compat"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 tokio_schedule = "0.3.0"

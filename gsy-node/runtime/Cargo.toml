@@ -55,10 +55,10 @@ sp-version = { workspace = true }
 sp-genesis-builder = { workspace = true }
 
 # Custom Pallets
-orderbook-registry = { version = "0.0.2", default-features = false, path = "../modules/orderbook-registry" }
-orderbook-worker = { version = "0.0.2", default-features = false, path = "../modules/orderbook-worker" }
-gsy-collateral = { version = "0.0.2", default-features = false, path = "../modules/gsy-collateral" }
-trades-settlement = { version = "0.0.2", default-features = false, path = "../modules/trades-settlement" }
+orderbook-registry = { workspace = true }
+orderbook-worker = { workspace = true }
+gsy-collateral = { workspace = true }
+trades-settlement = { workspace = true }
 
 # Used for the GSy node's RPCs
 frame-system-rpc-runtime-api = { workspace = true }

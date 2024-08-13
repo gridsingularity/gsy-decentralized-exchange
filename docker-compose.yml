@@ -1,27 +1,26 @@
 version: "3.2"
 
 services:
-  dev:
+  gsy-node:
     container_name: gsy-node
-    image: gsy_dex_image:staging
-    working_dir: /var/www/gsy-node
+    build:
+      dockerfile: ./gsy-node/Dockerfile
+    depends_on:
+      gsy-matching-engine:
+        condition: service_started
     ports:
       - "9944:9944"
     environment:
       - CARGO_HOME=/var/www/gsy-node/.cargo
-    volumes:
-      - ./gsy-node:/var/www/gsy-node
-    command: bash -c "cargo build --release && ./target/release/gsy-node --dev --ws-external"
+      - ORDERBOOK_SERVICE_URL=gsy-orderbook:8080
 
-  orderbook:
-    container_name: orderbook
-    image: gsy_dex_image:staging
+  gsy-orderbook:
+    container_name: gsy-orderbook
     build:
-      dockerfile: Dockerfile
+      dockerfile: ./gsy-orderbook-service/Dockerfile
     depends_on:
       mongodb:
         condition: service_started
-    working_dir: /var/www/orderbook
     ports:
       - "8080:8080"
     environment:
@@ -35,9 +34,15 @@ services:
       - DATABASE_PASSWORD=gsy
       - NODE_URL=gsy-node:9944
       - SCHEDULER_INTERVAL=900
-    volumes:
-      - ./gsy-orderbook-service:/var/www/orderbook
-    command: bash -c "cargo build --release && ./target/release/gsy-orderbook-service"
+
+  gsy-matching-engine:
+    container_name: gsy-matching-engine
+    build:
+      dockerfile: ./gsy-matching-engine/Dockerfile
+    depends_on:
+      gsy-orderbook:
+        condition: service_started
+    working_dir: /var/www/matching-engine
 
   mongodb:
     image: mongo:5.0

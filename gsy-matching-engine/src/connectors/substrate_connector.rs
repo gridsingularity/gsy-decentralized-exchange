@@ -6,18 +6,17 @@ use crate::primitives::web3_extension::BidOfferMatch as BidOfferMatchExtension;
 use anyhow::{Error, Result};
 use async_recursion::async_recursion;
 use codec::{Decode, Encode};
-use sp_keyring::AccountKeyring;
+use subxt_signer::sr25519::dev;
 use std::sync::{Arc, Mutex};
 use std::{thread, time};
 use subxt::{
     SubstrateConfig,
     OnlineClient,
-    tx::PairSigner,
     utils::AccountId32
 };
 use tracing::{error, info};
 
-const MATCH_PER_NR_BLOCKS: u8 = 4;
+const MATCH_PER_NR_BLOCKS: u64 = 4;
 
 #[subxt::subxt(runtime_metadata_path = "metadata.scale")]
 pub mod gsy_node {}
@@ -30,7 +29,7 @@ use crate::connectors::substrate_connector::gsy_node::runtime_types::gsy_primiti
 pub async fn substrate_subscribe(orderbook_url: String, node_url: String) -> Result<(), Error> {
     info!("Connecting to {}", node_url);
 
-    let api = OnlineClient::<SubstrateConfig>::from_url(node_url.clone()).await?;
+    let api = OnlineClient::<SubstrateConfig>::from_insecure_url(node_url.clone()).await?;
 
     let mut gsy_blocks_events = api.blocks().subscribe_finalized().await?;
 
@@ -130,13 +129,12 @@ async fn send_settle_trades_extrinsic(
     url: String,
     matches: Vec<OtherBidOfferMatch<AccountId32>>,
 ) -> Result<(), Error> {
-    let signer = PairSigner::new(AccountKeyring::Alice.pair());
-    info!("Signer: {:?}", signer.account_id());
 
     let api = OnlineClient::<SubstrateConfig>::from_url(url).await?;
 
     let trade_settlement_tx = gsy_node::tx().trades_settlement().settle_trades(matches);
 
+    let signer = dev::alice();
     let order_submit_and_watch = api
         .tx()
         .sign_and_submit_then_watch_default(&trade_settlement_tx, &signer)
