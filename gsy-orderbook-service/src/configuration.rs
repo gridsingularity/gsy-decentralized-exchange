@@ -31,7 +31,7 @@ pub fn get_configuration() -> Result<Settings, config::ConfigError> {
         Ok(settings) => Ok(settings),
         Err(_) => {
             return config::Config::builder()
-                .add_source(config::File::from_str("configuration", config::FileFormat::Yaml))
+                .add_source(config::File::with_name("configuration.yaml"))
                 .build().unwrap().try_deserialize();
             // settings.merge(config::File::with_name("configuration"))?;
             // settings.try_into()

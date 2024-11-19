@@ -24,4 +24,4 @@ RUN cargo build --release
 
 EXPOSE 9944
 
-ENTRYPOINT ["./target/release/gsy-node", "--dev", "--rpc-external", "--ws-external"]
+ENTRYPOINT ["./target/release/gsy-node", "--dev", "--rpc-external"]

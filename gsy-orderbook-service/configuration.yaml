@@ -1,0 +1,9 @@
+application_host: "localhost"
+application_port: "8080"
+database_host: "mongo"
+database_username: "mongo"
+database_password: "mongo"
+database_name: "mongo"
+database_url_scheme: "mongodb"
+node_url: "localhost:3000"
+scheduler_interval: 1000
