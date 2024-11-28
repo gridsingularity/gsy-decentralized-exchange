@@ -353,7 +353,7 @@ pub mod pallet {
 			matching_engine_operator_account: T::AccountId,
 		) -> DispatchResult {
 			// Verify that the user is root.
-			ensure_root(origin).unwrap();
+			ensure_root(origin)?;
 			log::info!(
 					"Registering matching_engine operator account: {:?}",
 					matching_engine_operator_account
@@ -371,8 +371,7 @@ pub mod pallet {
 		#[pallet::weight(<T as Config>::WeightInfo::orderbook_registry_weight())]
 		pub fn register_user(origin: OriginFor<T>, user_account: T::AccountId) -> DispatchResult {
 			// Verify that the user is root.
-			// log::info!("Registering user - {:?} ", origin.);
-			ensure_root(origin).unwrap();
+			ensure_root(origin)?;
 			log::info!("Registering user - {:?} ", user_account);
 			Self::add_user(user_account.clone())?;
 			Ok(())
