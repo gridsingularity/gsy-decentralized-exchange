@@ -24,6 +24,7 @@ orderbook-registry = { version = '0.0.2', default-features = false, path = '../o
 orderbook-worker = { version = '0.0.2', default-features = false, path = '../orderbook-worker' }
 log = { version = "0.4.21", default-features = false }
 pallet-balances = { workspace = true }
+pallet-timestamp = { workspace = true }
 sp-core = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.9.0", default-features = false }
 sp-io = { workspace = true }
 sp-std = { workspace = true }

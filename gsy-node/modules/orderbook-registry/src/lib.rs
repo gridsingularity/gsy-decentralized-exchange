@@ -25,6 +25,12 @@
 
 pub use pallet::*;
 
+#[cfg(test)]
+mod mock;
+
+#[cfg(test)]
+mod tests;
+
 #[cfg(feature = "runtime-benchmarks")]
 mod benchmarking;
 pub mod weights;
@@ -365,6 +371,7 @@ pub mod pallet {
 		#[pallet::weight(<T as Config>::WeightInfo::orderbook_registry_weight())]
 		pub fn register_user(origin: OriginFor<T>, user_account: T::AccountId) -> DispatchResult {
 			// Verify that the user is root.
+			// log::info!("Registering user - {:?} ", origin.);
 			ensure_root(origin).unwrap();
 			log::info!("Registering user - {:?} ", user_account);
 			Self::add_user(user_account.clone())?;
