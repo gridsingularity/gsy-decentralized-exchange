@@ -599,17 +599,16 @@ pub mod pallet {
 				<Error<T>>::NotARegisteredMatchingEngineOperator
 			);
 
-			let bid: Order<T::AccountId> = Order::Bid(proposed_match.bid.clone());
-			let offer: Order<T::AccountId> = Order::Offer(proposed_match.offer.clone());
-
+			let bid_hash = T::Hashing::hash_of(&proposed_match.bid);
+			let offer_hash = T::Hashing::hash_of(&proposed_match.offer);
 			let bid_ref = OrderReference {
 				user_id: proposed_match.bid.buyer.clone(),
-				hash: T::Hashing::hash_of(&bid),
+				hash: bid_hash,
 			};
 
 			let offer_ref = OrderReference {
 				user_id: proposed_match.offer.seller.clone(),
-				hash: T::Hashing::hash_of(&offer),
+				hash: offer_hash,
 			};
 
 			let mut orders_ref: Vec<OrderReference<T::AccountId, T::Hash>> = Vec::new();

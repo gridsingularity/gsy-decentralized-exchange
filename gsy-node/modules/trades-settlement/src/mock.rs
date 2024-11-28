@@ -4,7 +4,7 @@ use frame_system as system;
 use gsy_primitives::v0::{AccountId, Signature};
 use sp_core::H256;
 use sp_runtime::{
-	testing::{Header, TestXt},
+	testing::TestXt,
 	traits::{BlakeTwo256, Extrinsic as ExtrinsicT, IdentityLookup, Verify},
 	BuildStorage
 };
@@ -96,7 +96,7 @@ impl pallet_balances::Config for Test {
 }
 
 parameter_types! {
-	pub const ProxyAccountLimit: u32 = 3;
+	pub const ProxyAccountLimit: u32 = 15;
 	pub const TestPalletID: PalletId = PalletId(*b"test____");
 }
 
