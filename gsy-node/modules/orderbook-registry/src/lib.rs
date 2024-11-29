@@ -47,7 +47,7 @@ pub mod pallet {
 	use sp_runtime::SaturatedConversion;
 	use frame_support::dispatch::DispatchResult;
 	use gsy_primitives::v0::{
-		OrderReference, OrderStatus, BidOfferMatch, Order, Trade, TradeParameters};
+		OrderReference, OrderStatus, BidOfferMatch, Trade, TradeParameters};
 	use scale_info::{TypeInfo, prelude::vec::Vec};
 
 
@@ -204,7 +204,7 @@ pub mod pallet {
 		pub fn insert_orders(user_account: OriginFor<T>, orders_hash: Vec<T::Hash>) -> DispatchResult {
 			let user_account = ensure_signed(user_account).unwrap();
 			// Verify that the user is a registered account.
-			ensure!(Self::is_registered_user(&user_account), <Error<T>>::NotARegisteredUserAccount);
+			ensure!(<gsy_collateral::Pallet<T>>::is_registered_user(&user_account), <Error<T>>::NotARegisteredUserAccount);
 			for order_hash in orders_hash {
 				let order_ref =
 					OrderReference {user_id: user_account.clone(), hash: order_hash.clone()};
@@ -237,7 +237,7 @@ pub mod pallet {
 			let proxy_account = ensure_signed(proxy_account).unwrap();
 			// Verify that the user is a registered proxy account.
 			ensure!(
-				Self::is_registered_proxy_account(&delegator, proxy_account.clone()),
+				<gsy_collateral::Pallet<T>>::is_registered_proxy_account(&delegator, proxy_account.clone()),
 				<Error<T>>::NotARegisteredUserOrProxyAccount
 			);
 			for order_hash in orders_hash {
@@ -268,7 +268,7 @@ pub mod pallet {
 		pub fn delete_orders(user_account: OriginFor<T>, orders_hash: Vec<T::Hash>) -> DispatchResult {
 			let user_account = ensure_signed(user_account).unwrap();
 			// Verify that the user is a registered account.
-			ensure!(Self::is_registered_user(&user_account), <Error<T>>::NotARegisteredUserAccount);
+			ensure!(<gsy_collateral::Pallet<T>>::is_registered_user(&user_account), <Error<T>>::NotARegisteredUserAccount);
 			for order_hash in orders_hash {
 				let order_ref =
 					OrderReference {user_id: user_account.clone(), hash: order_hash.clone()};
@@ -301,7 +301,7 @@ pub mod pallet {
 			let proxy_account = ensure_signed(proxy_account).unwrap();
 			// Verify that the user is a registered proxy account.
 			ensure!(
-				Self::is_registered_proxy_account(&delegator, proxy_account.clone()),
+				<gsy_collateral::Pallet<T>>::is_registered_proxy_account(&delegator, proxy_account.clone()),
 				<Error<T>>::NotARegisteredUserOrProxyAccount
 			);
 			for order_hash in orders_hash {
@@ -595,7 +595,7 @@ pub mod pallet {
 		) -> DispatchResult {
 			// Verify that the user is a registered matching_engine operator account.
 			ensure!(
-				Self::is_registered_matching_engine_operator(&matching_engine_account),
+				<gsy_collateral::Pallet<T>>::is_registered_matching_engine_operator(&matching_engine_account),
 				<Error<T>>::NotARegisteredMatchingEngineOperator
 			);
 

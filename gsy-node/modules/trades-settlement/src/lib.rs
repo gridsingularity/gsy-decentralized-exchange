@@ -143,9 +143,6 @@ pub mod pallet {
 							Order::Offer(residual_offer),
 						)?;
 					}
-
-					let bid_hash = T::Hashing::hash_of(&valid_match.bid);
-					log::error!("BID HASH AFTER RESIDUAL: {:?}", bid_hash);
 				}
 
 				<orderbook_registry::Pallet<T>>::clear_orders_batch(matching_engine_operator, valid_matches)?;

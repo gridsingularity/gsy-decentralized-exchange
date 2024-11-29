@@ -10,7 +10,6 @@ use sp_runtime::{
 };
 pub use pallet_timestamp;
 
-type UncheckedExtrinsic = frame_system::mocking::MockUncheckedExtrinsic<Test>;
 type Block = frame_system::mocking::MockBlock<Test>;
 
 // Configure a mock runtime to test the pallet.
@@ -63,8 +62,6 @@ impl system::Config for Test {
 	type PostInherents = ();
 	type PostTransactions = ();
 }
-
-pub type BlockNumber = u64;
 
 pub const ALICE: AccountId = AccountId::new(*b"01234567890123456789012345678901");
 pub const BOB: AccountId = AccountId::new(*b"01234567890203894950392012432351");
