@@ -4,13 +4,12 @@ use frame_system as system;
 use gsy_primitives::v0::{AccountId, Signature};
 use sp_core::H256;
 use sp_runtime::{
-	testing::{Header, TestXt},
+	testing::TestXt,
 	traits::{BlakeTwo256, Extrinsic as ExtrinsicT, IdentityLookup, Verify},
 	BuildStorage
 };
 pub use pallet_timestamp;
 
-type UncheckedExtrinsic = frame_system::mocking::MockUncheckedExtrinsic<Test>;
 type Block = frame_system::mocking::MockBlock<Test>;
 
 // Configure a mock runtime to test the pallet.
@@ -64,8 +63,6 @@ impl system::Config for Test {
 	type PostTransactions = ();
 }
 
-pub type BlockNumber = u64;
-
 pub const ALICE: AccountId = AccountId::new(*b"01234567890123456789012345678901");
 pub const BOB: AccountId = AccountId::new(*b"01234567890203894950392012432351");
 pub const CHARLIE: AccountId = AccountId::new(*b"01234653535968356825454652432351");
@@ -96,7 +93,7 @@ impl pallet_balances::Config for Test {
 }
 
 parameter_types! {
-	pub const ProxyAccountLimit: u32 = 3;
+	pub const ProxyAccountLimit: u32 = 15;
 	pub const TestPalletID: PalletId = PalletId(*b"test____");
 }
 
