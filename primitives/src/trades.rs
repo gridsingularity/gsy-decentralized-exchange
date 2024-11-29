@@ -89,7 +89,6 @@ pub trait Validator {
 	fn validate_time_slots(
 		bid_time_slot: u64,
 		offer_time_slot: u64,
-		current_market_slot: u64,
 		proposed_match_market_slot: u64,
 	) -> bool;
 }

@@ -20,20 +20,23 @@
 //!
 //! A trades settlement system is a system that manages the settlement of  the trades executed
 //! within the GSy-Decentralized Energy Exchange. This module allows the registered matching engine
-//! (Matching Engine) to add the trade structs for the orders inserted by the users into the GSy-Decentralized
-//! Energy Exchange. Moreover it verify the correctness of the matched trades and update the orders
-//! status and the involved structures after the trade execution.
+//! (Matching Engine) to add the trade structs for the orders inserted by the users into the
+//! GSy-Decentralized Energy Exchange. Moreover, it verifies the correctness of the matched trades
+//! and updates the orders status and the involved structures after the trade execution.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
 pub use crate::weights::TradeSettlementWeightInfo;
 pub use pallet::*;
 
-// #[cfg(test)]
-// mod mock;
-//
-// #[cfg(test)]
-// mod tests;
+#[cfg(test)]
+mod mock;
+
+#[cfg(test)]
+mod tests;
+
+#[cfg(test)]
+mod test_orders;
 
 #[cfg(feature = "runtime-benchmarks")]
 mod benchmarking;
@@ -42,7 +45,7 @@ pub mod weights;
 #[frame_support::pallet]
 pub mod pallet {
 	use crate::weights::TradeSettlementWeightInfo;
-	use frame_support::{dispatch::DispatchResult, pallet_prelude::*, traits::UnixTime, dispatch::RawOrigin};
+	use frame_support::{dispatch::DispatchResult, pallet_prelude::*, dispatch::RawOrigin};
 	use frame_support::{sp_runtime::traits::Hash, transactional};
 	use frame_system::{ensure_signed, pallet_prelude::*};
 	use scale_info::prelude::vec::Vec;
@@ -78,7 +81,7 @@ pub mod pallet {
 	#[pallet::event]
 	#[pallet::generate_deposit(pub (super) fn deposit_event)]
 	pub enum Event<T: Config> {
-		TradeCleared(u8, u8),
+		TradesSettled(T::Hash),
 	}
 
 	#[pallet::error]
@@ -90,7 +93,7 @@ pub mod pallet {
 		/// Ensure that the orders execution returned an Ok(()) value.
 		OrdersNotExecutable,
 		/// Ensure the order has been registered in the orderbook registry.
-		OrderNotRegistered,
+		OrdersNotRegistered,
 		/// Ensure that the offered energy rate is lower than the bid energy rate.
 		OfferEnergyRateGreaterThanBidEnergyRate,
 		/// Ensure that the offered energy rate is higher than the  selected energy.
@@ -169,8 +172,8 @@ pub mod pallet {
 					)?;
 				}
 
-				<orderbook_registry::Pallet<T>>::clear_orders_batch(matching_engine_operator, valid_matches)?;
-
+				<orderbook_registry::Pallet<T>>::clear_orders_batch(matching_engine_operator, valid_matches.clone())?;
+				Self::deposit_event(Event::TradesSettled(T::Hashing::hash_of(&valid_matches)));
 				Ok(())
 			} else {
 				Err(Error::<T>::NoValidMatchToSettle.into())
@@ -237,10 +240,10 @@ pub mod pallet {
 					.time_slot
 					.checked_div(T::MarketSlotDuration::get())
 					.unwrap_or(0),
-				T::TimeProvider::now()
-					.as_secs()
-					.checked_div(T::MarketSlotDuration::get())
-					.unwrap_or(0),
+				// T::TimeProvider::now()
+				// 	.as_secs()
+				// 	.checked_div(T::MarketSlotDuration::get())
+				// 	.unwrap_or(0),
 				bid_offer_match.time_slot.checked_div(T::MarketSlotDuration::get()).unwrap_or(0),
 			) {
 				return false;
@@ -331,12 +334,10 @@ pub mod pallet {
 		fn validate_time_slots(
 			bid_market_slot: u64,
 			offer_market_slot: u64,
-			current_market_slot: u64,
 			proposed_match_market_slot: u64,
 		) -> bool {
 			offer_market_slot == bid_market_slot
-				&& offer_market_slot > current_market_slot
-				&& proposed_match_market_slot >= offer_market_slot
+				&& proposed_match_market_slot == offer_market_slot
 		}
 	}
 }

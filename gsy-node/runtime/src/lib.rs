@@ -30,8 +30,8 @@ use sp_runtime::{
     create_runtime_str, generic, impl_opaque_keys,
     transaction_validity::{TransactionPriority, TransactionSource, TransactionValidity}, ApplyExtrinsicResult,
 	traits::{
-		self, AccountIdConversion, BlakeTwo256, Block as BlockT, Bounded, ConvertInto, NumberFor,
-		OpaqueKeys, SaturatedConversion, StaticLookup, One, AccountIdLookup
+		self, BlakeTwo256, Block as BlockT, NumberFor,
+		SaturatedConversion, StaticLookup, One, AccountIdLookup
 	},
 	generic::Era,
 };
@@ -398,9 +398,6 @@ impl<LocalCall> frame_system::offchain::CreateSignedTransaction<LocalCall> for R
 		Some((call, (address, signature.into(), extra)))
 	}
 }
-
-
-
 
 
 // Create the runtime by composing the FRAME pallets that were previously configured.
