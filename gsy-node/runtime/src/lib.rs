@@ -72,6 +72,7 @@ pub use orderbook_registry;
 pub use gsy_collateral;
 pub use orderbook_worker;
 pub use trades_settlement;
+pub use remuneration;
 pub use gsy_primitives::v0::{AccountId, Balance, BlockNumber, Hash, Signature, Nonce};
 
 /// Index of a transaction in the chain.
@@ -308,6 +309,14 @@ impl trades_settlement::Config for Runtime {
 	type RuntimeEvent = RuntimeEvent;
 	type MarketSlotDuration = MarketSlotDuration;
 	type TradeSettlementWeightInfo = trades_settlement::weights::SubstrateWeightInfo<Runtime>;
+
+	type Remuneration = remuneration::Pallet<Runtime>;
+}
+
+impl remuneration::Config for Runtime {
+	type RuntimeEvent = RuntimeEvent;
+	type RemunerationWeightInfo = remuneration::weights::SubstrateWeightInfo<Runtime>;
+	type RemunerationHandler = remuneration::Pallet<Runtime>;
 }
 
 parameter_types! {
@@ -447,6 +456,9 @@ mod runtime {
 	// Include the custom logic from the gsy-collateral in the runtime.
 	#[runtime::pallet_index(10)]
 	pub type TradesSettlement = trades_settlement;
+
+	#[runtime::pallet_index(11)]
+	pub type Remuneration = remuneration;
 }
 
 /// The address format for describing accounts.
