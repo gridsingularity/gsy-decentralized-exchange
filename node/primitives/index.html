@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+
+<html class="writer-html5" lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="IE=edge" http-equiv="X-UA-Compatible"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/><meta content="Grid Singularity" name="author"/>
+<link href="../../img/favicon.ico" rel="shortcut icon"/>
+<title>Primitives - GSy DEX</title>
+<link href="../../css/theme.css" rel="stylesheet"/>
+<link href="../../css/theme_extra.css" rel="stylesheet"/>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" rel="stylesheet"/>
+<script>
+        // Current page data
+        var mkdocs_page_name = "Primitives";
+        var mkdocs_page_input_path = "node/primitives.md";
+        var mkdocs_page_url = null;
+      </script>
+<!--[if lt IE 9]>
+      <script src="../../js/html5shiv.min.js"></script>
+    <![endif]-->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+<script>hljs.highlightAll();</script>
+</head>
+<body class="wy-body-for-nav" role="document">
+<div class="wy-grid-for-nav">
+<nav class="wy-nav-side stickynav" data-toggle="wy-nav-shift">
+<div class="wy-side-scroll">
+<div class="wy-side-nav-search">
+<a href="../..">
+<img alt="Logo" class="logo" src="../../images/Profile.png"/>
+</a><div role="search">
+<form action="../../search.html" class="wy-form" id="rtd-search-form" method="get">
+<input aria-label="Search docs" name="q" placeholder="Search docs" title="Type search term here" type="text"/>
+</form>
+</div>
+</div>
+<div aria-label="Navigation menu" class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation">
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../..">Home</a>
+</li>
+</ul>
+<p class="caption"><span class="caption-text">Deployment and operation</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../setup/installation/">Intro</a>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../../setup/rust-setup/">Rust Setup</a>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../../setup/run/">Run</a>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../../setup/build/">Build</a>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../../setup/connect-ui/">Connect UI</a>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../../setup/docker/">Docker</a>
+</li>
+</ul>
+<p class="caption"><span class="caption-text">Node Structure</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../node/">Node</a>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../runtime/">Runtime</a>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../pallets/">Pallets</a>
+</li>
+<li class="toctree-l1 current"><a class="reference internal current" href="#">Primitives</a>
+<ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="#the-orders-module">The orders Module</a>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#primitives-diagram">Primitives Diagram</a>
+</li>
+</ul>
+</li>
+</ul>
+<p class="caption"><span class="caption-text">System Architecture</span></p>
+<ul>
+<li class="toctree-l1"><a class="" href="../../architecture.md">High Level Architecture</a>
+</li>
+</ul>
+</div>
+</div>
+</nav>
+<section class="wy-nav-content-wrap" data-toggle="wy-nav-shift">
+<nav aria-label="Mobile navigation menu" class="wy-nav-top" role="navigation">
+<i class="fa fa-bars" data-toggle="wy-nav-top"></i>
+<a href="../..">GSy DEX</a>
+</nav>
+<div class="wy-nav-content">
+<div class="rst-content"><div aria-label="breadcrumbs navigation" role="navigation">
+<ul class="wy-breadcrumbs">
+<li><a aria-label="Docs" class="icon icon-home" href="../.."></a></li>
+<li class="breadcrumb-item">Node Structure</li>
+<li class="breadcrumb-item active">Primitives</li>
+<li class="wy-breadcrumbs-aside">
+</li>
+</ul>
+<hr/>
+</div>
+<div class="document" itemscope="itemscope" itemtype="http://schema.org/Article" role="main">
+<div class="section" itemprop="articleBody">
+<h2 id="gsy-dex-primitives">GSy DEX Primitives</h2>
+<p>The above Rust code defines the core types used in the GSy-Decentralized Energy Exchange. It includes various primitive data structures such as types for block numbers, moments, signatures, public keys, account IDs, account indices, chain IDs, hashes, nonces, balances, headers, blocks, and extrinsics. Additionally, it exports the OrderReference and OrderStatus types from the <code>orders</code> module.</p>
+<p>Here is an overview of the data structures defined in the code:</p>
+<ul>
+<li><code>BlockNumber</code>: a type alias for a 64-bit unsigned integer used to represent block numbers in the GSy-Decentralized Energy Exchange.</li>
+<li><code>Moment</code>: a type alias for a 64-bit unsigned integer used to represent an instant or duration in time.</li>
+<li><code>Signature</code>: a type alias for the <code>MultiSignature</code> type from the <code>sp_runtime</code> module. This type is used to represent a signature for a transaction on the GSy chain. It allows one of several underlying cryptographic algorithms to be used, so it isn't a fixed size when encoded.</li>
+<li><code>AccountPublic</code>: a type alias for the <code>Signer</code> associated type of the <code>Verify</code> trait implemented for <code>Signature</code>. This type represents the public key used for the GSy chain and is actually a <code>MultiSigner</code>. Like the signature, this type also isn't a fixed size when encoded, as different cryptographic algorithms have different size public keys.</li>
+<li><code>AccountId</code>: a type alias for the <code>AccountId32</code> type associated with the <code>IdentifyAccount</code> trait implemented for <code>AccountPublic</code>. This type is an opaque account ID type for the GSy chain and is always 32 bytes.</li>
+<li><code>AccountIndex</code>: a type alias for a 32-bit unsigned integer used to represent the type for looking up accounts.</li>
+<li><code>ChainId</code>: a type alias for a 32-bit unsigned integer used to represent the identifier for a chain.</li>
+<li><code>Hash</code>: a type alias for the <code>H256</code> type from the <code>sp_core</code> module. This type is used to represent a hash of some data used by the GSy chain.</li>
+<li><code>Nonce</code>: a type alias for a 32-bit unsigned integer used to represent the index of a transaction in the relay chain.</li>
+<li><code>Balance</code>: a type alias for a 128-bit unsigned integer used to represent the balance of an account on the GSy chain.</li>
+<li><code>Header</code>: a type alias for the <code>generic::Header&lt;BlockNumber, BlakeTwo256&gt;</code> type from the <code>sp_runtime</code> module. This type represents the header of a block in the GSy-Decentralized Energy Exchange.</li>
+<li><code>Block</code>: a type alias for the <code>generic::Block&lt;Header, UncheckedExtrinsic&gt;</code> type from the <code>sp_runtime</code> module. This type represents a block in the GSy-Decentralized Energy Exchange.</li>
+<li><code>BlockId</code>: a type alias for the <code>generic::BlockId&lt;Block&gt;</code> type from the <code>sp_runtime</code> module. This type represents the ID of a block in the GSy-Decentralized Energy Exchange.</li>
+<li><code>UncheckedExtrinsic</code>: an opaque, encoded, unchecked extrinsic that is used to represent a transaction on the GSy chain.</li>
+<li><code>OrderReference</code>: a type defined in the <code>orders</code> module that represents a reference to an order in the GSy-Decentralized Energy Exchange.</li>
+<li><code>OrderStatus</code>: a type defined in the <code>orders</code> module that represents the status of an order in the GSy-Decentralized Energy Exchange.</li>
+<li><code>mod orders</code>: a module that exports the <code>OrderReference</code> and <code>OrderStatus</code> types.</li>
+</ul>
+<h3 id="the-orders-module">The <code>orders</code> Module</h3>
+<p>The <code>orders</code> module defines two types:</p>
+<ul>
+<li><code>OrderStatus</code>: An enum that represents the status of an order in the GSy-Decentralized Energy Exchange. It has three variants:<ul>
+<li><code>Open</code>: The default status.</li>
+<li><code>Executed</code>: The order has been executed.</li>
+<li><code>Deleted</code>: The order has been cancelled.</li>
+</ul>
+</li>
+<li><code>OrderReference</code>: A struct that represents a reference to an order in the GSy-Decentralized Energy Exchange. It has two fields:<ul>
+<li><code>user_id</code>: The account ID of the user who created the order. </li>
+<li><code>hash</code>: The hash of the order struct which represent a unique reference.</li>
+</ul>
+</li>
+</ul>
+<h3 id="primitives-diagram">Primitives Diagram</h3>
+<div class="mermaid">classDiagram
+    class BlockNumber {
+        +u64
+    }
+    class Moment {
+        +u64
+    }
+    class Signature {
+        +MultiSignature
+    }
+    class AccountPublic {
+        +MultiSigner
+    }
+    class AccountId {
+        +AccountId32
+    }
+    class AccountIndex {
+        +u32
+    }
+</div>
+<div class="mermaid">classDiagram
+    class ChainId {
+        +u32
+    }
+    class Hash {
+        +H256
+    }
+    class Nonce {
+        +u32
+    }
+    class Balance {
+        +u128
+    }
+    class Header {
+        +generic::Header
+    }
+    class Block {
+        +generic::Block
+    }
+</div>
+<div class="mermaid">classDiagram
+    class BlockId {
+        +generic::BlockId
+    }
+    class UncheckedExtrinsic {
+        +EncodedExtrinsic
+    }
+    class OrderReference {
+        +user_id: AccountId
+        +hash: Hash
+    }
+    class OrderStatus {
+        +Open
+        +Executed
+        +Deleted
+    }
+</div>
+</div>
+</div><footer>
+<div aria-label="Footer Navigation" class="rst-footer-buttons" role="navigation">
+<a class="btn btn-neutral float-left" href="../pallets/" title="Pallets"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+</div>
+<hr/>
+<div role="contentinfo">
+<!-- Copyright etc -->
+</div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+</div>
+</div>
+</section>
+</div>
+<div aria-label="Versions" class="rst-versions" role="note">
+<span class="rst-current-version" data-toggle="rst-current-version">
+<span><a href="../pallets/" style="color: #fcfcfc">« Previous</a></span>
+</span>
+</div>
+<script src="../../js/jquery-3.6.0.min.js"></script>
+<script>var base_url = "../..";</script>
+<script src="../../js/theme_extra.js"></script>
+<script src="../../js/theme.js"></script>
+<script src="../../search/main.js"></script>
+<script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+<script type="module">import mermaid from "https://unpkg.com/mermaid@10.4.0/dist/mermaid.esm.min.mjs";
+mermaid.initialize({});</script></body>
+</html>
