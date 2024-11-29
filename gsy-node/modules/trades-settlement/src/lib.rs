@@ -72,7 +72,7 @@ pub mod pallet {
 	#[pallet::event]
 	#[pallet::generate_deposit(pub (super) fn deposit_event)]
 	pub enum Event<T: Config> {
-		TradeCleared(u8, u8),
+		TradesSettled(T::Hash),
 	}
 
 	#[pallet::error]
@@ -145,8 +145,8 @@ pub mod pallet {
 					}
 				}
 
-				<orderbook_registry::Pallet<T>>::clear_orders_batch(matching_engine_operator, valid_matches)?;
-
+				<orderbook_registry::Pallet<T>>::clear_orders_batch(matching_engine_operator, valid_matches.clone())?;
+				Self::deposit_event(Event::TradesSettled(T::Hashing::hash_of(&valid_matches)));
 				Ok(())
 			} else {
 				Err(Error::<T>::NoValidMatchToSettle.into())

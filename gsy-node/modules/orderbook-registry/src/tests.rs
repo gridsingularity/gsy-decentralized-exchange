@@ -9,13 +9,13 @@ use frame_system::RawOrigin;
 fn add_already_registered_proxies_should_fail() {
 	new_test_ext().execute_with(|| {
 		// Register a user.
-		assert_ok!(OrderbookRegistry::register_user(RawOrigin::Root.into(), ALICE));
+		assert_ok!(GsyCollateral::register_user(RawOrigin::Root.into(), ALICE));
 		// Register a proxy.
-		assert_ok!(OrderbookRegistry::register_proxy_account(RawOrigin::Signed(ALICE).into(), BOB));
-		assert_eq!(OrderbookRegistry::is_registered_proxy_account(&ALICE, BOB), true);
+		assert_ok!(GsyCollateral::register_proxy_account(RawOrigin::Signed(ALICE).into(), BOB));
+		assert_eq!(GsyCollateral::is_registered_proxy_account(&ALICE, BOB), true);
 		assert_noop!(
-			OrderbookRegistry::register_proxy_account(RawOrigin::Signed(ALICE).into(), BOB),
-			Error::<Test>::AlreadyRegisteredProxyAccount
+			GsyCollateral::register_proxy_account(RawOrigin::Signed(ALICE).into(), BOB),
+			gsy_collateral::Error::<Test>::AlreadyRegisteredProxyAccount
 		);
 	});
 }
@@ -24,10 +24,10 @@ fn add_already_registered_proxies_should_fail() {
 fn add_matching_engine_operator_works() {
 	new_test_ext().execute_with(|| {
 		// Register a matching_engine operator.
-		assert_ok!(OrderbookRegistry::register_matching_engine_operator(RawOrigin::Root.into(), ALICE));
+		assert_ok!(GsyCollateral::register_matching_engine_operator(RawOrigin::Root.into(), ALICE));
 		assert_noop!(
-			OrderbookRegistry::register_matching_engine_operator(RawOrigin::Root.into(), ALICE),
-			Error::<Test>::AlreadyRegistered
+			GsyCollateral::register_matching_engine_operator(RawOrigin::Root.into(), ALICE),
+			gsy_collateral::Error::<Test>::AlreadyRegistered
 		);
 	});
 }
@@ -36,14 +36,14 @@ fn add_matching_engine_operator_works() {
 fn add_more_then_three_proxies_should_fail() {
 	new_test_ext().execute_with(|| {
 		// Register a user.
-		assert_ok!(OrderbookRegistry::register_user(RawOrigin::Root.into(), ALICE));
+		assert_ok!(GsyCollateral::register_user(RawOrigin::Root.into(), ALICE));
 		// Add proxies.
-		assert_ok!(OrderbookRegistry::register_proxy_account(RawOrigin::Signed(ALICE).into(), BOB));
-		assert_ok!(OrderbookRegistry::register_proxy_account(RawOrigin::Signed(ALICE).into(), CHARLIE));
-		assert_ok!(OrderbookRegistry::register_proxy_account(RawOrigin::Signed(ALICE).into(), MIKE));
+		assert_ok!(GsyCollateral::register_proxy_account(RawOrigin::Signed(ALICE).into(), BOB));
+		assert_ok!(GsyCollateral::register_proxy_account(RawOrigin::Signed(ALICE).into(), CHARLIE));
+		assert_ok!(GsyCollateral::register_proxy_account(RawOrigin::Signed(ALICE).into(), MIKE));
 		assert_noop!(
-			OrderbookRegistry::register_proxy_account(RawOrigin::Signed(ALICE).into(), JOHN),
-			Error::<Test>::ProxyAccountsLimitReached
+			GsyCollateral::register_proxy_account(RawOrigin::Signed(ALICE).into(), JOHN),
+			gsy_collateral::Error::<Test>::ProxyAccountsLimitReached
 		);
 	});
 }
@@ -52,10 +52,10 @@ fn add_more_then_three_proxies_should_fail() {
 fn add_proxies_works() {
 	new_test_ext().execute_with(|| {
 		// Register a user.
-		assert_ok!(OrderbookRegistry::register_user(RawOrigin::Root.into(), ALICE));
+		assert_ok!(GsyCollateral::register_user(RawOrigin::Root.into(), ALICE));
 		// Register a proxy.
-		assert_ok!(OrderbookRegistry::register_proxy_account(RawOrigin::Signed(ALICE).into(), BOB));
-		assert_eq!(OrderbookRegistry::is_registered_proxy_account(&ALICE, BOB), true);
+		assert_ok!(GsyCollateral::register_proxy_account(RawOrigin::Signed(ALICE).into(), BOB));
+		assert_eq!(GsyCollateral::is_registered_proxy_account(&ALICE, BOB), true);
 	});
 }
 
@@ -63,11 +63,11 @@ fn add_proxies_works() {
 fn add_self_proxies_should_fail() {
 	new_test_ext().execute_with(|| {
 		// Register a user.
-		assert_ok!(OrderbookRegistry::register_user(RawOrigin::Root.into(), ALICE));
+		assert_ok!(GsyCollateral::register_user(RawOrigin::Root.into(), ALICE));
 		// Add proxies.
 		assert_noop!(
-			OrderbookRegistry::register_proxy_account(RawOrigin::Signed(ALICE).into(), ALICE),
-			Error::<Test>::NoSelfProxy
+			GsyCollateral::register_proxy_account(RawOrigin::Signed(ALICE).into(), ALICE),
+			gsy_collateral::Error::<Test>::NoSelfProxy
 		);
 	});
 }
@@ -76,10 +76,10 @@ fn add_self_proxies_should_fail() {
 fn add_user_works() {
 	new_test_ext().execute_with(|| {
 		// Register a user.
-		assert_ok!(OrderbookRegistry::register_user(RawOrigin::Root.into(), ALICE));
+		assert_ok!(GsyCollateral::register_user(RawOrigin::Root.into(), ALICE));
 		assert_noop!(
-			OrderbookRegistry::register_user(RawOrigin::Root.into(), ALICE),
-			Error::<Test>::AlreadyRegistered
+			GsyCollateral::register_user(RawOrigin::Root.into(), ALICE),
+			gsy_collateral::Error::<Test>::AlreadyRegistered
 		);
 	});
 }
@@ -89,8 +89,8 @@ fn delegator_must_be_a_registered_user() {
 	new_test_ext().execute_with(|| {
 		// Add a proxy from an unregistered user.
 		assert_noop!(
-			OrderbookRegistry::register_proxy_account(RawOrigin::Signed(ALICE).into(), CHARLIE),
-			Error::<Test>::NotARegisteredUserAccount
+			GsyCollateral::register_proxy_account(RawOrigin::Signed(ALICE).into(), CHARLIE),
+			gsy_collateral::Error::<Test>::NotARegisteredUserAccount
 		);
 	});
 }
@@ -247,7 +247,7 @@ fn registered_matching_engine_operator_must_be_added_by_root() {
 fn registered_user_must_be_added_by_root() {
 	new_test_ext().execute_with(|| {
 		// Register a user.
-		assert_noop!(OrderbookRegistry::register_user(RawOrigin::Signed(ALICE).into(), BOB), BadOrigin);
+		assert_noop!(GsyCollateral::register_user(RawOrigin::Signed(ALICE).into(), BOB), BadOrigin);
 	});
 }
 
@@ -255,12 +255,12 @@ fn registered_user_must_be_added_by_root() {
 fn remove_proxies_works() {
 	new_test_ext().execute_with(|| {
 		// Register a user.
-		assert_ok!(OrderbookRegistry::register_user(RawOrigin::Root.into(), ALICE));
+		assert_ok!(GsyCollateral::register_user(RawOrigin::Root.into(), ALICE));
 		// Register a proxy.
-		assert_ok!(OrderbookRegistry::register_proxy_account(RawOrigin::Signed(ALICE).into(), BOB));
-		assert_eq!(OrderbookRegistry::is_registered_proxy_account(&ALICE, BOB), true);
+		assert_ok!(GsyCollateral::register_proxy_account(RawOrigin::Signed(ALICE).into(), BOB));
+		assert_eq!(GsyCollateral::is_registered_proxy_account(&ALICE, BOB), true);
 		// Remove proxies.
-		assert_ok!(OrderbookRegistry::unregister_proxy_account(RawOrigin::Signed(ALICE).into(), BOB));
-		assert_eq!(OrderbookRegistry::is_registered_proxy_account(&ALICE, BOB), false);
+		assert_ok!(GsyCollateral::unregister_proxy_account(RawOrigin::Signed(ALICE).into(), BOB));
+		assert_eq!(GsyCollateral::is_registered_proxy_account(&ALICE, BOB), false);
 	});
 }

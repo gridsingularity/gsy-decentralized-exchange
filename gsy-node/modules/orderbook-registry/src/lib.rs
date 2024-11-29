@@ -93,29 +93,6 @@ pub mod pallet {
 		type WeightInfo: WeightInfo;
 	}
 
-	#[pallet::storage]
-	#[pallet::getter(fn registered_user)]
-	/// Keeps track of the registered user.
-	pub type RegisteredUser<T: Config> =
-			StorageMap<_, Twox64Concat, T::AccountId, T::Hash, ValueQuery>;
-
-	#[pallet::storage]
-	#[pallet::getter(fn registered_matching_engine)]
-	/// Keeps track of the registered user.
-	pub type RegisteredMatchingEngine<T: Config> =
-			StorageMap<_, Twox64Concat, T::AccountId, T::Hash, ValueQuery>;
-
-	#[pallet::storage]
-	#[pallet::getter(fn proxy_accounts)]
-	/// Keeps track of the proxy accounts for each registered user.
-	pub type ProxyAccounts<T: Config> = StorageMap<
-		_,
-		Twox64Concat,
-		T::AccountId,
-		BoundedVec<ProxyDefinition<T::AccountId>, T::RegistryProxyAccountLimit>,
-		ValueQuery,
-	>;
-
 	// Storage items.
 	#[pallet::storage]
 	#[pallet::getter(fn order_registry)]
@@ -133,8 +110,6 @@ pub mod pallet {
 	#[pallet::event]
 	#[pallet::generate_deposit(pub(super) fn deposit_event)]
 	pub enum Event<T: Config> {
-		/// Matching Engine operator has been registered. \[matching_engine_operator\]
-		MatchingEngineOperatorRegistered(T::AccountId),
 		/// New order has been inserted. \[depositor, hash\]
 		NewOrderInserted(T::AccountId, T::Hash),
 		/// New order has been inserted for the user by proxy. \[depositor, proxy, hash\]
@@ -143,12 +118,6 @@ pub mod pallet {
 		OrderDeleted(T::AccountId, T::Hash),
 		/// Order has been deleted for the user by proxy. \[depositor, proxy, hash\]
 		OrderDeletedByProxy(T::AccountId, T::AccountId, T::Hash),
-		/// User has registered a proxy account. \[user_account, proxy_account\]
-		ProxyAccountRegistered(T::AccountId, T::AccountId),
-		/// User has unregistered a proxy account. \[user_account, proxy_account\]
-		ProxyAccountUnregistered(T::AccountId, T::AccountId),
-		/// User has been registered. \[user_account\]
-		UserRegistered(T::AccountId),
 		/// Order has been executed. \[depositor, hash, selected_energy, energy_rate, time_slot\]
 		OrderExecuted(Trade<T::AccountId, T::Hash>),
 		/// Trade has been cleared.
@@ -158,22 +127,6 @@ pub mod pallet {
 	// Errors inform users that something went wrong.
 	#[pallet::error]
 	pub enum Error<T> {
-		/// Cannot register an account already registered.
-		AlreadyRegistered,
-		/// Cannot register a proxy account already registered.
-		AlreadyRegisteredProxyAccount,
-		/// Cannot register a self proxy
-		NoSelfProxy,
-		/// Ensure that the account is a registered matching_engine operator.
-		NotARegisteredMatchingEngineOperator,
-		/// Ensure that the account is a proxy account.
-		NotARegisteredProxyAccount,
-		/// Ensure that the account is a registered user.
-		NotARegisteredUserAccount,
-		/// Ensure that the account is a proxy account.
-		NotARegisteredUserOrProxyAccount,
-		/// Ensure that the user has registered some proxy accounts.
-		NotRegisteredProxyAccounts,
 		/// Ensure the order exists.
 		OpenOrderNotFound,
 		/// Ensure the order exists and is not deleted.
@@ -182,8 +135,6 @@ pub mod pallet {
 		OrderAlreadyExecuted,
 		/// Ensure the order has not been already inserted.
 		OrderAlreadyInserted,
-		/// An account cannot have more proxy than `RegistryProxyAccountLimit`.
-		ProxyAccountsLimitReached,
 		/// Ensure the transfer has been successful.
 		UnableToCompleteTransfer,
 	}
@@ -204,7 +155,9 @@ pub mod pallet {
 		pub fn insert_orders(user_account: OriginFor<T>, orders_hash: Vec<T::Hash>) -> DispatchResult {
 			let user_account = ensure_signed(user_account).unwrap();
 			// Verify that the user is a registered account.
-			ensure!(<gsy_collateral::Pallet<T>>::is_registered_user(&user_account), <Error<T>>::NotARegisteredUserAccount);
+			ensure!(
+				<gsy_collateral::Pallet<T>>::is_registered_user(&user_account),
+				gsy_collateral::Error::<T>::NotARegisteredUserAccount);
 			for order_hash in orders_hash {
 				let order_ref =
 					OrderReference {user_id: user_account.clone(), hash: order_hash.clone()};
@@ -238,7 +191,7 @@ pub mod pallet {
 			// Verify that the user is a registered proxy account.
 			ensure!(
 				<gsy_collateral::Pallet<T>>::is_registered_proxy_account(&delegator, proxy_account.clone()),
-				<Error<T>>::NotARegisteredUserOrProxyAccount
+				gsy_collateral::Error::<T>::NotARegisteredProxyAccount
 			);
 			for order_hash in orders_hash {
 				let order_ref =
@@ -268,7 +221,8 @@ pub mod pallet {
 		pub fn delete_orders(user_account: OriginFor<T>, orders_hash: Vec<T::Hash>) -> DispatchResult {
 			let user_account = ensure_signed(user_account).unwrap();
 			// Verify that the user is a registered account.
-			ensure!(<gsy_collateral::Pallet<T>>::is_registered_user(&user_account), <Error<T>>::NotARegisteredUserAccount);
+			ensure!(<gsy_collateral::Pallet<T>>::is_registered_user(&user_account),
+				gsy_collateral::Error::<T>::NotARegisteredUserAccount);
 			for order_hash in orders_hash {
 				let order_ref =
 					OrderReference {user_id: user_account.clone(), hash: order_hash.clone()};
@@ -302,7 +256,7 @@ pub mod pallet {
 			// Verify that the user is a registered proxy account.
 			ensure!(
 				<gsy_collateral::Pallet<T>>::is_registered_proxy_account(&delegator, proxy_account.clone()),
-				<Error<T>>::NotARegisteredUserOrProxyAccount
+				gsy_collateral::Error::<T>::NotARegisteredProxyAccount
 			);
 			for order_hash in orders_hash {
 				let order_ref =
@@ -318,156 +272,9 @@ pub mod pallet {
 			}
 			Ok(())
 		}
-
-		/// Register a proxy account for a given registered user.
-		///
-		/// # Parameters:
-		/// * `origin`: The origin of the extrinsic. The user account that is registering the proxy account.
-		/// * `proxy_account`: The proxy account that is being registered.
-		#[transactional]
-		#[pallet::call_index(4)]
-		#[pallet::weight(<T as Config>::WeightInfo::orderbook_registry_weight())]
-		pub fn register_proxy_account(
-			origin: OriginFor<T>,
-			proxy_account: T::AccountId,
-		) -> DispatchResult {
-			let user_account = ensure_signed(origin).unwrap();
-			log::info!(
-				"Registering proxy account: {:?} for user: {:?} ",
-				proxy_account,
-				user_account
-			);
-			Self::add_proxy_account(&user_account, proxy_account)
-		}
-
-		/// Register a matching_engine operator account in the System.
-		///
-		/// # Parameters:
-		/// * `origin`: The origin of the extrinsic. The root user.
-		/// * `matching_engine_operator_account`: The matching_engine operator account that is being registered.
-		#[transactional]
-		#[pallet::call_index(5)]
-		#[pallet::weight(<T as Config>::WeightInfo::orderbook_registry_weight())]
-		pub fn register_matching_engine_operator(
-			origin: OriginFor<T>,
-			matching_engine_operator_account: T::AccountId,
-		) -> DispatchResult {
-			// Verify that the user is root.
-			ensure_root(origin)?;
-			log::info!(
-					"Registering matching_engine operator account: {:?}",
-					matching_engine_operator_account
-			);
-			Self::add_matching_engine_operator(matching_engine_operator_account)
-		}
-
-		/// Register a new user in the System. (Only the root user can register a new user)
-		///
-		/// # Parameters:
-		/// * `origin`: The origin of the extrinsic. The root user.
-		/// * `user_account`: The account of the new user.
-		#[transactional]
-		#[pallet::call_index(6)]
-		#[pallet::weight(<T as Config>::WeightInfo::orderbook_registry_weight())]
-		pub fn register_user(origin: OriginFor<T>, user_account: T::AccountId) -> DispatchResult {
-			// Verify that the user is root.
-			ensure_root(origin)?;
-			log::info!("Registering user - {:?} ", user_account);
-			Self::add_user(user_account.clone())?;
-			Ok(())
-		}
-
-		/// Unregister a proxy account for a given registered user.
-		///
-		/// # Parameters:
-		/// * `origin`: The origin of the extrinsic. The user account that is unregistering the proxy account.
-		/// * `proxy_account`: The proxy account that is being unregistered.
-		#[transactional]
-		#[pallet::call_index(7)]
-		#[pallet::weight(<T as Config>::WeightInfo::orderbook_registry_weight())]
-		pub fn unregister_proxy_account(
-			origin: OriginFor<T>,
-			proxy_account: T::AccountId,
-		) -> DispatchResult {
-			let user_account = ensure_signed(origin).unwrap();
-			log::info!(
-				"Unregistering proxy account: {:?} for user: {:?} ",
-				proxy_account,
-				user_account
-			);
-			Self::remove_proxy_account(&user_account, proxy_account)
-		}
 	}
 
 	impl<T: Config> Pallet<T> {
-		/// Register a new matching_engine operator account in the System.
-		///
-		/// # Parameters:
-		/// * `matching_engine_operator_account`: The matching_engine operator account that is being registered.
-		pub fn add_matching_engine_operator(
-				matching_engine_operator_account: T::AccountId
-		) -> DispatchResult {
-			ensure!(
-				!Self::is_registered_matching_engine_operator(&matching_engine_operator_account),
-				<Error<T>>::AlreadyRegistered
-			);
-			let account_hash = T::Hashing::hash_of(&matching_engine_operator_account);
-			log::info!("Account Hash - {:?} ", account_hash);
-			<RegisteredMatchingEngine<T>>::insert(&matching_engine_operator_account, account_hash);
-			// Deposit the MatchingEngineOperatorRegistered event.
-			Self::deposit_event(Event::MatchingEngineOperatorRegistered(
-					matching_engine_operator_account
-			));
-			Ok(())
-		}
-
-		/// Register a proxy account for a given registered user.
-		///
-		/// Parameters:
-		/// - `delegator`: The origin of the extrinsic. The user account that is registering the proxy account.
-		/// - `proxy_account`: The proxy account that is being registered.
-		pub fn add_proxy_account(
-			delegator: &T::AccountId,
-			proxy_account: T::AccountId,
-		) -> DispatchResult {
-			// Verify that the delegator is not registering itself as proxy.
-			ensure!(delegator != &proxy_account, <Error<T>>::NoSelfProxy);
-			// Verify that the delegator is a registered account.
-			ensure!(Self::is_registered_user(delegator), <Error<T>>::NotARegisteredUserAccount);
-			// Add the account to the proxy account storage.
-			ProxyAccounts::<T>::try_mutate(delegator, |ref mut proxy_accounts| {
-				let proxy_definition = ProxyDefinition { proxy: proxy_account.clone() };
-				let i = proxy_accounts
-					.binary_search(&proxy_definition)
-					.err()
-					.ok_or(<Error<T>>::AlreadyRegisteredProxyAccount)?;
-				proxy_accounts
-					.try_insert(i, proxy_definition)
-					.map_err(|_| <Error<T>>::ProxyAccountsLimitReached)?;
-				Self::deposit_event(Event::ProxyAccountRegistered(
-					delegator.clone(),
-					proxy_account,
-				));
-				Ok(())
-			})
-		}
-
-		/// Register a new user.
-		///
-		/// Parameters:
-		/// * `user_account`: The account of the new user.
-		pub fn add_user(user_account: T::AccountId) -> DispatchResult {
-			// Verify that the user is not already registered.
-			ensure!(!Self::is_registered_user(&user_account), <Error<T>>::AlreadyRegistered);
-			// Register the user.
-			let account_hash = T::Hashing::hash_of(&user_account);
-			log::info!("Account Hash - {:?} ", account_hash);
-			<RegisteredUser<T>>::insert(&user_account, account_hash);
-			// Deposit the UserRegistered event.
-			Self::deposit_event(Event::UserRegistered(user_account));
-			Ok(())
-		}
-
 
 		/// Helper function to check if a given order has already been inserted.
 		///
@@ -475,69 +282,6 @@ pub mod pallet {
 		/// `order_ref`: The order reference.
 		pub fn is_order_registered(order_ref: &OrderReference<T::AccountId, T::Hash>) -> bool {
 			<OrdersRegistry<T>>::contains_key(order_ref)
-		}
-
-		/// Helper function to check if a given user is a registered matching_engine operator
-		///
-		/// Parameters:
-		/// * `matching_engine_operator_account`: The matching_engine operator account that is being checked.
-		pub fn is_registered_matching_engine_operator(
-				matching_engine_operator_account: &T::AccountId
-		) -> bool {
-			<RegisteredMatchingEngine<T>>::contains_key(matching_engine_operator_account)
-		}
-
-		/// Helper function to check if a given account is registered as proxy.
-		///
-		/// Parameters:
-		/// - `user_account`: The account of the user.
-		/// - `proxy_account`: The account of the user.
-		pub fn is_registered_proxy_account(
-			delegator: &T::AccountId,
-			proxy_account: T::AccountId,
-		) -> bool {
-			ProxyAccounts::<T>::get(delegator)
-				.contains(&ProxyDefinition { proxy: proxy_account })
-		}
-
-		/// Helper function to check if a given user is registered.
-		///
-		/// Parameters:
-		/// - `user_account`: The account of the user.
-		pub fn is_registered_user(user_account: &T::AccountId) -> bool {
-			<RegisteredUser<T>>::contains_key(user_account)
-		}
-
-		/// Unregister a Proxy Account for a given registered user.
-		///
-		/// Parameters:
-		/// - `delegator`: The origin of the extrinsic. The user account that is unregistering the proxy account.
-		/// - `proxy_account`: The proxy account that is being unregistered.
-		#[require_transactional]
-		pub fn remove_proxy_account(
-			delegator: &T::AccountId,
-			proxy_account: T::AccountId,
-		) -> DispatchResult {
-			// Verify that the delegator is a registered account.
-			ensure!(Self::is_registered_user(delegator), <Error<T>>::NotARegisteredUserAccount);
-			// Remove the account from the proxy account storage.
-			ProxyAccounts::<T>::try_mutate_exists(delegator, |x| {
-				let mut proxy_accounts = x.take().ok_or(<Error<T>>::NotRegisteredProxyAccounts)?;
-				let proxy_definition = ProxyDefinition { proxy: proxy_account.clone() };
-				let i = proxy_accounts
-					.binary_search(&proxy_definition)
-					.ok()
-					.ok_or(<Error<T>>::NotARegisteredProxyAccount)?;
-				proxy_accounts.remove(i);
-				if !proxy_accounts.is_empty() {
-					*x = Some(proxy_accounts)
-				}
-				Self::deposit_event(Event::ProxyAccountUnregistered(
-					delegator.clone(),
-					proxy_account,
-				));
-				Ok(())
-			})
 		}
 
 		/// Helper function to update the order status in the OrderRegistry.
@@ -596,7 +340,7 @@ pub mod pallet {
 			// Verify that the user is a registered matching_engine operator account.
 			ensure!(
 				<gsy_collateral::Pallet<T>>::is_registered_matching_engine_operator(&matching_engine_account),
-				<Error<T>>::NotARegisteredMatchingEngineOperator
+				gsy_collateral::Error::<T>::NotARegisteredMatchingEngineOperator
 			);
 
 			let bid_hash = T::Hashing::hash_of(&proposed_match.bid);
@@ -644,7 +388,6 @@ pub mod pallet {
 				orders_ref,
 				updated_order_status
 			);
-
 
 			for order_ref in orders_ref {
 				ensure!(Self::is_order_registered(&order_ref), <Error<T>>::OpenOrderNotFound);
