@@ -15,11 +15,11 @@ pub use scale_info::prelude::vec::Vec;
 pub mod configuration;
 use configuration::OrderBookServiceURL;
 
-// #[cfg(test)]
-// mod mock;
-//
-// #[cfg(test)]
-// mod tests;
+#[cfg(test)]
+mod mock;
+
+#[cfg(test)]
+mod tests;
 
 #[cfg(feature = "runtime-benchmarks")]
 mod benchmarking;

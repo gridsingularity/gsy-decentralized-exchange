@@ -3,17 +3,18 @@ use frame_support::{assert_noop, assert_ok};
 use sp_runtime::DispatchError::BadOrigin;
 use sp_core::H256;
 use std::str::FromStr;
+use frame_system::RawOrigin;
 
 #[test]
 fn add_already_registered_proxies_should_fail() {
 	new_test_ext().execute_with(|| {
 		// Register a user.
-		assert_ok!(OrderbookRegistry::register_user(Origin::root(), ALICE));
+		assert_ok!(OrderbookRegistry::register_user(RawOrigin::Root.into(), ALICE));
 		// Register a proxy.
-		assert_ok!(OrderbookRegistry::register_proxy_account(Origin::signed(ALICE), BOB));
+		assert_ok!(OrderbookRegistry::register_proxy_account(RawOrigin::Signed(ALICE).into(), BOB));
 		assert_eq!(OrderbookRegistry::is_registered_proxy_account(&ALICE, BOB), true);
 		assert_noop!(
-			OrderbookRegistry::register_proxy_account(Origin::signed(ALICE), BOB),
+			OrderbookRegistry::register_proxy_account(RawOrigin::Signed(ALICE).into(), BOB),
 			Error::<Test>::AlreadyRegisteredProxyAccount
 		);
 	});
@@ -23,9 +24,9 @@ fn add_already_registered_proxies_should_fail() {
 fn add_matching_engine_operator_works() {
 	new_test_ext().execute_with(|| {
 		// Register a matching_engine operator.
-		assert_ok!(OrderbookRegistry::register_matching_engine_operator(Origin::root(), ALICE));
+		assert_ok!(OrderbookRegistry::register_matching_engine_operator(RawOrigin::Root.into(), ALICE));
 		assert_noop!(
-			OrderbookRegistry::register_matching_engine_operator(Origin::root(), ALICE),
+			OrderbookRegistry::register_matching_engine_operator(RawOrigin::Root.into(), ALICE),
 			Error::<Test>::AlreadyRegistered
 		);
 	});
@@ -35,13 +36,13 @@ fn add_matching_engine_operator_works() {
 fn add_more_then_three_proxies_should_fail() {
 	new_test_ext().execute_with(|| {
 		// Register a user.
-		assert_ok!(OrderbookRegistry::register_user(Origin::root(), ALICE));
+		assert_ok!(OrderbookRegistry::register_user(RawOrigin::Root.into(), ALICE));
 		// Add proxies.
-		assert_ok!(OrderbookRegistry::register_proxy_account(Origin::signed(ALICE), BOB));
-		assert_ok!(OrderbookRegistry::register_proxy_account(Origin::signed(ALICE), CHARLIE));
-		assert_ok!(OrderbookRegistry::register_proxy_account(Origin::signed(ALICE), MIKE));
+		assert_ok!(OrderbookRegistry::register_proxy_account(RawOrigin::Signed(ALICE).into(), BOB));
+		assert_ok!(OrderbookRegistry::register_proxy_account(RawOrigin::Signed(ALICE).into(), CHARLIE));
+		assert_ok!(OrderbookRegistry::register_proxy_account(RawOrigin::Signed(ALICE).into(), MIKE));
 		assert_noop!(
-			OrderbookRegistry::register_proxy_account(Origin::signed(ALICE), JOHN),
+			OrderbookRegistry::register_proxy_account(RawOrigin::Signed(ALICE).into(), JOHN),
 			Error::<Test>::ProxyAccountsLimitReached
 		);
 	});
@@ -51,9 +52,9 @@ fn add_more_then_three_proxies_should_fail() {
 fn add_proxies_works() {
 	new_test_ext().execute_with(|| {
 		// Register a user.
-		assert_ok!(OrderbookRegistry::register_user(Origin::root(), ALICE));
+		assert_ok!(OrderbookRegistry::register_user(RawOrigin::Root.into(), ALICE));
 		// Register a proxy.
-		assert_ok!(OrderbookRegistry::register_proxy_account(Origin::signed(ALICE), BOB));
+		assert_ok!(OrderbookRegistry::register_proxy_account(RawOrigin::Signed(ALICE).into(), BOB));
 		assert_eq!(OrderbookRegistry::is_registered_proxy_account(&ALICE, BOB), true);
 	});
 }
@@ -62,10 +63,10 @@ fn add_proxies_works() {
 fn add_self_proxies_should_fail() {
 	new_test_ext().execute_with(|| {
 		// Register a user.
-		assert_ok!(OrderbookRegistry::register_user(Origin::root(), ALICE));
+		assert_ok!(OrderbookRegistry::register_user(RawOrigin::Root.into(), ALICE));
 		// Add proxies.
 		assert_noop!(
-			OrderbookRegistry::register_proxy_account(Origin::signed(ALICE), ALICE),
+			OrderbookRegistry::register_proxy_account(RawOrigin::Signed(ALICE).into(), ALICE),
 			Error::<Test>::NoSelfProxy
 		);
 	});
@@ -75,9 +76,9 @@ fn add_self_proxies_should_fail() {
 fn add_user_works() {
 	new_test_ext().execute_with(|| {
 		// Register a user.
-		assert_ok!(OrderbookRegistry::register_user(Origin::root(), ALICE));
+		assert_ok!(OrderbookRegistry::register_user(RawOrigin::Root.into(), ALICE));
 		assert_noop!(
-			OrderbookRegistry::register_user(Origin::root(), ALICE),
+			OrderbookRegistry::register_user(RawOrigin::Root.into(), ALICE),
 			Error::<Test>::AlreadyRegistered
 		);
 	});
@@ -88,7 +89,7 @@ fn delegator_must_be_a_registered_user() {
 	new_test_ext().execute_with(|| {
 		// Add a proxy from an unregistered user.
 		assert_noop!(
-			OrderbookRegistry::register_proxy_account(Origin::signed(ALICE), CHARLIE),
+			OrderbookRegistry::register_proxy_account(RawOrigin::Signed(ALICE).into(), CHARLIE),
 			Error::<Test>::NotARegisteredUserAccount
 		);
 	});
@@ -98,7 +99,7 @@ fn delegator_must_be_a_registered_user() {
 fn delete_orders_works() {
 	new_test_ext().execute_with(|| {
 		// Register a user.
-		assert_ok!(OrderbookRegistry::register_user(Origin::root(), ALICE));
+		assert_ok!(OrderbookRegistry::register_user(RawOrigin::Root.into(), ALICE));
 		// Insert orders
 		let mut orders_hash: Vec<H256> = Vec::new();
 		let order_hash: H256 = H256::from_str(
@@ -106,11 +107,11 @@ fn delete_orders_works() {
 		).unwrap();
 		orders_hash.push(order_hash);
 		assert_ok!(OrderbookRegistry::insert_orders(
-			Origin::signed(ALICE),
+			RawOrigin::Signed(ALICE).into(),
 			orders_hash.clone()
 		));
 		assert_ok!(OrderbookRegistry::delete_orders(
-			Origin::signed(ALICE),
+			RawOrigin::Signed(ALICE).into(),
 			orders_hash
 		));
 	});
@@ -120,9 +121,9 @@ fn delete_orders_works() {
 fn delete_orders_by_proxy_works() {
 	new_test_ext().execute_with(|| {
 		// Register a user.
-		assert_ok!(OrderbookRegistry::register_user(Origin::root(), ALICE));
+		assert_ok!(OrderbookRegistry::register_user(RawOrigin::Root.into(), ALICE));
 		// Register proxy
-		assert_ok!(OrderbookRegistry::register_proxy_account(Origin::signed(ALICE), BOB));
+		assert_ok!(OrderbookRegistry::register_proxy_account(RawOrigin::Signed(ALICE).into(), BOB));
 		// Insert orders
 		let mut orders_hash: Vec<H256> = Vec::new();
 		let order_hash: H256 = H256::from_str(
@@ -130,12 +131,12 @@ fn delete_orders_by_proxy_works() {
 		).unwrap();
 		orders_hash.push(order_hash);
 		assert_ok!(OrderbookRegistry::insert_orders_by_proxy(
-			Origin::signed(BOB),
+			RawOrigin::Signed(BOB).into(),
 			ALICE,
 			orders_hash.clone()
 		));
 		assert_ok!(OrderbookRegistry::delete_orders_by_proxy(
-			Origin::signed(BOB),
+			RawOrigin::Signed(BOB).into(),
 			ALICE,
 			orders_hash
 		));
@@ -146,7 +147,7 @@ fn delete_orders_by_proxy_works() {
 fn insert_orders_works() {
 	new_test_ext().execute_with(|| {
 		// Register a user.
-		assert_ok!(OrderbookRegistry::register_user(Origin::root(), ALICE));
+		assert_ok!(OrderbookRegistry::register_user(RawOrigin::Root.into(), ALICE));
 		// Insert orders
 		let mut orders_hash: Vec<H256> = Vec::new();
 		let order_hash: H256 = H256::from_str(
@@ -154,7 +155,7 @@ fn insert_orders_works() {
 		).unwrap();
 		orders_hash.push(order_hash);
 		assert_ok!(OrderbookRegistry::insert_orders(
-			Origin::signed(ALICE),
+			RawOrigin::Signed(ALICE).into(),
 			orders_hash
 		));
 	});
@@ -164,9 +165,9 @@ fn insert_orders_works() {
 fn insert_orders_by_proxy_works() {
 	new_test_ext().execute_with(|| {
 		// Register a user.
-		assert_ok!(OrderbookRegistry::register_user(Origin::root(), ALICE));
+		assert_ok!(OrderbookRegistry::register_user(RawOrigin::Root.into(), ALICE));
 		// Register proxy
-		assert_ok!(OrderbookRegistry::register_proxy_account(Origin::signed(ALICE), BOB));
+		assert_ok!(OrderbookRegistry::register_proxy_account(RawOrigin::Signed(ALICE).into(), BOB));
 		// Insert orders
 		let mut orders_hash: Vec<H256> = Vec::new();
 		let order_hash: H256 = H256::from_str(
@@ -174,7 +175,7 @@ fn insert_orders_by_proxy_works() {
 		).unwrap();
 		orders_hash.push(order_hash);
 		assert_ok!(OrderbookRegistry::insert_orders_by_proxy(
-			Origin::signed(BOB),
+			RawOrigin::Signed(BOB).into(),
 			ALICE,
 			orders_hash
 		));
@@ -185,7 +186,7 @@ fn insert_orders_by_proxy_works() {
 fn insert_same_orders_should_fail() {
 	new_test_ext().execute_with(|| {
 		// Register a user.
-		assert_ok!(OrderbookRegistry::register_user(Origin::root(), ALICE));
+		assert_ok!(OrderbookRegistry::register_user(RawOrigin::Root.into(), ALICE));
 		// Insert orders
 		let mut orders_hash: Vec<H256> = Vec::new();
 		let order_hash: H256 = H256::from_str(
@@ -193,11 +194,11 @@ fn insert_same_orders_should_fail() {
 		).unwrap();
 		orders_hash.push(order_hash);
 		assert_ok!(OrderbookRegistry::insert_orders(
-			Origin::signed(ALICE),
+			RawOrigin::Signed(ALICE).into(),
 			orders_hash.clone()
 		));
 		assert_noop!(OrderbookRegistry::insert_orders(
-			Origin::signed(ALICE),
+			RawOrigin::Signed(ALICE).into(),
 			orders_hash),
 			Error::<Test>::OrderAlreadyInserted
 		);
@@ -208,9 +209,9 @@ fn insert_same_orders_should_fail() {
 fn insert_same_orders_by_proxy_works() {
 	new_test_ext().execute_with(|| {
 		// Register a user.
-		assert_ok!(OrderbookRegistry::register_user(Origin::root(), ALICE));
+		assert_ok!(OrderbookRegistry::register_user(RawOrigin::Root.into(), ALICE));
 		// Register proxy
-		assert_ok!(OrderbookRegistry::register_proxy_account(Origin::signed(ALICE), BOB));
+		assert_ok!(OrderbookRegistry::register_proxy_account(RawOrigin::Signed(ALICE).into(), BOB));
 		// Insert orders
 		let mut orders_hash: Vec<H256> = Vec::new();
 		let order_hash: H256 = H256::from_str(
@@ -218,12 +219,12 @@ fn insert_same_orders_by_proxy_works() {
 		).unwrap();
 		orders_hash.push(order_hash);
 		assert_ok!(OrderbookRegistry::insert_orders_by_proxy(
-			Origin::signed(BOB),
+			RawOrigin::Signed(BOB).into(),
 			ALICE,
 			orders_hash.clone()
 		));
 		assert_noop!(OrderbookRegistry::insert_orders_by_proxy(
-			Origin::signed(BOB),
+			RawOrigin::Signed(BOB).into(),
 			ALICE,
 			orders_hash),
 			Error::<Test>::OrderAlreadyInserted
@@ -236,7 +237,7 @@ fn registered_matching_engine_operator_must_be_added_by_root() {
 	new_test_ext().execute_with(|| {
 		// Register a matching_engine operator.
 		assert_noop!(
-			OrderbookRegistry::register_matching_engine_operator(Origin::signed(ALICE), BOB), 
+			OrderbookRegistry::register_matching_engine_operator(RawOrigin::Signed(ALICE).into(), BOB), 
 			BadOrigin
 		);
 	});
@@ -246,7 +247,7 @@ fn registered_matching_engine_operator_must_be_added_by_root() {
 fn registered_user_must_be_added_by_root() {
 	new_test_ext().execute_with(|| {
 		// Register a user.
-		assert_noop!(OrderbookRegistry::register_user(Origin::signed(ALICE), BOB), BadOrigin);
+		assert_noop!(OrderbookRegistry::register_user(RawOrigin::Signed(ALICE).into(), BOB), BadOrigin);
 	});
 }
 
@@ -254,12 +255,12 @@ fn registered_user_must_be_added_by_root() {
 fn remove_proxies_works() {
 	new_test_ext().execute_with(|| {
 		// Register a user.
-		assert_ok!(OrderbookRegistry::register_user(Origin::root(), ALICE));
+		assert_ok!(OrderbookRegistry::register_user(RawOrigin::Root.into(), ALICE));
 		// Register a proxy.
-		assert_ok!(OrderbookRegistry::register_proxy_account(Origin::signed(ALICE), BOB));
+		assert_ok!(OrderbookRegistry::register_proxy_account(RawOrigin::Signed(ALICE).into(), BOB));
 		assert_eq!(OrderbookRegistry::is_registered_proxy_account(&ALICE, BOB), true);
 		// Remove proxies.
-		assert_ok!(OrderbookRegistry::unregister_proxy_account(Origin::signed(ALICE), BOB));
+		assert_ok!(OrderbookRegistry::unregister_proxy_account(RawOrigin::Signed(ALICE).into(), BOB));
 		assert_eq!(OrderbookRegistry::is_registered_proxy_account(&ALICE, BOB), false);
 	});
 }

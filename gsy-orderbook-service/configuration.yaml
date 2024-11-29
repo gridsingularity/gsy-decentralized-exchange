@@ -1,0 +1,9 @@
+application_host: "localhost"
+application_port: "8080"
+database_host: "localhost"
+database_username: "gsy"
+database_password: "gsy"
+database_name: "orderbook"
+database_url_scheme: "mongodb"
+node_url: "localhost:9944"
+scheduler_interval: 1000

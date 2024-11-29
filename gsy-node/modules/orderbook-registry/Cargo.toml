@@ -17,6 +17,8 @@ codec = { workspace = true }
 scale-info = { workspace = true }
 frame-support = { workspace = true }
 frame-system = { workspace = true }
+pallet-balances = { workspace = true }
+pallet-timestamp = { workspace = true }
 sp-runtime = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.9.0", default-features = false }
 gsy-primitives = { workspace = true }
 gsy-collateral = { version = '0.0.2', default-features = false, path = '../gsy-collateral' }

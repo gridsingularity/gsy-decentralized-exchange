@@ -20,20 +20,20 @@
 //!
 //! A trades settlement system is a system that manages the settlement of  the trades executed
 //! within the GSy-Decentralized Energy Exchange. This module allows the registered matching engine
-//! (Matching Engine) to add the trade structs for the orders inserted by the users into the GSy-Decentralized
-//! Energy Exchange. Moreover it verify the correctness of the matched trades and update the orders
-//! status and the involved structures after the trade execution.
+//! (Matching Engine) to add the trade structs for the orders inserted by the users into the
+//! GSy-Decentralized Energy Exchange. Moreover, it verifies the correctness of the matched trades
+//! and updates the orders status and the involved structures after the trade execution.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
 pub use crate::weights::TradeSettlementWeightInfo;
 pub use pallet::*;
 
-// #[cfg(test)]
-// mod mock;
-//
-// #[cfg(test)]
-// mod tests;
+#[cfg(test)]
+mod mock;
+
+#[cfg(test)]
+mod tests;
 
 #[cfg(feature = "runtime-benchmarks")]
 mod benchmarking;
