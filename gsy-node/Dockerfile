@@ -11,17 +11,17 @@ RUN apt-get update && \
 RUN rustup default stable && \
     rustup update && \
     rustup update nightly && \
-    rustup component add rust-src --toolchain stable-x86_64-unknown-linux-gnu && \
-    rustup target add wasm32-unknown-unknown --toolchain stable-x86_64-unknown-linux-gnu
+    rustup component add rust-src && \
+    rustup target add wasm32-unknown-unknown
 
 ADD gsy-node /var/www/gsy-node/
 ADD primitives /var/www/primitives/
 
 WORKDIR /var/www/gsy-node/
 
-ENV ORDERBOOK_SERVICE_URL=gsy-orderbook:8080
+ENV ORDERBOOK_SERVICE_URL=http://gsy-orderbook:8080
 RUN cargo build --release
 
 EXPOSE 9944
 
-ENTRYPOINT ["./target/release/gsy-node", "--dev", "--rpc-external", "--ws-external"]
+ENTRYPOINT ["./target/release/gsy-node", "--dev", "--rpc-external"]
