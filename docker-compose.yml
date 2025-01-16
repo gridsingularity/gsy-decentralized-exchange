@@ -3,7 +3,6 @@ services:
     container_name: gsy-node
     build:
       dockerfile: ./gsy-node/Dockerfile
-    #image: gsy-node:latest
     depends_on:
       gsy-matching-engine:
         condition: service_started
