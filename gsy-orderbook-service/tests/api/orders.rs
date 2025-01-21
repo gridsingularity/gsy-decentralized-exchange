@@ -1,6 +1,6 @@
 use crate::helpers::init_app;
 use actix_web::web;
-use gsy_orderbook_service::schema::{Bid, Order, OrderComponent, OrderStatus};
+use gsy_orderbook_service::db::schema::{Bid, Order, OrderComponent, OrderStatus};
 use mongodb::bson::Bson;
 use std::collections::HashMap;
 
@@ -12,13 +12,13 @@ async fn subscribe_return_a_200_for_valid_form_data() {
     let bid = Bid {
         buyer: "Gigi".to_string(),
         nonce: 1,
-        area_uuid: 1,
-        market_uuid: 1,
-        time_slot: 1,
-        creation_time: 1677453190,
         bid_component: OrderComponent {
             energy: 100,
-            energy_rate: 10
+            energy_rate: 10,
+            area_uuid: 1,
+            market_uuid: 1,
+            time_slot: 1,
+            creation_time: 1677453190,
         },
     };
     let body = vec![Order::Bid(bid.clone())];

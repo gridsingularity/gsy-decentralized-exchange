@@ -3,8 +3,8 @@ use anyhow::Result;
 use mongodb::options::ClientOptions;
 use mongodb::Database;
 use std::ops::Deref;
-use crate::db::order_service::{init, OrderService};
-use crate::db::trade_service::TradeService;
+use crate::db::order_service::{init_orders, OrderService};
+use crate::db::trade_service::{init_trades, TradeService};
 
 pub type DbRef = web::Data<DatabaseWrapper>;
 
@@ -40,6 +40,7 @@ pub async fn init_database(db_url: String, db_name: String) -> Result<DatabaseWr
 
 async fn preload(db: &DatabaseWrapper) -> Result<()> {
     // put initialize here
-    init(db).await?;
+    init_orders(db).await?;
+    init_trades(db).await?;
     Ok(())
 }

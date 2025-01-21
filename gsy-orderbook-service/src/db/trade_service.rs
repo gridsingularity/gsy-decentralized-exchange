@@ -1,17 +1,16 @@
 use crate::db::DatabaseWrapper;
-use crate::db::schema::{TradeSchema, TradeStatus};
+use crate::db::schema::{TradeSchema};
 use anyhow::Result;
 use futures::StreamExt;
 use mongodb::bson::{doc, Bson};
 use mongodb::options::IndexOptions;
-use mongodb::results::UpdateResult;
-use mongodb::{bson, Collection, IndexModel};
+use mongodb::{Collection, IndexModel};
 use std::collections::HashMap;
 use std::ops::Deref;
 
 
 /// this function will call after connected to database
-pub async fn init(db: &DatabaseWrapper) -> Result<()> {
+pub async fn init_trades(db: &DatabaseWrapper) -> Result<()> {
     // create index in this block
 
     let controller = db.trades();
@@ -19,7 +18,7 @@ pub async fn init(db: &DatabaseWrapper) -> Result<()> {
         .keys(doc! {"_id":1})
         .options(IndexOptions::builder().build())
         .build();
-    controller.create_index(index, None).await?;
+    controller.create_index(index).await?;
     Ok(())
 }
 
@@ -30,7 +29,7 @@ pub struct TradeService(pub Collection<TradeSchema>);
 impl TradeService {
     #[tracing::instrument(name = "Fetching trades from database", skip(self))]
     pub async fn get_all_trades(&self) -> Result<Vec<TradeSchema>> {
-        let mut cursor = self.0.find(doc! {}, None).await.unwrap();
+        let mut cursor = self.0.find(doc! {}).await.unwrap();
         let mut result: Vec<TradeSchema> = Vec::new();
         while let Some(doc) = cursor.next().await {
             match doc {
@@ -53,7 +52,7 @@ impl TradeService {
         )
     )]
     pub async fn insert_trades(&self, trade_schema: Vec<TradeSchema>) -> Result<HashMap<usize, Bson>> {
-        match self.0.insert_many(trade_schema, None).await {
+        match self.0.insert_many(trade_schema).await {
             Ok(db_result) => Ok(db_result.inserted_ids),
             Err(e) => {
                 tracing::error!("Failed to execute query: {:?}", e);
