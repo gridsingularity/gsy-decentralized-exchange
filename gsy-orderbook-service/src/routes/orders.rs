@@ -3,7 +3,7 @@ use subxt::utils::AccountId32;
 use subxt::ext::sp_core::H256;
 
 use crate::db::DbRef;
-use crate::schema::OrderSchema;
+use crate::db::schema::{OrderSchema, TradeSchema};
 use crate::schema_insert_order::OrderSchema as OtherOrderSchema;
 use codec::Decode;
 
@@ -38,5 +38,26 @@ pub async fn get_orders(db: DbRef) -> impl Responder {
             tracing::error!("Failed to execute query: {:?}", e);
             HttpResponse::InternalServerError().finish()
         },
+    }
+}
+
+
+#[tracing::instrument(
+    name = "Adding new trades",
+    skip(trades, db),
+    fields(
+    trades = ?trades
+    )
+)]
+pub async fn post_trades(
+    trades: Json<Vec<u8>>,
+    db: DbRef,
+) -> impl Responder {
+    let transcode: Vec<TradeSchema> = Vec::<TradeSchema>::decode(&mut &trades[..]).unwrap();
+    let serialize_trades = serde_json::to_vec(&transcode).unwrap();
+    let deserialize_to_trade_struct: Vec<TradeSchema> = serde_json::from_slice(&serialize_trades).unwrap();
+    match db.get_ref().trades().insert_trades(deserialize_to_trade_struct).await {
+        Ok(ids) => HttpResponse::Ok().json(ids),
+        Err(_) => HttpResponse::InternalServerError().finish()
     }
 }

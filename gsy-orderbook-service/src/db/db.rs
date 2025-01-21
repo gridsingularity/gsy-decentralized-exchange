@@ -3,7 +3,8 @@ use anyhow::Result;
 use mongodb::options::ClientOptions;
 use mongodb::Database;
 use std::ops::Deref;
-use crate::order_service::{init, OrderService};
+use crate::db::order_service::{init, OrderService};
+use crate::db::trade_service::TradeService;
 
 pub type DbRef = web::Data<DatabaseWrapper>;
 
@@ -15,6 +16,10 @@ impl DatabaseWrapper {
     pub fn orders(&self) -> OrderService {
         self.into()
     }
+    pub fn trades(&self) -> TradeService {
+        self.into()
+    }
+
 }
 
 impl Deref for DatabaseWrapper {

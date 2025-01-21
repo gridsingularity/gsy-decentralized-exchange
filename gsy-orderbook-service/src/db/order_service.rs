@@ -1,5 +1,5 @@
 use crate::db::DatabaseWrapper;
-use crate::schema::{OrderSchema, OrderStatus};
+use crate::db::schema::{OrderSchema, OrderStatus};
 use anyhow::Result;
 use futures::StreamExt;
 use mongodb::bson::{doc, Bson};
