@@ -142,6 +142,8 @@ pub mod pallet {
 		/// New Order added to the orders book \[sender, hash\].
 		NewOrderInserted(Order<T::AccountId>, T::Hash),
 		NewTradeInserted(Trade<T::AccountId, T::Hash>, T::Hash),
+		/// Order has been deleted from the book.
+		TradeRemoved(T::Hash),
 	}
 
 	#[pallet::error]
@@ -152,6 +154,7 @@ pub mod pallet {
 		NoLocalAcctForSigning,
 		NonceCheckOverflow,
 		OrderIsNotRegistered,
+		TradeIsNotRegistered,
 		NotARootUser,
 		InsufficientCollateral,
 		InvalidNonce,
@@ -412,6 +415,7 @@ pub mod pallet {
 			let mut orders = Vec::<Order<T::AccountId>>::new();
 
 			let mut trades = Vec::<Trade<T::AccountId, T::Hash>>::new();
+			let mut trade_hashes = Vec::<T::Hash>::new();
 
 			for (order_ref, order) in <OrdersForWorker<T>>::iter() {
 				match &order {
@@ -461,6 +465,7 @@ pub mod pallet {
 							&trade
 						);
 						trades.push(trade);
+						trade_hashes.push(trade_hash);
 					},
 				}
 			}
@@ -493,6 +498,11 @@ pub mod pallet {
 					log::warn!(
 						"Offchain worker failed to send trades to the orderbook service, HTTP \
 						response code {}", post_trades_status_code)
+				}
+				else {
+					for trade_hash in trade_hashes {
+						Self::delete_trade(trade_hash).unwrap();
+					}
 				}
 			}
 		}
@@ -652,7 +662,7 @@ pub mod pallet {
 			user_nonce
 		}
 
-		/// Remove a order from the orders book.
+		/// Remove an order from the orders book.
 		///
 		/// Parameters
 		/// `order_reference`: The order reference.
@@ -663,6 +673,27 @@ pub mod pallet {
 			<OrdersForWorker<T>>::remove(order_reference.clone());
 			Self::deposit_event(Event::OrderRemoved(order_reference.user_id, order_reference.hash));
 			Ok(())
+		}
+
+		/// Remove a trade from the offchain worker storage.
+		///
+		/// Parameters
+		/// `trade_hash`: The hash of the trade object.
+		pub fn delete_trade(
+			trade_hash: T::Hash,
+		) -> DispatchResult {
+			ensure!(Self::is_trade_registered(&trade_hash), <Error<T>>::TradeIsNotRegistered);
+			<TradesForWorker<T>>::remove(trade_hash);
+			Self::deposit_event(Event::TradeRemoved(trade_hash));
+			Ok(())
+		}
+
+		/// Helper function to check if a given order has already been registered.
+		///
+		/// Parameters
+		/// `trade_hash`: The hash of the trade.
+		pub fn is_trade_registered(trade_hash: &T::Hash) -> bool {
+			<TradesForWorker<T>>::contains_key(trade_hash)
 		}
 
 		/// Helper function to check if a given order has already been registered.
