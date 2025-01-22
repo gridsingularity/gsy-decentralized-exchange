@@ -5,6 +5,8 @@ use mongodb::Database;
 use std::ops::Deref;
 use crate::db::order_service::{init_orders, OrderService};
 use crate::db::trade_service::{init_trades, TradeService};
+use crate::db::measurements_service::{init_measurements, MeasurementsService};
+use crate::db::forecasts_service::{init_forecasts, ForecastsService};
 
 pub type DbRef = web::Data<DatabaseWrapper>;
 
@@ -20,6 +22,13 @@ impl DatabaseWrapper {
         self.into()
     }
 
+    pub fn measurements(&self) -> MeasurementsService {
+        self.into()
+    }
+
+    pub fn forecasts(&self) -> ForecastsService {
+        self.into()
+    }
 }
 
 impl Deref for DatabaseWrapper {
@@ -42,5 +51,7 @@ async fn preload(db: &DatabaseWrapper) -> Result<()> {
     // put initialize here
     init_orders(db).await?;
     init_trades(db).await?;
+    init_forecasts(db).await?;
+    init_measurements(db).await?;
     Ok(())
 }

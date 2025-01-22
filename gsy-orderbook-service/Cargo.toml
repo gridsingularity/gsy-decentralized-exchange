@@ -16,7 +16,7 @@ name = "gsy-orderbook-service"
 [dependencies]
 anyhow = "1"
 actix-web = "4.5.1"
-chrono = "0.4.38"
+chrono = { version = "0.4.38", features = ["serde"] }
 codec = { package = "parity-scale-codec", version = "3.6.9", default-features = false, features = ["derive", "full", "bit-vec"] }
 config = "0.15.6"
 dotenv = "0"

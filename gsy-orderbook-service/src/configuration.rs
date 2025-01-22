@@ -1,3 +1,5 @@
+use config::{Config, File, ConfigError};
+
 #[derive(serde::Deserialize)]
 pub struct Settings {
     pub database_host: String,
@@ -26,15 +28,13 @@ impl Settings {
     }
 }
 
-pub fn get_configuration() -> Result<Settings, config::ConfigError> {
+pub fn get_configuration() -> Result<Settings, ConfigError> {
     match envy::from_env::<Settings>() {
         Ok(settings) => Ok(settings),
         Err(_) => {
-            return config::Config::builder()
-                .add_source(config::File::from_str("configuration", config::FileFormat::Yaml))
-                .build().unwrap().try_deserialize();
-            // settings.merge(config::File::with_name("configuration"))?;
-            // settings.try_into()
+            Config::builder()
+                .add_source(File::with_name("configuration.yaml"))
+                .build()?.try_deserialize()
         }
     }
 }
