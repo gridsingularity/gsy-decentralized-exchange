@@ -16,32 +16,37 @@ pub enum TradeStatus {
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub struct TradeParameters {
-    selected_energy: u64,
-    energy_rate: u64,
-    trade_uuid: H256,
+    pub selected_energy: f64,
+    pub energy_rate: f64,
+    pub trade_uuid: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub struct TradeSchema {
-    pub _id: H256,
+    pub _id: String,
     pub status: TradeStatus,
-    seller: String,
-    buyer: String,
-    market_id: u64,
-    time_slot: u64,
-    trade_uuid: H256,
-    creation_time: u64,
-    offer: Offer,
-    offer_hash: H256,
-    bid: Bid,
-    bid_hash: H256,
-    residual_offer: Offer,
-    residual_bid: Bid,
-    parameters: TradeParameters,
+    pub seller: String,
+    pub buyer: String,
+    pub market_id: String,
+    pub time_slot: u64,
+    pub trade_uuid: String,
+    pub creation_time: u64,
+    pub offer: Offer,
+    pub offer_hash: String,
+    pub bid: Bid,
+    pub bid_hash: String,
+    pub residual_offer: Option<Offer>,
+    pub residual_bid: Option<Bid>,
+    pub parameters: TradeParameters,
 }
 
 impl TradeSchema {
     pub fn hash(&self) -> H256 {
         BlakeTwo256::hash_of(self)
     }
+
+    pub fn eq(&self, other: &Self) -> bool {
+        self._id == other._id
+    }
+
 }
