@@ -1,4 +1,4 @@
-use scale_info::prelude::string::String;
+use scale_info::prelude::{format, string::String};
 use core::option_env;
 use codec::alloc::string::ToString;
 
@@ -10,13 +10,19 @@ pub struct OrderBookServiceURL {
 impl Default for OrderBookServiceURL{
 	fn default() -> Self {
 		// Set the environment variable "URL" for OrderBook_Service
-		let orderbook_env_var = option_env!("ORDERBOOK_SERVICE_URL");
-		if orderbook_env_var.is_none() {
-			OrderBookServiceURL{ url: "http://localhost:8080/orders".to_string() }
-		}
-		else {
-			OrderBookServiceURL{ url: orderbook_env_var.unwrap().to_string() }
-		}
-
+		let base_url = option_env!("ORDERBOOK_SERVICE_URL")
+            .unwrap_or("http://localhost:8080");
+        
+        OrderBookServiceURL { url: base_url.to_string() }
 	}
+}
+
+impl OrderBookServiceURL {
+    pub fn with_endpoint(&self, endpoint: &str) -> String {
+        format!(
+            "{}/{}",
+            self.url.trim_end_matches('/'),
+            endpoint.trim_start_matches('/')
+        )
+    }
 }

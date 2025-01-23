@@ -445,8 +445,9 @@ pub mod pallet {
 			// code the duration to 2s to complete the external call to the database to post the
 			// orders.
 			let orderbook_service_url = OrderBookServiceURL::default();
+			let full_url = orderbook_service_url.with_endpoint("orders");
 			let deadline = sp_io::offchain::timestamp().add(Duration::from_millis(2_000));
-			let request = Request::post(&orderbook_service_url.url, vec![&request_body]);
+			let request = Request::post(&full_url, vec![&request_body]);
 			let pending = request
 				.deadline(deadline)
 				.add_header("Content-Type", "application/json")
