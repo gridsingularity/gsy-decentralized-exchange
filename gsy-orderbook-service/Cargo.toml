@@ -14,6 +14,7 @@ name = "gsy-orderbook-service"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+gsy-offchain-primitives = { default-features = false, path = "../offchain-primitives", version = "0.1.0" }
 anyhow = "1"
 actix-web = "4.5.1"
 chrono = { version = "0.4.38", features = ["serde"] }

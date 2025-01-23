@@ -1,5 +1,5 @@
 use crate::db::DatabaseWrapper;
-use crate::db::schema::MeasurementSchema;
+use gsy_offchain_primitives::db_api_schema::profiles::MeasurementSchema;
 use anyhow::Result;
 use futures::StreamExt;
 use mongodb::bson::{doc, Bson};

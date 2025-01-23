@@ -1,8 +1,6 @@
 use crate::helpers::init_app;
 use actix_web::web;
-use gsy_orderbook_service::db::schema::{ForecastSchema, MeasurementSchema};
-use mongodb::bson::Bson;
-use std::collections::HashMap;
+use gsy_offchain_primitives::db_api_schema::profiles::{MeasurementSchema, ForecastSchema};
 
 #[tokio::test]
 async fn post_measurements_succeeds() {
@@ -11,7 +9,7 @@ async fn post_measurements_succeeds() {
     let measurement = MeasurementSchema {
         area_uuid: "my_uuid".to_string(),
         community_uuid: "my_community".to_string(),
-        energy_kWh: 12.21,
+        energy_kwh: 12.21,
         time_slot: 1232123213,
         creation_time: 1232123213,
     };
@@ -47,7 +45,7 @@ async fn post_measurements_fails_with_incorrect_json() {
     let address = app.address;
 
     let client = reqwest::Client::new();
-    let test_cases = vec![("area_uuid", "err"), ("energy_kWh", "err")];
+    let test_cases = vec![("area_uuid", "err"), ("energy_kwh", "err")];
 
     for (invalid_body, error_message) in test_cases {
         let resp = client
@@ -73,7 +71,7 @@ async fn post_forecasts_succeeds() {
     let forecast = ForecastSchema {
         area_uuid: "my_uuid".to_string(),
         community_uuid: "my_uuid".to_string(),
-        energy_kWh: 12.21,
+        energy_kwh: 12.21,
         time_slot: 1232123213,
         creation_time: 1232123213,
         confidence: 0.5
@@ -110,7 +108,7 @@ async fn post_forecasts_fails_with_incorrect_json() {
     let address = app.address;
 
     let client = reqwest::Client::new();
-    let test_cases = vec![("area_uuid", "err"), ("energy_kWh", "err")];
+    let test_cases = vec![("area_uuid", "err"), ("energy_kwh", "err")];
 
     for (invalid_body, error_message) in test_cases {
         let resp = client

@@ -1,5 +1,5 @@
 use crate::db::DbRef;
-use crate::db::schema::OrderStatus;
+use gsy_offchain_primitives::db_api_schema::orders::OrderStatus;
 use chrono::{Local, Utc};
 use tokio_schedule::{every, Job};
 

@@ -3,7 +3,8 @@ use subxt::utils::AccountId32;
 use subxt::ext::sp_core::H256;
 
 use crate::db::DbRef;
-use crate::db::schema::{OrderSchema, TradeSchema};
+use gsy_offchain_primitives::db_api_schema::orders::OrderSchema;
+use gsy_offchain_primitives::db_api_schema::trades::TradeSchema;
 use crate::schema_insert_order::OrderSchema as OtherOrderSchema;
 use codec::Decode;
 

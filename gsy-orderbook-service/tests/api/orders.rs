@@ -1,6 +1,6 @@
 use crate::helpers::init_app;
 use actix_web::web;
-use gsy_orderbook_service::db::schema::{Bid, Order, OrderComponent, OrderStatus};
+use gsy_offchain_primitives::db_api_schema::orders::{Order, OrderComponent, OrderStatus, Bid};
 use mongodb::bson::Bson;
 use std::collections::HashMap;
 
