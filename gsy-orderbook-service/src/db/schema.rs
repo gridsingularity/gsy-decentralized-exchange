@@ -123,7 +123,7 @@ pub struct MeasurementSchema {
     pub community_uuid: String,
     pub time_slot: u64,
     pub creation_time: u64,
-    pub energy_kWh: f64
+    pub energy_kwh: f64
 }
 
 
@@ -133,6 +133,6 @@ pub struct ForecastSchema {
     pub community_uuid: String,
     pub time_slot: u64,
     pub creation_time: u64,
-    pub energy_kWh: f64,
+    pub energy_kwh: f64,
     pub confidence: f64
 }
