@@ -1,6 +1,6 @@
 use actix_web::{web::Json, HttpResponse, Responder, web::Query};
 use crate::db::DbRef;
-use crate::db::schema::{MeasurementSchema, ForecastSchema};
+use gsy_offchain_primitives::db_api_schema::profiles::{MeasurementSchema, ForecastSchema};
 use serde::Deserialize;
 
 #[derive(Deserialize)]

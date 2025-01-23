@@ -1,5 +1,5 @@
 use crate::db::DatabaseWrapper;
-use crate::db::schema::ForecastSchema;
+use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
 use anyhow::Result;
 use futures::StreamExt;
 use mongodb::bson::{doc, Bson};

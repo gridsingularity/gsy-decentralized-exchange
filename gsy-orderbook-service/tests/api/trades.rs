@@ -1,11 +1,11 @@
 use crate::helpers::init_app;
 use actix_web::web;
-use gsy_offchain_primitives::db_api_schema::orders::{Order, OrderComponent, OrderStatus, Bid};
-use mongodb::bson::Bson;
-use std::collections::HashMap;
+use gsy_offchain_primitives::db_api_schema::orders::{Offer, Bid, Order, OrderComponent};
+use gsy_offchain_primitives::db_api_schema::trades::{TradeSchema, TradeStatus, TradeParameters};
+use subxt::ext::sp_core::H256;
 
 #[tokio::test]
-async fn subscribe_return_a_200_for_valid_form_data() {
+async fn post_trade_request_writes_trades_to_the_db() {
     let app = init_app().await;
     let address = app.address;
 
@@ -21,44 +21,54 @@ async fn subscribe_return_a_200_for_valid_form_data() {
             creation_time: 1677453190,
         },
     };
-    let body = vec![Order::Bid(bid.clone())];
+    let trade_uuid = H256::random();
+    let trade1 = TradeSchema {
+        _id: H256::random(),
+        status: TradeStatus::Open,
+        seller: "seller".to_string(),
+        buyer: "buyer".to_string(),
+        market_id: "market".to_string(),
+        time_slot: 123456123,
+        trade_uuid,
+        creation_time: 123456123,
+        offer: Offer,
+        offer_hash: H256::random(),
+        bid,
+        bid_hash: H256::random(),
+        residual_offer: None,
+        residual_bid: None,
+        parameters: TradeParameters {
+            selected_energy: 14, 
+            energy_rate: 0.3, 
+            trade_uuid
+        },
+    }
+    };
+
+    let body = vec![trade1.clone()];
 
     let client = reqwest::Client::new();
     let resp = client
-        .post(&format!("{}/orders", &address))
+        .post(&format!("{}/trades", &address))
         .header("Content-Type", "application/json")
         .json(&body)
         .send()
-        .await
-        .expect("Failed to execute request.");
+        .await;
 
-    let status = resp.status();
-    let response = resp.json::<HashMap<usize, Bson>>().await.unwrap();
+    let status = resp.unwrap().status();
 
     let db = web::Data::new(app.db_wrapper);
-    let order_id = response.get(&0).unwrap();
     let saved = db
         .get_ref()
-        .orders()
-        .get_order_by_id(order_id)
+        .trades()
+        .get_all_trades()
         .await
         .unwrap();
+    
     assert_eq!(200, status.as_u16());
-    assert_eq!(saved.unwrap().order, Order::Bid(bid));
-    let update_result = db
-        .get_ref()
-        .orders()
-        .update_order_status_by_id(order_id, OrderStatus::Executed)
-        .await
-        .unwrap();
-    assert_eq!(update_result.modified_count, 1);
-    let updated_order = db
-        .get_ref()
-        .orders()
-        .get_order_by_id(order_id)
-        .await
-        .unwrap();
-    assert_eq!(updated_order.unwrap().status, OrderStatus::Executed);
+    
+    let result_trade = saved.first().unwrap();
+    assert_eq!(*result_trade, trade1);
 }
 
 #[tokio::test]

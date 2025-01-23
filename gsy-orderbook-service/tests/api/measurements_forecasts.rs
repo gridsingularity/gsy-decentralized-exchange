@@ -1,6 +1,6 @@
 use crate::helpers::init_app;
 use actix_web::web;
-use gsy_orderbook_service::db::schema::{ForecastSchema, MeasurementSchema};
+use gsy_offchain_primitives::db_api_schema::profiles::{MeasurementSchema, ForecastSchema};
 
 #[tokio::test]
 async fn post_measurements_succeeds() {

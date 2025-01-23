@@ -1,10 +1,10 @@
 use crate::db::DatabaseWrapper;
-use crate::db::schema::{TradeSchema};
+use gsy_offchain_primitives::db_api_schema::trades::TradeSchema;
 use anyhow::Result;
 use futures::StreamExt;
 use mongodb::bson::{doc, Bson};
 use mongodb::options::IndexOptions;
-use mongodb::{Collection, IndexModel};
+use mongodb::{Collection, Cursor, IndexModel};
 use std::collections::HashMap;
 use std::ops::Deref;
 
@@ -41,14 +41,14 @@ impl TradeService {
                 }
             }
         }
-        return Ok(result);
+        Ok(result)
     }
 
     #[tracing::instrument(
         name = "Saving trades to database",
         skip(self, trade_schema),
         fields(
-        trade_schema = ?trade_schema
+            trade_schema = ?trade_schema
         )
     )]
     pub async fn insert_trades(&self, trade_schema: Vec<TradeSchema>) -> Result<HashMap<usize, Bson>> {
@@ -61,22 +61,48 @@ impl TradeService {
         }
     }
 
-    // TODO: Filter trades by market id
-    // #[tracing::instrument(name = "Fetching trades by market id from database", skip(self, id))]
-    // pub async fn get_trades_by_market_id(&self, id: &Bson) -> Result<Option<TradeSchema>> {
-    //     match self.0.find(doc! {"_id": id}, None).await {
-    //         Ok(doc) => Ok(doc),
-    //         Err(e) => {
-    //             tracing::error!("Failed to execute query: {:?}", e);
-    //             Err(anyhow::Error::from(e))
-    //         }
-    //     }
-    // }
+    async fn create_vector_from_cursor(&self, mut cursor: Cursor<TradeSchema>) -> Result<Vec<TradeSchema>> {
+        let mut result: Vec<TradeSchema> = Vec::new();
+        while let Some(doc) = cursor.next().await {
+            match doc {
+                Ok(document) => {
+                    result.push(document);
+                }
+                _ => {
+                    break;
+                }
+            }
+        }
+        Ok(result)
+    }
+
+    #[tracing::instrument(
+        name = "Fetching trades by market id from database", skip(self))]
+    pub async fn filter_trades(
+            &self,
+            market_id: Option<String>,
+            start_time: Option<u32>,
+            end_time: Option<u32>) -> Result<Vec<TradeSchema>> {
+        let mut filter_params = doc! {};
+        if market_id.is_some() { filter_params.insert("market_id", market_id.unwrap()); }
+        if start_time.is_some() { filter_params.insert("time_slot", doc! {"$gte": start_time.unwrap()} ); }
+        if end_time.is_some() { filter_params.insert("market_id", doc! {"$lte": start_time.unwrap()}); }
+
+        match self.0.find(filter_params).await {
+            Ok(cursor) => {
+                self.create_vector_from_cursor(cursor).await
+            },
+            Err(e) => {
+                tracing::error!("Failed to execute query: {:?}", e);
+                Err(anyhow::Error::from(e))
+            }
+        }
+    }
 }
 
 impl From<&DatabaseWrapper> for TradeService {
     fn from(db: &DatabaseWrapper) -> Self {
-        TradeService(db.collection("orders"))
+        TradeService(db.collection("trades"))
     }
 }
 

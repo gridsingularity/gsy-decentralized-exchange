@@ -1,5 +1,3 @@
-version: "3.2"
-
 services:
   gsy-node:
     container_name: gsy-node

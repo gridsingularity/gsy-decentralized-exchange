@@ -1,5 +1,5 @@
 use crate::db::DbRef;
-use crate::db::schema::OrderStatus;
+use gsy_offchain_primitives::db_api_schema::orders::OrderStatus;
 use anyhow::{Error, Result};
 use mongodb::bson;
 use subxt::{
