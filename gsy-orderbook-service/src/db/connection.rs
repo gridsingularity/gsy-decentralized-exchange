@@ -21,11 +21,9 @@ impl DatabaseWrapper {
     pub fn trades(&self) -> TradeService {
         self.into()
     }
-
     pub fn measurements(&self) -> MeasurementsService {
         self.into()
     }
-
     pub fn forecasts(&self) -> ForecastsService {
         self.into()
     }

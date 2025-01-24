@@ -1,11 +1,7 @@
 use actix_web::{web::Json, HttpResponse, Responder};
-use subxt::ext::sp_core::H256;
-use subxt::utils::AccountId32;
-
 use crate::db::DbRef;
-use crate::schema_insert_order::OrderSchema as OtherOrderSchema;
-use codec::Decode;
-use gsy_offchain_primitives::db_api_schema::orders::OrderSchema;
+use gsy_offchain_primitives::node_to_api_schema::insert_order::convert_gsy_node_order_schema_to_db_schema;
+
 
 #[tracing::instrument(
     name = "Adding new orders",
@@ -18,10 +14,8 @@ pub async fn post_orders(
     orders: Json<Vec<u8>>,
     db: DbRef,
 ) -> impl Responder {
-    let transcode: Vec<OtherOrderSchema<AccountId32, H256>> = Vec::<OtherOrderSchema<AccountId32, H256>>::decode(&mut &orders[..]).unwrap();
-    let serialize_other_order = serde_json::to_vec(&transcode).unwrap();
-    let deserialize_to_order_struct: Vec<OrderSchema> = serde_json::from_slice(&serialize_other_order).unwrap();
-    match db.get_ref().orders().insert_orders(deserialize_to_order_struct).await {
+    let deserialized_orders = convert_gsy_node_order_schema_to_db_schema(orders.to_vec());
+    match db.get_ref().orders().insert_orders(deserialized_orders).await {
         Ok(ids) => HttpResponse::Ok().json(ids),
         Err(_) => HttpResponse::InternalServerError().finish()
     }

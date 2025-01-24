@@ -2,8 +2,7 @@ use actix_web::web::Query;
 use actix_web::{web::Json, HttpResponse, Responder};
 
 use crate::db::DbRef;
-use codec::Decode;
-use gsy_offchain_primitives::db_api_schema::trades::TradeSchema;
+use gsy_offchain_primitives::node_to_api_schema::insert_trades::convert_gsy_node_trades_schema_to_db_schema;
 use serde::Deserialize;
 
 #[tracing::instrument(
@@ -17,10 +16,8 @@ pub async fn post_trades(
     trades: Json<Vec<u8>>,
     db: DbRef,
 ) -> impl Responder {
-    let transcode: Vec<TradeSchema> = Vec::<TradeSchema>::decode(&mut &trades[..]).unwrap();
-    let serialize_trades = serde_json::to_vec(&transcode).unwrap();
-    let deserialize_to_trade_struct: Vec<TradeSchema> = serde_json::from_slice(&serialize_trades).unwrap();
-    match db.get_ref().trades().insert_trades(deserialize_to_trade_struct).await {
+    let deserialized_trades = convert_gsy_node_trades_schema_to_db_schema(trades.to_vec());
+    match db.get_ref().trades().insert_trades(deserialized_trades).await {
         Ok(ids) => HttpResponse::Ok().json(ids),
         Err(_) => HttpResponse::InternalServerError().finish()
     }

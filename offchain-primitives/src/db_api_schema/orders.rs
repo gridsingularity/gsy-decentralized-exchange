@@ -29,7 +29,7 @@ pub struct OrderComponent {
 
 #[derive(Serialize, Deserialize, Debug, Encode, Clone, PartialEq)]
 pub struct OrderSchema {
-    pub _id: H256,
+    pub _id: String,
     pub status: OrderStatus,
     pub order: Order,
 }
@@ -37,7 +37,7 @@ pub struct OrderSchema {
 impl From<Order> for OrderSchema {
     fn from(order: Order) -> Self {
         OrderSchema {
-            _id: order.hash(),
+            _id: order.hash().to_string(),
             status: Default::default(),
             order,
         }
@@ -45,7 +45,7 @@ impl From<Order> for OrderSchema {
 }
 
 /// Order status
-#[derive(Serialize, Deserialize, Debug, Encode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub enum OrderStatus {
     Open,
     Executed,

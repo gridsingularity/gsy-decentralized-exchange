@@ -4,5 +4,4 @@ pub mod routes;
 pub mod startup;
 pub mod telemetry;
 pub mod event_listener;
-pub mod schema_insert_order;
 pub mod scheduler;

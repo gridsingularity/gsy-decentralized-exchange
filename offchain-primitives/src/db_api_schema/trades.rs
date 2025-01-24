@@ -8,10 +8,8 @@ use crate::db_api_schema::orders::{Offer, Bid};
 /// Trade status
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub enum TradeStatus {
-    Open,
+    Settled,
     Executed,
-    Expired,
-    Deleted,
 }
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
