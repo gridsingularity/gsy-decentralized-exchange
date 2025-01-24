@@ -86,7 +86,7 @@ impl TradeService {
         let mut filter_params = doc! {};
         if market_id.is_some() { filter_params.insert("market_id", market_id.unwrap()); }
         if start_time.is_some() { filter_params.insert("time_slot", doc! {"$gte": start_time.unwrap()} ); }
-        if end_time.is_some() { filter_params.insert("market_id", doc! {"$lte": start_time.unwrap()}); }
+        if end_time.is_some() { filter_params.insert("time_slot", doc! {"$lte": end_time.unwrap()}); }
 
         match self.0.find(filter_params).await {
             Ok(cursor) => {

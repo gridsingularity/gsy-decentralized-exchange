@@ -27,8 +27,16 @@ pub struct ForecastsService(pub Collection<ForecastSchema>);
 
 impl ForecastsService {
     #[tracing::instrument(name = "Fetching forecasts from database for one area", skip(self))]
-    pub async fn get_all_forecasts_for_area(&self, area_uuid: String) -> Result<Vec<ForecastSchema>> {
-        let mut cursor = self.0.find(doc! {"area_uuid": area_uuid}).await.unwrap();
+    pub async fn filter_forecasts(
+            &self,
+            area_uuid: Option<String>,
+            start_time: Option<u32>,
+            end_time: Option<u32>) -> Result<Vec<ForecastSchema>> {
+        let mut filter_params = doc! {};
+        if area_uuid.is_some() { filter_params.insert("area_uuid", area_uuid.unwrap()); }
+        if start_time.is_some() { filter_params.insert("time_slot", doc! {"$gte": start_time.unwrap()} ); }
+        if end_time.is_some() { filter_params.insert("time_slot", doc! {"$lte": end_time.unwrap()}); }
+        let mut cursor = self.0.find(filter_params).await.unwrap();
         let mut result: Vec<ForecastSchema> = Vec::new();
         while let Some(doc) = cursor.next().await {
             match doc {

@@ -4,8 +4,10 @@ use gsy_offchain_primitives::db_api_schema::profiles::{MeasurementSchema, Foreca
 use serde::Deserialize;
 
 #[derive(Deserialize)]
-pub struct Info {
-    area_uuid: String,
+pub struct ProfilesParameters {
+    area_uuid: Option<String>,
+    start_time: Option<u32>,
+    end_time: Option<u32>,
 }
 
 pub async fn post_measurements(
@@ -18,9 +20,12 @@ pub async fn post_measurements(
     }
 }
 
-pub async fn get_measurements(db: DbRef, query_params: Query<Info>) -> impl Responder {
+pub async fn get_measurements(db: DbRef, query_params: Query<ProfilesParameters>) -> impl Responder {
     let measurements_service = db.get_ref().measurements();
-    match measurements_service.get_all_measurements_for_area(query_params.area_uuid.clone()).await {
+    match measurements_service.filter_measurements(
+            query_params.area_uuid.clone(),
+            query_params.start_time.clone(),
+            query_params.end_time.clone()).await {
         Ok(measurements) => HttpResponse::Ok().json(measurements),
         Err(e) => {
             tracing::error!("Failed to execute query: {:?}", e);
@@ -39,9 +44,12 @@ pub async fn post_forecasts(
     }
 }
 
-pub async fn get_forecasts(db: DbRef, query_params: Query<Info>) -> impl Responder {
+pub async fn get_forecasts(db: DbRef, query_params: Query<ProfilesParameters>) -> impl Responder {
     let forecasts_service = db.get_ref().forecasts();
-    match forecasts_service.get_all_forecasts_for_area(query_params.area_uuid.clone()).await {
+    match forecasts_service.filter_forecasts(
+            query_params.area_uuid.clone(),
+            query_params.start_time.clone(),
+            query_params.end_time.clone()).await {
         Ok(measurements) => HttpResponse::Ok().json(measurements),
         Err(e) => {
             tracing::error!("Failed to execute query: {:?}", e);
