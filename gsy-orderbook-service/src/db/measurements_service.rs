@@ -71,7 +71,7 @@ impl MeasurementsService {
 
 impl From<&DatabaseWrapper> for MeasurementsService {
     fn from(db: &DatabaseWrapper) -> Self {
-        MeasurementsService(db.collection("orders"))
+        MeasurementsService(db.collection("measurements"))
     }
 }
 

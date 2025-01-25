@@ -71,7 +71,7 @@ impl ForecastsService {
 
 impl From<&DatabaseWrapper> for ForecastsService {
     fn from(db: &DatabaseWrapper) -> Self {
-        ForecastsService(db.collection("orders"))
+        ForecastsService(db.collection("forecasts"))
     }
 }
 
