@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="author" content="Grid Singularity" />
+      <link rel="shortcut icon" href="../../img/favicon.ico" />
+    <title>Node - GSy DEX</title>
+    <link rel="stylesheet" href="../../css/theme.css" />
+    <link rel="stylesheet" href="../../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Node";
+        var mkdocs_page_input_path = "node/node.md";
+        var mkdocs_page_url = null;
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href="../..">
+          <img src="../../images/Profile.png" class="logo" alt="Logo"/>
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../..">Home</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Deployment and operation</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../../setup/installation/">Intro</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../setup/rust-setup/">Rust Setup</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../setup/run/">Run</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../setup/build/">Build</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../setup/connect-ui/">Connect UI</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../setup/docker/">Docker</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Node Structure</span></p>
+              <ul class="current">
+                  <li class="toctree-l1 current"><a class="reference internal current" href="#">Node</a>
+    <ul class="current">
+    </ul>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../runtime/">Runtime</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../pallets/">Pallets</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../primitives/">Primitives</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">System Architecture</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="" href="../../architecture.md">High Level Architecture</a>
+                  </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../..">GSy DEX</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href="../.." class="icon icon-home" aria-label="Docs"></a></li>
+          <li class="breadcrumb-item">Node Structure</li>
+      <li class="breadcrumb-item active">Node</li>
+    <li class="wy-breadcrumbs-aside">
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h2 id="node">Node</h2>
+<p>A blockchain node is an application that allows users to participate in a blockchain network.
+Substrate-based blockchain nodes expose a number of capabilities:</p>
+<ul>
+<li>Networking: Substrate nodes use the <a href="https://libp2p.io/"><code>libp2p</code></a> networking stack to allow the
+  nodes in the network to communicate with one another.</li>
+<li>Consensus: Blockchains must have a way to come to
+  <a href="https://docs.substrate.io/v3/advanced/consensus">consensus</a> on the state of the
+  network. Substrate makes it possible to supply custom consensus engines and also ships with
+  several consensus mechanisms that have been built on top of
+  <a href="https://research.web3.foundation/en/latest/polkadot/NPoS/index.html">Web3 Foundation research</a>.</li>
+<li>RPC Server: A remote procedure call (RPC) server is used to interact with Substrate nodes.</li>
+</ul>
+<p>There are several files in the <code>node</code> directory - take special note of the following:</p>
+<ul>
+<li><code>chain_spec.rs</code>: A <a href="https://docs.substrate.io/v3/runtime/chain-specs">chain specification</a> is a
+  source code file that defines a Substrate chain's initial (genesis) state. Chain specifications
+  are useful for development and testing, and critical when architecting the launch of a
+  production chain. Take note of the <code>development_config</code> and <code>testnet_genesis</code> functions, which
+  are used to define the genesis state for the local development chain configuration. These
+  functions identify some
+  <a href="https://docs.substrate.io/v3/tools/subkey#well-known-keys">well-known accounts</a>
+  and use them to configure the blockchain's initial state.</li>
+<li><code>service.rs</code>: This file defines the node implementation. Take note of
+  the libraries that this file imports and the names of the functions it invokes. In particular,
+  there are references to consensus-related topics, such as the
+  <a href="https://docs.substrate.io/v3/advanced/consensus#longest-chain-rule">longest chain rule</a>,
+  the <a href="https://docs.substrate.io/v3/advanced/consensus#aura">Aura</a> block authoring
+  mechanism and the
+  <a href="https://docs.substrate.io/v3/advanced/consensus#grandpa">GRANDPA</a> finality
+  gadget.</li>
+</ul>
+<p>After the node has been <a href="../../setup/build/">built</a>, refer to the embedded documentation to learn more about the
+capabilities and configuration parameters that it exposes:</p>
+<pre><code class="language-shell">./target/release/gsy-node --help
+</code></pre>
+              
+            </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href="../../setup/docker/" class="btn btn-neutral float-left" title="Docker"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../runtime/" class="btn btn-neutral float-right" title="Runtime">Next <span class="icon icon-circle-arrow-right"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+    
+      <span><a href="../../setup/docker/" style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+      <span><a href="../runtime/" style="color: #fcfcfc">Next &raquo;</a></span>
+    
+  </span>
+</div>
+    <script src="../../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "../..";</script>
+    <script src="../../js/theme_extra.js"></script>
+    <script src="../../js/theme.js"></script>
+      <script src="../../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>
