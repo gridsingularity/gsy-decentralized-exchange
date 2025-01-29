@@ -24,5 +24,8 @@ pub enum Commands {
 
         #[clap(default_value_t = 30)]
         polling_interval: u64,
+
+        #[clap(default_value_t = 900)]
+        market_duration: u64,
     },
 }
