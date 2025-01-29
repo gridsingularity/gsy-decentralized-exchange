@@ -3,17 +3,21 @@ use core::option_env;
 use codec::alloc::string::ToString;
 
 #[derive(Debug)]
-pub struct OrderBookServiceURL {
-	pub url: String,
+pub struct OrderBookServiceURLs {
+	pub orders_url: String,
+	pub trades_url: String
 }
 
-impl Default for OrderBookServiceURL{
+impl Default for OrderBookServiceURLs{
 	fn default() -> Self {
 		// Set the environment variable "URL" for OrderBook_Service
 		let base_url = option_env!("ORDERBOOK_SERVICE_URL")
             .unwrap_or("http://localhost:8080");
-        
-        OrderBookServiceURL { url: base_url.to_string() }
+
+		OrderBookServiceURLs{
+			orders_url: format!("{}/orders", orderbook_url),
+			trades_url: format!("{}/trades", orderbook_url),
+		}
 	}
 }
 

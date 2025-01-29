@@ -1,5 +1,5 @@
 use crate::db::DatabaseWrapper;
-use crate::schema::{OrderSchema, OrderStatus};
+use gsy_offchain_primitives::db_api_schema::orders::{OrderStatus, OrderSchema};
 use anyhow::Result;
 use futures::StreamExt;
 use mongodb::bson::{doc, Bson};
@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::ops::Deref;
 
 /// this function will call after connected to database
-pub async fn init(db: &DatabaseWrapper) -> Result<()> {
+pub async fn init_orders(db: &DatabaseWrapper) -> Result<()> {
     // create index in this block
 
     let controller = db.orders();
@@ -18,7 +18,7 @@ pub async fn init(db: &DatabaseWrapper) -> Result<()> {
         .keys(doc! {"_id":1})
         .options(IndexOptions::builder().build())
         .build();
-    controller.create_index(index, None).await?;
+    controller.create_index(index).await?;
     Ok(())
 }
 
@@ -29,7 +29,7 @@ pub struct OrderService(pub Collection<OrderSchema>);
 impl OrderService {
     #[tracing::instrument(name = "Fetching orders from database", skip(self))]
     pub async fn get_all_orders(&self) -> Result<Vec<OrderSchema>> {
-        let mut cursor = self.0.find(doc! {}, None).await.unwrap();
+        let mut cursor = self.0.find(doc! {}).await.unwrap();
         let mut result: Vec<OrderSchema> = Vec::new();
         while let Some(doc) = cursor.next().await {
             match doc {
@@ -52,7 +52,7 @@ impl OrderService {
         )
     )]
     pub async fn insert_orders(&self, orders_schema: Vec<OrderSchema>) -> Result<HashMap<usize, Bson>> {
-        match self.0.insert_many(orders_schema, None).await {
+        match self.0.insert_many(orders_schema).await {
             Ok(db_result) => Ok(db_result.inserted_ids),
             Err(e) => {
                 tracing::error!("Failed to execute query: {:?}", e);
@@ -63,7 +63,7 @@ impl OrderService {
 
     #[tracing::instrument(name = "Fetching order by id from database", skip(self, id))]
     pub async fn get_order_by_id(&self, id: &Bson) -> Result<Option<OrderSchema>> {
-        match self.0.find_one(doc! {"_id": id}, None).await {
+        match self.0.find_one(doc! {"_id": id}).await {
             Ok(doc) => Ok(doc),
             Err(e) => {
                 tracing::error!("Failed to execute query: {:?}", e);
@@ -87,7 +87,6 @@ impl OrderService {
                 doc! {
                     "$set": {"status": bson::to_bson(&status).unwrap()}
                 },
-                None,
             )
             .await
         {
@@ -115,7 +114,6 @@ impl OrderService {
                 doc! {
                     "$set": { "status": bson::to_bson(&status).unwrap()},
                 },
-                None,
             )
             .await
         {
