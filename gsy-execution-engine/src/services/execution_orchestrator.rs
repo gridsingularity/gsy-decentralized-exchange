@@ -4,8 +4,6 @@ use tracing::info;
 use crate::{
     primitives::{
         penalty_calculator::{compute_penalties, Penalty},
-        trades::Trade,
-        measurements::Measurement,
     },
     connectors::{
         offchain_storage::fetch_trades_and_measurements_for_timeslot,
@@ -20,19 +18,21 @@ use crate::{
 pub async fn run_execution_cycle(
     offchain_url: &str,
     node_url: &str,
-    timeslot_str: &str,
+    timeslot: u64,
+    penalty_rate: f64,
+    market_duration: u64,
 ) -> Result<()> {
     // 1) fetch trades/measurements
-    let (trades, measurements) = fetch_trades_and_measurements_for_timeslot(offchain_url, timeslot_str).await?;
+    let (trades, measurements) = fetch_trades_and_measurements_for_timeslot(offchain_url, timeslot, market_duration).await?;
     info!(
         "Fetched {} trades, {} measurements for timeslot {}",
         trades.len(),
         measurements.len(),
-        timeslot_str
+        timeslot
     );
 
     // 2) compute penalties
-    let penalties: Vec<Penalty> = compute_penalties(&trades, &measurements);
+    let penalties: Vec<Penalty> = compute_penalties(&trades, &measurements, penalty_rate);
     info!("Computed {} penalties", penalties.len());
 
     // 3) submit penalties

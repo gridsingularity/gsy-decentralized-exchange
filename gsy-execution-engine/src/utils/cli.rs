@@ -27,5 +27,9 @@ pub enum Commands {
 
         #[clap(default_value_t = 900)]
         market_duration: u64,
+
+        /// Penalty rate (e.g., 10 for 10%)
+        #[clap(default_value_t = 0.10)]
+        penalty_rate: f64,
     },
 }

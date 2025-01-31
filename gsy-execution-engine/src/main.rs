@@ -22,7 +22,8 @@ async fn main() {
             node_host,
             node_port,
             polling_interval,
-            market_duration
+            market_duration,
+            penalty_rate
         } => {
             info!("Starting engine...");
             let offchain_url = format!("{}:{}", offchain_host, offchain_port);
@@ -30,7 +31,7 @@ async fn main() {
 
             loop {
                 let timeslot = generate_previous_timeslot(market_duration);
-                if let Err(e) = run_execution_cycle(&offchain_url, &node_url, &timeslot).await {
+                if let Err(e) = run_execution_cycle(&offchain_url, &node_url, timeslot, penalty_rate, market_duration).await {
                     error!("Cycle failed for {}: {:?}", timeslot, e);
                 }
                 info!("Sleeping for {}s...", polling_interval);
@@ -40,11 +41,11 @@ async fn main() {
     }
 }
 
-fn generate_previous_timeslot(market_duration: u64) -> String {
+fn generate_previous_timeslot(market_duration: u64) -> u64 {
     use chrono::{Utc, Duration};
     
     let now = Utc::now();
     let prev = now - Duration::seconds(market_duration as i64);
 
-    prev.format("%Y-%m-%dT%H:%M:%SZ").to_string()
+    prev.timestamp() as u64
 }

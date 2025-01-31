@@ -1,19 +1,26 @@
 use anyhow::{Result, anyhow};
 use reqwest::Client;
-use crate::primitives::{
-    trades::Trade,
-    measurements::Measurement
+use gsy_offchain_primitives::db_api_schema::{
+    profiles::MeasurementSchema, 
+    trades::TradeSchema,
 };
+
+fn round_down_timeslot(ts: u64) -> u64 {
+    (ts / 900) * 900
+}
 
 pub async fn fetch_trades_and_measurements_for_timeslot(
     base_url: &str,
-    timeslot: &str,
-) -> Result<(Vec<Trade>, Vec<Measurement>)> {
+    timeslot: u64,
+    market_duration: u64,
+) -> Result<(Vec<TradeSchema>, Vec<MeasurementSchema>)> {
     let client = Client::new();
 
-    // TODO: we might have an endpoint like /trades?timeslot=YYYY-MM-DD-HH
-    let trades_url = format!("{}/trades?timeslot={}", base_url, timeslot);
-    let measurements_url = format!("{}/measurements?timeslot={}", base_url, timeslot);
+    let start_time = round_down_timeslot(timeslot);
+    let end_time = start_time + (market_duration.checked_sub(1).unwrap_or(60));
+
+    let trades_url = format!("{}/trades?start_time={}&end_time={}", base_url, start_time, end_time);
+    let measurements_url = format!("{}/measurements?start_time={}&end_time={}", base_url, start_time, end_time);
 
     // 1) Fetch trades
     let trades_resp = client.get(&trades_url).send().await?;
@@ -24,7 +31,7 @@ pub async fn fetch_trades_and_measurements_for_timeslot(
             trades_resp.status()
         ));
     }
-    let trades: Vec<Trade> = trades_resp.json().await?;
+    let trades: Vec<TradeSchema> = trades_resp.json().await?;
 
     // 2) Fetch measurements
     let measurements_resp = client.get(&measurements_url).send().await?;
@@ -35,7 +42,7 @@ pub async fn fetch_trades_and_measurements_for_timeslot(
             measurements_resp.status()
         ));
     }
-    let measurements: Vec<Measurement> = measurements_resp.json().await?;
+    let measurements: Vec<MeasurementSchema> = measurements_resp.json().await?;
 
     Ok((trades, measurements))
 }
