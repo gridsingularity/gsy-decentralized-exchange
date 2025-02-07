@@ -6,81 +6,85 @@ use std::collections::HashMap;
 
 #[derive(Debug)]
 pub struct Penalty {
-    pub area_uuid: String,
+    pub penalized_account: String,
     pub market_uuid: String,
-    pub penalty_energy: f64,
+    pub trade_uuid: String,
+    pub penalty_cost: u64,
 }
 
+/// Computes penalties for each trade based on the measured energy.
+/// 
+/// For each trade, the measurement is looked up (by using the area_uuid and market_uuid from the Bid).
+/// The delta is computed as:
+///   delta = measured_energy - traded_energy
+/// If delta > 0.0, it indicates under-trading for consumption and the buyer is penalized.
+/// If delta < 0.0, it indicates under-trading for production and the seller is penalized.
+/// 
+/// # Arguments
+/// 
+/// * `trades` - A slice of TradeSchema records.
+/// * `measurements` - A slice of MeasurementSchema records.
+/// * `penalty_rate` - The penalty rate as a f64 (e.g., 0.10 for 10%).
+/// 
+/// # Returns
+/// 
+/// A vector of Penalty structs.
 pub fn compute_penalties(
-    trades: &[TradeSchema], 
+    trades: &[TradeSchema],
     measurements: &[MeasurementSchema],
-    penalty_rate: f64
+    penalty_rate: f64,
 ) -> Vec<Penalty> {
     let mut penalties = Vec::new();
 
-    // Aggregate consumed and produced energy per (area_uuid, market_uuid)
-    // Key: (area_uuid, market_uuid)
-    // Value: (total_consumed_energy, total_produced_energy)
-    let mut energy_map: HashMap<(String, String), (f64, f64)> = HashMap::new();
-
-    for trade in trades {
-        // Extract consumer details from Bid
-        let consumer_area_uuid = trade.bid.bid_component.area_uuid.clone();
-        let consumer_market_uuid = trade.bid.bid_component.market_uuid.clone();
-        let consumed_energy = trade.parameters.selected_energy;
-
-        // Extract producer details from Offer
-        let producer_area_uuid = trade.offer.offer_component.area_uuid.clone();
-        let producer_market_uuid = trade.offer.offer_component.market_uuid.clone();
-        let produced_energy = trade.parameters.selected_energy;
-
-        // Update consumed energy
-        let consumer_key = (consumer_area_uuid.clone(), consumer_market_uuid.clone());
-        let consumer_entry = energy_map.entry(consumer_key).or_insert((0.0, 0.0));
-        consumer_entry.0 += consumed_energy;
-
-        // Update produced energy
-        let producer_key = (producer_area_uuid.clone(), producer_market_uuid.clone());
-        let producer_entry = energy_map.entry(producer_key).or_insert((0.0, 0.0));
-        producer_entry.1 += produced_energy;
+    // Create a lookup map for measurements by (area_uuid, market_uuid)
+    let mut measurement_map: HashMap<(String, String), f64> = HashMap::new();
+    for meas in measurements {
+        measurement_map.insert(
+            (meas.area_uuid.clone(), meas.community_uuid.clone()),
+            meas.energy_kwh, // energy is f64; positive means consumption, negative means production
+        );
     }
 
-    // Iterate over each measurement
-    for measurement in measurements {
-        let key = (measurement.area_uuid.clone(), measurement.community_uuid.clone());
-        let (consumed_energy, produced_energy) = energy_map.get(&key)
-            .unwrap_or(&(0.0, 0.0));
+    // Iterate over each trade and compute the penalty if a matching measurement exists.
+    for trade in trades {
+        // For consumers, we use the Bid's area and market.
+        let key = (
+            trade.bid.bid_component.area_uuid.clone(),
+            trade.bid.bid_component.market_uuid.clone(),
+        );
 
-        let measured_energy = measurement.energy_kwh;
+        if let Some(&measured_energy) = measurement_map.get(&key) {
+            let traded_energy = trade.parameters.selected_energy;
 
-        if measured_energy > 0.0 {
-            // Consumption measurement
-            // Calculate delta_consumed = measured_energy - consumed_energy
-            let delta_consumed = measured_energy - consumed_energy;
-            let delta_consumed = if delta_consumed > 0.0 { delta_consumed } else { 0.0 };
+            // Compute delta = measured_energy - traded_energy.
+            let delta = measured_energy - traded_energy;
 
-            if delta_consumed > 0.0 {
-                // Consumers consumed more than traded
-                let penalty = delta_consumed * penalty_rate;
+            if delta > 0.0 {
+                // This is a consumption trade: measured energy exceeds traded energy.
+                // Penalize the buyer.
+
+                let raw_penalty = delta * penalty_rate;
+
+                // Scale and convert to u64: apply a scaling factor of 10,000.
+                let penalty_cost = (raw_penalty * 10_000.0).round() as u64;
+
                 penalties.push(Penalty {
-                    area_uuid: measurement.area_uuid.clone(),
-                    market_uuid: measurement.community_uuid.clone(),
-                    penalty_energy: penalty,
+                    penalized_account: trade.buyer.clone(),
+                    market_uuid: trade.market_id.clone(),
+                    trade_uuid: trade.trade_uuid.clone(),
+                    penalty_cost,
                 });
-            }
-        } else if measured_energy < 0.0 {
-            // Production measurement
-            // Calculate delta_produced = produced_energy + measured_energy (since measured_energy is negative)
-            let delta_produced = produced_energy + measured_energy;
-            let delta_produced = if delta_produced > 0.0 { delta_produced } else { 0.0 };
-
-            if delta_produced > 0.0 {
-                // Producers produced more than traded
-                let penalty = delta_produced * penalty_rate;
+            } else if delta < 0.0 {
+                // This is a production trade: measured energy is less than traded energy.
+                // Penalize the seller.
+                let raw_penalty = (-delta) * penalty_rate;
+                let penalty_cost = (raw_penalty * 10_000.0).round() as u64;
+            
                 penalties.push(Penalty {
-                    area_uuid: measurement.area_uuid.clone(),
-                    market_uuid: measurement.community_uuid.clone(),
-                    penalty_energy: penalty,
+                    penalized_account: trade.seller.clone(),
+                    market_uuid: trade.market_id.clone(),
+                    trade_uuid: trade.trade_uuid.clone(),
+                    penalty_cost,
                 });
             }
         }
