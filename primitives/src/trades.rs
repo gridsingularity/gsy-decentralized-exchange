@@ -1,4 +1,4 @@
-use crate::orders::{Bid, Offer};
+	use crate::orders::{Bid, Offer};
 use crate::v0::{AccountId, Hash};
 use codec::{Decode, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
@@ -29,6 +29,17 @@ impl Trade<AccountId, Hash> {
 		BlakeTwo256::hash_of(self)
 	}
 }
+
+#[derive(Debug, Encode, Decode, Clone, PartialEq, Eq, TypeInfo, MaxEncodedLen)]
+#[cfg_attr(feature = "std", derive(Hash, Default))]
+pub struct TradesPenalties<AccountId, Hash> {
+    pub penalized_account: AccountId,
+    pub market_uuid: u32,
+	pub trade_uuid: Hash,
+    pub penalty_energy: u64,
+}
+
+
 #[derive(Debug, Encode, Decode, Clone, Copy, PartialEq, Eq, TypeInfo, MaxEncodedLen)]
 #[cfg_attr(feature = "std", derive(Hash, Default))]
 pub struct TradeParameters<Hash> {

@@ -7,6 +7,7 @@ use sp_std::marker::PhantomData;
 
 pub trait TradeSettlementWeightInfo {
 	fn settle_trades() -> Weight;
+	fn submit_penalties() -> Weight;
 }
 
 /// Weight functions for `trades_settlement`.
@@ -21,4 +22,9 @@ impl<T: frame_system::Config> TradeSettlementWeightInfo for SubstrateWeightInfo<
 			.saturating_add(T::DbWeight::get().reads(202))
 			.saturating_add(T::DbWeight::get().writes(202))
 	}
+
+	fn submit_penalties() -> Weight {
+        Weight::from_parts(10_000_000, 0)
+            .saturating_add(T::DbWeight::get().writes(202))
+    }
 }
