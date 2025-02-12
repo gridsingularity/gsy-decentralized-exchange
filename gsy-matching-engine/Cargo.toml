@@ -13,6 +13,7 @@ path = "src/main.rs"
 name = "gsy-matching-engine"
 
 [dependencies]
+gsy-offchain-primitives = { default-features = false, path = "../offchain-primitives", version = "0.1.0" }
 anyhow = "1"
 async-recursion = "1"
 chrono = { version = "0.4.37", features = ["serde", "rustc-serialize"]}

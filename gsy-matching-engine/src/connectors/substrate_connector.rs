@@ -1,7 +1,7 @@
 use crate::algorithms::PayAsBid;
-use crate::primitives::web3::{
-    Bid, BidOfferMatch, MatchingData, Offer, Order, OrderSchema, OrderStatus,
-};
+use gsy_offchain_primitives::service_to_node_schema::orders::{
+    Bid, Offer, OrderStatus, Order, OrderSchema};
+use crate::primitives::web3::{BidOfferMatch, MatchingData};
 use crate::primitives::web3_extension::BidOfferMatch as BidOfferMatchExtension;
 use anyhow::{Error, Result};
 use async_recursion::async_recursion;
