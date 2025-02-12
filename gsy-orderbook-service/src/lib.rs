@@ -1,10 +1,7 @@
 pub mod configuration;
 pub mod db;
-pub mod order_service;
 pub mod routes;
-pub mod schema;
 pub mod startup;
 pub mod telemetry;
 pub mod event_listener;
-pub mod schema_insert_order;
 pub mod scheduler;

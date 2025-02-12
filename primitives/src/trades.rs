@@ -1,11 +1,11 @@
 use crate::orders::{Bid, Offer};
 use crate::v0::{AccountId, Hash};
-use codec::{Decode, Encode};
+use codec::{Decode, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
 pub use sp_runtime::traits::{BlakeTwo256, Hash as HashT};
 
 /// Trade struct
-#[derive(Debug, Encode, Decode, Clone, PartialEq, Eq, TypeInfo)]
+#[derive(Debug, Encode, Decode, Clone, PartialEq, Eq, TypeInfo, MaxEncodedLen)]
 #[cfg_attr(feature = "std", derive(Hash, Default))]
 pub struct Trade<AccountId, Hash> {
 	pub seller: AccountId,
@@ -19,7 +19,7 @@ pub struct Trade<AccountId, Hash> {
 	pub bid: Bid<AccountId>,
 	pub bid_hash: Hash,
 	pub residual_offer: Option<Offer<AccountId>>,
-	pub residual_bid: Option<Bid<AccountId>>,
+ 	pub residual_bid: Option<Bid<AccountId>>,
 	pub parameters: TradeParameters<Hash>,
 }
 
@@ -29,7 +29,7 @@ impl Trade<AccountId, Hash> {
 		BlakeTwo256::hash_of(self)
 	}
 }
-#[derive(Debug, Encode, Decode, Clone, Copy, PartialEq, Eq, TypeInfo)]
+#[derive(Debug, Encode, Decode, Clone, Copy, PartialEq, Eq, TypeInfo, MaxEncodedLen)]
 #[cfg_attr(feature = "std", derive(Hash, Default))]
 pub struct TradeParameters<Hash> {
 	/// The amount of energy that is traded.

@@ -1,7 +1,8 @@
-use codec::Encode;
+use codec::{Encode, Decode};
 use serde::{Deserialize, Serialize};
 use subxt::ext::sp_core::H256;
 use subxt::ext::sp_runtime::traits::{BlakeTwo256, Hash};
+
 
 #[derive(Serialize, Deserialize, Debug, Encode, Clone, PartialEq)]
 #[serde(tag = "type", content = "data")]
@@ -16,19 +17,19 @@ impl Order {
     }
 }
 /// Order component struct
-#[derive(Serialize, Deserialize, Debug, Encode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub struct OrderComponent {
-    pub area_uuid: u64,
-    pub market_uuid: u64,
+    pub area_uuid: String,
+    pub market_uuid: String,
     pub time_slot: u64,
     pub creation_time: u64,
-    pub energy: u64,
-    pub energy_rate: u64
+    pub energy: f64,
+    pub energy_rate: f64
 }
 
 #[derive(Serialize, Deserialize, Debug, Encode, Clone, PartialEq)]
 pub struct OrderSchema {
-    pub _id: H256,
+    pub _id: String,
     pub status: OrderStatus,
     pub order: Order,
 }
@@ -36,7 +37,7 @@ pub struct OrderSchema {
 impl From<Order> for OrderSchema {
     fn from(order: Order) -> Self {
         OrderSchema {
-            _id: order.hash(),
+            _id: order.hash().to_string(),
             status: Default::default(),
             order,
         }
@@ -44,7 +45,7 @@ impl From<Order> for OrderSchema {
 }
 
 /// Order status
-#[derive(Serialize, Deserialize, Debug, Encode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub enum OrderStatus {
     Open,
     Executed,
@@ -59,7 +60,7 @@ impl Default for OrderStatus {
 }
 
 /// Bid order struct
-#[derive(Serialize, Deserialize, Debug, Encode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub struct Bid {
     pub buyer: String,
     pub nonce: u32,
@@ -67,9 +68,10 @@ pub struct Bid {
 }
 
 /// Offer (Ask) order struct
-#[derive(Serialize, Deserialize, Debug, Encode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub struct Offer {
     pub seller: String,
     pub nonce: u32,
     pub offer_component: OrderComponent,
 }
+

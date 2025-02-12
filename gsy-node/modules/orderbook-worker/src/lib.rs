@@ -7,13 +7,13 @@ use sp_core::crypto::KeyTypeId;
 pub use crate::weights::WeightInfo;
 pub use pallet::*;
 
+pub use scale_info::prelude::vec::Vec;
 pub use sp_core::offchain::Timestamp;
 use sp_runtime::offchain::{http, Duration};
 pub use sp_std::sync::Arc;
-pub use scale_info::prelude::vec::Vec;
 
 pub mod configuration;
-use configuration::OrderBookServiceURL;
+use configuration::OrderBookServiceURLs;
 
 #[cfg(test)]
 mod mock;
@@ -29,13 +29,13 @@ pub const KEY_TYPE: KeyTypeId = KeyTypeId(*b"ocw!");
 
 pub mod crypto {
 	use super::KEY_TYPE;
+	use scale_info::prelude::string::String;
 	use sp_core::sr25519::Signature as Sr25519Signature;
 	use sp_runtime::{
 		app_crypto::{app_crypto, sr25519},
 		traits::Verify,
 		MultiSignature, MultiSigner,
 	};
-	use scale_info::prelude::string::String;
 
 	app_crypto!(sr25519, KEY_TYPE);
 
@@ -61,8 +61,7 @@ pub mod crypto {
 pub mod pallet {
 	use super::*;
 	use frame_support::{
-		pallet_prelude::*, require_transactional, sp_runtime::traits::Hash,
-		transactional,
+		pallet_prelude::*, require_transactional, sp_runtime::traits::Hash, transactional,
 	};
 	use frame_system::{
 		offchain::{
@@ -72,9 +71,9 @@ pub mod pallet {
 		pallet_prelude::*,
 	};
 	use gsy_primitives::v0::{
-		Bid, InputOrder, Offer, Order, OrderReference, OrderSchema,
-		OrderStatus,
+		Bid, InputOrder, Offer, Order, OrderReference, OrderSchema, OrderStatus,
 	};
+	use gsy_primitives::Trade;
 	use scale_info::prelude::vec;
 	use scale_info::TypeInfo;
 	use sp_runtime::offchain::http::Request;
@@ -101,7 +100,6 @@ pub mod pallet {
 		type UnsignedPriority: Get<TransactionPriority>;
 
 		type WeightInfo: WeightInfo;
-
 	}
 
 	#[pallet::pallet]
@@ -109,14 +107,24 @@ pub mod pallet {
 	pub struct Pallet<T>(_);
 
 	#[pallet::storage]
-	#[pallet::getter(fn orders_book)]
+	#[pallet::getter(fn orderbook)]
 	/// Temporary orders book for Orderbook workers.
-	pub type Orderbook<T: Config> = StorageMap<
+	pub type OrdersForWorker<T: Config> = StorageMap<
 		_,
 		Twox64Concat,
 		OrderReference<T::AccountId, T::Hash>,
 		Order<T::AccountId>,
 		OptionQuery,
+	>;
+
+	#[pallet::storage]
+	#[pallet::getter(fn trades_for_worker)]
+	/// Temporary trades for Orderbook workers.
+	pub type TradesForWorker<T: Config> = StorageMap<
+		_,
+		Twox64Concat,
+		T::Hash,
+		Trade<T::AccountId, T::Hash>,
 	>;
 
 	#[pallet::storage]
@@ -133,6 +141,9 @@ pub mod pallet {
 		OrderRemoved(T::AccountId, T::Hash),
 		/// New Order added to the orders book \[sender, hash\].
 		NewOrderInserted(Order<T::AccountId>, T::Hash),
+		NewTradeInserted(Trade<T::AccountId, T::Hash>, T::Hash),
+		/// Order has been deleted from the book.
+		TradeRemoved(T::Hash),
 	}
 
 	#[pallet::error]
@@ -143,6 +154,7 @@ pub mod pallet {
 		NoLocalAcctForSigning,
 		NonceCheckOverflow,
 		OrderIsNotRegistered,
+		TradeIsNotRegistered,
 		NotARootUser,
 		InsufficientCollateral,
 		InvalidNonce,
@@ -205,7 +217,10 @@ pub mod pallet {
 			);
 			let hashed_orders = Self::create_hash_vec_from_order_list(orders.clone());
 			let _ = <orderbook_registry::Pallet<T>>::insert_orders_by_proxy(
-				origin, delegator.clone(), hashed_orders);
+				origin,
+				delegator.clone(),
+				hashed_orders,
+			);
 			for order in orders {
 				Self::add_order(delegator.clone(), Self::input_order_to_order(order))?;
 			}
@@ -220,10 +235,7 @@ pub mod pallet {
 		#[transactional]
 		#[pallet::weight(< T as Config >::WeightInfo::remove_orders())]
 		#[pallet::call_index(2)]
-		pub fn remove_orders(
-			origin: OriginFor<T>,
-			orders_hash: Vec<T::Hash>,
-		) -> DispatchResult {
+		pub fn remove_orders(origin: OriginFor<T>, orders_hash: Vec<T::Hash>) -> DispatchResult {
 			let sender = ensure_signed(origin.clone())?;
 			log::info!("remove orders: {:?} for the user: {:?}", orders_hash, sender);
 			let _ = <orderbook_registry::Pallet<T>>::delete_orders(origin, orders_hash);
@@ -252,10 +264,7 @@ pub mod pallet {
 				);
 				let mut hash_vector = Vec::<T::Hash>::new();
 				hash_vector.push(payload.hash);
-				<orderbook_registry::Pallet<T>>::delete_orders(
-					origin.clone(),
-					hash_vector,
-				)?;
+				<orderbook_registry::Pallet<T>>::delete_orders(origin.clone(), hash_vector)?;
 				Self::delete_order(payload)?;
 			}
 			Ok(())
@@ -309,7 +318,10 @@ pub mod pallet {
 			);
 
 			let _ = <orderbook_registry::Pallet<T>>::delete_orders_by_proxy(
-				origin, delegator.clone(), orders_hash.clone());
+				origin,
+				delegator.clone(),
+				orders_hash.clone(),
+			);
 			Ok(())
 		}
 	}
@@ -402,7 +414,10 @@ pub mod pallet {
 
 			let mut orders = Vec::<Order<T::AccountId>>::new();
 
-			for (order_ref, order) in <Orderbook<T>>::iter() {
+			let mut trades = Vec::<Trade<T::AccountId, T::Hash>>::new();
+			let mut trade_hashes = Vec::<T::Hash>::new();
+
+			for (order_ref, order) in <OrdersForWorker<T>>::iter() {
 				match &order {
 					_order_in_book => {
 						log::info!(
@@ -438,15 +453,84 @@ pub mod pallet {
 						.expect("Error while removing processed orders");
 				}
 			}
+
+			// TODO: Trades transmission process starts here
+
+			for (trade_hash, trade) in <TradesForWorker<T>>::iter() {
+				match &trade {
+					_trade_in_book => {
+						log::info!(
+							"Offchain process: reference: {:?}, order: {:?}",
+							&trade_hash,
+							&trade
+						);
+						trades.push(trade);
+						trade_hashes.push(trade_hash);
+					},
+				}
+			}
+
+			if !trades.is_empty() {
+				// let trade_schema: Vec<Trade<T::AccountId, T::Hash>> = trades
+				// 	.clone()
+				// 	.into_iter()
+				// 	.map(|trade| Trade {
+				// 		seller: trade.seller,
+				// 		buyer: trade.buyer,
+				// 		market_id: trade.market_id,
+				// 		trade_uuid: trade.trade_uuid,
+				// 		creation_time: trade.creation_time,
+				// 		time_slot: trade.time_slot,
+				// 		offer: trade.offer,
+				// 		offer_hash: trade.offer_hash,
+				// 		bid: trade.bid,
+				// 		bid_hash: trade.bid_hash,
+				// 		residual_offer
+				//
+				// 	})
+				// 	.collect();
+				let bytes = trades.encode();
+				let bytes_to_json: Vec<u8> = serde_json::to_vec(&bytes).unwrap();
+				let post_trades_status_code =
+					Self::send_trade_to_orderbook_service(&bytes_to_json).unwrap();
+
+				if post_trades_status_code != 200 {
+					log::warn!(
+						"Offchain worker failed to send trades to the orderbook service, HTTP \
+						response code {}", post_trades_status_code)
+				}
+				else {
+					for trade_hash in trade_hashes {
+						Self::delete_trade(trade_hash).unwrap();
+					}
+				}
+			}
+		}
+
+		pub fn send_trade_to_orderbook_service(request_body: &[u8]) -> Result<u16, http::Error> {
+			// deadline sets the offchain worker execution time minimal as possible. So we hard
+			// code the duration to 2s to complete the external call to the database to post the
+			// orders.
+			let orderbook_service_urls = OrderBookServiceURLs::default();
+			let deadline = sp_io::offchain::timestamp().add(Duration::from_millis(2_000));
+			let request = Request::post(&orderbook_service_urls.trades_url, vec![&request_body]);
+			let pending = request
+				.deadline(deadline)
+				.add_header("Content-Type", "application/json")
+				.send()
+				.map_err(|_| http::Error::DeadlineReached)?;
+			let response =
+				pending.try_wait(deadline).map_err(|_| http::Error::DeadlineReached)??;
+			Ok(response.code)
 		}
 
 		pub fn send_order_to_orderbook_service(request_body: &[u8]) -> Result<u16, http::Error> {
 			// deadline sets the offchain worker execution time minimal as possible. So we hard
 			// code the duration to 2s to complete the external call to the database to post the
 			// orders.
-			let orderbook_service_url = OrderBookServiceURL::default();
+			let orderbook_service_url = OrderBookServiceURLs::default();
 			let deadline = sp_io::offchain::timestamp().add(Duration::from_millis(2_000));
-			let request = Request::post(&orderbook_service_url.url, vec![&request_body]);
+			let request = Request::post(&orderbook_service_url.orders_url, vec![&request_body]);
 			let pending = request
 				.deadline(deadline)
 				.add_header("Content-Type", "application/json")
@@ -535,10 +619,7 @@ pub mod pallet {
 		/// `sender`: The sender of the order.
 		/// `order`: The order to be inserted.
 		#[require_transactional]
-		pub fn add_order(
-			sender: T::AccountId,
-			order: Order<T::AccountId>,
-		) -> DispatchResult {
+		pub fn add_order(sender: T::AccountId, order: Order<T::AccountId>) -> DispatchResult {
 			ensure!(
 				<gsy_collateral::Pallet<T>>::verify_collateral_amount(
 					Self::get_order_amount(order.clone()),
@@ -549,8 +630,22 @@ pub mod pallet {
 			let order_hash = T::Hashing::hash_of(&order);
 			let order_reference =
 				OrderReference { user_id: sender.clone(), hash: order_hash.clone() };
-			<Orderbook<T>>::insert(order_reference, order.clone());
+			<OrdersForWorker<T>>::insert(order_reference, order.clone());
 			Self::deposit_event(Event::NewOrderInserted(order, order_hash));
+			Ok(())
+		}
+
+		/// Insert a new trade object into the Trades storage for offchain worker to relay them to
+		/// orderbook service.
+		///
+		/// Parameters
+		/// `sender`: The sender of the trade.
+		/// `trade`: The order to be inserted.
+		#[require_transactional]
+		pub fn add_trade(_sender: T::AccountId, trade: Trade<T::AccountId, T::Hash>) -> DispatchResult {
+			let trade_hash = T::Hashing::hash_of(&trade);
+			<TradesForWorker<T>>::insert(trade_hash, trade.clone());
+			Self::deposit_event(Event::NewTradeInserted(trade, trade_hash));
 			Ok(())
 		}
 
@@ -562,13 +657,12 @@ pub mod pallet {
 		/// `u32`: The nonce for the order.
 		pub fn get_and_increment_user_nonce(sender: T::AccountId) -> u32 {
 			let user_nonce = <UserNonce<T>>::get(sender.clone()).unwrap_or(0u32);
-			let nonce = user_nonce.checked_add(1u32)
-				.ok_or(<Error<T>>::NonceCheckOverflow).unwrap();
+			let nonce = user_nonce.checked_add(1u32).ok_or(<Error<T>>::NonceCheckOverflow).unwrap();
 			<UserNonce<T>>::insert(sender.clone(), nonce);
 			user_nonce
 		}
 
-		/// Remove a order from the orders book.
+		/// Remove an order from the orders book.
 		///
 		/// Parameters
 		/// `order_reference`: The order reference.
@@ -576,9 +670,30 @@ pub mod pallet {
 			order_reference: OrderReference<T::AccountId, T::Hash>,
 		) -> DispatchResult {
 			ensure!(Self::is_order_registered(&order_reference), <Error<T>>::OrderIsNotRegistered);
-			<Orderbook<T>>::remove(order_reference.clone());
+			<OrdersForWorker<T>>::remove(order_reference.clone());
 			Self::deposit_event(Event::OrderRemoved(order_reference.user_id, order_reference.hash));
 			Ok(())
+		}
+
+		/// Remove a trade from the offchain worker storage.
+		///
+		/// Parameters
+		/// `trade_hash`: The hash of the trade object.
+		pub fn delete_trade(
+			trade_hash: T::Hash,
+		) -> DispatchResult {
+			ensure!(Self::is_trade_registered(&trade_hash), <Error<T>>::TradeIsNotRegistered);
+			<TradesForWorker<T>>::remove(trade_hash);
+			Self::deposit_event(Event::TradeRemoved(trade_hash));
+			Ok(())
+		}
+
+		/// Helper function to check if a given order has already been registered.
+		///
+		/// Parameters
+		/// `trade_hash`: The hash of the trade.
+		pub fn is_trade_registered(trade_hash: &T::Hash) -> bool {
+			<TradesForWorker<T>>::contains_key(trade_hash)
 		}
 
 		/// Helper function to check if a given order has already been registered.
@@ -586,7 +701,7 @@ pub mod pallet {
 		/// Parameters
 		/// `order_ref`: The order reference.
 		pub fn is_order_registered(order_ref: &OrderReference<T::AccountId, T::Hash>) -> bool {
-			<Orderbook<T>>::contains_key(order_ref)
+			<OrdersForWorker<T>>::contains_key(order_ref)
 		}
 
 		/// Helper function to get the user_id of the order
@@ -621,7 +736,9 @@ pub mod pallet {
 			}
 		}
 
-		pub fn create_hash_vec_from_order_list(orders: Vec<InputOrder<T::AccountId>>) -> Vec<T::Hash> {
+		pub fn create_hash_vec_from_order_list(
+			orders: Vec<InputOrder<T::AccountId>>,
+		) -> Vec<T::Hash> {
 			return orders
 				.clone()
 				.into_iter()
@@ -629,6 +746,5 @@ pub mod pallet {
 				.map(|order| T::Hashing::hash_of(&order))
 				.collect();
 		}
-
 	}
 }
