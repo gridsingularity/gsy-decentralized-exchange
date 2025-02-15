@@ -26,7 +26,7 @@ pub struct MarketService(pub Collection<MarketTopologySchema>);
 
 impl MarketService {
     #[tracing::instrument(
-        name = "Fetching market information from database for one area", skip(self))]
+        name = "Fetching market information from database", skip(self))]
     pub async fn filter(
         &self,
         market_id: String) -> Result<Vec<MarketTopologySchema>> {
@@ -46,6 +46,32 @@ impl MarketService {
         }
         if result.len() > 1 {
             bail!("Found more than one market information for {}", market_id);
+        }
+        Ok(result)
+    }
+
+    #[tracing::instrument(
+        name = "Fetching market information from database for a community", skip(self))]
+    pub async fn get_community_market(
+        &self,
+        community_uuid: String, time_slot: u64) -> Result<Vec<MarketTopologySchema>> {
+        let mut cursor = self.0.find(
+            doc! {"community_uuid": community_uuid.clone(), "time_slot": time_slot as i32}
+        ).await.unwrap();
+
+        let mut result: Vec<MarketTopologySchema> = Vec::new();
+        while let Some(doc) = cursor.next().await {
+            match doc {
+                Ok(document) => {
+                    result.push(document);
+                }
+                _ => {
+                    break;
+                }
+            }
+        }
+        if result.len() > 1 {
+            bail!("Found more than one market information for {} {}", community_uuid, time_slot);
         }
         Ok(result)
     }

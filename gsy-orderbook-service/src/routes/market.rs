@@ -9,6 +9,13 @@ pub struct MarketParameters {
     market_id: String,
 }
 
+#[derive(Deserialize)]
+pub struct MarketFromCommunityParameters {
+    community_uuid: String,
+    time_slot: u64
+}
+
+
 pub async fn post_market(
     market: Json<MarketTopologySchema>,
     db: DbRef,
@@ -22,7 +29,8 @@ pub async fn post_market(
 pub async fn get_market(db: DbRef, params: Query<MarketParameters>) -> impl Responder {
     let market_service = db.get_ref().markets();
     match market_service.filter(params.market_id.clone()).await {
-        Ok(markets) => get_only_one_market(markets, params.market_id.clone()),
+        Ok(markets) => get_only_one_market(
+            markets, format!("market id ({})", params.market_id.clone())),
         Err(e) => {
             println!("Error getting market: {:?}", e);
             tracing::error!("Failed to execute query: {:?}", e);
@@ -31,7 +39,20 @@ pub async fn get_market(db: DbRef, params: Query<MarketParameters>) -> impl Resp
     }
 }
 
-fn get_only_one_market(markets: Vec<MarketTopologySchema>, market_id: String) -> HttpResponse {
+pub async fn get_market_from_community(db: DbRef, params: Query<MarketFromCommunityParameters>) -> impl Responder {
+    let market_service = db.get_ref().markets();
+    match market_service.get_community_market(params.community_uuid.clone(), params.time_slot).await {
+        Ok(markets) => get_only_one_market(
+            markets, format!("community id ({})", params.community_uuid.clone())),
+        Err(e) => {
+            println!("Error getting market: {:?}", e);
+            tracing::error!("Failed to execute query: {:?}", e);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
+fn get_only_one_market(markets: Vec<MarketTopologySchema>, tracing_description: String) -> HttpResponse {
     match markets.len() {
         0 => {
             HttpResponse::NotFound().finish()
@@ -41,7 +62,7 @@ fn get_only_one_market(markets: Vec<MarketTopologySchema>, market_id: String) ->
             HttpResponse::Ok().json(market)
         },
         _ => {
-            tracing::error!("Returned multiple markets for market id {:?}", market_id);
+            tracing::error!("Returned multiple markets for market id {:?}", tracing_description);
             HttpResponse::InternalServerError().finish()
         }
     }
