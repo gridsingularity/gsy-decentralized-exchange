@@ -430,7 +430,5 @@ pub mod pallet {
 		pub fn is_collateral_amount_sufficient(amount: u64, vault_owner: &T::AccountId) -> bool {
 			<gsy_collateral::Pallet<T>>::verify_collateral_amount(amount, vault_owner)
 		}
-
-
 	}
 }

@@ -13,9 +13,9 @@ name = "gsy-community-client"
 gsy-offchain-primitives = { default-features = false, path = "../offchain-primitives", version = "0.1.0" }
 reqwest = { version = "0", features = ["json"] }
 serde = { version = "1.0", features = ["derive"] }
-serde_json = { version = "1.0"}
+chrono = { version = "0.4.37", features = ["serde"] }
+anyhow = "1"
 subxt = { version = "0.37", features = ["substrate-compat"] }
 subxt-signer = "0.37"
 tracing = { version = "0.1", features = ["log"] }
-tracing-bunyan-formatter = "0.3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
