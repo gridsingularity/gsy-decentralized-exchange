@@ -27,20 +27,20 @@ The Orderbook Registry pallet provides a decentralized orderbook management syst
 
 The pallet provides several key components:
 
-1. User and Matching Engine Operator registration.
+1. User and Exchange Operator registration.
 2. Proxy account management for users.
 3. Order management, including insertion and deletion.
 
 ### Storage Items
 
 - `RegisteredUser`: Maps an AccountId to a Hash for registered users.
-- `RegisteredMatchingEngine`: Maps an AccountId to a Hash for registered matching engine operators.
+- `RegisteredExchangeOperator`: Maps an AccountId to a Hash for registered exchange operators.
 - `ProxyAccounts`: Maps an AccountId to a BoundedVec of ProxyDefinition for the registered proxy accounts.
 - `OrdersRegistry`: Maps an OrderReference to an OrderStatus.
 
 ### Events
 
-- `MatchingEngineOperatorRegistered`: Emitted when a new matching engine operator is registered.
+- `ExchangeOperatorRegistered`: Emitted when a new exchange operator is registered.
 - `NewOrderInserted`: Emitted when a new order is inserted.
 - `NewOrderInsertedByProxy`: Emitted when a new order is inserted by a proxy account.
 - `OrderDeleted`: Emitted when an order is deleted.
@@ -54,7 +54,7 @@ The pallet provides several key components:
 - `AlreadyRegistered`: Returned when an account is already registered.
 - `AlreadyRegisteredProxyAccount`: Returned when a proxy account is already registered.
 - `NoSelfProxy`: Returned when an account tries to register itself as a proxy account.
-- `NotARegisteredMatchingEngineOperator`: Returned when an account is not a registered matching engine operator.
+- `NotARegisteredExchangeOperator`: Returned when an account is not a registered exchange operator.
 - `NotARegisteredProxyAccount`: Returned when an account is not a registered proxy account.
 - `NotARegisteredUserAccount`: Returned when an account is not a registered user account.
 - `NotARegisteredUserOrProxyAccount`: Returned when an account is not a registered user or proxy account.
@@ -72,14 +72,14 @@ The pallet provides several key components:
 - `delete_order`: Delete an order with a given order hash for a registered user account.
 - `delete_order_by_proxy`: Delete an order with a given order hash for a registered user account by a registered proxy account.
 - `register_proxy_account`: Register a new proxy account for a registered user account.
-- `register_matching_engine_operator`: Register a new matching engine operator account.
+- `register_exchange_operator`: Register a new exchange operator account.
 - `register_user`: Register a new user account.
 - `unregister_proxy_account`: Unregister a proxy account for a registered user account.
 
 ### Helper Functions
 
-- `add_matching_engine_operator`: Add a matching engine operator account.
+- `add_exchange_operator`: Add an exchange operator account.
 - `add_proxy_account`: Add a proxy account for a registered user account.
 - `add_user`: Add a user account.
 - `is_order_registered`: Check if an order is registered.
-- `is_registered_matching_engine_operator`: Check if an account is a registered matching engine operator.
+- `is_registered_exchange_operator`: Check if an account is a registered exchange operator.

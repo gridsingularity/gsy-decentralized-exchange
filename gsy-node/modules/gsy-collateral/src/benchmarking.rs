@@ -59,12 +59,12 @@ benchmarks! {
 		).into());
 	}
 
-	register_matching_engine_operator {
-		let matching_engine_operator: T::AccountId = whitelisted_caller();
-	}: _(RawOrigin::Root, matching_engine_operator.clone())
+	register_exchange_operator {
+		let operator_account: T::AccountId = whitelisted_caller();
+	}: _(RawOrigin::Root, operator_account.clone())
 	verify {
-		assert_last_event::<T>(Event::MatchingEngineOperatorRegistered(
-			matching_engine_operator.clone(),
+		assert_last_event::<T>(Event::ExchangeOperatorRegistered(
+			operator_account.clone(),
 		).into());
 	}
 

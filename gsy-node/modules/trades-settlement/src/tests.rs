@@ -2,7 +2,8 @@ use crate::{mock::*, Error};
 use frame_system::RawOrigin;
 use frame_support::{assert_noop, assert_ok, traits::fungible::Mutate};
 use sp_runtime::traits::BlakeTwo256;
-use gsy_primitives::HashT;
+use sp_core::H256;
+use gsy_primitives::{HashT, TradesPenalties};
 use crate::test_orders::TestOrderbookFunctions;
 use crate::mock::OrderbookRegistry;
 use crate::mock::GsyCollateral;
@@ -16,8 +17,8 @@ fn settle_trades_works() {
 		assert_ok!(TestOrderbookFunctions::add_user::<Test>(BOB));
 		assert_ok!(TestOrderbookFunctions::add_user::<Test>(MIKE));
 
-		// Register matching_engine operator.
-		assert_ok!(TestOrderbookFunctions::add_matching_engine_operator::<Test>(MIKE));
+		// Register exchange operator.
+		assert_ok!(TestOrderbookFunctions::add_exchange_operator::<Test>(MIKE));
 
 		// Add wallet balance and collateral
 		assert_ok!(GsyCollateral::create_vault(ALICE));
@@ -117,6 +118,48 @@ fn settle_trades_works() {
 				RawOrigin::Signed(MIKE).into(), vec!(bid_offer_match_high_energy_rate)
 			),
 			Error::<Test>::NoValidMatchToSettle
+		);
+	});
+}
+
+#[test]
+fn submit_penalties_works_for_registered_operator() {
+	new_test_ext().execute_with(|| {
+		// Register exchange operator.
+		assert_ok!(TestOrderbookFunctions::add_exchange_operator::<Test>(MIKE));
+
+		// Create a sample penalty record.
+		let sample_penalty = TradesPenalties {
+			penalized_account: ALICE,
+			market_uuid: 1,
+			penalty_energy: 1000,
+			trade_uuid: H256::random(),
+		};
+
+		// Call the extrinsic from MIKE (the registered operator).
+		assert_ok!(TradesSettlement::submit_penalties(
+			RawOrigin::Signed(MIKE).into(), vec!(sample_penalty.clone()))
+		);
+	});
+}
+
+// Test that a non-operator cannot submit penalties.
+#[test]
+fn submit_penalties_fails_for_non_operator() {
+	new_test_ext().execute_with(|| {
+		// Here, we do not register BOB as an operator.
+		let sample_penalty = TradesPenalties {
+			penalized_account: ALICE,
+			market_uuid: 2,
+			penalty_energy: 2000,
+			trade_uuid: H256::random(),
+		};
+
+		// Calling submit_penalties from BOB (not registered) should fail.
+		assert_noop!(
+			TradesSettlement::submit_penalties(
+				RawOrigin::Signed(MIKE).into(), vec!(sample_penalty.clone())),
+			gsy_collateral::Error::<Test>::NotARegisteredExchangeOperator
 		);
 	});
 }

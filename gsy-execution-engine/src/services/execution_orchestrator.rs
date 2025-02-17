@@ -36,6 +36,6 @@ pub async fn run_execution_cycle(
     info!("Computed {} penalties", penalties.len());
 
     // 3) submit penalties
-    submit_penalties(node_url, &penalties).await?;
+    submit_penalties(node_url, penalties).await?;
     Ok(())
 }

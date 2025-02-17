@@ -12,8 +12,8 @@ impl TestOrderbookFunctions {
         Ok(())
     }
 
-    pub fn add_matching_engine_operator<T: Config>(user: T::AccountId) -> Result<(), &'static str> {
-        let _ = GsyCollateral::<T>::add_matching_engine_operator(user);
+    pub fn add_exchange_operator<T: Config>(user: T::AccountId) -> Result<(), &'static str> {
+        let _ = GsyCollateral::<T>::add_exchange_operator(user);
         Ok(())
     }
 

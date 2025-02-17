@@ -19,8 +19,8 @@
 //!
 //!
 //! A trades settlement system is a system that manages the settlement of  the trades executed
-//! within the GSy-Decentralized Energy Exchange. This module allows the registered matching engine
-//! (Matching Engine) to add the trade structs for the orders inserted by the users into the
+//! within the GSy-Decentralized Energy Exchange. This module allows the registered exchange
+//! operator to add the trade structs for the orders inserted by the users into the
 //! GSy-Decentralized Energy Exchange. Moreover, it verifies the correctness of the matched trades
 //! and updates the orders status and the involved structures after the trade execution.
 
@@ -54,7 +54,7 @@ pub mod pallet {
 
 	#[pallet::config]
 	pub trait Config:
-		frame_system::Config + orderbook_registry::Config + orderbook_worker::Config
+		frame_system::Config + orderbook_registry::Config + orderbook_worker::Config + gsy_collateral::Config
 	{
 		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
 
@@ -111,7 +111,7 @@ pub mod pallet {
 		/// Verify the recommended trade matches
 		///
 		/// # Parameters
-		/// `origin`: The origin of the extrinsic. The Matching Engine operator who wants to settle the matches.
+		/// `origin`: The origin of the extrinsic. The Exchange operator who wants to settle the matches.
 		/// `proposed_matches`: Vector of BidOfferMatch structures. Recommended matches for potential trades.
 		#[transactional]
 		#[pallet::weight(< T as Config >::TradeSettlementWeightInfo::settle_trades())]
@@ -120,7 +120,7 @@ pub mod pallet {
 			origin: OriginFor<T>,
 			proposed_matches: Vec<BidOfferMatch<T::AccountId>>,
 		) -> DispatchResult {
-			let matching_engine_operator = ensure_signed(origin)?;
+			let operator_account = ensure_signed(origin)?;
 
 			let valid_matches: Vec<_> = proposed_matches
 				.into_iter()
@@ -156,7 +156,7 @@ pub mod pallet {
 					}
 				}
 
-				<orderbook_registry::Pallet<T>>::clear_orders_batch(matching_engine_operator, valid_matches.clone())?;
+				<orderbook_registry::Pallet<T>>::clear_orders_batch(operator_account, valid_matches.clone())?;
 				Self::deposit_event(Event::TradesSettled(T::Hashing::hash_of(&valid_matches)));
 				Ok(())
 			} else {
@@ -176,7 +176,12 @@ pub mod pallet {
             origin: OriginFor<T>,
             penalties: Vec<TradesPenalties<T::AccountId, T::Hash>>,
         ) -> DispatchResult {
-            ensure_root(origin)?;
+            let operator_account = ensure_signed(origin)?;
+			// Verify that the user is a registered operator account.
+			ensure!(
+				<gsy_collateral::Pallet<T>>::is_registered_exchange_operator(&operator_account),
+				gsy_collateral::Error::<T>::NotARegisteredExchangeOperator
+			);
             // For each penalty in the input vector, compute a unique hash and insert it.
             for penalty in penalties.into_iter() {
                 let penalty_hash = T::Hashing::hash_of(&penalty);

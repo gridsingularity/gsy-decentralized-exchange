@@ -45,7 +45,7 @@ pub fn compute_penalties(
         );
     }
 
-    // Iterate over each trade and compute the penalty if a matching measurement exists.
+    // Iterate over each trade and compute the penalty if a measurement exists.
     for trade in trades {
         // For consumers, we use the Bid's area and market.
         let key = (
