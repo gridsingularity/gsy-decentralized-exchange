@@ -31,7 +31,7 @@ use crate::Pallet as OrderbookWorker;
 // 		nonce,
 // 		bid_component: OrderComponent {
 // 			area_uuid: 1,
-// 			market_uuid: 1u64,
+// 			market_id: 1u64,
 // 			time_slot: block_number,
 // 			creation_time: 1677453190,
 // 			energy,

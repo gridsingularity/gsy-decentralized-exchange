@@ -1,6 +1,8 @@
 use subxt::utils::H256;
 use base64;
 
+pub const NODE_FLOAT_SCALING_FACTOR: f64 = 10000.0;
+
 pub fn h256_to_base64(hash: H256) -> String {
     base64::encode(hash)  // Encode the H256 into a base64 string
 }

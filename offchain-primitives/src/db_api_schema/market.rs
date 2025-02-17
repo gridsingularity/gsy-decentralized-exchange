@@ -1,10 +1,12 @@
 use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
+use subxt::utils::H256;
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub struct AreaTopologySchema {
     pub area_uuid: String,
-    pub name: String
+    pub name: String,
+    pub area_hash: H256
 }
 
 

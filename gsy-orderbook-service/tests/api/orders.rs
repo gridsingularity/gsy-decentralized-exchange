@@ -26,6 +26,7 @@ async fn subscribe_return_a_200_for_valid_form_data() {
 
     let account: AccountId32 = create_test_accountid();
     let order_id = H256::random();
+    let market_id = H256::random();
 
     let order = OrderSchema {
         _id: order_id,
@@ -37,7 +38,7 @@ async fn subscribe_return_a_200_for_valid_form_data() {
                 energy: 100,
                 energy_rate: 10,
                 area_uuid: 1,
-                market_uuid: 1,
+                market_id: market_id,
                 time_slot: 1,
                 creation_time: 1677453190,
             }

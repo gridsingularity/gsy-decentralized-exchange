@@ -25,7 +25,7 @@ pub async fn post_trades(
 
 #[derive(Deserialize, Debug)]
 pub struct GetTradesParams {
-    market_uuid: Option<String>,
+    market_id: Option<String>,
     start_time: Option<u32>,
     end_time: Option<u32>
 }
@@ -36,7 +36,7 @@ pub struct GetTradesParams {
 )]
 pub async fn get_trades(db: DbRef, query_params: Query<GetTradesParams>) -> impl Responder {
     match db.get_ref().trades().filter_trades(
-        query_params.market_uuid.clone(),
+        query_params.market_id.clone(),
         query_params.start_time,
         query_params.end_time).await {
         Ok(trades) => HttpResponse::Ok().json(trades),

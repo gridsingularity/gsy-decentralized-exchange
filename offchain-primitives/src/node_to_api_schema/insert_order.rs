@@ -18,7 +18,7 @@ pub enum Order<AccountId32> {
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone)]
 pub struct OrderComponent{
     pub area_uuid: u64,
-    pub market_uuid: u64,
+    pub market_id: H256,
     pub time_slot: u64,
     pub creation_time: u64,
     pub energy: u64,
@@ -52,7 +52,7 @@ pub fn create_db_offer_from_node_offer(offer: Offer<AccountId32>) -> DbOffer {
         nonce: offer.nonce,
         offer_component: DbOrderComponent {
             area_uuid: offer.offer_component.area_uuid.to_string(),
-            market_uuid: offer.offer_component.market_uuid.to_string(),
+            market_id: offer.offer_component.market_id.to_string(),
             time_slot: offer.offer_component.time_slot,
             creation_time: offer.offer_component.creation_time,
             energy: offer.offer_component.energy as f64 / 10000.0,
@@ -67,7 +67,7 @@ pub fn create_db_bid_from_node_bid(bid: Bid<AccountId32>) -> DbBid {
         nonce: bid.nonce,
         bid_component: DbOrderComponent {
             area_uuid: bid.bid_component.area_uuid.to_string(),
-            market_uuid: bid.bid_component.market_uuid.to_string(),
+            market_id: bid.bid_component.market_id.to_string(),
             time_slot: bid.bid_component.time_slot,
             creation_time: bid.bid_component.creation_time,
             energy: bid.bid_component.energy as f64 / 10000.0,

@@ -37,7 +37,7 @@ struct ExternalMeasurement {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct ExternalAreaTopology {
 	area_uuid: String,
-	area_name: String
+	area_name: String,
 }
 
 // Struct for forecast data received from external API
@@ -212,7 +212,7 @@ async fn poll_and_forward(app_state: AppState) {
 						info!("Failed to forward forecasts: {}", e);
 					}
 					// TODO: Convert forecasts to orders 
-					// publish_orders(app_state.gsy_node_url.clone(), ).await;
+					publish_orders(app_state.gsy_node_url.clone(), valid_forecasts).await;
 				} else {
 					info!("No valid forecasts to forward.");
 				}

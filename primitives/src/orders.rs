@@ -23,7 +23,7 @@ pub enum InputOrder<AccountId> {
 #[cfg_attr(feature = "std", derive(Hash, Default))]
 pub struct OrderComponent {
     pub area_uuid: u64,
-    pub market_uuid: u64,
+    pub market_id: u64,
     pub time_slot: u64,
     pub creation_time: u64,
     pub energy: u64,
