@@ -1,19 +1,18 @@
-use std::str::FromStr;
-use gsy_offchain_primitives::service_to_node_schema::orders::Order;
 use anyhow::{Error, Result};
 use chrono::Local;
-use subxt_signer::sr25519::dev;
 use subxt::{
-    SubstrateConfig,
+    utils::AccountId32,
     OnlineClient,
-    utils::AccountId32
+    SubstrateConfig
 };
+use subxt_signer::sr25519::dev;
 use tracing::info;
-use gsy_offchain_primitives::db_api_schema::market::MarketTopologySchema;
+
+use crate::node_connector::orders::gsy_node::runtime_types::gsy_primitives::orders::{
+    InputBid, InputOffer, InputOrder, OrderComponent};
+use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketTopologySchema};
 use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
 use gsy_offchain_primitives::utils::NODE_FLOAT_SCALING_FACTOR;
-use crate::node_connector::orders::gsy_node::runtime_types::gsy_primitives::orders::{
-    InputOrder, OrderComponent, InputBid, InputOffer};
 
 
 const BID_RATE: f64 = 0.3;
@@ -30,42 +29,9 @@ pub async fn publish_orders(
 ) -> Result<(), Error> {
 
     let api = OnlineClient::<SubstrateConfig>::from_url(url).await?;
-
-    let now: u64 = Local::now().timestamp() as u64;
     
-    let input_orders = forecasts.into_iter().map(|forecast| {
-        if (forecast.energy_kwh > 0.) {
-            InputOrder::Bid {
-                0: InputBid {
-                    buyer: AccountId32::from_str(forecast.area_uuid.clone().as_str()).unwrap(),
-                    bid_component: OrderComponent {
-                        area_uuid: forecast.area_uuid.clone(),
-                        energy: (forecast.energy_kwh * NODE_FLOAT_SCALING_FACTOR) as u64,
-                        energy_rate: (forecast.energy_kwh * BID_RATE * NODE_FLOAT_SCALING_FACTOR) as u64,
-                        market_id: market.market_id.clone(),
-                        creation_time: now,
-                        time_slot: market.time_slot as u64,
-                    }
-                }
-            }
-        }
-        else if (forecast.energy_kwh < 0.) {
-            InputOrder::Offer {
-                0: InputOffer {
-                    seller: AccountId32::from_str(forecast.area_uuid.clone().as_str()).unwrap(),
-                    offer_component: OrderComponent {
-                        area_uuid: forecast.area_uuid.clone(),
-                        energy: (forecast.energy_kwh * NODE_FLOAT_SCALING_FACTOR) as u64,
-                        energy_rate: (forecast.energy_kwh * OFFER_RATE * NODE_FLOAT_SCALING_FACTOR) as u64,
-                        market_id: market.market_id.clone(),
-                        creation_time: now,
-                        time_slot: market.time_slot as u64,
-                    }
-                }
-            }
-        }
-    }).collect();
-let register_order_tx = gsy_node::tx().orderbook_worker().insert_orders(input_orders);
+    let input_orders = create_input_orders(forecasts, market);
+    let register_order_tx = gsy_node::tx().orderbook_worker().insert_orders(input_orders);
 
     let signer = dev::alice();
     let order_submit_and_watch = api
@@ -85,4 +51,65 @@ let register_order_tx = gsy_node::tx().orderbook_worker().insert_orders(input_or
     }
 
     Ok(())
+}
+
+
+fn _create_bid_object(
+    forecast: ForecastSchema, area_info: AreaTopologySchema, 
+    market: MarketTopologySchema, now: u64) -> InputOrder<AccountId32> {
+    InputOrder::Bid {
+        0: InputBid {
+            buyer: AccountId32::from(dev::eve().public_key()),
+            bid_component: OrderComponent {
+                area_uuid: area_info.area_hash.clone(),
+                energy: (forecast.energy_kwh.abs() * NODE_FLOAT_SCALING_FACTOR) as u64,
+                energy_rate: (forecast.energy_kwh.abs() * BID_RATE * NODE_FLOAT_SCALING_FACTOR) as u64,
+                market_id: market.market_id.clone(),
+                creation_time: now,
+                time_slot: market.time_slot as u64,
+            }
+        }
+    }
+}
+
+
+fn _create_offer_object(
+    forecast: ForecastSchema, area_info: AreaTopologySchema,
+    market: MarketTopologySchema, now: u64) -> InputOrder<AccountId32> {
+    InputOrder::Offer {
+        0: InputOffer {
+            seller: AccountId32::from(dev::ferdie().public_key()),
+            offer_component: OrderComponent {
+                area_uuid: area_info.area_hash.clone(),
+                energy: (forecast.energy_kwh.abs() * NODE_FLOAT_SCALING_FACTOR) as u64,
+                energy_rate: (forecast.energy_kwh.abs() * OFFER_RATE * NODE_FLOAT_SCALING_FACTOR) as u64,
+                market_id: market.market_id.clone(),
+                creation_time: now,
+                time_slot: market.time_slot as u64,
+            }
+        }
+    }
+}
+
+
+pub fn create_input_orders(forecasts: Vec<ForecastSchema>, market: MarketTopologySchema) -> Vec<InputOrder<AccountId32>> {
+    let now: u64 = Local::now().timestamp() as u64;
+
+    let mut input_orders: Vec<InputOrder<AccountId32>> = Vec::new();
+
+    for forecast in forecasts {
+        let area_info = market.area_uuids.iter().find(
+            |area| area.area_uuid == forecast.area_uuid);
+        if area_info.is_none() {
+            continue;
+        }
+
+        if forecast.energy_kwh > 0. {
+            input_orders.push(_create_bid_object(forecast, area_info.unwrap().clone(), market.clone(), now));
+        }
+        else if forecast.energy_kwh < 0. {
+            input_orders.push(_create_offer_object(forecast, area_info.unwrap().clone(), market.clone(), now));
+        }
+    }
+    input_orders
 }

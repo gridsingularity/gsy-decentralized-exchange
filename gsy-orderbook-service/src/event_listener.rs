@@ -8,7 +8,7 @@ use subxt::{
 };
 use tracing::info;
 
-#[subxt::subxt(runtime_metadata_path = "metadata.scale")]
+#[subxt::subxt(runtime_metadata_path = "../offchain-primitives/metadata.scale")]
 pub mod gsy_node {}
 
 pub async fn init_event_listener(db: DbRef, node_url: String) -> Result<(), Error> {

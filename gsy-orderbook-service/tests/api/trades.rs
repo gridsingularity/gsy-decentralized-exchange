@@ -14,6 +14,8 @@ async fn post_trade_request_writes_trades_to_the_db() {
     let address = app.address;
     let account: AccountId32 = crate::orders::create_test_accountid();
     let market_id = H256::random();
+    let area_id = H256::random();
+    let area_id_2 = H256::random();
 
     let bid = InsertBid {
         buyer: account.clone(),
@@ -21,7 +23,7 @@ async fn post_trade_request_writes_trades_to_the_db() {
         bid_component: InsertOrderComponent {
             energy: 100,
             energy_rate: 10,
-            area_uuid: 1,
+            area_uuid: area_id.clone(),
             market_id: market_id.clone(),
             time_slot: 1,
             creation_time: 1677453190,
@@ -33,7 +35,7 @@ async fn post_trade_request_writes_trades_to_the_db() {
         offer_component: InsertOrderComponent {
             energy: 100,
             energy_rate: 10,
-            area_uuid: 1,
+            area_uuid: area_id_2.clone(),
             market_id: market_id.clone(),
             time_slot: 1,
             creation_time: 1677453190,

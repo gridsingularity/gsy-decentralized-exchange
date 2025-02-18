@@ -19,8 +19,8 @@ impl Order {
 /// Order component struct
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub struct OrderComponent {
-    pub area_uuid: String,
-    pub market_id: String,
+    pub area_uuid: H256,
+    pub market_id: H256,
     pub time_slot: u64,
     pub creation_time: u64,
     pub energy: f64,

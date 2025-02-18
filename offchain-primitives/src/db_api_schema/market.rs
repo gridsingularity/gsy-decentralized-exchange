@@ -13,7 +13,7 @@ pub struct AreaTopologySchema {
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub struct MarketTopologySchema {
     // H256-serialized to string for market id
-    pub market_id: String,
+    pub market_id: H256,
     pub community_uuid: String,
     pub community_name: String,
     pub time_slot: u32,
