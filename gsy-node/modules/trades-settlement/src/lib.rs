@@ -40,6 +40,10 @@ mod test_orders;
 
 #[cfg(feature = "runtime-benchmarks")]
 mod benchmarking;
+
+#[cfg(feature = "runtime-benchmarks")]
+mod test_orders;
+
 pub mod weights;
 
 #[frame_support::pallet]

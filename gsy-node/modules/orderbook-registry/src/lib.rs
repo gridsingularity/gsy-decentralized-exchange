@@ -31,8 +31,8 @@ mod mock;
 #[cfg(test)]
 mod tests;
 
-#[cfg(feature = "runtime-benchmarks")]
-mod benchmarking;
+// #[cfg(feature = "runtime-benchmarks")]
+// mod benchmarking;
 pub mod weights;
 pub use weights::*;
 
@@ -114,10 +114,14 @@ pub mod pallet {
 		NewOrderInserted(T::AccountId, T::Hash),
 		/// New order has been inserted for the user by proxy. \[depositor, proxy, hash\]
 		NewOrderInsertedByProxy(T::AccountId, T::AccountId, T::Hash),
+		/// Notify that all orders in the batch have been inserted
+		AllOrdersInserted(T::AccountId),
 		/// Order has been deleted. \[depositor, hash\]
 		OrderDeleted(T::AccountId, T::Hash),
 		/// Order has been deleted for the user by proxy. \[depositor, proxy, hash\]
 		OrderDeletedByProxy(T::AccountId, T::AccountId, T::Hash),
+		/// Notify that all orders in the batch have been deleted
+		AllOrdersDeleted(T::AccountId),
 		/// Order has been executed. \[depositor, hash, selected_energy, energy_rate, time_slot\]
 		OrderExecuted(Trade<T::AccountId, T::Hash>),
 		/// Trade has been cleared.
@@ -170,6 +174,7 @@ pub mod pallet {
 					Event::NewOrderInserted(user_account.clone(), order_hash)
 				);
 			}
+			Self::deposit_event(Event::AllOrdersInserted(user_account.clone()));
 			Ok(())
 		}
 
@@ -235,6 +240,7 @@ pub mod pallet {
 					Event::OrderDeleted(order_ref.user_id, order_ref.hash)
 				);
 			}
+			Self::deposit_event(Event::AllOrdersDeleted(user_account));
 			Ok(())
 		}
 
@@ -424,7 +430,5 @@ pub mod pallet {
 		pub fn is_collateral_amount_sufficient(amount: u64, vault_owner: &T::AccountId) -> bool {
 			<gsy_collateral::Pallet<T>>::verify_collateral_amount(amount, vault_owner)
 		}
-
-
 	}
 }

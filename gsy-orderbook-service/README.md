@@ -18,7 +18,7 @@ curl -X POST http://127.0.0.1:8080/orders \
         "buyer": "aabc",
         "nonce": 2,
         "area_uuid": 1,
-        "market_uuid": 1,
+        "market_id": "0x123",
         "time_slot": 2,
         "creation_time": 1546300800,
         "bid_component": {
@@ -32,7 +32,7 @@ curl -X POST http://127.0.0.1:8080/orders \
         "seller": "bbbcb", 
         "nonce": 1, 
         "area_uuid": 1,
-        "market_uuid": 1,
+        "market_id": "0x123",
         "time_slot": 1,
         "creation_time": 1546300800,
         "offer_component": {

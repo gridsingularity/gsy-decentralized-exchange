@@ -1,6 +1,5 @@
 use scale_info::prelude::{format, string::String};
 use core::option_env;
-use codec::alloc::string::ToString;
 
 #[derive(Debug)]
 pub struct OrderBookServiceURLs {
@@ -11,7 +10,7 @@ pub struct OrderBookServiceURLs {
 impl Default for OrderBookServiceURLs{
 	fn default() -> Self {
 		// Set the environment variable "URL" for OrderBook_Service
-		let base_url = option_env!("ORDERBOOK_SERVICE_URL")
+		let orderbook_url = option_env!("ORDERBOOK_SERVICE_URL")
             .unwrap_or("http://localhost:8080");
 
 		OrderBookServiceURLs{
@@ -19,14 +18,4 @@ impl Default for OrderBookServiceURLs{
 			trades_url: format!("{}/trades", orderbook_url),
 		}
 	}
-}
-
-impl OrderBookServiceURL {
-    pub fn with_endpoint(&self, endpoint: &str) -> String {
-        format!(
-            "{}/{}",
-            self.url.trim_end_matches('/'),
-            endpoint.trim_start_matches('/')
-        )
-    }
 }

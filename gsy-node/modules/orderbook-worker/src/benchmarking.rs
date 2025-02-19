@@ -1,17 +1,8 @@
 //! Benchmarking setup for orderbook-worker
 #![cfg(feature = "runtime-benchmarks")]
 
-use super::*;
-
 #[allow(unused)]
 use crate::Pallet as OrderbookWorker;
-use gsy_collateral::Pallet as GsyCollateral;
-use orderbook_registry::Pallet as OrderbookRegistry;
-use gsy_primitives::{Vault, Order, Bid, OrderComponent};
-use frame_benchmarking::{benchmarks, impl_benchmark_test_suite, whitelisted_caller, Vec};
-use frame_system::RawOrigin;
-use frame_support::{sp_runtime::traits::{Hash, One}};
-use sp_std::vec;
 
 // fn add_user<T: Config>(
 // 	user: T::AccountId,
@@ -40,7 +31,7 @@ use sp_std::vec;
 // 		nonce,
 // 		bid_component: OrderComponent {
 // 			area_uuid: 1,
-// 			market_uuid: 1u64,
+// 			market_id: 1u64,
 // 			time_slot: block_number,
 // 			creation_time: 1677453190,
 // 			energy,
