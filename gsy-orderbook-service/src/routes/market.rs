@@ -12,7 +12,8 @@ pub struct MarketParameters {
 #[derive(Deserialize)]
 pub struct MarketFromCommunityParameters {
     community_uuid: String,
-    time_slot: u64
+    start_time: Option<u32>,
+    end_time: Option<u32>
 }
 
 
@@ -41,14 +42,13 @@ pub async fn get_market(db: DbRef, params: Query<MarketParameters>) -> impl Resp
 
 pub async fn get_market_from_community(db: DbRef, params: Query<MarketFromCommunityParameters>) -> impl Responder {
     let market_service = db.get_ref().markets();
-    match market_service.get_community_market(params.community_uuid.clone(), params.time_slot).await {
-        Ok(markets) => get_only_one_market(
-            markets, format!("community id ({})", params.community_uuid.clone())),
+    match market_service.get_community_market(
+            params.community_uuid.clone(), params.start_time, params.end_time).await {
+        Ok(markets) => HttpResponse::Ok().json(markets),
         Err(e) => {
-            println!("Error getting market: {:?}", e);
             tracing::error!("Failed to execute query: {:?}", e);
             HttpResponse::InternalServerError().finish()
-        }
+        },
     }
 }
 

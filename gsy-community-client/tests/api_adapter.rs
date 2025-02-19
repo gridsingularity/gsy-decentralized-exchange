@@ -2,6 +2,7 @@ use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAda
 use gsy_community_client::external_api::{
     ExternalForecast, ExternalMeasurement, ExternalCommunityTopology, ExternalAreaTopology};
 use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketTopologySchema};
+use gsy_offchain_primitives::utils::h256_to_string;
 use gsy_community_client::time_utils::get_last_and_next_timeslot;
 
 use subxt::utils::H256;
@@ -36,14 +37,14 @@ async fn test_get_or_create_market_topology() {
     let expected_market = MarketTopologySchema {
         creation_time: 123,
         time_slot: 456,
-        market_id: H256::random(),
+        market_id: h256_to_string(H256::random()),
         community_uuid: "comm_uuid".to_string(),
         community_name: "comm_name".to_string(),
         area_uuids: vec![
             AreaTopologySchema {
                 area_uuid: "area_uuid".to_string(),
                 name: "area_name".to_string(),
-                area_hash: H256::random(),
+                area_hash: h256_to_string(H256::random()),
             }
         ]
     };

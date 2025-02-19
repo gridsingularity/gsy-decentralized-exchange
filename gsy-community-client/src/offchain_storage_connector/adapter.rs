@@ -1,9 +1,10 @@
 use reqwest::Client;
 use subxt::utils::H256;
-use tracing::{info, error};
+use tracing::info;
 
 use gsy_offchain_primitives::db_api_schema::profiles::{MeasurementSchema, ForecastSchema};
 use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketTopologySchema};
+use gsy_offchain_primitives::utils::h256_to_string;
 use crate::time_utils::get_current_timestamp_in_secs;
 use crate::external_api::{
     ExternalForecast, ExternalMeasurement, ExternalCommunityTopology};
@@ -89,18 +90,17 @@ impl AreaMarketInfoAdapter {
             Ok(resp) => {
                 Some(resp.json::<MarketTopologySchema>().await.unwrap())
             }
-            Err(err) => {
-                error!("ERROR IN FETCH {:?}", err.status());
+            Err(_) => {
                 let new_market = MarketTopologySchema {
                     community_name: topology.community_name.clone(),
                     community_uuid: topology.community_uuid.clone(),
-                    market_id: H256::random(),
+                    market_id: h256_to_string(H256::random()),
                     time_slot: time_slot as u32,
                     creation_time: get_current_timestamp_in_secs() as u32,
                     area_uuids: topology.areas.clone().into_iter().map(
                         |area| AreaTopologySchema {
                             area_uuid: area.area_uuid.clone(), name: area.area_name.clone(),
-                            area_hash: H256::random(),
+                            area_hash: h256_to_string(H256::random()),
                         }
                     ).collect()
                 };
