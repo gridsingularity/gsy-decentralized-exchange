@@ -36,6 +36,49 @@ impl OrderService {
                 Ok(document) => {
                     result.push(document);
                 }
+                Err(err) => {
+                    tracing::error!("Error while fetching orders: {}", err.to_string());
+                    break;
+                }
+            }
+        }
+        Ok(result)
+    }
+
+    #[tracing::instrument(name = "Filter orders from database", skip(self))]
+    pub async fn filter_orders(
+            &self, market_id: Option<String>, start_time: Option<u32>,
+            end_time: Option<u32>) -> Result<Vec<DbOrderSchema>> {
+        let mut filter_params = doc! {};
+
+        if market_id.is_some() {
+            let market_id_str = market_id.unwrap();
+            filter_params = doc! {"$or": [
+                { "order.data.offer_component.market_id": market_id_str.clone() },
+                { "order.data.bid_component.market_id": market_id_str.clone() }
+            ]};
+        }
+
+        // TODO: Correct time_slot filtering based on nested offer / bid structs.
+        if start_time.is_some() {
+            filter_params.insert("time_slot", doc! {"$gte": start_time.unwrap()} ); }
+        if end_time.is_some() {
+            if start_time.is_some() {
+                filter_params.insert("time_slot",
+                                     doc! {"$gte": start_time.unwrap(), "$lte": end_time.unwrap()});
+            }
+            else {
+                filter_params.insert("time_slot", doc! {"$lte": end_time.unwrap()});
+            }
+        }
+
+        let mut cursor = self.0.find(filter_params).await.unwrap();
+        let mut result: Vec<DbOrderSchema> = Vec::new();
+        while let Some(doc) = cursor.next().await {
+            match doc {
+                Ok(document) => {
+                    result.push(document);
+                }
                 _ => {
                     break;
                 }
@@ -43,6 +86,7 @@ impl OrderService {
         }
         Ok(result)
     }
+
 
     #[tracing::instrument(
         name = "Saving orders to database",

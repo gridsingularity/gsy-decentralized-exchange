@@ -1,11 +1,10 @@
 use actix_web::web::Query;
 use actix_web::{web::Json, HttpResponse, Responder};
-
 use crate::db::DbRef;
 use gsy_offchain_primitives::node_to_api_schema::insert_trades::convert_gsy_node_trades_schema_to_db_schema;
 use serde::Deserialize;
-use gsy_offchain_primitives::db_api_schema::orders::DbOrderSchema;
 use gsy_offchain_primitives::db_api_schema::trades::TradeSchema;
+
 
 #[tracing::instrument(
     name = "Adding new trades",
