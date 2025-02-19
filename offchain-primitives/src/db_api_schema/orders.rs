@@ -7,8 +7,8 @@ use subxt::ext::sp_runtime::traits::{BlakeTwo256, Hash};
 #[derive(Serialize, Deserialize, Debug, Encode, Clone, PartialEq)]
 #[serde(tag = "type", content = "data")]
 pub enum Order {
-    Bid(Bid),
-    Offer(Offer),
+    Bid(DbBid),
+    Offer(DbOffer),
 }
 
 impl Order {
@@ -18,9 +18,9 @@ impl Order {
 }
 /// Order component struct
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
-pub struct OrderComponent {
-    pub area_uuid: H256,
-    pub market_id: H256,
+pub struct DbOrderComponent {
+    pub area_uuid: String,
+    pub market_id: String,
     pub time_slot: u64,
     pub creation_time: u64,
     pub energy: f64,
@@ -28,15 +28,15 @@ pub struct OrderComponent {
 }
 
 #[derive(Serialize, Deserialize, Debug, Encode, Clone, PartialEq)]
-pub struct OrderSchema {
+pub struct DbOrderSchema {
     pub _id: String,
     pub status: OrderStatus,
     pub order: Order,
 }
 
-impl From<Order> for OrderSchema {
+impl From<Order> for DbOrderSchema {
     fn from(order: Order) -> Self {
-        OrderSchema {
+        DbOrderSchema {
             _id: order.hash().to_string(),
             status: Default::default(),
             order,
@@ -61,17 +61,17 @@ impl Default for OrderStatus {
 
 /// Bid order struct
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
-pub struct Bid {
+pub struct DbBid {
     pub buyer: String,
     pub nonce: u32,
-    pub bid_component: OrderComponent,
+    pub bid_component: DbOrderComponent,
 }
 
 /// Offer (Ask) order struct
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
-pub struct Offer {
+pub struct DbOffer {
     pub seller: String,
     pub nonce: u32,
-    pub offer_component: OrderComponent,
+    pub offer_component: DbOrderComponent,
 }
 

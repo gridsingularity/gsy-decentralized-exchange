@@ -1,6 +1,7 @@
 FROM rust:1.80
 
 ADD gsy-orderbook-service /var/www/gsy-orderbook-service/
+ADD offchain-primitives /var/www/offchain-primitives/
 
 # build for release
 RUN rm -rf /var/www/gsy-orderbook-service/target/

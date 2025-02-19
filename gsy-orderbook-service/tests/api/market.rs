@@ -1,6 +1,7 @@
 use actix_web::web;
 use subxt::utils::H256;
 use gsy_offchain_primitives::db_api_schema::market::{MarketTopologySchema, AreaTopologySchema};
+use gsy_offchain_primitives::utils::h256_to_string;
 use crate::helpers::init_app;
 
 #[tokio::test]
@@ -11,12 +12,12 @@ async fn get_market_succeeds() {
         AreaTopologySchema{
             name: "area1".to_string(),
             area_uuid: "area1hash".to_string(),
-            area_hash: H256::random()
+            area_hash: h256_to_string(H256::random())
         },
         AreaTopologySchema{
             name: "area2".to_string(),
             area_uuid: "area2hash".to_string(),
-            area_hash: H256::random()
+            area_hash: h256_to_string(H256::random())
         },
     ];
     let market1 = MarketTopologySchema {
@@ -31,12 +32,12 @@ async fn get_market_succeeds() {
         AreaTopologySchema{
             name: "area3".to_string(),
             area_uuid: "area3hash".to_string(),
-            area_hash: H256::random()
+            area_hash: h256_to_string(H256::random())
         },
         AreaTopologySchema{
             name: "area4".to_string(),
             area_uuid: "area4hash".to_string(),
-            area_hash: H256::random()
+            area_hash: h256_to_string(H256::random())
         },
     ];
     let market2 = MarketTopologySchema {
@@ -98,12 +99,12 @@ fn create_market_topology_schema(
         AreaTopologySchema{
             name: area1_name,
             area_uuid: area1_uuid,
-            area_hash: H256::random()
+            area_hash: h256_to_string(H256::random())
         },
         AreaTopologySchema{
             name: area2_name,
             area_uuid: area2_uuid,
-            area_hash: H256::random()
+            area_hash: h256_to_string(H256::random())
         },
     ];
     let market = MarketTopologySchema {
@@ -199,12 +200,12 @@ async fn post_market_succeeds() {
         AreaTopologySchema{
             name: "area1".to_string(),
             area_uuid: "area1hash".to_string(),
-            area_hash: H256::random()
+            area_hash: h256_to_string(H256::random())
         },
         AreaTopologySchema{
             name: "area2".to_string(),
             area_uuid: "area2hash".to_string(),
-            area_hash: H256::random()
+            area_hash: h256_to_string(H256::random())
         },
     ];
     let market = MarketTopologySchema {

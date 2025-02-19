@@ -1,5 +1,5 @@
 use crate::db::DatabaseWrapper;
-use gsy_offchain_primitives::db_api_schema::orders::{OrderStatus, OrderSchema};
+use gsy_offchain_primitives::db_api_schema::orders::{OrderStatus, DbOrderSchema};
 use anyhow::Result;
 use futures::StreamExt;
 use mongodb::bson::{doc, Bson};
@@ -24,13 +24,13 @@ pub async fn init_orders(db: &DatabaseWrapper) -> Result<()> {
 
 /// this struct is wrapper to `Collection<Order>` should have function to help to manage order
 #[repr(transparent)]
-pub struct OrderService(pub Collection<OrderSchema>);
+pub struct OrderService(pub Collection<DbOrderSchema>);
 
 impl OrderService {
     #[tracing::instrument(name = "Fetching orders from database", skip(self))]
-    pub async fn get_all_orders(&self) -> Result<Vec<OrderSchema>> {
+    pub async fn get_all_orders(&self) -> Result<Vec<DbOrderSchema>> {
         let mut cursor = self.0.find(doc! {}).await.unwrap();
-        let mut result: Vec<OrderSchema> = Vec::new();
+        let mut result: Vec<DbOrderSchema> = Vec::new();
         while let Some(doc) = cursor.next().await {
             match doc {
                 Ok(document) => {
@@ -51,7 +51,7 @@ impl OrderService {
         orders_schema = ?orders_schema
         )
     )]
-    pub async fn insert_orders(&self, orders_schema: Vec<OrderSchema>) -> Result<HashMap<usize, Bson>> {
+    pub async fn insert_orders(&self, orders_schema: Vec<DbOrderSchema>) -> Result<HashMap<usize, Bson>> {
         match self.0.insert_many(orders_schema).await {
             Ok(db_result) => Ok(db_result.inserted_ids),
             Err(e) => {
@@ -62,7 +62,7 @@ impl OrderService {
     }
 
     #[tracing::instrument(name = "Fetching order by id from database", skip(self, id))]
-    pub async fn get_order_by_id(&self, id: &Bson) -> Result<Option<OrderSchema>> {
+    pub async fn get_order_by_id(&self, id: &Bson) -> Result<Option<DbOrderSchema>> {
         match self.0.find_one(doc! {"_id": id}).await {
             Ok(doc) => Ok(doc),
             Err(e) => {
@@ -133,7 +133,7 @@ impl From<&DatabaseWrapper> for OrderService {
 }
 
 impl Deref for OrderService {
-    type Target = Collection<OrderSchema>;
+    type Target = Collection<DbOrderSchema>;
 
     fn deref(&self) -> &Self::Target {
         &self.0

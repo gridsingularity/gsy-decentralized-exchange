@@ -3,6 +3,7 @@ use gsy_community_client::node_connector::orders::gsy_node::runtime_types::gsy_p
 use gsy_community_client::time_utils::get_current_timestamp_in_secs;
 use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketTopologySchema};
 use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
+use gsy_offchain_primitives::utils::h256_to_string;
 use subxt::utils::H256;
 
 
@@ -41,18 +42,18 @@ mod tests {
         let market: MarketTopologySchema = MarketTopologySchema {
             creation_time: 345345,
             time_slot: 456456,
-            market_id: H256::random(),
+            market_id: h256_to_string(H256::random()),
             community_uuid: "community1".to_string(),
             community_name: "My Community".to_string(),
             area_uuids: vec![
                 AreaTopologySchema {
                     area_uuid: "area1".to_string(),
-                    area_hash: H256::random(),
+                    area_hash: h256_to_string(H256::random()),
                     name: "Area 1".to_string(),
                 },
                 AreaTopologySchema {
                     area_uuid: "area2".to_string(),
-                    area_hash: H256::random(),
+                    area_hash: h256_to_string(H256::random()),
                     name: "Area 2".to_string(),
                 }
             ]
@@ -67,8 +68,8 @@ mod tests {
                 (InputOrder::Bid(bid), market) => {
                     // assert_eq!(bid.buyer.to_string(), AccountId32::from(dev::charlie().public_key()).to_string());
                     let area_info = market.area_uuids.get(0).unwrap();
-                    assert_eq!(bid.bid_component.area_uuid, area_info.area_hash);
-                    assert_eq!(bid.bid_component.market_id, market.market_id);
+                    assert_eq!(h256_to_string(bid.bid_component.area_uuid), area_info.area_hash);
+                    assert_eq!(h256_to_string(bid.bid_component.market_id), market.market_id);
                     assert!((current_time - bid.bid_component.creation_time) < 1);
                     assert_eq!(bid.bid_component.time_slot, 456456);
                     assert_eq!(bid.bid_component.energy_rate, 36000);
@@ -77,8 +78,8 @@ mod tests {
                 (InputOrder::Offer(offer), market) => {
                     // assert_eq!(offer.seller, AccountId32::from(dev::ferdie().public_key()));
                     let area_info = market.area_uuids.get(1).unwrap();
-                    assert_eq!(offer.offer_component.area_uuid, area_info.area_hash);
-                    assert_eq!(offer.offer_component.market_id, market.market_id);
+                    assert_eq!(h256_to_string(offer.offer_component.area_uuid), area_info.area_hash);
+                    assert_eq!(h256_to_string(offer.offer_component.market_id), market.market_id);
                     assert!((current_time - offer.offer_component.creation_time) < 1);
                     assert_eq!(offer.offer_component.time_slot, 456456);
                     assert_eq!(offer.offer_component.energy_rate, 700);

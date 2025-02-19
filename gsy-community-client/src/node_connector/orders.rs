@@ -11,7 +11,7 @@ use crate::node_connector::orders::gsy_node::runtime_types::gsy_primitives::orde
 use crate::time_utils::get_current_timestamp_in_secs;
 use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketTopologySchema};
 use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
-use gsy_offchain_primitives::utils::NODE_FLOAT_SCALING_FACTOR;
+use gsy_offchain_primitives::utils::{NODE_FLOAT_SCALING_FACTOR, string_to_h256};
 
 
 const BID_RATE: f64 = 0.3;
@@ -60,10 +60,10 @@ fn _create_bid_object(
         0: InputBid {
             buyer: AccountId32::from(dev::eve().public_key()),
             bid_component: OrderComponent {
-                area_uuid: area_info.area_hash.clone(),
+                area_uuid: string_to_h256(area_info.area_hash.clone()),
                 energy: (forecast.energy_kwh.abs() * NODE_FLOAT_SCALING_FACTOR) as u64,
                 energy_rate: (forecast.energy_kwh.abs() * BID_RATE * NODE_FLOAT_SCALING_FACTOR) as u64,
-                market_id: market.market_id.clone(),
+                market_id: string_to_h256(market.market_id.clone()),
                 creation_time: now,
                 time_slot: market.time_slot as u64,
             }
@@ -79,10 +79,10 @@ fn _create_offer_object(
         0: InputOffer {
             seller: AccountId32::from(dev::ferdie().public_key()),
             offer_component: OrderComponent {
-                area_uuid: area_info.area_hash.clone(),
+                area_uuid: string_to_h256(area_info.area_hash.clone()),
                 energy: (forecast.energy_kwh.abs() * NODE_FLOAT_SCALING_FACTOR) as u64,
                 energy_rate: (forecast.energy_kwh.abs() * OFFER_RATE * NODE_FLOAT_SCALING_FACTOR) as u64,
-                market_id: market.market_id.clone(),
+                market_id: string_to_h256(market.market_id.clone()),
                 creation_time: now,
                 time_slot: market.time_slot as u64,
             }
