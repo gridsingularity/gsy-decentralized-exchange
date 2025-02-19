@@ -4,6 +4,8 @@ use actix_web::{web::Json, HttpResponse, Responder};
 use crate::db::DbRef;
 use gsy_offchain_primitives::node_to_api_schema::insert_trades::convert_gsy_node_trades_schema_to_db_schema;
 use serde::Deserialize;
+use gsy_offchain_primitives::db_api_schema::orders::DbOrderSchema;
+use gsy_offchain_primitives::db_api_schema::trades::TradeSchema;
 
 #[tracing::instrument(
     name = "Adding new trades",
@@ -22,6 +24,18 @@ pub async fn post_trades(
         Err(_) => HttpResponse::InternalServerError().finish()
     }
 }
+
+
+pub async fn post_normalized_trades(
+    trades: Json<Vec<TradeSchema>>,
+    db: DbRef,
+) -> impl Responder {
+    match db.get_ref().trades().insert_trades(trades.to_vec()).await {
+        Ok(ids) => HttpResponse::Ok().json(ids),
+        Err(_) => HttpResponse::InternalServerError().finish()
+    }
+}
+
 
 #[derive(Deserialize, Debug)]
 pub struct GetTradesParams {

@@ -41,7 +41,7 @@ impl OrderService {
                 }
             }
         }
-        return Ok(result);
+        Ok(result)
     }
 
     #[tracing::instrument(
