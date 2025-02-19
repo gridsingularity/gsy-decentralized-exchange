@@ -1,5 +1,4 @@
 use anyhow::{Error, Result};
-use chrono::Local;
 use subxt::{
     utils::AccountId32,
     OnlineClient,
@@ -7,9 +6,9 @@ use subxt::{
 };
 use subxt_signer::sr25519::dev;
 use tracing::info;
-
 use crate::node_connector::orders::gsy_node::runtime_types::gsy_primitives::orders::{
     InputBid, InputOffer, InputOrder, OrderComponent};
+use crate::time_utils::get_current_timestamp_in_secs;
 use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketTopologySchema};
 use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
 use gsy_offchain_primitives::utils::NODE_FLOAT_SCALING_FACTOR;
@@ -93,7 +92,7 @@ fn _create_offer_object(
 
 
 pub fn create_input_orders(forecasts: Vec<ForecastSchema>, market: MarketTopologySchema) -> Vec<InputOrder<AccountId32>> {
-    let now: u64 = Local::now().timestamp() as u64;
+    let now: u64 = get_current_timestamp_in_secs();
 
     let mut input_orders: Vec<InputOrder<AccountId32>> = Vec::new();
 

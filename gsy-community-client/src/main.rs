@@ -1,11 +1,11 @@
 use reqwest::Client;
-use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{error, info};
 use std::time::Duration;
 use tokio::time::sleep;
 use gsy_offchain_primitives::db_api_schema::profiles::{MeasurementSchema, ForecastSchema};
 use gsy_community_client::node_connector::orders::publish_orders;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
+use gsy_community_client::time_utils::{get_current_timestamp_in_secs, get_last_and_next_timeslot};
 use gsy_community_client::external_api::{
 	ExternalForecast, ExternalMeasurement, ExternalCommunityTopology};
 
@@ -24,7 +24,7 @@ impl AppState {
 	fn new() -> Self {
 		AppState {
 			client: Client::new(),
-			api_adapter: AreaMarketInfoAdapter::new(),
+			api_adapter: AreaMarketInfoAdapter::new(None),
 			gsy_node_url: "http://gsy-node:9944/".to_string(),
 			forecast_url: "http://localhost:8000/forecasts".to_string(),
 			measurements_url: "http://localhost:8000/measurements".to_string(),
@@ -51,7 +51,10 @@ impl AppState {
 
 	async fn poll_and_forward(&self) {
 		loop {
-			let seconds_since_epoch = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+			let seconds_since_epoch = get_current_timestamp_in_secs();
+
+			let (_last_timeslot, next_timeslot) = get_last_and_next_timeslot();
+
 			// Fetch and forward topology
 			let external_topology_res = self.fetch_topology().await;
 			if external_topology_res.is_err() {
@@ -59,7 +62,7 @@ impl AppState {
 				continue
 			}
 			let internal_topology = self.api_adapter.get_or_create_market_topology(
-				external_topology_res.unwrap().clone()).await.unwrap();
+				external_topology_res.unwrap().clone(), next_timeslot).await.unwrap();
 
 			match self.fetch_forecasts().await {
 				Ok(forecasts) => {
@@ -72,7 +75,6 @@ impl AppState {
 						if let Err(e) = self.api_adapter.forward_forecast(valid_forecasts.clone()).await {
 							info!("Failed to forward forecasts: {}", e);
 						}
-						// TODO: Convert forecasts to orders 
 						publish_orders(
 							self.gsy_node_url.clone(), valid_forecasts.clone(), 
 							internal_topology.clone()).await.unwrap();

@@ -1,10 +1,10 @@
 use reqwest::Client;
 use subxt::utils::H256;
-use tracing::info;
-use chrono::Local;
+use tracing::{info, error};
 
 use gsy_offchain_primitives::db_api_schema::profiles::{MeasurementSchema, ForecastSchema};
 use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketTopologySchema};
+use crate::time_utils::get_current_timestamp_in_secs;
 use crate::external_api::{
     ExternalForecast, ExternalMeasurement, ExternalCommunityTopology};
 
@@ -14,18 +14,19 @@ pub struct AreaMarketInfoAdapter {
     client: Client,
     internal_forecast_url: String,
     internal_measurements_url: String,
-    internal_topology_url: String,
-    internal_community_market_url: String,
+    pub internal_topology_url: String,
+    pub internal_community_market_url: String,
 }
 
 impl AreaMarketInfoAdapter {
-    pub fn new() -> Self {
+    pub fn new(host: Option<String>) -> Self {
+        let hostname = host.unwrap_or_else(|| "http://gsy-orderbook:8080".to_string());
         AreaMarketInfoAdapter {
             client: Client::new(),
-            internal_forecast_url: "http://gsy-orderbook:8080/forecasts".to_string(),
-            internal_measurements_url: "http://gsy-orderbook:8080/measurements".to_string(),
-            internal_topology_url: "http://gsy-orderbook:8080/market".to_string(),
-            internal_community_market_url: "http://gsy-orderbook:8080/community-market".to_string(),
+            internal_forecast_url: hostname.clone() + "/forecasts",
+            internal_measurements_url: hostname.clone() + "/measurements",
+            internal_topology_url: hostname.clone() + "/market",
+            internal_community_market_url: hostname.clone() + "/community-market",
         }
     }
 
@@ -79,19 +80,23 @@ impl AreaMarketInfoAdapter {
         }
     }
 
-    pub async fn get_or_create_market_topology(&self, topology: ExternalCommunityTopology) -> Option<MarketTopologySchema> {
-        let response = self.client.get(&self.internal_community_market_url).send().await;
+    pub async fn get_or_create_market_topology(&self, topology: ExternalCommunityTopology, time_slot: u64) -> Option<MarketTopologySchema> {
+        let community_market_url = self.internal_community_market_url.clone() +
+            "?community_uuid=" + topology.community_uuid.as_str() +
+            "&time_slot=" + time_slot.to_string().as_str();
+        let response = self.client.get(community_market_url).send().await;
         match response {
-            Ok(response) => {
-                Some(response.json::<MarketTopologySchema>().await.unwrap())
+            Ok(resp) => {
+                Some(resp.json::<MarketTopologySchema>().await.unwrap())
             }
-            Err(_) => {
+            Err(err) => {
+                error!("ERROR IN FETCH {:?}", err.status());
                 let new_market = MarketTopologySchema {
                     community_name: topology.community_name.clone(),
                     community_uuid: topology.community_uuid.clone(),
                     market_id: H256::random(),
-                    time_slot: Local::now().timestamp() as u32, // TODO: Correct timeslot
-                    creation_time: Local::now().timestamp() as u32,
+                    time_slot: time_slot as u32,
+                    creation_time: get_current_timestamp_in_secs() as u32,
                     area_uuids: topology.areas.clone().into_iter().map(
                         |area| AreaTopologySchema {
                             area_uuid: area.area_uuid.clone(), name: area.area_name.clone(),

@@ -1,6 +1,6 @@
-use chrono::Local;
 use gsy_community_client::node_connector::orders::create_input_orders;
 use gsy_community_client::node_connector::orders::gsy_node::runtime_types::gsy_primitives::orders::InputOrder;
+use gsy_community_client::time_utils::get_current_timestamp_in_secs;
 use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketTopologySchema};
 use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
 use subxt::utils::H256;
@@ -60,7 +60,7 @@ mod tests {
 
         let input_orders = create_input_orders(forecasts, market.clone());
         assert_eq!(input_orders.len(), 2);
-        let current_time = Local::now().timestamp() as u64;
+        let current_time = get_current_timestamp_in_secs();
 
         for order in input_orders {
             match (order, market.clone()) {
