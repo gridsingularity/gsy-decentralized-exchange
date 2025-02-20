@@ -115,7 +115,7 @@ if __name__ == '__main__':
     order_index = 0
     for i in range(96):
         creation_time = int(now().timestamp())
-        time_slot = start_timestamp + 15 * 60
+        time_slot = start_timestamp + (15 * 60 * i)
         market_id = _random_hex_str()
 
         resp = post_market(market_id, time_slot, creation_time)
