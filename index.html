@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="description" content="Documentation for the Grid Singularity Decentralized Exchange" /><meta name="author" content="Grid Singularity" />
+      <link rel="shortcut icon" href="img/favicon.ico" />
+    <title>GSy DEX</title>
+    <link rel="stylesheet" href="css/theme.css" />
+    <link rel="stylesheet" href="css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Home";
+        var mkdocs_page_input_path = "index.md";
+        var mkdocs_page_url = null;
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href=".">
+          <img src="images/Profile.png" class="logo" alt="Logo"/>
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="./search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul class="current">
+                <li class="toctree-l1 current"><a class="reference internal current" href="#">Home</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#introduction">Introduction</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#scope-and-objectives">Scope and Objectives</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#design-principles">Design Principles</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#system-components">System Components</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#substrate-based-node">Substrate-based Node</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#user-guide">User Guide</a>
+    </li>
+    </ul>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Deployment and operation</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="setup/installation/">Intro</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="setup/rust-setup/">Rust Setup</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="setup/run/">Run</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="setup/build/">Build</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="setup/connect-ui/">Connect UI</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="setup/docker/">Docker</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Node Structure</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="node/node/">Node</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="node/runtime/">Runtime</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="node/pallets/">Pallets</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="node/primitives/">Primitives</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">System Architecture</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="" href="architecture.md">High Level Architecture</a>
+                  </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href=".">GSy DEX</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href="." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">Home</li>
+    <li class="wy-breadcrumbs-aside">
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="decentralized-energy-exchange">Decentralized Energy Exchange</h1>
+<h2 id="introduction">Introduction</h2>
+<p>The Decentralized Energy Exchange (DEX) aims to revolutionize the way energy is traded and managed by leveraging the power of distributed ledger technology, such as blockchain, and advanced distributed runtime functionalities. </p>
+<p>The target of the decentralized energy exchange is to design, develop, and implement a robust, secure, and efficient platform for energy trading in a decentralized environment. </p>
+<p>The Decentralized Energy Exchange can effectively facilitate peer-to-peer energy trading, optimize energy consumption and generation, and ultimately contribute to a more sustainable and resilient energy infrastructure.</p>
+<p>The documentation is intended for developers, architects, stakeholders, and decision-makers involved in the Decentralized Energy Exchange. It outlines the key components, interactions, and design principles that guide the development and implementation of the system, ensuring its scalability, modularity, and interoperability while maintaining high security and data privacy standards.</p>
+<p>For more info about Grid Singularity please visit the <a href="https://gridsingularity.com/" target="_blank">Grid Singularity website</a>.</p>
+<h2 id="scope-and-objectives">Scope and Objectives</h2>
+<p>This chapter describes the core components, interactions, and design principles of the Decentralized Energy Exchange. The scope and objectives include:</p>
+<ol>
+<li>
+<p><strong>Defining the key components and modules</strong>: The essential building blocks of the Decentralized Energy Exchange, including runtime, distributed ledger, communication protocols, and user interfaces.</p>
+</li>
+<li>
+<p><strong>Describing the interactions between components</strong>: The interactions and data flows between various components and modules within the Decentralized Energy Exchange, ensuring efficient and secure communication.</p>
+</li>
+<li>
+<p><strong>Establishing design principles and best practices</strong>: A set of design principles, patterns, and best practices that guide the development and implementation of the Decentralized Energy Exchange, promoting modularity, scalability, security, and maintainability.</p>
+</li>
+<li>
+<p><strong>Addressing security and privacy concerns</strong>: Measures and techniques to safeguard sensitive information and ensure the integrity of the Decentralized Energy Exchange are highlighted and implemented, in order to ensure data privacy and security of the users.</p>
+</li>
+<li>
+<p><strong>Facilitating interoperability and integration</strong>: The Decentralized Energy Exchange promotes the use of open standards, protocols, and APIs, enabling seamless integration with other systems, platforms, and technologies in the energy sector.</p>
+</li>
+<li>
+<p><strong>Adapting to evolving requirements and technologies</strong>: The Decentralized Energy Exchange is designed to be flexible and adaptable, allowing for the incorporation of new technologies, innovations, and evolving market requirements in the energy trading landscape.</p>
+</li>
+</ol>
+<p>By adhering to the scope and objectives outlined in this chapter, the Decentralized Energy Exchange can effectively support the energy trading ecosystem, offering a secure, efficient, and transparent platform for peer-to-peer energy transactions.</p>
+<h2 id="design-principles">Design Principles</h2>
+<p>The Decentralized Energy Exchange is designed around a set of key principles that guide its development and ensure that it meets the requirements of a modern, efficient, and secure energy trading platform. These design principles are aligned with the use of the Substrate framework for the development of the distributed ledger combined with the definition of a set of complementary ancillary services.</p>
+<ol>
+<li>
+<p><strong>Modularity</strong>: The Decentralized Energy Exchange is built on a modular structure, enabling each component to be developed, tested, and maintained independently. This modularity simplifies the development process and allows for easy integration of new features, modules, or services in the future.</p>
+</li>
+<li>
+<p><strong>Scalability</strong>: The Decentralized Energy Exchange is designed to scale horizontally, accommodating the growing number of participants, transactions, and data. The use of Substrate allows for a highly scalable and efficient distributed ledger, while the ancillary services can also scale independently to handle increased loads.</p>
+</li>
+<li>
+<p><strong>Interoperability</strong>: The Decentralized Energy Exchange promotes the use of open standards, protocols, and APIs to facilitate seamless integration with other systems, platforms, and technologies in the energy sector. This approach enables the Decentralized Energy Exchange to easily interact with other energy management systems, IoT devices, and existing infrastructure.</p>
+</li>
+<li>
+<p><strong>Security</strong>: Ensuring the security and integrity of the Decentralized Energy Exchange is a top priority. The Substrate framework provides robust security features, including strong cryptographic algorithms and a proven consensus mechanism. In addition, the ancillary services and communication protocols must be designed with security best practices in mind, including encryption, access control, and secure data storage.</p>
+</li>
+<li>
+<p><strong>Decentralization</strong>: The Decentralized Energy Exchange leverages the power of blockchain technology to enable a fully decentralized system. This approach eliminates the need for a central authority, ensuring a transparent, secure, and efficient energy trading platform that is less susceptible to manipulation or control by any single entity.</p>
+</li>
+<li>
+<p><strong>Flexibility</strong>: The Decentralized Energy Exchange is designed to be adaptable and capable of incorporating new technologies, innovations, and evolving market requirements. This flexibility is achieved through the use of modular components, extensible APIs, and a development process that encourages innovation and experimentation.</p>
+</li>
+<li>
+<p><strong>Usability</strong>: The user experience is an essential aspect of the Decentralized Energy Exchange. The Decentralized Energy Exchange should be easy to use and accessible to a wide range of users, including energy producers, consumers, grid operators, and regulators. The user interfaces and APIs should be designed with simplicity, efficiency, and intuitiveness in mind.</p>
+</li>
+</ol>
+<p>By following these design principles, the Decentralized Energy Exchange can effectively support the growing needs of the energy trading ecosystem and provide a secure, efficient, and transparent platform for peer-to-peer energy transactions.</p>
+<h2 id="system-components">System Components</h2>
+<p>The Decentralized Energy Exchange is composed of several components that work together to provide a secure, scalable, and efficient platform for energy trading. The core of the Decentralized Energy Exchange is built using the Substrate framework, which provides the distributed ledger and custom runtime for implementing the state transition functions required for the energy exchange. Additionally, the system includes a set of ancillary services that enable further scalability and security.</p>
+<h3 id="substrate-based-node">Substrate-based Node</h3>
+<p>The Substrate-based node is the backbone of the Decentralized Energy Exchange, consisting of two main parts:</p>
+<ol>
+<li>
+<p><strong>Client with outer node services</strong>: This component handles network activities such as peer discovery, managing transaction requests, reaching consensus with peers, and responding to RPC calls.</p>
+</li>
+<li>
+<p><strong>Custom Runtime</strong>: This component contains all the business logic for executing the state transition functions of the blockchain. The custom runtime is designed to improve the Decentralized Energy Exchange security, scalability, and reduce attack surfaces, as opposed to using smart contracts on a generalized virtual machine.</p>
+</li>
+</ol>
+<p>Please to fine more info about the node in the <a href="node/node/">Node Section</a>.</p>
+<h2 id="user-guide">User Guide</h2>
+<ul>
+<li><a href="setup/installation/">Installation</a></li>
+<li><a href="setup/rust-setup/">Rust Setup</a></li>
+<li><a href="setup/build/">Build &amp; Run</a></li>
+<li><a href="setup/test/">Test</a></li>
+<li><a href="setup/connect-ui/">Connect UI</a></li>
+<li><a href="setup/docker/">Docker</a></li>
+<li><a href="node/node/">Node</a></li>
+<li><a href="node/runtime/">Runtime</a></li>
+<li><a href="node/pallets/">Pallets</a></li>
+<li><a href="node/primitives/">Primitives</a></li>
+</ul>
+              
+            </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href="setup/installation/" class="btn btn-neutral float-right" title="Intro">Next <span class="icon icon-circle-arrow-right"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+    
+    
+      <span><a href="setup/installation/" style="color: #fcfcfc">Next &raquo;</a></span>
+    
+  </span>
+</div>
+    <script src="js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = ".";</script>
+    <script src="js/theme_extra.js"></script>
+    <script src="js/theme.js"></script>
+      <script src="search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>
+
+<!--
+MkDocs version : 1.6.1
+Build Date UTC : 2025-02-20 18:19:06.440427+00:00
+-->

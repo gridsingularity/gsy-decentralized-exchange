@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="author" content="Grid Singularity" />
+      <link rel="shortcut icon" href="../../img/favicon.ico" />
+    <title>Build - GSy DEX</title>
+    <link rel="stylesheet" href="../../css/theme.css" />
+    <link rel="stylesheet" href="../../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Build";
+        var mkdocs_page_input_path = "setup/build.md";
+        var mkdocs_page_url = null;
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href="../..">
+          <img src="../../images/Profile.png" class="logo" alt="Logo"/>
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../..">Home</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Deployment and operation</span></p>
+              <ul class="current">
+                  <li class="toctree-l1"><a class="reference internal" href="../installation/">Intro</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../rust-setup/">Rust Setup</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../run/">Run</a>
+                  </li>
+                  <li class="toctree-l1 current"><a class="reference internal current" href="#">Build</a>
+    <ul class="current">
+    </ul>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../connect-ui/">Connect UI</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../docker/">Docker</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Node Structure</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../../node/node/">Node</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../node/runtime/">Runtime</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../node/pallets/">Pallets</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../node/primitives/">Primitives</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">System Architecture</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="" href="../../architecture.md">High Level Architecture</a>
+                  </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../..">GSy DEX</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href="../.." class="icon icon-home" aria-label="Docs"></a></li>
+          <li class="breadcrumb-item">Deployment and operation</li>
+      <li class="breadcrumb-item active">Build</li>
+    <li class="wy-breadcrumbs-aside">
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h2 id="build">Build</h2>
+<p>The <code>cargo run</code> command will perform an initial build. Use the following command to build the node
+without launching it:</p>
+<pre><code class="language-sh">cd gsy-node
+cargo build --release
+</code></pre>
+<h2 id="embedded-docs">Embedded Docs</h2>
+<p>Once the project has been built, the following command can be used to explore all parameters and
+subcommands:</p>
+<pre><code class="language-sh">./target/release/gsy-node -h
+</code></pre>
+<h2 id="run">Run</h2>
+<p>Use Rust's native <code>cargo</code> command to build and launch the gsy-node:</p>
+<pre><code class="language-sh">cd gsy-node
+cargo run --release -- --dev --tmp
+</code></pre>
+<p>or if you have already built using <code>cargo build</code> you can launch the gsy-node using the following command:</p>
+<pre><code class="language-sh">./target/release/gsy-node --dev --tmp
+</code></pre>
+<p>You should always use the <code>--release</code> flag to build optimized artifacts.</p>
+<p>The command-line options specify how you want the running node to operate. 
+In this case, the <code>--dev</code> option specifies that the node runs in development mode using the predefined development chain specification. </p>
+<p>By default, this option also deletes all active data—such as keys, the blockchain database, and networking information when you stop the node by pressing Control-c. </p>
+<p>Using the <code>--dev</code> option ensures that you have a clean working state any time you stop and restart the node.</p>
+<p>Verify your node is up and running successfully by reviewing the output displayed in the terminal.</p>
+<p>The terminal should display output similar to this:</p>
+<pre><code class="language-sh">2022-08-16 13:43:58 Substrate Node    
+2022-08-16 13:43:58 ✌️  version 4.0.0-dev-de262935ede    
+2022-08-16 13:43:58 ❤️  by Substrate DevHub &lt;https://github.com/substrate-developer-hub&gt;, 2017-2022    
+2022-08-16 13:43:58 📋 Chain specification: Development
+2022-08-16 13:43:58 🏷  Node name: limping-oatmeal-7460    
+2022-08-16 13:43:58 👤 Role: AUTHORITY    
+2022-08-16 13:43:58 💾 Database: RocksDb at /var/folders/2_/g86ns85j5l7fdnl621ptzn500000gn/T/substrate95LPvM/chains/dev/db/full    
+2022-08-16 13:43:58 ⛓  Native runtime: node-template-100 (node-template-1.tx1.au1)
+2022-08-16 13:43:58 🔨 Initializing Genesis block/state (state: 0xf6f5…423f, header-hash: 0xc665…cf6a)
+2022-08-16 13:43:58 👴 Loading GRANDPA authority set from genesis on what appears to be first startup.
+2022-08-16 13:43:59 Using default protocol ID &quot;sup&quot; because none is configured in the chain specs
+2022-08-16 13:43:59 🏷  Local node identity is: 12D3KooWCu9uPCYZVsayaCKLdZLF8CmqiHkX2wHsAwSYVc2CxmiE
+...
+...
+...
+...
+2022-08-16 13:54:26 💤 Idle (0 peers), best: #3 (0xcdac…26e5), finalized #1 (0x107c…9bae), ⬇ 0 ⬆ 0
+</code></pre>
+<p>If the number after finalized is increasing, your blockchain is producing new blocks and reaching consensus about the state they describe.</p>
+<h2 id="single-node-development-chain">Single-Node Development Chain</h2>
+<p>This command will start the single-node development chain with persistent state:</p>
+<pre><code class="language-bash">./target/release/gsy-node --dev
+</code></pre>
+<p>Purge the development chain's state:</p>
+<pre><code class="language-bash">./target/release/gsy-node purge-chain --dev
+</code></pre>
+<p>Start the development chain with detailed logging:</p>
+<pre><code class="language-bash">RUST_BACKTRACE=1 ./target/release/gsy-node -ldebug --dev
+</code></pre>
+              
+            </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href="../run/" class="btn btn-neutral float-left" title="Run"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../connect-ui/" class="btn btn-neutral float-right" title="Connect UI">Next <span class="icon icon-circle-arrow-right"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+    
+      <span><a href="../run/" style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+      <span><a href="../connect-ui/" style="color: #fcfcfc">Next &raquo;</a></span>
+    
+  </span>
+</div>
+    <script src="../../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "../..";</script>
+    <script src="../../js/theme_extra.js"></script>
+    <script src="../../js/theme.js"></script>
+      <script src="../../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

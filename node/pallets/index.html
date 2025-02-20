@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="author" content="Grid Singularity" />
+      <link rel="shortcut icon" href="../../img/favicon.ico" />
+    <title>Pallets - GSy DEX</title>
+    <link rel="stylesheet" href="../../css/theme.css" />
+    <link rel="stylesheet" href="../../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Pallets";
+        var mkdocs_page_input_path = "node/pallets.md";
+        var mkdocs_page_url = null;
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href="../..">
+          <img src="../../images/Profile.png" class="logo" alt="Logo"/>
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../..">Home</a>
+                </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Deployment and operation</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="reference internal" href="../../setup/installation/">Intro</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../setup/rust-setup/">Rust Setup</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../setup/run/">Run</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../setup/build/">Build</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../setup/connect-ui/">Connect UI</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../../setup/docker/">Docker</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">Node Structure</span></p>
+              <ul class="current">
+                  <li class="toctree-l1"><a class="reference internal" href="../node/">Node</a>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../runtime/">Runtime</a>
+                  </li>
+                  <li class="toctree-l1 current"><a class="reference internal current" href="#">Pallets</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#orderbook-registry-pallet">Orderbook Registry Pallet</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#pallet-overview">Pallet Overview</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#storage-items">Storage Items</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#events">Events</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#errors">Errors</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#dispatchable-functions">Dispatchable Functions</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#helper-functions">Helper Functions</a>
+    </li>
+        </ul>
+    </li>
+    </ul>
+                  </li>
+                  <li class="toctree-l1"><a class="reference internal" href="../primitives/">Primitives</a>
+                  </li>
+              </ul>
+              <p class="caption"><span class="caption-text">System Architecture</span></p>
+              <ul>
+                  <li class="toctree-l1"><a class="" href="../../architecture.md">High Level Architecture</a>
+                  </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../..">GSy DEX</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href="../.." class="icon icon-home" aria-label="Docs"></a></li>
+          <li class="breadcrumb-item">Node Structure</li>
+      <li class="breadcrumb-item active">Pallets</li>
+    <li class="wy-breadcrumbs-aside">
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="pallets">Pallets</h1>
+<p>The runtime in this project is constructed using many FRAME pallets that ship with the
+<a href="https://github.com/paritytech/substrate/tree/master/frame">core Substrate repository</a> and
+ <code>orderbook-registry</code>, <code>orderbook-worker</code> and <code>trades-settlement</code> pallets
+that are defined in the <code>./modules</code> directory.</p>
+<p>A FRAME pallet is compromised of a number of blockchain primitives:</p>
+<ul>
+<li>Storage: FRAME defines a rich set of powerful
+  <a href="https://docs.substrate.io/v3/runtime/storage">storage abstractions</a> that makes
+  it easy to use Substrate's efficient key-value database to manage the evolving state of a
+  blockchain.</li>
+<li>Dispatchables: FRAME pallets define special types of functions that can be invoked (dispatched)
+  from outside of the runtime in order to update its state.</li>
+<li>Events: Substrate uses <a href="https://docs.substrate.io/v3/runtime/events-and-errors">events and errors</a>
+  to notify users of important changes in the runtime.</li>
+<li>Errors: When a dispatchable fails, it returns an error.</li>
+<li>Config: The <code>Config</code> configuration interface is used to define the types and parameters upon
+  which a FRAME pallet depends.</li>
+</ul>
+<h2 id="orderbook-registry-pallet">Orderbook Registry Pallet</h2>
+<p>The Orderbook Registry pallet provides a decentralized orderbook management system that allows users to register accounts, insert and delete orders, and manage proxies for delegating order management.</p>
+<h3 id="pallet-overview">Pallet Overview</h3>
+<p>The pallet provides several key components:</p>
+<ol>
+<li>User and Matching Engine Operator registration.</li>
+<li>Proxy account management for users.</li>
+<li>Order management, including insertion and deletion.</li>
+</ol>
+<h3 id="storage-items">Storage Items</h3>
+<ul>
+<li><code>RegisteredUser</code>: Maps an AccountId to a Hash for registered users.</li>
+<li><code>RegisteredMatchingEngine</code>: Maps an AccountId to a Hash for registered matching engine operators.</li>
+<li><code>ProxyAccounts</code>: Maps an AccountId to a BoundedVec of ProxyDefinition for the registered proxy accounts.</li>
+<li><code>OrdersRegistry</code>: Maps an OrderReference to an OrderStatus.</li>
+</ul>
+<h3 id="events">Events</h3>
+<ul>
+<li><code>MatchingEngineOperatorRegistered</code>: Emitted when a new matching engine operator is registered.</li>
+<li><code>NewOrderInserted</code>: Emitted when a new order is inserted.</li>
+<li><code>NewOrderInsertedByProxy</code>: Emitted when a new order is inserted by a proxy account.</li>
+<li><code>AllOrdersInserted</code>: Emitted when all orders in a batch are inserted.</li>
+<li><code>OrderDeleted</code>: Emitted when an order is deleted.</li>
+<li><code>OrderDeletedByProxy</code>: Emitted when an order is deleted by a proxy account.</li>
+<li><code>ProxyAccountRegistered</code>: Emitted when a new proxy account is registered.</li>
+<li><code>ProxyAccountUnregistered</code>: Emitted when a proxy account is unregistered.</li>
+<li><code>UserRegistered</code>: Emitted when a new user is registered.</li>
+</ul>
+<h3 id="errors">Errors</h3>
+<ul>
+<li><code>AlreadyRegistered</code>: Returned when an account is already registered.</li>
+<li><code>AlreadyRegisteredProxyAccount</code>: Returned when a proxy account is already registered.</li>
+<li><code>NoSelfProxy</code>: Returned when an account tries to register itself as a proxy account.</li>
+<li><code>NotARegisteredMatchingEngineOperator</code>: Returned when an account is not a registered matching engine operator.</li>
+<li><code>NotARegisteredProxyAccount</code>: Returned when an account is not a registered proxy account.</li>
+<li><code>NotARegisteredUserAccount</code>: Returned when an account is not a registered user account.</li>
+<li><code>NotARegisteredUserOrProxyAccount</code>: Returned when an account is not a registered user or proxy account.</li>
+<li><code>NotRegisteredProxyAccounts</code>: Returned when there are no registered proxy accounts.</li>
+<li><code>OpenOrderNotFound</code>: Returned when an open order is not found.</li>
+<li><code>OrderAlreadyDeleted</code>: Returned when an order is already deleted.</li>
+<li><code>OrderAlreadyExecuted</code>: Returned when an order is already executed.</li>
+<li><code>OrderAlreadyInserted</code>: Returned when an order is already inserted.</li>
+<li><code>ProxyAccountsLimitReached</code>: Returned when the proxy accounts limit has been reached.</li>
+</ul>
+<h3 id="dispatchable-functions">Dispatchable Functions</h3>
+<ul>
+<li><code>insert_orders</code>: Insert an order with a given order hash for a registered user account.</li>
+<li><code>insert_orders_by_proxy</code>: Insert an order with a given order hash for a registered user account by a registered proxy account.</li>
+<li><code>delete_order</code>: Delete an order with a given order hash for a registered user account.</li>
+<li><code>delete_order_by_proxy</code>: Delete an order with a given order hash for a registered user account by a registered proxy account.</li>
+<li><code>register_proxy_account</code>: Register a new proxy account for a registered user account.</li>
+<li><code>register_matching_engine_operator</code>: Register a new matching engine operator account.</li>
+<li><code>register_user</code>: Register a new user account.</li>
+<li><code>unregister_proxy_account</code>: Unregister a proxy account for a registered user account.</li>
+</ul>
+<h3 id="helper-functions">Helper Functions</h3>
+<ul>
+<li><code>add_matching_engine_operator</code>: Add a matching engine operator account.</li>
+<li><code>add_proxy_account</code>: Add a proxy account for a registered user account.</li>
+<li><code>add_user</code>: Add a user account.</li>
+<li><code>is_order_registered</code>: Check if an order is registered.</li>
+<li><code>is_registered_matching_engine_operator</code>: Check if an account is a registered matching engine operator.</li>
+</ul>
+              
+            </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href="../runtime/" class="btn btn-neutral float-left" title="Runtime"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../primitives/" class="btn btn-neutral float-right" title="Primitives">Next <span class="icon icon-circle-arrow-right"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+    
+      <span><a href="../runtime/" style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+      <span><a href="../primitives/" style="color: #fcfcfc">Next &raquo;</a></span>
+    
+  </span>
+</div>
+    <script src="../../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "../..";</script>
+    <script src="../../js/theme_extra.js"></script>
+    <script src="../../js/theme.js"></script>
+      <script src="../../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>
