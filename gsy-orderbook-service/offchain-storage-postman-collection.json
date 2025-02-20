@@ -1,0 +1,290 @@
+{
+	"info": {
+		"_postman_id": "018fbe25-f8f6-4981-90ab-eea7b5cc8c10",
+		"name": "Offchain Storage",
+		"schema": "https://schema.getpostman.com/json/collection/v2.0.0/collection.json",
+		"_exporter_id": "26429568",
+		"_collection_link": "https://speeding-station-363706.postman.co/workspace/Team-Workspace~39de2cec-d6c7-4f87-8f86-88242db100d4/collection/26429568-018fbe25-f8f6-4981-90ab-eea7b5cc8c10?action=share&source=collection_link&creator=26429568"
+	},
+	"item": [
+		{
+			"name": "forecasts",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "[\n    {\n        \"area_uuid\": \"areaid_1\",\n        \"community_uuid\": \"communityid_1\",\n        \"time_slot\": 123124, \n        \"creation_time\": 456456,\n        \"energy_kwh\": 0.26,\n        \"confidence\": 0.9\n    },\n    {\n        \"area_uuid\": \"areaid_1\",\n        \"community_uuid\": \"communityid_1\",\n        \"time_slot\": 123125, \n        \"creation_time\": 456456,\n        \"energy_kwh\": 0.21,\n        \"confidence\": 0.6\n    }\n]",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": "{{hostname}}/forecasts"
+			},
+			"response": []
+		},
+		{
+			"name": "forecasts",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{hostname}}/forecasts?area_uuid=areaid_1&start_time=123123&end_time=123125",
+					"host": [
+						"{{hostname}}"
+					],
+					"path": [
+						"forecasts"
+					],
+					"query": [
+						{
+							"key": "area_uuid",
+							"value": "areaid_1"
+						},
+						{
+							"key": "start_time",
+							"value": "123123"
+						},
+						{
+							"key": "end_time",
+							"value": "123125"
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "measurements",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "[\n    {\n        \"area_uuid\": \"areaid_1\",\n        \"community_uuid\": \"communityid_1\",\n        \"time_slot\": 123124, \n        \"creation_time\": 456456,\n        \"energy_kwh\": 0.26\n    }\n]",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": "{{hostname}}/measurements"
+			},
+			"response": []
+		},
+		{
+			"name": "measurements",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{hostname}}/measurements?area_uuid=areaid_1&start_time=123123&end_time=123125",
+					"host": [
+						"{{hostname}}"
+					],
+					"path": [
+						"measurements"
+					],
+					"query": [
+						{
+							"key": "area_uuid",
+							"value": "areaid_1"
+						},
+						{
+							"key": "start_time",
+							"value": "123123"
+						},
+						{
+							"key": "end_time",
+							"value": "123125"
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "orders",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "[\n    {\n        \"_id\": \"id3\",\n        \"status\": \"Open\",\n        \"order\": {\n            \"type\": \"Bid\",\n            \"data\": {\n                \"buyer\": \"Account1\",\n                \"nonce\": 2,\n                \"bid_component\": {\n                    \"area_uuid\": \"areaid_1\",\n                    \"market_id\": \"market1\",\n                    \"time_slot\": 123123, \n                    \"creation_time\": 456456,\n                    \"energy\": 0.26,\n                    \"energy_rate\": 0.123\n                }\n            }\n        }\n    },\n    {\n        \"_id\": \"id4\",\n        \"status\": \"Executed\",\n        \"order\": {\n            \"type\": \"Offer\",\n            \"data\": {\n                \"seller\": \"Account2\",\n                \"nonce\": 3,\n                \"offer_component\": {\n                    \"area_uuid\": \"areaid_2\",\n                    \"market_id\": \"market1\",\n                    \"time_slot\": 123123, \n                    \"creation_time\": 456456,\n                    \"energy\": 0.26,\n                    \"energy_rate\": 0.122\n                }\n            }\n        }\n    }\n]",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": "{{hostname}}/orders-normalized"
+			},
+			"response": []
+		},
+		{
+			"name": "orders",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": "{{hostname}}/orders"
+			},
+			"response": []
+		},
+		{
+			"name": "orders-filter",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{hostname}}/orders?market_id=market1",
+					"host": [
+						"{{hostname}}"
+					],
+					"path": [
+						"orders"
+					],
+					"query": [
+						{
+							"key": "market_id",
+							"value": "market1"
+						},
+						{
+							"key": "start_time",
+							"value": "123122",
+							"disabled": true
+						},
+						{
+							"key": "end_time",
+							"value": "123125",
+							"disabled": true
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "trades",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "[\n    {\n        \"_id\": \"tradeId\",\n        \"status\": \"Settled\",\n        \"buyer\": \"Account1\",\n        \"seller\": \"Account2\",\n        \"market_id\": \"market1\",\n        \"time_slot\": 123123, \n        \"creation_time\": 456456,\n        \"trade_uuid\": \"tradeUuid1\",\n        \"offer\": {\n            \"seller\": \"Account2\",\n            \"nonce\": 3,\n            \"offer_component\": {\n                \"area_uuid\": \"areaid_2\",\n                \"market_id\": \"market1\",\n                \"time_slot\": 123123, \n                \"creation_time\": 456456,\n                \"energy\": 0.26,\n                \"energy_rate\": 0.122\n            }\n        },\n        \"offer_hash\": \"0x12321343\",\n        \"bid\": {\n            \"buyer\": \"Account1\",\n            \"nonce\": 2,\n            \"bid_component\": {\n                \"area_uuid\": \"areaid_1\",\n                \"market_id\": \"market1\",\n                \"time_slot\": 123123, \n                \"creation_time\": 456456,\n                \"energy\": 0.26,\n                \"energy_rate\": 0.123\n            }\n        },\n        \"bid_hash\": \"0x3211233212\",\n        \"residual_offer\": null,\n        \"residual_bid\": null,\n        \"parameters\": {\n            \"selected_energy\": 0.26,\n            \"energy_rate\": 0.122,\n            \"trade_uuid\": \"tradeUuid1\"\n        }\n    }\n]",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": "{{hostname}}/trades-normalized"
+			},
+			"response": []
+		},
+		{
+			"name": "trades",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{hostname}}/trades?market_id=market1&start_time=123123&end_time=123125",
+					"host": [
+						"{{hostname}}"
+					],
+					"path": [
+						"trades"
+					],
+					"query": [
+						{
+							"key": "market_id",
+							"value": "market1"
+						},
+						{
+							"key": "start_time",
+							"value": "123123"
+						},
+						{
+							"key": "end_time",
+							"value": "123125"
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "market",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"market_id\": \"market1\",\n    \"community_uuid\": \"communityid_1\",\n    \"community_name\": \"Community 1\",\n    \"time_slot\": 123123,\n    \"creation_time\": 456456,\n    \"area_uuids\": [\n        {\n            \"area_uuid\": \"areaid_1\",\n            \"name\": \"Area 1\",\n            \"area_hash\": \"0x123123123123\"\n        },\n        {\n            \"area_uuid\": \"areaid_2\",\n            \"name\": \"Area 2\",\n            \"area_hash\": \"0x123123123124\"\n        }\n    ]\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": "{{hostname}}/market"
+			},
+			"response": []
+		},
+		{
+			"name": "market",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{hostname}}/market?market_id=market1",
+					"host": [
+						"{{hostname}}"
+					],
+					"path": [
+						"market"
+					],
+					"query": [
+						{
+							"key": "market_id",
+							"value": "market1"
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "community-market",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{hostname}}/community-market?community_uuid=communityid_1&start_time=123121&end_time=123123",
+					"host": [
+						"{{hostname}}"
+					],
+					"path": [
+						"community-market"
+					],
+					"query": [
+						{
+							"key": "community_uuid",
+							"value": "communityid_1"
+						},
+						{
+							"key": "start_time",
+							"value": "123121"
+						},
+						{
+							"key": "end_time",
+							"value": "123123"
+						}
+					]
+				}
+			},
+			"response": []
+		}
+	]
+}
