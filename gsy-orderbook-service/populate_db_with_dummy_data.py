@@ -106,7 +106,7 @@ def post_forecasts(area_uuid, time_slot, creation_time, energy):
 
 
 if __name__ == '__main__':
-    url = "http://localhost:8080"
+    url = "https://offchainst.vps.webdock.cloud"
 
     start_date = DateTime(year=2025, month=1, day=1)
     start_timestamp = int(start_date.timestamp())
@@ -118,7 +118,7 @@ if __name__ == '__main__':
         time_slot = start_timestamp + 15 * 60
         market_id = _random_hex_str()
 
-        # resp = post_market(market_id, time_slot, creation_time)
+        resp = post_market(market_id, time_slot, creation_time)
         post_trade(trade_index, order_index, market_id, time_slot, creation_time, 1, 2)
         order_index += 2
         trade_index += 1
@@ -127,12 +127,12 @@ if __name__ == '__main__':
         order_index += 2
         trade_index += 1
 
-        # post_measurements("areaid_1", time_slot, creation_time, 0.28)
-        # post_measurements("areaid_2", time_slot, creation_time, 1.1)
-        # post_measurements("areaid_3", time_slot, creation_time, 0.01)
-        # post_measurements("areaid_4", time_slot, creation_time, 10.2)
-        #
-        # post_forecasts("areaid_1", time_slot, creation_time, 0.28)
-        # post_forecasts("areaid_2", time_slot, creation_time, 1.1)
-        # post_forecasts("areaid_3", time_slot, creation_time, 0.01)
-        # post_forecasts("areaid_4", time_slot, creation_time, 10.2)
+        post_measurements("areaid_1", time_slot, creation_time, 0.28)
+        post_measurements("areaid_2", time_slot, creation_time, 1.1)
+        post_measurements("areaid_3", time_slot, creation_time, 0.01)
+        post_measurements("areaid_4", time_slot, creation_time, 10.2)
+
+        post_forecasts("areaid_1", time_slot, creation_time, 0.28)
+        post_forecasts("areaid_2", time_slot, creation_time, 1.1)
+        post_forecasts("areaid_3", time_slot, creation_time, 0.01)
+        post_forecasts("areaid_4", time_slot, creation_time, 10.2)
