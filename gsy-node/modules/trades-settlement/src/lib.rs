@@ -163,13 +163,13 @@ pub mod pallet {
 					}
 
 					// Convert energy to money
-					let energy_to_money_factor = EnergyToMoneyFactor::<T>::get();
-					let monetary_amount = valid_match.selected_energy.checked_mul(energy_to_money_factor).ok_or(Error::<T>::Overflow)?;
-					T::Remuneration::add_payment(
-						valid_match.bid.buyer.clone(),
-						valid_match.offer.seller.clone(),
-						monetary_amount.try_into().map_err(|_| Error::<T>::InvalidAmount)?,
-					)?;
+					// let energy_to_money_factor = EnergyToMoneyFactor::<T>::get();
+					// let monetary_amount = valid_match.selected_energy.checked_mul(energy_to_money_factor).ok_or(Error::<T>::Overflow)?;
+					// T::Remuneration::add_payment(
+					// 	valid_match.bid.buyer.clone(),
+					// 	valid_match.offer.seller.clone(),
+					// 	monetary_amount.try_into().map_err(|_| Error::<T>::InvalidAmount)?,
+					// )?;
 				}
 
 				<orderbook_registry::Pallet<T>>::clear_orders_batch(matching_engine_operator, valid_matches.clone())?;
@@ -232,19 +232,19 @@ pub mod pallet {
 					.bid
 					.bid_component
 					.time_slot
-					.checked_div(T::MarketSlotDuration::get())
+					.checked_div(<T as Config>::MarketSlotDuration::get())
 					.unwrap_or(0),
 				bid_offer_match
 					.offer
 					.offer_component
 					.time_slot
-					.checked_div(T::MarketSlotDuration::get())
+					.checked_div(<T as Config>::MarketSlotDuration::get())
 					.unwrap_or(0),
 				// T::TimeProvider::now()
 				// 	.as_secs()
 				// 	.checked_div(T::MarketSlotDuration::get())
 				// 	.unwrap_or(0),
-				bid_offer_match.time_slot.checked_div(T::MarketSlotDuration::get()).unwrap_or(0),
+				bid_offer_match.time_slot.checked_div(<T as Config>::MarketSlotDuration::get()).unwrap_or(0),
 			) {
 				return false;
 			}

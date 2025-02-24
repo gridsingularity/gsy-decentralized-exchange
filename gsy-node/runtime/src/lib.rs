@@ -164,6 +164,7 @@ parameter_types! {
 	pub BlockLength: frame_system::limits::BlockLength = frame_system::limits::BlockLength
 		::max_with_normal_ratio(5 * 1024 * 1024, NORMAL_DISPATCH_RATIO);
 	pub const SS58Prefix: u8 = 42;
+	pub const RemunerationMarketSlotDuration: u64 = 900;
 }
 
 // Configure FRAME pallets to include in runtime.
@@ -316,6 +317,7 @@ impl trades_settlement::Config for Runtime {
 impl remuneration::Config for Runtime {
 	type RuntimeEvent = RuntimeEvent;
 	type RemunerationWeightInfo = remuneration::weights::SubstrateWeightInfo<Runtime>;
+	type MarketSlotDuration = RemunerationMarketSlotDuration;
 	type RemunerationHandler = remuneration::Pallet<Runtime>;
 }
 

@@ -11,6 +11,10 @@ use crate::mock::GsyCollateral;
 fn settle_trades_works() {
 	new_test_ext().execute_with(|| {
 
+		// Set a block and a timestamp
+		System::set_block_number(1);
+		Timestamp::set_timestamp(1_000);
+
 		// Register users.
 		assert_ok!(TestOrderbookFunctions::add_user::<Test>(ALICE));
 		assert_ok!(TestOrderbookFunctions::add_user::<Test>(BOB));

@@ -23,12 +23,14 @@ frame_support::construct_runtime!(
 		OrderbookWorker: orderbook_worker,
 		TradesSettlement: trades_settlement,
 		Timestamp: pallet_timestamp,
+		Remuneration: remuneration,
 	}
 );
 
 parameter_types! {
 	pub const BlockHashCount: u64 = 250;
 	pub const SS58Prefix: u8 = 42;
+	pub const RemunerationMarketSlotDuration: u64 = 900;
 }
 
 impl system::Config for Test {
@@ -121,10 +123,18 @@ impl orderbook_registry::Config for Test {
 	type TimeProvider = pallet_timestamp::Pallet<Test>;
 }
 
+impl remuneration::Config for Test {
+	type RuntimeEvent = RuntimeEvent;
+	type RemunerationWeightInfo = remuneration::weights::SubstrateWeightInfo<Test>;
+	type MarketSlotDuration = RemunerationMarketSlotDuration;
+	type RemunerationHandler = Remuneration;
+}
+
 impl trades_settlement::Config for Test {
 	type RuntimeEvent = RuntimeEvent;
 	type TradeSettlementWeightInfo = trades_settlement::weights::SubstrateWeightInfo<Test>;
 	type MarketSlotDuration = MarketSlotDuration;
+	type Remuneration = Remuneration;
 }
 
 parameter_types! {
