@@ -74,10 +74,6 @@ pub mod pallet {
 	// #[pallet::generate_store(pub (super) trait Store)]
 	pub struct Pallet<T>(_);
 
-	#[pallet::storage]
-	#[pallet::getter(fn energy_to_money_factor)]
-	pub(super) type EnergyToMoneyFactor<T: Config> = StorageValue<_, u64, ValueQuery>;
-
 	#[pallet::event]
 	#[pallet::generate_deposit(pub (super) fn deposit_event)]
 	pub enum Event<T: Config> {
@@ -161,15 +157,6 @@ pub mod pallet {
 							Order::Offer(residual_offer),
 						)?;
 					}
-
-					// Convert energy to money
-					// let energy_to_money_factor = EnergyToMoneyFactor::<T>::get();
-					// let monetary_amount = valid_match.selected_energy.checked_mul(energy_to_money_factor).ok_or(Error::<T>::Overflow)?;
-					// T::Remuneration::add_payment(
-					// 	valid_match.bid.buyer.clone(),
-					// 	valid_match.offer.seller.clone(),
-					// 	monetary_amount.try_into().map_err(|_| Error::<T>::InvalidAmount)?,
-					// )?;
 				}
 
 				<orderbook_registry::Pallet<T>>::clear_orders_batch(matching_engine_operator, valid_matches.clone())?;
@@ -178,39 +165,6 @@ pub mod pallet {
 			} else {
 				Err(Error::<T>::NoValidMatchToSettle.into())
 			}
-		}
-
-		/// Updates the energy-to-money conversion factor.
-		///
-		/// - **Access Control**:
-		///   - Requires the caller to be the custodian, which is managed by the `remuneration` pallet.
-		///
-		/// - **Parameters**:
-		///   - `origin`: The origin of the call (must be signed by the custodian).
-		///   - `new_factor`: The new energy-to-money conversion factor to set.
-		///
-		/// - **Returns**:
-		///   - `DispatchResult`: Returns `Ok(())` on success, or an error otherwise.
-		#[transactional]
-		#[pallet::weight(< T as Config >::TradeSettlementWeightInfo::set_energy_to_money_factor())]
-		#[pallet::call_index(1)]
-		pub fn set_energy_to_money_factor(origin: OriginFor<T>, new_factor: u64) -> DispatchResult {
-			// todo How, when, why and by whom the factor is updated has still to be defined, in
-			//  the meantime only the custodian account, managed in remuneration pallet, is allowed.
-
-			// Ensure the origin is signed and retrieve the sender.
-			let sender = ensure_signed(origin)?;
-
-			// Fetch the custodian account from the remuneration pallet.
-			let custodian = remuneration::Pallet::<T>::custodian().ok_or(Error::<T>::NoCustodian)?;
-
-			// Check if the sender is the custodian.
-			ensure!(sender == custodian, Error::<T>::NotCustodian);
-
-			// Update the factor in storage
-			EnergyToMoneyFactor::<T>::put(new_factor);
-
-			Ok(())
 		}
 	}
 
