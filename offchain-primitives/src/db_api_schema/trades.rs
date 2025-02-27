@@ -2,7 +2,7 @@ use codec::{Encode, Decode};
 use serde::{Deserialize, Serialize};
 use subxt::ext::sp_core::H256;
 use subxt::ext::sp_runtime::traits::{BlakeTwo256, Hash};
-use crate::db_api_schema::orders::{Offer, Bid};
+use crate::db_api_schema::orders::{DbOffer, DbBid};
 
 
 /// Trade status
@@ -29,12 +29,12 @@ pub struct TradeSchema {
     pub time_slot: u64,
     pub trade_uuid: String,
     pub creation_time: u64,
-    pub offer: Offer,
+    pub offer: DbOffer,
     pub offer_hash: String,
-    pub bid: Bid,
+    pub bid: DbBid,
     pub bid_hash: String,
-    pub residual_offer: Option<Offer>,
-    pub residual_bid: Option<Bid>,
+    pub residual_offer: Option<DbOffer>,
+    pub residual_bid: Option<DbBid>,
     pub parameters: TradeParameters,
 }
 

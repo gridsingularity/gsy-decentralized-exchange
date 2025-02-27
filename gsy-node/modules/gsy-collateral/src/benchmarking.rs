@@ -5,14 +5,14 @@ use super::*;
 
 #[allow(unused)]
 use crate::Pallet as GsyCollateral;
-use gsy_primitives::{Vault, VaultWithStatus};
-use frame_benchmarking::{benchmarks, impl_benchmark_test_suite, whitelisted_caller};
-use frame_system::{EventRecord, RawOrigin};
+use frame_benchmarking::{account, benchmarks, impl_benchmark_test_suite, whitelisted_caller};
 use frame_support::traits::Currency;
+use frame_system::{EventRecord, RawOrigin};
+use gsy_primitives::{Vault, VaultWithStatus};
 
-fn assert_last_event<T: Config>(generic_event: <T as Config>::Event) {
+fn assert_last_event<T: Config>(generic_event: <T as Config>::RuntimeEvent) {
 	let events = frame_system::Pallet::<T>::events();
-	let system_event: <T as frame_system::Config>::Event = generic_event.into();
+	let system_event: <T as frame_system::Config>::RuntimeEvent = generic_event.into();
 	let EventRecord { event, .. } = &events[events.len() - 1];
 	assert_eq!(event, &system_event);
 }
@@ -50,7 +50,7 @@ benchmarks! {
 	register_proxy_account {
 		let caller: T::AccountId = whitelisted_caller();
 		add_user::<T>(caller.clone()).unwrap();
-		let proxy_account: T::AccountId = T::AccountId::default();
+		let proxy_account: T::AccountId = account("Name", 1, 12);
 	}: _(RawOrigin::Signed(caller.clone()), proxy_account.clone())
 	verify {
 		assert_last_event::<T>(Event::ProxyAccountRegistered(
@@ -105,7 +105,7 @@ benchmarks! {
 	unregister_proxy_account {
 		let caller: T::AccountId = whitelisted_caller();
 		add_user::<T>(caller.clone()).unwrap();
-		let proxy_account: T::AccountId = T::AccountId::default();
+		let proxy_account: T::AccountId = account("Name", 1, 12);
 		add_proxy_account::<T>(&caller, proxy_account.clone()).unwrap();
 	}: _(RawOrigin::Signed(caller.clone()), proxy_account.clone())
 	verify {

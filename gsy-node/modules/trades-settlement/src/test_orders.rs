@@ -28,7 +28,7 @@ impl TestOrderbookFunctions {
             nonce: 1,
             bid_component: OrderComponent {
                 area_uuid: 1,
-                market_uuid: 1u64,
+                market_id: 1u64,
                 time_slot: block_number,
                 creation_time: 1677453190,
                 energy,
@@ -48,7 +48,7 @@ impl TestOrderbookFunctions {
             nonce: 1,
             offer_component: OrderComponent {
                 area_uuid: 2,
-                market_uuid: 1u64,
+                market_id: 1u64,
                 time_slot: block_number,
                 creation_time: 1677453190,
                 energy,

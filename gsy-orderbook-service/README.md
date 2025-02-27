@@ -6,43 +6,22 @@
     + Edit `APPLICATION_HOST`, `APPLICATION_PORT`, `DATABASE_HOST`, `DATABASE_USERNAME`, `DATABASE_PASSWORD`, `DATABASE_NAME`, `DATABASE_URL_SCHEME`
 + run `cargo run`
 
-## API
+## Run as individual service via docker compose 
 
-### `POST /orders`
+To run the orderbook service as a separate service, the following command can be used:
+
 ```
-curl -X POST http://127.0.0.1:8080/orders \
-    -H "Content-Type: application/json" \
-    --data-raw '[{
-    "type": "Bid",
-    "data": {
-        "buyer": "aabc",
-        "nonce": 2,
-        "area_uuid": 1,
-        "market_uuid": 1,
-        "time_slot": 2,
-        "creation_time": 1546300800,
-        "bid_component": {
-            "energy": 10,
-            "energy_rate": 1
-            }
-        }
-    }, {
-    "type": "Offer", 
-    "data": {
-        "seller": "bbbcb", 
-        "nonce": 1, 
-        "area_uuid": 1,
-        "market_uuid": 1,
-        "time_slot": 1,
-        "creation_time": 1546300800,
-        "offer_component": {
-            "energy": 10, 
-            "energy_rate": 1
-            }
-        }
-    }]'
+# Run from the current directory 
+docker compose -f offchain-storage-docker-compose.yml up
 ```
-### `GET /orders`
+
+The script `populate_db_with_dummy_data.py` prepopulates the local database with fake data for testing. 
+
 ```
-curl http://127.0.0.1:8080/orders
+pip install requests pendulum
+python populate_db_with_dummy_data.py
 ```
+
+## API 
+
+The API of the orderbook service is summarized in the Postman collection file `offchain-storage-postman-collection.json`. 

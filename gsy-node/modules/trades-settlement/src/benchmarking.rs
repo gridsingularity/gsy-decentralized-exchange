@@ -3,9 +3,11 @@
 
 use super::*;
 
+use crate::test_orders::TestOrderbookFunctions;
 #[allow(unused)]
 use crate::Pallet as TradesSettlement;
-use frame_benchmarking::{benchmarks, impl_benchmark_test_suite, whitelisted_caller, Vec};
+use frame_benchmarking::{benchmarks, impl_benchmark_test_suite, whitelisted_caller};
+use crate::benchmarking::vec::Vec;
 use frame_support::{
 	sp_runtime::traits::{Hash, One},
 	traits::Currency,
@@ -16,7 +18,6 @@ use gsy_primitives::{Bid, BidOfferMatch, Offer, Order, OrderComponent, Vault};
 use orderbook_registry::Pallet as OrderbookRegistry;
 use orderbook_worker::Pallet as OrderbookWorker;
 use sp_std::vec;
-use test_orders::TestOrderbookFunctions;
 
 
 benchmarks! {
@@ -40,13 +41,13 @@ benchmarks! {
 				buyer.clone(), block_number, i as u64, i as u64);
 			let bid_order = Order::Bid(bid.clone());
 			let bid_order_hash = T::Hashing::hash_of(&bid_order);
-			let _ = OrderbookRegistry::<T>::add_order(buyer.clone(), bid_order_hash.clone());
+			let _ = OrderbookRegistry::<T>::insert_orders(RawOrigin::Signed(buyer.clone()).into(), vec!(bid_order_hash.clone()));
 			let _ = OrderbookWorker::<T>::add_order(buyer.clone(), bid_order.clone());
 			let offer = TestOrderbookFunctions::dummy_offer::<T>(
 				seller.clone(), block_number, i as u64, i as u64);
 			let offer_order = Order::Offer(offer.clone());
 			let offer_order_hash = T::Hashing::hash_of(&offer_order);
-			let _ = OrderbookRegistry::<T>::add_order(seller.clone(), offer_order_hash.clone());
+			let _ = OrderbookRegistry::<T>::insert_orders(RawOrigin::Signed(seller.clone()).into(), vec!(offer_order_hash.clone()));
 			let _ = OrderbookWorker::<T>::add_order(seller.clone(), offer_order.clone());
 			let bid_offer_match = TestOrderbookFunctions::dummy_bid_offer_match::<T>(
 				bid.clone(),

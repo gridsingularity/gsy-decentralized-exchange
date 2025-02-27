@@ -19,7 +19,7 @@ fn orderbook_worker_sends_back_result() {
 			nonce: 1,
 			bid_component: OrderComponent {
 				area_uuid: 1,
-				market_uuid: 1u64,
+				market_id: 1u64,
 				time_slot: 1,
 				creation_time: 1,
 				energy: 10,

@@ -43,6 +43,7 @@ The pallet provides several key components:
 - `ExchangeOperatorRegistered`: Emitted when a new exchange operator is registered.
 - `NewOrderInserted`: Emitted when a new order is inserted.
 - `NewOrderInsertedByProxy`: Emitted when a new order is inserted by a proxy account.
+- `AllOrdersInserted`: Emitted when all orders in a batch are inserted.
 - `OrderDeleted`: Emitted when an order is deleted.
 - `OrderDeletedByProxy`: Emitted when an order is deleted by a proxy account.
 - `ProxyAccountRegistered`: Emitted when a new proxy account is registered.

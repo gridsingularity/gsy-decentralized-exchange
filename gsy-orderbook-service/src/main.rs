@@ -26,12 +26,14 @@ async fn main() -> Result<(), anyhow::Error> {
         init_database(db_connection_string, configuration.database_name).await?;
     let db: DbRef = web::Data::new(db_connection_wrapper.clone());
     let db_event_listener_instance = web::Data::clone(&db);
-    tokio::task::spawn(async move {
-        let _ = init_event_listener(db_event_listener_instance, node_url).await;
-    });
-    tokio::task::spawn(async move {
-        start_scheduler(db, scheduler_interval).await;
-    });
+    if !node_url.is_empty() {
+        tokio::task::spawn(async move {
+            let _ = init_event_listener(db_event_listener_instance, node_url).await;
+        });
+        tokio::task::spawn(async move {
+            start_scheduler(db, scheduler_interval).await;
+        });
+    }
     let address = format!(
         "{}:{}",
         configuration.application_host, configuration.application_port

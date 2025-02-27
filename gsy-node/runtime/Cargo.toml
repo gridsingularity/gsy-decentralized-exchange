@@ -69,7 +69,7 @@ log = { version = "0.4.21", default-features = false }
 # Used for runtime benchmarking
 frame-benchmarking = { default-features = false, git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.9.0" }
 frame-system-benchmarking = { default-features = false, git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.9.0", optional = true }
-#hex-literal = { version = "0.4.1", default-features = false, optional = true }
+hex-literal = { version = "0.4.1", default-features = false, optional = true }
 
 [build-dependencies]
 substrate-wasm-builder = { default-features = false, git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.9.0" }
@@ -111,11 +111,15 @@ runtime-benchmarks = [
 	"frame-support/runtime-benchmarks",
 	"frame-system-benchmarking",
 	"frame-system/runtime-benchmarks",
-#	"hex-literal",
+	"hex-literal",
 	"pallet-balances/runtime-benchmarks",
 	"pallet-grandpa/runtime-benchmarks",
 	"pallet-sudo/runtime-benchmarks",
 	"pallet-timestamp/runtime-benchmarks",
+	"orderbook-registry/runtime-benchmarks",
+	"orderbook-worker/runtime-benchmarks",
+	"gsy-collateral/runtime-benchmarks",
+	"trades-settlement/runtime-benchmarks",
 	"sp-runtime/runtime-benchmarks",
 ]
 try-runtime = [
