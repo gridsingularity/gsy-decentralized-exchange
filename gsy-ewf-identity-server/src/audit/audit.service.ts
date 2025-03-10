@@ -15,13 +15,13 @@ export class AuditService {
     did: string,
     request?: Request,
     metadata?: Record<string, any>,
-    substrateAddress?: string,
+    gsyDexAddress?: string,
     success = true,
   ): Promise<AuditLog> {
     const log = new this.auditLogModel({
       action,
       did,
-      substrateAddress,
+      gsyDexAddress,
       metadata,
       success,
       ipAddress: request?.ip,

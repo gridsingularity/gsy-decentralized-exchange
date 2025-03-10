@@ -1,0 +1,23 @@
+services:
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    container_name: gsy-ewf-identity-server-test
+    depends_on:
+      - mongodb
+    environment:
+      - NODE_ENV=test
+      - MONGODB_URI=mongodb://gsy:gsy@mongodb/identitydb?authSource=admin
+    networks:
+      - test-network
+
+  mongodb:
+    image: mongo:6
+    container_name: identity-mongodb-test
+    networks:
+      - test-network
+
+networks:
+  test-network:
+    driver: bridge

@@ -21,7 +21,7 @@ export class AuditLog extends Document {
   did: string;
 
   @Prop()
-  substrateAddress?: string;
+  gsyDexAddress?: string;
 
   @Prop({ type: Object })
   metadata?: Record<string, any>;
