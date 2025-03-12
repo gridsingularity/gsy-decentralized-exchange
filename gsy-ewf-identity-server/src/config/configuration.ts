@@ -12,4 +12,13 @@ export default () => ({
     issuerPrivateKey: process.env.ISSUER_PRIVATE_KEY,
     issuerPublicKey: process.env.ISSUER_PUBLIC_KEY,
   },
+
+  substrate: {
+    wsUrl: process.env.SUBSTRATE_WS_URL,
+  },
+  
+  jwt: {
+    secret: process.env.JWT_SECRET || 'supersecret',
+    expiresIn: process.env.JWT_EXPIRES_IN || '24h',
+  },
 });

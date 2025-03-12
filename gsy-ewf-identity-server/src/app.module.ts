@@ -5,6 +5,7 @@ import configuration from './config/configuration';
 import { DIDModule } from './did/did.module';
 import { DatabaseModule } from './database/database.module';
 import { AuditModule } from './audit/audit.module';
+import { AuthModule } from './auth/auth.module';
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import { AuditModule } from './audit/audit.module';
     DatabaseModule,
     DIDModule,
     AuditModule,
+    AuthModule,
   ],
 })
 export class AppModule {}
