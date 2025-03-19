@@ -34,6 +34,8 @@
     "@nestjs/passport": "^10.0.0",
     "@nestjs/platform-express": "^10.0.0",
     "@nestjs/swagger": "^7.0.0",
+    "@polkadot/util": "^12.5.1",
+    "@polkadot/util-crypto": "^12.5.1",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.0",
     "ethers": "^6.7.0",

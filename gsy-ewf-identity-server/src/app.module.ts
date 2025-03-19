@@ -6,6 +6,7 @@ import { DIDModule } from './did/did.module';
 import { DatabaseModule } from './database/database.module';
 import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
+import { CredentialsModule } from './credentials/credentials.module';
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { AuthModule } from './auth/auth.module';
     DIDModule,
     AuditModule,
     AuthModule,
+    CredentialsModule,
   ],
 })
 export class AppModule {}

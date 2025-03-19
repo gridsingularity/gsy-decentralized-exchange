@@ -15,7 +15,7 @@ export class Credential extends Document {
   did: string;
 
   @Prop()
-  substrateAddress: string;
+  gsyDexAddress: string;
 
   @Prop({ required: true, type: Object })
   credentialSubject: Record<string, any>;
