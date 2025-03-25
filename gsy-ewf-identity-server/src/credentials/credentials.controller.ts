@@ -1,6 +1,7 @@
 import { 
     Controller, Post, Get, Delete, Body, Param, 
-    UseGuards, Req, HttpCode, HttpStatus 
+    UseGuards, Req, HttpCode, HttpStatus, ForbiddenException,
+    NotFoundException
   } from '@nestjs/common';
   import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
   import { CredentialsService } from './credentials.service';
@@ -13,7 +14,8 @@ import {
     CredentialVerificationResponse 
   } from './dto/credential-verification.dto';
   import { DIDAuthGuard } from '../auth/guards/did-auth.guard';
-  
+  import { DIDOwnerGuard } from '../auth/guards/did-owner.guard';
+
   @ApiTags('Credentials')
   @Controller('credentials')
   export class CredentialsController {
@@ -63,17 +65,38 @@ import {
       @Param('id') id: string,
       @Req() req,
     ): Promise<{ success: boolean }> {
+      const credential = await this.credentialsService.getCredentialById(id);
+
+      if (!credential) {
+        throw new NotFoundException('Credential not found');
+      }
+
+      // Check if the authenticated user owns this credential
+      if (credential.did !== req.user.did) {
+        throw new ForbiddenException('You do not have permission to revoke this credential');
+      }
+
       const success = await this.credentialsService.revokeCredential(id, req);
       return { success };
     }
   
     @Get('did/:did')
-    @UseGuards(DIDAuthGuard)
+    @UseGuards(DIDAuthGuard, DIDOwnerGuard)
     @ApiBearerAuth()
     @ApiOperation({ summary: 'Get all credentials for a DID' })
     @ApiResponse({ status: HttpStatus.OK, description: 'List of credentials' })
     @ApiResponse({ status: HttpStatus.UNAUTHORIZED, description: 'Unauthorized' })
     async getCredentialsByDid(@Param('did') did: string) {
       return this.credentialsService.getCredentialsByDid(did);
+    }
+
+    @Get('my')
+    @UseGuards(DIDAuthGuard)
+    @ApiBearerAuth()
+    @ApiOperation({ summary: 'Get all credentials for the authenticated user' })
+    @ApiResponse({ status: HttpStatus.OK, description: 'List of credentials' })
+    @ApiResponse({ status: HttpStatus.UNAUTHORIZED, description: 'Unauthorized' })
+    async getMyCredentials(@Req() req) {
+      return this.credentialsService.getCredentialsByDid(req.user.did);
     }
   }

@@ -339,4 +339,8 @@ export class CredentialsService {
   async getCredentialsByDid(did: string): Promise<Credential[]> {
     return this.credentialModel.find({ did }).exec();
   }
+
+  async getCredentialById(id: string): Promise<Credential | null> {
+    return this.credentialModel.findOne({ id }).exec();
+  }
 }

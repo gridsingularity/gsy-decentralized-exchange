@@ -7,6 +7,7 @@ import { DIDService } from './did.service';
 import { DIDRequest } from './dto/did-request.dto';
 import { DIDUpdateRequest } from './dto/did-update-request.dto';
 import { DIDAuthGuard } from '../auth/guards/did-auth.guard';
+import { DIDOwnerGuard } from '../auth/guards/did-owner.guard';
 
 @ApiTags('DID Management')
 @Controller('did')
@@ -31,7 +32,7 @@ export class DIDController {
   }
 
   @Patch(':did')
-  @UseGuards(DIDAuthGuard)
+  @UseGuards(DIDAuthGuard, DIDOwnerGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Update a DID document' })
   @ApiResponse({ status: HttpStatus.OK, description: 'DID document updated' })
@@ -45,7 +46,7 @@ export class DIDController {
   }
 
   @Delete(':did')
-  @UseGuards(DIDAuthGuard)
+  @UseGuards(DIDAuthGuard, DIDOwnerGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Deactivate a DID' })
   @ApiResponse({ status: HttpStatus.OK, description: 'DID deactivated successfully' })
