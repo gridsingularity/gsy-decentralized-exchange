@@ -8,13 +8,15 @@ services:
       - mongodb
     environment:
       - NODE_ENV=test
-      - MONGODB_URI=mongodb://gsy:gsy@mongodb/identitydb?authSource=admin
+      - MONGODB_URI=mongodb://mongodb/identitydb
     networks:
       - test-network
 
   mongodb:
     image: mongo:6
     container_name: identity-mongodb-test
+    environment:
+      - MONGO_INITDB_DATABASE=identitydb
     networks:
       - test-network
 
