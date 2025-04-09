@@ -34,6 +34,7 @@
 	pub use pallet::Error;
 	pub use pallet::CommunityInfo;
 	pub use pallet::{INTRA_COMMUNITY, INTER_COMMUNITY};
+	
 
 	#[cfg(test)]
 	mod mock;
@@ -232,6 +233,39 @@
 			OptionQuery
 		>;
 
+		/// ## Alpha Parameter
+		/// Used in settlement calculations for under-delivery penalty.
+		/// This is a fixed-point representation where 1.0 = 1_000_000
+		#[pallet::storage]
+		#[pallet::getter(fn alpha)]
+		pub(super) type Alpha<T: Config> = StorageValue<
+			_,
+			u64,
+			ValueQuery
+		>;	
+		
+		/// ## Beta Parameter
+		/// Used in settlement calculations for over-delivery adjustment.
+		/// This is a fixed-point representation where 1.0 = 1_000_000
+		#[pallet::storage]
+		#[pallet::getter(fn beta)]
+		pub(super) type Beta<T: Config> = StorageValue<
+			_,
+			u64,
+			ValueQuery
+		>;
+
+		/// ## Tolerance Parameter
+		/// Used in settlement calculations for acceptable deviation thresholds.
+		/// This is a fixed-point representation where 1.0 = 1_000_000
+		#[pallet::storage]
+		#[pallet::getter(fn tolerance)]
+		pub(super) type Tolerance<T: Config> = StorageValue<
+			_,
+			u64,
+			ValueQuery
+		>;		
+
 		/// # Events
 		///
 		/// The `Event` enum defines all the possible events that can be emitted by the Remuneration module.
@@ -283,6 +317,39 @@
 				user: T::AccountId,
 				new_balance: BalanceOf<T>,
 			},
+
+			/// Emitted when the Alpha parameter is updated.
+			/// - `old_value`: The previous value.
+			/// - `new_value`: The new value.
+			AlphaUpdated { old_value: u64, new_value: u64 },
+
+			/// Emitted when the Beta parameter is updated.
+			/// - `old_value`: The previous value.
+			/// - `new_value`: The new value.
+			BetaUpdated { old_value: u64, new_value: u64 },
+
+			/// Emitted when the Tolerance parameter is updated.
+			/// - `old_value`: The previous value.
+			/// - `new_value`: The new value.
+			ToleranceUpdated { old_value: u64, new_value: u64 },
+
+			/// Emitted when a flexibility settlement is processed.
+			/// - `requester`: The account ID of the flexibility requester.
+			/// - `provider`: The account ID of the flexibility provider.
+			/// - `requested`: The requested flexibility amount.
+			/// - `bidded`: The bidded flexibility amount.
+			/// - `delivered`: The actually delivered flexibility amount.
+			/// - `price`: The agreed price.
+			/// - `calculated_amount`: The final calculated payment amount.
+			FlexibilitySettled {
+				requester: T::AccountId,
+				provider: T::AccountId,
+				requested: u64,
+				bidded: u64,
+				delivered: u64,
+				price: u64,
+				calculated_amount: BalanceOf<T>,
+			},			
 		}
 
 		#[pallet::error]
@@ -652,7 +719,210 @@
 
 				Ok(())
 			}
-		}
+
+			/// ## Update Alpha Parameter
+			///
+			/// Updates the alpha parameter used for under-delivery penalty calculation.
+			///
+			/// - **Parameters**:
+			///   - `new_alpha`: The new alpha value (fixed-point, 1.0 = 1_000_000).
+			///
+			/// - **Access Control**:
+			///   - Requires the caller to be the custodian.
+			///
+			/// - **Event**:
+			///   - `AlphaUpdated` is emitted upon success.
+			#[transactional]
+			#[pallet::weight(<T as Config>::RemunerationWeightInfo::update_alpha())]
+			#[pallet::call_index(13)]
+			pub fn update_alpha(
+				origin: OriginFor<T>,
+				new_alpha: u64,
+			) -> DispatchResult {
+				// Make sure the caller is a signed origin
+				let sender = ensure_signed(origin)?;
+
+				// Only the custodian can perform this action
+				ensure!(Some(sender) == Custodian::<T>::get(), Error::<T>::NotCustodian);
+
+				// Get old value for event
+				let old_alpha = Alpha::<T>::get();
+
+				// Update the alpha parameter
+				Alpha::<T>::put(new_alpha);
+
+				// Emit the event
+				Self::deposit_event(Event::AlphaUpdated { 
+					old_value: old_alpha, 
+					new_value: new_alpha 
+				});
+
+				Ok(())
+			}
+
+			#[transactional]
+			#[pallet::weight(<T as Config>::RemunerationWeightInfo::update_beta())]
+			#[pallet::call_index(14)]
+			pub fn update_beta(
+				origin: OriginFor<T>,
+				new_beta: u64,
+			) -> DispatchResult {
+				// Make sure the caller is a signed origin
+				let sender = ensure_signed(origin)?;
+
+				// Only the custodian can perform this action
+				ensure!(Some(sender) == Custodian::<T>::get(), Error::<T>::NotCustodian);
+
+				// Get old value for event
+				let old_beta = Beta::<T>::get();
+
+				// Update the beta parameter
+				Beta::<T>::put(new_beta);
+
+				// Emit the event
+				Self::deposit_event(Event::BetaUpdated { 
+					old_value: old_beta, 
+					new_value: new_beta 
+				});
+
+				Ok(())
+			}
+
+			#[transactional]
+			#[pallet::weight(<T as Config>::RemunerationWeightInfo::update_tolerance())]
+			#[pallet::call_index(15)]
+			pub fn update_tolerance(
+				origin: OriginFor<T>,
+				new_tolerance: u64,
+			) -> DispatchResult {
+				// Make sure the caller is a signed origin
+				let sender = ensure_signed(origin)?;
+
+				// Only the custodian can perform this action
+				ensure!(Some(sender) == Custodian::<T>::get(), Error::<T>::NotCustodian);
+
+				// Get old value for event
+				let old_tolerance = Tolerance::<T>::get();
+
+				// Update the tolerance parameter
+				Tolerance::<T>::put(new_tolerance);
+
+				// Emit the event
+				Self::deposit_event(Event::ToleranceUpdated { 
+					old_value: old_tolerance, 
+					new_value: new_tolerance 
+				});
+
+				Ok(())
+			}
+
+			/// ## Settle Flexibility Payment
+			///
+			/// Calculates and processes a payment for flexibility services based on various parameters.
+			///
+			/// - **Parameters**:
+			///   - `receiver`: The account ID of the flexibility provider.
+			///   - `flexi_requested`: The requested flexibility amount.
+			///   - `flexi_bidded`: The bidded flexibility amount.
+			///   - `flexi_delivered`: The actually delivered flexibility amount.
+			///   - `price`: The agreed price per unit.
+			///   - `payment_type`: The type of payment (intra or inter community).
+			///
+			/// - **Access Control**:
+			///   - Requires the caller to be a valid signer.
+			///
+			/// - **Events**:
+			///   - `FlexibilitySettled` is emitted with details of the settlement.
+			///   - `PaymentAdded` is emitted for the underlying payment.
+			///
+			/// - **Validation**:
+			///   - Ensures all validation from the underlying `add_payment` function.
+			#[transactional]
+			#[pallet::weight(<T as Config>::RemunerationWeightInfo::settle_flexibility_payment())]
+			#[pallet::call_index(16)]
+			pub fn settle_flexibility_payment(
+				origin: OriginFor<T>,
+				receiver: T::AccountId,
+				flexi_requested: u64,
+				flexi_bidded: u64,
+				flexi_delivered: u64,
+				price: u64,
+				payment_type: u8
+			) -> DispatchResult {
+				// Ensure the caller is authorized to perform the action
+				let sender = ensure_signed(origin.clone())?;
+
+				// Get the parameters for the calculation
+				let alpha = Alpha::<T>::get();
+				let beta = Beta::<T>::get();
+				let tolerance = Tolerance::<T>::get();
+				
+				// Fixed point calculations: 1.0 = 1_000_000
+				let fixed_point_factor: u64 = 1_000_000; 
+				
+				// Calculate base payment (min of requested and delivered * price)
+				let base = core::cmp::min(flexi_requested, flexi_delivered).saturating_mul(price);
+				
+				// Calculate tolerance threshold for requested flexibility
+				let threshold = tolerance.saturating_mul(flexi_requested).checked_div(fixed_point_factor)
+					.unwrap_or(0);
+				
+				// Calculate bid threshold (using same tolerance for simplicity)
+				let threshold_bid = tolerance.saturating_mul(flexi_bidded).checked_div(fixed_point_factor)
+					.unwrap_or(0);
+				
+				// Under-delivery penalty
+				let under_delivery_diff = flexi_requested.saturating_sub(flexi_delivered).saturating_sub(threshold);
+				let under_delivery_penalty = if under_delivery_diff > 0 {
+					alpha.saturating_mul(under_delivery_diff).saturating_mul(price)
+						.checked_div(fixed_point_factor).unwrap_or(0)
+				} else {
+					0
+				};
+				
+				// Over-delivery adjustment
+				let over_delivery_diff = flexi_delivered.saturating_sub(flexi_requested).saturating_sub(threshold);
+				let over_delivery_adjustment = if over_delivery_diff > 0 {
+					beta.saturating_mul(over_delivery_diff).saturating_mul(price)
+						.checked_div(fixed_point_factor).unwrap_or(0)
+				} else {
+					0
+				};
+				
+				// Bid inflation penalty (using gamma = alpha for simplicity)
+				let bid_inflation_diff = flexi_bidded.saturating_sub(flexi_requested).saturating_sub(threshold_bid);
+				let bid_inflation_penalty = if bid_inflation_diff > 0 {
+					alpha.saturating_mul(bid_inflation_diff).saturating_mul(price)
+						.checked_div(fixed_point_factor).unwrap_or(0)
+				} else {
+					0
+				};
+				
+				// Calculate final amount
+				let final_amount = base.saturating_sub(under_delivery_penalty)
+					.saturating_add(over_delivery_adjustment)
+					.saturating_sub(bid_inflation_penalty);
+				
+				// Convert to BalanceOf<T> using checked_into
+				let amount = BalanceOf::<T>::from(final_amount as u32);
+				
+				// Call the existing add_payment function to process the payment
+				Self::add_payment(origin, receiver.clone(), amount, payment_type)?;
+				
+				// Emit the FlexibilitySettled event
+				Self::deposit_event(Event::FlexibilitySettled {
+					requester: sender,
+					provider: receiver,
+					requested: flexi_requested,
+					bidded: flexi_bidded,
+					delivered: flexi_delivered,
+					price,
+					calculated_amount: amount,
+				});
+				
+				Ok(())
+			}			
+		}		
 
 		/// # Queries for the Remuneration Pallet
 		///
@@ -718,5 +988,29 @@
 			pub fn query_custodian() -> Option<T::AccountId> {
 				Self::custodian()
 			}
+
+			/// Query the alpha parameter value.
+			///
+			/// - **Returns**:
+			///   - The current alpha parameter value.
+			pub fn query_alpha() -> u64 {
+				Self::alpha()
+			}
+
+			/// Query the beta parameter value.
+			///
+			/// - **Returns**:
+			///   - The current beta parameter value.
+			pub fn query_beta() -> u64 {
+				Self::beta()
+			}
+
+			/// Query the tolerance parameter value.
+			///
+			/// - **Returns**:
+			///   - The current tolerance parameter value.
+			pub fn query_tolerance() -> u64 {
+				Self::tolerance()
+			}			
 		}
 	}
