@@ -392,32 +392,25 @@ fn settle_flexibility_basic() {
         assert_ok!(Remuneration::set_balance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER1, 1000));
         assert_ok!(Remuneration::set_balance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER2, 0));
         
-        // Parameters are zeros by default, so calculation will be simple
-        // With alpha=0, beta=0, tolerance=0:
-        // - base = min(requested, delivered) * price = min(100, 100) * 5 = 500
-        // - no penalties or bonuses applied
-        
-        // Perfect delivery scenario: requested = bidded = delivered
+        // Perfect delivery scenario: requested = delivered
         assert_ok!(Remuneration::settle_flexibility_payment(
             RawOrigin::Signed(PROSUMER1).into(),
             PROSUMER2,
-            100, // requested
-            100, // bidded
-            100, // delivered
-            5,   // price
-            INTRA_COMMUNITY
+            100,  // requested
+            100,  // delivered
+            5,    // price
+            INTRA_COMMUNITY  // payment_type
         ));
         
         // Check balances after settlement
         assert_eq!(Remuneration::balances(PROSUMER1), 500); // 1000 - 500
         assert_eq!(Remuneration::balances(PROSUMER2), 500); // 0 + 500
         
-        // Verify event emission - using proper event assertion pattern
+        // Verify event emission
         let flexibility_settled_event = crate::Event::FlexibilitySettled {
             requester: PROSUMER1,
             provider: PROSUMER2,
             requested: 100,
-            bidded: 100,
             delivered: 100,
             price: 5,
             calculated_amount: 500,
@@ -450,11 +443,10 @@ fn settle_flexibility_under_delivery() {
         assert_ok!(Remuneration::settle_flexibility_payment(
             RawOrigin::Signed(PROSUMER1).into(),
             PROSUMER2,
-            100, // requested
-            100, // bidded
-            80,  // delivered (20 units under-delivered)
-            5,   // price
-            INTRA_COMMUNITY
+            100,  // requested
+            80,   // delivered (20 units under-delivered)
+            5,    // price
+            INTRA_COMMUNITY  // payment_type
         ));
         
         // Calculation:
@@ -467,12 +459,10 @@ fn settle_flexibility_under_delivery() {
         assert_eq!(Remuneration::balances(PROSUMER1), 650); // 1000 - 350
         assert_eq!(Remuneration::balances(PROSUMER2), 350); // 0 + 350
         
-        // Verify event emission
         let flexibility_settled_event = crate::Event::FlexibilitySettled {
             requester: PROSUMER1,
             provider: PROSUMER2,
             requested: 100,
-            bidded: 100,
             delivered: 80,
             price: 5,
             calculated_amount: 350,
@@ -505,11 +495,10 @@ fn settle_flexibility_over_delivery() {
         assert_ok!(Remuneration::settle_flexibility_payment(
             RawOrigin::Signed(PROSUMER1).into(),
             PROSUMER2,
-            100, // requested
-            100, // bidded
-            120, // delivered (20 units over-delivered)
-            5,   // price
-            INTRA_COMMUNITY
+            100,  // requested
+            120,  // delivered (20 units over-delivered)
+            5,    // price
+            INTRA_COMMUNITY  // payment_type
         ));
         
         // Calculation:
@@ -522,70 +511,13 @@ fn settle_flexibility_over_delivery() {
         assert_eq!(Remuneration::balances(PROSUMER1), 480); // 1000 - 520
         assert_eq!(Remuneration::balances(PROSUMER2), 520); // 0 + 520
         
-        // Verify event emission
         let flexibility_settled_event = crate::Event::FlexibilitySettled {
             requester: PROSUMER1,
             provider: PROSUMER2,
             requested: 100,
-            bidded: 100,
             delivered: 120,
             price: 5,
             calculated_amount: 520,
-        };
-        System::assert_last_event(flexibility_settled_event.into());
-    });
-}
-
-#[test]
-fn settle_flexibility_bid_inflation() {
-    new_test_ext().execute_with(|| {
-        // Set a block and a timestamp
-        System::set_block_number(1);
-        Timestamp::set_timestamp(1_000);
-        
-        // Setup initial state
-        assert_ok!(Remuneration::update_custodian(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), ALICE_THE_CUSTODIAN));
-        assert_ok!(Remuneration::add_community(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), COMMUNITY1, DSO, COMMUNITY1_OWNER));
-        assert_ok!(Remuneration::add_prosumer(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER1, COMMUNITY1));
-        assert_ok!(Remuneration::add_prosumer(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER2, COMMUNITY1));
-        
-        // Set initial balances
-        assert_ok!(Remuneration::set_balance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER1, 1000));
-        assert_ok!(Remuneration::set_balance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER2, 0));
-        
-        // Set alpha for bid inflation penalty calculation
-        assert_ok!(Remuneration::update_alpha(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 500_000)); // 0.5
-        
-        // Bid inflation scenario: bidded > requested
-        assert_ok!(Remuneration::settle_flexibility_payment(
-            RawOrigin::Signed(PROSUMER1).into(),
-            PROSUMER2,
-            100, // requested
-            120, // bidded (20 units inflated)
-            100, // delivered
-            5,   // price
-            INTRA_COMMUNITY
-        ));
-        
-        // Calculation:
-        // - base = min(100, 100) * 5 = 500
-        // - bid inflation diff = 120-100 = 20
-        // - bid inflation penalty = 0.5 * 20 * 5 = 50
-        // - final amount = 500 - 50 = 450
-        
-        // Check balances after settlement
-        assert_eq!(Remuneration::balances(PROSUMER1), 550); // 1000 - 450
-        assert_eq!(Remuneration::balances(PROSUMER2), 450); // 0 + 450
-        
-        // Verify event emission
-        let flexibility_settled_event = crate::Event::FlexibilitySettled {
-            requester: PROSUMER1,
-            provider: PROSUMER2,
-            requested: 100,
-            bidded: 120,
-            delivered: 100,
-            price: 5,
-            calculated_amount: 450,
         };
         System::assert_last_event(flexibility_settled_event.into());
     });
@@ -616,11 +548,10 @@ fn settle_flexibility_with_tolerance() {
         assert_ok!(Remuneration::settle_flexibility_payment(
             RawOrigin::Signed(PROSUMER1).into(),
             PROSUMER2,
-            100, // requested
-            100, // bidded
-            92,  // delivered (8 units under, within 10% tolerance)
-            5,   // price
-            INTRA_COMMUNITY
+            100,  // requested
+            92,   // delivered (8 units under, within 10% tolerance)
+            5,    // price
+            INTRA_COMMUNITY  // payment_type
         ));
         
         // Calculation:
@@ -642,11 +573,10 @@ fn settle_flexibility_with_tolerance() {
         assert_ok!(Remuneration::settle_flexibility_payment(
             RawOrigin::Signed(PROSUMER1).into(),
             PROSUMER2,
-            100, // requested
-            100, // bidded
-            85,  // delivered (15 units under, exceeds 10% tolerance)
-            5,   // price
-            INTRA_COMMUNITY
+            100,  // requested
+            85,   // delivered (15 units under, exceeds 10% tolerance)
+            5,    // price
+            INTRA_COMMUNITY  // payment_type
         ));
         
         // Calculation:
@@ -684,29 +614,36 @@ fn settle_flexibility_complex_scenario() {
         assert_ok!(Remuneration::update_beta(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 200_000)); // 0.2
         assert_ok!(Remuneration::update_tolerance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 100_000)); // 0.1
         
-        // Combined scenario: slight over-delivery and bid inflation
+        // Slight over-delivery scenario
         assert_ok!(Remuneration::settle_flexibility_payment(
             RawOrigin::Signed(PROSUMER1).into(),
             PROSUMER2,
-            100, // requested
-            120, // bidded (20 units inflated)
-            105, // delivered (5 units over-delivered)
-            5,   // price
-            INTRA_COMMUNITY
+            100,  // requested
+            105,  // delivered (5 units over-delivered)
+            5,    // price
+            INTRA_COMMUNITY  // payment_type
         ));
         
         // Calculation:
         // - base = min(100, 105) * 5 = 500
         // - threshold = 0.1 * 100 = 10
-        // - over-delivery diff = 105-100-10 = 0 (within tolerance)
-        // - threshold_bid = 0.1 * 120 = 12
-        // - bid inflation diff = 120-100-12 = 8 (beyond tolerance)
-        // - bid inflation penalty = 0.5 * 8 * 5 = 20
-        // - final amount = 500 - 0 + 0 - 20 = 480
+        // - over-delivery diff = 105-100-10 = 0 (within tolerance, no bonus)
+        // - final amount = 500
         
         // Check balances after settlement
-        assert_eq!(Remuneration::balances(PROSUMER1), 520); // 1000 - 480
-        assert_eq!(Remuneration::balances(PROSUMER2), 480); // 0 + 480
+        assert_eq!(Remuneration::balances(PROSUMER1), 500); // 1000 - 500
+        assert_eq!(Remuneration::balances(PROSUMER2), 500); // 0 + 500
+        
+        // Verify event emission
+        let flexibility_settled_event = crate::Event::FlexibilitySettled {
+            requester: PROSUMER1,
+            provider: PROSUMER2,
+            requested: 100,
+            delivered: 105,
+            price: 5,
+            calculated_amount: 500,
+        };
+        System::assert_last_event(flexibility_settled_event.into());
     });
 }
 
@@ -732,11 +669,10 @@ fn settle_flexibility_errors() {
             Remuneration::settle_flexibility_payment(
                 RawOrigin::Signed(PROSUMER1).into(),
                 PROSUMER2,
-                100, // requested
-                100, // bidded
-                100, // delivered
-                10,  // price - would require 1000 balance
-                INTRA_COMMUNITY
+                100,  // requested
+                100,  // delivered
+                10,   // price - would require 1000 balance
+                INTRA_COMMUNITY  // payment_type
             ),
             Error::<Test>::InsufficientBalance
         );
@@ -746,11 +682,10 @@ fn settle_flexibility_errors() {
             Remuneration::settle_flexibility_payment(
                 RawOrigin::Signed(PROSUMER1).into(),
                 PROSUMER1,
-                100,
-                100,
-                100,
-                5,
-                INTRA_COMMUNITY
+                100,  // requested
+                100,  // delivered
+                5,    // price
+                INTRA_COMMUNITY  // payment_type
             ),
             Error::<Test>::SameSenderReceiver
         );
@@ -760,11 +695,10 @@ fn settle_flexibility_errors() {
             Remuneration::settle_flexibility_payment(
                 RawOrigin::Signed(PROSUMER1).into(),
                 PROSUMER2,
-                100,
-                100,
-                100,
-                5,
-                3 // Invalid payment type
+                100,  // requested
+                100,  // delivered
+                5,    // price
+                3     // Invalid payment type
             ),
             Error::<Test>::PaymentTypeNotAllowed
         );
@@ -779,9 +713,8 @@ fn settle_flexibility_errors() {
                 PROSUMER3,
                 100,
                 100,
-                100,
                 5,
-                INTRA_COMMUNITY
+                INTRA_COMMUNITY  // payment_type
             ),
             Error::<Test>::DifferentCommunities
         );
@@ -812,11 +745,10 @@ fn settle_flexibility_inter_community() {
         assert_ok!(Remuneration::settle_flexibility_payment(
             RawOrigin::Signed(COMMUNITY1).into(),
             COMMUNITY2,
-            100, // requested
-            100, // bidded
-            100, // delivered
-            5,   // price
-            INTER_COMMUNITY
+            100,  // requested
+            100,  // delivered
+            5,    // price
+            INTER_COMMUNITY  // payment_type
         ));
         
         // Calculation (exact same formula, but between communities)
@@ -828,12 +760,10 @@ fn settle_flexibility_inter_community() {
         assert_eq!(Remuneration::balances(COMMUNITY1), 500); // 1000 - 500
         assert_eq!(Remuneration::balances(COMMUNITY2), 500); // 0 + 500
         
-        // Verify event emission
         let flexibility_settled_event = crate::Event::FlexibilitySettled {
             requester: COMMUNITY1,
             provider: COMMUNITY2,
             requested: 100,
-            bidded: 100,
             delivered: 100,
             price: 5,
             calculated_amount: 500,

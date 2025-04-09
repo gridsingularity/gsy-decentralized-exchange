@@ -337,7 +337,6 @@
 			/// - `requester`: The account ID of the flexibility requester.
 			/// - `provider`: The account ID of the flexibility provider.
 			/// - `requested`: The requested flexibility amount.
-			/// - `bidded`: The bidded flexibility amount.
 			/// - `delivered`: The actually delivered flexibility amount.
 			/// - `price`: The agreed price.
 			/// - `calculated_amount`: The final calculated payment amount.
@@ -345,7 +344,6 @@
 				requester: T::AccountId,
 				provider: T::AccountId,
 				requested: u64,
-				bidded: u64,
 				delivered: u64,
 				price: u64,
 				calculated_amount: BalanceOf<T>,
@@ -823,7 +821,6 @@
 			/// - **Parameters**:
 			///   - `receiver`: The account ID of the flexibility provider.
 			///   - `flexi_requested`: The requested flexibility amount.
-			///   - `flexi_bidded`: The bidded flexibility amount.
 			///   - `flexi_delivered`: The actually delivered flexibility amount.
 			///   - `price`: The agreed price per unit.
 			///   - `payment_type`: The type of payment (intra or inter community).
@@ -844,7 +841,6 @@
 				origin: OriginFor<T>,
 				receiver: T::AccountId,
 				flexi_requested: u64,
-				flexi_bidded: u64,
 				flexi_delivered: u64,
 				price: u64,
 				payment_type: u8
@@ -867,10 +863,6 @@
 				let threshold = tolerance.saturating_mul(flexi_requested).checked_div(fixed_point_factor)
 					.unwrap_or(0);
 				
-				// Calculate bid threshold (using same tolerance for simplicity)
-				let threshold_bid = tolerance.saturating_mul(flexi_bidded).checked_div(fixed_point_factor)
-					.unwrap_or(0);
-				
 				// Under-delivery penalty
 				let under_delivery_diff = flexi_requested.saturating_sub(flexi_delivered).saturating_sub(threshold);
 				let under_delivery_penalty = if under_delivery_diff > 0 {
@@ -882,17 +874,8 @@
 				
 				// Over-delivery adjustment
 				let over_delivery_diff = flexi_delivered.saturating_sub(flexi_requested).saturating_sub(threshold);
-				let over_delivery_adjustment = if over_delivery_diff > 0 {
+				let over_delivery_bonus = if over_delivery_diff > 0 {
 					beta.saturating_mul(over_delivery_diff).saturating_mul(price)
-						.checked_div(fixed_point_factor).unwrap_or(0)
-				} else {
-					0
-				};
-				
-				// Bid inflation penalty (using gamma = alpha for simplicity)
-				let bid_inflation_diff = flexi_bidded.saturating_sub(flexi_requested).saturating_sub(threshold_bid);
-				let bid_inflation_penalty = if bid_inflation_diff > 0 {
-					alpha.saturating_mul(bid_inflation_diff).saturating_mul(price)
 						.checked_div(fixed_point_factor).unwrap_or(0)
 				} else {
 					0
@@ -900,10 +883,9 @@
 				
 				// Calculate final amount
 				let final_amount = base.saturating_sub(under_delivery_penalty)
-					.saturating_add(over_delivery_adjustment)
-					.saturating_sub(bid_inflation_penalty);
+					.saturating_add(over_delivery_bonus);
 				
-				// Convert to BalanceOf<T> using checked_into
+				// Convert to BalanceOf<T>
 				let amount = BalanceOf::<T>::from(final_amount as u32);
 				
 				// Call the existing add_payment function to process the payment
@@ -914,7 +896,6 @@
 					requester: sender,
 					provider: receiver,
 					requested: flexi_requested,
-					bidded: flexi_bidded,
 					delivered: flexi_delivered,
 					price,
 					calculated_amount: amount,
