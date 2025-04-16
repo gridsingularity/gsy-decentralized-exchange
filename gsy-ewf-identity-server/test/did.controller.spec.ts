@@ -3,25 +3,24 @@ import { DIDController } from '../src/did/did.controller';
 import { DIDService } from '../src/did/did.service';
 import { DIDAuthGuard } from '../src/auth/guards/did-auth.guard';
 import { DIDOwnerGuard } from '../src/auth/guards/did-owner.guard';
+import { PreparedTransactionDto } from '../src/did/dto/prepared-transaction.dto';
+import { DIDUpdateRequest } from '../src/did/dto/did-update-request.dto';
+import { DIDRequest } from '../src/did/dto/did-request.dto';
 
-// Mock the DID service
 const mockDIDService = {
-  createDID: jest.fn(),
+  createDID: jest.fn(), 
   resolveDID: jest.fn(),
-  updateDID: jest.fn(),
-  deactivateDID: jest.fn(),
+  prepareUpdateTransaction: jest.fn(), 
+  prepareDeactivateTransaction: jest.fn(), 
   isDIDRegistered: jest.fn(),
-  getUserByDid: jest.fn(),
 };
 
-// Mock the DIDAuthGuard
 const mockDIDAuthGuard = { canActivate: jest.fn(() => true) };
-
-// Mock the DIDOwnerGuard
 const mockDIDOwnerGuard = { canActivate: jest.fn(() => true) };
 
 describe('DIDController', () => {
   let controller: DIDController;
+  let didService: DIDService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -37,8 +36,8 @@ describe('DIDController', () => {
       .compile();
 
     controller = module.get<DIDController>(DIDController);
+    didService = module.get<DIDService>(DIDService); 
 
-    // Reset mock function calls before each test
     jest.clearAllMocks();
   });
 
@@ -46,60 +45,69 @@ describe('DIDController', () => {
     expect(controller).toBeDefined();
   });
 
-  describe('updateDID', () => {
-    it('should update a DID when user is authorized', async () => {
-      const did = 'did:ethr:0x123';
-      const updates = { metadata: { name: 'Updated Name' } };
-      const mockReq = { user: { did } };
-      const mockUpdatedDoc = { id: did, metadata: updates.metadata };
-      
-      mockDIDOwnerGuard.canActivate.mockReturnValue(true);
-      mockDIDService.updateDID.mockResolvedValue(mockUpdatedDoc);
+  describe('createDID', () => {
+    it('should call didService.createDID and return prepared transaction data', async () => {
+      const didRequest: DIDRequest = { address: '0x123', metadata: {} };
+      const mockTxData: PreparedTransactionDto = { to: '0xRegistry', data: '0xabcdef', value: '0' };
+      mockDIDService.createDID.mockResolvedValue(mockTxData);
 
-      const result = await controller.updateDID(did, updates, mockReq);
-      expect(result).toEqual(mockUpdatedDoc);
-      expect(mockDIDService.updateDID).toHaveBeenCalledWith(did, updates, mockReq);
+      const result = await controller.createDID(didRequest, {}); 
+
+      expect(didService.createDID).toHaveBeenCalledWith(didRequest, {});
+      expect(result).toEqual(mockTxData);
     });
-
-    // The actual guard denial is tested in the guard's unit tests
   });
 
-  describe('deactivateDID', () => {
-    it('should deactivate a DID when user is authorized', async () => {
+
+  describe('prepareUpdateDIDTransaction', () => {
+    it('should prepare an update transaction when user is authorized', async () => {
+      const did = 'did:ethr:0x123';
+      const updates: DIDUpdateRequest = { publicKey: '0x456' };
+      const mockReq = { user: { did } };
+      const mockTxData: PreparedTransactionDto = { to: '0xRegistry', data: '0x123456', value: '0' };
+
+      mockDIDService.prepareUpdateTransaction.mockResolvedValue(mockTxData);
+
+      const result = await controller.prepareUpdateDIDTransaction(did, updates, mockReq);
+      expect(result).toEqual(mockTxData);
+      expect(didService.prepareUpdateTransaction).toHaveBeenCalledWith(did, updates, mockReq);
+    });
+  });
+
+  describe('prepareDeactivateDIDTransaction', () => {
+    it('should prepare a deactivate transaction when user is authorized', async () => {
       const did = 'did:ethr:0x123';
       const mockReq = { user: { did } };
-      
-      mockDIDOwnerGuard.canActivate.mockReturnValue(true);
-      mockDIDService.deactivateDID.mockResolvedValue(true);
+      const mockTxData: PreparedTransactionDto = { to: '0xRegistry', data: '0x987654', value: '0' };
 
-      const result = await controller.deactivateDID(did, mockReq);
-      expect(result).toEqual({ success: true });
-      expect(mockDIDService.deactivateDID).toHaveBeenCalledWith(did, mockReq);
+      mockDIDService.prepareDeactivateTransaction.mockResolvedValue(mockTxData);
+
+      const result = await controller.prepareDeactivateDIDTransaction(did, mockReq);
+      expect(result).toEqual(mockTxData);
+      expect(didService.prepareDeactivateTransaction).toHaveBeenCalledWith(did, mockReq);
     });
   });
 
   describe('isDIDRegistered', () => {
     it('should check if a DID is registered', async () => {
       const did = 'did:ethr:0x123';
-      
       mockDIDService.isDIDRegistered.mockResolvedValue(true);
 
       const result = await controller.isDIDRegistered(did);
       expect(result).toEqual({ registered: true });
-      expect(mockDIDService.isDIDRegistered).toHaveBeenCalledWith(did);
+      expect(didService.isDIDRegistered).toHaveBeenCalledWith(did);
     });
   });
 
   describe('resolveDID', () => {
     it('should resolve a DID document', async () => {
       const did = 'did:ethr:0x123';
-      const mockDocument = { id: did, publicKey: [] };
-      
+      const mockDocument = { id: did, verificationMethod: [] }; 
       mockDIDService.resolveDID.mockResolvedValue(mockDocument);
 
       const result = await controller.resolveDID(did);
       expect(result).toEqual(mockDocument);
-      expect(mockDIDService.resolveDID).toHaveBeenCalledWith(did);
+      expect(didService.resolveDID).toHaveBeenCalledWith(did);
     });
   });
 });

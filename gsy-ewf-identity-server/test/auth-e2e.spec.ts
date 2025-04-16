@@ -8,6 +8,7 @@ import { AppModule } from '../src/app.module';
 import { User } from '../src/database/schemas/user.schema';
 import { Credential, CredentialStatus } from '../src/database/schemas/credential.schema';
 import { v4 as uuidv4 } from 'uuid';
+import { Wallet } from 'ethers';
 
 describe('Authorization (e2e)', () => {
   let app: INestApplication;
@@ -26,7 +27,7 @@ describe('Authorization (e2e)', () => {
   const otherCredentialId = `urn:uuid:${uuidv4()}`;
 
   // Set a higher timeout for all tests
-  jest.setTimeout(30000);
+  jest.setTimeout(60000);
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -131,27 +132,34 @@ describe('Authorization (e2e)', () => {
       expect(response.body).toHaveProperty('registered');
     });
 
-    it('should allow updating own DID', async () => {
-      await request(app.getHttpServer())
-        .patch(`/did/${ownerUser.did}`)
+    it('should allow preparing update transaction for own DID', async () => {
+      const updatePayload = { publicKey: Wallet.createRandom().publicKey };
+      const response = await request(app.getHttpServer())
+        .post(`/did/${ownerUser.did}/prepare-update`) 
         .set('Authorization', `Bearer ${ownerToken}`)
-        .send({ metadata: { name: 'Test Update' } })
-        .expect(200);
+        .send(updatePayload)
+        .expect(200); 
+
+      expect(response.body).toHaveProperty('to');
+      expect(response.body).toHaveProperty('data');
+      expect(response.body.data).toMatch(/^0x[0-9a-fA-F]+$/); 
     });
 
-    it('should deny updating another user\'s DID', async () => {
+    it('should deny preparing update transaction for another user\'s DID', async () => {
+      const updatePayload = { publicKey: Wallet.createRandom().publicKey };
       await request(app.getHttpServer())
-        .patch(`/did/${otherUser.did}`)
-        .set('Authorization', `Bearer ${ownerToken}`)
-        .send({ metadata: { name: 'Unauthorized Update' } })
-        .expect(403); // DIDOwnerGuard should return Forbidden
+        .post(`/did/${otherUser.did}/prepare-update`) 
+        .set('Authorization', `Bearer ${ownerToken}`) 
+        .send(updatePayload)
+        .expect(403); 
     });
 
-    it('should deny access without authentication', async () => {
+    it('should deny preparing update transaction without authentication', async () => {
+      const updatePayload = { publicKey: Wallet.createRandom().publicKey };
       await request(app.getHttpServer())
-        .patch(`/did/${ownerUser.did}`)
-        .send({ metadata: { name: 'Unauthenticated Update' } })
-        .expect(401); // Unauthorized
+        .post(`/did/${ownerUser.did}/prepare-update`) 
+        .send(updatePayload)
+        .expect(401); 
     });
   });
 

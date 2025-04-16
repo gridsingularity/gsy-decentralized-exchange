@@ -109,7 +109,6 @@ export class CredentialsService {
       const credential = {
         '@context': [
           'https://www.w3.org/2018/credentials/v1',
-          'https://energyweb.org/contexts/gsy-dex-v1.jsonld',
         ],
         id,
         type: ['VerifiableCredential', 'GSYDexAddressCredential'],
@@ -195,13 +194,19 @@ export class CredentialsService {
     req?: any,
   ): Promise<CredentialVerificationResponse> {
     try {
-      // Basic validation of the credential
+      this.logger.debug(`Received credential type: ${typeof credential}, Keys: ${Object.keys(credential)}`);
+      try {
+        this.logger.debug(`Raw credential input: ${JSON.stringify(credential)}`);
+      } catch (e) {
+        this.logger.error(`Failed to stringify raw credential: ${e.message}`);
+      }
+
       if (!credential || !credential.id || !credential.issuer ||
           !credential.credentialSubject || !credential.proof) {
+        this.logger.warn(`Invalid credential format received.`);
         throw new BadRequestException('Invalid credential format');
       }
 
-      // Check if the credential exists in our database
       const credentialRecord = await this.credentialModel.findOne({
         id: credential.id,
       }).exec();
@@ -218,7 +223,6 @@ export class CredentialsService {
         };
       }
 
-      // Check if the credential is revoked
       if (credentialRecord.status === CredentialStatus.REVOKED) {
         return {
           valid: false,
@@ -231,7 +235,6 @@ export class CredentialsService {
         };
       }
 
-      // Check expiration
       const expirationDate = new Date(credential.expirationDate);
       const now = new Date();
       if (expirationDate < now) {
@@ -246,15 +249,29 @@ export class CredentialsService {
         };
       }
 
-      // Verify signature
       const { proof, ...credentialWithoutProof } = credential;
-      const credentialString = JSON.stringify(credentialWithoutProof);
+
+      this.logger.debug(`credentialWithoutProof type: ${typeof credentialWithoutProof}, Keys: ${Object.keys(credentialWithoutProof)}`);
+       try {
+        this.logger.debug(`credentialWithoutProof content: ${JSON.stringify(credentialWithoutProof, null, 2)}`);
+      } catch (e) {
+        this.logger.error(`Failed to stringify credentialWithoutProof: ${e.message}`);
+      }
+
+      const credentialString = JSON.stringify(credentialWithoutProof, Object.keys(credentialWithoutProof).sort());
       const issuerAddress = credential.issuer.split(':')[2];
-      
+      const signatureToVerify = proof.jws;
+
+      this.logger.log(`Verifying Message String (Sorted): >>>${credentialString}<<<`);
+      this.logger.log(`Verifying Signature (JWS): ${signatureToVerify}`);
+      this.logger.log(`Expected Issuer Addr: ${issuerAddress}`);
+
       try {
-        const recoveredAddress = ethers.verifyMessage(credentialString, proof.jws);
-        
+        const recoveredAddress = ethers.verifyMessage(credentialString, signatureToVerify);
+        this.logger.log(`Recovered address: ${recoveredAddress}`);
+
         if (recoveredAddress.toLowerCase() !== issuerAddress.toLowerCase()) {
+          this.logger.warn(`Signature INVALID - Recovered address ${recoveredAddress} !== Issuer ${issuerAddress}`);
           return {
             valid: false,
             did: credentialRecord.did,
@@ -264,20 +281,22 @@ export class CredentialsService {
               reason: 'Invalid signature',
             },
           };
+        } else {
+          this.logger.log(`Signature VALID for ${issuerAddress}`);
         }
       } catch (error) {
+        this.logger.error(`ethers.verifyMessage threw error: ${error.message}`, error.stack);
         return {
           valid: false,
           did: credentialRecord.did,
           gsyDexAddress: credentialRecord.gsyDexAddress,
           details: {
             status: 'invalid',
-            reason: 'Failed to verify signature',
+            reason: `Signature verification error: ${error.message}`,
           },
         };
       }
 
-      // Log the credential verification
       await this.auditService.log(
         AuditAction.CREDENTIAL_VERIFIED,
         credentialRecord.did,
@@ -302,7 +321,12 @@ export class CredentialsService {
       if (error instanceof BadRequestException) {
         throw error;
       }
-      throw new Error(`Failed to verify credential: ${error.message}`);
+       return {
+           valid: false,
+           did: credential?.credentialSubject?.id || 'unknown',
+           gsyDexAddress: credential?.credentialSubject?.accountLink?.gsyDexAddress || 'unknown',
+           details: { status: 'error', reason: `Verification failed: ${error.message}` }
+       };
     }
   }
 
