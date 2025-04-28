@@ -1,8 +1,13 @@
-import { Controller, Post, Body, HttpCode, HttpStatus } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { 
+  Controller, Get, Post, Body, Req, 
+  UseGuards, HttpCode, HttpStatus 
+} from '@nestjs/common';
+import { ApiBearerAuth, ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { AuthChallengeRequest, AuthChallengeResponse } from './dto/auth-challenge.dto';
 import { AuthVerificationRequest, AuthVerificationResponse } from './dto/auth-verification.dto';
+import { DIDAuthGuard } from '../auth/guards/did-auth.guard';
+import { UserInfoDto } from './dto/user-info.dto';
 
 @ApiTags('Authentication')
 @Controller('auth')
@@ -25,5 +30,15 @@ export class AuthController {
   @ApiResponse({ status: HttpStatus.UNAUTHORIZED, description: 'Invalid signature' })
   async verifyChallenge(@Body() request: AuthVerificationRequest): Promise<AuthVerificationResponse> {
     return this.authService.verifyChallenge(request.did, request.challengeId, request.signature);
+  }
+
+  @Get('verify-token')
+  @UseGuards(DIDAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Verify JWT and retrieve associated user information' })
+  @ApiResponse({ status: 200, description: 'Token is valid, user information returned.', type: UserInfoDto })
+  @ApiResponse({ status: 401, description: 'Unauthorized (Invalid, expired token, or user session invalid)' })
+  async verifyTokenAndGetUser(@Req() req): Promise<UserInfoDto> {
+    return req.user;
   }
 }

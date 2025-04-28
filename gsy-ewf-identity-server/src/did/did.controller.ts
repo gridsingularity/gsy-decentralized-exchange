@@ -1,12 +1,12 @@
 import {
-  Controller, Delete, Get, Post, Patch, Param, Body,
+  Controller, Get, Post, Param, Body,
   UseGuards, Req, HttpCode, HttpStatus
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiBody } from '@nestjs/swagger'; // Import ApiBody
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiBody } from '@nestjs/swagger';
 import { DIDService } from './did.service';
 import { DIDRequest } from './dto/did-request.dto';
 import { DIDUpdateRequest } from './dto/did-update-request.dto';
-import { PreparedTransactionDto } from './dto/prepared-transaction.dto'; // Import DTO
+import { PreparedTransactionDto } from './dto/prepared-transaction.dto'; 
 import { DIDAuthGuard } from '../auth/guards/did-auth.guard';
 import { DIDOwnerGuard } from '../auth/guards/did-owner.guard';
 
