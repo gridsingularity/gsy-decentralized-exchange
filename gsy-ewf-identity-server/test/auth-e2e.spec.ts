@@ -9,24 +9,23 @@ import { User } from '../src/database/schemas/user.schema';
 import { Credential, CredentialStatus } from '../src/database/schemas/credential.schema';
 import { v4 as uuidv4 } from 'uuid';
 import { Wallet } from 'ethers';
+import { UserInfoDto } from '../src/auth/dto/user-info.dto';
 
 describe('Authorization (e2e)', () => {
   let app: INestApplication;
   let jwtService: JwtService;
   let userModel: Model<User>;
   let credentialModel: Model<Credential>;
+  let ownerUserDto: UserInfoDto;
   
-  // Test users
   const ownerUser = { did: 'did:ethr:0x5a915Fd0B025d20eD0D1Ae83877208fA50Cd6B93' };
   const otherUser = { did: 'did:ethr:0x1111111111111111111111111111111111111111' };
   let ownerToken: string;
   let otherToken: string;
 
-  // Test credentials
   const ownerCredentialId = `urn:uuid:${uuidv4()}`;
   const otherCredentialId = `urn:uuid:${uuidv4()}`;
 
-  // Set a higher timeout for all tests
   jest.setTimeout(60000);
 
   beforeAll(async () => {
@@ -38,29 +37,31 @@ describe('Authorization (e2e)', () => {
     app.useGlobalPipes(new ValidationPipe());
     await app.init();
 
-    // Get services and models
     jwtService = app.get<JwtService>(JwtService);
     userModel = app.get<Model<User>>(getModelToken(User.name));
     credentialModel = app.get<Model<Credential>>(getModelToken(Credential.name));
 
-    // Create test tokens
     ownerToken = jwtService.sign({ sub: ownerUser.did });
     otherToken = jwtService.sign({ sub: otherUser.did });
 
-    // Setup test data in the database
     await setupTestData();
+    const userDoc = await userModel.findOne({ did: ownerUser.did }).lean().exec();
+    if (!userDoc) throw new Error("Setup failed: Owner user not found after setup.");
+    ownerUserDto = {
+      did: userDoc.did,
+      gsyDexAddress: userDoc.gsyDexAddress,
+      hasVerifiedCredential: userDoc.hasVerifiedCredential,
+      metadata: userDoc.metadata
+    };
   });
 
   afterAll(async () => {
-    // Clean up test data
     await cleanupTestData();
     await app.close();
   });
 
-  // Helper to set up test data
   async function setupTestData() {
     try {
-      // Create or update test users
       await userModel.findOneAndUpdate(
         { did: ownerUser.did },
         { hasVerifiedCredential: true },
@@ -73,7 +74,6 @@ describe('Authorization (e2e)', () => {
         { upsert: true, new: true }
       ).exec();
 
-      // Create test credentials
       await credentialModel.findOneAndUpdate(
         { id: ownerCredentialId },
         {
@@ -107,10 +107,8 @@ describe('Authorization (e2e)', () => {
     }
   }
 
-  // Helper to clean up test data
   async function cleanupTestData() {
     try {
-      // Remove test data
       await credentialModel.deleteOne({ id: ownerCredentialId }).exec();
       await credentialModel.deleteOne({ id: otherCredentialId }).exec();
       
@@ -177,7 +175,7 @@ describe('Authorization (e2e)', () => {
       await request(app.getHttpServer())
         .get(`/credentials/did/${otherUser.did}`)
         .set('Authorization', `Bearer ${ownerToken}`)
-        .expect(403); // DIDOwnerGuard should return Forbidden
+        .expect(403); 
     });
 
     it('should allow revoking own credential', async () => {
@@ -192,7 +190,61 @@ describe('Authorization (e2e)', () => {
       await request(app.getHttpServer())
         .delete(`/credentials/${otherCredentialId}`)
         .set('Authorization', `Bearer ${ownerToken}`)
-        .expect(403); // Forbidden
+        .expect(403); 
+    });
+  });
+
+  describe('Token Verification Endpoint (/auth/verify-token)', () => {
+    it('should return user info for a valid token', async () => {
+      const response = await request(app.getHttpServer())
+        .get('/auth/verify-token')
+        .set('Authorization', `Bearer ${ownerToken}`) 
+        .expect(200);
+
+      expect(response.body).toBeDefined();
+      expect(response.body.did).toEqual(ownerUserDto.did);
+      expect(response.body.gsyDexAddress).toEqual(ownerUserDto.gsyDexAddress);
+      expect(response.body.hasVerifiedCredential).toEqual(ownerUserDto.hasVerifiedCredential);
+    });
+
+    it('should return 401 Unauthorized for no token', async () => {
+      await request(app.getHttpServer())
+        .get('/auth/verify-token')
+        .expect(401);
+    });
+
+    it('should return 401 Unauthorized for an invalid/malformed token', async () => {
+      await request(app.getHttpServer())
+        .get('/auth/verify-token')
+        .set('Authorization', `Bearer invalid.token.string`)
+        .expect(401);
+    });
+
+    it('should return 401 Unauthorized for an expired token', async () => {
+      const expiredToken = jwtService.sign({ sub: ownerUser.did }, { expiresIn: '-1s' });
+
+      await request(app.getHttpServer())
+        .get('/auth/verify-token')
+        .set('Authorization', `Bearer ${expiredToken}`)
+        .expect(401);
+    });
+
+     it('should return 401 Unauthorized if the user associated with token no longer exists', async () => {
+      const tempDid = `did:ethr:${Wallet.createRandom().address.toLowerCase()}`;
+      await userModel.create({ did: tempDid });
+      const tempToken = jwtService.sign({ sub: tempDid });
+
+      await request(app.getHttpServer())
+        .get('/auth/verify-token')
+        .set('Authorization', `Bearer ${tempToken}`)
+        .expect(200);
+
+      await userModel.deleteOne({ did: tempDid }).exec();
+
+      await request(app.getHttpServer())
+          .get('/auth/verify-token')
+          .set('Authorization', `Bearer ${tempToken}`)
+          .expect(401);
     });
   });
 

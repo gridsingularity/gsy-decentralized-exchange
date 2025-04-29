@@ -7,15 +7,13 @@ import { DIDService } from '../src/did/did.service';
 import { AuditService } from '../src/audit/audit.service';
 import { Challenge } from '../src/database/schemas/challenge.schema';
 import { User } from '../src/database/schemas/user.schema';
+import { UserInfoDto } from '../src/auth/dto/user-info.dto';
 
-// Mock ethers v6
 jest.mock('ethers', () => ({
   verifyMessage: jest.fn((message, signature) => {
-    // For valid test cases, return the address in the DID
     if (signature === 'valid_signature') {
       return '0x5a915Fd0B025d20eD0D1Ae83877208fA50Cd6B93';
     }
-    // For invalid cases, return a different address
     return '0x1111111111111111111111111111111111111111';
   })
 }));
@@ -30,7 +28,6 @@ describe('AuthService', () => {
   let mockAuditService: any;
 
   beforeEach(async () => {
-    // Create mock Challenge model
     mockChallengeModel = function() {
       return {
         id: 'test-challenge-id',
@@ -53,7 +50,6 @@ describe('AuthService', () => {
       }),
     });
     
-    // Create mock User model
     mockUserModel = function() {
       return {
         did: 'did:ethr:0x5a915Fd0B025d20eD0D1Ae83877208fA50Cd6B93',
@@ -69,8 +65,16 @@ describe('AuthService', () => {
         }),
       }),
     });
+
+    const mockUserQuery = {
+      exec: jest.fn().mockResolvedValue(null), 
+      lean: jest.fn().mockReturnThis(), 
+    };
+    mockUserQuery.exec.mockResolvedValue(null); 
+
+    mockUserModel = jest.fn().mockImplementation(() => ({ save: jest.fn().mockResolvedValue(true) }));
+    mockUserModel.findOne = jest.fn().mockReturnValue(mockUserQuery);
     
-    // Create mock Audit service
     mockAuditService = {
       log: jest.fn().mockResolvedValue(true),
     };
@@ -130,7 +134,6 @@ describe('AuthService', () => {
     it('should throw an error for an unregistered DID', async () => {
       const did = 'did:ethr:0x1111111111111111111111111111111111111111';
       
-      // Mock DID service to return false for unregistered DID
       jest.spyOn(didService, 'isDIDRegistered').mockResolvedValueOnce(false);
       
       await expect(service.generateChallenge(did)).rejects.toThrow(BadRequestException);
@@ -161,7 +164,6 @@ describe('AuthService', () => {
       const challengeId = 'invalid-challenge-id';
       const signature = 'valid_signature';
       
-      // Mock challengeModel.findOne to return null for invalid challenge
       mockChallengeModel.findOne.mockReturnValueOnce({
         exec: jest.fn().mockResolvedValueOnce(null),
       });
@@ -192,9 +194,32 @@ describe('AuthService', () => {
   describe('validateUser', () => {
     it('should return user object for valid DID', async () => {
       const did = 'did:ethr:0x5a915Fd0B025d20eD0D1Ae83877208fA50Cd6B93';
-      
+
+      const mockUserDoc = {
+        _id: 'someMongoId',
+        did: did,
+        gsyDexAddress: '5abc...',
+        hasVerifiedCredential: false,
+        metadata: { test: 'data' },
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        __v: 0
+      };
+      const expectedDto: UserInfoDto = {
+        did: did,
+        gsyDexAddress: '5abc...',
+        hasVerifiedCredential: false,
+        metadata: { test: 'data' }
+      };
+
+      mockUserModel.findOne.mockReturnValueOnce({
+        lean: jest.fn().mockReturnThis(),
+        exec: jest.fn().mockResolvedValueOnce(mockUserDoc) 
+      });
+
       const result = await service.validateUser(did);
       
+      expect(mockUserModel.findOne).toHaveBeenCalledWith({ did });
       expect(result).toBeDefined();
       expect(result.did).toBe(did);
     });
@@ -202,13 +227,14 @@ describe('AuthService', () => {
     it('should return null for invalid DID', async () => {
       const did = 'did:ethr:0x1111111111111111111111111111111111111111';
       
-      // Mock userModel.findOne to return null for invalid DID
       mockUserModel.findOne.mockReturnValueOnce({
+        lean: jest.fn().mockReturnThis(),
         exec: jest.fn().mockResolvedValueOnce(null),
       });
       
       const result = await service.validateUser(did);
       
+      expect(mockUserModel.findOne).toHaveBeenCalledWith({ did });
       expect(result).toBeNull();
     });
   });
