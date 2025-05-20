@@ -1,4 +1,6 @@
 use crate::algorithms::PayAsBid;
+use crate::algorithms::PayAsClear;
+use crate::utils::MatchingAlgorithmType;
 use gsy_offchain_primitives::service_to_node_schema::orders::{
     Bid, Offer, OrderStatus, Order, OrderSchema};
 use crate::primitives::web3::{BidOfferMatch, MatchingData};
@@ -26,15 +28,18 @@ pub const DEFAULT_MARKET_ID: u8 = 1;
 use crate::connectors::substrate_connector::gsy_node::runtime_types::gsy_primitives::trades::BidOfferMatch as OtherBidOfferMatch;
 
 #[async_recursion]
-pub async fn substrate_subscribe(orderbook_url: String, node_url: String) -> Result<(), Error> {
+pub async fn substrate_subscribe(orderbook_url: String, node_url: String, algorithm_type: MatchingAlgorithmType) -> Result<(), Error> {
     info!("Connecting to {}", node_url);
+    info!("Using matching algorithm: {:?}", algorithm_type);
+
 
     let api = OnlineClient::<SubstrateConfig>::from_insecure_url(node_url.clone()).await?;
 
     let mut gsy_blocks_events = api.blocks().subscribe_finalized().await?;
 
-    let orderbook_url = Arc::new(Mutex::new(orderbook_url));
-    let node_url = Arc::new(Mutex::new(node_url.clone()));
+    let orderbook_url_arc = Arc::new(Mutex::new(orderbook_url)); 
+    let node_url_arc = Arc::new(Mutex::new(node_url.clone())); 
+    let algorithm_type_arc = Arc::new(algorithm_type); 
 
     while let Some(Ok(block)) = gsy_blocks_events.next().await {
         info!("Block {:?} finalized: {:?}", block.number(), block.hash());
@@ -44,45 +49,52 @@ pub async fn substrate_subscribe(orderbook_url: String, node_url: String) -> Res
         if (block.number() as u64) % MATCH_PER_NR_BLOCKS == 0 {
             info!("Starting matching cycle");
 
-            let orderbook_url_clone = Arc::clone(&orderbook_url);
-            let node_url_clone = Arc::clone(&node_url);
+            let orderbook_url_clone = Arc::clone(&orderbook_url_arc);
+            let algorithm_type_clone_for_task = Arc::clone(&algorithm_type_arc); 
 
             let matches_clone_one = Arc::clone(&matches);
-            let matches_clone_two = Arc::clone(&matches_clone_one);
-
+            
             if let Err(error) = tokio::task::spawn(async move {
-                let orderbook_url_clone = orderbook_url_clone.lock().unwrap().to_string();
+                let orderbook_url_local = orderbook_url_clone.lock().unwrap().to_string(); 
 
-                info!("Fetching orders from {}", orderbook_url_clone.clone());
+                info!("Fetching orders from {}", orderbook_url_local.clone());
 
                 let (open_bid, open_offer) =
-                    fetch_open_orders_from_orderbook_service(orderbook_url_clone)
+                    fetch_open_orders_from_orderbook_service(orderbook_url_local)
                         .await
                         .unwrap_or_else(|e| panic!("Failed to fetch the open orders: {:?}", e));
 
                 if open_bid.len() > 0 && open_offer.len() > 0 {
-                    info!("Open Bid - {:?}", open_bid);
-                    info!("Open Offer - {:?}", open_offer);
+                    info!("Open Bid - Count: {}", open_bid.len());
+                    info!("Open Offer - Count: {}", open_offer.len());
 
                     let mut matching_data = MatchingData {
                         bids: open_bid,
                         offers: open_offer,
                         market_id: DEFAULT_MARKET_ID,
                     };
-                    let bid_offer_matches = matching_data.pay_as_bid();
-                    matches_clone_one.lock().unwrap().extend(bid_offer_matches);
-                    info!("Matches - {:?}", matches_clone_one.lock().unwrap());
+                    
+                    let algo_type = &*algorithm_type_clone_for_task;
+                    let bid_offer_matches_result = match algo_type {
+                        MatchingAlgorithmType::PayAsBid => matching_data.pay_as_bid(),
+                        MatchingAlgorithmType::PayAsClear => matching_data.pay_as_clear(),
+                    };
+
+                    matches_clone_one.lock().unwrap().extend(bid_offer_matches_result);
+                    info!("Matches found: {}", matches_clone_one.lock().unwrap().len());
                 } else {
-                    info!("No open orders to match");
+                    info!("No open orders to match or one side is empty.");
                 }
             })
             .await
             {
-                error!("Error while fetching the orderbook - {:?}", error);
+                error!("Error while fetching/matching orders - {:?}", error);
             }
-
+            
+            let matches_clone_two = Arc::clone(&matches); 
             if matches_clone_two.lock().unwrap().len() > 0 {
-                settle_matched_orders(node_url_clone, matches_clone_two).await;
+                let node_url_clone_for_settle = Arc::clone(&node_url_arc); 
+                settle_matched_orders(node_url_clone_for_settle, matches_clone_two).await;
             }
         }
     }
@@ -91,9 +103,10 @@ pub async fn substrate_subscribe(orderbook_url: String, node_url: String) -> Res
         info!("Trying to reconnect...");
         let two_seconds = time::Duration::from_millis(2000);
         thread::sleep(two_seconds);
-        let orderbook_url = orderbook_url.lock().unwrap().to_string();
-        let node_url = node_url.lock().unwrap().to_string();
-        if let Err(error) = substrate_subscribe(orderbook_url, node_url.clone()).await {
+        let orderbook_url_local = orderbook_url_arc.lock().unwrap().to_string();
+        let node_url_local = node_url_arc.lock().unwrap().to_string();
+        let algo_type_local = (*algorithm_type_arc).clone();
+        if let Err(error) = substrate_subscribe(orderbook_url_local, node_url_local.clone(), algo_type_local).await {
             error!("Error - {:?}", error);
         }
     }

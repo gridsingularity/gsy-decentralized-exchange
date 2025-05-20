@@ -1,4 +1,7 @@
 use crate::algorithms::PayAsBid;
+use crate::algorithms::PayAsClear;
+use crate::algorithms::pay_as_clear::{get_clearing_point_web3, create_bid_offer_matches_web3, ClearingInfo};
+use std::cmp::Ordering;
 use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -155,5 +158,61 @@ impl PayAsBid for MatchingData {
             }
         }
         bid_offer_pairs
+    }
+}
+
+impl PayAsClear for MatchingData {
+    type Output = BidOfferMatch;
+    type BidType = Bid;
+    type OfferType = Offer;
+
+    fn pay_as_clear(&mut self) -> Vec<Self::Output> {
+        if self.bids.is_empty() || self.offers.is_empty() {
+            return Vec::new();
+        }
+
+        let mut sorted_bids = self.bids.clone();
+        let mut sorted_offers = self.offers.clone();
+
+        // Sort bids by energy_rate descending
+        sorted_bids.sort_by(|a, b| {
+            b.bid_component.energy_rate.cmp(&a.bid_component.energy_rate)
+        });
+        // Sort offers by energy_rate ascending
+        sorted_offers.sort_by(|a, b| {
+            a.offer_component.energy_rate.cmp(&b.offer_component.energy_rate)
+        });
+        
+        // Use time_slot from the first bid
+        let time_slot = self.bids.first().map_or(0, |b| b.bid_component.time_slot);
+
+
+        if let Some(clearing_info) = get_clearing_point_web3(&sorted_bids, &sorted_offers) {
+            if clearing_info.energy > 0 {
+                // Filter bids and offers that are not eligible at the clearing price
+                let eligible_bids: Vec<Bid> = sorted_bids
+                    .into_iter()
+                    .filter(|b| b.bid_component.energy_rate >= clearing_info.rate)
+                    .collect();
+                
+                let eligible_offers: Vec<Offer> = sorted_offers
+                    .into_iter()
+                    .filter(|o| o.offer_component.energy_rate <= clearing_info.rate)
+                    .collect();
+
+                if eligible_bids.is_empty() || eligible_offers.is_empty() {
+                    return Vec::new();
+                }
+                
+                return create_bid_offer_matches_web3(
+                    &eligible_bids,
+                    &eligible_offers,
+                    &clearing_info,
+                    self.market_id,
+                    time_slot,
+                );
+            }
+        }
+        Vec::new()
     }
 }
