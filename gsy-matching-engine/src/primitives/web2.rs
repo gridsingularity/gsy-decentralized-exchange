@@ -1,5 +1,5 @@
 use crate::algorithms::PayAsClear;
-use crate::algorithms::pay_as_clear::{get_clearing_point_web2, create_bid_offer_matches_web2, ClearingInfo as PayAsClearClearingInfo};
+use crate::algorithms::pay_as_clear::{get_clearing_point_web2, create_bid_offer_matches_web2};
 use std::cmp::Ordering;
 use serde::{Serialize, Deserialize, Serializer};
 use std::collections::HashMap;

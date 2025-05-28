@@ -1,7 +1,6 @@
 use crate::algorithms::PayAsBid;
 use crate::algorithms::PayAsClear;
-use crate::algorithms::pay_as_clear::{get_clearing_point_web3, create_bid_offer_matches_web3, ClearingInfo};
-use std::cmp::Ordering;
+use crate::algorithms::pay_as_clear::{get_clearing_point_web3, create_bid_offer_matches_web3};
 use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

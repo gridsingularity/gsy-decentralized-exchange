@@ -33,7 +33,7 @@ pub enum Commands {
         #[clap(default_value_t = String::from("9944"))]
         node_port: String,
         #[clap(long, value_enum, default_value_t = MatchingAlgorithmType::PayAsBid)]
-        pub algorithm: MatchingAlgorithmType,
+        algorithm: MatchingAlgorithmType,
     }
 }
 

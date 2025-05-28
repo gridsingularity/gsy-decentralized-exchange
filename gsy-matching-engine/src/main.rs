@@ -1,6 +1,6 @@
 use clap::Parser;
 use gsy_matching_engine::connectors::{redis_subscribe, substrate_subscribe};
-use gsy_matching_engine::utils::{Cli, Commands, MatchingAlgorithmType};
+use gsy_matching_engine::utils::{Cli, Commands};
 use std::{thread, time};
 use tracing::{error, info};
 use gsy_matching_engine::utils::telemetry::{get_subscriber, init_subscriber};
