@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Parser)]
 #[clap(author, version, about)]
@@ -32,5 +32,13 @@ pub enum Commands {
         node_host: String,
         #[clap(default_value_t = String::from("9944"))]
         node_port: String,
+        #[clap(long, value_enum, default_value_t = MatchingAlgorithmType::PayAsBid)]
+        algorithm: MatchingAlgorithmType,
     }
+}
+
+#[derive(Debug, Clone, ValueEnum)]
+pub enum MatchingAlgorithmType {
+    PayAsBid,
+    PayAsClear,
 }

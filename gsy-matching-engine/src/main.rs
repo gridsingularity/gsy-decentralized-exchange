@@ -42,18 +42,19 @@ async fn main() {
             orderbook_host,
             orderbook_port,
             node_host,
-            node_port
+            node_port,
+            algorithm
         } => async {
             let orderbook_url = format!("{}:{}/{}", orderbook_host, orderbook_port, "orders");
             let node_url = format!("{}:{}", node_host, node_port);
-            if let Err(error) = substrate_subscribe(orderbook_url.clone(), node_url.clone()).await {
+            if let Err(error) = substrate_subscribe(orderbook_url.clone(), node_url.clone(), algorithm.clone()).await {
                 info!("Error - {:?}", error);
                 let mut attempt: u8 = 1;
                 while attempt <= cli.max_attempts {
                     info!("Retrying...\nAttempt: {:}", attempt);
                     let two_seconds = time::Duration::from_millis(2000);
                     thread::sleep(two_seconds);
-                    if let Err(error) = substrate_subscribe(orderbook_url.clone(), node_url.clone()).await {
+                    if let Err(error) = substrate_subscribe(orderbook_url.clone(), node_url.clone(), algorithm.clone()).await {
                         error!("Error - {:?}", error);
                         attempt += 1;
                     }

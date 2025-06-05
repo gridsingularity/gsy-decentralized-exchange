@@ -1,9 +1,13 @@
+use crate::algorithms::PayAsClear;
+use crate::algorithms::pay_as_clear::{get_clearing_point_web2, create_bid_offer_matches_web2};
+use std::cmp::Ordering;
 use serde::{Serialize, Deserialize, Serializer};
 use std::collections::HashMap;
 use chrono::{NaiveDateTime};
 use crate::algorithms::PayAsBid;
 
 const FLOATING_POINT_TOLERANCE: f32 = 0.00001;
+const MATCH_FLOATING_POINT_TOLERANCE_F32_INTERNAL: f32 = 1e-8;
 
 pub fn serialize_datetime<S>(
     datetime: &Option<NaiveDateTime>,
@@ -137,5 +141,53 @@ impl PayAsBid for MatchingData {
             }
         }
         bid_offer_pairs
+    }
+}
+
+impl PayAsClear for MatchingData {
+    type Output = BidOfferMatch;
+    type BidType = Bid;
+    type OfferType = Offer;
+
+    fn pay_as_clear(&mut self) -> Vec<Self::Output> {
+        if self.bids.is_empty() || self.offers.is_empty() {
+            return Vec::new();
+        }
+
+        let mut sorted_bids = self.bids.clone();
+        let mut sorted_offers = self.offers.clone();
+
+        sorted_bids.sort_by(|a, b| {
+            b.energy_rate.partial_cmp(&a.energy_rate).unwrap_or(Ordering::Equal)
+        });
+        sorted_offers.sort_by(|a, b| {
+            a.energy_rate.partial_cmp(&b.energy_rate).unwrap_or(Ordering::Equal)
+        });
+
+        if let Some(clearing_info) = get_clearing_point_web2(&sorted_bids, &sorted_offers) {
+             if clearing_info.energy > MATCH_FLOATING_POINT_TOLERANCE_F32_INTERNAL {
+                let eligible_bids: Vec<Bid> = sorted_bids
+                    .into_iter()
+                    .filter(|b| b.energy_rate >= clearing_info.rate - MATCH_FLOATING_POINT_TOLERANCE_F32_INTERNAL)
+                    .collect();
+                
+                let eligible_offers: Vec<Offer> = sorted_offers
+                    .into_iter()
+                    .filter(|o| o.energy_rate <= clearing_info.rate + MATCH_FLOATING_POINT_TOLERANCE_F32_INTERNAL)
+                    .collect();
+
+                if eligible_bids.is_empty() || eligible_offers.is_empty() {
+                    return Vec::new();
+                }
+
+                return create_bid_offer_matches_web2(
+                    &eligible_bids,
+                    &eligible_offers,
+                    &clearing_info,
+                    self.market_id.clone(),
+                );
+            }
+        }
+        Vec::new()
     }
 }

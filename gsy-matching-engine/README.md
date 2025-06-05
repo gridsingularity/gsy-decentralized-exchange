@@ -2,7 +2,22 @@
 
 Ensure that redis is running with ```brew services```.
 
-Run
+### Run Tests (require docker).
+
+Move to the gsy-decentralized-exchange dir
+```
+cd ../gsy-decentralized-exchange
+```
+Build the tester image
+```
+docker build -f gsy-matching-engine/Dockerfile.test -t gsy-matching-engine-tester .
+```
+Run the test container
+```
+docker run gsy-matching-engine-teste
+```
+
+### Run
 ```
 gsy-matching-engine-sdk --log-level DEBUG run --setup matching_engine --run-on-redis
 ```

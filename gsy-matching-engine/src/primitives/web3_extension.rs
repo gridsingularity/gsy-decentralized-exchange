@@ -1,5 +1,6 @@
 use codec::{Encode, Decode};
 use serde::{Deserialize, Serialize};
+use subxt::ext::sp_core::H256;
 
 #[derive(Serialize, Deserialize, Encode, Decode, Debug, Clone)]
 pub struct BidOfferMatch<AccountId32> {
