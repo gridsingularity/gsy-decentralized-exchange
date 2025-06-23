@@ -1,13 +1,31 @@
-use crate::algorithms::PayAsBid;
-use gsy_offchain_primitives::service_to_node_schema::orders::{
-    Bid, Offer, OrderStatus, Order, OrderSchema};
-use crate::primitives::web3::{BidOfferMatch, MatchingData};
-use crate::primitives::web3_extension::BidOfferMatch as BidOfferMatchExtension;
-use anyhow::{Error, Result};
+use gsy_offchain_primitives::algorithms::PayAsBid;
+use gsy_offchain_primitives::db_api_schema::orders::{
+    DbOrderSchema, 
+    OrderStatus, 
+    DbBid, 
+    DbOffer, 
+    DbOrderComponent, 
+    Order as DbOrder
+};
+use gsy_offchain_primitives::types::{
+    Bid, 
+    BidOfferMatch, 
+    MatchingData, 
+    Offer, 
+    Order, 
+    OrderComponent
+};
+use gsy_offchain_primitives::utils::{
+    string_to_account_id, 
+    string_to_h256, 
+    NODE_FLOAT_SCALING_FACTOR
+};
+use anyhow::{anyhow, Error, Result};
 use async_recursion::async_recursion;
 use codec::{Decode, Encode};
 use subxt_signer::sr25519::dev;
 use std::sync::{Arc, Mutex};
+use std::str::FromStr;
 use std::{thread, time};
 use subxt::{
     SubstrateConfig,
@@ -106,23 +124,59 @@ async fn fetch_open_orders_from_orderbook_service(
     info!("Response: {:?} {}", res.version(), res.status());
     info!("Headers: {:#?}\n", res.headers());
 
-    let body = res.json::<Vec<OrderSchema>>().await?;
-    let open_bid: Vec<Bid> = body
-        .clone()
+    let body = res.json::<Vec<DbOrderSchema>>().await?;
+
+    let open_canonical_orders: Vec<Order> = body
         .into_iter()
-        .filter(|order| {
-            order.status == OrderStatus::Open && matches!(order.order, Order::Bid { .. })
+        .filter(|order| order.status == OrderStatus::Open)
+        .filter_map(|db_order_schema| {
+            match convert_db_order_to_canonical(db_order_schema.order) {
+                Ok(order) => Some(order),
+                Err(e) => {
+                    error!("Failed to convert DB order to canonical: {:?}", e);
+                    None
+                }
+            }
         })
-        .map(|order| order.into())
         .collect();
-    let open_offer: Vec<Offer> = body
-        .into_iter()
-        .filter(|order| {
-            order.status == OrderStatus::Open && matches!(order.order, Order::Offer { .. })
-        })
-        .map(|order| order.into())
-        .collect();
-    Ok((open_bid, open_offer))
+
+    let mut open_bids: Vec<Bid> = Vec::new();
+    let mut open_offers: Vec<Offer> = Vec::new();
+
+    for order in open_canonical_orders {
+        match order {
+            Order::Bid(bid) => open_bids.push(bid),
+            Order::Offer(offer) => open_offers.push(offer),
+        }
+    }
+    
+    Ok((open_bids, open_offers))
+}
+
+fn convert_db_order_to_canonical(order: DbOrder) -> Result<Order> {
+    Ok(match order {
+        DbOrder::Bid(bid) => Order::Bid(Bid {
+            buyer: string_to_account_id(bid.buyer.clone()).ok_or_else(|| anyhow!("Invalid buyer AccountId: {}", bid.buyer))?,
+            nonce: bid.nonce,
+            bid_component: convert_db_order_component_to_canonical(bid.bid_component)
+        }),
+        DbOrder::Offer(offer) => Order::Offer(Offer {
+            seller: string_to_account_id(offer.seller.clone()).ok_or_else(|| anyhow!("Invalid seller AccountId: {}", offer.seller))?,
+            nonce: offer.nonce,
+            offer_component: convert_db_order_component_to_canonical(offer.offer_component)
+        }),
+    })
+}
+
+fn convert_db_order_component_to_canonical(component: DbOrderComponent) -> OrderComponent {
+    OrderComponent {
+        area_uuid: string_to_h256(component.area_uuid),
+        market_id: string_to_h256(component.market_id),
+        time_slot: component.time_slot,
+        creation_time: component.creation_time,
+        energy: (component.energy * NODE_FLOAT_SCALING_FACTOR) as u64,
+        energy_rate: (component.energy_rate * NODE_FLOAT_SCALING_FACTOR) as u64
+    }
 }
 
 async fn send_settle_trades_extrinsic(
@@ -164,10 +218,7 @@ async fn settle_matched_orders(node_url: Arc<Mutex<String>>, matches: Arc<Mutex<
         let node_url = node_url.lock().unwrap().to_string();
         let matches: Vec<BidOfferMatch> = matches.lock().unwrap().clone();
 
-        let serialize_matches = serde_json::to_vec(&matches).unwrap();
-        let bid_offer_match_extension: Vec<BidOfferMatchExtension<AccountId32>> =
-            serde_json::from_slice(&serialize_matches).unwrap();
-        let bid_offer_match_bytes = bid_offer_match_extension.encode();
+        let bid_offer_match_bytes = matches.encode();
         let transcode_bid_offer_matches: Vec<OtherBidOfferMatch<AccountId32>> =
             Vec::<OtherBidOfferMatch<AccountId32>>::decode(&mut &bid_offer_match_bytes[..])
                 .unwrap();
