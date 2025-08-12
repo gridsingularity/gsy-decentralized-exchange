@@ -95,7 +95,43 @@ impl PayAsBid for MatchingData {
                 available_order_energy.insert(bid_id, bid_energy - selected_energy);
                 available_order_energy.insert(offer_id, offer_energy - selected_energy);
 
-                let new_bid_offer_match = BidOfferMatch { market_id: self.market_id, time_slot: offer.offer_component.time_slot, bid: bid.clone(), selected_energy, offer: offer.clone(), residual_offer: None, residual_bid: None, energy_rate: bid.bid_component.energy_rate };
+                let residual_bid = if bid_energy > selected_energy {
+                    Some(Bid {
+                        nonce: bid.nonce.wrapping_add(1),
+                        bid_component: OrderComponent {
+                            energy: bid_energy - selected_energy,
+                            ..bid.bid_component.clone()
+                        },
+                        ..bid.clone()
+                    })
+                } else {
+                    None
+                };
+
+                let residual_offer = if offer_energy > selected_energy {
+                    Some(Offer {
+                        nonce: offer.nonce.wrapping_add(1),
+                        offer_component: OrderComponent {
+                            energy: offer_energy - selected_energy,
+                            ..offer.offer_component.clone()
+                        },
+                        ..offer.clone()
+                    })
+                } else {
+                    None
+                };
+
+                let new_bid_offer_match = BidOfferMatch {
+                    market_id: self.market_id,
+                    time_slot: offer.offer_component.time_slot,
+                    bid: bid.clone(),
+                    offer: offer.clone(),
+                    residual_bid,
+                    residual_offer,
+                    selected_energy,
+                    energy_rate: bid.bid_component.energy_rate,
+                };
+
                 bid_offer_pairs.push(new_bid_offer_match);
             }
         }
