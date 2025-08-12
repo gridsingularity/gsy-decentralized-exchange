@@ -1,6 +1,7 @@
 FROM rust:1.80
 
 ADD gsy-matching-engine /var/www/gsy-matching-engine/
+ADD offchain-primitives /var/www/offchain-primitives/
 
 # build for release
 RUN rm -rf /var/www/gsy-matching-engine/target/

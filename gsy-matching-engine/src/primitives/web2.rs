@@ -1,7 +1,7 @@
 use serde::{Serialize, Deserialize, Serializer};
 use std::collections::HashMap;
 use chrono::{NaiveDateTime};
-use crate::algorithms::PayAsBid;
+use gsy_offchain_primitives::algorithms::PayAsBid;
 
 const FLOATING_POINT_TOLERANCE: f32 = 0.00001;
 
