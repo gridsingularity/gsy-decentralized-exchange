@@ -120,12 +120,8 @@ pub mod pallet {
 	#[pallet::storage]
 	#[pallet::getter(fn trades_for_worker)]
 	/// Temporary trades for Orderbook workers.
-	pub type TradesForWorker<T: Config> = StorageMap<
-		_,
-		Twox64Concat,
-		T::Hash,
-		Trade<T::AccountId, T::Hash>,
-	>;
+	pub type TradesForWorker<T: Config> =
+		StorageMap<_, Twox64Concat, T::Hash, Trade<T::AccountId, T::Hash>>;
 
 	#[pallet::storage]
 	#[pallet::getter(fn user_nonce)]
@@ -185,11 +181,19 @@ pub mod pallet {
 		) -> DispatchResult {
 			let sender = ensure_signed(origin.clone())?;
 			log::info!("add orders: {:?} for the user: {:?}", orders, sender);
-			let hashed_orders = Self::create_hash_vec_from_order_list(orders.clone());
 			// TODO: Refactor this method to add all orders in one go.
+			let full_orders: Vec<Order<T::AccountId>> =
+				orders.into_iter().map(|o| Self::input_order_to_order(o)).collect();
+			let hashed_orders = full_orders
+				.iter()
+				.map(|o| match o {
+					Order::Bid(b) => T::Hashing::hash_of(b),
+					Order::Offer(o) => T::Hashing::hash_of(o),
+				})
+				.collect();
 			let _ = <orderbook_registry::Pallet<T>>::insert_orders(origin, hashed_orders);
-			for order in orders {
-				Self::add_order(sender.clone(), Self::input_order_to_order(order))?;
+			for order in full_orders {
+				Self::add_order(sender.clone(), order)?;
 			}
 			Ok(())
 		}
@@ -215,14 +219,24 @@ pub mod pallet {
 				delegator,
 				sender
 			);
-			let hashed_orders = Self::create_hash_vec_from_order_list(orders.clone());
+			let full_orders: Vec<Order<T::AccountId>> = orders
+				.into_iter()
+				.map(|o| Self::input_order_to_order_for_delegator(o, delegator.clone()))
+				.collect();
+			let hashed_orders = full_orders
+				.iter()
+				.map(|o| match o {
+					Order::Bid(b) => T::Hashing::hash_of(b),
+					Order::Offer(o) => T::Hashing::hash_of(o),
+				})
+				.collect();
 			let _ = <orderbook_registry::Pallet<T>>::insert_orders_by_proxy(
 				origin,
 				delegator.clone(),
 				hashed_orders,
 			);
-			for order in orders {
-				Self::add_order(delegator.clone(), Self::input_order_to_order(order))?;
+			for order in full_orders {
+				Self::add_order(delegator.clone(), order)?;
 			}
 			Ok(())
 		}
@@ -497,9 +511,10 @@ pub mod pallet {
 				if post_trades_status_code != 200 {
 					log::warn!(
 						"Offchain worker failed to send trades to the orderbook service, HTTP \
-						response code {}", post_trades_status_code)
-				}
-				else {
+						response code {}",
+						post_trades_status_code
+					)
+				} else {
 					for trade_hash in trade_hashes {
 						Self::delete_trade(trade_hash).unwrap();
 					}
@@ -642,7 +657,10 @@ pub mod pallet {
 		/// `sender`: The sender of the trade.
 		/// `trade`: The order to be inserted.
 		#[require_transactional]
-		pub fn add_trade(_sender: T::AccountId, trade: Trade<T::AccountId, T::Hash>) -> DispatchResult {
+		pub fn add_trade(
+			_sender: T::AccountId,
+			trade: Trade<T::AccountId, T::Hash>,
+		) -> DispatchResult {
 			let trade_hash = T::Hashing::hash_of(&trade);
 			<TradesForWorker<T>>::insert(trade_hash, trade.clone());
 			Self::deposit_event(Event::NewTradeInserted(trade, trade_hash));
@@ -679,9 +697,7 @@ pub mod pallet {
 		///
 		/// Parameters
 		/// `trade_hash`: The hash of the trade object.
-		pub fn delete_trade(
-			trade_hash: T::Hash,
-		) -> DispatchResult {
+		pub fn delete_trade(trade_hash: T::Hash) -> DispatchResult {
 			ensure!(Self::is_trade_registered(&trade_hash), <Error<T>>::TradeIsNotRegistered);
 			<TradesForWorker<T>>::remove(trade_hash);
 			Self::deposit_event(Event::TradeRemoved(trade_hash));
@@ -736,15 +752,26 @@ pub mod pallet {
 			}
 		}
 
-		pub fn create_hash_vec_from_order_list(
-			orders: Vec<InputOrder<T::AccountId>>,
-		) -> Vec<T::Hash> {
-			return orders
-				.clone()
-				.into_iter()
-				.map(|order| Self::input_order_to_order(order))
-				.map(|order| T::Hashing::hash_of(&order))
-				.collect();
+		pub fn input_order_to_order_for_delegator(
+			order: InputOrder<T::AccountId>,
+			delegator: T::AccountId,
+		) -> Order<T::AccountId> {
+			match &order {
+				InputOrder::Bid(input_order) => Order::Bid {
+					0: Bid {
+						buyer: input_order.buyer.clone(),
+						nonce: Self::get_and_increment_user_nonce(delegator),
+						bid_component: input_order.bid_component.clone(),
+					},
+				},
+				InputOrder::Offer(input_order) => Order::Offer {
+					0: Offer {
+						seller: input_order.seller.clone(),
+						nonce: Self::get_and_increment_user_nonce(delegator),
+						offer_component: input_order.offer_component.clone(),
+					},
+				},
+			}
 		}
 	}
 }
