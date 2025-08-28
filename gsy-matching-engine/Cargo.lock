@@ -1752,6 +1752,8 @@ dependencies = [
 name = "gsy-offchain-primitives"
 version = "0.1.0"
 dependencies = [
+ "base64 0.13.1",
+ "hex",
  "parity-scale-codec",
  "serde",
  "subxt 0.35.3",

@@ -27,8 +27,8 @@ pub async fn publish_orders(
     market: MarketTopologySchema
 ) -> Result<(), Error> {
 
-    let api = OnlineClient::<SubstrateConfig>::from_url(url).await?;
-    
+    let api = OnlineClient::<SubstrateConfig>::from_insecure_url(url).await?;
+
     let input_orders = create_input_orders(forecasts, market);
     let register_order_tx = gsy_node::tx().orderbook_worker().insert_orders(input_orders);
 
@@ -54,7 +54,7 @@ pub async fn publish_orders(
 
 
 fn _create_bid_object(
-    forecast: ForecastSchema, area_info: AreaTopologySchema, 
+    forecast: ForecastSchema, area_info: AreaTopologySchema,
     market: MarketTopologySchema, now: u64) -> InputOrder<AccountId32> {
     InputOrder::Bid {
         0: InputBid {
