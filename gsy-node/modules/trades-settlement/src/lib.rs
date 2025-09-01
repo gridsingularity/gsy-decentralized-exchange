@@ -49,12 +49,12 @@ pub mod weights;
 #[frame_support::pallet]
 pub mod pallet {
 	use crate::weights::TradeSettlementWeightInfo;
-	use frame_support::{dispatch::DispatchResult, pallet_prelude::*, dispatch::RawOrigin};
+	use frame_support::{dispatch::DispatchResult, dispatch::RawOrigin, pallet_prelude::*};
 	use frame_support::{sp_runtime::traits::Hash, transactional};
 	use frame_system::{ensure_signed, pallet_prelude::*};
+	use gsy_primitives::v0::{Bid, BidOfferMatch, Offer, Order, OrderComponent, Validator};
 	use scale_info::prelude::vec::Vec;
 	use sp_std::vec;
-	use gsy_primitives::v0::{Bid, BidOfferMatch, Offer, Order, OrderComponent, Validator};
 
 	#[pallet::config]
 	pub trait Config:
@@ -149,7 +149,10 @@ pub mod pallet {
 					}
 				}
 
-				<orderbook_registry::Pallet<T>>::clear_orders_batch(matching_engine_operator, valid_matches.clone())?;
+				<orderbook_registry::Pallet<T>>::clear_orders_batch(
+					matching_engine_operator,
+					valid_matches.clone(),
+				)?;
 				Self::deposit_event(Event::TradesSettled(T::Hashing::hash_of(&valid_matches)));
 				Ok(())
 			} else {
@@ -280,8 +283,7 @@ pub mod pallet {
 			offer_market_slot: u64,
 			proposed_match_market_slot: u64,
 		) -> bool {
-			offer_market_slot == bid_market_slot
-				&& proposed_match_market_slot == offer_market_slot
+			offer_market_slot == bid_market_slot && proposed_match_market_slot == offer_market_slot
 		}
 	}
 }
