@@ -21,6 +21,7 @@ This module is integral to maintaining accountability, enabling transparent reco
   - Intra-community payments (between prosumers in the same community)
   - Inter-community payments (between different communities)
 - **Flexibility Service Settlement**: Calculates payments for flexibility services with incentives/penalties based on performance
+- **Adaptive Incentive Policy (NEW)**: Dynamically adjusts the penalty (alpha) and bonus (beta) factors based on recent under-/over-delivery performance history
 
 ### Flexibility Payment Calculation
 
@@ -35,9 +36,59 @@ Parameters for flexibility settlement:
 - **Beta**: Controls the bonus factor for over-delivery (fixed-point value)
 - **Tolerance**: Defines the acceptable deviation threshold without penalties (fixed-point value)
 
-## Usage Examples
+### Adaptive Alpha / Beta Mechanism
 
-### Setting Up the System
+The module supports a closed-loop update of the incentive parameters (alpha, beta) via two new extrinsics:
+
+1. `set_adaptation_params(u_ref, o_ref, k_alpha, k_beta, window_size)`
+2. `adapt_alpha_beta(u_measurements, o_measurements)`
+
+All adaptive parameters use the same fixed-point convention (1.0 = 1_000_000).
+
+Definitions:
+- `u_ref`: Reference (target) average under-delivery deviation
+- `o_ref`: Reference (target) average over-delivery deviation
+- `k_alpha`: Gain factor controlling sensitivity of alpha updates
+- `k_beta`: Gain factor controlling sensitivity of beta updates
+- `window_size` (`N`): Required number of measurements for each adaptation call
+
+On each adaptation call with N measurements:
+- Compute averages: `u_avg = mean(u_measurements)`, `o_avg = mean(o_measurements)`
+- Update rules (fixed-point arithmetic):
+
+```
+alpha_{t+1} = clamp_0_max( alpha_t * (1 + k_alpha * (u_avg - u_ref)) )
+beta_{t+1}  = clamp_0_max( beta_t  * (1 + k_beta  * (o_avg - o_ref)) )
+```
+
+Where the internal representation uses integer math with factor F = 1_000_000:
+```
+factor_a = F + (k_alpha * (u_avg - u_ref)) / F
+new_alpha = (alpha * factor_a) / F
+```
+(analogous for beta). Negative intermediate results are clamped to 0; values that would overflow `u64` are clamped to `u64::MAX`.
+
+### Example Adaptation Workflow
+
+```rust
+// Custodian sets adaptation policy (window size = 3 samples)
+Remuneration::set_adaptation_params(origin, 400_000, 300_000, 100_000, 200_000, 3);
+
+// Later, provide last 3 measurement samples (fixed-point deviations)
+Remuneration::adapt_alpha_beta(
+    origin,
+    vec![500_000, 600_000, 700_000],  // under-delivery deviations
+    vec![400_000, 500_000, 600_000],  // over-delivery deviations
+);
+
+// Alpha / Beta now adapted and stored
+let alpha_now = Remuneration::alpha();
+let beta_now  = Remuneration::beta();
+```
+
+### Usage Examples
+
+#### Setting Up the System
 
 ```rust
 // Set the custodian (privileged administrator)
@@ -48,6 +99,9 @@ Remuneration::update_alpha(origin, 500_000);     // 0.5 in fixed-point notation
 Remuneration::update_beta(origin, 200_000);      // 0.2 in fixed-point notation
 Remuneration::update_tolerance(origin, 100_000); // 0.1 in fixed-point notation
 
+// Configure adaptation policy (optional)
+Remuneration::set_adaptation_params(origin, 500_000, 300_000, 100_000, 200_000, 5);
+
 // Add a community
 Remuneration::add_community(origin, community_account, dso_account, owner_account);
 
@@ -55,7 +109,7 @@ Remuneration::add_community(origin, community_account, dso_account, owner_accoun
 Remuneration::add_prosumer(origin, prosumer_account, community_account);
 ```
 
-### Processing Payments
+#### Processing Payments
 
 ```rust
 // Standard payment between prosumers in same community
@@ -73,86 +127,125 @@ Remuneration::settle_flexibility_payment(
     price_per_unit,        // e.g., 5 currency units
     INTRA_COMMUNITY
 );
+
+// Perform adaptive update of alpha & beta after collecting N deviation samples
+Remuneration::adapt_alpha_beta(
+    origin,
+    under_delivery_samples, // length == configured window_size
+    over_delivery_samples   // same length
+);
 ```
 
 ## Flexibility Settlement Calculation
 
 The settlement amount is calculated using the following formula:
 
-    base_payment = min(requested, delivered) * price
-    under_delivery_penalty = alpha * max(0, requested - delivered - threshold) * price
-    over_delivery_bonus = beta * max(0, delivered - requested - threshold) * price
+```
+base_payment = min(requested, delivered) * price
+under_delivery_penalty = alpha * max(0, requested - delivered - threshold) * price
+over_delivery_bonus    = beta  * max(0, delivered - requested - threshold) * price
 
-    final_amount = base_payment - under_delivery_penalty + over_delivery_bonus
+final_amount = base_payment - under_delivery_penalty + over_delivery_bonus
+```
 
 Where:
 - `threshold = tolerance * requested / 1_000_000`
 - All parameters (alpha, beta, tolerance) use fixed-point arithmetic with 1.0 = 1,000,000
+
+## Adaptive Parameter Constraints & Validation
+
+- `window_size` must be > 0 when set
+- Both `u_measurements` & `o_measurements` must:
+  - Be non-empty
+  - Have identical length
+  - Length must equal the configured `window_size`
+- Negative adaptation factors clamp result to 0
+- Overflowing multiplication clamps result to `u64::MAX`
 
 ## Events
 
 The module emits various events for tracking operations:
 
 - `CustodianUpdated`: When the custodian is changed
-- `CommunityAdded`/`CommunityRemoved`: When communities are added or removed
-- `ProsumerAdded`/`ProsumerRemoved`: When prosumers are added or removed
+- `CommunityAdded` / `CommunityRemoved`: When communities are added or removed
+- `ProsumerAdded` / `ProsumerRemoved`: When prosumers are added or removed
 - `PaymentAdded`: When a standard payment is processed
 - `BalanceSet`: When an account's balance is manually updated by the custodian
-- `AlphaUpdated`/`BetaUpdated`/`ToleranceUpdated`: When settlement parameters are changed
+- `AlphaUpdated` / `BetaUpdated` / `ToleranceUpdated`: When settlement parameters are changed manually
 - `FlexibilitySettled`: When a flexibility payment settlement is completed
+- `AdaptationParamsUpdated`: When adaptation policy (u_ref, o_ref, k_alpha, k_beta, window_size) is updated
+- `AlphaBetaAdapted`: When alpha and beta are recalculated based on measurement windows
 
 ## Error Handling
 
 The module includes comprehensive error handling for various scenarios:
-- Authorization errors (e.g., `NotCustodian`, `NotAllowedToManageProsumers`)
-- Validation errors (e.g., `SameSenderReceiver`, `InsufficientBalance`)
-- Entity status errors (e.g., `SenderNotProsumer`, `ReceiverNotProsumer`)
-- Relationship errors (e.g., `DifferentCommunities`, `NotACommunity`)
-- Payment type errors (e.g., `PaymentTypeNotAllowed`)
+
+Authorization & Role:
+- `NotCustodian`
+- `NotAllowedToManageProsumers`
+
+Validation & Logic:
+- `SameSenderReceiver`
+- `InsufficientBalance`
+- `PaymentTypeNotAllowed`
+- `InvalidWindowSize` (adaptation policy)
+- `EmptyMeasurements` (no samples provided)
+- `MismatchedMeasurements` (length mismatch between under & over arrays)
+- `MeasurementsExceedWindow` (length differs from configured window size)
+
+Entity / Relationship:
+- `SenderNotProsumer`, `ReceiverNotProsumer`
+- `NotACommunity`
+- `DifferentCommunities`
 
 ## Testing
 
-The remuneration module includes comprehensive tests to verify its functionality and ensure correctness:
+The remuneration module includes comprehensive tests to verify its functionality and ensure correctness.
 
 ### Test Coverage
 
-- **Administrative Operations**: Tests for custodian management, community management, and prosumer management
-- **Basic Payment Functionality**: Verification of intra-community and inter-community payments
-- **Balance Management**: Tests for setting and updating balances
-- **Parameter Management**: Tests for updating alpha, beta, and tolerance parameters
+- **Administrative Operations**: Custodian, community, and prosumer management
+- **Basic Payment Functionality**: Intra-community and inter-community payments
+- **Balance Management**: Setting / updating balances
+- **Parameter Management**: Alpha, beta, tolerance updates
+- **Adaptive Policy**:
+  - Setting adaptation params (success & failure paths)
+  - Alpha/Beta adaptation (success math verification)
+  - Validation errors (window size, empty, mismatched, length vs window)
+  - Edge handling (negative factor clamp, overflow clamp)
 
 ### Flexibility Settlement Tests
 
-The module includes extensive testing for the flexibility settlement mechanism:
+1. Basic settlement (requested == delivered)
+2. Under-delivery penalties
+3. Over-delivery bonuses
+4. Tolerance threshold behavior
+5. Complex combined scenarios
+6. Error handling (invalid actors, balances, types)
+7. Inter-community flexibility settlements
 
-1. **Basic Settlement**: Verification of straightforward settlements where requested and delivered flexibility match
-2. **Under-delivery Scenarios**: Tests to verify correct penalty calculation when delivered flexibility is less than requested
-3. **Over-delivery Scenarios**: Tests to verify correct bonus calculation when delivered flexibility exceeds requested
-4. **Tolerance Effects**: Tests to verify that deviations within tolerance thresholds do not incur penalties
-5. **Complex Cases**: Tests for combinations of under/over-delivery and tolerance effects
-6. **Error Handling**: Tests to ensure proper error responses for invalid inputs and states
-7. **Inter-community Settlements**: Tests for flexibility settlements between different energy communities
+### Adaptation Tests (Highlights)
+
+- Proper storage of adaptation policy
+- Adapting alpha/beta with deterministic expected outputs
+- Rejecting incorrect measurement vector conditions
+- Clamping to zero and to `u64::MAX` under extreme negative / overflow conditions
 
 ### Test Methodology
 
-Tests use the mock runtime environment to simulate a blockchain with the remuneration module. Each test:
+Each test:
+1. Configures initial chain state (custodian, entities)
+2. Applies parameter / adaptation configuration
+3. Executes target extrinsic
+4. Asserts resulting state (storage, balances, parameters)
 
-1. Sets up the initial state (custodian, communities, prosumers, balances)
-2. Configures settlement parameters (alpha, beta, tolerance) as needed
-3. Executes the operation being tested
-4. Verifies the resulting state changes (balance updates, event emissions)
-
-This test suite ensures the module functions correctly under both normal operations and edge cases, providing confidence in the reliability and correctness of the implementation.
-
-### Running Tests
-
-Tests can be executed using the following command:
+Run tests:
 
 ```bash
 cargo test -p remuneration
 ```
 
-For parallel test execution:
+Parallel execution:
 
 ```bash
 cargo test -p remuneration --jobs 6
