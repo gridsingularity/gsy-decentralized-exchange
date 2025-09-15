@@ -17,7 +17,8 @@ pub trait RemunerationWeightInfo {
 	fn set_balance() -> Weight;
 	fn update_alpha() -> Weight;
 	fn update_beta() -> Weight;
-	fn update_tolerance() -> Weight;
+	fn update_under_tolerance() -> Weight; // renamed & split
+	fn update_over_tolerance() -> Weight;  // new
 	fn settle_flexibility_payment() -> Weight;
 	// New extrinsics
 	fn set_adaptation_params() -> Weight;
@@ -71,7 +72,11 @@ impl<T: frame_system::Config> RemunerationWeightInfo for SubstrateWeightInfo<T> 
 		Weight::from_parts(9_000_000, 0)
 			.saturating_add(T::DbWeight::get().writes(1_u64))
 	}
-	fn update_tolerance() -> Weight {
+	fn update_under_tolerance() -> Weight { // replaces update_tolerance
+		Weight::from_parts(9_000_000, 0)
+			.saturating_add(T::DbWeight::get().writes(1_u64))
+	}
+	fn update_over_tolerance() -> Weight { // new
 		Weight::from_parts(9_000_000, 0)
 			.saturating_add(T::DbWeight::get().writes(1_u64))
 	}

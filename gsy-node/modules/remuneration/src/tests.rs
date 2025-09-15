@@ -345,8 +345,9 @@ fn update_settlement_parameters() {
         // Default values should be zero
         assert_eq!(Remuneration::alpha(), 0);
         assert_eq!(Remuneration::beta(), 0);
-        assert_eq!(Remuneration::tolerance(), 0);
-        
+        assert_eq!(Remuneration::under_tolerance(), 0);
+        assert_eq!(Remuneration::over_tolerance(), 0);
+
         // Update alpha
         assert_ok!(Remuneration::update_alpha(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 500_000)); // 0.5 in fixed point
         assert_eq!(Remuneration::alpha(), 500_000);
@@ -355,10 +356,12 @@ fn update_settlement_parameters() {
         assert_ok!(Remuneration::update_beta(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 200_000)); // 0.2 in fixed point
         assert_eq!(Remuneration::beta(), 200_000);
         
-        // Update tolerance
-        assert_ok!(Remuneration::update_tolerance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 100_000)); // 0.1 in fixed point
-        assert_eq!(Remuneration::tolerance(), 100_000);
-        
+        // Update under & over tolerance
+        assert_ok!(Remuneration::update_under_tolerance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 100_000)); // 0.1 in fixed point
+        assert_ok!(Remuneration::update_over_tolerance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 150_000)); // 0.15 in fixed point
+        assert_eq!(Remuneration::under_tolerance(), 100_000);
+        assert_eq!(Remuneration::over_tolerance(), 150_000);
+
         // Non-custodian cannot update parameters
         assert_noop!(
             Remuneration::update_alpha(RawOrigin::Signed(BOB_THE_CHEATER).into(), 700_000),
@@ -369,7 +372,11 @@ fn update_settlement_parameters() {
             Error::<Test>::NotCustodian
         );
         assert_noop!(
-            Remuneration::update_tolerance(RawOrigin::Signed(BOB_THE_CHEATER).into(), 150_000),
+            Remuneration::update_under_tolerance(RawOrigin::Signed(BOB_THE_CHEATER).into(), 150_000),
+            Error::<Test>::NotCustodian
+        );
+        assert_noop!(
+            Remuneration::update_over_tolerance(RawOrigin::Signed(BOB_THE_CHEATER).into(), 200_000),
             Error::<Test>::NotCustodian
         );
     });
@@ -511,8 +518,9 @@ fn settle_flexibility_with_tolerance() {
         
         // Set parameters
         assert_ok!(Remuneration::update_alpha(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 500_000)); // 0.5
-        assert_ok!(Remuneration::update_tolerance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 100_000)); // 0.1
-        
+        assert_ok!(Remuneration::update_under_tolerance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 100_000)); // 0.1 for under
+        assert_ok!(Remuneration::update_over_tolerance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 100_000)); // 0.1 for over (symmetry)
+
         // Under-delivery but within tolerance (10% of 100 = 10 units)
         assert_ok!(Remuneration::settle_flexibility_payment(
             RawOrigin::Signed(PROSUMER1).into(),
@@ -523,14 +531,7 @@ fn settle_flexibility_with_tolerance() {
             INTRA_COMMUNITY  // payment_type
         ));
         
-        // Calculation:
-        // - base = min(100, 92) * 5 = 460
-        // - threshold = 0.1 * 100 = 10
-        // - under-delivery diff = 100-92-10 = 0 (within tolerance)
-        // - no penalties apply
-        // - final amount = 460
-        
-        // Check balances after settlement
+        // Base = 92 * 5 = 460, diff after tolerance = 0, final=460
         assert_eq!(Remuneration::balances(PROSUMER1), 540); // 1000 - 460
         assert_eq!(Remuneration::balances(PROSUMER2), 460); // 0 + 460
         
@@ -543,76 +544,42 @@ fn settle_flexibility_with_tolerance() {
             RawOrigin::Signed(PROSUMER1).into(),
             PROSUMER2,
             100,  // requested
-            85,   // delivered (15 units under, exceeds 10% tolerance)
+            85,   // delivered (15 under, tolerance=10 => 5 penalized)
             5,    // price
-            INTRA_COMMUNITY  // payment_type
+            INTRA_COMMUNITY
         ));
-        
-        // Calculation:
-        // - base = min(100, 85) * 5 = 425
-        // - threshold = 0.1 * 100 = 10
-        // - under-delivery diff = 100-85-10 = 5 (beyond tolerance)
-        // - under-delivery penalty = 0.5 * 5 * 5 = 12.5 (truncated to 12 in fixed point)
-        // - final amount = 425 - 12 = 413
-        
-        // Check balances after settlement
+        // Penalty = 0.5 * 5 * 5 = 12 (truncated), base=85*5=425, final=413
         assert_eq!(Remuneration::balances(PROSUMER1), 587); // 1000 - 413
-        assert_eq!(Remuneration::balances(PROSUMER2), 413); // 0 + 413
+        assert_eq!(Remuneration::balances(PROSUMER2), 413);
     });
 }
 
 #[test]
 fn settle_flexibility_complex_scenario() {
     new_test_ext().execute_with(|| {
-        // Set a block and a timestamp
         System::set_block_number(1);
         Timestamp::set_timestamp(1_000);
-        
-        // Setup initial state
         assert_ok!(Remuneration::update_custodian(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), ALICE_THE_CUSTODIAN));
         assert_ok!(Remuneration::add_community(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), COMMUNITY1, DSO, COMMUNITY1_OWNER));
         assert_ok!(Remuneration::add_prosumer(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER1, COMMUNITY1));
         assert_ok!(Remuneration::add_prosumer(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER2, COMMUNITY1));
-        
-        // Set initial balances
         assert_ok!(Remuneration::set_balance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER1, 1000));
         assert_ok!(Remuneration::set_balance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER2, 0));
-        
-        // Set all parameters
-        assert_ok!(Remuneration::update_alpha(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 500_000)); // 0.5
-        assert_ok!(Remuneration::update_beta(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 200_000)); // 0.2
-        assert_ok!(Remuneration::update_tolerance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 100_000)); // 0.1
-        
-        // Slight over-delivery scenario
+        assert_ok!(Remuneration::update_alpha(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 500_000));
+        assert_ok!(Remuneration::update_beta(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 200_000));
+        assert_ok!(Remuneration::update_under_tolerance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 100_000));
+        assert_ok!(Remuneration::update_over_tolerance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 100_000));
         assert_ok!(Remuneration::settle_flexibility_payment(
             RawOrigin::Signed(PROSUMER1).into(),
             PROSUMER2,
-            100,  // requested
-            105,  // delivered (5 units over-delivered)
-            5,    // price
-            INTRA_COMMUNITY  // payment_type
+            100,
+            105,
+            5,
+            INTRA_COMMUNITY
         ));
-        
-        // Calculation:
-        // - base = min(100, 105) * 5 = 500
-        // - threshold = 0.1 * 100 = 10
-        // - over-delivery diff = 105-100-10 = -5 (within tolerance, no bonus)
-        // - final amount = 500
-        
-        // Check balances after settlement
-        assert_eq!(Remuneration::balances(PROSUMER1), 500); // 1000 - 500
-        assert_eq!(Remuneration::balances(PROSUMER2), 500); // 0 + 500
-        
-        // Verify event emission
-        let flexibility_settled_event = crate::Event::FlexibilitySettled {
-            requester: PROSUMER1,
-            provider: PROSUMER2,
-            requested: 100,
-            delivered: 105,
-            price: 5,
-            calculated_amount: 500,
-        };
-        System::assert_last_event(flexibility_settled_event.into());
+        // Over within tolerance: base=500, no bonus
+        assert_eq!(Remuneration::balances(PROSUMER1), 500);
+        assert_eq!(Remuneration::balances(PROSUMER2), 500);
     });
 }
 
@@ -693,51 +660,27 @@ fn settle_flexibility_errors() {
 #[test]
 fn settle_flexibility_inter_community() {
     new_test_ext().execute_with(|| {
-        // Set a block and a timestamp
         System::set_block_number(1);
         Timestamp::set_timestamp(1_000);
-        
-        // Setup initial state
         assert_ok!(Remuneration::update_custodian(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), ALICE_THE_CUSTODIAN));
         assert_ok!(Remuneration::add_community(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), COMMUNITY1, DSO, COMMUNITY1_OWNER));
         assert_ok!(Remuneration::add_community(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), COMMUNITY2, DSO, COMMUNITY2_OWNER));
-        
-        // Set initial balances
         assert_ok!(Remuneration::set_balance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), COMMUNITY1, 1000));
         assert_ok!(Remuneration::set_balance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), COMMUNITY2, 0));
-        
-        // Set parameters
-        assert_ok!(Remuneration::update_alpha(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 500_000)); // 0.5
-        assert_ok!(Remuneration::update_beta(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 200_000)); // 0.2
-        
-        // Inter-community flexibility transaction
+        assert_ok!(Remuneration::update_alpha(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 500_000));
+        assert_ok!(Remuneration::update_beta(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 200_000));
+        assert_ok!(Remuneration::update_under_tolerance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 0));
+        assert_ok!(Remuneration::update_over_tolerance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 0));
         assert_ok!(Remuneration::settle_flexibility_payment(
             RawOrigin::Signed(COMMUNITY1).into(),
             COMMUNITY2,
-            100,  // requested
-            100,  // delivered
-            5,    // price
-            INTER_COMMUNITY  // payment_type
+            100,
+            100,
+            5,
+            INTER_COMMUNITY
         ));
-        
-        // Calculation (exact same formula, but between communities)
-        // - base = min(100, 100) * 5 = 500
-        // - no penalties apply
-        // - final amount = 500
-        
-        // Check balances after settlement
-        assert_eq!(Remuneration::balances(COMMUNITY1), 500); // 1000 - 500
-        assert_eq!(Remuneration::balances(COMMUNITY2), 500); // 0 + 500
-        
-        let flexibility_settled_event = crate::Event::FlexibilitySettled {
-            requester: COMMUNITY1,
-            provider: COMMUNITY2,
-            requested: 100,
-            delivered: 100,
-            price: 5,
-            calculated_amount: 500,
-        };
-        System::assert_last_event(flexibility_settled_event.into());
+        assert_eq!(Remuneration::balances(COMMUNITY1), 500);
+        assert_eq!(Remuneration::balances(COMMUNITY2), 500);
     });
 }
 

@@ -254,18 +254,21 @@
 			ValueQuery
 		>;
 
-		/// ## Tolerance Parameter
-		/// Used in settlement calculations for acceptable deviation thresholds.
+		/// ## Under Tolerance Parameter
+		/// Used in settlement calculations for acceptable under-delivery deviation thresholds.
 		/// This is a fixed-point representation where 1.0 = 1_000_000
 		#[pallet::storage]
-		#[pallet::getter(fn tolerance)]
-		pub(super) type Tolerance<T: Config> = StorageValue<
-			_,
-			u64,
-			ValueQuery
-		>;
+		#[pallet::getter(fn under_tolerance)]
+		pub(super) type UnderTolerance<T: Config> = StorageValue<_, u64, ValueQuery>;
 
-		// --- Adaptive parameters storage ---
+		/// ## Over Tolerance Parameter
+		/// Used in settlement calculations for acceptable over-delivery deviation thresholds.
+		/// This is a fixed-point representation where 1.0 = 1_000_000
+		#[pallet::storage]
+		#[pallet::getter(fn over_tolerance)]
+		pub(super) type OverTolerance<T: Config> = StorageValue<_, u64, ValueQuery>;
+
+		/// --- Adaptive parameters storage ---
 		/// Reference benchmark for under-delivery deviation (fixed-point, 1.0 = 1_000_000)
 		#[pallet::storage]
 		#[pallet::getter(fn u_ref)]
@@ -353,15 +356,17 @@
 			/// - `new_value`: The new value.
 			BetaUpdated { old_value: u64, new_value: u64 },
 
-			/// Emitted when the Tolerance parameter is updated.
+			/// Emitted when the Under-Delivery Tolerance parameter is updated.
 			/// - `old_value`: The previous value.
 			/// - `new_value`: The new value.
-			ToleranceUpdated { old_value: u64, new_value: u64 },
+			UnderToleranceUpdated { old_value: u64, new_value: u64 },
+
+			/// Emitted when the Over-Delivery Tolerance parameter is updated.
+			/// - `old_value`: The previous value.
+			/// - `new_value`: The new value.
+			OverToleranceUpdated { old_value: u64, new_value: u64 },
 
 			/// Emitted when a flexibility settlement is processed.
-			/// - `requester`: The account ID of the flexibility requester.
-			/// - `provider`: The account ID of the flexibility provider.
-			/// - `requested`: The requested flexibility amount.
 			/// - `delivered`: The actually delivered flexibility amount.
 			/// - `price`: The agreed price.
 			/// - `calculated_amount`: The final calculated payment amount.
@@ -396,33 +401,19 @@
 
 		#[pallet::error]
 		pub enum Error<T> {
-			/// The caller is not the custodian and cannot perform this action.
 			NotCustodian,
-			/// The caller is not allowed to manage (add/remove/update) prosumers (i.e. the caller is neither the custodian nor the community owner).
 			NotAllowedToManageProsumers,
-			/// The sender and receiver cannot be the same.
 			SameSenderReceiver,
-			/// The sender does not have enough balance to complete the transaction.
 			InsufficientBalance,
-			/// The sender is not a registered prosumer.
 			SenderNotProsumer,
-			/// The receiver is not a registered prosumer.
 			ReceiverNotProsumer,
-			/// Sender and receiver must belong to the same community (intra-community case).
 			DifferentCommunities,
-			/// Sender or receiver is not a registered community (inter-community case).
 			NotACommunity,
-			/// The caller is not the community owner.
 			NotCommunityOwner,
-			/// Payment not allowed (availbale only intra and inter community cases).
 			PaymentTypeNotAllowed,
-			/// Adaptation window size must be > 0.
 			InvalidWindowSize,
-			/// Provided measurements vectors are empty.
 			EmptyMeasurements,
-			/// Provided measurements exceed the configured window size.
 			MeasurementsExceedWindow,
-			/// Provided measurements vectors have mismatched lengths.
 			MismatchedMeasurements,
 		}
 
@@ -839,56 +830,32 @@
 			}
 
 			#[transactional]
-			#[pallet::weight(<T as Config>::RemunerationWeightInfo::update_tolerance())]
+			#[pallet::weight(<T as Config>::RemunerationWeightInfo::update_under_tolerance())]
 			#[pallet::call_index(15)]
-			pub fn update_tolerance(
-				origin: OriginFor<T>,
-				new_tolerance: u64,
-			) -> DispatchResult {
-				// Make sure the caller is a signed origin
+			pub fn update_under_tolerance(origin: OriginFor<T>, new_value: u64) -> DispatchResult {
 				let sender = ensure_signed(origin)?;
-
-				// Only the custodian can perform this action
 				ensure!(Some(sender) == Custodian::<T>::get(), Error::<T>::NotCustodian);
-
-				// Get old value for event
-				let old_tolerance = Tolerance::<T>::get();
-
-				// Update the tolerance parameter
-				Tolerance::<T>::put(new_tolerance);
-
-				// Emit the event
-				Self::deposit_event(Event::ToleranceUpdated { 
-					old_value: old_tolerance, 
-					new_value: new_tolerance 
-				});
-
+				let old = UnderTolerance::<T>::get();
+				UnderTolerance::<T>::put(new_value);
+				Self::deposit_event(Event::UnderToleranceUpdated { old_value: old, new_value });
 				Ok(())
 			}
 
-			/// ## Settle Flexibility Payment
-			///
-			/// Calculates and processes a payment for flexibility services based on various parameters.
-			///
-			/// - **Parameters**:
-			///   - `receiver`: The account ID of the flexibility provider.
-			///   - `flexi_requested`: The requested flexibility amount.
-			///   - `flexi_delivered`: The actually delivered flexibility amount.
-			///   - `price`: The agreed price per unit.
-			///   - `payment_type`: The type of payment (intra or inter community).
-			///
-			/// - **Access Control**:
-			///   - Requires the caller to be a valid signer.
-			///
-			/// - **Events**:
-			///   - `FlexibilitySettled` is emitted with details of the settlement.
-			///   - `PaymentAdded` is emitted for the underlying payment.
-			///
-			/// - **Validation**:
-			///   - Ensures all validation from the underlying `add_payment` function.
+			#[transactional]
+			#[pallet::weight(<T as Config>::RemunerationWeightInfo::update_over_tolerance())]
+			#[pallet::call_index(16)]
+			pub fn update_over_tolerance(origin: OriginFor<T>, new_value: u64) -> DispatchResult {
+				let sender = ensure_signed(origin)?;
+				ensure!(Some(sender) == Custodian::<T>::get(), Error::<T>::NotCustodian);
+				let old = OverTolerance::<T>::get();
+				OverTolerance::<T>::put(new_value);
+				Self::deposit_event(Event::OverToleranceUpdated { old_value: old, new_value });
+				Ok(())
+			}
+
 			#[transactional]
 			#[pallet::weight(<T as Config>::RemunerationWeightInfo::settle_flexibility_payment())]
-			#[pallet::call_index(16)]
+			#[pallet::call_index(17)]
 			pub fn settle_flexibility_payment(
 				origin: OriginFor<T>,
 				receiver: T::AccountId,
@@ -897,161 +864,61 @@
 				price: u64,
 				payment_type: u8
 			) -> DispatchResult {
-				// Ensure the caller is authorized to perform the action
 				let sender = ensure_signed(origin.clone())?;
 
-				// Get the parameters for the calculation
+				// Parameters
 				let alpha = Alpha::<T>::get();
 				let beta = Beta::<T>::get();
-				let tolerance = Tolerance::<T>::get();
+				let under_tol = UnderTolerance::<T>::get();
+				let over_tol = OverTolerance::<T>::get();
+				let f: u64 = 1_000_000;
 
-				// Fixed point calculations: 1.0 = 1_000_000
-				let fixed_point_factor: u64 = 1_000_000;
-
-				// Calculate base payment (min of requested and delivered * price)
 				let base = core::cmp::min(flexi_requested, flexi_delivered).saturating_mul(price);
-
-				// Calculate tolerance threshold for requested flexibility
-				let threshold = tolerance.saturating_mul(flexi_requested).checked_div(fixed_point_factor)
-					.unwrap_or(0);
-
-				// Under-delivery penalty
-				let under_delivery_diff = flexi_requested.saturating_sub(flexi_delivered).saturating_sub(threshold);
-				let under_delivery_penalty = if under_delivery_diff > 0 {
-					alpha.saturating_mul(under_delivery_diff).saturating_mul(price)
-						.checked_div(fixed_point_factor).unwrap_or(0)
-				} else {
-					0
-				};
-
-				// Over-delivery adjustment
-				let over_delivery_diff = flexi_delivered.saturating_sub(flexi_requested).saturating_sub(threshold);
-				let over_delivery_bonus = if over_delivery_diff > 0 {
-					beta.saturating_mul(over_delivery_diff).saturating_mul(price)
-						.checked_div(fixed_point_factor).unwrap_or(0)
-				} else {
-					0
-				};
-
-				// Calculate final amount
-				let final_amount = base.saturating_sub(under_delivery_penalty)
-					.saturating_add(over_delivery_bonus);
-
-				// Convert to BalanceOf<T>
+				let threshold_under = under_tol.saturating_mul(flexi_requested).checked_div(f).unwrap_or(0);
+				let threshold_over = over_tol.saturating_mul(flexi_requested).checked_div(f).unwrap_or(0);
+				let under_diff = flexi_requested.saturating_sub(flexi_delivered).saturating_sub(threshold_under);
+				let under_penalty = if under_diff > 0 { alpha.saturating_mul(under_diff).saturating_mul(price).checked_div(f).unwrap_or(0) } else { 0 };
+				let over_diff = flexi_delivered.saturating_sub(flexi_requested).saturating_sub(threshold_over);
+				let over_bonus = if over_diff > 0 { beta.saturating_mul(over_diff).saturating_mul(price).checked_div(f).unwrap_or(0) } else { 0 };
+				let final_amount = base.saturating_sub(under_penalty).saturating_add(over_bonus);
 				let amount = BalanceOf::<T>::from(final_amount as u32);
-
-				// Call the existing add_payment function to process the payment
 				Self::add_payment(origin, receiver.clone(), amount, payment_type)?;
-
-				// Emit the FlexibilitySettled event
-				Self::deposit_event(Event::FlexibilitySettled {
-					requester: sender,
-					provider: receiver,
-					requested: flexi_requested,
-					delivered: flexi_delivered,
-					price,
-					calculated_amount: amount,
-				});
-
+				Self::deposit_event(Event::FlexibilitySettled { requester: sender, provider: receiver, requested: flexi_requested, delivered: flexi_delivered, price, calculated_amount: amount });
 				Ok(())
 			}
 
-			/// ## Set Adaptation Policy Parameters
-			///
-			/// Allows the custodian to set the reference benchmarks (u_ref, o_ref),
-			/// the gain factors (k_alpha, k_beta), and the averaging window size N.
 			#[transactional]
 			#[pallet::weight(<T as Config>::RemunerationWeightInfo::set_adaptation_params())]
-			#[pallet::call_index(17)]
+			#[pallet::call_index(18)]
 			pub fn set_adaptation_params(
-				origin: OriginFor<T>,
-				u_ref: u64,
-				o_ref: u64,
-				k_alpha: u64,
-				k_beta: u64,
-				window_size: u32,
+				origin: OriginFor<T>, u_ref: u64, o_ref: u64, k_alpha: u64, k_beta: u64, window_size: u32,
 			) -> DispatchResult {
 				let sender = ensure_signed(origin)?;
 				ensure!(Some(sender) == Custodian::<T>::get(), Error::<T>::NotCustodian);
 				ensure!(window_size > 0, Error::<T>::InvalidWindowSize);
-
-				URef::<T>::put(u_ref);
-				ORef::<T>::put(o_ref);
-				KAlpha::<T>::put(k_alpha);
-				KBeta::<T>::put(k_beta);
-				AdaptationWindowSize::<T>::put(window_size);
-
+				URef::<T>::put(u_ref); ORef::<T>::put(o_ref); KAlpha::<T>::put(k_alpha); KBeta::<T>::put(k_beta); AdaptationWindowSize::<T>::put(window_size);
 				Self::deposit_event(Event::AdaptationParamsUpdated { u_ref, o_ref, k_alpha, k_beta, window_size });
 				Ok(())
 			}
 
-			/// ## Adapt Alpha and Beta
-			///
-			/// Custodian provides the last N measurements of under- and over-delivery deviations
-			/// (fixed-point, 1.0 = 1_000_000). This call computes u_avg and o_avg and updates
-			/// Alpha and Beta using:
-			/// alpha(t+1) = alpha(t) * { 1 + k_alpha * [u_avg - u_ref] }
-			/// beta(t+1) = beta(t) * { 1 + k_beta * [o_avg - o_ref] }
 			#[transactional]
 			#[pallet::weight(<T as Config>::RemunerationWeightInfo::adapt_alpha_beta())]
-			#[pallet::call_index(18)]
-			pub fn adapt_alpha_beta(
-				origin: OriginFor<T>,
-				u_measurements: Vec<u64>,
-				o_measurements: Vec<u64>,
-			) -> DispatchResult {
-				let sender = ensure_signed(origin)?;
-				ensure!(Some(sender) == Custodian::<T>::get(), Error::<T>::NotCustodian);
-
-				let n_cfg = AdaptationWindowSize::<T>::get();
-				ensure!(n_cfg > 0, Error::<T>::InvalidWindowSize);
-
-				let n_u = u_measurements.len() as u32;
-				let n_o = o_measurements.len() as u32;
-				ensure!(n_u > 0 && n_o > 0, Error::<T>::EmptyMeasurements);
-				ensure!(n_u == n_o, Error::<T>::MismatchedMeasurements);
-				ensure!(n_u == n_cfg, Error::<T>::MeasurementsExceedWindow);
-
-				// Compute averages using wider accumulator to prevent overflow
-				let sum_u: u128 = u_measurements.iter().fold(0u128, |acc, v| acc.saturating_add(*v as u128));
-				let sum_o: u128 = o_measurements.iter().fold(0u128, |acc, v| acc.saturating_add(*v as u128));
-				let n: u128 = n_u as u128;
-				let u_avg: u64 = (sum_u / n) as u64;
-				let o_avg: u64 = (sum_o / n) as u64;
-
-				// Fetch current params
-				let alpha = Alpha::<T>::get();
-				let beta = Beta::<T>::get();
-				let u_ref = URef::<T>::get();
-				let o_ref = ORef::<T>::get();
-				let k_alpha = KAlpha::<T>::get();
-				let k_beta = KBeta::<T>::get();
-
-				let f: i128 = 1_000_000; // fixed point factor
-
-				// Compute new alpha
-				let delta_u: i128 = (u_avg as i128) - (u_ref as i128);
-				let factor_a: i128 = f + ( (k_alpha as i128).saturating_mul(delta_u) ) / f;
-				let mut new_alpha_i: i128 = (alpha as i128).saturating_mul(factor_a);
-				new_alpha_i = new_alpha_i.checked_div(f).unwrap_or(0);
-				if new_alpha_i < 0 { new_alpha_i = 0; }
-				let new_alpha: u64 = if new_alpha_i as u128 > u64::MAX as u128 { u64::MAX } else { new_alpha_i as u64 };
-
-				// Compute new beta
-				let delta_o: i128 = (o_avg as i128) - (o_ref as i128);
-				let factor_b: i128 = f + ( (k_beta as i128).saturating_mul(delta_o) ) / f;
-				let mut new_beta_i: i128 = (beta as i128).saturating_mul(factor_b);
-				new_beta_i = new_beta_i.checked_div(f).unwrap_or(0);
-				if new_beta_i < 0 { new_beta_i = 0; }
-				let new_beta: u64 = if new_beta_i as u128 > u64::MAX as u128 { u64::MAX } else { new_beta_i as u64 };
-
-				// Persist and emit events
-				Alpha::<T>::put(new_alpha);
-				Beta::<T>::put(new_beta);
+			#[pallet::call_index(19)]
+			pub fn adapt_alpha_beta(origin: OriginFor<T>, u_measurements: Vec<u64>, o_measurements: Vec<u64>) -> DispatchResult {
+				let sender = ensure_signed(origin)?; ensure!(Some(sender) == Custodian::<T>::get(), Error::<T>::NotCustodian);
+				let n_cfg = AdaptationWindowSize::<T>::get(); ensure!(n_cfg > 0, Error::<T>::InvalidWindowSize);
+				let n_u = u_measurements.len() as u32; let n_o = o_measurements.len() as u32; ensure!(n_u > 0 && n_o > 0, Error::<T>::EmptyMeasurements); ensure!(n_u == n_o, Error::<T>::MismatchedMeasurements); ensure!(n_u == n_cfg, Error::<T>::MeasurementsExceedWindow);
+				let sum_u: u128 = u_measurements.iter().fold(0u128, |a,v| a.saturating_add(*v as u128));
+				let sum_o: u128 = o_measurements.iter().fold(0u128, |a,v| a.saturating_add(*v as u128));
+				let n: u128 = n_u as u128; let u_avg = (sum_u / n) as u64; let o_avg = (sum_o / n) as u64;
+				let alpha = Alpha::<T>::get(); let beta = Beta::<T>::get(); let u_ref = URef::<T>::get(); let o_ref = ORef::<T>::get(); let k_alpha = KAlpha::<T>::get(); let k_beta = KBeta::<T>::get();
+				let f: i128 = 1_000_000;
+				let delta_u = (u_avg as i128) - (u_ref as i128); let factor_a = f + ( (k_alpha as i128).saturating_mul(delta_u) ) / f; let mut new_alpha_i = (alpha as i128).saturating_mul(factor_a).checked_div(f).unwrap_or(0); if new_alpha_i < 0 { new_alpha_i = 0; } let new_alpha: u64 = new_alpha_i.clamp(0, u64::MAX as i128) as u64;
+				let delta_o = (o_avg as i128) - (o_ref as i128); let factor_b = f + ( (k_beta as i128).saturating_mul(delta_o) ) / f; let mut new_beta_i = (beta as i128).saturating_mul(factor_b).checked_div(f).unwrap_or(0); if new_beta_i < 0 { new_beta_i = 0; } let new_beta: u64 = new_beta_i.clamp(0, u64::MAX as i128) as u64;
+				Alpha::<T>::put(new_alpha); Beta::<T>::put(new_beta);
 				Self::deposit_event(Event::AlphaUpdated { old_value: alpha, new_value: new_alpha });
 				Self::deposit_event(Event::BetaUpdated { old_value: beta, new_value: new_beta });
 				Self::deposit_event(Event::AlphaBetaAdapted { old_alpha: alpha, new_alpha, old_beta: beta, new_beta, u_avg, o_avg });
-
 				Ok(())
 			}
 		}
@@ -1141,10 +1008,8 @@
 			///
 			/// - **Returns**:
 			///   - The current tolerance parameter value.
-			pub fn query_tolerance() -> u64 {
-				Self::tolerance()
-			}
-
+			pub fn query_under_tolerance() -> u64 { Self::under_tolerance() }
+			pub fn query_over_tolerance() -> u64 { Self::over_tolerance() }
 			/// Query adaptation parameters.
 			pub fn query_adaptation_params() -> (u64, u64, u64, u64, u32) {
 				(
