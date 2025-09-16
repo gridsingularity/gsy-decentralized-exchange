@@ -21,7 +21,7 @@ This module is integral to maintaining accountability, enabling transparent reco
   - Intra-community payments (between prosumers in the same community)
   - Inter-community payments (between different communities)
 - **Flexibility Service Settlement**: Calculates payments for flexibility services with incentives/penalties based on performance
-- **Adaptive Incentive & Policy System (UPDATED)**: Dynamically adjusts:
+- **Adaptive Incentive & Policy System**: Dynamically adjusts:
   - Under-delivery penalty factor (alpha)
   - Over-delivery bonus factor (beta)
   - Under-delivery tolerance (UnderTolerance) via feedback on recent performance
@@ -40,7 +40,7 @@ Parameters (all fixed-point with 1.0 = 1_000_000):
 - **UnderTolerance**: Allowed fractional shortfall before penalty (per request)
 - **OverTolerance**: Allowed fractional excess before bonus
 
-### Adaptive Parameter Mechanism (UPDATED)
+### Adaptive Parameter Mechanism
 
 Adaptive control now covers alpha, beta, and under-delivery tolerance via two extrinsics:
 
@@ -123,7 +123,7 @@ let under_tol = Remuneration::under_tolerance();
 | 18 | set_adaptation_params | Configure adaptation policy |
 | 19 | dynamically_adapt_parameters | Adapt alpha, beta, under tolerance |
 
-### Usage Examples (UPDATED)
+### Usage Examples
 
 #### Setup
 ```rust
@@ -173,7 +173,7 @@ Remuneration::settle_flexibility_payment(
 Remuneration::dynamically_adapt_parameters(origin, u_samples, o_samples);
 ```
 
-## Flexibility Settlement Calculation (UPDATED)
+## Flexibility Settlement Calculation
 
 ```
 base_payment          = min(requested, delivered) * price
@@ -197,7 +197,7 @@ final_amount          = base_payment - under_delivery_penalty + over_delivery_bo
 - Multiplication overflow => clamp to `u64::MAX`
 - UnderTolerance adaptation only (OverTolerance is manual)
 
-## Events (UPDATED)
+## Events
 - `CustodianUpdated`
 - `CommunityAdded` / `CommunityRemoved`
 - `ProsumerAdded` / `ProsumerRemoved`
@@ -220,7 +220,7 @@ Validation:
 - `SameSenderReceiver`, `InsufficientBalance`, `PaymentTypeNotAllowed`
 - `InvalidWindowSize`, `EmptyMeasurements`, `MismatchedMeasurements`, `MeasurementsExceedWindow`
 
-## Testing (UPDATED)
+## Testing
 
 Coverage includes everything previously documented plus:
 - Dual tolerance behavior (separate under & over) in settlement
