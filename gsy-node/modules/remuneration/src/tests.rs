@@ -870,3 +870,70 @@ fn adaptation_alpha_beta_overflow_clamps_to_u64_max() {
         assert_eq!(Remuneration::beta(), u64::MAX);
     });
 }
+
+#[test]
+fn settle_flexibility_dual_tolerances() {
+    new_test_ext().execute_with(|| {
+        System::set_block_number(1);
+        Timestamp::set_timestamp(1_000);
+        // Setup base state
+        assert_ok!(Remuneration::update_custodian(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), ALICE_THE_CUSTODIAN));
+        assert_ok!(Remuneration::add_community(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), COMMUNITY1, DSO, COMMUNITY1_OWNER));
+        assert_ok!(Remuneration::add_prosumer(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER1, COMMUNITY1));
+        assert_ok!(Remuneration::add_prosumer(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER2, COMMUNITY1));
+        // Set high precision alpha/beta = 1.0 (no scaling effect besides diff*price)
+        assert_ok!(Remuneration::update_alpha(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 1_000_000));
+        assert_ok!(Remuneration::update_beta(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 1_000_000));
+        // Set asymmetric tolerances: under 5%, over 20%
+        assert_ok!(Remuneration::update_under_tolerance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 50_000)); // 0.05
+        assert_ok!(Remuneration::update_over_tolerance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 200_000)); // 0.20
+
+        // ---------- Scenario 1: Under-delivery partially beyond under tolerance ----------
+        // requested=100, delivered=94, under tolerance=5 => penalized diff = (100-94)-5 = 1
+        assert_ok!(Remuneration::set_balance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER1, 5_000));
+        assert_ok!(Remuneration::set_balance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER2, 0));
+        assert_ok!(Remuneration::settle_flexibility_payment(
+            RawOrigin::Signed(PROSUMER1).into(),
+            PROSUMER2,
+            100,
+            94,
+            10,
+            INTRA_COMMUNITY
+        ));
+        // Base = 94*10 = 940 ; Penalty = 1*10 =10 ; Final=930
+        assert_eq!(Remuneration::balances(PROSUMER1), 5_000 - 930);
+        assert_eq!(Remuneration::balances(PROSUMER2), 930);
+
+        // ---------- Scenario 2: Over-delivery within over tolerance (no bonus) ----------
+        // requested=100, delivered=115, over tolerance=20 => over diff 15 < 20 => no bonus
+        assert_ok!(Remuneration::set_balance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER1, 5_000));
+        assert_ok!(Remuneration::set_balance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER2, 0));
+        assert_ok!(Remuneration::settle_flexibility_payment(
+            RawOrigin::Signed(PROSUMER1).into(),
+            PROSUMER2,
+            100,
+            115,
+            10,
+            INTRA_COMMUNITY
+        ));
+        // Base = 100*10=1000 ; no bonus
+        assert_eq!(Remuneration::balances(PROSUMER1), 5_000 - 1_000);
+        assert_eq!(Remuneration::balances(PROSUMER2), 1_000);
+
+        // ---------- Scenario 3: Over-delivery beyond over tolerance (bonus applies) ----------
+        // requested=100, delivered=125, over tolerance=20 => bonus diff = (125-100) - 20 = 5
+        assert_ok!(Remuneration::set_balance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER1, 5_000));
+        assert_ok!(Remuneration::set_balance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER2, 0));
+        assert_ok!(Remuneration::settle_flexibility_payment(
+            RawOrigin::Signed(PROSUMER1).into(),
+            PROSUMER2,
+            100,
+            125,
+            10,
+            INTRA_COMMUNITY
+        ));
+        // Base=1000 ; Bonus=5*10=50 ; Final=1050
+        assert_eq!(Remuneration::balances(PROSUMER1), 5_000 - 1_050);
+        assert_eq!(Remuneration::balances(PROSUMER2), 1_050);
+    });
+}
