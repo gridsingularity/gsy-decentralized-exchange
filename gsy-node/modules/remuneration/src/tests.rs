@@ -699,7 +699,7 @@ fn adaptation_set_params_success_and_event() {
         let window_size = 4u32;
         assert_ok!(Remuneration::set_adaptation_params(
             RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
-            u_ref,o_ref,k_alpha,k_beta,window_size
+            u_ref,o_ref,k_alpha,k_beta, /* k_under_tol */ 50_000, window_size
         ));
         // Storage checks only (omit event assertion to avoid failure in mock)
         assert_eq!(Remuneration::u_ref(), u_ref);
@@ -716,7 +716,7 @@ fn adaptation_set_params_not_custodian_fails() {
         // No custodian yet => set one
         assert_ok!(Remuneration::update_custodian(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), ALICE_THE_CUSTODIAN));
         assert_noop!(
-            Remuneration::set_adaptation_params(RawOrigin::Signed(BOB_THE_CHEATER).into(), 1,2,3,4,5),
+            Remuneration::set_adaptation_params(RawOrigin::Signed(BOB_THE_CHEATER).into(), 1,2,3,4,5,5),
             Error::<Test>::NotCustodian
         );
     });
@@ -727,7 +727,7 @@ fn adaptation_set_params_zero_window_fails() {
     new_test_ext().execute_with(|| {
         assert_ok!(Remuneration::update_custodian(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), ALICE_THE_CUSTODIAN));
         assert_noop!(
-            Remuneration::set_adaptation_params(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 10,20,30,40,0),
+            Remuneration::set_adaptation_params(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 10,20,30,40,50,0),
             Error::<Test>::InvalidWindowSize
         );
     });
@@ -746,10 +746,10 @@ fn adaptation_alpha_beta_success_updates_and_events() {
         let k_alpha = 100_000; // 0.1
         let k_beta  = 200_000; // 0.2
         let window = 3u32;
-        assert_ok!(Remuneration::set_adaptation_params(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), u_ref,o_ref,k_alpha,k_beta,window));
+        assert_ok!(Remuneration::set_adaptation_params(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), u_ref,o_ref,k_alpha,k_beta,50_000,window));
         let u_measurements = vec![500_000,600_000,700_000]; // avg = 600_000
         let o_measurements = vec![400_000,500_000,600_000]; // avg = 500_000
-        assert_ok!(Remuneration::adapt_alpha_beta(
+        assert_ok!(Remuneration::dynamically_adapt_parameters(
             RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
             u_measurements.clone(),
             o_measurements.clone()
@@ -771,9 +771,9 @@ fn adaptation_alpha_beta_success_updates_and_events() {
 fn adaptation_alpha_beta_not_custodian_fails() {
     new_test_ext().execute_with(|| {
         assert_ok!(Remuneration::update_custodian(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), ALICE_THE_CUSTODIAN));
-        assert_ok!(Remuneration::set_adaptation_params(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 100,200,300,400,2));
+        assert_ok!(Remuneration::set_adaptation_params(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 100,200,300,400,500,2));
         assert_noop!(
-            Remuneration::adapt_alpha_beta(RawOrigin::Signed(BOB_THE_CHEATER).into(), vec![1,2], vec![1,2]),
+            Remuneration::dynamically_adapt_parameters(RawOrigin::Signed(BOB_THE_CHEATER).into(), vec![1,2], vec![1,2]),
             Error::<Test>::NotCustodian
         );
     });
@@ -785,7 +785,7 @@ fn adaptation_alpha_beta_invalid_window_size_when_not_set() {
         // Custodian set but no adaptation params yet => window_size=0
         assert_ok!(Remuneration::update_custodian(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), ALICE_THE_CUSTODIAN));
         assert_noop!(
-            Remuneration::adapt_alpha_beta(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), vec![1], vec![1]),
+            Remuneration::dynamically_adapt_parameters(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), vec![1], vec![1]),
             Error::<Test>::InvalidWindowSize
         );
     });
@@ -795,9 +795,9 @@ fn adaptation_alpha_beta_invalid_window_size_when_not_set() {
 fn adaptation_alpha_beta_empty_measurements_fails() {
     new_test_ext().execute_with(|| {
         assert_ok!(Remuneration::update_custodian(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), ALICE_THE_CUSTODIAN));
-        assert_ok!(Remuneration::set_adaptation_params(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 10,10,10,10,2));
+        assert_ok!(Remuneration::set_adaptation_params(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 10,10,10,10,10,2));
         assert_noop!(
-            Remuneration::adapt_alpha_beta(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), vec![], vec![]),
+            Remuneration::dynamically_adapt_parameters(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), vec![], vec![]),
             Error::<Test>::EmptyMeasurements
         );
     });
@@ -807,9 +807,9 @@ fn adaptation_alpha_beta_empty_measurements_fails() {
 fn adaptation_alpha_beta_mismatched_lengths_fail() {
     new_test_ext().execute_with(|| {
         assert_ok!(Remuneration::update_custodian(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), ALICE_THE_CUSTODIAN));
-        assert_ok!(Remuneration::set_adaptation_params(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 1,1,1,1,3));
+        assert_ok!(Remuneration::set_adaptation_params(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 1,1,1,1,1,3));
         assert_noop!(
-            Remuneration::adapt_alpha_beta(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), vec![1,2,3], vec![1,2]),
+            Remuneration::dynamically_adapt_parameters(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), vec![1,2,3], vec![1,2]),
             Error::<Test>::MismatchedMeasurements
         );
     });
@@ -820,10 +820,10 @@ fn adaptation_alpha_beta_window_size_mismatch_fail() {
     new_test_ext().execute_with(|| {
         assert_ok!(Remuneration::update_custodian(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), ALICE_THE_CUSTODIAN));
         // window size configured 2
-        assert_ok!(Remuneration::set_adaptation_params(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 1,1,1,1,2));
+        assert_ok!(Remuneration::set_adaptation_params(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 1,1,1,1,1,2));
         // Provide length 3 -> fails MeasurementsExceedWindow (n != configured)
         assert_noop!(
-            Remuneration::adapt_alpha_beta(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), vec![1,2,3], vec![1,2,3]),
+            Remuneration::dynamically_adapt_parameters(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), vec![1,2,3], vec![1,2,3]),
             Error::<Test>::MeasurementsExceedWindow
         );
     });
@@ -843,10 +843,11 @@ fn adaptation_alpha_beta_negative_factor_clamps_to_zero() {
             1_000_000, // o_ref
             1_000_000, // k_alpha 1.0
             1_000_000, // k_beta 1.0
+            1_000_000, // k_under_tol 1.0
             2
         ));
-        // Provide zero measurements -> avg 0; delta = -1_000_000 => factor=0 => new values clamp to 0
-        assert_ok!(Remuneration::adapt_alpha_beta(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), vec![0,0], vec![0,0]));
+        // Provide zero measurements -> avg 0; delta = -1_000_000 => factor clamped to 0
+        assert_ok!(Remuneration::dynamically_adapt_parameters(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), vec![0,0], vec![0,0]));
         assert_eq!(Remuneration::alpha(), 0);
         assert_eq!(Remuneration::beta(), 0);
     });
@@ -862,10 +863,10 @@ fn adaptation_alpha_beta_overflow_clamps_to_u64_max() {
         // Configure window 1, large positive delta to attempt doubling
         assert_ok!(Remuneration::set_adaptation_params(
             RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
-            0,0,1_000_000,1_000_000,1
+            0,0,1_000_000,1_000_000,1_000_000,1
         ));
         // delta = 1_000_000 => factor 2.0 -> product overflows, should clamp
-        assert_ok!(Remuneration::adapt_alpha_beta(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), vec![1_000_000], vec![1_000_000]));
+        assert_ok!(Remuneration::dynamically_adapt_parameters(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), vec![1_000_000], vec![1_000_000]));
         assert_eq!(Remuneration::alpha(), u64::MAX);
         assert_eq!(Remuneration::beta(), u64::MAX);
     });
@@ -935,5 +936,47 @@ fn settle_flexibility_dual_tolerances() {
         // Base=1000 ; Bonus=5*10=50 ; Final=1050
         assert_eq!(Remuneration::balances(PROSUMER1), 5_000 - 1_050);
         assert_eq!(Remuneration::balances(PROSUMER2), 1_050);
+    });
+}
+
+#[test]
+fn adaptation_under_tolerance_decreases() {
+    new_test_ext().execute_with(|| {
+        assert_ok!(Remuneration::update_custodian(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), ALICE_THE_CUSTODIAN));
+        // Initial under tolerance 0.2
+        assert_ok!(Remuneration::update_under_tolerance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 200_000));
+        // Set params: u_ref=0.1, k_under=0.5, window=3
+        assert_ok!(Remuneration::set_adaptation_params(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 100_000, 0, 0, 0, 500_000, 3));
+        // u_avg = 0.3 -> delta_u=0.2; factor = 1 - 0.5*0.2 = 0.9; new_under = 0.18
+        assert_ok!(Remuneration::dynamically_adapt_parameters(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), vec![300_000,300_000,300_000], vec![0,0,0]));
+        assert_eq!(Remuneration::under_tolerance(), 180_000);
+    });
+}
+
+#[test]
+fn adaptation_under_tolerance_increases() {
+    new_test_ext().execute_with(|| {
+        assert_ok!(Remuneration::update_custodian(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), ALICE_THE_CUSTODIAN));
+        // Initial under tolerance 0.2
+        assert_ok!(Remuneration::update_under_tolerance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 200_000));
+        // Set params: u_ref=0.5, k_under=0.5, window=2
+        assert_ok!(Remuneration::set_adaptation_params(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 500_000, 0, 0, 0, 500_000, 2));
+        // u_avg = 0.3 -> delta_u = -0.2 ; factor = 1 + 0.5*0.2 = 1.1 ; new_under = 0.22
+        assert_ok!(Remuneration::dynamically_adapt_parameters(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), vec![300_000,300_000], vec![0,0]));
+        assert_eq!(Remuneration::under_tolerance(), 220_000);
+    });
+}
+
+#[test]
+fn adaptation_under_tolerance_clamps_to_zero() {
+    new_test_ext().execute_with(|| {
+        assert_ok!(Remuneration::update_custodian(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), ALICE_THE_CUSTODIAN));
+        // Initial under tolerance 0.2
+        assert_ok!(Remuneration::update_under_tolerance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 200_000));
+        // Large k and large positive delta forcing negative factor
+        assert_ok!(Remuneration::set_adaptation_params(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 0, 0, 0, 0, 1_000_000, 1));
+        // u_avg = 1.0 -> delta_u=1.0 => factor = 1 - 1*1 = 0 -> new_under=0
+        assert_ok!(Remuneration::dynamically_adapt_parameters(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), vec![1_000_000], vec![0]));
+        assert_eq!(Remuneration::under_tolerance(), 0);
     });
 }
