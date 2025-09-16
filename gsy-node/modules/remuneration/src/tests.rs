@@ -696,10 +696,11 @@ fn adaptation_set_params_success_and_event() {
         let o_ref = 300_000; // 0.3
         let k_alpha = 120_000; // 0.12
         let k_beta = 250_000;  // 0.25
+        let k_under_tol = 50_000;  // 0.05
         let window_size = 4u32;
         assert_ok!(Remuneration::set_adaptation_params(
             RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
-            u_ref,o_ref,k_alpha,k_beta, /* k_under_tol */ 50_000, window_size
+            u_ref,o_ref,k_alpha,k_beta, k_under_tol, window_size
         ));
         // Storage checks only (omit event assertion to avoid failure in mock)
         assert_eq!(Remuneration::u_ref(), u_ref);
@@ -745,8 +746,9 @@ fn adaptation_alpha_beta_success_updates_and_events() {
         let o_ref = 300_000; // 0.3
         let k_alpha = 100_000; // 0.1
         let k_beta  = 200_000; // 0.2
+        let k_under_tol  = 50_000; // 0.05
         let window = 3u32;
-        assert_ok!(Remuneration::set_adaptation_params(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), u_ref,o_ref,k_alpha,k_beta,50_000,window));
+        assert_ok!(Remuneration::set_adaptation_params(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), u_ref,o_ref,k_alpha,k_beta,k_under_tol,window));
         let u_measurements = vec![500_000,600_000,700_000]; // avg = 600_000
         let o_measurements = vec![400_000,500_000,600_000]; // avg = 500_000
         assert_ok!(Remuneration::dynamically_adapt_parameters(
