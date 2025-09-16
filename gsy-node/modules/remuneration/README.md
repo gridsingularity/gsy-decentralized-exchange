@@ -21,239 +21,227 @@ This module is integral to maintaining accountability, enabling transparent reco
   - Intra-community payments (between prosumers in the same community)
   - Inter-community payments (between different communities)
 - **Flexibility Service Settlement**: Calculates payments for flexibility services with incentives/penalties based on performance
-- **Adaptive Incentive Policy (NEW)**: Dynamically adjusts the penalty (alpha) and bonus (beta) factors based on recent under-/over-delivery performance history
+- **Adaptive Incentive & Policy System (UPDATED)**: Dynamically adjusts:
+  - Under-delivery penalty factor (alpha)
+  - Over-delivery bonus factor (beta)
+  - Under-delivery tolerance (UnderTolerance) via feedback on recent performance
 
 ### Flexibility Payment Calculation
 
 The module includes a specialized settlement mechanism for flexibility services with:
 
-- **Base Payment**: Calculated as minimum of requested and delivered flexibility multiplied by price
-- **Under-delivery Penalties**: Applied when delivered flexibility is less than requested (beyond tolerance)
-- **Over-delivery Bonuses**: Applied when delivered flexibility exceeds requested amount
+- **Base Payment**: min(requested, delivered) * price
+- **Under-delivery Penalties**: Applied when delivered flexibility is less than requested beyond the under-delivery tolerance
+- **Over-delivery Bonuses**: Applied when delivered flexibility exceeds requested amount beyond the over-delivery tolerance
 
-Parameters for flexibility settlement:
-- **Alpha**: Controls the penalty factor for under-delivery (fixed-point value)
-- **Beta**: Controls the bonus factor for over-delivery (fixed-point value)
-- **Tolerance**: Defines the acceptable deviation threshold without penalties (fixed-point value)
+Parameters (all fixed-point with 1.0 = 1_000_000):
+- **Alpha**: Under-delivery penalty scaler
+- **Beta**: Over-delivery bonus scaler
+- **UnderTolerance**: Allowed fractional shortfall before penalty (per request)
+- **OverTolerance**: Allowed fractional excess before bonus
 
-### Adaptive Alpha / Beta Mechanism
+### Adaptive Parameter Mechanism (UPDATED)
 
-The module supports a closed-loop update of the incentive parameters (alpha, beta) via two new extrinsics:
+Adaptive control now covers alpha, beta, and under-delivery tolerance via two extrinsics:
 
-1. `set_adaptation_params(u_ref, o_ref, k_alpha, k_beta, window_size)`
-2. `adapt_alpha_beta(u_measurements, o_measurements)`
-
-All adaptive parameters use the same fixed-point convention (1.0 = 1_000_000).
+1. `set_adaptation_params(u_ref, o_ref, k_alpha, k_beta, k_under_tol, window_size)`
+2. `dynamically_adapt_parameters(u_measurements, o_measurements)`
 
 Definitions:
-- `u_ref`: Reference (target) average under-delivery deviation
-- `o_ref`: Reference (target) average over-delivery deviation
-- `k_alpha`: Gain factor controlling sensitivity of alpha updates
-- `k_beta`: Gain factor controlling sensitivity of beta updates
-- `window_size` (`N`): Required number of measurements for each adaptation call
+- `u_ref`: Target under-delivery deviation (reference benchmark)
+- `o_ref`: Target over-delivery deviation
+- `k_alpha`: Gain for alpha adaptation
+- `k_beta`: Gain for beta adaptation
+- `k_under_tol`: Gain for adaptive under-tolerance scaling
+- `window_size` (`N`): Exact number of measurement samples required per adaptation
+- All measurements & parameters use the same fixed-point scaling (1e6 = 1.0)
 
-On each adaptation call with N measurements:
-- Compute averages: `u_avg = mean(u_measurements)`, `o_avg = mean(o_measurements)`
-- Update rules (fixed-point arithmetic):
+Given the last N measurements:
+```
+u_avg = mean(u_measurements)
+o_avg = mean(o_measurements)
 
+alpha_{t+1} = clamp( alpha_t * ( 1 + k_alpha * (u_avg - u_ref) ) )
+beta_{t+1}  = clamp( beta_t  * ( 1 + k_beta  * (o_avg - o_ref) ) )
+underTol_{t+1} = clamp( underTol_t * ( 1 - k_under_tol * (u_avg - u_ref) ) )
 ```
-alpha_{t+1} = clamp_0_max( alpha_t * (1 + k_alpha * (u_avg - u_ref)) )
-beta_{t+1}  = clamp_0_max( beta_t  * (1 + k_beta  * (o_avg - o_ref)) )
-```
+Where `clamp` applies `[0, u64::MAX]` after fixed-point arithmetic; negative intermediate factors drive values toward zero.
 
-Where the internal representation uses integer math with factor F = 1_000_000:
+Internal integer form (F = 1_000_000):
 ```
-factor_a = F + (k_alpha * (u_avg - u_ref)) / F
-new_alpha = (alpha * factor_a) / F
+factor_a  = F + (k_alpha     * (u_avg - u_ref)) / F
+factor_b  = F + (k_beta      * (o_avg - o_ref)) / F
+factor_ut = F - (k_under_tol * (u_avg - u_ref)) / F
+new_alpha = alpha * factor_a  / F
+new_beta  = beta  * factor_b  / F
+new_under = underTol * factor_ut / F
 ```
-(analogous for beta). Negative intermediate results are clamped to 0; values that would overflow `u64` are clamped to `u64::MAX`.
+> NOTE: Only UnderTolerance is adapted; OverTolerance is currently static (manual updates via `update_over_tolerance`).
 
 ### Example Adaptation Workflow
 
 ```rust
 // Custodian sets adaptation policy (window size = 3 samples)
-Remuneration::set_adaptation_params(origin, 400_000, 300_000, 100_000, 200_000, 3);
-
-// Later, provide last 3 measurement samples (fixed-point deviations)
-Remuneration::adapt_alpha_beta(
+Remuneration::set_adaptation_params(
     origin,
-    vec![500_000, 600_000, 700_000],  // under-delivery deviations
-    vec![400_000, 500_000, 600_000],  // over-delivery deviations
+    400_000, // u_ref (0.4)
+    300_000, // o_ref (0.3)
+    100_000, // k_alpha (0.1)
+    200_000, // k_beta  (0.2)
+    050_000, // k_under_tol (0.05)
+    3        // window size
 );
 
-// Alpha / Beta now adapted and stored
+// Later, adapt using last 3 deviation samples
+Remuneration::dynamically_adapt_parameters(
+    origin,
+    vec![500_000, 600_000, 700_000], // under-delivery samples
+    vec![400_000, 500_000, 600_000], // over-delivery samples
+);
+
 let alpha_now = Remuneration::alpha();
 let beta_now  = Remuneration::beta();
+let under_tol = Remuneration::under_tolerance();
 ```
 
-### Usage Examples
+### Extrinsics Summary (Call Indices)
+| Index | Extrinsic | Purpose |
+|-------|-----------|---------|
+| 1 | update_custodian | Set / change custodian |
+| 2 | add_community | Register community |
+| 3 | remove_community | Remove community |
+| 4 | add_prosumer | Register prosumer to community |
+| 5 | remove_prosumer | Deregister prosumer |
+| 6 | update_prosumer | Move prosumer to another community |
+| 7 | add_payment | Register payment (intra or inter) |
+| 8 | set_balance | Custodian sets internal balance |
+| 13 | update_alpha | Manual alpha update |
+| 14 | update_beta | Manual beta update |
+| 15 | update_under_tolerance | Manual UnderTolerance update |
+| 16 | update_over_tolerance | Manual OverTolerance update |
+| 17 | settle_flexibility_payment | Compute & transfer flexibility payment |
+| 18 | set_adaptation_params | Configure adaptation policy |
+| 19 | dynamically_adapt_parameters | Adapt alpha, beta, under tolerance |
 
-#### Setting Up the System
+### Usage Examples (UPDATED)
 
+#### Setup
 ```rust
-// Set the custodian (privileged administrator)
-Remuneration::update_custodian(origin, admin_account);
+Remuneration::update_custodian(origin, admin);
 
-// Set parameters for flexibility settlement
-Remuneration::update_alpha(origin, 500_000);     // 0.5 in fixed-point notation
-Remuneration::update_beta(origin, 200_000);      // 0.2 in fixed-point notation
-Remuneration::update_tolerance(origin, 100_000); // 0.1 in fixed-point notation
+// Settlement parameters
+Remuneration::update_alpha(origin, 500_000);        // 0.5
+Remuneration::update_beta(origin, 200_000);         // 0.2
+Remuneration::update_under_tolerance(origin, 100_000); // 0.1
+Remuneration::update_over_tolerance(origin, 150_000);  // 0.15
 
-// Configure adaptation policy (optional)
-Remuneration::set_adaptation_params(origin, 500_000, 300_000, 100_000, 200_000, 5);
+// Adaptive policy (optional)
+Remuneration::set_adaptation_params(
+    origin,
+    500_000, // u_ref
+    300_000, // o_ref
+    100_000, // k_alpha
+    200_000, // k_beta
+    050_000, // k_under_tol
+    5        // window size
+);
 
-// Add a community
-Remuneration::add_community(origin, community_account, dso_account, owner_account);
-
-// Add prosumers to the community
-Remuneration::add_prosumer(origin, prosumer_account, community_account);
+// Add entities
+Remuneration::add_community(origin, community, dso, owner);
+Remuneration::add_prosumer(origin, prosumer, community);
 ```
 
-#### Processing Payments
-
+#### Payments & Settlement
 ```rust
-// Standard payment between prosumers in same community
-Remuneration::add_payment(origin, receiver_account, amount, INTRA_COMMUNITY);
+// Intra-community payment
+Remuneration::add_payment(origin, receiver, 1_000u128.into(), INTRA_COMMUNITY);
 
-// Payment between communities
-Remuneration::add_payment(origin, receiver_community, amount, INTER_COMMUNITY);
+// Inter-community payment
+Remuneration::add_payment(origin, other_community, 5_000u128.into(), INTER_COMMUNITY);
 
-// Flexibility service payment with performance calculation
+// Flexibility payment
 Remuneration::settle_flexibility_payment(
     origin,
-    provider_account,
-    flexibility_requested,  // e.g., 100 units
-    flexibility_delivered,  // e.g., 95 units
-    price_per_unit,        // e.g., 5 currency units
+    provider,
+    100,   // requested
+    92,    // delivered
+    5,     // price
     INTRA_COMMUNITY
 );
 
-// Perform adaptive update of alpha & beta after collecting N deviation samples
-Remuneration::adapt_alpha_beta(
-    origin,
-    under_delivery_samples, // length == configured window_size
-    over_delivery_samples   // same length
-);
+// Adaptive update after collecting N samples
+Remuneration::dynamically_adapt_parameters(origin, u_samples, o_samples);
 ```
 
-## Flexibility Settlement Calculation
-
-The settlement amount is calculated using the following formula:
+## Flexibility Settlement Calculation (UPDATED)
 
 ```
-base_payment = min(requested, delivered) * price
-under_delivery_penalty = alpha * max(0, requested - delivered - threshold) * price
-over_delivery_bonus    = beta  * max(0, delivered - requested - threshold) * price
-
-final_amount = base_payment - under_delivery_penalty + over_delivery_bonus
+base_payment          = min(requested, delivered) * price
+threshold_under       = UnderTolerance * requested / 1_000_000
+threshold_over        = OverTolerance  * requested / 1_000_000
+under_excess          = max(0, (requested - delivered) - threshold_under)
+under_delivery_penalty= alpha * under_excess * price / 1_000_000
+over_excess           = max(0, (delivered - requested) - threshold_over)
+over_delivery_bonus   = beta  * over_excess  * price / 1_000_000
+final_amount          = base_payment - under_delivery_penalty + over_delivery_bonus
 ```
 
-Where:
-- `threshold = tolerance * requested / 1_000_000`
-- All parameters (alpha, beta, tolerance) use fixed-point arithmetic with 1.0 = 1,000,000
+## Adaptive Parameter Validation
 
-## Adaptive Parameter Constraints & Validation
+- `window_size > 0`
+- Measurement vectors:
+  - Non-empty
+  - Same length
+  - Length == `window_size`
+- Negative scaling => clamp to 0
+- Multiplication overflow => clamp to `u64::MAX`
+- UnderTolerance adaptation only (OverTolerance is manual)
 
-- `window_size` must be > 0 when set
-- Both `u_measurements` & `o_measurements` must:
-  - Be non-empty
-  - Have identical length
-  - Length must equal the configured `window_size`
-- Negative adaptation factors clamp result to 0
-- Overflowing multiplication clamps result to `u64::MAX`
+## Events (UPDATED)
+- `CustodianUpdated`
+- `CommunityAdded` / `CommunityRemoved`
+- `ProsumerAdded` / `ProsumerRemoved`
+- `PaymentAdded`
+- `BalanceSet`
+- `AlphaUpdated` / `BetaUpdated`
+- `UnderToleranceUpdated` / `OverToleranceUpdated`
+- `FlexibilitySettled`
+- `AdaptationParamsUpdated` (now includes `k_under_tol`)
+- `AlphaBetaAdapted` (emitted after dynamic adaptation — may be accompanied by `UnderToleranceUpdated` if it changes)
 
-## Events
-
-The module emits various events for tracking operations:
-
-- `CustodianUpdated`: When the custodian is changed
-- `CommunityAdded` / `CommunityRemoved`: When communities are added or removed
-- `ProsumerAdded` / `ProsumerRemoved`: When prosumers are added or removed
-- `PaymentAdded`: When a standard payment is processed
-- `BalanceSet`: When an account's balance is manually updated by the custodian
-- `AlphaUpdated` / `BetaUpdated` / `ToleranceUpdated`: When settlement parameters are changed manually
-- `FlexibilitySettled`: When a flexibility payment settlement is completed
-- `AdaptationParamsUpdated`: When adaptation policy (u_ref, o_ref, k_alpha, k_beta, window_size) is updated
-- `AlphaBetaAdapted`: When alpha and beta are recalculated based on measurement windows
-
-## Error Handling
-
-The module includes comprehensive error handling for various scenarios:
-
-Authorization & Role:
-- `NotCustodian`
-- `NotAllowedToManageProsumers`
-
-Validation & Logic:
-- `SameSenderReceiver`
-- `InsufficientBalance`
-- `PaymentTypeNotAllowed`
-- `InvalidWindowSize` (adaptation policy)
-- `EmptyMeasurements` (no samples provided)
-- `MismatchedMeasurements` (length mismatch between under & over arrays)
-- `MeasurementsExceedWindow` (length differs from configured window size)
+## Errors
+Authorization:
+- `NotCustodian`, `NotAllowedToManageProsumers`
 
 Entity / Relationship:
-- `SenderNotProsumer`, `ReceiverNotProsumer`
-- `NotACommunity`
-- `DifferentCommunities`
+- `SenderNotProsumer`, `ReceiverNotProsumer`, `NotACommunity`, `DifferentCommunities`
 
-## Testing
+Validation:
+- `SameSenderReceiver`, `InsufficientBalance`, `PaymentTypeNotAllowed`
+- `InvalidWindowSize`, `EmptyMeasurements`, `MismatchedMeasurements`, `MeasurementsExceedWindow`
 
-The remuneration module includes comprehensive tests to verify its functionality and ensure correctness.
+## Testing (UPDATED)
 
-### Test Coverage
-
-- **Administrative Operations**: Custodian, community, and prosumer management
-- **Basic Payment Functionality**: Intra-community and inter-community payments
-- **Balance Management**: Setting / updating balances
-- **Parameter Management**: Alpha, beta, tolerance updates
-- **Adaptive Policy**:
-  - Setting adaptation params (success & failure paths)
-  - Alpha/Beta adaptation (success math verification)
-  - Validation errors (window size, empty, mismatched, length vs window)
-  - Edge handling (negative factor clamp, overflow clamp)
-
-### Flexibility Settlement Tests
-
-1. Basic settlement (requested == delivered)
-2. Under-delivery penalties
-3. Over-delivery bonuses
-4. Tolerance threshold behavior
-5. Complex combined scenarios
-6. Error handling (invalid actors, balances, types)
-7. Inter-community flexibility settlements
-
-### Adaptation Tests (Highlights)
-
-- Proper storage of adaptation policy
-- Adapting alpha/beta with deterministic expected outputs
-- Rejecting incorrect measurement vector conditions
-- Clamping to zero and to `u64::MAX` under extreme negative / overflow conditions
-
-### Test Methodology
-
-Each test:
-1. Configures initial chain state (custodian, entities)
-2. Applies parameter / adaptation configuration
-3. Executes target extrinsic
-4. Asserts resulting state (storage, balances, parameters)
+Coverage includes everything previously documented plus:
+- Dual tolerance behavior (separate under & over) in settlement
+- Dynamic under tolerance adaptation scenarios:
+  - Decrease when deviation above reference
+  - Increase when deviation below reference
+  - Clamp to zero edge case
+- Rename path: `dynamically_adapt_parameters` replacing legacy `adapt_alpha_beta`
 
 Run tests:
-
 ```bash
 cargo test -p remuneration
 ```
 
-Parallel execution:
-
-```bash
-cargo test -p remuneration --jobs 6
-```
-
 ## Integration
+Integrates with:
+- `orderbook_registry` (participant registry)
+- Other settlement / market pallets in the runtime
+- Standard FRAME pallets (`frame_system`, `pallet_balances`)
 
-This module is designed to integrate with other pallets in the energy trading system:
-- `orderbook_registry` for market participant management
-- `trades_settlement` for concluding energy market transactions
-- Standard Substrate pallets like `frame_system` and `pallet_balances`
+## Notes & Future Extensions
+- OverTolerance could be made adaptive analogously (gain + adaptation rule)
+- Additional safety guards (e.g., min/max bounds on adaptive parameters) can be introduced if governance requires tighter control
+- Event filtering dashboards should listen for `UnderToleranceUpdated` following adaptation cycles
