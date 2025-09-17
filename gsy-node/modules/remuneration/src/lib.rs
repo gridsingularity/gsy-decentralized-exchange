@@ -299,6 +299,17 @@
 		#[pallet::getter(fn adaptation_window_size)]
 		pub(super) type AdaptationWindowSize<T: Config> = StorageValue<_, u32, ValueQuery>;
 
+		/// Piecewise settlement parameters
+		#[pallet::storage]
+		#[pallet::getter(fn alpha_piecewise)]
+		pub(super) type AlphaPiecewise<T: Config> = StorageValue<_, u64, ValueQuery>;
+		#[pallet::storage]
+		#[pallet::getter(fn eps_piecewise_1)]
+		pub(super) type EpsPiecewise1<T: Config> = StorageValue<_, u64, ValueQuery>;
+		#[pallet::storage]
+		#[pallet::getter(fn eps_piecewise_2)]
+		pub(super) type EpsPiecewise2<T: Config> = StorageValue<_, u64, ValueQuery>;
+
 		/// # Events
 		///
 		/// The `Event` enum defines all the possible events that can be emitted by the Remuneration module.
@@ -403,6 +414,13 @@
 				u_avg: u64,
 				o_avg: u64,
 			},
+
+			/// Emitted when alpha_piecewise is updated.
+			AlphaPiecewiseUpdated { old_value: u64, new_value: u64 },
+			/// Emitted when eps_piecewise_1 is updated.
+			EpsPiecewise1Updated { old_value: u64, new_value: u64 },
+			/// Emitted when eps_piecewise_2 is updated.
+			EpsPiecewise2Updated { old_value: u64, new_value: u64 },
 		}
 
 		#[pallet::error]
@@ -936,6 +954,78 @@
 				Self::deposit_event(Event::BetaUpdated { old_value: beta, new_value: new_beta });
 				if new_under != under_old { Self::deposit_event(Event::UnderToleranceUpdated { old_value: under_old, new_value: new_under }); }
 				Self::deposit_event(Event::AlphaBetaAdapted { old_alpha: alpha, new_alpha, old_beta: beta, new_beta, u_avg, o_avg });
+				Ok(())
+			}
+
+			/// ## Update Alpha Piecewise Parameter
+			///
+			/// Updates the alpha_piecewise parameter used for flexible settlement calculations.
+			///
+			/// - **Parameters**:
+			///   - `new_value`: The new alpha_piecewise value.
+			///
+			/// - **Access Control**:
+			///   - Requires the caller to be the custodian.
+			///
+			/// - **Event**:
+			///   - `AlphaPiecewiseUpdated` is emitted upon success.
+			#[transactional]
+			#[pallet::weight(<T as Config>::RemunerationWeightInfo::update_alpha_piecewise())]
+			#[pallet::call_index(20)]
+			pub fn update_alpha_piecewise(origin: OriginFor<T>, new_value: u64) -> DispatchResult {
+				let sender = ensure_signed(origin)?;
+				ensure!(Some(sender) == Custodian::<T>::get(), Error::<T>::NotCustodian);
+				let old = AlphaPiecewise::<T>::get();
+				AlphaPiecewise::<T>::put(new_value);
+				Self::deposit_event(Event::AlphaPiecewiseUpdated { old_value: old, new_value });
+				Ok(())
+			}
+
+			/// ## Update Eps Piecewise 1 Parameter
+			///
+			/// Updates the eps_piecewise_1 parameter used for flexible settlement calculations.
+			///
+			/// - **Parameters**:
+			///   - `new_value`: The new eps_piecewise_1 value.
+			///
+			/// - **Access Control**:
+			///   - Requires the caller to be the custodian.
+			///
+			/// - **Event**:
+			///   - `EpsPiecewise1Updated` is emitted upon success.
+			#[transactional]
+			#[pallet::weight(<T as Config>::RemunerationWeightInfo::update_eps_piecewise_1())]
+			#[pallet::call_index(21)]
+			pub fn update_eps_piecewise_1(origin: OriginFor<T>, new_value: u64) -> DispatchResult {
+				let sender = ensure_signed(origin)?;
+				ensure!(Some(sender) == Custodian::<T>::get(), Error::<T>::NotCustodian);
+				let old = EpsPiecewise1::<T>::get();
+				EpsPiecewise1::<T>::put(new_value);
+				Self::deposit_event(Event::EpsPiecewise1Updated { old_value: old, new_value });
+				Ok(())
+			}
+
+			/// ## Update Eps Piecewise 2 Parameter
+			///
+			/// Updates the eps_piecewise_2 parameter used for flexible settlement calculations.
+			///
+			/// - **Parameters**:
+			///   - `new_value`: The new eps_piecewise_2 value.
+			///
+			/// - **Access Control**:
+			///   - Requires the caller to be the custodian.
+			///
+			/// - **Event**:
+			///   - `EpsPiecewise2Updated` is emitted upon success.
+			#[transactional]
+			#[pallet::weight(<T as Config>::RemunerationWeightInfo::update_eps_piecewise_2())]
+			#[pallet::call_index(22)]
+			pub fn update_eps_piecewise_2(origin: OriginFor<T>, new_value: u64) -> DispatchResult {
+				let sender = ensure_signed(origin)?;
+				ensure!(Some(sender) == Custodian::<T>::get(), Error::<T>::NotCustodian);
+				let old = EpsPiecewise2::<T>::get();
+				EpsPiecewise2::<T>::put(new_value);
+				Self::deposit_event(Event::EpsPiecewise2Updated { old_value: old, new_value });
 				Ok(())
 			}
 		}

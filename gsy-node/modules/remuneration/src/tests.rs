@@ -982,3 +982,40 @@ fn adaptation_under_tolerance_clamps_to_zero() {
         assert_eq!(Remuneration::under_tolerance(), 0);
     });
 }
+
+#[test]
+fn piecewise_parameters_management() {
+    new_test_ext().execute_with(|| {
+        // Set custodian
+        assert_ok!(Remuneration::update_custodian(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), ALICE_THE_CUSTODIAN));
+
+        // Defaults should be zero
+        assert_eq!(Remuneration::alpha_piecewise(), 0);
+        assert_eq!(Remuneration::eps_piecewise_1(), 0);
+        assert_eq!(Remuneration::eps_piecewise_2(), 0);
+
+        // Custodian updates values
+        assert_ok!(Remuneration::update_alpha_piecewise(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 750_000));
+        assert_eq!(Remuneration::alpha_piecewise(), 750_000);
+
+        assert_ok!(Remuneration::update_eps_piecewise_1(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 100_000));
+        assert_eq!(Remuneration::eps_piecewise_1(), 100_000);
+
+        assert_ok!(Remuneration::update_eps_piecewise_2(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 250_000));
+        assert_eq!(Remuneration::eps_piecewise_2(), 250_000);
+
+        // Non-custodian cannot update
+        assert_noop!(
+            Remuneration::update_alpha_piecewise(RawOrigin::Signed(BOB_THE_CHEATER).into(), 900_000),
+            Error::<Test>::NotCustodian
+        );
+        assert_noop!(
+            Remuneration::update_eps_piecewise_1(RawOrigin::Signed(BOB_THE_CHEATER).into(), 111_111),
+            Error::<Test>::NotCustodian
+        );
+        assert_noop!(
+            Remuneration::update_eps_piecewise_2(RawOrigin::Signed(BOB_THE_CHEATER).into(), 222_222),
+            Error::<Test>::NotCustodian
+        );
+    });
+}

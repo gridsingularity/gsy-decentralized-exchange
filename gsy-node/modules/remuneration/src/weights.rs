@@ -22,6 +22,10 @@ pub trait RemunerationWeightInfo {
 	fn settle_flexibility_payment() -> Weight;
 	fn set_adaptation_params() -> Weight;
 	fn dynamically_adapt_parameters() -> Weight;
+	// New piecewise parameter updates
+	fn update_alpha_piecewise() -> Weight;
+	fn update_eps_piecewise_1() -> Weight;
+	fn update_eps_piecewise_2() -> Weight;
 }
 
 /// Weight functions for `remuneration`.
@@ -85,12 +89,24 @@ impl<T: frame_system::Config> RemunerationWeightInfo for SubstrateWeightInfo<T> 
 	}
 	fn set_adaptation_params() -> Weight {
 		Weight::from_parts(9_000_000, 0)
-			// write u_ref, o_ref, k_alpha, k_beta, window size
-			.saturating_add(T::DbWeight::get().writes(5_u64))
+			// write u_ref, o_ref, k_alpha, k_beta, k_under_tol, window size
+			.saturating_add(T::DbWeight::get().writes(6_u64))
 	}
 	fn dynamically_adapt_parameters() -> Weight {
 		Weight::from_parts(9_000_000, 0)
-			// writes alpha and beta
-			.saturating_add(T::DbWeight::get().writes(2_u64))
+			// writes alpha, beta, under_tolerance
+			.saturating_add(T::DbWeight::get().writes(3_u64))
+	}
+	fn update_alpha_piecewise() -> Weight {
+		Weight::from_parts(9_000_000, 0)
+			.saturating_add(T::DbWeight::get().writes(1_u64))
+	}
+	fn update_eps_piecewise_1() -> Weight {
+		Weight::from_parts(9_000_000, 0)
+			.saturating_add(T::DbWeight::get().writes(1_u64))
+	}
+	fn update_eps_piecewise_2() -> Weight {
+		Weight::from_parts(9_000_000, 0)
+			.saturating_add(T::DbWeight::get().writes(1_u64))
 	}
 }
