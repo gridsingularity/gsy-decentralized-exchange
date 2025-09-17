@@ -26,6 +26,8 @@ pub trait RemunerationWeightInfo {
 	fn update_alpha_piecewise() -> Weight;
 	fn update_eps_piecewise_1() -> Weight;
 	fn update_eps_piecewise_2() -> Weight;
+	// New piecewise quadratic penalty settlement
+	fn settle_flexibility_payment_with_pw_quad_penalty() -> Weight;
 }
 
 /// Weight functions for `remuneration`.
@@ -106,6 +108,10 @@ impl<T: frame_system::Config> RemunerationWeightInfo for SubstrateWeightInfo<T> 
 			.saturating_add(T::DbWeight::get().writes(1_u64))
 	}
 	fn update_eps_piecewise_2() -> Weight {
+		Weight::from_parts(9_000_000, 0)
+			.saturating_add(T::DbWeight::get().writes(1_u64))
+	}
+	fn settle_flexibility_payment_with_pw_quad_penalty() -> Weight {
 		Weight::from_parts(9_000_000, 0)
 			.saturating_add(T::DbWeight::get().writes(1_u64))
 	}

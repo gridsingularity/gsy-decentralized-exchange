@@ -26,9 +26,9 @@ This module is integral to maintaining accountability, enabling transparent reco
   - Over-delivery bonus factor (beta)
   - Under-delivery tolerance (UnderTolerance) via feedback on recent performance
 
-### Flexibility Payment Calculation
+### Flexibility Payment Calculation (Linear + Tolerances)
 
-The module includes a specialized settlement mechanism for flexibility services with:
+The module includes a settlement mechanism for flexibility services with:
 
 - **Base Payment**: min(requested, delivered) * price
 - **Under-delivery Penalties**: Applied when delivered flexibility is less than requested beyond the under-delivery tolerance
@@ -39,6 +39,48 @@ Parameters (all fixed-point with 1.0 = 1_000_000):
 - **Beta**: Over-delivery bonus scaler
 - **UnderTolerance**: Allowed fractional shortfall before penalty (per request)
 - **OverTolerance**: Allowed fractional excess before bonus
+
+### Piecewise Quadratic Under-Delivery Penalty (PW Quad)
+
+Besides the linear/tolerance model, the module supports a piecewise quadratic penalty for under-delivery. In this variant, over-delivery does not grant any bonus (it is ignored). The final payment is:
+
+```
+base_payment = min(E_r, E_m) * price
+penalty_value = P(E_r, E_m) * price
+final_amount = max(0, base_payment - penalty_value)
+```
+
+Where the penalty in energy units, P(E_r, E_m), is computed via a piecewise rule using two thresholds derived from the requested energy and configured epsilons:
+
+- Fixed-point scale F = 1_000_000
+- e1 = E_r * (1 - eps1/F)
+- e2 = E_r * (1 - eps2/F)
+
+Piecewise penalty (energy units):
+```
+if E_m >= e1:
+    P = 0
+elif e2 <= E_m < e1:
+    P = alpha_piecewise * (e1 - E_m)
+else:  # E_m < e2
+    P = alpha_piecewise * (e1 - E_m) + alpha_piecewise * (e2 - E_m)^2
+```
+Notes:
+- eps1 and eps2 are fixed-point fractions in [0, 1] with F = 1_000_000
+- alpha_piecewise is a dimensionless integer scaling factor applied directly in energy units
+- Over-delivery is ignored (no bonus added)
+
+Related storage parameters and extrinsics:
+- alpha_piecewise: `update_alpha_piecewise(new_value: u64)`
+- eps_piecewise_1: `update_eps_piecewise_1(new_value: u64)` (fixed-point)
+- eps_piecewise_2: `update_eps_piecewise_2(new_value: u64)` (fixed-point)
+
+Settlement extrinsic using the PW Quad penalty:
+- `settle_flexibility_payment_with_pw_quad_penalty(receiver, requested, delivered, price, payment_type)`
+
+Helper (read-only) API:
+- `calc_piecewise_quadratic_penalty(requested: u64, delivered: u64) -> u64`
+  - Returns the penalty in energy units P(E_r, E_m) computed via the above piecewise rule
 
 ### Adaptive Parameter Mechanism
 
@@ -119,9 +161,13 @@ let under_tol = Remuneration::under_tolerance();
 | 14 | update_beta | Manual beta update |
 | 15 | update_under_tolerance | Manual UnderTolerance update |
 | 16 | update_over_tolerance | Manual OverTolerance update |
-| 17 | settle_flexibility_payment | Compute & transfer flexibility payment |
+| 17 | settle_flexibility_payment | Linear model: compute & transfer flexibility payment |
 | 18 | set_adaptation_params | Configure adaptation policy |
 | 19 | dynamically_adapt_parameters | Adapt alpha, beta, under tolerance |
+| 20 | update_alpha_piecewise | Set alpha_piecewise for PW Quad penalty |
+| 21 | update_eps_piecewise_1 | Set eps1 (fixed-point) for PW Quad |
+| 22 | update_eps_piecewise_2 | Set eps2 (fixed-point) for PW Quad |
+| 23 | settle_flexibility_payment_with_pw_quad_penalty | PW Quad model: compute & transfer |
 
 ### Usage Examples
 
@@ -129,11 +175,16 @@ let under_tol = Remuneration::under_tolerance();
 ```rust
 Remuneration::update_custodian(origin, admin);
 
-// Settlement parameters
-Remuneration::update_alpha(origin, 500_000);        // 0.5
-Remuneration::update_beta(origin, 200_000);         // 0.2
+// Linear settlement parameters
+Remuneration::update_alpha(origin, 500_000);           // 0.5
+Remuneration::update_beta(origin, 200_000);            // 0.2
 Remuneration::update_under_tolerance(origin, 100_000); // 0.1
 Remuneration::update_over_tolerance(origin, 150_000);  // 0.15
+
+// Piecewise quadratic parameters
+Remuneration::update_alpha_piecewise(origin, 1);       // integer coefficient
+Remuneration::update_eps_piecewise_1(origin, 200_000); // 0.2
+Remuneration::update_eps_piecewise_2(origin, 400_000); // 0.4
 
 // Adaptive policy (optional)
 Remuneration::set_adaptation_params(
@@ -159,7 +210,7 @@ Remuneration::add_payment(origin, receiver, 1_000u128.into(), INTRA_COMMUNITY);
 // Inter-community payment
 Remuneration::add_payment(origin, other_community, 5_000u128.into(), INTER_COMMUNITY);
 
-// Flexibility payment
+// Flexibility payment - Linear model (with over/under tolerances)
 Remuneration::settle_flexibility_payment(
     origin,
     provider,
@@ -169,11 +220,18 @@ Remuneration::settle_flexibility_payment(
     INTRA_COMMUNITY
 );
 
-// Adaptive update after collecting N samples
-Remuneration::dynamically_adapt_parameters(origin, u_samples, o_samples);
+// Flexibility payment - Piecewise quadratic under-delivery (no over-delivery bonus)
+Remuneration::settle_flexibility_payment_with_pw_quad_penalty(
+    origin,
+    provider,
+    100,   // requested
+    70,    // delivered
+    10,    // price
+    INTRA_COMMUNITY
+);
 ```
 
-## Flexibility Settlement Calculation
+## Flexibility Settlement Calculation (Linear Model)
 
 ```
 base_payment          = min(requested, delivered) * price
@@ -228,11 +286,85 @@ Coverage includes everything previously documented plus:
   - Decrease when deviation above reference
   - Increase when deviation below reference
   - Clamp to zero edge case
-- Rename path: `dynamically_adapt_parameters` replacing legacy `adapt_alpha_beta`
+- Piecewise quadratic under-delivery penalty:
+  - All three branches and their boundaries (E_m ≥ e1, e2 ≤ E_m < e1, E_m < e2)
+  - Over-delivery ignored (no bonus)
+  - Saturation behavior when penalty exceeds base
 
 Run tests:
 ```bash
 cargo test -p remuneration
+```
+
+### Test Suite Overview
+
+- Administrative and registry
+  - custodian_management
+  - community_management
+  - prosumer_management
+
+- Payments and balances
+  - intra_community_payment_ok
+  - inter_community_payment_ok
+  - payment_err_insufficient_balance
+  - payment_err_intra_prosumers_belonging_to_different_communities
+  - payment_err_inter_actors_not_being_communities
+
+- Settlement parameters and tolerances (linear model)
+  - update_settlement_parameters
+  - settle_flexibility_basic
+  - settle_flexibility_under_delivery
+  - settle_flexibility_over_delivery
+  - settle_flexibility_with_tolerance
+  - settle_flexibility_complex_scenario
+  - settle_flexibility_errors
+  - settle_flexibility_inter_community
+  - settle_flexibility_dual_tolerances
+
+- Piecewise quadratic penalty (PW Quad)
+  - piecewise_parameters_management
+  - calc_piecewise_quadratic_penalty_branches_and_boundaries
+  - settle_flexibility_payment_with_pw_quad_penalty
+
+- Adaptive mechanism (alpha/beta/under tolerance)
+  - adaptation_set_params_success_and_event
+  - adaptation_set_params_not_custodian_fails
+  - adaptation_set_params_zero_window_fails
+  - adaptation_alpha_beta_success_updates_and_events
+  - adaptation_alpha_beta_not_custodian_fails
+  - adaptation_alpha_beta_invalid_window_size_when_not_set
+  - adaptation_alpha_beta_empty_measurements_fails
+  - adaptation_alpha_beta_mismatched_lengths_fail
+  - adaptation_alpha_beta_window_size_mismatch_fail
+  - adaptation_alpha_beta_negative_factor_clamps_to_zero
+  - adaptation_alpha_beta_overflow_clamps_to_u64_max
+
+- Runtime integrity (from mock runtime)
+  - mock::__construct_runtime_integrity_test::runtime_integrity_tests
+  - mock::test_genesis_config_builds
+
+### How to list tests
+
+```bash
+# List all tests in this crate
+cargo test -p remuneration -- --list --format=pretty
+```
+
+### Sample results
+
+Example output from a local run (will vary slightly by environment):
+
+```text
+running 31 tests
+...............................
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+Running unittests src/lib.rs (.../target/debug/deps/remuneration-*)
+mock::__construct_runtime_integrity_test::runtime_integrity_tests: test
+mock::test_genesis_config_builds: test
+... (remaining test names) ...
+
+31 tests, 0 benchmarks
 ```
 
 ## Integration

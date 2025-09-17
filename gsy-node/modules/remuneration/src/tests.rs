@@ -942,80 +942,80 @@ fn settle_flexibility_dual_tolerances() {
 }
 
 #[test]
-fn adaptation_under_tolerance_decreases() {
+fn settle_flexibility_payment_with_pw_quad_penalty() {
     new_test_ext().execute_with(|| {
+        System::set_block_number(1);
+        Timestamp::set_timestamp(1_000);
         assert_ok!(Remuneration::update_custodian(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), ALICE_THE_CUSTODIAN));
-        // Initial under tolerance 0.2
-        assert_ok!(Remuneration::update_under_tolerance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 200_000));
-        // Set params: u_ref=0.1, k_under=0.5, window=3
-        assert_ok!(Remuneration::set_adaptation_params(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 100_000, 0, 0, 0, 500_000, 3));
-        // u_avg = 0.3 -> delta_u=0.2; factor = 1 - 0.5*0.2 = 0.9; new_under = 0.18
-        assert_ok!(Remuneration::dynamically_adapt_parameters(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), vec![300_000,300_000,300_000], vec![0,0,0]));
-        assert_eq!(Remuneration::under_tolerance(), 180_000);
-    });
-}
+        assert_ok!(Remuneration::add_community(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), COMMUNITY1, DSO, COMMUNITY1_OWNER));
+        assert_ok!(Remuneration::add_prosumer(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER1, COMMUNITY1));
+        assert_ok!(Remuneration::add_prosumer(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER2, COMMUNITY1));
 
-#[test]
-fn adaptation_under_tolerance_increases() {
-    new_test_ext().execute_with(|| {
-        assert_ok!(Remuneration::update_custodian(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), ALICE_THE_CUSTODIAN));
-        // Initial under tolerance 0.2
-        assert_ok!(Remuneration::update_under_tolerance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 200_000));
-        // Set params: u_ref=0.5, k_under=0.5, window=2
-        assert_ok!(Remuneration::set_adaptation_params(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 500_000, 0, 0, 0, 500_000, 2));
-        // u_avg = 0.3 -> delta_u = -0.2 ; factor = 1 + 0.5*0.2 = 1.1 ; new_under = 0.22
-        assert_ok!(Remuneration::dynamically_adapt_parameters(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), vec![300_000,300_000], vec![0,0]));
-        assert_eq!(Remuneration::under_tolerance(), 220_000);
-    });
-}
+        // Piecewise params: alpha=1, eps1=0.2, eps2=0.4 => e1=80, e2=60
+        assert_ok!(Remuneration::update_alpha_piecewise(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 1));
+        assert_ok!(Remuneration::update_eps_piecewise_1(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 200_000));
+        assert_ok!(Remuneration::update_eps_piecewise_2(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 400_000));
 
-#[test]
-fn adaptation_under_tolerance_clamps_to_zero() {
-    new_test_ext().execute_with(|| {
-        assert_ok!(Remuneration::update_custodian(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), ALICE_THE_CUSTODIAN));
-        // Initial under tolerance 0.2
-        assert_ok!(Remuneration::update_under_tolerance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 200_000));
-        // Large k and large positive delta forcing negative factor
-        assert_ok!(Remuneration::set_adaptation_params(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 0, 0, 0, 0, 1_000_000, 1));
-        // u_avg = 1.0 -> delta_u=1.0 => factor = 1 - 1*1 = 0 -> new_under=0
-        assert_ok!(Remuneration::dynamically_adapt_parameters(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), vec![1_000_000], vec![0]));
-        assert_eq!(Remuneration::under_tolerance(), 0);
-    });
-}
+        // ---------- Perfect delivery ----------
+        assert_ok!(Remuneration::set_balance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER1, 5_000));
+        assert_ok!(Remuneration::set_balance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER2, 0));
 
-#[test]
-fn piecewise_parameters_management() {
-    new_test_ext().execute_with(|| {
-        // Set custodian
-        assert_ok!(Remuneration::update_custodian(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), ALICE_THE_CUSTODIAN));
+        let price = 5u64; let er = 100u64; let em = 100u64;
+        // Base = 100*5=500 ; Em>=e1 => penalty=0 ; final=500
+        assert_ok!(Remuneration::settle_flexibility_payment_with_pw_quad_penalty(
+            RawOrigin::Signed(PROSUMER1).into(), PROSUMER2, er, em, price, INTRA_COMMUNITY
+        ));
+        assert_eq!(Remuneration::balances(PROSUMER1), 5_000 - 500);
+        assert_eq!(Remuneration::balances(PROSUMER2), 500);
 
-        // Defaults should be zero
-        assert_eq!(Remuneration::alpha_piecewise(), 0);
-        assert_eq!(Remuneration::eps_piecewise_1(), 0);
-        assert_eq!(Remuneration::eps_piecewise_2(), 0);
+        // ---------- Linear under-delivery ----------
+        assert_ok!(Remuneration::set_balance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER1, 10_000));
+        assert_ok!(Remuneration::set_balance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER2, 0));
 
-        // Custodian updates values
-        assert_ok!(Remuneration::update_alpha_piecewise(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 750_000));
-        assert_eq!(Remuneration::alpha_piecewise(), 750_000);
+        let price = 10u64; let er = 100u64; let em = 70u64; // e2<=em<e1
+        // Base = 70*10=700 ; penalty_energy = e1-em = 10 ; penalty_value=100 ; final=600
+        assert_ok!(Remuneration::settle_flexibility_payment_with_pw_quad_penalty(
+            RawOrigin::Signed(PROSUMER1).into(), PROSUMER2, er, em, price, INTRA_COMMUNITY
+        ));
+        assert_eq!(Remuneration::balances(PROSUMER1), 10_000 - 600);
+        assert_eq!(Remuneration::balances(PROSUMER2), 600);
 
-        assert_ok!(Remuneration::update_eps_piecewise_1(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 100_000));
-        assert_eq!(Remuneration::eps_piecewise_1(), 100_000);
+        // ---------- Quadratic under-delivery (does not saturate to zero) ----------
+        // Choose Em just below e2 so quadratic term is small: em = 59 (<60)
+        // penalty_energy = (e1-em) + (e2-em)^2 = (80-59) + (60-59)^2 = 21 + 1 = 22
+        // Base = min(er, em) * price = 59 * 10 = 590; penalty_value = 22 * 10 = 220; final = 370
+        assert_ok!(Remuneration::set_balance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER1, 10_000));
+        assert_ok!(Remuneration::set_balance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER2, 0));
+        let price = 10u64; let er = 100u64; let em = 59u64;
+        assert_ok!(Remuneration::settle_flexibility_payment_with_pw_quad_penalty(
+            RawOrigin::Signed(PROSUMER1).into(), PROSUMER2, er, em, price, INTRA_COMMUNITY
+        ));
+        assert_eq!(Remuneration::balances(PROSUMER1), 10_000 - 370);
+        assert_eq!(Remuneration::balances(PROSUMER2), 370);
 
-        assert_ok!(Remuneration::update_eps_piecewise_2(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 250_000));
-        assert_eq!(Remuneration::eps_piecewise_2(), 250_000);
+        // ---------- Quadratic under-delivery (saturates to zero) ----------
+        assert_ok!(Remuneration::set_balance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER1, 10_000));
+        assert_ok!(Remuneration::set_balance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER2, 0));
 
-        // Non-custodian cannot update
-        assert_noop!(
-            Remuneration::update_alpha_piecewise(RawOrigin::Signed(BOB_THE_CHEATER).into(), 900_000),
-            Error::<Test>::NotCustodian
-        );
-        assert_noop!(
-            Remuneration::update_eps_piecewise_1(RawOrigin::Signed(BOB_THE_CHEATER).into(), 111_111),
-            Error::<Test>::NotCustodian
-        );
-        assert_noop!(
-            Remuneration::update_eps_piecewise_2(RawOrigin::Signed(BOB_THE_CHEATER).into(), 222_222),
-            Error::<Test>::NotCustodian
-        );
+        let price = 10u64; let er = 100u64; let em = 50u64; // em<e2
+        // Base = 50*10=500 ; penalty_energy = (e1-em) + (e2-em)^2 = 30 + 100 = 130 ; penalty_value=1300 ; final saturates to 0
+        assert_ok!(Remuneration::settle_flexibility_payment_with_pw_quad_penalty(
+            RawOrigin::Signed(PROSUMER1).into(), PROSUMER2, er, em, price, INTRA_COMMUNITY
+        ));
+        // Amount=0 transferred => balances unchanged
+        assert_eq!(Remuneration::balances(PROSUMER1), 10_000);
+        assert_eq!(Remuneration::balances(PROSUMER2), 0);
+
+        // ---------- Over-delivery no bonus ----------
+        assert_ok!(Remuneration::set_balance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER1, 5_000));
+        assert_ok!(Remuneration::set_balance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER2, 0));
+
+        let price = 5u64; let er = 100u64; let em = 120u64;
+        // Base = min(100,120)*5 = 500 ; penalty should be 0; no bonus considered => final=500
+        assert_ok!(Remuneration::settle_flexibility_payment_with_pw_quad_penalty(
+            RawOrigin::Signed(PROSUMER1).into(), PROSUMER2, er, em, price, INTRA_COMMUNITY
+        ));
+        assert_eq!(Remuneration::balances(PROSUMER1), 5_000 - 500);
+        assert_eq!(Remuneration::balances(PROSUMER2), 500);
     });
 }

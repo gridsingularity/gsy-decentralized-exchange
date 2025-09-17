@@ -912,6 +912,34 @@
 			}
 
 			#[transactional]
+			#[pallet::weight(<T as Config>::RemunerationWeightInfo::settle_flexibility_payment_with_pw_quad_penalty())]
+			#[pallet::call_index(23)]
+			pub fn settle_flexibility_payment_with_pw_quad_penalty(
+				origin: OriginFor<T>,
+				receiver: T::AccountId,
+				flexi_requested: u64,
+				flexi_delivered: u64,
+				price: u64,
+				payment_type: u8
+			) -> DispatchResult {
+				let sender = ensure_signed(origin.clone())?;
+
+				// Base payment is for energy actually delivered up to the requested amount
+				let base: u128 = (core::cmp::min(flexi_requested, flexi_delivered) as u128)
+					.saturating_mul(price as u128);
+				// Penalty computed via piecewise quadratic policy (energy units), then converted to value with price
+				let penalty_energy: u128 = Self::calc_piecewise_quadratic_penalty(flexi_requested, flexi_delivered) as u128;
+				let penalty_value: u128 = penalty_energy.saturating_mul(price as u128);
+				let final_amount_u128 = base.saturating_sub(penalty_value);
+				let final_amount_u64 = final_amount_u128.min(u128::from(u64::MAX)) as u64;
+				let amount = BalanceOf::<T>::from(final_amount_u64 as u32);
+
+				Self::add_payment(origin, receiver.clone(), amount, payment_type)?;
+				Self::deposit_event(Event::FlexibilitySettled { requester: sender, provider: receiver, requested: flexi_requested, delivered: flexi_delivered, price, calculated_amount: amount });
+				Ok(())
+			}
+
+			#[transactional]
 			#[pallet::weight(<T as Config>::RemunerationWeightInfo::set_adaptation_params())]
 			#[pallet::call_index(18)]
 			pub fn set_adaptation_params(
@@ -1028,6 +1056,7 @@
 				Self::deposit_event(Event::EpsPiecewise2Updated { old_value: old, new_value });
 				Ok(())
 			}
+
 		}
 
 		/// # Queries for the Remuneration Pallet
@@ -1037,6 +1066,43 @@
 		/// structured and efficient manner. The methods included here are read-only and do not alter the state
 		/// of the storage.
 		impl<T: Config> Pallet<T> {
+			/// Calculate piecewise quadratic under-delivery penalty based on global parameters.
+			/// Inputs:
+			/// - flexi_requested (E_r)
+			/// - flexi_delivered (E_m)
+			/// Global params (fixed-point 1e6):
+			/// - alpha_piecewise, eps_piecewise_1, eps_piecewise_2
+			/// Piecewise rule:
+			/// e1 = E_r * (1 - eps1)
+			/// e2 = E_r * (1 - eps2)
+			/// if E_m >= e1: 0
+			/// else if e2 <= E_m < e1: alpha*(e1 - E_m)
+			/// else (E_m < e2): alpha*(e1 - E_m) + alpha*(e2 - E_m)^2
+			pub fn calc_piecewise_quadratic_penalty(flexi_requested: u64, flexi_delivered: u64) -> u64 {
+				let f: u128 = 1_000_000u128;
+				let er: u128 = flexi_requested as u128;
+				let em: u128 = flexi_delivered as u128;
+				let alpha: u128 = AlphaPiecewise::<T>::get() as u128;
+				let eps1: u128 = EpsPiecewise1::<T>::get() as u128;
+				let eps2: u128 = EpsPiecewise2::<T>::get() as u128;
+				// e1 = Er * (1 - eps1); e2 = Er * (1 - eps2) with fixed-point eps
+				let one_minus_eps1 = f.saturating_sub(eps1);
+				let one_minus_eps2 = f.saturating_sub(eps2);
+				let e1: u128 = one_minus_eps1.saturating_mul(er).checked_div(f).unwrap_or(0);
+				let e2: u128 = one_minus_eps2.saturating_mul(er).checked_div(f).unwrap_or(0);
+				if em >= e1 {
+					return 0;
+				}
+				let diff1 = e1.saturating_sub(em);
+				let mut penalty: u128 = alpha.saturating_mul(diff1);
+				if em < e2 {
+					let diff2 = e2.saturating_sub(em);
+					let quad = alpha.saturating_mul(diff2.saturating_mul(diff2));
+					penalty = penalty.saturating_add(quad);
+				}
+				penalty.min(u128::from(u64::MAX)) as u64
+			}
+
 			/// Query the balance of a specific account.
 			///
 			/// - **Parameters**:
