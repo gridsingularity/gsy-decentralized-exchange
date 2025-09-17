@@ -981,17 +981,17 @@ fn settle_flexibility_payment_with_pw_quad_penalty() {
         assert_eq!(Remuneration::balances(PROSUMER2), 600);
 
         // ---------- Quadratic under-delivery (does not saturate to zero) ----------
-        // Choose Em just below e2 so quadratic term is small: em = 59 (<60)
-        // penalty_energy = (e1-em) + (e2-em)^2 = (80-59) + (60-59)^2 = 21 + 1 = 22
-        // Base = min(er, em) * price = 59 * 10 = 590; penalty_value = 22 * 10 = 220; final = 370
+        // Choose Em below e2 so quadratic term is pronounced: em = 55 (<60)
+        // penalty_energy = (e1-em) + (e2-em)^2 = (80-55) + (60-55)^2 = 25 + 25 = 50
+        // Base = min(er, em) * price = 55 * 10 = 550; penalty_value = 50 * 10 = 500; final = 50
         assert_ok!(Remuneration::set_balance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER1, 10_000));
         assert_ok!(Remuneration::set_balance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER2, 0));
-        let price = 10u64; let er = 100u64; let em = 59u64;
+        let price = 10u64; let er = 100u64; let em = 55u64;
         assert_ok!(Remuneration::settle_flexibility_payment_with_pw_quad_penalty(
             RawOrigin::Signed(PROSUMER1).into(), PROSUMER2, er, em, price, INTRA_COMMUNITY
         ));
-        assert_eq!(Remuneration::balances(PROSUMER1), 10_000 - 370);
-        assert_eq!(Remuneration::balances(PROSUMER2), 370);
+        assert_eq!(Remuneration::balances(PROSUMER1), 10_000 - 50);
+        assert_eq!(Remuneration::balances(PROSUMER2), 50);
 
         // ---------- Quadratic under-delivery (saturates to zero) ----------
         assert_ok!(Remuneration::set_balance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER1, 10_000));
