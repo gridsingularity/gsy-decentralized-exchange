@@ -1065,3 +1065,54 @@ fn settle_flexibility_payment_with_pw_quad_penalty() {
         assert_eq!(Remuneration::balances(PROSUMER2), 500);
     });
 }
+
+#[test]
+fn hybrid_model_parameters_management() {
+    new_test_ext().execute_with(|| {
+        // Set custodian
+        assert_ok!(Remuneration::update_custodian(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), ALICE_THE_CUSTODIAN));
+        // Defaults should be zero
+        assert_eq!(Remuneration::gamma_over_hybrid(), 0);
+        assert_eq!(Remuneration::gamma_under_hybrid(), 0);
+        assert_eq!(Remuneration::eps_hybrid(), 0);
+        assert_eq!(Remuneration::n_hybrid(), 0);
+        // Update all hybrid parameters at once
+        let go = 300_000u64; // 0.3
+        let gu = 500_000u64; // 0.5
+        let eps = 100_000u64; // 0.1
+        let n = 2u64; // quadratic growth
+        assert_ok!(Remuneration::set_hybrid_model_parameters(
+            RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), go, gu, eps, n
+        ));
+        // Check storage
+        assert_eq!(Remuneration::gamma_over_hybrid(), go);
+        assert_eq!(Remuneration::gamma_under_hybrid(), gu);
+        assert_eq!(Remuneration::eps_hybrid(), eps);
+        assert_eq!(Remuneration::n_hybrid(), n);
+        // Query helper returns same tuple
+        let q = Remuneration::query_hybrid_model_params();
+        assert_eq!(q, (go, gu, eps, n));
+    });
+}
+
+
+#[test]
+fn hybrid_model_parameters_not_custodian_fails() {
+    new_test_ext().execute_with(|| {
+        // Establish a custodian distinct from the caller later
+        assert_ok!(Remuneration::update_custodian(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), ALICE_THE_CUSTODIAN));
+        // Non-custodian tries to set -> should fail
+        assert_noop!(
+            Remuneration::set_hybrid_model_parameters(
+                RawOrigin::Signed(BOB_THE_CHEATER).into(), 1, 2, 3, 4
+            ),
+            Error::<Test>::NotCustodian
+        );
+        // Ensure values remain unchanged (zero)
+        assert_eq!(Remuneration::gamma_over_hybrid(), 0);
+        assert_eq!(Remuneration::gamma_under_hybrid(), 0);
+        assert_eq!(Remuneration::eps_hybrid(), 0);
+        assert_eq!(Remuneration::n_hybrid(), 0);
+    });
+}
+

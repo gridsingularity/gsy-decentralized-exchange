@@ -21,6 +21,7 @@ pub trait RemunerationWeightInfo {
 	fn dynamically_adapt_parameters() -> Weight;
 	fn set_piecewise_parameters() -> Weight;
 	fn settle_flexibility_payment_with_pw_quad_penalty() -> Weight;
+	fn set_hybrid_model_parameters() -> Weight; // new hybrid params setter
 }
 
 /// Weight functions for `remuneration`.
@@ -89,5 +90,10 @@ impl<T: frame_system::Config> RemunerationWeightInfo for SubstrateWeightInfo<T> 
 	fn settle_flexibility_payment_with_pw_quad_penalty() -> Weight {
 		Weight::from_parts(9_000_000, 0)
 			.saturating_add(T::DbWeight::get().writes(1_u64))
+	}
+	fn set_hybrid_model_parameters() -> Weight {
+		Weight::from_parts(9_000_000, 0)
+			// writes gamma_over, gamma_under, eps_hybrid, n_hybrid
+			.saturating_add(T::DbWeight::get().writes(4_u64))
 	}
 }

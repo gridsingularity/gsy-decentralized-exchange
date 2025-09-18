@@ -310,6 +310,21 @@
 		#[pallet::getter(fn eps_piecewise_2)]
 		pub(super) type EpsPiecewise2<T: Config> = StorageValue<_, u64, ValueQuery>;
 
+		/// ## Hybrid Model Parameters
+		/// Additional parameters for the hybrid settlement model.
+		#[pallet::storage]
+		#[pallet::getter(fn gamma_over_hybrid)]
+		pub(super) type GammaOverHybrid<T: Config> = StorageValue<_, u64, ValueQuery>;
+		#[pallet::storage]
+		#[pallet::getter(fn gamma_under_hybrid)]
+		pub(super) type GammaUnderHybrid<T: Config> = StorageValue<_, u64, ValueQuery>;
+		#[pallet::storage]
+		#[pallet::getter(fn eps_hybrid)]
+		pub(super) type EpsHybrid<T: Config> = StorageValue<_, u64, ValueQuery>;
+		#[pallet::storage]
+		#[pallet::getter(fn n_hybrid)]
+		pub(super) type NHybrid<T: Config> = StorageValue<_, u64, ValueQuery>;
+
 		/// # Events
 		///
 		/// The `Event` enum defines all the possible events that can be emitted by the Remuneration module.
@@ -421,6 +436,14 @@
 			EpsPiecewise1Updated { old_value: u64, new_value: u64 },
 			/// Emitted when eps_piecewise_2 is updated.
 			EpsPiecewise2Updated { old_value: u64, new_value: u64 },
+
+			/// Emitted when hybrid model parameters are updated.
+			HybridModelParametersUpdated {
+				gamma_over: u64,
+				gamma_under: u64,
+				eps: u64,
+				n: u64,
+			},
 		}
 
 		#[pallet::error]
@@ -937,7 +960,7 @@
 			#[transactional]
 			#[pallet::weight(<T as Config>::RemunerationWeightInfo::set_piecewise_parameters())]
 			#[pallet::call_index(20)]
-			pub fn set_piecewise_parameters(origin: OriginFor<T>, new_alpha_pw: u64, new_eps1: u64, new_eps2: u64) -> DispatchResult {
+				pub fn set_piecewise_parameters(origin: OriginFor<T>, new_alpha_pw: u64, new_eps1: u64, new_eps2: u64) -> DispatchResult {
 				let sender = ensure_signed(origin)?;
 				ensure!(Some(sender) == Custodian::<T>::get(), Error::<T>::NotCustodian);
 				let old_alpha = AlphaPiecewise::<T>::get();
@@ -950,6 +973,30 @@
 				Self::deposit_event(Event::AlphaPiecewiseUpdated { old_value: old_alpha, new_value: new_alpha_pw });
 				Self::deposit_event(Event::EpsPiecewise1Updated { old_value: old_eps1, new_value: new_eps1 });
 				Self::deposit_event(Event::EpsPiecewise2Updated { old_value: old_eps2, new_value: new_eps2 });
+				Ok(())
+			}
+
+			/// ## Set Hybrid Model Parameters
+			///
+			/// Sets gamma_over_hybrid, gamma_under_hybrid, eps_hybrid, and n_hybrid atomically.
+			/// Custodian-only. Emits a single consolidated update event.
+			#[transactional]
+			#[pallet::weight(<T as Config>::RemunerationWeightInfo::set_hybrid_model_parameters())]
+			#[pallet::call_index(21)]
+			pub fn set_hybrid_model_parameters(
+				origin: OriginFor<T>,
+				new_gamma_over: u64,
+				new_gamma_under: u64,
+				new_eps: u64,
+				new_n: u64,
+			) -> DispatchResult {
+				let sender = ensure_signed(origin)?;
+				ensure!(Some(sender) == Custodian::<T>::get(), Error::<T>::NotCustodian);
+				GammaOverHybrid::<T>::put(new_gamma_over);
+				GammaUnderHybrid::<T>::put(new_gamma_under);
+				EpsHybrid::<T>::put(new_eps);
+				NHybrid::<T>::put(new_n);
+				Self::deposit_event(Event::HybridModelParametersUpdated { gamma_over: new_gamma_over, gamma_under: new_gamma_under, eps: new_eps, n: new_n });
 				Ok(())
 			}
 
@@ -1087,6 +1134,16 @@
 					Self::k_alpha(),
 					Self::k_beta(),
 					Self::adaptation_window_size(),
+				)
+			}
+
+			/// Query hybrid model parameters.
+			pub fn query_hybrid_model_params() -> (u64, u64, u64, u64) {
+				(
+					Self::gamma_over_hybrid(),
+					Self::gamma_under_hybrid(),
+					Self::eps_hybrid(),
+					Self::n_hybrid(),
 				)
 			}
 		}
