@@ -982,6 +982,46 @@ mod pw_quad_penalty_tests {
     use super::*;
 
     #[test]
+    fn piecewise_parameters_management() {
+        new_test_ext().execute_with(|| {
+            // Set custodian
+            assert_ok!(Remuneration::update_custodian(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), ALICE_THE_CUSTODIAN));
+            // Defaults
+            assert_eq!(Remuneration::alpha_piecewise(), 0);
+            assert_eq!(Remuneration::eps_piecewise_1(), 0);
+            assert_eq!(Remuneration::eps_piecewise_2(), 0);
+            // Update piecewise params
+            let a = 2u64; let e1 = 250_000u64; let e2 = 400_000u64;
+            assert_ok!(Remuneration::set_piecewise_parameters(
+                RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), a, e1, e2
+            ));
+            // Storage checks
+            assert_eq!(Remuneration::alpha_piecewise(), a);
+            assert_eq!(Remuneration::eps_piecewise_1(), e1);
+            assert_eq!(Remuneration::eps_piecewise_2(), e2);
+        });
+    }
+
+    #[test]
+    fn piecewise_parameters_not_custodian_fails() {
+        new_test_ext().execute_with(|| {
+            // Establish a custodian to compare against
+            assert_ok!(Remuneration::update_custodian(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), ALICE_THE_CUSTODIAN));
+            // Non-custodian cannot set piecewise params
+            assert_noop!(
+                Remuneration::set_piecewise_parameters(
+                    RawOrigin::Signed(BOB_THE_CHEATER).into(), 1, 200_000, 300_000
+                ),
+                Error::<Test>::NotCustodian
+            );
+            // Ensure storage remains at defaults
+            assert_eq!(Remuneration::alpha_piecewise(), 0);
+            assert_eq!(Remuneration::eps_piecewise_1(), 0);
+            assert_eq!(Remuneration::eps_piecewise_2(), 0);
+        });
+    }
+
+    #[test]
     fn settle_flexibility_payment_with_pw_quad_penalty() {
         new_test_ext().execute_with(|| {
             System::set_block_number(1);
