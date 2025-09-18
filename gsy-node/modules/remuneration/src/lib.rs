@@ -985,75 +985,30 @@
 				Ok(())
 			}
 
-			/// ## Update Alpha Piecewise Parameter
+			/// ## Update Piecewise Parameters
 			///
-			/// Updates the alpha_piecewise parameter used for flexible settlement calculations.
+			/// Updates all piecewise parameters used for flexible settlement calculations.
+			/// - `new_alpha_pw`: New alpha_piecewise value (dimensionless, integer scaling factor)
+			/// - `new_eps1`: New eps_piecewise_1 value (fixed-point 1e6)
+			/// - `new_eps2`: New eps_piecewise_2 value (fixed-point 1e6)
 			///
-			/// - **Parameters**:
-			///   - `new_value`: The new alpha_piecewise value.
-			///
-			/// - **Access Control**:
-			///   - Requires the caller to be the custodian.
-			///
-			/// - **Event**:
-			///   - `AlphaPiecewiseUpdated` is emitted upon success.
+			/// Access: Custodian only
 			#[transactional]
-			#[pallet::weight(<T as Config>::RemunerationWeightInfo::update_alpha_piecewise())]
+			#[pallet::weight(<T as Config>::RemunerationWeightInfo::set_piecewise_parameters())]
 			#[pallet::call_index(20)]
-			pub fn update_alpha_piecewise(origin: OriginFor<T>, new_value: u64) -> DispatchResult {
+			pub fn set_piecewise_parameters(origin: OriginFor<T>, new_alpha_pw: u64, new_eps1: u64, new_eps2: u64) -> DispatchResult {
 				let sender = ensure_signed(origin)?;
 				ensure!(Some(sender) == Custodian::<T>::get(), Error::<T>::NotCustodian);
-				let old = AlphaPiecewise::<T>::get();
-				AlphaPiecewise::<T>::put(new_value);
-				Self::deposit_event(Event::AlphaPiecewiseUpdated { old_value: old, new_value });
-				Ok(())
-			}
-
-			/// ## Update Eps Piecewise 1 Parameter
-			///
-			/// Updates the eps_piecewise_1 parameter used for flexible settlement calculations.
-			///
-			/// - **Parameters**:
-			///   - `new_value`: The new eps_piecewise_1 value.
-			///
-			/// - **Access Control**:
-			///   - Requires the caller to be the custodian.
-			///
-			/// - **Event**:
-			///   - `EpsPiecewise1Updated` is emitted upon success.
-			#[transactional]
-			#[pallet::weight(<T as Config>::RemunerationWeightInfo::update_eps_piecewise_1())]
-			#[pallet::call_index(21)]
-			pub fn update_eps_piecewise_1(origin: OriginFor<T>, new_value: u64) -> DispatchResult {
-				let sender = ensure_signed(origin)?;
-				ensure!(Some(sender) == Custodian::<T>::get(), Error::<T>::NotCustodian);
-				let old = EpsPiecewise1::<T>::get();
-				EpsPiecewise1::<T>::put(new_value);
-				Self::deposit_event(Event::EpsPiecewise1Updated { old_value: old, new_value });
-				Ok(())
-			}
-
-			/// ## Update Eps Piecewise 2 Parameter
-			///
-			/// Updates the eps_piecewise_2 parameter used for flexible settlement calculations.
-			///
-			/// - **Parameters**:
-			///   - `new_value`: The new eps_piecewise_2 value.
-			///
-			/// - **Access Control**:
-			///   - Requires the caller to be the custodian.
-			///
-			/// - **Event**:
-			///   - `EpsPiecewise2Updated` is emitted upon success.
-			#[transactional]
-			#[pallet::weight(<T as Config>::RemunerationWeightInfo::update_eps_piecewise_2())]
-			#[pallet::call_index(22)]
-			pub fn update_eps_piecewise_2(origin: OriginFor<T>, new_value: u64) -> DispatchResult {
-				let sender = ensure_signed(origin)?;
-				ensure!(Some(sender) == Custodian::<T>::get(), Error::<T>::NotCustodian);
-				let old = EpsPiecewise2::<T>::get();
-				EpsPiecewise2::<T>::put(new_value);
-				Self::deposit_event(Event::EpsPiecewise2Updated { old_value: old, new_value });
+				let old_alpha = AlphaPiecewise::<T>::get();
+				let old_eps1 = EpsPiecewise1::<T>::get();
+				let old_eps2 = EpsPiecewise2::<T>::get();
+				AlphaPiecewise::<T>::put(new_alpha_pw);
+				EpsPiecewise1::<T>::put(new_eps1);
+				EpsPiecewise2::<T>::put(new_eps2);
+				// Emit the three existing events for compatibility with downstream listeners
+				Self::deposit_event(Event::AlphaPiecewiseUpdated { old_value: old_alpha, new_value: new_alpha_pw });
+				Self::deposit_event(Event::EpsPiecewise1Updated { old_value: old_eps1, new_value: new_eps1 });
+				Self::deposit_event(Event::EpsPiecewise2Updated { old_value: old_eps2, new_value: new_eps2 });
 				Ok(())
 			}
 

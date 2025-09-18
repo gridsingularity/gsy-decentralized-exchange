@@ -22,11 +22,9 @@ pub trait RemunerationWeightInfo {
 	fn settle_flexibility_payment() -> Weight;
 	fn set_adaptation_params() -> Weight;
 	fn dynamically_adapt_parameters() -> Weight;
-	// New piecewise parameter updates
-	fn update_alpha_piecewise() -> Weight;
-	fn update_eps_piecewise_1() -> Weight;
-	fn update_eps_piecewise_2() -> Weight;
-	// New piecewise quadratic penalty settlement
+	// Consolidated piecewise parameter update
+	fn set_piecewise_parameters() -> Weight;
+	// Piecewise quadratic penalty settlement
 	fn settle_flexibility_payment_with_pw_quad_penalty() -> Weight;
 }
 
@@ -99,17 +97,10 @@ impl<T: frame_system::Config> RemunerationWeightInfo for SubstrateWeightInfo<T> 
 			// writes alpha, beta, under_tolerance
 			.saturating_add(T::DbWeight::get().writes(3_u64))
 	}
-	fn update_alpha_piecewise() -> Weight {
+	fn set_piecewise_parameters() -> Weight {
 		Weight::from_parts(9_000_000, 0)
-			.saturating_add(T::DbWeight::get().writes(1_u64))
-	}
-	fn update_eps_piecewise_1() -> Weight {
-		Weight::from_parts(9_000_000, 0)
-			.saturating_add(T::DbWeight::get().writes(1_u64))
-	}
-	fn update_eps_piecewise_2() -> Weight {
-		Weight::from_parts(9_000_000, 0)
-			.saturating_add(T::DbWeight::get().writes(1_u64))
+			// writes alpha_pw, eps1, eps2
+			.saturating_add(T::DbWeight::get().writes(3_u64))
 	}
 	fn settle_flexibility_payment_with_pw_quad_penalty() -> Weight {
 		Weight::from_parts(9_000_000, 0)

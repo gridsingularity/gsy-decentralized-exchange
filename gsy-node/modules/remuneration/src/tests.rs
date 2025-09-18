@@ -952,9 +952,7 @@ fn settle_flexibility_payment_with_pw_quad_penalty() {
         assert_ok!(Remuneration::add_prosumer(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER2, COMMUNITY1));
 
         // Piecewise params: alpha=1, eps1=0.2, eps2=0.4 => e1=80, e2=60
-        assert_ok!(Remuneration::update_alpha_piecewise(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 1));
-        assert_ok!(Remuneration::update_eps_piecewise_1(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 200_000));
-        assert_ok!(Remuneration::update_eps_piecewise_2(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 400_000));
+        assert_ok!(Remuneration::set_piecewise_parameters(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 1, 200_000, 400_000));
 
         // ---------- Perfect delivery ----------
         assert_ok!(Remuneration::set_balance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER1, 5_000));
@@ -971,7 +969,6 @@ fn settle_flexibility_payment_with_pw_quad_penalty() {
         // ---------- Linear under-delivery ----------
         assert_ok!(Remuneration::set_balance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER1, 10_000));
         assert_ok!(Remuneration::set_balance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER2, 0));
-
         let price = 10u64; let er = 100u64; let em = 70u64; // e2<=em<e1
         // Base = 70*10=700 ; penalty_energy = e1-em = 10 ; penalty_value=100 ; final=600
         assert_ok!(Remuneration::settle_flexibility_payment_with_pw_quad_penalty(

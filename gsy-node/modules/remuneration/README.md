@@ -71,9 +71,8 @@ Notes:
 - Over-delivery is ignored (no bonus added)
 
 Related storage parameters and extrinsics:
-- alpha_piecewise: `update_alpha_piecewise(new_value: u64)`
-- eps_piecewise_1: `update_eps_piecewise_1(new_value: u64)` (fixed-point)
-- eps_piecewise_2: `update_eps_piecewise_2(new_value: u64)` (fixed-point)
+- Storage: alpha_piecewise, eps_piecewise_1, eps_piecewise_2
+- Extrinsic: `update_piecewise_parameters(new_alpha_pw: u64, new_eps1: u64, new_eps2: u64)` (eps values are fixed-point)
 
 Settlement extrinsic using the PW Quad penalty:
 - `settle_flexibility_payment_with_pw_quad_penalty(receiver, requested, delivered, price, payment_type)`
@@ -164,9 +163,7 @@ let under_tol = Remuneration::under_tolerance();
 | 17 | settle_flexibility_payment | Linear model: compute & transfer flexibility payment |
 | 18 | set_adaptation_params | Configure adaptation policy |
 | 19 | dynamically_adapt_parameters | Adapt alpha, beta, under tolerance |
-| 20 | update_alpha_piecewise | Set alpha_piecewise for PW Quad penalty |
-| 21 | update_eps_piecewise_1 | Set eps1 (fixed-point) for PW Quad |
-| 22 | update_eps_piecewise_2 | Set eps2 (fixed-point) for PW Quad |
+| 20 | update_piecewise_parameters | Set alpha_pw, eps1, eps2 for PW Quad |
 | 23 | settle_flexibility_payment_with_pw_quad_penalty | PW Quad model: compute & transfer |
 
 ### Usage Examples
@@ -181,10 +178,8 @@ Remuneration::update_beta(origin, 200_000);            // 0.2
 Remuneration::update_under_tolerance(origin, 100_000); // 0.1
 Remuneration::update_over_tolerance(origin, 150_000);  // 0.15
 
-// Piecewise quadratic parameters
-Remuneration::update_alpha_piecewise(origin, 1);       // integer coefficient
-Remuneration::update_eps_piecewise_1(origin, 200_000); // 0.2
-Remuneration::update_eps_piecewise_2(origin, 400_000); // 0.4
+// Piecewise quadratic parameters (consolidated)
+Remuneration::update_piecewise_parameters(origin, 1, 200_000, 400_000);
 
 // Adaptive policy (optional)
 Remuneration::set_adaptation_params(
