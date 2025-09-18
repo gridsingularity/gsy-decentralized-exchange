@@ -51,6 +51,7 @@
 		use frame_support::{transactional};
 		use frame_system::{ensure_signed, pallet_prelude::*};
 		use sp_std::vec;
+		use sp_std::vec::Vec;
 		use sp_std::marker::PhantomData;
 
 		pub const INTRA_COMMUNITY: u8 = 1;
