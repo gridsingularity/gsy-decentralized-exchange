@@ -348,35 +348,43 @@ fn update_settlement_parameters() {
         assert_eq!(Remuneration::under_tolerance(), 0);
         assert_eq!(Remuneration::over_tolerance(), 0);
 
-        // Update alpha
-        assert_ok!(Remuneration::update_alpha(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 500_000)); // 0.5 in fixed point
+        // Update alpha only (others remain the same via set_main_parameters)
+        assert_ok!(Remuneration::set_main_parameters(
+            RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+            500_000, // alpha
+            Remuneration::beta(),
+            Remuneration::under_tolerance(),
+            Remuneration::over_tolerance(),
+        ));
         assert_eq!(Remuneration::alpha(), 500_000);
         
-        // Update beta
-        assert_ok!(Remuneration::update_beta(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 200_000)); // 0.2 in fixed point
+        // Update beta only
+        assert_ok!(Remuneration::set_main_parameters(
+            RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+            Remuneration::alpha(),
+            200_000, // beta
+            Remuneration::under_tolerance(),
+            Remuneration::over_tolerance(),
+        ));
         assert_eq!(Remuneration::beta(), 200_000);
         
-        // Update under & over tolerance
-        assert_ok!(Remuneration::update_under_tolerance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 100_000)); // 0.1 in fixed point
-        assert_ok!(Remuneration::update_over_tolerance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 150_000)); // 0.15 in fixed point
+        // Update under & over tolerance only
+        assert_ok!(Remuneration::set_main_parameters(
+            RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+            Remuneration::alpha(),
+            Remuneration::beta(),
+            100_000, // under tol
+            150_000, // over tol
+        ));
         assert_eq!(Remuneration::under_tolerance(), 100_000);
         assert_eq!(Remuneration::over_tolerance(), 150_000);
 
         // Non-custodian cannot update parameters
         assert_noop!(
-            Remuneration::update_alpha(RawOrigin::Signed(BOB_THE_CHEATER).into(), 700_000),
-            Error::<Test>::NotCustodian
-        );
-        assert_noop!(
-            Remuneration::update_beta(RawOrigin::Signed(BOB_THE_CHEATER).into(), 300_000),
-            Error::<Test>::NotCustodian
-        );
-        assert_noop!(
-            Remuneration::update_under_tolerance(RawOrigin::Signed(BOB_THE_CHEATER).into(), 150_000),
-            Error::<Test>::NotCustodian
-        );
-        assert_noop!(
-            Remuneration::update_over_tolerance(RawOrigin::Signed(BOB_THE_CHEATER).into(), 200_000),
+            Remuneration::set_main_parameters(
+                RawOrigin::Signed(BOB_THE_CHEATER).into(),
+                1, 2, 3, 4,
+            ),
             Error::<Test>::NotCustodian
         );
     });
@@ -433,8 +441,14 @@ fn settle_flexibility_under_delivery() {
         assert_ok!(Remuneration::set_balance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER2, 0));
         
         // Set alpha for under-delivery penalty calculation
-        assert_ok!(Remuneration::update_alpha(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 500_000)); // 0.5
-        
+        assert_ok!(Remuneration::set_main_parameters(
+            RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+            500_000, // alpha 0.5
+            Remuneration::beta(),
+            Remuneration::under_tolerance(),
+            Remuneration::over_tolerance(),
+        ));
+
         // Under-delivery scenario: delivered < requested
         assert_ok!(Remuneration::settle_flexibility_payment(
             RawOrigin::Signed(PROSUMER1).into(),
@@ -475,8 +489,14 @@ fn settle_flexibility_over_delivery() {
         assert_ok!(Remuneration::set_balance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER2, 0));
         
         // Set beta for over-delivery adjustment calculation
-        assert_ok!(Remuneration::update_beta(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 200_000)); // 0.2
-        
+        assert_ok!(Remuneration::set_main_parameters(
+            RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+            Remuneration::alpha(),
+            200_000, // 0.2
+            Remuneration::under_tolerance(),
+            Remuneration::over_tolerance(),
+        ));
+
         // Over-delivery scenario: delivered > requested
         assert_ok!(Remuneration::settle_flexibility_payment(
             RawOrigin::Signed(PROSUMER1).into(),
@@ -516,10 +536,14 @@ fn settle_flexibility_with_tolerance() {
         assert_ok!(Remuneration::set_balance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER1, 1000));
         assert_ok!(Remuneration::set_balance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER2, 0));
         
-        // Set parameters
-        assert_ok!(Remuneration::update_alpha(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 500_000)); // 0.5
-        assert_ok!(Remuneration::update_under_tolerance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 100_000)); // 0.1 for under
-        assert_ok!(Remuneration::update_over_tolerance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 100_000)); // 0.1 for over (symmetry)
+        // Set parameters via set_main_parameters
+        assert_ok!(Remuneration::set_main_parameters(
+            RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+            500_000, // alpha 0.5
+            Remuneration::beta(),
+            100_000, // under tol 0.1
+            100_000, // over tol 0.1
+        ));
 
         // Under-delivery but within tolerance (10% of 100 = 10 units)
         assert_ok!(Remuneration::settle_flexibility_payment(
@@ -565,10 +589,14 @@ fn settle_flexibility_complex_scenario() {
         assert_ok!(Remuneration::add_prosumer(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER2, COMMUNITY1));
         assert_ok!(Remuneration::set_balance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER1, 1000));
         assert_ok!(Remuneration::set_balance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER2, 0));
-        assert_ok!(Remuneration::update_alpha(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 500_000));
-        assert_ok!(Remuneration::update_beta(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 200_000));
-        assert_ok!(Remuneration::update_under_tolerance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 100_000));
-        assert_ok!(Remuneration::update_over_tolerance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 100_000));
+        // Set all parameters at once
+        assert_ok!(Remuneration::set_main_parameters(
+            RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+            500_000, // alpha
+            200_000, // beta
+            100_000, // under tol
+            100_000, // over tol
+        ));
         assert_ok!(Remuneration::settle_flexibility_payment(
             RawOrigin::Signed(PROSUMER1).into(),
             PROSUMER2,
@@ -667,10 +695,14 @@ fn settle_flexibility_inter_community() {
         assert_ok!(Remuneration::add_community(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), COMMUNITY2, DSO, COMMUNITY2_OWNER));
         assert_ok!(Remuneration::set_balance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), COMMUNITY1, 1000));
         assert_ok!(Remuneration::set_balance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), COMMUNITY2, 0));
-        assert_ok!(Remuneration::update_alpha(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 500_000));
-        assert_ok!(Remuneration::update_beta(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 200_000));
-        assert_ok!(Remuneration::update_under_tolerance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 0));
-        assert_ok!(Remuneration::update_over_tolerance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 0));
+        // Set parameters at once
+        assert_ok!(Remuneration::set_main_parameters(
+            RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+            500_000,
+            200_000,
+            0,
+            0,
+        ));
         assert_ok!(Remuneration::settle_flexibility_payment(
             RawOrigin::Signed(COMMUNITY1).into(),
             COMMUNITY2,
@@ -740,8 +772,13 @@ fn adaptation_alpha_beta_success_updates_and_events() {
         assert_ok!(Remuneration::update_custodian(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), ALICE_THE_CUSTODIAN));
         let initial_alpha = 2_000_000u64; // 2.0
         let initial_beta  = 1_500_000u64; // 1.5
-        assert_ok!(Remuneration::update_alpha(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), initial_alpha));
-        assert_ok!(Remuneration::update_beta(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), initial_beta));
+        assert_ok!(Remuneration::set_main_parameters(
+            RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+            initial_alpha,
+            initial_beta,
+            Remuneration::under_tolerance(),
+            Remuneration::over_tolerance(),
+        ));
         let u_ref = 400_000; // 0.4
         let o_ref = 300_000; // 0.3
         let k_alpha = 100_000; // 0.1
@@ -836,8 +873,13 @@ fn adaptation_alpha_beta_negative_factor_clamps_to_zero() {
     new_test_ext().execute_with(|| {
         assert_ok!(Remuneration::update_custodian(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), ALICE_THE_CUSTODIAN));
         // Start alpha/beta at 1.0
-        assert_ok!(Remuneration::update_alpha(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 1_000_000));
-        assert_ok!(Remuneration::update_beta(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 1_000_000));
+        assert_ok!(Remuneration::set_main_parameters(
+            RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+            1_000_000,
+            1_000_000,
+            Remuneration::under_tolerance(),
+            Remuneration::over_tolerance(),
+        ));
         // Set high k so (1 + k*(avg-ref)) becomes 0
         assert_ok!(Remuneration::set_adaptation_params(
             RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
@@ -860,8 +902,13 @@ fn adaptation_alpha_beta_overflow_clamps_to_u64_max() {
     new_test_ext().execute_with(|| {
         assert_ok!(Remuneration::update_custodian(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), ALICE_THE_CUSTODIAN));
         let near_max = u64::MAX - 5000; // large starting point
-        assert_ok!(Remuneration::update_alpha(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), near_max));
-        assert_ok!(Remuneration::update_beta(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), near_max));
+        assert_ok!(Remuneration::set_main_parameters(
+            RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+            near_max,
+            near_max,
+            Remuneration::under_tolerance(),
+            Remuneration::over_tolerance(),
+        ));
         // Configure window 1, large positive delta to attempt doubling
         assert_ok!(Remuneration::set_adaptation_params(
             RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
@@ -884,12 +931,14 @@ fn settle_flexibility_dual_tolerances() {
         assert_ok!(Remuneration::add_community(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), COMMUNITY1, DSO, COMMUNITY1_OWNER));
         assert_ok!(Remuneration::add_prosumer(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER1, COMMUNITY1));
         assert_ok!(Remuneration::add_prosumer(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), PROSUMER2, COMMUNITY1));
-        // Set high precision alpha/beta = 1.0 (no scaling effect besides diff*price)
-        assert_ok!(Remuneration::update_alpha(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 1_000_000));
-        assert_ok!(Remuneration::update_beta(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 1_000_000));
-        // Set asymmetric tolerances: under 5%, over 20%
-        assert_ok!(Remuneration::update_under_tolerance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 50_000)); // 0.05
-        assert_ok!(Remuneration::update_over_tolerance(RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(), 200_000)); // 0.20
+        // Set high precision alpha/beta = 1.0 and asymmetric tolerances
+        assert_ok!(Remuneration::set_main_parameters(
+            RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+            1_000_000, // alpha 1.0
+            1_000_000, // beta  1.0
+            50_000,    // under tol 5%
+            200_000,   // over tol 20%
+        ));
 
         // ---------- Scenario 1: Under-delivery partially beyond under tolerance ----------
         // requested=100, delivered=94, under tolerance=5 => penalized diff = (100-94)-5 = 1

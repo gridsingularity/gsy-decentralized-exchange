@@ -785,95 +785,36 @@
 				Ok(())
 			}
 
-			/// ## Update Alpha Parameter
+			/// ## Set Main Parameters
 			///
-			/// Updates the alpha parameter used for under-delivery penalty calculation.
-			///
-			/// - **Parameters**:
-			///   - `new_alpha`: The new alpha value (fixed-point, 1.0 = 1_000_000).
-			///
-			/// - **Access Control**:
-			///   - Requires the caller to be the custodian.
-			///
-			/// - **Event**:
-			///   - `AlphaUpdated` is emitted upon success.
+			/// Sets alpha, beta, under_tolerance, and over_tolerance atomically.
+			/// Custodian-only. Emits individual update events for changed values.
 			#[transactional]
-			#[pallet::weight(<T as Config>::RemunerationWeightInfo::update_alpha())]
+			#[pallet::weight(<T as Config>::RemunerationWeightInfo::set_main_parameters())]
 			#[pallet::call_index(13)]
-			pub fn update_alpha(
+			pub fn set_main_parameters(
 				origin: OriginFor<T>,
 				new_alpha: u64,
-			) -> DispatchResult {
-				// Make sure the caller is a signed origin
-				let sender = ensure_signed(origin)?;
-
-				// Only the custodian can perform this action
-				ensure!(Some(sender) == Custodian::<T>::get(), Error::<T>::NotCustodian);
-
-				// Get old value for event
-				let old_alpha = Alpha::<T>::get();
-
-				// Update the alpha parameter
-				Alpha::<T>::put(new_alpha);
-
-				// Emit the event
-				Self::deposit_event(Event::AlphaUpdated { 
-					old_value: old_alpha, 
-					new_value: new_alpha 
-				});
-
-				Ok(())
-			}
-
-			#[transactional]
-			#[pallet::weight(<T as Config>::RemunerationWeightInfo::update_beta())]
-			#[pallet::call_index(14)]
-			pub fn update_beta(
-				origin: OriginFor<T>,
 				new_beta: u64,
+				new_under_tol: u64,
+				new_over_tol: u64,
 			) -> DispatchResult {
-				// Make sure the caller is a signed origin
 				let sender = ensure_signed(origin)?;
-
-				// Only the custodian can perform this action
 				ensure!(Some(sender) == Custodian::<T>::get(), Error::<T>::NotCustodian);
-
-				// Get old value for event
+				let old_alpha = Alpha::<T>::get();
 				let old_beta = Beta::<T>::get();
-
-				// Update the beta parameter
+				let old_under = UnderTolerance::<T>::get();
+				let old_over = OverTolerance::<T>::get();
+				// Persist
+				Alpha::<T>::put(new_alpha);
 				Beta::<T>::put(new_beta);
-
-				// Emit the event
-				Self::deposit_event(Event::BetaUpdated { 
-					old_value: old_beta, 
-					new_value: new_beta 
-				});
-
-				Ok(())
-			}
-
-			#[transactional]
-			#[pallet::weight(<T as Config>::RemunerationWeightInfo::update_under_tolerance())]
-			#[pallet::call_index(15)]
-			pub fn update_under_tolerance(origin: OriginFor<T>, new_value: u64) -> DispatchResult {
-				let sender = ensure_signed(origin)?;
-				ensure!(Some(sender) == Custodian::<T>::get(), Error::<T>::NotCustodian);
-				let old = UnderTolerance::<T>::get();
-				UnderTolerance::<T>::put(new_value);
-				Self::deposit_event(Event::UnderToleranceUpdated { old_value: old, new_value });
-				Ok(())
-			}
-
-			#[transactional]
-			#[pallet::weight(<T as Config>::RemunerationWeightInfo::update_over_tolerance())]
-			#[pallet::call_index(16)]
-			pub fn update_over_tolerance(origin: OriginFor<T>, new_value: u64) -> DispatchResult {
-				let sender = ensure_signed(origin)?;
-				ensure!(Some(sender) == Custodian::<T>::get(), Error::<T>::NotCustodian);
-				let old = OverTolerance::<T>::get();
-				OverTolerance::<T>::put(new_value);
-				Self::deposit_event(Event::OverToleranceUpdated { old_value: old, new_value });
+				UnderTolerance::<T>::put(new_under_tol);
+				OverTolerance::<T>::put(new_over_tol);
+				// Events (only when changed)
+				if new_alpha != old_alpha { Self::deposit_event(Event::AlphaUpdated { old_value: old_alpha, new_value: new_alpha }); }
+				if new_beta  != old_beta  { Self::deposit_event(Event::BetaUpdated  { old_value: old_beta,  new_value: new_beta  }); }
+				if new_under_tol != old_under { Self::deposit_event(Event::UnderToleranceUpdated { old_value: old_under, new_value: new_under_tol }); }
+				if new_over_tol  != old_over  { Self::deposit_event(Event::OverToleranceUpdated  { old_value: old_over,  new_value: new_over_tol  }); }
 				Ok(())
 			}
 

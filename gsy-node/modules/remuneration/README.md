@@ -72,7 +72,7 @@ Notes:
 
 Related storage parameters and extrinsics:
 - Storage: alpha_piecewise, eps_piecewise_1, eps_piecewise_2
-- Extrinsic: `update_piecewise_parameters(new_alpha_pw: u64, new_eps1: u64, new_eps2: u64)` (eps values are fixed-point)
+- Extrinsic: `set_piecewise_parameters(new_alpha_pw: u64, new_eps1: u64, new_eps2: u64)` (eps values are fixed-point)
 
 Settlement extrinsic using the PW Quad penalty:
 - `settle_flexibility_payment_with_pw_quad_penalty(receiver, requested, delivered, price, payment_type)`
@@ -117,7 +117,7 @@ new_alpha = alpha * factor_a  / F
 new_beta  = beta  * factor_b  / F
 new_under = underTol * factor_ut / F
 ```
-> NOTE: Only UnderTolerance is adapted; OverTolerance is currently static (manual updates via `update_over_tolerance`).
+> NOTE: Only UnderTolerance is adapted; OverTolerance is currently set manually via `set_main_parameters`.
 
 ### Example Adaptation Workflow
 
@@ -156,14 +156,11 @@ let under_tol = Remuneration::under_tolerance();
 | 6 | update_prosumer | Move prosumer to another community |
 | 7 | add_payment | Register payment (intra or inter) |
 | 8 | set_balance | Custodian sets internal balance |
-| 13 | update_alpha | Manual alpha update |
-| 14 | update_beta | Manual beta update |
-| 15 | update_under_tolerance | Manual UnderTolerance update |
-| 16 | update_over_tolerance | Manual OverTolerance update |
+| 13 | set_main_parameters | Set alpha, beta, under & over tolerances atomically |
 | 17 | settle_flexibility_payment | Linear model: compute & transfer flexibility payment |
 | 18 | set_adaptation_params | Configure adaptation policy |
 | 19 | dynamically_adapt_parameters | Adapt alpha, beta, under tolerance |
-| 20 | update_piecewise_parameters | Set alpha_pw, eps1, eps2 for PW Quad |
+| 20 | set_piecewise_parameters | Set alpha_pw, eps1, eps2 for PW Quad |
 | 23 | settle_flexibility_payment_with_pw_quad_penalty | PW Quad model: compute & transfer |
 
 ### Usage Examples
@@ -172,14 +169,11 @@ let under_tol = Remuneration::under_tolerance();
 ```rust
 Remuneration::update_custodian(origin, admin);
 
-// Linear settlement parameters
-Remuneration::update_alpha(origin, 500_000);           // 0.5
-Remuneration::update_beta(origin, 200_000);            // 0.2
-Remuneration::update_under_tolerance(origin, 100_000); // 0.1
-Remuneration::update_over_tolerance(origin, 150_000);  // 0.15
+// Linear settlement parameters (all at once)
+Remuneration::set_main_parameters(origin, 500_000, 200_000, 100_000, 150_000);
 
-// Piecewise quadratic parameters (consolidated)
-Remuneration::update_piecewise_parameters(origin, 1, 200_000, 400_000);
+// Piecewise quadratic parameters
+Remuneration::set_piecewise_parameters(origin, 1, 200_000, 400_000);
 
 // Adaptive policy (optional)
 Remuneration::set_adaptation_params(
@@ -248,7 +242,7 @@ final_amount          = base_payment - under_delivery_penalty + over_delivery_bo
   - Length == `window_size`
 - Negative scaling => clamp to 0
 - Multiplication overflow => clamp to `u64::MAX`
-- UnderTolerance adaptation only (OverTolerance is manual)
+- UnderTolerance adaptation only (OverTolerance is manual via `set_main_parameters`)
 
 ## Events
 - `CustodianUpdated`

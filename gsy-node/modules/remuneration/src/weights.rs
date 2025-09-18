@@ -15,16 +15,11 @@ pub trait RemunerationWeightInfo {
 	fn add_payment() -> Weight;
 	fn update_prosumer() -> Weight;
 	fn set_balance() -> Weight;
-	fn update_alpha() -> Weight;
-	fn update_beta() -> Weight;
-	fn update_under_tolerance() -> Weight; // renamed & split
-	fn update_over_tolerance() -> Weight;  // new
+	fn set_main_parameters() -> Weight; // consolidated alpha/beta/tolerances
 	fn settle_flexibility_payment() -> Weight;
 	fn set_adaptation_params() -> Weight;
 	fn dynamically_adapt_parameters() -> Weight;
-	// Consolidated piecewise parameter update
 	fn set_piecewise_parameters() -> Weight;
-	// Piecewise quadratic penalty settlement
 	fn settle_flexibility_payment_with_pw_quad_penalty() -> Weight;
 }
 
@@ -67,21 +62,10 @@ impl<T: frame_system::Config> RemunerationWeightInfo for SubstrateWeightInfo<T> 
 		Weight::from_parts(9_000_000, 0)
 			.saturating_add(T::DbWeight::get().writes(1_u64))
 	}
-	fn update_alpha() -> Weight {
+	fn set_main_parameters() -> Weight {
 		Weight::from_parts(9_000_000, 0)
-			.saturating_add(T::DbWeight::get().writes(1_u64))
-	}
-	fn update_beta() -> Weight {
-		Weight::from_parts(9_000_000, 0)
-			.saturating_add(T::DbWeight::get().writes(1_u64))
-	}
-	fn update_under_tolerance() -> Weight { // replaces update_tolerance
-		Weight::from_parts(9_000_000, 0)
-			.saturating_add(T::DbWeight::get().writes(1_u64))
-	}
-	fn update_over_tolerance() -> Weight { // new
-		Weight::from_parts(9_000_000, 0)
-			.saturating_add(T::DbWeight::get().writes(1_u64))
+			// writes alpha, beta, under_tolerance, over_tolerance
+			.saturating_add(T::DbWeight::get().writes(4_u64))
 	}
 	fn settle_flexibility_payment() -> Weight {
 		Weight::from_parts(9_000_000, 0)
