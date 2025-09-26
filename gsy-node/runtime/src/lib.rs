@@ -74,6 +74,7 @@ pub use orderbook_worker;
 pub use trades_settlement;
 pub use remuneration;
 pub use gsy_primitives::v0::{AccountId, Balance, BlockNumber, Hash, Signature, Nonce};
+pub use offchain_utils;
 
 /// Index of a transaction in the chain.
 pub type Index = u32;
@@ -317,8 +318,17 @@ impl trades_settlement::Config for Runtime {
 impl remuneration::Config for Runtime {
 	type RuntimeEvent = RuntimeEvent;
 	type RemunerationWeightInfo = remuneration::weights::SubstrateWeightInfo<Runtime>;
-	type MarketSlotDuration = RemunerationMarketSlotDuration;
+		type MarketSlotDuration = RemunerationMarketSlotDuration;
 	type RemunerationHandler = remuneration::Pallet<Runtime>;
+}
+
+parameter_types! {
+	pub const OffchainMaxJobsPerBlock: u32 = 8;
+}
+impl offchain_utils::Config for Runtime {
+	type RuntimeEvent = RuntimeEvent;
+	type MaxJobsPerBlock = OffchainMaxJobsPerBlock;
+	type WeightInfo = offchain_utils::weights::SubstrateWeightInfo<Runtime>;
 }
 
 parameter_types! {
@@ -458,6 +468,9 @@ mod runtime {
 
 	#[runtime::pallet_index(11)]
 	pub type Remuneration = remuneration;
+
+	#[runtime::pallet_index(12)]
+	pub type OffchainUtils = offchain_utils;
 }
 
 /// The address format for describing accounts.
@@ -763,3 +776,4 @@ impl_runtime_apis! {
 		}
 	}
 }
+

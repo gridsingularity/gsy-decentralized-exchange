@@ -56,6 +56,7 @@ sp-genesis-builder = { workspace = true }
 
 # Custom Pallets
 orderbook-registry = { workspace = true }
+offchain-utils = { workspace = true }
 orderbook-worker = { workspace = true }
 gsy-collateral = { workspace = true }
 trades-settlement = { workspace = true }
@@ -106,6 +107,7 @@ std = [
 	"sp-std/std",
 	"sp-transaction-pool/std",
 	"sp-version/std",
+	"offchain-utils/std",
 ]
 runtime-benchmarks = [
 	"frame-benchmarking/runtime-benchmarks",

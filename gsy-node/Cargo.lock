@@ -2868,6 +2868,7 @@ dependencies = [
  "gsy-collateral",
  "gsy-primitives",
  "log",
+ "offchain-utils",
  "orderbook-registry",
  "orderbook-worker",
  "pallet-aura",
@@ -4853,6 +4854,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6a622008b6e321afc04970976f62ee297fdbaa6f95318ca343e3eebb9648441"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "offchain-utils"
+version = "0.0.1"
+dependencies = [
+ "frame-support",
+ "frame-system",
+ "parity-scale-codec 3.6.9",
+ "scale-info 2.11.2",
+ "sp-core",
+ "sp-io",
+ "sp-offchain",
+ "sp-runtime",
+ "sp-std 14.0.0 (git+https://github.com/paritytech/polkadot-sdk.git?tag=polkadot-v1.9.0)",
 ]
 
 [[package]]

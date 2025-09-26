@@ -5,6 +5,7 @@ members = [
     "modules/gsy-collateral",
     "modules/orderbook-worker",
     "modules/remuneration",
+    "modules/offchain-utils",
     "runtime",
 ]
 resolver = "1"
@@ -20,6 +21,7 @@ orderbook-registry = { version = '0.0.2', default-features = false, path = './mo
 orderbook-worker = { version = '0.0.2', default-features = false, path = './modules/orderbook-worker' }
 trades-settlement = { version = '0.0.2', default-features = false, path = './modules/trades-settlement' }
 remuneration = { version = '0.0.2', default-features = false, path = './modules/remuneration' }
+offchain-utils = { version = '0.0.1', default-features = false, path = './modules/offchain-utils' }
 
 # Base substrate frame dependencies
 codec = { package = "parity-scale-codec", version = "3.6.9", default-features = false, features = ["derive"] }
