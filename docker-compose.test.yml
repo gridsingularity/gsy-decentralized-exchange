@@ -11,6 +11,16 @@ services:
       - RUST_LOG=info
       - CARGO_HOME=/var/www/gsy-node/.cargo
       - ORDERBOOK_SERVICE_URL=http://gsy-orderbook:8080
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'curl -H ''Content-Type: application/json'' -d ''{"id":1, "jsonrpc":"2.0", "method":"system_health"}'' http://localhost:9944 | grep -q ''"result":''',
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
   gsy-orderbook:
     container_name: gsy-orderbook
@@ -47,8 +57,20 @@ services:
       gsy-orderbook:
         condition: service_healthy
       gsy-node:
-        condition: service_started
+        condition: service_healthy
     working_dir: /var/www/matching-engine
+
+  gsy-market-orchestrator:
+    container_name: gsy-market-orchestrator
+    build:
+      dockerfile: ./gsy-market-orchestrator/Dockerfile
+    depends_on:
+      gsy-node:
+        condition: service_healthy
+    environment:
+      - RUST_LOG=info,gsy_market_orchestrator=debug
+      - GSY_NODE_URL=ws://gsy-node:9944
+      - ORCHESTRATOR_SIGNER_SURI=//Alice
 
   mongodb:
     image: mongo:5.0
@@ -68,7 +90,7 @@ services:
       dockerfile: ./e2e-tests/Dockerfile
     depends_on:
       gsy-node:
-        condition: service_started
+        condition: service_healthy
       gsy-orderbook:
         condition: service_healthy
       gsy-matching-engine:

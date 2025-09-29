@@ -13,7 +13,7 @@ pub struct Config {
 }
 
 fn default_node_url() -> String {
-	"ws://127.0.0.1:9944".to_string()
+	"ws://gsy-node:9944".to_string()
 }
 fn default_signer_suri() -> String {
 	"//Alice".to_string()

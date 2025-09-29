@@ -1,4 +1,4 @@
-FROM rust:1.80
+FROM rustlang/rust:nightly
 
 ADD gsy-market-orchestrator /var/www/gsy-market-orchestrator/
 ADD offchain-primitives /var/www/offchain-primitives/
