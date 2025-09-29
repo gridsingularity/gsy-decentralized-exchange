@@ -68,7 +68,7 @@
 		///   Handles the logic for adding a payment between two accounts. This method abstracts
 		///   the internal workings of the remuneration pallet, enabling seamless integration with other pallets.
 		pub trait RemunerationHandler<AccountId, Balance> {
-			fn add_payment(receiver: AccountId, amount: Balance, payment_type: u8) -> DispatchResult;
+			fn add_payment(sender: AccountId, receiver: AccountId, amount: Balance, payment_type: u8) -> DispatchResult;
 		}
 
 		/// # Configuration Trait for Remuneration Pallet
@@ -108,10 +108,10 @@
 		/// ## Methods
 		/// - `add_payment(sender: T::AccountId, receiver: T::AccountId, amount: BalanceOf<T>) -> DispatchResult`:
 		///   Invokes the `add_payment` method in the remuneration pallet using the root origin.
-		impl<T: Config> RemunerationHandler<T::AccountId, BalanceOf<T>> for Pallet<T> {
-			fn add_payment(receiver: T::AccountId, amount: BalanceOf<T>, payment_type: u8) -> DispatchResult {
+		impl<T: Config + offchain_utils::Config> RemunerationHandler<T::AccountId, BalanceOf<T>> for Pallet<T> {
+			fn add_payment(sender: T::AccountId, receiver: T::AccountId, amount: BalanceOf<T>, payment_type: u8) -> DispatchResult {
 				Pallet::<T>::add_payment(
-					frame_system::RawOrigin::Root.into(),
+					frame_system::RawOrigin::Signed(sender).into(),
 					receiver,
 					amount,
 					payment_type,
@@ -445,6 +445,9 @@
 				eps: u64,
 				n: u64,
 			},
+			/// Demonstration event for cross-pallet utility call.
+			/// Emitted when sum is computed via offchain-utils::Pallet::<T>::sum_u64.
+			SumComputed { a: u64, b: u64, sum: u64 },
 		}
 
 		#[pallet::error]
@@ -471,7 +474,10 @@
 		/// These functions allow users and other pallets to interact with the pallet's storage and logic,
 		/// ensuring proper access control and event generation for key actions.
 		#[pallet::call]
-		impl<T: Config> Pallet<T> {
+		impl<T: Config> Pallet<T>
+		where
+			T: offchain_utils::Config,
+		{
 			/// ## Update Custodian
 			///
 			/// Allows updating the custodian user. If no custodian is set, any user can initialize it.
@@ -1001,6 +1007,18 @@
 				Ok(())
 			}
 
+			/// Demo: call offchain-utils helper to sum two u64 values and emit the result.
+			/// This shows how the remuneration pallet can invoke functionality provided by
+			/// a separate pallet (offchain-utils), which in general can perform heavy work offchain.
+			#[transactional]
+			#[pallet::weight(< T as Config >::RemunerationWeightInfo::sum_via_offchain_utils())]
+			#[pallet::call_index(9)]
+			pub fn sum_via_offchain_utils(origin: OriginFor<T>, a: u64, b: u64) -> DispatchResult {
+				let _who = ensure_signed(origin)?;
+				let sum = offchain_utils::Pallet::<T>::sum_u64(a, b);
+				Self::deposit_event(Event::SumComputed { a, b, sum });
+				Ok(())
+			}
 		}
 
 		/// # Queries for the Remuneration Pallet

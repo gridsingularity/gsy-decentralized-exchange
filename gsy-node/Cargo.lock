@@ -6178,6 +6178,7 @@ dependencies = [
  "gsy-collateral",
  "gsy-primitives",
  "log",
+ "offchain-utils",
  "orderbook-registry",
  "orderbook-worker",
  "pallet-balances",
