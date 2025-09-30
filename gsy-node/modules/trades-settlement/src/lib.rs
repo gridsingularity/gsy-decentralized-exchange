@@ -49,7 +49,7 @@ pub mod weights;
 #[frame_support::pallet]
 pub mod pallet {
 	use crate::weights::TradeSettlementWeightInfo;
-	use frame_support::{dispatch::DispatchResult, pallet_prelude::*, dispatch::RawOrigin};
+	use frame_support::{dispatch::DispatchResult, dispatch::RawOrigin, pallet_prelude::*};
 	use frame_support::{sp_runtime::traits::Hash, transactional};
 	use frame_system::{ensure_signed, pallet_prelude::*};
 	use scale_info::prelude::vec::Vec;
@@ -318,8 +318,7 @@ pub mod pallet {
 			offer_market_slot: u64,
 			proposed_match_market_slot: u64,
 		) -> bool {
-			offer_market_slot == bid_market_slot
-				&& proposed_match_market_slot == offer_market_slot
+			offer_market_slot == bid_market_slot && proposed_match_market_slot == offer_market_slot
 		}
 	}
 }

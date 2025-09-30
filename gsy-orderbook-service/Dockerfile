@@ -15,6 +15,9 @@ RUN rm -rf target/
 
 
 FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 COPY --from=builder /var/www/gsy-orderbook-service/gsy-orderbook-service .

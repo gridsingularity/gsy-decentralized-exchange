@@ -18,8 +18,8 @@ pub struct Trade<AccountId, Hash> {
 	pub offer_hash: Hash,
 	pub bid: Bid<AccountId>,
 	pub bid_hash: Hash,
+	pub residual_bid: Option<Bid<AccountId>>,
 	pub residual_offer: Option<Offer<AccountId>>,
- 	pub residual_bid: Option<Bid<AccountId>>,
 	pub parameters: TradeParameters<Hash>,
 }
 
@@ -62,10 +62,10 @@ pub struct BidOfferMatch<AccountId> {
 	pub bid: Bid<AccountId>,
 	/// The offer
 	pub offer: Offer<AccountId>,
-	/// The residual offer (if any)
-	pub residual_offer: Option<Offer<AccountId>>,
 	/// The residual bid (if any)
 	pub residual_bid: Option<Bid<AccountId>>,
+	/// The residual offer (if any)
+	pub residual_offer: Option<Offer<AccountId>>,
 	/// The amount of energy that is traded.
 	pub selected_energy: u64,
 	/// The price of the selected energy.
