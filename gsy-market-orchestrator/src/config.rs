@@ -1,3 +1,4 @@
+use gsy_offchain_primitives::MarketType;
 use serde::Deserialize;
 
 #[derive(Deserialize, Debug, Clone)]
@@ -29,15 +30,18 @@ pub fn get_config() -> anyhow::Result<Config> {
 	Ok(envy::from_env::<Config>()?)
 }
 
-// Define the static market rules
 pub struct MarketRule {
-	pub market_type: &'static str,
+	pub market_type: MarketType,
 	pub open_offset_mins: i64,
 	pub close_offset_mins: i64,
 }
 
 pub const MARKET_RULES: &[MarketRule] = &[
-	MarketRule { market_type: "Spot", open_offset_mins: -120, close_offset_mins: -60 },
-	MarketRule { market_type: "Flexibility", open_offset_mins: -15, close_offset_mins: 0 },
-	MarketRule { market_type: "Settlement", open_offset_mins: 30, close_offset_mins: 60 },
+	MarketRule { market_type: MarketType::Spot, open_offset_mins: -120, close_offset_mins: -60 },
+	MarketRule {
+		market_type: MarketType::Flexibility,
+		open_offset_mins: -15,
+		close_offset_mins: 0,
+	},
+	MarketRule { market_type: MarketType::Settlement, open_offset_mins: 30, close_offset_mins: 60 },
 ];

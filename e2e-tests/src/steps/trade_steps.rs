@@ -4,12 +4,13 @@ use gsy_node::runtime_types::gsy_primitives::orders::{
 	InputBid, InputOffer, InputOrder, OrderComponent,
 };
 use gsy_offchain_primitives::db_api_schema::profiles::MeasurementSchema;
+use gsy_offchain_primitives::MarketType;
 use subxt::utils::H256;
 
 #[when(regex = r#""([^"]*)" submits a bid for (\d+) energy at a rate of (\d+)"#)]
 async fn submit_bid(world: &mut MyWorld, user_name: String, energy: u64, rate: u64) {
 	let user = world.users.get(&user_name).unwrap().clone();
-	let market_id = world.generate_market_id("Spot");
+	let market_id = world.generate_market_id(MarketType::Spot);
 	world.last_market_id = Some(market_id);
 
 	let bid = InputOrder::Bid(InputBid {
@@ -40,7 +41,7 @@ async fn submit_bid(world: &mut MyWorld, user_name: String, energy: u64, rate: u
 #[when(regex = r#""([^"]*)" submits an offer for (\d+) energy at a rate of (\d+)"#)]
 async fn submit_offer(world: &mut MyWorld, user_name: String, energy: u64, rate: u64) {
 	let user = world.users.get(&user_name).unwrap().clone();
-	let market_id = world.generate_market_id("Spot");
+	let market_id = world.generate_market_id(MarketType::Spot);
 
 	let offer = InputOrder::Offer(InputOffer {
 		seller: user.public_key().into(),

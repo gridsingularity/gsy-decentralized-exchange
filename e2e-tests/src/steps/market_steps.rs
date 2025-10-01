@@ -1,5 +1,6 @@
 use crate::world::{gsy_node, MyWorld};
 use cucumber::when;
+use gsy_offchain_primitives::MarketType;
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::info;
@@ -7,7 +8,7 @@ use tracing::info;
 #[when("the Market Orchestrator opens the Spot market for the next delivery slot")]
 async fn wait_for_market_to_open(world: &mut MyWorld) {
 	info!("Waiting for the Market Orchestrator to open the Spot market...");
-	let market_id = world.generate_market_id("Spot");
+	let market_id = world.generate_market_id(MarketType::Spot);
 
 	let mut block_sub = world
 		.subxt_client

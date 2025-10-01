@@ -8,12 +8,12 @@ use tracing::{error, info};
 pub mod gsy_node {}
 
 #[derive(Clone)]
-pub struct GsyNodeClient {
+pub struct GsyMarketOrchestratorNodeClient {
 	api: OnlineClient<SubstrateConfig>,
 	signer: Keypair,
 }
 
-impl GsyNodeClient {
+impl GsyMarketOrchestratorNodeClient {
 	pub async fn new(config: &Config) -> Result<Self> {
 		let api =
 			OnlineClient::<SubstrateConfig>::from_insecure_url(config.gsy_node_url.clone()).await?;

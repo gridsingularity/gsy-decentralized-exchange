@@ -13,7 +13,7 @@ async fn main() -> Result<()> {
 
 	info!("Starting GSY Market Orchestrator...");
 	let config = config::get_config()?;
-	let client = chain_connector::GsyNodeClient::new(&config).await?;
+	let client = chain_connector::GsyMarketOrchestratorNodeClient::new(&config).await?;
 
 	orchestrator::run(config, client).await
 }

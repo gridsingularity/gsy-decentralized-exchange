@@ -1,6 +1,7 @@
 use anyhow::Result;
 use blake2_rfc::blake2b::blake2b;
 use cucumber::World;
+use gsy_offchain_primitives::MarketType;
 use reqwest::Client;
 use std::collections::HashMap;
 use subxt::{utils::H256, OnlineClient, SubstrateConfig};
@@ -50,9 +51,9 @@ impl MyWorld {
 		})
 	}
 
-	pub fn generate_market_id(&self, market_type: &str) -> H256 {
+	pub fn generate_market_id(&self, market_type: MarketType) -> H256 {
 		let mut buffer = Vec::new();
-		buffer.extend_from_slice(market_type.as_bytes());
+		buffer.extend_from_slice(market_type.as_str().as_bytes());
 		buffer.extend_from_slice(&self.target_delivery_time.to_be_bytes());
 		let hash_bytes: [u8; 32] =
 			blake2b(32, &[], &buffer).as_bytes().try_into().expect("hash is 32 bytes");

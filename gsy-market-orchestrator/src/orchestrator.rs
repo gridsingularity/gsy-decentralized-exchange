@@ -1,12 +1,13 @@
-use crate::chain_connector::{self, GsyNodeClient};
+use crate::chain_connector::{self, GsyMarketOrchestratorNodeClient};
 use crate::config::{Config, MARKET_RULES};
 use blake2_rfc::blake2b::blake2b;
+use gsy_offchain_primitives::MarketType;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use subxt::utils::H256;
 use tokio::time::sleep;
 use tracing::{error, info, warn};
 
-pub async fn run(config: Config, client: GsyNodeClient) -> anyhow::Result<()> {
+pub async fn run(config: Config, client: GsyMarketOrchestratorNodeClient) -> anyhow::Result<()> {
 	info!("Configuration: {:?}", config);
 
 	info!("Waiting for orchestrator account to be registered as an operator...");
@@ -37,7 +38,10 @@ pub async fn run(config: Config, client: GsyNodeClient) -> anyhow::Result<()> {
 	}
 }
 
-async fn orchestrate_markets(config: &Config, client: &GsyNodeClient) -> anyhow::Result<()> {
+async fn orchestrate_markets(
+	config: &Config,
+	client: &GsyMarketOrchestratorNodeClient,
+) -> anyhow::Result<()> {
 	let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
 	let look_ahead_horizon = now + (config.look_ahead_hours * 3600);
 
@@ -58,13 +62,13 @@ async fn orchestrate_markets(config: &Config, client: &GsyNodeClient) -> anyhow:
 
 			if should_be_open && !on_chain_status {
 				info!(
-					"OPENING market '{}' for delivery at {}",
+					"OPENING market '{:?}' for delivery at {}",
 					rule.market_type, current_delivery_hour
 				);
 				client.update_market_status(market_id, true).await?;
 			} else if !should_be_open && on_chain_status {
 				info!(
-					"CLOSING market '{}' for delivery at {}",
+					"CLOSING market '{:?}' for delivery at {}",
 					rule.market_type, current_delivery_hour
 				);
 				client.update_market_status(market_id, false).await?;
@@ -75,9 +79,9 @@ async fn orchestrate_markets(config: &Config, client: &GsyNodeClient) -> anyhow:
 	Ok(())
 }
 
-pub fn generate_market_id(market_type: &str, delivery_timestamp: u64) -> H256 {
+pub fn generate_market_id(market_type: MarketType, delivery_timestamp: u64) -> H256 {
 	let mut buffer = Vec::new();
-	buffer.extend_from_slice(market_type.as_bytes());
+	buffer.extend_from_slice(market_type.as_str().as_bytes());
 	buffer.extend_from_slice(&delivery_timestamp.to_be_bytes());
 	H256(blake2b(32, &[], &buffer).as_bytes().try_into().expect("hash is 32 bytes"))
 }
