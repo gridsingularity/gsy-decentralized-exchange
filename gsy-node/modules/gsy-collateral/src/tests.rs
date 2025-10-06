@@ -16,12 +16,12 @@ fn add_user_works() {
 }
 
 #[test]
-fn add_matching_engine_operator_works() {
+fn add_exchange_operator_works() {
 	new_test_ext().execute_with(|| {
-		// Register a matching_engine operator.
-		assert_ok!(GsyCollateral::register_matching_engine_operator(RawOrigin::Root.into(), ALICE));
+		// Register an exchange operator.
+		assert_ok!(GsyCollateral::register_exchange_operator(RawOrigin::Root.into(), ALICE));
 		assert_noop!(
-			GsyCollateral::register_matching_engine_operator(RawOrigin::Root.into(), ALICE),
+			GsyCollateral::register_exchange_operator(RawOrigin::Root.into(), ALICE),
 			Error::<Test>::AlreadyRegistered
 		);
 	});
@@ -36,10 +36,10 @@ fn registered_user_must_be_added_by_root() {
 }
 
 #[test]
-fn registered_matching_engine_operator_must_be_added_by_root() {
+fn registered_exchange_operator_must_be_added_by_root() {
 	new_test_ext().execute_with(|| {
-		// Register a matching_engine operator.
-		assert_noop!(GsyCollateral::register_matching_engine_operator(
+		// Register an exchange operator.
+		assert_noop!(GsyCollateral::register_exchange_operator(
 			RawOrigin::Signed(ALICE).into(), BOB), BadOrigin);
 	});
 }

@@ -112,7 +112,7 @@ pub mod pallet {
 
 	#[pallet::storage]
 	#[pallet::getter(fn executed_trades)]
-	/// Keeps track of the executed trades by each registered matching_engine operator.
+	/// Keeps track of the executed trades by each registered exchange operator.
 	pub type TradesRegistry<T: Config> =
 		StorageMap<_, Twox64Concat, T::AccountId, T::Hash, ValueQuery>;
 
@@ -319,8 +319,8 @@ pub mod pallet {
 		) -> DispatchResult {
 			let operator = ensure_signed(origin)?;
 			ensure!(
-				<gsy_collateral::Pallet<T>>::is_registered_matching_engine_operator(&operator),
-				gsy_collateral::Error::<T>::NotARegisteredMatchingEngineOperator
+				<gsy_collateral::Pallet<T>>::is_registered_exchange_operator(&operator),
+				gsy_collateral::Error::<T>::NotARegisteredExchangeOperator
 			);
 			MarketStatus::<T>::insert(market_uid, is_open);
 			Self::deposit_event(Event::MarketStatusUpdated(market_uid, is_open));
@@ -366,15 +366,15 @@ pub mod pallet {
 		/// Execute a batch of orders.
 		///
 		/// Parameters
-		/// `matching_engine_account`: The user who proposes tha trade match to execute the order.
+		/// `operator_account`: The user who proposes tha trade match to execute the order.
 		/// `proposed_matches`: The proposed match batch.
 		#[require_transactional]
 		pub fn clear_orders_batch(
-			matching_engine_account: T::AccountId,
+			operator_account: T::AccountId,
 			proposed_matches: Vec<BidOfferMatch<T::AccountId>>,
 		) -> DispatchResult {
 			for proposed_match in proposed_matches {
-				Self::clear_order(matching_engine_account.clone(), proposed_match)?;
+				Self::clear_order(operator_account.clone(), proposed_match)?;
 			}
 			Ok(())
 		}
@@ -382,19 +382,17 @@ pub mod pallet {
 		/// Execute an order.
 		///
 		/// Parameters
-		/// `matching_engine_account`: The user who proposes tha trade match to execute the order.
+		/// `operator_account`: The user who proposes tha trade match to execute the order.
 		/// `proposed_match`: The proposed match structure containing the bid and offer.
 		#[require_transactional]
 		pub fn clear_order(
-			matching_engine_account: T::AccountId,
+			operator_account: T::AccountId,
 			proposed_match: BidOfferMatch<T::AccountId>,
 		) -> DispatchResult {
-			// Verify that the user is a registered matching_engine operator account.
+			// Verify that the user is a registered operator account.
 			ensure!(
-				<gsy_collateral::Pallet<T>>::is_registered_matching_engine_operator(
-					&matching_engine_account
-				),
-				gsy_collateral::Error::<T>::NotARegisteredMatchingEngineOperator
+				<gsy_collateral::Pallet<T>>::is_registered_exchange_operator(&operator_account),
+				gsy_collateral::Error::<T>::NotARegisteredExchangeOperator
 			);
 
 			let bid_hash = T::Hashing::hash_of(&proposed_match.bid);
@@ -459,10 +457,14 @@ pub mod pallet {
 			}
 
 			// Add trade in the trade registry.
+<<<<<<< HEAD
 			<TradesRegistry<T>>::insert(
 				matching_engine_account,
 				T::Hashing::hash_of(&proposed_match),
 			);
+=======
+			<TradesRegistry<T>>::insert(operator_account, T::Hashing::hash_of(&proposed_match));
+>>>>>>> main
 
 			Self::deposit_event(Event::TradeCleared(T::Hashing::hash_of(&proposed_match)));
 
