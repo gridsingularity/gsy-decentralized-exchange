@@ -457,14 +457,7 @@ pub mod pallet {
 			}
 
 			// Add trade in the trade registry.
-<<<<<<< HEAD
-			<TradesRegistry<T>>::insert(
-				matching_engine_account,
-				T::Hashing::hash_of(&proposed_match),
-			);
-=======
 			<TradesRegistry<T>>::insert(operator_account, T::Hashing::hash_of(&proposed_match));
->>>>>>> main
 
 			Self::deposit_event(Event::TradeCleared(T::Hashing::hash_of(&proposed_match)));
 
