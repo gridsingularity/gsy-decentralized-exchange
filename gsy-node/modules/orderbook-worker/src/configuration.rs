@@ -14,8 +14,8 @@ impl Default for OrderBookServiceURLs{
             .unwrap_or("http://localhost:8080");
 
 		OrderBookServiceURLs{
-			orders_url: format!("{}/orders", orderbook_url),
-			trades_url: format!("{}/trades", orderbook_url),
+			orders_url: format!("{}/orders", base_url),
+			trades_url: format!("{}/trades", base_url),
 		}
 	}
 }

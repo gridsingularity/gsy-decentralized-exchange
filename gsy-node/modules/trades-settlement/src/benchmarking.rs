@@ -22,14 +22,14 @@ use sp_std::vec;
 
 benchmarks! {
 	settle_trades {
-		let matching_engine: T::AccountId = whitelisted_caller();
-		TestOrderbookFunctions::add_matching_engine_operator::<T>(matching_engine.clone()).unwrap();
+		let operator_account: T::AccountId = whitelisted_caller();
+		TestOrderbookFunctions::add_exchange_operator::<T>(operator_account.clone()).unwrap();
 		let buyer: T::AccountId = whitelisted_caller();
 		TestOrderbookFunctions::add_user::<T>(buyer.clone()).unwrap();
 		let seller: T::AccountId = whitelisted_caller();
 		TestOrderbookFunctions::add_user::<T>(seller.clone()).unwrap();
 		let block_number = 1677453190;
-		let _ = GsyCollateral::<T>::create(matching_engine.clone());
+		let _ = GsyCollateral::<T>::create(operator_account.clone());
 		let _ = GsyCollateral::<T>::create(buyer.clone());
 		let _ = GsyCollateral::<T>::create(seller.clone());
 		let amount: BalanceOf<T> = 10_000_000u32.into();
@@ -60,7 +60,7 @@ benchmarks! {
 			);
 			bid_offer_matches.push(bid_offer_match);
 		}
-	}: _(RawOrigin::Signed(matching_engine.clone()), bid_offer_matches)
+	}: _(RawOrigin::Signed(operator_account.clone()), bid_offer_matches)
 }
 
 impl_benchmark_test_suite!(TradesSettlement, crate::mock::new_test_ext(), crate::mock::Test);

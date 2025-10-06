@@ -134,9 +134,9 @@ pub mod pallet {
 	StorageMap<_, Twox64Concat, T::AccountId, T::Hash, ValueQuery>;
 
 	#[pallet::storage]
-	#[pallet::getter(fn registered_matching_engine)]
+	#[pallet::getter(fn registered_exchange_operator)]
 	/// Keeps track of the registered user.
-	pub type RegisteredMatchingEngine<T: Config> =
+	pub type RegisteredExchangeOperator<T: Config> =
 	StorageMap<_, Twox64Concat, T::AccountId, T::Hash, ValueQuery>;
 
 	#[pallet::storage]
@@ -179,8 +179,8 @@ pub mod pallet {
 		ProxyAccountUnregistered(T::AccountId, T::AccountId),
 		/// User has been registered. \[user_account\]
 		UserRegistered(T::AccountId),
-		/// Matching Engine operator has been registered. \[matching_engine_operator\]
-		MatchingEngineOperatorRegistered(T::AccountId),
+		/// Exchange operator has been registered. \[exchange_operator\]
+		ExchangeOperatorRegistered(T::AccountId),
 		/// New vault has been created. \[vault_id, vault_owner\]
 		VaultCreated(T::VaultId, T::AccountId),
 		/// A Vault has been successfully restarted. \[vault_owner\]
@@ -204,8 +204,8 @@ pub mod pallet {
 		NoSelfProxy,
 		/// Ensure that the account is a registered user.
 		NotARegisteredUserAccount,
-		/// Ensure that the account is a registered matching_engine operator.
-		NotARegisteredMatchingEngineOperator,
+		/// Ensure that the account is a registered exchange operator.
+		NotARegisteredExchangeOperator,
 		/// Ensure that the account is a proxy account.
 		NotARegisteredProxyAccount,
 		/// Ensure that the user has registered some proxy accounts.
@@ -274,22 +274,22 @@ pub mod pallet {
 			Self::add_proxy_account(&user_account, proxy_account)
 		}
 
-		/// Register a matching_engine operator account in the System.
+		/// Register a exchange operator account in the System.
 		///
 		/// # Parameters:
 		/// * `origin`: The origin of the extrinsic. The root user.
-		/// * `matching_engine_operator_account`: The matching_engine operator account that is being registered.
+		/// * `operator_account`: The operator account that is being registered.
 		#[transactional]
-		#[pallet::weight(<T as Config>::WeightInfo::register_matching_engine_operator())]
+		#[pallet::weight(<T as Config>::WeightInfo::register_exchange_operator())]
 		#[pallet::call_index(2)]
-		pub fn register_matching_engine_operator(
+		pub fn register_exchange_operator(
 			origin: OriginFor<T>,
-			matching_engine_operator_account: T::AccountId,
+			operator_account: T::AccountId,
 		) -> DispatchResult {
 			// Verify that the user is root.
 			ensure_root(origin)?;
-			log::info!("Registering matching_engine operator account: {:?}", matching_engine_operator_account);
-			Self::add_matching_engine_operator(matching_engine_operator_account)
+			log::info!("Registering exchange operator account: {:?}", operator_account);
+			Self::add_exchange_operator(operator_account)
 		}
 
 		/// Register a new user in the System. (Only the root user can register a new user)
@@ -385,20 +385,20 @@ pub mod pallet {
 	}
 
 	impl<T: Config> Pallet<T> {
-		/// Register a new matching_engine operator account in the System.
+		/// Register a new operator account in the System.
 		///
 		/// # Parameters:
-		/// * `matching_engine_operator_account`: The matching_engine operator account that is being registered.
-		pub fn add_matching_engine_operator(matching_engine_operator_account: T::AccountId) -> DispatchResult {
+		/// * `operator_account`: The operator account that is being registered.
+		pub fn add_exchange_operator(operator_account: T::AccountId) -> DispatchResult {
 			ensure!(
-				!Self::is_registered_matching_engine_operator(&matching_engine_operator_account),
+				!Self::is_registered_exchange_operator(&operator_account),
 				<Error<T>>::AlreadyRegistered
 			);
-			let account_hash = T::Hashing::hash_of(&matching_engine_operator_account);
+			let account_hash = T::Hashing::hash_of(&operator_account);
 			log::info!("Account Hash - {:?} ", account_hash);
-			<RegisteredMatchingEngine<T>>::insert(&matching_engine_operator_account, account_hash);
-			// Deposit the MatchingEngineOperatorRegistered event.
-			Self::deposit_event(Event::<T>::MatchingEngineOperatorRegistered(matching_engine_operator_account));
+			<RegisteredExchangeOperator<T>>::insert(&operator_account, account_hash);
+			// Deposit the ExchangeOperatorRegistered event.
+			Self::deposit_event(Event::<T>::ExchangeOperatorRegistered(operator_account));
 			Ok(())
 		}
 
@@ -552,12 +552,12 @@ pub mod pallet {
 			Ok(collateral_amount)
 		}
 
-		/// Helper function to check if a given user is a registered matching_engine operator
+		/// Helper function to check if a given user is a registered exchange operator
 		///
 		/// Parameters:
-		/// * `matching_engine_operator_account`: The matching_engine operator account that is being checked.
-		pub fn is_registered_matching_engine_operator(matching_engine_operator_account: &T::AccountId) -> bool {
-			<RegisteredMatchingEngine<T>>::contains_key(matching_engine_operator_account)
+		/// * `operator_account`: The exchange operator account that is being checked.
+		pub fn is_registered_exchange_operator(operator_account: &T::AccountId) -> bool {
+			<RegisteredExchangeOperator<T>>::contains_key(operator_account)
 		}
 
 		/// Helper function to check if a given user is registered.

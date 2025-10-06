@@ -80,7 +80,7 @@ pub use sp_runtime::OpaqueExtrinsic as UncheckedExtrinsic;
 mod orders;
 pub use orders::{Bid, InputBid, Offer, InputOffer, Order, InputOrder, OrderComponent, OrderReference, OrderSchema, OrderStatus};
 mod trades;
-pub use trades::{Validator, BidOfferMatch, Trade, TradeParameters};
+pub use trades::{Validator, BidOfferMatch, Trade, TradeParameters, TradesPenalties};
 mod vault;
 pub use vault::{CollateralInfo, Vault, VaultInfo, VaultStatus, VaultWithStatus};
 

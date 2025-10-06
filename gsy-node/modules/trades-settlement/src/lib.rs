@@ -19,8 +19,8 @@
 //!
 //!
 //! A trades settlement system is a system that manages the settlement of  the trades executed
-//! within the GSy-Decentralized Energy Exchange. This module allows the registered matching engine
-//! (Matching Engine) to add the trade structs for the orders inserted by the users into the
+//! within the GSy-Decentralized Energy Exchange. This module allows the registered exchange
+//! operator to add the trade structs for the orders inserted by the users into the
 //! GSy-Decentralized Energy Exchange. Moreover, it verifies the correctness of the matched trades
 //! and updates the orders status and the involved structures after the trade execution.
 
@@ -52,13 +52,13 @@ pub mod pallet {
 	use frame_support::{dispatch::DispatchResult, dispatch::RawOrigin, pallet_prelude::*};
 	use frame_support::{sp_runtime::traits::Hash, transactional};
 	use frame_system::{ensure_signed, pallet_prelude::*};
-	use gsy_primitives::v0::{Bid, BidOfferMatch, Offer, Order, OrderComponent, Validator};
 	use scale_info::prelude::vec::Vec;
 	use sp_std::vec;
+	use gsy_primitives::v0::{Bid, BidOfferMatch, Offer, Order, OrderComponent, Validator, TradesPenalties};
 
 	#[pallet::config]
 	pub trait Config:
-		frame_system::Config + orderbook_registry::Config + orderbook_worker::Config
+		frame_system::Config + orderbook_registry::Config + orderbook_worker::Config + gsy_collateral::Config
 	{
 		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
 
@@ -73,10 +73,21 @@ pub mod pallet {
 	// #[pallet::generate_store(pub (super) trait Store)]
 	pub struct Pallet<T>(_);
 
+	#[pallet::storage]
+	#[pallet::getter(fn trades_penalties)]
+	pub type PenaltiesRegistry<T: Config> = StorageMap<
+		_,
+		Twox64Concat,
+		T::Hash,
+		TradesPenalties<T::AccountId, T::Hash>,
+	>;
+
+
 	#[pallet::event]
 	#[pallet::generate_deposit(pub (super) fn deposit_event)]
 	pub enum Event<T: Config> {
 		TradesSettled(T::Hash),
+		PenaltiesSubmitted(TradesPenalties<T::AccountId, T::Hash>, T::Hash),
 	}
 
 	#[pallet::error]
@@ -104,7 +115,7 @@ pub mod pallet {
 		/// Verify the recommended trade matches
 		///
 		/// # Parameters
-		/// `origin`: The origin of the extrinsic. The Matching Engine operator who wants to settle the matches.
+		/// `origin`: The origin of the extrinsic. The Exchange operator who wants to settle the matches.
 		/// `proposed_matches`: Vector of BidOfferMatch structures. Recommended matches for potential trades.
 		#[transactional]
 		#[pallet::weight(< T as Config >::TradeSettlementWeightInfo::settle_trades())]
@@ -113,7 +124,7 @@ pub mod pallet {
 			origin: OriginFor<T>,
 			proposed_matches: Vec<BidOfferMatch<T::AccountId>>,
 		) -> DispatchResult {
-			let matching_engine_operator = ensure_signed(origin)?;
+			let operator_account = ensure_signed(origin)?;
 
 			let valid_matches: Vec<_> = proposed_matches
 				.into_iter()
@@ -149,16 +160,40 @@ pub mod pallet {
 					}
 				}
 
-				<orderbook_registry::Pallet<T>>::clear_orders_batch(
-					matching_engine_operator,
-					valid_matches.clone(),
-				)?;
+				<orderbook_registry::Pallet<T>>::clear_orders_batch(operator_account, valid_matches.clone())?;
 				Self::deposit_event(Event::TradesSettled(T::Hashing::hash_of(&valid_matches)));
 				Ok(())
 			} else {
 				Err(Error::<T>::NoValidMatchToSettle.into())
 			}
 		}
+
+		/// Submit penalties received from the execution engine.
+        ///
+        /// This function is restricted to the execution engine operator (here enforced by require
+        /// that the origin is root). It accepts a vector of penalty records and stores each one
+        /// in the `TradesPenalties` storage map.
+        #[transactional]
+        #[pallet::call_index(1)]
+        #[pallet::weight(<T as Config>::TradeSettlementWeightInfo::submit_penalties())]
+        pub fn submit_penalties(
+            origin: OriginFor<T>,
+            penalties: Vec<TradesPenalties<T::AccountId, T::Hash>>,
+        ) -> DispatchResult {
+            let operator_account = ensure_signed(origin)?;
+			// Verify that the user is a registered operator account.
+			ensure!(
+				<gsy_collateral::Pallet<T>>::is_registered_exchange_operator(&operator_account),
+				gsy_collateral::Error::<T>::NotARegisteredExchangeOperator
+			);
+            // For each penalty in the input vector, compute a unique hash and insert it.
+            for penalty in penalties.into_iter() {
+                let penalty_hash = T::Hashing::hash_of(&penalty);
+                <PenaltiesRegistry<T>>::insert(penalty_hash, penalty.clone());
+				Self::deposit_event(Event::PenaltiesSubmitted(penalty, penalty_hash));
+            }
+            Ok(())
+        }
 	}
 
 	impl<T: Config> Validator for Pallet<T> {
