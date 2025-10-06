@@ -1,0 +1,22 @@
+[package]
+name = "gsy-market-orchestrator"
+version = "0.1.0"
+authors = ["Grid Singularity <info@gridsingularity.com>"]
+edition = "2021"
+
+[[bin]]
+path = "src/main.rs"
+name = "gsy-market-orchestrator"
+
+[dependencies]
+gsy-offchain-primitives = { default-features = false, path = "../offchain-primitives" }
+anyhow = "1"
+blake2-rfc = { version = "0.2.18", default-features = false }
+codec = { package = "parity-scale-codec", version = "3.6.9" }
+serde = { version = "1.0", features = ["derive"] }
+envy = "0.4"
+subxt = { version = "0.37", features = ["substrate-compat"] }
+subxt-signer = "0.37"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+tracing = { version = "0.1", features = ["log"] }
+tracing-subscriber = { version = "0.3", features = ["registry", "env-filter"] }

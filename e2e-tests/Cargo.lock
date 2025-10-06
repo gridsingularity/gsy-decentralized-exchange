@@ -1374,6 +1374,7 @@ name = "e2e-tests"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "blake2-rfc",
  "cucumber",
  "futures",
  "gsy-offchain-primitives",

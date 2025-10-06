@@ -154,6 +154,7 @@ pub mod pallet {
 		NotARootUser,
 		InsufficientCollateral,
 		InvalidNonce,
+		MarketIsClosed,
 	}
 
 	#[pallet::hooks]
@@ -181,6 +182,18 @@ pub mod pallet {
 		) -> DispatchResult {
 			let sender = ensure_signed(origin.clone())?;
 			log::info!("add orders: {:?} for the user: {:?}", orders, sender);
+			for order in &orders {
+				let market_id_h256 = match order {
+					InputOrder::Bid(b) => b.bid_component.market_id,
+					InputOrder::Offer(o) => o.offer_component.market_id,
+				};
+				let market_id: T::Hash = T::Hash::decode(&mut &market_id_h256.encode()[..])
+					.expect("H256 and T::Hash are the same type; decoding will not fail");
+				ensure!(
+					<orderbook_registry::Pallet<T>>::market_status(market_id),
+					Error::<T>::MarketIsClosed
+				);
+			}
 			// TODO: Refactor this method to add all orders in one go.
 			let full_orders: Vec<Order<T::AccountId>> =
 				orders.into_iter().map(|o| Self::input_order_to_order(o)).collect();
@@ -219,6 +232,18 @@ pub mod pallet {
 				delegator,
 				sender
 			);
+			for order in &orders {
+				let market_id_h256 = match order {
+					InputOrder::Bid(b) => b.bid_component.market_id,
+					InputOrder::Offer(o) => o.offer_component.market_id,
+				};
+				let market_id: T::Hash = T::Hash::decode(&mut &market_id_h256.encode()[..])
+					.expect("H256 and T::Hash are the same type; decoding will not fail");
+				ensure!(
+					<orderbook_registry::Pallet<T>>::market_status(market_id),
+					Error::<T>::MarketIsClosed
+				);
+			}
 			let full_orders: Vec<Order<T::AccountId>> = orders
 				.into_iter()
 				.map(|o| Self::input_order_to_order_for_delegator(o, delegator.clone()))
