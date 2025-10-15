@@ -80,8 +80,8 @@ async fn users_are_registered(
 	println!("Registering market orchestrator/matching engine operator: {:?}", alice_account_id);
 
 	let register_me_call = gsy_node::runtime_types::gsy_node_runtime::RuntimeCall::GsyCollateral(
-		gsy_node::runtime_types::gsy_collateral::pallet::Call::register_matching_engine_operator {
-			matching_engine_operator_account: alice_account_id,
+		gsy_node::runtime_types::gsy_collateral::pallet::Call::register_exchange_operator {
+			operator_account: alice_account_id,
 		},
 	);
 
@@ -91,8 +91,8 @@ async fn users_are_registered(
 		.tx()
 		.sign_and_submit_then_watch_default(&sudo_tx_me, &sudo_signer)
 		.await
-		.expect("Failed to submit register_matching_engine_operator tx")
+		.expect("Failed to submit register_exchange_operator tx")
 		.wait_for_finalized_success()
 		.await
-		.expect("register_matching_engine_operator extrinsic failed");
+		.expect("register_exchange_operator extrinsic failed");
 }
