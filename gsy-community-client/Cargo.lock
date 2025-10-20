@@ -1760,6 +1760,7 @@ name = "gsy-community-client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "blake2-rfc",
  "gsy-offchain-primitives",
  "httpmock",
  "reqwest",

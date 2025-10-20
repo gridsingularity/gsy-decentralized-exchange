@@ -1,4 +1,4 @@
-FROM rust:1.80
+FROM rustlang/rust:nightly
 
 WORKDIR /var/www/gsy-execution-engine
 

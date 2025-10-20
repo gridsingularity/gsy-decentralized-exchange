@@ -72,6 +72,16 @@ services:
       - GSY_NODE_URL=ws://gsy-node:9944
       - ORCHESTRATOR_SIGNER_SURI=//Alice
 
+  gsy-execution-engine:
+    container_name: gsy-execution-engine
+    build:
+      dockerfile: ./gsy-execution-engine/Dockerfile
+    depends_on:
+      gsy-orderbook:
+        condition: service_healthy
+      gsy-node:
+        condition: service_healthy
+
   mongodb:
     image: mongo:5.0
     container_name: mongodb
@@ -94,6 +104,8 @@ services:
       gsy-orderbook:
         condition: service_healthy
       gsy-matching-engine:
+        condition: service_started
+      gsy-execution-engine:
         condition: service_started
     networks:
       - default

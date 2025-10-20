@@ -20,7 +20,7 @@ use tracing::{error, info};
 
 const MATCH_PER_NR_BLOCKS: u64 = 4;
 
-#[subxt::subxt(runtime_metadata_path = "metadata.scale")]
+#[subxt::subxt(runtime_metadata_path = "../offchain-primitives/metadata.scale")]
 pub mod gsy_node {}
 
 pub const DEFAULT_MARKET_ID: u8 = 1;

@@ -6,6 +6,7 @@ WORKDIR /usr/src/app
 
 ADD e2e-tests ./e2e-tests
 ADD offchain-primitives ./offchain-primitives
+ADD gsy-community-client ./gsy-community-client
 
 WORKDIR /usr/src/app/e2e-tests
 

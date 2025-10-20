@@ -7,7 +7,8 @@ Feature: GSY DEX Trade Execution
     Given the GSY DEX services are running
     And users "alice", "bob", and "charlie" the matching engine operator are registered and have collateral
     When the Market Orchestrator opens the Spot market for the next delivery slot
-    And "alice" submits a bid for 100 energy at a rate of 15
-    And "bob" submits an offer for 100 energy at a rate of 10
+    And "alice" submits a bid for 10 energy
+    And "bob" submits an offer for 10 energy
     And measurements for "alice" and "bob" assets are submitted
     Then the matching engine matches the bid and offer and a trade is settled on-chain
+    And the execution engine submits penalties for the trade

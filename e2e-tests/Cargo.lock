@@ -1377,6 +1377,7 @@ dependencies = [
  "blake2-rfc",
  "cucumber",
  "futures",
+ "gsy-community-client",
  "gsy-offchain-primitives",
  "reqwest",
  "serde",
@@ -1919,6 +1920,22 @@ dependencies = [
  "ff",
  "rand_core 0.6.4",
  "subtle",
+]
+
+[[package]]
+name = "gsy-community-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "blake2-rfc",
+ "gsy-offchain-primitives",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "subxt 0.37.0",
+ "subxt-signer",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

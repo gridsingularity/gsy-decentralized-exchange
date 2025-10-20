@@ -8,6 +8,14 @@ use tracing::info;
 #[when("the Market Orchestrator opens the Spot market for the next delivery slot")]
 async fn wait_for_market_to_open(world: &mut MyWorld) {
 	info!("Waiting for the Market Orchestrator to open the Spot market...");
+	let now = std::time::SystemTime::now()
+		.duration_since(std::time::UNIX_EPOCH)
+		.unwrap()
+		.as_secs();
+	let hour_as_secs = 3600;
+	let spot_open_offset_secs = 120 * 60;
+	let target_hour_start = ((now + spot_open_offset_secs) / hour_as_secs) * hour_as_secs;
+	world.target_delivery_time = target_hour_start;
 	let market_id = world.generate_market_id(MarketType::Spot);
 
 	let mut block_sub = world

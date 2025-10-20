@@ -1,14 +1,15 @@
-use reqwest::Client;
-use tracing::{error, info};
-use std::time::Duration;
-use tokio::time::sleep;
-use gsy_offchain_primitives::db_api_schema::profiles::{MeasurementSchema, ForecastSchema};
+use gsy_community_client::external_api::{
+	ExternalCommunityTopology, ExternalForecast, ExternalMeasurement,
+};
 use gsy_community_client::node_connector::orders::publish_orders;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use gsy_community_client::time_utils::{get_current_timestamp_in_secs, get_last_and_next_timeslot};
-use gsy_community_client::external_api::{
-	ExternalForecast, ExternalMeasurement, ExternalCommunityTopology};
-
+use gsy_offchain_primitives::db_api_schema::profiles::{ForecastSchema, MeasurementSchema};
+use reqwest::Client;
+use std::time::Duration;
+use subxt_signer::sr25519::dev;
+use tokio::time::sleep;
+use tracing::{error, info};
 
 #[derive(Clone)]
 struct AppState {
@@ -58,30 +59,50 @@ impl AppState {
 			// Fetch and forward topology
 			let external_topology_res = self.fetch_topology().await;
 			if external_topology_res.is_err() {
-				error!("Failed to fetch external topology: {}", external_topology_res.unwrap_err().to_string());
-				continue
+				error!(
+					"Failed to fetch external topology: {}",
+					external_topology_res.unwrap_err().to_string()
+				);
+				continue;
 			}
-			let internal_topology = self.api_adapter.get_or_create_market_topology(
-				external_topology_res.unwrap().clone(), next_timeslot).await.unwrap();
+			let internal_topology = self
+				.api_adapter
+				.get_or_create_market_topology(
+					external_topology_res.unwrap().clone(),
+					next_timeslot,
+				)
+				.await
+				.unwrap();
 
 			match self.fetch_forecasts().await {
 				Ok(forecasts) => {
 					let valid_forecasts: Vec<ForecastSchema> = forecasts
 						.into_iter()
-						.map(|forecast| self.api_adapter.convert_forecast_to_internal_schema(&forecast))
-						.filter(|forecast| self.api_adapter.validate_forecast(forecast, seconds_since_epoch))
+						.map(|forecast| {
+							self.api_adapter.convert_forecast_to_internal_schema(&forecast)
+						})
+						.filter(|forecast| {
+							self.api_adapter.validate_forecast(forecast, seconds_since_epoch)
+						})
 						.collect();
 					if !valid_forecasts.is_empty() {
-						if let Err(e) = self.api_adapter.forward_forecast(valid_forecasts.clone()).await {
+						if let Err(e) =
+							self.api_adapter.forward_forecast(valid_forecasts.clone()).await
+						{
 							info!("Failed to forward forecasts: {}", e);
 						}
 						publish_orders(
-							self.gsy_node_url.clone(), valid_forecasts.clone(), 
-							internal_topology.clone()).await.unwrap();
+							self.gsy_node_url.clone(),
+							valid_forecasts.clone(),
+							internal_topology.clone(),
+							&dev::alice(),
+						)
+						.await
+						.unwrap();
 					} else {
 						info!("No valid forecasts to forward.");
 					}
-				}
+				},
 				Err(e) => error!("Error fetching forecasts: {}", e),
 			}
 
@@ -90,17 +111,23 @@ impl AppState {
 				Ok(measurements) => {
 					let valid_measurements: Vec<MeasurementSchema> = measurements
 						.into_iter()
-						.map(|measurement| self.api_adapter.convert_measurement_to_internal_schema(&measurement))
-						.filter(|measurement| self.api_adapter.validate_measurement(measurement, seconds_since_epoch))
+						.map(|measurement| {
+							self.api_adapter.convert_measurement_to_internal_schema(&measurement)
+						})
+						.filter(|measurement| {
+							self.api_adapter.validate_measurement(measurement, seconds_since_epoch)
+						})
 						.collect();
 					if !valid_measurements.is_empty() {
-						if let Err(e) = self.api_adapter.forward_measurement(valid_measurements).await {
+						if let Err(e) =
+							self.api_adapter.forward_measurement(valid_measurements).await
+						{
 							info!("Failed to forward measurements: {}", e);
 						}
 					} else {
 						info!("No valid measurements to forward.");
 					}
-				}
+				},
 				Err(e) => error!("Error fetching measurements: {}", e),
 			}
 
@@ -109,7 +136,6 @@ impl AppState {
 		}
 	}
 }
-
 
 #[tokio::main]
 async fn main() {
