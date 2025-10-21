@@ -29,7 +29,7 @@ impl GsyMarketOrchestratorNodeClient {
 		let operator_account = AccountId32::from(self.signer.public_key());
 		let storage_address = gsy_node::storage()
 			.gsy_collateral()
-			.registered_matching_engine(operator_account);
+			.registered_exchange_operator(operator_account);
 		let is_registered =
 			self.api.storage().at_latest().await?.fetch(&storage_address).await?.is_some();
 		Ok(is_registered)
