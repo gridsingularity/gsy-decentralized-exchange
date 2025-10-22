@@ -1,13 +1,13 @@
 use crate::db::DatabaseWrapper;
-use gsy_offchain_primitives::db_api_schema::profiles::{
-    PVMeasurementSchema, SmartMeterMeasurementSchema, BatteryMeasurementSchema};
 use anyhow::Result;
+use gsy_offchain_primitives::db_api_schema::profiles::{
+    BatteryMeasurementSchema, PVMeasurementSchema, SmartMeterMeasurementSchema,
+};
 use mongodb::bson::{doc, Bson};
 use mongodb::options::IndexOptions;
 use mongodb::{Collection, IndexModel};
 use std::collections::HashMap;
 use std::ops::Deref;
-
 
 /// this function will call after connected to database
 pub async fn init_asset_measurements(db: &DatabaseWrapper) -> Result<()> {
@@ -43,7 +43,10 @@ impl Deref for PVMeasurementsService {
 }
 
 impl PVMeasurementsService {
-    pub async fn insert_measurements(&self, measurements: Vec<PVMeasurementSchema>) -> Result<HashMap<usize, Bson>> {
+    pub async fn insert_measurements(
+        &self,
+        measurements: Vec<PVMeasurementSchema>,
+    ) -> Result<HashMap<usize, Bson>> {
         match self.0.insert_many(measurements).await {
             Ok(db_result) => Ok(db_result.inserted_ids),
             Err(e) => {
@@ -56,7 +59,6 @@ impl PVMeasurementsService {
 
 #[repr(transparent)]
 pub struct SmartMeterMeasurementsService(pub Collection<SmartMeterMeasurementSchema>);
-
 
 impl From<&DatabaseWrapper> for SmartMeterMeasurementsService {
     fn from(db: &DatabaseWrapper) -> Self {
@@ -73,7 +75,10 @@ impl Deref for SmartMeterMeasurementsService {
 }
 
 impl SmartMeterMeasurementsService {
-    pub async fn insert_measurements(&self, measurements: Vec<SmartMeterMeasurementSchema>) -> Result<HashMap<usize, Bson>> {
+    pub async fn insert_measurements(
+        &self,
+        measurements: Vec<SmartMeterMeasurementSchema>,
+    ) -> Result<HashMap<usize, Bson>> {
         match self.0.insert_many(measurements).await {
             Ok(db_result) => Ok(db_result.inserted_ids),
             Err(e) => {
@@ -102,7 +107,10 @@ impl Deref for BatteryMeasurementsService {
 }
 
 impl BatteryMeasurementsService {
-    pub async fn insert_measurements(&self, measurements: Vec<BatteryMeasurementSchema>) -> Result<HashMap<usize, Bson>> {
+    pub async fn insert_measurements(
+        &self,
+        measurements: Vec<BatteryMeasurementSchema>,
+    ) -> Result<HashMap<usize, Bson>> {
         match self.0.insert_many(measurements).await {
             Ok(db_result) => Ok(db_result.inserted_ids),
             Err(e) => {

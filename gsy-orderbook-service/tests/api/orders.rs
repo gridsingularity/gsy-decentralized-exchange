@@ -1,19 +1,20 @@
 use crate::helpers::init_app;
 use actix_web::web;
+use codec::Encode;
 use gsy_offchain_primitives::db_api_schema::orders::OrderStatus;
 use gsy_offchain_primitives::node_to_api_schema::insert_order::{
-    Order, OrderComponent, Bid, OrderSchema};
+    Bid, Order, OrderComponent, OrderSchema,
+};
 use mongodb::bson::Bson;
 use std::collections::HashMap;
-use codec::Encode;
 use subxt::ext::sp_core::crypto::AccountId32;
 use subxt::utils::H256;
 
 pub fn create_test_accountid() -> AccountId32 {
     // A fixed 32-byte value, typically derived from a public key
     let account_id_bytes = [
-        0u8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
-        16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31
+        0u8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+        25, 26, 27, 28, 29, 30, 31,
     ];
 
     AccountId32::from(account_id_bytes)
@@ -42,8 +43,8 @@ async fn subscribe_return_a_200_for_valid_form_data() {
                 market_id: market_id,
                 time_slot: 1,
                 creation_time: 1677453190,
-            }
-        })
+            },
+        }),
     };
 
     let orderlist = vec![order.clone()];
@@ -64,7 +65,10 @@ async fn subscribe_return_a_200_for_valid_form_data() {
     let db = web::Data::new(app.db_wrapper);
 
     let resp_order_id = response.get(&0).unwrap();
-    assert_eq!(resp_order_id.as_str().unwrap().to_string(), order_id.to_string());
+    assert_eq!(
+        resp_order_id.as_str().unwrap().to_string(),
+        order_id.to_string()
+    );
     let saved = db
         .get_ref()
         .orders()
