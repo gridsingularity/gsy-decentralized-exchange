@@ -6,6 +6,9 @@ use std::ops::Deref;
 use crate::db::order_service::{init_orders, OrderService};
 use crate::db::trade_service::{init_trades, TradeService};
 use crate::db::measurements_service::{init_measurements, MeasurementsService};
+use crate::db::asset_measurements_service::{
+    init_asset_measurements, PVMeasurementsService, SmartMeterMeasurementsService,
+    BatteryMeasurementsService};
 use crate::db::forecasts_service::{init_forecasts, ForecastsService};
 use crate::db::market_service::{init_markets, MarketService};
 
@@ -23,6 +26,15 @@ impl DatabaseWrapper {
         self.into()
     }
     pub fn measurements(&self) -> MeasurementsService {
+        self.into()
+    }
+    pub fn pv_measurements(&self) -> PVMeasurementsService {
+        self.into()
+    }
+    pub fn battery_measurements(&self) -> BatteryMeasurementsService {
+        self.into()
+    }
+    pub fn smart_meter_measurements(&self) -> SmartMeterMeasurementsService {
         self.into()
     }
     pub fn forecasts(&self) -> ForecastsService {
@@ -55,6 +67,7 @@ async fn preload(db: &DatabaseWrapper) -> Result<()> {
     init_trades(db).await?;
     init_forecasts(db).await?;
     init_measurements(db).await?;
+    init_asset_measurements(db).await?;
     init_markets(db).await?;
     Ok(())
 }

@@ -5,7 +5,7 @@ pub mod node_to_api_schema;
 pub mod types;
 pub mod utils;
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MarketType {
