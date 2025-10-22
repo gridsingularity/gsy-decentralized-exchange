@@ -85,7 +85,7 @@ async fn submit_offer(world: &mut MyWorld, user_name: String, energy: f64) {
 }
 
 #[when(regex = r#"measurements for "([^"]*)" and "([^"]*)" assets are submitted"#)]
-async fn submit_measurements(_world: &mut MyWorld, _user1: String, _user2: String) {
+async fn submit_measurements(world: &mut MyWorld, _user1: String, _user2: String) {
 	let orderbook_url = std::env::var("ORDERBOOK_SERVICE_URL")
 		.unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
 	let adapter = AreaMarketInfoAdapter::new(Some(orderbook_url));
@@ -95,14 +95,14 @@ async fn submit_measurements(_world: &mut MyWorld, _user1: String, _user2: Strin
 			area_uuid: "area-alice".to_string(),
 			community_uuid: "community1".to_string(),
 			energy_kwh: 12.0,
-			time_slot: 1,
+			time_slot: world.target_delivery_time,
 			creation_time: 1,
 		},
 		MeasurementSchema {
 			area_uuid: "area-bob".to_string(),
 			community_uuid: "community1".to_string(),
 			energy_kwh: -8.0,
-			time_slot: 1,
+			time_slot: world.target_delivery_time,
 			creation_time: 1,
 		},
 	];
