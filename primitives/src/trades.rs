@@ -1,4 +1,4 @@
-	use crate::orders::{Bid, Offer};
+use crate::orders::{Bid, Offer};
 use crate::v0::{AccountId, Hash};
 use codec::{Decode, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
@@ -7,19 +7,19 @@ pub use sp_runtime::traits::{BlakeTwo256, Hash as HashT};
 /// Trade struct
 #[derive(Debug, Encode, Decode, Clone, PartialEq, Eq, TypeInfo, MaxEncodedLen)]
 #[cfg_attr(feature = "std", derive(Hash, Default))]
-pub struct Trade<AccountId, Hash> {
-	pub seller: AccountId,
-	pub buyer: AccountId,
+pub struct Trade<AccountId32, Hash> {
+	pub seller: AccountId32,
+	pub buyer: AccountId32,
 	pub market_id: u8,
 	pub trade_uuid: Hash,
 	pub creation_time: u64,
 	pub time_slot: u64,
-	pub offer: Offer<AccountId>,
+	pub offer: Offer<AccountId32>,
 	pub offer_hash: Hash,
-	pub bid: Bid<AccountId>,
+	pub bid: Bid<AccountId32>,
 	pub bid_hash: Hash,
-	pub residual_bid: Option<Bid<AccountId>>,
-	pub residual_offer: Option<Offer<AccountId>>,
+	pub residual_bid: Option<Bid<AccountId32>>,
+	pub residual_offer: Option<Offer<AccountId32>>,
 	pub parameters: TradeParameters<Hash>,
 }
 
