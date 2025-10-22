@@ -18,6 +18,12 @@ pub async fn post_trades(
     db: DbRef,
 ) -> impl Responder {
     let deserialized_trades = convert_gsy_node_trades_schema_to_db_schema(trades.to_vec());
+    for trade in deserialized_trades.clone() {
+        let _ = db.get_ref().orders().update_order_by_area_market_id(
+            trade.market_id.clone(), trade.offer.offer_component.area_uuid.clone());
+        let _ = db.get_ref().orders().update_order_by_area_market_id(
+            trade.market_id.clone(), trade.bid.bid_component.area_uuid.clone());
+    }
     match db.get_ref().trades().insert_trades(deserialized_trades).await {
         Ok(ids) => HttpResponse::Ok().json(ids),
         Err(_) => HttpResponse::InternalServerError().finish()
