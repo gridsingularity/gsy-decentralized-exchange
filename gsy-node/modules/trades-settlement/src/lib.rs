@@ -160,10 +160,18 @@ pub mod pallet {
 					}
 				}
 
-				<orderbook_registry::Pallet<T>>::clear_orders_batch(
-					operator_account,
+				let trades = <orderbook_registry::Pallet<T>>::clear_orders_batch(
+					operator_account.clone(),
 					valid_matches.clone(),
-				)?;
+				);
+
+				for trade in trades {
+					<orderbook_worker::Pallet<T>>::add_trade(
+						operator_account.clone(),
+						trade.clone(),
+					)?;
+				}
+
 				Self::deposit_event(Event::TradesSettled(T::Hashing::hash_of(&valid_matches)));
 				Ok(())
 			} else {

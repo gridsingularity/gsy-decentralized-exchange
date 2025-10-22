@@ -622,7 +622,7 @@ pub mod pallet {
 		pub fn transfer_collateral(
 			from_account: &T::AccountId,
 			to_account: &T::AccountId,
-			collateral_amount: BalanceOf<T>,
+			collateral_amount: u64,
 		) -> DispatchResult {
 			let from_vault_info = Self::vault_info(from_account)?;
 			let to_vault_info = Self::vault_info(to_account)?;
@@ -639,20 +639,21 @@ pub mod pallet {
 			let to_collateral_info = to_vault_info.collateral;
 
 			ensure!(
-				from_collateral_info.amount >= collateral_amount,
+				from_collateral_info.amount >= collateral_amount.saturated_into(),
 				<Error<T>>::NotEnoughCollateral
 			);
 
-			T::Currency::transfer(&from, &to, collateral_amount, ExistenceRequirement::KeepAlive)
+			T::Currency::transfer(
+				&from, &to, collateral_amount.saturated_into(), ExistenceRequirement::KeepAlive)
 				.map_err(|_| <Error<T>>::NotEnoughCollateralForFee)?;
 
 			let deposit_time = <frame_system::Pallet<T>>::block_number();
 			let new_from_collateral_info = CollateralInfo {
-				amount: from_collateral_info.amount - collateral_amount,
+				amount: from_collateral_info.amount - collateral_amount.saturated_into(),
 				deposit_time,
 			};
 			let new_to_collateral_info = CollateralInfo {
-				amount: to_collateral_info.amount + collateral_amount,
+				amount: to_collateral_info.amount + collateral_amount.saturated_into(),
 				deposit_time,
 			};
 			let new_from_vault_info =
