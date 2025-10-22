@@ -15,25 +15,25 @@ name = "gsy-orderbook-service"
 
 [dependencies]
 gsy-offchain-primitives = { default-features = false, path = "../offchain-primitives", version = "0.1.0" }
-anyhow = "1"
-actix-web = "4.5.1"
+anyhow = "1.0.100"
+actix-web = "4.11.0"
 chrono = { version = "0.4.37", features = ["serde"] }
 codec = { package = "parity-scale-codec", version = "3.6.9", default-features = false, features = ["derive", "full", "bit-vec"] }
-config = "0.15.6"
-dotenv = "0"
-envy = "0.4"
+config = "0.15.18"
+dotenv = "0.15.0"
+envy = "0.4.2"
 futures = "0.3.30"
-mongodb = "3.2.0"
+mongodb = "3.3.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0"}
-subxt = { version = "0.37", features = ["substrate-compat"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-tokio_schedule = "0.3.0"
-tracing = { version = "0.1", features = ["log"] }
-tracing-actix-web = "0.7"
+subxt = { version = "0.44.0"}
+tokio = { version = "1.48", features = ["macros", "rt-multi-thread"] }
+tokio_schedule = "0.3.2"
+tracing = { version = "0.1.41", features = ["log"] }
+tracing-actix-web = "0.7.19"
 tracing-bunyan-formatter = "0.3"
 tracing-log = "0.2"
-tracing-subscriber = { version = "0.3", features = ["registry", "env-filter"] }
+tracing-subscriber = { version = "0.3.20", features = ["registry", "env-filter"] }
 
 [dev-dependencies]
 once_cell = "1"
