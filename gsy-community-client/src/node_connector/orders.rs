@@ -7,7 +7,7 @@ use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketT
 use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
 use gsy_offchain_primitives::utils::{string_to_h256, NODE_FLOAT_SCALING_FACTOR};
 use subxt::{utils::AccountId32, OnlineClient, SubstrateConfig};
-use subxt_signer::sr25519::{dev, Keypair};
+use subxt_signer::sr25519::Keypair;
 use tracing::info;
 
 const BID_RATE: f64 = 0.3;

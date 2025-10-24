@@ -8,7 +8,6 @@ use gsy_offchain_primitives::utils::h256_to_string;
 use gsy_offchain_primitives::MarketType;
 use std::time::Duration;
 use subxt::utils::H256;
-use tokio::time::sleep;
 use tracing::info;
 
 #[when(regex = r#""([^"]*)" submits a bid for (\d+) energy"#)]

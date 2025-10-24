@@ -5,6 +5,7 @@ use gsy_community_client::node_connector::orders::publish_orders;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use gsy_community_client::time_utils::{get_current_timestamp_in_secs, get_last_and_next_timeslot};
 use gsy_offchain_primitives::db_api_schema::profiles::{ForecastSchema, MeasurementSchema};
+use gsy_offchain_primitives::constants::Constants;
 use reqwest::Client;
 use std::time::Duration;
 use subxt_signer::sr25519::dev;
@@ -132,7 +133,7 @@ impl AppState {
 			}
 
 			// Sleep for 15 minutes before polling again
-			sleep(Duration::from_secs(900)).await;
+			sleep(Duration::from_secs(Constants::TIME_SLOT_SEC)).await;
 		}
 	}
 }

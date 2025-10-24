@@ -1,4 +1,4 @@
-use gsy_offchain_primitives::MarketType;
+use gsy_offchain_primitives::{MarketType, constants::Constants};
 use serde::Deserialize;
 
 #[derive(Deserialize, Debug, Clone)]
@@ -23,7 +23,7 @@ fn default_tick_interval() -> u64 {
 	60
 } // 1 minute
 fn default_look_ahead() -> u64 {
-	24
+	0
 } // 24 hours
 
 pub fn get_config() -> anyhow::Result<Config> {
@@ -37,11 +37,19 @@ pub struct MarketRule {
 }
 
 pub const MARKET_RULES: &[MarketRule] = &[
-	MarketRule { market_type: MarketType::Spot, open_offset_mins: -120, close_offset_mins: -60 },
+	MarketRule {
+		market_type: MarketType::Spot,
+		open_offset_mins: Constants::SPOT_MARKET_OPEN_OFFSET_SEC,
+		close_offset_mins: Constants::SPOT_MARKET_CLOSE_OFFSET_SEC
+	},
 	MarketRule {
 		market_type: MarketType::Flexibility,
-		open_offset_mins: -15,
-		close_offset_mins: 0,
+		open_offset_mins: Constants::FLEX_MARKET_OPEN_OFFSET_SEC,
+		close_offset_mins: Constants::FLEX_MARKET_CLOSE_OFFSET_SEC
 	},
-	MarketRule { market_type: MarketType::Settlement, open_offset_mins: 30, close_offset_mins: 60 },
+	MarketRule {
+		market_type: MarketType::Settlement,
+		open_offset_mins: Constants::SETTLEMENT_MARKET_OPEN_OFFSET_MIN,
+		close_offset_mins: Constants::SETTLEMENT_MARKET_CLOSE_OFFSET_MIN
+	},
 ];
