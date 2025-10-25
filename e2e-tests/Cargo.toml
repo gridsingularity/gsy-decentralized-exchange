@@ -18,8 +18,8 @@ serde_json = "1.0"
 anyhow = "1.0"
 subxt = { version = "0.37", features = ["substrate-compat"] }
 subxt-signer = { version = "0.37" }
-gsy-offchain-primitives = { path = "../offchain-primitives" }
-gsy-community-client = { path = "../gsy-community-client" }
+gsy-offchain-primitives = { path = "../offchain-primitives", version = "0" }
+gsy-community-client = { path = "../gsy-community-client", version = "0" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 futures = "0.3"

@@ -13,7 +13,7 @@ panic = "unwind"
 
 [workspace.dependencies]
 
-gsy-primitives = { version = '0.0.2', default-features = false, path = '../primitives' }
+gsy-primitives = { version = '0', default-features = false, path = '../primitives' }
 gsy-collateral = { version = '0.0.2', default-features = false, path = './modules/gsy-collateral' }
 orderbook-registry = { version = '0.0.2', default-features = false, path = './modules/orderbook-registry' }
 orderbook-worker = { version = '0.0.2', default-features = false, path = './modules/orderbook-worker' }
@@ -32,7 +32,7 @@ pallet-grandpa = { git = "https://github.com/paritytech/polkadot-sdk.git", tag =
 pallet-sudo = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.9.0", default-features = false }
 pallet-timestamp = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.9.0", default-features = false }
 pallet-transaction-payment = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.9.0", default-features = false }
-pallet-transaction-payment-rpc = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.9.0" }
+pallet-transaction-payment-rpc = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.9.0", default-features = false }
 
 # General Substrate requirements
 sc-cli = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.9.0", default-features = false }

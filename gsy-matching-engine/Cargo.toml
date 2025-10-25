@@ -13,10 +13,10 @@ path = "src/main.rs"
 name = "gsy-matching-engine"
 
 [dependencies]
-gsy-offchain-primitives = { default-features = false, path = "../offchain-primitives", version = "0.1.0" }
+gsy-offchain-primitives = { default-features = false, path = "../offchain-primitives", version = "0" }
 anyhow = "1"
 async-recursion = "1"
-chrono = { version = "0.4.37", features = ["serde", "rustc-serialize"]}
+chrono = { version = "0.4.37", features = ["serde"]}
 clap = { version = "4", features = ["derive"]}
 codec = { package = "parity-scale-codec", version = "3.6.9", default-features = false, features = ["derive", "full", "bit-vec"] }
 futures = "0.3.30"
