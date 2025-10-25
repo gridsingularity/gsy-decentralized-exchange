@@ -3,9 +3,14 @@ name = "gsy-offchain-primitives"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "gsy_offchain_primitives"
+path = "src/lib.rs"
+
 [dependencies]
 codec = { package = "parity-scale-codec", version = "3.6.9", default-features = false, features = ["derive", "full", "bit-vec"] }
 serde = { version = "1.0", features = ["derive"] }
 subxt = { version = "0.35.1", features = ["substrate-compat"] }
 base64 = "0.13.1"
 hex = "0.4.3"
+uuid = {  version = "1.18.1" , features=["v4"]}

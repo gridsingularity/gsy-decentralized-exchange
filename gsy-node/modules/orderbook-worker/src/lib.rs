@@ -363,6 +363,30 @@ pub mod pallet {
 			);
 			Ok(())
 		}
+
+		/// Remove trade from offchain worker.
+		/// Called by the Orderbook worker.
+		///
+		/// # Parameters
+		/// `origin`: The origin of the extrinsic. The user who wants to remove the order.
+		/// `order_hash`: The hash of the order to remove.
+		#[pallet::weight(< T as Config >::WeightInfo::zero_weight())]
+		#[pallet::call_index(6)]
+		pub fn remove_offchain_worker_trade(
+			origin: OriginFor<T>,
+			trade_payload: TradePayload<T::Public, T::AccountId, T::Hash>,
+			_signature: T::Signature,
+		) -> DispatchResult {
+			ensure_none(origin)?;
+			for trade in trade_payload.trade {
+				log::info!(
+					"remove trade: {:?}",
+					trade.trade_uuid,
+				);
+				Self::delete_trade(T::Hashing::hash_of(&trade))?;
+			}
+			Ok(())
+		}
 	}
 
 	#[pallet::validate_unsigned]
@@ -405,6 +429,15 @@ pub mod pallet {
 					}
 					valid_tx(b"remove_order_by_order_reference".to_vec())
 				},
+				Call::remove_offchain_worker_trade {
+					trade_payload: ref payload,
+					ref signature,
+				} => {
+					if !SignedPayload::<T>::verify::<T::AuthorityId>(payload, signature.clone()) {
+						return InvalidTransaction::BadProof.into();
+					}
+					valid_tx(b"remove_offchain_worker_trade".to_vec())
+				},
 
 				_ => InvalidTransaction::Call.into(),
 			}
@@ -417,9 +450,21 @@ pub mod pallet {
 		}
 	}
 
+	impl<T: SigningTypes> SignedPayload<T> for TradePayload<T::Public, T::AccountId, T::Hash> {
+		fn public(&self) -> T::Public {
+			self.public.clone()
+		}
+	}
+
 	#[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug, TypeInfo)]
 	pub struct Payload<Public, AccountId, Hash> {
 		order_reference: Vec<OrderReference<AccountId, Hash>>,
+		public: Public,
+	}
+
+	#[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug, TypeInfo)]
+	pub struct TradePayload<Public, AccountId, Hash> {
+		trade: Vec<Trade<AccountId, Hash>>,
 		public: Public,
 	}
 
@@ -444,7 +489,8 @@ pub mod pallet {
 		}
 		/// The main entry point for the offchain worker.
 		fn offchain_process() {
-			log::info!("Started offchain process...");
+			log::info!("Started offchain process...Orders {:?}, Trades {:?}",
+				<OrdersForWorker<T>>::iter().count(), <TradesForWorker<T>>::iter().count());
 			// Iterate through the locally stored orders and react to them.
 			// When the worker sees a new order, it responds by making
 			// an HTTP request to the DB and send a signed transaction back.
@@ -499,7 +545,7 @@ pub mod pallet {
 				match &trade {
 					_trade_in_book => {
 						log::info!(
-							"Offchain process: reference: {:?}, order: {:?}",
+							"Offchain process: reference: {:?}, trade: {:?}",
 							&trade_hash,
 							&trade
 						);
@@ -510,24 +556,6 @@ pub mod pallet {
 			}
 
 			if !trades.is_empty() {
-				// let trade_schema: Vec<Trade<T::AccountId, T::Hash>> = trades
-				// 	.clone()
-				// 	.into_iter()
-				// 	.map(|trade| Trade {
-				// 		seller: trade.seller,
-				// 		buyer: trade.buyer,
-				// 		market_id: trade.market_id,
-				// 		trade_uuid: trade.trade_uuid,
-				// 		creation_time: trade.creation_time,
-				// 		time_slot: trade.time_slot,
-				// 		offer: trade.offer,
-				// 		offer_hash: trade.offer_hash,
-				// 		bid: trade.bid,
-				// 		bid_hash: trade.bid_hash,
-				// 		residual_offer
-				//
-				// 	})
-				// 	.collect();
 				let bytes = trades.encode();
 				let bytes_to_json: Vec<u8> = serde_json::to_vec(&bytes).unwrap();
 				let post_trades_status_code =
@@ -540,9 +568,8 @@ pub mod pallet {
 						post_trades_status_code
 					)
 				} else {
-					for trade_hash in trade_hashes {
-						Self::delete_trade(trade_hash).unwrap();
-					}
+					Self::remove_processed_trades_succeeded(trades).expect(
+						"Could not call the runtime to remove the processed trades.");
 				}
 			}
 		}
@@ -552,15 +579,23 @@ pub mod pallet {
 			// code the duration to 2s to complete the external call to the database to post the
 			// orders.
 			let orderbook_service_urls = OrderBookServiceURLs::default();
-			let deadline = sp_io::offchain::timestamp().add(Duration::from_millis(2_000));
+			let deadline = sp_io::offchain::timestamp().add(Duration::from_millis(10_000));
 			let request = Request::post(&orderbook_service_urls.trades_url, vec![&request_body]);
 			let pending = request
 				.deadline(deadline)
 				.add_header("Content-Type", "application/json")
 				.send()
+				.map_err(|e| {
+					log::error!("❌ Failed to send the trade HTTP request: {:?}", e);
+					e
+				})
 				.map_err(|_| http::Error::DeadlineReached)?;
+
 			let response =
-				pending.try_wait(deadline).map_err(|_| http::Error::DeadlineReached)??;
+				pending.try_wait(deadline).map_err(|e| {
+					log::error!("❌ Failed to wait for the response of the trade HTTP request: {:?}", e);
+					e
+				}).map_err(|_| http::Error::DeadlineReached)??;
 			Ok(response.code)
 		}
 
@@ -575,9 +610,17 @@ pub mod pallet {
 				.deadline(deadline)
 				.add_header("Content-Type", "application/json")
 				.send()
+				.map_err(|e| {
+					log::error!("❌ Failed to send order HTTP request: {:?}", e);
+					e
+				})
 				.map_err(|_| http::Error::DeadlineReached)?;
 			let response =
-				pending.try_wait(deadline).map_err(|_| http::Error::DeadlineReached)??;
+				pending.try_wait(deadline).map_err(|e| {
+					log::error!("❌ Failed to wait for the response of the order HTTP request: {:?}", e);
+					e
+				}).map_err(|_| http::Error::DeadlineReached)??;
+
 			Ok(response.code)
 		}
 
@@ -642,6 +685,34 @@ pub mod pallet {
 				},
 				move |payload, signature| Call::remove_local_order_by_order_reference {
 					order_payload: payload,
+					signature,
+				},
+			) {
+				match res {
+					Ok(_) => log::info!("Unsigned transaction - remove_processed_orders_succeeded"),
+					Err(()) => log::error!("{:?}", <Error<T>>::OffchainSignedTxError),
+				};
+			};
+			Ok(())
+		}
+
+		/// Sending a signed response to the pallet.
+		/// Orderbook worker calls to remove trades from storage.
+		///
+		/// Parameters
+		/// `trades`: The trades collected by the Orderbook worker from storage.
+		pub fn remove_processed_trades_succeeded(
+			trades: Vec<Trade<T::AccountId, T::Hash>>,
+		) -> Result<(), Error<T>> {
+			let signer = Signer::<T, T::AuthorityId>::any_account();
+
+			if let Some((_, res)) = signer.send_unsigned_transaction(
+				move |account| TradePayload {
+					trade: trades.clone(),
+					public: account.public.clone(),
+				},
+				move |payload, signature| Call::remove_offchain_worker_trade {
+					trade_payload: payload,
 					signature,
 				},
 			) {

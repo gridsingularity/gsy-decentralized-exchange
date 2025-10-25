@@ -1,4 +1,4 @@
-use gsy_offchain_primitives::MarketType;
+use gsy_offchain_primitives::{MarketType, constants::Constants};
 use serde::Deserialize;
 
 #[derive(Deserialize, Debug, Clone)]

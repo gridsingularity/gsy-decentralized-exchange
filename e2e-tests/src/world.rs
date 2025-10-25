@@ -32,23 +32,7 @@ impl MyWorld {
 		users.insert("bob".to_string(), subxt_signer::sr25519::dev::bob());
 		users.insert("charlie".to_string(), subxt_signer::sr25519::dev::charlie());
 
-		Ok(Self {
-			subxt_client,
-			http_client,
-			users,
-			last_market_id: None,
-			target_delivery_time: {
-				let now = std::time::SystemTime::now()
-					.duration_since(std::time::UNIX_EPOCH)
-					.unwrap()
-					.as_secs();
-				let hour_as_secs = 3600;
-				let spot_open_offset_secs = 120 * 60;
-				let target_hour_start =
-					((now + spot_open_offset_secs) / hour_as_secs) * hour_as_secs;
-				target_hour_start
-			},
-		})
+		Ok(Self { subxt_client, http_client, users, last_market_id: None, target_delivery_time: 0 })
 	}
 
 	pub fn generate_market_id(&self, market_type: MarketType) -> H256 {

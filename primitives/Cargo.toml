@@ -4,6 +4,10 @@ version = "0.0.2"
 authors = ['Grid Singularity <https://github.com/gridsingularity>']
 edition = "2021"
 
+[lib]
+name = "gsy_primitives"
+path = "src/lib.rs"
+
 [dependencies]
 sp-core = { default-features = false, git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.9.0" }
 sp-std = { default-features = false, git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.9.0" }

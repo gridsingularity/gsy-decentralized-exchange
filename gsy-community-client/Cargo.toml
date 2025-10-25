@@ -8,9 +8,12 @@ edition = "2021"
 path = "src/main.rs"
 name = "gsy-community-client"
 
+[lib]
+name = "gsy_community_client"
+path = "src/lib.rs"
 
 [dependencies]
-gsy-offchain-primitives = { default-features = false, path = "../offchain-primitives", version = "0.1.0" }
+gsy-offchain-primitives = { default-features = false, path = "../offchain-primitives", version = "0" }
 reqwest = { version = "0", features = ["json"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1"
@@ -19,6 +22,7 @@ subxt = { version = "0.37", features = ["substrate-compat"] }
 subxt-signer = "0.37"
 tracing = { version = "0.1", features = ["log"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+blake2-rfc = { version = "0.2.18", default-features = false }
 
 [dev-dependencies]
 httpmock = "0.8.0-alpha.1"

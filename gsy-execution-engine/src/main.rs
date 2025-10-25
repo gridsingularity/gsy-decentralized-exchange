@@ -8,6 +8,7 @@ use tracing::{error, info};
 use utils::cli::{Cli, Commands};
 use utils::telemetry::{get_subscriber, init_subscriber};
 use services::execution_orchestrator::run_execution_cycle;
+use gsy_offchain_primitives::constants::Constants;
 
 #[tokio::main]
 async fn main() {
@@ -45,7 +46,8 @@ fn generate_previous_timeslot(market_duration: u64) -> u64 {
     use chrono::{Utc, Duration};
     
     let now = Utc::now();
-    let prev = now - Duration::seconds(market_duration as i64);
 
-    prev.timestamp() as u64
+    let prev = now - Duration::minutes(Constants::EXECUTION_ENGINE_OFFSET_MIN as i64);
+
+    (prev.timestamp() as u64 / Constants::TIME_SLOT_SEC) * Constants::TIME_SLOT_SEC as u64
 }

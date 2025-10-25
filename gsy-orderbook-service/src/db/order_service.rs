@@ -116,6 +116,28 @@ impl OrderService {
         }
     }
 
+    pub async fn update_order_by_area_market_id(
+        &self, area_uuid: String, market_id: String) -> Result<bool> {
+        let filter = doc! {
+            "area_uuid": area_uuid,
+            "market_id": market_id
+        };
+
+        let update = doc! {
+            "$set": {
+                "status": bson::to_bson(&OrderStatus::Executed)?,
+            }
+        };
+
+        match self.0.update_many(filter, update).await {
+            Ok(_doc) => Ok(true),
+            Err(e) => {
+                tracing::error!("Failed to execute query: {:?}", e);
+                Err(anyhow::Error::from(e))
+            }
+        }
+    }
+
     #[tracing::instrument(name = "Update order status by id", skip(self, id, status))]
     pub async fn update_order_status_by_id(
         &self,
