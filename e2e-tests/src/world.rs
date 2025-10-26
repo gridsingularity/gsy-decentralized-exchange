@@ -6,6 +6,8 @@ use reqwest::Client;
 use std::collections::HashMap;
 use subxt::{utils::H256, OnlineClient, SubstrateConfig};
 use subxt_signer::sr25519::Keypair;
+use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
+use gsy_offchain_primitives::db_api_schema::market::MarketTopologySchema;
 
 #[subxt::subxt(runtime_metadata_path = "../offchain-primitives/metadata.scale")]
 pub mod gsy_node {}
@@ -18,6 +20,11 @@ pub struct MyWorld {
 	pub users: HashMap<String, Keypair>,
 	pub last_market_id: Option<subxt::utils::H256>,
 	pub target_delivery_time: u64,
+	pub buyer_id: String,
+	pub seller_id: String,
+	pub bid_forecast: Option<ForecastSchema>,
+	pub offer_forecast: Option<ForecastSchema>,
+	pub topology_schema: Option<MarketTopologySchema>
 }
 
 impl MyWorld {
@@ -32,7 +39,11 @@ impl MyWorld {
 		users.insert("bob".to_string(), subxt_signer::sr25519::dev::bob());
 		users.insert("charlie".to_string(), subxt_signer::sr25519::dev::charlie());
 
-		Ok(Self { subxt_client, http_client, users, last_market_id: None, target_delivery_time: 0 })
+		Ok(Self {
+			subxt_client, http_client, users, last_market_id: None, target_delivery_time: 0,
+			buyer_id: "areaAlice".to_string(), seller_id: "areaBob".to_string(),
+			bid_forecast: None, offer_forecast: None, topology_schema: None
+		})
 	}
 
 	pub fn generate_market_id(&self, market_type: MarketType) -> H256 {

@@ -1947,7 +1947,9 @@ name = "gsy-offchain-primitives"
 version = "0.1.0"
 dependencies = [
  "base64 0.13.1",
+ "chrono",
  "hex",
+ "once_cell",
  "parity-scale-codec",
  "serde",
  "subxt 0.35.3",

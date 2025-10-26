@@ -99,6 +99,17 @@ impl AreaMarketInfoAdapter {
 		}
 	}
 
+	async fn get_existing_market_topology(&self, community_market_url: String) -> Option<MarketTopologySchema> {
+		let response = match self.client.get(community_market_url).send().await {
+			Ok(resp) if resp.status().is_success() => resp,
+			_ => return None,
+		};
+		match response.json::<MarketTopologySchema>().await {
+			Ok(body) => Some(body),
+			Err(_) => None,
+		}
+	}
+
 	pub async fn get_or_create_market_topology(
 		&self,
 		topology: ExternalCommunityTopology,
@@ -109,10 +120,10 @@ impl AreaMarketInfoAdapter {
 			+ topology.community_uuid.as_str()
 			+ "&time_slot="
 			+ time_slot.to_string().as_str();
-		let response = self.client.get(community_market_url).send().await;
-		match response {
-			Ok(resp) => Some(resp.json::<MarketTopologySchema>().await.unwrap()),
-			Err(_) => {
+		let market_topology = self.get_existing_market_topology(community_market_url).await;
+		match market_topology {
+			Some(topology) => Some(topology),
+			None => {
 				let new_market = MarketTopologySchema {
 					community_name: topology.community_name.clone(),
 					community_uuid: topology.community_uuid.clone(),

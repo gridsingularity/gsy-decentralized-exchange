@@ -26,4 +26,4 @@ RUN cargo build --release
 FROM rustlang/rust:nightly AS runtime
 WORKDIR /var/www/gsy-execution-engine
 COPY --from=builder /var/www/gsy-execution-engine/target/release/gsy-execution-engine /usr/local/bin
-ENTRYPOINT ["/usr/local/bin/gsy-execution-engine", "web3", "http://gsy-orderbook", "8080", "ws://gsy-node", "9944", "30", "900", "0.10"]
+ENTRYPOINT ["/usr/local/bin/gsy-execution-engine", "web3", "http://gsy-orderbook", "8080", "ws://gsy-node", "9944", "30", "3600", "0.10"]

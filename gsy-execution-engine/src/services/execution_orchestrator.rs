@@ -1,5 +1,6 @@
 use anyhow::Result;
 use tracing::info;
+use gsy_offchain_primitives::utils::timestamp_to_datetime_string;
 
 use crate::{
     primitives::{
@@ -25,10 +26,12 @@ pub async fn run_execution_cycle(
     // 1) fetch trades/measurements
     let (trades, measurements) = fetch_trades_and_measurements_for_timeslot(offchain_url, timeslot, market_duration).await?;
     info!(
-        "Fetched {} trades, {} measurements for timeslot {}",
+        "Fetched {} trades, {} measurements for timeslot {}. Trades {:?} measurements {:?}.",
         trades.len(),
         measurements.len(),
-        timeslot
+        timestamp_to_datetime_string(timeslot),
+        trades,
+        measurements
     );
 
     // 2) compute penalties

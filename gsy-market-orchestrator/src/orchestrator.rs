@@ -1,7 +1,8 @@
+use std::thread::current;
 use crate::chain_connector::{self, GsyMarketOrchestratorNodeClient};
 use crate::config::{Config, MARKET_RULES};
 use blake2_rfc::blake2b::blake2b;
-use gsy_offchain_primitives::MarketType;
+use gsy_offchain_primitives::{MarketType, constants::GlobalConstants, utils::timestamp_to_datetime_string};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use subxt::utils::H256;
 use tokio::time::sleep;
@@ -45,36 +46,40 @@ async fn orchestrate_markets(
 	let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
 	let look_ahead_horizon = now + (config.look_ahead_hours * 3600);
 
-	let hour_as_secs = 3600;
-	let mut current_delivery_hour = (now / hour_as_secs) * hour_as_secs;
+	let mut current_delivery_secs = (now / GlobalConstants.TIME_SLOT_SEC) * GlobalConstants.TIME_SLOT_SEC;
 
 	info!("Orchestrator Check at {}. Looking ahead to {}", now, look_ahead_horizon);
 
-	while current_delivery_hour <= look_ahead_horizon {
-		for rule in MARKET_RULES {
-			let market_id = generate_market_id(rule.market_type, current_delivery_hour);
+	while current_delivery_secs <= look_ahead_horizon {
+		for rule in MARKET_RULES.iter() {
+			error!("Looping over: {}", timestamp_to_datetime_string(current_delivery_secs));
 
-			let open_time = (current_delivery_hour as i64 + rule.open_offset_mins * 60) as u64;
-			let close_time = (current_delivery_hour as i64 + rule.close_offset_mins * 60) as u64;
+			let market_id = generate_market_id(rule.market_type, current_delivery_secs);
+			let open_time = (current_delivery_secs as i64 + rule.open_offset_mins * 60) as u64;
+			let close_time = (current_delivery_secs as i64 + rule.close_offset_mins * 60) as u64;
 
 			let on_chain_status = client.get_market_status(market_id).await?;
 			let should_be_open = now >= open_time && now < close_time;
 
 			if should_be_open && !on_chain_status {
-				info!(
-					"OPENING market '{:?}' for delivery at {}",
-					rule.market_type, current_delivery_hour
+				error!(
+					"OPENING market '{:?}' for delivery at {}. Opening time {}.",
+					rule.market_type,
+					timestamp_to_datetime_string(current_delivery_secs),
+					timestamp_to_datetime_string(open_time)
 				);
 				client.update_market_status(market_id, true).await?;
 			} else if !should_be_open && on_chain_status {
-				info!(
-					"CLOSING market '{:?}' for delivery at {}",
-					rule.market_type, current_delivery_hour
+				error!(
+					"CLOSING market '{:?}' for delivery at {}. Closing time {}.",
+					rule.market_type,
+					timestamp_to_datetime_string(current_delivery_secs),
+					timestamp_to_datetime_string(close_time)
 				);
 				client.update_market_status(market_id, false).await?;
 			}
 		}
-		current_delivery_hour += hour_as_secs;
+		current_delivery_secs += GlobalConstants.TIME_SLOT_SEC;
 	}
 	Ok(())
 }

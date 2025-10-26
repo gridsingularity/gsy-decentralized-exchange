@@ -2,82 +2,33 @@ use crate::world::{gsy_node, MyWorld};
 use cucumber::{then, when};
 use gsy_community_client::node_connector::orders::publish_orders;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
-use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketTopologySchema};
-use gsy_offchain_primitives::db_api_schema::profiles::{ForecastSchema, MeasurementSchema};
-use gsy_offchain_primitives::utils::h256_to_string;
-use gsy_offchain_primitives::MarketType;
+use gsy_offchain_primitives::db_api_schema::profiles::MeasurementSchema;
 use std::time::Duration;
-use subxt::utils::H256;
 use tracing::info;
 
-#[when(regex = r#""([^"]*)" submits a bid for (\d+) energy"#)]
-async fn submit_bid(world: &mut MyWorld, user_name: String, energy: f64) {
+#[when(regex = r#""([^"]*)" submits a bid"#)]
+async fn submit_bid(world: &mut MyWorld, user_name: String) {
 	let user = world.users.get(&user_name).unwrap().clone();
-	let market_id = world.generate_market_id(MarketType::Spot);
-	world.last_market_id = Some(market_id);
-
-	let forecast = ForecastSchema {
-		area_uuid: format!("area-{}", user_name),
-		community_uuid: "community1".to_string(),
-		time_slot: world.target_delivery_time,
-		creation_time: 1,
-		energy_kwh: energy,
-		confidence: 1.0,
-	};
-
-	let market = MarketTopologySchema {
-		market_id: h256_to_string(market_id),
-		community_uuid: "community1".to_string(),
-		community_name: "Test Community".to_string(),
-		time_slot: world.target_delivery_time as u32,
-		creation_time: 1,
-		area_uuids: vec![AreaTopologySchema {
-			area_uuid: format!("area-{}", user_name),
-			name: user_name.clone(),
-			area_hash: h256_to_string(H256::random()),
-		}],
-	};
 
 	let node_url =
 		std::env::var("GSY_NODE_URL").unwrap_or_else(|_| "ws://127.0.0.1:9944".to_string());
 
-	publish_orders(node_url, vec![forecast], market, &user)
+	publish_orders(node_url, vec![world.bid_forecast.clone().unwrap()],
+				   world.topology_schema.clone().unwrap(), &user)
 		.await
 		.expect("Failed to publish bid");
 	println!("Submitted bid for {}", user_name);
 }
 
-#[when(regex = r#""([^"]*)" submits an offer for (\d+) energy"#)]
-async fn submit_offer(world: &mut MyWorld, user_name: String, energy: f64) {
+#[when(regex = r#""([^"]*)" submits an offer"#)]
+async fn submit_offer(world: &mut MyWorld, user_name: String) {
 	let user = world.users.get(&user_name).unwrap().clone();
-	let market_id = world.generate_market_id(MarketType::Spot);
-
-	let forecast = ForecastSchema {
-		area_uuid: format!("area-{}", user_name),
-		community_uuid: "community1".to_string(),
-		time_slot: world.target_delivery_time,
-		creation_time: 1,
-		energy_kwh: -energy,
-		confidence: 1.0,
-	};
-
-	let market = MarketTopologySchema {
-		market_id: h256_to_string(market_id),
-		community_uuid: "community1".to_string(),
-		community_name: "Test Community".to_string(),
-		time_slot: world.target_delivery_time as u32,
-		creation_time: 1,
-		area_uuids: vec![AreaTopologySchema {
-			area_uuid: format!("area-{}", user_name),
-			name: user_name.clone(),
-			area_hash: h256_to_string(H256::random()),
-		}],
-	};
 
 	let node_url =
 		std::env::var("GSY_NODE_URL").unwrap_or_else(|_| "ws://127.0.0.1:9944".to_string());
 
-	publish_orders(node_url, vec![forecast], market, &user)
+	publish_orders(node_url, vec![world.offer_forecast.clone().unwrap()],
+				   world.topology_schema.clone().unwrap(), &user)
 		.await
 		.expect("Failed to publish offer");
 	println!("Submitted offer for {}", user_name);
@@ -91,14 +42,14 @@ async fn submit_measurements(world: &mut MyWorld, _user1: String, _user2: String
 
 	let measurements = vec![
 		MeasurementSchema {
-			area_uuid: "area-alice".to_string(),
+			area_uuid: world.buyer_id.clone(),
 			community_uuid: "community1".to_string(),
 			energy_kwh: 12.0,
 			time_slot: world.target_delivery_time,
 			creation_time: 1,
 		},
 		MeasurementSchema {
-			area_uuid: "area-bob".to_string(),
+			area_uuid: world.seller_id.clone(),
 			community_uuid: "community1".to_string(),
 			energy_kwh: -8.0,
 			time_slot: world.target_delivery_time,

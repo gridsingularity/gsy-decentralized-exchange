@@ -15,4 +15,6 @@
 # direnv cache
 .direnv
 
+mongodb-data
+
 .idea

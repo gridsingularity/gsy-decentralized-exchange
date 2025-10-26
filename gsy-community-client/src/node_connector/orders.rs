@@ -57,7 +57,7 @@ fn _create_bid_object(
 		0: InputBid {
 			buyer: AccountId32::from(signer.public_key()),
 			bid_component: OrderComponent {
-				area_uuid: string_to_h256(area_info.area_hash.clone()),
+				area_uuid: string_to_h256(area_info.area_uuid.clone()),
 				energy: (forecast.energy_kwh.abs() * NODE_FLOAT_SCALING_FACTOR) as u64,
 				energy_rate: (forecast.energy_kwh.abs() * BID_RATE * NODE_FLOAT_SCALING_FACTOR)
 					as u64,
@@ -80,7 +80,7 @@ fn _create_offer_object(
 		0: InputOffer {
 			seller: AccountId32::from(signer.public_key()),
 			offer_component: OrderComponent {
-				area_uuid: string_to_h256(area_info.area_hash.clone()),
+				area_uuid: string_to_h256(area_info.area_uuid.clone()),
 				energy: (forecast.energy_kwh.abs() * NODE_FLOAT_SCALING_FACTOR) as u64,
 				energy_rate: (forecast.energy_kwh.abs() * OFFER_RATE * NODE_FLOAT_SCALING_FACTOR)
 					as u64,

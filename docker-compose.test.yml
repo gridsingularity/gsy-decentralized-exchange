@@ -71,6 +71,9 @@ services:
       - RUST_LOG=info,gsy_market_orchestrator=debug
       - GSY_NODE_URL=ws://gsy-node:9944
       - ORCHESTRATOR_SIGNER_SURI=//Alice
+      - SPOT_MARKET_OPEN_OFFSET_MIN=-120
+      - SPOT_MARKET_CLOSE_OFFSET_MIN=-30
+      - EXECUTION_ENGINE_OFFSET_MIN=-120
 
   gsy-execution-engine:
     container_name: gsy-execution-engine
@@ -81,6 +84,8 @@ services:
         condition: service_healthy
       gsy-node:
         condition: service_healthy
+    environment:
+      - EXECUTION_ENGINE_OFFSET_MIN=-90
 
   mongodb:
     image: mongo:5.0
@@ -107,5 +112,7 @@ services:
         condition: service_started
       gsy-execution-engine:
         condition: service_started
+    environment:
+      - RUST_BACKTRACE=1
     networks:
       - default
