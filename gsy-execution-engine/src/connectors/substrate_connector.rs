@@ -7,9 +7,10 @@ use subxt::{
 	OnlineClient, SubstrateConfig,
 };
 use subxt_signer::sr25519::dev;
+use gsy_offchain_primitives::utils::string_to_h256;
 use tracing::info;
 
-#[subxt::subxt(runtime_metadata_path = "metadata.scale")]
+#[subxt::subxt(runtime_metadata_path = "../offchain-primitives/metadata.scale")]
 pub mod gsy_node {}
 
 pub async fn submit_penalties(node_url: &str, penalties: Vec<Penalty>) -> Result<(), Error> {
@@ -18,8 +19,6 @@ pub async fn submit_penalties(node_url: &str, penalties: Vec<Penalty>) -> Result
 		return Ok(());
 	}
 
-	let api = OnlineClient::<SubstrateConfig>::from_insecure_url(node_url).await?;
-
 	type NodeTradesPenalties =
 		gsy_node::runtime_types::gsy_primitives::trades::TradesPenalties<AccountId32, H256>;
 
@@ -27,8 +26,8 @@ pub async fn submit_penalties(node_url: &str, penalties: Vec<Penalty>) -> Result
 		.iter()
 		.filter_map(|p| {
 			let account = AccountId32::from_str(&p.penalized_account).ok()?;
-			let market_uuid = p.market_id.parse::<u32>().ok()?;
-			let trade_uuid = H256::from_str(&p.trade_uuid).ok()?;
+			let market_uuid = string_to_h256(p.market_id.clone());
+			let trade_uuid = string_to_h256(p.trade_uuid.clone());
 
 			Some(NodeTradesPenalties {
 				penalized_account: account,
@@ -39,10 +38,12 @@ pub async fn submit_penalties(node_url: &str, penalties: Vec<Penalty>) -> Result
 		})
 		.collect();
 
+	info!("Sending {} penalties to gsy-node.", node_penalties.len());
 	let penalty_extrinsic = gsy_node::tx().trades_settlement().submit_penalties(node_penalties);
 
 	let signer = dev::alice();
 
+	let api = OnlineClient::<SubstrateConfig>::from_insecure_url(node_url).await?;
 	let tx_progress = api
 		.tx()
 		.sign_and_submit_then_watch_default(&penalty_extrinsic, &signer)

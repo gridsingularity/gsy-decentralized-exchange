@@ -1,5 +1,6 @@
 use gsy_offchain_primitives::db_api_schema::{profiles::MeasurementSchema, trades::TradeSchema};
 use std::collections::HashMap;
+use tracing::info;
 
 #[derive(Debug)]
 pub struct Penalty {
@@ -33,11 +34,13 @@ pub fn compute_penalties(
 ) -> Vec<Penalty> {
 	let mut penalties = Vec::new();
 
-	// Create a lookup map for measurements by (area_uuid, market_id)
-	let mut measurement_map: HashMap<(String, String), f64> = HashMap::new();
+	// Create a lookup map for measurements by area_uuid
+	// TODO: temporarily use only the area_hash for identifying measurements. Should be improved
+	// by adding market_id in the measurements, and use this too for identification.
+	let mut measurement_map: HashMap<String, f64> = HashMap::new();
 	for meas in measurements {
 		measurement_map.insert(
-			(meas.area_uuid.clone(), meas.community_uuid.clone()),
+			meas.area_hash.clone(),
 			meas.energy_kwh, // energy is f64; positive means consumption, negative means production
 		);
 	}
@@ -45,10 +48,8 @@ pub fn compute_penalties(
 	// Iterate over each trade and compute the penalty if a measurement exists.
 	for trade in trades {
 		// For consumers, we use the Bid's area and market.
-		let key =
-			(trade.bid.bid_component.area_uuid.clone(), trade.bid.bid_component.market_id.clone());
 
-		if let Some(&measured_energy) = measurement_map.get(&key) {
+		if let Some(&measured_energy) = measurement_map.get(&trade.bid.bid_component.area_uuid.clone()) {
 			let traded_energy = trade.parameters.selected_energy;
 
 			// Compute delta = measured_energy - traded_energy.
@@ -65,7 +66,7 @@ pub fn compute_penalties(
 
 				penalties.push(Penalty {
 					penalized_account: trade.buyer.clone(),
-					market_id: trade.market_id.clone(),
+					market_id: trade.offer.offer_component.market_id.clone(),
 					trade_uuid: trade.trade_uuid.clone(),
 					penalty_cost,
 				});

@@ -26,12 +26,10 @@ pub async fn run_execution_cycle(
     // 1) fetch trades/measurements
     let (trades, measurements) = fetch_trades_and_measurements_for_timeslot(offchain_url, timeslot, market_duration).await?;
     info!(
-        "Fetched {} trades, {} measurements for timeslot {}. Trades {:?} measurements {:?}.",
+        "Fetched {} trades, {} measurements for timeslot {}.",
         trades.len(),
         measurements.len(),
         timestamp_to_datetime_string(timeslot),
-        trades,
-        measurements
     );
 
     // 2) compute penalties
