@@ -5,42 +5,20 @@ use gsy_community_client::external_api::{ExternalAreaTopology, ExternalCommunity
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use gsy_offchain_primitives::db_api_schema::market::AreaTopologySchema;
 use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
-use gsy_offchain_primitives::utils::h256_to_string;
+use gsy_offchain_primitives::utils::{h256_to_string, string_to_h256};
 use gsy_offchain_primitives::{constants::GlobalConstants, utils::timestamp_to_datetime_string, MarketType};
 use std::time::Duration as Duration;
 use subxt::utils::H256;
 use tokio::time::sleep;
-use tracing::info;
+use tracing::{error, info};
 
 #[when(regex = r#"the community topology and forecasts of (\d+) energy are submitted"#)]
 async fn submit_topology_forecasts(world: &mut MyWorld, energy: f64) {
-	let bid_forecast = ForecastSchema {
-		area_uuid: world.buyer_id.clone(),
-		community_uuid: "community1".to_string(),
-		time_slot: world.target_delivery_time,
-		creation_time: 1,
-		energy_kwh: energy,
-		confidence: 1.0,
-	};
-
-	let offer_forecast = ForecastSchema {
-		area_uuid: world.seller_id.clone(),
-		community_uuid: "community1".to_string(),
-		time_slot: world.target_delivery_time,
-		creation_time: 1,
-		energy_kwh: -energy,
-		confidence: 1.0,
-	};
-
-	let market_id = world.generate_market_id(MarketType::Spot);
-	world.last_market_id = Some(market_id);
 
 	let orderbook_url = std::env::var("ORDERBOOK_SERVICE_URL")
 		.unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
 	let adapter = AreaMarketInfoAdapter::new(Some(orderbook_url));
-	adapter.forward_forecast(
-		vec![bid_forecast.clone(), offer_forecast.clone()]
-	).await.expect("Forecast forwarding failed.");
+
 	let market = adapter.get_or_create_market_topology(
 		ExternalCommunityTopology {
 			community_uuid: "community1".to_string(),
@@ -57,6 +35,52 @@ async fn submit_topology_forecasts(world: &mut MyWorld, energy: f64) {
 			]
 		}, world.target_delivery_time
 	).await.expect("Topology forwarding failed.");
+
+	for area in market.community_areas.clone() {
+		if area.area_uuid == world.buyer_id {
+			world.buyer_hash = Some(area.area_hash.clone());
+		};
+		if area.area_uuid == world.seller_id {
+			world.seller_hash = Some(area.area_hash.clone());
+		};
+	}
+
+	if world.buyer_hash.is_none() {
+        error!("Buyer area hash not found in the community.");
+    }
+
+	if world.seller_hash.is_none() {
+		error!("Seller area hash not found in the community.");
+	}
+
+	world.last_market_id = Some(string_to_h256(market.market_id.clone()));
+	if world.last_market_id.unwrap() != world.generate_market_id(MarketType::Spot) {
+		error!("Market ID mismatch {} {}", world.last_market_id.unwrap(), world.generate_market_id(MarketType::Spot));
+	}
+
+	let bid_forecast = ForecastSchema {
+		area_uuid: world.buyer_id.clone(),
+		area_hash: world.buyer_hash.clone().unwrap(),
+		community_uuid: "community1".to_string(),
+		time_slot: world.target_delivery_time,
+		creation_time: 1,
+		energy_kwh: energy,
+		confidence: 1.0,
+	};
+
+	let offer_forecast = ForecastSchema {
+		area_uuid: world.seller_id.clone(),
+		area_hash: world.seller_hash.clone().unwrap(),
+		community_uuid: "community1".to_string(),
+		time_slot: world.target_delivery_time,
+		creation_time: 1,
+		energy_kwh: -energy,
+		confidence: 1.0,
+	};
+
+	adapter.forward_forecast(
+		vec![bid_forecast.clone(), offer_forecast.clone()]
+	).await.expect("Forecast forwarding failed.");
 
 	world.bid_forecast = Some(bid_forecast.clone());
 	world.offer_forecast = Some(offer_forecast.clone());

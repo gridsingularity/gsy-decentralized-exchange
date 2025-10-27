@@ -18,5 +18,5 @@ pub struct MarketTopologySchema {
     pub community_name: String,
     pub time_slot: u32,
     pub creation_time: u32,
-    pub area_uuids: Vec<AreaTopologySchema>
+    pub community_areas: Vec<AreaTopologySchema>
 }

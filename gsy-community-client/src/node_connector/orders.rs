@@ -57,7 +57,7 @@ fn _create_bid_object(
 		0: InputBid {
 			buyer: AccountId32::from(signer.public_key()),
 			bid_component: OrderComponent {
-				area_uuid: string_to_h256(area_info.area_uuid.clone()),
+				area_uuid: string_to_h256(area_info.area_hash.clone()),
 				energy: (forecast.energy_kwh.abs() * NODE_FLOAT_SCALING_FACTOR) as u64,
 				energy_rate: (forecast.energy_kwh.abs() * BID_RATE * NODE_FLOAT_SCALING_FACTOR)
 					as u64,
@@ -80,7 +80,7 @@ fn _create_offer_object(
 		0: InputOffer {
 			seller: AccountId32::from(signer.public_key()),
 			offer_component: OrderComponent {
-				area_uuid: string_to_h256(area_info.area_uuid.clone()),
+				area_uuid: string_to_h256(area_info.area_hash.clone()),
 				energy: (forecast.energy_kwh.abs() * NODE_FLOAT_SCALING_FACTOR) as u64,
 				energy_rate: (forecast.energy_kwh.abs() * OFFER_RATE * NODE_FLOAT_SCALING_FACTOR)
 					as u64,
@@ -102,7 +102,7 @@ pub fn create_input_orders(
 	let mut input_orders: Vec<InputOrder<AccountId32>> = Vec::new();
 
 	for forecast in forecasts {
-		let area_info = market.area_uuids.iter().find(|area| area.area_uuid == forecast.area_uuid);
+		let area_info = market.community_areas.iter().find(|area| area.area_hash == forecast.area_hash);
 		if area_info.is_none() {
 			continue;
 		}

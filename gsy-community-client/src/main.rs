@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use gsy_community_client::external_api::{
 	ExternalCommunityTopology, ExternalForecast, ExternalMeasurement,
 };
@@ -74,13 +75,17 @@ impl AppState {
 				)
 				.await
 				.unwrap();
-
+			let area_uuid_to_hash: HashMap<String, String> = internal_topology.community_areas.iter().map(
+				|area| {
+					(area.area_uuid.clone(), area.area_hash.clone())
+				}).collect();
 			match self.fetch_forecasts().await {
 				Ok(forecasts) => {
 					let valid_forecasts: Vec<ForecastSchema> = forecasts
 						.into_iter()
 						.map(|forecast| {
-							self.api_adapter.convert_forecast_to_internal_schema(&forecast)
+							self.api_adapter.convert_forecast_to_internal_schema(
+								&forecast, area_uuid_to_hash[&forecast.area_uuid].clone())
 						})
 						.filter(|forecast| {
 							self.api_adapter.validate_forecast(forecast, seconds_since_epoch)
@@ -113,7 +118,8 @@ impl AppState {
 					let valid_measurements: Vec<MeasurementSchema> = measurements
 						.into_iter()
 						.map(|measurement| {
-							self.api_adapter.convert_measurement_to_internal_schema(&measurement)
+							self.api_adapter.convert_measurement_to_internal_schema(
+								&measurement, area_uuid_to_hash[&measurement.area_uuid].clone())
 						})
 						.filter(|measurement| {
 							self.api_adapter.validate_measurement(measurement, seconds_since_epoch)

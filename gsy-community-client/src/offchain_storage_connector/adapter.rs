@@ -75,9 +75,11 @@ impl AreaMarketInfoAdapter {
 	pub fn convert_forecast_to_internal_schema(
 		&self,
 		forecast: &ExternalForecast,
+		area_hash: String
 	) -> ForecastSchema {
 		ForecastSchema {
 			area_uuid: forecast.area_uuid.clone(),
+			area_hash: area_hash.clone(),
 			community_uuid: forecast.community_uuid.clone(),
 			time_slot: forecast.time_slot,
 			creation_time: forecast.creation_time,
@@ -89,9 +91,11 @@ impl AreaMarketInfoAdapter {
 	pub fn convert_measurement_to_internal_schema(
 		&self,
 		measurement: &ExternalMeasurement,
+		area_hash: String,
 	) -> MeasurementSchema {
 		MeasurementSchema {
 			area_uuid: measurement.area_uuid.clone(),
+			area_hash: area_hash.clone(),
 			community_uuid: measurement.community_uuid.clone(),
 			time_slot: measurement.time_slot,
 			creation_time: measurement.creation_time,
@@ -130,7 +134,7 @@ impl AreaMarketInfoAdapter {
 					market_id: h256_to_string(generate_market_id(MarketType::Spot, time_slot)),
 					time_slot: time_slot as u32,
 					creation_time: get_current_timestamp_in_secs() as u32,
-					area_uuids: topology
+					community_areas: topology
 						.areas
 						.clone()
 						.into_iter()

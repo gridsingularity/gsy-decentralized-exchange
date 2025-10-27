@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub struct MeasurementSchema {
     pub area_uuid: String,
+    pub area_hash: String,
     pub community_uuid: String,
     pub time_slot: u64,
     pub creation_time: u64,
@@ -15,6 +16,7 @@ pub struct MeasurementSchema {
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub struct ForecastSchema {
     pub area_uuid: String,
+    pub area_hash: String,
     pub community_uuid: String,
     pub time_slot: u64,
     pub creation_time: u64,

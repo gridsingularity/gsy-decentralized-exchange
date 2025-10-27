@@ -40,7 +40,7 @@ async fn test_get_or_create_market_topology() {
         market_id: h256_to_string(H256::random()),
         community_uuid: "comm_uuid".to_string(),
         community_name: "comm_name".to_string(),
-        area_uuids: vec![
+        community_areas: vec![
             AreaTopologySchema {
                 area_uuid: "area_uuid".to_string(),
                 name: "area_name".to_string(),

@@ -43,6 +43,7 @@ async fn submit_measurements(world: &mut MyWorld, _user1: String, _user2: String
 	let measurements = vec![
 		MeasurementSchema {
 			area_uuid: world.buyer_id.clone(),
+			area_hash: world.buyer_hash.clone().unwrap(),
 			community_uuid: "community1".to_string(),
 			energy_kwh: 12.0,
 			time_slot: world.target_delivery_time,
@@ -50,6 +51,7 @@ async fn submit_measurements(world: &mut MyWorld, _user1: String, _user2: String
 		},
 		MeasurementSchema {
 			area_uuid: world.seller_id.clone(),
+			area_hash: world.seller_hash.clone().unwrap(),
 			community_uuid: "community1".to_string(),
 			energy_kwh: -8.0,
 			time_slot: world.target_delivery_time,
