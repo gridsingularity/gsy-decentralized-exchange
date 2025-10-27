@@ -38,7 +38,7 @@ benchmarks! {
 		add_user::<T>(caller.clone()).unwrap();
 		let _ = GsyCollateral::<T>::create(caller.clone());
 		let amount: BalanceOf<T> = 10_000_000u32.into();
-		T::Currency::deposit_creating(&caller, amount * 2u32.into());
+		let _ = T::Currency::deposit_creating(&caller, amount * 2u32.into());
 	}: _(RawOrigin::Signed(caller.clone()), amount)
 	verify {
 		assert_last_event::<T>(Event::CollateralDeposited(
@@ -120,7 +120,7 @@ benchmarks! {
 		add_user::<T>(caller.clone()).unwrap();
 		let _ = GsyCollateral::<T>::create(caller.clone());
 		let amount: BalanceOf<T> = 10_000_000u32.into();
-		T::Currency::deposit_creating(&caller, amount * 2u32.into());
+		let _ = T::Currency::deposit_creating(&caller, amount * 2u32.into());
 		let _ = GsyCollateral::<T>::deposit(&caller, amount);
 		let withdraw_amount: BalanceOf<T> = 9_000_000u32.into();
 	}: _(RawOrigin::Signed(caller.clone()), withdraw_amount)

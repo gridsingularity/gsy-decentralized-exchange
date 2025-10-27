@@ -1,7 +1,10 @@
+use sp_core::H256;
+use gsy_primitives::HashT;
 use super::*;
 
 use gsy_collateral::Pallet as GsyCollateral;
 use gsy_primitives::{Bid, BidOfferMatch, Offer, OrderComponent};
+
 
 pub struct TestOrderbookFunctions;
 
@@ -27,8 +30,8 @@ impl TestOrderbookFunctions {
             buyer,
             nonce: 1,
             bid_component: OrderComponent {
-                area_uuid: 1,
-                market_id: 1u64,
+                area_uuid: H256::from_slice(&[1u8; 32]),
+                market_id: H256::from_slice(&[1u8; 32]),
                 time_slot: block_number,
                 creation_time: 1677453190,
                 energy,
@@ -47,8 +50,8 @@ impl TestOrderbookFunctions {
             seller,
             nonce: 1,
             offer_component: OrderComponent {
-                area_uuid: 2,
-                market_id: 1u64,
+                area_uuid: H256::from_slice(&[1u8; 32]),
+                market_id: H256::from_slice(&[1u8; 32]),
                 time_slot: block_number,
                 creation_time: 1677453190,
                 energy,
@@ -66,8 +69,9 @@ impl TestOrderbookFunctions {
         selected_energy: u64,
         energy_rate: u64,
     ) -> BidOfferMatch<T::AccountId, T::Hash> {
+        let market_hash = <T as frame_system::Config>::Hashing::hash_of(&[1u8; 32]);
         BidOfferMatch {
-            market_id: 1,
+            market_id: market_hash,
             time_slot: block_number,
             bid,
             offer,

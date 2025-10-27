@@ -23,7 +23,7 @@ jobs:
       - uses: actions/checkout@v2
 
       - name: Set-Up
-        run: sudo apt install -y git clang curl libssl-dev llvm libudev-dev
+        run: sudo apt install -y clang curl git make libssl-dev protobuf-compiler
 
       - name: Install Rustup
         run: |
@@ -50,7 +50,7 @@ jobs:
       - uses: actions/checkout@v2
 
       - name: Set-Up
-        run: sudo apt install -y git clang curl libssl-dev llvm libudev-dev
+        run: sudo apt install -y clang curl git make libssl-dev protobuf-compiler
 
       - name: Install Rustup
         run: |

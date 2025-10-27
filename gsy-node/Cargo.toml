@@ -23,7 +23,7 @@ trades-settlement = { version = '0.0.2', default-features = false, path = './mod
 codec = { package = "parity-scale-codec", version = "3.6.9", default-features = false, features = ["derive"] }
 scale-info = { version = "2.11.2", default-features = false, features = ["derive"] }
 frame-support = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.9.0", default-features = false }
-frame-system = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.9.0", default-features = false }
+frame-system = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.9.0", default-features = false, features = ["runtime-benchmarks"] }
 frame-executive =  { default-features = false, git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.9.0" }
 # frame pallets
 pallet-aura = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.9.0", default-features = false }
