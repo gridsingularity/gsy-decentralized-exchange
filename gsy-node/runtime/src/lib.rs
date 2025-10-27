@@ -370,7 +370,7 @@ where
 		let tip = 0;
 		// take the biggest period possible.
 		let period =
-			BlockHashCount::get().checked_next_power_of_two().map(|c| c / 2).unwrap_or(2) as u64;
+			BlockHashCount::get().checked_next_power_of_two().map(|c| c / 2).unwrap_or(64) as u64;
 		let current_block = System::block_number()
 			.saturated_into::<u64>()
 			// The `System::block_number` is initialized with `n+1`,

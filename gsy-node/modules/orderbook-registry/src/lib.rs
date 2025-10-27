@@ -369,7 +369,7 @@ pub mod pallet {
 		/// `proposed_matches`: The proposed match batch.
 		pub fn clear_orders_batch(
 			operator_account: T::AccountId,
-			proposed_matches: Vec<BidOfferMatch<T::AccountId>>,
+			proposed_matches: Vec<BidOfferMatch<T::AccountId, T::Hash>>,
 		) -> Vec<Trade<T::AccountId, T::Hash>> {
 
 			let mut trades: Vec<Trade<T::AccountId, T::Hash>> = Vec::new();
@@ -387,7 +387,7 @@ pub mod pallet {
 		/// `proposed_match`: The proposed match structure containing the bid and offer.
 		pub fn clear_order(
 			operator_account: T::AccountId,
-			proposed_match: BidOfferMatch<T::AccountId>,
+			proposed_match: BidOfferMatch<T::AccountId, T::Hash>,
 		) -> Result<Trade<T::AccountId, T::Hash>, gsy_collateral::Error<T>> {
 			// Verify that the user is a registered operator account.
 			ensure!(

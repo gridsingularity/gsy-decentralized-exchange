@@ -122,7 +122,7 @@ pub mod pallet {
 		#[pallet::call_index(0)]
 		pub fn settle_trades(
 			origin: OriginFor<T>,
-			proposed_matches: Vec<BidOfferMatch<T::AccountId>>,
+			proposed_matches: Vec<BidOfferMatch<T::AccountId, T::Hash>>,
 		) -> DispatchResult {
 			let operator_account = ensure_signed(origin)?;
 
@@ -197,20 +197,28 @@ pub mod pallet {
 				<gsy_collateral::Pallet<T>>::is_registered_exchange_operator(&operator_account),
 				gsy_collateral::Error::<T>::NotARegisteredExchangeOperator
 			);
+			log::info!("Submitting penalties {:?}...", penalties.len());
 			// For each penalty in the input vector, compute a unique hash and insert it.
 			for penalty in penalties.into_iter() {
 				let penalty_hash = T::Hashing::hash_of(&penalty);
+
+				log::info!("Inserting penalty {:?} {:?}...", penalty_hash, penalty.penalty_energy);
+
 				<PenaltiesRegistry<T>>::insert(penalty_hash, penalty.clone());
+
+				log::info!("Emitting penalty event...");
 				Self::deposit_event(Event::PenaltiesSubmitted(penalty, penalty_hash));
 			}
+			log::info!("Exited penalty submission...");
 			Ok(())
 		}
 	}
 
 	impl<T: Config> Validator for Pallet<T> {
 		type AccountId = T::AccountId;
+		type Hash = T::Hash;
 
-		fn validate(bid_offer_match: &BidOfferMatch<Self::AccountId>) -> bool {
+		fn validate(bid_offer_match: &BidOfferMatch<Self::AccountId, Self::Hash>) -> bool {
 			if !Self::validate_bid_energy_component(
 				bid_offer_match.bid.bid_component.energy,
 				bid_offer_match.selected_energy,

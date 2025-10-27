@@ -65,7 +65,7 @@ impl TestOrderbookFunctions {
         block_number: u64,
         selected_energy: u64,
         energy_rate: u64,
-    ) -> BidOfferMatch<T::AccountId> {
+    ) -> BidOfferMatch<T::AccountId, T::Hash> {
         BidOfferMatch {
             market_id: 1,
             time_slot: block_number,

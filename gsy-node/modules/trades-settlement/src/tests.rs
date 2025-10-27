@@ -131,7 +131,7 @@ fn submit_penalties_works_for_registered_operator() {
 		// Create a sample penalty record.
 		let sample_penalty = TradesPenalties {
 			penalized_account: ALICE,
-			market_uuid: 1,
+			market_uuid: H256::random(),
 			penalty_energy: 1000,
 			trade_uuid: H256::random(),
 		};
@@ -150,7 +150,7 @@ fn submit_penalties_fails_for_non_operator() {
 		// Here, we do not register BOB as an operator.
 		let sample_penalty = TradesPenalties {
 			penalized_account: ALICE,
-			market_uuid: 2,
+			market_uuid: H256::random(),
 			penalty_energy: 2000,
 			trade_uuid: H256::random(),
 		};

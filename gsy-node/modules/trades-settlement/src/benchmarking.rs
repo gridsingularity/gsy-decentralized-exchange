@@ -35,7 +35,7 @@ benchmarks! {
 		let amount: BalanceOf<T> = 10_000_000u32.into();
 		<T as gsy_collateral::Config>::Currency::deposit_creating(&seller, amount * 2u32.into());
 		let _ = GsyCollateral::<T>::deposit(&seller, amount);
-		let mut bid_offer_matches: Vec<BidOfferMatch<T::AccountId>> = vec![];
+		let mut bid_offer_matches: Vec<BidOfferMatch<T::AccountId, T::Hash>> = vec![];
 		for i in 0..100 {
 			let bid = TestOrderbookFunctions::dummy_bid::<T>(
 				buyer.clone(), block_number, i as u64, i as u64);
