@@ -15,6 +15,7 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::{thread, time};
 use subxt::{utils::AccountId32, OnlineClient, SubstrateConfig};
+use subxt::utils::H256;
 use subxt_signer::sr25519::dev;
 use tracing::{error, info};
 
@@ -69,7 +70,7 @@ pub async fn substrate_subscribe(orderbook_url: String, node_url: String) -> Res
 					let mut matching_data = MatchingData {
 						bids: open_bid,
 						offers: open_offer,
-						market_id: DEFAULT_MARKET_ID,
+						market_id: H256::random(),
 					};
 					let bid_offer_matches = matching_data.pay_as_bid();
 					matches_clone_one.lock().unwrap().extend(bid_offer_matches);
@@ -165,7 +166,7 @@ fn convert_db_order_component_to_canonical(component: DbOrderComponent) -> Order
 
 async fn send_settle_trades_extrinsic(
 	url: String,
-	matches: Vec<OtherBidOfferMatch<AccountId32>>,
+	matches: Vec<OtherBidOfferMatch<AccountId32, H256>>,
 ) -> Result<(), Error> {
 	let api = OnlineClient::<SubstrateConfig>::from_insecure_url(url).await?;
 
@@ -202,8 +203,8 @@ async fn settle_matched_orders(
 		let matches: Vec<BidOfferMatch> = matches.lock().unwrap().clone();
 
 		let bid_offer_match_bytes = matches.encode();
-		let transcode_bid_offer_matches: Vec<OtherBidOfferMatch<AccountId32>> =
-			Vec::<OtherBidOfferMatch<AccountId32>>::decode(&mut &bid_offer_match_bytes[..])
+		let transcode_bid_offer_matches: Vec<OtherBidOfferMatch<AccountId32, H256>> =
+			Vec::<OtherBidOfferMatch<AccountId32, H256>>::decode(&mut &bid_offer_match_bytes[..])
 				.unwrap();
 
 		match send_settle_trades_extrinsic(node_url, transcode_bid_offer_matches).await {
