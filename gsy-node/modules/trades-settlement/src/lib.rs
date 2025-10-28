@@ -53,7 +53,7 @@ pub mod pallet {
 	use frame_support::{sp_runtime::traits::Hash, transactional};
 	use frame_system::{ensure_signed, pallet_prelude::*};
 	use gsy_primitives::v0::{
-		Bid, BidOfferMatch, Offer, Order, OrderComponent, TradesPenalties, Validator,
+		Bid, BidOfferMatch, Offer, Order, OrderComponent, TradesPenalties, Validator, Trade
 	};
 	use scale_info::prelude::vec::Vec;
 	use sp_std::vec;
@@ -160,19 +160,25 @@ pub mod pallet {
 					}
 				}
 
-				let trades = <orderbook_registry::Pallet<T>>::clear_orders_batch(
-					operator_account.clone(),
-					valid_matches.clone(),
-				);
+				let mut trades = Vec::<Trade<T::AccountId, T::Hash>>::new();
+				for valid_match in valid_matches.clone() {
+					let trade_result = <orderbook_registry::Pallet<T>>::clear_order(
+						operator_account.clone(), valid_match.clone()
+					);
+					if trade_result.is_err() {
+						return Err(trade_result.unwrap_err());
+					}
+					trades.push(trade_result.unwrap());
+				}
 
-				for trade in trades {
+				for trade in trades.clone() {
 					<orderbook_worker::Pallet<T>>::add_trade(
 						operator_account.clone(),
 						trade.clone(),
 					)?;
 				}
 
-				Self::deposit_event(Event::TradesSettled(T::Hashing::hash_of(&valid_matches)));
+				Self::deposit_event(Event::TradesSettled(T::Hashing::hash_of(&trades)));
 				Ok(())
 			} else {
 				Err(Error::<T>::NoValidMatchToSettle.into())

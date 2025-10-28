@@ -362,24 +362,6 @@ pub mod pallet {
 			})
 		}
 
-		/// Execute a batch of orders.
-		///
-		/// Parameters
-		/// `operator_account`: The user who proposes tha trade match to execute the order.
-		/// `proposed_matches`: The proposed match batch.
-		pub fn clear_orders_batch(
-			operator_account: T::AccountId,
-			proposed_matches: Vec<BidOfferMatch<T::AccountId, T::Hash>>,
-		) -> Vec<Trade<T::AccountId, T::Hash>> {
-
-			let mut trades: Vec<Trade<T::AccountId, T::Hash>> = Vec::new();
-			for proposed_match in proposed_matches {
-				let trade: Trade<T::AccountId, T::Hash> = Self::clear_order(operator_account.clone(), proposed_match).unwrap();
-				trades.push(trade);
-			}
-			trades
-		}
-
 		/// Execute an order.
 		///
 		/// Parameters
@@ -388,7 +370,7 @@ pub mod pallet {
 		pub fn clear_order(
 			operator_account: T::AccountId,
 			proposed_match: BidOfferMatch<T::AccountId, T::Hash>,
-		) -> Result<Trade<T::AccountId, T::Hash>, gsy_collateral::Error<T>> {
+		) -> Result<Trade<T::AccountId, T::Hash>, DispatchError> {
 			// Verify that the user is a registered operator account.
 			ensure!(
 				<gsy_collateral::Pallet<T>>::is_registered_exchange_operator(&operator_account),
@@ -440,11 +422,14 @@ pub mod pallet {
 			for order_ref in orders_ref {
 				ensure!(
 					Self::is_order_registered(&order_ref),
-					gsy_collateral::Error::<T>::TransferFailed);
-				Self::update_order_status(
+					<Error<T>>::OpenOrderNotFound);
+				let update_result = Self::update_order_status(
 					order_ref,
 					updated_order_status.clone()
-				).ok().take();
+				);
+				if update_result.is_err() {
+					return Err(update_result.unwrap_err());
+				}
 			}
 
 			if proposed_match.bid.buyer.clone() != proposed_match.offer.seller.clone() {
