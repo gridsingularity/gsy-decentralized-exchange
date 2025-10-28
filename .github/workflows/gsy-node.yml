@@ -114,9 +114,6 @@ jobs:
   coverage:
     name: Code coverage
     runs-on: ubuntu-latest
-    container:
-      image: xd009642/tarpaulin:develop-nightly
-      options: --security-opt seccomp=unconfined
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2
@@ -124,7 +121,7 @@ jobs:
       - name: Set-Up
         run: apt install -y clang curl git make libssl-dev protobuf-compiler
 
-      - name: Install Rustup
+      - name: Install Rustup and Tarpaulin
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           source ~/.cargo/env
@@ -134,6 +131,7 @@ jobs:
           rustup component add rust-src --toolchain 1.85.0
           rustup install nightly-2024-04-25
           rustup target add wasm32-unknown-unknown --toolchain nightly-2024-04-25
+          cargo install cargo-tarpaulin
 
       - name: Generate code coverage
         run: |
@@ -142,5 +140,5 @@ jobs:
       - name: Upload to codecov.io
         uses: codecov/codecov-action@v2
         with:
-          # token: ${{secrets.CODECOV_TOKEN}} # not required for public repos
+          token: ${{secrets.CODECOV_TOKEN}} # not required for public repos
           fail_ci_if_error: true
