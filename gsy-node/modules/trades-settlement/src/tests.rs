@@ -1,17 +1,16 @@
-use crate::{mock::*, Error};
-use frame_system::RawOrigin;
-use frame_support::{assert_noop, assert_ok, traits::fungible::Mutate};
-use sp_runtime::traits::BlakeTwo256;
-use sp_core::H256;
-use gsy_primitives::{HashT, TradesPenalties};
-use crate::test_orders::TestOrderbookFunctions;
-use crate::mock::OrderbookRegistry;
 use crate::mock::GsyCollateral;
+use crate::mock::OrderbookRegistry;
+use crate::test_orders::TestOrderbookFunctions;
+use crate::{mock::*, Error};
+use frame_support::{assert_noop, assert_ok, traits::fungible::Mutate};
+use frame_system::RawOrigin;
+use gsy_primitives::{HashT, TradesPenalties};
+use sp_core::H256;
+use sp_runtime::traits::BlakeTwo256;
 
 #[test]
 fn settle_trades_works() {
 	new_test_ext().execute_with(|| {
-
 		// Register users.
 		assert_ok!(TestOrderbookFunctions::add_user::<Test>(ALICE));
 		assert_ok!(TestOrderbookFunctions::add_user::<Test>(BOB));
@@ -37,69 +36,141 @@ fn settle_trades_works() {
 		let bid = TestOrderbookFunctions::dummy_bid::<Test>(ALICE, 2, 100, 10);
 		let bid_2 = TestOrderbookFunctions::dummy_bid::<Test>(ALICE, 2, 100, 50);
 		let bid_3 = TestOrderbookFunctions::dummy_bid::<Test>(ALICE, 2, 200, 10);
-		let offer = TestOrderbookFunctions::dummy_offer::<Test>(BOB, 2,  100, 10);
-		let offer_2 = TestOrderbookFunctions::dummy_offer::<Test>(BOB,2,  100, 50);
-		let offer_3 = TestOrderbookFunctions::dummy_offer::<Test>(BOB,2,  200, 50);
-		let unregistered_bid = TestOrderbookFunctions::dummy_bid::<Test>(CHARLIE,6, 100, 10);
-		let unregistered_offer = TestOrderbookFunctions::dummy_offer::<Test>(BOB,7, 100, 10);
+		let offer = TestOrderbookFunctions::dummy_offer::<Test>(BOB, 2, 100, 10);
+		let offer_2 = TestOrderbookFunctions::dummy_offer::<Test>(BOB, 2, 100, 50);
+		let offer_3 = TestOrderbookFunctions::dummy_offer::<Test>(BOB, 2, 200, 50);
+		let unregistered_bid = TestOrderbookFunctions::dummy_bid::<Test>(CHARLIE, 6, 100, 10);
+		let unregistered_offer = TestOrderbookFunctions::dummy_offer::<Test>(BOB, 7, 100, 10);
 
-		assert_ok!(OrderbookRegistry::insert_orders(RawOrigin::Signed(ALICE).into(), vec!(BlakeTwo256::hash_of(&bid.clone()))));
-		assert_ok!(OrderbookRegistry::insert_orders(RawOrigin::Signed(ALICE).into(), vec!(BlakeTwo256::hash_of(&bid_2.clone()))));
-		assert_ok!(OrderbookRegistry::insert_orders(RawOrigin::Signed(ALICE).into(), vec!(BlakeTwo256::hash_of(&bid_3.clone()))));
+		assert_ok!(OrderbookRegistry::insert_orders(
+			RawOrigin::Signed(ALICE).into(),
+			vec!(BlakeTwo256::hash_of(&bid.clone()))
+		));
+		assert_ok!(OrderbookRegistry::insert_orders(
+			RawOrigin::Signed(ALICE).into(),
+			vec!(BlakeTwo256::hash_of(&bid_2.clone()))
+		));
+		assert_ok!(OrderbookRegistry::insert_orders(
+			RawOrigin::Signed(ALICE).into(),
+			vec!(BlakeTwo256::hash_of(&bid_3.clone()))
+		));
 
-		assert_ok!(OrderbookRegistry::insert_orders(RawOrigin::Signed(BOB).into(), vec!(BlakeTwo256::hash_of(&offer.clone()))));
-		assert_ok!(OrderbookRegistry::insert_orders(RawOrigin::Signed(BOB).into(), vec!(BlakeTwo256::hash_of(&offer_2.clone()))));
-		assert_ok!(OrderbookRegistry::insert_orders(RawOrigin::Signed(BOB).into(), vec!(BlakeTwo256::hash_of(&offer_3.clone()))));
+		assert_ok!(OrderbookRegistry::insert_orders(
+			RawOrigin::Signed(BOB).into(),
+			vec!(BlakeTwo256::hash_of(&offer.clone()))
+		));
+		assert_ok!(OrderbookRegistry::insert_orders(
+			RawOrigin::Signed(BOB).into(),
+			vec!(BlakeTwo256::hash_of(&offer_2.clone()))
+		));
+		assert_ok!(OrderbookRegistry::insert_orders(
+			RawOrigin::Signed(BOB).into(),
+			vec!(BlakeTwo256::hash_of(&offer_3.clone()))
+		));
 
 		// Add bid offer matches
 		let bid_offer_match = TestOrderbookFunctions::dummy_bid_offer_match::<Test>(
-			bid.clone(), offer.clone(), None, None, 2, 100, 10);
+			bid.clone(),
+			offer.clone(),
+			None,
+			None,
+			2,
+			100,
+			10,
+		);
 
 		let bid_offer_match_unregistered_bid = TestOrderbookFunctions::dummy_bid_offer_match::<Test>(
-			unregistered_bid.clone(), offer.clone(), None, None, 2, 13, 12);
+			unregistered_bid.clone(),
+			offer.clone(),
+			None,
+			None,
+			2,
+			13,
+			12,
+		);
 
-		let bid_offer_match_unregistered_offer = TestOrderbookFunctions::dummy_bid_offer_match::<Test>(
-			bid.clone(), unregistered_offer.clone(), None, None, 2, 100, 10);
+		let bid_offer_match_unregistered_offer =
+			TestOrderbookFunctions::dummy_bid_offer_match::<Test>(
+				bid.clone(),
+				unregistered_offer.clone(),
+				None,
+				None,
+				2,
+				100,
+				10,
+			);
 
-		let bid_offer_match_high_selected_energy = TestOrderbookFunctions::dummy_bid_offer_match::<Test>(
-			bid_2.clone(), offer_2.clone(), None, None, 2, 150, 10);
+		let bid_offer_match_high_selected_energy =
+			TestOrderbookFunctions::dummy_bid_offer_match::<Test>(
+				bid_2.clone(),
+				offer_2.clone(),
+				None,
+				None,
+				2,
+				150,
+				10,
+			);
 
-		let bid_offer_match_low_selected_energy = TestOrderbookFunctions::dummy_bid_offer_match::<Test>(
-			bid_2.clone(), offer_2.clone(), None, None, 2, 150, 10);
+		let bid_offer_match_low_selected_energy =
+			TestOrderbookFunctions::dummy_bid_offer_match::<Test>(
+				bid_2.clone(),
+				offer_2.clone(),
+				None,
+				None,
+				2,
+				150,
+				10,
+			);
 
 		let bid_offer_match_high_energy_rate = TestOrderbookFunctions::dummy_bid_offer_match::<Test>(
-			bid_3.clone(), offer_3.clone(), None, None, 2, 150, 10);
+			bid_3.clone(),
+			offer_3.clone(),
+			None,
+			None,
+			2,
+			150,
+			10,
+		);
 
 		// Clear trade.
 		assert_ok!(TradesSettlement::settle_trades(
-			RawOrigin::Signed(MIKE).into(), vec!(bid_offer_match.clone())));
+			RawOrigin::Signed(MIKE).into(),
+			vec!(bid_offer_match.clone())
+		));
 
 		// Clear trade that has already been settled.
 		// Recreate vector since the former one was moved
 		assert_noop!(
 			TradesSettlement::settle_trades(
-				RawOrigin::Signed(MIKE).into(), vec!(bid_offer_match.clone())),
+				RawOrigin::Signed(MIKE).into(),
+				vec!(bid_offer_match.clone())
+			),
 			orderbook_registry::Error::<Test>::OrderAlreadyExecuted
 		);
 
 		// Clear trade with unregistered bid.
 		assert_noop!(
 			TradesSettlement::settle_trades(
-				RawOrigin::Signed(MIKE).into(), vec!(bid_offer_match_unregistered_bid)),
+				RawOrigin::Signed(MIKE).into(),
+				vec!(bid_offer_match_unregistered_bid)
+			),
 			orderbook_registry::Error::<Test>::OpenOrderNotFound
 		);
 
 		// Clear trade with unregistered offer.
 		assert_noop!(
 			TradesSettlement::settle_trades(
-				RawOrigin::Signed(MIKE).into(), vec!(bid_offer_match_unregistered_offer)),
+				RawOrigin::Signed(MIKE).into(),
+				vec!(bid_offer_match_unregistered_offer)
+			),
 			orderbook_registry::Error::<Test>::OrderAlreadyExecuted
 		);
 
 		// Clear trade with offered energy lower than trade selected energy.
 		assert_noop!(
 			TradesSettlement::settle_trades(
-				RawOrigin::Signed(MIKE).into(), vec!(bid_offer_match_high_selected_energy)
+				RawOrigin::Signed(MIKE).into(),
+				vec!(bid_offer_match_high_selected_energy)
 			),
 			Error::<Test>::NoValidMatchToSettle
 		);
@@ -107,7 +178,8 @@ fn settle_trades_works() {
 		// Clear trade with bid energy lower than trade selected energy.
 		assert_noop!(
 			TradesSettlement::settle_trades(
-				RawOrigin::Signed(MIKE).into(), vec!(bid_offer_match_low_selected_energy)
+				RawOrigin::Signed(MIKE).into(),
+				vec!(bid_offer_match_low_selected_energy)
 			),
 			Error::<Test>::NoValidMatchToSettle
 		);
@@ -115,7 +187,8 @@ fn settle_trades_works() {
 		// Clear trade with offered energy_rate higher than bid energy_rate.
 		assert_noop!(
 			TradesSettlement::settle_trades(
-				RawOrigin::Signed(MIKE).into(), vec!(bid_offer_match_high_energy_rate)
+				RawOrigin::Signed(MIKE).into(),
+				vec!(bid_offer_match_high_energy_rate)
 			),
 			Error::<Test>::NoValidMatchToSettle
 		);
@@ -138,8 +211,9 @@ fn submit_penalties_works_for_registered_operator() {
 
 		// Call the extrinsic from MIKE (the registered operator).
 		assert_ok!(TradesSettlement::submit_penalties(
-			RawOrigin::Signed(MIKE).into(), vec!(sample_penalty.clone()))
-		);
+			RawOrigin::Signed(MIKE).into(),
+			vec!(sample_penalty.clone())
+		));
 	});
 }
 
@@ -158,7 +232,9 @@ fn submit_penalties_fails_for_non_operator() {
 		// Calling submit_penalties from BOB (not registered) should fail.
 		assert_noop!(
 			TradesSettlement::submit_penalties(
-				RawOrigin::Signed(MIKE).into(), vec!(sample_penalty.clone())),
+				RawOrigin::Signed(MIKE).into(),
+				vec!(sample_penalty.clone())
+			),
 			gsy_collateral::Error::<Test>::NotARegisteredExchangeOperator
 		);
 	});

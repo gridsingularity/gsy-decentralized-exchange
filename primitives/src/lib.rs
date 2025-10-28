@@ -78,9 +78,12 @@ pub type BlockId = generic::BlockId<Block>;
 pub use sp_runtime::OpaqueExtrinsic as UncheckedExtrinsic;
 
 mod orders;
-pub use orders::{Bid, InputBid, Offer, InputOffer, Order, InputOrder, OrderComponent, OrderReference, OrderSchema, OrderStatus};
+pub use orders::{
+	Bid, InputBid, InputOffer, InputOrder, Offer, Order, OrderComponent, OrderReference,
+	OrderSchema, OrderStatus,
+};
 mod trades;
-pub use trades::{Validator, BidOfferMatch, Trade, TradeParameters, TradesPenalties};
+pub use trades::{BidOfferMatch, Trade, TradeParameters, TradesPenalties, Validator};
 mod vault;
 pub use vault::{CollateralInfo, Vault, VaultInfo, VaultStatus, VaultWithStatus};
 

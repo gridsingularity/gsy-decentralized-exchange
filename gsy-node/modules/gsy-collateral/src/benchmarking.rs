@@ -17,9 +17,7 @@ fn assert_last_event<T: Config>(generic_event: <T as Config>::RuntimeEvent) {
 	assert_eq!(event, &system_event);
 }
 
-fn add_user<T: Config>(
-	user: T::AccountId,
-) -> Result<(), &'static str> {
+fn add_user<T: Config>(user: T::AccountId) -> Result<(), &'static str> {
 	let _ = GsyCollateral::<T>::add_user(user);
 	Ok(())
 }
@@ -132,8 +130,4 @@ benchmarks! {
 	}
 }
 
-impl_benchmark_test_suite!(
-	GsyCollateral,
-	crate::mock::new_test_ext(),
-	crate::mock::Test
-);
+impl_benchmark_test_suite!(GsyCollateral, crate::mock::new_test_ext(), crate::mock::Test);

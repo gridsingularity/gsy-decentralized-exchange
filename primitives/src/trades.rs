@@ -33,12 +33,11 @@ impl Trade<AccountId, Hash> {
 #[derive(Debug, Encode, Decode, Clone, PartialEq, Eq, TypeInfo, MaxEncodedLen)]
 #[cfg_attr(feature = "std", derive(Hash, Default))]
 pub struct TradesPenalties<AccountId, Hash> {
-    pub penalized_account: AccountId,
-    pub market_uuid: Hash,
+	pub penalized_account: AccountId,
+	pub market_uuid: Hash,
 	pub trade_uuid: Hash,
-    pub penalty_energy: u64,
+	pub penalty_energy: u64,
 }
-
 
 #[derive(Debug, Encode, Decode, Clone, Copy, PartialEq, Eq, TypeInfo, MaxEncodedLen)]
 #[cfg_attr(feature = "std", derive(Hash, Default))]
@@ -75,7 +74,7 @@ pub struct BidOfferMatch<AccountId, Hash> {
 /// Expose function to Validate Bids/Offers Matches.
 pub trait Validator {
 	type AccountId;
-	
+
 	type Hash;
 
 	/// Validate a bid/offer match.

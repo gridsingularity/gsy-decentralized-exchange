@@ -41,9 +41,7 @@ pub mod pallet {
 	// Import various useful types required by all FRAME pallets.
 	use super::*;
 	use frame_support::dispatch::DispatchResult;
-	use frame_support::{
-		pallet_prelude::*, traits::Currency, traits::UnixTime, transactional,
-	};
+	use frame_support::{pallet_prelude::*, traits::Currency, traits::UnixTime, transactional};
 	use frame_system::pallet_prelude::*;
 	use gsy_primitives::v0::{BidOfferMatch, OrderReference, OrderStatus, Trade, TradeParameters};
 	use scale_info::{prelude::vec::Vec, TypeInfo};
@@ -420,13 +418,9 @@ pub mod pallet {
 			);
 
 			for order_ref in orders_ref {
-				ensure!(
-					Self::is_order_registered(&order_ref),
-					<Error<T>>::OpenOrderNotFound);
-				let update_result = Self::update_order_status(
-					order_ref,
-					updated_order_status.clone()
-				);
+				ensure!(Self::is_order_registered(&order_ref), <Error<T>>::OpenOrderNotFound);
+				let update_result =
+					Self::update_order_status(order_ref, updated_order_status.clone());
 				if update_result.is_err() {
 					return Err(update_result.unwrap_err());
 				}
@@ -444,7 +438,9 @@ pub mod pallet {
 				<gsy_collateral::Pallet<T>>::transfer_collateral(
 					&proposed_match.bid.buyer,
 					&proposed_match.offer.seller,
-					collateral_amount).unwrap();
+					collateral_amount,
+				)
+				.unwrap();
 			}
 
 			<TradesRegistry<T>>::insert(operator_account, T::Hashing::hash_of(&proposed_match));

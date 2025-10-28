@@ -1,7 +1,7 @@
 use crate::{mock::*, Error};
 use frame_support::{assert_noop, assert_ok};
-use sp_runtime::DispatchError::BadOrigin;
 use frame_system::RawOrigin;
+use sp_runtime::DispatchError::BadOrigin;
 
 #[test]
 fn add_user_works() {
@@ -39,8 +39,10 @@ fn registered_user_must_be_added_by_root() {
 fn registered_exchange_operator_must_be_added_by_root() {
 	new_test_ext().execute_with(|| {
 		// Register an exchange operator.
-		assert_noop!(GsyCollateral::register_exchange_operator(
-			RawOrigin::Signed(ALICE).into(), BOB), BadOrigin);
+		assert_noop!(
+			GsyCollateral::register_exchange_operator(RawOrigin::Signed(ALICE).into(), BOB),
+			BadOrigin
+		);
 	});
 }
 #[test]
@@ -80,7 +82,10 @@ fn add_remove_proxies_works() {
 			GsyCollateral::unregister_proxy_account(RawOrigin::Signed(ALICE).into(), BOB),
 			Error::<Test>::NotARegisteredProxyAccount
 		);
-		assert_ok!(GsyCollateral::unregister_proxy_account(RawOrigin::Signed(ALICE).into(), CHARLIE));
+		assert_ok!(GsyCollateral::unregister_proxy_account(
+			RawOrigin::Signed(ALICE).into(),
+			CHARLIE
+		));
 		assert_noop!(
 			GsyCollateral::unregister_proxy_account(RawOrigin::Signed(ALICE).into(), CHARLIE),
 			Error::<Test>::NotARegisteredProxyAccount

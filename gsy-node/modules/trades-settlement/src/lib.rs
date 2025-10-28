@@ -53,7 +53,7 @@ pub mod pallet {
 	use frame_support::{sp_runtime::traits::Hash, transactional};
 	use frame_system::{ensure_signed, pallet_prelude::*};
 	use gsy_primitives::v0::{
-		Bid, BidOfferMatch, Offer, Order, OrderComponent, TradesPenalties, Validator, Trade
+		Bid, BidOfferMatch, Offer, Order, OrderComponent, Trade, TradesPenalties, Validator,
 	};
 	use scale_info::prelude::vec::Vec;
 	use sp_std::vec;
@@ -163,7 +163,8 @@ pub mod pallet {
 				let mut trades = Vec::<Trade<T::AccountId, T::Hash>>::new();
 				for valid_match in valid_matches.clone() {
 					let trade_result = <orderbook_registry::Pallet<T>>::clear_order(
-						operator_account.clone(), valid_match.clone()
+						operator_account.clone(),
+						valid_match.clone(),
 					);
 					if trade_result.is_err() {
 						return Err(trade_result.unwrap_err());

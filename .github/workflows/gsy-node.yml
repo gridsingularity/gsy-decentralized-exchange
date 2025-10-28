@@ -104,6 +104,9 @@ jobs:
   coverage:
     name: Code coverage
     runs-on: ubuntu-latest
+    container:
+      image: xd009642/tarpaulin:develop-nightly
+      options: --security-opt seccomp=unconfined
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2
@@ -114,7 +117,16 @@ jobs:
           toolchain: nightly
           override: true
           target: wasm32-unknown-unknown
-      - name: Run cargo-tarpaulin
-        uses: actions-rs/tarpaulin@v0.1
+
+      - name: Set-Up
+        run: sudo apt install -y clang curl git make libssl-dev protobuf-compiler
+
+      - name: Generate code coverage
+        run: |
+          cargo +nightly tarpaulin --manifest-path gsy-node/Cargo.toml --ignore-tests --out xml
+
+      - name: Upload to codecov.io
+        uses: codecov/codecov-action@v2
         with:
-          args: '--manifest-path gsy-node/Cargo.toml --ignore-tests'
+          # token: ${{secrets.CODECOV_TOKEN}} # not required for public repos
+          fail_ci_if_error: true

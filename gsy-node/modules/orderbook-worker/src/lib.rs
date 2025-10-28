@@ -379,10 +379,7 @@ pub mod pallet {
 		) -> DispatchResult {
 			ensure_none(origin)?;
 			for trade in trade_payload.trade {
-				log::info!(
-					"remove trade: {:?}",
-					trade.trade_uuid,
-				);
+				log::info!("remove trade: {:?}", trade.trade_uuid,);
 				Self::delete_trade(T::Hashing::hash_of(&trade))?;
 			}
 			Ok(())
@@ -489,8 +486,11 @@ pub mod pallet {
 		}
 		/// The main entry point for the offchain worker.
 		fn offchain_process() {
-			log::info!("Started offchain process...Orders {:?}, Trades {:?}",
-				<OrdersForWorker<T>>::iter().count(), <TradesForWorker<T>>::iter().count());
+			log::info!(
+				"Started offchain process...Orders {:?}, Trades {:?}",
+				<OrdersForWorker<T>>::iter().count(),
+				<TradesForWorker<T>>::iter().count()
+			);
 			// Iterate through the locally stored orders and react to them.
 			// When the worker sees a new order, it responds by making
 			// an HTTP request to the DB and send a signed transaction back.
@@ -568,8 +568,8 @@ pub mod pallet {
 						post_trades_status_code
 					)
 				} else {
-					Self::remove_processed_trades_succeeded(trades).expect(
-						"Could not call the runtime to remove the processed trades.");
+					Self::remove_processed_trades_succeeded(trades)
+						.expect("Could not call the runtime to remove the processed trades.");
 				}
 			}
 		}
@@ -591,11 +591,16 @@ pub mod pallet {
 				})
 				.map_err(|_| http::Error::DeadlineReached)?;
 
-			let response =
-				pending.try_wait(deadline).map_err(|e| {
-					log::error!("❌ Failed to wait for the response of the trade HTTP request: {:?}", e);
+			let response = pending
+				.try_wait(deadline)
+				.map_err(|e| {
+					log::error!(
+						"❌ Failed to wait for the response of the trade HTTP request: {:?}",
+						e
+					);
 					e
-				}).map_err(|_| http::Error::DeadlineReached)??;
+				})
+				.map_err(|_| http::Error::DeadlineReached)??;
 			Ok(response.code)
 		}
 
@@ -615,11 +620,16 @@ pub mod pallet {
 					e
 				})
 				.map_err(|_| http::Error::DeadlineReached)?;
-			let response =
-				pending.try_wait(deadline).map_err(|e| {
-					log::error!("❌ Failed to wait for the response of the order HTTP request: {:?}", e);
+			let response = pending
+				.try_wait(deadline)
+				.map_err(|e| {
+					log::error!(
+						"❌ Failed to wait for the response of the order HTTP request: {:?}",
+						e
+					);
 					e
-				}).map_err(|_| http::Error::DeadlineReached)??;
+				})
+				.map_err(|_| http::Error::DeadlineReached)??;
 
 			Ok(response.code)
 		}

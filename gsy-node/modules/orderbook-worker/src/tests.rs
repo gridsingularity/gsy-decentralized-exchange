@@ -1,12 +1,9 @@
-use crate::{mock::*};
-use gsy_primitives::{
-	v0::OrderComponent,
-	Bid,
-};
+use crate::mock::*;
+use codec::Encode;
+use gsy_primitives::{v0::OrderComponent, Bid};
 use sp_core::offchain::{testing, OffchainWorkerExt};
 use sp_core::H256;
-use sp_runtime::{AccountId32};
-use codec::Encode;
+use sp_runtime::AccountId32;
 
 #[test]
 fn orderbook_worker_sends_back_result() {
@@ -24,7 +21,7 @@ fn orderbook_worker_sends_back_result() {
 				time_slot: 1,
 				creation_time: 1,
 				energy: 10,
-				energy_rate: 1
+				energy_rate: 1,
 			},
 		};
 

@@ -3,22 +3,18 @@
 
 use super::*;
 
+use crate::benchmarking::vec::Vec;
 use crate::test_orders::TestOrderbookFunctions;
 #[allow(unused)]
 use crate::Pallet as TradesSettlement;
 use frame_benchmarking::{benchmarks, impl_benchmark_test_suite, whitelisted_caller};
-use crate::benchmarking::vec::Vec;
-use frame_support::{
-	sp_runtime::traits::Hash,
-	traits::Currency,
-};
+use frame_support::{sp_runtime::traits::Hash, traits::Currency};
 use frame_system::RawOrigin;
 use gsy_collateral::{BalanceOf, Pallet as GsyCollateral};
 use gsy_primitives::{BidOfferMatch, Order, Vault};
 use orderbook_registry::Pallet as OrderbookRegistry;
 use orderbook_worker::Pallet as OrderbookWorker;
 use sp_std::vec;
-
 
 benchmarks! {
 	settle_trades {
