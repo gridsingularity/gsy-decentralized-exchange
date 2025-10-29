@@ -39,7 +39,7 @@ pub enum Order {
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub struct BidOfferMatch {
-	pub market_id: u8,
+	pub market_id: H256,
 	pub time_slot: u64,
 	pub bid: Bid,
 	pub offer: Offer,
@@ -53,7 +53,7 @@ pub struct BidOfferMatch {
 pub struct MatchingData {
 	pub bids: Vec<Bid>,
 	pub offers: Vec<Offer>,
-	pub market_id: u8,
+	pub market_id: H256,
 }
 
 impl PayAsBid for MatchingData {
@@ -127,7 +127,7 @@ impl PayAsBid for MatchingData {
 				};
 
 				let new_bid_offer_match = BidOfferMatch {
-					market_id: self.market_id,
+					market_id: offer.offer_component.market_id,
 					time_slot: offer.offer_component.time_slot,
 					bid: bid.clone(),
 					offer: offer.clone(),

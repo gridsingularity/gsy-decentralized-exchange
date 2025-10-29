@@ -17,9 +17,7 @@ fn assert_last_event<T: Config>(generic_event: <T as Config>::RuntimeEvent) {
 	assert_eq!(event, &system_event);
 }
 
-fn add_user<T: Config>(
-	user: T::AccountId,
-) -> Result<(), &'static str> {
+fn add_user<T: Config>(user: T::AccountId) -> Result<(), &'static str> {
 	let _ = GsyCollateral::<T>::add_user(user);
 	Ok(())
 }
@@ -38,7 +36,7 @@ benchmarks! {
 		add_user::<T>(caller.clone()).unwrap();
 		let _ = GsyCollateral::<T>::create(caller.clone());
 		let amount: BalanceOf<T> = 10_000_000u32.into();
-		T::Currency::deposit_creating(&caller, amount * 2u32.into());
+		let _ = T::Currency::deposit_creating(&caller, amount * 2u32.into());
 	}: _(RawOrigin::Signed(caller.clone()), amount)
 	verify {
 		assert_last_event::<T>(Event::CollateralDeposited(
@@ -120,7 +118,7 @@ benchmarks! {
 		add_user::<T>(caller.clone()).unwrap();
 		let _ = GsyCollateral::<T>::create(caller.clone());
 		let amount: BalanceOf<T> = 10_000_000u32.into();
-		T::Currency::deposit_creating(&caller, amount * 2u32.into());
+		let _ = T::Currency::deposit_creating(&caller, amount * 2u32.into());
 		let _ = GsyCollateral::<T>::deposit(&caller, amount);
 		let withdraw_amount: BalanceOf<T> = 9_000_000u32.into();
 	}: _(RawOrigin::Signed(caller.clone()), withdraw_amount)
@@ -132,8 +130,4 @@ benchmarks! {
 	}
 }
 
-impl_benchmark_test_suite!(
-	GsyCollateral,
-	crate::mock::new_test_ext(),
-	crate::mock::Test
-);
+impl_benchmark_test_suite!(GsyCollateral, crate::mock::new_test_ext(), crate::mock::Test);

@@ -52,13 +52,18 @@ pub mod pallet {
 	use frame_support::{dispatch::DispatchResult, dispatch::RawOrigin, pallet_prelude::*};
 	use frame_support::{sp_runtime::traits::Hash, transactional};
 	use frame_system::{ensure_signed, pallet_prelude::*};
+	use gsy_primitives::v0::{
+		Bid, BidOfferMatch, Offer, Order, OrderComponent, Trade, TradesPenalties, Validator,
+	};
 	use scale_info::prelude::vec::Vec;
 	use sp_std::vec;
-	use gsy_primitives::v0::{Bid, BidOfferMatch, Offer, Order, OrderComponent, Validator, TradesPenalties};
 
 	#[pallet::config]
 	pub trait Config:
-		frame_system::Config + orderbook_registry::Config + orderbook_worker::Config + gsy_collateral::Config
+		frame_system::Config
+		+ orderbook_registry::Config
+		+ orderbook_worker::Config
+		+ gsy_collateral::Config
 	{
 		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
 
@@ -75,13 +80,8 @@ pub mod pallet {
 
 	#[pallet::storage]
 	#[pallet::getter(fn trades_penalties)]
-	pub type PenaltiesRegistry<T: Config> = StorageMap<
-		_,
-		Twox64Concat,
-		T::Hash,
-		TradesPenalties<T::AccountId, T::Hash>,
-	>;
-
+	pub type PenaltiesRegistry<T: Config> =
+		StorageMap<_, Twox64Concat, T::Hash, TradesPenalties<T::AccountId, T::Hash>>;
 
 	#[pallet::event]
 	#[pallet::generate_deposit(pub (super) fn deposit_event)]
@@ -122,7 +122,7 @@ pub mod pallet {
 		#[pallet::call_index(0)]
 		pub fn settle_trades(
 			origin: OriginFor<T>,
-			proposed_matches: Vec<BidOfferMatch<T::AccountId>>,
+			proposed_matches: Vec<BidOfferMatch<T::AccountId, T::Hash>>,
 		) -> DispatchResult {
 			let operator_account = ensure_signed(origin)?;
 
@@ -160,8 +160,26 @@ pub mod pallet {
 					}
 				}
 
-				<orderbook_registry::Pallet<T>>::clear_orders_batch(operator_account, valid_matches.clone())?;
-				Self::deposit_event(Event::TradesSettled(T::Hashing::hash_of(&valid_matches)));
+				let mut trades = Vec::<Trade<T::AccountId, T::Hash>>::new();
+				for valid_match in valid_matches.clone() {
+					let trade_result = <orderbook_registry::Pallet<T>>::clear_order(
+						operator_account.clone(),
+						valid_match.clone(),
+					);
+					if trade_result.is_err() {
+						return Err(trade_result.unwrap_err());
+					}
+					trades.push(trade_result.unwrap());
+				}
+
+				for trade in trades.clone() {
+					<orderbook_worker::Pallet<T>>::add_trade(
+						operator_account.clone(),
+						trade.clone(),
+					)?;
+				}
+
+				Self::deposit_event(Event::TradesSettled(T::Hashing::hash_of(&trades)));
 				Ok(())
 			} else {
 				Err(Error::<T>::NoValidMatchToSettle.into())
@@ -169,37 +187,45 @@ pub mod pallet {
 		}
 
 		/// Submit penalties received from the execution engine.
-        ///
-        /// This function is restricted to the execution engine operator (here enforced by require
-        /// that the origin is root). It accepts a vector of penalty records and stores each one
-        /// in the `TradesPenalties` storage map.
-        #[transactional]
-        #[pallet::call_index(1)]
-        #[pallet::weight(<T as Config>::TradeSettlementWeightInfo::submit_penalties())]
-        pub fn submit_penalties(
-            origin: OriginFor<T>,
-            penalties: Vec<TradesPenalties<T::AccountId, T::Hash>>,
-        ) -> DispatchResult {
-            let operator_account = ensure_signed(origin)?;
+		///
+		/// This function is restricted to the execution engine operator (here enforced by require
+		/// that the origin is root). It accepts a vector of penalty records and stores each one
+		/// in the `TradesPenalties` storage map.
+		#[transactional]
+		#[pallet::call_index(1)]
+		#[pallet::weight(<T as Config>::TradeSettlementWeightInfo::submit_penalties())]
+		pub fn submit_penalties(
+			origin: OriginFor<T>,
+			penalties: Vec<TradesPenalties<T::AccountId, T::Hash>>,
+		) -> DispatchResult {
+			let operator_account = ensure_signed(origin)?;
 			// Verify that the user is a registered operator account.
 			ensure!(
 				<gsy_collateral::Pallet<T>>::is_registered_exchange_operator(&operator_account),
 				gsy_collateral::Error::<T>::NotARegisteredExchangeOperator
 			);
-            // For each penalty in the input vector, compute a unique hash and insert it.
-            for penalty in penalties.into_iter() {
-                let penalty_hash = T::Hashing::hash_of(&penalty);
-                <PenaltiesRegistry<T>>::insert(penalty_hash, penalty.clone());
+			log::info!("Submitting penalties {:?}...", penalties.len());
+			// For each penalty in the input vector, compute a unique hash and insert it.
+			for penalty in penalties.into_iter() {
+				let penalty_hash = T::Hashing::hash_of(&penalty);
+
+				log::info!("Inserting penalty {:?} {:?}...", penalty_hash, penalty.penalty_energy);
+
+				<PenaltiesRegistry<T>>::insert(penalty_hash, penalty.clone());
+
+				log::info!("Emitting penalty event...");
 				Self::deposit_event(Event::PenaltiesSubmitted(penalty, penalty_hash));
-            }
-            Ok(())
-        }
+			}
+			log::info!("Exited penalty submission...");
+			Ok(())
+		}
 	}
 
 	impl<T: Config> Validator for Pallet<T> {
 		type AccountId = T::AccountId;
+		type Hash = T::Hash;
 
-		fn validate(bid_offer_match: &BidOfferMatch<Self::AccountId>) -> bool {
+		fn validate(bid_offer_match: &BidOfferMatch<Self::AccountId, Self::Hash>) -> bool {
 			if !Self::validate_bid_energy_component(
 				bid_offer_match.bid.bid_component.energy,
 				bid_offer_match.selected_energy,

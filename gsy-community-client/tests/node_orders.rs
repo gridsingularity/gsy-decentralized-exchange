@@ -45,7 +45,7 @@ mod tests {
             market_id: h256_to_string(H256::random()),
             community_uuid: "community1".to_string(),
             community_name: "My Community".to_string(),
-            area_uuids: vec![
+            community_areas: vec![
                 AreaTopologySchema {
                     area_uuid: "area1".to_string(),
                     area_hash: h256_to_string(H256::random()),
@@ -67,7 +67,7 @@ mod tests {
             match (order, market.clone()) {
                 (InputOrder::Bid(bid), market) => {
                     // assert_eq!(bid.buyer.to_string(), AccountId32::from(dev::charlie().public_key()).to_string());
-                    let area_info = market.area_uuids.get(0).unwrap();
+                    let area_info = market.community_areas.get(0).unwrap();
                     assert_eq!(h256_to_string(bid.bid_component.area_uuid), area_info.area_hash);
                     assert_eq!(h256_to_string(bid.bid_component.market_id), market.market_id);
                     assert!((current_time - bid.bid_component.creation_time) < 1);
@@ -77,7 +77,7 @@ mod tests {
                 },
                 (InputOrder::Offer(offer), market) => {
                     // assert_eq!(offer.seller, AccountId32::from(dev::ferdie().public_key()));
-                    let area_info = market.area_uuids.get(1).unwrap();
+                    let area_info = market.community_areas.get(1).unwrap();
                     assert_eq!(h256_to_string(offer.offer_component.area_uuid), area_info.area_hash);
                     assert_eq!(h256_to_string(offer.offer_component.market_id), market.market_id);
                     assert!((current_time - offer.offer_component.creation_time) < 1);

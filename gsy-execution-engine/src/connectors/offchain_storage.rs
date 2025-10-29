@@ -1,12 +1,14 @@
 use anyhow::{Result, anyhow};
+use tracing::info;
 use reqwest::Client;
 use gsy_offchain_primitives::db_api_schema::{
     profiles::MeasurementSchema, 
     trades::TradeSchema,
 };
+use gsy_offchain_primitives::constants::GlobalConstants;
 
 fn round_down_timeslot(ts: u64) -> u64 {
-    (ts / 900) * 900
+    (ts / GlobalConstants.TIME_SLOT_SEC) * GlobalConstants.TIME_SLOT_SEC
 }
 
 pub async fn fetch_trades_and_measurements_for_timeslot(
@@ -17,10 +19,12 @@ pub async fn fetch_trades_and_measurements_for_timeslot(
     let client = Client::new();
 
     let start_time = round_down_timeslot(timeslot);
-    let end_time = start_time + (market_duration.checked_sub(1).unwrap_or(60));
+    let end_time = start_time + (market_duration.checked_sub(1).unwrap_or(GlobalConstants.TIME_SLOT_SEC));
 
     let trades_url = format!("{}/trades?start_time={}&end_time={}", base_url, start_time, end_time);
     let measurements_url = format!("{}/measurements?start_time={}&end_time={}", base_url, start_time, end_time);
+    info!("Fetching trades for {}", trades_url);
+    info!("Fetching measurements for {}", measurements_url);
 
     // 1) Fetch trades
     let trades_resp = client.get(&trades_url).send().await?;

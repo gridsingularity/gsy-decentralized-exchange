@@ -14,9 +14,9 @@ name = "gsy-orderbook-service"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-gsy-offchain-primitives = { default-features = false, path = "../offchain-primitives", version = "0.1.0" }
-anyhow = "1.0.100"
-actix-web = "4.11.0"
+gsy-offchain-primitives = { default-features = false, path = "../offchain-primitives", version = "0" }
+anyhow = "1"
+actix-web = "4.5.1"
 chrono = { version = "0.4.37", features = ["serde"] }
 codec = { package = "parity-scale-codec", version = "3.6.9", default-features = false, features = ["derive", "full", "bit-vec"] }
 config = "0.15.18"

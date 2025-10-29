@@ -1,7 +1,7 @@
 use bitflags::bitflags;
 use codec::MaxEncodedLen;
-use frame_support::{dispatch::DispatchResult, sp_runtime::DispatchError};
 use codec::{Decode, Encode};
+use frame_support::{dispatch::DispatchResult, sp_runtime::DispatchError};
 use scale_info::TypeInfo;
 
 #[derive(Copy, Clone, Encode, Decode, Default, MaxEncodedLen, Debug, PartialEq, TypeInfo)]
