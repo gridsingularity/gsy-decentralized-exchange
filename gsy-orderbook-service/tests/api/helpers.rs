@@ -40,7 +40,6 @@ pub async fn init_app() -> TestApp {
     .await
     .unwrap();
     let server = run(listener, db_wrapper.clone()).expect("Failed to bind address");
-
     let _ = tokio::spawn(server);
     TestApp {
         address,

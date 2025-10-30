@@ -148,11 +148,13 @@ async fn get_market_from_community_succeeds() {
 
     let status = resp.status();
     assert_eq!(200, status.as_u16());
-    let resp_json: MarketTopologySchema = resp.json().await.unwrap();
-    assert_eq!(resp_json.market_id, "my_market".to_string());
-    assert_eq!(resp_json.community_name, "community1".to_string());
-    assert_eq!(resp_json.community_areas, community_areas_1);
-    assert_eq!(resp_json.time_slot, market1.time_slot);
+    let resp_json: Vec<MarketTopologySchema> = resp.json().await.unwrap();
+    let topology = resp_json.get(0).unwrap();
+
+    assert_eq!(topology.market_id, "my_market".to_string());
+    assert_eq!(topology.community_name, "community1".to_string());
+    assert_eq!(topology.community_areas, community_areas_1);
+    assert_eq!(topology.time_slot, market1.time_slot);
 
     let resp = client
         .get(&format!(
@@ -166,11 +168,12 @@ async fn get_market_from_community_succeeds() {
 
     let status = resp.status();
     assert_eq!(200, status.as_u16());
-    let resp_json: MarketTopologySchema = resp.json().await.unwrap();
-    assert_eq!(resp_json.market_id, "my_market2".to_string());
-    assert_eq!(resp_json.community_name, "community2".to_string());
-    assert_eq!(resp_json.community_areas, community_areas_2);
-    assert_eq!(resp_json.time_slot, market2.time_slot);
+    let resp_json: Vec<MarketTopologySchema> = resp.json().await.unwrap();
+    let topology = resp_json.get(0).unwrap();
+    assert_eq!(topology.market_id, "my_market2".to_string());
+    assert_eq!(topology.community_name, "community2".to_string());
+    assert_eq!(topology.community_areas, community_areas_2);
+    assert_eq!(topology.time_slot, market2.time_slot);
 }
 
 #[tokio::test]

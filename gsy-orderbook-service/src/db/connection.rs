@@ -1,6 +1,8 @@
 use crate::db::asset_measurements_service::{
-    init_asset_measurements, BatteryMeasurementsService, PVMeasurementsService,
-    SmartMeterMeasurementsService,
+    BatteryMeasurementsService, PVMeasurementsService,
+    SmartMeterMeasurementsService, TransformerMeasurementsService,
+    init_pv_measurements, init_transformer_measurements, init_battery_measurements,
+    init_smart_meter_measurements
 };
 use crate::db::forecasts_service::{init_forecasts, ForecastsService};
 use crate::db::market_service::{init_markets, MarketService};
@@ -38,6 +40,9 @@ impl DatabaseWrapper {
     pub fn smart_meter_measurements(&self) -> SmartMeterMeasurementsService {
         self.into()
     }
+    pub fn transformer_measurements(&self) -> TransformerMeasurementsService {
+        self.into()
+    }
     pub fn forecasts(&self) -> ForecastsService {
         self.into()
     }
@@ -68,7 +73,10 @@ async fn preload(db: &DatabaseWrapper) -> Result<()> {
     init_trades(db).await?;
     init_forecasts(db).await?;
     init_measurements(db).await?;
-    init_asset_measurements(db).await?;
     init_markets(db).await?;
+    init_pv_measurements(db).await?;
+    init_smart_meter_measurements(db).await?;
+    init_transformer_measurements(db).await?;
+    init_battery_measurements(db).await?;
     Ok(())
 }

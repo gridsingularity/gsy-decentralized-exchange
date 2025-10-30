@@ -2,9 +2,8 @@ use crate::algorithms::PayAsBid;
 use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use subxt::ext::sp_core::H256;
-use subxt::ext::sp_runtime::traits::{BlakeTwo256, Hash};
-use subxt::utils::AccountId32;
+use sp_runtime::traits::{BlakeTwo256, Hash};
+use subxt::utils::{AccountId32, H256};
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, PartialOrd)]
 pub struct OrderComponent {
@@ -83,8 +82,8 @@ impl PayAsBid for MatchingData {
 					continue;
 				}
 
-				let bid_id = BlakeTwo256::hash_of(&bid);
-				let offer_id = BlakeTwo256::hash_of(&offer);
+				let bid_id = H256(BlakeTwo256::hash_of(&bid).0);
+				let offer_id = H256(BlakeTwo256::hash_of(&offer).0);
 
 				let offer_energy =
 					*available_order_energy.entry(offer_id).or_insert(offer.offer_component.energy);

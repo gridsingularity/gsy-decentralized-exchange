@@ -7,8 +7,7 @@ use gsy_offchain_primitives::node_to_api_schema::insert_order::{
 use gsy_offchain_primitives::node_to_api_schema::insert_trades::{
     Trade, TradeParameters as InsertTradeParameters,
 };
-use subxt::ext::sp_core::H256;
-use subxt::ext::sp_runtime::AccountId32;
+use subxt::utils::{H256, AccountId32};
 
 #[tokio::test]
 async fn post_trade_request_writes_trades_to_the_db() {
@@ -46,7 +45,6 @@ async fn post_trade_request_writes_trades_to_the_db() {
 
     let trade_uuid = H256::random();
     let trade1 = Trade {
-        _id: H256::random(),
         seller: account.clone(),
         buyer: account.clone(),
         market_id: market_id.clone(),

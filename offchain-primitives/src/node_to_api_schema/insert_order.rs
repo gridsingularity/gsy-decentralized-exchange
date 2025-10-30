@@ -3,9 +3,8 @@ use crate::db_api_schema::orders::{DbBid, DbOffer, DbOrderComponent, DbOrderSche
 use crate::utils::h256_to_string;
 use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
-use subxt::ext::sp_core::H256;
-use subxt::ext::sp_runtime::traits::{BlakeTwo256, Hash as HashT};
-use subxt::utils::AccountId32;
+use sp_runtime::traits::{BlakeTwo256, Hash as HashT};
+use subxt::utils::{AccountId32, H256};
 
 #[derive(Serialize, Deserialize, Encode, Decode, Clone, Debug)]
 #[serde(tag = "type", content = "data")]
@@ -85,7 +84,7 @@ pub fn convert_gsy_node_order_schema_to_db_schema(
 	for order in transcode {
 		match order.order {
 			Order::Bid(bid) => {
-				let bid_hash = BlakeTwo256::hash_of(&bid);
+				let bid_hash = H256(BlakeTwo256::hash_of(&bid).0);
 				deserialized.push(DbOrderSchema {
 					_id: h256_to_string(bid_hash),
 					status: order.status,
@@ -93,7 +92,7 @@ pub fn convert_gsy_node_order_schema_to_db_schema(
 				});
 			},
 			Order::Offer(offer) => {
-				let offer_hash = BlakeTwo256::hash_of(&offer);
+				let offer_hash = H256(BlakeTwo256::hash_of(&offer).0);
 				deserialized.push(DbOrderSchema {
 					_id: h256_to_string(offer_hash),
 					status: order.status,

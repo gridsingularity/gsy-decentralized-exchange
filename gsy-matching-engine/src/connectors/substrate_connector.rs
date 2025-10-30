@@ -14,8 +14,8 @@ use gsy_offchain_primitives::utils::{
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::{thread, time};
-use subxt::{utils::AccountId32, OnlineClient, SubstrateConfig};
 use subxt::utils::H256;
+use subxt::{utils::AccountId32, OnlineClient, SubstrateConfig};
 use subxt_signer::sr25519::dev;
 use tracing::{error, info};
 

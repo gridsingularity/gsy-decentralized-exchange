@@ -7,8 +7,7 @@ use gsy_offchain_primitives::node_to_api_schema::insert_order::{
 };
 use mongodb::bson::Bson;
 use std::collections::HashMap;
-use subxt::ext::sp_core::crypto::AccountId32;
-use subxt::utils::H256;
+use subxt::utils::{AccountId32, H256};
 
 pub fn create_test_accountid() -> AccountId32 {
     // A fixed 32-byte value, typically derived from a public key

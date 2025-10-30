@@ -43,22 +43,33 @@ pub async fn post_asset_measurements(
         }
     }
 
-    match db.get_ref().pv_measurements().insert_measurements(pv_data).await {
-        Ok(_ids) => (),
-        Err(_) => return HttpResponse::InternalServerError().finish(),
-    };
-    match db.get_ref().battery_measurements().insert_measurements(battery_data).await {
-        Ok(_ids) => (),
-        Err(_) => return HttpResponse::InternalServerError().finish(),
-    };
-    match db.get_ref().smart_meter_measurements().insert_measurements(smart_meter_data).await {
-        Ok(_ids) => (),
-        Err(_) => return HttpResponse::InternalServerError().finish(),
-    };
-    match db.get_ref().transformer_measurements().insert_measurements(transformer_data).await {
-        Ok(_ids) => (),
-        Err(_) => return HttpResponse::InternalServerError().finish(),
-    };
+    if pv_data.len() > 0 {
+        match db.get_ref().pv_measurements().insert_measurements(pv_data).await {
+            Ok(_ids) => (),
+            Err(_) => return HttpResponse::InternalServerError().finish(),
+        };
+    }
+
+    if battery_data.len() > 0 {
+        match db.get_ref().battery_measurements().insert_measurements(battery_data).await {
+            Ok(_ids) => (),
+            Err(_) => return HttpResponse::InternalServerError().finish(),
+        };
+    }
+
+    if smart_meter_data.len() > 0 {
+        match db.get_ref().smart_meter_measurements().insert_measurements(smart_meter_data).await {
+            Ok(_ids) => (),
+            Err(_) => return HttpResponse::InternalServerError().finish(),
+        };
+    }
+
+    if transformer_data.len() > 0 {
+        match db.get_ref().transformer_measurements().insert_measurements(transformer_data).await {
+            Ok(_ids) => (),
+            Err(_) => return HttpResponse::InternalServerError().finish(),
+        };
+    }
 
     HttpResponse::Ok().finish()
 }

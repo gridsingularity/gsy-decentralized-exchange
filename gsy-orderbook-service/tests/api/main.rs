@@ -4,3 +4,4 @@ mod market;
 mod measurements_forecasts;
 mod orders;
 pub mod trades;
+mod asset_measurements;
