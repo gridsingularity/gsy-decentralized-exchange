@@ -4,7 +4,7 @@ use subxt::{config::substrate::AccountId32, utils::H256, OnlineClient, Substrate
 use subxt_signer::{sr25519::Keypair, SecretUri};
 use tracing::{error, info};
 
-#[subxt::subxt(runtime_metadata_path = "metadata.scale")]
+#[subxt::subxt(runtime_metadata_path = "../offchain-primitives/metadata.scale")]
 pub mod gsy_node {}
 
 #[derive(Clone)]

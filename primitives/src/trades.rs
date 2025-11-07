@@ -1,4 +1,4 @@
-	use crate::orders::{Bid, Offer};
+use crate::orders::{Bid, Offer};
 use crate::v0::{AccountId, Hash};
 use codec::{Decode, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
@@ -7,19 +7,19 @@ pub use sp_runtime::traits::{BlakeTwo256, Hash as HashT};
 /// Trade struct
 #[derive(Debug, Encode, Decode, Clone, PartialEq, Eq, TypeInfo, MaxEncodedLen)]
 #[cfg_attr(feature = "std", derive(Hash, Default))]
-pub struct Trade<AccountId, Hash> {
-	pub seller: AccountId,
-	pub buyer: AccountId,
-	pub market_id: u8,
+pub struct Trade<AccountId32, Hash> {
+	pub seller: AccountId32,
+	pub buyer: AccountId32,
+	pub market_id: Hash,
 	pub trade_uuid: Hash,
 	pub creation_time: u64,
 	pub time_slot: u64,
-	pub offer: Offer<AccountId>,
+	pub offer: Offer<AccountId32>,
 	pub offer_hash: Hash,
-	pub bid: Bid<AccountId>,
+	pub bid: Bid<AccountId32>,
 	pub bid_hash: Hash,
-	pub residual_bid: Option<Bid<AccountId>>,
-	pub residual_offer: Option<Offer<AccountId>>,
+	pub residual_bid: Option<Bid<AccountId32>>,
+	pub residual_offer: Option<Offer<AccountId32>>,
 	pub parameters: TradeParameters<Hash>,
 }
 
@@ -33,12 +33,11 @@ impl Trade<AccountId, Hash> {
 #[derive(Debug, Encode, Decode, Clone, PartialEq, Eq, TypeInfo, MaxEncodedLen)]
 #[cfg_attr(feature = "std", derive(Hash, Default))]
 pub struct TradesPenalties<AccountId, Hash> {
-    pub penalized_account: AccountId,
-    pub market_uuid: u32,
+	pub penalized_account: AccountId,
+	pub market_uuid: Hash,
 	pub trade_uuid: Hash,
-    pub penalty_energy: u64,
+	pub penalty_energy: u64,
 }
-
 
 #[derive(Debug, Encode, Decode, Clone, Copy, PartialEq, Eq, TypeInfo, MaxEncodedLen)]
 #[cfg_attr(feature = "std", derive(Hash, Default))]
@@ -53,9 +52,9 @@ pub struct TradeParameters<Hash> {
 
 #[derive(Debug, Encode, Decode, Clone, PartialEq, Eq, TypeInfo)]
 #[cfg_attr(feature = "std", derive(Hash, Default))]
-pub struct BidOfferMatch<AccountId> {
+pub struct BidOfferMatch<AccountId, Hash> {
 	/// The market ID
-	pub market_id: u8,
+	pub market_id: Hash,
 	/// The time slot
 	pub time_slot: u64,
 	/// The bid
@@ -76,8 +75,10 @@ pub struct BidOfferMatch<AccountId> {
 pub trait Validator {
 	type AccountId;
 
+	type Hash;
+
 	/// Validate a bid/offer match.
-	fn validate(bid_offer_match: &BidOfferMatch<Self::AccountId>) -> bool;
+	fn validate(bid_offer_match: &BidOfferMatch<Self::AccountId, Self::Hash>) -> bool;
 	/// Check the energy amount of the bid against the selected energy amount.
 	fn validate_bid_energy_component(bid_component_energy: u64, selected_energy: u64) -> bool;
 	/// Check the energy amount of the offer against the selected energy amount.

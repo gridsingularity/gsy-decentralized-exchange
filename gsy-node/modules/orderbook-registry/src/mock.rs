@@ -1,12 +1,12 @@
 use crate as orderbook_registry;
-use frame_support::{parameter_types, traits::fungible::Mutate, PalletId};
 use frame_support::pallet_prelude::ConstU32;
+use frame_support::{parameter_types, traits::fungible::Mutate, PalletId};
 use frame_system as system;
 use gsy_primitives::v0::AccountId;
 use sp_core::H256;
 use sp_runtime::{
 	traits::{BlakeTwo256, IdentityLookup},
-	BuildStorage
+	BuildStorage,
 };
 
 type Block = frame_system::mocking::MockBlock<Test>;
@@ -65,7 +65,6 @@ pub const CHARLIE: AccountId = AccountId::new(*b"0123465353596835682545465243235
 pub const MIKE: AccountId = AccountId::new(*b"45678901234568356825456789012345");
 pub const JOHN: AccountId = AccountId::new(*b"56789012344653535968356890123456");
 
-
 impl pallet_timestamp::Config for Test {
 	type Moment = u64;
 	type OnTimestampSet = ();
@@ -112,14 +111,12 @@ impl gsy_collateral::Config for Test {
 }
 
 impl orderbook_registry::Config for Test {
-
 	type RuntimeEvent = RuntimeEvent;
 	type Currency = Balances;
 	type RegistryProxyAccountLimit = ConstU32<3>;
 	type WeightInfo = orderbook_registry::weights::SubstrateWeight<Test>;
 	type TimeProvider = pallet_timestamp::Pallet<Test>;
 }
-
 
 // Build genesis storage according to the mock runtime.
 pub fn new_test_ext() -> sp_io::TestExternalities {

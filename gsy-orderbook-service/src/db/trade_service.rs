@@ -80,11 +80,11 @@ impl TradeService {
         name = "Fetching trades by market id from database", skip(self))]
     pub async fn filter_trades(
             &self,
-            market_id: Option<String>,
+            // market_id: Option<String>,
             start_time: Option<u32>,
             end_time: Option<u32>) -> Result<Vec<TradeSchema>> {
         let mut filter_params = doc! {};
-        if market_id.is_some() { filter_params.insert("market_id", market_id.unwrap()); }
+        // if market_id.is_some() { filter_params.insert("market_id", market_id.unwrap()); }
         if start_time.is_some() { filter_params.insert("time_slot", doc! {"$gte": start_time.unwrap()} ); }
         if end_time.is_some() {
             if start_time.is_some() {

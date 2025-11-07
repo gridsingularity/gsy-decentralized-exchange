@@ -1,14 +1,14 @@
 use crate as gsy_collateral;
-use frame_support::{PalletId, parameter_types, traits::fungible::Mutate};
+use frame_support::{parameter_types, traits::fungible::Mutate, PalletId};
 use frame_system as system;
 use gsy_primitives::v0::AccountId;
+pub use pallet_balances;
+pub use pallet_timestamp;
 use sp_core::H256;
 use sp_runtime::{
 	traits::{BlakeTwo256, IdentityLookup},
-	BuildStorage
+	BuildStorage,
 };
-pub use pallet_balances;
-pub use pallet_timestamp;
 
 type Block = frame_system::mocking::MockBlock<Test>;
 

@@ -3,22 +3,18 @@
 
 use super::*;
 
+use crate::benchmarking::vec::Vec;
 use crate::test_orders::TestOrderbookFunctions;
 #[allow(unused)]
 use crate::Pallet as TradesSettlement;
 use frame_benchmarking::{benchmarks, impl_benchmark_test_suite, whitelisted_caller};
-use crate::benchmarking::vec::Vec;
-use frame_support::{
-	sp_runtime::traits::{Hash, One},
-	traits::Currency,
-};
+use frame_support::{sp_runtime::traits::Hash, traits::Currency};
 use frame_system::RawOrigin;
 use gsy_collateral::{BalanceOf, Pallet as GsyCollateral};
-use gsy_primitives::{Bid, BidOfferMatch, Offer, Order, OrderComponent, Vault};
+use gsy_primitives::{BidOfferMatch, Order, Vault};
 use orderbook_registry::Pallet as OrderbookRegistry;
 use orderbook_worker::Pallet as OrderbookWorker;
 use sp_std::vec;
-
 
 benchmarks! {
 	settle_trades {
@@ -33,9 +29,9 @@ benchmarks! {
 		let _ = GsyCollateral::<T>::create(buyer.clone());
 		let _ = GsyCollateral::<T>::create(seller.clone());
 		let amount: BalanceOf<T> = 10_000_000u32.into();
-		<T as gsy_collateral::Config>::Currency::deposit_creating(&seller, amount * 2u32.into());
+		let _ = <T as gsy_collateral::Config>::Currency::deposit_creating(&seller, amount * 2u32.into());
 		let _ = GsyCollateral::<T>::deposit(&seller, amount);
-		let mut bid_offer_matches: Vec<BidOfferMatch<T::AccountId>> = vec![];
+		let mut bid_offer_matches: Vec<BidOfferMatch<T::AccountId, T::Hash>> = vec![];
 		for i in 0..100 {
 			let bid = TestOrderbookFunctions::dummy_bid::<T>(
 				buyer.clone(), block_number, i as u64, i as u64);

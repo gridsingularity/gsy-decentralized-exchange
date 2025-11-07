@@ -6,7 +6,7 @@ edition = "2021"
 description = "Execution Engine for the Grid Singularity Energy Exchange"
 
 [dependencies]
-gsy-offchain-primitives = { default-features = false, path = "../offchain-primitives", version = "0.1.0" }
+gsy-offchain-primitives = { default-features = false, path = "../offchain-primitives", version = "0" }
 anyhow = "1"
 chrono = { version = "0.4.37", features = ["serde"]}
 clap = { version = "4", features = ["derive"] }

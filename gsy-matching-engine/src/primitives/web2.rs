@@ -25,6 +25,7 @@ pub fn serialize_datetime<S>(
 pub struct Bid {
     pub r#type: String,
     pub id: String,
+    pub market_id: String,
     pub energy: f32,
     pub energy_rate: f32,
     pub original_price: f32,
@@ -42,6 +43,7 @@ pub struct Bid {
 pub struct Offer {
     pub r#type: String,
     pub id: String,
+    pub market_id: String,
     pub energy: f32,
     pub energy_rate: f32,
     pub original_price: f32,
@@ -119,7 +121,7 @@ impl PayAsBid for MatchingData {
                     |energy| *energy >= -FLOATING_POINT_TOLERANCE));
 
                 let new_bid_offer_match = BidOfferMatch {
-                        market_id: self.market_id.clone(),
+                        market_id: offer.market_id.clone(),
                         time_slot: offer.time_slot,
                         bid: bid.clone(),
                         selected_energy,

@@ -13,7 +13,7 @@ def post_market(market_id, time_slot, creation_time):
         "community_name": "Community 1",
         "time_slot": time_slot,
         "creation_time": creation_time,
-        "area_uuids": [
+        "community_areas": [
             {
                 "area_uuid": "areaid_1",
                 "name": "Area 1",

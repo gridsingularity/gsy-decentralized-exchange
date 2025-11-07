@@ -1,14 +1,14 @@
 use crate as trades_settlement;
-use frame_support::{PalletId, parameter_types};
+use frame_support::{parameter_types, PalletId};
 use frame_system as system;
 use gsy_primitives::v0::{AccountId, Signature};
+pub use pallet_timestamp;
 use sp_core::H256;
 use sp_runtime::{
 	testing::TestXt,
 	traits::{BlakeTwo256, Extrinsic as ExtrinsicT, IdentityLookup, Verify},
-	BuildStorage
+	BuildStorage,
 };
-pub use pallet_timestamp;
 
 type Block = frame_system::mocking::MockBlock<Test>;
 

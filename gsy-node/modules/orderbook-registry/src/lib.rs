@@ -31,8 +31,8 @@ mod mock;
 #[cfg(test)]
 mod tests;
 
-// #[cfg(feature = "runtime-benchmarks")]
-// mod benchmarking;
+#[cfg(feature = "runtime-benchmarks")]
+mod benchmarking;
 pub mod weights;
 pub use weights::*;
 
@@ -41,14 +41,11 @@ pub mod pallet {
 	// Import various useful types required by all FRAME pallets.
 	use super::*;
 	use frame_support::dispatch::DispatchResult;
-	use frame_support::{
-		pallet_prelude::*, require_transactional, traits::Currency, traits::UnixTime, transactional,
-	};
+	use frame_support::{pallet_prelude::*, traits::Currency, traits::UnixTime, transactional};
 	use frame_system::pallet_prelude::*;
 	use gsy_primitives::v0::{BidOfferMatch, OrderReference, OrderStatus, Trade, TradeParameters};
 	use scale_info::{prelude::vec::Vec, TypeInfo};
 	use sp_runtime::traits::Hash;
-	use sp_runtime::SaturatedConversion;
 
 	pub type BalanceOf<T> =
 		<<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
@@ -363,32 +360,15 @@ pub mod pallet {
 			})
 		}
 
-		/// Execute a batch of orders.
-		///
-		/// Parameters
-		/// `operator_account`: The user who proposes tha trade match to execute the order.
-		/// `proposed_matches`: The proposed match batch.
-		#[require_transactional]
-		pub fn clear_orders_batch(
-			operator_account: T::AccountId,
-			proposed_matches: Vec<BidOfferMatch<T::AccountId>>,
-		) -> DispatchResult {
-			for proposed_match in proposed_matches {
-				Self::clear_order(operator_account.clone(), proposed_match)?;
-			}
-			Ok(())
-		}
-
 		/// Execute an order.
 		///
 		/// Parameters
 		/// `operator_account`: The user who proposes tha trade match to execute the order.
 		/// `proposed_match`: The proposed match structure containing the bid and offer.
-		#[require_transactional]
 		pub fn clear_order(
 			operator_account: T::AccountId,
-			proposed_match: BidOfferMatch<T::AccountId>,
-		) -> DispatchResult {
+			proposed_match: BidOfferMatch<T::AccountId, T::Hash>,
+		) -> Result<Trade<T::AccountId, T::Hash>, DispatchError> {
 			// Verify that the user is a registered operator account.
 			ensure!(
 				<gsy_collateral::Pallet<T>>::is_registered_exchange_operator(&operator_account),
@@ -413,7 +393,7 @@ pub mod pallet {
 				trade_uuid: T::Hashing::hash_of(&proposed_match),
 			};
 
-			let trade = Trade {
+			let trade: Trade<T::AccountId, T::Hash> = Trade {
 				seller: proposed_match.offer.seller.clone(),
 				buyer: proposed_match.bid.buyer.clone(),
 				market_id: proposed_match.market_id,
@@ -439,31 +419,34 @@ pub mod pallet {
 
 			for order_ref in orders_ref {
 				ensure!(Self::is_order_registered(&order_ref), <Error<T>>::OpenOrderNotFound);
-				Self::update_order_status(order_ref, updated_order_status.clone())?;
+				let update_result =
+					Self::update_order_status(order_ref, updated_order_status.clone());
+				if update_result.is_err() {
+					return Err(update_result.unwrap_err());
+				}
 			}
 
 			if proposed_match.bid.buyer.clone() != proposed_match.offer.seller.clone() {
 				// Settle the trade with amount transferred from buyer to seller.
 
+				let collateral_amount = proposed_match
+					.selected_energy
+					.checked_mul(proposed_match.energy_rate)
+					.ok_or(<Error<T>>::OrderAlreadyInserted)
+					.unwrap();
+
 				<gsy_collateral::Pallet<T>>::transfer_collateral(
 					&proposed_match.bid.buyer,
 					&proposed_match.offer.seller,
-					(proposed_match
-						.selected_energy
-						.checked_mul(proposed_match.energy_rate)
-						.ok_or(<Error<T>>::OrderAlreadyInserted)?)
-					.saturated_into(),
-				)?;
+					collateral_amount,
+				)
+				.unwrap();
 			}
 
-			// Add trade in the trade registry.
 			<TradesRegistry<T>>::insert(operator_account, T::Hashing::hash_of(&proposed_match));
-
 			Self::deposit_event(Event::TradeCleared(T::Hashing::hash_of(&proposed_match)));
-
-			Self::deposit_event(Event::OrderExecuted(trade));
-
-			Ok(())
+			Self::deposit_event(Event::OrderExecuted(trade.clone()));
+			Ok(trade)
 		}
 
 		/// Helper function to check if a given order has already been inserted.
