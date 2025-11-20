@@ -11,6 +11,30 @@ pub enum Order<AccountId> {
 	Offer(Offer<AccountId>),
 }
 
+#[derive(Debug, Encode, Decode, Clone, Copy, PartialEq, Eq, TypeInfo, MaxEncodedLen)]
+#[cfg_attr(feature = "std", derive(Hash))]
+pub enum EnergyType {
+	Clean,
+	Battery,
+	FossilFuel,
+	Import,
+}
+
+#[derive(Debug, Encode, Decode, Clone, PartialEq, Eq, TypeInfo, MaxEncodedLen)]
+#[cfg_attr(feature = "std", derive(Hash, Default))]
+pub struct Requirements<AccountId> {
+	pub trading_partner_id: Option<AccountId>,
+	pub energy_type: Option<EnergyType>,
+	pub preferred_energy_rate: Option<u64>,
+}
+
+#[derive(Debug, Encode, Decode, Clone, PartialEq, Eq, TypeInfo, MaxEncodedLen)]
+#[cfg_attr(feature = "std", derive(Hash))]
+pub struct Attributes<AccountId> {
+	pub trading_partner_id: Option<AccountId>,
+	pub energy_type: EnergyType,
+}
+
 #[derive(Debug, Encode, Decode, Clone, PartialEq, Eq, TypeInfo)]
 #[cfg_attr(feature = "std", derive(Hash))]
 pub enum InputOrder<AccountId> {
@@ -50,6 +74,7 @@ pub struct OrderSchema<AccountId, Hash> {
 pub struct InputBid<AccountId> {
 	pub buyer: AccountId,
 	pub bid_component: OrderComponent,
+	pub requirements: Option<Requirements<AccountId>>,
 }
 
 /// Bid order struct
@@ -59,6 +84,7 @@ pub struct Bid<AccountId> {
 	pub buyer: AccountId,
 	pub nonce: u32,
 	pub bid_component: OrderComponent,
+	pub requirements: Option<Requirements<AccountId>>,
 }
 
 impl Bid<AccountId> {
@@ -74,6 +100,7 @@ impl Bid<AccountId> {
 pub struct InputOffer<AccountId> {
 	pub seller: AccountId,
 	pub offer_component: OrderComponent,
+	pub attributes: Option<Attributes<AccountId>>,
 }
 
 /// Offer (Ask) order struct
@@ -83,6 +110,7 @@ pub struct Offer<AccountId> {
 	pub seller: AccountId,
 	pub nonce: u32,
 	pub offer_component: OrderComponent,
+	pub attributes: Option<Attributes<AccountId>>,
 }
 
 impl Offer<AccountId> {
