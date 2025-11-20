@@ -1,6 +1,7 @@
-use crate::db::DatabaseWrapper;
+use crate::db::{DatabaseWrapper, create_filter_params_with_start_end_time};
 use anyhow::Result;
 use gsy_offchain_primitives::db_api_schema::profiles::{BatteryMeasurementSchema, PVMeasurementSchema, SmartMeterMeasurementSchema, TransformerMeasurementSchema};
+use futures::stream::TryStreamExt;
 use mongodb::bson::{doc, Bson};
 use mongodb::options::IndexOptions;
 use mongodb::{Collection, IndexModel};
@@ -73,6 +74,28 @@ impl PVMeasurementsService {
     ) -> Result<HashMap<usize, Bson>> {
         match self.0.insert_many(measurements).await {
             Ok(db_result) => Ok(db_result.inserted_ids),
+            Err(e) => {
+                tracing::error!("Failed to execute query: {:?}", e);
+                Err(anyhow::Error::from(e))
+            }
+        }
+    }
+
+    pub async fn get_measurements(
+        &self,
+        area_uuid: String,
+        start_time: Option<u32>,
+        end_time: Option<u32>,
+    ) -> Result<Vec<PVMeasurementSchema>> {
+        let mut filter_params = create_filter_params_with_start_end_time(start_time, end_time);
+        filter_params.insert("metadata.area_uuid".to_string(), area_uuid);
+        println!("Filter params: {:?}", filter_params);
+
+        match self.0.find(filter_params).await {
+            Ok(cursor) => {
+                let results = cursor.try_collect().await?;
+                Ok(results)
+            },
             Err(e) => {
                 tracing::error!("Failed to execute query: {:?}", e);
                 Err(anyhow::Error::from(e))

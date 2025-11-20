@@ -2,6 +2,7 @@ use crate::db::DatabaseWrapper;
 use anyhow::Result;
 use futures::StreamExt;
 use gsy_offchain_primitives::db_api_schema::orders::{DbOrderSchema, OrderStatus};
+use crate::db::create_filter_params_with_start_end_time;
 use mongodb::bson::{doc, Bson};
 use mongodb::options::IndexOptions;
 use mongodb::results::UpdateResult;
@@ -52,7 +53,8 @@ impl OrderService {
         start_time: Option<u32>,
         end_time: Option<u32>,
     ) -> Result<Vec<DbOrderSchema>> {
-        let mut filter_params = doc! {};
+        let mut filter_params = create_filter_params_with_start_end_time(
+            start_time, end_time);
 
         if market_id.is_some() {
             let market_id_str = market_id.unwrap();
@@ -63,19 +65,6 @@ impl OrderService {
         }
 
         // TODO: Correct time_slot filtering based on nested offer / bid structs.
-        if start_time.is_some() {
-            filter_params.insert("time_slot", doc! {"$gte": start_time.unwrap()});
-        }
-        if end_time.is_some() {
-            if start_time.is_some() {
-                filter_params.insert(
-                    "time_slot",
-                    doc! {"$gte": start_time.unwrap(), "$lte": end_time.unwrap()},
-                );
-            } else {
-                filter_params.insert("time_slot", doc! {"$lte": end_time.unwrap()});
-            }
-        }
 
         let mut cursor = self.0.find(filter_params).await.unwrap();
         let mut result: Vec<DbOrderSchema> = Vec::new();

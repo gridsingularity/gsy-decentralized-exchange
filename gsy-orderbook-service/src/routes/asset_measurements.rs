@@ -1,12 +1,12 @@
 use actix_web::{HttpResponse, Responder};
-use actix_web::web::Json;
+use actix_web::web::{Json, Query};
 use codec::{Encode, Decode};
 use serde::{Deserialize, Serialize};
 use gsy_offchain_primitives::db_api_schema::profiles::{
     PVMeasurementSchema, BatteryMeasurementSchema, SmartMeterMeasurementSchema,
     TransformerMeasurementSchema};
 use crate::db::DbRef;
-
+use crate::routes::MarketParameters;
 
 #[derive(Deserialize, Serialize, Encode, Decode, Clone)]
 #[serde(untagged)]
@@ -17,6 +17,13 @@ pub enum AssetMeasurementInput {
     MeasurementTransformer(TransformerMeasurementSchema),
 }
 
+#[derive(Deserialize)]
+pub struct AssetMeasurementParameters {
+    area_uuid: String,
+    start_time: Option<u32>,
+    end_time: Option<u32>,
+}
+
 pub async fn post_asset_measurements(
     measurements: Json<Vec<AssetMeasurementInput>>,
     db: DbRef,
@@ -25,7 +32,6 @@ pub async fn post_asset_measurements(
     let mut smart_meter_data: Vec<SmartMeterMeasurementSchema> = Vec::new();
     let mut battery_data: Vec<BatteryMeasurementSchema> = Vec::new();
     let mut transformer_data: Vec<TransformerMeasurementSchema> = Vec::new();
-    tracing::error!("ENTERED ENDPOINT");
     for measurement in measurements.to_vec() {
         match measurement.clone() {
             AssetMeasurementInput::MeasurementPV(schema) => {
@@ -72,4 +78,19 @@ pub async fn post_asset_measurements(
     }
 
     HttpResponse::Ok().finish()
+}
+
+
+pub async fn get_asset_measurements(db: DbRef, params: Query<AssetMeasurementParameters>) -> impl Responder {
+    match db.get_ref().pv_measurements().get_measurements(
+        params.area_uuid.clone(), params.start_time, params.end_time,
+    ).await {
+        Ok(pv_data) => {
+            HttpResponse::Ok().json(pv_data)
+        }
+        Err(e) => {
+            tracing::error!("Failed to execute query: {:?}", e);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
 }

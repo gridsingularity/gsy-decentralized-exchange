@@ -67,6 +67,13 @@ pub async fn init_database(db_url: String, db_name: String) -> Result<DatabaseWr
     Ok(db)
 }
 
+pub async fn delete_database(db_url: String, db_name: String) -> Result<()> {
+    let options = ClientOptions::parse(&db_url).await?;
+    let client = mongodb::Client::with_options(options)?;
+    client.database(db_name.as_str()).drop().await?;
+    Ok(())
+}
+
 async fn preload(db: &DatabaseWrapper) -> Result<()> {
     // put initialize here
     init_orders(db).await?;
