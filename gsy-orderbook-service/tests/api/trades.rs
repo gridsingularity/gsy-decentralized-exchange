@@ -1,4 +1,4 @@
-use crate::helpers::init_app;
+use crate::helpers::{init_app, stop_app};
 use actix_web::web;
 use codec::Encode;
 use gsy_offchain_primitives::node_to_api_schema::insert_order::{
@@ -8,11 +8,12 @@ use gsy_offchain_primitives::node_to_api_schema::insert_trades::{
     Trade, TradeParameters as InsertTradeParameters,
 };
 use subxt::utils::{H256, AccountId32};
+use gsy_offchain_primitives::utils::h256_to_string;
 
 #[tokio::test]
 async fn post_trade_request_writes_trades_to_the_db() {
     let app = init_app().await;
-    let address = app.address;
+    let address = app.address.clone();
     let account: AccountId32 = crate::orders::create_test_accountid();
     let market_id = H256::random();
     let area_id = H256::random();
@@ -78,17 +79,19 @@ async fn post_trade_request_writes_trades_to_the_db() {
     let status = resp.unwrap().status();
     assert_eq!(200, status.as_u16());
 
-    let db = web::Data::new(app.db_wrapper);
+    let db = web::Data::new(app.db_wrapper.clone());
     let saved = db.get_ref().trades().get_all_trades().await.unwrap();
 
     let result_trade = saved.first().unwrap();
-    assert_eq!(result_trade.trade_uuid, trade1.trade_uuid.to_string());
+    let trade_object_uuid = h256_to_string(trade1.trade_uuid);
+    assert_eq!(result_trade.trade_uuid, trade_object_uuid);
+    stop_app(app).await;
 }
 
 #[tokio::test]
 async fn subscribe_return_a_400_when_data_is_missing() {
     let app = init_app().await;
-    let address = app.address;
+    let address = app.address.clone();
 
     let client = reqwest::Client::new();
     let test_cases = vec![("test", "err"), ("test2", "err")];
@@ -108,4 +111,5 @@ async fn subscribe_return_a_400_when_data_is_missing() {
             error_message
         );
     }
+    stop_app(app).await;
 }

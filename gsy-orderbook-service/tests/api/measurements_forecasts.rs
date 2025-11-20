@@ -1,4 +1,4 @@
-use crate::helpers::init_app;
+use crate::helpers::{init_app, stop_app};
 use actix_web::web;
 use subxt::utils::H256;
 use sp_runtime::traits::CheckedConversion;
@@ -8,7 +8,7 @@ use gsy_offchain_primitives::utils::h256_to_string;
 #[tokio::test]
 async fn get_measurements_succeeds() {
     let app = init_app().await;
-    let address = app.address;
+    let address = app.address.clone();
     let measurement1 = MeasurementSchema {
         area_uuid: "my_uuid".to_string(),
         area_hash: h256_to_string(H256::random()),
@@ -27,7 +27,7 @@ async fn get_measurements_succeeds() {
     };
 
     let measurement_vec = vec![measurement1, measurement2];
-    let db = web::Data::new(app.db_wrapper);
+    let db = web::Data::new(app.db_wrapper.clone());
     let saved = db
         .get_ref()
         .measurements()
@@ -82,12 +82,13 @@ async fn get_measurements_succeeds() {
     let resp_json: Vec<MeasurementSchema> = resp.json().await.unwrap();
     assert_eq!(resp_json.len(), 1);
     assert_eq!(resp_json.iter().nth(0).unwrap().area_uuid, "my_uuid");
+    stop_app(app).await;
 }
 
 #[tokio::test]
 async fn post_measurements_succeeds() {
     let app = init_app().await;
-    let address = app.address;
+    let address = app.address.clone();
     let measurement = MeasurementSchema {
         area_uuid: "my_uuid".to_string(),
         area_hash: h256_to_string(H256::random()),
@@ -111,7 +112,7 @@ async fn post_measurements_succeeds() {
     let status = resp.status();
     assert_eq!(200, status.as_u16());
 
-    let db = web::Data::new(app.db_wrapper);
+    let db = web::Data::new(app.db_wrapper.clone());
     let saved = db
         .get_ref()
         .measurements()
@@ -121,12 +122,13 @@ async fn post_measurements_succeeds() {
     assert_eq!(1, saved.len());
     let measurement_db = saved.into_iter().nth(0).unwrap();
     assert_eq!(measurement_db, measurement);
+    stop_app(app).await;
 }
 
 #[tokio::test]
 async fn post_measurements_fails_with_incorrect_json() {
     let app = init_app().await;
-    let address = app.address;
+    let address = app.address.clone();
 
     let client = reqwest::Client::new();
     let test_cases = vec![("area_uuid", "err"), ("energy_kwh", "err")];
@@ -146,12 +148,13 @@ async fn post_measurements_fails_with_incorrect_json() {
             error_message
         );
     }
+    stop_app(app).await;
 }
 
 #[tokio::test]
 async fn get_forecasts_succeeds() {
     let app = init_app().await;
-    let address = app.address;
+    let address = app.address.clone();
     let forecast1 = ForecastSchema {
         area_uuid: "my_uuid".to_string(),
         area_hash: h256_to_string(H256::random()),
@@ -172,7 +175,7 @@ async fn get_forecasts_succeeds() {
     };
 
     let forecast_vec = vec![forecast1, forecast2];
-    let db = web::Data::new(app.db_wrapper);
+    let db = web::Data::new(app.db_wrapper.clone());
     let saved = db
         .get_ref()
         .forecasts()
@@ -228,12 +231,13 @@ async fn get_forecasts_succeeds() {
     let resp_json: Vec<ForecastSchema> = resp.json().await.unwrap();
     assert_eq!(resp_json.len(), 1);
     assert_eq!(resp_json.iter().nth(0).unwrap().area_uuid, "my_uuid");
+    stop_app(app).await;
 }
 
 #[tokio::test]
 async fn post_forecasts_succeeds() {
     let app = init_app().await;
-    let address = app.address;
+    let address = app.address.clone();
     let forecast = ForecastSchema {
         area_uuid: "my_uuid".to_string(),
         area_hash: h256_to_string(H256::random()),
@@ -258,7 +262,7 @@ async fn post_forecasts_succeeds() {
     let status = resp.status();
     assert_eq!(200, status.as_u16());
 
-    let db = web::Data::new(app.db_wrapper);
+    let db = web::Data::new(app.db_wrapper.clone());
     let saved = db
         .get_ref()
         .forecasts()
@@ -268,12 +272,13 @@ async fn post_forecasts_succeeds() {
     assert_eq!(1, saved.len());
     let forecast_db = saved.into_iter().nth(0).unwrap();
     assert_eq!(forecast_db, forecast);
+    stop_app(app).await;
 }
 
 #[tokio::test]
 async fn post_forecasts_fails_with_incorrect_json() {
     let app = init_app().await;
-    let address = app.address;
+    let address = app.address.clone();
 
     let client = reqwest::Client::new();
     let test_cases = vec![("area_uuid", "err"), ("energy_kwh", "err")];
@@ -293,4 +298,5 @@ async fn post_forecasts_fails_with_incorrect_json() {
             error_message
         );
     }
+    stop_app(app).await;
 }
