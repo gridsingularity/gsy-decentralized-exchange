@@ -7,6 +7,27 @@ use subxt::ext::sp_runtime::traits::{BlakeTwo256, Hash};
 use subxt::utils::AccountId32;
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, PartialOrd)]
+pub enum EnergyType {
+	Clean,
+	Battery,
+	FossilFuel,
+	Import,
+}
+
+#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, PartialOrd)]
+pub struct Requirements {
+	pub trading_partner_id: Option<AccountId32>,
+	pub energy_type: Option<EnergyType>,
+	pub preferred_energy_rate: Option<u64>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, PartialOrd)]
+pub struct Attributes {
+	pub trading_partner_id: Option<AccountId32>,
+	pub energy_type: EnergyType,
+}
+
+#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, PartialOrd)]
 pub struct OrderComponent {
 	pub area_uuid: H256,
 	pub market_id: H256,
@@ -21,6 +42,7 @@ pub struct Bid {
 	pub buyer: AccountId32,
 	pub nonce: u32,
 	pub bid_component: OrderComponent,
+	pub requirements: Option<Requirements>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, PartialOrd)]
@@ -28,6 +50,7 @@ pub struct Offer {
 	pub seller: AccountId32,
 	pub nonce: u32,
 	pub offer_component: OrderComponent,
+	pub attributes: Option<Attributes>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]

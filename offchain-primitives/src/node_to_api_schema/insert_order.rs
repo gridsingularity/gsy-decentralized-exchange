@@ -1,5 +1,8 @@
 use crate::db_api_schema;
-use crate::db_api_schema::orders::{DbBid, DbOffer, DbOrderComponent, DbOrderSchema, OrderStatus};
+use crate::db_api_schema::orders::{
+	DbAttributes, DbBid, DbOffer, DbOrderComponent, DbOrderSchema, DbRequirements, EnergyType,
+	OrderStatus,
+};
 use crate::utils::h256_to_string;
 use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
@@ -36,6 +39,7 @@ pub struct Bid<AccountId32> {
 	pub buyer: AccountId32,
 	pub nonce: u32,
 	pub bid_component: OrderComponent,
+	pub requirements: Option<DbRequirements>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone)]
@@ -43,6 +47,7 @@ pub struct Offer<AccountId32> {
 	pub seller: AccountId32,
 	pub nonce: u32,
 	pub offer_component: OrderComponent,
+	pub attributes: Option<DbAttributes>,
 }
 
 pub fn create_db_offer_from_node_offer(offer: Offer<AccountId32>) -> DbOffer {
@@ -57,6 +62,7 @@ pub fn create_db_offer_from_node_offer(offer: Offer<AccountId32>) -> DbOffer {
 			energy: offer.offer_component.energy as f64 / 10000.0,
 			energy_rate: offer.offer_component.energy_rate as f64 / 10000.0,
 		},
+		attributes: None,
 	}
 }
 
@@ -72,6 +78,7 @@ pub fn create_db_bid_from_node_bid(bid: Bid<AccountId32>) -> DbBid {
 			energy: bid.bid_component.energy as f64 / 10000.0,
 			energy_rate: bid.bid_component.energy_rate as f64 / 10000.0,
 		},
+		requirements: None,
 	}
 }
 
