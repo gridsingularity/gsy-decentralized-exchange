@@ -27,7 +27,6 @@ serde = { version = "1.0", features = ["derive"] }
 subxt = { version = "0.44.0" }
 codec = { package = "parity-scale-codec", version = "3.6.9", default-features = false, features = ["derive", "full", "bit-vec"] }
 sp-runtime = { version = "31.0.1", default-features = false, features = ["std"] }
-serde_json = { version = "1.0"}
 tokio = { version = "1.48", features = ["macros", "rt-multi-thread"] }
 tokio_schedule = "0.3.2"
 tracing = { version = "0.1.41", features = ["log"] }
@@ -37,6 +36,7 @@ tracing-log = "0.2"
 tracing-subscriber = { version = "0.3.20", features = ["registry", "env-filter"] }
 async-trait = "0.1.89"
 tokio-stream = "0.1.17"
+test-context = "0.4.1"
 
 [dev-dependencies]
 once_cell = "1"

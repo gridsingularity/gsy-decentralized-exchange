@@ -50,6 +50,6 @@ pub async fn init_app() -> TestApp {
 }
 
 pub async fn stop_app(app: TestApp) {
-    let mut configuration = get_configuration().expect("Failed to read configuration");
+    let configuration = get_configuration().expect("Failed to read configuration");
     delete_database(configuration.get_connection_string(),app.db_name).await.unwrap();
 }
