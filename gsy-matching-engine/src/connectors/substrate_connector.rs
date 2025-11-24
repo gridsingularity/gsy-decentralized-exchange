@@ -14,8 +14,8 @@ use gsy_offchain_primitives::utils::{
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::{thread, time};
-use subxt::{utils::AccountId32, OnlineClient, SubstrateConfig};
 use subxt::utils::H256;
+use subxt::{utils::AccountId32, OnlineClient, SubstrateConfig};
 use subxt_signer::sr25519::dev;
 use tracing::{error, info};
 
@@ -143,12 +143,14 @@ fn convert_db_order_to_canonical(order: DbOrder) -> Result<Order> {
 				.ok_or_else(|| anyhow!("Invalid buyer AccountId: {}", bid.buyer))?,
 			nonce: bid.nonce,
 			bid_component: convert_db_order_component_to_canonical(bid.bid_component),
+			requirements: None,
 		}),
 		DbOrder::Offer(offer) => Order::Offer(Offer {
 			seller: string_to_account_id(offer.seller.clone())
 				.ok_or_else(|| anyhow!("Invalid seller AccountId: {}", offer.seller))?,
 			nonce: offer.nonce,
 			offer_component: convert_db_order_component_to_canonical(offer.offer_component),
+			attributes: None,
 		}),
 	})
 }

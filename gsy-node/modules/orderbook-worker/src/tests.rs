@@ -23,6 +23,7 @@ fn orderbook_worker_sends_back_result() {
 				energy: 10,
 				energy_rate: 1,
 			},
+			requirements: None,
 		};
 
 		let bytes = test_data.encode();
