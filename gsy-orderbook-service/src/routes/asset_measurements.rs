@@ -1,12 +1,13 @@
-use actix_web::{HttpResponse, Responder};
-use actix_web::web::{Json, Query};
-use codec::{Encode, Decode};
-use serde::{Deserialize, Serialize};
-use gsy_offchain_primitives::db_api_schema::profiles::{
-    PVMeasurementSchema, BatteryMeasurementSchema, SmartMeterMeasurementSchema,
-    TransformerMeasurementSchema};
+use crate::db::asset_measurements_service::GetMeasurements;
 use crate::db::DbRef;
-use crate::routes::MarketParameters;
+use actix_web::web::{Json, Query};
+use actix_web::{HttpResponse, Responder};
+use codec::{Decode, Encode};
+use gsy_offchain_primitives::db_api_schema::profiles::{
+    BatteryMeasurementSchema, PVMeasurementSchema, SmartMeterMeasurementSchema,
+    TransformerMeasurementSchema};
+use serde::{Deserialize, Serialize};
+
 
 #[derive(Deserialize, Serialize, Encode, Decode, Clone)]
 #[serde(untagged)]
@@ -17,8 +18,9 @@ pub enum AssetMeasurementInput {
     MeasurementTransformer(TransformerMeasurementSchema),
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct AssetMeasurementParameters {
+    community_uuid: String,
     area_uuid: String,
     start_time: Option<u32>,
     end_time: Option<u32>,
@@ -81,16 +83,48 @@ pub async fn post_asset_measurements(
 }
 
 
-pub async fn get_asset_measurements(db: DbRef, params: Query<AssetMeasurementParameters>) -> impl Responder {
-    match db.get_ref().pv_measurements().get_measurements(
+async fn get_asset_measurements_for_type<T: Send + Sync + Serialize + 'static + serde::de::DeserializeOwned + std::fmt::Debug>(
+    db_document: &(dyn GetMeasurements<T> + Sync), params: Query<AssetMeasurementParameters>) -> HttpResponse
+{
+    match db_document.get_measurements(
         params.area_uuid.clone(), params.start_time, params.end_time,
     ).await {
         Ok(pv_data) => {
+            println!("{:?}", pv_data);
             HttpResponse::Ok().json(pv_data)
         }
         Err(e) => {
             tracing::error!("Failed to execute query: {:?}", e);
             HttpResponse::InternalServerError().finish()
         }
+    }
+}
+
+pub async fn get_asset_measurements(db: DbRef, params: Query<AssetMeasurementParameters>) -> HttpResponse {
+    let markets = match db.get_ref().markets().get_community_market(params.community_uuid.clone(), None, None).await {
+        Ok(markets) if !markets.is_empty() => markets,
+        _ => return HttpResponse::NotFound().finish()
+    };
+    let _first_market = markets.first().unwrap();
+    let area_type = _first_market.community_areas.iter().find(
+        |area| {area.area_uuid == params.area_uuid}).unwrap().area_type.clone();
+    if area_type == "PV" {
+        get_asset_measurements_for_type(
+            &db.get_ref().pv_measurements(), params.clone()).await
+    }
+    else if area_type == "SmartMeter" {
+        get_asset_measurements_for_type(
+            &db.get_ref().smart_meter_measurements(), params.clone()).await
+    }
+    else if area_type == "Battery" {
+        get_asset_measurements_for_type(
+            &db.get_ref().battery_measurements(), params.clone()).await
+    }
+    else if area_type == "Transformer" {
+        get_asset_measurements_for_type(
+            &db.get_ref().transformer_measurements(), params.clone()).await
+    }
+    else {
+        HttpResponse::NotImplemented().body(format!("Measurements for area type '{}' not implemented yet", area_type))
     }
 }

@@ -2032,6 +2032,7 @@ version = "0.1.0"
 dependencies = [
  "actix-web",
  "anyhow",
+ "async-trait",
  "chrono",
  "config",
  "dotenv",
@@ -2047,6 +2048,7 @@ dependencies = [
  "sp-runtime",
  "subxt",
  "tokio",
+ "tokio-stream",
  "tokio_schedule",
  "tracing",
  "tracing-actix-web",

@@ -54,7 +54,7 @@ impl OrderService {
         end_time: Option<u32>,
     ) -> Result<Vec<DbOrderSchema>> {
         let mut filter_params = create_filter_params_with_start_end_time(
-            start_time, end_time);
+            "time_slot".to_string(), start_time, end_time);
 
         if market_id.is_some() {
             let market_id_str = market_id.unwrap();

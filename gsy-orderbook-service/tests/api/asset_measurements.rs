@@ -1,14 +1,61 @@
+use actix_web::web;
+use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketTopologySchema};
 use crate::helpers::{init_app, stop_app};
 use gsy_offchain_primitives::db_api_schema::profiles::{
     PVMeasurementSchema, SmartMeterMeasurementSchema, BatteryMeasurementSchema,
     TransformerMeasurementSchema, MeasurementMetadataSchema
 };
+use gsy_orderbook_service::db::DatabaseWrapper;
 
+async fn insert_market_topology_to_db(db_wrapper: DatabaseWrapper) {
+    // Creating a Market with the respective community topology
+    let market_topology = MarketTopologySchema {
+        creation_time: 12344,
+        time_slot: 12345,
+        market_id: "new_market".to_string(),
+        community_areas: vec![
+            AreaTopologySchema {
+                area_type: "PV".to_string(),
+                area_hash: "pv1hash".to_string(),
+                area_uuid: "pv1".to_string(),
+                name: "pv1name".to_string()
+            },
+            AreaTopologySchema {
+                area_type: "SmartMeter".to_string(),
+                area_hash: "smartmeter1hash".to_string(),
+                area_uuid: "smartmeter1".to_string(),
+                name: "smartmeter1name".to_string()
+            },
+            AreaTopologySchema {
+                area_type: "Battery".to_string(),
+                area_hash: "battery1hash".to_string(),
+                area_uuid: "battery1".to_string(),
+                name: "battery1name".to_string()
+            },
+            AreaTopologySchema {
+                area_type: "Transformer".to_string(),
+                area_hash: "transformer1hash".to_string(),
+                area_uuid: "transformer1".to_string(),
+                name: "transformer1name".to_string()
+            }
+        ],
+        community_name: "community1".to_string(),
+        community_uuid: "community1".to_string(),
+    };
+    let db = web::Data::new(db_wrapper.clone());
+    let _saved = db
+        .get_ref()
+        .markets()
+        .insert(market_topology.clone())
+        .await
+        .unwrap();
+}
 
 # [tokio::test]
 async fn test_post_and_fetch_pv_asset_measurements() {
     let app = init_app().await;
     let client = reqwest::Client::new();
+    let _ = insert_market_topology_to_db(app.db_wrapper.clone()).await;
 
     // Test PV Measurement
     let pv_measurement = PVMeasurementSchema {
@@ -25,6 +72,7 @@ async fn test_post_and_fetch_pv_asset_measurements() {
         energy_kWh: 5000.0,
     };
 
+    // Sending the measurements for the PV of the community
     let pv_measurements = vec![pv_measurement];
     let resp = client
         .post(&format!("{}/asset_measurements", &app.address))
@@ -37,15 +85,21 @@ async fn test_post_and_fetch_pv_asset_measurements() {
 
     // Get PV Measurements
     let resp = client
-        .get(&format!("{}/asset_measurements?area_uuid={}&start_time=12340&end_time=12350",
-                      &app.address, "pv1".to_string()))
+        .get(&format!("{}/asset_measurements?community_uuid={}&area_uuid={}&start_time=12340&end_time=12350",
+                      &app.address, "community1".to_string(), "pv1".to_string()))
         .send()
         .await
         .unwrap();
 
     let status = resp.status().as_u16();
-    println!("Response: {:?}", resp.text().await.unwrap());
-    assert_eq!(status, 209);
+    let measurements: Vec<PVMeasurementSchema> = resp.json().await.unwrap();
+    assert_eq!(status, 200);
+    assert_eq!(measurements.len(), 1);
+    assert_eq!(measurements[0].metadata.area_uuid, "pv1");
+    assert_eq!(measurements[0].metadata.time_slot, 12345);
+    assert_eq!(measurements[0].metadata.creation_time, 12344);
+    assert_eq!(measurements[0].power_kW, 1000.0);
+    assert_eq!(measurements[0].energy_kWh, 5000.0);
     stop_app(app).await;
 }
 
@@ -53,6 +107,7 @@ async fn test_post_and_fetch_pv_asset_measurements() {
 async fn test_post_battery_asset_measurements() {
     let app = init_app().await;
     let client = reqwest::Client::new();
+    let _ = insert_market_topology_to_db(app.db_wrapper.clone()).await;
 
     // Test Battery Measurement
     let battery_measurement = BatteryMeasurementSchema {
@@ -81,7 +136,29 @@ async fn test_post_battery_asset_measurements() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status().as_u16(), 200);
+
+    let status = resp.status().as_u16();
+    assert_eq!(status, 200);
+
+    // Get Battery Measurements
+    let resp = client
+        .get(&format!("{}/asset_measurements?community_uuid={}&area_uuid={}&start_time=12340&end_time=12350",
+                      &app.address, "community1".to_string(), "battery1".to_string()))
+        .send()
+        .await
+        .unwrap();
+
+    let status = resp.status().as_u16();
+    let measurements: Vec<BatteryMeasurementSchema> = resp.json().await.unwrap();
+    assert_eq!(status, 200);
+    assert_eq!(measurements.len(), 1);
+    assert_eq!(measurements[0].metadata.area_uuid, "battery1");
+    assert_eq!(measurements[0].metadata.time_slot, 12345);
+    assert_eq!(measurements[0].metadata.creation_time, 12344);
+    assert_eq!(measurements[0].power_kW, 2000.0);
+    assert_eq!(measurements[0].power_charge_kW, 1500.0);
+    assert_eq!(measurements[0].power_discharge_kW, 500.0);
+    assert_eq!(measurements[0].soc, 75.5);
     stop_app(app).await;
 }
 
@@ -89,11 +166,12 @@ async fn test_post_battery_asset_measurements() {
 async fn test_post_transformer_asset_measurements() {
     let app = init_app().await;
     let client = reqwest::Client::new();
+    let _ = insert_market_topology_to_db(app.db_wrapper.clone()).await;
 
     // Test Transformer Measurement
     let transformer_measurement = TransformerMeasurementSchema {
         metadata: MeasurementMetadataSchema {
-            area_uuid: "transformer_1".to_string(),
+            area_uuid: "transformer1".to_string(),
             community_uuid: "community1".to_string(),
             asset_type: "Transformer".to_string(),
             time_slot: 12345,
@@ -122,7 +200,28 @@ async fn test_post_transformer_asset_measurements() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status().as_u16(), 200);
+    let status = resp.status().as_u16();
+    assert_eq!(status, 200);
+
+    // Get Transformer Measurements
+    let resp = client
+        .get(&format!("{}/asset_measurements?community_uuid={}&area_uuid={}&start_time=12340&end_time=12350",
+                      &app.address, "community1".to_string(), "transformer1".to_string()))
+        .send()
+        .await
+        .unwrap();
+
+    let status = resp.status().as_u16();
+    let measurements: Vec<TransformerMeasurementSchema> = resp.json().await.unwrap();
+    assert_eq!(status, 200);
+    assert_eq!(measurements.len(), 1);
+    assert_eq!(measurements[0].metadata.area_uuid, "transformer1");
+    assert_eq!(measurements[0].metadata.time_slot, 12345);
+    assert_eq!(measurements[0].metadata.creation_time, 12344);
+    assert_eq!(measurements[0].current_A_p1, 10.0);
+    assert_eq!(measurements[0].power_kW_p2, 2.4);
+    assert_eq!(measurements[0].reactive_power_kvar_p3, 0.7);
+    assert_eq!(measurements[0].voltage_V_p1, 230.0);
     stop_app(app).await;
 }
 
@@ -130,11 +229,12 @@ async fn test_post_transformer_asset_measurements() {
 async fn test_post_smart_meter_asset_measurements() {
     let app = init_app().await;
     let client = reqwest::Client::new();
+    let _ = insert_market_topology_to_db(app.db_wrapper.clone()).await;
 
         // Test Smart Meter Measurement
     let smart_meter_measurement = SmartMeterMeasurementSchema {
         metadata: MeasurementMetadataSchema {
-            area_uuid: "smart_meter_1".to_string(),
+            area_uuid: "smartmeter1".to_string(),
             community_uuid: "community1".to_string(),
             asset_type: "SmartMeter".to_string(),
             time_slot: 12345,
@@ -165,6 +265,27 @@ async fn test_post_smart_meter_asset_measurements() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status().as_u16(), 200);
+    let status = resp.status().as_u16();
+    assert_eq!(status, 200);
+
+    // Get Smart Meter Measurements
+    let resp = client
+        .get(&format!("{}/asset_measurements?community_uuid={}&area_uuid={}&start_time=12340&end_time=12350",
+                      &app.address, "community1".to_string(), "smartmeter1".to_string()))
+        .send()
+        .await
+        .unwrap();
+
+    let status = resp.status().as_u16();
+    let measurements: Vec<SmartMeterMeasurementSchema> = resp.json().await.unwrap();
+    assert_eq!(status, 200);
+    assert_eq!(measurements.len(), 1);
+    assert_eq!(measurements[0].metadata.area_uuid, "smartmeter1");
+    assert_eq!(measurements[0].metadata.time_slot, 12345);
+    assert_eq!(measurements[0].metadata.creation_time, 12344);
+    assert_eq!(measurements[0].power_kW_p1, 1150.0);
+    assert_eq!(measurements[0].current_A_p2, 5.1);
+    assert_eq!(measurements[0].reactive_power_kvar_p3, 120.0);
+    assert_eq!(measurements[0].voltage_V_p3, 232.0);
     stop_app(app).await;
 }
