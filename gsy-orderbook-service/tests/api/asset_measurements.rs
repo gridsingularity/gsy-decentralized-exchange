@@ -1,9 +1,9 @@
+use crate::helpers::{init_app, stop_app, TestApp};
 use actix_web::web;
 use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketTopologySchema};
-use crate::helpers::{init_app, stop_app, TestApp};
 use gsy_offchain_primitives::db_api_schema::profiles::{
-    PVMeasurementSchema, SmartMeterMeasurementSchema, BatteryMeasurementSchema,
-    TransformerMeasurementSchema, MeasurementMetadataSchema
+    BatteryMeasurementSchema, MeasurementMetadataSchema, PVMeasurementSchema,
+    SmartMeterMeasurementSchema, TransformerMeasurementSchema,
 };
 use gsy_orderbook_service::db::DatabaseWrapper;
 use test_context::{test_context, AsyncTestContext};
@@ -26,26 +26,26 @@ impl AsyncTestContext for AssetMeasurementsTestContext {
                     area_type: "PV".to_string(),
                     area_hash: "pv1hash".to_string(),
                     area_uuid: "pv1".to_string(),
-                    name: "pv1name".to_string()
+                    name: "pv1name".to_string(),
                 },
                 AreaTopologySchema {
                     area_type: "SmartMeter".to_string(),
                     area_hash: "smartmeter1hash".to_string(),
                     area_uuid: "smartmeter1".to_string(),
-                    name: "smartmeter1name".to_string()
+                    name: "smartmeter1name".to_string(),
                 },
                 AreaTopologySchema {
                     area_type: "Battery".to_string(),
                     area_hash: "battery1hash".to_string(),
                     area_uuid: "battery1".to_string(),
-                    name: "battery1name".to_string()
+                    name: "battery1name".to_string(),
                 },
                 AreaTopologySchema {
                     area_type: "Transformer".to_string(),
                     area_hash: "transformer1hash".to_string(),
                     area_uuid: "transformer1".to_string(),
-                    name: "transformer1name".to_string()
-                }
+                    name: "transformer1name".to_string(),
+                },
             ],
             community_name: "community1".to_string(),
             community_uuid: "community1".to_string(),
@@ -65,11 +65,9 @@ impl AsyncTestContext for AssetMeasurementsTestContext {
     }
 }
 
-
 #[test_context(AssetMeasurementsTestContext)]
 #[tokio::test]
 async fn test_post_and_fetch_pv_asset_measurements(ctx: &mut AssetMeasurementsTestContext) {
-
     // Test PV Measurement
     let pv_measurement = PVMeasurementSchema {
         metadata: MeasurementMetadataSchema {
@@ -87,7 +85,8 @@ async fn test_post_and_fetch_pv_asset_measurements(ctx: &mut AssetMeasurementsTe
 
     // Sending the measurements for the PV of the community
     let pv_measurements = vec![pv_measurement];
-    let resp = ctx.client
+    let resp = ctx
+        .client
         .post(&format!("{}/asset_measurements", &ctx.app.address))
         .json(&pv_measurements)
         .send()
@@ -97,9 +96,14 @@ async fn test_post_and_fetch_pv_asset_measurements(ctx: &mut AssetMeasurementsTe
     assert_eq!(status, 200);
 
     // Get PV Measurements
-    let resp = ctx.client
-        .get(&format!("{}/asset_measurements?community_uuid={}&area_uuid={}&start_time=12340&end_time=12350",
-                      &ctx.app.address, "community1".to_string(), "pv1".to_string()))
+    let resp = ctx
+        .client
+        .get(&format!(
+            "{}/asset_measurements?community_uuid={}&area_uuid={}&start_time=12340&end_time=12350",
+            &ctx.app.address,
+            "community1".to_string(),
+            "pv1".to_string()
+        ))
         .send()
         .await
         .unwrap();
@@ -116,9 +120,8 @@ async fn test_post_and_fetch_pv_asset_measurements(ctx: &mut AssetMeasurementsTe
 }
 
 #[test_context(AssetMeasurementsTestContext)]
-# [tokio::test]
+#[tokio::test]
 async fn test_post_battery_asset_measurements(ctx: &mut AssetMeasurementsTestContext) {
-
     // Test Battery Measurement
     let battery_measurement = BatteryMeasurementSchema {
         metadata: MeasurementMetadataSchema {
@@ -136,11 +139,12 @@ async fn test_post_battery_asset_measurements(ctx: &mut AssetMeasurementsTestCon
         temperature_C: 25.0,
         voltage_V: 48.0,
         energy_charge_kWh: 12.0,
-        energy_discharge_kWh: 11.0
+        energy_discharge_kWh: 11.0,
     };
 
     let battery_measurements = vec![battery_measurement];
-    let resp = ctx.client
+    let resp = ctx
+        .client
         .post(&format!("{}/asset_measurements", &ctx.app.address))
         .json(&battery_measurements)
         .send()
@@ -151,9 +155,14 @@ async fn test_post_battery_asset_measurements(ctx: &mut AssetMeasurementsTestCon
     assert_eq!(status, 200);
 
     // Get Battery Measurements
-    let resp = ctx.client
-        .get(&format!("{}/asset_measurements?community_uuid={}&area_uuid={}&start_time=12340&end_time=12350",
-                      &ctx.app.address, "community1".to_string(), "battery1".to_string()))
+    let resp = ctx
+        .client
+        .get(&format!(
+            "{}/asset_measurements?community_uuid={}&area_uuid={}&start_time=12340&end_time=12350",
+            &ctx.app.address,
+            "community1".to_string(),
+            "battery1".to_string()
+        ))
         .send()
         .await
         .unwrap();
@@ -172,9 +181,8 @@ async fn test_post_battery_asset_measurements(ctx: &mut AssetMeasurementsTestCon
 }
 
 #[test_context(AssetMeasurementsTestContext)]
-# [tokio::test]
+#[tokio::test]
 async fn test_post_transformer_asset_measurements(ctx: &mut AssetMeasurementsTestContext) {
-
     // Test Transformer Measurement
     let transformer_measurement = TransformerMeasurementSchema {
         metadata: MeasurementMetadataSchema {
@@ -201,7 +209,8 @@ async fn test_post_transformer_asset_measurements(ctx: &mut AssetMeasurementsTes
     };
 
     let transformer_measurements = vec![transformer_measurement];
-    let resp = ctx.client
+    let resp = ctx
+        .client
         .post(&format!("{}/asset_measurements", &ctx.app.address))
         .json(&transformer_measurements)
         .send()
@@ -211,9 +220,14 @@ async fn test_post_transformer_asset_measurements(ctx: &mut AssetMeasurementsTes
     assert_eq!(status, 200);
 
     // Get Transformer Measurements
-    let resp = ctx.client
-        .get(&format!("{}/asset_measurements?community_uuid={}&area_uuid={}&start_time=12340&end_time=12350",
-                      &ctx.app.address, "community1".to_string(), "transformer1".to_string()))
+    let resp = ctx
+        .client
+        .get(&format!(
+            "{}/asset_measurements?community_uuid={}&area_uuid={}&start_time=12340&end_time=12350",
+            &ctx.app.address,
+            "community1".to_string(),
+            "transformer1".to_string()
+        ))
         .send()
         .await
         .unwrap();
@@ -232,7 +246,7 @@ async fn test_post_transformer_asset_measurements(ctx: &mut AssetMeasurementsTes
 }
 
 #[test_context(AssetMeasurementsTestContext)]
-# [tokio::test]
+#[tokio::test]
 async fn test_post_smart_meter_asset_measurements(ctx: &mut AssetMeasurementsTestContext) {
     // Test Smart Meter Measurement
     let smart_meter_measurement = SmartMeterMeasurementSchema {
@@ -262,7 +276,8 @@ async fn test_post_smart_meter_asset_measurements(ctx: &mut AssetMeasurementsTes
     };
 
     let smart_meter_measurements = vec![smart_meter_measurement];
-    let resp = ctx.client
+    let resp = ctx
+        .client
         .post(&format!("{}/asset_measurements", &ctx.app.address))
         .json(&smart_meter_measurements)
         .send()
@@ -272,9 +287,14 @@ async fn test_post_smart_meter_asset_measurements(ctx: &mut AssetMeasurementsTes
     assert_eq!(status, 200);
 
     // Get Smart Meter Measurements
-    let resp = ctx.client
-        .get(&format!("{}/asset_measurements?community_uuid={}&area_uuid={}&start_time=12340&end_time=12350",
-                      &ctx.app.address, "community1".to_string(), "smartmeter1".to_string()))
+    let resp = ctx
+        .client
+        .get(&format!(
+            "{}/asset_measurements?community_uuid={}&area_uuid={}&start_time=12340&end_time=12350",
+            &ctx.app.address,
+            "community1".to_string(),
+            "smartmeter1".to_string()
+        ))
         .send()
         .await
         .unwrap();

@@ -9,17 +9,17 @@ async fn get_market_succeeds() {
     let app = init_app().await;
     let address = app.address.clone();
     let community_areas_1 = vec![
-        AreaTopologySchema{
+        AreaTopologySchema {
             name: "area1".to_string(),
             area_uuid: "area1hash".to_string(),
             area_hash: h256_to_string(H256::random()),
-            area_type: "Home".to_string()
+            area_type: "Home".to_string(),
         },
         AreaTopologySchema {
             name: "area2".to_string(),
             area_uuid: "area2hash".to_string(),
             area_hash: h256_to_string(H256::random()),
-            area_type: "Home".to_string()
+            area_type: "Home".to_string(),
         },
     ];
     let market1 = MarketTopologySchema {
@@ -31,17 +31,17 @@ async fn get_market_succeeds() {
         community_uuid: "my_community1_hash".to_string(),
     };
     let community_areas_2 = vec![
-        AreaTopologySchema{
+        AreaTopologySchema {
             name: "area3".to_string(),
             area_uuid: "area3hash".to_string(),
             area_hash: h256_to_string(H256::random()),
-            area_type: "Home".to_string()
+            area_type: "Home".to_string(),
         },
         AreaTopologySchema {
             name: "area4".to_string(),
             area_uuid: "area4hash".to_string(),
             area_hash: h256_to_string(H256::random()),
-            area_type: "Home".to_string()
+            area_type: "Home".to_string(),
         },
     ];
     let market2 = MarketTopologySchema {
@@ -93,21 +93,26 @@ async fn get_market_succeeds() {
 }
 
 fn create_market_topology_schema(
-    market_id: String, community_uuid: String, community_name: String,
-    area1_name: String, area1_uuid: String,
-    area2_name: String, area2_uuid: String) -> (MarketTopologySchema, Vec<AreaTopologySchema>) {
+    market_id: String,
+    community_uuid: String,
+    community_name: String,
+    area1_name: String,
+    area1_uuid: String,
+    area2_name: String,
+    area2_uuid: String,
+) -> (MarketTopologySchema, Vec<AreaTopologySchema>) {
     let community_areas = vec![
-        AreaTopologySchema{
+        AreaTopologySchema {
             name: area1_name,
             area_uuid: area1_uuid,
             area_hash: h256_to_string(H256::random()),
-            area_type: "Home".to_string()
+            area_type: "Home".to_string(),
         },
         AreaTopologySchema {
             name: area2_name,
             area_uuid: area2_uuid,
             area_hash: h256_to_string(H256::random()),
-            area_type: "Home".to_string()
+            area_type: "Home".to_string(),
         },
     ];
     let market = MarketTopologySchema {
@@ -127,8 +132,14 @@ async fn get_market_from_community_succeeds() {
     let address = app.address.clone();
 
     let (market1, community_areas_1) = create_market_topology_schema(
-        "my_market".to_string(), "communityhash".to_string(), "community1".to_string(),
-        "area1".to_string(), "area1hash".to_string(), "area2".to_string(), "area2hash".to_string());
+        "my_market".to_string(),
+        "communityhash".to_string(),
+        "community1".to_string(),
+        "area1".to_string(),
+        "area1hash".to_string(),
+        "area2".to_string(),
+        "area2hash".to_string(),
+    );
 
     let db = web::Data::new(app.db_wrapper.clone());
     let market_ref = db.get_ref().markets();
@@ -136,8 +147,14 @@ async fn get_market_from_community_succeeds() {
     assert_eq!(saved.market_id, "my_market");
 
     let (market2, community_areas_2) = create_market_topology_schema(
-        "my_market2".to_string(), "communityhash2".to_string(), "community2".to_string(),
-        "area3".to_string(), "area3hash".to_string(), "area4".to_string(), "area4hash".to_string());
+        "my_market2".to_string(),
+        "communityhash2".to_string(),
+        "community2".to_string(),
+        "area3".to_string(),
+        "area3hash".to_string(),
+        "area4".to_string(),
+        "area4hash".to_string(),
+    );
 
     let saved = market_ref.insert(market2.clone()).await.unwrap();
     assert_eq!(saved.market_id, "my_market2");
@@ -206,17 +223,17 @@ async fn post_market_succeeds() {
     let app = init_app().await;
     let address = app.address.clone();
     let community_areas = vec![
-        AreaTopologySchema{
+        AreaTopologySchema {
             name: "area1".to_string(),
             area_uuid: "area1hash".to_string(),
             area_hash: h256_to_string(H256::random()),
-            area_type: "Home".to_string()
+            area_type: "Home".to_string(),
         },
         AreaTopologySchema {
             name: "area2".to_string(),
             area_uuid: "area2hash".to_string(),
             area_hash: h256_to_string(H256::random()),
-            area_type: "Home".to_string()
+            area_type: "Home".to_string(),
         },
     ];
     let market = MarketTopologySchema {

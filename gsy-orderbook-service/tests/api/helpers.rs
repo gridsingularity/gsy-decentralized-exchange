@@ -1,5 +1,5 @@
 use gsy_orderbook_service::configuration::get_configuration;
-use gsy_orderbook_service::db::{init_database, delete_database, DatabaseWrapper};
+use gsy_orderbook_service::db::{delete_database, init_database, DatabaseWrapper};
 use gsy_orderbook_service::startup::run;
 use gsy_orderbook_service::telemetry::{get_subscriber, init_subscriber};
 use once_cell::sync::Lazy;
@@ -21,7 +21,7 @@ static TRACING: Lazy<()> = Lazy::new(|| {
 pub struct TestApp {
     pub address: String,
     pub db_wrapper: DatabaseWrapper,
-    pub db_name: String
+    pub db_name: String,
 }
 
 pub async fn init_app() -> TestApp {
@@ -45,11 +45,13 @@ pub async fn init_app() -> TestApp {
     TestApp {
         address,
         db_wrapper,
-        db_name: configuration.database_name
+        db_name: configuration.database_name,
     }
 }
 
 pub async fn stop_app(app: TestApp) {
     let configuration = get_configuration().expect("Failed to read configuration");
-    delete_database(configuration.get_connection_string(),app.db_name).await.unwrap();
+    delete_database(configuration.get_connection_string(), app.db_name)
+        .await
+        .unwrap();
 }

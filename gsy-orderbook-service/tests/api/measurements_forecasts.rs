@@ -1,9 +1,9 @@
 use crate::helpers::{init_app, stop_app};
 use actix_web::web;
-use subxt::utils::H256;
-use sp_runtime::traits::CheckedConversion;
 use gsy_offchain_primitives::db_api_schema::profiles::{ForecastSchema, MeasurementSchema};
 use gsy_offchain_primitives::utils::h256_to_string;
+use sp_runtime::traits::CheckedConversion;
+use subxt::utils::H256;
 
 #[tokio::test]
 async fn get_measurements_succeeds() {

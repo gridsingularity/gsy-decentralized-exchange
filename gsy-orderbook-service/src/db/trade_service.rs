@@ -83,11 +83,14 @@ impl TradeService {
 
     #[tracing::instrument(name = "Fetching trades by market id from database", skip(self))]
     pub async fn filter_trades(
-            &self,
-            start_time: Option<u32>,
-            end_time: Option<u32>) -> Result<Vec<TradeSchema>> {
+        &self,
+        start_time: Option<u32>,
+        end_time: Option<u32>,
+    ) -> Result<Vec<TradeSchema>> {
         let mut filter_params = doc! {};
-        if start_time.is_some() { filter_params.insert("time_slot", doc! {"$gte": start_time.unwrap()} ); }
+        if start_time.is_some() {
+            filter_params.insert("time_slot", doc! {"$gte": start_time.unwrap()});
+        }
         if end_time.is_some() {
             if start_time.is_some() {
                 filter_params.insert(

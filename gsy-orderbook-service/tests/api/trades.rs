@@ -7,8 +7,8 @@ use gsy_offchain_primitives::node_to_api_schema::insert_order::{
 use gsy_offchain_primitives::node_to_api_schema::insert_trades::{
     Trade, TradeParameters as InsertTradeParameters,
 };
-use subxt::utils::{H256, AccountId32};
 use gsy_offchain_primitives::utils::h256_to_string;
+use subxt::utils::{AccountId32, H256};
 
 #[tokio::test]
 async fn post_trade_request_writes_trades_to_the_db() {

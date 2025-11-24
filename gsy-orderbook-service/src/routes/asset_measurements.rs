@@ -5,9 +5,9 @@ use actix_web::{HttpResponse, Responder};
 use codec::{Decode, Encode};
 use gsy_offchain_primitives::db_api_schema::profiles::{
     BatteryMeasurementSchema, PVMeasurementSchema, SmartMeterMeasurementSchema,
-    TransformerMeasurementSchema};
+    TransformerMeasurementSchema,
+};
 use serde::{Deserialize, Serialize};
-
 
 #[derive(Deserialize, Serialize, Encode, Decode, Clone)]
 #[serde(untagged)]
@@ -52,28 +52,48 @@ pub async fn post_asset_measurements(
     }
 
     if pv_data.len() > 0 {
-        match db.get_ref().pv_measurements().insert_measurements(pv_data).await {
+        match db
+            .get_ref()
+            .pv_measurements()
+            .insert_measurements(pv_data)
+            .await
+        {
             Ok(_ids) => (),
             Err(_) => return HttpResponse::InternalServerError().finish(),
         };
     }
 
     if battery_data.len() > 0 {
-        match db.get_ref().battery_measurements().insert_measurements(battery_data).await {
+        match db
+            .get_ref()
+            .battery_measurements()
+            .insert_measurements(battery_data)
+            .await
+        {
             Ok(_ids) => (),
             Err(_) => return HttpResponse::InternalServerError().finish(),
         };
     }
 
     if smart_meter_data.len() > 0 {
-        match db.get_ref().smart_meter_measurements().insert_measurements(smart_meter_data).await {
+        match db
+            .get_ref()
+            .smart_meter_measurements()
+            .insert_measurements(smart_meter_data)
+            .await
+        {
             Ok(_ids) => (),
             Err(_) => return HttpResponse::InternalServerError().finish(),
         };
     }
 
     if transformer_data.len() > 0 {
-        match db.get_ref().transformer_measurements().insert_measurements(transformer_data).await {
+        match db
+            .get_ref()
+            .transformer_measurements()
+            .insert_measurements(transformer_data)
+            .await
+        {
             Ok(_ids) => (),
             Err(_) => return HttpResponse::InternalServerError().finish(),
         };
@@ -82,13 +102,16 @@ pub async fn post_asset_measurements(
     HttpResponse::Ok().finish()
 }
 
-
-async fn get_asset_measurements_for_type<T: Send + Sync + Serialize + 'static + serde::de::DeserializeOwned + std::fmt::Debug>(
-    db_document: &(dyn GetMeasurements<T> + Sync), params: Query<AssetMeasurementParameters>) -> HttpResponse
-{
-    match db_document.get_measurements(
-        params.area_uuid.clone(), params.start_time, params.end_time,
-    ).await {
+async fn get_asset_measurements_for_type<
+    T: Send + Sync + Serialize + 'static + serde::de::DeserializeOwned + std::fmt::Debug,
+>(
+    db_document: &(dyn GetMeasurements<T> + Sync),
+    params: Query<AssetMeasurementParameters>,
+) -> HttpResponse {
+    match db_document
+        .get_measurements(params.area_uuid.clone(), params.start_time, params.end_time)
+        .await
+    {
         Ok(pv_data) => {
             println!("{:?}", pv_data);
             HttpResponse::Ok().json(pv_data)
@@ -100,31 +123,41 @@ async fn get_asset_measurements_for_type<T: Send + Sync + Serialize + 'static + 
     }
 }
 
-pub async fn get_asset_measurements(db: DbRef, params: Query<AssetMeasurementParameters>) -> HttpResponse {
-    let markets = match db.get_ref().markets().get_community_market(params.community_uuid.clone(), None, None).await {
+pub async fn get_asset_measurements(
+    db: DbRef,
+    params: Query<AssetMeasurementParameters>,
+) -> HttpResponse {
+    let markets = match db
+        .get_ref()
+        .markets()
+        .get_community_market(params.community_uuid.clone(), None, None)
+        .await
+    {
         Ok(markets) if !markets.is_empty() => markets,
-        _ => return HttpResponse::NotFound().finish()
+        _ => return HttpResponse::NotFound().finish(),
     };
     let _first_market = markets.first().unwrap();
-    let area_type = _first_market.community_areas.iter().find(
-        |area| {area.area_uuid == params.area_uuid}).unwrap().area_type.clone();
+    let area_type = _first_market
+        .community_areas
+        .iter()
+        .find(|area| area.area_uuid == params.area_uuid)
+        .unwrap()
+        .area_type
+        .clone();
     if area_type == "PV" {
-        get_asset_measurements_for_type(
-            &db.get_ref().pv_measurements(), params.clone()).await
-    }
-    else if area_type == "SmartMeter" {
-        get_asset_measurements_for_type(
-            &db.get_ref().smart_meter_measurements(), params.clone()).await
-    }
-    else if area_type == "Battery" {
-        get_asset_measurements_for_type(
-            &db.get_ref().battery_measurements(), params.clone()).await
-    }
-    else if area_type == "Transformer" {
-        get_asset_measurements_for_type(
-            &db.get_ref().transformer_measurements(), params.clone()).await
-    }
-    else {
-        HttpResponse::NotImplemented().body(format!("Measurements for area type '{}' not implemented yet", area_type))
+        get_asset_measurements_for_type(&db.get_ref().pv_measurements(), params.clone()).await
+    } else if area_type == "SmartMeter" {
+        get_asset_measurements_for_type(&db.get_ref().smart_meter_measurements(), params.clone())
+            .await
+    } else if area_type == "Battery" {
+        get_asset_measurements_for_type(&db.get_ref().battery_measurements(), params.clone()).await
+    } else if area_type == "Transformer" {
+        get_asset_measurements_for_type(&db.get_ref().transformer_measurements(), params.clone())
+            .await
+    } else {
+        HttpResponse::NotImplemented().body(format!(
+            "Measurements for area type '{}' not implemented yet",
+            area_type
+        ))
     }
 }

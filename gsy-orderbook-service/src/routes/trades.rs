@@ -17,11 +17,20 @@ pub async fn post_trades(trades: Json<Vec<u8>>, db: DbRef) -> impl Responder {
 
     for trade in deserialized_trades.clone() {
         let _ = db.get_ref().orders().update_order_by_area_market_id(
-            trade.market_id.clone(), trade.offer.offer_component.area_uuid.clone());
+            trade.market_id.clone(),
+            trade.offer.offer_component.area_uuid.clone(),
+        );
         let _ = db.get_ref().orders().update_order_by_area_market_id(
-            trade.market_id.clone(), trade.bid.bid_component.area_uuid.clone());
+            trade.market_id.clone(),
+            trade.bid.bid_component.area_uuid.clone(),
+        );
     }
-    match db.get_ref().trades().insert_trades(deserialized_trades).await {
+    match db
+        .get_ref()
+        .trades()
+        .insert_trades(deserialized_trades)
+        .await
+    {
         Ok(ids) => HttpResponse::Ok().json(ids),
         Err(_) => HttpResponse::InternalServerError().finish(),
     }
@@ -42,9 +51,12 @@ pub struct GetTradesParams {
 
 #[tracing::instrument(name = "Retrieve trades", skip(db))]
 pub async fn get_trades(db: DbRef, query_params: Query<GetTradesParams>) -> impl Responder {
-    match db.get_ref().trades().filter_trades(
-        query_params.start_time,
-        query_params.end_time).await {
+    match db
+        .get_ref()
+        .trades()
+        .filter_trades(query_params.start_time, query_params.end_time)
+        .await
+    {
         Ok(trades) => HttpResponse::Ok().json(trades),
         Err(e) => {
             tracing::error!("Failed to execute query: {:?}", e);

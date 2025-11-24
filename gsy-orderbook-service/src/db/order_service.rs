@@ -1,8 +1,8 @@
+use crate::db::create_filter_params_with_start_end_time;
 use crate::db::DatabaseWrapper;
 use anyhow::Result;
 use futures::StreamExt;
 use gsy_offchain_primitives::db_api_schema::orders::{DbOrderSchema, OrderStatus};
-use crate::db::create_filter_params_with_start_end_time;
 use mongodb::bson::{doc, Bson};
 use mongodb::options::IndexOptions;
 use mongodb::results::UpdateResult;
@@ -53,8 +53,8 @@ impl OrderService {
         start_time: Option<u32>,
         end_time: Option<u32>,
     ) -> Result<Vec<DbOrderSchema>> {
-        let mut filter_params = create_filter_params_with_start_end_time(
-            "time_slot".to_string(), start_time, end_time);
+        let mut filter_params =
+            create_filter_params_with_start_end_time("time_slot".to_string(), start_time, end_time);
 
         if market_id.is_some() {
             let market_id_str = market_id.unwrap();
@@ -113,7 +113,10 @@ impl OrderService {
     }
 
     pub async fn update_order_by_area_market_id(
-        &self, area_uuid: String, market_id: String) -> Result<bool> {
+        &self,
+        area_uuid: String,
+        market_id: String,
+    ) -> Result<bool> {
         let filter = doc! {
             "area_uuid": area_uuid,
             "market_id": market_id

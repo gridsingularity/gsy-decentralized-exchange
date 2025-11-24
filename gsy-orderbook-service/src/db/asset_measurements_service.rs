@@ -1,14 +1,16 @@
-use crate::db::{DatabaseWrapper, create_filter_params_with_start_end_time};
+use crate::db::{create_filter_params_with_start_end_time, DatabaseWrapper};
 use anyhow::Result;
-use serde::Serialize;
-use gsy_offchain_primitives::db_api_schema::profiles::{BatteryMeasurementSchema, PVMeasurementSchema, SmartMeterMeasurementSchema, TransformerMeasurementSchema};
+use futures::stream::TryStreamExt;
+use gsy_offchain_primitives::db_api_schema::profiles::{
+    BatteryMeasurementSchema, PVMeasurementSchema, SmartMeterMeasurementSchema,
+    TransformerMeasurementSchema,
+};
 use mongodb::bson::{doc, Bson};
 use mongodb::options::IndexOptions;
 use mongodb::{Collection, IndexModel};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
-use futures::stream::{TryStreamExt};
-
 
 /// this function will call after connected to database
 pub async fn init_pv_measurements(db: &DatabaseWrapper) -> Result<()> {
@@ -69,13 +71,19 @@ pub trait GetMeasurements<T: Send + Sync + Serialize + 'static> {
     }
 
     async fn get_measurements(
-        &self, area_uuid: String, start_time: Option<u32>, end_time: Option<u32>
+        &self,
+        area_uuid: String,
+        start_time: Option<u32>,
+        end_time: Option<u32>,
     ) -> Result<Vec<T>>
     where
         T: serde::de::DeserializeOwned + Send + Sync,
     {
         let mut filter_params = create_filter_params_with_start_end_time(
-            "metadata.time_slot".to_string(), start_time, end_time);
+            "metadata.time_slot".to_string(),
+            start_time,
+            end_time,
+        );
         filter_params.insert("metadata.area_uuid".to_string(), area_uuid);
 
         let mut results: Vec<T> = Vec::new();
@@ -119,16 +127,21 @@ impl Deref for PVMeasurementsService {
 
 #[async_trait::async_trait]
 impl GetMeasurements<PVMeasurementSchema> for PVMeasurementsService {
-
-    fn get_database(&self) -> AssetMeasurementCollection<PVMeasurementSchema> { self.0.clone() }
+    fn get_database(&self) -> AssetMeasurementCollection<PVMeasurementSchema> {
+        self.0.clone()
+    }
 }
 
 #[repr(transparent)]
-pub struct SmartMeterMeasurementsService(pub AssetMeasurementCollection<SmartMeterMeasurementSchema>);
+pub struct SmartMeterMeasurementsService(
+    pub AssetMeasurementCollection<SmartMeterMeasurementSchema>,
+);
 
 impl From<&DatabaseWrapper> for SmartMeterMeasurementsService {
     fn from(db: &DatabaseWrapper) -> Self {
-        SmartMeterMeasurementsService(AssetMeasurementCollection(db.collection("smartmetermeasurements")))
+        SmartMeterMeasurementsService(AssetMeasurementCollection(
+            db.collection("smartmetermeasurements"),
+        ))
     }
 }
 
@@ -142,8 +155,9 @@ impl Deref for SmartMeterMeasurementsService {
 
 #[async_trait::async_trait]
 impl GetMeasurements<SmartMeterMeasurementSchema> for SmartMeterMeasurementsService {
-
-    fn get_database(&self) -> AssetMeasurementCollection<SmartMeterMeasurementSchema> { self.0.clone() }
+    fn get_database(&self) -> AssetMeasurementCollection<SmartMeterMeasurementSchema> {
+        self.0.clone()
+    }
 }
 
 #[repr(transparent)]
@@ -151,7 +165,9 @@ pub struct BatteryMeasurementsService(pub AssetMeasurementCollection<BatteryMeas
 
 impl From<&DatabaseWrapper> for BatteryMeasurementsService {
     fn from(db: &DatabaseWrapper) -> Self {
-        BatteryMeasurementsService(AssetMeasurementCollection(db.collection("batterymeasurements")))
+        BatteryMeasurementsService(AssetMeasurementCollection(
+            db.collection("batterymeasurements"),
+        ))
     }
 }
 
@@ -165,16 +181,21 @@ impl Deref for BatteryMeasurementsService {
 
 #[async_trait::async_trait]
 impl GetMeasurements<BatteryMeasurementSchema> for BatteryMeasurementsService {
-    fn get_database(&self) -> AssetMeasurementCollection<BatteryMeasurementSchema> { self.0.clone() }
+    fn get_database(&self) -> AssetMeasurementCollection<BatteryMeasurementSchema> {
+        self.0.clone()
+    }
 }
 
-
 #[repr(transparent)]
-pub struct TransformerMeasurementsService(pub AssetMeasurementCollection<TransformerMeasurementSchema>);
+pub struct TransformerMeasurementsService(
+    pub AssetMeasurementCollection<TransformerMeasurementSchema>,
+);
 
 impl From<&DatabaseWrapper> for TransformerMeasurementsService {
     fn from(db: &DatabaseWrapper) -> Self {
-        TransformerMeasurementsService(AssetMeasurementCollection(db.collection("transformermeasurements")))
+        TransformerMeasurementsService(AssetMeasurementCollection(
+            db.collection("transformermeasurements"),
+        ))
     }
 }
 
@@ -188,5 +209,7 @@ impl Deref for TransformerMeasurementsService {
 
 #[async_trait::async_trait]
 impl GetMeasurements<TransformerMeasurementSchema> for TransformerMeasurementsService {
-    fn get_database(&self) -> AssetMeasurementCollection<TransformerMeasurementSchema> { self.0.clone() }
+    fn get_database(&self) -> AssetMeasurementCollection<TransformerMeasurementSchema> {
+        self.0.clone()
+    }
 }
