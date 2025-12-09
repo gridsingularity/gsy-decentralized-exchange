@@ -1,6 +1,6 @@
-use gsy_offchain_primitives::{MarketType, constants::GlobalConstants};
-use serde::Deserialize;
+use gsy_offchain_primitives::{constants::GLOBAL_CONSTANTS, MarketType};
 use once_cell::sync::Lazy;
+use serde::Deserialize;
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct Config {
@@ -37,22 +37,22 @@ pub struct MarketRule {
 	pub close_offset_mins: i64,
 }
 
-pub static MARKET_RULES:  Lazy<Vec<MarketRule>> = Lazy::new(|| {
+pub static MARKET_RULES: Lazy<Vec<MarketRule>> = Lazy::new(|| {
 	vec![
 		MarketRule {
 			market_type: MarketType::Spot,
-			open_offset_mins: GlobalConstants.SPOT_MARKET_OPEN_OFFSET_MIN,
-			close_offset_mins: GlobalConstants.SPOT_MARKET_CLOSE_OFFSET_MIN
+			open_offset_mins: GLOBAL_CONSTANTS.spot_market_open_offset_min,
+			close_offset_mins: GLOBAL_CONSTANTS.spot_market_close_offset_min,
 		},
 		MarketRule {
 			market_type: MarketType::Flexibility,
-			open_offset_mins: GlobalConstants.FLEX_MARKET_OPEN_OFFSET_MIN,
-			close_offset_mins: GlobalConstants.FLEX_MARKET_CLOSE_OFFSET_MIN,
+			open_offset_mins: GLOBAL_CONSTANTS.flex_market_open_offset_min,
+			close_offset_mins: GLOBAL_CONSTANTS.flex_market_close_offset_min,
 		},
 		MarketRule {
 			market_type: MarketType::Settlement,
-			open_offset_mins: GlobalConstants.SETTLEMENT_MARKET_OPEN_OFFSET_MIN,
-			close_offset_mins: GlobalConstants.SETTLEMENT_MARKET_CLOSE_OFFSET_MIN
+			open_offset_mins: GLOBAL_CONSTANTS.settlement_market_open_offset_min,
+			close_offset_mins: GLOBAL_CONSTANTS.settlement_market_close_offset_min,
 		},
 	]
 });
