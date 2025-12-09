@@ -143,14 +143,49 @@ fn convert_db_order_to_canonical(order: DbOrder) -> Result<Order> {
 				.ok_or_else(|| anyhow!("Invalid buyer AccountId: {}", bid.buyer))?,
 			nonce: bid.nonce,
 			bid_component: convert_db_order_component_to_canonical(bid.bid_component),
-			requirements: None,
+			requirements: bid.requirements.map(|r| gsy_offchain_primitives::types::Requirements {
+				trading_partner_id: r.trading_partner_id.and_then(string_to_account_id),
+				energy_type: r.energy_type.map(|et| match et {
+					gsy_offchain_primitives::db_api_schema::orders::EnergyType::Clean => {
+						gsy_offchain_primitives::types::EnergyType::Clean
+					},
+					gsy_offchain_primitives::db_api_schema::orders::EnergyType::Battery => {
+						gsy_offchain_primitives::types::EnergyType::Battery
+					},
+					gsy_offchain_primitives::db_api_schema::orders::EnergyType::FossilFuel => {
+						gsy_offchain_primitives::types::EnergyType::FossilFuel
+					},
+					gsy_offchain_primitives::db_api_schema::orders::EnergyType::Import => {
+						gsy_offchain_primitives::types::EnergyType::Import
+					},
+				}),
+				preferred_energy_rate: r
+					.preferred_energy_rate
+					.map(|r| (r * NODE_FLOAT_SCALING_FACTOR) as u64),
+			}),
 		}),
 		DbOrder::Offer(offer) => Order::Offer(Offer {
 			seller: string_to_account_id(offer.seller.clone())
 				.ok_or_else(|| anyhow!("Invalid seller AccountId: {}", offer.seller))?,
 			nonce: offer.nonce,
 			offer_component: convert_db_order_component_to_canonical(offer.offer_component),
-			attributes: None,
+			attributes: offer.attributes.map(|a| gsy_offchain_primitives::types::Attributes {
+				trading_partner_id: a.trading_partner_id.and_then(string_to_account_id),
+				energy_type: match a.energy_type {
+					gsy_offchain_primitives::db_api_schema::orders::EnergyType::Clean => {
+						gsy_offchain_primitives::types::EnergyType::Clean
+					},
+					gsy_offchain_primitives::db_api_schema::orders::EnergyType::Battery => {
+						gsy_offchain_primitives::types::EnergyType::Battery
+					},
+					gsy_offchain_primitives::db_api_schema::orders::EnergyType::FossilFuel => {
+						gsy_offchain_primitives::types::EnergyType::FossilFuel
+					},
+					gsy_offchain_primitives::db_api_schema::orders::EnergyType::Import => {
+						gsy_offchain_primitives::types::EnergyType::Import
+					},
+				},
+			}),
 		}),
 	})
 }

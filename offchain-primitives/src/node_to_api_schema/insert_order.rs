@@ -35,11 +35,24 @@ pub struct OrderSchema<AccountId32, Hash> {
 }
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone)]
+pub struct Requirements<AccountId32> {
+	pub trading_partner_id: Option<AccountId32>,
+	pub energy_type: Option<EnergyType>,
+	pub preferred_energy_rate: Option<u64>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone)]
+pub struct Attributes<AccountId32> {
+	pub trading_partner_id: Option<AccountId32>,
+	pub energy_type: EnergyType,
+}
+
+#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone)]
 pub struct Bid<AccountId32> {
 	pub buyer: AccountId32,
 	pub nonce: u32,
 	pub bid_component: OrderComponent,
-	pub requirements: Option<DbRequirements>,
+	pub requirements: Option<Requirements<AccountId32>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone)]
@@ -47,7 +60,7 @@ pub struct Offer<AccountId32> {
 	pub seller: AccountId32,
 	pub nonce: u32,
 	pub offer_component: OrderComponent,
-	pub attributes: Option<DbAttributes>,
+	pub attributes: Option<Attributes<AccountId32>>,
 }
 
 pub fn create_db_offer_from_node_offer(offer: Offer<AccountId32>) -> DbOffer {
@@ -62,7 +75,10 @@ pub fn create_db_offer_from_node_offer(offer: Offer<AccountId32>) -> DbOffer {
 			energy: offer.offer_component.energy as f64 / 10000.0,
 			energy_rate: offer.offer_component.energy_rate as f64 / 10000.0,
 		},
-		attributes: None,
+		attributes: offer.attributes.map(|attr| DbAttributes {
+			trading_partner_id: attr.trading_partner_id.map(|id| id.to_string()),
+			energy_type: attr.energy_type,
+		}),
 	}
 }
 
@@ -78,7 +94,11 @@ pub fn create_db_bid_from_node_bid(bid: Bid<AccountId32>) -> DbBid {
 			energy: bid.bid_component.energy as f64 / 10000.0,
 			energy_rate: bid.bid_component.energy_rate as f64 / 10000.0,
 		},
-		requirements: None,
+		requirements: bid.requirements.map(|req| DbRequirements {
+			trading_partner_id: req.trading_partner_id.map(|id| id.to_string()),
+			energy_type: req.energy_type,
+			preferred_energy_rate: req.preferred_energy_rate.map(|r| r as f64 / 10000.0),
+		}),
 	}
 }
 
