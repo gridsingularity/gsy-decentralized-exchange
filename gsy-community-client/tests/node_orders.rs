@@ -5,6 +5,7 @@ use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketT
 use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
 use gsy_offchain_primitives::utils::h256_to_string;
 use subxt::utils::H256;
+use subxt_signer::sr25519::dev;
 
 
 #[cfg(test)]
@@ -12,6 +13,7 @@ mod tests {
     use super::*;
     use tracing::Level;
     use tracing_subscriber;
+    use gsy_offchain_primitives::db_api_schema::market::AssetType;
 
     fn setup_tracing() {
         tracing_subscriber::fmt().with_max_level(Level::INFO).init();
@@ -50,18 +52,20 @@ mod tests {
             community_areas: vec![
                 AreaTopologySchema {
                     area_uuid: "area1".to_string(),
+                    area_type: AssetType::BATTERY,
                     area_hash: h256_to_string(H256::random()),
                     name: "Area 1".to_string(),
                 },
                 AreaTopologySchema {
                     area_uuid: "area2".to_string(),
+                    area_type: AssetType::BATTERY,
                     area_hash: h256_to_string(H256::random()),
                     name: "Area 2".to_string(),
                 }
             ]
         };
 
-        let input_orders = create_input_orders(forecasts, market.clone());
+        let input_orders = create_input_orders(forecasts, market.clone(), &dev::alice());
         assert_eq!(input_orders.len(), 2);
         let current_time = get_current_timestamp_in_secs();
 

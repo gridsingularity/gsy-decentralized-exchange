@@ -2,7 +2,7 @@
 use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, Hash, Eq)]
 pub enum AssetType {
     BATTERY,
     SMART_METER,
@@ -10,7 +10,8 @@ pub enum AssetType {
     GRID_METER,
     EV,
     HEAT_PUMP,
-    AREA
+    BOILER,
+    UNKNOWN
 }
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]

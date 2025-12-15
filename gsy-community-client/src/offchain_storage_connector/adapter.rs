@@ -1,6 +1,5 @@
-use crate::external_api::{
-	GetLECBuildings, ExternalForecast, ExternalMeasurement
-};
+use std::collections::{HashMap, HashSet};
+use crate::external_api::{GetLECBuildings, ExternalForecast, ExternalMeasurement, GetLECAssets, ExternalAreaTopology, ExternalCommunityAsset, ExternalCommunityTopology};
 use crate::time_utils::get_current_timestamp_in_secs;
 use blake2_rfc::blake2b::blake2b;
 use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketTopologySchema};
@@ -10,6 +9,8 @@ use gsy_offchain_primitives::MarketType;
 use reqwest::Client;
 use subxt::utils::H256;
 use tracing::info;
+use uuid::Uuid;
+use crate::node_connector::orders::gsy_node::timestamp::calls::types::Set;
 
 fn generate_market_id(market_type: MarketType, delivery_timestamp: u64) -> H256 {
 	let mut buffer = Vec::new();
@@ -118,54 +119,53 @@ impl AreaMarketInfoAdapter {
 
 	pub async fn get_or_create_market_topology(
 		&self,
-		topology: GetLECBuildings,
+		topology: Vec<ExternalCommunityTopology>,
 		time_slot: u64,
-	) -> Option<MarketTopologySchema> {
-		Some(MarketTopologySchema {
-			market_id: "market_id".to_string(),
-			community_uuid: "community_uuid".to_string(),
-			community_name: "community_name".to_string(),
-			time_slot: 123,
-			creation_time: 234,
-			community_areas: vec![]
-		})
-		// let community_market_url = self.internal_community_market_url.clone()
-		// 	+ "?community_uuid="
-		// 	+ topology.community_uuid.as_str()
-		// 	+ "&time_slot="
-		// 	+ time_slot.to_string().as_str();
-		// let market_topology = self.get_existing_market_topology(community_market_url).await;
-		// match market_topology {
-		// 	Some(topology) => Some(topology),
-		// 	None => {
-		// 		let new_market = MarketTopologySchema {
-		// 			community_name: topology.community_name.clone(),
-		// 			community_uuid: topology.community_uuid.clone(),
-		// 			market_id: h256_to_string(generate_market_id(MarketType::Spot, time_slot)),
-		// 			time_slot: time_slot as u32,
-		// 			creation_time: get_current_timestamp_in_secs() as u32,
-		// 			community_areas: topology
-		// 				.areas
-		// 				.clone()
-		// 				.into_iter()
-		// 				.map(|area| AreaTopologySchema {
-		// 					area_uuid: area.area_uuid.clone(),
-		// 					name: area.area_name.clone(),
-		// 					area_hash: h256_to_string(H256::random()),
-		// 				})
-		// 				.collect(),
-		// 		};
-		// 		let topology_resp =
-		// 			self.client.post(&self.internal_topology_url).json(&new_market).send().await;
-		//
-		// 		match topology_resp {
-		// 			Ok(_) => Some(new_market),
-		// 			Err(error) => {
-		// 				info!("New topology creation failed with error: {}", error.to_string());
-		// 				None
-		// 			},
-		// 		}
-		// 	},
-		// }
+	) -> Vec<MarketTopologySchema> {
+
+		let mut market_topologies: Vec<MarketTopologySchema> = vec![];
+		for community_topology in topology {
+			let community_market_url = self.internal_community_market_url.clone()
+				+ "?community_uuid="
+				+ community_topology.community_name.as_str()
+				+ "&time_slot="
+				+ time_slot.to_string().as_str();
+			let market_topology = self.get_existing_market_topology(community_market_url).await;
+			match market_topology {
+				Some(_) => {
+					market_topologies.push(market_topology.unwrap().clone());
+				},
+				None => {
+					let new_market = MarketTopologySchema {
+						community_name: community_topology.community_name.clone(),
+						community_uuid: Uuid::new_v4().to_string(),
+						market_id: h256_to_string(generate_market_id(MarketType::Spot, time_slot)),
+						time_slot: time_slot as u32,
+						creation_time: get_current_timestamp_in_secs() as u32,
+						community_areas: community_topology
+							.areas
+							.clone()
+							.into_iter()
+							.map(|area| AreaTopologySchema {
+								area_uuid: Uuid::new_v4().to_string(),
+								area_type: area.area_type.clone(),
+								name: area.area_name.clone(),
+								area_hash: h256_to_string(H256::random()),
+							})
+							.collect(),
+					};
+					let topology_resp =
+						self.client.post(&self.internal_topology_url).json(&new_market).send().await;
+
+					match topology_resp {
+						Ok(_) => market_topologies.push(market_topology.unwrap().clone()),
+						Err(error) => {
+							info!("New topology creation failed with error: {}", error.to_string());
+						},
+					}
+				}
+			}
+		}
+		market_topologies
 	}
 }

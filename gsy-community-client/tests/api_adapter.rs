@@ -1,7 +1,7 @@
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use gsy_community_client::external_api::{
     ExternalForecast, ExternalMeasurement, ExternalAreaTopology,
-    GetLECBuildings
+    GetLECBuildings, GetLECAssets
 };
 use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketTopologySchema};
 use gsy_offchain_primitives::utils::h256_to_string;
@@ -129,9 +129,11 @@ async fn test_import_external_topology() {
 
     let topology = serde_json::from_str::<GetLECBuildings>(external_topology.as_str()).unwrap();
     assert_eq!(topology.results.bindings.len(), 2);
-    assert_eq!(topology.results.bindings[0].site_name.value, "Pilot1".to_string());
+    assert_eq!(topology.results.bindings[0].site_name.value, "UrBeroaCommunity".to_string());
+    assert_eq!(topology.results.bindings[0].lec_name.value, "Pilot1".to_string());
     assert_eq!(topology.results.bindings[0].participant_name.value, "UrBeroaMainStation".to_string());
-    assert_eq!(topology.results.bindings[1].site_name.value, "Pilot1".to_string());
+    assert_eq!(topology.results.bindings[1].site_name.value, "UrBeroaCommunity".to_string());
+    assert_eq!(topology.results.bindings[1].lec_name.value, "Pilot1".to_string());
     assert_eq!(topology.results.bindings[1].participant_name.value, "UrBeroaSubstation1".to_string());
 }
 
@@ -200,18 +202,32 @@ async fn test_import_external_lec_assets() {
                     "type": "uri",
                     "value": "http://w3id.org/fedecom/energyasset#SmartMeter"
                 }
-            },
+            }
         ]
     }
     }
     "#.to_string();
 
-    let topology = serde_json::from_str::<GetLECBuildings>(external_assets.as_str()).unwrap();
-    assert_eq!(topology.results.bindings.len(), 2);
-    assert_eq!(topology.results.bindings[0].site_name.value, "Pilot1".to_string());
-    assert_eq!(topology.results.bindings[0].participant_name.value, "UrBeroaMainStation".to_string());
-    assert_eq!(topology.results.bindings[1].site_name.value, "Pilot1".to_string());
-    assert_eq!(topology.results.bindings[1].participant_name.value, "UrBeroaSubstation1".to_string());
+    let topology = serde_json::from_str::<GetLECAssets>(external_assets.as_str()).unwrap();
+    assert_eq!(topology.results.bindings.len(), 3);
+    assert_eq!(topology.results.bindings[0].asset_name.value, "LIC02DBATT".to_string());
+    assert_eq!(topology.results.bindings[0].asset_type.value,
+               "http://w3id.org/fedecom/battery#Battery".to_string());
+    assert_eq!(topology.results.bindings[0].asset_sub_type.is_none(), true);
+
+    assert_eq!(topology.results.bindings[1].asset_name.value, "LIC00SGIM".to_string());
+    assert_eq!(topology.results.bindings[1].asset_type.value,
+               "http://w3id.org/fedecom/energyasset#Meter".to_string());
+    assert_eq!(topology.results.bindings[1].asset_sub_type.is_some(), true);
+    assert_eq!(topology.results.bindings[1].asset_sub_type.clone().unwrap().value,
+               "http://w3id.org/fedecom/energyasset#GridMeter");
+
+    assert_eq!(topology.results.bindings[2].asset_name.value, "LIC02SM".to_string());
+    assert_eq!(topology.results.bindings[2].asset_type.value,
+               "http://w3id.org/fedecom/energyasset#Meter".to_string());
+    assert_eq!(topology.results.bindings[2].asset_sub_type.is_some(), true);
+    assert_eq!(topology.results.bindings[2].asset_sub_type.clone().unwrap().value,
+               "http://w3id.org/fedecom/energyasset#SmartMeter");
 }
 
 
@@ -236,7 +252,8 @@ mod tests {
             area_uuid: "area_uuid".to_string(),
             confidence: 0.4
         };
-        let converted_forecast = adapter.convert_forecast_to_internal_schema(&forecast);
+        let area_hash = h256_to_string(H256::random());
+        let converted_forecast = adapter.convert_forecast_to_internal_schema(&forecast, area_hash.clone());
         assert_eq!(converted_forecast.area_uuid, "area_uuid");
         assert_eq!(converted_forecast.community_uuid, "comm_uuid");
         assert_eq!(converted_forecast.energy_kwh, 11.);
@@ -255,12 +272,12 @@ mod tests {
             energy_kwh: 11.,
             area_uuid: "area_uuid".to_string(),
         };
-        let converted_measurement = adapter.convert_measurement_to_internal_schema(&measurement);
+        let area_hash = h256_to_string(H256::random());
+        let converted_measurement = adapter.convert_measurement_to_internal_schema(&measurement, area_hash.clone());
         assert_eq!(converted_measurement.area_uuid, "area_uuid");
         assert_eq!(converted_measurement.community_uuid, "comm_uuid");
         assert_eq!(converted_measurement.energy_kwh, 11.);
         assert_eq!(converted_measurement.time_slot, 123123);
         assert_eq!(converted_measurement.creation_time, 456456);
     }
-
 }

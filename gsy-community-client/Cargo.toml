@@ -23,6 +23,8 @@ subxt-signer = "0.37"
 tracing = { version = "0.1", features = ["log"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 blake2-rfc = { version = "0.2.18", default-features = false }
+rand = "0.8.5"
+uuid = { version = "1.18.1", features = ["v4"] }
 
 [dev-dependencies]
 httpmock = "0.8.0-alpha.1"
