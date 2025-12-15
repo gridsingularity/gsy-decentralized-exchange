@@ -23,6 +23,7 @@ mod tests {
         let forecasts: Vec<ForecastSchema> = vec![
             ForecastSchema {
                 area_uuid: "area1".to_string(),
+                area_hash: h256_to_string(H256::random()),
                 creation_time: 123123,
                 time_slot: 456456,
                 energy_kwh: 12.,
@@ -31,6 +32,7 @@ mod tests {
             },
             ForecastSchema {
                 area_uuid: "area2".to_string(),
+                area_hash: h256_to_string(H256::random()),
                 creation_time: 234234,
                 time_slot: 456456,
                 energy_kwh: -1.,

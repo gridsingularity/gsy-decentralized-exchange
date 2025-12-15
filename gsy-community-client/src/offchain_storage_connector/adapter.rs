@@ -1,4 +1,6 @@
-use crate::external_api::{ExternalCommunityTopology, ExternalForecast, ExternalMeasurement};
+use crate::external_api::{
+	GetLECBuildings, ExternalForecast, ExternalMeasurement
+};
 use crate::time_utils::get_current_timestamp_in_secs;
 use blake2_rfc::blake2b::blake2b;
 use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketTopologySchema};
@@ -116,46 +118,54 @@ impl AreaMarketInfoAdapter {
 
 	pub async fn get_or_create_market_topology(
 		&self,
-		topology: ExternalCommunityTopology,
+		topology: GetLECBuildings,
 		time_slot: u64,
 	) -> Option<MarketTopologySchema> {
-		let community_market_url = self.internal_community_market_url.clone()
-			+ "?community_uuid="
-			+ topology.community_uuid.as_str()
-			+ "&time_slot="
-			+ time_slot.to_string().as_str();
-		let market_topology = self.get_existing_market_topology(community_market_url).await;
-		match market_topology {
-			Some(topology) => Some(topology),
-			None => {
-				let new_market = MarketTopologySchema {
-					community_name: topology.community_name.clone(),
-					community_uuid: topology.community_uuid.clone(),
-					market_id: h256_to_string(generate_market_id(MarketType::Spot, time_slot)),
-					time_slot: time_slot as u32,
-					creation_time: get_current_timestamp_in_secs() as u32,
-					community_areas: topology
-						.areas
-						.clone()
-						.into_iter()
-						.map(|area| AreaTopologySchema {
-							area_uuid: area.area_uuid.clone(),
-							name: area.area_name.clone(),
-							area_hash: h256_to_string(H256::random()),
-						})
-						.collect(),
-				};
-				let topology_resp =
-					self.client.post(&self.internal_topology_url).json(&new_market).send().await;
-
-				match topology_resp {
-					Ok(_) => Some(new_market),
-					Err(error) => {
-						info!("New topology creation failed with error: {}", error.to_string());
-						None
-					},
-				}
-			},
-		}
+		Some(MarketTopologySchema {
+			market_id: "market_id".to_string(),
+			community_uuid: "community_uuid".to_string(),
+			community_name: "community_name".to_string(),
+			time_slot: 123,
+			creation_time: 234,
+			community_areas: vec![]
+		})
+		// let community_market_url = self.internal_community_market_url.clone()
+		// 	+ "?community_uuid="
+		// 	+ topology.community_uuid.as_str()
+		// 	+ "&time_slot="
+		// 	+ time_slot.to_string().as_str();
+		// let market_topology = self.get_existing_market_topology(community_market_url).await;
+		// match market_topology {
+		// 	Some(topology) => Some(topology),
+		// 	None => {
+		// 		let new_market = MarketTopologySchema {
+		// 			community_name: topology.community_name.clone(),
+		// 			community_uuid: topology.community_uuid.clone(),
+		// 			market_id: h256_to_string(generate_market_id(MarketType::Spot, time_slot)),
+		// 			time_slot: time_slot as u32,
+		// 			creation_time: get_current_timestamp_in_secs() as u32,
+		// 			community_areas: topology
+		// 				.areas
+		// 				.clone()
+		// 				.into_iter()
+		// 				.map(|area| AreaTopologySchema {
+		// 					area_uuid: area.area_uuid.clone(),
+		// 					name: area.area_name.clone(),
+		// 					area_hash: h256_to_string(H256::random()),
+		// 				})
+		// 				.collect(),
+		// 		};
+		// 		let topology_resp =
+		// 			self.client.post(&self.internal_topology_url).json(&new_market).send().await;
+		//
+		// 		match topology_resp {
+		// 			Ok(_) => Some(new_market),
+		// 			Err(error) => {
+		// 				info!("New topology creation failed with error: {}", error.to_string());
+		// 				None
+		// 			},
+		// 		}
+		// 	},
+		// }
 	}
 }

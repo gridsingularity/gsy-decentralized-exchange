@@ -30,10 +30,48 @@ pub struct ExternalAreaTopology {
     pub area_name: String,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct NameField {
+    pub field_type: String,
+    pub value: String,
+}
+
+
 // Struct for forecast data received from external API
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ExternalCommunityTopology {
-    pub areas: Vec<ExternalAreaTopology>,
-    pub community_uuid: String,
-    pub community_name: String,
+pub struct ExternalCommunityMemberTopology {
+    pub lec_name: NameField,
+    pub lec_alt_name: NameField,
+    pub site_name: NameField,
+    pub participant_name: NameField
+}
+
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct LECCommunityMemberResults {
+    pub bindings: Vec<ExternalCommunityMemberTopology>
+}
+
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct GetLECBuildings {
+    pub results: LECCommunityMemberResults
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct ExternalCommunityAsset {
+    pub location: NameField,
+    pub asset_name: NameField,
+    pub asset_type: NameField,
+    pub asset_sub_type: Option<NameField>
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct LECCommunityAssetResults {
+    pub bindings: Vec<ExternalCommunityAsset>
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct GetLECAssets {
+    pub results: LECCommunityAssetResults
 }
