@@ -26,6 +26,12 @@ pub async fn init_orders(db: &DatabaseWrapper) -> Result<()> {
 #[repr(transparent)]
 pub struct OrderService(pub Collection<DbOrderSchema>);
 
+impl From<&DatabaseWrapper> for OrderService {
+    fn from(db: &DatabaseWrapper) -> Self {
+        OrderService(db.collection("orders"))
+    }
+}
+
 impl OrderService {
     #[tracing::instrument(name = "Fetching orders from database", skip(self))]
     pub async fn get_all_orders(&self) -> Result<Vec<DbOrderSchema>> {
@@ -47,8 +53,8 @@ impl OrderService {
 
     #[tracing::instrument(name = "Filter orders from database", skip(self))]
     pub async fn filter_orders(
-            &self, market_id: Option<String>, start_time: Option<u32>,
-            end_time: Option<u32>) -> Result<Vec<DbOrderSchema>> {
+        &self, market_id: Option<String>, start_time: Option<u32>,
+        end_time: Option<u32>) -> Result<Vec<DbOrderSchema>> {
         let mut filter_params = doc! {};
 
         if market_id.is_some() {
@@ -189,12 +195,6 @@ impl OrderService {
                 Err(anyhow::Error::from(e))
             }
         }
-    }
-}
-
-impl From<&DatabaseWrapper> for OrderService {
-    fn from(db: &DatabaseWrapper) -> Self {
-        OrderService(db.collection("orders"))
     }
 }
 

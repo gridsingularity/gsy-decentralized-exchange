@@ -1,6 +1,6 @@
 use actix_web::web;
 use subxt::utils::H256;
-use gsy_offchain_primitives::db_api_schema::market::{MarketTopologySchema, AreaTopologySchema};
+use gsy_offchain_primitives::db_api_schema::market::{MarketTopologySchema, AreaTopologySchema, AssetType};
 use gsy_offchain_primitives::utils::h256_to_string;
 use crate::helpers::init_app;
 
@@ -12,12 +12,14 @@ async fn get_market_succeeds() {
         AreaTopologySchema{
             name: "area1".to_string(),
             area_uuid: "area1hash".to_string(),
-            area_hash: h256_to_string(H256::random())
+            area_hash: h256_to_string(H256::random()),
+            area_type: AssetType::AREA
         },
         AreaTopologySchema{
             name: "area2".to_string(),
             area_uuid: "area2hash".to_string(),
-            area_hash: h256_to_string(H256::random())
+            area_hash: h256_to_string(H256::random()),
+            area_type: AssetType::AREA
         },
     ];
     let market1 = MarketTopologySchema {
@@ -32,12 +34,14 @@ async fn get_market_succeeds() {
         AreaTopologySchema{
             name: "area3".to_string(),
             area_uuid: "area3hash".to_string(),
-            area_hash: h256_to_string(H256::random())
+            area_hash: h256_to_string(H256::random()),
+            area_type: AssetType::AREA
         },
         AreaTopologySchema{
             name: "area4".to_string(),
             area_uuid: "area4hash".to_string(),
-            area_hash: h256_to_string(H256::random())
+            area_hash: h256_to_string(H256::random()),
+            area_type: AssetType::AREA
         },
     ];
     let market2 = MarketTopologySchema {
@@ -99,12 +103,14 @@ fn create_market_topology_schema(
         AreaTopologySchema{
             name: area1_name,
             area_uuid: area1_uuid,
-            area_hash: h256_to_string(H256::random())
+            area_hash: h256_to_string(H256::random()),
+            area_type: AssetType::AREA
         },
         AreaTopologySchema{
             name: area2_name,
             area_uuid: area2_uuid,
-            area_hash: h256_to_string(H256::random())
+            area_hash: h256_to_string(H256::random()),
+            area_type: AssetType::AREA
         },
     ];
     let market = MarketTopologySchema {
@@ -148,32 +154,40 @@ async fn get_market_from_community_succeeds() {
 
     let client = reqwest::Client::new();
     let resp = client
-        .get(&format!("{}/community-market?community_uuid=communityhash&time_slot=1232123213", &address))
+        .get(&format!("{}/community-market?community_name=community1&time_slot=1232123213", &address))
         .header("Content-Type", "application/json")
         .send()
         .await.unwrap();
 
     let status = resp.status();
     assert_eq!(200, status.as_u16());
-    let resp_json: MarketTopologySchema = resp.json().await.unwrap();
-    assert_eq!(resp_json.market_id, "my_market".to_string());
-    assert_eq!(resp_json.community_name, "community1".to_string());
-    assert_eq!(resp_json.community_areas, community_areas_1);
-    assert_eq!(resp_json.time_slot, market1.time_slot);
+    // println!("{:?}", resp.text().await.unwrap());
+    // assert_eq!(false, true);
+    let resp_json: Vec<MarketTopologySchema> = resp.json().await.unwrap();
+    assert_eq!(resp_json.len(), 1);
+    let topology = resp_json.get(0).unwrap();
+    assert_eq!(topology.market_id, "my_market".to_string());
+    assert_eq!(topology.community_name, "community1".to_string());
+    assert_eq!(topology.community_uuid, "communityhash".to_string());
+    assert_eq!(topology.community_areas, community_areas_1);
+    assert_eq!(topology.time_slot, market1.time_slot);
 
     let resp = client
-        .get(&format!("{}/community-market?community_uuid=communityhash2&time_slot=1232123213", &address))
+        .get(&format!("{}/community-market?community_name=community2&time_slot=1232123213", &address))
         .header("Content-Type", "application/json")
         .send()
         .await.unwrap();
 
     let status = resp.status();
     assert_eq!(200, status.as_u16());
-    let resp_json: MarketTopologySchema = resp.json().await.unwrap();
-    assert_eq!(resp_json.market_id, "my_market2".to_string());
-    assert_eq!(resp_json.community_name, "community2".to_string());
-    assert_eq!(resp_json.community_areas, community_areas_2);
-    assert_eq!(resp_json.time_slot, market2.time_slot);
+    let resp_json: Vec<MarketTopologySchema> = resp.json().await.unwrap();
+    assert_eq!(resp_json.len(), 1);
+    let topology = resp_json.get(0).unwrap();
+    assert_eq!(topology.market_id, "my_market2".to_string());
+    assert_eq!(topology.community_name, "community2".to_string());
+    assert_eq!(topology.community_uuid, "communityhash2".to_string());
+    assert_eq!(topology.community_areas, community_areas_2);
+    assert_eq!(topology.time_slot, market2.time_slot);
 }
 
 
@@ -200,17 +214,19 @@ async fn post_market_succeeds() {
         AreaTopologySchema{
             name: "area1".to_string(),
             area_uuid: "area1hash".to_string(),
-            area_hash: h256_to_string(H256::random())
+            area_hash: h256_to_string(H256::random()),
+            area_type: AssetType::AREA
         },
         AreaTopologySchema{
             name: "area2".to_string(),
             area_uuid: "area2hash".to_string(),
-            area_hash: h256_to_string(H256::random())
+            area_hash: h256_to_string(H256::random()),
+            area_type: AssetType::AREA
         },
     ];
     let market = MarketTopologySchema {
         market_id: "new_market".to_string(),
-        community_areas: community_areas,
+        community_areas,
         time_slot: 432321123,
         creation_time: 432321121,
         community_name: "my_community".to_string(),

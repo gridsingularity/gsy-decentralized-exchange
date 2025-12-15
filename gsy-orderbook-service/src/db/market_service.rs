@@ -54,10 +54,10 @@ impl MarketService {
         name = "Fetching market information from database for a community", skip(self))]
     pub async fn get_community_market(
         &self,
-        community_uuid: String, start_time: Option<u32>, end_time: Option<u32>) -> Result<Vec<MarketTopologySchema>> {
+        community_name: String, start_time: Option<u32>, end_time: Option<u32>) -> Result<Vec<MarketTopologySchema>> {
 
         let mut filter_params = doc! {};
-        filter_params.insert("community_uuid", community_uuid.clone());
+        filter_params.insert("community_name", community_name.clone());
         if start_time.is_some() {
             filter_params.insert("time_slot", doc! {"$gte": start_time.unwrap()} ); }
         if end_time.is_some() {

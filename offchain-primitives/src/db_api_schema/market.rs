@@ -1,11 +1,23 @@
+#![allow(non_camel_case_types)]
 use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
+#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+pub enum AssetType {
+    BATTERY,
+    SMART_METER,
+    PV,
+    GRID_METER,
+    EV,
+    HEAT_PUMP,
+    AREA
+}
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub struct AreaTopologySchema {
     pub area_uuid: String,
     pub name: String,
+    pub area_type: AssetType,
     pub area_hash: String
 }
 
@@ -20,3 +32,4 @@ pub struct MarketTopologySchema {
     pub creation_time: u32,
     pub community_areas: Vec<AreaTopologySchema>
 }
+
