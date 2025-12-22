@@ -112,6 +112,8 @@ services:
         condition: service_started
       gsy-execution-engine:
         condition: service_started
+      gsy-market-orchestrator:
+        condition: service_started
     environment:
       - RUST_BACKTRACE=1
     networks:

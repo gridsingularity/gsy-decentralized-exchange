@@ -473,7 +473,7 @@ pub mod pallet {
 						buyer: input_order.buyer.clone(),
 						nonce: Self::get_and_increment_user_nonce(input_order.buyer.clone()),
 						bid_component: input_order.bid_component.clone(),
-						requirements: None,
+						requirements: input_order.requirements.clone(),
 					},
 				},
 				InputOrder::Offer(input_order) => Order::Offer {
@@ -481,7 +481,7 @@ pub mod pallet {
 						seller: input_order.seller.clone(),
 						nonce: Self::get_and_increment_user_nonce(input_order.seller.clone()),
 						offer_component: input_order.offer_component.clone(),
-						attributes: None,
+						attributes: input_order.attributes.clone(),
 					},
 				},
 			}

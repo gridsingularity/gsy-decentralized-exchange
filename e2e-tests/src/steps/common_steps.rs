@@ -28,6 +28,7 @@ async fn services_are_running(world: &mut MyWorld) {
 #[given(
 	regex = r#"users "([^"]*)", "([^"]*)", and "([^"]*)" the matching engine operator are registered and have collateral"#
 )]
+#[given(regex = r#"users "([^"]*)", "([^"]*)", and "([^"]*)" are registered and have collateral"#)]
 async fn users_are_registered(
 	world: &mut MyWorld,
 	alice_name: String,
