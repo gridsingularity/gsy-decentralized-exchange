@@ -22,10 +22,12 @@ mod tests {
     #[test]
     fn test_orders_to_node_are_created_correctly() {
         setup_tracing();
+        let area_hash_1 = h256_to_string(H256::random());
+        let area_hash_2 = h256_to_string(H256::random());
         let forecasts: Vec<ForecastSchema> = vec![
             ForecastSchema {
                 area_uuid: "area1".to_string(),
-                area_hash: h256_to_string(H256::random()),
+                area_hash: area_hash_1.clone(),
                 creation_time: 123123,
                 time_slot: 456456,
                 energy_kwh: 12.,
@@ -34,7 +36,7 @@ mod tests {
             },
             ForecastSchema {
                 area_uuid: "area2".to_string(),
-                area_hash: h256_to_string(H256::random()),
+                area_hash: area_hash_2.clone(),
                 creation_time: 234234,
                 time_slot: 456456,
                 energy_kwh: -1.,
@@ -53,13 +55,13 @@ mod tests {
                 AreaTopologySchema {
                     area_uuid: "area1".to_string(),
                     area_type: AssetType::BATTERY,
-                    area_hash: h256_to_string(H256::random()),
+                    area_hash: area_hash_1.clone(),
                     name: "Area 1".to_string(),
                 },
                 AreaTopologySchema {
                     area_uuid: "area2".to_string(),
                     area_type: AssetType::BATTERY,
-                    area_hash: h256_to_string(H256::random()),
+                    area_hash: area_hash_2.clone(),
                     name: "Area 2".to_string(),
                 }
             ]
@@ -72,7 +74,6 @@ mod tests {
         for order in input_orders {
             match (order, market.clone()) {
                 (InputOrder::Bid(bid), market) => {
-                    // assert_eq!(bid.buyer.to_string(), AccountId32::from(dev::charlie().public_key()).to_string());
                     let area_info = market.community_areas.get(0).unwrap();
                     assert_eq!(h256_to_string(bid.bid_component.area_uuid), area_info.area_hash);
                     assert_eq!(h256_to_string(bid.bid_component.market_id), market.market_id);
@@ -82,7 +83,6 @@ mod tests {
                     assert_eq!(bid.bid_component.energy, 120000);
                 },
                 (InputOrder::Offer(offer), market) => {
-                    // assert_eq!(offer.seller, AccountId32::from(dev::ferdie().public_key()));
                     let area_info = market.community_areas.get(1).unwrap();
                     assert_eq!(h256_to_string(offer.offer_component.area_uuid), area_info.area_hash);
                     assert_eq!(h256_to_string(offer.offer_component.market_id), market.market_id);

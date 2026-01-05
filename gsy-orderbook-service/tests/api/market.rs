@@ -13,13 +13,13 @@ async fn get_market_succeeds() {
             name: "area1".to_string(),
             area_uuid: "area1hash".to_string(),
             area_hash: h256_to_string(H256::random()),
-            area_type: AssetType::AREA
+            area_type: AssetType::UNKNOWN
         },
         AreaTopologySchema{
             name: "area2".to_string(),
             area_uuid: "area2hash".to_string(),
             area_hash: h256_to_string(H256::random()),
-            area_type: AssetType::AREA
+            area_type: AssetType::UNKNOWN
         },
     ];
     let market1 = MarketTopologySchema {
@@ -35,13 +35,13 @@ async fn get_market_succeeds() {
             name: "area3".to_string(),
             area_uuid: "area3hash".to_string(),
             area_hash: h256_to_string(H256::random()),
-            area_type: AssetType::AREA
+            area_type: AssetType::UNKNOWN
         },
         AreaTopologySchema{
             name: "area4".to_string(),
             area_uuid: "area4hash".to_string(),
             area_hash: h256_to_string(H256::random()),
-            area_type: AssetType::AREA
+            area_type: AssetType::UNKNOWN
         },
     ];
     let market2 = MarketTopologySchema {
@@ -104,13 +104,13 @@ fn create_market_topology_schema(
             name: area1_name,
             area_uuid: area1_uuid,
             area_hash: h256_to_string(H256::random()),
-            area_type: AssetType::AREA
+            area_type: AssetType::UNKNOWN
         },
         AreaTopologySchema{
             name: area2_name,
             area_uuid: area2_uuid,
             area_hash: h256_to_string(H256::random()),
-            area_type: AssetType::AREA
+            area_type: AssetType::UNKNOWN
         },
     ];
     let market = MarketTopologySchema {
@@ -215,13 +215,13 @@ async fn post_market_succeeds() {
             name: "area1".to_string(),
             area_uuid: "area1hash".to_string(),
             area_hash: h256_to_string(H256::random()),
-            area_type: AssetType::AREA
+            area_type: AssetType::UNKNOWN
         },
         AreaTopologySchema{
             name: "area2".to_string(),
             area_uuid: "area2hash".to_string(),
             area_hash: h256_to_string(H256::random()),
-            area_type: AssetType::AREA
+            area_type: AssetType::UNKNOWN
         },
     ];
     let market = MarketTopologySchema {

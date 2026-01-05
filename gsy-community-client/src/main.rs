@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use gsy_community_client::external_api::{ExternalForecast, ExternalMeasurement, GetLECBuildings, GetLECAssets, ExternalAreaTopology, ExternalCommunityTopology, map_fedecom_asset_type_to_asset_type};
+use gsy_community_client::external_api::{ExternalForecast, ExternalMeasurement, GetLECBuildings, GetLECAssets, ExternalAreaTopology, ExternalCommunityTopology, map_fedecom_asset_type_to_asset_type, ExternalCommunityAsset};
 use gsy_community_client::node_connector::orders::publish_orders;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use gsy_community_client::time_utils::{get_current_timestamp_in_secs, get_last_and_next_timeslot};
@@ -7,6 +7,7 @@ use gsy_offchain_primitives::db_api_schema::profiles::{ForecastSchema, Measureme
 use gsy_offchain_primitives::constants::GlobalConstants;
 use reqwest::Client;
 use std::time::Duration;
+use gsy_offchain_primitives::db_api_schema::market::MarketTopologySchema;
 use subxt_signer::sr25519::dev;
 use serde::Serialize;
 use tokio::time::sleep;
@@ -27,7 +28,7 @@ struct AppState {
 	assets_url: String,
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 struct GetAssetsPostParameters {
 	lec: String
 }
@@ -63,8 +64,8 @@ impl AppState {
 	}
 
 	async fn fetch_assets(&self, community_name: String) -> Result<GetLECAssets, reqwest::Error> {
-		let response = self.client.post(&self.assets_url).body(
-			&GetAssetsPostParameters{lec: community_name}).send().await?;
+		let post_parameters = GetAssetsPostParameters{lec: community_name};
+		let response = self.client.post(&self.assets_url).json(&post_parameters).send().await?;
 		response.json::<GetLECAssets>().await
 	}
 
@@ -84,24 +85,25 @@ impl AppState {
 			}
 		}
 
-		communities.iter().map(async |community: ExternalCommunityTopology| {
-			let assets = self.fetch_assets(community.community_name).await;
-			let asset_objects = assets.unwrap().results.bindings.iter().map(
-				|asset| {
-					let asset_subtype = if asset.asset_sub_type.is_some() {
-						Some(asset.asset_sub_type.unwrap().field_type) } else { None };
-					ExternalAreaTopology {
-						area_name: asset.asset_name.value,
-						area_type: map_fedecom_asset_type_to_asset_type(
-							asset.asset_type.field_type, asset_subtype)
-				}
-			}).collect();
-			ExternalCommunityTopology {
+		let mut external_topologies: Vec<ExternalCommunityTopology> = vec![];
+		for community in communities {
+			let assets = self.fetch_assets(community.community_name.clone()).await;
+			let mut asset_objects: Vec<ExternalAreaTopology> = vec![];
+			for asset in assets.unwrap().results.bindings {
+				let asset_subtype = if asset.asset_sub_type.is_some() {
+					Some(asset.asset_sub_type.unwrap().field_type) } else { None };
+				asset_objects.push(ExternalAreaTopology {
+					area_name: asset.asset_name.value,
+					area_type: map_fedecom_asset_type_to_asset_type(
+						asset.asset_type.field_type, asset_subtype)
+				});
+			}
+			external_topologies.push(ExternalCommunityTopology {
 				areas: asset_objects,
 				community_name: community.community_name.clone()
-			}
-
-		}).collect()
+			});
+		}
+		external_topologies
 	}
 
 	async fn poll_and_forward(&self) {
@@ -120,75 +122,76 @@ impl AppState {
 				continue;
 			}
 
-			let internal_topology = self
+			let internal_topology: Vec<MarketTopologySchema> = self
 				.api_adapter
 				.get_or_create_market_topology(
 					self.get_all_assets_for_all_communities(external_topology_res.unwrap()).await,
 					next_timeslot,
 				)
-				.await
-				.unwrap();
-			let area_uuid_to_hash: HashMap<String, String> = internal_topology.community_areas.iter().map(
-				|area| {
-					(area.area_uuid.clone(), area.area_hash.clone())
-				}).collect();
-			match self.fetch_forecasts().await {
-				Ok(forecasts) => {
-					let valid_forecasts: Vec<ForecastSchema> = forecasts
-						.into_iter()
-						.map(|forecast| {
-							self.api_adapter.convert_forecast_to_internal_schema(
-								&forecast, area_uuid_to_hash[&forecast.area_uuid].clone())
-						})
-						.filter(|forecast| {
-							self.api_adapter.validate_forecast(forecast, seconds_since_epoch)
-						})
-						.collect();
-					if !valid_forecasts.is_empty() {
-						if let Err(e) =
-							self.api_adapter.forward_forecast(valid_forecasts.clone()).await
-						{
-							info!("Failed to forward forecasts: {}", e);
+				.await;
+			for market in internal_topology {
+				let area_uuid_to_hash: HashMap<String, String> = market.community_areas.iter().map(
+					|area| {
+						(area.area_uuid.clone(), area.area_hash.clone())
+					}).collect();
+				match self.fetch_forecasts().await {
+					Ok(forecasts) => {
+						let valid_forecasts: Vec<ForecastSchema> = forecasts
+							.into_iter()
+							.map(|forecast| {
+								self.api_adapter.convert_forecast_to_internal_schema(
+									&forecast, area_uuid_to_hash[&forecast.area_uuid].clone())
+							})
+							.filter(|forecast| {
+								self.api_adapter.validate_forecast(forecast, seconds_since_epoch)
+							})
+							.collect();
+						if !valid_forecasts.is_empty() {
+							if let Err(e) =
+								self.api_adapter.forward_forecast(valid_forecasts.clone()).await
+							{
+								info!("Failed to forward forecasts: {}", e);
+							}
+							publish_orders(
+								self.gsy_node_url.clone(),
+								valid_forecasts.clone(),
+								market.clone(),
+								&dev::alice(),
+							)
+								.await
+								.unwrap();
+						} else {
+							info!("No valid forecasts to forward.");
 						}
-						publish_orders(
-							self.gsy_node_url.clone(),
-							valid_forecasts.clone(),
-							internal_topology.clone(),
-							&dev::alice(),
-						)
-						.await
-						.unwrap();
-					} else {
-						info!("No valid forecasts to forward.");
-					}
-				},
-				Err(e) => error!("Error fetching forecasts: {}", e),
-			}
+					},
+					Err(e) => error!("Error fetching forecasts: {}", e),
+				}
 
-			// Fetch and forward measurements
-			match self.fetch_measurements().await {
-				Ok(measurements) => {
-					let valid_measurements: Vec<MeasurementSchema> = measurements
-						.into_iter()
-						.map(|measurement| {
-							self.api_adapter.convert_measurement_to_internal_schema(
-								&measurement, area_uuid_to_hash[&measurement.area_uuid].clone())
-						})
-						.filter(|measurement| {
-							self.api_adapter.validate_measurement(measurement, seconds_since_epoch)
-						})
-						.collect();
-					if !valid_measurements.is_empty() {
-						if let Err(e) =
-							self.api_adapter.forward_measurement(valid_measurements).await
-						{
-							info!("Failed to forward measurements: {}", e);
+				// Fetch and forward measurements
+				match self.fetch_measurements().await {
+					Ok(measurements) => {
+						let valid_measurements: Vec<MeasurementSchema> = measurements
+							.into_iter()
+							.map(|measurement| {
+								self.api_adapter.convert_measurement_to_internal_schema(
+									&measurement, area_uuid_to_hash[&measurement.area_uuid].clone())
+							})
+							.filter(|measurement| {
+								self.api_adapter.validate_measurement(measurement, seconds_since_epoch)
+							})
+							.collect();
+						if !valid_measurements.is_empty() {
+							if let Err(e) =
+								self.api_adapter.forward_measurement(valid_measurements).await
+							{
+								info!("Failed to forward measurements: {}", e);
+							}
+						} else {
+							info!("No valid measurements to forward.");
 						}
-					} else {
-						info!("No valid measurements to forward.");
-					}
-				},
-				Err(e) => error!("Error fetching measurements: {}", e),
+					},
+					Err(e) => error!("Error fetching measurements: {}", e),
+				}
 			}
 
 			// Sleep for 15 minutes before polling again
