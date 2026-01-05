@@ -1,13 +1,18 @@
+use crate::db::asset_measurements_service::{
+    init_battery_measurements, init_pv_measurements, init_smart_meter_measurements,
+    init_transformer_measurements, BatteryMeasurementsService, PVMeasurementsService,
+    SmartMeterMeasurementsService, TransformerMeasurementsService,
+};
+use crate::db::forecasts_service::{init_forecasts, ForecastsService};
+use crate::db::market_service::{init_markets, MarketService};
+use crate::db::measurements_service::{init_measurements, MeasurementsService};
+use crate::db::order_service::{init_orders, OrderService};
+use crate::db::trade_service::{init_trades, TradeService};
 use actix_web::web;
 use anyhow::Result;
 use mongodb::options::ClientOptions;
 use mongodb::Database;
 use std::ops::Deref;
-use crate::db::order_service::{init_orders, OrderService};
-use crate::db::trade_service::{init_trades, TradeService};
-use crate::db::measurements_service::{init_measurements, MeasurementsService};
-use crate::db::forecasts_service::{init_forecasts, ForecastsService};
-use crate::db::market_service::{init_markets, MarketService};
 
 pub type DbRef = web::Data<DatabaseWrapper>;
 
@@ -23,6 +28,18 @@ impl DatabaseWrapper {
         self.into()
     }
     pub fn measurements(&self) -> MeasurementsService {
+        self.into()
+    }
+    pub fn pv_measurements(&self) -> PVMeasurementsService {
+        self.into()
+    }
+    pub fn battery_measurements(&self) -> BatteryMeasurementsService {
+        self.into()
+    }
+    pub fn smart_meter_measurements(&self) -> SmartMeterMeasurementsService {
+        self.into()
+    }
+    pub fn transformer_measurements(&self) -> TransformerMeasurementsService {
         self.into()
     }
     pub fn forecasts(&self) -> ForecastsService {
@@ -49,6 +66,13 @@ pub async fn init_database(db_url: String, db_name: String) -> Result<DatabaseWr
     Ok(db)
 }
 
+pub async fn delete_database(db_url: String, db_name: String) -> Result<()> {
+    let options = ClientOptions::parse(&db_url).await?;
+    let client = mongodb::Client::with_options(options)?;
+    client.database(db_name.as_str()).drop().await?;
+    Ok(())
+}
+
 async fn preload(db: &DatabaseWrapper) -> Result<()> {
     // put initialize here
     init_orders(db).await?;
@@ -56,5 +80,9 @@ async fn preload(db: &DatabaseWrapper) -> Result<()> {
     init_forecasts(db).await?;
     init_measurements(db).await?;
     init_markets(db).await?;
+    init_pv_measurements(db).await?;
+    init_smart_meter_measurements(db).await?;
+    init_transformer_measurements(db).await?;
+    init_battery_measurements(db).await?;
     Ok(())
 }

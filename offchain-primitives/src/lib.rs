@@ -6,7 +6,7 @@ pub mod types;
 pub mod utils;
 pub mod constants;
 
-use serde::{Deserialize};
+use serde::Deserialize;
 
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MarketType {

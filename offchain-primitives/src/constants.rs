@@ -1,3 +1,4 @@
+#![allow(non_upper_case_globals,non_snake_case)]
 use crate::utils::read_env_or;
 use once_cell::sync::Lazy;
 

@@ -1,8 +1,7 @@
 use serde::{Deserialize, Serialize};
 use codec::{Decode, Encode};
-use subxt::ext::sp_core::H256;
-use subxt::ext::sp_runtime::traits::CheckedConversion;
-use subxt::utils::AccountId32;
+use sp_runtime::traits::CheckedConversion;
+use subxt::utils::{AccountId32, H256};
 use crate::db_api_schema;
 use crate::node_to_api_schema::insert_order::{
     Offer, Bid, create_db_offer_from_node_offer, create_db_bid_from_node_bid};
