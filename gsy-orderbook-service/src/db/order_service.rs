@@ -1,11 +1,11 @@
 use crate::db::DatabaseWrapper;
-use gsy_offchain_primitives::db_api_schema::orders::{OrderStatus, DbOrderSchema};
 use anyhow::Result;
 use futures::StreamExt;
-use mongodb::bson::{doc, Bson};
+use gsy_offchain_primitives::db_api_schema::orders::{DbOrderSchema, OrderStatus};
+use mongodb::bson::{Bson, doc};
 use mongodb::options::IndexOptions;
 use mongodb::results::UpdateResult;
-use mongodb::{bson, Collection, IndexModel};
+use mongodb::{Collection, IndexModel, bson};
 use std::collections::HashMap;
 use std::ops::Deref;
 
@@ -53,8 +53,11 @@ impl OrderService {
 
     #[tracing::instrument(name = "Filter orders from database", skip(self))]
     pub async fn filter_orders(
-        &self, market_id: Option<String>, start_time: Option<u32>,
-        end_time: Option<u32>) -> Result<Vec<DbOrderSchema>> {
+        &self,
+        market_id: Option<String>,
+        start_time: Option<u32>,
+        end_time: Option<u32>,
+    ) -> Result<Vec<DbOrderSchema>> {
         let mut filter_params = doc! {};
 
         if market_id.is_some() {
@@ -67,13 +70,15 @@ impl OrderService {
 
         // TODO: Correct time_slot filtering based on nested offer / bid structs.
         if start_time.is_some() {
-            filter_params.insert("time_slot", doc! {"$gte": start_time.unwrap()} ); }
+            filter_params.insert("time_slot", doc! {"$gte": start_time.unwrap()});
+        }
         if end_time.is_some() {
             if start_time.is_some() {
-                filter_params.insert("time_slot",
-                                     doc! {"$gte": start_time.unwrap(), "$lte": end_time.unwrap()});
-            }
-            else {
+                filter_params.insert(
+                    "time_slot",
+                    doc! {"$gte": start_time.unwrap(), "$lte": end_time.unwrap()},
+                );
+            } else {
                 filter_params.insert("time_slot", doc! {"$lte": end_time.unwrap()});
             }
         }
@@ -93,7 +98,6 @@ impl OrderService {
         Ok(result)
     }
 
-
     #[tracing::instrument(
         name = "Saving orders to database",
         skip(self, orders_schema),
@@ -101,7 +105,10 @@ impl OrderService {
         orders_schema = ?orders_schema
         )
     )]
-    pub async fn insert_orders(&self, orders_schema: Vec<DbOrderSchema>) -> Result<HashMap<usize, Bson>> {
+    pub async fn insert_orders(
+        &self,
+        orders_schema: Vec<DbOrderSchema>,
+    ) -> Result<HashMap<usize, Bson>> {
         match self.0.insert_many(orders_schema).await {
             Ok(db_result) => Ok(db_result.inserted_ids),
             Err(e) => {
@@ -123,7 +130,10 @@ impl OrderService {
     }
 
     pub async fn update_order_by_area_market_id(
-        &self, area_uuid: String, market_id: String) -> Result<bool> {
+        &self,
+        area_uuid: String,
+        market_id: String,
+    ) -> Result<bool> {
         let filter = doc! {
             "area_uuid": area_uuid,
             "market_id": market_id

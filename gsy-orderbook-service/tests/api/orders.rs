@@ -1,21 +1,22 @@
 use crate::helpers::init_app;
 use actix_web::web;
+use codec::Encode;
 use gsy_offchain_primitives::db_api_schema::orders::OrderStatus;
 use gsy_offchain_primitives::node_to_api_schema::insert_order::{
-    Order, OrderComponent, Bid, OrderSchema};
-use mongodb::bson::Bson;
-use subxt::ext::sp_runtime::traits::{BlakeTwo256, Hash as HashT};
-use std::collections::HashMap;
-use codec::Encode;
-use subxt::ext::sp_core::crypto::AccountId32;
-use subxt::utils::H256;
+    Bid, Order, OrderComponent, OrderSchema,
+};
 use gsy_offchain_primitives::utils::h256_to_string;
+use mongodb::bson::Bson;
+use std::collections::HashMap;
+use subxt::ext::sp_core::crypto::AccountId32;
+use subxt::ext::sp_runtime::traits::{BlakeTwo256, Hash as HashT};
+use subxt::utils::H256;
 
 pub fn create_test_accountid() -> AccountId32 {
     // A fixed 32-byte value, typically derived from a public key
     let account_id_bytes = [
-        0u8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
-        16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31
+        0u8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+        25, 26, 27, 28, 29, 30, 31,
     ];
 
     AccountId32::from(account_id_bytes)
@@ -41,14 +42,14 @@ async fn subscribe_return_a_200_for_valid_form_data() {
             market_id: market_id,
             time_slot: 1,
             creation_time: 1677453190,
-        }
+        },
     };
     let bid_id = h256_to_string(BlakeTwo256::hash_of(&bid));
 
     let order = OrderSchema {
         _id: order_id,
         status: OrderStatus::Expired,
-        order: Order::Bid(bid.clone())
+        order: Order::Bid(bid.clone()),
     };
 
     let orderlist = vec![order.clone()];

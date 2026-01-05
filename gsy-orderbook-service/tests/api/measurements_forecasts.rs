@@ -1,6 +1,6 @@
 use crate::helpers::init_app;
 use actix_web::web;
-use gsy_offchain_primitives::db_api_schema::profiles::{MeasurementSchema, ForecastSchema};
+use gsy_offchain_primitives::db_api_schema::profiles::{ForecastSchema, MeasurementSchema};
 use subxt::ext::sp_runtime::traits::CheckedConversion;
 
 #[tokio::test]
@@ -41,7 +41,8 @@ async fn get_measurements_succeeds() {
         .get(&format!("{}/measurements?area_uuid=my_uuid", &address))
         .header("Content-Type", "application/json")
         .send()
-        .await.unwrap();
+        .await
+        .unwrap();
 
     let status = resp.status();
     assert_eq!(200, status.as_u16());
@@ -51,13 +52,17 @@ async fn get_measurements_succeeds() {
     assert_eq!(resp_json.iter().nth(0).unwrap().time_slot, 1232123213);
     assert_eq!(resp_json.iter().nth(0).unwrap().creation_time, 1232123213);
     assert_eq!(resp_json.iter().nth(0).unwrap().energy_kwh, 12.21);
-    assert_eq!(resp_json.iter().nth(0).unwrap().community_uuid, "my_community");
+    assert_eq!(
+        resp_json.iter().nth(0).unwrap().community_uuid,
+        "my_community"
+    );
 
     let resp = client
         .get(&format!("{}/measurements?start_time=1232123214", &address))
         .header("Content-Type", "application/json")
         .send()
-        .await.unwrap();
+        .await
+        .unwrap();
     let status = resp.status();
     assert_eq!(200, status.as_u16());
     let resp_json: Vec<MeasurementSchema> = resp.json().await.unwrap();
@@ -68,7 +73,8 @@ async fn get_measurements_succeeds() {
         .get(&format!("{}/measurements?end_time=1232123214", &address))
         .header("Content-Type", "application/json")
         .send()
-        .await.unwrap();
+        .await
+        .unwrap();
     let status = resp.status();
     assert_eq!(200, status.as_u16());
     let resp_json: Vec<MeasurementSchema> = resp.json().await.unwrap();
@@ -97,7 +103,8 @@ async fn post_measurements_succeeds() {
         .header("Content-Type", "application/json")
         .json(&body)
         .send()
-        .await.unwrap();
+        .await
+        .unwrap();
 
     let status = resp.status();
     assert_eq!(200, status.as_u16());
@@ -139,7 +146,6 @@ async fn post_measurements_fails_with_incorrect_json() {
     }
 }
 
-
 #[tokio::test]
 async fn get_forecasts_succeeds() {
     let app = init_app().await;
@@ -151,7 +157,7 @@ async fn get_forecasts_succeeds() {
         energy_kwh: 12.21,
         time_slot: 1232123213,
         creation_time: 1232123213,
-        confidence: 1.0
+        confidence: 1.0,
     };
     let forecast2 = ForecastSchema {
         area_uuid: "my_uuid1".to_string(),
@@ -160,7 +166,7 @@ async fn get_forecasts_succeeds() {
         energy_kwh: 13.21,
         time_slot: 1232123215,
         creation_time: 1232123215,
-        confidence: 0.9
+        confidence: 0.9,
     };
 
     let forecast_vec = vec![forecast1, forecast2];
@@ -180,7 +186,8 @@ async fn get_forecasts_succeeds() {
         .get(&format!("{}/forecasts?area_uuid=my_uuid", &address))
         .header("Content-Type", "application/json")
         .send()
-        .await.unwrap();
+        .await
+        .unwrap();
 
     let status = resp.status();
     assert_eq!(200, status.as_u16());
@@ -190,14 +197,18 @@ async fn get_forecasts_succeeds() {
     assert_eq!(resp_json.iter().nth(0).unwrap().time_slot, 1232123213);
     assert_eq!(resp_json.iter().nth(0).unwrap().creation_time, 1232123213);
     assert_eq!(resp_json.iter().nth(0).unwrap().energy_kwh, 12.21);
-    assert_eq!(resp_json.iter().nth(0).unwrap().community_uuid, "my_community");
+    assert_eq!(
+        resp_json.iter().nth(0).unwrap().community_uuid,
+        "my_community"
+    );
     assert_eq!(resp_json.iter().nth(0).unwrap().confidence, 1.0);
 
     let resp = client
         .get(&format!("{}/forecasts?start_time=1232123214", &address))
         .header("Content-Type", "application/json")
         .send()
-        .await.unwrap();
+        .await
+        .unwrap();
     let status = resp.status();
     assert_eq!(200, status.as_u16());
     let resp_json: Vec<ForecastSchema> = resp.json().await.unwrap();
@@ -208,7 +219,8 @@ async fn get_forecasts_succeeds() {
         .get(&format!("{}/forecasts?end_time=1232123214", &address))
         .header("Content-Type", "application/json")
         .send()
-        .await.unwrap();
+        .await
+        .unwrap();
     let status = resp.status();
     assert_eq!(200, status.as_u16());
     let resp_json: Vec<ForecastSchema> = resp.json().await.unwrap();
@@ -227,7 +239,7 @@ async fn post_forecasts_succeeds() {
         energy_kwh: 12.21,
         time_slot: 1232123213,
         creation_time: 1232123213,
-        confidence: 0.5
+        confidence: 0.5,
     };
 
     let body = vec![forecast.clone()];
@@ -238,7 +250,8 @@ async fn post_forecasts_succeeds() {
         .header("Content-Type", "application/json")
         .json(&body)
         .send()
-        .await.unwrap();
+        .await
+        .unwrap();
 
     let status = resp.status();
     assert_eq!(200, status.as_u16());
