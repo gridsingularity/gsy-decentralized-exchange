@@ -1,6 +1,7 @@
 use gsy_community_client::external_api::{
     ExternalAreaTopology, ExternalCommunityAsset, ExternalCommunityTopology, ExternalForecast,
-    ExternalMeasurement, LECCommunityAssetsResults, LECCommunityMembersResults, map_fedecom_asset_type_to_asset_type,
+    ExternalMeasurement, LECCommunityAssetsResults, LECCommunityMembersResults,
+    map_fedecom_asset_type_to_asset_type,
 };
 use gsy_community_client::node_connector::orders::publish_orders;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
@@ -67,7 +68,10 @@ impl AppState {
         response.json::<LECCommunityMembersResults>().await
     }
 
-    async fn fetch_assets(&self, community_name: String) -> Result<LECCommunityAssetsResults, reqwest::Error> {
+    async fn fetch_assets(
+        &self,
+        community_name: String,
+    ) -> Result<LECCommunityAssetsResults, reqwest::Error> {
         let post_parameters = GetAssetsPostParameters {
             lec: community_name,
         };

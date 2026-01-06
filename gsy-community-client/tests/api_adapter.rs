@@ -1,12 +1,9 @@
 use gsy_community_client::external_api::{
-    ExternalAreaTopology, ExternalForecast, ExternalMeasurement, LECCommunityAssetsResults, LECCommunityMembersResults,
+    ExternalForecast, ExternalMeasurement, LECCommunityAssetsResults, LECCommunityMembersResults,
 };
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
-use gsy_community_client::time_utils::get_last_and_next_timeslot;
-use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketTopologySchema};
 use gsy_offchain_primitives::utils::h256_to_string;
 
-use httpmock::prelude::*;
 use serde_json;
 use subxt::utils::H256;
 use tracing::Level;
@@ -120,7 +117,8 @@ mod tests {
     "#
         .to_string();
 
-        let topology = serde_json::from_str::<LECCommunityMembersResults>(external_topology.as_str()).unwrap();
+        let topology =
+            serde_json::from_str::<LECCommunityMembersResults>(external_topology.as_str()).unwrap();
         assert_eq!(topology.results.bindings.len(), 2);
         assert_eq!(
             topology.results.bindings[0].site_name.value,
@@ -217,7 +215,8 @@ mod tests {
     }
     "#.to_string();
 
-        let topology = serde_json::from_str::<LECCommunityAssetsResults>(external_assets.as_str()).unwrap();
+        let topology =
+            serde_json::from_str::<LECCommunityAssetsResults>(external_assets.as_str()).unwrap();
         assert_eq!(topology.results.bindings.len(), 3);
         assert_eq!(
             topology.results.bindings[0].asset_name.value,
