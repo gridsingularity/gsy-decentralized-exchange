@@ -1,6 +1,6 @@
 use gsy_community_client::external_api::{
     ExternalAreaTopology, ExternalCommunityAsset, ExternalCommunityTopology, ExternalForecast,
-    ExternalMeasurement, GetLECAssets, GetLECBuildings, map_fedecom_asset_type_to_asset_type,
+    ExternalMeasurement, LECCommunityAssetsResults, LECCommunityMembersResults, map_fedecom_asset_type_to_asset_type,
 };
 use gsy_community_client::node_connector::orders::publish_orders;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
@@ -62,12 +62,12 @@ impl AppState {
         response.json::<Vec<ExternalMeasurement>>().await
     }
 
-    async fn fetch_topology(&self) -> Result<GetLECBuildings, reqwest::Error> {
-        let response = self.client.get(&self.topology_url).send().await?;
-        response.json::<GetLECBuildings>().await
+    async fn fetch_topology(&self) -> Result<LECCommunityMembersResults, reqwest::Error> {
+        let response = self.client.post(&self.topology_url).send().await?;
+        response.json::<LECCommunityMembersResults>().await
     }
 
-    async fn fetch_assets(&self, community_name: String) -> Result<GetLECAssets, reqwest::Error> {
+    async fn fetch_assets(&self, community_name: String) -> Result<LECCommunityAssetsResults, reqwest::Error> {
         let post_parameters = GetAssetsPostParameters {
             lec: community_name,
         };
@@ -77,12 +77,12 @@ impl AppState {
             .json(&post_parameters)
             .send()
             .await?;
-        response.json::<GetLECAssets>().await
+        response.json::<LECCommunityAssetsResults>().await
     }
 
     async fn get_all_assets_for_all_communities(
         &self,
-        buildings: GetLECBuildings,
+        buildings: LECCommunityMembersResults,
     ) -> Vec<ExternalCommunityTopology> {
         let mut communities: Vec<ExternalCommunityTopology> = Vec::new();
         let mut community_uuids: HashSet<String> = HashSet::new();

@@ -82,13 +82,13 @@ pub struct ExternalCommunityMemberTopology {
 }
 
 #[derive(Deserialize, Debug, Clone)]
-pub struct LECCommunityMemberResults {
+pub struct _LECCommunityMemberResults {
     pub bindings: Vec<ExternalCommunityMemberTopology>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
-pub struct GetLECBuildings {
-    pub results: LECCommunityMemberResults,
+pub struct LECCommunityMembersResults {
+    pub results: _LECCommunityMemberResults,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -103,11 +103,11 @@ pub struct ExternalCommunityAsset {
 }
 
 #[derive(Deserialize, Debug, Clone)]
-pub struct LECCommunityAssetResults {
+pub struct _LECCommunityAssetResults {
     pub bindings: Vec<ExternalCommunityAsset>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
-pub struct GetLECAssets {
-    pub results: LECCommunityAssetResults,
+pub struct LECCommunityAssetsResults {
+    pub results: _LECCommunityAssetResults,
 }

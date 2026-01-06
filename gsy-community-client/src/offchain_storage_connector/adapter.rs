@@ -1,6 +1,6 @@
 use crate::external_api::{
     ExternalAreaTopology, ExternalCommunityAsset, ExternalCommunityTopology, ExternalForecast,
-    ExternalMeasurement, GetLECAssets, GetLECBuildings,
+    ExternalMeasurement, LECCommunityAssetsResults, LECCommunityMembersResults,
 };
 use crate::node_connector::orders::gsy_node::timestamp::calls::types::Set;
 use crate::time_utils::get_current_timestamp_in_secs;
