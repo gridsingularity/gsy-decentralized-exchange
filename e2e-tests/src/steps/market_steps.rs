@@ -1,14 +1,13 @@
 use crate::world::{gsy_node, MyWorld};
-use chrono::{prelude::DateTime, prelude::NaiveDateTime, Duration as ChronoDuration, Utc};
-use cucumber::{given, when};
+use chrono::{Duration as ChronoDuration, Utc};
+use cucumber::when;
 use gsy_community_client::external_api::{ExternalAreaTopology, ExternalCommunityTopology};
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
-use gsy_offchain_primitives::db_api_schema::market::AreaTopologySchema;
+use gsy_offchain_primitives::db_api_schema::market::AssetType;
 use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
-use gsy_offchain_primitives::utils::{h256_to_string, string_to_h256};
-use gsy_offchain_primitives::{constants::GlobalConstants, utils::timestamp_to_datetime_string, MarketType};
+use gsy_offchain_primitives::utils::string_to_h256;
+use gsy_offchain_primitives::{constants::GlobalConstants, MarketType};
 use std::time::Duration as Duration;
-use subxt::utils::H256;
 use tokio::time::sleep;
 use tracing::{error, info};
 
@@ -20,21 +19,23 @@ async fn submit_topology_forecasts(world: &mut MyWorld, energy: f64) {
 	let adapter = AreaMarketInfoAdapter::new(Some(orderbook_url));
 
 	let market = adapter.get_or_create_market_topology(
-		ExternalCommunityTopology {
-			community_uuid: "community1".to_string(),
+		vec![
+			ExternalCommunityTopology {
+			// community_uuid: "community1".to_string(),
 			community_name: "Test Community".to_string(),
 			areas: vec![
 				ExternalAreaTopology {
-					area_uuid: world.buyer_id.clone(),
+					area_type: AssetType::SMART_METER,
 					area_name: "buyer".to_string(),
 				},
 				ExternalAreaTopology {
-					area_uuid: world.seller_id.clone(),
+					area_type: AssetType::PV,
 					area_name: "seller".to_string(),
 				},
 			]
-		}, world.target_delivery_time
-	).await.expect("Topology forwarding failed.");
+		}], world.target_delivery_time
+	).await.get(0).unwrap().clone();
+
 
 	for area in market.community_areas.clone() {
 		if area.area_uuid == world.buyer_id {

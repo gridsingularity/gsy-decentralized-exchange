@@ -8,7 +8,7 @@ use subxt::{utils::H256, OnlineClient, SubstrateConfig};
 use subxt_signer::sr25519::Keypair;
 use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
 use gsy_offchain_primitives::db_api_schema::market::MarketTopologySchema;
-use gsy_offchain_primitives::utils::h256_to_string;
+use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 
 #[subxt::subxt(runtime_metadata_path = "../offchain-primitives/metadata.scale")]
 pub mod gsy_node {}
@@ -27,7 +27,9 @@ pub struct MyWorld {
 	pub seller_hash: Option<String>,
 	pub bid_forecast: Option<ForecastSchema>,
 	pub offer_forecast: Option<ForecastSchema>,
-	pub topology_schema: Option<MarketTopologySchema>
+	pub topology_schema: Option<MarketTopologySchema>,
+	pub community_client_api: AreaMarketInfoAdapter,
+	pub community_uuid: Option<String>
 }
 
 impl MyWorld {
@@ -46,7 +48,8 @@ impl MyWorld {
 			subxt_client, http_client, users, last_market_id: None, target_delivery_time: 0,
 			buyer_id: "areaAlice".to_string(), seller_id: "areaBob".to_string(),
 			buyer_hash: None, seller_hash: None,
-			bid_forecast: None, offer_forecast: None, topology_schema: None
+			bid_forecast: None, offer_forecast: None, topology_schema: None,
+			community_client_api: AreaMarketInfoAdapter::new(None), community_uuid: None
 		})
 	}
 
