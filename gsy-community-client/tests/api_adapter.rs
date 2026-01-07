@@ -6,18 +6,10 @@ use gsy_offchain_primitives::utils::h256_to_string;
 
 use serde_json;
 use subxt::utils::H256;
-use tracing::Level;
-use tracing_subscriber;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tracing::Level;
-    use tracing_subscriber;
-
-    fn setup_tracing() {
-        tracing_subscriber::fmt().with_max_level(Level::INFO).init();
-    }
 
     #[test]
     fn test_convert_forecast_to_internal_schema() {

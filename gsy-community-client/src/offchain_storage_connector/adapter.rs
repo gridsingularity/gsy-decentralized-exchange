@@ -1,8 +1,4 @@
-use crate::external_api::{
-    ExternalAreaTopology, ExternalCommunityAsset, ExternalCommunityTopology, ExternalForecast,
-    ExternalMeasurement, LECCommunityAssetsResults, LECCommunityMembersResults,
-};
-use crate::node_connector::orders::gsy_node::timestamp::calls::types::Set;
+use crate::external_api::{ExternalCommunityTopology, ExternalForecast, ExternalMeasurement};
 use crate::time_utils::get_current_timestamp_in_secs;
 use blake2_rfc::blake2b::blake2b;
 use gsy_offchain_primitives::MarketType;
@@ -10,7 +6,6 @@ use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketT
 use gsy_offchain_primitives::db_api_schema::profiles::{ForecastSchema, MeasurementSchema};
 use gsy_offchain_primitives::utils::h256_to_string;
 use reqwest::Client;
-use std::collections::{HashMap, HashSet};
 use subxt::utils::H256;
 use tracing::info;
 use uuid::Uuid;
@@ -27,7 +22,7 @@ fn generate_market_id(market_type: MarketType, delivery_timestamp: u64) -> H256 
     )
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct AreaMarketInfoAdapter {
     client: Client,
     internal_forecast_url: String,
@@ -118,7 +113,7 @@ impl AreaMarketInfoAdapter {
         }
     }
 
-    async fn get_existing_market_topology(
+    pub async fn get_existing_market_topology(
         &self,
         community_market_url: String,
     ) -> Option<MarketTopologySchema> {
