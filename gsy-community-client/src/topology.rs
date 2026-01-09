@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use crate::external_api::{
     ExternalAreaTopology, ExternalCommunityTopology, LECCommunityAssetsResults,
     LECCommunityMembersResults, map_fedecom_asset_type_to_asset_type,
@@ -10,9 +10,20 @@ use serde::{Serialize, Deserialize};
 use tracing::error;
 
 
+
+#[derive(Deserialize, Serialize)]
+struct GetBuildingsPostParameters {
+    params: HashMap<String, String>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct GetAssetsLECParameters {
+    lec: String,
+}
+
 #[derive(Deserialize, Serialize)]
 struct GetAssetsPostParameters {
-    lec: String,
+    params: GetAssetsLECParameters
 }
 
 
@@ -37,7 +48,8 @@ impl TopologyManager {
     }
 
     async fn fetch_topology(&self) -> Result<LECCommunityMembersResults, reqwest::Error> {
-        let response = self.client.post(&self.topology_url).send().await?;
+        let params = GetBuildingsPostParameters { params: HashMap::new() };
+        let response = self.client.post(&self.topology_url).json(&params).send().await?;
         response.json::<LECCommunityMembersResults>().await
     }
 
@@ -46,8 +58,11 @@ impl TopologyManager {
         community_name: String,
     ) -> Result<LECCommunityAssetsResults, reqwest::Error> {
         let post_parameters = GetAssetsPostParameters {
-            lec: community_name,
+            params: GetAssetsLECParameters {
+                lec: community_name,
+            }
         };
+
         let response = self
             .client
             .post(&self.assets_url)
@@ -75,7 +90,8 @@ impl TopologyManager {
 
         let mut external_topologies: Vec<ExternalCommunityTopology> = vec![];
         for community in communities {
-            let assets = self.fetch_assets(community.community_name.clone()).await;
+            let assets = self.fetch_assets(
+                community.community_name.clone()).await;
             let mut asset_objects: Vec<ExternalAreaTopology> = vec![];
             for asset in assets.unwrap().results.bindings {
                 let asset_subtype = if asset.asset_sub_type.is_some() {
@@ -100,24 +116,24 @@ impl TopologyManager {
     }
 
     pub async fn get(&self, next_timeslot: u64) -> Vec<MarketTopologySchema> {
-
         // Fetch topology
         let external_topology_res = self.fetch_topology().await;
-        if external_topology_res.is_err() {
-            error!(
-                    "Failed to fetch external topology: {}",
-                    external_topology_res.unwrap_err().to_string()
-                );
-            return vec![]
+        match external_topology_res {
+            Ok(topology) => {
+                let all_assets = self.get_all_assets_for_all_communities(topology).await;
+                let retval = self
+                    .api_adapter
+                    .get_or_create_market_topology(
+                        all_assets,
+                        next_timeslot,
+                    ).await;
+                retval
+            }
+            Err(error) => {
+                error!("Failed to fetch external topology: {}", error);
+                vec![]
+            }
         }
-
-        self
-            .api_adapter
-            .get_or_create_market_topology(
-                self.get_all_assets_for_all_communities(external_topology_res.unwrap())
-                    .await,
-                next_timeslot,
-            ).await
     }
 }
 

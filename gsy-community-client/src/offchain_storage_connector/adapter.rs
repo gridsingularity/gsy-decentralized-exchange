@@ -7,7 +7,7 @@ use gsy_offchain_primitives::db_api_schema::profiles::{ForecastSchema, Measureme
 use gsy_offchain_primitives::utils::h256_to_string;
 use reqwest::Client;
 use subxt::utils::H256;
-use tracing::info;
+use tracing::{info, error};
 use uuid::Uuid;
 
 fn generate_market_id(market_type: MarketType, delivery_timestamp: u64) -> H256 {
@@ -116,15 +116,15 @@ impl AreaMarketInfoAdapter {
     pub async fn get_existing_market_topology(
         &self,
         community_market_url: String,
-    ) -> Option<MarketTopologySchema> {
+    ) -> Vec<MarketTopologySchema> {
         let response = match self.client.get(community_market_url).send().await {
             Ok(resp) if resp.status().is_success() => resp,
-            _ => return None,
+            _ => return vec![],
         };
-        match response.json::<MarketTopologySchema>().await {
-            Ok(body) => Some(body),
-            Err(_) => None,
-        }
+        response.json::<Vec<MarketTopologySchema>>().await.unwrap_or_else(|err| {
+            error!("Failed to deserialize market topology response: {:?}", err);
+            vec![]
+        })
     }
 
     pub async fn get_or_create_market_topology(
@@ -139,47 +139,47 @@ impl AreaMarketInfoAdapter {
                 + community_topology.community_name.as_str()
                 + "&time_slot="
                 + time_slot.to_string().as_str();
-            let market_topology = self
+            let market_topology_res = self
                 .get_existing_market_topology(community_market_url)
                 .await;
-            match market_topology {
-                Some(_) => {
-                    market_topologies.push(market_topology.unwrap().clone());
-                }
-                None => {
-                    let new_market = MarketTopologySchema {
-                        community_name: community_topology.community_name.clone(),
-                        community_uuid: Uuid::new_v4().to_string(),
-                        market_id: h256_to_string(generate_market_id(MarketType::Spot, time_slot)),
-                        time_slot: time_slot as u32,
-                        creation_time: get_current_timestamp_in_secs() as u32,
-                        community_areas: community_topology
-                            .areas
-                            .clone()
-                            .into_iter()
-                            .map(|area| AreaTopologySchema {
-                                area_uuid: Uuid::new_v4().to_string(),
-                                area_type: area.area_type.clone(),
-                                name: area.area_name.clone(),
-                                area_hash: h256_to_string(H256::random()),
-                            })
-                            .collect(),
-                    };
-                    let topology_resp = self
-                        .client
-                        .post(&self.internal_topology_url)
-                        .json(&new_market)
-                        .send()
-                        .await;
+            if !market_topology_res.is_empty() {
+                market_topologies.push(market_topology_res.get(0).unwrap().clone());
+            }
+            else {
+                let new_market = MarketTopologySchema {
+                    community_name: community_topology.community_name.clone(),
+                    community_uuid: Uuid::new_v4().to_string(),
+                    market_id: h256_to_string(generate_market_id(MarketType::Spot, time_slot)),
+                    time_slot: time_slot as u32,
+                    creation_time: get_current_timestamp_in_secs() as u32,
+                    community_areas: community_topology
+                        .areas
+                        .clone()
+                        .into_iter()
+                        .map(|area| AreaTopologySchema {
+                            area_uuid: Uuid::new_v4().to_string(),
+                            area_type: area.area_type.clone(),
+                            name: area.area_name.clone(),
+                            area_hash: h256_to_string(H256::random()),
+                        })
+                        .collect(),
+                };
+                let topology_resp = self
+                    .client
+                    .post(&self.internal_topology_url)
+                    .json(&new_market)
+                    .send()
+                    .await;
 
-                    match topology_resp {
-                        Ok(_) => market_topologies.push(market_topology.unwrap().clone()),
-                        Err(error) => {
-                            info!(
-                                "New topology creation failed with error: {}",
-                                error.to_string()
-                            );
-                        }
+                match topology_resp {
+                    Ok(_) => {
+                        market_topologies.push(new_market.clone())
+                    },
+                    Err(error) => {
+                        info!(
+                            "New topology creation failed with error: {}",
+                            error.to_string()
+                        );
                     }
                 }
             }
