@@ -1,5 +1,5 @@
 use gsy_orderbook_service::configuration::get_configuration;
-use gsy_orderbook_service::db::{init_database, DatabaseWrapper};
+use gsy_orderbook_service::db::{DatabaseWrapper, init_database};
 use gsy_orderbook_service::startup::run;
 use gsy_orderbook_service::telemetry::{get_subscriber, init_subscriber};
 use once_cell::sync::Lazy;

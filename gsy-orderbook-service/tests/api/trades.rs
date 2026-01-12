@@ -2,9 +2,12 @@ use crate::helpers::init_app;
 use actix_web::web;
 use codec::Encode;
 use gsy_offchain_primitives::node_to_api_schema::insert_order::{
-    Offer as InsertOffer, Bid as InsertBid, OrderComponent as InsertOrderComponent};
+    Bid as InsertBid, Offer as InsertOffer, OrderComponent as InsertOrderComponent,
+};
 use gsy_offchain_primitives::node_to_api_schema::insert_trades::{
-    Trade, TradeParameters as InsertTradeParameters};
+    Trade, TradeParameters as InsertTradeParameters,
+};
+use gsy_offchain_primitives::utils::h256_to_string;
 use subxt::ext::sp_core::H256;
 use subxt::ext::sp_runtime::AccountId32;
 
@@ -44,7 +47,6 @@ async fn post_trade_request_writes_trades_to_the_db() {
 
     let trade_uuid = H256::random();
     let trade1 = Trade {
-        _id: H256::random(),
         seller: account.clone(),
         buyer: account.clone(),
         market_id: market_id.clone(),
@@ -58,10 +60,10 @@ async fn post_trade_request_writes_trades_to_the_db() {
         residual_offer: None,
         residual_bid: None,
         parameters: InsertTradeParameters {
-            selected_energy: 14, 
+            selected_energy: 14,
             energy_rate: 3,
-            trade_uuid
-        }
+            trade_uuid,
+        },
     };
 
     let tradelist = vec![trade1.clone()];
@@ -79,15 +81,10 @@ async fn post_trade_request_writes_trades_to_the_db() {
     assert_eq!(200, status.as_u16());
 
     let db = web::Data::new(app.db_wrapper);
-    let saved = db
-        .get_ref()
-        .trades()
-        .get_all_trades()
-        .await
-        .unwrap();
+    let saved = db.get_ref().trades().get_all_trades().await.unwrap();
 
     let result_trade = saved.first().unwrap();
-    assert_eq!(result_trade.trade_uuid, trade1.trade_uuid.to_string());
+    assert_eq!(result_trade.trade_uuid, h256_to_string(trade1.trade_uuid));
 }
 
 #[tokio::test]
