@@ -1,8 +1,6 @@
 use serde::{Deserialize, Serialize};
 use codec::{Decode, Encode};
-use subxt::ext::sp_core::H256;
-use subxt::ext::sp_runtime::traits::CheckedConversion;
-use subxt::utils::AccountId32;
+use subxt::utils::{AccountId32, H256};
 use crate::db_api_schema;
 use crate::node_to_api_schema::insert_order::{
     Offer, Bid, create_db_offer_from_node_offer, create_db_bid_from_node_bid};
@@ -59,11 +57,11 @@ pub fn convert_gsy_node_trades_schema_to_db_schema(trades: Vec<u8>) -> Vec<DbTra
             bid: create_db_bid_from_node_bid(trade.bid),
             bid_hash: h256_to_string(trade.bid_hash),
             residual_offer: match trade.residual_offer {
-                Some(residual_offer) => create_db_offer_from_node_offer(residual_offer).checked_into(),
+                Some(residual_offer) => create_db_offer_from_node_offer(residual_offer).try_into().ok(),
                 None => None
             },
             residual_bid: match trade.residual_bid {
-                Some(residual_bid) => create_db_bid_from_node_bid(residual_bid).checked_into(),
+                Some(residual_bid) => create_db_bid_from_node_bid(residual_bid).try_into().ok(),
                 None => None
             },
             parameters: DbTradeParameters {

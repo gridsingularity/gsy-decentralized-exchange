@@ -1,7 +1,7 @@
 use codec::{Encode, Decode};
 use serde::{Deserialize, Serialize};
-use subxt::ext::sp_core::H256;
-use subxt::ext::sp_runtime::traits::{BlakeTwo256, Hash};
+use subxt::utils::H256;
+use subxt::config::{substrate::BlakeTwo256, Hasher};
 
 
 #[derive(Serialize, Deserialize, Debug, Encode, Clone, PartialEq)]
@@ -13,7 +13,7 @@ pub enum Order {
 
 impl Order {
     pub fn hash(&self) -> H256 {
-        BlakeTwo256::hash_of(self)
+        BlakeTwo256.hash_of(self)
     }
 }
 /// Order component struct

@@ -26,11 +26,11 @@ async fn submit_topology_forecasts(world: &mut MyWorld, energy: f64) {
 			areas: vec![
 				ExternalAreaTopology {
 					area_type: AssetType::SMART_METER,
-					area_name: "buyer".to_string(),
+					area_name: "areaAlice".to_string(),
 				},
 				ExternalAreaTopology {
 					area_type: AssetType::PV,
-					area_name: "seller".to_string(),
+					area_name: "areaBob".to_string(),
 				},
 			]
 		}], world.target_delivery_time
@@ -38,10 +38,10 @@ async fn submit_topology_forecasts(world: &mut MyWorld, energy: f64) {
 
 
 	for area in market.community_areas.clone() {
-		if area.area_uuid == world.buyer_id {
+		if area.name == world.buyer_id {
 			world.buyer_hash = Some(area.area_hash.clone());
 		};
-		if area.area_uuid == world.seller_id {
+		if area.name == world.seller_id {
 			world.seller_hash = Some(area.area_hash.clone());
 		};
 	}
