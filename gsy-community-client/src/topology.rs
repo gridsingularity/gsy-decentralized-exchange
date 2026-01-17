@@ -1,10 +1,7 @@
 use std::collections::{HashMap, HashSet};
-use crate::external_api::{
-    ExternalAreaTopology, ExternalCommunityTopology, LECCommunityAssetsResults,
-    LECCommunityMembersResults, map_fedecom_asset_type_to_asset_type,
-};
 use crate::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
-use gsy_offchain_primitives::db_api_schema::market::MarketTopologySchema;
+use crate::constants::CommunityClientConstants;
+use gsy_offchain_primitives::db_api_schema::market::{MarketTopologySchema, AssetType};
 use reqwest::Client;
 use serde::{Serialize, Deserialize};
 use tracing::error;
@@ -26,6 +23,70 @@ struct GetAssetsPostParameters {
     params: GetAssetsLECParameters
 }
 
+// Struct for forecast data received from external API
+#[derive(Serialize, Deserialize, Debug, Clone, Hash, Eq, PartialEq)]
+pub struct ExternalAreaTopology {
+    pub area_name: String,
+    pub area_type: AssetType,
+}
+
+// Struct for forecast data received from external API
+#[derive(Serialize, Deserialize, Debug, Clone, Hash, Eq, PartialEq)]
+pub struct ExternalCommunityTopology {
+    pub community_name: String,
+    pub areas: Vec<ExternalAreaTopology>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct NameField {
+    #[serde(rename = "type")]
+    pub field_type: String,
+    pub value: String,
+}
+
+// Struct for forecast data received from external API
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ExternalCommunityMemberTopology {
+    #[serde(rename = "lecName")]
+    pub lec_name: NameField,
+    #[serde(rename = "lecAltName")]
+    pub lec_alt_name: NameField,
+    #[serde(rename = "siteName")]
+    pub site_name: NameField,
+    #[serde(rename = "participantName")]
+    pub participant_name: NameField,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct _LECCommunityMemberResults {
+    pub bindings: Vec<ExternalCommunityMemberTopology>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct LECCommunityMembersResults {
+    pub results: _LECCommunityMemberResults,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct ExternalCommunityAsset {
+    pub location: NameField,
+    #[serde(rename = "assetName")]
+    pub asset_name: NameField,
+    #[serde(rename = "assetType")]
+    pub asset_type: NameField,
+    #[serde(rename = "assetSubType")]
+    pub asset_sub_type: Option<NameField>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct _LECCommunityAssetResults {
+    pub bindings: Vec<ExternalCommunityAsset>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct LECCommunityAssetsResults {
+    pub results: _LECCommunityAssetResults,
+}
 
 #[derive(Clone)]
 pub struct TopologyManager {
@@ -35,15 +96,39 @@ pub struct TopologyManager {
     assets_url: String,
 }
 
-
 impl TopologyManager {
     pub fn new(client: &Client, api_adapter: &AreaMarketInfoAdapter) -> Self {
         TopologyManager {
             client: client.clone(),
             api_adapter: api_adapter.clone(),
-            topology_url: "https://fedecom.tekniker.es/services/queries/get_lecs_buildings"
-                .to_string(),
-            assets_url: "https://fedecom.tekniker.es/services/queries/get_assets".to_string(),
+            topology_url: CommunityClientConstants.FEDECOM_ONTOLOGY_URL.clone(),
+            assets_url: CommunityClientConstants.FEDECOM_ONTOLOGY_ASSETS_URL.clone(),
+        }
+    }
+
+    fn map_fedecom_asset_type_to_asset_type(
+        &self,
+        external_asset_type: String,
+        external_asset_subtype: Option<String>,
+    ) -> AssetType {
+        match external_asset_type.as_str() {
+            "http://w3id.org/fedecom/battery#Battery" => AssetType::BATTERY,
+            "http://w3id.org/fedecom/energyasset#Meter" => {
+                if external_asset_subtype.is_some()
+                    && external_asset_subtype
+                    .unwrap()
+                    .eq("http://w3id.org/fedecom/energyasset#GridMeter")
+                {
+                    AssetType::GRID_METER
+                } else {
+                    AssetType::SMART_METER
+                }
+            }
+            "http://w3id.org/fedecom/energyasset#Boiler" => AssetType::BOILER,
+            "http://w3id.org/fedecom/energyasset#EVCharger" => AssetType::EV,
+            "https://w3id.org/hpont#HeatPumpSystem" => AssetType::HEAT_PUMP,
+            "http://w3id.org/fedecom/energyasset#PVSystem" => AssetType::PV,
+            _ => AssetType::UNKNOWN,
         }
     }
 
@@ -101,7 +186,7 @@ impl TopologyManager {
                 };
                 asset_objects.push(ExternalAreaTopology {
                     area_name: asset.asset_name.value,
-                    area_type: map_fedecom_asset_type_to_asset_type(
+                    area_type: self.map_fedecom_asset_type_to_asset_type(
                         asset.asset_type.field_type,
                         asset_subtype,
                     ),

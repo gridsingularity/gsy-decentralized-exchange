@@ -95,6 +95,7 @@ impl PayAsBid for MatchingData {
                     continue;
                 }
 
+                let h2 = bid.hash();
                 if !available_order_energy.contains_key(bid.id.as_str()) {
                     available_order_energy.insert(bid.id.clone(), bid.energy).unwrap_or(0.0);
                 }
