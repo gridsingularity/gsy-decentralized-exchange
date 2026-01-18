@@ -1,18 +1,20 @@
-use gsy_community_client::external_api::{ExternalForecast, ExternalMeasurement, MeasurementInfluxDBConnection};
+use chrono::Utc;
+use gsy_community_client::external_api::{
+    ExternalForecast, ExternalMeasurement, MeasurementInfluxDBConnection,
+};
 use gsy_community_client::node_connector::orders::publish_orders;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use gsy_community_client::time_utils::{get_current_timestamp_in_secs, get_last_and_next_timeslot};
 use gsy_community_client::topology::TopologyManager;
 use gsy_offchain_primitives::constants::GlobalConstants;
+use gsy_offchain_primitives::db_api_schema::market::MarketTopologySchema;
 use gsy_offchain_primitives::db_api_schema::profiles::{ForecastSchema, MeasurementSchema};
 use reqwest::Client;
-use chrono::Utc;
 use std::collections::{HashMap, HashSet};
-use subxt_signer::sr25519::dev;
 use std::time::Duration;
+use subxt_signer::sr25519::dev;
 use tokio::time::sleep;
 use tracing::{error, info};
-use gsy_offchain_primitives::db_api_schema::market::MarketTopologySchema;
 
 #[derive(Clone)]
 struct AppState {
@@ -41,15 +43,25 @@ impl AppState {
     }
 
     // Function to fetch an array of measurement data
-    async fn fetch_measurements(&self, topologies: Vec<MarketTopologySchema>) -> Vec<ExternalMeasurement> {
+    async fn fetch_measurements(
+        &self,
+        topologies: Vec<MarketTopologySchema>,
+    ) -> Vec<ExternalMeasurement> {
         let start_time = Utc::now() - Duration::from_secs(2 * GlobalConstants.TIME_SLOT_SEC);
         let end_time = Utc::now();
-        let measurements = self.external_measurements_api.read(start_time, end_time).await;
+        let measurements = self
+            .external_measurements_api
+            .read(start_time, end_time)
+            .await;
 
         let mut external_measurements: Vec<ExternalMeasurement> = vec![];
         for topology in topologies.iter() {
             let topology_member_ids: HashSet<String> = HashSet::from_iter(
-                topology.community_areas.iter().map(|area| area.name.clone()));
+                topology
+                    .community_areas
+                    .iter()
+                    .map(|area| area.name.clone()),
+            );
             for (sensor_id, timestamp_hashmap) in measurements.clone().into_iter() {
                 // TODO: Create a manual mapping between ontology sensor ids and Influx sensor ids
                 if topology_member_ids.contains(&sensor_id) {
@@ -65,20 +77,19 @@ impl AppState {
                     }
                 }
             }
-
         }
         external_measurements
     }
 
     async fn poll_and_forward(&self) {
-
         loop {
             let seconds_since_epoch = get_current_timestamp_in_secs();
 
             let (_last_timeslot, next_timeslot) = get_last_and_next_timeslot();
 
-            let internal_topology = TopologyManager::new(
-                &self.client, &self.api_adapter).get(next_timeslot).await;
+            let internal_topology = TopologyManager::new(&self.client, &self.api_adapter)
+                .get(next_timeslot)
+                .await;
 
             for market in internal_topology.clone() {
                 let area_uuid_to_hash: HashMap<String, String> = market

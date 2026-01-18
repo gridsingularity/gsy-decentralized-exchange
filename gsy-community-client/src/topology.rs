@@ -1,12 +1,10 @@
-use std::collections::{HashMap, HashSet};
-use crate::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use crate::constants::CommunityClientConstants;
-use gsy_offchain_primitives::db_api_schema::market::{MarketTopologySchema, AssetType};
+use crate::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
+use gsy_offchain_primitives::db_api_schema::market::{AssetType, MarketTopologySchema};
 use reqwest::Client;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use tracing::error;
-
-
 
 #[derive(Deserialize, Serialize)]
 struct GetBuildingsPostParameters {
@@ -20,7 +18,7 @@ struct GetAssetsLECParameters {
 
 #[derive(Deserialize, Serialize)]
 struct GetAssetsPostParameters {
-    params: GetAssetsLECParameters
+    params: GetAssetsLECParameters,
 }
 
 // Struct for forecast data received from external API
@@ -116,8 +114,8 @@ impl TopologyManager {
             "http://w3id.org/fedecom/energyasset#Meter" => {
                 if external_asset_subtype.is_some()
                     && external_asset_subtype
-                    .unwrap()
-                    .eq("http://w3id.org/fedecom/energyasset#GridMeter")
+                        .unwrap()
+                        .eq("http://w3id.org/fedecom/energyasset#GridMeter")
                 {
                     AssetType::GRID_METER
                 } else {
@@ -133,8 +131,15 @@ impl TopologyManager {
     }
 
     async fn fetch_topology(&self) -> Result<LECCommunityMembersResults, reqwest::Error> {
-        let params = GetBuildingsPostParameters { params: HashMap::new() };
-        let response = self.client.post(&self.topology_url).json(&params).send().await?;
+        let params = GetBuildingsPostParameters {
+            params: HashMap::new(),
+        };
+        let response = self
+            .client
+            .post(&self.topology_url)
+            .json(&params)
+            .send()
+            .await?;
         response.json::<LECCommunityMembersResults>().await
     }
 
@@ -145,7 +150,7 @@ impl TopologyManager {
         let post_parameters = GetAssetsPostParameters {
             params: GetAssetsLECParameters {
                 lec: community_name,
-            }
+            },
         };
 
         let response = self
@@ -175,8 +180,7 @@ impl TopologyManager {
 
         let mut external_topologies: Vec<ExternalCommunityTopology> = vec![];
         for community in communities {
-            let assets = self.fetch_assets(
-                community.community_name.clone()).await;
+            let assets = self.fetch_assets(community.community_name.clone()).await;
             let mut asset_objects: Vec<ExternalAreaTopology> = vec![];
             for asset in assets.unwrap().results.bindings {
                 let asset_subtype = if asset.asset_sub_type.is_some() {
@@ -208,10 +212,8 @@ impl TopologyManager {
                 let all_assets = self.get_all_assets_for_all_communities(topology).await;
                 let retval = self
                     .api_adapter
-                    .get_or_create_market_topology(
-                        all_assets,
-                        next_timeslot,
-                    ).await;
+                    .get_or_create_market_topology(all_assets, next_timeslot)
+                    .await;
                 retval
             }
             Err(error) => {
@@ -221,4 +223,3 @@ impl TopologyManager {
         }
     }
 }
-
