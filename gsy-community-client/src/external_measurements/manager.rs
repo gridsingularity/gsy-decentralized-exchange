@@ -1,14 +1,14 @@
-use std::collections::{HashMap, HashSet};
-use std::time::Duration;
-use gsy_offchain_primitives::db_api_schema::profiles::MeasurementSchema;
-use gsy_offchain_primitives::constants::GlobalConstants;
-use gsy_offchain_primitives::db_api_schema::market::MarketTopologySchema;
 use crate::external_measurements::influxdb_api::MeasurementInfluxDBConnection;
+use crate::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use crate::types::ExternalMeasurement;
 use chrono::Utc;
+use gsy_offchain_primitives::constants::GlobalConstants;
+use gsy_offchain_primitives::db_api_schema::market::MarketTopologySchema;
+use gsy_offchain_primitives::db_api_schema::profiles::MeasurementSchema;
+use std::collections::{HashMap, HashSet};
 use std::iter::FromIterator;
+use std::time::Duration;
 use tracing::info;
-use crate::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 
 #[derive(Clone)]
 pub struct MeasurementsManager {
@@ -63,7 +63,11 @@ impl MeasurementsManager {
         external_measurements
     }
 
-    pub async fn fetch_and_forward(&self, internal_topology: Vec<MarketTopologySchema>, seconds_since_epoch: u64) {
+    pub async fn fetch_and_forward(
+        &self,
+        internal_topology: Vec<MarketTopologySchema>,
+        seconds_since_epoch: u64,
+    ) {
         let area_uuid_to_hash: HashMap<String, String> = internal_topology
             .iter()
             .flat_map(|topology| topology.community_areas.iter())
@@ -75,10 +79,11 @@ impl MeasurementsManager {
         let valid_measurements: Vec<MeasurementSchema> = measurements
             .into_iter()
             .map(|measurement| {
-                self.offchain_storage_api.convert_measurement_to_internal_schema(
-                    &measurement,
-                    area_uuid_to_hash[&measurement.area_uuid].clone(),
-                )
+                self.offchain_storage_api
+                    .convert_measurement_to_internal_schema(
+                        &measurement,
+                        area_uuid_to_hash[&measurement.area_uuid].clone(),
+                    )
             })
             .filter(|measurement| {
                 self.offchain_storage_api
@@ -86,7 +91,8 @@ impl MeasurementsManager {
             })
             .collect();
         if !valid_measurements.is_empty() {
-            if let Err(e) = self.offchain_storage_api
+            if let Err(e) = self
+                .offchain_storage_api
                 .forward_measurement(valid_measurements)
                 .await
             {
@@ -96,5 +102,4 @@ impl MeasurementsManager {
             info!("No valid measurements to forward.");
         }
     }
-
 }

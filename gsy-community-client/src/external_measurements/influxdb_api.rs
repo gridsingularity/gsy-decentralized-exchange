@@ -35,7 +35,6 @@ struct RawInfluxDBMeasurement {
     topic: String,
 }
 
-
 #[derive(Serialize, Deserialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 struct InfluxRequestParams {

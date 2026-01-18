@@ -1,6 +1,6 @@
-use crate::types::{ExternalForecast, ExternalMeasurement};
 use crate::time_utils::get_current_timestamp_in_secs;
 use crate::topology::ExternalCommunityTopology;
+use crate::types::{ExternalForecast, ExternalMeasurement};
 use blake2_rfc::blake2b::blake2b;
 use gsy_offchain_primitives::MarketType;
 use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketTopologySchema};

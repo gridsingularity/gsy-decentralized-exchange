@@ -1,6 +1,6 @@
-use gsy_community_client::types::{ExternalForecast, ExternalMeasurement};
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use gsy_community_client::topology::{LECCommunityAssetsResults, LECCommunityMembersResults};
+use gsy_community_client::types::{ExternalForecast, ExternalMeasurement};
 use gsy_offchain_primitives::utils::h256_to_string;
 
 use serde_json;
