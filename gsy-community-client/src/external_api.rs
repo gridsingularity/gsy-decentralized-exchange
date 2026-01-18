@@ -119,7 +119,6 @@ impl MeasurementInfluxDBConnection {
                 .to_string(),
         );
 
-        println!("Query: {}", query_str);
         let request_body = InfluxRequestParams {
             query: query_str.clone(),
             org_id: CommunityClientConstants.FEDECOM_INFLUX_DB_ORG.clone(),
@@ -157,6 +156,7 @@ impl MeasurementInfluxDBConnection {
         let fetched_data = self.fetch_from_db(start_time, end_time).await;
         for record in fetched_data.iter() {
             let sensor_id_tokens = record.sensor_id.split('-');
+            // TODO: For now only FLEXO sensors are integrated in InfluxDB. 
             assert_eq!(
                 sensor_id_tokens.clone().nth(0).unwrap().to_string(),
                 "FLEXO".to_string()
