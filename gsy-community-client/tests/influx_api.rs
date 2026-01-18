@@ -1,5 +1,5 @@
 use chrono::{TimeZone, Utc};
-use gsy_community_client::external_api::MeasurementInfluxDBConnection;
+use gsy_community_client::external_measurements::influxdb_api::MeasurementInfluxDBConnection;
 
 #[cfg(test)]
 mod tests {

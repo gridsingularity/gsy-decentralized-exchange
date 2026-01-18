@@ -1,4 +1,4 @@
-use gsy_community_client::external_api::{ExternalForecast, ExternalMeasurement};
+use gsy_community_client::types::{ExternalForecast, ExternalMeasurement};
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use gsy_community_client::topology::{LECCommunityAssetsResults, LECCommunityMembersResults};
 use gsy_offchain_primitives::utils::h256_to_string;

@@ -1,4 +1,4 @@
-use crate::external_api::{ExternalForecast, ExternalMeasurement};
+use crate::types::{ExternalForecast, ExternalMeasurement};
 use crate::time_utils::get_current_timestamp_in_secs;
 use crate::topology::ExternalCommunityTopology;
 use blake2_rfc::blake2b::blake2b;

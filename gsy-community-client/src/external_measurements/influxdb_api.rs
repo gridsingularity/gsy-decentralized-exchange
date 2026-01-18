@@ -35,26 +35,6 @@ struct RawInfluxDBMeasurement {
     topic: String,
 }
 
-// Struct for forecast data received from external API
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ExternalForecast {
-    pub area_uuid: String,
-    pub community_uuid: String,
-    pub time_slot: u64,
-    pub creation_time: u64,
-    pub energy_kwh: f64,
-    pub confidence: f64,
-}
-
-// Struct for measurement data received from external API
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ExternalMeasurement {
-    pub area_uuid: String,
-    pub community_uuid: String,
-    pub time_slot: u64,
-    pub creation_time: u64,
-    pub energy_kwh: f64,
-}
 
 #[derive(Serialize, Deserialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
@@ -156,7 +136,7 @@ impl MeasurementInfluxDBConnection {
         let fetched_data = self.fetch_from_db(start_time, end_time).await;
         for record in fetched_data.iter() {
             let sensor_id_tokens = record.sensor_id.split('-');
-            // TODO: For now only FLEXO sensors are integrated in InfluxDB. 
+            // TODO: For now only FLEXO sensors are integrated in InfluxDB.
             assert_eq!(
                 sensor_id_tokens.clone().nth(0).unwrap().to_string(),
                 "FLEXO".to_string()

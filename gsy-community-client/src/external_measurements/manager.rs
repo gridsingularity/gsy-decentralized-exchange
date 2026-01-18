@@ -1,11 +1,10 @@
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use gsy_offchain_primitives::db_api_schema::profiles::MeasurementSchema;
-use gsy_offchain_primitives::MarketType;
 use gsy_offchain_primitives::constants::GlobalConstants;
 use gsy_offchain_primitives::db_api_schema::market::MarketTopologySchema;
-use crate::external_api::MeasurementInfluxDBConnection;
-use crate::external_api::ExternalMeasurement;
+use crate::external_measurements::influxdb_api::MeasurementInfluxDBConnection;
+use crate::types::ExternalMeasurement;
 use chrono::Utc;
 use std::iter::FromIterator;
 use tracing::info;

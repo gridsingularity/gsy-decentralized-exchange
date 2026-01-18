@@ -1,17 +1,13 @@
-use chrono::Utc;
-use gsy_community_client::external_api::{
-    ExternalForecast, ExternalMeasurement, MeasurementInfluxDBConnection,
-};
 use gsy_community_client::node_connector::orders::publish_orders;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
-use gsy_community_client::time_utils::{get_current_timestamp_in_secs, get_last_and_next_timeslot};
+use gsy_community_client::external_measurements::manager::MeasurementsManager;
 use gsy_community_client::topology::TopologyManager;
-use gsy_community_client::measurements::MeasurementsManager;
+use gsy_community_client::types::ExternalForecast;
+use gsy_community_client::time_utils::{get_current_timestamp_in_secs, get_last_and_next_timeslot};
 use gsy_offchain_primitives::constants::GlobalConstants;
-use gsy_offchain_primitives::db_api_schema::market::MarketTopologySchema;
-use gsy_offchain_primitives::db_api_schema::profiles::{ForecastSchema, MeasurementSchema};
+use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
 use reqwest::Client;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::time::Duration;
 use subxt_signer::sr25519::dev;
 use tokio::time::sleep;
