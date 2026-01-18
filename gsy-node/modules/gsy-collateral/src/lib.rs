@@ -41,7 +41,6 @@ pub use weights::*;
 
 #[frame_support::pallet]
 pub mod pallet {
-	use super::*;
 	use crate::weights::WeightInfo;
 	use codec::{FullCodec, MaxEncodedLen};
 	use core::fmt::Debug;
@@ -84,8 +83,6 @@ pub mod pallet {
 	/// Configure the pallet by specifying the parameters and types on which it depends.
 	#[pallet::config]
 	pub trait Config: frame_system::Config {
-		/// Because this pallet emits events, it depends on the runtime's definition of an event.
-		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
 		/// The Currency handler for the gsy-collateral pallet.
 		type Currency: Currency<Self::AccountId>;
 

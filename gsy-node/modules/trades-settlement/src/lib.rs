@@ -65,7 +65,6 @@ pub mod pallet {
 		+ orderbook_worker::Config
 		+ gsy_collateral::Config
 	{
-		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
 
 		type TradeSettlementWeightInfo: TradeSettlementWeightInfo;
 

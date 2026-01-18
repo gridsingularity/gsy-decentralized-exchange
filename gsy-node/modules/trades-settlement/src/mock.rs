@@ -146,14 +146,6 @@ impl frame_system::offchain::SigningTypes for Test {
 	type Signature = Signature;
 }
 
-impl<LocalCall> frame_system::offchain::SendTransactionTypes<LocalCall> for Test
-where
-	RuntimeCall: From<LocalCall>,
-{
-	type Extrinsic = Extrinsic;
-	type OverarchingCall = RuntimeCall;
-}
-
 impl<LocalCall> frame_system::offchain::CreateSignedTransaction<LocalCall> for Test
 where
 	RuntimeCall: From<LocalCall>,

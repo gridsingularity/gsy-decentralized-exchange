@@ -46,7 +46,6 @@ use sp_std::prelude::*;
 use sp_version::NativeVersion;
 use sp_version::RuntimeVersion;
 
-use frame_support::genesis_builder_helper::{build_config, create_default_config};
 use frame_support::PalletId;
 pub use frame_support::{
 	construct_runtime, derive_impl, parameter_types,
@@ -214,6 +213,7 @@ impl pallet_aura::Config for Runtime {
 	type DisabledValidators = ();
 	type MaxAuthorities = ConstU32<32>;
 	type AllowMultipleBlocksPerSlot = ConstBool<false>;
+	type SlotDuration = ConstU64<64>;
 }
 
 impl pallet_grandpa::Config for Runtime {
@@ -255,6 +255,8 @@ impl pallet_balances::Config for Runtime {
 	type MaxFreezes = ();
 	type RuntimeHoldReason = ();
 	type RuntimeFreezeReason = ();
+
+	type DoneSlashHandler = ();
 }
 
 parameter_types! {
@@ -268,6 +270,7 @@ impl pallet_transaction_payment::Config for Runtime {
 	type WeightToFee = IdentityFee<Balance>;
 	type LengthToFee = IdentityFee<Balance>;
 	type FeeMultiplierUpdate = ConstFeeMultiplier<FeeMultiplier>;
+	type WeightInfo = pallet_transaction_payment::weights::SubstrateWeight<Runtime>;
 }
 
 impl pallet_sudo::Config for Runtime {
@@ -283,7 +286,6 @@ parameter_types! {
 }
 
 impl orderbook_registry::Config for Runtime {
-	type RuntimeEvent = RuntimeEvent;
 	type Currency = Balances;
 	type RegistryProxyAccountLimit = ConstU32<32>;
 	type WeightInfo = ();
@@ -292,7 +294,6 @@ impl orderbook_registry::Config for Runtime {
 
 /// Configure the gsy-collateral in modules/gsy-collateral.
 impl gsy_collateral::Config for Runtime {
-	type RuntimeEvent = RuntimeEvent;
 	type Currency = Balances;
 	type ProxyAccountLimit = ProxyAccountLimit;
 	type PalletId = VaultPalletId;
@@ -305,11 +306,6 @@ parameter_types! {
 	pub const MarketSlotDuration: u64 = SECS_PER_MARKET_SLOT;
 }
 
-impl trades_settlement::Config for Runtime {
-	type RuntimeEvent = RuntimeEvent;
-	type MarketSlotDuration = MarketSlotDuration;
-	type TradeSettlementWeightInfo = trades_settlement::weights::SubstrateWeightInfo<Runtime>;
-}
 
 parameter_types! {
 	// Priority for a transaction. Additive. Higher is better.
@@ -327,19 +323,15 @@ impl frame_system::offchain::AppCrypto<sp_runtime::MultiSigner, sp_runtime::Mult
 
 impl orderbook_worker::Config for Runtime {
 	type AuthorityId = AuraAuthId;
-	type RuntimeEvent = RuntimeEvent;
 
-	type Call = RuntimeCall;
+	type Call = Call;
 	type UnsignedPriority = UnsignedPriority;
 	type WeightInfo = orderbook_worker::weights::SubstrateWeightInfo<Runtime>;
 }
 
-impl<C> frame_system::offchain::SendTransactionTypes<C> for Runtime
-where
-	RuntimeCall: From<C>,
-{
-	type Extrinsic = UncheckedExtrinsic;
-	type OverarchingCall = RuntimeCall;
+impl trades_settlement::Config for Runtime {
+	type MarketSlotDuration = MarketSlotDuration;
+	type TradeSettlementWeightInfo = trades_settlement::weights::SubstrateWeightInfo<Runtime>;
 }
 
 impl frame_system::offchain::SigningTypes for Runtime {
@@ -361,7 +353,7 @@ impl<LocalCall> frame_system::offchain::CreateSignedTransaction<LocalCall> for R
 where
 	RuntimeCall: From<LocalCall>,
 {
-	fn create_transaction<C: frame_system::offchain::AppCrypto<Self::Public, Self::Signature>>(
+	fn create_signed_transaction<C: frame_system::offchain::AppCrypto<Self::Public, Self::Signature>>(
 		call: RuntimeCall,
 		public: <Signature as traits::Verify>::Signer,
 		account: AccountId,
@@ -741,13 +733,4 @@ impl_runtime_apis! {
 		}
 	}
 
-	impl sp_genesis_builder::GenesisBuilder<Block> for Runtime {
-		fn create_default_config() -> Vec<u8> {
-			create_default_config::<RuntimeGenesisConfig>()
-		}
-
-		fn build_config(config: Vec<u8>) -> sp_genesis_builder::Result {
-			build_config::<RuntimeGenesisConfig>(config)
-		}
-	}
 }
