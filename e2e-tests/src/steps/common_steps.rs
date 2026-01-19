@@ -31,15 +31,15 @@ async fn services_are_running(world: &mut MyWorld) {
 #[given(regex = r#"users "([^"]*)", "([^"]*)", and "([^"]*)" are registered and have collateral"#)]
 async fn users_are_registered(
 	world: &mut MyWorld,
-	alice_name: String,
-	bob_name: String,
-	charlie_name: String,
+	first_user: String,
+	second_user: String,
+	third_user: String,
 ) {
 	let sudo_signer = subxt_signer::sr25519::dev::alice();
 	let user_keys = [
-		world.users.get(&alice_name).unwrap(),
-		world.users.get(&bob_name).unwrap(),
-		world.users.get(&charlie_name).unwrap(),
+		world.users.get(&first_user).unwrap(),
+		world.users.get(&second_user).unwrap(),
+		world.users.get(&third_user).unwrap(),
 	];
 
 	for keypair in user_keys.iter() {
@@ -77,7 +77,7 @@ async fn users_are_registered(
 			.expect("deposit_collateral extrinsic failed");
 	}
 
-	let alice_account_id: AccountId32 = world.users.get(&alice_name).unwrap().public_key().into();
+	let alice_account_id: AccountId32 = world.users.get(&first_user).unwrap().public_key().into();
 	println!("Registering market orchestrator/matching engine operator: {:?}", alice_account_id);
 
 	let register_me_call = gsy_node::runtime_types::gsy_node_runtime::RuntimeCall::GsyCollateral(
