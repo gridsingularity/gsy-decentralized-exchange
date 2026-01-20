@@ -11,7 +11,7 @@ pub enum AssetType {
     EV,
     HEAT_PUMP,
     BOILER,
-    UNKNOWN
+    AREA
 }
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]

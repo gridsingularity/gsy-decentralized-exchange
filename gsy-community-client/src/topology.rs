@@ -126,11 +126,11 @@ impl TopologyManager {
             "http://w3id.org/fedecom/energyasset#EVCharger" => AssetType::EV,
             "https://w3id.org/hpont#HeatPumpSystem" => AssetType::HEAT_PUMP,
             "http://w3id.org/fedecom/energyasset#PVSystem" => AssetType::PV,
-            _ => AssetType::UNKNOWN,
+            _ => AssetType::AREA,
         }
     }
 
-    async fn fetch_topology(&self) -> Result<LECCommunityMembersResults, reqwest::Error> {
+    pub async fn fetch_topology(&self) -> Result<LECCommunityMembersResults, reqwest::Error> {
         let params = GetBuildingsPostParameters {
             params: HashMap::new(),
         };
@@ -168,11 +168,12 @@ impl TopologyManager {
     ) -> Vec<ExternalCommunityTopology> {
         let mut communities: Vec<ExternalCommunityTopology> = Vec::new();
         let mut community_uuids: HashSet<String> = HashSet::new();
+
         for building in buildings.results.bindings {
             if !community_uuids.contains(&building.lec_name.value) {
                 community_uuids.insert(building.lec_name.value.clone());
                 communities.push(ExternalCommunityTopology {
-                    community_name: building.lec_alt_name.value,
+                    community_name: building.lec_name.value,
                     areas: vec![],
                 });
             }
@@ -196,11 +197,13 @@ impl TopologyManager {
                     ),
                 });
             }
+
             external_topologies.push(ExternalCommunityTopology {
                 areas: asset_objects,
                 community_name: community.community_name.clone(),
             });
         }
+
         external_topologies
     }
 
