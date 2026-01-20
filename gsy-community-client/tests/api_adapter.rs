@@ -1,13 +1,16 @@
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
-use gsy_community_client::topology::{LECCommunityAssetsResults, LECCommunityMembersResults};
+use gsy_community_client::topology::{LECCommunityAssetsResults, LECCommunityMembersResults, TopologyManager};
 use gsy_community_client::types::{ExternalForecast, ExternalMeasurement};
 use gsy_offchain_primitives::utils::h256_to_string;
-
+use reqwest::Client;
+use std::collections::HashSet;
 use serde_json;
 use subxt::utils::H256;
 
 #[cfg(test)]
 mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use gsy_community_client::time_utils::TIMESLOT_MINUTES;
     use super::*;
 
     #[test]
@@ -254,5 +257,31 @@ mod tests {
                 .value,
             "http://w3id.org/fedecom/energyasset#SmartMeter"
         );
+    }
+
+    #[tokio::test]
+    async fn test_fetch_topology_returns_all_pilot_sites() {
+        let manager = TopologyManager::new(&Client::new(), &AreaMarketInfoAdapter::new(None));
+        const TIMESLOT_SECS: u64 = (TIMESLOT_MINUTES * 60) as u64;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let secs_since_last_timeslot = now % ((TIMESLOT_MINUTES * 60) as u64);
+        let last_quarter = now - secs_since_last_timeslot;
+        let current_timeslot = last_quarter + TIMESLOT_SECS;
+        let pilot_sites = manager.fetch_topology().await.unwrap();
+        let results = pilot_sites.results.bindings;
+        let sites_names: HashSet<String> = results.iter().map(|x| x.site_name.value.clone()).collect();
+        let lec_names: HashSet<String> = results.iter().map(|x| x.lec_name.value.clone()).collect();
+
+        assert_eq!(sites_names, HashSet::from([
+            "EZ_Puertollano".to_string(), "ArenaInnovationCommunity".to_string(),
+            "EZ_Barcelona_TMB".to_string(), "UrBeroaCommunity".to_string(),
+            "TownHall".to_string(), "GaramèDistrict".to_string(),
+            "LugaggiaInnovationCommunity".to_string(), "ENBRO_Community".to_string(),
+            "Brico_HQ".to_string()]));
+        assert_eq!(lec_names, HashSet::from([
+            "Pilot1".to_string(), "Pilot2".to_string(), "Pilot3".to_string()]));
     }
 }

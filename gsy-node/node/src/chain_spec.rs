@@ -105,7 +105,7 @@ fn testnet_genesis(
 			"balances": endowed_accounts.iter().cloned().map(|k| (k, 1u64 << 60)).collect::<Vec<_>>(),
 		},
 		"aura": {
-			"authorities": initial_authorities.iter().map(|x| (x.0.clone())).collect::<Vec<_>>(),
+			"authorities": initial_authorities.iter().map(|x| x.0.clone() ).collect::<Vec<_>>(),
 		},
 		"grandpa": {
 			"authorities": initial_authorities.iter().map(|x| (x.1.clone(), 1)).collect::<Vec<_>>(),

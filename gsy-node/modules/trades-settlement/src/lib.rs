@@ -127,10 +127,10 @@ pub mod pallet {
 
 			let valid_matches: Vec<_> = proposed_matches
 				.into_iter()
-				.filter(|bid_offer_match| <Self as Validator>::validate(bid_offer_match))
+				.filter(<Self as Validator>::validate)
 				.collect();
 
-			if valid_matches.len() > 0 {
+			if !valid_matches.is_empty() {
 				for valid_match in valid_matches.clone() {
 					// Check residual orders and add them to storage.
 					if let Some(residual_bid) = valid_match.residual_bid {
@@ -313,9 +313,9 @@ pub mod pallet {
 			selected_energy: u64,
 		) -> bool {
 			residual_bid.eq(&Bid {
-				nonce: bid.nonce.clone().checked_add(1).unwrap(),
+				nonce: bid.nonce.checked_add(1).unwrap(),
 				bid_component: OrderComponent {
-					energy: (bid.bid_component.energy.checked_sub(selected_energy).unwrap()).into(),
+					energy: (bid.bid_component.energy.checked_sub(selected_energy).unwrap()),
 					..bid.bid_component.clone()
 				},
 				..bid.clone()
@@ -328,10 +328,9 @@ pub mod pallet {
 			selected_energy: u64,
 		) -> bool {
 			residual_offer.eq(&Offer {
-				nonce: offer.nonce.clone().checked_add(1).unwrap(),
+				nonce: offer.nonce.checked_add(1).unwrap(),
 				offer_component: OrderComponent {
-					energy: (offer.offer_component.energy.checked_sub(selected_energy).unwrap())
-						.into(),
+					energy: (offer.offer_component.energy.checked_sub(selected_energy).unwrap()),
 					..offer.offer_component.clone()
 				},
 				..offer.clone()
