@@ -3,7 +3,6 @@ use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use subxt::ext::sp_core::H256;
-use subxt::ext::sp_runtime::traits::{BlakeTwo256, Hash};
 use subxt::utils::AccountId32;
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, PartialOrd)]
@@ -83,7 +82,7 @@ impl MatchingData {
 	fn match_preferences(&self) -> (Vec<BidOfferMatch>, Vec<Bid>, Vec<Offer>) {
 		let mut matches = Vec::new();
 
-		type OrderKey = (AccountId32, u32);
+		type OrderKey = ([u8; 32], u32);
 
 		let mut bid_matched_amounts: HashMap<OrderKey, u64> = HashMap::new();
 		let mut offer_matched_amounts: HashMap<OrderKey, u64> = HashMap::new();
@@ -96,13 +95,13 @@ impl MatchingData {
 		for bid in preference_bids {
 			let req = bid.requirements.as_ref().unwrap();
 			let partner_id = req.trading_partner_id.as_ref().unwrap();
-			let bid_key = (bid.buyer.clone(), bid.nonce);
+			let bid_key = (bid.buyer.0, bid.nonce);
 
 			let partner_offers: Vec<&Offer> =
 				self.offers.iter().filter(|o| &o.seller == partner_id).collect();
 
 			for offer in partner_offers {
-				let offer_key = (offer.seller.clone(), offer.nonce);
+				let offer_key = (offer.seller.0, offer.nonce);
 
 				let bid_amount_used = *bid_matched_amounts.get(&bid_key).unwrap_or(&0);
 				let offer_amount_used = *offer_matched_amounts.get(&offer_key).unwrap_or(&0);
@@ -150,13 +149,12 @@ impl MatchingData {
 				bid.requirements.as_ref().and_then(|r| r.trading_partner_id.as_ref()).is_some();
 
 			if has_reqs {
-				let bid_key = (bid.buyer.clone(), bid.nonce);
+				let bid_key = (bid.buyer.0, bid.nonce);
 				let matched_amount = *bid_matched_amounts.get(&bid_key).unwrap_or(&0);
 
 				if bid.bid_component.energy > matched_amount {
 					let mut residual_bid = bid.clone();
 					residual_bid.bid_component.energy -= matched_amount;
-					// If matched partially, update nonce to represent a "new" residual order for phase 2
 					if matched_amount > 0 {
 						residual_bid.nonce = residual_bid.nonce.wrapping_add(1);
 					}
@@ -169,7 +167,7 @@ impl MatchingData {
 
 		let mut remaining_offers = Vec::new();
 		for offer in self.offers.iter() {
-			let offer_key = (offer.seller.clone(), offer.nonce);
+			let offer_key = (offer.seller.0, offer.nonce);
 			let matched_amount = *offer_matched_amounts.get(&offer_key).unwrap_or(&0);
 
 			if offer.offer_component.energy > matched_amount {
@@ -191,15 +189,15 @@ impl MatchingData {
 		bids.sort_by(|a, b| b.bid_component.energy_rate.cmp(&a.bid_component.energy_rate));
 		offers.sort_by(|a, b| a.offer_component.energy_rate.cmp(&b.offer_component.energy_rate));
 
-		type OrderKey = (AccountId32, u32);
+		type OrderKey = ([u8; 32], u32);
 		let mut available_energy_bid: HashMap<OrderKey, u64> = HashMap::new();
 		let mut available_energy_offer: HashMap<OrderKey, u64> = HashMap::new();
 
 		for b in &bids {
-			available_energy_bid.insert((b.buyer.clone(), b.nonce), b.bid_component.energy);
+			available_energy_bid.insert((b.buyer.0, b.nonce), b.bid_component.energy);
 		}
 		for o in &offers {
-			available_energy_offer.insert((o.seller.clone(), o.nonce), o.offer_component.energy);
+			available_energy_offer.insert((o.seller.0, o.nonce), o.offer_component.energy);
 		}
 
 		for offer in &mut offers {
@@ -212,8 +210,8 @@ impl MatchingData {
 					continue;
 				}
 
-				let bid_key = (bid.buyer.clone(), bid.nonce);
-				let offer_key = (offer.seller.clone(), offer.nonce);
+				let bid_key = (bid.buyer.0, bid.nonce);
+				let offer_key = (offer.seller.0, offer.nonce);
 
 				let offer_energy = *available_energy_offer.get(&offer_key).unwrap_or(&0);
 				let bid_energy = *available_energy_bid.get(&bid_key).unwrap_or(&0);
