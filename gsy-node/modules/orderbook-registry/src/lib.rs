@@ -176,7 +176,7 @@ pub mod pallet {
 			);
 			for order_hash in orders_hash {
 				let order_ref =
-					OrderReference { user_id: user_account.clone(), hash: order_hash.clone() };
+					OrderReference { user_id: user_account.clone(), hash: order_hash };
 				let order_status = OrderStatus::Open;
 				// Verify that the order is not already inserted.
 				ensure!(!Self::is_order_registered(&order_ref), <Error<T>>::OrderAlreadyInserted);
@@ -213,7 +213,7 @@ pub mod pallet {
 			);
 			for order_hash in orders_hash {
 				let order_ref =
-					OrderReference { user_id: delegator.clone(), hash: order_hash.clone() };
+					OrderReference { user_id: delegator.clone(), hash: order_hash };
 				let order_status = OrderStatus::Open;
 				// Verify that the order is not already inserted.
 				ensure!(!Self::is_order_registered(&order_ref), <Error<T>>::OrderAlreadyInserted);
@@ -248,12 +248,12 @@ pub mod pallet {
 			);
 			for order_hash in orders_hash {
 				let order_ref =
-					OrderReference { user_id: user_account.clone(), hash: order_hash.clone() };
+					OrderReference { user_id: user_account.clone(), hash: order_hash };
 				let updated_order_status = OrderStatus::Deleted;
 				// Verify that the order is already inserted.
 				ensure!(Self::is_order_registered(&order_ref), <Error<T>>::OpenOrderNotFound);
 				log::info!("deleting order: {:?} - status: {:?}", order_ref, updated_order_status);
-				Self::update_order_status(order_ref.clone(), updated_order_status.clone())?;
+				Self::update_order_status(order_ref.clone(), updated_order_status)?;
 				Self::deposit_event(Event::OrderDeleted(order_ref.user_id, order_ref.hash));
 			}
 			Self::deposit_event(Event::AllOrdersDeleted(user_account));
@@ -285,12 +285,12 @@ pub mod pallet {
 			);
 			for order_hash in orders_hash {
 				let order_ref =
-					OrderReference { user_id: delegator.clone(), hash: order_hash.clone() };
+					OrderReference { user_id: delegator.clone(), hash: order_hash };
 				let updated_order_status = OrderStatus::Deleted;
 				// Verify that the order is already inserted.
 				ensure!(Self::is_order_registered(&order_ref), <Error<T>>::OpenOrderNotFound);
 				log::info!("deleting order: {:?} - status: {:?}", order_ref, updated_order_status);
-				Self::update_order_status(order_ref.clone(), updated_order_status.clone())?;
+				Self::update_order_status(order_ref.clone(), updated_order_status)?;
 				Self::deposit_event(Event::OrderDeleted(order_ref.user_id, order_ref.hash));
 			}
 			Ok(())
@@ -348,7 +348,7 @@ pub mod pallet {
 
 			<OrdersRegistry<T>>::try_mutate(order_ref, |order_status| {
 				if let OrderStatus::Open = order_status {
-					*order_status = updated_order_status.clone();
+					*order_status = updated_order_status;
 					Ok(())
 				} else if let OrderStatus::Executed(_) = order_status {
 					Err(<Error<T>>::OrderAlreadyExecuted)?
@@ -401,15 +401,15 @@ pub mod pallet {
 				trade_uuid: T::Hashing::hash_of(&proposed_match),
 				creation_time: T::TimeProvider::now().as_secs(),
 				offer: proposed_match.offer.clone(),
-				offer_hash: offer_ref.hash.clone(),
+				offer_hash: offer_ref.hash,
 				bid: proposed_match.bid.clone(),
-				bid_hash: bid_ref.hash.clone(),
+				bid_hash: bid_ref.hash,
 				residual_offer: proposed_match.residual_offer.clone(),
 				residual_bid: proposed_match.residual_bid.clone(),
 				parameters: trade_parameters,
 			};
 
-			let updated_order_status = OrderStatus::Executed(trade_parameters.clone());
+			let updated_order_status = OrderStatus::Executed(trade_parameters);
 
 			log::info!(
 				"executing trade with bid and offer: {:?} - status: {:?}",
@@ -420,7 +420,7 @@ pub mod pallet {
 			for order_ref in orders_ref {
 				ensure!(Self::is_order_registered(&order_ref), <Error<T>>::OpenOrderNotFound);
 				let update_result =
-					Self::update_order_status(order_ref, updated_order_status.clone());
+					Self::update_order_status(order_ref, updated_order_status);
 				if update_result.is_err() {
 					return Err(update_result.unwrap_err());
 				}

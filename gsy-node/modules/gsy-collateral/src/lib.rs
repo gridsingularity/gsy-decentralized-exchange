@@ -41,7 +41,7 @@ pub use weights::*;
 
 #[frame_support::pallet]
 pub mod pallet {
-	use super::*;
+	
 	use crate::weights::WeightInfo;
 	use codec::{FullCodec, MaxEncodedLen};
 	use core::fmt::Debug;
@@ -462,7 +462,7 @@ pub mod pallet {
 
 				let vault_info = VaultInfo {
 					owner: user_account.clone(),
-					id: vault_id.clone(),
+					id: vault_id,
 					collateral: CollateralInfo {
 						amount: Zero::zero(),
 						deposit_time: <frame_system::Pallet<T>>::block_number(),
@@ -508,7 +508,7 @@ pub mod pallet {
 			let new_collateral_info =
 				CollateralInfo { amount: collateral_info.amount + collateral_amount, deposit_time };
 			let new_vault_info = VaultInfo { collateral: new_collateral_info, ..vault_info };
-			<Vaults<T>>::insert(&user_account, new_vault_info);
+			<Vaults<T>>::insert(user_account, new_vault_info);
 			Ok(collateral_amount)
 		}
 
@@ -543,7 +543,7 @@ pub mod pallet {
 			let new_collateral_info =
 				CollateralInfo { amount: collateral_info.amount - collateral_amount, deposit_time };
 			let new_vault_info = VaultInfo { collateral: new_collateral_info, ..vault_info };
-			<Vaults<T>>::insert(&user_account, new_vault_info);
+			<Vaults<T>>::insert(user_account, new_vault_info);
 			Ok(collateral_amount)
 		}
 
@@ -659,8 +659,8 @@ pub mod pallet {
 				VaultInfo { collateral: new_from_collateral_info, ..from_vault_info };
 			let new_to_vault_info =
 				VaultInfo { collateral: new_to_collateral_info, ..to_vault_info };
-			<Vaults<T>>::insert(&from_account, new_from_vault_info);
-			<Vaults<T>>::insert(&to_account, new_to_vault_info);
+			<Vaults<T>>::insert(from_account, new_from_vault_info);
+			<Vaults<T>>::insert(to_account, new_to_vault_info);
 			Ok(())
 		}
 

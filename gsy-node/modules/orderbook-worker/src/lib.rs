@@ -468,20 +468,16 @@ pub mod pallet {
 	impl<T: Config> Pallet<T> {
 		pub fn input_order_to_order(order: InputOrder<T::AccountId>) -> Order<T::AccountId> {
 			match &order {
-				InputOrder::Bid(input_order) => Order::Bid {
-					0: Bid {
+				InputOrder::Bid(input_order) => Order::Bid(Bid {
 						buyer: input_order.buyer.clone(),
 						nonce: Self::get_and_increment_user_nonce(input_order.buyer.clone()),
 						bid_component: input_order.bid_component.clone(),
-					},
-				},
-				InputOrder::Offer(input_order) => Order::Offer {
-					0: Offer {
+					}),
+				InputOrder::Offer(input_order) => Order::Offer(Offer {
 						seller: input_order.seller.clone(),
 						nonce: Self::get_and_increment_user_nonce(input_order.seller.clone()),
 						offer_component: input_order.offer_component.clone(),
-					},
-				},
+					}),
 			}
 		}
 		/// The main entry point for the offchain worker.
@@ -585,9 +581,8 @@ pub mod pallet {
 				.deadline(deadline)
 				.add_header("Content-Type", "application/json")
 				.send()
-				.map_err(|e| {
+				.inspect_err(|&e| {
 					log::error!("❌ Failed to send the trade HTTP request: {:?}", e);
-					e
 				})
 				.map_err(|_| http::Error::DeadlineReached)?;
 
@@ -615,9 +610,8 @@ pub mod pallet {
 				.deadline(deadline)
 				.add_header("Content-Type", "application/json")
 				.send()
-				.map_err(|e| {
+				.inspect_err(|&e| {
 					log::error!("❌ Failed to send order HTTP request: {:?}", e);
-					e
 				})
 				.map_err(|_| http::Error::DeadlineReached)?;
 			let response = pending
@@ -648,7 +642,7 @@ pub mod pallet {
 				let order_hash = T::Hashing::hash_of(&order);
 				let order_ref = Self::get_order_owner_id(order.clone());
 				let order_reference =
-					OrderReference { user_id: order_ref.clone(), hash: order_hash.clone() };
+					OrderReference { user_id: order_ref.clone(), hash: order_hash };
 				order_reference_vec.push(order_reference)
 			}
 
@@ -684,7 +678,7 @@ pub mod pallet {
 				let order_hash = T::Hashing::hash_of(&order);
 				let order_ref = Self::get_order_owner_id(order.clone());
 				let order_reference =
-					OrderReference { user_id: order_ref.clone(), hash: order_hash.clone() };
+					OrderReference { user_id: order_ref.clone(), hash: order_hash };
 				order_reference_vec.push(order_reference)
 			}
 
@@ -750,7 +744,7 @@ pub mod pallet {
 			);
 			let order_hash = T::Hashing::hash_of(&order);
 			let order_reference =
-				OrderReference { user_id: sender.clone(), hash: order_hash.clone() };
+				OrderReference { user_id: sender.clone(), hash: order_hash };
 			<OrdersForWorker<T>>::insert(order_reference, order.clone());
 			Self::deposit_event(Event::NewOrderInserted(order, order_hash));
 			Ok(())
@@ -846,14 +840,12 @@ pub mod pallet {
 				Order::Offer(offer) => offer
 					.offer_component
 					.energy
-					.clone()
-					.checked_mul(offer.offer_component.energy_rate.clone())
+					.checked_mul(offer.offer_component.energy_rate)
 					.unwrap(),
 				Order::Bid(bid) => bid
 					.bid_component
 					.energy
-					.clone()
-					.checked_mul(bid.bid_component.energy_rate.clone())
+					.checked_mul(bid.bid_component.energy_rate)
 					.unwrap(),
 			}
 		}
@@ -863,20 +855,16 @@ pub mod pallet {
 			delegator: T::AccountId,
 		) -> Order<T::AccountId> {
 			match &order {
-				InputOrder::Bid(input_order) => Order::Bid {
-					0: Bid {
+				InputOrder::Bid(input_order) => Order::Bid(Bid {
 						buyer: input_order.buyer.clone(),
 						nonce: Self::get_and_increment_user_nonce(delegator),
 						bid_component: input_order.bid_component.clone(),
-					},
-				},
-				InputOrder::Offer(input_order) => Order::Offer {
-					0: Offer {
+					}),
+				InputOrder::Offer(input_order) => Order::Offer(Offer {
 						seller: input_order.seller.clone(),
 						nonce: Self::get_and_increment_user_nonce(delegator),
 						offer_component: input_order.offer_component.clone(),
-					},
-				},
+					}),
 			}
 		}
 	}

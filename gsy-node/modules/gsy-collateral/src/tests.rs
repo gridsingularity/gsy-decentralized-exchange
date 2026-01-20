@@ -56,7 +56,7 @@ fn add_remove_proxies_works() {
 			Error::<Test>::NoSelfProxy
 		);
 		assert_ok!(GsyCollateral::register_proxy_account(RawOrigin::Signed(ALICE).into(), BOB));
-		assert_eq!(GsyCollateral::is_registered_proxy_account(&ALICE, BOB), true);
+		assert!(GsyCollateral::is_registered_proxy_account(&ALICE, BOB));
 		assert_noop!(
 			GsyCollateral::register_proxy_account(RawOrigin::Signed(ALICE).into(), BOB),
 			Error::<Test>::AlreadyRegisteredProxyAccount
@@ -77,7 +77,7 @@ fn add_remove_proxies_works() {
 		);
 		// Remove proxies.
 		assert_ok!(GsyCollateral::unregister_proxy_account(RawOrigin::Signed(ALICE).into(), BOB));
-		assert_eq!(GsyCollateral::is_registered_proxy_account(&ALICE, BOB), false);
+		assert!(!GsyCollateral::is_registered_proxy_account(&ALICE, BOB));
 		assert_noop!(
 			GsyCollateral::unregister_proxy_account(RawOrigin::Signed(ALICE).into(), BOB),
 			Error::<Test>::NotARegisteredProxyAccount
