@@ -1,3 +1,4 @@
+#![allow(clippy::result_large_err)]
 // This file is part of Substrate.
 
 // Copyright (C) 2022 Parity Technologies (UK) Ltd.

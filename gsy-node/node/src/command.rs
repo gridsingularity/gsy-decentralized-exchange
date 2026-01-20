@@ -1,3 +1,4 @@
+#![allow(clippy::result_large_err)]
 use crate::{
 	benchmarking::{inherent_benchmark_data, RemarkBuilder, TransferKeepAliveBuilder},
 	chain_spec,

@@ -1,3 +1,5 @@
+#![allow(clippy::type_complexity)]
+
 // This file is part of GSy-Decentralized Energy Exchange.
 
 // Copyright (C) Grid Singularity Gmbh.
@@ -21,7 +23,7 @@
 //! A collateral management system is a system that manages the collateral of a registered user
 //! in the GSy-Decentralized Energy Exchange. This module allows the user to deposit a collateral
 //! and withdraw it from the system. Moreover it allows the registered user to add or remove proxy
-//!	accounts which can insert order on behalf of the registered user.
+//! accounts which can insert order on behalf of the registered user.
 //! It also allows the root user to register new users allowing them to deposit collateral.
 
 #![cfg_attr(not(feature = "std"), no_std)]

@@ -13,6 +13,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+#![allow(clippy::large_enum_variant)]
+
 //! # Orderbook Registry ( orderbook-registry )
 //!
 //!
@@ -383,9 +385,8 @@ pub mod pallet {
 			let offer_ref =
 				OrderReference { user_id: proposed_match.offer.seller.clone(), hash: offer_hash };
 
-			let mut orders_ref: Vec<OrderReference<T::AccountId, T::Hash>> = Vec::new();
-			orders_ref.push(bid_ref.clone());
-			orders_ref.push(offer_ref.clone());
+			let orders_ref: Vec<OrderReference<T::AccountId, T::Hash>> = vec![
+				bid_ref.clone(), offer_ref.clone()];
 
 			let trade_parameters = TradeParameters {
 				selected_energy: proposed_match.selected_energy,
@@ -421,9 +422,7 @@ pub mod pallet {
 				ensure!(Self::is_order_registered(&order_ref), <Error<T>>::OpenOrderNotFound);
 				let update_result =
 					Self::update_order_status(order_ref, updated_order_status);
-				if update_result.is_err() {
-					return Err(update_result.unwrap_err());
-				}
+				update_result?;
 			}
 
 			if proposed_match.bid.buyer.clone() != proposed_match.offer.seller.clone() {

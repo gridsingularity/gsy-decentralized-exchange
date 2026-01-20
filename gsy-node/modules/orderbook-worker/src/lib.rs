@@ -1,3 +1,4 @@
+#![allow(clippy::large_enum_variant)]
 #![cfg_attr(not(feature = "std"), no_std)]
 
 use frame_support::sp_runtime::transaction_validity::{TransactionValidity, ValidTransaction};
@@ -301,8 +302,7 @@ pub mod pallet {
 					payload.hash,
 					payload.user_id
 				);
-				let mut hash_vector = Vec::<T::Hash>::new();
-				hash_vector.push(payload.hash);
+				let hash_vector: Vec<T::Hash> = vec![payload.hash];
 				<orderbook_registry::Pallet<T>>::delete_orders(origin.clone(), hash_vector)?;
 				Self::delete_order(payload)?;
 			}
@@ -395,11 +395,10 @@ pub mod pallet {
 		/// By default unsigned transactions are disallowed, but implementing the validator
 		/// here we make sure that some particular calls (the ones produced by offchain worker)
 		/// are being whitelisted and marked as valid.
-
 		fn validate_unsigned(_source: TransactionSource, call: &Self::Call) -> TransactionValidity {
 			let valid_tx = |provide| {
 				ValidTransaction::with_tag_prefix("gsy-node")
-					.priority(TransactionPriority::max_value())
+					.priority(TransactionPriority::MAX)
 					.and_provides([&provide])
 					.longevity(3)
 					.propagate(true)
@@ -499,16 +498,10 @@ pub mod pallet {
 			let mut trade_hashes = Vec::<T::Hash>::new();
 
 			for (order_ref, order) in <OrdersForWorker<T>>::iter() {
-				match &order {
-					_order_in_book => {
-						log::info!(
-							"Offchain process: reference: {:?}, order: {:?}",
-							&order_ref,
-							&order
-						);
-						orders.push(order);
-					},
-				}
+				let _order_in_book = &order;
+				log::info!(
+					"Offchain process: reference: {:?}, order: {:?}", &order_ref, &order);
+				orders.push(order);
 			}
 			if !orders.is_empty() {
 				let orders_schema: Vec<OrderSchema<T::AccountId, T::Hash>> = orders
@@ -538,17 +531,14 @@ pub mod pallet {
 			// TODO: Trades transmission process starts here
 
 			for (trade_hash, trade) in <TradesForWorker<T>>::iter() {
-				match &trade {
-					_trade_in_book => {
-						log::info!(
-							"Offchain process: reference: {:?}, trade: {:?}",
-							&trade_hash,
-							&trade
-						);
-						trades.push(trade);
-						trade_hashes.push(trade_hash);
-					},
-				}
+				let _trade_in_book = &trade;
+				log::info!(
+					"Offchain process: reference: {:?}, trade: {:?}",
+					&trade_hash,
+					&trade
+				);
+				trades.push(trade);
+				trade_hashes.push(trade_hash);
 			}
 
 			if !trades.is_empty() {
