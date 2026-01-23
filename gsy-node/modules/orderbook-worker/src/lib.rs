@@ -36,6 +36,7 @@ pub mod crypto {
 		traits::Verify,
 		MultiSignature, MultiSigner,
 	};
+	use scale_info::prelude::string::String;
 
 	app_crypto!(sr25519, KEY_TYPE);
 
@@ -400,18 +401,18 @@ pub mod pallet {
 
 			match call {
 				Call::remove_local_order_by_order_reference {
-					order_payload: ref payload,
+					order_payload: _payload,
 				} => {
 					valid_tx(b"remove_local_order_by_order_reference".to_vec())
 				},
 
 				Call::remove_order_by_order_reference {
-					order_payload: ref payload,
+					order_payload: _payload,
 				} => {
 					valid_tx(b"remove_order_by_order_reference".to_vec())
 				},
 				Call::remove_offchain_worker_trade {
-					trade_payload: ref payload,
+					trade_payload: _payload,
 				} => {
 					valid_tx(b"remove_offchain_worker_trade".to_vec())
 				},
@@ -421,12 +422,12 @@ pub mod pallet {
 		}
 	}
 
-	#[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug, TypeInfo)]
+	#[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug, TypeInfo, DecodeWithMemTracking)]
 	pub struct Payload<AccountId, Hash> {
 		order_reference: Vec<OrderReference<AccountId, Hash>>,
 	}
 
-	#[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug, TypeInfo)]
+	#[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug, TypeInfo, DecodeWithMemTracking)]
 	pub struct TradePayload<AccountId, Hash> {
 		trade: Vec<Trade<AccountId, Hash>>,
 	}
@@ -611,7 +612,7 @@ pub mod pallet {
 			}.into();
 
 			let extrinsic = T::create_bare(call.into());
-			SubmitTransaction::<T, Call<T>>::submit_transaction(extrinsic)
+			let _ = SubmitTransaction::<T, Call<T>>::submit_transaction(extrinsic)
 				.map_err(|()| log::error!("{:?}", <Error<T>>::OffchainSignedTxError));
 
 			Ok(())
@@ -625,7 +626,7 @@ pub mod pallet {
 		pub fn remove_processed_orders_succeeded(
 			orders: Vec<Order<T::AccountId>>,
 		) -> Result<(), Error<T>> {
-			let signer = Signer::<T, T::AuthorityId>::any_account();
+			let _signer = Signer::<T, T::AuthorityId>::any_account();
 			let mut order_reference_vec = Vec::<OrderReference<T::AccountId, T::Hash>>::new();
 			for order in orders {
 				let order_hash = T::Hashing::hash_of(&order);
@@ -644,7 +645,7 @@ pub mod pallet {
 			};
 
 			let extrinsic = T::create_bare(call.into());
-			SubmitTransaction::<T, Call<T>>::submit_transaction(extrinsic)
+			let _ = SubmitTransaction::<T, Call<T>>::submit_transaction(extrinsic)
 				.map_err(|()| log::error!("{:?}", <Error<T>>::OffchainSignedTxError));
 
 			Ok(())
@@ -658,8 +659,6 @@ pub mod pallet {
 		pub fn remove_processed_trades_succeeded(
 			trades: Vec<Trade<T::AccountId, T::Hash>>,
 		) -> Result<(), Error<T>> {
-			let signer = Signer::<T, T::AuthorityId>::any_account();
-
 
 			let payload = TradePayload {
 				trade: trades.clone(),
@@ -670,7 +669,7 @@ pub mod pallet {
 			};
 
 			let extrinsic = T::create_bare(call.into());
-			SubmitTransaction::<T, Call<T>>::submit_transaction(extrinsic)
+			let _ = SubmitTransaction::<T, Call<T>>::submit_transaction(extrinsic)
 				.map_err(|()| log::error!("{:?}", <Error<T>>::OffchainSignedTxError));
 
 			Ok(())

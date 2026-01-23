@@ -26,7 +26,7 @@ pub struct CollateralInfo<Balance, BlockNumber> {
 
 bitflags! {
 	/// Vault status flags.
-	#[derive(MaxEncodedLen, Encode, Decode, TypeInfo)]
+	#[derive(Copy, Clone, Debug, PartialEq)]
 	pub struct VaultStatus: u32 {
 		/// The vault is closed.
 		const CLOSED = 0b0000_0001;
@@ -39,6 +39,29 @@ bitflags! {
 	}
 }
 
+impl TypeInfo for VaultStatus {
+	type Identity = Self;
+
+	fn type_info() -> scale_info::Type {
+		u32::type_info()
+	}
+}
+impl Encode for VaultStatus {
+	fn encode_to<T: codec::Output + ?Sized>(&self, dest: &mut T) {
+		self.bits().encode_to(dest)
+	}
+}
+impl Decode for VaultStatus {
+	fn decode<I: codec::Input>(input: &mut I) -> Result<Self, codec::Error> {
+		let bits = u32::decode(input)?;
+		Ok(Self::from_bits_truncate(bits))
+	}
+}
+impl MaxEncodedLen for VaultStatus {
+	fn max_encoded_len() -> usize {
+		4 // because u32 occupies 4 bytes
+	}
+}
 impl Default for VaultStatus {
 	fn default() -> Self {
 		Self::empty()

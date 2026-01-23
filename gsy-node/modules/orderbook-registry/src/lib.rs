@@ -46,7 +46,7 @@ pub mod pallet {
 	use frame_support::{pallet_prelude::*, traits::Currency, traits::UnixTime, transactional};
 	use frame_system::pallet_prelude::*;
 	use gsy_primitives::v0::{BidOfferMatch, OrderReference, OrderStatus, Trade, TradeParameters};
-	use scale_info::{prelude::vec::Vec, TypeInfo};
+	use scale_info::{prelude::vec::Vec, prelude::vec, TypeInfo};
 	use sp_runtime::traits::Hash;
 
 	pub type BalanceOf<T> =

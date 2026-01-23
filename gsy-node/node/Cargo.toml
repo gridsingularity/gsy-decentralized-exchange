@@ -19,61 +19,55 @@ path = "src/main.rs"
 
 [dependencies]
 # Third-party requirements
-clap = { version = "4.5.4", features = ["derive"] }
-futures = { version = "0.3.30", features = ["thread-pool"] }
-serde_json = { version = "1.0.114", default-features = false }
-jsonrpsee = { version = "0.22.4", features = ["server"] }
+clap = { version = "4", features = ["derive"] }
+futures = { version = "0", features = ["thread-pool"] }
+serde_json = { version = "1", default-features = false }
+jsonrpsee = { version = "0.24.10", features = ["server"] }
 
-codec = { workspace = true }
-scale-info = { workspace = true }
-sp-runtime = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.20.4", default-features = false }
-frame-support = { workspace = true }
-frame-system = { workspace = true }
-gsy-primitives = { workspace = true }
+# Substrate core
+sc-cli = { workspace = true, default-features = true }
+sc-executor = { workspace = true, default-features = true }
+sc-network = { workspace = true, default-features = true }
+sc-offchain = { workspace = true, default-features = true }
+sc-rpc = { workspace = true, default-features = true }
+sc-service = { workspace = true, default-features = true }
+sc-telemetry = { workspace = true, default-features = true }
+sc-transaction-pool = { workspace = true, default-features = true }
+sc-transaction-pool-api = { workspace = true, default-features = true }
+sc-consensus-aura = { workspace = true, default-features = true }
+sc-consensus-grandpa = { workspace = true, default-features = true }
+sc-consensus = { workspace = true, default-features = true }
+sc-client-api = { workspace = true, default-features = true }
+sc-rpc-api = { workspace = true, default-features = true }
+sc-basic-authorship = { workspace = true, default-features = true }
 
-sc-cli = { workspace = true }
-sp-core = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.20.4" }
-sc-executor = { workspace = true }
-sc-network = { workspace = true }
-sc-offchain = { workspace = true }
-sc-service = { workspace = true }
-sc-telemetry = { workspace = true }
-sc-keystore = { workspace = true }
-sc-transaction-pool = { workspace = true }
-sc-transaction-pool-api = { workspace = true }
-sc-consensus-aura = { workspace = true }
-sc-consensus-grandpa = { workspace = true }
-sp-consensus-grandpa = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.20.4" }
-sp-consensus-aura = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.20.4" }
-sc-consensus = { workspace = true }
-sc-client-api = { workspace = true }
-sp-timestamp = { workspace = true }
-sp-inherents = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.20.4" }
-sp-io = { workspace = true }
-sp-keyring = { workspace = true }
-pallet-transaction-payment = { workspace = true }
-pallet-transaction-payment-rpc = { workspace = true }
+# Substrate primitives
+sp-core = { workspace = true, default-features = true }
+sp-consensus-grandpa = { workspace = true, default-features = true }
+sp-consensus-aura = { workspace = true, default-features = true  }
+sp-runtime = { workspace = true, default-features = true }
+sp-timestamp = { workspace = true, default-features = true }
+sp-inherents = { workspace = true, default-features = true }
+sp-io = { workspace = true, default-features = true }
+sp-keyring = { workspace = true, default-features = true }
+sp-blockchain = { workspace = true, default-features = true }
+sp-block-builder = { workspace = true, default-features = true }
+sp-api = { workspace = true, default-features = true }
 
-# These dependencies are used for the GSy node's RPCs
-sc-rpc = { workspace = true }
-sp-api = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.20.4" }
-sc-rpc-api = { workspace = true }
-sp-blockchain = { workspace = true }
-sp-block-builder = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.20.4" }
-sc-basic-authorship = { workspace = true }
-substrate-frame-rpc-system = { workspace = true }
+# Frame and pallets
+frame-system = { workspace = true, default-features = true }
+pallet-transaction-payment = { workspace = true, default-features = true }
+pallet-transaction-payment-rpc = { workspace = true, default-features = true }
+substrate-frame-rpc-system = { workspace = true, default-features = true }
 
 # These dependencies are used for runtime benchmarking
-frame-benchmarking = { default-features = false, git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.20.4" }
-frame-benchmarking-cli = { default-features = false, git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.20.4" }
+frame-benchmarking-cli = { workspace = true, default-features = true }
 
 # Local Dependencies
 gsy-node-runtime = { version = "0.0.2", path = "../runtime" }
 
-# try-runtime-cli = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.20.4", optional = true }
-
 [build-dependencies]
-substrate-build-script-utils = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.20.4" }
+substrate-build-script-utils = { default-features = true, git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.21.0" }
 
 [features]
 default = []

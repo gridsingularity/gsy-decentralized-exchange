@@ -30,7 +30,7 @@ use sp_core::{
 	OpaqueMetadata,
 };
 use sp_runtime::{
-	create_runtime_str, generic,
+	generic,
 	generic::Era,
 	impl_opaque_keys,
 	traits::{
@@ -41,7 +41,7 @@ use sp_runtime::{
 	ApplyExtrinsicResult,
 };
 
-use sp_std::prelude::*;
+use sp_std::{prelude::*, borrow::Cow};
 #[cfg(feature = "std")]
 use sp_version::NativeVersion;
 use sp_version::RuntimeVersion;
@@ -64,7 +64,7 @@ pub use frame_support::{
 pub use frame_system::Call as SystemCall;
 pub use pallet_balances::Call as BalancesCall;
 pub use pallet_timestamp::Call as TimestampCall;
-use pallet_transaction_payment::{ConstFeeMultiplier, CurrencyAdapter, Multiplier};
+use pallet_transaction_payment::{ConstFeeMultiplier, FungibleAdapter, Multiplier};
 
 #[cfg(any(feature = "std", test))]
 pub use sp_runtime::BuildStorage;
@@ -108,8 +108,8 @@ pub mod opaque {
 // https://docs.substrate.io/main-docs/build/upgrade#runtime-versioning
 #[sp_version::runtime_version]
 pub const VERSION: RuntimeVersion = RuntimeVersion {
-	spec_name: create_runtime_str!("gsy-node"),
-	impl_name: create_runtime_str!("gsy-node"),
+	spec_name: Cow::Borrowed("gsy-node"),
+	impl_name: Cow::Borrowed("gsy-node"),
 	authoring_version: 1,
 	// The version of the runtime specification. A full node will not attempt to use its native
 	//   runtime in substitute for the on-chain Wasm runtime unless all of `spec_name`,
@@ -120,7 +120,7 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
 	impl_version: 1,
 	apis: RUNTIME_API_VERSIONS,
 	transaction_version: 1,
-	state_version: 1,
+	system_version: 1,
 };
 
 /// This determines the average expected block time that we are targeting.
@@ -265,7 +265,7 @@ parameter_types! {
 
 impl pallet_transaction_payment::Config for Runtime {
 	type RuntimeEvent = RuntimeEvent;
-	type OnChargeTransaction = CurrencyAdapter<Balances, ()>;
+	type OnChargeTransaction = FungibleAdapter<Balances, ()>;
 	type OperationalFeeMultiplier = ConstU8<5>;
 	type WeightToFee = IdentityFee<Balance>;
 	type LengthToFee = IdentityFee<Balance>;
@@ -317,14 +317,14 @@ impl frame_system::offchain::AppCrypto<sp_runtime::MultiSigner, sp_runtime::Mult
 	for AuraAuthId
 {
 	type RuntimeAppPublic = AuraId;
-	type GenericSignature = Sr25519Signature;
 	type GenericPublic = Sr25519Public;
+	type GenericSignature = Sr25519Signature;
 }
 
 impl orderbook_worker::Config for Runtime {
 	type AuthorityId = AuraAuthId;
 
-	type Call = Call;
+	type Call = RuntimeCall;
 	type UnsignedPriority = UnsignedPriority;
 	type WeightInfo = orderbook_worker::weights::SubstrateWeightInfo<Runtime>;
 }
@@ -349,16 +349,34 @@ parameter_types! {
 	pub const MaxPeerDataEncodingSize: u32 = 1_000;
 }
 
+impl<LocalCall> frame_system::offchain::CreateTransactionBase<LocalCall> for Runtime
+where
+	RuntimeCall: From<LocalCall>,
+{
+	type Extrinsic = UncheckedExtrinsic;
+	type RuntimeCall = RuntimeCall;
+}
+
+impl<LocalCall> frame_system::offchain::CreateBare<LocalCall> for Runtime
+where
+	RuntimeCall: From<LocalCall>,
+{
+
+	fn create_bare(call: RuntimeCall) -> UncheckedExtrinsic {
+		UncheckedExtrinsic::new_bare(call)
+	}
+}
+
 impl<LocalCall> frame_system::offchain::CreateSignedTransaction<LocalCall> for Runtime
 where
 	RuntimeCall: From<LocalCall>,
 {
 	fn create_signed_transaction<C: frame_system::offchain::AppCrypto<Self::Public, Self::Signature>>(
-		call: RuntimeCall,
+		call: <Self as frame_system::offchain::CreateTransactionBase<LocalCall>>::RuntimeCall,
 		public: <Signature as traits::Verify>::Signer,
 		account: AccountId,
 		nonce: Index,
-	) -> Option<(RuntimeCall, <UncheckedExtrinsic as traits::Extrinsic>::SignaturePayload)> {
+	) -> Option<Self::Extrinsic> {
 		let tip = 0;
 		// take the biggest period possible.
 		let period =
@@ -389,9 +407,16 @@ where
 		let address =
 			<<Runtime as frame_system::Config>::Lookup as StaticLookup>::unlookup(account);
 		let (call, extra, _) = raw_payload.deconstruct();
-		Some((call, (address, signature, extra)))
+
+		Some(UncheckedExtrinsic::new_signed(
+			call,
+			address,
+			signature,
+			extra,
+		))
 	}
 }
+
 
 // Create the runtime by composing the FRAME pallets that were previously configured.
 #[frame_support::runtime]
@@ -454,6 +479,8 @@ pub type Address = sp_runtime::MultiAddress<AccountId, ()>;
 pub type Header = generic::Header<BlockNumber, BlakeTwo256>;
 /// Block type as expected by this runtime.
 pub type Block = generic::Block<Header, UncheckedExtrinsic>;
+pub type LazyBlock = sp_runtime::generic::LazyBlock<Header, UncheckedExtrinsic>;
+
 /// The SignedExtension to the basic transaction logic.
 pub type SignedExtra = (
 	// frame_system::CheckNonZeroSender<Runtime>,
@@ -505,7 +532,7 @@ impl_runtime_apis! {
 			VERSION
 		}
 
-		fn execute_block(block: Block) {
+		fn execute_block(block: LazyBlock) {
 			Executive::execute_block(block);
 		}
 
@@ -542,7 +569,7 @@ impl_runtime_apis! {
 		}
 
 		fn check_inherents(
-			block: Block,
+			block: LazyBlock,
 			data: sp_inherents::InherentData,
 		) -> sp_inherents::CheckInherentsResult {
 			data.check_extrinsics(&block)
@@ -571,7 +598,7 @@ impl_runtime_apis! {
 		}
 
 		fn authorities() -> Vec<AuraId> {
-			Aura::authorities().into_inner()
+			pallet_aura::Authorities::<Runtime>::get().to_vec()
 		}
 	}
 

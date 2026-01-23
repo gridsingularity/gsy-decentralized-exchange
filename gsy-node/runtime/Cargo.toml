@@ -4,7 +4,7 @@ version = '0.0.2'
 description = 'The GSy Node FRAME-based Substrate runtime.'
 authors = ['Grid Singularity <https://github.com/gridsingularity>']
 homepage = 'https://gridsingularity.com/'
-edition = '2021'
+edition = '2024'
 license = 'Unlicense'
 publish = false
 repository = 'https://github.com/gridsingularity/gsy-node'
@@ -20,7 +20,7 @@ targets = ["x86_64-unknown-linux-gnu"]
 [dependencies]
 codec = { workspace = true }
 scale-info = { workspace = true }
-frame-support = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.20.4", default-features = false, features = ["experimental"] }
+frame-support = { workspace = true, default-features = false, features = ["experimental"] }
 frame-system = { workspace = true }
 gsy-primitives = { workspace = true }
 
@@ -31,32 +31,23 @@ pallet-grandpa = { workspace = true }
 pallet-sudo = { workspace = true }
 pallet-timestamp = { workspace = true }
 pallet-transaction-payment = { workspace = true }
-frame-try-runtime = { default-features = false, git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.20.4", optional = true }
+frame-try-runtime = { workspace = true, default-features = false, optional = true }
 frame-executive =  { workspace = true }
 
 
 # primitives
-sp-api = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.20.4", default-features = false }
-sp-block-builder = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.20.4", default-features = false }
-sp-consensus-aura = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.20.4", default-features = false, features = [
-	"serde",
-] }
-sp-consensus-grandpa = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.20.4", default-features = false, features = [
-	"serde",
-] }
-sp-core = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.20.4", default-features = false, features = [
-	"serde",
-] }
-sp-inherents = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.20.4", default-features = false }
+sp-api = { workspace = true, default-features = false }
+sp-block-builder = { workspace = true, default-features = false }
+sp-consensus-aura = { workspace = true, default-features = false, features = ["serde"] }
+sp-consensus-grandpa = { workspace = true, default-features = false, features = ["serde"] }
+sp-core = { workspace = true, default-features = false, features = ["serde"] }
+sp-inherents = { workspace = true, default-features = false }
 sp-offchain = { workspace = true }
-sp-runtime = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.20.4", default-features = false, features = [
-	"serde",
-] }
+sp-runtime = { workspace = true, default-features = false, features = ["serde"] }
 sp-session = { workspace = true }
 sp-std = { workspace = true }
-sp-storage = { workspace = true }
 sp-transaction-pool = { workspace = true }
-sp-version = { workspace = true }
+sp-version = { workspace = true, features = ["serde"] }
 sp-genesis-builder = { workspace = true }
 
 # Custom Pallets
@@ -69,15 +60,15 @@ trades-settlement = { workspace = true }
 frame-system-rpc-runtime-api = { workspace = true }
 pallet-transaction-payment-rpc-runtime-api = { workspace = true }
 
-log = { version = "0.4.21", default-features = false }
+log = { version = "0", default-features = false }
 
 # Used for runtime benchmarking
-frame-benchmarking = { default-features = false, git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.20.4" }
-frame-system-benchmarking = { default-features = false, git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.20.4", optional = true }
-hex-literal = { version = "0.4.1", default-features = false, optional = true }
+frame-benchmarking = { workspace = true, default-features = false, optional = true }
+frame-system-benchmarking = { workspace = true, default-features = false, optional = true }
+hex-literal = { version = "1", default-features = false, optional = true }
 
 [build-dependencies]
-substrate-wasm-builder = { default-features = false, git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.20.4" }
+substrate-wasm-builder = { workspace = true, default-features = true }
 
 [features]
 default = ["std"]
