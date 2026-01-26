@@ -206,6 +206,8 @@ impl frame_system::Config for Runtime {
 
 	/// The origin account
 	type RuntimeOrigin = RuntimeOrigin;
+
+	type SingleBlockMigrations = SingleBlockMigrations;
 }
 
 impl pallet_aura::Config for Runtime {
@@ -497,7 +499,7 @@ pub type SignedExtra = (
 ///
 /// This can be a tuple of types, each implementing `OnRuntimeUpgrade`.
 #[allow(unused_parens)]
-type Migrations = ();
+type SingleBlockMigrations = ();
 
 /// Unchecked extrinsic type as expected by this runtime.
 pub type UncheckedExtrinsic =
@@ -512,7 +514,6 @@ pub type Executive = frame_executive::Executive<
 	frame_system::ChainContext<Runtime>,
 	Runtime,
 	AllPalletsWithSystem,
-	Migrations,
 >;
 
 #[cfg(feature = "runtime-benchmarks")]

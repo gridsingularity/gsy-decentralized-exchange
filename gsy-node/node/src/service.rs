@@ -12,7 +12,6 @@ use sc_transaction_pool_api::OffchainTransactionPoolFactory;
 use sp_consensus_aura::sr25519::AuthorityPair as AuraPair;
 use std::{sync::Arc, time::Duration};
 use sc_service::config::ExecutorConfiguration;
-pub use sc_rpc_api::DenyUnsafe;
 
 
 pub(crate) type FullClient = sc_service::TFullClient<
@@ -222,7 +221,7 @@ pub fn new_full<
 		let pool = transaction_pool.clone();
 
 		Box::new(move |_| {
-			let deps = crate::rpc::FullDeps { client: client.clone(), pool: pool.clone(), deny_unsafe: DenyUnsafe::No };
+			let deps = crate::rpc::FullDeps { client: client.clone(), pool: pool.clone() };
 			crate::rpc::create_full(deps).map_err(Into::into)
 		})
 	};

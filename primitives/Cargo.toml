@@ -2,7 +2,7 @@
 name = "gsy-primitives"
 version = "0.0.2"
 authors = ['Grid Singularity <https://github.com/gridsingularity>']
-edition = "2021"
+edition = "2024"
 
 [lib]
 name = "gsy_primitives"

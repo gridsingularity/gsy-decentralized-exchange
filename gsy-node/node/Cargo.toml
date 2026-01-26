@@ -61,18 +61,19 @@ pallet-transaction-payment-rpc = { workspace = true, default-features = true }
 substrate-frame-rpc-system = { workspace = true, default-features = true }
 
 # These dependencies are used for runtime benchmarking
-frame-benchmarking-cli = { workspace = true, default-features = true }
+frame-benchmarking-cli = { workspace = true, default-features = true, optional = true }
 
 # Local Dependencies
 gsy-node-runtime = { version = "0.0.2", path = "../runtime" }
 
 [build-dependencies]
-substrate-build-script-utils = { default-features = true, git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.21.0" }
+substrate-build-script-utils = { workspace = true }
 
 [features]
 default = []
 # Dependencies that are only required if runtime benchmarking should be build.
 runtime-benchmarks = [
+    "frame-benchmarking-cli",
     "frame-benchmarking-cli/runtime-benchmarks",
     "frame-system/runtime-benchmarks",
     "sc-service/runtime-benchmarks",
