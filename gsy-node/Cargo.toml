@@ -24,6 +24,7 @@ trades-settlement = { version = '0.0.2', default-features = false, path = './mod
 codec = { package = "parity-scale-codec", version = "3.6.9", default-features = false, features = ["derive"] }
 scale-info = { version = "2.11.2", default-features = false, features = ["derive"] }
 frame-support = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.21.0", default-features = false }
+frame-metadata-hash-extension = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.21.0", default-features = false }
 frame-system = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.21.0", default-features = false, features = ["runtime-benchmarks"] }
 frame-executive =  { default-features = false, git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.21.0" }
 frame-try-runtime = { default-features = false, git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.21.0" }
@@ -83,3 +84,5 @@ sp-genesis-builder = { git = "https://github.com/paritytech/polkadot-sdk.git", t
 sp-blockchain = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.21.0", default-features = false }
 
 substrate-build-script-utils = { default-features = true, git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.21.0" }
+
+serde_json = { version = "1", default-features = false }

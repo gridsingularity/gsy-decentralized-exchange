@@ -53,6 +53,7 @@ sp-keyring = { workspace = true, default-features = true }
 sp-blockchain = { workspace = true, default-features = true }
 sp-block-builder = { workspace = true, default-features = true }
 sp-api = { workspace = true, default-features = true }
+sp-genesis-builder = { workspace = true, default-features = true }
 
 # Frame and pallets
 frame-system = { workspace = true, default-features = true }
@@ -73,9 +74,9 @@ substrate-build-script-utils = { workspace = true }
 default = []
 # Dependencies that are only required if runtime benchmarking should be build.
 runtime-benchmarks = [
-    "frame-benchmarking-cli",
     "frame-benchmarking-cli/runtime-benchmarks",
     "frame-system/runtime-benchmarks",
+    "pallet-transaction-payment/runtime-benchmarks",
     "sc-service/runtime-benchmarks",
     "gsy-node-runtime/runtime-benchmarks",
     "sp-runtime/runtime-benchmarks",
@@ -87,5 +88,4 @@ try-runtime = [
     "pallet-transaction-payment/try-runtime",
     "gsy-node-runtime/try-runtime",
     "sp-runtime/try-runtime",
-#    "try-runtime-cli/try-runtime",
 ]

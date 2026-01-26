@@ -1,19 +1,17 @@
-FROM ubuntu:22.04 AS chef
+FROM ubuntu:24.04 AS chef
 WORKDIR /root
 ENV PATH=$PATH:/root/.cargo/bin
 RUN apt-get update && \
     apt-get upgrade -y && \
-    apt-get install -y cmake curl libssl-dev git clang llvm libudev-dev protobuf-compiler && \
+    apt-get install -y cmake curl libssl-dev git clang llvm libudev-dev protobuf-compiler libclang-dev && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* && \
-    curl https://sh.rustup.rs -sSf | sh -s -- -y --no-modify-path && \
-    rustup install 1.85.0 && \
-    rustup default 1.85.0 && \
-    rustup target add wasm32-unknown-unknown --toolchain 1.85.0 && \
-    rustup component add rust-src --toolchain 1.85.0 && \
-    rustup install nightly-2024-04-25 && \
-    rustup target add wasm32-unknown-unknown --toolchain nightly-2024-04-25 && \
-    cargo install cargo-chef
+    curl https://sh.rustup.rs -sSf | sh -s -- -y --no-modify-path
+RUN rustup install 1.93.0
+RUN rustup default 1.93.0
+RUN rustup target add wasm32-unknown-unknown --toolchain 1.93.0
+RUN rustup component add rust-src --toolchain 1.93.0
+RUN cargo install cargo-chef
 
 FROM chef AS planner
 # First prepare dependencies of primitives
