@@ -29,7 +29,7 @@ impl Constants {
             ),
             FEDECOM_INFLUX_DB_ORG: read_env_or("FEDECOM_INFLUX_DB_ORG", "fedecom".to_string()),
             // Token is mandatory
-            FEDECOM_INFLUX_DB_TOKEN: env::var("FEDECOM_INFLUX_DB_TOKEN".to_string()).unwrap(),
+            FEDECOM_INFLUX_DB_TOKEN: read_env_or("FEDECOM_INFLUX_DB_TOKEN", "".to_string()),
         }
     }
 }
