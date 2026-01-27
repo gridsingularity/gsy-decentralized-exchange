@@ -63,7 +63,7 @@ impl_runtime_apis! {
 
 	impl sp_api::Metadata<Block> for Runtime {
 		fn metadata() -> OpaqueMetadata {
-			OpaqueMetadata::new(Runtime::metadata().into())
+			OpaqueMetadata::new(crate::Runtime::metadata().into())
 		}
 
 		fn metadata_at_version(version: u32) -> Option<OpaqueMetadata> {
@@ -72,12 +72,6 @@ impl_runtime_apis! {
 
 		fn metadata_versions() -> Vec<u32> {
 			Runtime::metadata_versions()
-		}
-	}
-
-	impl frame_support::view_functions::runtime_api::RuntimeViewFunction<Block> for Runtime {
-		fn execute_view_function(id: frame_support::view_functions::ViewFunctionId, input: Vec<u8>) -> Result<Vec<u8>, frame_support::view_functions::ViewFunctionDispatchError> {
-			Runtime::execute_view_function(id, input)
 		}
 	}
 

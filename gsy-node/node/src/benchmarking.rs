@@ -132,7 +132,9 @@ pub fn create_benchmark_extrinsic(
 		.map(|c| c / 2)
 		.unwrap_or(2);
 
-	let extra: runtime::SignedExtra = (
+	let tx_ext: runtime::TxExtension = (
+		frame_system::AuthorizeCall::<runtime::Runtime>::new(),
+		frame_system::CheckNonZeroSender::<runtime::Runtime>::new(),
 		frame_system::CheckSpecVersion::<runtime::Runtime>::new(),
 		frame_system::CheckTxVersion::<runtime::Runtime>::new(),
 		frame_system::CheckGenesis::<runtime::Runtime>::new(),
@@ -143,11 +145,13 @@ pub fn create_benchmark_extrinsic(
 		frame_system::CheckNonce::<runtime::Runtime>::from(nonce),
 		frame_system::CheckWeight::<runtime::Runtime>::new(),
 		pallet_transaction_payment::ChargeTransactionPayment::<runtime::Runtime>::from(0),
+		frame_metadata_hash_extension::CheckMetadataHash::<runtime::Runtime>::new(false),
+		frame_system::WeightReclaim::<runtime::Runtime>::new(),
 	);
 
 	let raw_payload = runtime::SignedPayload::from_raw(
 		call.clone(),
-		extra.clone(),
+		tx_ext.clone(),
 		(
 			runtime::VERSION.spec_version,
 			runtime::VERSION.transaction_version,
@@ -164,7 +168,7 @@ pub fn create_benchmark_extrinsic(
 		call.clone(),
 		sp_runtime::AccountId32::from(sender.public()).into(),
 		runtime::Signature::Sr25519(signature.clone()),
-		extra.clone(),
+		tx_ext,
 	)
 }
 

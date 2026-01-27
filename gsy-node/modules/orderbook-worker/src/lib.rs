@@ -88,6 +88,10 @@ pub mod pallet {
 		+ orderbook_registry::Config
 		+ gsy_collateral::Config
 	{
+
+		#[allow(deprecated)]
+		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
+
 		type AuthorityId: AppCrypto<Self::Public, Self::Signature>;
 
 		/// A dispatchable call type. We need to define it for the Orderbook worker to

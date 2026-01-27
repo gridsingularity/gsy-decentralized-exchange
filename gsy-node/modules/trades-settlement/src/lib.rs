@@ -66,6 +66,9 @@ pub mod pallet {
 		+ gsy_collateral::Config
 	{
 
+		#[allow(deprecated)]
+		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
+
 		type TradeSettlementWeightInfo: TradeSettlementWeightInfo;
 
 		/// The length of the market slot in seconds.

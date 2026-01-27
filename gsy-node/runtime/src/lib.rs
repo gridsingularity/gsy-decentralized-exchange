@@ -28,23 +28,18 @@ pub mod apis;
 pub mod genesis_config_presets;
 
 use codec::Encode;
-use pallet_grandpa::AuthorityId as GrandpaId;
-use sp_api::impl_runtime_apis;
 use sp_consensus_aura::sr25519::AuthorityId as AuraId;
 use sp_core::{
-	crypto::KeyTypeId, sr25519::Public as Sr25519Public, sr25519::Signature as Sr25519Signature,
-	OpaqueMetadata,
+	sr25519::Public as Sr25519Public, sr25519::Signature as Sr25519Signature,
 };
 use sp_runtime::{
 	generic,
 	generic::Era,
 	impl_opaque_keys,
 	traits::{
-		self, AccountIdLookup, BlakeTwo256, Block as BlockT, NumberFor, One, SaturatedConversion,
-		StaticLookup,
+		self, AccountIdLookup, BlakeTwo256, One, SaturatedConversion, StaticLookup,
 	},
-	transaction_validity::{TransactionPriority, TransactionSource, TransactionValidity},
-	ApplyExtrinsicResult,
+	transaction_validity::TransactionPriority,
 };
 
 
@@ -180,6 +175,7 @@ impl frame_system::Config for Runtime {
 	/// The basic call filter to use in dispatchable.
 	type BaseCallFilter = frame_support::traits::Everything;
 	type RuntimeCall = RuntimeCall;
+
 	type PalletInfo = PalletInfo;
 	/// The hashing algorithm used.
 	type Hashing = BlakeTwo256;
@@ -249,13 +245,14 @@ impl pallet_timestamp::Config for Runtime {
 pub const EXISTENTIAL_DEPOSIT: u128 = 500;
 
 impl pallet_balances::Config for Runtime {
+	type RuntimeEvent = RuntimeEvent;
+
 	type MaxLocks = ConstU32<50>;
 	type MaxReserves = ();
 	type ReserveIdentifier = [u8; 8];
 	/// The type for recording an account's balance.
 	type Balance = Balance;
 	/// The ubiquitous event type.
-	type RuntimeEvent = RuntimeEvent;
 	type DustRemoval = ();
 	type ExistentialDeposit = ConstU128<EXISTENTIAL_DEPOSIT>;
 	type AccountStore = System;
@@ -295,6 +292,7 @@ parameter_types! {
 }
 
 impl orderbook_registry::Config for Runtime {
+	type RuntimeEvent = RuntimeEvent;
 	type Currency = Balances;
 	type RegistryProxyAccountLimit = ConstU32<32>;
 	type WeightInfo = ();
@@ -303,6 +301,7 @@ impl orderbook_registry::Config for Runtime {
 
 /// Configure the gsy-collateral in modules/gsy-collateral.
 impl gsy_collateral::Config for Runtime {
+	type RuntimeEvent = RuntimeEvent;
 	type Currency = Balances;
 	type ProxyAccountLimit = ProxyAccountLimit;
 	type PalletId = VaultPalletId;
@@ -315,6 +314,11 @@ parameter_types! {
 	pub const MarketSlotDuration: u64 = SECS_PER_MARKET_SLOT;
 }
 
+impl trades_settlement::Config for Runtime {
+	type RuntimeEvent = RuntimeEvent;
+	type MarketSlotDuration = MarketSlotDuration;
+	type TradeSettlementWeightInfo = trades_settlement::weights::SubstrateWeightInfo<Runtime>;
+}
 
 parameter_types! {
 	// Priority for a transaction. Additive. Higher is better.
@@ -322,15 +326,10 @@ parameter_types! {
 }
 
 pub struct AuraAuthId;
-impl frame_system::offchain::AppCrypto<sp_runtime::MultiSigner, sp_runtime::MultiSignature>
-	for AuraAuthId
-{
-	type RuntimeAppPublic = AuraId;
-	type GenericPublic = Sr25519Public;
-	type GenericSignature = Sr25519Signature;
-}
 
 impl orderbook_worker::Config for Runtime {
+	type RuntimeEvent = RuntimeEvent;
+
 	type AuthorityId = AuraAuthId;
 
 	type Call = RuntimeCall;
@@ -338,9 +337,13 @@ impl orderbook_worker::Config for Runtime {
 	type WeightInfo = orderbook_worker::weights::SubstrateWeightInfo<Runtime>;
 }
 
-impl trades_settlement::Config for Runtime {
-	type MarketSlotDuration = MarketSlotDuration;
-	type TradeSettlementWeightInfo = trades_settlement::weights::SubstrateWeightInfo<Runtime>;
+
+impl frame_system::offchain::AppCrypto<sp_runtime::MultiSigner, sp_runtime::MultiSignature>
+for AuraAuthId
+{
+	type RuntimeAppPublic = AuraId;
+	type GenericPublic = Sr25519Public;
+	type GenericSignature = Sr25519Signature;
 }
 
 impl frame_system::offchain::SigningTypes for Runtime {
@@ -425,7 +428,6 @@ where
 		))
 	}
 }
-
 
 // Create the runtime by composing the FRAME pallets that were previously configured.
 #[frame_support::runtime]

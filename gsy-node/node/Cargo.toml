@@ -71,7 +71,8 @@ gsy-node-runtime = { version = "0.0.2", path = "../runtime" }
 substrate-build-script-utils = { workspace = true }
 
 [features]
-default = []
+default = ["std"]
+std = ["gsy-node-runtime/std"]
 # Dependencies that are only required if runtime benchmarking should be build.
 runtime-benchmarks = [
     "frame-benchmarking-cli/runtime-benchmarks",

@@ -3689,6 +3689,7 @@ dependencies = [
  "sp-runtime",
  "sp-session",
  "sp-std",
+ "sp-storage",
  "sp-transaction-pool",
  "sp-version",
  "substrate-wasm-builder",
@@ -9978,9 +9979,9 @@ checksum = "38b58827f4464d87d377d175e90bf58eb00fd8716ff0a62f80356b5e61555d0d"
 
 [[package]]
 name = "siphasher"
-version = "1.0.1"
+version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "56199f7ddabf13fe5074ce809e7d3f42b42ae711800501b5b16ea82ad029c39d"
+checksum = "b2aa850e253778c88a04c3d7323b043aeda9d3e30d5971937c1855769763678e"
 
 [[package]]
 name = "slab"
@@ -10064,7 +10065,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "sha3",
- "siphasher 1.0.1",
+ "siphasher 1.0.2",
  "slab",
  "smallvec",
  "soketto",
@@ -10103,7 +10104,7 @@ dependencies = [
  "rand_chacha 0.3.1",
  "serde",
  "serde_json",
- "siphasher 1.0.1",
+ "siphasher 1.0.2",
  "slab",
  "smol",
  "smoldot",
