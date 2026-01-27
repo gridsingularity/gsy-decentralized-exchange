@@ -2,9 +2,16 @@ use crate::algorithms::PayAsBid;
 use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use subxt::ext::sp_core::H256;
-use subxt::ext::sp_runtime::traits::{BlakeTwo256, Hash};
+use std::convert::Into;
+use subxt::utils::H256;
+use subxt::config::{substrate::BlakeTwo256, Hasher};
 use subxt::utils::AccountId32;
+
+#[subxt::subxt(runtime_metadata_path = "./metadata.scale")]
+pub mod gsy_node {}
+
+pub use crate::types::gsy_node::runtime_types::gsy_primitives::trades::BidOfferMatch as NodeBidOfferMatch;
+pub use crate::types::gsy_node::runtime_types::gsy_primitives::orders::{Bid as NodeBid, Offer as NodeOffer, OrderComponent as NodeOrderComponent};
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, PartialOrd)]
 pub struct OrderComponent {
@@ -16,6 +23,19 @@ pub struct OrderComponent {
 	pub energy_rate: u64,
 }
 
+impl Into<NodeOrderComponent> for OrderComponent {
+	fn into(self) -> NodeOrderComponent {
+		NodeOrderComponent {
+			area_uuid: self.area_uuid,
+			market_id: self.market_id,
+			time_slot: self.time_slot,
+			creation_time: self.creation_time,
+			energy: self.energy,
+			energy_rate: self.energy_rate,
+		}
+	}
+}
+
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, PartialOrd)]
 pub struct Bid {
 	pub buyer: AccountId32,
@@ -23,11 +43,32 @@ pub struct Bid {
 	pub bid_component: OrderComponent,
 }
 
+impl Into<NodeBid<AccountId32>> for Bid {
+	fn into(self) -> NodeBid<AccountId32> {
+		NodeBid {
+			buyer: self.buyer,
+			nonce: self.nonce,
+			bid_component: self.bid_component.into(),
+		}
+	}
+}
+
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, PartialOrd)]
 pub struct Offer {
 	pub seller: AccountId32,
 	pub nonce: u32,
 	pub offer_component: OrderComponent,
+}
+
+
+impl Into<NodeOffer<AccountId32>> for Offer {
+	fn into(self) -> NodeOffer<AccountId32> {
+		NodeOffer {
+			seller: self.seller,
+			nonce: self.nonce,
+			offer_component: self.offer_component.into(),
+		}
+	}
 }
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
@@ -47,6 +88,22 @@ pub struct BidOfferMatch {
 	pub residual_offer: Option<Offer>,
 	pub selected_energy: u64,
 	pub energy_rate: u64,
+}
+
+
+impl Into<NodeBidOfferMatch<AccountId32, H256>> for BidOfferMatch {
+	fn into(self) -> NodeBidOfferMatch<AccountId32, H256> {
+		NodeBidOfferMatch {
+			bid: self.bid.into(),
+			offer: self.offer.into(),
+			market_id: self.market_id,
+			time_slot: self.time_slot,
+			residual_bid: self.residual_bid.map(|bid| bid.into()),
+			residual_offer: self.residual_offer.map(|offer| offer.into()),
+			selected_energy: self.selected_energy,
+			energy_rate: self.energy_rate,
+		}
+	}
 }
 
 #[derive(Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize)]
@@ -83,8 +140,8 @@ impl PayAsBid for MatchingData {
 					continue;
 				}
 
-				let bid_id = BlakeTwo256::hash_of(&bid);
-				let offer_id = BlakeTwo256::hash_of(&offer);
+				let bid_id = BlakeTwo256.hash_of(&bid);
+				let offer_id = BlakeTwo256.hash_of(&offer);
 
 				let offer_energy =
 					*available_order_energy.entry(offer_id).or_insert(offer.offer_component.energy);

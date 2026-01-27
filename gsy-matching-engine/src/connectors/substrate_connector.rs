@@ -1,17 +1,15 @@
 use anyhow::{anyhow, Error, Result};
 use async_recursion::async_recursion;
-use codec::{Decode, Encode};
 use gsy_offchain_primitives::algorithms::PayAsBid;
 use gsy_offchain_primitives::db_api_schema::orders::{
-	DbBid, DbOffer, DbOrderComponent, DbOrderSchema, Order as DbOrder, OrderStatus,
+	DbOrderComponent, DbOrderSchema, Order as DbOrder, OrderStatus,
 };
 use gsy_offchain_primitives::types::{
-	Bid, BidOfferMatch, MatchingData, Offer, Order, OrderComponent,
+	gsy_node, Bid, BidOfferMatch, MatchingData, Offer, Order, OrderComponent, NodeBidOfferMatch
 };
 use gsy_offchain_primitives::utils::{
 	string_to_account_id, string_to_h256, NODE_FLOAT_SCALING_FACTOR,
 };
-use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::{thread, time};
 use subxt::{utils::AccountId32, OnlineClient, SubstrateConfig};
@@ -21,12 +19,6 @@ use tracing::{error, info};
 
 const MATCH_PER_NR_BLOCKS: u64 = 4;
 
-#[subxt::subxt(runtime_metadata_path = "../offchain-primitives/metadata.scale")]
-pub mod gsy_node {}
-
-pub const DEFAULT_MARKET_ID: u8 = 1;
-
-use crate::connectors::substrate_connector::gsy_node::runtime_types::gsy_primitives::trades::BidOfferMatch as OtherBidOfferMatch;
 
 #[async_recursion]
 pub async fn substrate_subscribe(orderbook_url: String, node_url: String) -> Result<(), Error> {
@@ -166,7 +158,7 @@ fn convert_db_order_component_to_canonical(component: DbOrderComponent) -> Order
 
 async fn send_settle_trades_extrinsic(
 	url: String,
-	matches: Vec<OtherBidOfferMatch<AccountId32, H256>>,
+	matches: Vec<NodeBidOfferMatch<AccountId32, H256>>,
 ) -> Result<(), Error> {
 	let api = OnlineClient::<SubstrateConfig>::from_insecure_url(url).await?;
 
@@ -202,10 +194,10 @@ async fn settle_matched_orders(
 		let node_url = node_url.lock().unwrap().to_string();
 		let matches: Vec<BidOfferMatch> = matches.lock().unwrap().clone();
 
-		let bid_offer_match_bytes = matches.encode();
-		let transcode_bid_offer_matches: Vec<OtherBidOfferMatch<AccountId32, H256>> =
-			Vec::<OtherBidOfferMatch<AccountId32, H256>>::decode(&mut &bid_offer_match_bytes[..])
-				.unwrap();
+		let transcode_bid_offer_matches: Vec<NodeBidOfferMatch<AccountId32, H256>> =
+			matches.iter().map(|bid_offer_match| -> NodeBidOfferMatch<AccountId32, H256> {
+				bid_offer_match.clone().into()
+			}).collect();
 
 		match send_settle_trades_extrinsic(node_url, transcode_bid_offer_matches).await {
 			Ok(()) => {

@@ -1,7 +1,6 @@
 use crate::helpers::init_app;
 use actix_web::web;
 use gsy_offchain_primitives::db_api_schema::profiles::{ForecastSchema, MeasurementSchema};
-use subxt::ext::sp_runtime::traits::CheckedConversion;
 
 #[tokio::test]
 async fn get_measurements_succeeds() {
@@ -113,7 +112,7 @@ async fn post_measurements_succeeds() {
     let saved = db
         .get_ref()
         .measurements()
-        .filter_measurements("my_uuid".to_string().checked_into(), None, None)
+        .filter_measurements("my_uuid".to_string().try_into().ok(), None, None)
         .await
         .unwrap();
     assert_eq!(1, saved.len());
@@ -260,7 +259,7 @@ async fn post_forecasts_succeeds() {
     let saved = db
         .get_ref()
         .forecasts()
-        .filter_forecasts("my_uuid".to_string().checked_into(), None, None)
+        .filter_forecasts("my_uuid".to_string().try_into().ok(), None, None)
         .await
         .unwrap();
     assert_eq!(1, saved.len());

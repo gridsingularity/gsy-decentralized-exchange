@@ -1,3 +1,4 @@
+#![allow(clippy::large_enum_variant)]
 #![cfg_attr(not(feature = "std"), no_std)]
 
 use frame_support::sp_runtime::transaction_validity::{TransactionValidity, ValidTransaction};
@@ -301,8 +302,7 @@ pub mod pallet {
 					payload.hash,
 					payload.user_id
 				);
-				let mut hash_vector = Vec::<T::Hash>::new();
-				hash_vector.push(payload.hash);
+				let hash_vector: Vec<T::Hash> = vec![payload.hash];
 				<orderbook_registry::Pallet<T>>::delete_orders(origin.clone(), hash_vector)?;
 				Self::delete_order(payload)?;
 			}
@@ -395,11 +395,10 @@ pub mod pallet {
 		/// By default unsigned transactions are disallowed, but implementing the validator
 		/// here we make sure that some particular calls (the ones produced by offchain worker)
 		/// are being whitelisted and marked as valid.
-
 		fn validate_unsigned(_source: TransactionSource, call: &Self::Call) -> TransactionValidity {
 			let valid_tx = |provide| {
 				ValidTransaction::with_tag_prefix("gsy-node")
-					.priority(TransactionPriority::max_value())
+					.priority(TransactionPriority::MAX)
 					.and_provides([&provide])
 					.longevity(3)
 					.propagate(true)
@@ -468,20 +467,16 @@ pub mod pallet {
 	impl<T: Config> Pallet<T> {
 		pub fn input_order_to_order(order: InputOrder<T::AccountId>) -> Order<T::AccountId> {
 			match &order {
-				InputOrder::Bid(input_order) => Order::Bid {
-					0: Bid {
+				InputOrder::Bid(input_order) => Order::Bid(Bid {
 						buyer: input_order.buyer.clone(),
 						nonce: Self::get_and_increment_user_nonce(input_order.buyer.clone()),
 						bid_component: input_order.bid_component.clone(),
-					},
-				},
-				InputOrder::Offer(input_order) => Order::Offer {
-					0: Offer {
+					}),
+				InputOrder::Offer(input_order) => Order::Offer(Offer {
 						seller: input_order.seller.clone(),
 						nonce: Self::get_and_increment_user_nonce(input_order.seller.clone()),
 						offer_component: input_order.offer_component.clone(),
-					},
-				},
+					}),
 			}
 		}
 		/// The main entry point for the offchain worker.
@@ -503,16 +498,10 @@ pub mod pallet {
 			let mut trade_hashes = Vec::<T::Hash>::new();
 
 			for (order_ref, order) in <OrdersForWorker<T>>::iter() {
-				match &order {
-					_order_in_book => {
-						log::info!(
-							"Offchain process: reference: {:?}, order: {:?}",
-							&order_ref,
-							&order
-						);
-						orders.push(order);
-					},
-				}
+				let _order_in_book = &order;
+				log::info!(
+					"Offchain process: reference: {:?}, order: {:?}", &order_ref, &order);
+				orders.push(order);
 			}
 			if !orders.is_empty() {
 				let orders_schema: Vec<OrderSchema<T::AccountId, T::Hash>> = orders
@@ -542,17 +531,14 @@ pub mod pallet {
 			// TODO: Trades transmission process starts here
 
 			for (trade_hash, trade) in <TradesForWorker<T>>::iter() {
-				match &trade {
-					_trade_in_book => {
-						log::info!(
-							"Offchain process: reference: {:?}, trade: {:?}",
-							&trade_hash,
-							&trade
-						);
-						trades.push(trade);
-						trade_hashes.push(trade_hash);
-					},
-				}
+				let _trade_in_book = &trade;
+				log::info!(
+					"Offchain process: reference: {:?}, trade: {:?}",
+					&trade_hash,
+					&trade
+				);
+				trades.push(trade);
+				trade_hashes.push(trade_hash);
 			}
 
 			if !trades.is_empty() {
@@ -585,9 +571,8 @@ pub mod pallet {
 				.deadline(deadline)
 				.add_header("Content-Type", "application/json")
 				.send()
-				.map_err(|e| {
+				.inspect_err(|&e| {
 					log::error!("❌ Failed to send the trade HTTP request: {:?}", e);
-					e
 				})
 				.map_err(|_| http::Error::DeadlineReached)?;
 
@@ -615,9 +600,8 @@ pub mod pallet {
 				.deadline(deadline)
 				.add_header("Content-Type", "application/json")
 				.send()
-				.map_err(|e| {
+				.inspect_err(|&e| {
 					log::error!("❌ Failed to send order HTTP request: {:?}", e);
-					e
 				})
 				.map_err(|_| http::Error::DeadlineReached)?;
 			let response = pending
@@ -648,7 +632,7 @@ pub mod pallet {
 				let order_hash = T::Hashing::hash_of(&order);
 				let order_ref = Self::get_order_owner_id(order.clone());
 				let order_reference =
-					OrderReference { user_id: order_ref.clone(), hash: order_hash.clone() };
+					OrderReference { user_id: order_ref.clone(), hash: order_hash };
 				order_reference_vec.push(order_reference)
 			}
 
@@ -684,7 +668,7 @@ pub mod pallet {
 				let order_hash = T::Hashing::hash_of(&order);
 				let order_ref = Self::get_order_owner_id(order.clone());
 				let order_reference =
-					OrderReference { user_id: order_ref.clone(), hash: order_hash.clone() };
+					OrderReference { user_id: order_ref.clone(), hash: order_hash };
 				order_reference_vec.push(order_reference)
 			}
 
@@ -750,7 +734,7 @@ pub mod pallet {
 			);
 			let order_hash = T::Hashing::hash_of(&order);
 			let order_reference =
-				OrderReference { user_id: sender.clone(), hash: order_hash.clone() };
+				OrderReference { user_id: sender.clone(), hash: order_hash };
 			<OrdersForWorker<T>>::insert(order_reference, order.clone());
 			Self::deposit_event(Event::NewOrderInserted(order, order_hash));
 			Ok(())
@@ -846,14 +830,12 @@ pub mod pallet {
 				Order::Offer(offer) => offer
 					.offer_component
 					.energy
-					.clone()
-					.checked_mul(offer.offer_component.energy_rate.clone())
+					.checked_mul(offer.offer_component.energy_rate)
 					.unwrap(),
 				Order::Bid(bid) => bid
 					.bid_component
 					.energy
-					.clone()
-					.checked_mul(bid.bid_component.energy_rate.clone())
+					.checked_mul(bid.bid_component.energy_rate)
 					.unwrap(),
 			}
 		}
@@ -863,20 +845,16 @@ pub mod pallet {
 			delegator: T::AccountId,
 		) -> Order<T::AccountId> {
 			match &order {
-				InputOrder::Bid(input_order) => Order::Bid {
-					0: Bid {
+				InputOrder::Bid(input_order) => Order::Bid(Bid {
 						buyer: input_order.buyer.clone(),
 						nonce: Self::get_and_increment_user_nonce(delegator),
 						bid_component: input_order.bid_component.clone(),
-					},
-				},
-				InputOrder::Offer(input_order) => Order::Offer {
-					0: Offer {
+					}),
+				InputOrder::Offer(input_order) => Order::Offer(Offer {
 						seller: input_order.seller.clone(),
 						nonce: Self::get_and_increment_user_nonce(delegator),
 						offer_component: input_order.offer_component.clone(),
-					},
-				},
+					}),
 			}
 		}
 	}

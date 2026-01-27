@@ -1,3 +1,5 @@
+#![allow(clippy::result_large_err)]
+#![allow(clippy::large_enum_variant)]
 use sc_cli::RunCmd;
 
 #[derive(Debug, clap::Parser)]

@@ -11,8 +11,6 @@ path = "src/lib.rs"
 path = "src/main.rs"
 name = "gsy-orderbook-service"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 gsy-offchain-primitives = { default-features = false, path = "../offchain-primitives", version = "0" }
 anyhow = "1"
@@ -25,8 +23,7 @@ envy = "0.4"
 futures = "0.3.30"
 mongodb = "3.2.0"
 serde = { version = "1.0", features = ["derive"] }
-serde_json = { version = "1.0"}
-subxt = { version = "0.37", features = ["substrate-compat"] }
+subxt = { version = "0.44" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 tokio_schedule = "0.3.0"
 tracing = { version = "0.1", features = ["log"] }
@@ -37,5 +34,5 @@ tracing-subscriber = { version = "0.3", features = ["registry", "env-filter"] }
 
 [dev-dependencies]
 once_cell = "1"
-reqwest = {version = "0.12", features = ["json"]}
+reqwest = {version = "0", features = ["json"]}
 uuid = "1.12.1"

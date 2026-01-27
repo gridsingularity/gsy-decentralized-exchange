@@ -1,7 +1,7 @@
 use codec::{Encode, Decode};
 use serde::{Deserialize, Serialize};
-use subxt::ext::sp_core::H256;
-use subxt::ext::sp_runtime::traits::{BlakeTwo256, Hash};
+use subxt::utils::H256;
+use subxt::config::{Hasher, substrate::BlakeTwo256};
 use crate::db_api_schema::orders::{DbOffer, DbBid};
 
 
@@ -40,7 +40,7 @@ pub struct TradeSchema {
 
 impl TradeSchema {
     pub fn hash(&self) -> H256 {
-        BlakeTwo256::hash_of(self)
+        BlakeTwo256.hash_of(self)
     }
 
     pub fn eq(&self, other: &Self) -> bool {

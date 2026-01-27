@@ -1,14 +1,15 @@
-use gsy_community_client::external_api::{ExternalForecast, ExternalMeasurement};
+use gsy_community_client::external_measurements::manager::MeasurementsManager;
 use gsy_community_client::node_connector::orders::publish_orders;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use gsy_community_client::time_utils::{get_current_timestamp_in_secs, get_last_and_next_timeslot};
 use gsy_community_client::topology::TopologyManager;
+use gsy_community_client::types::ExternalForecast;
 use gsy_offchain_primitives::constants::GlobalConstants;
-use gsy_offchain_primitives::db_api_schema::profiles::{ForecastSchema, MeasurementSchema};
+use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
 use reqwest::Client;
 use std::collections::HashMap;
-use subxt_signer::sr25519::dev;
 use std::time::Duration;
+use subxt_signer::sr25519::dev;
 use tokio::time::sleep;
 use tracing::{error, info};
 
@@ -16,19 +17,20 @@ use tracing::{error, info};
 struct AppState {
     client: Client,
     api_adapter: AreaMarketInfoAdapter,
+    measurements: MeasurementsManager,
     gsy_node_url: String,
     forecast_url: String,
-    measurements_url: String,
 }
 
 impl AppState {
     fn new() -> Self {
+        let api_adapter = AreaMarketInfoAdapter::new(None);
         AppState {
             client: Client::new(),
-            api_adapter: AreaMarketInfoAdapter::new(None),
+            api_adapter,
+            measurements: MeasurementsManager::new(),
             gsy_node_url: "http://gsy-node:9944/".to_string(),
             forecast_url: "http://localhost:8000/forecasts".to_string(),
-            measurements_url: "http://localhost:8000/measurements".to_string(),
         }
     }
 
@@ -38,23 +40,22 @@ impl AppState {
         response.json::<Vec<ExternalForecast>>().await
     }
 
-    // Function to fetch an array of measurement data
-    async fn fetch_measurements(&self) -> Result<Vec<ExternalMeasurement>, reqwest::Error> {
-        let response = self.client.get(&self.measurements_url).send().await?;
-        response.json::<Vec<ExternalMeasurement>>().await
-    }
-
     async fn poll_and_forward(&self) {
-
         loop {
             let seconds_since_epoch = get_current_timestamp_in_secs();
 
             let (_last_timeslot, next_timeslot) = get_last_and_next_timeslot();
 
-            let internal_topology = TopologyManager::new(
-                &self.client, &self.api_adapter).get(next_timeslot).await;
+            let internal_topology = TopologyManager::new(&self.client, &self.api_adapter)
+                .get(next_timeslot)
+                .await;
 
-            for market in internal_topology {
+            self.measurements
+                .fetch_and_forward(internal_topology.clone(), seconds_since_epoch)
+                .await;
+
+            // TODO: Fetch forecast data from MySQL Fedecom DB
+            for market in internal_topology.clone() {
                 let area_uuid_to_hash: HashMap<String, String> = market
                     .community_areas
                     .iter()
@@ -96,37 +97,6 @@ impl AppState {
                         }
                     }
                     Err(e) => error!("Error fetching forecasts: {}", e),
-                }
-
-                // Fetch and forward measurements
-                match self.fetch_measurements().await {
-                    Ok(measurements) => {
-                        let valid_measurements: Vec<MeasurementSchema> = measurements
-                            .into_iter()
-                            .map(|measurement| {
-                                self.api_adapter.convert_measurement_to_internal_schema(
-                                    &measurement,
-                                    area_uuid_to_hash[&measurement.area_uuid].clone(),
-                                )
-                            })
-                            .filter(|measurement| {
-                                self.api_adapter
-                                    .validate_measurement(measurement, seconds_since_epoch)
-                            })
-                            .collect();
-                        if !valid_measurements.is_empty() {
-                            if let Err(e) = self
-                                .api_adapter
-                                .forward_measurement(valid_measurements)
-                                .await
-                            {
-                                info!("Failed to forward measurements: {}", e);
-                            }
-                        } else {
-                            info!("No valid measurements to forward.");
-                        }
-                    }
-                    Err(e) => error!("Error fetching measurements: {}", e),
                 }
             }
 

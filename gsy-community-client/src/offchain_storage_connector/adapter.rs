@@ -1,5 +1,6 @@
-use crate::external_api::{ExternalCommunityTopology, ExternalForecast, ExternalMeasurement};
 use crate::time_utils::get_current_timestamp_in_secs;
+use crate::topology::ExternalCommunityTopology;
+use crate::types::{ExternalForecast, ExternalMeasurement};
 use blake2_rfc::blake2b::blake2b;
 use gsy_offchain_primitives::MarketType;
 use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketTopologySchema};
@@ -7,7 +8,7 @@ use gsy_offchain_primitives::db_api_schema::profiles::{ForecastSchema, Measureme
 use gsy_offchain_primitives::utils::h256_to_string;
 use reqwest::Client;
 use subxt::utils::H256;
-use tracing::{info, error};
+use tracing::{error, info};
 use uuid::Uuid;
 
 fn generate_market_id(market_type: MarketType, delivery_timestamp: u64) -> H256 {
@@ -121,10 +122,13 @@ impl AreaMarketInfoAdapter {
             Ok(resp) if resp.status().is_success() => resp,
             _ => return vec![],
         };
-        response.json::<Vec<MarketTopologySchema>>().await.unwrap_or_else(|err| {
-            error!("Failed to deserialize market topology response: {:?}", err);
-            vec![]
-        })
+        response
+            .json::<Vec<MarketTopologySchema>>()
+            .await
+            .unwrap_or_else(|err| {
+                error!("Failed to deserialize market topology response: {:?}", err);
+                vec![]
+            })
     }
 
     pub async fn get_or_create_market_topology(
@@ -144,8 +148,7 @@ impl AreaMarketInfoAdapter {
                 .await;
             if !market_topology_res.is_empty() {
                 market_topologies.push(market_topology_res.get(0).unwrap().clone());
-            }
-            else {
+            } else {
                 let new_market = MarketTopologySchema {
                     community_name: community_topology.community_name.clone(),
                     community_uuid: Uuid::new_v4().to_string(),
@@ -172,9 +175,7 @@ impl AreaMarketInfoAdapter {
                     .await;
 
                 match topology_resp {
-                    Ok(_) => {
-                        market_topologies.push(new_market.clone())
-                    },
+                    Ok(_) => market_topologies.push(new_market.clone()),
                     Err(error) => {
                         info!(
                             "New topology creation failed with error: {}",
