@@ -72,3 +72,13 @@ services:
     environment:
       - MONGO_INITDB_ROOT_USERNAME=gsy
       - MONGO_INITDB_ROOT_PASSWORD=gsy
+
+  gsy-contracts:
+    container_name: gsy-contracts
+    build:
+      context: ./gsy-contracts
+      dockerfile: Dockerfile
+    volumes:
+      - ./gsy-contracts:/app
+      - /app/node_modules
+    command: tail -f /dev/null
