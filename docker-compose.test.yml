@@ -118,3 +118,13 @@ services:
       - RUST_BACKTRACE=1
     networks:
       - default
+
+  gsy-contracts-tests:
+    container_name: gsy-contracts-tests
+    build:
+      context: ./gsy-contracts
+      dockerfile: Dockerfile
+    command: npx hardhat test
+    volumes:
+      - ./gsy-contracts:/app
+      - /app/node_modules
