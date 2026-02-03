@@ -172,7 +172,7 @@ impl OrderService {
             .0
             .update_many(
                 doc! {
-                    "order.data.time_slot": { "$lt": bson::to_bson(&now_time_slot).unwrap()},
+                    "time_slot": { "$lt": bson::to_bson(&now_time_slot).unwrap()},
                     "status": bson::to_bson(&OrderStatus::Open).unwrap()
                 },
                 doc! {

@@ -29,10 +29,10 @@ pub fn run(
             .route("/market", web::post().to(post_market))
             .route("/market", web::get().to(get_market))
             .route(
-                "/asset_measurements",
+                "/asset-measurements",
                 web::post().to(post_asset_measurements),
             )
-            .route("/asset_measurements", web::get().to(get_asset_measurements))
+            .route("/asset-measurements", web::get().to(get_asset_measurements))
             .route(
                 "/community-market",
                 web::get().to(get_market_from_community),
