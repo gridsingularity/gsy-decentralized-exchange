@@ -170,14 +170,22 @@
 				"header": [],
 				"body": {
 					"mode": "raw",
+<<<<<<< Updated upstream
 					"raw": "[\n    {\n        \"_id\": \"tradeId\",\n        \"status\": \"Settled\",\n        \"buyer\": \"Account1\",\n        \"seller\": \"Account2\",\n        \"market_id\": \"market1\",\n        \"time_slot\": 123123, \n        \"creation_time\": 456456,\n        \"trade_uuid\": \"tradeUuid1\",\n        \"offer\": {\n            \"seller\": \"Account2\",\n            \"offer_component\": {\n                \"area_uuid\": \"areaid_2\",\n                \"market_id\": \"market1\",\n                \"time_slot\": 123123, \n                \"creation_time\": 456456,\n                \"energy\": 0.26,\n                \"energy_rate\": 0.122\n            }\n        },\n        \"offer_hash\": \"0x12321343\",\n        \"bid\": {\n            \"buyer\": \"Account1\",\n            \"nonce\": 2,\n            \"bid_component\": {\n                \"area_uuid\": \"areaid_1\",\n                \"market_id\": \"market1\",\n                \"time_slot\": 123123, \n                \"creation_time\": 456456,\n                \"energy\": 0.26,\n                \"energy_rate\": 0.123\n            }\n        },\n        \"bid_hash\": \"0x3211233212\",\n        \"residual_offer\": null,\n        \"residual_bid\": null,\n        \"parameters\": {\n            \"selected_energy\": 0.26,\n            \"energy_rate\": 0.122,\n            \"trade_uuid\": \"tradeUuid1\"\n        }\n    }\n]",
+=======
+					"raw": "[\n    {\n        \"trade_uuid\": \"tradeId\",\n        \"status\": \"Settled\",\n        \"buyer\": \"Account1\",\n        \"seller\": \"Account2\",\n        \"market_id\": \"market1\",\n        \"time_slot\": 123123, \n        \"creation_time\": 456456,\n        \"offer\": {\n            \"order_id\": \"id4\",\n            \"status\": \"Executed\",\n            \"order_type\": \"Offer\",\n            \"created_by\": \"Account2\",\n            \"area_uuid\": \"areaid_2\",\n            \"market_id\": \"market1\",\n            \"time_slot\": 123123, \n            \"creation_time\": 456456,\n            \"energy\": 0.26,\n            \"energy_rate\": 0.122\n        },\n        \"offer_hash\": \"0x12321343\",\n        \"bid\": {\n            \"order_id\": \"id3\",\n            \"status\": \"Executed\",\n            \"order_type\": \"Bid\",\n            \"created_by\": \"Account1\",\n            \"area_uuid\": \"areaid_1\",\n            \"market_id\": \"market1\",\n            \"time_slot\": 123123, \n            \"creation_time\": 456456,\n            \"energy\": 0.26,\n            \"energy_rate\": 0.123\n        },\n        \"bid_hash\": \"0x3211233212\",\n        \"residual_offer\": null,\n        \"residual_bid\": null,\n        \"parameters\": null\n    }\n]",
+>>>>>>> Stashed changes
 					"options": {
 						"raw": {
 							"language": "json"
 						}
 					}
 				},
+<<<<<<< Updated upstream
 				"url": "{{hostname}}/trades-normalized"
+=======
+				"url": "{{hostname}}/trades"
+>>>>>>> Stashed changes
 			},
 			"response": []
 		},
