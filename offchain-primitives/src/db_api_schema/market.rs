@@ -1,8 +1,7 @@
-use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
+use crate::MarketType;
 
-
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct AreaTopologySchema {
     pub area_uuid: String,
     pub name: String,
@@ -10,10 +9,11 @@ pub struct AreaTopologySchema {
 }
 
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct MarketTopologySchema {
     // H256-serialized to string for market id
     pub market_id: String,
+    pub market_type: MarketType,
     pub community_uuid: String,
     pub community_name: String,
     pub time_slot: u32,

@@ -4,9 +4,9 @@ pub mod types;
 pub mod utils;
 pub mod constants;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MarketType {
 	Spot,
 	Flexibility,
