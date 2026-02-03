@@ -26,7 +26,6 @@ use sp_runtime::traits::{BlakeTwo256, Hash as HashT};
 pub fn dummy_bid(buyer: AccountId, energy: u64, energy_rate: u64) -> Bid<AccountId> {
 	Bid {
 		buyer,
-		nonce: rand::thread_rng().gen_range(1..101),
 		bid_component: OrderComponent {
 			area_uuid: 1,
 			market_id: rand::thread_rng().gen_range(1..101),
@@ -46,7 +45,6 @@ pub fn dummy_offer(
 ) -> Offer<AccountId> {
 	Offer {
 		seller,
-		nonce: rand::thread_rng().gen_range(1..101),
 		offer_component: OrderComponent {
 			area_uuid: 2,
 			market_id: rand::thread_rng().gen_range(1..101),

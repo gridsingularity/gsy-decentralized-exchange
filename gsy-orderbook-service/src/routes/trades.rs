@@ -2,41 +2,17 @@ use crate::db::DbRef;
 use actix_web::web::Query;
 use actix_web::{web::Json, HttpResponse, Responder};
 use gsy_offchain_primitives::db_api_schema::trades::TradeSchema;
-use gsy_offchain_primitives::node_to_api_schema::insert_trades::convert_gsy_node_trades_schema_to_db_schema;
 use serde::Deserialize;
+
 
 #[tracing::instrument(
     name = "Adding new trades",
-    skip(trades, db),
+    skip(db),
     fields(
     trades = ?trades
     )
 )]
-pub async fn post_trades(trades: Json<Vec<u8>>, db: DbRef) -> impl Responder {
-    let deserialized_trades = convert_gsy_node_trades_schema_to_db_schema(trades.to_vec());
-
-    for trade in deserialized_trades.clone() {
-        let _ = db.get_ref().orders().update_order_by_area_market_id(
-            trade.market_id.clone(),
-            trade.offer.offer_component.area_uuid.clone(),
-        );
-        let _ = db.get_ref().orders().update_order_by_area_market_id(
-            trade.market_id.clone(),
-            trade.bid.bid_component.area_uuid.clone(),
-        );
-    }
-    match db
-        .get_ref()
-        .trades()
-        .insert_trades(deserialized_trades)
-        .await
-    {
-        Ok(ids) => HttpResponse::Ok().json(ids),
-        Err(_) => HttpResponse::InternalServerError().finish(),
-    }
-}
-
-pub async fn post_normalized_trades(trades: Json<Vec<TradeSchema>>, db: DbRef) -> impl Responder {
+pub async fn post_trades(trades: Json<Vec<TradeSchema>>, db: DbRef) -> impl Responder {
     match db.get_ref().trades().insert_trades(trades.to_vec()).await {
         Ok(ids) => HttpResponse::Ok().json(ids),
         Err(_) => HttpResponse::InternalServerError().finish(),

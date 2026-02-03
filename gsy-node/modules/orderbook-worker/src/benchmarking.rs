@@ -21,14 +21,12 @@ use crate::Pallet as OrderbookWorker;
 //
 // fn dummy_bid<T: Config>(
 // 	buyer: T::AccountId,
-// 	nonce: u32,
 // 	block_number: u64,
 // 	energy: u64,
 // 	energy_rate: u64
 // ) -> Bid<T::AccountId> {
 // 	Bid {
 // 		buyer,
-// 		nonce,
 // 		bid_component: OrderComponent {
 // 			area_uuid: 1,
 // 			market_id: 1u64,

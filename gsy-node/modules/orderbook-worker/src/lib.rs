@@ -471,14 +471,12 @@ pub mod pallet {
 				InputOrder::Bid(input_order) => Order::Bid {
 					0: Bid {
 						buyer: input_order.buyer.clone(),
-						nonce: Self::get_and_increment_user_nonce(input_order.buyer.clone()),
 						bid_component: input_order.bid_component.clone(),
 					},
 				},
 				InputOrder::Offer(input_order) => Order::Offer {
 					0: Offer {
 						seller: input_order.seller.clone(),
-						nonce: Self::get_and_increment_user_nonce(input_order.seller.clone()),
 						offer_component: input_order.offer_component.clone(),
 					},
 				},
@@ -773,19 +771,6 @@ pub mod pallet {
 			Ok(())
 		}
 
-		/// Get nonce for the order.
-		///
-		/// Parameters
-		/// `sender`: The sender of the order.
-		/// Returns
-		/// `u32`: The nonce for the order.
-		pub fn get_and_increment_user_nonce(sender: T::AccountId) -> u32 {
-			let user_nonce = <UserNonce<T>>::get(sender.clone()).unwrap_or(0u32);
-			let nonce = user_nonce.checked_add(1u32).ok_or(<Error<T>>::NonceCheckOverflow).unwrap();
-			<UserNonce<T>>::insert(sender.clone(), nonce);
-			user_nonce
-		}
-
 		/// Remove an order from the orders book.
 		///
 		/// Parameters
@@ -866,14 +851,12 @@ pub mod pallet {
 				InputOrder::Bid(input_order) => Order::Bid {
 					0: Bid {
 						buyer: input_order.buyer.clone(),
-						nonce: Self::get_and_increment_user_nonce(delegator),
 						bid_component: input_order.bid_component.clone(),
 					},
 				},
 				InputOrder::Offer(input_order) => Order::Offer {
 					0: Offer {
 						seller: input_order.seller.clone(),
-						nonce: Self::get_and_increment_user_nonce(delegator),
 						offer_component: input_order.offer_component.clone(),
 					},
 				},

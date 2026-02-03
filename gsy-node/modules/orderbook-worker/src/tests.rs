@@ -14,7 +14,6 @@ fn orderbook_worker_sends_back_result() {
 
 		let test_data: Bid<AccountId32> = Bid {
 			buyer: AccountId32::new(*b"d43593c715fdd31c61141abd04a99f32"),
-			nonce: 1,
 			bid_component: OrderComponent {
 				area_uuid: H256::random(),
 				market_id: H256::random(),

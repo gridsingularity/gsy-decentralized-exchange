@@ -1,8 +1,6 @@
 use crate::helpers::{init_app, stop_app};
 use actix_web::web;
 use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketTopologySchema};
-use gsy_offchain_primitives::utils::h256_to_string;
-use subxt::utils::H256;
 
 #[tokio::test]
 async fn get_market_succeeds() {
@@ -12,13 +10,11 @@ async fn get_market_succeeds() {
         AreaTopologySchema {
             name: "area1".to_string(),
             area_uuid: "area1hash".to_string(),
-            area_hash: h256_to_string(H256::random()),
             area_type: "Home".to_string(),
         },
         AreaTopologySchema {
             name: "area2".to_string(),
             area_uuid: "area2hash".to_string(),
-            area_hash: h256_to_string(H256::random()),
             area_type: "Home".to_string(),
         },
     ];
@@ -34,13 +30,11 @@ async fn get_market_succeeds() {
         AreaTopologySchema {
             name: "area3".to_string(),
             area_uuid: "area3hash".to_string(),
-            area_hash: h256_to_string(H256::random()),
             area_type: "Home".to_string(),
         },
         AreaTopologySchema {
             name: "area4".to_string(),
             area_uuid: "area4hash".to_string(),
-            area_hash: h256_to_string(H256::random()),
             area_type: "Home".to_string(),
         },
     ];
@@ -105,13 +99,11 @@ fn create_market_topology_schema(
         AreaTopologySchema {
             name: area1_name,
             area_uuid: area1_uuid,
-            area_hash: h256_to_string(H256::random()),
             area_type: "Home".to_string(),
         },
         AreaTopologySchema {
             name: area2_name,
             area_uuid: area2_uuid,
-            area_hash: h256_to_string(H256::random()),
             area_type: "Home".to_string(),
         },
     ];
@@ -226,13 +218,11 @@ async fn post_market_succeeds() {
         AreaTopologySchema {
             name: "area1".to_string(),
             area_uuid: "area1hash".to_string(),
-            area_hash: h256_to_string(H256::random()),
             area_type: "Home".to_string(),
         },
         AreaTopologySchema {
             name: "area2".to_string(),
             area_uuid: "area2hash".to_string(),
-            area_hash: h256_to_string(H256::random()),
             area_type: "Home".to_string(),
         },
     ];

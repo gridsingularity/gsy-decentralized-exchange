@@ -5,7 +5,6 @@ use gsy_offchain_primitives::db_api_schema::profiles::{
     BatteryMeasurementSchema, MeasurementMetadataSchema, PVMeasurementSchema,
     SmartMeterMeasurementSchema, TransformerMeasurementSchema,
 };
-use gsy_orderbook_service::db::DatabaseWrapper;
 use test_context::{test_context, AsyncTestContext};
 
 struct AssetMeasurementsTestContext {
@@ -24,25 +23,21 @@ impl AsyncTestContext for AssetMeasurementsTestContext {
             community_areas: vec![
                 AreaTopologySchema {
                     area_type: "PV".to_string(),
-                    area_hash: "pv1hash".to_string(),
                     area_uuid: "pv1".to_string(),
                     name: "pv1name".to_string(),
                 },
                 AreaTopologySchema {
                     area_type: "SmartMeter".to_string(),
-                    area_hash: "smartmeter1hash".to_string(),
                     area_uuid: "smartmeter1".to_string(),
                     name: "smartmeter1name".to_string(),
                 },
                 AreaTopologySchema {
                     area_type: "Battery".to_string(),
-                    area_hash: "battery1hash".to_string(),
                     area_uuid: "battery1".to_string(),
                     name: "battery1name".to_string(),
                 },
                 AreaTopologySchema {
                     area_type: "Transformer".to_string(),
-                    area_hash: "transformer1hash".to_string(),
                     area_uuid: "transformer1".to_string(),
                     name: "transformer1name".to_string(),
                 },

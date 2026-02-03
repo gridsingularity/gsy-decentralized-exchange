@@ -314,7 +314,6 @@ pub mod pallet {
 			selected_energy: u64,
 		) -> bool {
 			residual_bid.eq(&Bid {
-				nonce: bid.nonce.clone().checked_add(1).unwrap(),
 				bid_component: OrderComponent {
 					energy: (bid.bid_component.energy.checked_sub(selected_energy).unwrap()).into(),
 					..bid.bid_component.clone()
@@ -329,7 +328,6 @@ pub mod pallet {
 			selected_energy: u64,
 		) -> bool {
 			residual_offer.eq(&Offer {
-				nonce: offer.nonce.clone().checked_add(1).unwrap(),
 				offer_component: OrderComponent {
 					energy: (offer.offer_component.energy.checked_sub(selected_energy).unwrap())
 						.into(),

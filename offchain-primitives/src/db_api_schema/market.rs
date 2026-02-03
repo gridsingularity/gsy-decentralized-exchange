@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 pub struct AreaTopologySchema {
     pub area_uuid: String,
     pub name: String,
-    pub area_hash: String,
     pub area_type: String
 }
 
