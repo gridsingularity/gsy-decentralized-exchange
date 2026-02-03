@@ -46,7 +46,7 @@ pub mod pallet {
 	use frame_support::{pallet_prelude::*, traits::Currency, traits::UnixTime, transactional};
 	use frame_system::pallet_prelude::*;
 	use gsy_primitives::v0::{BidOfferMatch, OrderReference, OrderStatus, Trade, TradeParameters};
-	use scale_info::{prelude::vec::Vec, TypeInfo};
+	use scale_info::{prelude::vec::Vec, prelude::vec, TypeInfo};
 	use sp_runtime::traits::Hash;
 
 	pub type BalanceOf<T> =
@@ -77,7 +77,8 @@ pub mod pallet {
 	/// Configure the pallet by specifying the parameters and types on which it depends.
 	#[pallet::config]
 	pub trait Config: frame_system::Config + gsy_collateral::Config {
-		/// Because this pallet emits events, it depends on the runtime's definition of an event.
+
+		#[allow(deprecated)]
 		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
 		/// The Currency handler.
 		type Currency: Currency<Self::AccountId>;

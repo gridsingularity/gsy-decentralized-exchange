@@ -1,7 +1,7 @@
 use crate::world::{gsy_node, MyWorld};
 use chrono::{Duration as ChronoDuration, Utc};
 use cucumber::when;
-use gsy_community_client::external_api::{ExternalAreaTopology, ExternalCommunityTopology};
+use gsy_community_client::topology::{ExternalAreaTopology, ExternalCommunityTopology};
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use gsy_offchain_primitives::db_api_schema::market::AssetType;
 use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;

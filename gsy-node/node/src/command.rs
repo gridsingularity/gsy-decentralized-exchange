@@ -1,15 +1,15 @@
 #![allow(clippy::result_large_err)]
+
 use crate::{
-	benchmarking::{inherent_benchmark_data, RemarkBuilder, TransferKeepAliveBuilder},
 	chain_spec,
 	cli::{Cli, Subcommand},
 	service,
 };
-use frame_benchmarking_cli::{BenchmarkCmd, ExtrinsicFactory, SUBSTRATE_REFERENCE_HARDWARE};
-use gsy_node_runtime::{Block, EXISTENTIAL_DEPOSIT};
+
+use gsy_node_runtime::Block;
 use sc_cli::SubstrateCli;
 use sc_service::PartialComponents;
-use sp_keyring::Sr25519Keyring;
+
 
 impl SubstrateCli for Cli {
 	fn impl_name() -> String {
@@ -103,7 +103,14 @@ pub fn run() -> sc_cli::Result<()> {
 				Ok((cmd.run(client, backend, Some(aux_revert)), task_manager))
 			})
 		},
+		#[cfg(feature = "runtime-benchmarks")]
 		Some(Subcommand::Benchmark(cmd)) => {
+			// These imports are only used for benchmarking, do not move to the top of the file.
+			use crate::benchmarking::{inherent_benchmark_data, RemarkBuilder, TransferKeepAliveBuilder};
+			use frame_benchmarking_cli::{BenchmarkCmd, ExtrinsicFactory, SUBSTRATE_REFERENCE_HARDWARE};
+			use gsy_node_runtime::{Block, EXISTENTIAL_DEPOSIT};
+			use sp_keyring::Sr25519Keyring;
+			
 			let runner = cli.create_runner(cmd)?;
 
 			runner.sync_run(|config| {
@@ -195,7 +202,18 @@ pub fn run() -> sc_cli::Result<()> {
 		None => {
 			let runner = cli.create_runner(&cli.run)?;
 			runner.run_node_until_exit(|config| async move {
-				service::new_full(config).map_err(sc_cli::Error::Service)
+				match config.network.network_backend {
+					sc_network::config::NetworkBackendType::Libp2p => service::new_full::<
+						sc_network::NetworkWorker<
+							gsy_node_runtime::opaque::Block,
+							<gsy_node_runtime::opaque::Block as sp_runtime::traits::Block>::Hash,
+						>,
+					>(config)
+						.map_err(sc_cli::Error::Service),
+					sc_network::config::NetworkBackendType::Litep2p =>
+						service::new_full::<sc_network::Litep2pNetworkBackend>(config)
+							.map_err(sc_cli::Error::Service),
+				}
 			})
 		},
 	}

@@ -1,11 +1,11 @@
 use crate::orders::{Bid, Offer};
 use crate::v0::{AccountId, Hash};
-use codec::{Decode, Encode, MaxEncodedLen};
+use codec::{Decode, Encode, MaxEncodedLen, DecodeWithMemTracking};
 use scale_info::TypeInfo;
 pub use sp_runtime::traits::{BlakeTwo256, Hash as HashT};
 
 /// Trade struct
-#[derive(Debug, Encode, Decode, Clone, PartialEq, Eq, TypeInfo, MaxEncodedLen)]
+#[derive(Debug, Encode, Decode, Clone, PartialEq, Eq, TypeInfo, MaxEncodedLen, DecodeWithMemTracking)]
 #[cfg_attr(feature = "std", derive(Hash, Default))]
 pub struct Trade<AccountId32, Hash> {
 	pub seller: AccountId32,
@@ -30,7 +30,7 @@ impl Trade<AccountId, Hash> {
 	}
 }
 
-#[derive(Debug, Encode, Decode, Clone, PartialEq, Eq, TypeInfo, MaxEncodedLen)]
+#[derive(Debug, Encode, Decode, Clone, PartialEq, Eq, TypeInfo, MaxEncodedLen, DecodeWithMemTracking)]
 #[cfg_attr(feature = "std", derive(Hash, Default))]
 pub struct TradesPenalties<AccountId, Hash> {
 	pub penalized_account: AccountId,
@@ -39,7 +39,7 @@ pub struct TradesPenalties<AccountId, Hash> {
 	pub penalty_energy: u64,
 }
 
-#[derive(Debug, Encode, Decode, Clone, Copy, PartialEq, Eq, TypeInfo, MaxEncodedLen)]
+#[derive(Debug, Encode, Decode, Clone, Copy, PartialEq, Eq, TypeInfo, MaxEncodedLen, DecodeWithMemTracking)]
 #[cfg_attr(feature = "std", derive(Hash, Default))]
 pub struct TradeParameters<Hash> {
 	/// The amount of energy that is traded.
@@ -50,7 +50,7 @@ pub struct TradeParameters<Hash> {
 	pub trade_uuid: Hash,
 }
 
-#[derive(Debug, Encode, Decode, Clone, PartialEq, Eq, TypeInfo)]
+#[derive(Debug, Encode, Decode, Clone, PartialEq, Eq, TypeInfo, DecodeWithMemTracking)]
 #[cfg_attr(feature = "std", derive(Hash, Default))]
 pub struct BidOfferMatch<AccountId, Hash> {
 	/// The market ID
