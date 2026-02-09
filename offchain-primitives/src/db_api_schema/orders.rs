@@ -1,3 +1,5 @@
+#![allow(non_snake_case)]
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -21,7 +23,7 @@ pub struct DbOrderSchema {
     pub market_id: String,
     pub time_slot: u64,
     pub creation_time: u64,
-    pub energy: f64,
+    pub energy_kWh: f64,
     pub energy_rate: f64,
     pub created_by: String
 }

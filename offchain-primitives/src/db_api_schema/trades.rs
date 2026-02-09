@@ -1,3 +1,5 @@
+#![allow(non_snake_case)]
+
 use serde::{Deserialize, Serialize};
 use crate::db_api_schema::orders::DbOrderSchema;
 
@@ -11,9 +13,8 @@ pub enum TradeStatus {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct TradeParameters {
-    pub selected_energy: f64,
+    pub selected_energy_kWh: f64,
     pub energy_rate: f64,
-    pub trade_uuid: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -31,7 +32,7 @@ pub struct TradeSchema {
     pub bid_hash: String,
     pub residual_offer: Option<DbOrderSchema>,
     pub residual_bid: Option<DbOrderSchema>,
-    pub parameters: Option<TradeParameters>,
+    pub parameters: TradeParameters,
 }
 
 impl TradeSchema {

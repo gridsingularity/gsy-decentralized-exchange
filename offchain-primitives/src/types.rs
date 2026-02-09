@@ -1,3 +1,5 @@
+#![allow(non_snake_case)]
+
 use crate::algorithms::PayAsBid;
 use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
@@ -11,7 +13,7 @@ pub struct OrderComponent {
 	pub market_id: H256,
 	pub time_slot: u64,
 	pub creation_time: u64,
-	pub energy: u64,
+	pub energy_kwh: u64,
 	pub energy_rate: u64,
 }
 
@@ -44,7 +46,7 @@ pub struct BidOfferMatch {
 	pub offer: Offer,
 	pub residual_bid: Option<Bid>,
 	pub residual_offer: Option<Offer>,
-	pub selected_energy: u64,
+	pub selected_energy_kWh: u64,
 	pub energy_rate: u64,
 }
 
@@ -72,8 +74,8 @@ impl PayAsBid for MatchingData {
 		for offer in &mut offers {
 			for bid in &mut bids {
 				if offer.offer_component.area_uuid == bid.bid_component.area_uuid
-					|| offer.offer_component.energy == 0
-					|| bid.bid_component.energy == 0
+					|| offer.offer_component.energy_kwh == 0
+					|| bid.bid_component.energy_kwh == 0
 				{
 					continue;
 				}
@@ -86,9 +88,9 @@ impl PayAsBid for MatchingData {
 				let offer_id = H256(BlakeTwo256::hash_of(&offer).0);
 
 				let offer_energy =
-					*available_order_energy.entry(offer_id).or_insert(offer.offer_component.energy);
+					*available_order_energy.entry(offer_id).or_insert(offer.offer_component.energy_kwh);
 				let bid_energy =
-					*available_order_energy.entry(bid_id).or_insert(bid.bid_component.energy);
+					*available_order_energy.entry(bid_id).or_insert(bid.bid_component.energy_kwh);
 
 				let selected_energy = offer_energy.min(bid_energy);
 
@@ -103,7 +105,7 @@ impl PayAsBid for MatchingData {
 					Some(Bid {
 						nonce: bid.nonce.wrapping_add(1),
 						bid_component: OrderComponent {
-							energy: bid_energy - selected_energy,
+							energy_kwh: bid_energy - selected_energy,
 							..bid.bid_component.clone()
 						},
 						..bid.clone()
@@ -116,7 +118,7 @@ impl PayAsBid for MatchingData {
 					Some(Offer {
 						nonce: offer.nonce.wrapping_add(1),
 						offer_component: OrderComponent {
-							energy: offer_energy - selected_energy,
+							energy_kwh: offer_energy - selected_energy,
 							..offer.offer_component.clone()
 						},
 						..offer.clone()
@@ -132,7 +134,7 @@ impl PayAsBid for MatchingData {
 					offer: offer.clone(),
 					residual_bid,
 					residual_offer,
-					selected_energy,
+					selected_energy_kWh: selected_energy,
 					energy_rate: bid.bid_component.energy_rate,
 				};
 

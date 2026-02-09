@@ -1,6 +1,7 @@
 use crate::helpers::{init_app, stop_app};
 use actix_web::web;
 use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketTopologySchema};
+use gsy_offchain_primitives::MarketType;
 
 #[tokio::test]
 async fn get_market_succeeds() {
@@ -20,6 +21,7 @@ async fn get_market_succeeds() {
     ];
     let market1 = MarketTopologySchema {
         market_id: "my_market".to_string(),
+        market_type: MarketType::Spot,
         community_areas: community_areas_1.clone(),
         time_slot: 1232123213,
         creation_time: 1232123213,
@@ -40,6 +42,7 @@ async fn get_market_succeeds() {
     ];
     let market2 = MarketTopologySchema {
         market_id: "my_market2".to_string(),
+        market_type: MarketType::Spot,
         community_areas: community_areas_2.clone(),
         time_slot: 1242123213,
         creation_time: 1242123213,
@@ -109,6 +112,7 @@ fn create_market_topology_schema(
     ];
     let market = MarketTopologySchema {
         market_id,
+        market_type: MarketType::Spot,
         community_areas: community_areas.clone(),
         time_slot: 1232123213,
         creation_time: 1232123213,
@@ -228,7 +232,8 @@ async fn post_market_succeeds() {
     ];
     let market = MarketTopologySchema {
         market_id: "new_market".to_string(),
-        community_areas: community_areas,
+        market_type: MarketType::Spot,
+        community_areas,
         time_slot: 432321123,
         creation_time: 432321121,
         community_name: "my_community".to_string(),

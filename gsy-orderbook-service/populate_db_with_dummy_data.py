@@ -88,7 +88,7 @@ def post_measurements(area_uuid, time_slot, creation_time, energy):
         "community_uuid": "communityid_1",
         "time_slot": time_slot,
         "creation_time": creation_time,
-        "energy_kwh": energy
+        "energy_kWh": energy
     }])
 
 

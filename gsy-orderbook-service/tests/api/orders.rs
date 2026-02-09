@@ -18,10 +18,10 @@ async fn subscribe_return_a_200_for_valid_form_data() {
         status: OrderStatus::Expired,
         order_type: OrderEnum::Bid,
         created_by: "buyer".to_string(),
-        energy: 100.0,
+        energy_kWh: 100.0,
         energy_rate: 10.0,
         area_uuid: area_id,
-        market_id: market_id,
+        market_id,
         time_slot: 1,
         creation_time: 1677453190,
     };
