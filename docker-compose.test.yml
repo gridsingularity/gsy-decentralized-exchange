@@ -128,3 +128,11 @@ services:
     volumes:
       - ./gsy-contracts:/app
       - /app/node_modules
+
+  gsy-listener-test:
+    container_name: gsy-listener-test
+    build:
+      context: ./gsy-ethers-listener
+      dockerfile: Dockerfile
+    environment:
+      - RUST_LOG=info
