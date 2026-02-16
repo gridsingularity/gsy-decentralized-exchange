@@ -1,12 +1,11 @@
 use crate::db::DatabaseWrapper;
-use gsy_offchain_primitives::db_api_schema::market::MarketTopologySchema;
 use anyhow::{bail, Result};
 use futures::StreamExt;
+use gsy_offchain_primitives::db_api_schema::market::MarketTopologySchema;
 use mongodb::bson::doc;
 use mongodb::options::IndexOptions;
 use mongodb::{Collection, IndexModel};
 use std::ops::Deref;
-
 
 /// this function will call after connected to database
 pub async fn init_markets(db: &DatabaseWrapper) -> Result<()> {
@@ -25,13 +24,13 @@ pub async fn init_markets(db: &DatabaseWrapper) -> Result<()> {
 pub struct MarketService(pub Collection<MarketTopologySchema>);
 
 impl MarketService {
-    #[tracing::instrument(
-        name = "Fetching market information from database", skip(self))]
-    pub async fn filter(
-        &self,
-        market_id: String) -> Result<Vec<MarketTopologySchema>> {
-        let mut cursor = self.0.find(
-            doc! {"market_id": market_id.clone()}).await.unwrap();
+    #[tracing::instrument(name = "Fetching market information from database", skip(self))]
+    pub async fn filter(&self, market_id: String) -> Result<Vec<MarketTopologySchema>> {
+        let mut cursor = self
+            .0
+            .find(doc! {"market_id": market_id.clone()})
+            .await
+            .unwrap();
 
         let mut result: Vec<MarketTopologySchema> = Vec::new();
         while let Some(doc) = cursor.next().await {
@@ -51,22 +50,27 @@ impl MarketService {
     }
 
     #[tracing::instrument(
-        name = "Fetching market information from database for a community", skip(self))]
+        name = "Fetching market information from database for a community",
+        skip(self)
+    )]
     pub async fn get_community_market(
         &self,
-        community_uuid: String, start_time: Option<u32>, end_time: Option<u32>) -> Result<Vec<MarketTopologySchema>> {
-
+        community_uuid: String,
+        start_time: Option<u32>,
+        end_time: Option<u32>,
+    ) -> Result<Vec<MarketTopologySchema>> {
         let mut filter_params = doc! {};
         filter_params.insert("community_uuid", community_uuid.clone());
         if start_time.is_some() {
-            filter_params.insert("time_slot", doc! {"$gte": start_time.unwrap()} ); }
+            filter_params.insert("time_slot", doc! {"$gte": start_time.unwrap()});
+        }
         if end_time.is_some() {
             if start_time.is_some() {
                 filter_params.insert(
                     "time_slot",
-                    doc! {"$gte": start_time.unwrap(), "$lte": end_time.unwrap()});
-            }
-            else {
+                    doc! {"$gte": start_time.unwrap(), "$lte": end_time.unwrap()},
+                );
+            } else {
                 filter_params.insert("time_slot", doc! {"$lte": end_time.unwrap()});
             }
         }
@@ -94,7 +98,8 @@ impl MarketService {
         )
     )]
     pub async fn insert(&self, market: MarketTopologySchema) -> Result<MarketTopologySchema> {
-        self.check_if_market_exists(market.market_id.clone()).await?;
+        self.check_if_market_exists(market.market_id.clone())
+            .await?;
         match self.0.insert_one(market.clone()).await {
             Ok(_db_result) => Ok(market),
             Err(e) => {
@@ -105,8 +110,11 @@ impl MarketService {
     }
 
     async fn check_if_market_exists(&self, market_id: String) -> Result<bool> {
-        match self.0.find(
-            doc! {"market_id": market_id.clone()}).limit(1).await
+        match self
+            .0
+            .find(doc! {"market_id": market_id.clone()})
+            .limit(1)
+            .await
         {
             Ok(_) => Ok(true),
             Err(_) => {

@@ -1,6 +1,6 @@
 use crate::db::DbRef;
-use gsy_offchain_primitives::db_api_schema::orders::OrderStatus;
 use chrono::{Local, Utc};
+use gsy_offchain_primitives::db_api_schema::orders::OrderStatus;
 use tokio_schedule::{every, Job};
 
 pub async fn start_scheduler(db: DbRef, scheduler_interval: u32) {
@@ -11,10 +11,8 @@ pub async fn start_scheduler(db: DbRef, scheduler_interval: u32) {
             match db
                 .get_ref()
                 .orders()
-                .update_expired_orders(
-                    Local::now().timestamp() as u64,
-                    OrderStatus::Expired
-                ).await
+                .update_expired_orders(Local::now().timestamp() as u64, OrderStatus::Expired)
+                .await
             {
                 Ok(result) => tracing::info!("Update result: {:?}", result),
                 Err(e) => {
