@@ -1,9 +1,9 @@
-use crate::helpers::init_app;
+use crate::helpers::{init_app, stop_app};
 
 #[tokio::test]
 async fn health_check() {
     let app = init_app().await;
-    let address = app.address;
+    let address = app.address.clone();
 
     let client = reqwest::Client::new();
     let resp = client
@@ -14,4 +14,5 @@ async fn health_check() {
 
     assert!(resp.status().is_success());
     assert_eq!(Some(0), resp.content_length());
+    stop_app(app).await;
 }

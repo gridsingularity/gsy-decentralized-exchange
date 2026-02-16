@@ -1,12 +1,15 @@
 use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
+
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub struct AreaTopologySchema {
     pub area_uuid: String,
     pub name: String,
     pub area_hash: String,
+    pub area_type: String
 }
+
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub struct MarketTopologySchema {
@@ -16,5 +19,5 @@ pub struct MarketTopologySchema {
     pub community_name: String,
     pub time_slot: u32,
     pub creation_time: u32,
-    pub community_areas: Vec<AreaTopologySchema>,
+    pub community_areas: Vec<AreaTopologySchema>
 }

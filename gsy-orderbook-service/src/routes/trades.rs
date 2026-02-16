@@ -14,6 +14,7 @@ use serde::Deserialize;
 )]
 pub async fn post_trades(trades: Json<Vec<u8>>, db: DbRef) -> impl Responder {
     let deserialized_trades = convert_gsy_node_trades_schema_to_db_schema(trades.to_vec());
+
     for trade in deserialized_trades.clone() {
         let _ = db.get_ref().orders().update_order_by_area_market_id(
             trade.market_id.clone(),
@@ -44,7 +45,6 @@ pub async fn post_normalized_trades(trades: Json<Vec<TradeSchema>>, db: DbRef) -
 
 #[derive(Deserialize, Debug)]
 pub struct GetTradesParams {
-    market_id: Option<String>,
     start_time: Option<u32>,
     end_time: Option<u32>,
 }
@@ -54,11 +54,7 @@ pub async fn get_trades(db: DbRef, query_params: Query<GetTradesParams>) -> impl
     match db
         .get_ref()
         .trades()
-        .filter_trades(
-            // query_params.market_id.clone(),
-            query_params.start_time,
-            query_params.end_time,
-        )
+        .filter_trades(query_params.start_time, query_params.end_time)
         .await
     {
         Ok(trades) => HttpResponse::Ok().json(trades),

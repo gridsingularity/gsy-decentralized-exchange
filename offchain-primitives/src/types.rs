@@ -2,8 +2,8 @@ use crate::algorithms::PayAsBid;
 use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use subxt::ext::sp_core::H256;
-use subxt::utils::AccountId32;
+use sp_runtime::traits::{BlakeTwo256, Hash};
+use subxt::utils::{AccountId32, H256};
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, PartialOrd)]
 pub enum EnergyType {
@@ -28,54 +28,54 @@ pub struct Attributes {
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, PartialOrd)]
 pub struct OrderComponent {
-    pub area_uuid: H256,
-    pub market_id: H256,
-    pub time_slot: u64,
-    pub creation_time: u64,
-    pub energy: u64,
-    pub energy_rate: u64,
+	pub area_uuid: H256,
+	pub market_id: H256,
+	pub time_slot: u64,
+	pub creation_time: u64,
+	pub energy: u64,
+	pub energy_rate: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, PartialOrd)]
 pub struct Bid {
-    pub buyer: AccountId32,
-    pub nonce: u32,
-    pub bid_component: OrderComponent,
+	pub buyer: AccountId32,
+	pub nonce: u32,
+	pub bid_component: OrderComponent,
     pub requirements: Option<Requirements>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, PartialOrd)]
 pub struct Offer {
-    pub seller: AccountId32,
-    pub nonce: u32,
-    pub offer_component: OrderComponent,
+	pub seller: AccountId32,
+	pub nonce: u32,
+	pub offer_component: OrderComponent,
     pub attributes: Option<Attributes>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 #[serde(tag = "type", content = "data")]
 pub enum Order {
-    Bid(Bid),
-    Offer(Offer),
+	Bid(Bid),
+	Offer(Offer),
 }
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub struct BidOfferMatch {
-    pub market_id: H256,
-    pub time_slot: u64,
-    pub bid: Bid,
-    pub offer: Offer,
-    pub residual_bid: Option<Bid>,
-    pub residual_offer: Option<Offer>,
-    pub selected_energy: u64,
-    pub energy_rate: u64,
+	pub market_id: H256,
+	pub time_slot: u64,
+	pub bid: Bid,
+	pub offer: Offer,
+	pub residual_bid: Option<Bid>,
+	pub residual_offer: Option<Offer>,
+	pub selected_energy: u64,
+	pub energy_rate: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub struct MatchingData {
-    pub bids: Vec<Bid>,
-    pub offers: Vec<Offer>,
-    pub market_id: H256,
+	pub bids: Vec<Bid>,
+	pub offers: Vec<Offer>,
+	pub market_id: H256,
 }
 
 impl MatchingData {

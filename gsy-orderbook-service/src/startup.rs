@@ -1,8 +1,8 @@
 use crate::db::DatabaseWrapper;
 use crate::routes::{
-    get_forecasts, get_market, get_market_from_community, get_measurements, get_orders, get_trades,
-    health_check, post_forecasts, post_market, post_measurements, post_normalized_orders,
-    post_normalized_trades, post_orders, post_trades,
+    get_asset_measurements, get_forecasts, get_market, get_market_from_community, get_measurements,
+    get_orders, get_trades, health_check, post_asset_measurements, post_forecasts, post_market,
+    post_measurements, post_normalized_orders, post_normalized_trades, post_orders, post_trades,
 };
 use actix_web::dev::Server;
 use actix_web::{web, App, HttpServer};
@@ -30,6 +30,11 @@ pub fn run(
             .route("/forecasts", web::get().to(get_forecasts))
             .route("/market", web::post().to(post_market))
             .route("/market", web::get().to(get_market))
+            .route(
+                "/asset_measurements",
+                web::post().to(post_asset_measurements),
+            )
+            .route("/asset_measurements", web::get().to(get_asset_measurements))
             .route(
                 "/community-market",
                 web::get().to(get_market_from_community),
