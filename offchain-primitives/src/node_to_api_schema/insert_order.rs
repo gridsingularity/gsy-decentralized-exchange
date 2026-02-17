@@ -3,7 +3,7 @@ use crate::db_api_schema::orders::{
     DbAttributes, DbBid, DbOffer, DbOrderComponent, DbOrderSchema, DbRequirements, EnergyType,
     OrderStatus,
 };
-use crate::utils::h256_to_string;
+use crate::utils::{h256_to_string, NODE_FLOAT_SCALING_FACTOR};
 use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 use sp_runtime::traits::{BlakeTwo256, Hash as HashT};
@@ -71,8 +71,8 @@ pub fn create_db_offer_from_node_offer(offer: Offer<AccountId32>) -> DbOffer {
 			market_id: h256_to_string(offer.offer_component.market_id),
 			time_slot: offer.offer_component.time_slot,
 			creation_time: offer.offer_component.creation_time,
-			energy: offer.offer_component.energy as f64 / 10000.0,
-			energy_rate: offer.offer_component.energy_rate as f64 / 10000.0,
+			energy: offer.offer_component.energy as f64 / NODE_FLOAT_SCALING_FACTOR,
+			energy_rate: offer.offer_component.energy_rate as f64 / NODE_FLOAT_SCALING_FACTOR,
 		},
         attributes: offer.attributes.map(|attr| DbAttributes {
             trading_partner_id: attr.trading_partner_id.map(|id| id.to_string()),
@@ -90,13 +90,14 @@ pub fn create_db_bid_from_node_bid(bid: Bid<AccountId32>) -> DbBid {
 			market_id: h256_to_string(bid.bid_component.market_id),
 			time_slot: bid.bid_component.time_slot,
 			creation_time: bid.bid_component.creation_time,
-			energy: bid.bid_component.energy as f64 / 10000.0,
-			energy_rate: bid.bid_component.energy_rate as f64 / 10000.0,
+			energy: bid.bid_component.energy as f64 / NODE_FLOAT_SCALING_FACTOR,
+			energy_rate: bid.bid_component.energy_rate as f64 / NODE_FLOAT_SCALING_FACTOR,
 		},
         requirements: bid.requirements.map(|req| DbRequirements {
             trading_partner_id: req.trading_partner_id.map(|id| id.to_string()),
             energy_type: req.energy_type,
-            preferred_energy_rate: req.preferred_energy_rate.map(|r| r as f64 / 10000.0),
+            preferred_energy_rate: req.preferred_energy_rate.map(
+				|r| r as f64 / NODE_FLOAT_SCALING_FACTOR),
         }),
 	}
 }

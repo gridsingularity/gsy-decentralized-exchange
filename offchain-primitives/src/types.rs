@@ -2,7 +2,6 @@ use crate::algorithms::PayAsBid;
 use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use sp_runtime::traits::{BlakeTwo256, Hash};
 use subxt::utils::{AccountId32, H256};
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, PartialOrd)]
@@ -87,7 +86,7 @@ impl MatchingData {
         let mut bid_matched_amounts: HashMap<OrderKey, u64> = HashMap::new();
         let mut offer_matched_amounts: HashMap<OrderKey, u64> = HashMap::new();
 
-        let (preference_bids, non_preference_bids): (Vec<&Bid>, Vec<&Bid>) =
+        let (preference_bids, _non_preference_bids): (Vec<&Bid>, Vec<&Bid>) =
             self.bids.iter().partition(|b| {
                 b.requirements
                     .as_ref()
