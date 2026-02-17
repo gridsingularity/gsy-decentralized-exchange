@@ -3,11 +3,11 @@ use gsy_offchain_primitives::utils::string_to_account_id;
 use subxt::utils::{AccountId32, H256};
 
 use crate::connectors::substrate_connector::gsy_node::runtime_types::gsy_primitives::orders::{
-    Bid as NodeBid, Offer as NodeOffer, OrderComponent as NodeOrderComponent,
-    Attributes as NodeAttributes, Requirements as NodeRequirements, EnergyType as NodeEnergyType};
+    Attributes as NodeAttributes, Bid as NodeBid, EnergyType as NodeEnergyType, Offer as NodeOffer,
+    OrderComponent as NodeOrderComponent, Requirements as NodeRequirements,
+};
 
 use crate::connectors::substrate_connector::gsy_node::runtime_types::gsy_primitives::trades::BidOfferMatch as NodeBidOfferMatch;
-
 
 fn create_node_energy_type_from_canonical(energy_type: EnergyType) -> NodeEnergyType {
     match energy_type {
@@ -18,7 +18,9 @@ fn create_node_energy_type_from_canonical(energy_type: EnergyType) -> NodeEnergy
     }
 }
 
-pub fn create_node_bid_offer_matches_from_canonical(matches: Vec<BidOfferMatch>) -> Vec<NodeBidOfferMatch<AccountId32, H256>> {
+pub fn create_node_bid_offer_matches_from_canonical(
+    matches: Vec<BidOfferMatch>,
+) -> Vec<NodeBidOfferMatch<AccountId32, H256>> {
     matches.into_iter().map(|bid_offer_match| {
         crate::connectors::substrate_connector::gsy_node::runtime_types::gsy_primitives::trades::BidOfferMatch {
             market_id: bid_offer_match.market_id,
@@ -52,7 +54,6 @@ fn create_node_offer_from_canonical_offer(offer: Offer) -> NodeOffer<AccountId32
     }
 }
 
-
 fn create_node_bid_from_canonical_bid(bid: Bid) -> NodeBid<AccountId32> {
     NodeBid {
         buyer: bid.buyer,
@@ -66,10 +67,12 @@ fn create_node_bid_from_canonical_bid(bid: Bid) -> NodeBid<AccountId32> {
             energy_rate: bid.bid_component.energy_rate,
         },
         requirements: bid.requirements.map(|req| NodeRequirements {
-            trading_partner_id: req.trading_partner_id.map(
-                |id| string_to_account_id(id.to_string()).unwrap()
-            ),
-            energy_type: req.energy_type.map(|r| {create_node_energy_type_from_canonical(r)}),
+            trading_partner_id: req
+                .trading_partner_id
+                .map(|id| string_to_account_id(id.to_string()).unwrap()),
+            energy_type: req
+                .energy_type
+                .map(|r| create_node_energy_type_from_canonical(r)),
             preferred_energy_rate: req.preferred_energy_rate,
         }),
     }
