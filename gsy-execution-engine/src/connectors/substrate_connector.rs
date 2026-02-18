@@ -1,13 +1,11 @@
 use crate::primitives::penalty_calculator::Penalty;
-use anyhow::{anyhow, Error, Result};
-use codec::{Decode, Encode};
-use std::str::FromStr;
+use anyhow::{Error, Result};
 use subxt::{
 	utils::{AccountId32, H256},
 	OnlineClient, SubstrateConfig,
 };
 use subxt_signer::sr25519::dev;
-use gsy_offchain_primitives::utils::string_to_h256;
+use gsy_offchain_primitives::utils::{string_to_h256, string_to_account_id};
 use tracing::info;
 
 #[subxt::subxt(runtime_metadata_path = "../offchain-primitives/metadata.scale")]
@@ -19,13 +17,12 @@ pub async fn submit_penalties(node_url: &str, penalties: Vec<Penalty>) -> Result
 		return Ok(());
 	}
 
-	type NodeTradesPenalties =
-		gsy_node::runtime_types::gsy_primitives::trades::TradesPenalties<AccountId32, H256>;
+	use crate::connectors::substrate_connector::gsy_node::runtime_types::gsy_primitives::trades::TradesPenalties as NodeTradesPenalties;
 
-	let node_penalties: Vec<NodeTradesPenalties> = penalties
-		.iter()
+	let node_penalties: Vec<NodeTradesPenalties<AccountId32, H256>> = penalties
+		.into_iter()
 		.filter_map(|p| {
-			let account = AccountId32::from_str(&p.penalized_account).ok()?;
+			let account = string_to_account_id(p.penalized_account)?;
 			let market_uuid = string_to_h256(p.market_id.clone());
 			let trade_uuid = string_to_h256(p.trade_uuid.clone());
 

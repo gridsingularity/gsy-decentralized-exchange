@@ -55,7 +55,7 @@ async fn main() {
 	}
 }
 
-fn generate_previous_timeslot(market_duration: u64) -> u64 {
+fn generate_previous_timeslot(_market_duration: u64) -> u64 {
 	use chrono::{Duration, Utc};
 
 	let now = Utc::now();
