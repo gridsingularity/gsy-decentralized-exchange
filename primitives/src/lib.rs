@@ -79,8 +79,8 @@ pub use sp_runtime::OpaqueExtrinsic as UncheckedExtrinsic;
 
 mod orders;
 pub use orders::{
-	Bid, InputBid, InputOffer, InputOrder, Offer, Order, OrderComponent, OrderReference,
-	OrderSchema, OrderStatus,
+	Attributes, Bid, EnergyType, InputBid, InputOffer, InputOrder, Offer, Order, OrderComponent,
+	OrderReference, OrderSchema, OrderStatus, Requirements,
 };
 mod trades;
 pub use trades::{BidOfferMatch, Trade, TradeParameters, TradesPenalties, Validator};

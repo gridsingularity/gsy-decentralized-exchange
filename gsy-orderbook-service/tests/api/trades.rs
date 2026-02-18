@@ -1,7 +1,16 @@
 use crate::helpers::{init_app, stop_app};
 use actix_web::web;
+use codec::Encode;
+use gsy_offchain_primitives::node_to_api_schema::insert_order::{
+    Bid as InsertBid, Offer as InsertOffer, OrderComponent as InsertOrderComponent,
+};
+use gsy_offchain_primitives::node_to_api_schema::insert_trades::{
+    Trade, TradeParameters as InsertTradeParameters,
+};
 use gsy_offchain_primitives::db_api_schema::orders::{DbOrderSchema, OrderEnum, OrderStatus};
 use gsy_offchain_primitives::db_api_schema::trades::{TradeSchema, TradeParameters, TradeStatus};
+use gsy_offchain_primitives::utils::h256_to_string;
+use subxt::utils::{AccountId32, H256};
 
 #[tokio::test]
 async fn post_trade_request_writes_trades_to_the_db() {
@@ -22,6 +31,8 @@ async fn post_trade_request_writes_trades_to_the_db() {
         market_id: market_id.clone(),
         time_slot: 1,
         creation_time: 1677453190,
+        requirements: None,
+        attributes: None
     };
     let offer = DbOrderSchema {
         status: OrderStatus::Open,
@@ -34,6 +45,8 @@ async fn post_trade_request_writes_trades_to_the_db() {
         market_id: market_id.clone(),
         time_slot: 1,
         creation_time: 1677453190,
+        requirements: None,
+        attributes: None
     };
 
     let trade1 = TradeSchema {

@@ -2,9 +2,9 @@ use crate::algorithms::PayAsBid;
 use crate::primitives::web2::{Bid, BidOfferMatch, MatchingData, Offer};
 
 use anyhow::{Error, Result};
-use serde_json::{Value, json};
-use chrono::{NaiveDateTime};
+use chrono::NaiveDateTime;
 use redis::Commands;
+use serde_json::{json, Value};
 
 pub fn value_to_str(value: &Value) -> String {
     // Helper function to convert the serde Value to String
@@ -25,10 +25,12 @@ pub fn value_to_f32(value: &Value) -> f32 {
 pub fn value_to_datetime(value: &Value) -> Option<NaiveDateTime> {
     // Helper function to convert the serde Value to NaiveDateTime
     match value.as_str() {
-        Some(..) => match NaiveDateTime::parse_from_str(value.as_str().unwrap(), "%Y-%m-%dT%H:%M:%S") {
-            Ok(datetime) => Some(datetime),
-            Err(_e) => None,
-        },
+        Some(..) => {
+            match NaiveDateTime::parse_from_str(value.as_str().unwrap(), "%Y-%m-%dT%H:%M:%S") {
+                Ok(datetime) => Some(datetime),
+                Err(_e) => None,
+            }
+        }
         None => None,
     }
 }
@@ -44,7 +46,7 @@ pub fn read_bids(orders: &Value) -> Vec<Bid> {
             energy: value_to_f32(&bid["energy"]),
             energy_rate: value_to_f32(&bid["energy_rate"]),
             original_price: value_to_f32(&bid["original_price"]),
-            requirements: Some(value_to_str(&bid["requirements"])),
+            requirements: serde_json::from_value(bid["requirements"].clone()).ok(),
             buyer_origin: value_to_str(&bid["buyer_origin"]),
             buyer_origin_id: value_to_str(&bid["buyer_origin_id"]),
             buyer_id: value_to_str(&bid["buyer_id"]),
@@ -68,7 +70,7 @@ pub fn read_offers(orders: &Value) -> Vec<Offer> {
             energy: value_to_f32(&offer["energy"]),
             energy_rate: value_to_f32(&offer["energy_rate"]),
             original_price: value_to_f32(&offer["original_price"]),
-            requirements: Some(value_to_str(&offer["requirements"])),
+            attributes: serde_json::from_value(offer["attributes"].clone()).ok(),
             seller_origin: value_to_str(&offer["seller_origin"]),
             seller_origin_id: value_to_str(&offer["seller_origin_id"]),
             seller_id: value_to_str(&offer["seller_id"]),
@@ -121,12 +123,16 @@ pub fn unwrap_offers_bids_response(payload: &str, client: &redis::Client) {
                 matches.extend(process_market_id_for_pay_as_bid(obj, _market_id.as_str()));
             }
 
-            client.get_connection().unwrap().publish::<String, String, redis::Value>(
-                "external-matching-engine//recommendations/".to_string(),
-                json!({"recommended_matches": matches}).to_string(),
-            ).expect("Cannot publish Redis message to recommendations channel.");
+            client
+                .get_connection()
+                .unwrap()
+                .publish::<String, String, redis::Value>(
+                    "external-matching-engine//recommendations/".to_string(),
+                    json!({"recommended_matches": matches}).to_string(),
+                )
+                .expect("Cannot publish Redis message to recommendations channel.");
         }
-    };
+    }
 }
 
 pub fn unwrap_recommendations_response(payload: &str) {
@@ -147,34 +153,42 @@ pub fn unwrap_tick_response(payload: &str, client: &redis::Client) {
             let slot_percent_int: i32 = slot_percent_str[..length - 1].parse().unwrap();
             // TODO: change this fast fix with the proper logic
             if slot_percent_int > 33 {
-                client.get_connection().unwrap().publish::<String, String, redis::Value>(
-                    "external-matching-engine//offers-bids/".to_string(), "{}".to_string()
-                ).expect("Cannot publish Redis message to offers-bids channel.");
+                client
+                    .get_connection()
+                    .unwrap()
+                    .publish::<String, String, redis::Value>(
+                        "external-matching-engine//offers-bids/".to_string(),
+                        "{}".to_string(),
+                    )
+                    .expect("Cannot publish Redis message to offers-bids channel.");
             }
         }
     }
 }
 
 pub async fn redis_subscribe(channels: Vec<String>, url: String) -> Result<(), Error> {
+    let client = redis::Client::open(url)?;
 
-        let client = redis::Client::open(url)?;
+    let mut con = client.get_connection()?;
 
-        let mut con = client.get_connection()?;
+    let mut pubsub = con.as_pubsub();
+    for channel in channels {
+        pubsub.psubscribe(channel)?;
+    }
 
-        let mut pubsub = con.as_pubsub();
-        for channel in channels {
-            pubsub.psubscribe(channel)?;
-        }
-
-        loop {
-            let msg = pubsub.get_message().unwrap();
-            let payload: String = msg.get_payload().unwrap();
-            let channel_name = msg.get_channel_name();
-            match channel_name {
-                "external-matching-engine//offers-bids/response/" => unwrap_offers_bids_response(&payload, &client),
-                "external-matching-engine//recommendations/" => unwrap_recommendations_response(&payload),
-                "external-matching-engine//events/" => unwrap_tick_response(&payload, &client),
-                _ => unwrap_recommendations_response(&payload),
-            };
-        }
+    loop {
+        let msg = pubsub.get_message().unwrap();
+        let payload: String = msg.get_payload().unwrap();
+        let channel_name = msg.get_channel_name();
+        match channel_name {
+            "external-matching-engine//offers-bids/response/" => {
+                unwrap_offers_bids_response(&payload, &client)
+            }
+            "external-matching-engine//recommendations/" => {
+                unwrap_recommendations_response(&payload)
+            }
+            "external-matching-engine//events/" => unwrap_tick_response(&payload, &client),
+            _ => unwrap_recommendations_response(&payload),
+        };
+    }
 }

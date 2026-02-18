@@ -1,13 +1,13 @@
-use std::collections::HashMap;
 use gsy_community_client::external_api::{
 	ExternalCommunityTopology, ExternalForecast, ExternalMeasurement,
 };
 use gsy_community_client::node_connector::orders::publish_orders;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use gsy_community_client::time_utils::{get_current_timestamp_in_secs, get_last_and_next_timeslot};
+use gsy_offchain_primitives::constants::GLOBAL_CONSTANTS;
 use gsy_offchain_primitives::db_api_schema::profiles::{ForecastSchema, MeasurementSchema};
-use gsy_offchain_primitives::constants::GlobalConstants;
 use reqwest::Client;
+use std::collections::HashMap;
 use std::time::Duration;
 use subxt_signer::sr25519::dev;
 use tokio::time::sleep;
@@ -75,17 +75,20 @@ impl AppState {
 				)
 				.await
 				.unwrap();
-			let area_uuid_to_hash: HashMap<String, String> = internal_topology.community_areas.iter().map(
-				|area| {
-					(area.area_uuid.clone(), area.area_hash.clone())
-				}).collect();
+			let area_uuid_to_hash: HashMap<String, String> = internal_topology
+				.community_areas
+				.iter()
+				.map(|area| (area.area_uuid.clone(), area.area_hash.clone()))
+				.collect();
 			match self.fetch_forecasts().await {
 				Ok(forecasts) => {
 					let valid_forecasts: Vec<ForecastSchema> = forecasts
 						.into_iter()
 						.map(|forecast| {
 							self.api_adapter.convert_forecast_to_internal_schema(
-								&forecast, area_uuid_to_hash[&forecast.area_uuid].clone())
+								&forecast,
+								area_uuid_to_hash[&forecast.area_uuid].clone(),
+							)
 						})
 						.filter(|forecast| {
 							self.api_adapter.validate_forecast(forecast, seconds_since_epoch)
@@ -119,7 +122,9 @@ impl AppState {
 						.into_iter()
 						.map(|measurement| {
 							self.api_adapter.convert_measurement_to_internal_schema(
-								&measurement, area_uuid_to_hash[&measurement.area_uuid].clone())
+								&measurement,
+								area_uuid_to_hash[&measurement.area_uuid].clone(),
+							)
 						})
 						.filter(|measurement| {
 							self.api_adapter.validate_measurement(measurement, seconds_since_epoch)
@@ -139,7 +144,7 @@ impl AppState {
 			}
 
 			// Sleep for 15 minutes before polling again
-			sleep(Duration::from_secs(GlobalConstants.TIME_SLOT_SEC)).await;
+			sleep(Duration::from_secs(GLOBAL_CONSTANTS.time_slot_sec)).await;
 		}
 	}
 }

@@ -40,5 +40,4 @@ impl TradeSchema {
     pub fn eq(&self, other: &Self) -> bool {
         self.trade_uuid == other.trade_uuid
     }
-
 }

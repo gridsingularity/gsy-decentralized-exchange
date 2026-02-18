@@ -472,12 +472,14 @@ pub mod pallet {
 					0: Bid {
 						buyer: input_order.buyer.clone(),
 						bid_component: input_order.bid_component.clone(),
+						requirements: input_order.requirements.clone(),
 					},
 				},
 				InputOrder::Offer(input_order) => Order::Offer {
 					0: Offer {
 						seller: input_order.seller.clone(),
 						offer_component: input_order.offer_component.clone(),
+						attributes: input_order.attributes.clone(),
 					},
 				},
 			}
@@ -852,12 +854,14 @@ pub mod pallet {
 					0: Bid {
 						buyer: input_order.buyer.clone(),
 						bid_component: input_order.bid_component.clone(),
+						requirements: None,
 					},
 				},
 				InputOrder::Offer(input_order) => Order::Offer {
 					0: Offer {
 						seller: input_order.seller.clone(),
 						offer_component: input_order.offer_component.clone(),
+						attributes: None,
 					},
 				},
 			}

@@ -1,6 +1,11 @@
 use crate::helpers::{init_app, stop_app};
 use actix_web::web;
-use gsy_offchain_primitives::db_api_schema::orders::{OrderStatus, DbOrderSchema, OrderEnum};
+use gsy_offchain_primitives::db_api_schema::orders::{DbRequirements, OrderStatus, DbOrderSchema, OrderEnum};
+use codec::Encode;
+use gsy_offchain_primitives::node_to_api_schema::insert_order::{
+    Bid, Order, OrderComponent, OrderSchema,
+};
+use gsy_offchain_primitives::utils::h256_to_string;
 use mongodb::bson::Bson;
 use std::collections::HashMap;
 
@@ -24,6 +29,7 @@ async fn subscribe_return_a_200_for_valid_form_data() {
         market_id,
         time_slot: 1,
         creation_time: 1677453190,
+        requirements: None,
     };
 
     let orderlist = vec![order.clone()];

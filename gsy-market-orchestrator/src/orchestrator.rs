@@ -1,8 +1,10 @@
-use std::thread::current;
 use crate::chain_connector::{self, GsyMarketOrchestratorNodeClient};
 use crate::config::{Config, MARKET_RULES};
 use blake2_rfc::blake2b::blake2b;
-use gsy_offchain_primitives::{MarketType, constants::GlobalConstants, utils::timestamp_to_datetime_string};
+use gsy_offchain_primitives::{
+	constants::GLOBAL_CONSTANTS, utils::timestamp_to_datetime_string, MarketType,
+};
+use std::thread::current;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use subxt::utils::H256;
 use tokio::time::sleep;
@@ -46,7 +48,8 @@ async fn orchestrate_markets(
 	let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
 	let look_ahead_horizon = now + (config.look_ahead_hours * 3600);
 
-	let mut current_delivery_secs = (now / GlobalConstants.TIME_SLOT_SEC) * GlobalConstants.TIME_SLOT_SEC;
+	let mut current_delivery_secs =
+		(now / GLOBAL_CONSTANTS.time_slot_sec) * GLOBAL_CONSTANTS.time_slot_sec;
 
 	info!("Orchestrator Check at {}. Looking ahead to {}", now, look_ahead_horizon);
 
@@ -77,7 +80,7 @@ async fn orchestrate_markets(
 				client.update_market_status(market_id, false).await?;
 			}
 		}
-		current_delivery_secs += GlobalConstants.TIME_SLOT_SEC;
+		current_delivery_secs += GLOBAL_CONSTANTS.time_slot_sec;
 	}
 	Ok(())
 }

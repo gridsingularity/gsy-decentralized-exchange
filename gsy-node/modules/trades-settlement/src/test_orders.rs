@@ -35,6 +35,7 @@ impl TestOrderbookFunctions {
 				energy,
 				energy_rate,
 			},
+			requirements: None,
 		}
 	}
 
@@ -55,6 +56,7 @@ impl TestOrderbookFunctions {
 				energy,
 				energy_rate,
 			},
+			attributes: None,
 		}
 	}
 

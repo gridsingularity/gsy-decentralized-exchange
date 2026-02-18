@@ -142,6 +142,7 @@ impl AreaMarketInfoAdapter {
 							area_uuid: area.area_uuid.clone(),
 							name: area.area_name.clone(),
 							area_hash: h256_to_string(H256::random()),
+							area_type: "Area".to_string(),
 						})
 						.collect(),
 				};

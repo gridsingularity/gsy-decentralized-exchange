@@ -1,8 +1,7 @@
-use subxt::utils::{AccountId32, H256};
-use std::str::FromStr;
-use chrono::{Utc, prelude::DateTime};
+use chrono::{prelude::DateTime, Utc};
 use std::env;
-
+use std::str::FromStr;
+use subxt::utils::{AccountId32, H256};
 
 pub const NODE_FLOAT_SCALING_FACTOR: f64 = 10000.0;
 

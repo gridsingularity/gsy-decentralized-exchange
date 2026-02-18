@@ -65,6 +65,7 @@ fn _create_bid_object(
 				creation_time: now,
 				time_slot: market.time_slot as u64,
 			},
+			requirements: None,
 		},
 	}
 }
@@ -88,6 +89,7 @@ fn _create_offer_object(
 				creation_time: now,
 				time_slot: market.time_slot as u64,
 			},
+			attributes: None,
 		},
 	}
 }
@@ -102,7 +104,8 @@ pub fn create_input_orders(
 	let mut input_orders: Vec<InputOrder<AccountId32>> = Vec::new();
 
 	for forecast in forecasts {
-		let area_info = market.community_areas.iter().find(|area| area.area_hash == forecast.area_hash);
+		let area_info =
+			market.community_areas.iter().find(|area| area.area_hash == forecast.area_hash);
 		if area_info.is_none() {
 			continue;
 		}

@@ -32,17 +32,14 @@ pub fn dummy_bid(buyer: AccountId, energy: u64, energy_rate: u64) -> Bid<Account
 			time_slot: rand::thread_rng().gen_range(1..101),
 			creation_time: 1677453190,
 			energy,
-			energy_rate
+			energy_rate,
 		},
+		requirements: None,
 	}
 }
 
 /// Create an offer with filler values.
-pub fn dummy_offer(
-	seller: AccountId,
-	energy: u64,
-	energy_rate: u64,
-) -> Offer<AccountId> {
+pub fn dummy_offer(seller: AccountId, energy: u64, energy_rate: u64) -> Offer<AccountId> {
 	Offer {
 		seller,
 		offer_component: OrderComponent {
@@ -51,8 +48,9 @@ pub fn dummy_offer(
 			time_slot: rand::thread_rng().gen_range(1..101),
 			creation_time: 1677453190,
 			energy,
-			energy_rate
+			energy_rate,
 		},
+		attributes: None,
 	}
 }
 
@@ -61,7 +59,7 @@ pub fn dummy_trade(
 	buyer: AccountId,
 	seller: AccountId,
 	selected_energy: u64,
-	energy_rate: u64
+	energy_rate: u64,
 ) -> Trade<AccountId, Hash> {
 	let trade_uuid = BlakeTwo256::hash_of(&rand::thread_rng().gen::<u128>());
 	let bid = dummy_bid(buyer.clone(), selected_energy, energy_rate);
@@ -79,10 +77,6 @@ pub fn dummy_trade(
 		offer_hash: BlakeTwo256::hash_of(&offer),
 		residual_offer: None,
 		residual_bid: None,
-		parameters: TradeParameters {
-			selected_energy,
-			energy_rate,
-			trade_uuid,
-		}
+		parameters: TradeParameters { selected_energy, energy_rate, trade_uuid },
 	}
 }
