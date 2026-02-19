@@ -87,7 +87,7 @@ impl MatchingData {
 		let mut bid_matched_amounts: HashMap<OrderKey, u64> = HashMap::new();
 		let mut offer_matched_amounts: HashMap<OrderKey, u64> = HashMap::new();
 
-		let (preference_bids, non_preference_bids): (Vec<&Bid>, Vec<&Bid>) =
+		let (preference_bids, _non_preference_bids): (Vec<&Bid>, Vec<&Bid>) =
 			self.bids.iter().partition(|b| {
 				b.requirements.as_ref().and_then(|r| r.trading_partner_id.as_ref()).is_some()
 			});
