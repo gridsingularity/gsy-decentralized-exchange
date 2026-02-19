@@ -5,8 +5,8 @@ use gsy_offchain_primitives::db_api_schema::profiles::{
     BatteryMeasurementSchema, MeasurementMetadataSchema, PVMeasurementSchema,
     SmartMeterMeasurementSchema, TransformerMeasurementSchema,
 };
-use test_context::{test_context, AsyncTestContext};
 use gsy_offchain_primitives::MarketType;
+use test_context::{test_context, AsyncTestContext};
 
 struct AssetMeasurementsTestContext {
     app: TestApp,

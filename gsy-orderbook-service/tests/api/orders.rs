@@ -1,9 +1,8 @@
 use crate::helpers::{init_app, stop_app};
 use actix_web::web;
-use gsy_offchain_primitives::db_api_schema::orders::{OrderStatus, DbOrderSchema, OrderEnum};
+use gsy_offchain_primitives::db_api_schema::orders::{DbOrderSchema, OrderEnum, OrderStatus};
 use mongodb::bson::Bson;
 use std::collections::HashMap;
-
 
 #[tokio::test]
 async fn subscribe_return_a_200_for_valid_form_data() {

@@ -1,23 +1,24 @@
-use crate::db_api_schema::orders::{DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus};
+use crate::db_api_schema::orders::{
+    DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus,
+};
 use crate::utils::{h256_to_string, NODE_FLOAT_SCALING_FACTOR};
 use serde::{Deserialize, Serialize};
 use subxt::utils::{AccountId32, H256};
 
-
 #[derive(Serialize, Deserialize, Clone)]
 struct NodeOrderSchema<AccountId32, Hash> {
-	pub order_id: Hash,
-	pub order_type: OrderEnum,
-	pub status: OrderStatus,
-	pub area_uuid: H256,
-	pub market_id: H256,
-	pub time_slot: u64,
-	pub creation_time: u64,
-	pub energy: u64,
-	pub energy_rate: u64,
-	pub created_by: AccountId32,
-	pub requirements: Option<NodeRequirements<AccountId32>>,
-	pub attributes: Option<NodeAttributes<AccountId32>>,
+    pub order_id: Hash,
+    pub order_type: OrderEnum,
+    pub status: OrderStatus,
+    pub area_uuid: H256,
+    pub market_id: H256,
+    pub time_slot: u64,
+    pub creation_time: u64,
+    pub energy: u64,
+    pub energy_rate: u64,
+    pub created_by: AccountId32,
+    pub requirements: Option<NodeRequirements<AccountId32>>,
+    pub attributes: Option<NodeAttributes<AccountId32>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

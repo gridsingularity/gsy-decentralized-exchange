@@ -1,11 +1,11 @@
 #![allow(non_snake_case)]
 
 use crate::algorithms::PayAsBid;
+use crate::db_api_schema::orders::{OrderEnum, OrderStatus};
 use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use subxt::utils::{AccountId32, H256};
-use crate::db_api_schema::orders::{OrderEnum, OrderStatus};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd)]
 pub enum EnergyType {
@@ -28,7 +28,6 @@ pub struct Attributes {
     pub energy_type: EnergyType,
 }
 
-
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd)]
 pub struct Order {
     pub order_id: H256,
@@ -47,21 +46,21 @@ pub struct Order {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct BidOfferMatch {
-	pub market_id: H256,
-	pub time_slot: u64,
-	pub bid: Order,
-	pub offer: Order,
-	pub residual_bid: Option<Order>,
-	pub residual_offer: Option<Order>,
-	pub selected_energy_kWh: u64,
-	pub energy_rate: u64,
+    pub market_id: H256,
+    pub time_slot: u64,
+    pub bid: Order,
+    pub offer: Order,
+    pub residual_bid: Option<Order>,
+    pub residual_offer: Option<Order>,
+    pub selected_energy_kWh: u64,
+    pub energy_rate: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub struct MatchingData {
-	pub bids: Vec<Order>,
-	pub offers: Vec<Order>,
-	pub market_id: H256,
+    pub bids: Vec<Order>,
+    pub offers: Vec<Order>,
+    pub market_id: H256,
 }
 
 impl MatchingData {
@@ -104,9 +103,7 @@ impl MatchingData {
                 let selected_energy = bid_energy_needed.min(offer_energy_available);
 
                 if selected_energy > 0 {
-                    let trade_rate = req
-                        .preferred_energy_rate
-                        .unwrap_or(bid.energy_rate);
+                    let trade_rate = req.preferred_energy_rate.unwrap_or(bid.energy_rate);
 
                     matches.push(BidOfferMatch {
                         market_id: offer.market_id,
@@ -180,12 +177,8 @@ impl MatchingData {
     fn match_standard(&self, mut bids: Vec<Order>, mut offers: Vec<Order>) -> Vec<BidOfferMatch> {
         let mut matches = Vec::new();
 
-        bids.sort_by(|a, b| {
-            b.energy_rate.cmp(&a.energy_rate)
-        });
-        offers.sort_by(|a, b| {
-            a.energy_rate.cmp(&b.energy_rate)
-        });
+        bids.sort_by(|a, b| b.energy_rate.cmp(&a.energy_rate));
+        offers.sort_by(|a, b| a.energy_rate.cmp(&b.energy_rate));
 
         type OrderKey = H256;
         let mut available_energy_bid: HashMap<OrderKey, u64> = HashMap::new();

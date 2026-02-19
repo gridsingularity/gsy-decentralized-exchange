@@ -1,4 +1,4 @@
-use gsy_offchain_primitives::types::{Order, BidOfferMatch, EnergyType};
+use gsy_offchain_primitives::types::{BidOfferMatch, EnergyType, Order};
 use gsy_offchain_primitives::utils::string_to_account_id;
 use subxt::utils::{AccountId32, H256};
 

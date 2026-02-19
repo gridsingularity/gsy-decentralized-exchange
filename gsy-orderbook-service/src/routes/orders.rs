@@ -4,7 +4,6 @@ use anyhow::{Error, Result};
 use gsy_offchain_primitives::db_api_schema::orders::DbOrderSchema;
 use serde::Deserialize;
 
-
 #[tracing::instrument(
     name = "Adding new orders",
     skip(db),

@@ -4,7 +4,6 @@ use actix_web::{web::Json, HttpResponse, Responder};
 use gsy_offchain_primitives::db_api_schema::trades::TradeSchema;
 use serde::Deserialize;
 
-
 #[tracing::instrument(
     name = "Adding new trades",
     skip(db),

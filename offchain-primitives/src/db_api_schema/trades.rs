@@ -1,8 +1,7 @@
 #![allow(non_snake_case)]
 
-use serde::{Deserialize, Serialize};
 use crate::db_api_schema::orders::DbOrderSchema;
-
+use serde::{Deserialize, Serialize};
 
 /// Trade status
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -36,7 +35,6 @@ pub struct TradeSchema {
 }
 
 impl TradeSchema {
-
     pub fn eq(&self, other: &Self) -> bool {
         self.trade_uuid == other.trade_uuid
     }

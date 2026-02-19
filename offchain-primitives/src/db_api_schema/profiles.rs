@@ -1,8 +1,7 @@
 #![allow(non_snake_case)]
 
-use codec::{Encode, Decode};
+use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
-
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub struct MeasurementMetadataSchema {
@@ -13,16 +12,14 @@ pub struct MeasurementMetadataSchema {
     pub creation_time: u64,
 }
 
-
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub struct MeasurementSchema {
     pub area_uuid: String,
     pub community_uuid: String,
     pub time_slot: u64,
     pub creation_time: u64,
-    pub energy_kwh: f64
+    pub energy_kwh: f64,
 }
-
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub struct PVMeasurementSchema {
@@ -32,7 +29,6 @@ pub struct PVMeasurementSchema {
     pub voltage_V: f64,
     pub energy_kWh: f64,
 }
-
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub struct BatteryMeasurementSchema {
@@ -45,9 +41,8 @@ pub struct BatteryMeasurementSchema {
     pub temperature_C: f64,
     pub voltage_V: f64,
     pub energy_charge_kWh: f64,
-    pub energy_discharge_kWh: f64
+    pub energy_discharge_kWh: f64,
 }
-
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub struct SmartMeterMeasurementSchema {
@@ -70,7 +65,6 @@ pub struct SmartMeterMeasurementSchema {
     pub voltage_V_p3: f64,
 }
 
-
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub struct TransformerMeasurementSchema {
     pub metadata: MeasurementMetadataSchema,
@@ -90,7 +84,6 @@ pub struct TransformerMeasurementSchema {
     pub voltage_V_p3: f64,
 }
 
-
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub struct ForecastSchema {
     pub area_uuid: String,
@@ -98,5 +91,5 @@ pub struct ForecastSchema {
     pub time_slot: u64,
     pub creation_time: u64,
     pub energy_kwh: f64,
-    pub confidence: f64
+    pub confidence: f64,
 }

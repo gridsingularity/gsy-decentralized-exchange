@@ -1,10 +1,8 @@
+use crate::primitives::node_types_converter::create_node_bid_offer_matches_from_canonical;
 use anyhow::{anyhow, Error, Result};
 use async_recursion::async_recursion;
 use gsy_offchain_primitives::algorithms::PayAsBid;
-use gsy_offchain_primitives::db_api_schema::orders::{
-    DbOrderSchema, OrderStatus, OrderEnum
-};
-use crate::primitives::node_types_converter::create_node_bid_offer_matches_from_canonical;
+use gsy_offchain_primitives::db_api_schema::orders::{DbOrderSchema, OrderEnum, OrderStatus};
 use gsy_offchain_primitives::types::{BidOfferMatch, MatchingData, Order};
 use gsy_offchain_primitives::utils::{
     string_to_account_id, string_to_h256, NODE_FLOAT_SCALING_FACTOR,
@@ -25,28 +23,28 @@ pub const DEFAULT_MARKET_ID: u8 = 1;
 
 #[async_recursion]
 pub async fn substrate_subscribe(orderbook_url: String, node_url: String) -> Result<(), Error> {
-	info!("Connecting to {}", node_url);
+    info!("Connecting to {}", node_url);
 
-	let api = OnlineClient::<SubstrateConfig>::from_insecure_url(node_url.clone()).await?;
+    let api = OnlineClient::<SubstrateConfig>::from_insecure_url(node_url.clone()).await?;
 
-	let mut gsy_blocks_events = api.blocks().subscribe_finalized().await?;
+    let mut gsy_blocks_events = api.blocks().subscribe_finalized().await?;
 
-	let orderbook_url = Arc::new(Mutex::new(orderbook_url));
-	let node_url = Arc::new(Mutex::new(node_url.clone()));
+    let orderbook_url = Arc::new(Mutex::new(orderbook_url));
+    let node_url = Arc::new(Mutex::new(node_url.clone()));
 
-	while let Some(Ok(block)) = gsy_blocks_events.next().await {
-		info!("Block {:?} finalized: {:?}", block.number(), block.hash());
+    while let Some(Ok(block)) = gsy_blocks_events.next().await {
+        info!("Block {:?} finalized: {:?}", block.number(), block.hash());
 
-		let matches = Arc::new(Mutex::new(Vec::new()));
+        let matches = Arc::new(Mutex::new(Vec::new()));
 
-		if (block.number() as u64) % MATCH_PER_NR_BLOCKS == 0 {
-			info!("Starting matching cycle");
+        if (block.number() as u64) % MATCH_PER_NR_BLOCKS == 0 {
+            info!("Starting matching cycle");
 
-			let orderbook_url_clone = Arc::clone(&orderbook_url);
-			let node_url_clone = Arc::clone(&node_url);
+            let orderbook_url_clone = Arc::clone(&orderbook_url);
+            let node_url_clone = Arc::clone(&node_url);
 
-			let matches_clone_one = Arc::clone(&matches);
-			let matches_clone_two = Arc::clone(&matches_clone_one);
+            let matches_clone_one = Arc::clone(&matches);
+            let matches_clone_two = Arc::clone(&matches_clone_one);
 
             if let Err(error) = tokio::task::spawn(async move {
                 let orderbook_url_clone = orderbook_url_clone.lock().unwrap().to_string();
@@ -147,9 +145,8 @@ fn convert_db_order_to_canonical(order: DbOrderSchema) -> Result<Order> {
             creation_time: order.creation_time,
             energy: (order.energy_kWh * NODE_FLOAT_SCALING_FACTOR) as u64,
             energy_rate: (order.energy_rate * NODE_FLOAT_SCALING_FACTOR) as u64,
-            requirements: order
-                .requirements
-                .map(|r| gsy_offchain_primitives::types::Requirements {
+            requirements: order.requirements.map(|r| {
+                gsy_offchain_primitives::types::Requirements {
                     trading_partner_id: r.trading_partner_id.and_then(string_to_account_id),
                     energy_type: r.energy_type.map(|et| match et {
                         gsy_offchain_primitives::db_api_schema::orders::EnergyType::Clean => {
@@ -168,8 +165,9 @@ fn convert_db_order_to_canonical(order: DbOrderSchema) -> Result<Order> {
                     preferred_energy_rate: r
                         .preferred_energy_rate
                         .map(|r| (r * NODE_FLOAT_SCALING_FACTOR) as u64),
-                }),
-            attributes: None
+                }
+            }),
+            attributes: None,
         },
         OrderEnum::Offer => Order {
             order_id: string_to_h256(order.order_id),
@@ -203,7 +201,7 @@ fn convert_db_order_to_canonical(order: DbOrderSchema) -> Result<Order> {
                         }
                     },
                 }),
-        }
+        },
     })
 }
 

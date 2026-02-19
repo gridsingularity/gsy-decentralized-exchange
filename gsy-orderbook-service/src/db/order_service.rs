@@ -80,7 +80,6 @@ impl OrderService {
         Ok(result)
     }
 
-
     #[tracing::instrument(
         name = "Saving orders to database",
         skip(self, orders_schema),

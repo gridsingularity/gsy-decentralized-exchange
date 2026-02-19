@@ -2,7 +2,6 @@
 
 use serde::{Deserialize, Serialize};
 
-
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum EnergyType {
     Clean,
@@ -29,7 +28,6 @@ pub enum OrderEnum {
     Bid,
     Offer,
 }
-
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct DbOrderSchema {

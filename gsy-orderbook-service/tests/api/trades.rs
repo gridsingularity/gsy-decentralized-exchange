@@ -1,7 +1,7 @@
 use crate::helpers::{init_app, stop_app};
 use actix_web::web;
 use gsy_offchain_primitives::db_api_schema::orders::{DbOrderSchema, OrderEnum, OrderStatus};
-use gsy_offchain_primitives::db_api_schema::trades::{TradeSchema, TradeParameters, TradeStatus};
+use gsy_offchain_primitives::db_api_schema::trades::{TradeParameters, TradeSchema, TradeStatus};
 
 #[tokio::test]
 async fn post_trade_request_writes_trades_to_the_db() {
@@ -23,7 +23,7 @@ async fn post_trade_request_writes_trades_to_the_db() {
         time_slot: 1,
         creation_time: 1677453190,
         requirements: None,
-        attributes: None
+        attributes: None,
     };
     let offer = DbOrderSchema {
         status: OrderStatus::Open,
@@ -37,7 +37,7 @@ async fn post_trade_request_writes_trades_to_the_db() {
         time_slot: 1,
         creation_time: 1677453190,
         requirements: None,
-        attributes: None
+        attributes: None,
     };
 
     let trade1 = TradeSchema {

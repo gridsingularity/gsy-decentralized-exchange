@@ -1,13 +1,12 @@
-use serde::{Deserialize, Serialize};
 use crate::MarketType;
+use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct AreaTopologySchema {
     pub area_uuid: String,
     pub name: String,
-    pub area_type: String
+    pub area_type: String,
 }
-
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct MarketTopologySchema {
@@ -18,5 +17,5 @@ pub struct MarketTopologySchema {
     pub community_name: String,
     pub time_slot: u32,
     pub creation_time: u32,
-    pub community_areas: Vec<AreaTopologySchema>
+    pub community_areas: Vec<AreaTopologySchema>,
 }
