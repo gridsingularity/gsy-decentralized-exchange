@@ -1,8 +1,7 @@
 #![allow(non_snake_case)]
 
 use serde::{Deserialize, Serialize};
-use subxt::utils::H256;
-use sp_runtime::traits::{BlakeTwo256, Hash};
+
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum EnergyType {
@@ -25,7 +24,7 @@ pub struct DbAttributes {
     pub energy_type: EnergyType,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd)]
 pub enum OrderEnum {
     Bid,
     Offer,
@@ -49,7 +48,7 @@ pub struct DbOrderSchema {
 }
 
 /// Order status
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd)]
 pub enum OrderStatus {
     Open,
     Executed,
