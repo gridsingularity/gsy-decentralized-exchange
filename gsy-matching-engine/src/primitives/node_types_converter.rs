@@ -25,7 +25,7 @@ pub fn create_node_bid_offer_matches_from_canonical(
         crate::connectors::substrate_connector::gsy_node::runtime_types::gsy_primitives::trades::BidOfferMatch {
             market_id: bid_offer_match.market_id,
             time_slot: bid_offer_match.time_slot,
-            selected_energy: bid_offer_match.selected_energy_kWh,
+            selected_energy: bid_offer_match.selected_energy,
             energy_rate: bid_offer_match.energy_rate,
             bid: create_node_bid_from_canonical_bid(bid_offer_match.bid),
             offer: create_node_offer_from_canonical_offer(bid_offer_match.offer),

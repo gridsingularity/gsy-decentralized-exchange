@@ -2,7 +2,6 @@
 
 use crate::algorithms::PayAsBid;
 use crate::db_api_schema::orders::{OrderEnum, OrderStatus};
-use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use subxt::utils::{AccountId32, H256};
@@ -52,7 +51,7 @@ pub struct BidOfferMatch {
     pub offer: Order,
     pub residual_bid: Option<Order>,
     pub residual_offer: Option<Order>,
-    pub selected_energy_kWh: u64,
+    pub selected_energy: u64,
     pub energy_rate: u64,
 }
 
@@ -112,7 +111,7 @@ impl MatchingData {
                         offer: offer.clone(),
                         residual_bid: None,
                         residual_offer: None,
-                        selected_energy_kWh: selected_energy,
+                        selected_energy: selected_energy,
                         energy_rate: trade_rate,
                     });
 
@@ -243,7 +242,7 @@ impl MatchingData {
                     offer: offer.clone(),
                     residual_bid,
                     residual_offer,
-                    selected_energy_kWh: selected_energy,
+                    selected_energy: selected_energy,
                     energy_rate: bid.energy_rate,
                 };
 
