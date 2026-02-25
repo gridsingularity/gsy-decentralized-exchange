@@ -136,3 +136,25 @@ services:
       dockerfile: Dockerfile
     environment:
       - RUST_LOG=info
+
+  gsy-orderbook-integration-test:
+    container_name: gsy-orderbook-integration-test
+    build:
+      context: .
+      dockerfile: gsy-orderbook-service/Dockerfile
+      target: builder
+    command: cargo test --test api
+    depends_on:
+      mongodb:
+        condition: service_started
+    environment:
+      - RUST_LOG=info
+      - DATABASE_HOST=mongodb
+      - DATABASE_NAME=test_db
+      - DATABASE_USERNAME=gsy
+      - DATABASE_PASSWORD=gsy
+      - DATABASE_URL_SCHEME=mongodb
+      - APPLICATION_HOST=0.0.0.0
+      - APPLICATION_PORT=8080
+      - SCHEDULER_INTERVAL=900
+      - EVM_NODE_URL=ws://localhost:8545

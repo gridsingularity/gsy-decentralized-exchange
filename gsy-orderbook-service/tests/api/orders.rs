@@ -1,46 +1,32 @@
 use crate::helpers::init_app;
 use actix_web::web;
-use codec::Encode;
-use gsy_offchain_primitives::db_api_schema::orders::{DbRequirements, OrderStatus};
-use gsy_offchain_primitives::node_to_api_schema::insert_order::{
-	Bid, Order, OrderComponent, OrderSchema,
+use gsy_offchain_primitives::db_api_schema::orders::{
+	DbBid, DbOrderComponent, DbOrderSchema, Order, OrderStatus,
 };
 use mongodb::bson::Bson;
 use std::collections::HashMap;
-use subxt::ext::sp_core::crypto::AccountId32;
-use subxt::utils::H256;
-
-pub fn create_test_accountid() -> AccountId32 {
-	// A fixed 32-byte value, typically derived from a public key
-	let account_id_bytes = [
-		0u8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
-		25, 26, 27, 28, 29, 30, 31,
-	];
-
-	AccountId32::from(account_id_bytes)
-}
 
 #[tokio::test]
 async fn subscribe_return_a_200_for_valid_form_data() {
 	let app = init_app().await;
 	let address = app.address;
 
-	let account: AccountId32 = create_test_accountid();
-	let order_id = H256::random();
-	let market_id = H256::random();
-	let area_id = H256::random();
+	let order_id = "0x123";
+	let market_id = "0x456";
+	let area_id = "0x789";
+	let account = "0xABC";
 
-	let order = OrderSchema {
-		_id: order_id,
+	let order = DbOrderSchema {
+		_id: order_id.to_string(),
 		status: OrderStatus::Expired,
-		order: Order::Bid(Bid {
-			buyer: account,
+		order: Order::Bid(DbBid {
+			buyer: account.to_string(),
 			nonce: 1,
-			bid_component: OrderComponent {
-				energy: 100,
-				energy_rate: 10,
-				area_uuid: area_id,
-				market_id,
+			bid_component: DbOrderComponent {
+				energy: 100.0,
+				energy_rate: 10.0,
+				area_uuid: area_id.to_string(),
+				market_id: market_id.to_string(),
 				time_slot: 1,
 				creation_time: 1677453190,
 			},
@@ -49,11 +35,11 @@ async fn subscribe_return_a_200_for_valid_form_data() {
 	};
 
 	let orderlist = vec![order.clone()];
-	let body = Vec::<OrderSchema<AccountId32, H256>>::encode(&orderlist);
+	let body = orderlist;
 
 	let client = reqwest::Client::new();
 	let resp = client
-		.post(&format!("{}/orders", &address))
+		.post(&format!("{}/orders-normalized", &address))
 		.header("Content-Type", "application/json")
 		.json(&body)
 		.send()
@@ -93,7 +79,7 @@ async fn subscribe_return_a_400_when_data_is_missing() {
 
 	for (invalid_body, error_message) in test_cases {
 		let resp = client
-			.post(&format!("{}/orders", &address))
+			.post(&format!("{}/orders-normalized", &address))
 			.header("Content-Type", "application/json")
 			.body(invalid_body)
 			.send()

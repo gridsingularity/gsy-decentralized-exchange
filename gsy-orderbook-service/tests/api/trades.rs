@@ -1,77 +1,77 @@
 use crate::helpers::init_app;
 use actix_web::web;
-use codec::Encode;
-use gsy_offchain_primitives::node_to_api_schema::insert_order::{
-	Bid as InsertBid, Offer as InsertOffer, OrderComponent as InsertOrderComponent,
+use gsy_offchain_primitives::db_api_schema::orders::{DbBid, DbOffer, DbOrderComponent};
+use gsy_offchain_primitives::db_api_schema::trades::{
+	TradeParameters as DbTradeParameters, TradeSchema, TradeStatus,
 };
-use gsy_offchain_primitives::node_to_api_schema::insert_trades::{
-	Trade, TradeParameters as InsertTradeParameters,
-};
-use subxt::ext::sp_core::H256;
-use subxt::ext::sp_runtime::AccountId32;
+use uuid::Uuid;
 
 #[tokio::test]
 async fn post_trade_request_writes_trades_to_the_db() {
 	let app = init_app().await;
 	let address = app.address;
-	let account: AccountId32 = crate::orders::create_test_accountid();
-	let market_id = H256::random();
-	let area_id = H256::random();
-	let area_id_2 = H256::random();
+	let account = "0xAccount";
+	let market_id = "0xMarket";
+	let area_id = "0xArea1";
+	let area_id_2 = "0xArea2";
 
-	let bid = InsertBid {
-		buyer: account.clone(),
+	let bid = DbBid {
+		buyer: account.to_string(),
 		nonce: 1,
-		bid_component: InsertOrderComponent {
-			energy: 100,
-			energy_rate: 10,
-			area_uuid: area_id.clone(),
-			market_id: market_id.clone(),
+		bid_component: DbOrderComponent {
+			energy: 100.0,
+			energy_rate: 10.0,
+			area_uuid: area_id.to_string(),
+			market_id: market_id.to_string(),
 			time_slot: 1,
 			creation_time: 1677453190,
 		},
 		requirements: None,
 	};
-	let offer = InsertOffer {
-		seller: account.clone(),
+	let offer = DbOffer {
+		seller: account.to_string(),
 		nonce: 1,
-		offer_component: InsertOrderComponent {
-			energy: 100,
-			energy_rate: 10,
-			area_uuid: area_id_2.clone(),
-			market_id: market_id.clone(),
+		offer_component: DbOrderComponent {
+			energy: 100.0,
+			energy_rate: 10.0,
+			area_uuid: area_id_2.to_string(),
+			market_id: market_id.to_string(),
 			time_slot: 1,
 			creation_time: 1677453190,
 		},
 		attributes: None,
 	};
 
-	let trade_uuid = H256::random();
-	let trade1 = Trade {
-		_id: H256::random(),
-		seller: account.clone(),
-		buyer: account.clone(),
-		market_id: market_id.clone(),
+	let trade_uuid = Uuid::new_v4().to_string();
+	let trade1 = TradeSchema {
+		_id: Uuid::new_v4().to_string(),
+		status: TradeStatus::Settled,
+		seller: account.to_string(),
+		buyer: account.to_string(),
+		market_id: market_id.to_string(),
 		time_slot: 123456123,
-		trade_uuid,
+		trade_uuid: trade_uuid.clone(),
 		creation_time: 123456123,
 		offer,
-		offer_hash: H256::random(),
+		offer_hash: "0xOfferHash".to_string(),
 		bid,
-		bid_hash: H256::random(),
+		bid_hash: "0xBidHash".to_string(),
 		residual_offer: None,
 		residual_bid: None,
-		parameters: InsertTradeParameters { selected_energy: 14, energy_rate: 3, trade_uuid },
+		parameters: DbTradeParameters {
+			selected_energy: 14.0,
+			energy_rate: 3.0,
+			trade_uuid: trade_uuid.clone(),
+		},
 	};
 
 	let tradelist = vec![trade1.clone()];
-	let body = Vec::<Trade<AccountId32, H256>>::encode(&tradelist);
 
 	let client = reqwest::Client::new();
 	let resp = client
-		.post(&format!("{}/trades", &address))
+		.post(&format!("{}/trades-normalized", &address))
 		.header("Content-Type", "application/json")
-		.json(&body)
+		.json(&tradelist)
 		.send()
 		.await;
 
@@ -95,7 +95,7 @@ async fn subscribe_return_a_400_when_data_is_missing() {
 
 	for (invalid_body, error_message) in test_cases {
 		let resp = client
-			.post(&format!("{}/orders", &address))
+			.post(&format!("{}/orders-normalized", &address))
 			.header("Content-Type", "application/json")
 			.body(invalid_body)
 			.send()
