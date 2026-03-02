@@ -2,14 +2,13 @@ use crate::db::asset_measurements_service::GetMeasurements;
 use crate::db::DbRef;
 use actix_web::web::{Json, Query};
 use actix_web::{HttpResponse, Responder};
-use codec::{Decode, Encode};
 use gsy_offchain_primitives::db_api_schema::profiles::{
     BatteryMeasurementSchema, PVMeasurementSchema, SmartMeterMeasurementSchema,
     TransformerMeasurementSchema,
 };
 use serde::{Deserialize, Serialize};
 
-#[derive(Deserialize, Serialize, Encode, Decode, Clone)]
+#[derive(Deserialize, Serialize, Clone)]
 #[serde(untagged)]
 pub enum AssetMeasurementInput {
     MeasurementPV(PVMeasurementSchema),

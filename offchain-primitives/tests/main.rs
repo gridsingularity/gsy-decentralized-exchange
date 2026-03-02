@@ -10,9 +10,12 @@ mod tests {
     fn test_h256_to_string() {
         let hash = H256::zero();
         let hash_string = h256_to_string(hash);
-        assert_eq!(hash_string, "0x0000000000000000000000000000000000000000000000000000000000000000");
+        assert_eq!(
+            hash_string,
+            "0x0000000000000000000000000000000000000000000000000000000000000000"
+        );
     }
-    
+
     #[test]
     fn test_string_to_h256() {
         // let hash = H256::zero();
@@ -27,5 +30,4 @@ mod tests {
         let hash_string = h256_to_string(hash);
         assert_eq!(hash, string_to_h256(hash_string));
     }
-    
 }

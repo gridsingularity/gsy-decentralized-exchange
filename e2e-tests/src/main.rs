@@ -15,5 +15,5 @@ async fn main() {
     println!("Waiting for services to start...");
     sleep(std::time::Duration::from_secs(30)).await;
 
-    world::MyWorld::run("features").await;
+    world::MyWorld::cucumber().run_and_exit("features").await;
 }

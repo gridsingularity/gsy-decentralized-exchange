@@ -1,51 +1,52 @@
-use codec::{Encode, Decode};
+#![allow(non_snake_case)]
+
 use serde::{Deserialize, Serialize};
-use subxt::utils::H256;
-use sp_runtime::traits::{BlakeTwo256, Hash};
 
-
-#[derive(Serialize, Deserialize, Debug, Encode, Clone, PartialEq)]
-#[serde(tag = "type", content = "data")]
-pub enum Order {
-    Bid(DbBid),
-    Offer(DbOffer),
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub enum EnergyType {
+    Clean,
+    Battery,
+    FossilFuel,
+    Import,
 }
 
-impl Order {
-    pub fn hash(&self) -> H256 {
-        H256(BlakeTwo256::hash_of(self).0)
-    }
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct DbRequirements {
+    pub trading_partner_id: Option<String>,
+    pub energy_type: Option<EnergyType>,
+    pub preferred_energy_rate: Option<f64>,
 }
-/// Order component struct
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
-pub struct DbOrderComponent {
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct DbAttributes {
+    pub trading_partner_id: Option<String>,
+    pub energy_type: EnergyType,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd)]
+pub enum OrderEnum {
+    Bid,
+    Offer,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct DbOrderSchema {
+    pub order_id: String,
+    pub status: OrderStatus,
+    pub order_type: OrderEnum,
     pub area_uuid: String,
     pub market_id: String,
     pub time_slot: u64,
     pub creation_time: u64,
-    pub energy: f64,
-    pub energy_rate: f64
-}
-
-#[derive(Serialize, Deserialize, Debug, Encode, Clone, PartialEq)]
-pub struct DbOrderSchema {
-    pub _id: String,
-    pub status: OrderStatus,
-    pub order: Order,
-}
-
-impl From<Order> for DbOrderSchema {
-    fn from(order: Order) -> Self {
-        DbOrderSchema {
-            _id: order.hash().to_string(),
-            status: Default::default(),
-            order,
-        }
-    }
+    pub energy_kWh: f64,
+    pub energy_rate: f64,
+    pub created_by: String,
+    pub requirements: Option<DbRequirements>,
+    pub attributes: Option<DbAttributes>,
 }
 
 /// Order status
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd)]
 pub enum OrderStatus {
     Open,
     Executed,
@@ -58,20 +59,3 @@ impl Default for OrderStatus {
         Self::Open
     }
 }
-
-/// Bid order struct
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
-pub struct DbBid {
-    pub buyer: String,
-    pub nonce: u32,
-    pub bid_component: DbOrderComponent,
-}
-
-/// Offer (Ask) order struct
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
-pub struct DbOffer {
-    pub seller: String,
-    pub nonce: u32,
-    pub offer_component: DbOrderComponent,
-}
-

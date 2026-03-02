@@ -2,7 +2,7 @@ use crate::db::DatabaseWrapper;
 use crate::routes::{
     get_asset_measurements, get_forecasts, get_market, get_market_from_community, get_measurements,
     get_orders, get_trades, health_check, post_asset_measurements, post_forecasts, post_market,
-    post_measurements, post_normalized_orders, post_normalized_trades, post_orders, post_trades,
+    post_measurements, post_orders, post_trades,
 };
 use actix_web::dev::Server;
 use actix_web::{web, App, HttpServer};
@@ -18,10 +18,8 @@ pub fn run(
         App::new()
             .wrap(TracingLogger::default())
             .route("/health_check", web::get().to(health_check))
-            .route("/orders-normalized", web::post().to(post_normalized_orders))
             .route("/orders", web::post().to(post_orders))
             .route("/orders", web::get().to(get_orders))
-            .route("/trades-normalized", web::post().to(post_normalized_trades))
             .route("/trades", web::post().to(post_trades))
             .route("/trades", web::get().to(get_trades))
             .route("/measurements", web::post().to(post_measurements))
@@ -31,10 +29,10 @@ pub fn run(
             .route("/market", web::post().to(post_market))
             .route("/market", web::get().to(get_market))
             .route(
-                "/asset_measurements",
+                "/asset-measurements",
                 web::post().to(post_asset_measurements),
             )
-            .route("/asset_measurements", web::get().to(get_asset_measurements))
+            .route("/asset-measurements", web::get().to(get_asset_measurements))
             .route(
                 "/community-market",
                 web::get().to(get_market_from_community),
