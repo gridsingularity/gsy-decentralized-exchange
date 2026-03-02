@@ -1,6 +1,5 @@
-use codec::{Encode, Decode};
+use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
-
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub struct MeasurementSchema {
@@ -9,9 +8,8 @@ pub struct MeasurementSchema {
     pub community_uuid: String,
     pub time_slot: u64,
     pub creation_time: u64,
-    pub energy_kwh: f64
+    pub energy_kwh: f64,
 }
-
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub struct ForecastSchema {
@@ -21,5 +19,5 @@ pub struct ForecastSchema {
     pub time_slot: u64,
     pub creation_time: u64,
     pub energy_kwh: f64,
-    pub confidence: f64
+    pub confidence: f64,
 }

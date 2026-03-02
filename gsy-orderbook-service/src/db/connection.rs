@@ -1,13 +1,13 @@
+use crate::db::forecasts_service::{init_forecasts, ForecastsService};
+use crate::db::market_service::{init_markets, MarketService};
+use crate::db::measurements_service::{init_measurements, MeasurementsService};
+use crate::db::order_service::{init_orders, OrderService};
+use crate::db::trade_service::{init_trades, TradeService};
 use actix_web::web;
 use anyhow::Result;
 use mongodb::options::ClientOptions;
 use mongodb::Database;
 use std::ops::Deref;
-use crate::db::order_service::{init_orders, OrderService};
-use crate::db::trade_service::{init_trades, TradeService};
-use crate::db::measurements_service::{init_measurements, MeasurementsService};
-use crate::db::forecasts_service::{init_forecasts, ForecastsService};
-use crate::db::market_service::{init_markets, MarketService};
 
 pub type DbRef = web::Data<DatabaseWrapper>;
 

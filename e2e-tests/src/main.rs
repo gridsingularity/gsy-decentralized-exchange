@@ -7,12 +7,13 @@ use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
 #[tokio::main]
 async fn main() {
-	let subscriber =
-		FmtSubscriber::builder().with_env_filter(EnvFilter::from_default_env()).finish();
-	tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
+    let subscriber = FmtSubscriber::builder()
+        .with_env_filter(EnvFilter::from_default_env())
+        .finish();
+    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
-	println!("Waiting for services to start...");
-	sleep(std::time::Duration::from_secs(30)).await;
+    println!("Waiting for services to start...");
+    sleep(std::time::Duration::from_secs(30)).await;
 
-	world::MyWorld::cucumber().run_and_exit("features").await;
+    world::MyWorld::cucumber().run_and_exit("features").await;
 }

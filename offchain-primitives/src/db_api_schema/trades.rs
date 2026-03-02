@@ -1,9 +1,8 @@
-use codec::{Encode, Decode};
+use crate::db_api_schema::orders::{DbBid, DbOffer};
+use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 use subxt::ext::sp_core::H256;
 use subxt::ext::sp_runtime::traits::{BlakeTwo256, Hash};
-use crate::db_api_schema::orders::{DbOffer, DbBid};
-
 
 /// Trade status
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
@@ -46,5 +45,4 @@ impl TradeSchema {
     pub fn eq(&self, other: &Self) -> bool {
         self._id == other._id
     }
-
 }

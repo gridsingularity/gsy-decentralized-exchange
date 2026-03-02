@@ -1,16 +1,17 @@
-use serde::{Deserialize, Serialize};
+use crate::db_api_schema;
+use crate::db_api_schema::trades::{
+    TradeParameters as DbTradeParameters, TradeSchema as DbTradeSchema, TradeStatus,
+};
+use crate::node_to_api_schema::insert_order::{
+    create_db_bid_from_node_bid, create_db_offer_from_node_offer, Bid, Offer,
+};
+use crate::utils::h256_to_string;
 use codec::{Decode, Encode};
+use serde::{Deserialize, Serialize};
 use subxt::ext::sp_core::H256;
 use subxt::ext::sp_runtime::traits::CheckedConversion;
 use subxt::utils::AccountId32;
-use crate::db_api_schema;
-use crate::node_to_api_schema::insert_order::{
-    Offer, Bid, create_db_offer_from_node_offer, create_db_bid_from_node_bid};
-use crate::db_api_schema::trades::{
-    TradeSchema as DbTradeSchema, TradeStatus, TradeParameters as DbTradeParameters};
-use crate::utils::h256_to_string;
 use uuid::Uuid;
-
 
 #[derive(Serialize, Deserialize, Encode, Decode, Clone)]
 pub struct TradeParameters<Hash> {
@@ -39,11 +40,10 @@ pub struct Trade<AccountId32, Hash> {
     pub parameters: TradeParameters<Hash>,
 }
 
-
 pub fn convert_gsy_node_trades_schema_to_db_schema(trades: Vec<u8>) -> Vec<DbTradeSchema> {
-    let transcode: Vec<Trade<AccountId32, H256>> = Vec::<Trade<AccountId32, H256>>::decode(
-        &mut &trades[..]).unwrap();
-    let mut deserialized: Vec<db_api_schema::trades::TradeSchema> = vec!();
+    let transcode: Vec<Trade<AccountId32, H256>> =
+        Vec::<Trade<AccountId32, H256>>::decode(&mut &trades[..]).unwrap();
+    let mut deserialized: Vec<db_api_schema::trades::TradeSchema> = vec![];
     for trade in transcode {
         deserialized.push(db_api_schema::trades::TradeSchema {
             _id: Uuid::new_v4().to_string(),
@@ -59,17 +59,19 @@ pub fn convert_gsy_node_trades_schema_to_db_schema(trades: Vec<u8>) -> Vec<DbTra
             bid: create_db_bid_from_node_bid(trade.bid),
             bid_hash: h256_to_string(trade.bid_hash),
             residual_offer: match trade.residual_offer {
-                Some(residual_offer) => create_db_offer_from_node_offer(residual_offer).checked_into(),
-                None => None
+                Some(residual_offer) => {
+                    create_db_offer_from_node_offer(residual_offer).checked_into()
+                }
+                None => None,
             },
             residual_bid: match trade.residual_bid {
                 Some(residual_bid) => create_db_bid_from_node_bid(residual_bid).checked_into(),
-                None => None
+                None => None,
             },
             parameters: DbTradeParameters {
                 selected_energy: trade.parameters.selected_energy as f64 / 10000.0,
                 energy_rate: trade.parameters.energy_rate as f64 / 10000.0,
-                trade_uuid: h256_to_string(trade.parameters.trade_uuid)
+                trade_uuid: h256_to_string(trade.parameters.trade_uuid),
             },
         })
     }

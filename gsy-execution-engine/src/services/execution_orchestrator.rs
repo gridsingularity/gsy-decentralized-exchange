@@ -1,15 +1,13 @@
 use anyhow::Result;
-use tracing::info;
 use gsy_offchain_primitives::utils::timestamp_to_datetime_string;
+use tracing::info;
 
 use crate::{
-    primitives::{
-        penalty_calculator::{compute_penalties, Penalty},
-    },
     connectors::{
         offchain_storage::fetch_trades_and_measurements_for_timeslot,
         substrate_connector::submit_penalties,
     },
+    primitives::penalty_calculator::{compute_penalties, Penalty},
 };
 
 /// Higher-level function that does the repeated/polling logic
@@ -24,7 +22,8 @@ pub async fn run_execution_cycle(
     market_duration: u64,
 ) -> Result<()> {
     // 1) fetch trades/measurements
-    let (trades, measurements) = fetch_trades_and_measurements_for_timeslot(offchain_url, timeslot, market_duration).await?;
+    let (trades, measurements) =
+        fetch_trades_and_measurements_for_timeslot(offchain_url, timeslot, market_duration).await?;
     info!(
         "Fetched {} trades, {} measurements for timeslot {}.",
         trades.len(),

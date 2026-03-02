@@ -1,95 +1,108 @@
 use crate::helpers::init_app;
 use actix_web::web;
 use gsy_offchain_primitives::db_api_schema::orders::{
-	DbBid, DbOrderComponent, DbOrderSchema, Order, OrderStatus,
+    DbBid, DbOrderComponent, DbOrderSchema, Order, OrderStatus,
 };
 use mongodb::bson::Bson;
 use std::collections::HashMap;
 
 #[tokio::test]
 async fn subscribe_return_a_200_for_valid_form_data() {
-	let app = init_app().await;
-	let address = app.address;
+    let app = init_app().await;
+    let address = app.address;
 
-	let order_id = "0x123";
-	let market_id = "0x456";
-	let area_id = "0x789";
-	let account = "0xABC";
+    let order_id = "0x123";
+    let market_id = "0x456";
+    let area_id = "0x789";
+    let account = "0xABC";
 
-	let order = DbOrderSchema {
-		_id: order_id.to_string(),
-		status: OrderStatus::Expired,
-		order: Order::Bid(DbBid {
-			buyer: account.to_string(),
-			nonce: 1,
-			bid_component: DbOrderComponent {
-				energy: 100.0,
-				energy_rate: 10.0,
-				area_uuid: area_id.to_string(),
-				market_id: market_id.to_string(),
-				time_slot: 1,
-				creation_time: 1677453190,
-			},
-			requirements: None,
-		}),
-	};
+    let order = DbOrderSchema {
+        _id: order_id.to_string(),
+        status: OrderStatus::Expired,
+        order: Order::Bid(DbBid {
+            buyer: account.to_string(),
+            nonce: 1,
+            bid_component: DbOrderComponent {
+                energy: 100.0,
+                energy_rate: 10.0,
+                area_uuid: area_id.to_string(),
+                market_id: market_id.to_string(),
+                time_slot: 1,
+                creation_time: 1677453190,
+            },
+            requirements: None,
+        }),
+    };
 
-	let orderlist = vec![order.clone()];
-	let body = orderlist;
+    let orderlist = vec![order.clone()];
+    let body = orderlist;
 
-	let client = reqwest::Client::new();
-	let resp = client
-		.post(&format!("{}/orders-normalized", &address))
-		.header("Content-Type", "application/json")
-		.json(&body)
-		.send()
-		.await
-		.expect("Failed to execute request.");
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(&format!("{}/orders-normalized", &address))
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .expect("Failed to execute request.");
 
-	let status = resp.status();
-	let response = resp.json::<HashMap<usize, Bson>>().await.unwrap();
+    let status = resp.status();
+    let response = resp.json::<HashMap<usize, Bson>>().await.unwrap();
 
-	let db = web::Data::new(app.db_wrapper);
+    let db = web::Data::new(app.db_wrapper);
 
-	let resp_order_id = response.get(&0).unwrap();
-	assert_eq!(resp_order_id.as_str().unwrap().to_string(), order_id.to_string());
-	let saved = db.get_ref().orders().get_order_by_id(resp_order_id).await.unwrap();
+    let resp_order_id = response.get(&0).unwrap();
+    assert_eq!(
+        resp_order_id.as_str().unwrap().to_string(),
+        order_id.to_string()
+    );
+    let saved = db
+        .get_ref()
+        .orders()
+        .get_order_by_id(resp_order_id)
+        .await
+        .unwrap();
 
-	assert_eq!(200, status.as_u16());
-	assert_eq!(saved.unwrap()._id, order._id.to_string());
+    assert_eq!(200, status.as_u16());
+    assert_eq!(saved.unwrap()._id, order._id.to_string());
 
-	let update_result = db
-		.get_ref()
-		.orders()
-		.update_order_status_by_id(resp_order_id, OrderStatus::Executed)
-		.await
-		.unwrap();
-	assert_eq!(update_result.modified_count, 1);
-	let updated_order = db.get_ref().orders().get_order_by_id(resp_order_id).await.unwrap();
-	assert_eq!(updated_order.unwrap().status, OrderStatus::Executed);
+    let update_result = db
+        .get_ref()
+        .orders()
+        .update_order_status_by_id(resp_order_id, OrderStatus::Executed)
+        .await
+        .unwrap();
+    assert_eq!(update_result.modified_count, 1);
+    let updated_order = db
+        .get_ref()
+        .orders()
+        .get_order_by_id(resp_order_id)
+        .await
+        .unwrap();
+    assert_eq!(updated_order.unwrap().status, OrderStatus::Executed);
 }
 
 #[tokio::test]
 async fn subscribe_return_a_400_when_data_is_missing() {
-	let app = init_app().await;
-	let address = app.address;
+    let app = init_app().await;
+    let address = app.address;
 
-	let client = reqwest::Client::new();
-	let test_cases = vec![("test", "err"), ("test2", "err")];
+    let client = reqwest::Client::new();
+    let test_cases = vec![("test", "err"), ("test2", "err")];
 
-	for (invalid_body, error_message) in test_cases {
-		let resp = client
-			.post(&format!("{}/orders-normalized", &address))
-			.header("Content-Type", "application/json")
-			.body(invalid_body)
-			.send()
-			.await
-			.expect("Failed to execute request.");
-		assert_eq!(
-			400,
-			resp.status().as_u16(),
-			"The API did not fail with 400 Bad Request when the payload was {}.",
-			error_message
-		);
-	}
+    for (invalid_body, error_message) in test_cases {
+        let resp = client
+            .post(&format!("{}/orders-normalized", &address))
+            .header("Content-Type", "application/json")
+            .body(invalid_body)
+            .send()
+            .await
+            .expect("Failed to execute request.");
+        assert_eq!(
+            400,
+            resp.status().as_u16(),
+            "The API did not fail with 400 Bad Request when the payload was {}.",
+            error_message
+        );
+    }
 }
