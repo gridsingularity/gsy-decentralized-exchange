@@ -1,80 +1,72 @@
 use crate::helpers::{init_app, stop_app};
 use actix_web::web;
-use codec::Encode;
-use gsy_offchain_primitives::node_to_api_schema::insert_order::{
-    Bid as InsertBid, Offer as InsertOffer, OrderComponent as InsertOrderComponent,
-};
-use gsy_offchain_primitives::node_to_api_schema::insert_trades::{
-    Trade, TradeParameters as InsertTradeParameters,
-};
-use gsy_offchain_primitives::utils::h256_to_string;
-use subxt::utils::{AccountId32, H256};
+use gsy_offchain_primitives::db_api_schema::orders::{DbOrderSchema, OrderEnum, OrderStatus};
+use gsy_offchain_primitives::db_api_schema::trades::{TradeParameters, TradeSchema, TradeStatus};
 
 #[tokio::test]
 async fn post_trade_request_writes_trades_to_the_db() {
     let app = init_app().await;
     let address = app.address.clone();
-    let account: AccountId32 = crate::orders::create_test_accountid();
-    let market_id = H256::random();
-    let area_id = H256::random();
-    let area_id_2 = H256::random();
+    let market_id = "market_id".to_string();
+    let area_id = "area_id".to_string();
+    let area_id_2 = "area_id_2".to_string();
 
-    let bid = InsertBid {
-        buyer: account.clone(),
-        nonce: 1,
-        bid_component: InsertOrderComponent {
-            energy: 100,
-            energy_rate: 10,
-            area_uuid: area_id.clone(),
-            market_id: market_id.clone(),
-            time_slot: 1,
-            creation_time: 1677453190,
-        },
+    let bid = DbOrderSchema {
+        status: OrderStatus::Open,
+        order_id: "bid_id".to_string(),
+        order_type: OrderEnum::Bid,
+        created_by: "buyer".to_string(),
+        energy_kWh: 100.,
+        energy_rate: 10.,
+        area_uuid: area_id.clone(),
+        market_id: market_id.clone(),
+        time_slot: 1,
+        creation_time: 1677453190,
         requirements: None,
+        attributes: None,
     };
-    let offer = InsertOffer {
-        seller: account.clone(),
-        nonce: 1,
-        offer_component: InsertOrderComponent {
-            energy: 100,
-            energy_rate: 10,
-            area_uuid: area_id_2.clone(),
-            market_id: market_id.clone(),
-            time_slot: 1,
-            creation_time: 1677453190,
-        },
+    let offer = DbOrderSchema {
+        status: OrderStatus::Open,
+        order_id: "offer_id".to_string(),
+        order_type: OrderEnum::Offer,
+        created_by: "seller".to_string(),
+        energy_kWh: 100.,
+        energy_rate: 10.,
+        area_uuid: area_id_2.clone(),
+        market_id: market_id.clone(),
+        time_slot: 1,
+        creation_time: 1677453190,
+        requirements: None,
         attributes: None,
     };
 
-    let trade_uuid = H256::random();
-    let trade1 = Trade {
-        seller: account.clone(),
-        buyer: account.clone(),
+    let trade1 = TradeSchema {
+        status: TradeStatus::Executed,
+        trade_uuid: "trade_id".to_string(),
+        offer_hash: "offer_hash".to_string(),
+        bid_hash: "bid_hash".to_string(),
+        seller: "seller".to_string(),
+        buyer: "buyer".to_string(),
         market_id: market_id.clone(),
         time_slot: 123456123,
-        trade_uuid,
         creation_time: 123456123,
         offer,
-        offer_hash: H256::random(),
         bid,
-        bid_hash: H256::random(),
         residual_offer: None,
         residual_bid: None,
-        parameters: InsertTradeParameters {
-            selected_energy: 14,
-            energy_rate: 3,
-            trade_uuid,
+        parameters: TradeParameters {
+            selected_energy_kWh: 14.,
+            energy_rate: 3.,
         },
     };
 
     let tradelist = vec![trade1.clone()];
-    let body = Vec::<Trade<AccountId32, H256>>::encode(&tradelist);
 
     let client = reqwest::Client::new();
     let resp = client
         .post(&format!("{}/trades", &address))
         .header("Content-Type", "application/json")
-        .json(&body)
+        .json(&tradelist)
         .send()
         .await;
 
@@ -85,8 +77,7 @@ async fn post_trade_request_writes_trades_to_the_db() {
     let saved = db.get_ref().trades().get_all_trades().await.unwrap();
 
     let result_trade = saved.first().unwrap();
-    let trade_object_uuid = h256_to_string(trade1.trade_uuid);
-    assert_eq!(result_trade.trade_uuid, trade_object_uuid);
+    assert_eq!(result_trade.trade_uuid, "trade_id".to_string());
     stop_app(app).await;
 }
 

@@ -59,8 +59,7 @@ impl OrderService {
         if market_id.is_some() {
             let market_id_str = market_id.unwrap();
             filter_params = doc! {"$or": [
-                { "order.data.offer_component.market_id": market_id_str.clone() },
-                { "order.data.bid_component.market_id": market_id_str.clone() }
+                { "market_id": market_id_str.clone() },
             ]};
         }
 
@@ -80,7 +79,6 @@ impl OrderService {
         }
         Ok(result)
     }
-
 
     #[tracing::instrument(
         name = "Saving orders to database",
@@ -174,7 +172,7 @@ impl OrderService {
             .0
             .update_many(
                 doc! {
-                    "order.data.time_slot": { "$lt": bson::to_bson(&now_time_slot).unwrap()},
+                    "time_slot": { "$lt": bson::to_bson(&now_time_slot).unwrap()},
                     "status": bson::to_bson(&OrderStatus::Open).unwrap()
                 },
                 doc! {

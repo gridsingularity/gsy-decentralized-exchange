@@ -5,7 +5,7 @@ use gsy_offchain_primitives::db_api_schema::profiles::{
     BatteryMeasurementSchema, MeasurementMetadataSchema, PVMeasurementSchema,
     SmartMeterMeasurementSchema, TransformerMeasurementSchema,
 };
-use gsy_orderbook_service::db::DatabaseWrapper;
+use gsy_offchain_primitives::MarketType;
 use test_context::{test_context, AsyncTestContext};
 
 struct AssetMeasurementsTestContext {
@@ -21,28 +21,25 @@ impl AsyncTestContext for AssetMeasurementsTestContext {
             creation_time: 12344,
             time_slot: 12345,
             market_id: "new_market".to_string(),
+            market_type: MarketType::Spot,
             community_areas: vec![
                 AreaTopologySchema {
                     area_type: "PV".to_string(),
-                    area_hash: "pv1hash".to_string(),
                     area_uuid: "pv1".to_string(),
                     name: "pv1name".to_string(),
                 },
                 AreaTopologySchema {
                     area_type: "SmartMeter".to_string(),
-                    area_hash: "smartmeter1hash".to_string(),
                     area_uuid: "smartmeter1".to_string(),
                     name: "smartmeter1name".to_string(),
                 },
                 AreaTopologySchema {
                     area_type: "Battery".to_string(),
-                    area_hash: "battery1hash".to_string(),
                     area_uuid: "battery1".to_string(),
                     name: "battery1name".to_string(),
                 },
                 AreaTopologySchema {
                     area_type: "Transformer".to_string(),
-                    area_hash: "transformer1hash".to_string(),
                     area_uuid: "transformer1".to_string(),
                     name: "transformer1name".to_string(),
                 },
@@ -87,7 +84,7 @@ async fn test_post_and_fetch_pv_asset_measurements(ctx: &mut AssetMeasurementsTe
     let pv_measurements = vec![pv_measurement];
     let resp = ctx
         .client
-        .post(&format!("{}/asset_measurements", &ctx.app.address))
+        .post(&format!("{}/asset-measurements", &ctx.app.address))
         .json(&pv_measurements)
         .send()
         .await
@@ -99,7 +96,7 @@ async fn test_post_and_fetch_pv_asset_measurements(ctx: &mut AssetMeasurementsTe
     let resp = ctx
         .client
         .get(&format!(
-            "{}/asset_measurements?community_uuid={}&area_uuid={}&start_time=12340&end_time=12350",
+            "{}/asset-measurements?community_uuid={}&area_uuid={}&start_time=12340&end_time=12350",
             &ctx.app.address,
             "community1".to_string(),
             "pv1".to_string()
@@ -145,7 +142,7 @@ async fn test_post_battery_asset_measurements(ctx: &mut AssetMeasurementsTestCon
     let battery_measurements = vec![battery_measurement];
     let resp = ctx
         .client
-        .post(&format!("{}/asset_measurements", &ctx.app.address))
+        .post(&format!("{}/asset-measurements", &ctx.app.address))
         .json(&battery_measurements)
         .send()
         .await
@@ -158,7 +155,7 @@ async fn test_post_battery_asset_measurements(ctx: &mut AssetMeasurementsTestCon
     let resp = ctx
         .client
         .get(&format!(
-            "{}/asset_measurements?community_uuid={}&area_uuid={}&start_time=12340&end_time=12350",
+            "{}/asset-measurements?community_uuid={}&area_uuid={}&start_time=12340&end_time=12350",
             &ctx.app.address,
             "community1".to_string(),
             "battery1".to_string()
@@ -211,7 +208,7 @@ async fn test_post_transformer_asset_measurements(ctx: &mut AssetMeasurementsTes
     let transformer_measurements = vec![transformer_measurement];
     let resp = ctx
         .client
-        .post(&format!("{}/asset_measurements", &ctx.app.address))
+        .post(&format!("{}/asset-measurements", &ctx.app.address))
         .json(&transformer_measurements)
         .send()
         .await
@@ -223,7 +220,7 @@ async fn test_post_transformer_asset_measurements(ctx: &mut AssetMeasurementsTes
     let resp = ctx
         .client
         .get(&format!(
-            "{}/asset_measurements?community_uuid={}&area_uuid={}&start_time=12340&end_time=12350",
+            "{}/asset-measurements?community_uuid={}&area_uuid={}&start_time=12340&end_time=12350",
             &ctx.app.address,
             "community1".to_string(),
             "transformer1".to_string()
@@ -278,7 +275,7 @@ async fn test_post_smart_meter_asset_measurements(ctx: &mut AssetMeasurementsTes
     let smart_meter_measurements = vec![smart_meter_measurement];
     let resp = ctx
         .client
-        .post(&format!("{}/asset_measurements", &ctx.app.address))
+        .post(&format!("{}/asset-measurements", &ctx.app.address))
         .json(&smart_meter_measurements)
         .send()
         .await
@@ -290,7 +287,7 @@ async fn test_post_smart_meter_asset_measurements(ctx: &mut AssetMeasurementsTes
     let resp = ctx
         .client
         .get(&format!(
-            "{}/asset_measurements?community_uuid={}&area_uuid={}&start_time=12340&end_time=12350",
+            "{}/asset-measurements?community_uuid={}&area_uuid={}&start_time=12340&end_time=12350",
             &ctx.app.address,
             "community1".to_string(),
             "smartmeter1".to_string()

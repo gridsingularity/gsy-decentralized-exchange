@@ -50,7 +50,6 @@ def post_trade(trade_index, order_index, market_id, time_slot, creation_time, se
         "trade_uuid": "tradeUuid" + str(trade_index),
         "offer": {
             "seller": "Account2",
-            "nonce": order_index,
             "offer_component": {
                 "area_uuid": "areaid_" + str(seller_index),
                 "market_id": market_id,
@@ -63,7 +62,6 @@ def post_trade(trade_index, order_index, market_id, time_slot, creation_time, se
         "offer_hash": _random_hex_str(),
         "bid": {
             "buyer": "Account1",
-            "nonce": order_index + 1,
             "bid_component": {
                 "area_uuid": "areaid_" + str(buyer_index),
                 "market_id": market_id,
@@ -90,7 +88,7 @@ def post_measurements(area_uuid, time_slot, creation_time, energy):
         "community_uuid": "communityid_1",
         "time_slot": time_slot,
         "creation_time": creation_time,
-        "energy_kwh": energy
+        "energy_kWh": energy
     }])
 
 

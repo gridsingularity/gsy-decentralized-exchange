@@ -1,4 +1,4 @@
-use gsy_offchain_primitives::types::{Bid, BidOfferMatch, EnergyType, Offer};
+use gsy_offchain_primitives::types::{BidOfferMatch, EnergyType, Order};
 use gsy_offchain_primitives::utils::string_to_account_id;
 use subxt::utils::{AccountId32, H256};
 
@@ -35,17 +35,17 @@ pub fn create_node_bid_offer_matches_from_canonical(
     }).collect()
 }
 
-fn create_node_offer_from_canonical_offer(offer: Offer) -> NodeOffer<AccountId32> {
+fn create_node_offer_from_canonical_offer(offer: Order) -> NodeOffer<AccountId32> {
     NodeOffer {
-        seller: string_to_account_id(offer.seller.to_string()).unwrap(),
-        nonce: offer.nonce,
+        seller: string_to_account_id(offer.created_by.to_string()).unwrap(),
+        nonce: 0,
         offer_component: NodeOrderComponent {
-            area_uuid: offer.offer_component.area_uuid,
-            market_id: offer.offer_component.market_id,
-            time_slot: offer.offer_component.time_slot,
-            creation_time: offer.offer_component.creation_time,
-            energy: offer.offer_component.energy,
-            energy_rate: offer.offer_component.energy_rate,
+            area_uuid: offer.area_uuid,
+            market_id: offer.market_id,
+            time_slot: offer.time_slot,
+            creation_time: offer.creation_time,
+            energy: offer.energy,
+            energy_rate: offer.energy_rate,
         },
         attributes: offer.attributes.map(|attr| NodeAttributes {
             trading_partner_id: attr.trading_partner_id,
@@ -54,17 +54,18 @@ fn create_node_offer_from_canonical_offer(offer: Offer) -> NodeOffer<AccountId32
     }
 }
 
-fn create_node_bid_from_canonical_bid(bid: Bid) -> NodeBid<AccountId32> {
+fn create_node_bid_from_canonical_bid(bid: Order) -> NodeBid<AccountId32> {
     NodeBid {
-        buyer: bid.buyer,
-        nonce: bid.nonce,
+        buyer: bid.created_by,
+        // TODO: Remove the nonce value once the port to Ethereum is completed
+        nonce: 0,
         bid_component: NodeOrderComponent {
-            area_uuid: bid.bid_component.area_uuid,
-            market_id: bid.bid_component.market_id,
-            time_slot: bid.bid_component.time_slot,
-            creation_time: bid.bid_component.creation_time,
-            energy: bid.bid_component.energy,
-            energy_rate: bid.bid_component.energy_rate,
+            area_uuid: bid.area_uuid,
+            market_id: bid.market_id,
+            time_slot: bid.time_slot,
+            creation_time: bid.creation_time,
+            energy: bid.energy,
+            energy_rate: bid.energy_rate,
         },
         requirements: bid.requirements.map(|req| NodeRequirements {
             trading_partner_id: req

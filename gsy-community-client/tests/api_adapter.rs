@@ -1,20 +1,20 @@
-use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use gsy_community_client::external_api::{
-    ExternalForecast, ExternalMeasurement, ExternalCommunityTopology, ExternalAreaTopology};
+    ExternalAreaTopology, ExternalCommunityTopology, ExternalForecast, ExternalMeasurement,
+};
+use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
+use gsy_community_client::time_utils::get_last_and_next_timeslot;
 use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketTopologySchema};
 use gsy_offchain_primitives::utils::h256_to_string;
-use gsy_community_client::time_utils::get_last_and_next_timeslot;
 
-use subxt::utils::H256;
-use serde_json;
 use httpmock::prelude::*;
+use serde_json;
+use subxt::utils::H256;
 use tracing::Level;
 use tracing_subscriber;
 
 fn setup_tracing() {
     tracing_subscriber::fmt().with_max_level(Level::INFO).init();
 }
-
 
 #[tokio::test]
 async fn test_get_or_create_market_topology() {
@@ -26,12 +26,10 @@ async fn test_get_or_create_market_topology() {
     let external_topology = ExternalCommunityTopology {
         community_name: "comm_name".to_string(),
         community_uuid: "comm_uuid".to_string(),
-        areas: vec![
-            ExternalAreaTopology {
-                area_uuid: "area_uuid".to_string(),
-                area_name: "area_name".to_string(),
-            }
-        ]
+        areas: vec![ExternalAreaTopology {
+            area_uuid: "area_uuid".to_string(),
+            area_name: "area_name".to_string(),
+        }],
     };
 
     let expected_market = MarketTopologySchema {
@@ -40,13 +38,11 @@ async fn test_get_or_create_market_topology() {
         market_id: h256_to_string(H256::random()),
         community_uuid: "comm_uuid".to_string(),
         community_name: "comm_name".to_string(),
-        community_areas: vec![
-            AreaTopologySchema {
-                area_uuid: "area_uuid".to_string(),
-                name: "area_name".to_string(),
-                area_hash: h256_to_string(H256::random()),
-            }
-        ]
+        community_areas: vec![AreaTopologySchema {
+            area_uuid: "area_uuid".to_string(),
+            name: "area_name".to_string(),
+            area_hash: h256_to_string(H256::random()),
+        }],
     };
 
     let market_json_str = serde_json::to_string(&expected_market).unwrap();
@@ -61,14 +57,14 @@ async fn test_get_or_create_market_topology() {
             .body(market_json_str);
     });
 
-    let adapter = AreaMarketInfoAdapter::new(
-        Some(server.base_url()));
-    let market = adapter.get_or_create_market_topology(
-        external_topology, time_slot).await.unwrap();
+    let adapter = AreaMarketInfoAdapter::new(Some(server.base_url()));
+    let market = adapter
+        .get_or_create_market_topology(external_topology, time_slot)
+        .await
+        .unwrap();
     assert_eq!(market, expected_market);
     mock_request.assert();
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -89,7 +85,7 @@ mod tests {
             community_uuid: "comm_uuid".to_string(),
             energy_kwh: 11.,
             area_uuid: "area_uuid".to_string(),
-            confidence: 0.4
+            confidence: 0.4,
         };
         let converted_forecast = adapter.convert_forecast_to_internal_schema(&forecast);
         assert_eq!(converted_forecast.area_uuid, "area_uuid");
@@ -117,5 +113,4 @@ mod tests {
         assert_eq!(converted_measurement.time_slot, 123123);
         assert_eq!(converted_measurement.creation_time, 456456);
     }
-
 }

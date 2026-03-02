@@ -1,9 +1,6 @@
 use crate::helpers::{init_app, stop_app};
 use actix_web::web;
 use gsy_offchain_primitives::db_api_schema::profiles::{ForecastSchema, MeasurementSchema};
-use gsy_offchain_primitives::utils::h256_to_string;
-use sp_runtime::traits::CheckedConversion;
-use subxt::utils::H256;
 
 #[tokio::test]
 async fn get_measurements_succeeds() {
@@ -11,7 +8,6 @@ async fn get_measurements_succeeds() {
     let address = app.address.clone();
     let measurement1 = MeasurementSchema {
         area_uuid: "my_uuid".to_string(),
-        area_hash: h256_to_string(H256::random()),
         community_uuid: "my_community".to_string(),
         energy_kwh: 12.21,
         time_slot: 1232123213,
@@ -19,7 +15,6 @@ async fn get_measurements_succeeds() {
     };
     let measurement2 = MeasurementSchema {
         area_uuid: "my_uuid1".to_string(),
-        area_hash: h256_to_string(H256::random()),
         community_uuid: "my_community".to_string(),
         energy_kwh: 13.21,
         time_slot: 1232123215,
@@ -91,7 +86,6 @@ async fn post_measurements_succeeds() {
     let address = app.address.clone();
     let measurement = MeasurementSchema {
         area_uuid: "my_uuid".to_string(),
-        area_hash: h256_to_string(H256::random()),
         community_uuid: "my_community".to_string(),
         energy_kwh: 12.21,
         time_slot: 1232123213,
@@ -116,7 +110,7 @@ async fn post_measurements_succeeds() {
     let saved = db
         .get_ref()
         .measurements()
-        .filter_measurements("my_uuid".to_string().checked_into(), None, None)
+        .filter_measurements(Some("my_uuid".to_string()), None, None)
         .await
         .unwrap();
     assert_eq!(1, saved.len());
@@ -157,7 +151,6 @@ async fn get_forecasts_succeeds() {
     let address = app.address.clone();
     let forecast1 = ForecastSchema {
         area_uuid: "my_uuid".to_string(),
-        area_hash: h256_to_string(H256::random()),
         community_uuid: "my_community".to_string(),
         energy_kwh: 12.21,
         time_slot: 1232123213,
@@ -166,7 +159,6 @@ async fn get_forecasts_succeeds() {
     };
     let forecast2 = ForecastSchema {
         area_uuid: "my_uuid1".to_string(),
-        area_hash: h256_to_string(H256::random()),
         community_uuid: "my_community".to_string(),
         energy_kwh: 13.21,
         time_slot: 1232123215,
@@ -240,7 +232,6 @@ async fn post_forecasts_succeeds() {
     let address = app.address.clone();
     let forecast = ForecastSchema {
         area_uuid: "my_uuid".to_string(),
-        area_hash: h256_to_string(H256::random()),
         community_uuid: "my_uuid".to_string(),
         energy_kwh: 12.21,
         time_slot: 1232123213,
@@ -266,7 +257,7 @@ async fn post_forecasts_succeeds() {
     let saved = db
         .get_ref()
         .forecasts()
-        .filter_forecasts("my_uuid".to_string().checked_into(), None, None)
+        .filter_forecasts(Some("my_uuid".to_string()), None, None)
         .await
         .unwrap();
     assert_eq!(1, saved.len());
