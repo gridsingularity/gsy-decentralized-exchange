@@ -1,6 +1,9 @@
 use crate::helpers::{init_app, stop_app};
 use actix_web::web;
-use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketTopologySchema};
+use gsy_offchain_primitives::{
+    MarketType,
+    db_api_schema::market::{AreaTopologySchema, MarketTopologySchema}
+};
 use uuid::Uuid;
 
 

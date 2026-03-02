@@ -5,6 +5,7 @@ use ethers::{
     utils::Anvil,
 };
 use gsy_ethers_listener::{GsyEthersListener, ListenerConfig};
+use gsy_offchain_primitives::db_api_schema::orders::OrderEnum;
 use gsy_orderbook_service::evm_handler::OrderbookEvmHandler;
 use std::{fs::File, io::Write, sync::Arc, time::Duration};
 use tempfile::TempDir;
@@ -140,12 +141,9 @@ async fn test_evm_order_listener_persists_to_db() {
         let order_bson = mongodb::bson::to_bson(&expected_id).unwrap();
         if let Ok(Some(order)) = db.orders().get_order_by_id(&order_bson).await {
             found = true;
-            if let gsy_offchain_primitives::db_api_schema::orders::Order::Bid(bid) = order.order {
-                assert_eq!(bid.bid_component.energy, 1.0);
-                assert_eq!(bid.bid_component.energy_rate, 0.5);
-            } else {
-                panic!("Expected Bid");
-            }
+            assert_eq!(order.order_type, OrderEnum::Bid);
+            assert_eq!(order.energy_kWh, 1.0);
+            assert_eq!(order.energy_rate, 0.5);
             break;
         }
         tokio::time::sleep(Duration::from_millis(200)).await;

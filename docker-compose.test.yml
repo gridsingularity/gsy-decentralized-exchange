@@ -34,17 +34,12 @@ services:
     depends_on:
       gsy-orderbook:
         condition: service_healthy
-      gsy-node:
-        condition: service_healthy
     working_dir: /var/www/matching-engine
 
   gsy-market-orchestrator:
     container_name: gsy-market-orchestrator
     build:
       dockerfile: ./gsy-market-orchestrator/Dockerfile
-    depends_on:
-      gsy-node:
-        condition: service_healthy
     environment:
       - RUST_LOG=info,gsy_market_orchestrator=debug
       - GSY_NODE_URL=ws://gsy-node:9944
@@ -59,8 +54,6 @@ services:
       dockerfile: ./gsy-execution-engine/Dockerfile
     depends_on:
       gsy-orderbook:
-        condition: service_healthy
-      gsy-node:
         condition: service_healthy
     environment:
       - EXECUTION_ENGINE_OFFSET_MIN=-90
@@ -82,8 +75,6 @@ services:
       context: .
       dockerfile: ./e2e-tests/Dockerfile
     depends_on:
-      gsy-node:
-        condition: service_healthy
       gsy-orderbook:
         condition: service_healthy
       gsy-matching-engine:

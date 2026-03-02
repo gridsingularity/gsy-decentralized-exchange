@@ -8,7 +8,6 @@ async fn get_measurements_succeeds() {
     let address = app.address.clone();
     let measurement1 = MeasurementSchema {
         area_uuid: "my_uuid".to_string(),
-        area_hash: "0x123".to_string(), // Added
         community_uuid: "my_community".to_string(),
         energy_kwh: 12.21,
         time_slot: 1232123213,
@@ -16,7 +15,6 @@ async fn get_measurements_succeeds() {
     };
     let measurement2 = MeasurementSchema {
         area_uuid: "my_uuid1".to_string(),
-        area_hash: "0x456".to_string(), // Added
         community_uuid: "my_community".to_string(),
         energy_kwh: 13.21,
         time_slot: 1232123215,
@@ -87,7 +85,6 @@ async fn post_measurements_succeeds() {
     let address = app.address.clone();
     let measurement = MeasurementSchema {
         area_uuid: "my_uuid".to_string(),
-        area_hash: "0x123".to_string(), // Added
         community_uuid: "my_community".to_string(),
         energy_kwh: 12.21,
         time_slot: 1232123213,
@@ -153,7 +150,6 @@ async fn get_forecasts_succeeds() {
     let address = app.address.clone();
     let forecast1 = ForecastSchema {
         area_uuid: "my_uuid".to_string(),
-        area_hash: "0x123".to_string(), // Added
         community_uuid: "my_community".to_string(),
         energy_kwh: 12.21,
         time_slot: 1232123213,
@@ -162,7 +158,6 @@ async fn get_forecasts_succeeds() {
     };
     let forecast2 = ForecastSchema {
         area_uuid: "my_uuid1".to_string(),
-        area_hash: "0x456".to_string(), // Added
         community_uuid: "my_community".to_string(),
         energy_kwh: 13.21,
         time_slot: 1232123215,
@@ -235,7 +230,6 @@ async fn post_forecasts_succeeds() {
     let address = app.address.clone();
     let forecast = ForecastSchema {
         area_uuid: "my_uuid".to_string(),
-        area_hash: "0x123".to_string(), // Added
         community_uuid: "my_uuid".to_string(),
         energy_kwh: 12.21,
         time_slot: 1232123213,

@@ -6,7 +6,7 @@ use cucumber::{then, when};
 use gsy_community_client::node_connector::orders::publish_orders;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use gsy_offchain_primitives::db_api_schema::profiles::MeasurementSchema;
-use gsy_offchain_primitives::utils::NODE_FLOAT_SCALING_FACTOR;
+use gsy_offchain_primitives::utils::{string_to_h256, NODE_FLOAT_SCALING_FACTOR};
 use std::time::Duration;
 use subxt::utils::AccountId32;
 use tracing::info;
@@ -168,21 +168,11 @@ async fn submit_cheaper_offer(world: &mut MyWorld, user_name: String, energy: f6
 
     // Find the area hash for Charlie
     let charlie_area_uuid = format!("area{}", user_name);
-    let charlie_area_hash = world
-        .topology_schema
-        .as_ref()
-        .unwrap()
-        .community_areas
-        .iter()
-        .find(|a| a.area_uuid == charlie_area_uuid)
-        .unwrap()
-        .area_hash
-        .clone();
 
     let offer_order = InputOrder::Offer(InputOffer {
         seller: user.public_key().into(),
         offer_component: OrderComponent {
-            area_uuid: charlie_area_hash.parse().unwrap(),
+            area_uuid: string_to_h256(charlie_area_uuid.clone()),
             market_id: world.last_market_id.unwrap(),
             time_slot: world.target_delivery_time,
             creation_time: chrono::Utc::now().timestamp() as u64,
@@ -221,7 +211,6 @@ async fn submit_measurements(world: &mut MyWorld, _user1: String, _user2: String
     let measurements = vec![
         MeasurementSchema {
             area_uuid: world.buyer_id.clone(),
-            area_hash: world.buyer_hash.clone().unwrap(),
             community_uuid: "community1".to_string(),
             energy_kwh: 12.0,
             time_slot: world.target_delivery_time,
@@ -229,7 +218,6 @@ async fn submit_measurements(world: &mut MyWorld, _user1: String, _user2: String
         },
         MeasurementSchema {
             area_uuid: world.seller_id.clone(),
-            area_hash: world.seller_hash.clone().unwrap(),
             community_uuid: "community1".to_string(),
             energy_kwh: -8.0,
             time_slot: world.target_delivery_time,

@@ -6,7 +6,7 @@ use gsy_offchain_primitives::db_api_schema::trades::{TradeParameters, TradeSchem
 #[tokio::test]
 async fn post_trade_request_writes_trades_to_the_db() {
     let app = init_app().await;
-    let address = app.address;
+    let address = app.address.clone();
     let account = "0xAccount";
     let market_id = "0xMarket";
     let area_id = "0xArea1";
@@ -19,8 +19,8 @@ async fn post_trade_request_writes_trades_to_the_db() {
         created_by: account.to_string(),
         energy_kWh: 100.,
         energy_rate: 10.,
-        area_uuid: area_id.clone(),
-        market_id: market_id.clone(),
+        area_uuid: area_id.to_string(),
+        market_id: market_id.to_string(),
         time_slot: 1,
         creation_time: 1677453190,
         requirements: None,
@@ -33,8 +33,8 @@ async fn post_trade_request_writes_trades_to_the_db() {
         created_by: account.to_string(),
         energy_kWh: 100.,
         energy_rate: 10.,
-        area_uuid: area_id_2.clone(),
-        market_id: market_id.clone(),
+        area_uuid: area_id_2.to_string(),
+        market_id: market_id.to_string(),
         time_slot: 1,
         creation_time: 1677453190,
         requirements: None,
@@ -48,7 +48,7 @@ async fn post_trade_request_writes_trades_to_the_db() {
         bid_hash: "bid_hash".to_string(),
         seller: account.to_string(),
         buyer: account.to_string(),
-        market_id: market_id.clone(),
+        market_id: market_id.to_string(),
         time_slot: 123456123,
         creation_time: 123456123,
         offer,

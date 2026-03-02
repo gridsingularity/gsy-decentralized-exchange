@@ -6,7 +6,7 @@ use gsy_ethers_listener::{
     TradeSettledFilter,
 };
 use gsy_offchain_primitives::db_api_schema::{
-    orders::{DbBid, DbOffer, DbOrderComponent, DbOrderSchema, Order as DbOrder, OrderStatus},
+    orders::{DbOrderSchema, OrderStatus, OrderEnum},
     trades::{TradeParameters, TradeSchema, TradeStatus},
 };
 use gsy_offchain_primitives::utils::NODE_FLOAT_SCALING_FACTOR;
@@ -33,35 +33,21 @@ impl GsyEventHandler for OrderbookEvmHandler {
         let order_id_str = format!("0x{}", hex::encode(event.order_hash));
         let owner_str = format!("{:?}", event.owner);
 
-        let component = DbOrderComponent {
+        let order_enum = if event.is_bid { OrderEnum::Bid } else { OrderEnum::Offer };
+
+        let schema = DbOrderSchema {
+            order_id: order_id_str,
+            status: OrderStatus::Open,
+            order_type: order_enum,
             area_uuid: area_uuid_str,
             market_id: market_id_str,
             time_slot: event.time_slot,
             creation_time: event.creation_time,
-            energy: energy_f64,
+            energy_kWh: energy_f64,
             energy_rate: rate_f64,
-        };
-
-        let order_enum = if event.is_bid {
-            DbOrder::Bid(DbBid {
-                buyer: owner_str,
-                nonce: event.nonce as u32,
-                bid_component: component,
-                requirements: None,
-            })
-        } else {
-            DbOrder::Offer(DbOffer {
-                seller: owner_str,
-                nonce: event.nonce as u32,
-                offer_component: component,
-                attributes: None,
-            })
-        };
-
-        let schema = DbOrderSchema {
-            _id: order_id_str,
-            status: OrderStatus::Open,
-            order: order_enum,
+            created_by: owner_str,
+            requirements: None,
+            attributes: None,
         };
 
         match self.db.orders().insert_orders(vec![schema]).await {
@@ -93,8 +79,8 @@ impl GsyEventHandler for OrderbookEvmHandler {
     }
 
     async fn handle_trade_settled(&self, event: TradeSettledFilter) -> Result<()> {
-        let trade_id = format!("0x{}", hex::encode(event.trade_id));
-        info!("Processing EVM TradeSettled: {:?}", trade_id);
+        let trade_hash = format!("0x{}", hex::encode(event.trade_id));
+        info!("Processing EVM TradeSettled: {:?}", trade_hash);
 
         let energy_f64 = event.energy.as_u64() as f64 / NODE_FLOAT_SCALING_FACTOR;
         let price_f64 = event.price.as_u64() as f64 / NODE_FLOAT_SCALING_FACTOR;
@@ -109,34 +95,24 @@ impl GsyEventHandler for OrderbookEvmHandler {
         let ask_doc = self.db.orders().get_order_by_id(&ask_bson).await?;
 
         if let (Some(bid_order), Some(ask_order)) = (bid_doc, ask_doc) {
-            let db_bid = match bid_order.order {
-                DbOrder::Bid(b) => b,
-                _ => return Ok(()),
-            };
-            let db_ask = match ask_order.order {
-                DbOrder::Offer(o) => o,
-                _ => return Ok(()),
-            };
 
             let trade_schema = TradeSchema {
-                _id: Uuid::new_v4().to_string(),
+                trade_uuid: Uuid::new_v4().to_string(),
                 status: TradeStatus::Settled,
-                seller: db_ask.seller.clone(),
-                buyer: db_bid.buyer.clone(),
-                market_id: db_bid.bid_component.market_id.clone(),
-                time_slot: db_bid.bid_component.time_slot,
-                trade_uuid: trade_id,
+                seller: ask_order.created_by.clone(),
+                buyer: bid_order.created_by.clone(),
+                market_id: bid_order.market_id.clone(),
+                time_slot: bid_order.time_slot,
                 creation_time: chrono::Utc::now().timestamp() as u64,
-                offer: db_ask,
+                offer: ask_order,
                 offer_hash: ask_hash_str,
-                bid: db_bid,
+                bid: bid_order,
                 bid_hash: bid_hash_str,
                 residual_offer: None,
                 residual_bid: None,
                 parameters: TradeParameters {
-                    selected_energy: energy_f64,
+                    selected_energy_kWh: energy_f64,
                     energy_rate: price_f64,
-                    trade_uuid: format!("0x{}", hex::encode(event.trade_id)),
                 },
             };
 

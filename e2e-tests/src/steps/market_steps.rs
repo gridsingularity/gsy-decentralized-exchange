@@ -56,10 +56,10 @@ async fn submit_topology_forecasts_three_users(
 
     for area in market.community_areas {
         if area.area_uuid == format!("area{}", user1) {
-            world.buyer_hash = Some(area.area_hash.clone());
+            world.buyer_hash = Some(area.area_uuid.clone());
         }
         if area.area_uuid == format!("area{}", user2) {
-            world.seller_hash = Some(area.area_hash.clone());
+            world.seller_hash = Some(area.area_uuid.clone());
         }
     }
 
@@ -68,16 +68,6 @@ async fn submit_topology_forecasts_three_users(
         let energy_val = if i == 0 { energy } else { -energy };
         forecasts.push(ForecastSchema {
             area_uuid: area.area_uuid.clone(),
-            area_hash: world
-                .topology_schema
-                .as_ref()
-                .unwrap()
-                .community_areas
-                .iter()
-                .find(|a| a.area_uuid == area.area_uuid)
-                .unwrap()
-                .area_hash
-                .clone(),
             community_uuid: "community1".to_string(),
             time_slot: world.target_delivery_time,
             creation_time: 1,

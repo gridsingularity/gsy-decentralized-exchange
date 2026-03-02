@@ -39,7 +39,7 @@ pub fn compute_penalties(
     let mut measurement_map: HashMap<String, f64> = HashMap::new();
     for meas in measurements {
         measurement_map.insert(
-            meas.area_hash.clone(),
+            meas.area_uuid.clone(),
             meas.energy_kwh, // energy is f64; positive means consumption, negative means production
         );
     }
@@ -49,9 +49,9 @@ pub fn compute_penalties(
         // For consumers, we use the Bid's area and market.
 
         if let Some(&measured_energy) =
-            measurement_map.get(&trade.bid.bid_component.area_uuid.clone())
+            measurement_map.get(&trade.bid.area_uuid.clone())
         {
-            let traded_energy = trade.parameters.selected_energy;
+            let traded_energy = trade.parameters.selected_energy_kWh;
 
             // Compute delta = measured_energy - traded_energy.
             let delta = measured_energy - traded_energy;
@@ -67,7 +67,7 @@ pub fn compute_penalties(
 
                 penalties.push(Penalty {
                     penalized_account: trade.buyer.clone(),
-                    market_id: trade.offer.offer_component.market_id.clone(),
+                    market_id: trade.market_id.clone(),
                     trade_uuid: trade.trade_uuid.clone(),
                     penalty_cost,
                 });

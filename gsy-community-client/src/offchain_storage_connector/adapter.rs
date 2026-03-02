@@ -88,7 +88,6 @@ impl AreaMarketInfoAdapter {
     ) -> ForecastSchema {
         ForecastSchema {
             area_uuid: forecast.area_uuid.clone(),
-            area_hash: area_hash.clone(),
             community_uuid: forecast.community_uuid.clone(),
             time_slot: forecast.time_slot,
             creation_time: forecast.creation_time,
@@ -104,7 +103,6 @@ impl AreaMarketInfoAdapter {
     ) -> MeasurementSchema {
         MeasurementSchema {
             area_uuid: measurement.area_uuid.clone(),
-            area_hash: area_hash.clone(),
             community_uuid: measurement.community_uuid.clone(),
             time_slot: measurement.time_slot,
             creation_time: measurement.creation_time,
