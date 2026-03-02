@@ -1,5 +1,5 @@
 use crate::algorithms::PayAsBid;
-use crate::primitives::web2::{Attributes, Bid, BidOfferMatch, MatchingData, Offer, Requirements};
+use crate::primitives::web2::{Bid, BidOfferMatch, MatchingData, Offer};
 
 use anyhow::{Error, Result};
 use chrono::NaiveDateTime;

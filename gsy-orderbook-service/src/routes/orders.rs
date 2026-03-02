@@ -1,10 +1,17 @@
 use crate::db::DbRef;
 use actix_web::{web::Json, web::Query, HttpResponse, Responder};
-use anyhow::Error;
+use anyhow::{Error, Result};
 use gsy_offchain_primitives::db_api_schema::orders::DbOrderSchema;
 use serde::Deserialize;
 
-pub async fn post_normalized_orders(orders: Json<Vec<DbOrderSchema>>, db: DbRef) -> impl Responder {
+#[tracing::instrument(
+    name = "Adding new orders",
+    skip(db),
+    fields(
+    orders = ?orders
+    )
+)]
+pub async fn post_orders(orders: Json<Vec<DbOrderSchema>>, db: DbRef) -> impl Responder {
     match db.get_ref().orders().insert_orders(orders.to_vec()).await {
         Ok(ids) => HttpResponse::Ok().json(ids),
         Err(_) => HttpResponse::InternalServerError().finish(),

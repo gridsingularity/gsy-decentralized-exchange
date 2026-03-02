@@ -1,30 +1,28 @@
-use crate::helpers::init_app;
+use crate::helpers::{init_app, stop_app};
 use actix_web::web;
 use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketTopologySchema};
 use uuid::Uuid;
 
-fn random_hash() -> String {
-    format!("0x{}", Uuid::new_v4().simple().to_string())
-}
 
 #[tokio::test]
 async fn get_market_succeeds() {
     let app = init_app().await;
-    let address = app.address;
+    let address = app.address.clone();
     let community_areas_1 = vec![
         AreaTopologySchema {
             name: "area1".to_string(),
             area_uuid: "area1hash".to_string(),
-            area_hash: random_hash(),
+            area_type: "Home".to_string(),
         },
         AreaTopologySchema {
             name: "area2".to_string(),
             area_uuid: "area2hash".to_string(),
-            area_hash: random_hash(),
+            area_type: "Home".to_string(),
         },
     ];
     let market1 = MarketTopologySchema {
         market_id: "my_market".to_string(),
+        market_type: MarketType::Spot,
         community_areas: community_areas_1.clone(),
         time_slot: 1232123213,
         creation_time: 1232123213,
@@ -35,16 +33,17 @@ async fn get_market_succeeds() {
         AreaTopologySchema {
             name: "area3".to_string(),
             area_uuid: "area3hash".to_string(),
-            area_hash: random_hash(),
+            area_type: "Home".to_string(),
         },
         AreaTopologySchema {
             name: "area4".to_string(),
             area_uuid: "area4hash".to_string(),
-            area_hash: random_hash(),
+            area_type: "Home".to_string(),
         },
     ];
     let market2 = MarketTopologySchema {
         market_id: "my_market2".to_string(),
+        market_type: MarketType::Spot,
         community_areas: community_areas_2.clone(),
         time_slot: 1242123213,
         creation_time: 1242123213,
@@ -52,7 +51,7 @@ async fn get_market_succeeds() {
         community_uuid: "my_community2_hash".to_string(),
     };
 
-    let db = web::Data::new(app.db_wrapper);
+    let db = web::Data::new(app.db_wrapper.clone());
     let market_ref = db.get_ref().markets();
     let saved = market_ref.insert(market1.clone()).await.unwrap();
     assert_eq!(saved.market_id, "my_market");
@@ -88,6 +87,7 @@ async fn get_market_succeeds() {
     assert_eq!(resp_json.market_id, "my_market2".to_string());
     assert_eq!(resp_json.community_areas, community_areas_2);
     assert_eq!(resp_json.time_slot, market2.time_slot);
+    stop_app(app).await;
 }
 
 fn create_market_topology_schema(
@@ -103,16 +103,17 @@ fn create_market_topology_schema(
         AreaTopologySchema {
             name: area1_name,
             area_uuid: area1_uuid,
-            area_hash: random_hash(),
+            area_type: "Home".to_string(),
         },
         AreaTopologySchema {
             name: area2_name,
             area_uuid: area2_uuid,
-            area_hash: random_hash(),
+            area_type: "Home".to_string(),
         },
     ];
     let market = MarketTopologySchema {
         market_id,
+        market_type: MarketType::Spot,
         community_areas: community_areas.clone(),
         time_slot: 1232123213,
         creation_time: 1232123213,
@@ -125,7 +126,7 @@ fn create_market_topology_schema(
 #[tokio::test]
 async fn get_market_from_community_succeeds() {
     let app = init_app().await;
-    let address = app.address;
+    let address = app.address.clone();
 
     let (market1, community_areas_1) = create_market_topology_schema(
         "my_market".to_string(),
@@ -137,7 +138,7 @@ async fn get_market_from_community_succeeds() {
         "area2hash".to_string(),
     );
 
-    let db = web::Data::new(app.db_wrapper);
+    let db = web::Data::new(app.db_wrapper.clone());
     let market_ref = db.get_ref().markets();
     let saved = market_ref.insert(market1.clone()).await.unwrap();
     assert_eq!(saved.market_id, "my_market");
@@ -168,15 +169,14 @@ async fn get_market_from_community_succeeds() {
 
     let status = resp.status();
     assert_eq!(200, status.as_u16());
-
     let resp_json: Vec<MarketTopologySchema> = resp.json().await.unwrap();
     assert_eq!(resp_json.len(), 1);
+    let topology = resp_json.get(0).unwrap();
 
-    let first_market = &resp_json[0];
-    assert_eq!(first_market.market_id, "my_market".to_string());
-    assert_eq!(first_market.community_name, "community1".to_string());
-    assert_eq!(first_market.community_areas, community_areas_1);
-    assert_eq!(first_market.time_slot, market1.time_slot);
+    assert_eq!(topology.market_id, "my_market".to_string());
+    assert_eq!(topology.community_name, "community1".to_string());
+    assert_eq!(topology.community_areas, community_areas_1);
+    assert_eq!(topology.time_slot, market1.time_slot);
 
     let resp = client
         .get(&format!(
@@ -190,21 +190,20 @@ async fn get_market_from_community_succeeds() {
 
     let status = resp.status();
     assert_eq!(200, status.as_u16());
-
     let resp_json: Vec<MarketTopologySchema> = resp.json().await.unwrap();
     assert_eq!(resp_json.len(), 1);
-
-    let first_market = &resp_json[0];
-    assert_eq!(first_market.market_id, "my_market2".to_string());
-    assert_eq!(first_market.community_name, "community2".to_string());
-    assert_eq!(first_market.community_areas, community_areas_2);
-    assert_eq!(first_market.time_slot, market2.time_slot);
+    let topology = resp_json.get(0).unwrap();
+    assert_eq!(topology.market_id, "my_market2".to_string());
+    assert_eq!(topology.community_name, "community2".to_string());
+    assert_eq!(topology.community_areas, community_areas_2);
+    assert_eq!(topology.time_slot, market2.time_slot);
+    stop_app(app).await;
 }
 
 #[tokio::test]
 async fn get_market_fails_for_wrong_market_id() {
     let app = init_app().await;
-    let address = app.address;
+    let address = app.address.clone();
     let client = reqwest::Client::new();
     let resp = client
         .get(&format!("{}/market?market_id=no_such_market", &address))
@@ -215,26 +214,28 @@ async fn get_market_fails_for_wrong_market_id() {
 
     let status = resp.status();
     assert_eq!(404, status.as_u16());
+    stop_app(app).await;
 }
 
 #[tokio::test]
 async fn post_market_succeeds() {
     let app = init_app().await;
-    let address = app.address;
+    let address = app.address.clone();
     let community_areas = vec![
         AreaTopologySchema {
             name: "area1".to_string(),
             area_uuid: "area1hash".to_string(),
-            area_hash: random_hash(),
+            area_type: "Home".to_string(),
         },
         AreaTopologySchema {
             name: "area2".to_string(),
             area_uuid: "area2hash".to_string(),
-            area_hash: random_hash(),
+            area_type: "Home".to_string(),
         },
     ];
     let market = MarketTopologySchema {
         market_id: "new_market".to_string(),
+        market_type: MarketType::Spot,
         community_areas,
         time_slot: 432321123,
         creation_time: 432321121,
@@ -254,7 +255,7 @@ async fn post_market_succeeds() {
     let status = resp.status();
     assert_eq!(200, status.as_u16());
 
-    let db = web::Data::new(app.db_wrapper);
+    let db = web::Data::new(app.db_wrapper.clone());
     let saved = db
         .get_ref()
         .markets()
@@ -264,4 +265,5 @@ async fn post_market_succeeds() {
 
     let first_element = saved.iter().nth(0).unwrap();
     assert_eq!(*first_element, market);
+    stop_app(app).await;
 }

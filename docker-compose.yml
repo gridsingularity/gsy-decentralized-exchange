@@ -1,16 +1,4 @@
 services:
-  gsy-node:
-    container_name: gsy-node
-    build:
-      dockerfile: ./gsy-node/Dockerfile
-    depends_on:
-      gsy-matching-engine:
-        condition: service_started
-    ports:
-      - "9944:9944"
-    environment:
-      - CARGO_HOME=/var/www/gsy-node/.cargo
-      - ORDERBOOK_SERVICE_URL=http://gsy-orderbook:8080
 
   gsy-orderbook:
     container_name: gsy-orderbook

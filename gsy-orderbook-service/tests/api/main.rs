@@ -1,3 +1,4 @@
+mod asset_measurements;
 mod evm_integration;
 mod health_check;
 mod helpers;

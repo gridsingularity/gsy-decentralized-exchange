@@ -143,6 +143,7 @@ impl AreaMarketInfoAdapter {
             Some(topology) => Some(topology),
             None => {
                 let new_market = MarketTopologySchema {
+                    market_type: MarketType::Spot,
                     community_name: topology.community_name.clone(),
                     community_uuid: topology.community_uuid.clone(),
                     market_id: h256_to_string(generate_market_id(MarketType::Spot, time_slot)),
@@ -155,7 +156,7 @@ impl AreaMarketInfoAdapter {
                         .map(|area| AreaTopologySchema {
                             area_uuid: area.area_uuid.clone(),
                             name: area.area_name.clone(),
-                            area_hash: h256_to_string(H256::random()),
+                            area_type: "Area".to_string(),
                         })
                         .collect(),
                 };

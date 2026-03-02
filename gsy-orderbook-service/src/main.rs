@@ -23,10 +23,10 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let configuration = get_configuration().expect("Failed to load configuration");
     let db_connection_string = configuration.get_connection_string();
-    let scheduler_interval = configuration.scheduler_interval;
+    let scheduler_interval = configuration.get_scheduler_interval();
 
     let db_connection_wrapper =
-        init_database(db_connection_string, configuration.database_name.clone()).await?;
+        init_database(db_connection_string, configuration.database_name).await?;
     let db: DbRef = web::Data::new(db_connection_wrapper.clone());
 
     info!("🚀 Starting Orderbook Service with EVM Listener");

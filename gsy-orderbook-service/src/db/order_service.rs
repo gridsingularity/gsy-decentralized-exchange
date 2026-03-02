@@ -1,3 +1,4 @@
+use crate::db::create_filter_params_with_start_end_time;
 use crate::db::DatabaseWrapper;
 use anyhow::Result;
 use futures::StreamExt;
@@ -52,30 +53,17 @@ impl OrderService {
         start_time: Option<u32>,
         end_time: Option<u32>,
     ) -> Result<Vec<DbOrderSchema>> {
-        let mut filter_params = doc! {};
+        let mut filter_params =
+            create_filter_params_with_start_end_time("time_slot".to_string(), start_time, end_time);
 
         if market_id.is_some() {
             let market_id_str = market_id.unwrap();
             filter_params = doc! {"$or": [
-                { "order.data.offer_component.market_id": market_id_str.clone() },
-                { "order.data.bid_component.market_id": market_id_str.clone() }
+                { "market_id": market_id_str.clone() },
             ]};
         }
 
         // TODO: Correct time_slot filtering based on nested offer / bid structs.
-        if start_time.is_some() {
-            filter_params.insert("time_slot", doc! {"$gte": start_time.unwrap()});
-        }
-        if end_time.is_some() {
-            if start_time.is_some() {
-                filter_params.insert(
-                    "time_slot",
-                    doc! {"$gte": start_time.unwrap(), "$lte": end_time.unwrap()},
-                );
-            } else {
-                filter_params.insert("time_slot", doc! {"$lte": end_time.unwrap()});
-            }
-        }
 
         let mut cursor = self.0.find(filter_params).await.unwrap();
         let mut result: Vec<DbOrderSchema> = Vec::new();
@@ -184,7 +172,7 @@ impl OrderService {
             .0
             .update_many(
                 doc! {
-                    "order.data.time_slot": { "$lt": bson::to_bson(&now_time_slot).unwrap()},
+                    "time_slot": { "$lt": bson::to_bson(&now_time_slot).unwrap()},
                     "status": bson::to_bson(&OrderStatus::Open).unwrap()
                 },
                 doc! {

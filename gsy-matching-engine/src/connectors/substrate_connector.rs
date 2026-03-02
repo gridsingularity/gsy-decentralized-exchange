@@ -1,21 +1,16 @@
+use crate::primitives::node_types_converter::create_node_bid_offer_matches_from_canonical;
 use anyhow::{anyhow, Error, Result};
 use async_recursion::async_recursion;
-use codec::{Decode, Encode};
 use gsy_offchain_primitives::algorithms::PayAsBid;
-use gsy_offchain_primitives::db_api_schema::orders::{
-    DbBid, DbOffer, DbOrderComponent, DbOrderSchema, Order as DbOrder, OrderStatus,
-};
-use gsy_offchain_primitives::types::{
-    Bid, BidOfferMatch, MatchingData, Offer, Order, OrderComponent,
-};
+use gsy_offchain_primitives::db_api_schema::orders::{DbOrderSchema, OrderEnum, OrderStatus};
+use gsy_offchain_primitives::types::{BidOfferMatch, MatchingData, Order};
 use gsy_offchain_primitives::utils::{
     string_to_account_id, string_to_h256, NODE_FLOAT_SCALING_FACTOR,
 };
-use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::{thread, time};
 use subxt::utils::H256;
-use subxt::{utils::AccountId32, OnlineClient, SubstrateConfig};
+use subxt::{OnlineClient, SubstrateConfig};
 use subxt_signer::sr25519::dev;
 use tracing::{error, info};
 
@@ -25,8 +20,6 @@ const MATCH_PER_NR_BLOCKS: u64 = 4;
 pub mod gsy_node {}
 
 pub const DEFAULT_MARKET_ID: u8 = 1;
-
-use crate::connectors::substrate_connector::gsy_node::runtime_types::gsy_primitives::trades::BidOfferMatch as OtherBidOfferMatch;
 
 #[async_recursion]
 pub async fn substrate_subscribe(orderbook_url: String, node_url: String) -> Result<(), Error> {
@@ -104,7 +97,7 @@ pub async fn substrate_subscribe(orderbook_url: String, node_url: String) -> Res
 
 async fn fetch_open_orders_from_orderbook_service(
     url: String,
-) -> Result<(Vec<Bid>, Vec<Offer>), Error> {
+) -> Result<(Vec<Order>, Vec<Order>), Error> {
     let res = reqwest::get(url).await?;
     info!("Response: {:?} {}", res.version(), res.status());
     info!("Headers: {:#?}\n", res.headers());
@@ -115,7 +108,7 @@ async fn fetch_open_orders_from_orderbook_service(
         .into_iter()
         .filter(|order| order.status == OrderStatus::Open)
         .filter_map(
-            |db_order_schema| match convert_db_order_to_canonical(db_order_schema.order) {
+            |db_order_schema| match convert_db_order_to_canonical(db_order_schema) {
                 Ok(order) => Some(order),
                 Err(e) => {
                     error!("Failed to convert DB order to canonical: {:?}", e);
@@ -125,29 +118,35 @@ async fn fetch_open_orders_from_orderbook_service(
         )
         .collect();
 
-    let mut open_bids: Vec<Bid> = Vec::new();
-    let mut open_offers: Vec<Offer> = Vec::new();
+    let mut open_bids: Vec<Order> = Vec::new();
+    let mut open_offers: Vec<Order> = Vec::new();
 
     for order in open_canonical_orders {
-        match order {
-            Order::Bid(bid) => open_bids.push(bid),
-            Order::Offer(offer) => open_offers.push(offer),
+        match order.order_type {
+            OrderEnum::Bid => open_bids.push(order),
+            OrderEnum::Offer => open_offers.push(order),
         }
     }
 
     Ok((open_bids, open_offers))
 }
 
-fn convert_db_order_to_canonical(order: DbOrder) -> Result<Order> {
-    Ok(match order {
-        DbOrder::Bid(bid) => Order::Bid(Bid {
-            buyer: string_to_account_id(bid.buyer.clone())
-                .ok_or_else(|| anyhow!("Invalid buyer AccountId: {}", bid.buyer))?,
-            nonce: bid.nonce,
-            bid_component: convert_db_order_component_to_canonical(bid.bid_component),
-            requirements: bid
-                .requirements
-                .map(|r| gsy_offchain_primitives::types::Requirements {
+fn convert_db_order_to_canonical(order: DbOrderSchema) -> Result<Order> {
+    Ok(match order.order_type {
+        OrderEnum::Bid => Order {
+            created_by: string_to_account_id(order.created_by.clone())
+                .ok_or_else(|| anyhow!("Invalid buyer AccountId: {}", order.created_by))?,
+            order_id: string_to_h256(order.order_id),
+            order_type: OrderEnum::Bid,
+            status: order.status,
+            area_uuid: string_to_h256(order.area_uuid),
+            market_id: string_to_h256(order.market_id),
+            time_slot: order.time_slot,
+            creation_time: order.creation_time,
+            energy: (order.energy_kWh * NODE_FLOAT_SCALING_FACTOR) as u64,
+            energy_rate: (order.energy_rate * NODE_FLOAT_SCALING_FACTOR) as u64,
+            requirements: order.requirements.map(|r| {
+                gsy_offchain_primitives::types::Requirements {
                     trading_partner_id: r.trading_partner_id.and_then(string_to_account_id),
                     energy_type: r.energy_type.map(|et| match et {
                         gsy_offchain_primitives::db_api_schema::orders::EnergyType::Clean => {
@@ -166,14 +165,24 @@ fn convert_db_order_to_canonical(order: DbOrder) -> Result<Order> {
                     preferred_energy_rate: r
                         .preferred_energy_rate
                         .map(|r| (r * NODE_FLOAT_SCALING_FACTOR) as u64),
-                }),
-        }),
-        DbOrder::Offer(offer) => Order::Offer(Offer {
-            seller: string_to_account_id(offer.seller.clone())
-                .ok_or_else(|| anyhow!("Invalid seller AccountId: {}", offer.seller))?,
-            nonce: offer.nonce,
-            offer_component: convert_db_order_component_to_canonical(offer.offer_component),
-            attributes: offer
+                }
+            }),
+            attributes: None,
+        },
+        OrderEnum::Offer => Order {
+            order_id: string_to_h256(order.order_id),
+            order_type: order.order_type,
+            status: order.status,
+            created_by: string_to_account_id(order.created_by.clone())
+                .ok_or_else(|| anyhow!("Invalid seller AccountId: {}", order.created_by))?,
+            area_uuid: string_to_h256(order.area_uuid),
+            market_id: string_to_h256(order.market_id),
+            time_slot: order.time_slot,
+            creation_time: order.creation_time,
+            energy: (order.energy_kWh * NODE_FLOAT_SCALING_FACTOR) as u64,
+            energy_rate: (order.energy_rate * NODE_FLOAT_SCALING_FACTOR) as u64,
+            requirements: None,
+            attributes: order
                 .attributes
                 .map(|a| gsy_offchain_primitives::types::Attributes {
                     trading_partner_id: a.trading_partner_id.and_then(string_to_account_id),
@@ -192,28 +201,21 @@ fn convert_db_order_to_canonical(order: DbOrder) -> Result<Order> {
                         }
                     },
                 }),
-        }),
+        },
     })
-}
-
-fn convert_db_order_component_to_canonical(component: DbOrderComponent) -> OrderComponent {
-    OrderComponent {
-        area_uuid: string_to_h256(component.area_uuid),
-        market_id: string_to_h256(component.market_id),
-        time_slot: component.time_slot,
-        creation_time: component.creation_time,
-        energy: (component.energy * NODE_FLOAT_SCALING_FACTOR) as u64,
-        energy_rate: (component.energy_rate * NODE_FLOAT_SCALING_FACTOR) as u64,
-    }
 }
 
 async fn send_settle_trades_extrinsic(
     url: String,
-    matches: Vec<OtherBidOfferMatch<AccountId32, H256>>,
+    matches: Vec<BidOfferMatch>,
 ) -> Result<(), Error> {
     let api = OnlineClient::<SubstrateConfig>::from_insecure_url(url).await?;
 
-    let trade_settlement_tx = gsy_node::tx().trades_settlement().settle_trades(matches);
+    let transcoded_matches = create_node_bid_offer_matches_from_canonical(matches);
+
+    let trade_settlement_tx = gsy_node::tx()
+        .trades_settlement()
+        .settle_trades(transcoded_matches);
 
     let signer = dev::alice();
     let order_submit_and_watch = api
@@ -245,12 +247,7 @@ async fn settle_matched_orders(
         let node_url = node_url.lock().unwrap().to_string();
         let matches: Vec<BidOfferMatch> = matches.lock().unwrap().clone();
 
-        let bid_offer_match_bytes = matches.encode();
-        let transcode_bid_offer_matches: Vec<OtherBidOfferMatch<AccountId32, H256>> =
-            Vec::<OtherBidOfferMatch<AccountId32, H256>>::decode(&mut &bid_offer_match_bytes[..])
-                .unwrap();
-
-        match send_settle_trades_extrinsic(node_url, transcode_bid_offer_matches).await {
+        match send_settle_trades_extrinsic(node_url, matches).await {
             Ok(()) => {
                 info!("Settling trades successful");
             }

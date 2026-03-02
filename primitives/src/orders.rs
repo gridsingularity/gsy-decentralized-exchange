@@ -82,7 +82,6 @@ pub struct InputBid<AccountId> {
 #[cfg_attr(feature = "std", derive(Hash, Default))]
 pub struct Bid<AccountId> {
     pub buyer: AccountId,
-    pub nonce: u32,
     pub bid_component: OrderComponent,
     pub requirements: Option<Requirements<AccountId>>,
 }
@@ -108,7 +107,6 @@ pub struct InputOffer<AccountId> {
 #[cfg_attr(feature = "std", derive(Hash, Default))]
 pub struct Offer<AccountId> {
     pub seller: AccountId,
-    pub nonce: u32,
     pub offer_component: OrderComponent,
     pub attributes: Option<Attributes<AccountId>>,
 }
