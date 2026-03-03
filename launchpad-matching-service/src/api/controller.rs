@@ -56,7 +56,6 @@ pub struct MatchController {}
 impl MatchControllerBase for MatchController {
     async fn insert_bid_offer_matches_to_db(&self, matches: Vec<DbBidOfferMatch>) {
         if let Ok(model) = model::MatchModel::new().await {
-            use model::MatchStore;
             if let Err(e) = model.insert_matches(matches).await {
                 eprintln!("Failed to insert matches into MongoDB: {:?}", e);
             }

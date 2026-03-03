@@ -1,0 +1,7 @@
+application_host: "localhost"
+application_port: "9876"
+database_host: "localhost"
+database_username: "gsy"
+database_password: "gsy"
+database_name: "launchpad"
+database_url_scheme: "mongodb"
