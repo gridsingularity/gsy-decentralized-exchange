@@ -109,7 +109,7 @@ async fn test_get_average_energy_rate_series() {
 
     model.insert_matches(vec![match1, match2]).await.unwrap();
 
-    let result = model.get_average_energy_rate_series(market_id, 0, 1000).await;
+    let result = model.get_average_energy_rate_series(Some(market_id), 0, 1000).await;
     assert!(result.is_ok());
     let series = result.unwrap();
     assert_eq!(series.len(), 1);
@@ -201,7 +201,7 @@ async fn test_get_average_energy_rate_series_multiple_slots() {
 
     model.insert_matches(vec![match_s100_1, match_s100_2, match_s200_1]).await.unwrap();
 
-    let result = model.get_average_energy_rate_series(market_id, 0, 1000).await;
+    let result = model.get_average_energy_rate_series(Some(market_id), 0, 1000).await;
     assert!(result.is_ok());
     let series = result.unwrap();
     
@@ -213,6 +213,88 @@ async fn test_get_average_energy_rate_series_multiple_slots() {
     
     assert_eq!(series[1].time_slot, 200);
     assert_eq!(series[1].average_energy_rate, 25.0);
+}
+
+#[tokio::test]
+async fn test_get_average_energy_rate_series_all_markets() {
+    let model = match MatchModel::new().await {
+        Ok(m) => m,
+        Err(_) => return, // Skip if no MongoDB
+    };
+    
+    let market_id1 = format!("test_market_all_1_{}", 111);
+    let market_id2 = format!("test_market_all_2_{}", 222);
+    
+    let bid = DbBid {
+        buyer: "buyer1".to_string(),
+        nonce: 1,
+        bid_component: DbOrderComponent {
+            area_uuid: "area1".to_string(),
+            market_id: market_id1.clone(),
+            time_slot: 500,
+            creation_time: 100,
+            energy: 10.0,
+            energy_rate: 10.0,
+        },
+    };
+    let offer = DbOffer {
+        seller: "seller1".to_string(),
+        nonce: 1,
+        offer_component: DbOrderComponent {
+            area_uuid: "area2".to_string(),
+            market_id: market_id1.clone(),
+            time_slot: 500,
+            creation_time: 100,
+            energy: 10.0,
+            energy_rate: 10.0,
+        },
+    };
+
+    let match1 = DbBidOfferMatch {
+        market_id: market_id1,
+        time_slot: 500,
+        bid: bid.clone(),
+        offer: offer.clone(),
+        residual_bid: None,
+        residual_offer: None,
+        selected_energy: 10.0,
+        energy_rate: 10.0,
+    };
+    
+    let match2 = DbBidOfferMatch {
+        market_id: market_id2,
+        time_slot: 500,
+        bid: DbBid {
+            bid_component: DbOrderComponent {
+                market_id: "test_market_all_2_111".to_string(), // irrelevant for filter
+                ..bid.bid_component.clone()
+            },
+            ..bid.clone()
+        },
+        offer: DbOffer {
+            offer_component: DbOrderComponent {
+                market_id: "test_market_all_2_111".to_string(), // irrelevant for filter
+                ..offer.offer_component.clone()
+            },
+            ..offer.clone()
+        },
+        residual_bid: None,
+        residual_offer: None,
+        selected_energy: 10.0,
+        energy_rate: 20.0,
+    };
+
+    model.insert_matches(vec![match1, match2]).await.unwrap();
+
+    // Query with None for market_id -> should average both markets
+    let result = model.get_average_energy_rate_series(None, 400, 600).await;
+    assert!(result.is_ok());
+    let series = result.unwrap();
+    
+    assert_eq!(series.len(), 1);
+    assert_eq!(series[0].time_slot, 500);
+    // Average of 10.0 and 20.0 is 15.0
+    assert_eq!(series[0].average_energy_rate, 15.0);
 }
 
 #[tokio::test]
@@ -283,13 +365,13 @@ async fn test_get_average_energy_rate_series_time_range() {
     model.insert_matches(vec![match_s100, match_s200, match_s300]).await.unwrap();
 
     // Query range [150, 250] -> should only return slot 200
-    let result = model.get_average_energy_rate_series(market_id.clone(), 150, 250).await;
+    let result = model.get_average_energy_rate_series(Some(market_id.clone()), 150, 250).await;
     let series = result.unwrap();
     assert_eq!(series.len(), 1);
     assert_eq!(series[0].time_slot, 200);
 
     // Query range [100, 200] -> should return slots 100 and 200
-    let result = model.get_average_energy_rate_series(market_id.clone(), 100, 200).await;
+    let result = model.get_average_energy_rate_series(Some(market_id.clone()), 100, 200).await;
     let series = result.unwrap();
     assert_eq!(series.len(), 2);
     assert_eq!(series[0].time_slot, 100);

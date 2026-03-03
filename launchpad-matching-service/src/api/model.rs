@@ -33,15 +33,20 @@ impl MatchModel {
         Ok(())
     }
 
-    pub async fn get_average_energy_rate_series(&self, market_id: String, start_time: u64, end_time: u64) -> mongodb::error::Result<Vec<TimeSeriesPoint>> {
+    pub async fn get_average_energy_rate_series(&self, market_id: Option<String>, start_time: u64, end_time: u64) -> mongodb::error::Result<Vec<TimeSeriesPoint>> {
         let collection: Collection<DbBidOfferMatch> = self.db.collection("matches");
+
+        let mut match_filter = doc! {
+            "time_slot": { "$gte": start_time as i64, "$lte": end_time as i64 }
+        };
+
+        if let Some(market_id) = market_id {
+            match_filter.insert("market_id", market_id);
+        }
 
         let pipeline = vec![
             doc! {
-                "$match": {
-                    "market_id": market_id,
-                    "time_slot": { "$gte": start_time as i64, "$lte": end_time as i64 }
-                }
+                "$match": match_filter
             },
             doc! {
                 "$group": {
