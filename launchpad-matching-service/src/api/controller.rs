@@ -2,10 +2,12 @@ use std::collections::HashMap;
 use gsy_offchain_primitives::algorithms::PayAsBid;
 use crate::api::types::{DbBidOfferMatch, DbMatchingData};
 use gsy_offchain_primitives::db_api_schema::orders::{DbOrderSchema, Order, DbBid, DbOffer};
+use crate::api::model;
 
-pub fn process_market_id_for_pay_as_bid(
+pub async fn process_market_id_for_pay_as_bid(
         orders: Vec<DbOrderSchema>) -> HashMap<String, Vec<DbBidOfferMatch>> {
     let mut matches = HashMap::new();
+    let mut all_matches_to_insert = Vec::new();
 
     // Find all market ids in the orders
     let market_ids: Vec<String> = orders.iter().map(|order| {
@@ -34,7 +36,18 @@ pub fn process_market_id_for_pay_as_bid(
             market_id: market_id.clone(),
         };
         let algorithm_result = matching_data.pay_as_bid();
+        all_matches_to_insert.extend(algorithm_result.clone());
         matches.insert(market_id.clone(), algorithm_result);
     }
+
+    if let Ok(model) = model::MatchModel::new().await {
+        use model::MatchStore;
+        if let Err(e) = model.insert_matches(all_matches_to_insert).await {
+            eprintln!("Failed to insert matches into MongoDB: {:?}", e);
+        }
+    } else {
+        eprintln!("Failed to connect to MongoDB");
+    }
+
     matches
 }

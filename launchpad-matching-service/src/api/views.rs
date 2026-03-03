@@ -4,6 +4,6 @@ use crate::api::controller;
 
 #[post("/match")]
 pub async fn pay_as_bid(orders: web::Json<Vec<DbOrderSchema>>) -> impl Responder {
-    let result = controller::process_market_id_for_pay_as_bid(orders.into_inner());
+    let result = controller::process_market_id_for_pay_as_bid(orders.into_inner()).await;
     HttpResponse::Ok().json(result)
 }
