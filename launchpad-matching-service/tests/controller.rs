@@ -1,13 +1,20 @@
-use actix_web::{test, App};
 use gsy_offchain_primitives::db_api_schema::orders::{DbBid, DbOffer, DbOrderComponent, DbOrderSchema, Order};
-use std::collections::HashMap;
+use launchpad_matching_service::api::controller::MatchControllerBase;
 use launchpad_matching_service::api::types::DbBidOfferMatch;
-use launchpad_matching_service::api::views::pay_as_bid;
+use async_trait::async_trait;
 
-#[actix_web::test]
-async fn test_match_endpoint() {
-    let app = test::init_service(App::new().service(pay_as_bid)).await;
+struct MockMatchController;
 
+#[async_trait]
+impl MatchControllerBase for MockMatchController {
+    async fn insert_bid_offer_matches_to_db(&self, _matches: Vec<DbBidOfferMatch>) {
+        // Mocked, does nothing
+    }
+}
+
+#[tokio::test]
+async fn test_process_market_id_for_pay_as_bid() {
+    let controller = MockMatchController {};
     let market_id = "market1".to_string();
     let area_uuid = "area1".to_string();
 
@@ -28,7 +35,7 @@ async fn test_match_endpoint() {
         seller: "seller1".to_string(),
         nonce: 1,
         offer_component: DbOrderComponent {
-            area_uuid: "area2".to_string(), // different area to allow matching in current logic (Wait, logic in types.rs says if area_uuid same it continues/skips)
+            area_uuid: "area2".to_string(),
             market_id: market_id.clone(),
             time_slot: 100,
             creation_time: 100,
@@ -50,15 +57,8 @@ async fn test_match_endpoint() {
         },
     ];
 
-    let req = test::TestRequest::post()
-        .uri("/match")
-        .set_json(&orders)
-        .to_request();
-
-    let resp = test::call_service(&app, req).await;
-    assert!(resp.status().is_success());
-
-    let result: HashMap<String, Vec<DbBidOfferMatch>> = test::read_body_json(resp).await;
+    let result = controller.process_market_id_for_pay_as_bid(orders).await;
+    
     assert!(result.contains_key(&market_id));
     assert_eq!(result.get(&market_id).unwrap().len(), 1);
     
@@ -68,10 +68,9 @@ async fn test_match_endpoint() {
     assert_eq!(match_obj.market_id, market_id);
 }
 
-#[actix_web::test]
-async fn test_match_multiple_orders() {
-    let app = test::init_service(App::new().service(pay_as_bid)).await;
-
+#[tokio::test]
+async fn test_process_market_id_multiple_orders() {
+    let controller = MockMatchController;
     let market_id = "market1".to_string();
 
     let bid1 = DbBid {
@@ -149,26 +148,10 @@ async fn test_match_multiple_orders() {
         },
     ];
 
-    let req = test::TestRequest::post()
-        .uri("/match")
-        .set_json(&orders)
-        .to_request();
-
-    let resp = test::call_service(&app, req).await;
-    assert!(resp.status().is_success());
-
-    let result: HashMap<String, Vec<DbBidOfferMatch>> = test::read_body_json(resp).await;
+    let result = controller.process_market_id_for_pay_as_bid(orders).await;
+    
     assert!(result.contains_key(&market_id));
-    
     let matches = result.get(&market_id).unwrap();
-    
-    // offer1 (15.0 @ 10.0) is cheaper than offer2 (10.0 @ 12.0), so it should be processed first.
-    // bid1 (10.0 @ 20.0) is more expensive than bid2 (10.0 @ 15.0), so it should be matched first.
-    
-    // Match 1: offer1 (15) vs bid1 (10) -> selected: 10, offer1 remains 5
-    // Match 2: offer1 (5) vs bid2 (10) -> selected: 5, bid2 remains 5, offer1 consumed
-    // Match 3: offer2 (10) vs bid2 (5) -> selected: 5, offer2 remains 5, bid2 consumed
-    
     assert_eq!(matches.len(), 3);
     
     // Check match 1
@@ -190,10 +173,9 @@ async fn test_match_multiple_orders() {
     assert_eq!(matches[2].energy_rate, 15.0);
 }
 
-#[actix_web::test]
-async fn test_match_one_bid_multiple_offers() {
-    let app = test::init_service(App::new().service(pay_as_bid)).await;
-
+#[tokio::test]
+async fn test_process_market_id_one_bid_multiple_offers() {
+    let controller = MockMatchController;
     let market_id = "market1".to_string();
 
     // One bid with 20.0 energy
@@ -256,24 +238,10 @@ async fn test_match_one_bid_multiple_offers() {
         },
     ];
 
-    let req = test::TestRequest::post()
-        .uri("/match")
-        .set_json(&orders)
-        .to_request();
-
-    let resp = test::call_service(&app, req).await;
-    assert!(resp.status().is_success());
-
-    let result: HashMap<String, Vec<DbBidOfferMatch>> = test::read_body_json(resp).await;
+    let result = controller.process_market_id_for_pay_as_bid(orders).await;
+    
     assert!(result.contains_key(&market_id));
-    
     let matches = result.get(&market_id).unwrap();
-    
-    // Pay-As-Bid algorithm logic check:
-    // offer1 (12.0 @ 10.0) is cheaper than offer2 (15.0 @ 15.0), so it should be processed first.
-    // Match 1: bid (20) vs offer1 (12) -> selected: 12, bid remains 8
-    // Match 2: bid (8) vs offer2 (15) -> selected: 8, offer2 remains 7, bid consumed
-    
     assert_eq!(matches.len(), 2);
     
     // Match 1
