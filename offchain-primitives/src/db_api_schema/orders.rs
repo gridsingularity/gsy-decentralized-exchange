@@ -17,7 +17,7 @@ impl Order {
     }
 }
 /// Order component struct
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, PartialOrd)]
 pub struct DbOrderComponent {
     pub area_uuid: String,
     pub market_id: String,
@@ -60,7 +60,7 @@ impl Default for OrderStatus {
 }
 
 /// Bid order struct
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, PartialOrd)]
 pub struct DbBid {
     pub buyer: String,
     pub nonce: u32,
@@ -68,7 +68,7 @@ pub struct DbBid {
 }
 
 /// Offer (Ask) order struct
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, PartialOrd)]
 pub struct DbOffer {
     pub seller: String,
     pub nonce: u32,
