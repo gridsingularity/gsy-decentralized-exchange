@@ -1,6 +1,11 @@
-use actix_web::{post, web, HttpResponse, Responder};
+use actix_web::{get, post, web, HttpResponse, Responder};
 use gsy_offchain_primitives::db_api_schema::orders::DbOrderSchema;
 use crate::api::controller::{MatchController, MatchControllerBase};
+
+#[get("/health-check")]
+pub async fn health_check() -> impl Responder {
+    HttpResponse::Ok().finish()
+}
 
 #[post("/match")]
 pub async fn pay_as_bid(

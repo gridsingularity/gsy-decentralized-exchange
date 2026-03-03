@@ -8,6 +8,7 @@ async fn main() -> std::io::Result<()> {
 
     HttpServer::new(|| {
         App::new()
+            .service(views::health_check)
             .service(views::pay_as_bid)
     })
     .bind((configuration.application_host, configuration.application_port))?
