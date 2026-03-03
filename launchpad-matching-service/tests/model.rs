@@ -2,11 +2,17 @@ use launchpad_matching_service::api::model::MatchModel;
 use launchpad_matching_service::api::types::DbBidOfferMatch;
 use gsy_offchain_primitives::db_api_schema::orders::{DbBid, DbOffer, DbOrderComponent};
 
+async fn setup(collection_name: &str) -> Option<MatchModel> {
+    let model = MatchModel::new().await.ok()?.with_collection(collection_name);
+    model.db.collection::<DbBidOfferMatch>(collection_name).drop(None).await.ok();
+    Some(model)
+}
+
 #[tokio::test]
 async fn test_insert_matches() {
-    let model = match MatchModel::new().await {
-        Ok(m) => m,
-        Err(_) => return, // Skip if no MongoDB
+    let model = match setup("test_insert_matches").await {
+        Some(m) => m,
+        None => return,
     };
     
     let market_id = "test_market_insert".to_string();
@@ -53,9 +59,9 @@ async fn test_insert_matches() {
 
 #[tokio::test]
 async fn test_get_average_energy_rate_series() {
-    let model = match MatchModel::new().await {
-        Ok(m) => m,
-        Err(_) => return, // Skip if no MongoDB
+    let model = match setup("test_get_average_energy_rate_series").await {
+        Some(m) => m,
+        None => return,
     };
     
     let market_id = format!("test_market_series_{}", 12345);
@@ -118,10 +124,92 @@ async fn test_get_average_energy_rate_series() {
 }
 
 #[tokio::test]
+async fn test_get_matches() {
+    let model = match setup("test_get_matches").await {
+        Some(m) => m,
+        None => return,
+    };
+
+    let market_id = format!("test_get_matches_{}", 999);
+    let other_market = format!("test_get_matches_other_{}", 888);
+
+    // Common bid/offer components
+    let bid_comp = DbOrderComponent {
+        area_uuid: "area1".to_string(),
+        market_id: market_id.clone(),
+        time_slot: 100,
+        creation_time: 100,
+        energy: 10.0,
+        energy_rate: 15.0,
+    };
+    let offer_comp = DbOrderComponent {
+        area_uuid: "area2".to_string(),
+        market_id: market_id.clone(),
+        time_slot: 100,
+        creation_time: 100,
+        energy: 10.0,
+        energy_rate: 10.0,
+    };
+
+    let matches = vec![
+        // Match in range, target market
+        DbBidOfferMatch {
+            market_id: market_id.clone(),
+            time_slot: 150,
+            bid: DbBid { buyer: "b1".to_string(), nonce: 1, bid_component: DbOrderComponent { time_slot: 150, ..bid_comp.clone() } },
+            offer: DbOffer { seller: "s1".to_string(), nonce: 1, offer_component: DbOrderComponent { time_slot: 150, ..offer_comp.clone() } },
+            residual_bid: None, residual_offer: None, selected_energy: 1.0, energy_rate: 10.0,
+        },
+        // Match in range, target market
+        DbBidOfferMatch {
+            market_id: market_id.clone(),
+            time_slot: 160,
+            bid: DbBid { buyer: "b1".to_string(), nonce: 2, bid_component: DbOrderComponent { time_slot: 160, ..bid_comp.clone() } },
+            offer: DbOffer { seller: "s1".to_string(), nonce: 2, offer_component: DbOrderComponent { time_slot: 160, ..offer_comp.clone() } },
+            residual_bid: None, residual_offer: None, selected_energy: 1.0, energy_rate: 10.0,
+        },
+        // Match out of range (too early)
+        DbBidOfferMatch {
+            market_id: market_id.clone(),
+            time_slot: 50,
+            bid: DbBid { buyer: "b1".to_string(), nonce: 3, bid_component: DbOrderComponent { time_slot: 50, ..bid_comp.clone() } },
+            offer: DbOffer { seller: "s1".to_string(), nonce: 3, offer_component: DbOrderComponent { time_slot: 50, ..offer_comp.clone() } },
+            residual_bid: None, residual_offer: None, selected_energy: 1.0, energy_rate: 10.0,
+        },
+        // Match in range, different market
+        DbBidOfferMatch {
+            market_id: other_market.clone(),
+            time_slot: 155,
+            bid: DbBid { buyer: "b1".to_string(), nonce: 4, bid_component: DbOrderComponent { time_slot: 155, market_id: other_market.clone(), ..bid_comp.clone() } },
+            offer: DbOffer { seller: "s1".to_string(), nonce: 4, offer_component: DbOrderComponent { time_slot: 155, market_id: other_market.clone(), ..offer_comp.clone() } },
+            residual_bid: None, residual_offer: None, selected_energy: 1.0, energy_rate: 10.0,
+        },
+    ];
+
+    model.insert_matches(matches).await.unwrap();
+
+    // Test 1: Cumulative filtering (time range + market_id)
+    let results = model.get_matches(100, 200, Some(market_id.clone()), 10).await.unwrap();
+    assert_eq!(results.len(), 2, "Should find 2 matches for target market in time range");
+    assert!(results.iter().all(|m| m.time_slot >= 100 && m.time_slot <= 200));
+    assert!(results.iter().all(|m| m.market_id == market_id));
+
+    // Test 2: Optional market_id (None should return both markets)
+    let results_all_markets = model.get_matches(100, 200, None, 10).await.unwrap();
+    assert_eq!(results_all_markets.len(), 3, "Should find 3 matches across all markets in time range");
+
+    // Test 3: Limit
+    let results_limited = model.get_matches(100, 200, None, 1).await.unwrap();
+    assert_eq!(results_limited.len(), 1, "Should respect the limit of 1");
+    // Since we sort by time_slot, it should be the one at 150
+    assert_eq!(results_limited[0].time_slot, 150);
+}
+
+#[tokio::test]
 async fn test_get_average_energy_rate_series_multiple_slots() {
-    let model = match MatchModel::new().await {
-        Ok(m) => m,
-        Err(_) => return, // Skip if no MongoDB
+    let model = match setup("test_get_average_energy_rate_series_multiple_slots").await {
+        Some(m) => m,
+        None => return,
     };
     
     let market_id = format!("test_market_multi_slots_{}", 67890);
@@ -217,9 +305,9 @@ async fn test_get_average_energy_rate_series_multiple_slots() {
 
 #[tokio::test]
 async fn test_get_average_energy_rate_series_all_markets() {
-    let model = match MatchModel::new().await {
-        Ok(m) => m,
-        Err(_) => return, // Skip if no MongoDB
+    let model = match setup("test_get_average_energy_rate_series_all_markets").await {
+        Some(m) => m,
+        None => return,
     };
     
     let market_id1 = format!("test_market_all_1_{}", 111);
@@ -299,9 +387,9 @@ async fn test_get_average_energy_rate_series_all_markets() {
 
 #[tokio::test]
 async fn test_get_average_energy_rate_series_time_range() {
-    let model = match MatchModel::new().await {
-        Ok(m) => m,
-        Err(_) => return, // Skip if no MongoDB
+    let model = match setup("test_get_average_energy_rate_series_time_range").await {
+        Some(m) => m,
+        None => return,
     };
     
     let market_id = format!("test_market_range_{}", 54321);
