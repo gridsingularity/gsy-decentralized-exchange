@@ -1,5 +1,6 @@
+use std::collections::HashMap;
 use gsy_offchain_primitives::db_api_schema::orders::{DbBid, DbOffer, DbOrderComponent, DbOrderSchema, Order};
-use launchpad_matching_service::api::controller::MatchControllerBase;
+use launchpad_matching_service::api::controller::{MatchControllerBase, DbMarketData};
 use launchpad_matching_service::api::types::DbBidOfferMatch;
 use async_trait::async_trait;
 
@@ -10,6 +11,11 @@ impl MatchControllerBase for MockMatchController {
     async fn insert_bid_offer_matches_to_db(&self, _matches: Vec<DbBidOfferMatch>) {
         // Mocked, does nothing
     }
+    async fn update_market_statistics(
+        &self, _market_data_map: HashMap<(String, u64), DbMarketData>) {
+        // Mocked, does nothing
+    }
+
 }
 
 #[tokio::test]
@@ -255,4 +261,80 @@ async fn test_process_market_id_one_bid_multiple_offers() {
     assert_eq!(matches[1].offer.seller, "seller2");
     assert_eq!(matches[1].selected_energy, 8.0);
     assert_eq!(matches[1].energy_rate, 25.0);
+}
+
+#[tokio::test]
+async fn test_calculate_market_statistics() {
+    let controller = MockMatchController;
+    let market_id = "market_stats".to_string();
+    let time_slot = 100u64;
+
+    let bid = DbBid {
+        buyer: "buyer1".to_string(),
+        nonce: 1,
+        bid_component: DbOrderComponent {
+            area_uuid: "area1".to_string(),
+            market_id: market_id.clone(),
+            time_slot,
+            creation_time: 100,
+            energy: 10.0,
+            energy_rate: 15.0,
+        },
+    };
+
+    let offer = DbOffer {
+        seller: "seller1".to_string(),
+        nonce: 1,
+        offer_component: DbOrderComponent {
+            area_uuid: "area2".to_string(),
+            market_id: market_id.clone(),
+            time_slot,
+            creation_time: 100,
+            energy: 15.0,
+            energy_rate: 10.0,
+        },
+    };
+
+    let orders = vec![
+        DbOrderSchema {
+            _id: "bid1".to_string(),
+            status: Default::default(),
+            order: Order::Bid(bid.clone()),
+        },
+        DbOrderSchema {
+            _id: "offer1".to_string(),
+            status: Default::default(),
+            order: Order::Offer(offer.clone()),
+        },
+    ];
+
+    let matches = vec![
+        DbBidOfferMatch {
+            market_id: market_id.clone(),
+            time_slot,
+            bid: bid.clone(),
+            offer: offer.clone(),
+            residual_bid: None,
+            residual_offer: Some(offer.clone()),
+            selected_energy: 10.0,
+            energy_rate: 15.0,
+        }
+    ];
+
+    let stats_map = controller.calculate_market_statistics(&orders, &matches).await;
+
+    assert_eq!(stats_map.len(), 1);
+    let stats = stats_map.get(&(market_id.clone(), time_slot)).unwrap();
+
+    assert_eq!(stats.market_id, market_id);
+    assert_eq!(stats.time_slot, time_slot);
+    assert_eq!(stats.submitted_bid_count, 1);
+    assert_eq!(stats.submitted_offer_count, 1);
+    assert_eq!(stats.total_matches, 1);
+    assert_eq!(stats.total_matched_energy_kWh, 10.0);
+    
+    // Total energy submitted: 10 (bid) + 15 (offer) = 25
+    // Matched energy: 10
+    // Unmatched should be: (10 - 10) + (15 - 10) = 5
+    assert_eq!(stats.total_unmatched_energy_kWh, 5.0);
 }

@@ -1,5 +1,6 @@
-use mongodb::{Client, Collection, bson::doc};
+use mongodb::{Client, Collection, bson::doc, options::UpdateOptions};
 use crate::api::types::DbBidOfferMatch;
+use crate::api::controller::DbMarketData;
 use crate::configuration::get_configuration;
 use serde::{Serialize, Deserialize};
 use futures_util::StreamExt;
@@ -114,5 +115,31 @@ impl MatchModel {
         }
 
         Ok(results)
+    }
+
+    pub async fn upsert_market_data(&self, market_data_list: Vec<DbMarketData>) -> mongodb::error::Result<()> {
+        let collection: Collection<DbMarketData> = self.db.collection("market_data");
+
+        for data in market_data_list {
+            let filter = doc! {
+                "market_id": &data.market_id,
+                "time_slot": data.time_slot as i64
+            };
+
+            let update = doc! {
+                "$inc": {
+                    "submitted_bid_count": data.submitted_bid_count as i64,
+                    "submitted_offer_count": data.submitted_offer_count as i64,
+                    "total_matches": data.total_matches as i64,
+                    "total_matched_energy_kWh": data.total_matched_energy_kWh,
+                    "total_unmatched_energy_kWh": data.total_unmatched_energy_kWh
+                }
+            };
+
+            let options = UpdateOptions::builder().upsert(true).build();
+            collection.update_one(filter, update, options).await?;
+        }
+
+        Ok(())
     }
 }

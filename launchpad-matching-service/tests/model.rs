@@ -1,6 +1,8 @@
 use launchpad_matching_service::api::model::MatchModel;
 use launchpad_matching_service::api::types::DbBidOfferMatch;
+use launchpad_matching_service::api::controller::DbMarketData;
 use gsy_offchain_primitives::db_api_schema::orders::{DbBid, DbOffer, DbOrderComponent};
+use mongodb::bson::doc;
 
 async fn setup(collection_name: &str) -> Option<MatchModel> {
     let model = MatchModel::new().await.ok()?.with_collection(collection_name);
@@ -464,4 +466,59 @@ async fn test_get_average_energy_rate_series_time_range() {
     assert_eq!(series.len(), 2);
     assert_eq!(series[0].time_slot, 100);
     assert_eq!(series[1].time_slot, 200);
+}
+
+#[tokio::test]
+async fn test_upsert_market_data() {
+    // We use setup but manually handle the market_data collection
+    let model = match setup("dummy_collection").await {
+        Some(m) => m,
+        None => return,
+    };
+    
+    // Clear market_data collection for this test
+    model.db.collection::<DbMarketData>("market_data").drop(None).await.unwrap();
+
+    let market_id = "test_market_upsert".to_string();
+    let time_slot = 100u64;
+
+    let initial_data = vec![DbMarketData {
+        market_id: market_id.clone(),
+        time_slot,
+        submitted_bid_count: 5,
+        submitted_offer_count: 3,
+        total_matches: 2,
+        total_matched_energy_kWh: 20.0,
+        total_unmatched_energy_kWh: 10.0,
+    }];
+
+    // First upsert (insert)
+    model.upsert_market_data(initial_data).await.unwrap();
+
+    let collection = model.db.collection::<DbMarketData>("market_data");
+    let stored = collection.find_one(doc! { "market_id": &market_id, "time_slot": time_slot as i64 }, None).await.unwrap().unwrap();
+    
+    assert_eq!(stored.submitted_bid_count, 5);
+    assert_eq!(stored.total_matched_energy_kWh, 20.0);
+
+    // Second upsert (update/increment)
+    let increment_data = vec![DbMarketData {
+        market_id: market_id.clone(),
+        time_slot,
+        submitted_bid_count: 2,
+        submitted_offer_count: 1,
+        total_matches: 1,
+        total_matched_energy_kWh: 5.0,
+        total_unmatched_energy_kWh: 2.0,
+    }];
+
+    model.upsert_market_data(increment_data).await.unwrap();
+
+    let stored_updated = collection.find_one(doc! { "market_id": &market_id, "time_slot": time_slot as i64 }, None).await.unwrap().unwrap();
+    
+    assert_eq!(stored_updated.submitted_bid_count, 7); // 5 + 2
+    assert_eq!(stored_updated.submitted_offer_count, 4); // 3 + 1
+    assert_eq!(stored_updated.total_matches, 3); // 2 + 1
+    assert_eq!(stored_updated.total_matched_energy_kWh, 25.0); // 20.0 + 5.0
+    assert_eq!(stored_updated.total_unmatched_energy_kWh, 12.0); // 10.0 + 2.0
 }
