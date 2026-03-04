@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use gsy_offchain_primitives::db_api_schema::orders::{DbBid, DbOffer, DbOrderComponent, DbOrderSchema, Order};
 use launchpad_matching_service::api::controller::{MatchControllerBase, DbMarketData};
 use launchpad_matching_service::api::types::{DbBidOfferMatch, OrdersToMatch};
+use launchpad_matching_service::api::model;
 use async_trait::async_trait;
 
 struct MockMatchController;
@@ -18,6 +19,15 @@ impl MatchControllerBase for MockMatchController {
 
     async fn filter_matches(&self, _user_id: String, _market_id: Option<String>, _start_time: u64, _end_time: u64, _limit: Option<i64>) -> Vec<DbBidOfferMatch> {
         Vec::new()
+    }
+
+    async fn get_market_statistics(&self, _user_id: String, _market_id: Option<String>, _start_time: u64, _end_time: u64) -> model::MarketStatisticsResponse {
+        model::MarketStatisticsResponse {
+            average_trade_rate_timeseries: Vec::new(),
+            energy_timeseries: Vec::new(),
+            total_matches: 0,
+            success_rate: 0.0,
+        }
     }
 
 }

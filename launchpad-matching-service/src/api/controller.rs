@@ -150,6 +150,13 @@ pub trait MatchControllerBase: Send + Sync {
         end_time: u64,
         limit: Option<i64>,
     ) -> Vec<DbBidOfferMatch>;
+    async fn get_market_statistics(
+        &self,
+        user_id: String,
+        market_id: Option<String>,
+        start_time: u64,
+        end_time: u64,
+    ) -> model::MarketStatisticsResponse;
 }
 
 pub struct MatchController {}
@@ -199,5 +206,61 @@ impl MatchControllerBase for MatchController {
             eprintln!("Failed to connect to MongoDB for fetching matches");
             Vec::new()
         }
+    }
+
+    async fn get_market_statistics(
+        &self,
+        user_id: String,
+        market_id: Option<String>,
+        start_time: u64,
+        end_time: u64,
+    ) -> model::MarketStatisticsResponse {
+        let mut response = model::MarketStatisticsResponse {
+            average_trade_rate_timeseries: Vec::new(),
+            energy_timeseries: Vec::new(),
+            total_matches: 0,
+            success_rate: 0.0,
+        };
+
+        if let Ok(model) = model::MatchModel::new().await {
+            // 1. Fetch average trade rate timeseries
+            if let Ok(series) = model.get_average_energy_rate_series(user_id.clone(), market_id.clone(), start_time, end_time).await {
+                response.average_trade_rate_timeseries = series;
+            }
+
+            // 2. Fetch market data for energy timeseries and totals
+            if let Ok(market_data_list) = model.get_market_data(user_id, market_id, start_time, end_time).await {
+                let mut total_matched_energy = 0.0;
+                let mut total_unmatched_energy = 0.0;
+                let mut total_matches = 0;
+
+                let mut energy_map: HashMap<u64, model::EnergyTimeSeriesPoint> = HashMap::new();
+
+                for data in market_data_list {
+                    let point = energy_map.entry(data.time_slot).or_insert(model::EnergyTimeSeriesPoint {
+                        time_slot: data.time_slot,
+                        matched_energy_kWh: 0.0,
+                        unmatched_energy_kWh: 0.0,
+                    });
+                    point.matched_energy_kWh += data.total_matched_energy_kWh;
+                    point.unmatched_energy_kWh += data.total_unmatched_energy_kWh;
+
+                    total_matched_energy += data.total_matched_energy_kWh;
+                    total_unmatched_energy += data.total_unmatched_energy_kWh;
+                    total_matches += data.total_matches;
+                }
+
+                let mut timeseries: Vec<model::EnergyTimeSeriesPoint> = energy_map.into_values().collect();
+                timeseries.sort_by_key(|p| p.time_slot);
+                response.energy_timeseries = timeseries;
+
+                response.total_matches = total_matches;
+                if total_matched_energy + total_unmatched_energy > 0.0 {
+                    response.success_rate = total_matched_energy / (total_matched_energy + total_unmatched_energy);
+                }
+            }
+        }
+
+        response
     }
 }

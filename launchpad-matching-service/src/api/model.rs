@@ -5,10 +5,27 @@ use crate::configuration::get_configuration;
 use serde::{Serialize, Deserialize};
 use futures_util::StreamExt;
 
+#[allow(non_snake_case)]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct TimeSeriesPoint {
     pub time_slot: u64,
     pub average_energy_rate: f64,
+}
+
+#[allow(non_snake_case)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct EnergyTimeSeriesPoint {
+    pub time_slot: u64,
+    pub matched_energy_kWh: f64,
+    pub unmatched_energy_kWh: f64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct MarketStatisticsResponse {
+    pub average_trade_rate_timeseries: Vec<TimeSeriesPoint>,
+    pub energy_timeseries: Vec<EnergyTimeSeriesPoint>,
+    pub total_matches: u64,
+    pub success_rate: f64,
 }
 
 pub struct MatchModel {
@@ -149,5 +166,37 @@ impl MatchModel {
         }
 
         Ok(())
+    }
+
+    pub async fn get_market_data(
+        &self,
+        user_id: String,
+        market_id: Option<String>,
+        start_time: u64,
+        end_time: u64,
+    ) -> mongodb::error::Result<Vec<DbMarketData>> {
+        let collection: Collection<DbMarketData> = self.db.collection("market_data");
+
+        let mut filter = doc! {
+            "time_slot": { "$gte": start_time as i64, "$lte": end_time as i64 },
+            "user_id": user_id
+        };
+
+        if let Some(market_id) = market_id {
+            filter.insert("market_id", market_id);
+        }
+
+        let options = mongodb::options::FindOptions::builder()
+            .sort(doc! { "time_slot": 1 })
+            .build();
+
+        let mut cursor = collection.find(filter, options).await?;
+        let mut results = Vec::new();
+
+        while let Some(result) = cursor.next().await {
+            results.push(result?);
+        }
+
+        Ok(results)
     }
 }

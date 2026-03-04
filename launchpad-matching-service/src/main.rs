@@ -11,6 +11,7 @@ async fn main() -> std::io::Result<()> {
             .service(views::health_check)
             .service(views::pay_as_bid)
             .service(views::filter_matches)
+            .service(views::get_market_statistics)
     })
     .bind((configuration.application_host, configuration.application_port))?
     .run()
