@@ -63,7 +63,7 @@ pub trait MatchControllerBase: Send + Sync {
         }
         self.insert_bid_offer_matches_to_db(all_matches_to_insert.clone()).await;
         let market_data_map = self.calculate_market_statistics(&orders, &all_matches_to_insert, user_id.clone()).await;
-        self.update_market_statistics(market_data_map).await;
+        self.update_market_statistics_to_db(market_data_map).await;
         matches
     }
 
@@ -141,7 +141,15 @@ pub trait MatchControllerBase: Send + Sync {
     }
 
     async fn insert_bid_offer_matches_to_db(&self, matches: Vec<DbBidOfferMatch>);
-    async fn update_market_statistics(&self, market_data_map: HashMap<(String, u64), DbMarketData>);
+    async fn update_market_statistics_to_db(&self, market_data_map: HashMap<(String, u64), DbMarketData>);
+    async fn filter_matches(
+        &self,
+        user_id: String,
+        market_id: Option<String>,
+        start_time: u64,
+        end_time: u64,
+        limit: Option<i64>,
+    ) -> Vec<DbBidOfferMatch>;
 }
 
 pub struct MatchController {}
@@ -158,7 +166,7 @@ impl MatchControllerBase for MatchController {
         }
     }
 
-    async fn update_market_statistics(&self, market_data_map: HashMap<(String, u64), DbMarketData>) {
+    async fn update_market_statistics_to_db(&self, market_data_map: HashMap<(String, u64), DbMarketData>) {
 
 
         if let Ok(model) = model::MatchModel::new().await {
@@ -168,6 +176,28 @@ impl MatchControllerBase for MatchController {
             }
         } else {
             eprintln!("Failed to connect to MongoDB for market data upsert");
+        }
+    }
+
+    async fn filter_matches(
+        &self,
+        user_id: String,
+        market_id: Option<String>,
+        start_time: u64,
+        end_time: u64,
+        limit: Option<i64>,
+    ) -> Vec<DbBidOfferMatch> {
+        if let Ok(model) = model::MatchModel::new().await {
+            match model.get_matches(start_time, end_time, user_id, market_id, limit).await {
+                Ok(matches) => matches,
+                Err(e) => {
+                    eprintln!("Failed to fetch matches from MongoDB: {:?}", e);
+                    Vec::new()
+                }
+            }
+        } else {
+            eprintln!("Failed to connect to MongoDB for fetching matches");
+            Vec::new()
         }
     }
 }

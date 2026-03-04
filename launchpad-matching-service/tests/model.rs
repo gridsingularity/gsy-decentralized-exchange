@@ -198,20 +198,24 @@ async fn test_get_matches() {
     model.insert_matches(matches).await.unwrap();
 
     // Test 1: Cumulative filtering (time range + market_id)
-    let results = model.get_matches(100, 200, "user1".to_string(), Some(market_id.clone()), 10).await.unwrap();
+    let results = model.get_matches(100, 200, "user1".to_string(), Some(market_id.clone()), Some(10)).await.unwrap();
     assert_eq!(results.len(), 2, "Should find 2 matches for target market in time range");
     assert!(results.iter().all(|m| m.time_slot >= 100 && m.time_slot <= 200));
     assert!(results.iter().all(|m| m.market_id == market_id));
 
     // Test 2: Optional market_id (None should return both markets)
-    let results_all_markets = model.get_matches(100, 200, "user1".to_string(), None, 10).await.unwrap();
+    let results_all_markets = model.get_matches(100, 200, "user1".to_string(), None, Some(10)).await.unwrap();
     assert_eq!(results_all_markets.len(), 3, "Should find 3 matches across all markets in time range");
 
     // Test 3: Limit
-    let results_limited = model.get_matches(100, 200, "user1".to_string(), None, 1).await.unwrap();
+    let results_limited = model.get_matches(100, 200, "user1".to_string(), None, Some(1)).await.unwrap();
     assert_eq!(results_limited.len(), 1, "Should respect the limit of 1");
     // Since we sort by time_slot, it should be the one at 150
     assert_eq!(results_limited[0].time_slot, 150);
+
+    // Test 4: No limit
+    let results_no_limit = model.get_matches(100, 200, "user1".to_string(), None, None).await.unwrap();
+    assert_eq!(results_no_limit.len(), 3, "Should return all matches when limit is None");
 }
 
 #[tokio::test]

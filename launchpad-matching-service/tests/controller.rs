@@ -11,9 +11,13 @@ impl MatchControllerBase for MockMatchController {
     async fn insert_bid_offer_matches_to_db(&self, _matches: Vec<DbBidOfferMatch>) {
         // Mocked, does nothing
     }
-    async fn update_market_statistics(
+    async fn update_market_statistics_to_db(
         &self, _market_data_map: HashMap<(String, u64), DbMarketData>) {
         // Mocked, does nothing
+    }
+
+    async fn filter_matches(&self, _user_id: String, _market_id: Option<String>, _start_time: u64, _end_time: u64, _limit: Option<i64>) -> Vec<DbBidOfferMatch> {
+        Vec::new()
     }
 
 }

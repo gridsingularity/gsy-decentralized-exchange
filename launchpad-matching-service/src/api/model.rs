@@ -92,7 +92,7 @@ impl MatchModel {
         end_time: u64,
         user_id: String,
         market_id: Option<String>,
-        limit: i64,
+        limit: Option<i64>,
     ) -> mongodb::error::Result<Vec<DbBidOfferMatch>> {
         let collection: Collection<DbBidOfferMatch> = self.db.collection(&self.collection_name);
 
@@ -104,10 +104,15 @@ impl MatchModel {
             filter.insert("market_id", market_id);
         }
 
-        let options = mongodb::options::FindOptions::builder()
-            .limit(limit)
-            .sort(doc! { "time_slot": 1 })
-            .build();
+        let options = match limit {
+            Some(l) => mongodb::options::FindOptions::builder()
+                .limit(l)
+                .sort(doc! { "time_slot": 1 })
+                .build(),
+            None => mongodb::options::FindOptions::builder()
+                .sort(doc! { "time_slot": 1 })
+                .build(),
+        };
 
         let mut cursor = collection.find(filter, options).await?;
         let mut results = Vec::new();
