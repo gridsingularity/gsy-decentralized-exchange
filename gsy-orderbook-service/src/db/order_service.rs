@@ -10,6 +10,18 @@ use mongodb::{bson, Collection, IndexModel};
 use std::collections::HashMap;
 use std::ops::Deref;
 
+fn build_order_identifier_filter(id: &Bson) -> mongodb::bson::Document {
+    match id {
+        Bson::String(order_id) => doc! {
+            "$or": [
+                { "_id": Bson::String(order_id.clone()) },
+                { "order_id": order_id.clone() }
+            ]
+        },
+        _ => doc! { "_id": id.clone() },
+    }
+}
+
 /// this function will call after connected to database
 pub async fn init_orders(db: &DatabaseWrapper) -> Result<()> {
     // create index in this block
@@ -102,7 +114,8 @@ impl OrderService {
 
     #[tracing::instrument(name = "Fetching order by id from database", skip(self, id))]
     pub async fn get_order_by_id(&self, id: &Bson) -> Result<Option<DbOrderSchema>> {
-        match self.0.find_one(doc! {"_id": id}).await {
+        let filter = build_order_identifier_filter(id);
+        match self.0.find_one(filter).await {
             Ok(doc) => Ok(doc),
             Err(e) => {
                 tracing::error!("Failed to execute query: {:?}", e);
@@ -142,12 +155,11 @@ impl OrderService {
         id: &Bson,
         status: OrderStatus,
     ) -> Result<UpdateResult> {
+        let filter = build_order_identifier_filter(id);
         match self
             .0
             .update_one(
-                doc! {
-                    "_id": id
-                },
+                filter,
                 doc! {
                     "$set": {"status": bson::to_bson(&status).unwrap()}
                 },
