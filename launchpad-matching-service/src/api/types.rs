@@ -1,10 +1,12 @@
-use serde::{Serialize, Deserialize};
-use std::collections::HashMap;
 use gsy_offchain_primitives::algorithms::PayAsBid;
-use gsy_offchain_primitives::db_api_schema::orders::{DbBid, DbOffer, DbOrderComponent, DbOrderSchema};
+use gsy_offchain_primitives::db_api_schema::orders::{
+    DbBid, DbOffer, DbOrderComponent, DbOrderSchema,
+};
+use serde::{Deserialize, Serialize};
 use serde_json;
-use subxt::utils::H256;
+use std::collections::HashMap;
 use subxt::config::{Hasher, substrate::BlakeTwo256};
+use subxt::utils::H256;
 
 const EPS: f64 = 0.000001;
 
@@ -13,7 +15,6 @@ pub struct OrdersToMatch {
     pub user_id: String,
     pub orders: Vec<DbOrderSchema>,
 }
-
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct DbBidOfferMatch {
@@ -28,13 +29,12 @@ pub struct DbBidOfferMatch {
     pub energy_rate: f64,
 }
 
-
 #[derive(Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub struct DbMatchingData {
     pub bids: Vec<DbBid>,
     pub offers: Vec<DbOffer>,
     pub market_id: String,
-    pub user_id: String
+    pub user_id: String,
 }
 
 impl PayAsBid for DbMatchingData {
@@ -46,8 +46,18 @@ impl PayAsBid for DbMatchingData {
         let mut bids = self.bids.clone();
         let mut offers = self.offers.clone();
 
-        bids.sort_by(|a, b| b.bid_component.energy_rate.partial_cmp(&a.bid_component.energy_rate).unwrap());
-        offers.sort_by(|a, b| a.offer_component.energy_rate.partial_cmp(&b.offer_component.energy_rate).unwrap());
+        bids.sort_by(|a, b| {
+            b.bid_component
+                .energy_rate
+                .partial_cmp(&a.bid_component.energy_rate)
+                .unwrap()
+        });
+        offers.sort_by(|a, b| {
+            a.offer_component
+                .energy_rate
+                .partial_cmp(&b.offer_component.energy_rate)
+                .unwrap()
+        });
 
         let mut available_order_energy: HashMap<H256, f64> = HashMap::new();
 
@@ -64,17 +74,19 @@ impl PayAsBid for DbMatchingData {
                     continue;
                 }
 
-                let serialized_bid = serde_json::to_string(bid).expect(
-                    "Failed to serialize DbBid to JSON String");
-                let serialized_offer = serde_json::to_string(offer).expect(
-                    "Failed to serialize DbOffer to JSON String");
-                let bid_id = BlakeTwo256.hash_of(&serialized_bid);
-                let offer_id = BlakeTwo256.hash_of(&serialized_offer);
+                let serialized_bid =
+                    serde_json::to_string(bid).expect("Failed to serialize DbBid to JSON String");
+                let serialized_offer = serde_json::to_string(offer)
+                    .expect("Failed to serialize DbOffer to JSON String");
+                let bid_id = BlakeTwo256.hash(&serialized_bid.into_bytes());
+                let offer_id = BlakeTwo256.hash(&serialized_offer.into_bytes());
 
-                let offer_energy =
-                    *available_order_energy.entry(offer_id.clone()).or_insert(offer.offer_component.energy);
-                let bid_energy =
-                    *available_order_energy.entry(bid_id.clone()).or_insert(bid.bid_component.energy);
+                let offer_energy = *available_order_energy
+                    .entry(offer_id.clone())
+                    .or_insert(offer.offer_component.energy);
+                let bid_energy = *available_order_energy
+                    .entry(bid_id.clone())
+                    .or_insert(bid.bid_component.energy);
 
                 let selected_energy = offer_energy.min(bid_energy);
 

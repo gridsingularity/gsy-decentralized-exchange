@@ -1,9 +1,11 @@
-use std::collections::HashMap;
-use gsy_offchain_primitives::db_api_schema::orders::{DbBid, DbOffer, DbOrderComponent, DbOrderSchema, Order};
-use launchpad_matching_service::api::controller::{MatchControllerBase, DbMarketData};
-use launchpad_matching_service::api::types::{DbBidOfferMatch, OrdersToMatch};
-use launchpad_matching_service::api::model;
 use async_trait::async_trait;
+use gsy_offchain_primitives::db_api_schema::orders::{
+    DbBid, DbOffer, DbOrderComponent, DbOrderSchema, Order,
+};
+use launchpad_matching_service::api::controller::{DbMarketData, MatchControllerBase};
+use launchpad_matching_service::api::model;
+use launchpad_matching_service::api::types::{DbBidOfferMatch, OrdersToMatch};
+use std::collections::HashMap;
 
 struct MockMatchController;
 
@@ -13,15 +15,31 @@ impl MatchControllerBase for MockMatchController {
         // Mocked, does nothing
     }
     async fn update_market_statistics_to_db(
-        &self, _market_data_map: HashMap<(String, u64), DbMarketData>) {
+        &self,
+        _market_data_map: HashMap<(String, u64), DbMarketData>,
+    ) {
         // Mocked, does nothing
     }
 
-    async fn filter_matches(&self, _user_id: String, _market_id: Option<String>, _start_time: u64, _end_time: u64, _limit: Option<i64>) -> Vec<DbBidOfferMatch> {
+    async fn filter_matches(
+        &self,
+        _user_id: String,
+        _market_id: Option<String>,
+        _start_time: u64,
+        _end_time: u64,
+        _limit: Option<i64>,
+    ) -> Vec<DbBidOfferMatch> {
         Vec::new()
     }
 
-    async fn get_market_statistics(&self, _user_id: String, _market_id: Option<String>, _start_time: u64, _end_time: u64, _resolution: model::Resolution) -> model::MarketStatisticsResponse {
+    async fn get_market_statistics(
+        &self,
+        _user_id: String,
+        _market_id: Option<String>,
+        _start_time: u64,
+        _end_time: u64,
+        _resolution: model::Resolution,
+    ) -> model::MarketStatisticsResponse {
         model::MarketStatisticsResponse {
             average_trade_rate_timeseries: Vec::new(),
             energy_timeseries: Vec::new(),
@@ -85,11 +103,13 @@ async fn test_process_market_id_for_pay_as_bid() {
         orders: orders.clone(),
         user_id: user_id.clone(),
     };
-    let result = controller.process_market_id_for_pay_as_bid(orders_to_match).await;
-    
+    let result = controller
+        .process_market_id_for_pay_as_bid(orders_to_match)
+        .await;
+
     assert!(result.contains_key(&market_id));
     assert_eq!(result.get(&market_id).unwrap().len(), 1);
-    
+
     let match_obj = &result.get(&market_id).unwrap()[0];
     assert_eq!(match_obj.selected_energy, 10.0);
     assert_eq!(match_obj.energy_rate, 15.0);
@@ -180,18 +200,20 @@ async fn test_process_market_id_multiple_orders() {
         orders: orders.clone(),
         user_id: "user1".to_string().clone(),
     };
-    let result = controller.process_market_id_for_pay_as_bid(orders_to_match).await;
-    
+    let result = controller
+        .process_market_id_for_pay_as_bid(orders_to_match)
+        .await;
+
     assert!(result.contains_key(&market_id));
     let matches = result.get(&market_id).unwrap();
     assert_eq!(matches.len(), 3);
-    
+
     // Check match 1
     assert_eq!(matches[0].bid.buyer, "buyer1");
     assert_eq!(matches[0].offer.seller, "seller1");
     assert_eq!(matches[0].selected_energy, 10.0);
     assert_eq!(matches[0].energy_rate, 20.0);
-    
+
     // Check match 2
     assert_eq!(matches[1].bid.buyer, "buyer2");
     assert_eq!(matches[1].offer.seller, "seller1");
@@ -274,18 +296,20 @@ async fn test_process_market_id_one_bid_multiple_offers() {
         orders: orders.clone(),
         user_id: "user1".to_string().clone(),
     };
-    let result = controller.process_market_id_for_pay_as_bid(orders_to_match).await;
-    
+    let result = controller
+        .process_market_id_for_pay_as_bid(orders_to_match)
+        .await;
+
     assert!(result.contains_key(&market_id));
     let matches = result.get(&market_id).unwrap();
     assert_eq!(matches.len(), 2);
-    
+
     // Match 1
     assert_eq!(matches[0].bid.buyer, "buyer1");
     assert_eq!(matches[0].offer.seller, "seller1");
     assert_eq!(matches[0].selected_energy, 12.0);
     assert_eq!(matches[0].energy_rate, 25.0);
-    
+
     // Match 2
     assert_eq!(matches[1].bid.buyer, "buyer1");
     assert_eq!(matches[1].offer.seller, "seller2");
@@ -338,21 +362,21 @@ async fn test_calculate_market_statistics() {
         },
     ];
 
-    let matches = vec![
-        DbBidOfferMatch {
-            user_id: "user1".to_string(),
-            market_id: market_id.clone(),
-            time_slot,
-            bid: bid.clone(),
-            offer: offer.clone(),
-            residual_bid: None,
-            residual_offer: Some(offer.clone()),
-            selected_energy: 10.0,
-            energy_rate: 15.0,
-        }
-    ];
+    let matches = vec![DbBidOfferMatch {
+        user_id: "user1".to_string(),
+        market_id: market_id.clone(),
+        time_slot,
+        bid: bid.clone(),
+        offer: offer.clone(),
+        residual_bid: None,
+        residual_offer: Some(offer.clone()),
+        selected_energy: 10.0,
+        energy_rate: 15.0,
+    }];
 
-    let stats_map = controller.calculate_market_statistics(&orders, &matches, "user1".to_string()).await;
+    let stats_map = controller
+        .calculate_market_statistics(&orders, &matches, "user1".to_string())
+        .await;
 
     assert_eq!(stats_map.len(), 1);
     let stats = stats_map.get(&(market_id.clone(), time_slot)).unwrap();
@@ -363,7 +387,7 @@ async fn test_calculate_market_statistics() {
     assert_eq!(stats.submitted_offer_count, 1);
     assert_eq!(stats.total_matches, 1);
     assert_eq!(stats.total_matched_energy_kWh, 10.0);
-    
+
     // Total energy submitted: 10 (bid) + 15 (offer) = 25
     // Matched energy: 10
     // Unmatched should be: (10 - 10) + (15 - 10) = 5

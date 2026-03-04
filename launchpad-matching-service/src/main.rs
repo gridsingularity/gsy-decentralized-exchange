@@ -1,5 +1,5 @@
-use launchpad_matching_service::api::views;
 use actix_web::{App, HttpServer};
+use launchpad_matching_service::api::views;
 use launchpad_matching_service::configuration::get_configuration;
 
 #[actix_web::main]
@@ -14,7 +14,10 @@ async fn main() -> std::io::Result<()> {
             .service(views::get_market_statistics)
             .service(views::get_markets)
     })
-    .bind((configuration.application_host, configuration.application_port))?
+    .bind((
+        configuration.application_host,
+        configuration.application_port,
+    ))?
     .run()
     .await
 }

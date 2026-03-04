@@ -1,16 +1,31 @@
-use actix_web::{test, App};
-use launchpad_matching_service::api::views;
-use launchpad_matching_service::api::types::{OrdersToMatch, DbBidOfferMatch};
+use actix_web::{App, test};
+use gsy_offchain_primitives::db_api_schema::orders::{
+    DbBid, DbOffer, DbOrderComponent, DbOrderSchema, Order,
+};
 use launchpad_matching_service::api::controller::DbMarketData;
-use launchpad_matching_service::api::model::{MatchModel, MarketStatisticsResponse};
-use gsy_offchain_primitives::db_api_schema::orders::{DbOrderSchema, Order, DbBid, DbOffer, DbOrderComponent};
+use launchpad_matching_service::api::model::{MarketStatisticsResponse, MatchModel};
+use launchpad_matching_service::api::types::{DbBidOfferMatch, OrdersToMatch};
+use launchpad_matching_service::api::views;
 use std::collections::HashMap;
 
 async fn setup_db(collection_name: &str) -> Option<MatchModel> {
-    let model = MatchModel::new().await.ok()?.with_collection(collection_name);
-    model.db.collection::<DbBidOfferMatch>(collection_name).drop(None).await.ok();
+    let model = MatchModel::new()
+        .await
+        .ok()?
+        .with_collection(collection_name);
+    model
+        .db
+        .collection::<DbBidOfferMatch>(collection_name)
+        .drop(None)
+        .await
+        .ok();
     // Also drop market_data to have a clean state for statistics tests
-    model.db.collection::<mongodb::bson::Document>("market_data").drop(None).await.ok();
+    model
+        .db
+        .collection::<mongodb::bson::Document>("market_data")
+        .drop(None)
+        .await
+        .ok();
     Some(model)
 }
 
@@ -46,9 +61,7 @@ fn create_dummy_offer(energy_rate: f64, energy: f64) -> DbOffer {
 
 #[actix_web::test]
 async fn test_health_check_endpoint() {
-    let app = test::init_service(
-        App::new().service(views::health_check)
-    ).await;
+    let app = test::init_service(App::new().service(views::health_check)).await;
 
     let req = test::TestRequest::get().uri("/health-check").to_request();
     let resp = test::call_service(&app, req).await;
@@ -58,17 +71,15 @@ async fn test_health_check_endpoint() {
 
 #[actix_web::test]
 async fn test_pay_as_bid_endpoint() {
-    // We use a specific collection name to avoid interference, 
-    // though the controller currently uses a hardcoded one in some places, 
+    // We use a specific collection name to avoid interference,
+    // though the controller currently uses a hardcoded one in some places,
     // the MatchModel::new() will connect to the same DB.
     let _model = match setup_db("matches").await {
         Some(m) => m,
         None => return,
     };
 
-    let app = test::init_service(
-        App::new().service(views::pay_as_bid)
-    ).await;
+    let app = test::init_service(App::new().service(views::pay_as_bid)).await;
 
     let market_id = "view_test_market".to_string();
     let user_id = "view_test_user".to_string();
@@ -119,14 +130,14 @@ async fn test_pay_as_bid_endpoint() {
         .uri("/match")
         .set_json(&orders_to_match)
         .to_request();
-    
+
     let resp = test::call_service(&app, req).await;
     assert!(resp.status().is_success());
 
     let body: HashMap<String, Vec<DbBidOfferMatch>> = test::read_body_json(resp).await;
     assert!(body.contains_key(&market_id));
     assert_eq!(body.get(&market_id).unwrap().len(), 1);
-    
+
     let m = &body.get(&market_id).unwrap()[0];
     assert_eq!(m.selected_energy, 10.0);
     assert_eq!(m.energy_rate, 15.0);
@@ -134,14 +145,13 @@ async fn test_pay_as_bid_endpoint() {
 
 #[actix_web::test]
 async fn test_filter_matches_endpoint() {
-    let model = match setup_db("matches").await { // Use "matches" as it's the default collection
+    let model = match setup_db("matches").await {
+        // Use "matches" as it's the default collection
         Some(m) => m,
         None => return,
     };
 
-    let app = test::init_service(
-        App::new().service(views::filter_matches)
-    ).await;
+    let app = test::init_service(App::new().service(views::filter_matches)).await;
 
     let market_id = "filter_test_market".to_string();
     let user_id = "filter_test_user".to_string();
@@ -168,17 +178,45 @@ async fn test_filter_matches_endpoint() {
             user_id: user_id.clone(),
             market_id: market_id.clone(),
             time_slot: 150,
-            bid: DbBid { buyer: "b1".to_string(), nonce: 1, bid_component: bid_comp.clone() },
-            offer: DbOffer { seller: "s1".to_string(), nonce: 1, offer_component: offer_comp.clone() },
-            residual_bid: None, residual_offer: None, selected_energy: 1.0, energy_rate: 10.0,
+            bid: DbBid {
+                buyer: "b1".to_string(),
+                nonce: 1,
+                bid_component: bid_comp.clone(),
+            },
+            offer: DbOffer {
+                seller: "s1".to_string(),
+                nonce: 1,
+                offer_component: offer_comp.clone(),
+            },
+            residual_bid: None,
+            residual_offer: None,
+            selected_energy: 1.0,
+            energy_rate: 10.0,
         },
         DbBidOfferMatch {
             user_id: user_id.clone(),
             market_id: market_id.clone(),
             time_slot: 160,
-            bid: DbBid { buyer: "b1".to_string(), nonce: 2, bid_component: DbOrderComponent { time_slot: 160, ..bid_comp.clone() } },
-            offer: DbOffer { seller: "s1".to_string(), nonce: 2, offer_component: DbOrderComponent { time_slot: 160, ..offer_comp.clone() } },
-            residual_bid: None, residual_offer: None, selected_energy: 1.0, energy_rate: 10.0,
+            bid: DbBid {
+                buyer: "b1".to_string(),
+                nonce: 2,
+                bid_component: DbOrderComponent {
+                    time_slot: 160,
+                    ..bid_comp.clone()
+                },
+            },
+            offer: DbOffer {
+                seller: "s1".to_string(),
+                nonce: 2,
+                offer_component: DbOrderComponent {
+                    time_slot: 160,
+                    ..offer_comp.clone()
+                },
+            },
+            residual_bid: None,
+            residual_offer: None,
+            selected_energy: 1.0,
+            energy_rate: 10.0,
         },
     ];
 
@@ -197,10 +235,7 @@ async fn test_filter_matches_endpoint() {
     assert_eq!(body.len(), 2);
 
     // Test optional limit and market_id
-    let uri_no_limit = format!(
-        "/matches?user_id={}&start_time=100&end_time=200",
-        user_id
-    );
+    let uri_no_limit = format!("/matches?user_id={}&start_time=100&end_time=200", user_id);
     let req = test::TestRequest::get().uri(&uri_no_limit).to_request();
     let resp = test::call_service(&app, req).await;
     assert!(resp.status().is_success());
@@ -216,9 +251,7 @@ async fn test_get_market_statistics_endpoint() {
         None => return,
     };
 
-    let app = test::init_service(
-        App::new().service(views::get_market_statistics)
-    ).await;
+    let app = test::init_service(App::new().service(views::get_market_statistics)).await;
 
     let market_id = "stats_test_market".to_string();
     let user_id = "stats_test_user".to_string();
@@ -241,31 +274,38 @@ async fn test_get_market_statistics_endpoint() {
         energy_rate: 10.0,
     };
 
-    let matches = vec![
-        DbBidOfferMatch {
-            user_id: user_id.clone(),
-            market_id: market_id.clone(),
-            time_slot: 100,
-            bid: DbBid { buyer: "b1".to_string(), nonce: 1, bid_component: bid_comp.clone() },
-            offer: DbOffer { seller: "s1".to_string(), nonce: 1, offer_component: offer_comp.clone() },
-            residual_bid: None, residual_offer: None, selected_energy: 10.0, energy_rate: 20.0,
+    let matches = vec![DbBidOfferMatch {
+        user_id: user_id.clone(),
+        market_id: market_id.clone(),
+        time_slot: 100,
+        bid: DbBid {
+            buyer: "b1".to_string(),
+            nonce: 1,
+            bid_component: bid_comp.clone(),
         },
-    ];
+        offer: DbOffer {
+            seller: "s1".to_string(),
+            nonce: 1,
+            offer_component: offer_comp.clone(),
+        },
+        residual_bid: None,
+        residual_offer: None,
+        selected_energy: 10.0,
+        energy_rate: 20.0,
+    }];
     model.insert_matches(matches).await.unwrap();
 
     // 2. Insert some market data for energy timeseries
-    let market_data = vec![
-        DbMarketData {
-            user_id: user_id.clone(),
-            market_id: market_id.clone(),
-            time_slot: 100,
-            submitted_bid_count: 1,
-            submitted_offer_count: 1,
-            total_matches: 1,
-            total_matched_energy_kWh: 10.0,
-            total_unmatched_energy_kWh: 5.0,
-        },
-    ];
+    let market_data = vec![DbMarketData {
+        user_id: user_id.clone(),
+        market_id: market_id.clone(),
+        time_slot: 100,
+        submitted_bid_count: 1,
+        submitted_offer_count: 1,
+        total_matches: 1,
+        total_matched_energy_kWh: 10.0,
+        total_unmatched_energy_kWh: 5.0,
+    }];
     model.upsert_market_data(market_data).await.unwrap();
 
     // 3. Test the endpoint
@@ -278,11 +318,14 @@ async fn test_get_market_statistics_endpoint() {
     assert!(resp.status().is_success());
 
     let body: MarketStatisticsResponse = test::read_body_json(resp).await;
-    
+
     assert_eq!(body.total_matches, 1);
     assert!(body.success_rate > 0.0);
     assert_eq!(body.average_trade_rate_timeseries.len(), 1);
-    assert_eq!(body.average_trade_rate_timeseries[0].average_energy_rate, 20.0);
+    assert_eq!(
+        body.average_trade_rate_timeseries[0].average_energy_rate,
+        20.0
+    );
     assert_eq!(body.energy_timeseries.len(), 1);
     assert_eq!(body.energy_timeseries[0].matched_energy_kWh, 10.0);
     assert_eq!(body.energy_timeseries[0].unmatched_energy_kWh, 5.0);
@@ -295,9 +338,7 @@ async fn test_get_market_statistics_optional_market_id() {
         None => return,
     };
 
-    let app = test::init_service(
-        App::new().service(views::get_market_statistics)
-    ).await;
+    let app = test::init_service(App::new().service(views::get_market_statistics)).await;
 
     let market1 = "market1".to_string();
     let market2 = "market2".to_string();
@@ -343,17 +384,39 @@ async fn test_get_market_statistics_optional_market_id() {
             user_id: user_id.clone(),
             market_id: market1.clone(),
             time_slot: 100,
-            bid: DbBid { buyer: "b1".to_string(), nonce: 1, bid_component: bid_comp1.clone() },
-            offer: DbOffer { seller: "s1".to_string(), nonce: 1, offer_component: offer_comp1.clone() },
-            residual_bid: None, residual_offer: None, selected_energy: 10.0, energy_rate: 20.0,
+            bid: DbBid {
+                buyer: "b1".to_string(),
+                nonce: 1,
+                bid_component: bid_comp1.clone(),
+            },
+            offer: DbOffer {
+                seller: "s1".to_string(),
+                nonce: 1,
+                offer_component: offer_comp1.clone(),
+            },
+            residual_bid: None,
+            residual_offer: None,
+            selected_energy: 10.0,
+            energy_rate: 20.0,
         },
         DbBidOfferMatch {
             user_id: user_id.clone(),
             market_id: market2.clone(),
             time_slot: 100,
-            bid: DbBid { buyer: "b2".to_string(), nonce: 1, bid_component: bid_comp2.clone() },
-            offer: DbOffer { seller: "s2".to_string(), nonce: 1, offer_component: offer_comp2.clone() },
-            residual_bid: None, residual_offer: None, selected_energy: 10.0, energy_rate: 30.0,
+            bid: DbBid {
+                buyer: "b2".to_string(),
+                nonce: 1,
+                bid_component: bid_comp2.clone(),
+            },
+            offer: DbOffer {
+                seller: "s2".to_string(),
+                nonce: 1,
+                offer_component: offer_comp2.clone(),
+            },
+            residual_bid: None,
+            residual_offer: None,
+            selected_energy: 10.0,
+            energy_rate: 30.0,
         },
     ];
     model.insert_matches(matches).await.unwrap();
@@ -384,32 +447,32 @@ async fn test_get_market_statistics_optional_market_id() {
     model.upsert_market_data(market_data).await.unwrap();
 
     // 3. Test the endpoint WITHOUT market_id
-    let uri = format!(
-        "/statistics?user_id={}&start_time=0&end_time=200",
-        user_id
-    );
+    let uri = format!("/statistics?user_id={}&start_time=0&end_time=200", user_id);
     let req = test::TestRequest::get().uri(&uri).to_request();
     let resp = test::call_service(&app, req).await;
     assert!(resp.status().is_success());
 
     let body: MarketStatisticsResponse = test::read_body_json(resp).await;
-    
+
     // Total matches should be 1 + 1 = 2
     assert_eq!(body.total_matches, 2);
-    
+
     // Average trade rate for time_slot 100 should be (20.0 + 30.0) / 2 = 25.0
     assert_eq!(body.average_trade_rate_timeseries.len(), 1);
-    assert_eq!(body.average_trade_rate_timeseries[0].average_energy_rate, 25.0);
-    
+    assert_eq!(
+        body.average_trade_rate_timeseries[0].average_energy_rate,
+        25.0
+    );
+
     // Energy timeseries for time_slot 100 should aggregate both markets
     // matched = 10.0 + 10.0 = 20.0
     // unmatched = 5.0 + 5.0 = 10.0
     assert_eq!(body.energy_timeseries.len(), 1);
     assert_eq!(body.energy_timeseries[0].matched_energy_kWh, 20.0);
     assert_eq!(body.energy_timeseries[0].unmatched_energy_kWh, 10.0);
-    
+
     // Success rate should be 20.0 / (20.0 + 10.0) = 0.666...
-    assert!((body.success_rate - 2.0/3.0).abs() < 0.0001);
+    assert!((body.success_rate - 2.0 / 3.0).abs() < 0.0001);
 }
 
 #[actix_web::test]
@@ -419,9 +482,7 @@ async fn test_get_markets_endpoint() {
         None => return,
     };
 
-    let app = test::init_service(
-        App::new().service(views::get_markets)
-    ).await;
+    let app = test::init_service(App::new().service(views::get_markets)).await;
 
     let user_id = "market_id_test_user".to_string();
     let market1 = "market1".to_string();
@@ -470,7 +531,7 @@ async fn test_get_markets_endpoint() {
 
     let mut body: Vec<String> = test::read_body_json(resp).await;
     body.sort();
-    
+
     assert_eq!(body.len(), 2);
     assert_eq!(body[0], market1);
     assert_eq!(body[1], market2);
@@ -483,9 +544,7 @@ async fn test_get_markets_different_users() {
         None => return,
     };
 
-    let app = test::init_service(
-        App::new().service(views::get_markets)
-    ).await;
+    let app = test::init_service(App::new().service(views::get_markets)).await;
 
     let user1 = "user1".to_string();
     let user2 = "user2".to_string();
@@ -544,17 +603,15 @@ async fn test_get_market_statistics_resolution() {
     };
     // setup_db already drops "matches" and "market_data"
 
-    let app = test::init_service(
-        App::new().service(views::get_market_statistics)
-    ).await;
+    let app = test::init_service(App::new().service(views::get_market_statistics)).await;
 
     let user_id = "res_test_user".to_string();
     let market_id = "res_test_market".to_string();
-    
+
     // Create data across two different days
     let day1 = 1735689600; // 2025-01-01 00:00:00 UTC
     let day2 = 1735776000; // 2025-01-02 00:00:00 UTC
-    
+
     // 1. Matches for trade rate
     let matches = vec![
         DbBidOfferMatch {
@@ -631,21 +688,30 @@ async fn test_get_market_statistics_resolution() {
     // Test Day resolution
     let uri = format!(
         "/statistics?user_id={}&market_id={}&start_time={}&end_time={}&resolution=day",
-        user_id, market_id, day1, day2 + 86400
+        user_id,
+        market_id,
+        day1,
+        day2 + 86400
     );
     let req = test::TestRequest::get().uri(&uri).to_request();
     let resp = test::call_service(&app, req).await;
     assert!(resp.status().is_success());
 
     let body: MarketStatisticsResponse = test::read_body_json(resp).await;
-    
+
     // Day 1 average trade rate: (20 + 30) / 2 = 25
     // Day 2 average trade rate: 40
     assert_eq!(body.average_trade_rate_timeseries.len(), 2);
     assert_eq!(body.average_trade_rate_timeseries[0].time_slot, day1);
-    assert_eq!(body.average_trade_rate_timeseries[0].average_energy_rate, 25.0);
+    assert_eq!(
+        body.average_trade_rate_timeseries[0].average_energy_rate,
+        25.0
+    );
     assert_eq!(body.average_trade_rate_timeseries[1].time_slot, day2);
-    assert_eq!(body.average_trade_rate_timeseries[1].average_energy_rate, 40.0);
+    assert_eq!(
+        body.average_trade_rate_timeseries[1].average_energy_rate,
+        40.0
+    );
 
     // Day 1 energy: matched = 10 + 15 = 25, unmatched = 5 + 5 = 10
     // Day 2 energy: matched = 20, unmatched = 10

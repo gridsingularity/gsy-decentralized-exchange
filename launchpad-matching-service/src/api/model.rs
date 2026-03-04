@@ -1,9 +1,9 @@
-use mongodb::{Client, Collection, bson::doc, options::UpdateOptions};
-use crate::api::types::DbBidOfferMatch;
 use crate::api::controller::DbMarketData;
+use crate::api::types::DbBidOfferMatch;
 use crate::configuration::get_configuration;
-use serde::{Serialize, Deserialize};
 use futures_util::StreamExt;
+use mongodb::{Client, Collection, bson::doc, options::UpdateOptions};
+use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Copy)]
 #[serde(rename_all = "snake_case")]
@@ -47,7 +47,11 @@ impl MatchModel {
         let mongodb_uri = get_configuration().unwrap().get_connection_string();
         let client = Client::with_uri_str(mongodb_uri).await?;
         let db = client.database("launchpad");
-        Ok(MatchModel { client, db, collection_name: "matches".to_string() })
+        Ok(MatchModel {
+            client,
+            db,
+            collection_name: "matches".to_string(),
+        })
     }
 
     pub fn with_collection(mut self, name: &str) -> Self {
@@ -55,7 +59,10 @@ impl MatchModel {
         self
     }
 
-    pub async fn insert_matches(&self, matches: Vec<DbBidOfferMatch>) -> mongodb::error::Result<()> {
+    pub async fn insert_matches(
+        &self,
+        matches: Vec<DbBidOfferMatch>,
+    ) -> mongodb::error::Result<()> {
         let collection: Collection<DbBidOfferMatch> = self.db.collection(&self.collection_name);
 
         if !matches.is_empty() {
@@ -65,7 +72,13 @@ impl MatchModel {
         Ok(())
     }
 
-    pub async fn get_average_energy_rate_series(&self, user_id: String, market_id: Option<String>, start_time: u64, end_time: u64) -> mongodb::error::Result<Vec<TimeSeriesPoint>> {
+    pub async fn get_average_energy_rate_series(
+        &self,
+        user_id: String,
+        market_id: Option<String>,
+        start_time: u64,
+        end_time: u64,
+    ) -> mongodb::error::Result<Vec<TimeSeriesPoint>> {
         let collection: Collection<DbBidOfferMatch> = self.db.collection(&self.collection_name);
 
         let mut match_filter = doc! {
@@ -96,7 +109,7 @@ impl MatchModel {
             },
             doc! {
                 "$sort": { "time_slot": 1 }
-            }
+            },
         ];
 
         let mut cursor = collection.aggregate(pipeline, None).await?;
@@ -149,7 +162,10 @@ impl MatchModel {
         Ok(results)
     }
 
-    pub async fn upsert_market_data(&self, market_data_list: Vec<DbMarketData>) -> mongodb::error::Result<()> {
+    pub async fn upsert_market_data(
+        &self,
+        market_data_list: Vec<DbMarketData>,
+    ) -> mongodb::error::Result<()> {
         let collection: Collection<DbMarketData> = self.db.collection("market_data");
 
         for data in market_data_list {
