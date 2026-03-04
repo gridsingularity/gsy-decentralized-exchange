@@ -1,8 +1,11 @@
 openapi: 3.0.3
 info:
-  title: Launchpad Matching Service API
+  title: GSY Matching Service API
   description: API for matching energy orders and retrieving market statistics.
   version: 1.0.0
+tags:
+  - name: Endpoints
+    description: All service endpoints
 servers:
   - url: http://localhost:8080
     description: Local server
@@ -10,6 +13,8 @@ servers:
 paths:
   /health-check:
     get:
+      tags:
+        - Endpoints
       summary: Health check
       description: Returns 200 OK if the service is running.
       responses:
@@ -18,6 +23,8 @@ paths:
 
   /match:
     post:
+      tags:
+        - Endpoints
       summary: Process orders for matching
       description: Processes a list of bid and offer orders using the Pay-As-Bid algorithm and returns the matches found.
       requestBody:
@@ -40,6 +47,8 @@ paths:
 
   /matches:
     get:
+      tags:
+        - Endpoints
       summary: Filter matches
       description: Retrieves matches based on user ID, optional market ID, and time range.
       parameters:
@@ -83,6 +92,8 @@ paths:
 
   /statistics:
     get:
+      tags:
+        - Endpoints
       summary: Get market statistics
       description: Returns market statistics and energy/trade rate timeseries for a user and period.
       parameters:
@@ -123,6 +134,8 @@ paths:
 
   /markets:
     get:
+      tags:
+        - Endpoints
       summary: Get unique market IDs
       description: Returns all unique market IDs for a specific user.
       parameters:
