@@ -157,6 +157,7 @@ pub trait MatchControllerBase: Send + Sync {
         start_time: u64,
         end_time: u64,
     ) -> model::MarketStatisticsResponse;
+    async fn get_markets(&self, user_id: String) -> Vec<String>;
 }
 
 pub struct MatchController {}
@@ -262,5 +263,20 @@ impl MatchControllerBase for MatchController {
         }
 
         response
+    }
+
+    async fn get_markets(&self, user_id: String) -> Vec<String> {
+        if let Ok(model) = model::MatchModel::new().await {
+            match model.get_markets(user_id).await {
+                Ok(ids) => ids,
+                Err(e) => {
+                    eprintln!("Failed to fetch unique market ids from MongoDB: {:?}", e);
+                    Vec::new()
+                }
+            }
+        } else {
+            eprintln!("Failed to connect to MongoDB for fetching unique market ids");
+            Vec::new()
+        }
     }
 }

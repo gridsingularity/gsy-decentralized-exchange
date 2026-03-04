@@ -381,3 +381,127 @@ async fn test_get_market_statistics_optional_market_id() {
     // Success rate should be 20.0 / (20.0 + 10.0) = 0.666...
     assert!((body.success_rate - 2.0/3.0).abs() < 0.0001);
 }
+
+#[actix_web::test]
+async fn test_get_markets_endpoint() {
+    let model = match setup_db("matches").await {
+        Some(m) => m,
+        None => return,
+    };
+
+    let app = test::init_service(
+        App::new().service(views::get_markets)
+    ).await;
+
+    let user_id = "market_id_test_user".to_string();
+    let market1 = "market1".to_string();
+    let market2 = "market2".to_string();
+
+    // Insert market data for both markets
+    let market_data = vec![
+        DbMarketData {
+            user_id: user_id.clone(),
+            market_id: market1.clone(),
+            time_slot: 100,
+            submitted_bid_count: 1,
+            submitted_offer_count: 1,
+            total_matches: 1,
+            total_matched_energy_kWh: 10.0,
+            total_unmatched_energy_kWh: 5.0,
+        },
+        DbMarketData {
+            user_id: user_id.clone(),
+            market_id: market2.clone(),
+            time_slot: 100,
+            submitted_bid_count: 1,
+            submitted_offer_count: 1,
+            total_matches: 1,
+            total_matched_energy_kWh: 10.0,
+            total_unmatched_energy_kWh: 5.0,
+        },
+        // Same market, different time slot - should still only result in unique market_id
+        DbMarketData {
+            user_id: user_id.clone(),
+            market_id: market1.clone(),
+            time_slot: 200,
+            submitted_bid_count: 1,
+            submitted_offer_count: 1,
+            total_matches: 1,
+            total_matched_energy_kWh: 10.0,
+            total_unmatched_energy_kWh: 5.0,
+        },
+    ];
+    model.upsert_market_data(market_data).await.unwrap();
+
+    let uri = format!("/markets?user_id={}", user_id);
+    let req = test::TestRequest::get().uri(&uri).to_request();
+    let resp = test::call_service(&app, req).await;
+    assert!(resp.status().is_success());
+
+    let mut body: Vec<String> = test::read_body_json(resp).await;
+    body.sort();
+    
+    assert_eq!(body.len(), 2);
+    assert_eq!(body[0], market1);
+    assert_eq!(body[1], market2);
+}
+
+#[actix_web::test]
+async fn test_get_markets_different_users() {
+    let model = match setup_db("matches").await {
+        Some(m) => m,
+        None => return,
+    };
+
+    let app = test::init_service(
+        App::new().service(views::get_markets)
+    ).await;
+
+    let user1 = "user1".to_string();
+    let user2 = "user2".to_string();
+    let market1 = "market1".to_string();
+    let market2 = "market2".to_string();
+
+    // Insert market data for both users
+    let market_data = vec![
+        DbMarketData {
+            user_id: user1.clone(),
+            market_id: market1.clone(),
+            time_slot: 100,
+            submitted_bid_count: 1,
+            submitted_offer_count: 1,
+            total_matches: 1,
+            total_matched_energy_kWh: 10.0,
+            total_unmatched_energy_kWh: 5.0,
+        },
+        DbMarketData {
+            user_id: user2.clone(),
+            market_id: market2.clone(),
+            time_slot: 100,
+            submitted_bid_count: 1,
+            submitted_offer_count: 1,
+            total_matches: 1,
+            total_matched_energy_kWh: 10.0,
+            total_unmatched_energy_kWh: 5.0,
+        },
+    ];
+    model.upsert_market_data(market_data).await.unwrap();
+
+    // Test for user1
+    let uri1 = format!("/markets?user_id={}", user1);
+    let req1 = test::TestRequest::get().uri(&uri1).to_request();
+    let resp1 = test::call_service(&app, req1).await;
+    assert!(resp1.status().is_success());
+    let body1: Vec<String> = test::read_body_json(resp1).await;
+    assert_eq!(body1.len(), 1);
+    assert_eq!(body1[0], market1);
+
+    // Test for user2
+    let uri2 = format!("/markets?user_id={}", user2);
+    let req2 = test::TestRequest::get().uri(&uri2).to_request();
+    let resp2 = test::call_service(&app, req2).await;
+    assert!(resp2.status().is_success());
+    let body2: Vec<String> = test::read_body_json(resp2).await;
+    assert_eq!(body2.len(), 1);
+    assert_eq!(body2[0], market2);
+}

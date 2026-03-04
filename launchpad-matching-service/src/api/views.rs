@@ -21,6 +21,11 @@ pub struct MarketStatisticsQuery {
     pub end_time: u64,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct MarketsQuery {
+    pub user_id: String,
+}
+
 #[get("/health-check")]
 pub async fn health_check() -> impl Responder {
     HttpResponse::Ok().finish()
@@ -61,5 +66,14 @@ pub async fn get_market_statistics(
         query.start_time,
         query.end_time,
     ).await;
+    HttpResponse::Ok().json(result)
+}
+
+#[get("/markets")]
+pub async fn get_markets(
+    query: web::Query<MarketsQuery>,
+) -> impl Responder {
+    let controller = MatchController {};
+    let result = controller.get_markets(query.user_id.clone()).await;
     HttpResponse::Ok().json(result)
 }

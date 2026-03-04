@@ -30,6 +30,9 @@ impl MatchControllerBase for MockMatchController {
         }
     }
 
+    async fn get_markets(&self, _user_id: String) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 #[tokio::test]

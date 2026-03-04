@@ -199,4 +199,17 @@ impl MatchModel {
 
         Ok(results)
     }
+
+    pub async fn get_markets(&self, user_id: String) -> mongodb::error::Result<Vec<String>> {
+        let collection: Collection<DbMarketData> = self.db.collection("market_data");
+        let filter = doc! { "user_id": user_id };
+        let cursor = collection.distinct("market_id", filter, None).await?;
+        let mut results = Vec::new();
+        for val in cursor {
+            if let Some(market_id) = val.as_str() {
+                results.push(market_id.to_string());
+            }
+        }
+        Ok(results)
+    }
 }
