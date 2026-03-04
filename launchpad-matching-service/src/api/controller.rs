@@ -156,6 +156,7 @@ pub trait MatchControllerBase: Send + Sync {
         market_id: Option<String>,
         start_time: u64,
         end_time: u64,
+        resolution: model::Resolution,
     ) -> model::MarketStatisticsResponse;
     async fn get_markets(&self, user_id: String) -> Vec<String>;
 }
@@ -215,6 +216,7 @@ impl MatchControllerBase for MatchController {
         market_id: Option<String>,
         start_time: u64,
         end_time: u64,
+        resolution: model::Resolution,
     ) -> model::MarketStatisticsResponse {
         let mut response = model::MarketStatisticsResponse {
             average_trade_rate_timeseries: Vec::new(),
@@ -251,9 +253,56 @@ impl MatchControllerBase for MatchController {
                     total_matches += data.total_matches;
                 }
 
-                let mut timeseries: Vec<model::EnergyTimeSeriesPoint> = energy_map.into_values().collect();
-                timeseries.sort_by_key(|p| p.time_slot);
-                response.energy_timeseries = timeseries;
+                let mut energy_timeseries: Vec<model::EnergyTimeSeriesPoint> = energy_map.into_values().collect();
+                energy_timeseries.sort_by_key(|p| p.time_slot);
+
+                // Apply resolution aggregation if needed
+                match resolution {
+                    model::Resolution::NoAggregation => {
+                        response.energy_timeseries = energy_timeseries;
+                    }
+                    model::Resolution::Day | model::Resolution::Month => {
+                        let seconds_in_period = match resolution {
+                            model::Resolution::Day => 24 * 60 * 60,
+                            model::Resolution::Month => 30 * 24 * 60 * 60, // Approximation
+                            _ => unreachable!(),
+                        };
+
+                        // Aggregate average_trade_rate_timeseries
+                        let mut aggregated_trade_rate: HashMap<u64, (f64, u64)> = HashMap::new();
+                        for point in response.average_trade_rate_timeseries {
+                            let period_start = (point.time_slot / seconds_in_period) * seconds_in_period;
+                            let entry = aggregated_trade_rate.entry(period_start).or_insert((0.0, 0));
+                            entry.0 += point.average_energy_rate;
+                            entry.1 += 1;
+                        }
+                        let mut new_trade_rate_series: Vec<model::TimeSeriesPoint> = aggregated_trade_rate
+                            .into_iter()
+                            .map(|(time_slot, (sum, count))| model::TimeSeriesPoint {
+                                time_slot,
+                                average_energy_rate: sum / count as f64,
+                            })
+                            .collect();
+                        new_trade_rate_series.sort_by_key(|p| p.time_slot);
+                        response.average_trade_rate_timeseries = new_trade_rate_series;
+
+                        // Aggregate energy_timeseries
+                        let mut aggregated_energy: HashMap<u64, model::EnergyTimeSeriesPoint> = HashMap::new();
+                        for point in energy_timeseries {
+                            let period_start = (point.time_slot / seconds_in_period) * seconds_in_period;
+                            let entry = aggregated_energy.entry(period_start).or_insert(model::EnergyTimeSeriesPoint {
+                                time_slot: period_start,
+                                matched_energy_kWh: 0.0,
+                                unmatched_energy_kWh: 0.0,
+                            });
+                            entry.matched_energy_kWh += point.matched_energy_kWh;
+                            entry.unmatched_energy_kWh += point.unmatched_energy_kWh;
+                        }
+                        let mut new_energy_series: Vec<model::EnergyTimeSeriesPoint> = aggregated_energy.into_values().collect();
+                        new_energy_series.sort_by_key(|p| p.time_slot);
+                        response.energy_timeseries = new_energy_series;
+                    }
+                }
 
                 response.total_matches = total_matches;
                 if total_matched_energy + total_unmatched_energy > 0.0 {

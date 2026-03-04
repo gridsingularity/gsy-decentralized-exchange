@@ -2,6 +2,7 @@ use actix_web::{get, post, web, HttpResponse, Responder};
 use serde::{Serialize, Deserialize};
 use crate::api::controller::{MatchController, MatchControllerBase};
 use crate::api::types::OrdersToMatch;
+use crate::api::model::Resolution;
 
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -19,6 +20,7 @@ pub struct MarketStatisticsQuery {
     pub market_id: Option<String>,
     pub start_time: u64,
     pub end_time: u64,
+    pub resolution: Option<Resolution>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -65,6 +67,7 @@ pub async fn get_market_statistics(
         query.market_id.clone(),
         query.start_time,
         query.end_time,
+        query.resolution.unwrap_or(Resolution::NoAggregation),
     ).await;
     HttpResponse::Ok().json(result)
 }

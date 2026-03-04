@@ -14,6 +14,36 @@ async fn setup_db(collection_name: &str) -> Option<MatchModel> {
     Some(model)
 }
 
+fn create_dummy_bid(energy_rate: f64, energy: f64) -> DbBid {
+    DbBid {
+        buyer: "test_buyer".to_string(),
+        nonce: 1,
+        bid_component: DbOrderComponent {
+            area_uuid: "area1".to_string(),
+            market_id: "test_market".to_string(),
+            time_slot: 100,
+            creation_time: 100,
+            energy,
+            energy_rate,
+        },
+    }
+}
+
+fn create_dummy_offer(energy_rate: f64, energy: f64) -> DbOffer {
+    DbOffer {
+        seller: "test_seller".to_string(),
+        nonce: 1,
+        offer_component: DbOrderComponent {
+            area_uuid: "area2".to_string(),
+            market_id: "test_market".to_string(),
+            time_slot: 100,
+            creation_time: 100,
+            energy,
+            energy_rate,
+        },
+    }
+}
+
 #[actix_web::test]
 async fn test_health_check_endpoint() {
     let app = test::init_service(
@@ -504,4 +534,126 @@ async fn test_get_markets_different_users() {
     let body2: Vec<String> = test::read_body_json(resp2).await;
     assert_eq!(body2.len(), 1);
     assert_eq!(body2[0], market2);
+}
+
+#[actix_web::test]
+async fn test_get_market_statistics_resolution() {
+    let model = match setup_db("matches").await {
+        Some(m) => m,
+        None => return,
+    };
+    // setup_db already drops "matches" and "market_data"
+
+    let app = test::init_service(
+        App::new().service(views::get_market_statistics)
+    ).await;
+
+    let user_id = "res_test_user".to_string();
+    let market_id = "res_test_market".to_string();
+    
+    // Create data across two different days
+    let day1 = 1735689600; // 2025-01-01 00:00:00 UTC
+    let day2 = 1735776000; // 2025-01-02 00:00:00 UTC
+    
+    // 1. Matches for trade rate
+    let matches = vec![
+        DbBidOfferMatch {
+            user_id: user_id.clone(),
+            market_id: market_id.clone(),
+            time_slot: day1 + 3600, // 1 AM
+            bid: create_dummy_bid(20.0, 10.0),
+            offer: create_dummy_offer(15.0, 10.0),
+            residual_bid: None,
+            residual_offer: None,
+            selected_energy: 10.0,
+            energy_rate: 20.0,
+        },
+        DbBidOfferMatch {
+            user_id: user_id.clone(),
+            market_id: market_id.clone(),
+            time_slot: day1 + 7200, // 2 AM
+            bid: create_dummy_bid(30.0, 10.0),
+            offer: create_dummy_offer(25.0, 10.0),
+            residual_bid: None,
+            residual_offer: None,
+            selected_energy: 10.0,
+            energy_rate: 30.0,
+        },
+        DbBidOfferMatch {
+            user_id: user_id.clone(),
+            market_id: market_id.clone(),
+            time_slot: day2 + 3600, // Day 2, 1 AM
+            bid: create_dummy_bid(40.0, 10.0),
+            offer: create_dummy_offer(35.0, 10.0),
+            residual_bid: None,
+            residual_offer: None,
+            selected_energy: 10.0,
+            energy_rate: 40.0,
+        },
+    ];
+    model.insert_matches(matches).await.unwrap();
+
+    // 2. Market data for energy statistics
+    let market_data = vec![
+        DbMarketData {
+            user_id: user_id.clone(),
+            market_id: market_id.clone(),
+            time_slot: day1 + 3600,
+            submitted_bid_count: 1,
+            submitted_offer_count: 1,
+            total_matches: 1,
+            total_matched_energy_kWh: 10.0,
+            total_unmatched_energy_kWh: 5.0,
+        },
+        DbMarketData {
+            user_id: user_id.clone(),
+            market_id: market_id.clone(),
+            time_slot: day1 + 7200,
+            submitted_bid_count: 1,
+            submitted_offer_count: 1,
+            total_matches: 1,
+            total_matched_energy_kWh: 15.0,
+            total_unmatched_energy_kWh: 5.0,
+        },
+        DbMarketData {
+            user_id: user_id.clone(),
+            market_id: market_id.clone(),
+            time_slot: day2 + 3600,
+            submitted_bid_count: 1,
+            submitted_offer_count: 1,
+            total_matches: 1,
+            total_matched_energy_kWh: 20.0,
+            total_unmatched_energy_kWh: 10.0,
+        },
+    ];
+    model.upsert_market_data(market_data).await.unwrap();
+
+    // Test Day resolution
+    let uri = format!(
+        "/statistics?user_id={}&market_id={}&start_time={}&end_time={}&resolution=day",
+        user_id, market_id, day1, day2 + 86400
+    );
+    let req = test::TestRequest::get().uri(&uri).to_request();
+    let resp = test::call_service(&app, req).await;
+    assert!(resp.status().is_success());
+
+    let body: MarketStatisticsResponse = test::read_body_json(resp).await;
+    
+    // Day 1 average trade rate: (20 + 30) / 2 = 25
+    // Day 2 average trade rate: 40
+    assert_eq!(body.average_trade_rate_timeseries.len(), 2);
+    assert_eq!(body.average_trade_rate_timeseries[0].time_slot, day1);
+    assert_eq!(body.average_trade_rate_timeseries[0].average_energy_rate, 25.0);
+    assert_eq!(body.average_trade_rate_timeseries[1].time_slot, day2);
+    assert_eq!(body.average_trade_rate_timeseries[1].average_energy_rate, 40.0);
+
+    // Day 1 energy: matched = 10 + 15 = 25, unmatched = 5 + 5 = 10
+    // Day 2 energy: matched = 20, unmatched = 10
+    assert_eq!(body.energy_timeseries.len(), 2);
+    assert_eq!(body.energy_timeseries[0].time_slot, day1);
+    assert_eq!(body.energy_timeseries[0].matched_energy_kWh, 25.0);
+    assert_eq!(body.energy_timeseries[0].unmatched_energy_kWh, 10.0);
+    assert_eq!(body.energy_timeseries[1].time_slot, day2);
+    assert_eq!(body.energy_timeseries[1].matched_energy_kWh, 20.0);
+    assert_eq!(body.energy_timeseries[1].unmatched_energy_kWh, 10.0);
 }

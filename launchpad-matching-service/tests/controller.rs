@@ -21,7 +21,7 @@ impl MatchControllerBase for MockMatchController {
         Vec::new()
     }
 
-    async fn get_market_statistics(&self, _user_id: String, _market_id: Option<String>, _start_time: u64, _end_time: u64) -> model::MarketStatisticsResponse {
+    async fn get_market_statistics(&self, _user_id: String, _market_id: Option<String>, _start_time: u64, _end_time: u64, _resolution: model::Resolution) -> model::MarketStatisticsResponse {
         model::MarketStatisticsResponse {
             average_trade_rate_timeseries: Vec::new(),
             energy_timeseries: Vec::new(),

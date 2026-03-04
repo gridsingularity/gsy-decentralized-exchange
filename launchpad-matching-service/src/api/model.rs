@@ -5,6 +5,14 @@ use crate::configuration::get_configuration;
 use serde::{Serialize, Deserialize};
 use futures_util::StreamExt;
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Copy)]
+#[serde(rename_all = "snake_case")]
+pub enum Resolution {
+    NoAggregation,
+    Day,
+    Month,
+}
+
 #[allow(non_snake_case)]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct TimeSeriesPoint {
