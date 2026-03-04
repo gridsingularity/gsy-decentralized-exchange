@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use gsy_offchain_primitives::db_api_schema::orders::{DbBid, DbOffer, DbOrderComponent, DbOrderSchema, Order};
 use launchpad_matching_service::api::controller::{MatchControllerBase, DbMarketData};
-use launchpad_matching_service::api::types::DbBidOfferMatch;
+use launchpad_matching_service::api::types::{DbBidOfferMatch, OrdersToMatch};
 use async_trait::async_trait;
 
 struct MockMatchController;
@@ -21,6 +21,7 @@ impl MatchControllerBase for MockMatchController {
 #[tokio::test]
 async fn test_process_market_id_for_pay_as_bid() {
     let controller = MockMatchController {};
+    let user_id = "user1".to_string();
     let market_id = "market1".to_string();
     let area_uuid = "area1".to_string();
 
@@ -63,7 +64,11 @@ async fn test_process_market_id_for_pay_as_bid() {
         },
     ];
 
-    let result = controller.process_market_id_for_pay_as_bid(orders).await;
+    let orders_to_match = OrdersToMatch {
+        orders: orders.clone(),
+        user_id: user_id.clone(),
+    };
+    let result = controller.process_market_id_for_pay_as_bid(orders_to_match).await;
     
     assert!(result.contains_key(&market_id));
     assert_eq!(result.get(&market_id).unwrap().len(), 1);
@@ -154,7 +159,11 @@ async fn test_process_market_id_multiple_orders() {
         },
     ];
 
-    let result = controller.process_market_id_for_pay_as_bid(orders).await;
+    let orders_to_match = OrdersToMatch {
+        orders: orders.clone(),
+        user_id: "user1".to_string().clone(),
+    };
+    let result = controller.process_market_id_for_pay_as_bid(orders_to_match).await;
     
     assert!(result.contains_key(&market_id));
     let matches = result.get(&market_id).unwrap();
@@ -244,7 +253,11 @@ async fn test_process_market_id_one_bid_multiple_offers() {
         },
     ];
 
-    let result = controller.process_market_id_for_pay_as_bid(orders).await;
+    let orders_to_match = OrdersToMatch {
+        orders: orders.clone(),
+        user_id: "user1".to_string().clone(),
+    };
+    let result = controller.process_market_id_for_pay_as_bid(orders_to_match).await;
     
     assert!(result.contains_key(&market_id));
     let matches = result.get(&market_id).unwrap();
@@ -310,6 +323,7 @@ async fn test_calculate_market_statistics() {
 
     let matches = vec![
         DbBidOfferMatch {
+            user_id: "user1".to_string(),
             market_id: market_id.clone(),
             time_slot,
             bid: bid.clone(),
@@ -321,7 +335,7 @@ async fn test_calculate_market_statistics() {
         }
     ];
 
-    let stats_map = controller.calculate_market_statistics(&orders, &matches).await;
+    let stats_map = controller.calculate_market_statistics(&orders, &matches, "user1".to_string()).await;
 
     assert_eq!(stats_map.len(), 1);
     let stats = stats_map.get(&(market_id.clone(), time_slot)).unwrap();

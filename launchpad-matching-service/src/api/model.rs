@@ -40,13 +40,14 @@ impl MatchModel {
         Ok(())
     }
 
-    pub async fn get_average_energy_rate_series(&self, market_id: Option<String>, start_time: u64, end_time: u64) -> mongodb::error::Result<Vec<TimeSeriesPoint>> {
+    pub async fn get_average_energy_rate_series(&self, user_id: String, market_id: Option<String>, start_time: u64, end_time: u64) -> mongodb::error::Result<Vec<TimeSeriesPoint>> {
         let collection: Collection<DbBidOfferMatch> = self.db.collection(&self.collection_name);
 
         let mut match_filter = doc! {
             "time_slot": { "$gte": start_time as i64, "$lte": end_time as i64 }
         };
 
+        match_filter.insert("user_id", user_id);
         if let Some(market_id) = market_id {
             match_filter.insert("market_id", market_id);
         }
@@ -89,6 +90,7 @@ impl MatchModel {
         &self,
         start_time: u64,
         end_time: u64,
+        user_id: String,
         market_id: Option<String>,
         limit: i64,
     ) -> mongodb::error::Result<Vec<DbBidOfferMatch>> {
@@ -97,7 +99,7 @@ impl MatchModel {
         let mut filter = doc! {
             "time_slot": { "$gte": start_time as i64, "$lte": end_time as i64 }
         };
-
+        filter.insert("user_id", user_id);
         if let Some(market_id) = market_id {
             filter.insert("market_id", market_id);
         }
@@ -122,6 +124,7 @@ impl MatchModel {
 
         for data in market_data_list {
             let filter = doc! {
+                "user_id": &data.user_id,
                 "market_id": &data.market_id,
                 "time_slot": data.time_slot as i64
             };

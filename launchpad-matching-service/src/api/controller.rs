@@ -4,13 +4,14 @@ use serde::{Serialize, Deserialize};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use gsy_offchain_primitives::algorithms::PayAsBid;
-use crate::api::types::{DbBidOfferMatch, DbMatchingData};
+use crate::api::types::{DbBidOfferMatch, DbMatchingData, OrdersToMatch};
 use gsy_offchain_primitives::db_api_schema::orders::{DbOrderSchema, Order, DbBid, DbOffer};
 use crate::api::model;
 
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct DbMarketData {
+    pub user_id: String,
     pub market_id: String,
     pub time_slot: u64,
     pub submitted_bid_count: u64,
@@ -23,7 +24,9 @@ pub struct DbMarketData {
 #[async_trait]
 pub trait MatchControllerBase: Send + Sync {
     async fn process_market_id_for_pay_as_bid(
-            &self, orders: Vec<DbOrderSchema>) -> HashMap<String, Vec<DbBidOfferMatch>> {
+            &self, orders_obj: OrdersToMatch) -> HashMap<String, Vec<DbBidOfferMatch>> {
+        let orders = orders_obj.orders;
+        let user_id = orders_obj.user_id;
         let mut matches = HashMap::new();
         let mut all_matches_to_insert = Vec::new();
 
@@ -52,19 +55,20 @@ pub trait MatchControllerBase: Send + Sync {
                 bids: bids_list,
                 offers: offers_list,
                 market_id: market_id.clone(),
+                user_id: user_id.clone(),
             };
             let algorithm_result = matching_data.pay_as_bid();
             all_matches_to_insert.extend(algorithm_result.clone());
             matches.insert(market_id.clone(), algorithm_result);
         }
         self.insert_bid_offer_matches_to_db(all_matches_to_insert.clone()).await;
-        let market_data_map = self.calculate_market_statistics(&orders, &all_matches_to_insert).await;
+        let market_data_map = self.calculate_market_statistics(&orders, &all_matches_to_insert, user_id.clone()).await;
         self.update_market_statistics(market_data_map).await;
         matches
     }
 
     async fn calculate_market_statistics(
-        &self, orders: &[DbOrderSchema], matches: &[DbBidOfferMatch]
+        &self, orders: &[DbOrderSchema], matches: &[DbBidOfferMatch], user_id: String
     ) -> HashMap<(String, u64), DbMarketData> {
         let mut total_bid_energy_kWh: HashMap<(String, u64), f64> = HashMap::new();
         let mut total_offer_energy_kWh: HashMap<(String, u64), f64> = HashMap::new();
@@ -89,6 +93,7 @@ pub trait MatchControllerBase: Send + Sync {
             };
 
             let entry = market_data_map.entry((market_id.clone(), time_slot)).or_insert(DbMarketData {
+                user_id: user_id.clone(),
                 market_id: market_id.clone(),
                 time_slot,
                 submitted_bid_count: 0,
@@ -131,8 +136,6 @@ pub trait MatchControllerBase: Send + Sync {
             entry.total_matched_energy_kWh = matched_energy;
             entry.total_unmatched_energy_kWh = bid_energy + offer_energy - 2.0 * matched_energy;
         }
-        
-        
         
         market_data_map
     }

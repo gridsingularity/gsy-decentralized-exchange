@@ -1,16 +1,23 @@
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use gsy_offchain_primitives::algorithms::PayAsBid;
-use gsy_offchain_primitives::db_api_schema::orders::{DbBid, DbOffer, DbOrderComponent};
+use gsy_offchain_primitives::db_api_schema::orders::{DbBid, DbOffer, DbOrderComponent, DbOrderSchema};
 use serde_json;
 use subxt::utils::H256;
 use subxt::config::{Hasher, substrate::BlakeTwo256};
 
 const EPS: f64 = 0.000001;
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct OrdersToMatch {
+    pub user_id: String,
+    pub orders: Vec<DbOrderSchema>,
+}
+
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct DbBidOfferMatch {
+    pub user_id: String,
     pub market_id: String,
     pub time_slot: u64,
     pub bid: DbBid,
@@ -27,6 +34,7 @@ pub struct DbMatchingData {
     pub bids: Vec<DbBid>,
     pub offers: Vec<DbOffer>,
     pub market_id: String,
+    pub user_id: String
 }
 
 impl PayAsBid for DbMatchingData {
@@ -104,6 +112,7 @@ impl PayAsBid for DbMatchingData {
                 };
 
                 let new_bid_offer_match = DbBidOfferMatch {
+                    user_id: self.user_id.clone(),
                     market_id: offer.offer_component.market_id.clone(),
                     time_slot: offer.offer_component.time_slot,
                     bid: bid.clone(),

@@ -45,6 +45,7 @@ async fn test_insert_matches() {
     };
 
     let matches = vec![DbBidOfferMatch {
+        user_id: "user1".to_string(),
         market_id: market_id.clone(),
         time_slot: 100,
         bid,
@@ -95,6 +96,7 @@ async fn test_get_average_energy_rate_series() {
     };
 
     let match1 = DbBidOfferMatch {
+        user_id: "user1".to_string(),
         market_id: market_id.clone(),
         time_slot: 200,
         bid: bid.clone(),
@@ -105,6 +107,7 @@ async fn test_get_average_energy_rate_series() {
         energy_rate: 20.0,
     };
     let match2 = DbBidOfferMatch {
+        user_id: "user1".to_string(),
         market_id: market_id.clone(),
         time_slot: 200,
         bid: bid.clone(),
@@ -117,7 +120,7 @@ async fn test_get_average_energy_rate_series() {
 
     model.insert_matches(vec![match1, match2]).await.unwrap();
 
-    let result = model.get_average_energy_rate_series(Some(market_id), 0, 1000).await;
+    let result = model.get_average_energy_rate_series("user1".to_string(), Some(market_id), 0, 1000).await;
     assert!(result.is_ok());
     let series = result.unwrap();
     assert_eq!(series.len(), 1);
@@ -156,6 +159,7 @@ async fn test_get_matches() {
     let matches = vec![
         // Match in range, target market
         DbBidOfferMatch {
+            user_id: "user1".to_string(),
             market_id: market_id.clone(),
             time_slot: 150,
             bid: DbBid { buyer: "b1".to_string(), nonce: 1, bid_component: DbOrderComponent { time_slot: 150, ..bid_comp.clone() } },
@@ -164,6 +168,7 @@ async fn test_get_matches() {
         },
         // Match in range, target market
         DbBidOfferMatch {
+            user_id: "user1".to_string(),
             market_id: market_id.clone(),
             time_slot: 160,
             bid: DbBid { buyer: "b1".to_string(), nonce: 2, bid_component: DbOrderComponent { time_slot: 160, ..bid_comp.clone() } },
@@ -172,6 +177,7 @@ async fn test_get_matches() {
         },
         // Match out of range (too early)
         DbBidOfferMatch {
+            user_id: "user1".to_string(),
             market_id: market_id.clone(),
             time_slot: 50,
             bid: DbBid { buyer: "b1".to_string(), nonce: 3, bid_component: DbOrderComponent { time_slot: 50, ..bid_comp.clone() } },
@@ -180,6 +186,7 @@ async fn test_get_matches() {
         },
         // Match in range, different market
         DbBidOfferMatch {
+            user_id: "user1".to_string(),
             market_id: other_market.clone(),
             time_slot: 155,
             bid: DbBid { buyer: "b1".to_string(), nonce: 4, bid_component: DbOrderComponent { time_slot: 155, market_id: other_market.clone(), ..bid_comp.clone() } },
@@ -191,17 +198,17 @@ async fn test_get_matches() {
     model.insert_matches(matches).await.unwrap();
 
     // Test 1: Cumulative filtering (time range + market_id)
-    let results = model.get_matches(100, 200, Some(market_id.clone()), 10).await.unwrap();
+    let results = model.get_matches(100, 200, "user1".to_string(), Some(market_id.clone()), 10).await.unwrap();
     assert_eq!(results.len(), 2, "Should find 2 matches for target market in time range");
     assert!(results.iter().all(|m| m.time_slot >= 100 && m.time_slot <= 200));
     assert!(results.iter().all(|m| m.market_id == market_id));
 
     // Test 2: Optional market_id (None should return both markets)
-    let results_all_markets = model.get_matches(100, 200, None, 10).await.unwrap();
+    let results_all_markets = model.get_matches(100, 200, "user1".to_string(), None, 10).await.unwrap();
     assert_eq!(results_all_markets.len(), 3, "Should find 3 matches across all markets in time range");
 
     // Test 3: Limit
-    let results_limited = model.get_matches(100, 200, None, 1).await.unwrap();
+    let results_limited = model.get_matches(100, 200, "user1".to_string(), None, 1).await.unwrap();
     assert_eq!(results_limited.len(), 1, "Should respect the limit of 1");
     // Since we sort by time_slot, it should be the one at 150
     assert_eq!(results_limited[0].time_slot, 150);
@@ -246,6 +253,7 @@ async fn test_get_average_energy_rate_series_multiple_slots() {
     };
 
     let match_s100_1 = DbBidOfferMatch {
+        user_id: "user1".to_string(),
         market_id: market_id.clone(),
         time_slot: 100,
         bid: bid.clone(),
@@ -256,6 +264,7 @@ async fn test_get_average_energy_rate_series_multiple_slots() {
         energy_rate: 10.0,
     };
     let match_s100_2 = DbBidOfferMatch {
+        user_id: "user1".to_string(),
         market_id: market_id.clone(),
         time_slot: 100,
         bid: bid.clone(),
@@ -267,6 +276,7 @@ async fn test_get_average_energy_rate_series_multiple_slots() {
     };
 
     let match_s200_1 = DbBidOfferMatch {
+        user_id: "user1".to_string(),
         market_id: market_id.clone(),
         time_slot: 200,
         bid: DbBid {
@@ -291,7 +301,7 @@ async fn test_get_average_energy_rate_series_multiple_slots() {
 
     model.insert_matches(vec![match_s100_1, match_s100_2, match_s200_1]).await.unwrap();
 
-    let result = model.get_average_energy_rate_series(Some(market_id), 0, 1000).await;
+    let result = model.get_average_energy_rate_series("user1".to_string(), Some(market_id), 0, 1000).await;
     assert!(result.is_ok());
     let series = result.unwrap();
     
@@ -341,6 +351,7 @@ async fn test_get_average_energy_rate_series_all_markets() {
     };
 
     let match1 = DbBidOfferMatch {
+        user_id: "user1".to_string(),
         market_id: market_id1,
         time_slot: 500,
         bid: bid.clone(),
@@ -352,6 +363,7 @@ async fn test_get_average_energy_rate_series_all_markets() {
     };
     
     let match2 = DbBidOfferMatch {
+        user_id: "user1".to_string(),
         market_id: market_id2,
         time_slot: 500,
         bid: DbBid {
@@ -377,7 +389,7 @@ async fn test_get_average_energy_rate_series_all_markets() {
     model.insert_matches(vec![match1, match2]).await.unwrap();
 
     // Query with None for market_id -> should average both markets
-    let result = model.get_average_energy_rate_series(None, 400, 600).await;
+    let result = model.get_average_energy_rate_series("user1".to_string(), None, 400, 600).await;
     assert!(result.is_ok());
     let series = result.unwrap();
     
@@ -422,6 +434,7 @@ async fn test_get_average_energy_rate_series_time_range() {
     };
 
     let match_s100 = DbBidOfferMatch {
+        user_id: "user1".to_string(),
         market_id: market_id.clone(),
         time_slot: 100,
         bid: bid.clone(),
@@ -432,6 +445,7 @@ async fn test_get_average_energy_rate_series_time_range() {
         energy_rate: 15.0,
     };
     let match_s200 = DbBidOfferMatch {
+        user_id: "user1".to_string(),
         market_id: market_id.clone(),
         time_slot: 200,
         bid: bid.clone(),
@@ -442,6 +456,7 @@ async fn test_get_average_energy_rate_series_time_range() {
         energy_rate: 25.0,
     };
     let match_s300 = DbBidOfferMatch {
+        user_id: "user1".to_string(),
         market_id: market_id.clone(),
         time_slot: 300,
         bid: bid.clone(),
@@ -455,13 +470,13 @@ async fn test_get_average_energy_rate_series_time_range() {
     model.insert_matches(vec![match_s100, match_s200, match_s300]).await.unwrap();
 
     // Query range [150, 250] -> should only return slot 200
-    let result = model.get_average_energy_rate_series(Some(market_id.clone()), 150, 250).await;
+    let result = model.get_average_energy_rate_series("user1".to_string(), Some(market_id.clone()), 150, 250).await;
     let series = result.unwrap();
     assert_eq!(series.len(), 1);
     assert_eq!(series[0].time_slot, 200);
 
     // Query range [100, 200] -> should return slots 100 and 200
-    let result = model.get_average_energy_rate_series(Some(market_id.clone()), 100, 200).await;
+    let result = model.get_average_energy_rate_series("user1".to_string(), Some(market_id.clone()), 100, 200).await;
     let series = result.unwrap();
     assert_eq!(series.len(), 2);
     assert_eq!(series[0].time_slot, 100);
@@ -483,6 +498,7 @@ async fn test_upsert_market_data() {
     let time_slot = 100u64;
 
     let initial_data = vec![DbMarketData {
+        user_id: "user1".to_string(),
         market_id: market_id.clone(),
         time_slot,
         submitted_bid_count: 5,
@@ -503,6 +519,7 @@ async fn test_upsert_market_data() {
 
     // Second upsert (update/increment)
     let increment_data = vec![DbMarketData {
+        user_id: "user1".to_string(),
         market_id: market_id.clone(),
         time_slot,
         submitted_bid_count: 2,
