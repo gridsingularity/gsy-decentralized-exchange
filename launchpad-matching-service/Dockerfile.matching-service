@@ -1,0 +1,12 @@
+FROM rust:1.94
+
+ADD launchpad-matching-service /var/www/launchpad-matching-service/
+ADD offchain-primitives /var/www/offchain-primitives/
+
+RUN rm -rf /var/www/launchpad-matching-service/target/
+
+WORKDIR /var/www/launchpad-matching-service/
+
+RUN cargo build --release
+
+ENTRYPOINT ["/var/www/launchpad-matching-service/target/release/launchpad-matching-service"]

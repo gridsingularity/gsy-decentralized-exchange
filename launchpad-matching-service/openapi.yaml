@@ -4,10 +4,12 @@ info:
   description: API for matching energy orders and retrieving market statistics.
   version: 1.0.0
 tags:
+  - name: Auth
+    description: Authentication endpoints
   - name: Endpoints
     description: All service endpoints
 servers:
-  - url: http://localhost:8080
+  - url: https://localhost
     description: Local server
 
 paths:
@@ -23,8 +25,13 @@ paths:
 
   /token:
     post:
+      tags:
+        - Auth
       summary: Obtain a JWT access token
-      description: Authenticates with username and password and returns a Bearer token for use with protected endpoints.
+      description: >
+        Authenticates with username and password and returns a Bearer token
+        for use with all protected endpoints. Tokens are signed with HS256
+        and expire after 24 hours.
       requestBody:
         required: true
         content:
@@ -40,6 +47,8 @@ paths:
                 $ref: '#/components/schemas/TokenResponse'
         '401':
           description: Invalid username or password
+        '500':
+          description: Internal server error (database unavailable or token encoding failure)
 
   /match:
     post:
@@ -66,6 +75,8 @@ paths:
                   type: array
                   items:
                     $ref: '#/components/schemas/DbBidOfferMatch'
+        '401':
+          description: Missing, invalid, or expired Bearer token
 
   /matches:
     get:
@@ -113,6 +124,8 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/DbBidOfferMatch'
+        '401':
+          description: Missing, invalid, or expired Bearer token
 
   /statistics:
     get:
@@ -157,6 +170,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/MarketStatisticsResponse'
+        '401':
+          description: Missing, invalid, or expired Bearer token
 
   /markets:
     get:
@@ -181,6 +196,8 @@ paths:
                 type: array
                 items:
                   type: string
+        '401':
+          description: Missing, invalid, or expired Bearer token
 
 components:
   securitySchemes:

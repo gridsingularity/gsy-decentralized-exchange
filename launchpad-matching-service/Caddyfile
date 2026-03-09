@@ -1,0 +1,17 @@
+{
+    order rate_limit before reverse_proxy
+}
+
+localhost {
+
+    # Rate limit: 100 requests per second per client IP
+    rate_limit {
+        zone matching_service_zone {
+            key    {remote.host}
+            events 100
+            window 1s
+        }
+    }
+
+    reverse_proxy matching-service:9876
+}
