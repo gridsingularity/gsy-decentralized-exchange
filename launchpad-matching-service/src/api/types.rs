@@ -46,12 +46,16 @@ impl PayAsBid for DbMatchingData {
         let mut bids = self.bids.clone();
         let mut offers = self.offers.clone();
 
+        // Sorting bids in descending order based on energy rate.
+        // b is compared with a, therefore the sorting order is descending.
         bids.sort_by(|a, b| {
             b.bid_component
                 .energy_rate
                 .partial_cmp(&a.bid_component.energy_rate)
                 .unwrap()
         });
+        // Sorting offers in ascending order based on energy rate.
+        // a is compared with b, therefore the sorting order is ascending.
         offers.sort_by(|a, b| {
             a.offer_component
                 .energy_rate

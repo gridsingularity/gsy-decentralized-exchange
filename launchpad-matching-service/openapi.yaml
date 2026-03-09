@@ -21,12 +21,34 @@ paths:
         '200':
           description: Service is healthy
 
+  /token:
+    post:
+      summary: Obtain a JWT access token
+      description: Authenticates with username and password and returns a Bearer token for use with protected endpoints.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenRequest'
+      responses:
+        '200':
+          description: Authentication successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '401':
+          description: Invalid username or password
+
   /match:
     post:
       tags:
         - Endpoints
       summary: Process orders for matching
       description: Processes a list of bid and offer orders using the Pay-As-Bid algorithm and returns the matches found.
+      security:
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -51,6 +73,8 @@ paths:
         - Endpoints
       summary: Filter matches
       description: Retrieves matches based on user ID, optional market ID, and time range.
+      security:
+        - bearerAuth: []
       parameters:
         - name: user_id
           in: query
@@ -96,6 +120,8 @@ paths:
         - Endpoints
       summary: Get market statistics
       description: Returns market statistics and energy/trade rate timeseries for a user and period.
+      security:
+        - bearerAuth: []
       parameters:
         - name: user_id
           in: query
@@ -138,6 +164,8 @@ paths:
         - Endpoints
       summary: Get unique market IDs
       description: Returns all unique market IDs for a specific user.
+      security:
+        - bearerAuth: []
       parameters:
         - name: user_id
           in: query
@@ -155,7 +183,37 @@ paths:
                   type: string
 
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
   schemas:
+    TokenRequest:
+      type: object
+      required:
+        - username
+        - password
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+
+    TokenResponse:
+      type: object
+      required:
+        - access_token
+        - token_type
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          example: bearer
+
     OrdersToMatch:
       type: object
       required:

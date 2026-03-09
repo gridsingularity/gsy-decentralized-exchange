@@ -1,6 +1,7 @@
 use crate::api::controller::{MatchController, MatchControllerBase};
 use crate::api::model::Resolution;
 use crate::api::types::OrdersToMatch;
+use crate::auth::jwt::Claims;
 use actix_web::{HttpResponse, Responder, get, post, web};
 use serde::{Deserialize, Serialize};
 
@@ -33,7 +34,7 @@ pub async fn health_check() -> impl Responder {
 }
 
 #[post("/match")]
-pub async fn pay_as_bid(orders: web::Json<OrdersToMatch>) -> impl Responder {
+pub async fn pay_as_bid(_claims: Claims, orders: web::Json<OrdersToMatch>) -> impl Responder {
     let controller = MatchController {};
     let result = controller
         .process_market_id_for_pay_as_bid(orders.into_inner())
@@ -42,7 +43,7 @@ pub async fn pay_as_bid(orders: web::Json<OrdersToMatch>) -> impl Responder {
 }
 
 #[get("/matches")]
-pub async fn filter_matches(query: web::Query<MatchFilterQuery>) -> impl Responder {
+pub async fn filter_matches(_claims: Claims, query: web::Query<MatchFilterQuery>) -> impl Responder {
     let controller = MatchController {};
     let result = controller
         .filter_matches(
@@ -57,7 +58,7 @@ pub async fn filter_matches(query: web::Query<MatchFilterQuery>) -> impl Respond
 }
 
 #[get("/statistics")]
-pub async fn get_market_statistics(query: web::Query<MarketStatisticsQuery>) -> impl Responder {
+pub async fn get_market_statistics(_claims: Claims, query: web::Query<MarketStatisticsQuery>) -> impl Responder {
     let controller = MatchController {};
     let result = controller
         .get_market_statistics(
@@ -72,7 +73,7 @@ pub async fn get_market_statistics(query: web::Query<MarketStatisticsQuery>) -> 
 }
 
 #[get("/markets")]
-pub async fn get_markets(query: web::Query<MarketsQuery>) -> impl Responder {
+pub async fn get_markets(_claims: Claims, query: web::Query<MarketsQuery>) -> impl Responder {
     let controller = MatchController {};
     let result = controller.get_markets(query.user_id.clone()).await;
     HttpResponse::Ok().json(result)

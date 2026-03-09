@@ -10,6 +10,7 @@ pub struct Configuration {
     pub database_url_scheme: String,
     pub application_host: String,
     pub application_port: u16,
+    pub jwt_secret: String,
 }
 
 impl Configuration {
