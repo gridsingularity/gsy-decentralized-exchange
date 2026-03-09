@@ -24,12 +24,11 @@ services:
       dockerfile: ./launchpad-matching-service/Dockerfile.matching-service
     depends_on:
       - mongodb
-    expose:
-      - "9876"
     environment:
       - RUST_LOG=info
+      - DATABASE_HOST=mongodb
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health_check"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health-check"]
       interval: 10s
       timeout: 5s
       retries: 5

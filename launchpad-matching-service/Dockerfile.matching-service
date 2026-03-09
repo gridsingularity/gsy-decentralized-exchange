@@ -9,4 +9,5 @@ WORKDIR /var/www/launchpad-matching-service/
 
 RUN cargo build --release
 
+EXPOSE 9876
 ENTRYPOINT ["/var/www/launchpad-matching-service/target/release/launchpad-matching-service"]

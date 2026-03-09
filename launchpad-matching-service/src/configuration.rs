@@ -26,11 +26,9 @@ impl Configuration {
 }
 
 pub fn get_configuration() -> Result<Configuration, ConfigError> {
-    match envy::from_env::<Configuration>() {
-        Ok(settings) => Ok(settings),
-        Err(_) => Config::builder()
-            .add_source(File::with_name("configuration.yaml"))
-            .build()?
-            .try_deserialize(),
-    }
+    Config::builder()
+        .add_source(File::with_name("configuration.yaml").required(false))
+        .add_source(config::Environment::default())
+        .build()?
+        .try_deserialize()
 }

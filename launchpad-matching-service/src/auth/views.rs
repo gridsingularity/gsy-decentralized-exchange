@@ -36,7 +36,6 @@ pub async fn get_token(
         Ok(true) => {}
         _ => return HttpResponse::Unauthorized().finish(),
     }
-
     match encode_jwt(&body.username, &jwt_secret.0, 24) {
         Ok(token) => HttpResponse::Ok().json(TokenResponse {
             access_token: token,
