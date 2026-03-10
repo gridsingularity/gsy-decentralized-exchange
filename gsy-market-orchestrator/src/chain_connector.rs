@@ -1,85 +1,119 @@
 use crate::config::Config;
-use anyhow::Result;
-use subxt::{config::substrate::AccountId32, utils::H256, OnlineClient, SubstrateConfig};
-use subxt_signer::{sr25519::Keypair, SecretUri};
-use tracing::{error, info};
+use anyhow::{anyhow, Result};
+use async_trait::async_trait;
+use ethers::prelude::*;
+use ethers::utils::keccak256;
+use std::sync::Arc;
+use tracing::{info, warn};
 
-#[subxt::subxt(runtime_metadata_path = "../offchain-primitives/metadata.scale")]
-pub mod gsy_node {}
+abigen!(
+    MarketControllerContract,
+    r#"[
+        function hasRole(bytes32 role, address account) external view returns (bool)
+        function isMarketOpen(bytes32 marketId) external view returns (bool)
+        function setMarketStatus(bytes32 marketId, bool isOpen) external
+    ]"#
+);
+
+type WsSignerMiddleware = SignerMiddleware<Provider<Ws>, LocalWallet>;
+
+#[async_trait]
+pub trait MarketChainClient: Send + Sync {
+    async fn is_operator_registered(&self) -> Result<bool>;
+    async fn get_market_status(&self, market_id: [u8; 32]) -> Result<bool>;
+    async fn update_market_status(&self, market_id: [u8; 32], is_open: bool) -> Result<()>;
+}
 
 #[derive(Clone)]
 pub struct GsyMarketOrchestratorNodeClient {
-    api: OnlineClient<SubstrateConfig>,
-    signer: Keypair,
+    market_controller: MarketControllerContract<WsSignerMiddleware>,
+    signer_address: Address,
 }
 
 impl GsyMarketOrchestratorNodeClient {
     pub async fn new(config: &Config) -> Result<Self> {
-        let api =
-            OnlineClient::<SubstrateConfig>::from_insecure_url(config.gsy_node_url.clone()).await?;
-        let uri: SecretUri = config.orchestrator_signer_suri.parse()?;
-        let signer = Keypair::from_uri(&uri)?;
-        info!("Orchestrator connected to node: {}", config.gsy_node_url);
-        let account_id = AccountId32::from(signer.public_key());
-        info!("Orchestrator signer account: {}", account_id);
-        Ok(Self { api, signer })
-    }
+        if config.market_controller_address.is_zero() {
+            warn!("MARKET_CONTROLLER_ADDRESS is zero; contract calls will fail until configured.");
+        }
 
-    pub async fn is_operator_registered(&self) -> Result<bool> {
-        let operator_account = AccountId32::from(self.signer.public_key());
-        let storage_address = gsy_node::storage()
-            .gsy_collateral()
-            .registered_exchange_operator(operator_account);
+        let provider = Provider::<Ws>::connect(config.evm_node_url.as_str()).await?;
+        let chain_id = provider.get_chainid().await?.as_u64();
+
+        let wallet = config
+            .orchestrator_signer_private_key
+            .parse::<LocalWallet>()?
+            .with_chain_id(chain_id);
+        let signer_address = wallet.address();
+
+        info!(
+            "Orchestrator connected to EVM node: {}",
+            config.evm_node_url
+        );
+        info!("Orchestrator chain id: {}", chain_id);
+        info!("Orchestrator signer account: {:?}", signer_address);
+
+        let client = Arc::new(SignerMiddleware::new(provider, wallet));
+        let market_controller =
+            MarketControllerContract::new(config.market_controller_address, client.clone());
+
+        Ok(Self {
+            market_controller,
+            signer_address,
+        })
+    }
+}
+
+#[async_trait]
+impl MarketChainClient for GsyMarketOrchestratorNodeClient {
+    async fn is_operator_registered(&self) -> Result<bool> {
+        let orchestrator_role = keccak256("ORCHESTRATOR_ROLE");
         let is_registered = self
-            .api
-            .storage()
-            .at_latest()
-            .await?
-            .fetch(&storage_address)
-            .await?
-            .is_some();
+            .market_controller
+            .has_role(orchestrator_role, self.signer_address)
+            .call()
+            .await?;
         Ok(is_registered)
     }
 
-    pub async fn get_market_status(&self, market_id: H256) -> Result<bool> {
-        let storage_address = gsy_node::storage()
-            .orderbook_registry()
-            .market_status(market_id);
+    async fn get_market_status(&self, market_id: [u8; 32]) -> Result<bool> {
         let status = self
-            .api
-            .storage()
-            .at_latest()
-            .await?
-            .fetch(&storage_address)
-            .await?
-            .unwrap_or(false);
+            .market_controller
+            .is_market_open(market_id)
+            .call()
+            .await?;
         Ok(status)
     }
 
-    pub async fn update_market_status(&self, market_id: H256, is_open: bool) -> Result<()> {
-        let tx = gsy_node::tx()
-            .orderbook_registry()
-            .update_market_status(market_id, is_open);
+    async fn update_market_status(&self, market_id: [u8; 32], is_open: bool) -> Result<()> {
+        let set_market_status_call = self.market_controller.set_market_status(market_id, is_open);
+        let pending_tx = set_market_status_call.send().await?;
 
-        let result = self
-            .api
-            .tx()
-            .sign_and_submit_then_watch_default(&tx, &self.signer)
-            .await?
-            .wait_for_finalized_success()
-            .await?;
+        let tx_hash = pending_tx.tx_hash();
+        let receipt = pending_tx.await?;
 
-        let event =
-            result.find_first::<gsy_node::orderbook_registry::events::MarketStatusUpdated>()?;
-
-        if let Some(event) = event {
-            info!(
-                "Successfully submitted and finalized MarketStatusUpdated: {:?}",
-                event
-            );
-        } else {
-            error!("Failed to find MarketStatusUpdated event after finalization.");
+        match receipt {
+            Some(receipt) => {
+                let status = receipt
+                    .status
+                    .map(|value| value.as_u64())
+                    .unwrap_or_default();
+                if status != 1 {
+                    return Err(anyhow!(
+                        "Market status transaction {:?} reverted with status {:?}",
+                        tx_hash,
+                        receipt.status
+                    ));
+                }
+                info!(
+                    "Successfully finalized market status update tx {:?} (is_open={})",
+                    tx_hash, is_open
+                );
+                Ok(())
+            }
+            None => Err(anyhow!(
+                "Market status transaction {:?} dropped without receipt",
+                tx_hash
+            )),
         }
-        Ok(())
     }
 }

@@ -36,8 +36,9 @@ services:
       dockerfile: ./gsy-market-orchestrator/Dockerfile
     environment:
       - RUST_LOG=info,gsy_market_orchestrator=debug
-      - GSY_NODE_URL=ws://gsy-node:9944
-      - ORCHESTRATOR_SIGNER_SURI=//Alice
+      - EVM_NODE_URL=ws://anvil:8545
+      - MARKET_CONTROLLER_ADDRESS=0x0000000000000000000000000000000000000000
+      - ORCHESTRATOR_SIGNER_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
 
   gsy-execution-engine:
     container_name: gsy-execution-engine

@@ -42,8 +42,9 @@ services:
       dockerfile: ./gsy-market-orchestrator/Dockerfile
     environment:
       - RUST_LOG=info,gsy_market_orchestrator=debug
-      - GSY_NODE_URL=ws://gsy-node:9944
-      - ORCHESTRATOR_SIGNER_SURI=//Alice
+      - EVM_NODE_URL=ws://anvil:8545
+      - MARKET_CONTROLLER_ADDRESS=0x0000000000000000000000000000000000000000
+      - ORCHESTRATOR_SIGNER_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
       - SPOT_MARKET_OPEN_OFFSET_MIN=-120
       - SPOT_MARKET_CLOSE_OFFSET_MIN=-30
       - EXECUTION_ENGINE_OFFSET_MIN=-120
@@ -127,3 +128,13 @@ services:
       - APPLICATION_PORT=8080
       - SCHEDULER_INTERVAL=900
       - EVM_NODE_URL=ws://localhost:8545
+
+  gsy-market-orchestrator-integration-test:
+    container_name: gsy-market-orchestrator-integration-test
+    build:
+      context: .
+      dockerfile: gsy-market-orchestrator/Dockerfile
+    entrypoint: ["cargo", "test", "--test", "evm_integration"]
+    working_dir: /var/www/gsy-market-orchestrator
+    environment:
+      - RUST_LOG=info

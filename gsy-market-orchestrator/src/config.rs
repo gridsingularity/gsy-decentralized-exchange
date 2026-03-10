@@ -1,24 +1,33 @@
+use ethers::types::Address;
 use gsy_offchain_primitives::{constants::GLOBAL_CONSTANTS, MarketType};
 use once_cell::sync::Lazy;
 use serde::Deserialize;
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct Config {
-    #[serde(default = "default_node_url")]
-    pub gsy_node_url: String,
-    #[serde(default = "default_signer_suri")]
-    pub orchestrator_signer_suri: String,
+    #[serde(default = "default_evm_node_url")]
+    pub evm_node_url: String,
+    #[serde(default = "default_market_controller_address")]
+    pub market_controller_address: Address,
+    #[serde(default = "default_signer_private_key")]
+    pub orchestrator_signer_private_key: String,
     #[serde(default = "default_tick_interval")]
     pub tick_interval_seconds: u64,
     #[serde(default = "default_look_ahead")]
     pub look_ahead_hours: u64,
 }
 
-fn default_node_url() -> String {
-    "ws://gsy-node:9944".to_string()
+fn default_evm_node_url() -> String {
+    "ws://anvil:8545".to_string()
 }
-fn default_signer_suri() -> String {
-    "//Alice".to_string()
+
+fn default_market_controller_address() -> Address {
+    Address::zero()
+}
+
+fn default_signer_private_key() -> String {
+    // Default Anvil account #0 private key.
+    "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string()
 }
 fn default_tick_interval() -> u64 {
     60

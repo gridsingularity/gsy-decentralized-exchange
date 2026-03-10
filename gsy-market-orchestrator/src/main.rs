@@ -1,8 +1,5 @@
-mod chain_connector;
-mod config;
-mod orchestrator;
-
 use anyhow::Result;
+use gsy_market_orchestrator::{chain_connector, config, orchestrator};
 use tracing::info;
 
 #[tokio::main]
