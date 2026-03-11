@@ -11,6 +11,8 @@ import "./GsyVault.sol";
  */
 contract TradeSettlement is AccessControl {
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
+    bytes32 public constant EXECUTION_ENGINE_ROLE =
+        keccak256("EXECUTION_ENGINE_ROLE");
 
     OrderRegistry public registry;
     GsyVault public vault;
@@ -23,10 +25,19 @@ contract TradeSettlement is AccessControl {
         uint256 price
     );
 
+    event PenaltyRecorded(
+        address indexed penalizedAccount,
+        bytes32 indexed marketId,
+        bytes32 indexed tradeId,
+        uint64 penaltyEnergy
+    );
+    event PenaltiesSubmitted(uint256 count);
+
     error InvalidOrderParams();
     error OrderNotOpen();
     error PriceMismatch();
     error EnergyMismatch();
+    error InvalidPenalty();
 
     constructor(address _registry, address _vault) {
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
@@ -53,6 +64,16 @@ contract TradeSettlement is AccessControl {
         uint256 clearingPrice;
     }
 
+    struct TradePenalty {
+        address penalizedAccount;
+        bytes32 marketId;
+        bytes32 tradeId;
+        uint64 penaltyEnergy;
+    }
+
+    mapping(bytes32 => uint256) public penaltyEnergyByTrade;
+    mapping(address => uint256) public penaltyEnergyByAccount;
+
     /**
      * @notice Settle a batch of matched trades.
      * @dev Only callable by the Matching Engine (Operator).
@@ -63,6 +84,39 @@ contract TradeSettlement is AccessControl {
         for (uint256 i = 0; i < matches.length; i++) {
             _settleTrade(matches[i]);
         }
+    }
+
+    /**
+     * @notice Submit penalties computed by the execution engine.
+     * @dev Stores aggregate values and emits events for off-chain indexing.
+     */
+    function submitPenalties(
+        TradePenalty[] calldata penalties
+    ) external onlyRole(EXECUTION_ENGINE_ROLE) {
+        for (uint256 i = 0; i < penalties.length; i++) {
+            TradePenalty calldata penalty = penalties[i];
+
+            if (
+                penalty.penalizedAccount == address(0) ||
+                penalty.tradeId == bytes32(0) ||
+                penalty.penaltyEnergy == 0
+            ) {
+                revert InvalidPenalty();
+            }
+
+            penaltyEnergyByTrade[penalty.tradeId] += penalty.penaltyEnergy;
+            penaltyEnergyByAccount[penalty.penalizedAccount] += penalty
+                .penaltyEnergy;
+
+            emit PenaltyRecorded(
+                penalty.penalizedAccount,
+                penalty.marketId,
+                penalty.tradeId,
+                penalty.penaltyEnergy
+            );
+        }
+
+        emit PenaltiesSubmitted(penalties.length);
     }
 
     function _settleTrade(Match calldata trade) internal {

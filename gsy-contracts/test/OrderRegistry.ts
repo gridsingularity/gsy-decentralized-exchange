@@ -7,27 +7,23 @@ describe("OrderRegistry", function () {
   async function deployRegistryFixture() {
     const [admin, user, proxy, other] = await ethers.getSigners();
 
-    // Deploy Dependencies
     const MarketController =
       await ethers.getContractFactory("MarketController");
     const controller = await MarketController.deploy();
     const GsyVault = await ethers.getContractFactory("GsyVault");
     const vault = await GsyVault.deploy();
 
-    // Deploy Registry
     const OrderRegistry = await ethers.getContractFactory("OrderRegistry");
     const registry = await OrderRegistry.deploy(
       await controller.getAddress(),
       await vault.getAddress(),
     );
 
-    // Setup Market
     const marketId = ethers.keccak256(ethers.toUtf8Bytes("market-1"));
     const ORCHESTRATOR_ROLE = await controller.ORCHESTRATOR_ROLE();
     await controller.grantRole(ORCHESTRATOR_ROLE, admin.address);
     await controller.setMarketStatus(marketId, true);
 
-    // Setup Proxy
     await vault.connect(user).setProxy(proxy.address, true);
 
     const baseOrder = {

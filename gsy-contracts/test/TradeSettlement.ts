@@ -5,9 +5,9 @@ import { hashOrder, ORDER_TYPE_BID, ORDER_TYPE_ASK } from "./utils";
 
 describe("TradeSettlement", function () {
   async function deploySettlementFixture() {
-    const [admin, buyer, seller, operator] = await ethers.getSigners();
+    const [admin, buyer, seller, operator, executionEngine] =
+      await ethers.getSigners();
 
-    // 1. Deploy dependencies
     const MarketController =
       await ethers.getContractFactory("MarketController");
     const controller = await MarketController.deploy();
@@ -27,7 +27,6 @@ describe("TradeSettlement", function () {
       await vault.getAddress(),
     );
 
-    // 2. Setup Permissions
     const ORCHESTRATOR_ROLE = await controller.ORCHESTRATOR_ROLE();
     await controller.grantRole(ORCHESTRATOR_ROLE, admin.address);
 
@@ -42,16 +41,15 @@ describe("TradeSettlement", function () {
 
     const OPERATOR_ROLE = await settlement.OPERATOR_ROLE();
     await settlement.grantRole(OPERATOR_ROLE, operator.address);
+    const EXECUTION_ENGINE_ROLE = await settlement.EXECUTION_ENGINE_ROLE();
+    await settlement.grantRole(EXECUTION_ENGINE_ROLE, executionEngine.address);
 
-    // 3. Setup Market
     const marketId = ethers.keccak256(ethers.toUtf8Bytes("market-1"));
     await controller.setMarketStatus(marketId, true);
 
-    // 4. Setup Balances
     const depositAmount = 10000;
     await vault.connect(buyer).deposit({ value: depositAmount });
 
-    // 5. Define Orders
     const bid = {
       owner: buyer.address,
       nonce: 1,
@@ -83,6 +81,7 @@ describe("TradeSettlement", function () {
       buyer,
       seller,
       operator,
+      executionEngine,
       bid,
       ask,
       depositAmount,
@@ -93,7 +92,6 @@ describe("TradeSettlement", function () {
     const { settlement, registry, vault, buyer, seller, operator, bid, ask } =
       await loadFixture(deploySettlementFixture);
 
-    // Place orders first
     await registry.connect(buyer).placeOrder(bid);
     await registry.connect(seller).placeOrder(ask);
 
@@ -106,30 +104,105 @@ describe("TradeSettlement", function () {
 
     const totalCost = matchData.selectedEnergy * matchData.clearingPrice;
 
-    // Check balances before
     expect(await vault.balances(buyer.address)).to.equal(10000);
     expect(await vault.balances(seller.address)).to.equal(0);
 
-    // Execute Settlement
     await expect(settlement.connect(operator).settleBatch([matchData])).to.emit(
       settlement,
       "TradeSettled",
     );
 
-    // Check Balances after
     expect(await vault.balances(buyer.address)).to.equal(10000 - totalCost);
     expect(await vault.balances(seller.address)).to.equal(totalCost);
 
-    // Check Order Status
     const bidHash = await hashOrder(bid);
     expect(await registry.getStatus(bidHash)).to.equal(2); // Executed
+  });
+
+  it("Should submit penalties from the execution engine", async function () {
+    const { settlement, buyer, executionEngine } = await loadFixture(
+      deploySettlementFixture,
+    );
+
+    const marketId = ethers.keccak256(ethers.toUtf8Bytes("market-penalty"));
+    const tradeId1 = ethers.keccak256(ethers.toUtf8Bytes("trade-1"));
+    const tradeId2 = ethers.keccak256(ethers.toUtf8Bytes("trade-2"));
+
+    const penalties = [
+      {
+        penalizedAccount: buyer.address,
+        marketId,
+        tradeId: tradeId1,
+        penaltyEnergy: 30,
+      },
+      {
+        penalizedAccount: buyer.address,
+        marketId,
+        tradeId: tradeId2,
+        penaltyEnergy: 70,
+      },
+    ];
+
+    await expect(settlement.connect(executionEngine).submitPenalties(penalties))
+      .to.emit(settlement, "PenaltyRecorded")
+      .withArgs(buyer.address, marketId, tradeId1, 30)
+      .and.to.emit(settlement, "PenaltiesSubmitted")
+      .withArgs(2);
+
+    expect(await settlement.penaltyEnergyByTrade(tradeId1)).to.equal(30);
+    expect(await settlement.penaltyEnergyByTrade(tradeId2)).to.equal(70);
+    expect(await settlement.penaltyEnergyByAccount(buyer.address)).to.equal(
+      100,
+    );
+  });
+
+  it("Should fail penalties submission from unauthorized account", async function () {
+    const { settlement, buyer, operator } = await loadFixture(
+      deploySettlementFixture,
+    );
+
+    const marketId = ethers.keccak256(ethers.toUtf8Bytes("market-penalty"));
+    const tradeId = ethers.keccak256(ethers.toUtf8Bytes("trade-1"));
+    const penalties = [
+      {
+        penalizedAccount: buyer.address,
+        marketId,
+        tradeId,
+        penaltyEnergy: 10,
+      },
+    ];
+
+    await expect(
+      settlement.connect(operator).submitPenalties(penalties),
+    ).to.be.revertedWithCustomError(
+      settlement,
+      "AccessControlUnauthorizedAccount",
+    );
+  });
+
+  it("Should fail penalties submission with invalid payload", async function () {
+    const { settlement, executionEngine } = await loadFixture(
+      deploySettlementFixture,
+    );
+
+    const penalties = [
+      {
+        penalizedAccount: ethers.ZeroAddress,
+        marketId: ethers.keccak256(ethers.toUtf8Bytes("market-penalty")),
+        tradeId: ethers.keccak256(ethers.toUtf8Bytes("trade-1")),
+        penaltyEnergy: 10,
+      },
+    ];
+
+    await expect(
+      settlement.connect(executionEngine).submitPenalties(penalties),
+    ).to.be.revertedWithCustomError(settlement, "InvalidPenalty");
   });
 
   it("Should fail if orders are not open", async function () {
     const { settlement, operator, bid, ask } = await loadFixture(
       deploySettlementFixture,
     );
-    // Not placing orders in registry
 
     const matchData = { bid, ask, selectedEnergy: 100, clearingPrice: 45 };
 
