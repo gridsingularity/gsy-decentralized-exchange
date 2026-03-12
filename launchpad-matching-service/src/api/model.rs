@@ -44,9 +44,10 @@ pub struct MatchModel {
 
 impl MatchModel {
     pub async fn new() -> mongodb::error::Result<Self> {
-        let mongodb_uri = get_configuration().unwrap().get_connection_string();
+        let config = get_configuration().unwrap();
+        let mongodb_uri = config.get_connection_string();
         let client = Client::with_uri_str(mongodb_uri).await?;
-        let db = client.database("launchpad");
+        let db = client.database(config.database_name.as_str());
         Ok(MatchModel {
             client,
             db,

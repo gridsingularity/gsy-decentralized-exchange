@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use gsy_offchain_primitives::algorithms::PayAsBid;
 use gsy_offchain_primitives::db_api_schema::orders::{DbBid, DbOffer, DbOrderSchema, Order};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct DbMarketData {
@@ -32,7 +32,7 @@ pub trait MatchControllerBase: Send + Sync {
         let mut all_matches_to_insert = Vec::new();
 
         // Find all market ids in the orders
-        let market_ids: Vec<String> = orders
+        let market_ids: HashSet<String> = orders
             .iter()
             .map(|order| match order.order.clone() {
                 Order::Bid(bid) => bid.bid_component.market_id.clone(),
@@ -40,34 +40,48 @@ pub trait MatchControllerBase: Send + Sync {
             })
             .collect();
 
+        let time_slots: HashSet<u64> = orders
+            .iter()
+            .map(|order| match order.order.clone() {
+                Order::Bid(bid) => bid.bid_component.time_slot.clone(),
+                Order::Offer(offer) => offer.offer_component.time_slot.clone(),
+            })
+            .collect();
+
         for market_id in market_ids.iter() {
-            let bids_list: Vec<DbBid> = orders
-                .iter()
-                .filter_map(|order| match &order.order {
-                    Order::Bid(bid) if bid.bid_component.market_id == *market_id => {
-                        Some(bid.clone())
-                    }
-                    _ => None,
-                })
-                .collect();
-            let offers_list: Vec<DbOffer> = orders
-                .iter()
-                .filter_map(|order| match &order.order {
-                    Order::Offer(offer) if offer.offer_component.market_id == *market_id => {
-                        Some(offer.clone())
-                    }
-                    _ => None,
-                })
-                .collect();
-            let mut matching_data = DbMatchingData {
-                bids: bids_list,
-                offers: offers_list,
-                market_id: market_id.clone(),
-                user_id: user_id.clone(),
-            };
-            let algorithm_result = matching_data.pay_as_bid();
-            all_matches_to_insert.extend(algorithm_result.clone());
-            matches.insert(market_id.clone(), algorithm_result);
+            for time_slot in time_slots.iter() {
+                let bids_list: Vec<DbBid> = orders
+                    .iter()
+                    .filter_map(|order| match &order.order {
+                        Order::Bid(bid) if
+                                bid.bid_component.market_id == *market_id &&
+                                bid.bid_component.time_slot == *time_slot => {
+                            Some(bid.clone())
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                let offers_list: Vec<DbOffer> = orders
+                    .iter()
+                    .filter_map(|order| match &order.order {
+                        Order::Offer(offer) if
+                                offer.offer_component.market_id == *market_id &&
+                                offer.offer_component.time_slot == *time_slot => {
+                            Some(offer.clone())
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                let mut matching_data = DbMatchingData {
+                    bids: bids_list,
+                    offers: offers_list,
+                    market_id: market_id.clone(),
+                    user_id: user_id.clone(),
+                };
+                let algorithm_result = matching_data.pay_as_bid();
+                all_matches_to_insert.extend(algorithm_result.clone());
+                matches.insert(market_id.clone(), algorithm_result);
+            }
         }
         self.insert_bid_offer_matches_to_db(all_matches_to_insert.clone())
             .await;
