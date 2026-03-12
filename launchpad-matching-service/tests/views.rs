@@ -1,4 +1,4 @@
-use actix_web::{App, test};
+use actix_web::{App, test, web};
 use gsy_offchain_primitives::db_api_schema::orders::{
     DbBid, DbOffer, DbOrderComponent, DbOrderSchema, Order,
 };
@@ -6,7 +6,15 @@ use launchpad_matching_service::api::controller::DbMarketData;
 use launchpad_matching_service::api::model::{MarketStatisticsResponse, MatchModel};
 use launchpad_matching_service::api::types::{DbBidOfferMatch, OrdersToMatch};
 use launchpad_matching_service::api::views;
+use launchpad_matching_service::auth::jwt::{JwtSecret, encode_jwt};
 use std::collections::HashMap;
+
+const TEST_JWT_SECRET: &str = "test_secret_for_unit_tests";
+
+fn test_bearer_token() -> String {
+    let token = encode_jwt("test_user", TEST_JWT_SECRET, 1).expect("Failed to encode JWT");
+    format!("Bearer {}", token)
+}
 
 async fn setup_db(collection_name: &str) -> Option<MatchModel> {
     let model = MatchModel::new()
@@ -79,7 +87,12 @@ async fn test_pay_as_bid_endpoint() {
         None => return,
     };
 
-    let app = test::init_service(App::new().service(views::pay_as_bid)).await;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(JwtSecret(TEST_JWT_SECRET.to_string())))
+            .service(views::pay_as_bid),
+    )
+    .await;
 
     let market_id = "view_test_market".to_string();
     let user_id = "view_test_user".to_string();
@@ -128,6 +141,7 @@ async fn test_pay_as_bid_endpoint() {
 
     let req = test::TestRequest::post()
         .uri("/match")
+        .insert_header(("Authorization", test_bearer_token()))
         .set_json(&orders_to_match)
         .to_request();
 
@@ -151,7 +165,12 @@ async fn test_filter_matches_endpoint() {
         None => return,
     };
 
-    let app = test::init_service(App::new().service(views::filter_matches)).await;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(JwtSecret(TEST_JWT_SECRET.to_string())))
+            .service(views::filter_matches),
+    )
+    .await;
 
     let market_id = "filter_test_market".to_string();
     let user_id = "filter_test_user".to_string();
@@ -227,7 +246,10 @@ async fn test_filter_matches_endpoint() {
         "/matches?user_id={}&market_id={}&start_time=100&end_time=200&limit=10",
         user_id, market_id
     );
-    let req = test::TestRequest::get().uri(&uri).to_request();
+    let req = test::TestRequest::get()
+        .uri(&uri)
+        .insert_header(("Authorization", test_bearer_token()))
+        .to_request();
     let resp = test::call_service(&app, req).await;
     assert!(resp.status().is_success());
 
@@ -236,7 +258,10 @@ async fn test_filter_matches_endpoint() {
 
     // Test optional limit and market_id
     let uri_no_limit = format!("/matches?user_id={}&start_time=100&end_time=200", user_id);
-    let req = test::TestRequest::get().uri(&uri_no_limit).to_request();
+    let req = test::TestRequest::get()
+        .uri(&uri_no_limit)
+        .insert_header(("Authorization", test_bearer_token()))
+        .to_request();
     let resp = test::call_service(&app, req).await;
     assert!(resp.status().is_success());
 
@@ -251,7 +276,12 @@ async fn test_get_market_statistics_endpoint() {
         None => return,
     };
 
-    let app = test::init_service(App::new().service(views::get_market_statistics)).await;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(JwtSecret(TEST_JWT_SECRET.to_string())))
+            .service(views::get_market_statistics),
+    )
+    .await;
 
     let market_id = "stats_test_market".to_string();
     let user_id = "stats_test_user".to_string();
@@ -313,7 +343,10 @@ async fn test_get_market_statistics_endpoint() {
         "/statistics?user_id={}&market_id={}&start_time=0&end_time=200",
         user_id, market_id
     );
-    let req = test::TestRequest::get().uri(&uri).to_request();
+    let req = test::TestRequest::get()
+        .uri(&uri)
+        .insert_header(("Authorization", test_bearer_token()))
+        .to_request();
     let resp = test::call_service(&app, req).await;
     assert!(resp.status().is_success());
 
@@ -338,7 +371,12 @@ async fn test_get_market_statistics_optional_market_id() {
         None => return,
     };
 
-    let app = test::init_service(App::new().service(views::get_market_statistics)).await;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(JwtSecret(TEST_JWT_SECRET.to_string())))
+            .service(views::get_market_statistics),
+    )
+    .await;
 
     let market1 = "market1".to_string();
     let market2 = "market2".to_string();
@@ -448,7 +486,10 @@ async fn test_get_market_statistics_optional_market_id() {
 
     // 3. Test the endpoint WITHOUT market_id
     let uri = format!("/statistics?user_id={}&start_time=0&end_time=200", user_id);
-    let req = test::TestRequest::get().uri(&uri).to_request();
+    let req = test::TestRequest::get()
+        .uri(&uri)
+        .insert_header(("Authorization", test_bearer_token()))
+        .to_request();
     let resp = test::call_service(&app, req).await;
     assert!(resp.status().is_success());
 
@@ -482,7 +523,12 @@ async fn test_get_markets_endpoint() {
         None => return,
     };
 
-    let app = test::init_service(App::new().service(views::get_markets)).await;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(JwtSecret(TEST_JWT_SECRET.to_string())))
+            .service(views::get_markets),
+    )
+    .await;
 
     let user_id = "market_id_test_user".to_string();
     let market1 = "market1".to_string();
@@ -525,7 +571,10 @@ async fn test_get_markets_endpoint() {
     model.upsert_market_data(market_data).await.unwrap();
 
     let uri = format!("/markets?user_id={}", user_id);
-    let req = test::TestRequest::get().uri(&uri).to_request();
+    let req = test::TestRequest::get()
+        .uri(&uri)
+        .insert_header(("Authorization", test_bearer_token()))
+        .to_request();
     let resp = test::call_service(&app, req).await;
     assert!(resp.status().is_success());
 
@@ -544,7 +593,12 @@ async fn test_get_markets_different_users() {
         None => return,
     };
 
-    let app = test::init_service(App::new().service(views::get_markets)).await;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(JwtSecret(TEST_JWT_SECRET.to_string())))
+            .service(views::get_markets),
+    )
+    .await;
 
     let user1 = "user1".to_string();
     let user2 = "user2".to_string();
@@ -578,7 +632,10 @@ async fn test_get_markets_different_users() {
 
     // Test for user1
     let uri1 = format!("/markets?user_id={}", user1);
-    let req1 = test::TestRequest::get().uri(&uri1).to_request();
+    let req1 = test::TestRequest::get()
+        .uri(&uri1)
+        .insert_header(("Authorization", test_bearer_token()))
+        .to_request();
     let resp1 = test::call_service(&app, req1).await;
     assert!(resp1.status().is_success());
     let body1: Vec<String> = test::read_body_json(resp1).await;
@@ -587,7 +644,10 @@ async fn test_get_markets_different_users() {
 
     // Test for user2
     let uri2 = format!("/markets?user_id={}", user2);
-    let req2 = test::TestRequest::get().uri(&uri2).to_request();
+    let req2 = test::TestRequest::get()
+        .uri(&uri2)
+        .insert_header(("Authorization", test_bearer_token()))
+        .to_request();
     let resp2 = test::call_service(&app, req2).await;
     assert!(resp2.status().is_success());
     let body2: Vec<String> = test::read_body_json(resp2).await;
@@ -603,7 +663,12 @@ async fn test_get_market_statistics_resolution() {
     };
     // setup_db already drops "matches" and "market_data"
 
-    let app = test::init_service(App::new().service(views::get_market_statistics)).await;
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(JwtSecret(TEST_JWT_SECRET.to_string())))
+            .service(views::get_market_statistics),
+    )
+    .await;
 
     let user_id = "res_test_user".to_string();
     let market_id = "res_test_market".to_string();
@@ -693,7 +758,10 @@ async fn test_get_market_statistics_resolution() {
         day1,
         day2 + 86400
     );
-    let req = test::TestRequest::get().uri(&uri).to_request();
+    let req = test::TestRequest::get()
+        .uri(&uri)
+        .insert_header(("Authorization", test_bearer_token()))
+        .to_request();
     let resp = test::call_service(&app, req).await;
     assert!(resp.status().is_success());
 
