@@ -48,9 +48,7 @@ pub fn compute_penalties(
     for trade in trades {
         // For consumers, we use the Bid's area and market.
 
-        if let Some(&measured_energy) =
-            measurement_map.get(&trade.bid.area_uuid.clone())
-        {
+        if let Some(&measured_energy) = measurement_map.get(&trade.bid.area_uuid.clone()) {
             let traded_energy = trade.parameters.selected_energy_kWh;
 
             // Compute delta = measured_energy - traded_energy.

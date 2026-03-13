@@ -58,6 +58,8 @@ services:
         condition: service_healthy
     environment:
       - EXECUTION_ENGINE_OFFSET_MIN=-90
+      - TRADE_SETTLEMENT_ADDRESS=0x0000000000000000000000000000000000000000
+      - EXECUTION_ENGINE_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
 
   mongodb:
     image: mongo:5.0
@@ -136,5 +138,16 @@ services:
       dockerfile: gsy-market-orchestrator/Dockerfile
     entrypoint: ["cargo", "test", "--test", "evm_integration"]
     working_dir: /var/www/gsy-market-orchestrator
+    environment:
+      - RUST_LOG=info
+
+  gsy-execution-engine-integration-test:
+    container_name: gsy-execution-engine-integration-test
+    build:
+      context: .
+      dockerfile: gsy-execution-engine/Dockerfile
+      target: builder
+    command: cargo test --test evm_integration
+    working_dir: /var/www/gsy-execution-engine
     environment:
       - RUST_LOG=info

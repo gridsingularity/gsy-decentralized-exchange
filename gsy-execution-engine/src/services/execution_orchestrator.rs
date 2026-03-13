@@ -4,8 +4,8 @@ use tracing::info;
 
 use crate::{
     connectors::{
+        evm_connector::submit_penalties,
         offchain_storage::fetch_trades_and_measurements_for_timeslot,
-        substrate_connector::submit_penalties,
     },
     primitives::penalty_calculator::{compute_penalties, Penalty},
 };
@@ -16,7 +16,9 @@ use crate::{
 /// 3) submit them
 pub async fn run_execution_cycle(
     offchain_url: &str,
-    node_url: &str,
+    evm_node_url: &str,
+    trade_settlement_address: &str,
+    execution_engine_private_key: &str,
     timeslot: u64,
     penalty_rate: f64,
     market_duration: u64,
@@ -36,6 +38,12 @@ pub async fn run_execution_cycle(
     info!("Computed {} penalties", penalties.len());
 
     // 3) submit penalties
-    submit_penalties(node_url, penalties).await?;
+    submit_penalties(
+        evm_node_url,
+        trade_settlement_address,
+        execution_engine_private_key,
+        penalties,
+    )
+    .await?;
     Ok(())
 }

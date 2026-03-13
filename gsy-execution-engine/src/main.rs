@@ -1,14 +1,14 @@
-mod connectors;
-mod primitives;
-mod services;
-mod utils;
-
 use clap::Parser;
+use gsy_execution_engine::{
+    services::execution_orchestrator::run_execution_cycle,
+    utils::{
+        cli::{Cli, Commands},
+        telemetry::{get_subscriber, init_subscriber},
+    },
+};
 use gsy_offchain_primitives::{constants::GLOBAL_CONSTANTS, utils::timestamp_to_datetime_string};
-use services::execution_orchestrator::run_execution_cycle;
+use std::env;
 use tracing::{error, info};
-use utils::cli::{Cli, Commands};
-use utils::telemetry::{get_subscriber, init_subscriber};
 
 #[tokio::main]
 async fn main() {
@@ -28,7 +28,19 @@ async fn main() {
         } => {
             info!("Starting engine...");
             let offchain_url = format!("{}:{}", offchain_host, offchain_port);
-            let node_url = format!("{}:{}", node_host, node_port);
+            let evm_node_url = format!("{}:{}", node_host, node_port);
+            let trade_settlement_address = env::var("TRADE_SETTLEMENT_ADDRESS")
+                .unwrap_or_else(|_| "0x0000000000000000000000000000000000000000".to_string());
+            let execution_engine_private_key = env::var("EXECUTION_ENGINE_PRIVATE_KEY")
+                .unwrap_or_else(|_| {
+                    "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string()
+                });
+
+            if trade_settlement_address == "0x0000000000000000000000000000000000000000" {
+                info!(
+                    "TRADE_SETTLEMENT_ADDRESS is zero; penalty submissions will fail until configured."
+                );
+            }
 
             loop {
                 let timeslot = generate_previous_timeslot(market_duration);
@@ -39,7 +51,9 @@ async fn main() {
                 );
                 if let Err(e) = run_execution_cycle(
                     &offchain_url,
-                    &node_url,
+                    &evm_node_url,
+                    &trade_settlement_address,
+                    &execution_engine_private_key,
                     timeslot,
                     penalty_rate,
                     market_duration,
@@ -56,7 +70,7 @@ async fn main() {
 }
 
 fn generate_previous_timeslot(_market_duration: u64) -> u64 {
-	use chrono::{Duration, Utc};
+    use chrono::{Duration, Utc};
 
     let now = Utc::now();
 

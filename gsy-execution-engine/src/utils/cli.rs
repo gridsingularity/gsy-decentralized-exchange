@@ -19,7 +19,7 @@ pub enum Commands {
         #[clap(default_value_t = String::from("ws://127.0.0.1"))]
         node_host: String,
 
-        #[clap(default_value_t = String::from("9944"))]
+        #[clap(default_value_t = String::from("8545"))]
         node_port: String,
 
         #[clap(default_value_t = 30)]
