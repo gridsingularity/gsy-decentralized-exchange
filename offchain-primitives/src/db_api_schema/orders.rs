@@ -36,6 +36,8 @@ pub struct DbOrderSchema {
     pub order_type: OrderEnum,
     pub area_uuid: String,
     pub market_id: String,
+    #[serde(default)]
+    pub nonce: Option<u64>,
     pub time_slot: u64,
     pub creation_time: u64,
     pub energy_kWh: f64,

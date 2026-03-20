@@ -6,7 +6,7 @@ use gsy_ethers_listener::{
     TradeSettledFilter,
 };
 use gsy_offchain_primitives::db_api_schema::{
-    orders::{DbOrderSchema, OrderStatus, OrderEnum},
+    orders::{DbOrderSchema, OrderEnum, OrderStatus},
     trades::{TradeParameters, TradeSchema, TradeStatus},
 };
 use gsy_offchain_primitives::utils::NODE_FLOAT_SCALING_FACTOR;
@@ -33,7 +33,11 @@ impl GsyEventHandler for OrderbookEvmHandler {
         let order_id_str = format!("0x{}", hex::encode(event.order_hash));
         let owner_str = format!("{:?}", event.owner);
 
-        let order_enum = if event.is_bid { OrderEnum::Bid } else { OrderEnum::Offer };
+        let order_enum = if event.is_bid {
+            OrderEnum::Bid
+        } else {
+            OrderEnum::Offer
+        };
 
         let schema = DbOrderSchema {
             order_id: order_id_str,
@@ -41,6 +45,7 @@ impl GsyEventHandler for OrderbookEvmHandler {
             order_type: order_enum,
             area_uuid: area_uuid_str,
             market_id: market_id_str,
+            nonce: Some(event.nonce),
             time_slot: event.time_slot,
             creation_time: event.creation_time,
             energy_kWh: energy_f64,
@@ -95,7 +100,6 @@ impl GsyEventHandler for OrderbookEvmHandler {
         let ask_doc = self.db.orders().get_order_by_id(&ask_bson).await?;
 
         if let (Some(bid_order), Some(ask_order)) = (bid_doc, ask_doc) {
-
             let trade_schema = TradeSchema {
                 trade_uuid: Uuid::new_v4().to_string(),
                 status: TradeStatus::Settled,

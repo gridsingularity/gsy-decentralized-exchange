@@ -14,6 +14,12 @@ RUN cargo chef prepare --recipe-path recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
 
 FROM chef AS builder
+RUN apt-get update && apt-get install -y libssl-dev pkg-config git curl
+RUN cargo install svm-rs && svm install 0.8.20 && ln -s /root/.svm/0.8.20/solc-0.8.20 /usr/local/bin/solc
+RUN curl -L https://foundry.paradigm.xyz | bash
+ENV PATH="/root/.foundry/bin:${PATH}"
+RUN foundryup
+
 COPY ./offchain-primitives /var/www/offchain-primitives
 COPY --from=chef /var/www/offchain-primitives/target /var/www/offchain-primitives/target
 
@@ -26,4 +32,4 @@ RUN cargo build --release
 FROM rustlang/rust:nightly AS runtime
 WORKDIR /var/www/gsy-matching-engine
 COPY --from=builder /var/www/gsy-matching-engine/target/release/gsy-matching-engine /usr/local/bin
-ENTRYPOINT ["/usr/local/bin/gsy-matching-engine", "web3", "http://gsy-orderbook", "8080", "ws://gsy-node", "9944"]
+ENTRYPOINT ["/usr/local/bin/gsy-matching-engine", "web3", "http://gsy-orderbook", "8080", "ws://anvil", "8545"]

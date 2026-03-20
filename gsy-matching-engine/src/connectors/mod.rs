@@ -1,4 +1,4 @@
+pub mod evm_connector;
 mod redis_connector;
-pub mod substrate_connector;
+pub use evm_connector::evm_subscribe;
 pub use redis_connector::redis_subscribe;
-pub use substrate_connector::substrate_subscribe;

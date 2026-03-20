@@ -23,6 +23,7 @@ async fn subscribe_return_a_200_for_valid_form_data() {
         energy_rate: 10.0,
         area_uuid: area_id.to_string(),
         market_id: market_id.to_string(),
+        nonce: None,
         time_slot: 1,
         creation_time: 1677453190,
         requirements: None,

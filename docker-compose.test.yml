@@ -35,6 +35,9 @@ services:
       gsy-orderbook:
         condition: service_healthy
     working_dir: /var/www/matching-engine
+    environment:
+      - TRADE_SETTLEMENT_ADDRESS=0x0000000000000000000000000000000000000000
+      - MATCHING_ENGINE_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
 
   gsy-market-orchestrator:
     container_name: gsy-market-orchestrator
@@ -138,6 +141,17 @@ services:
       dockerfile: gsy-market-orchestrator/Dockerfile
     entrypoint: ["cargo", "test", "--test", "evm_integration"]
     working_dir: /var/www/gsy-market-orchestrator
+    environment:
+      - RUST_LOG=info
+
+  gsy-matching-engine-integration-test:
+    container_name: gsy-matching-engine-integration-test
+    build:
+      context: .
+      dockerfile: gsy-matching-engine/Dockerfile
+      target: builder
+    command: cargo test --test evm_integration
+    working_dir: /var/www/gsy-matching-engine
     environment:
       - RUST_LOG=info
 
