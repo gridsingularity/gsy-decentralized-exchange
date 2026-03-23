@@ -39,6 +39,18 @@ services:
       - TRADE_SETTLEMENT_ADDRESS=0x0000000000000000000000000000000000000000
       - MATCHING_ENGINE_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
 
+  gsy-community-client:
+    container_name: gsy-community-client
+    build:
+      dockerfile: ./gsy-community-client/Dockerfile
+    depends_on:
+      gsy-orderbook:
+        condition: service_healthy
+    environment:
+      - EVM_NODE_URL=ws://anvil:8545
+      - ORDER_REGISTRY_ADDRESS=0x0000000000000000000000000000000000000000
+      - COMMUNITY_CLIENT_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+
   gsy-market-orchestrator:
     container_name: gsy-market-orchestrator
     build:
@@ -163,5 +175,16 @@ services:
       target: builder
     command: cargo test --test evm_integration
     working_dir: /var/www/gsy-execution-engine
+    environment:
+      - RUST_LOG=info
+
+  gsy-community-client-integration-test:
+    container_name: gsy-community-client-integration-test
+    build:
+      context: .
+      dockerfile: gsy-community-client/Dockerfile
+      target: builder
+    command: cargo test --tests
+    working_dir: /var/www/gsy-community-client
     environment:
       - RUST_LOG=info

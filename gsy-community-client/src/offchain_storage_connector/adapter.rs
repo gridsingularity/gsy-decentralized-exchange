@@ -3,22 +3,16 @@ use crate::time_utils::get_current_timestamp_in_secs;
 use blake2_rfc::blake2b::blake2b;
 use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketTopologySchema};
 use gsy_offchain_primitives::db_api_schema::profiles::{ForecastSchema, MeasurementSchema};
-use gsy_offchain_primitives::utils::h256_to_string;
 use gsy_offchain_primitives::MarketType;
 use reqwest::Client;
-use subxt::utils::H256;
 use tracing::info;
 
-fn generate_market_id(market_type: MarketType, delivery_timestamp: u64) -> H256 {
+fn generate_market_id(market_type: MarketType, delivery_timestamp: u64) -> String {
     let mut buffer = Vec::new();
     buffer.extend_from_slice(market_type.as_str().as_bytes());
     buffer.extend_from_slice(&delivery_timestamp.to_be_bytes());
-    H256(
-        blake2b(32, &[], &buffer)
-            .as_bytes()
-            .try_into()
-            .expect("hash is 32 bytes"),
-    )
+    let digest = blake2b(32, &[], &buffer);
+    format!("0x{}", ethers::utils::hex::encode(digest.as_bytes()))
 }
 
 #[derive(Clone)]
@@ -84,7 +78,7 @@ impl AreaMarketInfoAdapter {
     pub fn convert_forecast_to_internal_schema(
         &self,
         forecast: &ExternalForecast,
-        area_hash: String,
+        _area_hash: String,
     ) -> ForecastSchema {
         ForecastSchema {
             area_uuid: forecast.area_uuid.clone(),
@@ -99,7 +93,7 @@ impl AreaMarketInfoAdapter {
     pub fn convert_measurement_to_internal_schema(
         &self,
         measurement: &ExternalMeasurement,
-        area_hash: String,
+        _area_hash: String,
     ) -> MeasurementSchema {
         MeasurementSchema {
             area_uuid: measurement.area_uuid.clone(),
@@ -144,7 +138,7 @@ impl AreaMarketInfoAdapter {
                     market_type: MarketType::Spot,
                     community_name: topology.community_name.clone(),
                     community_uuid: topology.community_uuid.clone(),
-                    market_id: h256_to_string(generate_market_id(MarketType::Spot, time_slot)),
+                    market_id: generate_market_id(MarketType::Spot, time_slot),
                     time_slot: time_slot as u32,
                     creation_time: get_current_timestamp_in_secs() as u32,
                     community_areas: topology

@@ -4,11 +4,10 @@ use gsy_community_client::external_api::{
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use gsy_community_client::time_utils::get_last_and_next_timeslot;
 use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketTopologySchema};
-use gsy_offchain_primitives::utils::h256_to_string;
+use gsy_offchain_primitives::MarketType;
 
 use httpmock::prelude::*;
 use serde_json;
-use subxt::utils::H256;
 use tracing::Level;
 use tracing_subscriber;
 
@@ -33,15 +32,16 @@ async fn test_get_or_create_market_topology() {
     };
 
     let expected_market = MarketTopologySchema {
+        market_type: MarketType::Spot,
         creation_time: 123,
         time_slot: 456,
-        market_id: h256_to_string(H256::random()),
+        market_id: format!("0x{}", "11".repeat(32)),
         community_uuid: "comm_uuid".to_string(),
         community_name: "comm_name".to_string(),
         community_areas: vec![AreaTopologySchema {
             area_uuid: "area_uuid".to_string(),
             name: "area_name".to_string(),
-            area_hash: h256_to_string(H256::random()),
+            area_type: "Area".to_string(),
         }],
     };
 
@@ -69,12 +69,6 @@ async fn test_get_or_create_market_topology() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tracing::Level;
-    use tracing_subscriber;
-
-    fn setup_tracing() {
-        tracing_subscriber::fmt().with_max_level(Level::INFO).init();
-    }
 
     #[test]
     fn test_convert_forecast_to_internal_schema() {
@@ -87,7 +81,8 @@ mod tests {
             area_uuid: "area_uuid".to_string(),
             confidence: 0.4,
         };
-        let converted_forecast = adapter.convert_forecast_to_internal_schema(&forecast);
+        let converted_forecast =
+            adapter.convert_forecast_to_internal_schema(&forecast, "ignored".to_string());
         assert_eq!(converted_forecast.area_uuid, "area_uuid");
         assert_eq!(converted_forecast.community_uuid, "comm_uuid");
         assert_eq!(converted_forecast.energy_kwh, 11.);
@@ -106,7 +101,8 @@ mod tests {
             energy_kwh: 11.,
             area_uuid: "area_uuid".to_string(),
         };
-        let converted_measurement = adapter.convert_measurement_to_internal_schema(&measurement);
+        let converted_measurement =
+            adapter.convert_measurement_to_internal_schema(&measurement, "ignored".to_string());
         assert_eq!(converted_measurement.area_uuid, "area_uuid");
         assert_eq!(converted_measurement.community_uuid, "comm_uuid");
         assert_eq!(converted_measurement.energy_kwh, 11.);
