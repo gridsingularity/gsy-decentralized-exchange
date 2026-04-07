@@ -1,4 +1,4 @@
-use subxt::utils::H256;
+use sp_core::H256;
 
 use gsy_offchain_primitives::utils::{h256_to_string, string_to_h256};
 

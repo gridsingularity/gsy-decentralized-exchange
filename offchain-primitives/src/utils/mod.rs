@@ -1,7 +1,8 @@
 use chrono::{prelude::DateTime, Utc};
+use sp_core::H256;
+use sp_runtime::AccountId32;
 use std::env;
 use std::str::FromStr;
-use subxt::utils::{AccountId32, H256};
 
 pub const NODE_FLOAT_SCALING_FACTOR: f64 = 10000.0;
 
@@ -17,6 +18,23 @@ pub fn string_to_h256(hex_string: String) -> H256 {
 
 pub fn string_to_account_id(account_id_str: String) -> Option<AccountId32> {
     AccountId32::from_str(&account_id_str).ok()
+}
+
+pub fn evm_address_to_account_id(evm_address: &str) -> Option<AccountId32> {
+    let trimmed = evm_address.trim();
+    let hex = trimmed.strip_prefix("0x").unwrap_or(trimmed);
+    if hex.len() != 40 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+
+    let raw = hex::decode(hex).ok()?;
+    if raw.len() != 20 {
+        return None;
+    }
+
+    let mut padded = [0u8; 32];
+    padded[12..].copy_from_slice(&raw);
+    Some(AccountId32::from(padded))
 }
 
 pub fn timestamp_to_datetime_string(timestamp: u64) -> String {

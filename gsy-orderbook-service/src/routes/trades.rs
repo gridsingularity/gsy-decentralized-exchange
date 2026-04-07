@@ -18,7 +18,6 @@ pub async fn post_trades(trades: Json<Vec<TradeSchema>>, db: DbRef) -> impl Resp
     }
 }
 
-
 #[derive(Deserialize, Debug)]
 pub struct GetTradesParams {
     start_time: Option<u32>,

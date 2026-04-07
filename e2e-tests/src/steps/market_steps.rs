@@ -1,14 +1,22 @@
-use crate::world::{gsy_node, MyWorld};
-use chrono::{Duration as ChronoDuration, Utc};
+use crate::world::MyWorld;
 use cucumber::when;
+use ethers::prelude::*;
 use gsy_community_client::external_api::{ExternalAreaTopology, ExternalCommunityTopology};
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
+use gsy_community_client::time_utils::get_last_and_next_timeslot;
 use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
-use gsy_offchain_primitives::utils::string_to_h256;
-use gsy_offchain_primitives::{constants::GLOBAL_CONSTANTS, MarketType};
+use gsy_offchain_primitives::MarketType;
+use std::str::FromStr;
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::info;
+
+abigen!(
+    MarketControllerContract,
+    r#"[
+        function isMarketOpen(bytes32 marketId) external view returns (bool)
+    ]"#
+);
 
 #[when(
     regex = r#"^the community topology and forecasts of (\d+) energy are submitted by "([^"]*)", "([^"]*)", and "([^"]*)"$"#
@@ -20,9 +28,7 @@ async fn submit_topology_forecasts_three_users(
     user2: String,
     user3: String,
 ) {
-    let orderbook_url = std::env::var("ORDERBOOK_SERVICE_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
-    let adapter = AreaMarketInfoAdapter::new(Some(orderbook_url));
+    let adapter = AreaMarketInfoAdapter::new(Some(world.orderbook_service_url.clone()));
 
     let areas = vec![
         ExternalAreaTopology {
@@ -49,29 +55,24 @@ async fn submit_topology_forecasts_three_users(
             world.target_delivery_time,
         )
         .await
-        .expect("Topology forwarding failed.");
+        .expect("Topology forwarding failed");
 
+    let market_id = H256::from_str(market.market_id.as_str())
+        .expect("Invalid market id in topology")
+        .to_fixed_bytes();
+
+    world.last_market_id = Some(market_id);
     world.topology_schema = Some(market.clone());
-    world.last_market_id = Some(string_to_h256(market.market_id.clone()));
-
-    for area in market.community_areas {
-        if area.area_uuid == format!("area{}", user1) {
-            world.buyer_hash = Some(area.area_uuid.clone());
-        }
-        if area.area_uuid == format!("area{}", user2) {
-            world.seller_hash = Some(area.area_uuid.clone());
-        }
-    }
 
     let mut forecasts = Vec::new();
-    for (i, area) in areas.iter().enumerate() {
-        let energy_val = if i == 0 { energy } else { -energy };
+    for (index, area) in areas.iter().enumerate() {
+        let energy_value = if index == 0 { energy } else { -energy };
         forecasts.push(ForecastSchema {
             area_uuid: area.area_uuid.clone(),
             community_uuid: "community1".to_string(),
             time_slot: world.target_delivery_time,
             creation_time: 1,
-            energy_kwh: energy_val,
+            energy_kwh: energy_value,
             confidence: 1.0,
         });
     }
@@ -79,7 +80,7 @@ async fn submit_topology_forecasts_three_users(
     adapter
         .forward_forecast(forecasts.clone())
         .await
-        .expect("Forecast forwarding failed.");
+        .expect("Forecast forwarding failed");
 
     world.bid_forecast = Some(forecasts[0].clone());
     world.offer_forecast = Some(forecasts[1].clone());
@@ -99,52 +100,38 @@ async fn submit_topology_forecasts(world: &mut MyWorld, energy: f64) {
 
 #[when("the Market Orchestrator opens the Spot market for the next delivery slot")]
 async fn wait_for_market_to_open(world: &mut MyWorld) {
-    info!("Waiting for the Market Orchestrator to open the Spot market...");
-    let now = Utc::now();
-    let target_timeslot_start = ((now + ChronoDuration::hours(2)).timestamp() as u64
-        / GLOBAL_CONSTANTS.time_slot_sec)
-        * GLOBAL_CONSTANTS.time_slot_sec;
+    let (_, next_timeslot) = get_last_and_next_timeslot();
+    world.target_delivery_time = next_timeslot;
 
-    world.target_delivery_time = target_timeslot_start;
     let market_id = world.generate_market_id(MarketType::Spot);
+    world.last_market_id = Some(market_id);
 
-    let mut block_sub = world
-        .subxt_client
-        .blocks()
-        .subscribe_finalized()
-        .await
-        .expect("Failed to subscribe to finalized blocks");
+    info!(
+        "Waiting for MarketController to open market {:?} for timeslot {}",
+        H256::from(market_id),
+        world.target_delivery_time
+    );
 
-    for i in 0..40 {
-        info!(
-            "Waiting for MarketStatusUpdated event for market {}... Check {}/40",
-            market_id,
-            i + 1
-        );
+    let market_controller =
+        MarketControllerContract::new(world.market_controller_address, world.provider.clone());
 
-        let block = tokio::time::timeout(Duration::from_secs(12), block_sub.next())
+    for attempt in 0..60 {
+        let is_open = market_controller
+            .is_market_open(market_id)
+            .call()
             .await
-            .expect("Timeout waiting for new block from node")
-            .unwrap()
-            .unwrap();
+            .expect("Failed to read market status from MarketController");
 
-        let events = block.events().await.unwrap();
-
-        let event = events
-            .find_first::<gsy_node::orderbook_registry::events::MarketStatusUpdated>()
-            .unwrap();
-
-        if let Some(e) = event {
-            info!("-> Found event: MarketStatusUpdated({:?}, {})", e.0, e.1);
-            if e.0 == market_id && e.1 == true {
-                info!(
-                    "✅ MarketStatusUpdated(true) event found for market {:?}",
-                    market_id
-                );
-                sleep(Duration::from_secs(6)).await;
-                return;
-            }
+        if is_open {
+            info!("Spot market opened after {} checks", attempt + 1);
+            return;
         }
+
+        sleep(Duration::from_secs(2)).await;
     }
-    panic!("Timeout: Did not find MarketStatusUpdated(true) event for the target market.");
+
+    panic!(
+        "Timeout: Spot market {:?} was not opened by orchestrator",
+        H256::from(market_id)
+    );
 }

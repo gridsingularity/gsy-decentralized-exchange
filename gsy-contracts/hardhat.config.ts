@@ -15,6 +15,10 @@ const config: HardhatUserConfig = {
     hardhat: {
       chainId: 1337,
     },
+    anvil: {
+      url: process.env.ANVIL_RPC_URL ?? "http://127.0.0.1:8545",
+      chainId: 31337,
+    },
     // Future config for Energy Web Chain (Volta)
     volta: {
       url: "https://volta-rpc.energyweb.org",

@@ -7,7 +7,8 @@ use gsy_offchain_primitives::db_api_schema::orders::{
 };
 use gsy_offchain_primitives::types::{BidOfferMatch, MatchingData, Order};
 use gsy_offchain_primitives::utils::{
-    h256_to_string, string_to_account_id, string_to_h256, NODE_FLOAT_SCALING_FACTOR,
+    evm_address_to_account_id, h256_to_string, string_to_account_id, string_to_h256,
+    NODE_FLOAT_SCALING_FACTOR,
 };
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -94,13 +95,25 @@ pub async fn evm_subscribe(
     info!("Connecting to EVM node {}", node_url);
     let provider = Provider::<Ws>::connect(node_url.as_str()).await?;
     let mut last_processed_block = provider.get_block_number().await?;
+    // Keep track of which trigger "bucket" was already processed, so we do not
+    // miss matches when multiple blocks are mined between polling iterations.
+    let mut last_processed_trigger_bucket =
+        last_processed_block.as_u64().saturating_sub(1) / MATCH_PER_NR_BLOCKS;
 
     loop {
         let block_number = provider.get_block_number().await?;
         if block_number > last_processed_block {
             info!("Block {} observed", block_number);
 
-            if block_number.as_u64() % MATCH_PER_NR_BLOCKS == 0 {
+            let current_trigger_bucket = block_number.as_u64() / MATCH_PER_NR_BLOCKS;
+            if current_trigger_bucket > last_processed_trigger_bucket {
+                info!(
+                    "Matching trigger reached (bucket {} -> {}) at block {}",
+                    last_processed_trigger_bucket,
+                    current_trigger_bucket,
+                    block_number
+                );
+
                 if let Err(error) = run_matching_cycle(
                     orderbook_url.as_str(),
                     node_url.as_str(),
@@ -111,6 +124,8 @@ pub async fn evm_subscribe(
                 {
                     error!("Matching cycle failed: {:?}", error);
                 }
+
+                last_processed_trigger_bucket = current_trigger_bucket;
             }
 
             last_processed_block = block_number;
@@ -131,6 +146,11 @@ async fn run_matching_cycle(
 
     let prepared_orders =
         fetch_open_orders_from_orderbook_service(orderbook_url.to_string()).await?;
+    info!(
+        "Prepared open orders: bids={}, offers={}",
+        prepared_orders.open_bids.len(),
+        prepared_orders.open_offers.len()
+    );
     if prepared_orders.open_bids.is_empty() || prepared_orders.open_offers.is_empty() {
         info!("No open bid/offer pairs to match");
         return Ok(());
@@ -271,6 +291,7 @@ async fn fetch_open_orders_from_orderbook_service(url: String) -> Result<Prepare
     info!("Headers: {:#?}\n", res.headers());
 
     let body = res.json::<Vec<DbOrderSchema>>().await?;
+    info!("Fetched {} total orders from orderbook", body.len());
     Ok(fetch_market_orders(body))
 }
 
@@ -289,14 +310,7 @@ fn validate_h256_hex(field_name: &str, value: &str) -> Result<()> {
 
 fn convert_db_order_to_canonical(order: &DbOrderSchema) -> Result<Order> {
     let parse_account_or_address = |value: &str| {
-        string_to_account_id(value.to_string()).or_else(|| {
-            Address::from_str(value).ok().and_then(|address| {
-                let mut padded = [0u8; 32];
-                padded[12..].copy_from_slice(address.as_bytes());
-                let account_id_32 = format!("0x{}", ethers::utils::hex::encode(padded));
-                string_to_account_id(account_id_32)
-            })
-        })
+        string_to_account_id(value.to_string()).or_else(|| evm_address_to_account_id(value))
     };
 
     validate_h256_hex("order_id", order.order_id.as_str())?;
@@ -314,8 +328,8 @@ fn convert_db_order_to_canonical(order: &DbOrderSchema) -> Result<Order> {
             market_id: string_to_h256(order.market_id.clone()),
             time_slot: order.time_slot,
             creation_time: order.creation_time,
-            energy: (order.energy_kWh * NODE_FLOAT_SCALING_FACTOR) as u64,
-            energy_rate: (order.energy_rate * NODE_FLOAT_SCALING_FACTOR) as u64,
+            energy: (order.energy_kWh * NODE_FLOAT_SCALING_FACTOR).round() as u64,
+            energy_rate: (order.energy_rate * NODE_FLOAT_SCALING_FACTOR).round() as u64,
             requirements: order.requirements.as_ref().map(|r| {
                 gsy_offchain_primitives::types::Requirements {
                     trading_partner_id: r
@@ -325,7 +339,7 @@ fn convert_db_order_to_canonical(order: &DbOrderSchema) -> Result<Order> {
                     energy_type: r.energy_type.as_ref().map(map_energy_type),
                     preferred_energy_rate: r
                         .preferred_energy_rate
-                        .map(|rate| (rate * NODE_FLOAT_SCALING_FACTOR) as u64),
+                        .map(|rate| (rate * NODE_FLOAT_SCALING_FACTOR).round() as u64),
                 }
             }),
             attributes: None,
@@ -340,8 +354,8 @@ fn convert_db_order_to_canonical(order: &DbOrderSchema) -> Result<Order> {
             market_id: string_to_h256(order.market_id.clone()),
             time_slot: order.time_slot,
             creation_time: order.creation_time,
-            energy: (order.energy_kWh * NODE_FLOAT_SCALING_FACTOR) as u64,
-            energy_rate: (order.energy_rate * NODE_FLOAT_SCALING_FACTOR) as u64,
+            energy: (order.energy_kWh * NODE_FLOAT_SCALING_FACTOR).round() as u64,
+            energy_rate: (order.energy_rate * NODE_FLOAT_SCALING_FACTOR).round() as u64,
             requirements: None,
             attributes: order.attributes.as_ref().map(|a| {
                 gsy_offchain_primitives::types::Attributes {
@@ -391,8 +405,8 @@ fn to_evm_order_data(order: &DbOrderSchema, expected_type: OrderEnum) -> Result<
         parse_evm_bytes32("market_id", order.market_id.as_str())?,
         order.time_slot,
         order.creation_time,
-        (order.energy_kWh * NODE_FLOAT_SCALING_FACTOR) as u64,
-        (order.energy_rate * NODE_FLOAT_SCALING_FACTOR) as u64,
+        (order.energy_kWh * NODE_FLOAT_SCALING_FACTOR).round() as u64,
+        (order.energy_rate * NODE_FLOAT_SCALING_FACTOR).round() as u64,
     ))
 }
 

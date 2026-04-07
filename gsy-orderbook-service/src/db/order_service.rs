@@ -103,13 +103,31 @@ impl OrderService {
         &self,
         orders_schema: Vec<DbOrderSchema>,
     ) -> Result<HashMap<usize, Bson>> {
-        match self.0.insert_many(orders_schema).await {
-            Ok(db_result) => Ok(db_result.inserted_ids),
-            Err(e) => {
-                tracing::error!("Failed to execute query: {:?}", e);
-                Err(anyhow::Error::from(e))
+        let mut upserted_ids = HashMap::new();
+
+        for (index, order_schema) in orders_schema.into_iter().enumerate() {
+            let order_id = order_schema.order_id.clone();
+            let order_doc = bson::to_document(&order_schema)?;
+
+            match self
+                .0
+                .update_one(doc! { "order_id": order_id }, doc! { "$set": order_doc })
+                .upsert(true)
+                .await
+            {
+                Ok(db_result) => {
+                    if let Some(upserted_id) = db_result.upserted_id {
+                        upserted_ids.insert(index, upserted_id);
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Failed to execute query: {:?}", e);
+                    return Err(anyhow::Error::from(e));
+                }
             }
         }
+
+        Ok(upserted_ids)
     }
 
     #[tracing::instrument(name = "Fetching order by id from database", skip(self, id))]

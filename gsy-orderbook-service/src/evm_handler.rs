@@ -31,7 +31,7 @@ impl GsyEventHandler for OrderbookEvmHandler {
         let area_uuid_str = format!("0x{}", hex::encode(event.area_uuid));
         let market_id_str = format!("0x{}", hex::encode(event.market_id));
         let order_id_str = format!("0x{}", hex::encode(event.order_hash));
-        let owner_str = format!("{:?}", event.owner);
+        let owner_str = format!("0x{}", hex::encode(event.owner.as_bytes()));
 
         let order_enum = if event.is_bid {
             OrderEnum::Bid

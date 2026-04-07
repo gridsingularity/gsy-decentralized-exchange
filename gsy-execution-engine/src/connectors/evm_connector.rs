@@ -35,6 +35,13 @@ abigen!(
                 }
             ],
             "outputs": []
+        },
+        {
+            "type": "function",
+            "name": "penaltyEnergyByTrade",
+            "stateMutability": "view",
+            "inputs": [{"name": "tradeId", "type": "bytes32"}],
+            "outputs": [{"name": "", "type": "uint256"}]
         }
     ]"#
 );
@@ -131,8 +138,34 @@ pub async fn submit_penalties(
         );
     }
 
-    info!("Submitting {} penalties to EVM", evm_penalties.len());
-    let submit_penalties_call = trade_settlement.submit_penalties(evm_penalties);
+    let mut penalties_to_submit: Vec<EvmPenaltyTuple> = Vec::new();
+    let mut skipped_existing = 0usize;
+    for penalty in evm_penalties {
+        let existing = trade_settlement
+            .penalty_energy_by_trade(penalty.2)
+            .call()
+            .await?;
+        if existing.is_zero() {
+            penalties_to_submit.push(penalty);
+        } else {
+            skipped_existing += 1;
+        }
+    }
+
+    if penalties_to_submit.is_empty() {
+        info!(
+            "All computed penalties were already recorded on-chain (skipped {}).",
+            skipped_existing
+        );
+        return Ok(());
+    }
+
+    info!(
+        "Submitting {} penalties to EVM (skipped {} already recorded)",
+        penalties_to_submit.len(),
+        skipped_existing
+    );
+    let submit_penalties_call = trade_settlement.submit_penalties(penalties_to_submit);
     let pending_tx = submit_penalties_call.send().await?;
     let tx_hash = pending_tx.tx_hash();
     let receipt = pending_tx.await?;

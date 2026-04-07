@@ -1,14 +1,39 @@
-use crate::world::{gsy_node, MyWorld};
+use crate::world::MyWorld;
 use cucumber::given;
-use subxt::utils::AccountId32;
+use ethers::prelude::*;
+use ethers::utils::keccak256;
+use std::collections::HashSet;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::time::sleep;
+
+abigen!(
+    MarketControllerContract,
+    r#"[
+        function hasRole(bytes32 role, address account) external view returns (bool)
+    ]"#
+);
+
+abigen!(
+    TradeSettlementContract,
+    r#"[
+        function hasRole(bytes32 role, address account) external view returns (bool)
+    ]"#
+);
+
+abigen!(
+    GsyVaultContract,
+    r#"[
+        function deposit() external payable
+        function balances(address account) external view returns (uint256)
+    ]"#
+);
 
 #[given("the GSY DEX services are running")]
 async fn services_are_running(world: &mut MyWorld) {
-    let orderbook_url = std::env::var("ORDERBOOK_SERVICE_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
     let res = world
         .http_client
-        .get(format!("{}/health_check", orderbook_url))
+        .get(format!("{}/health_check", world.orderbook_service_url))
         .send()
         .await
         .expect("Failed to contact orderbook service");
@@ -17,15 +42,43 @@ async fn services_are_running(world: &mut MyWorld) {
         "Orderbook service is not healthy"
     );
 
-    let block_number = world
-        .subxt_client
-        .blocks()
-        .at_latest()
+    let chain_id = world
+        .provider
+        .get_chainid()
         .await
-        .expect("Failed to contact gsy-node")
-        .number();
-    assert!(block_number > 0, "Node is not producing blocks.");
-    println!("Services are running. Current block: {}", block_number);
+        .expect("Failed to contact EVM node")
+        .as_u64();
+
+    let market_controller_code = world
+        .provider
+        .get_code(world.market_controller_address, None)
+        .await
+        .expect("Failed to read MarketController bytecode");
+    let order_registry_code = world
+        .provider
+        .get_code(world.order_registry_address, None)
+        .await
+        .expect("Failed to read OrderRegistry bytecode");
+    let trade_settlement_code = world
+        .provider
+        .get_code(world.trade_settlement_address, None)
+        .await
+        .expect("Failed to read TradeSettlement bytecode");
+
+    assert!(
+        !market_controller_code.0.is_empty(),
+        "MarketController is not deployed"
+    );
+    assert!(
+        !order_registry_code.0.is_empty(),
+        "OrderRegistry is not deployed"
+    );
+    assert!(
+        !trade_settlement_code.0.is_empty(),
+        "TradeSettlement is not deployed"
+    );
+
+    println!("Services are running. chain_id={}", chain_id);
 }
 
 #[given(
@@ -38,70 +91,138 @@ async fn users_are_registered(
     second_user: String,
     third_user: String,
 ) {
-    let sudo_signer = subxt_signer::sr25519::dev::alice();
-    let user_keys = [
-        world.users.get(&first_user).unwrap(),
-        world.users.get(&second_user).unwrap(),
-        world.users.get(&third_user).unwrap(),
+    let mut seen = HashSet::new();
+    let users = [
+        first_user.as_str(),
+        second_user.as_str(),
+        third_user.as_str(),
     ];
 
-    for keypair in user_keys.iter() {
-        let account_id: AccountId32 = keypair.public_key().into();
-        println!("Registering user: {:?}", account_id);
+    for user_name in users {
+        let wallet = world.wallet_for_user(user_name);
+        if seen.insert(wallet.address()) {
+            let signer = Arc::new(SignerMiddleware::new(
+                world.provider.clone(),
+                wallet.clone(),
+            ));
+            let vault = GsyVaultContract::new(world.gsy_vault_address, signer.clone());
 
-        let register_user_call =
-            gsy_node::runtime_types::gsy_node_runtime::RuntimeCall::GsyCollateral(
-                gsy_node::runtime_types::gsy_collateral::pallet::Call::register_user {
-                    user_account: account_id.clone(),
-                },
+            let existing_balance = vault
+                .balances(wallet.address())
+                .call()
+                .await
+                .expect("Failed to query vault balance before deposit");
+            if existing_balance > U256::zero() {
+                continue;
+            }
+
+            let mut deposited = false;
+            let mut last_error = String::new();
+            for attempt in 0..5 {
+                let deposit_call = vault
+                    .deposit()
+                    .value(U256::from(1_000_000_000_000_000_000u128));
+                match deposit_call.send().await {
+                    Ok(pending_tx) => {
+                        let receipt = pending_tx
+                            .await
+                            .expect("Failed awaiting collateral deposit receipt");
+                        assert!(
+                            receipt.is_some(),
+                            "Collateral deposit tx was dropped without receipt"
+                        );
+                        deposited = true;
+                        break;
+                    }
+                    Err(error) => {
+                        last_error = error.to_string();
+                        let is_retryable_nonce_error = last_error.contains("nonce too low")
+                            || last_error.contains("already known")
+                            || last_error.contains("replacement transaction underpriced");
+                        if is_retryable_nonce_error && attempt < 4 {
+                            sleep(Duration::from_millis(300)).await;
+                            continue;
+                        }
+
+                        panic!(
+                            "Failed to submit collateral deposit transaction: {:?}",
+                            error
+                        );
+                    }
+                };
+            }
+
+            assert!(
+                deposited,
+                "Could not submit collateral deposit transaction after retries: {}",
+                last_error
             );
 
-        let sudo_tx = gsy_node::tx().sudo().sudo(register_user_call);
+            let balance = vault
+                .balances(wallet.address())
+                .call()
+                .await
+                .expect("Failed to query vault balance");
 
-        world
-            .subxt_client
-            .tx()
-            .sign_and_submit_then_watch_default(&sudo_tx, &sudo_signer)
-            .await
-            .expect("Failed to submit register_user tx")
-            .wait_for_finalized_success()
-            .await
-            .expect("register_user extrinsic failed");
-
-        let deposit_tx = gsy_node::tx()
-            .gsy_collateral()
-            .deposit_collateral(500000000000000);
-        world
-            .subxt_client
-            .tx()
-            .sign_and_submit_then_watch_default(&deposit_tx, *keypair)
-            .await
-            .expect("Failed to submit deposit_collateral tx")
-            .wait_for_finalized_success()
-            .await
-            .expect("deposit_collateral extrinsic failed");
+            assert!(
+                balance > U256::zero(),
+                "Vault balance for {} is zero after deposit",
+                user_name
+            );
+        }
     }
 
-    let alice_account_id: AccountId32 = world.users.get(&first_user).unwrap().public_key().into();
-    println!(
-        "Registering market orchestrator/matching engine operator: {:?}",
-        alice_account_id
+    let orchestrator_wallet = std::env::var("ORCHESTRATOR_SIGNER_PRIVATE_KEY")
+        .unwrap_or_else(|_| world.private_key_for_user("alice"))
+        .parse::<LocalWallet>()
+        .expect("Invalid orchestrator private key")
+        .with_chain_id(world.chain_id);
+
+    let matching_wallet = std::env::var("MATCHING_ENGINE_PRIVATE_KEY")
+        .unwrap_or_else(|_| world.private_key_for_user("alice"))
+        .parse::<LocalWallet>()
+        .expect("Invalid matching engine private key")
+        .with_chain_id(world.chain_id);
+
+    let execution_wallet = std::env::var("EXECUTION_ENGINE_PRIVATE_KEY")
+        .unwrap_or_else(|_| world.private_key_for_user("alice"))
+        .parse::<LocalWallet>()
+        .expect("Invalid execution engine private key")
+        .with_chain_id(world.chain_id);
+
+    let market_controller =
+        MarketControllerContract::new(world.market_controller_address, world.provider.clone());
+    let trade_settlement =
+        TradeSettlementContract::new(world.trade_settlement_address, world.provider.clone());
+
+    let orchestrator_role = keccak256("ORCHESTRATOR_ROLE");
+    let operator_role = keccak256("OPERATOR_ROLE");
+    let execution_role = keccak256("EXECUTION_ENGINE_ROLE");
+
+    assert!(
+        market_controller
+            .has_role(orchestrator_role, orchestrator_wallet.address())
+            .call()
+            .await
+            .expect("Failed to check ORCHESTRATOR_ROLE"),
+        "Orchestrator account does not have ORCHESTRATOR_ROLE"
     );
 
-    let register_me_call = gsy_node::runtime_types::gsy_node_runtime::RuntimeCall::GsyCollateral(
-        gsy_node::runtime_types::gsy_collateral::pallet::Call::register_exchange_operator {
-            operator_account: alice_account_id,
-        },
+    assert!(
+        trade_settlement
+            .has_role(operator_role, matching_wallet.address())
+            .call()
+            .await
+            .expect("Failed to check OPERATOR_ROLE"),
+        "Matching engine account does not have OPERATOR_ROLE"
     );
 
-    let sudo_tx_me = gsy_node::tx().sudo().sudo(register_me_call);
-    world
-        .subxt_client
-        .tx()
-        .sign_and_submit_then_watch_default(&sudo_tx_me, &sudo_signer)
-        .await
-        .expect("Failed to submit register_exchange_operator tx")
-        .wait_for_finalized_success()
-        .await
-        .expect("register_exchange_operator extrinsic failed");
+    assert!(
+        trade_settlement
+            .has_role(execution_role, execution_wallet.address())
+            .call()
+            .await
+            .expect("Failed to check EXECUTION_ENGINE_ROLE"),
+        "Execution engine account does not have EXECUTION_ENGINE_ROLE"
+    );
 }
