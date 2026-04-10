@@ -1301,7 +1301,6 @@ dependencies = [
  "async-trait",
  "ethers",
  "hex",
- "serde",
  "tempfile",
  "tokio",
  "tracing",

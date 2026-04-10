@@ -2426,7 +2426,6 @@ dependencies = [
  "async-trait",
  "ethers",
  "hex",
- "serde",
  "tokio",
  "tracing",
 ]
@@ -2435,7 +2434,6 @@ dependencies = [
 name = "gsy-offchain-primitives"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
  "chrono",
  "hex",
  "once_cell",
@@ -2443,7 +2441,6 @@ dependencies = [
  "serde",
  "sp-core",
  "sp-runtime",
- "uuid 1.18.1",
 ]
 
 [[package]]

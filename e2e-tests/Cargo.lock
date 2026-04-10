@@ -1342,16 +1342,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "blake2-rfc",
- "chrono",
  "cucumber",
  "ethers",
- "futures",
  "gsy-community-client",
  "gsy-offchain-primitives",
  "hex",
  "reqwest 0.12.22",
- "serde",
- "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber 0.3.19",
@@ -1517,7 +1513,7 @@ dependencies = [
  "sha2 0.10.9",
  "sha3",
  "thiserror 1.0.69",
- "uuid 0.8.2",
+ "uuid",
 ]
 
 [[package]]
@@ -2232,7 +2228,6 @@ dependencies = [
 name = "gsy-offchain-primitives"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
  "chrono",
  "hex",
  "once_cell",
@@ -2240,7 +2235,6 @@ dependencies = [
  "serde",
  "sp-core",
  "sp-runtime",
- "uuid 1.18.1",
 ]
 
 [[package]]
@@ -6065,17 +6059,6 @@ checksum = "bc5cf98d8186244414c848017f0e2676b3fcb46807f6668a97dfe67359a3c4b7"
 dependencies = [
  "getrandom 0.2.16",
  "serde",
-]
-
-[[package]]
-name = "uuid"
-version = "1.18.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f87b8aa10b915a06587d0dec516c282ff295b475d94abf425d62b57710070a2"
-dependencies = [
- "getrandom 0.3.3",
- "js-sys",
- "wasm-bindgen",
 ]
 
 [[package]]
