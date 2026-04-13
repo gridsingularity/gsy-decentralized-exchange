@@ -2,21 +2,23 @@ site_name: 'GSy DEX'
 site_description: 'Documentation for the Grid Singularity Decentralized Exchange'
 site_author: 'Grid Singularity'
 nav:
-    - Home: index.md
-    - Deployment and operation:
-      - Intro: setup/installation.md
-      - Rust Setup: setup/rust-setup.md
-      - Run: setup/run.md
-      - Build: setup/build.md
-      - Connect UI: setup/connect-ui.md
-      - Docker: setup/docker.md
-    - Node Structure:
-        - Node: node/node.md
-        - Runtime: node/runtime.md
-        - Pallets: node/pallets.md
-        - Primitives: node/primitives.md
-    - System Architecture:
-        - High Level Architecture: architecture.md
+  - Home: index.md
+  - Platform Architecture:
+    - Overview: platform/overview.md
+    - System Components Overview: platform/system-components-overview.md
+    - Smart Contracts: platform/smart-contracts.md
+    - Off-Chain Storage: platform/off-chain-storage.md
+    - Matching Engine: platform/matching-engine.md
+    - Execution Engine: platform/execution-engine.md
+    - Market Orchestrator: platform/market-orchestrator.md
+    - Community Client: platform/community-client.md
+  - Setup and Operations:
+    - Installation: setup/installation.md
+    - Rust Setup: setup/rust-setup.md
+    - Build: setup/build.md
+    - Run: setup/run.md
+    - Docker: setup/docker.md
+    - Testing: setup/test.md
 
 theme:
   name: readthedocs
