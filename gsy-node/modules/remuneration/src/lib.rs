@@ -127,9 +127,7 @@ pub mod pallet {
 	/// ## Methods
 	/// - `add_payment(sender: T::AccountId, receiver: T::AccountId, amount: BalanceOf<T>) -> DispatchResult`:
 	///   Invokes the `add_payment` method in the remuneration pallet using the root origin.
-	impl<T: Config + offchain_utils::Config> RemunerationHandler<T::AccountId, BalanceOf<T>>
-		for Pallet<T>
-	{
+	impl<T: Config> RemunerationHandler<T::AccountId, BalanceOf<T>> for Pallet<T> {
 		fn add_payment(
 			sender: T::AccountId,
 			receiver: T::AccountId,
@@ -510,13 +508,6 @@ pub mod pallet {
 			eps: u64,
 			n: u64,
 		},
-		/// Demonstration event for cross-pallet utility call.
-		/// Emitted when sum is computed via offchain-utils::Pallet::<T>::sum_u64.
-		SumComputed {
-			a: u64,
-			b: u64,
-			sum: u64,
-		},
 		BridgeFundsReserved {
 			bridge_id: Vec<u8>,
 			who: T::AccountId,
@@ -570,10 +561,7 @@ pub mod pallet {
 	/// These functions allow users and other pallets to interact with the pallet's storage and logic,
 	/// ensuring proper access control and event generation for key actions.
 	#[pallet::call]
-	impl<T: Config> Pallet<T>
-	where
-		T: offchain_utils::Config,
-	{
+	impl<T: Config> Pallet<T> {
 		/// ## Update Custodian
 		///
 		/// Allows updating the custodian user. If no custodian is set, any user can initialize it.
@@ -1255,19 +1243,6 @@ pub mod pallet {
 				eps: new_eps,
 				n: new_n,
 			});
-			Ok(())
-		}
-
-		/// Demo: call offchain-utils helper to sum two u64 values and emit the result.
-		/// This shows how the remuneration pallet can invoke functionality provided by
-		/// a separate pallet (offchain-utils), which in general can perform heavy work offchain.
-		#[transactional]
-		#[pallet::weight(< T as Config >::RemunerationWeightInfo::sum_via_offchain_utils())]
-		#[pallet::call_index(9)]
-		pub fn sum_via_offchain_utils(origin: OriginFor<T>, a: u64, b: u64) -> DispatchResult {
-			let _who = ensure_signed(origin)?;
-			let sum = offchain_utils::Pallet::<T>::sum_u64(a, b);
-			Self::deposit_event(Event::SumComputed { a, b, sum });
 			Ok(())
 		}
 	}

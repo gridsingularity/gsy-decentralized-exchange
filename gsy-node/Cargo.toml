@@ -5,7 +5,6 @@ members = [
     "modules/gsy-collateral",
     "modules/orderbook-worker",
     "modules/remuneration",
-    "modules/offchain-utils",
     "modules/stripe-bridge",
     "runtime",
 ]
@@ -22,7 +21,6 @@ orderbook-registry = { version = '0.0.2', default-features = false, path = './mo
 orderbook-worker = { version = '0.0.2', default-features = false, path = './modules/orderbook-worker' }
 trades-settlement = { version = '0.0.2', default-features = false, path = './modules/trades-settlement' }
 remuneration = { version = '0.0.2', default-features = false, path = './modules/remuneration' }
-offchain-utils = { version = '0.0.1', default-features = false, path = './modules/offchain-utils' }
 stripe-bridge = { version = '0.0.2', default-features = false, path = './modules/stripe-bridge' }
 
 # Base substrate frame dependencies

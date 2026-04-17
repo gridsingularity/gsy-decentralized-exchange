@@ -20,7 +20,6 @@ frame_support::construct_runtime!(
 		OrderbookRegistry: orderbook_registry,
 		OrderbookWorker: orderbook_worker,
 		Timestamp: pallet_timestamp,
-		OffchainUtils: offchain_utils,
 		Remuneration: remuneration,
 		StripeBridge: stripe_bridge,
 	}
@@ -131,15 +130,6 @@ impl remuneration::Config for Test {
 	type RemunerationWeightInfo = remuneration::weights::SubstrateWeightInfo<Test>;
 	type MarketSlotDuration = MarketSlotDuration;
 	type RemunerationHandler = remuneration::Pallet<Test>;
-}
-
-parameter_types! {
-	pub const OffchainMaxJobsPerBlock: u32 = 8;
-}
-impl offchain_utils::Config for Test {
-	type RuntimeEvent = RuntimeEvent;
-	type MaxJobsPerBlock = OffchainMaxJobsPerBlock;
-	type WeightInfo = offchain_utils::weights::SubstrateWeightInfo<Test>;
 }
 
 impl stripe_bridge::Config for Test {

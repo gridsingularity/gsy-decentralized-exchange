@@ -2868,7 +2868,6 @@ dependencies = [
  "gsy-collateral",
  "gsy-primitives",
  "log",
- "offchain-utils",
  "orderbook-registry",
  "orderbook-worker",
  "pallet-aura",
@@ -4858,21 +4857,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "offchain-utils"
-version = "0.0.1"
-dependencies = [
- "frame-support",
- "frame-system",
- "parity-scale-codec 3.6.9",
- "scale-info 2.11.2",
- "sp-core",
- "sp-io",
- "sp-offchain",
- "sp-runtime",
- "sp-std 14.0.0 (git+https://github.com/paritytech/polkadot-sdk.git?tag=polkadot-v1.9.0)",
-]
-
-[[package]]
 name = "oid-registry"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6179,7 +6163,6 @@ dependencies = [
  "gsy-collateral",
  "gsy-primitives",
  "log",
- "offchain-utils",
  "orderbook-registry",
  "orderbook-worker",
  "pallet-balances",
@@ -8879,7 +8862,6 @@ dependencies = [
  "gsy-collateral",
  "gsy-primitives",
  "log",
- "offchain-utils",
  "orderbook-registry",
  "orderbook-worker",
  "pallet-balances",

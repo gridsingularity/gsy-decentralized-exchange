@@ -23,7 +23,6 @@ frame_support::construct_runtime!(
 		OrderbookWorker: orderbook_worker,
 		// TradesSettlement: trades_settlement,
 		Timestamp: pallet_timestamp,
-		OffchainUtils: offchain_utils,
 		Remuneration: remuneration,
 	}
 );
@@ -135,16 +134,6 @@ impl orderbook_worker::Config for Test {
 	type Call = frame_system::pallet_prelude::RuntimeCallFor<Test>;
 	type UnsignedPriority = UnsignedPriority;
 	type WeightInfo = orderbook_worker::weights::SubstrateWeightInfo<Test>;
-}
-
-// Satisfy offchain-utils Config bound for Test
-parameter_types! {
-	pub const OffchainMaxJobsPerBlock: u32 = 8;
-}
-impl offchain_utils::Config for Test {
-	type RuntimeEvent = RuntimeEvent;
-	type MaxJobsPerBlock = OffchainMaxJobsPerBlock;
-	type WeightInfo = offchain_utils::weights::SubstrateWeightInfo<Test>;
 }
 
 type Extrinsic = TestXt<RuntimeCall, ()>;

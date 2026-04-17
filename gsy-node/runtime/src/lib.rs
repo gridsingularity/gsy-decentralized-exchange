@@ -75,7 +75,6 @@ pub use trades_settlement;
 pub use remuneration;
 pub use stripe_bridge;
 pub use gsy_primitives::v0::{AccountId, Balance, BlockNumber, Hash, Signature, Nonce};
-pub use offchain_utils;
 
 /// Index of a transaction in the chain.
 pub type Index = u32;
@@ -324,15 +323,6 @@ impl remuneration::Config for Runtime {
 }
 
 parameter_types! {
-	pub const OffchainMaxJobsPerBlock: u32 = 8;
-}
-impl offchain_utils::Config for Runtime {
-	type RuntimeEvent = RuntimeEvent;
-	type MaxJobsPerBlock = OffchainMaxJobsPerBlock;
-	type WeightInfo = offchain_utils::weights::SubstrateWeightInfo<Runtime>;
-}
-
-parameter_types! {
 	// Priority for a transaction. Additive. Higher is better.
 	pub const UnsignedPriority: u64 = 1 << 20;
 }
@@ -476,9 +466,6 @@ mod runtime {
 
 	#[runtime::pallet_index(11)]
 	pub type Remuneration = remuneration;
-
-	#[runtime::pallet_index(12)]
-	pub type OffchainUtils = offchain_utils;
 
 	#[runtime::pallet_index(13)]
 	pub type StripeBridge = stripe_bridge;

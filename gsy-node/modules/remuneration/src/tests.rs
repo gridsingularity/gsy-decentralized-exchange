@@ -1973,25 +1973,3 @@ mod stripe_bridge_tests {
 		});
 	}
 }
-
-#[cfg(test)]
-mod offchain_utils_integration_tests {
-	use super::*;
-	use frame_support::assert_ok;
-
-	#[test]
-	fn sum_via_offchain_utils_emits_correct_sum() {
-		new_test_ext().execute_with(|| {
-			// Directly exercise the offchain-utils helper function
-			assert_eq!(offchain_utils::Pallet::<Test>::sum_u64(7, 5), 12);
-			assert_eq!(offchain_utils::Pallet::<Test>::sum_u64(u64::MAX, 1), u64::MAX);
-
-			// Also ensure the remuneration extrinsic dispatches (smoke test)
-			assert_ok!(Remuneration::sum_via_offchain_utils(
-				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
-				7,
-				5
-			));
-		});
-	}
-}
