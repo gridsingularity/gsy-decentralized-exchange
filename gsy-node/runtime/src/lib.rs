@@ -73,6 +73,7 @@ pub use gsy_collateral;
 pub use orderbook_worker;
 pub use trades_settlement;
 pub use remuneration;
+pub use stripe_bridge;
 pub use gsy_primitives::v0::{AccountId, Balance, BlockNumber, Hash, Signature, Nonce};
 pub use offchain_utils;
 
@@ -344,6 +345,13 @@ impl orderbook_worker::Config for Runtime {
 	type WeightInfo = orderbook_worker::weights::SubstrateWeightInfo<Runtime>;
 }
 
+impl stripe_bridge::Config for Runtime {
+	type AuthorityId = stripe_bridge::crypto::TestAuthId;
+	type RuntimeEvent = RuntimeEvent;
+	type RuntimeCall = RuntimeCall;
+	type UnsignedPriority = UnsignedPriority;
+	type WeightInfo = stripe_bridge::weights::SubstrateWeightInfo<Runtime>;
+}
 
 impl<C> frame_system::offchain::SendTransactionTypes<C> for Runtime
 	where
@@ -471,6 +479,9 @@ mod runtime {
 
 	#[runtime::pallet_index(12)]
 	pub type OffchainUtils = offchain_utils;
+
+	#[runtime::pallet_index(13)]
+	pub type StripeBridge = stripe_bridge;
 }
 
 /// The address format for describing accounts.
@@ -776,4 +787,3 @@ impl_runtime_apis! {
 		}
 	}
 }
-

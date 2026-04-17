@@ -61,6 +61,7 @@ orderbook-worker = { workspace = true }
 gsy-collateral = { workspace = true }
 trades-settlement = { workspace = true }
 remuneration = { workspace = true }
+stripe-bridge = { workspace = true }
 
 # Used for the GSy node's RPCs
 frame-system-rpc-runtime-api = { workspace = true }
