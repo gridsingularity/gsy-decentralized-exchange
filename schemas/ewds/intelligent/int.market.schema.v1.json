@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "int.market.schema.v1",
+  "title": "GSY Market Topology",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "marketId": { "type": "string", "pattern": "^0x[a-fA-F0-9]{64}$" },
+    "marketType": { "type": "string", "enum": ["spot", "settlement", "flexibility"] },
+    "communityUuid": { "type": "string", "minLength": 1 },
+    "communityName": { "type": "string", "minLength": 1 },
+    "timeSlot": {
+      "oneOf": [
+        { "type": "string", "format": "date-time" },
+        { "type": "integer", "minimum": 0 }
+      ]
+    },
+    "creationTime": { "type": "integer", "minimum": 0 },
+    "communityAreas": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "areaUuid": { "type": "string", "minLength": 1 },
+          "name": { "type": "string", "minLength": 1 },
+          "areaType": { "type": "string", "minLength": 1 }
+        },
+        "required": ["areaUuid", "name", "areaType"]
+      }
+    }
+  },
+  "required": [
+    "marketId",
+    "marketType",
+    "communityUuid",
+    "communityName",
+    "timeSlot",
+    "creationTime",
+    "communityAreas"
+  ]
+}

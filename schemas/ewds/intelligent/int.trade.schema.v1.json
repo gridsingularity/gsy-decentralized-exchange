@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "int.trade.schema.v1",
+  "title": "int:Trade",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "tradeId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "bidId": {
+      "type": "string",
+      "pattern": "^0x[a-fA-F0-9]{64}$"
+    },
+    "offerId": {
+      "type": "string",
+      "pattern": "^0x[a-fA-F0-9]{64}$"
+    },
+    "residualBidId": {
+      "type": ["string", "null"],
+      "pattern": "^0x[a-fA-F0-9]{64}$"
+    },
+    "residualOfferId": {
+      "type": ["string", "null"],
+      "pattern": "^0x[a-fA-F0-9]{64}$"
+    },
+    "marketId": {
+      "type": "string",
+      "pattern": "^0x[a-fA-F0-9]{64}$"
+    },
+    "tradeStatus": {
+      "type": "string",
+      "enum": ["settled", "executed"]
+    },
+    "tradeQuantity": {
+      "type": "number",
+      "minimum": 0
+    },
+    "tradePrice": {
+      "type": "number",
+      "minimum": 0
+    },
+    "tradeTimestamp": {
+      "oneOf": [
+        { "type": "string", "format": "date-time" },
+        { "type": "integer", "minimum": 0 }
+      ]
+    },
+    "buyer": {
+      "type": "string"
+    },
+    "seller": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "tradeId",
+    "bidId",
+    "offerId",
+    "marketId",
+    "tradeStatus",
+    "tradeQuantity",
+    "tradePrice",
+    "tradeTimestamp",
+    "buyer",
+    "seller"
+  ]
+}

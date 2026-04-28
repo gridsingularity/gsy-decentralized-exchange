@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "int.trades.query.request.v1",
+  "title": "trades.query request",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "requestId": { "type": "string", "minLength": 1 },
+    "operation": { "const": "trades.query" },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "startTime": { "type": "integer", "minimum": 0 },
+        "endTime": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["startTime", "endTime"]
+    }
+  },
+  "required": ["requestId", "operation", "payload"]
+}

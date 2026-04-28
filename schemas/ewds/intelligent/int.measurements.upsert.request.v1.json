@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "int.measurements.upsert.request.v1",
+  "title": "measurements.upsert request",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "requestId": { "type": "string", "minLength": 1 },
+    "operation": { "const": "measurements.upsert" },
+    "payload": {
+      "type": "array",
+      "items": { "$ref": "./int.measurement.schema.v1.json" },
+      "minItems": 1
+    }
+  },
+  "required": ["requestId", "operation", "payload"]
+}

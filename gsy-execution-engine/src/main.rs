@@ -27,7 +27,9 @@ async fn main() {
             penalty_rate,
         } => {
             info!("Starting engine...");
-            let offchain_url = format!("{}:{}", offchain_host, offchain_port);
+            let default_offchain_storage_url = format!("{}:{}", offchain_host, offchain_port);
+            let offchain_url = env::var("OFFCHAIN_STORAGE_URL")
+                .unwrap_or_else(|_| default_offchain_storage_url.clone());
             let evm_node_url = format!("{}:{}", node_host, node_port);
             let trade_settlement_address = env::var("TRADE_SETTLEMENT_ADDRESS")
                 .unwrap_or_else(|_| "0x0000000000000000000000000000000000000000".to_string());
@@ -41,6 +43,7 @@ async fn main() {
                     "TRADE_SETTLEMENT_ADDRESS is zero; penalty submissions will fail until configured."
                 );
             }
+            info!("Using off-chain storage URL: {}", offchain_url);
 
             loop {
                 let timeslot = generate_previous_timeslot(market_duration);

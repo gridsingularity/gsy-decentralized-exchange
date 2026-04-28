@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "int.orders.query.request.v1",
+  "title": "orders.query request",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "requestId": { "type": "string", "minLength": 1 },
+    "operation": { "const": "orders.query" },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "marketId": { "type": "string", "pattern": "^0x[a-fA-F0-9]{64}$" },
+        "startTime": { "type": "integer", "minimum": 0 },
+        "endTime": { "type": "integer", "minimum": 0 }
+      }
+    }
+  },
+  "required": ["requestId", "operation", "payload"]
+}

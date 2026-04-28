@@ -2034,6 +2034,8 @@ dependencies = [
  "ethers-solc",
  "gsy-offchain-primitives",
  "reqwest",
+ "serde",
+ "serde_json",
  "tempfile",
  "tokio",
  "tracing",

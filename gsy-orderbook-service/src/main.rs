@@ -4,6 +4,7 @@ use gsy_ethers_listener::{GsyEthersListener, ListenerConfig};
 use gsy_orderbook_service::configuration::get_configuration;
 use gsy_orderbook_service::db::{init_database, DbRef};
 use gsy_orderbook_service::evm_handler::OrderbookEvmHandler;
+use gsy_orderbook_service::ewds_handler::{start_ewds_request_handler, EwdsHandlerConfig};
 use gsy_orderbook_service::scheduler::start_scheduler;
 use gsy_orderbook_service::startup::run;
 use gsy_orderbook_service::telemetry::{get_subscriber, init_subscriber};
@@ -51,6 +52,14 @@ async fn main() -> Result<(), anyhow::Error> {
     tokio::task::spawn(async move {
         start_scheduler(db, scheduler_interval).await;
     });
+
+    let ewds_config = EwdsHandlerConfig::from_env();
+    if ewds_config.enabled {
+        let db_for_ewds = db_connection_wrapper.clone();
+        tokio::task::spawn(async move {
+            start_ewds_request_handler(db_for_ewds, ewds_config).await;
+        });
+    }
 
     let address = format!(
         "{}:{}",

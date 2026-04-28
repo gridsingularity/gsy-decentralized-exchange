@@ -51,7 +51,13 @@ async fn main() {
             node_port,
         } => {
             async {
-                let orderbook_url = format!("{}:{}/{}", orderbook_host, orderbook_port, "orders");
+                let default_offchain_storage_url = format!("{}:{}", orderbook_host, orderbook_port);
+                let offchain_storage_url = env::var("OFFCHAIN_STORAGE_URL")
+                    .unwrap_or_else(|_| default_offchain_storage_url.clone());
+                let orderbook_url = format!(
+                    "{}/orders",
+                    offchain_storage_url.trim_end_matches('/')
+                );
                 let node_url = format!("{}:{}", node_host, node_port);
                 let trade_settlement_address = env::var("TRADE_SETTLEMENT_ADDRESS")
                     .unwrap_or_else(|_| "0x0000000000000000000000000000000000000000".to_string());
@@ -66,6 +72,7 @@ async fn main() {
                         "TRADE_SETTLEMENT_ADDRESS is zero; settlement submissions will fail until configured."
                     );
                 }
+                info!("Using off-chain storage URL: {}", offchain_storage_url);
 
                 if let Err(error) =
                     evm_subscribe(

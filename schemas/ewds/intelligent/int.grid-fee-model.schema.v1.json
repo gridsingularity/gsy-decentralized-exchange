@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "int.grid-fee-model.schema.v1",
+  "title": "int:GridFeeModel",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "modelName": { "type": "string", "minLength": 1 },
+    "modelDescription": { "type": "string" },
+    "modelParameters": {
+      "oneOf": [
+        { "type": "string" },
+        { "type": "object" }
+      ]
+    },
+    "modelProvider": { "type": "string" }
+  },
+  "required": ["modelName"]
+}

@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "int.order.schema.v1",
+  "title": "int:Order",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "orderId": {
+      "type": "string",
+      "pattern": "^0x[a-fA-F0-9]{64}$"
+    },
+    "marketId": {
+      "type": "string",
+      "pattern": "^0x[a-fA-F0-9]{64}$"
+    },
+    "orderType": {
+      "type": "string",
+      "enum": ["bid", "offer"]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["open", "executed", "expired", "deleted"]
+    },
+    "quantity": {
+      "type": "number",
+      "minimum": 0
+    },
+    "priceLimit": {
+      "type": "number",
+      "minimum": 0
+    },
+    "timeSlot": {
+      "oneOf": [
+        { "type": "string", "format": "date-time" },
+        { "type": "integer", "minimum": 0 }
+      ]
+    },
+    "creationTime": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "createdBy": {
+      "type": "string"
+    },
+    "requirements": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tradingPartnerId": { "type": ["string", "null"] },
+        "energyType": {
+          "type": ["string", "null"],
+          "enum": ["clean", "battery", "fossilFuel", "import", null]
+        },
+        "preferredEnergyRate": {
+          "type": ["number", "null"],
+          "minimum": 0
+        }
+      }
+    },
+    "attributes": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tradingPartnerId": { "type": ["string", "null"] },
+        "energyType": {
+          "type": "string",
+          "enum": ["clean", "battery", "fossilFuel", "import"]
+        }
+      }
+    }
+  },
+  "required": [
+    "orderId",
+    "marketId",
+    "orderType",
+    "status",
+    "quantity",
+    "priceLimit",
+    "timeSlot",
+    "creationTime",
+    "createdBy"
+  ]
+}

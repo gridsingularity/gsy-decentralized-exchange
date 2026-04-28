@@ -5,6 +5,7 @@ use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketT
 use gsy_offchain_primitives::db_api_schema::profiles::{ForecastSchema, MeasurementSchema};
 use gsy_offchain_primitives::MarketType;
 use reqwest::Client;
+use std::env;
 use tracing::info;
 
 fn generate_market_id(market_type: MarketType, delivery_timestamp: u64) -> String {
@@ -26,13 +27,17 @@ pub struct AreaMarketInfoAdapter {
 
 impl AreaMarketInfoAdapter {
     pub fn new(host: Option<String>) -> Self {
-        let hostname = host.unwrap_or_else(|| "http://gsy-orderbook:8080".to_string());
+        let hostname = env::var("OFFCHAIN_STORAGE_URL")
+            .ok()
+            .or(host)
+            .unwrap_or_else(|| "http://gsy-orderbook:8080".to_string());
+        let base_url = hostname.trim_end_matches('/').to_string();
         AreaMarketInfoAdapter {
             client: Client::new(),
-            internal_forecast_url: hostname.clone() + "/forecasts",
-            internal_measurements_url: hostname.clone() + "/measurements",
-            internal_topology_url: hostname.clone() + "/market",
-            internal_community_market_url: hostname.clone() + "/community-market",
+            internal_forecast_url: base_url.clone() + "/forecasts",
+            internal_measurements_url: base_url.clone() + "/measurements",
+            internal_topology_url: base_url.clone() + "/market",
+            internal_community_market_url: base_url.clone() + "/community-market",
         }
     }
 

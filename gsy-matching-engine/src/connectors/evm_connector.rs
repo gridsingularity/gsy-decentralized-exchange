@@ -10,8 +10,11 @@ use gsy_offchain_primitives::utils::{
     evm_address_to_account_id, h256_to_string, string_to_account_id, string_to_h256,
     NODE_FLOAT_SCALING_FACTOR,
 };
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::env;
 use std::str::FromStr;
+use std::time::Instant;
 use tokio::time::{sleep, Duration};
 use tracing::{error, info, warn};
 
@@ -80,6 +83,45 @@ abigen!(
 type EvmOrderDataTuple = (Address, u64, [u8; 32], [u8; 32], u64, u64, u64, u64);
 type EvmMatchTuple = (EvmOrderDataTuple, EvmOrderDataTuple, U256, U256);
 
+#[derive(Serialize)]
+struct EwdsRequestEnvelope {
+    request_id: String,
+    operation: String,
+    payload: serde_json::Value,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EwdsSendMessageDto {
+    fqcn: String,
+    topic_name: String,
+    topic_version: String,
+    topic_owner: String,
+    transaction_id: String,
+    payload: String,
+    anonymous_recipient: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EwdsMessageDto {
+    payload: String,
+}
+
+#[derive(Deserialize)]
+struct EwdsOrdersQueryResponse {
+    request_id: String,
+    success: bool,
+    data: Option<Vec<DbOrderSchema>>,
+    error: Option<EwdsErrorPayload>,
+}
+
+#[derive(Deserialize)]
+struct EwdsErrorPayload {
+    code: String,
+    message: String,
+}
+
 struct PreparedOrders {
     open_bids: Vec<Order>,
     open_offers: Vec<Order>,
@@ -109,9 +151,7 @@ pub async fn evm_subscribe(
             if current_trigger_bucket > last_processed_trigger_bucket {
                 info!(
                     "Matching trigger reached (bucket {} -> {}) at block {}",
-                    last_processed_trigger_bucket,
-                    current_trigger_bucket,
-                    block_number
+                    last_processed_trigger_bucket, current_trigger_bucket, block_number
                 );
 
                 if let Err(error) = run_matching_cycle(
@@ -286,6 +326,14 @@ fn fetch_market_orders(body: Vec<DbOrderSchema>) -> PreparedOrders {
 }
 
 async fn fetch_open_orders_from_orderbook_service(url: String) -> Result<PreparedOrders, Error> {
+    if env::var("OFFCHAIN_STORAGE_TRANSPORT")
+        .map(|value| value.eq_ignore_ascii_case("ewds"))
+        .unwrap_or(false)
+    {
+        info!("Fetching orders via EWDS transport");
+        return fetch_open_orders_via_ewds(url).await;
+    }
+
     let res = reqwest::get(url).await?;
     info!("Response: {:?} {}", res.version(), res.status());
     info!("Headers: {:#?}\n", res.headers());
@@ -293,6 +341,133 @@ async fn fetch_open_orders_from_orderbook_service(url: String) -> Result<Prepare
     let body = res.json::<Vec<DbOrderSchema>>().await?;
     info!("Fetched {} total orders from orderbook", body.len());
     Ok(fetch_market_orders(body))
+}
+
+async fn fetch_open_orders_via_ewds(fallback_url: String) -> Result<PreparedOrders, Error> {
+    let gateway_base =
+        env::var("EWDS_GATEWAY_URL").unwrap_or_else(|_| "http://ewds-gateway-api:3333".to_string());
+    let request_fqcn =
+        env::var("EWDS_REQUEST_FQCN").unwrap_or_else(|_| "gsy.dex.offchain.request".to_string());
+    let response_fqcn =
+        env::var("EWDS_RESPONSE_FQCN").unwrap_or_else(|_| "gsy.dex.offchain.response".to_string());
+    let topic_owner =
+        env::var("EWDS_TOPIC_OWNER").unwrap_or_else(|_| "gsy.dex.offchain-storage".to_string());
+    let request_topic =
+        env::var("EWDS_ORDERS_REQUEST_TOPIC").unwrap_or_else(|_| "orders.query".to_string());
+    let response_topic = env::var("EWDS_ORDERS_RESPONSE_TOPIC")
+        .unwrap_or_else(|_| "orders.query.response".to_string());
+
+    let timeout_ms = env::var("EWDS_RESPONSE_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(8_000);
+    let poll_interval_ms = env::var("EWDS_RESPONSE_POLL_INTERVAL_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(400);
+
+    let request_id = format!(
+        "orders-query-{}-{}",
+        chrono::Utc::now().timestamp_millis(),
+        std::process::id()
+    );
+
+    let query_payload = parse_query_params_from_url(&fallback_url);
+    let envelope = EwdsRequestEnvelope {
+        request_id: request_id.clone(),
+        operation: "orders.query".to_string(),
+        payload: query_payload,
+    };
+
+    let send_message_body = EwdsSendMessageDto {
+        fqcn: request_fqcn,
+        topic_name: request_topic,
+        topic_version: "1.0.0".to_string(),
+        topic_owner: topic_owner.clone(),
+        transaction_id: request_id.clone(),
+        payload: serde_json::to_string(&envelope)?,
+        anonymous_recipient: Vec::new(),
+    };
+
+    let client = reqwest::Client::new();
+    let post_url = format!("{}/api/v2/messages", gateway_base.trim_end_matches('/'));
+    let send_response = client
+        .post(post_url)
+        .json(&send_message_body)
+        .send()
+        .await?;
+    if !send_response.status().is_success() {
+        return Err(anyhow!(
+            "EWDS message send failed for orders.query: HTTP {}",
+            send_response.status()
+        ));
+    }
+
+    let started = Instant::now();
+    let get_url = format!("{}/api/v2/messages", gateway_base.trim_end_matches('/'));
+    loop {
+        if started.elapsed().as_millis() as u64 > timeout_ms {
+            return Err(anyhow!(
+                "EWDS timeout waiting for orders.query response (request_id={})",
+                request_id
+            ));
+        }
+
+        let mut poll_url = reqwest::Url::parse(get_url.as_str())?;
+        {
+            let mut query = poll_url.query_pairs_mut();
+            query.append_pair("fqcn", response_fqcn.as_str());
+            query.append_pair("amount", "100");
+            query.append_pair("topicName", response_topic.as_str());
+            query.append_pair("topicOwner", topic_owner.as_str());
+        }
+
+        let response = client.get(poll_url).send().await?;
+
+        if response.status().is_success() {
+            let messages = response
+                .json::<Vec<EwdsMessageDto>>()
+                .await
+                .unwrap_or_default();
+            for message in messages {
+                let parsed = serde_json::from_str::<EwdsOrdersQueryResponse>(&message.payload);
+                if let Ok(parsed_payload) = parsed {
+                    if parsed_payload.request_id == request_id {
+                        if !parsed_payload.success {
+                            let error_message = parsed_payload
+                                .error
+                                .map(|error| format!("{}: {}", error.code, error.message))
+                                .unwrap_or_else(|| "Unknown EWDS error".to_string());
+                            return Err(anyhow!(
+                                "EWDS orders.query returned error (request_id={}): {}",
+                                request_id,
+                                error_message
+                            ));
+                        }
+                        let orders = parsed_payload.data.unwrap_or_default();
+                        info!("Fetched {} total orders from EWDS", orders.len());
+                        return Ok(fetch_market_orders(orders));
+                    }
+                }
+            }
+        }
+
+        sleep(Duration::from_millis(poll_interval_ms)).await;
+    }
+}
+
+fn parse_query_params_from_url(url: &str) -> serde_json::Value {
+    if let Ok(parsed_url) = reqwest::Url::parse(url) {
+        let mut map = serde_json::Map::new();
+        for (key, value) in parsed_url.query_pairs() {
+            map.insert(
+                key.to_string(),
+                serde_json::Value::String(value.to_string()),
+            );
+        }
+        return serde_json::Value::Object(map);
+    }
+    serde_json::json!({})
 }
 
 fn validate_h256_hex(field_name: &str, value: &str) -> Result<()> {
