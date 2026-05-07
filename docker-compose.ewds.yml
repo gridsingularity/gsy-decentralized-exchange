@@ -1,0 +1,206 @@
+x-ddhub-gateway-env: &ddhub-gateway-env
+  NODE_ENV: ${EWDS_GATEWAY_NODE_ENV:-test}
+  DSB_BASE_URL: ${EWDS_BROKER_BASE_URL:-https://ddhub-ewc.energyweb.org}
+  CACHE_SERVER_URL: ${EWDS_CACHE_SERVER_URL:-https://identitycache.energyweb.org/v1}
+  EVENT_SERVER_URL: ${EWDS_EVENT_SERVER_URL:-https://identitycache.energyweb.org}
+  SECRETS_ENGINE: ${SECRETS_ENGINE:-vault}
+  VAULT_ENDPOINT: ${VAULT_ENDPOINT:-http://vault_demo:8200}
+  VAULT_TOKEN: ${VAULT_TOKEN:-}
+  DB_NAME: ${EWDS_GATEWAY_DB_NAME:-postgresql://ddhub:password123@postgres:5432/ddhub}
+  PARENT_NAMESPACE: ${EWDS_PARENT_NAMESPACE:-dsmb.apps.ddhub.energyweb.auth.ewc}
+  DID_REGISTRY_ADDRESS: ${EWDS_DID_REGISTRY_ADDRESS:-0xE29672f34e92b56C9169f9D485fFc8b9A136BCE4}
+  MTLS_ENABLED: "${EWDS_MTLS_ENABLED:-true}"
+  RPC_URL: ${EWDS_RPC_URL:-https://rpc.energyweb.org/}
+  ENS_URL: ${EWDS_ENS_URL:-https://rpc.energyweb.org/}
+  CHAIN_ID: "${EWDS_CHAIN_ID:-246}"
+  CHAIN_NAME: ${EWDS_CHAIN_NAME:-EWC}
+
+x-gsy-ewds-env: &gsy-ewds-env
+  EWDS_GATEWAY_URL: ${EWDS_GATEWAY_URL:-http://ddhub-gateway-api:3333}
+  EWDS_REQUEST_FQCN: ${EWDS_REQUEST_FQCN:-gsy.dex.offchain.request}
+  EWDS_RESPONSE_FQCN: ${EWDS_RESPONSE_FQCN:-gsy.dex.offchain.response}
+  EWDS_TOPIC_OWNER: ${EWDS_TOPIC_OWNER:-dsmb.apps.ddhub.energyweb.auth.ewc}
+  EWDS_ORDERS_REQUEST_TOPIC: ${EWDS_ORDERS_REQUEST_TOPIC:-orders.query}
+  EWDS_ORDERS_RESPONSE_TOPIC: ${EWDS_ORDERS_RESPONSE_TOPIC:-orders.query.response}
+  EWDS_TRADES_REQUEST_TOPIC: ${EWDS_TRADES_REQUEST_TOPIC:-trades.query}
+  EWDS_TRADES_RESPONSE_TOPIC: ${EWDS_TRADES_RESPONSE_TOPIC:-trades.query.response}
+  EWDS_MEASUREMENTS_REQUEST_TOPIC: ${EWDS_MEASUREMENTS_REQUEST_TOPIC:-measurements.query}
+  EWDS_MEASUREMENTS_RESPONSE_TOPIC: ${EWDS_MEASUREMENTS_RESPONSE_TOPIC:-measurements.query.response}
+
+services:
+  vault_demo:
+    image: hashicorp/vault:latest
+    restart: always
+    volumes:
+      - ddhub-vault-data:/vault/file
+      - ./vault-config:/vault/config:ro
+    ports:
+      - "${EWDS_VAULT_PORT:-8200}:8200/tcp"
+    cap_add:
+      - IPC_LOCK
+    container_name: vault_demo
+    entrypoint: "vault server -config=/vault/config/vault.json"
+
+  vault-init:
+    image: hashicorp/vault:latest
+    container_name: vault-init
+    user: root
+    depends_on:
+      - vault_demo
+    environment:
+      VAULT_ADDR: http://vault_demo:8200
+    volumes:
+      - ddhub-vault-creds:/vault-creds
+    entrypoint: /bin/sh
+    command: |
+      -c '
+      sleep 3
+      if vault status | grep "Initialized.*false"; then
+        echo "Initializing Vault..."
+        vault operator init -key-shares=1 -key-threshold=1 > /vault-creds/init.txt
+        echo $(grep "Initial Root Token:" /vault-creds/init.txt | awk "{print \$4}") > /vault-creds/root_token.txt
+        vault operator unseal $(grep "Unseal Key 1:" /vault-creds/init.txt | awk "{print \$4}")
+        VAULT_TOKEN=$(cat /vault-creds/root_token.txt) vault secrets enable -version=1 -path=ddhub kv
+      else
+        echo "Unsealing Vault..."
+        vault operator unseal $(grep "Unseal Key 1:" /vault-creds/init.txt | awk "{print \$4}")
+      fi
+      '
+
+  postgres:
+    image: postgres:14.1-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: ${EWDS_POSTGRES_USER:-ddhub}
+      POSTGRES_PASSWORD: ${EWDS_POSTGRES_PASSWORD:-password123}
+      POSTGRES_DB: ${EWDS_POSTGRES_DB:-ddhub}
+    ports:
+      - "${EWDS_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - ddhub-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  ddhub-gateway-migrationer:
+    image: ${EWDS_GATEWAY_BACKEND_IMAGE:-aemocontainerregistry.azurecr.io/ddhub-client-gateway-backend:latest}
+    container_name: ddhub-gateway-migrationer
+    platform: ${EWDS_GATEWAY_PLATFORM:-linux/amd64}
+    depends_on:
+      vault-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ddhub-vault-creds:/vault-creds:ro
+    entrypoint: >
+      sh -c '
+        export VAULT_TOKEN="$$(cat /vault-creds/root_token.txt)"
+        exec ./node_modules/.bin/typeorm migrations:run
+      '
+    environment:
+      <<: *ddhub-gateway-env
+
+  ddhub-gateway-UI:
+    image: ${EWDS_GATEWAY_FRONTEND_IMAGE:-aemocontainerregistry.azurecr.io/ddhub-client-gateway-frontend:latest}
+    platform: ${EWDS_GATEWAY_PLATFORM:-linux/amd64}
+    ports:
+      - "${EWDS_GATEWAY_UI_PORT:-3000}:80"
+
+  ddhub-gateway-api:
+    image: ${EWDS_GATEWAY_BACKEND_IMAGE:-aemocontainerregistry.azurecr.io/ddhub-client-gateway-backend:latest}
+    container_name: ddhub-gateway-api
+    platform: ${EWDS_GATEWAY_PLATFORM:-linux/amd64}
+    depends_on:
+      vault-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      ddhub-gateway-migrationer:
+        condition: service_completed_successfully
+    volumes:
+      - ddhub-vault-creds:/vault-creds:ro
+    entrypoint: >
+      sh -c '
+        export VAULT_TOKEN="$$(cat /vault-creds/root_token.txt)"
+        exec node main.js
+      '
+    ports:
+      - "${EWDS_GATEWAY_API_PORT:-3333}:3333"
+    environment:
+      <<: *ddhub-gateway-env
+
+  ddhub-gateway-scheduler:
+    image: ${EWDS_GATEWAY_SCHEDULER_IMAGE:-aemocontainerregistry.azurecr.io/ddhub-client-gateway-scheduler:latest}
+    container_name: ddhub-gateway-scheduler
+    platform: ${EWDS_GATEWAY_PLATFORM:-linux/amd64}
+    depends_on:
+      vault-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      ddhub-gateway-migrationer:
+        condition: service_completed_successfully
+    volumes:
+      - ddhub-vault-creds:/vault-creds:ro
+    entrypoint: >
+      sh -c '
+        export VAULT_TOKEN="$$(cat /vault-creds/root_token.txt)"
+        exec node main.js
+      '
+    environment:
+      <<: *ddhub-gateway-env
+
+  proxy-server:
+    image: nginx:alpine
+    volumes:
+      - ./proxy-config:/etc/nginx/conf.d:ro
+    ports:
+      - "${EWDS_GATEWAY_PROXY_PORT:-3009}:80"
+    depends_on:
+      - ddhub-gateway-UI
+      - ddhub-gateway-api
+
+  gsy-orderbook:
+    profiles: ["ewds"]
+    depends_on:
+      ddhub-gateway-api:
+        condition: service_started
+    environment:
+      <<: *gsy-ewds-env
+      EWDS_ENABLE_HANDLER: "${EWDS_ENABLE_HANDLER:-true}"
+
+  gsy-matching-engine:
+    profiles: ["ewds"]
+    depends_on:
+      ddhub-gateway-api:
+        condition: service_started
+    environment:
+      <<: *gsy-ewds-env
+      OFFCHAIN_STORAGE_TRANSPORT: ${OFFCHAIN_STORAGE_TRANSPORT:-ewds}
+
+  gsy-execution-engine:
+    profiles: ["ewds"]
+    depends_on:
+      ddhub-gateway-api:
+        condition: service_started
+    environment:
+      <<: *gsy-ewds-env
+      OFFCHAIN_STORAGE_TRANSPORT: ${OFFCHAIN_STORAGE_TRANSPORT:-ewds}
+
+  gsy-community-client:
+    profiles: ["ewds"]
+    depends_on:
+      ddhub-gateway-api:
+        condition: service_started
+    environment:
+      <<: *gsy-ewds-env
+      OFFCHAIN_STORAGE_TRANSPORT: ${OFFCHAIN_STORAGE_TRANSPORT:-ewds}
+
+volumes:
+  ddhub-vault-data:
+  ddhub-vault-creds:
+  ddhub-postgres-data:

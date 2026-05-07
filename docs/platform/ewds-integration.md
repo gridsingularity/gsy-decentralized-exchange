@@ -21,11 +21,6 @@ Related participant service:
 
 - `gsy-community-client` (writes forecasts, measurements, market topology)
 
-Out-of-scope for this phase:
-
-- Replacing direct EVM RPC traffic (`ws://anvil:8545`) with EWDS.
-- Smart-contract protocol changes.
-
 ## Current Refactored Runtime
 
 ### On-chain Plane
@@ -162,50 +157,27 @@ Validator requirements:
 
 ## Docker and Local Testing Integration
 
-A local EWDS overlay compose should be used in addition to base compose:
+A local DDHub Client Gateway should be deployed against EWF-hosted EWC Digital Spine services:
 
-- Base: `docker-compose.yml`
-- EWDS overlay: `docker-compose.ewds.yml`
+- Gateway-only stack: `docker-compose.ewds.yml`
+- Full DEX overlay: `docker-compose.yml` plus `docker-compose.ewds.yml` with profile `ewds`
 
-Run example:
+Gateway smoke-test example:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.ewds.yml --profile ewds up --build
+docker compose --env-file .env.ewds.local -f docker-compose.ewds.yml up --build
+```
+
+After configuring mTLS and the DID/EWC private key through the gateway UI, restart the gateway compose stack without deleting volumes. This preserves Vault/Postgres state while forcing the API and scheduler to reload certificate and identity material:
+
+```bash
+docker compose --env-file .env.ewds.local -f docker-compose.ewds.yml down --remove-orphans
+docker compose --env-file .env.ewds.local -f docker-compose.ewds.yml up --build
 ```
 
 The overlay provides:
 
 - DDHub client gateway services.
-- Vault and Postgres dependencies for gateway bootstrap.
+- Vault and Postgres dependencies for local gateway setup.
+- EWF mainnet EWC broker/cache/RPC configuration.
 - Service-level env overrides so off-chain calls can target EWDS gateway.
-
-## Phased Rollout Plan
-
-1. **Inventory and Contract Definition**
-- Finalize endpoint inventory and caller mapping.
-- Define topic/channel naming and schema versions.
-
-2. **Dual-Transport Refactor**
-- Add `OFFCHAIN_STORAGE_URL` transport override to all off-chain callers.
-- Keep direct HTTP as default fallback.
-
-3. **EWDS Registration and Routing**
-- Register services, topics, and channels in Intelligent EWDS.
-- Deploy validators for all request/response schemas.
-
-4. **Compose and Test Migration**
-- Add EWDS compose overlay for local development.
-- Add e2e scenarios that run through EWDS transport.
-
-5. **Cutover**
-- Switch service defaults to EWDS URLs.
-- Remove direct HTTP fallback paths once production confidence is reached.
-
-## Acceptance Criteria
-
-- All in-scope services are registered in Intelligent EWDS.
-- Topic/channel schemas and validators are deployed and versioned.
-- Matching and execution services read required off-chain data via EWDS.
-- Community client writes required off-chain data via EWDS.
-- Local compose supports EWDS-enabled e2e execution.
-- Existing EVM settlement and penalty flows remain functional.

@@ -4,7 +4,7 @@ services:
     container_name: anvil
     image: ghcr.io/foundry-rs/foundry:latest
     entrypoint: ["anvil"]
-    command: ["--host", "0.0.0.0", "--port", "8545", "--chain-id", "31337"]
+    command: ["--host", "0.0.0.0", "--port", "8545", "--chain-id", "${ANVIL_CHAIN_ID:-31337}"]
     ports:
       - "8545:8545"
     healthcheck:
@@ -27,6 +27,7 @@ services:
       sh -lc "npx hardhat run scripts/deploy.ts --network anvil"
     environment:
       - ANVIL_RPC_URL=http://127.0.0.1:8545
+      - ANVIL_CHAIN_ID=${ANVIL_CHAIN_ID:-31337}
       - CONTRACTS_ENV_PATH=/contracts/addresses.env
       - ORCHESTRATOR_SIGNER_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
       - MATCHING_ENGINE_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
@@ -77,6 +78,8 @@ services:
     entrypoint: ["/usr/local/bin/gsy-matching-engine"]
     command: ["web3", "http://gsy-orderbook", "8080", "ws://anvil", "8545"]
     environment:
+      - OFFCHAIN_STORAGE_TRANSPORT=http
+      - OFFCHAIN_STORAGE_URL=http://gsy-orderbook:8080
       - TRADE_SETTLEMENT_ADDRESS=0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9
       - MATCHING_ENGINE_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
 
@@ -92,6 +95,8 @@ services:
       gsy-contracts-bootstrap:
         condition: service_completed_successfully
     environment:
+      - OFFCHAIN_STORAGE_TRANSPORT=http
+      - OFFCHAIN_STORAGE_URL=http://gsy-orderbook:8080
       - EVM_NODE_URL=ws://anvil:8545
       - ORDER_REGISTRY_ADDRESS=0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0
       - COMMUNITY_CLIENT_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
@@ -129,6 +134,8 @@ services:
     entrypoint: ["/usr/local/bin/gsy-execution-engine"]
     command: ["web3", "http://gsy-orderbook", "8080", "ws://anvil", "8545", "5", "900", "0.10"]
     environment:
+      - OFFCHAIN_STORAGE_TRANSPORT=http
+      - OFFCHAIN_STORAGE_URL=http://gsy-orderbook:8080
       - EXECUTION_ENGINE_OFFSET_MIN=-15
       - TRADE_SETTLEMENT_ADDRESS=0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9
       - EXECUTION_ENGINE_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
