@@ -3,7 +3,7 @@
 </p>
 
 # GSY Decentralized Energy Exchange
-The Grid Singularity Decentralized Energy Exchange (GSY DEX) is developed by [Grid Singularity](https://gridsingularity.com/){target=_blank} as an open source GPL v.3 codebase (see [Licensing](https://gridsingularity.github.io/gsy-e/licensing/){target=_blank}) to model, simulate, optimise and deploy interconnected, grid-aware energy marketplaces. Grid Singularity has been proclaimed the [World Tech Pioneer by the World Economic Forum](https://www.weforum.org/organizations/grid-singularity-gmbh-gsy-gmbh){target=_blank} and is also known as a co-founder of the [Energy Web Foundation](https://www.energyweb.org/){target=_blank} that gathers leading energy and sustainability organisations globally, co-developing a shared decentralised digital trust platform. This is the branch for GSY DEX v.2.
+The Grid Singularity Decentralized Energy Exchange (GSY DEX) is developed by [Grid Singularity](https://gridsingularity.com/) as an open source GPL v.3 codebase (see [Licensing](https://gridsingularity.github.io/gsy-e/licensing/)) to model, simulate, optimise and deploy interconnected, grid-aware energy marketplaces. Grid Singularity has been proclaimed the [World Tech Pioneer by the World Economic Forum](https://www.weforum.org/organizations/grid-singularity-gmbh-gsy-gmbh) and is also known as a co-founder of the [Energy Web Foundation](https://www.energyweb.org/) that gathers leading energy and sustainability organisations globally, co-developing a shared decentralised digital trust platform. This is the branch for GSY DEX v.2.
 
 ## Installation Instructions
 
