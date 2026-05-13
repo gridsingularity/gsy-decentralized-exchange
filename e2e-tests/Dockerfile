@@ -39,7 +39,7 @@ COPY --from=builder /app/e2e-tests/target/release/trade_executor .
 COPY --from=builder /app/e2e-tests/features ./features
 
 ENV GSY_NODE_URL="ws://gsy-node:9944"
-ENV ORDERBOOK_SERVICE_URL="http://gsy-orderbook:8080"
+ENV OFFCHAIN_STORAGE_URL="http://gsy-offchain-storage:8080"
 ENV RUST_LOG="info"
 
 CMD ["./trade_executor"]
