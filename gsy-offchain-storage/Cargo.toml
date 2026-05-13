@@ -1,5 +1,5 @@
 [package]
-name = "gsy-orderbook-service"
+name = "gsy-offchain-storage"
 version = "0.1.0"
 authors = ["Grid Singularity <info@gridsingularity.com>"]
 edition = "2021"
@@ -9,7 +9,7 @@ path = "src/lib.rs"
 
 [[bin]]
 path = "src/main.rs"
-name = "gsy-orderbook-service"
+name = "gsy-offchain-storage"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

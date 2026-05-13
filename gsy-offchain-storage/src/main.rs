@@ -12,7 +12,7 @@ use std::net::TcpListener;
 async fn main() -> Result<(), anyhow::Error> {
 	dotenv::dotenv().ok();
 
-	let subscriber = get_subscriber("gsy-orderbook-service".into(), "info".into(), std::io::stdout);
+	let subscriber = get_subscriber("gsy-offchain-storage".into(), "info".into(), std::io::stdout);
 	init_subscriber(subscriber);
 	let configuration = get_configuration().expect("Failed to load configuration");
 	let db_connection_string = configuration.get_connection_string();
