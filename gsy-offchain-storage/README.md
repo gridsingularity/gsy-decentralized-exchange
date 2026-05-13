@@ -1,4 +1,4 @@
-# Gsy Orderbook Service
+# GSY DEX Off-Chain Storage
 
 ## Getting started
 
@@ -8,7 +8,7 @@
 
 ## Run as individual service via docker compose 
 
-To run the orderbook service as a separate service, the following command can be used:
+To run the GSY DEX Off-Chain Storage as a separate service, the following command can be used:
 
 ```
 # Run from the current directory 
@@ -24,4 +24,4 @@ python populate_db_with_dummy_data.py
 
 ## API 
 
-The API of the orderbook service is summarized in the Postman collection file `offchain-storage-postman-collection.json`. 
+The API of the GSY DEX Off-Chain Storage is summarized in the Postman collection file `offchain-storage-postman-collection.json`. 

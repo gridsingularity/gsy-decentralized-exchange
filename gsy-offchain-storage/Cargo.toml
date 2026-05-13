@@ -1,5 +1,5 @@
 [package]
-name = "gsy-orderbook-service"
+name = "gsy-offchain-storage"
 version = "0.1.0"
 authors = ["Grid Singularity <info@gridsingularity.com>"]
 edition = "2021"
@@ -9,7 +9,7 @@ path = "src/lib.rs"
 
 [[bin]]
 path = "src/main.rs"
-name = "gsy-orderbook-service"
+name = "gsy-offchain-storage"
 
 [dependencies]
 gsy-offchain-primitives = { default-features = false, path = "../offchain-primitives", version = "0" }

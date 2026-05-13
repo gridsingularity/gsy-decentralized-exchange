@@ -38,13 +38,13 @@ COPY primitives /var/www/primitives/
 COPY --from=planner /var/www/primitives/target /var/www/primitives/target
 COPY --from=planner /var/www/gsy-node/target /var/www/gsy-node/target
 WORKDIR /var/www/gsy-node/
-ENV ORDERBOOK_SERVICE_URL=http://gsy-orderbook:8080
+ENV OFFCHAIN_STORAGE_URL=http://gsy-offchain-storage:8080
 RUN cargo build --release
 
 FROM chef AS runtime
 
 WORKDIR /var/www/gsy-node/
 COPY --from=builder /var/www/gsy-node/target /var/www/gsy-node/target
-ENV ORDERBOOK_SERVICE_URL=http://gsy-orderbook:8080
+ENV OFFCHAIN_STORAGE_URL=http://gsy-offchain-storage:8080
 EXPOSE 9944
 ENTRYPOINT ["./target/release/gsy-node", "--dev", "--rpc-external"]

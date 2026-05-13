@@ -1522,7 +1522,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "gsy-orderbook-service"
+name = "gsy-offchain-storage"
 version = "0.1.0"
 dependencies = [
  "actix-web",

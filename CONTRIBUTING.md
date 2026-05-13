@@ -1,4 +1,4 @@
-## How to contribute to the GSy DEX
+## How to contribute to the GSY DEX
 
 #### **Did you find a bug?**
 
@@ -16,7 +16,7 @@
 
 #### **Did you fix whitespace, format code, or make a purely cosmetic patch?**
 
-Changes that are cosmetic in nature and do not add anything substantial to the stability, functionality, or testability of the GSy DEX will generally not be accepted.
+Changes that are cosmetic in nature and do not add anything substantial to the stability, functionality, or testability of the GSY DEX will generally not be accepted.
 
 
 #### **Do you intend to add a new feature or change an existing one?**
@@ -26,20 +26,23 @@ Changes that are cosmetic in nature and do not add anything substantial to the s
 * Do not open an issue on GitHub until you have collected positive feedback about the change. GitHub issues are primarily intended for bug reports and fixes.
 
 
-#### **Do you have questions about the source code or the functionality of the GSy DEX?**
+#### **Do you have questions about the source code or the functionality of the GSY DEX?**
 
 * Consult our [Wiki](https://gridsingularity.github.io/gsy-e/documentation/)
 
-* If things are still unclear: Ask any question about how to use the GSy DEX in the [Grid Singularity Community Slack](https://gsycommunity.slack.com/join/shared_invite/zt-dpfxe2gk-hKFccsrr68g982odCJlrIg#/).
+* If things are still unclear: Ask any question about how to use the GSY DEX in the [Grid Singularity Community Slack](https://gsycommunity.slack.com/join/shared_invite/zt-dpfxe2gk-hKFccsrr68g982odCJlrIg#/).
 
+#### **No AI**
+
+Do not contribute anything using generative AI tools. 
 
 #### **License**
 
-By contributing to the GSy DEX, you agree that your contributions will be licensed under the [GPLv3 License](https://github.com/gridsingularity/gsy-dex/blob/master/LICENSE).
+By contributing to the GSY DEX, you agree that your contributions will be licensed under the [GPLv3 License](https://github.com/gridsingularity/gsy-dex/blob/master/LICENSE).
 
 Each contributor has to sign our Contributor License Agreement. The purpose of the CLA is to ensure that the guardian of a project's outputs has the necessary ownership or grants of rights over all contributions to allow them to distribute under the chosen license. You can read and sign our full [Contributor License Agreement](https://gist.github.com/gsydev/c880a76b3cb73658f3b99b9edb791fb4) before submitting a pull request.
 
 
 Thanks!
 
-GSy Team
+GSY Team
