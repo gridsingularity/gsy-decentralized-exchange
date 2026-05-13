@@ -3,12 +3,8 @@
 </p>
 
 # GSy Decentralized Energy Exchange
+The Grid Singularity Decentralized Energy Exchange is developed by Grid Singularity as an open source codebase (see Licensing) to model, simulate, optimize and deploy interconnected, grid-aware decentralized energy marketplaces. Grid Singularity has been proclaimed the World Tech Pioneer by the World Economic Forum and is also known as a co-founder of the Energy Web Foundation that gathers leading energy corporations globally co-developing a shared blockchain-based platform.
 
-The GSy Decentralized Energy Exchange (DEX) aims to revolutionize the way energy is traded and managed by leveraging the power of distributed ledger technology, such as blockchain, and advanced distributed runtime functionalities. 
-
-The target of the decentralized energy exchange is to design, develop, and implement a robust, secure, and efficient platform for energy trading in a decentralized environment. 
-
-The GSy Decentralized Energy Exchange can effectively facilitate peer-to-peer energy trading, optimize energy consumption and generation, and ultimately contribute to a more sustainable and resilient energy infrastructure.
 
 ## Installation Instructions
 
