@@ -20,6 +20,17 @@ Examples of unacceptable behavior by participants include:
 - Publishing others' private information, such as a physical or electronic address, without explicit permission
 - Other conduct which could reasonably be considered inappropriate in a professional setting
 
+### AI Usage
+AI has been applied to a lot of different fields over the years, being used more and more as time goes on. Even though it "could" be used as a tool, many choose not to and try to employ it as a replacement for their own brains. Therefore all usage of AI is forbidden, because it is not only ethically and morally wrong, but also produces issues, bugs and other problems in a bigger scope than any human ever could.
+
+This is a small list of examples where AI usage is forbidden. Do note that any usage of AI will not be tolerated, this is just a guideline to present the scope of this ban:
+
+- Writing any comments, issues, pull requests or other form of text
+- Using generated code that you willingly produced (if you used already existing code from an otherwise credible source that was created by AI and didn't notice it, this does not apply)
+- Solving issues
+- Restructuring code
+- Using any features of a platform for this project, that generate any form of content using AI
+
 ### Our Responsibilities
 Project maintainers are responsible for clarifying the standards of acceptable behavior and are expected to take appropriate and fair corrective action in response to any instances of unacceptable behavior.
 
