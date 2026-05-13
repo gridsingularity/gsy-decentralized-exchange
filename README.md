@@ -2,13 +2,13 @@
   <img src="./docs/images/Profile.png" alt="GSy Logo" title="GSy Logo" width="200" />
 </p>
 
-# GSy Decentralized Energy Exchange
+# GSY Decentralized Energy Exchange
 The Grid Singularity Decentralized Energy Exchange is developed by Grid Singularity as an open source codebase (see Licensing) to model, simulate, optimize and deploy interconnected, grid-aware decentralized energy marketplaces. Grid Singularity has been proclaimed the World Tech Pioneer by the World Economic Forum and is also known as a co-founder of the Energy Web Foundation that gathers leading energy corporations globally co-developing a shared blockchain-based platform.
 
 
 ## Installation Instructions
 
-Follow the steps below to set up the GSy Decentralized Energy Exchange locally.
+Follow the steps below to set up the GSY Decentralized Energy Exchange locally.
 
 ### Prerequisites
 
@@ -29,7 +29,7 @@ cd gsy-decentralized-exchange
 ```
 
 ### Build & Run the Project services
-#### GSy Node
+#### GSY Node
 ```sh
 cd gsy-node
 ```
