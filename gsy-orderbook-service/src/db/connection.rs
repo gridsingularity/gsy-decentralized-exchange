@@ -1,13 +1,19 @@
-use crate::db::asset_measurements_service::{
-    init_battery_measurements, init_pv_measurements, init_smart_meter_measurements,
-    init_transformer_measurements, BatteryMeasurementsService, PVMeasurementsService,
-    SmartMeterMeasurementsService, TransformerMeasurementsService,
+use crate::db::grid_topology_service::{
+    init_assets, init_communities, init_facilities, init_pilot_sites, init_sites, AssetService,
+    EnergyCommunityService, FacilityService, PilotSiteService, SiteService,
 };
-use crate::db::forecasts_service::{init_forecasts, ForecastsService};
 use crate::db::market_service::{init_markets, MarketService};
-use crate::db::measurements_service::{init_measurements, MeasurementsService};
-use crate::db::order_service::{init_orders, OrderService};
-use crate::db::trade_service::{init_trades, TradeService};
+use crate::db::measurements_service::{
+    init_measurement_points, init_timeseries, MeasurementPointService, TimeseriesService,
+};
+use crate::db::order_service::{
+    init_flexibility_orders, init_orders, init_tariffs, FlexibilityOrderService, OrderService,
+    TariffService,
+};
+use crate::db::trade_service::{
+    init_clearing_results, init_market_roles, init_trades, ClearingResultService,
+    MarketRoleService, TradeService,
+};
 use actix_web::web;
 use anyhow::Result;
 use mongodb::options::ClientOptions;
@@ -21,31 +27,53 @@ pub type DbRef = web::Data<DatabaseWrapper>;
 pub struct DatabaseWrapper(pub Database);
 
 impl DatabaseWrapper {
+    // Order Book Storage (D3.2 §5.4)
     pub fn orders(&self) -> OrderService {
         self.into()
     }
+    pub fn flexibility_orders(&self) -> FlexibilityOrderService {
+        self.into()
+    }
+    pub fn tariffs(&self) -> TariffService {
+        self.into()
+    }
+
+    // Trades Storage (D3.2 §5.3)
     pub fn trades(&self) -> TradeService {
         self.into()
     }
-    pub fn measurements(&self) -> MeasurementsService {
+    pub fn clearing_results(&self) -> ClearingResultService {
         self.into()
     }
-    pub fn pv_measurements(&self) -> PVMeasurementsService {
-        self.into()
-    }
-    pub fn battery_measurements(&self) -> BatteryMeasurementsService {
-        self.into()
-    }
-    pub fn smart_meter_measurements(&self) -> SmartMeterMeasurementsService {
-        self.into()
-    }
-    pub fn transformer_measurements(&self) -> TransformerMeasurementsService {
-        self.into()
-    }
-    pub fn forecasts(&self) -> ForecastsService {
+    pub fn market_roles(&self) -> MarketRoleService {
         self.into()
     }
     pub fn markets(&self) -> MarketService {
+        self.into()
+    }
+
+    // Measurements Storage (D3.2 §5.2)
+    pub fn measurement_points(&self) -> MeasurementPointService {
+        self.into()
+    }
+    pub fn timeseries(&self) -> TimeseriesService {
+        self.into()
+    }
+
+    // Grid Topology and Market Storage (D3.2 §5.1)
+    pub fn assets(&self) -> AssetService {
+        self.into()
+    }
+    pub fn pilot_sites(&self) -> PilotSiteService {
+        self.into()
+    }
+    pub fn communities(&self) -> EnergyCommunityService {
+        self.into()
+    }
+    pub fn sites(&self) -> SiteService {
+        self.into()
+    }
+    pub fn facilities(&self) -> FacilityService {
         self.into()
     }
 }
@@ -74,15 +102,19 @@ pub async fn delete_database(db_url: String, db_name: String) -> Result<()> {
 }
 
 async fn preload(db: &DatabaseWrapper) -> Result<()> {
-    // put initialize here
     init_orders(db).await?;
+    init_flexibility_orders(db).await?;
+    init_tariffs(db).await?;
     init_trades(db).await?;
-    init_forecasts(db).await?;
-    init_measurements(db).await?;
+    init_clearing_results(db).await?;
+    init_market_roles(db).await?;
     init_markets(db).await?;
-    init_pv_measurements(db).await?;
-    init_smart_meter_measurements(db).await?;
-    init_transformer_measurements(db).await?;
-    init_battery_measurements(db).await?;
+    init_measurement_points(db).await?;
+    init_timeseries(db).await?;
+    init_assets(db).await?;
+    init_pilot_sites(db).await?;
+    init_communities(db).await?;
+    init_sites(db).await?;
+    init_facilities(db).await?;
     Ok(())
 }

@@ -1,76 +1,62 @@
-use serde::{Deserialize, Serialize};
-use codec::{Decode, Encode};
-use sp_runtime::traits::CheckedConversion;
-use subxt::utils::{AccountId32, H256};
-use crate::db_api_schema;
-use crate::node_to_api_schema::insert_order::{
-    Offer, Bid, create_db_offer_from_node_offer, create_db_bid_from_node_bid};
-use crate::db_api_schema::trades::{
-    TradeSchema as DbTradeSchema, TradeStatus, TradeParameters as DbTradeParameters};
-use crate::utils::h256_to_string;
-use uuid::Uuid;
+//! Convert SCALE-encoded trades emitted by the GSY DEX Node into the
+//! Trades Storage schema specified in D3.2 §5.3. The off-chain schema
+//! only persists hash references to the bid and offer (via `bid_id`
+//! and `offer_id`) — the full order payloads themselves live in the
+//! Order Book Storage.
 
+use crate::db_api_schema::trades::{TradeSchema as DbTradeSchema, TradeStatus};
+use crate::node_to_api_schema::insert_order::{Bid, Offer};
+use crate::utils::h256_to_string;
+use codec::{Decode, Encode};
+use serde::{Deserialize, Serialize};
+use subxt::utils::{AccountId32, H256};
 
 #[derive(Serialize, Deserialize, Encode, Decode, Clone)]
 pub struct TradeParameters<Hash> {
-    /// The amount of energy that is traded.
-    pub selected_energy: u64,
-    /// The price of the traded energy.
-    pub energy_rate: u64,
-    /// The trade hash.
-    pub trade_uuid: Hash,
+	pub selected_energy: u64,
+	pub energy_rate: u64,
+	pub trade_uuid: Hash,
 }
 
 #[derive(Serialize, Deserialize, Encode, Decode, Clone)]
 pub struct Trade<AccountId32, Hash> {
-    pub seller: AccountId32,
-    pub buyer: AccountId32,
-    pub market_id: H256,
-    pub trade_uuid: Hash,
-    pub creation_time: u64,
-    pub time_slot: u64,
-    pub offer: Offer<AccountId32>,
-    pub offer_hash: Hash,
-    pub bid: Bid<AccountId32>,
-    pub bid_hash: Hash,
-    pub residual_bid: Option<Bid<AccountId32>>,
-    pub residual_offer: Option<Offer<AccountId32>>,
-    pub parameters: TradeParameters<Hash>,
+	pub seller: AccountId32,
+	pub buyer: AccountId32,
+	pub market_id: H256,
+	pub trade_uuid: Hash,
+	pub creation_time: u64,
+	pub time_slot: u64,
+	pub offer: Offer<AccountId32>,
+	pub offer_hash: Hash,
+	pub bid: Bid<AccountId32>,
+	pub bid_hash: Hash,
+	pub residual_bid: Option<Bid<AccountId32>>,
+	pub residual_offer: Option<Offer<AccountId32>>,
+	pub parameters: TradeParameters<Hash>,
 }
 
+const ENERGY_SCALE: f64 = 10_000.0;
 
 pub fn convert_gsy_node_trades_schema_to_db_schema(trades: Vec<u8>) -> Vec<DbTradeSchema> {
-    let transcode: Vec<Trade<AccountId32, H256>> = Vec::<Trade<AccountId32, H256>>::decode(
-        &mut &trades[..]).unwrap();
-    let mut deserialized: Vec<db_api_schema::trades::TradeSchema> = vec!();
-    for trade in transcode {
-        deserialized.push(db_api_schema::trades::TradeSchema {
-            _id: Uuid::new_v4().to_string(),
-            status: TradeStatus::Settled,
-            seller: trade.seller.to_string(),
-            buyer: trade.buyer.to_string(),
-            market_id: h256_to_string(trade.market_id),
-            time_slot: trade.time_slot,
-            trade_uuid: h256_to_string(trade.trade_uuid),
-            creation_time: trade.creation_time,
-            offer: create_db_offer_from_node_offer(trade.offer),
-            offer_hash: h256_to_string(trade.offer_hash),
-            bid: create_db_bid_from_node_bid(trade.bid),
-            bid_hash: h256_to_string(trade.bid_hash),
-            residual_offer: match trade.residual_offer {
-                Some(residual_offer) => create_db_offer_from_node_offer(residual_offer).checked_into(),
-                None => None
-            },
-            residual_bid: match trade.residual_bid {
-                Some(residual_bid) => create_db_bid_from_node_bid(residual_bid).checked_into(),
-                None => None
-            },
-            parameters: DbTradeParameters {
-                selected_energy: trade.parameters.selected_energy as f64 / 10000.0,
-                energy_rate: trade.parameters.energy_rate as f64 / 10000.0,
-                trade_uuid: h256_to_string(trade.parameters.trade_uuid)
-            },
-        })
-    }
-    deserialized
+	let transcode: Vec<Trade<AccountId32, H256>> =
+		Vec::<Trade<AccountId32, H256>>::decode(&mut &trades[..]).unwrap();
+	let mut deserialized: Vec<DbTradeSchema> = vec![];
+	for trade in transcode {
+		deserialized.push(DbTradeSchema {
+			trade_id: h256_to_string(trade.trade_uuid),
+			trade_quantity: trade.parameters.selected_energy as f64 / ENERGY_SCALE,
+			trade_price: trade.parameters.energy_rate as f64 / ENERGY_SCALE,
+			trade_timestamp: trade.creation_time.to_string(),
+			time_slot: trade.time_slot.to_string(),
+			market_id: h256_to_string(trade.market_id),
+			trade_status: TradeStatus::Settled,
+			buyer: trade.buyer.to_string(),
+			seller: trade.seller.to_string(),
+			bid_id: h256_to_string(trade.bid_hash),
+			offer_id: h256_to_string(trade.offer_hash),
+			residual_bid_id: None,
+			residual_offer_id: None,
+		});
+	}
+	deserialized
 }

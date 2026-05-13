@@ -8,22 +8,31 @@ use serde::Deserialize;
 #[tracing::instrument(
     name = "Adding new trades",
     skip(trades, db),
-    fields(
-    trades = ?trades
-    )
+    fields(trades = ?trades)
 )]
 pub async fn post_trades(trades: Json<Vec<u8>>, db: DbRef) -> impl Responder {
     let deserialized_trades = convert_gsy_node_trades_schema_to_db_schema(trades.to_vec());
 
-    for trade in deserialized_trades.clone() {
-        let _ = db.get_ref().orders().update_order_by_area_market_id(
-            trade.market_id.clone(),
-            trade.offer.offer_component.area_uuid.clone(),
-        );
-        let _ = db.get_ref().orders().update_order_by_area_market_id(
-            trade.market_id.clone(),
-            trade.bid.bid_component.area_uuid.clone(),
-        );
+    // Each trade settles its bid and offer in the Order Book — surface the
+    // executed status by updating both orders by id. The matching engine
+    // uses `bid_id` / `offer_id` to reference the underlying orders.
+    for trade in deserialized_trades.iter() {
+        let _ = db
+            .get_ref()
+            .orders()
+            .update_order_status_by_id(
+                &trade.bid_id,
+                gsy_offchain_primitives::db_api_schema::orders::OrderStatus::Executed,
+            )
+            .await;
+        let _ = db
+            .get_ref()
+            .orders()
+            .update_order_status_by_id(
+                &trade.offer_id,
+                gsy_offchain_primitives::db_api_schema::orders::OrderStatus::Executed,
+            )
+            .await;
     }
     match db
         .get_ref()
@@ -45,8 +54,8 @@ pub async fn post_normalized_trades(trades: Json<Vec<TradeSchema>>, db: DbRef) -
 
 #[derive(Deserialize, Debug)]
 pub struct GetTradesParams {
-    start_time: Option<u32>,
-    end_time: Option<u32>,
+    start_time: Option<String>,
+    end_time: Option<String>,
 }
 
 #[tracing::instrument(name = "Retrieve trades", skip(db))]
@@ -54,7 +63,10 @@ pub async fn get_trades(db: DbRef, query_params: Query<GetTradesParams>) -> impl
     match db
         .get_ref()
         .trades()
-        .filter_trades(query_params.start_time, query_params.end_time)
+        .filter_trades(
+            query_params.start_time.clone(),
+            query_params.end_time.clone(),
+        )
         .await
     {
         Ok(trades) => HttpResponse::Ok().json(trades),

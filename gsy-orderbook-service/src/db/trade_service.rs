@@ -1,54 +1,70 @@
 use crate::db::DatabaseWrapper;
 use anyhow::Result;
 use futures::StreamExt;
-use gsy_offchain_primitives::db_api_schema::trades::TradeSchema;
+use gsy_offchain_primitives::db_api_schema::trades::{
+    ClearingResultSchema, MarketRoleSchema, TradeSchema,
+};
 use mongodb::bson::{doc, Bson};
 use mongodb::options::IndexOptions;
 use mongodb::{Collection, Cursor, IndexModel};
 use std::collections::HashMap;
 use std::ops::Deref;
 
-/// this function will call after connected to database
+/// Trade indexes per D3.2 §5.3: `buyer`, `seller`, `market_id` and
+/// `time_slot` accelerate per-asset / per-market / per-slot lookups.
 pub async fn init_trades(db: &DatabaseWrapper) -> Result<()> {
-    // create index in this block
-
     let controller = db.trades();
-    let index: IndexModel = IndexModel::builder()
-        .keys(doc! {"_id":1})
-        .options(IndexOptions::builder().build())
-        .build();
-    controller.create_index(index).await?;
+    controller
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! {"trade_id": 1})
+                .options(IndexOptions::builder().unique(true).build())
+                .build(),
+        )
+        .await?;
+    for key in ["buyer", "seller", "market_id", "time_slot"] {
+        controller
+            .create_index(IndexModel::builder().keys(doc! {key: 1}).build())
+            .await?;
+    }
     Ok(())
 }
 
-/// this struct is wrapper to `Collection<Trade>` should have function to help to manage order
+pub async fn init_clearing_results(db: &DatabaseWrapper) -> Result<()> {
+    let controller = db.clearing_results();
+    controller
+        .create_index(IndexModel::builder().keys(doc! {"market_id": 1}).build())
+        .await?;
+    Ok(())
+}
+
+pub async fn init_market_roles(db: &DatabaseWrapper) -> Result<()> {
+    let controller = db.market_roles();
+    controller
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! {"role_name": 1})
+                .options(IndexOptions::builder().unique(true).build())
+                .build(),
+        )
+        .await?;
+    Ok(())
+}
+
 #[repr(transparent)]
 pub struct TradeService(pub Collection<TradeSchema>);
 
 impl TradeService {
     #[tracing::instrument(name = "Fetching trades from database", skip(self))]
     pub async fn get_all_trades(&self) -> Result<Vec<TradeSchema>> {
-        let mut cursor = self.0.find(doc! {}).await.unwrap();
-        let mut result: Vec<TradeSchema> = Vec::new();
-        while let Some(doc) = cursor.next().await {
-            match doc {
-                Ok(document) => {
-                    result.push(document);
-                }
-                _ => {
-                    break;
-                }
-            }
-        }
-        Ok(result)
+        let cursor = self.0.find(doc! {}).await?;
+        self.create_vector_from_cursor(cursor).await
     }
 
     #[tracing::instrument(
         name = "Saving trades to database",
         skip(self, trade_schema),
-        fields(
-            trade_schema = ?trade_schema
-        )
+        fields(trade_schema = ?trade_schema)
     )]
     pub async fn insert_trades(
         &self,
@@ -69,37 +85,33 @@ impl TradeService {
     ) -> Result<Vec<TradeSchema>> {
         let mut result: Vec<TradeSchema> = Vec::new();
         while let Some(doc) = cursor.next().await {
-            match doc {
-                Ok(document) => {
-                    result.push(document);
-                }
-                _ => {
-                    break;
-                }
+            if let Ok(document) = doc {
+                result.push(document);
+            } else {
+                break;
             }
         }
         Ok(result)
     }
 
-    #[tracing::instrument(name = "Fetching trades by market id from database", skip(self))]
+    #[tracing::instrument(name = "Filter trades by time slot", skip(self))]
     pub async fn filter_trades(
         &self,
-        start_time: Option<u32>,
-        end_time: Option<u32>,
+        start_time: Option<String>,
+        end_time: Option<String>,
     ) -> Result<Vec<TradeSchema>> {
         let mut filter_params = doc! {};
-        if start_time.is_some() {
-            filter_params.insert("time_slot", doc! {"$gte": start_time.unwrap()});
-        }
-        if end_time.is_some() {
-            if start_time.is_some() {
-                filter_params.insert(
-                    "time_slot",
-                    doc! {"$gte": start_time.unwrap(), "$lte": end_time.unwrap()},
-                );
-            } else {
-                filter_params.insert("time_slot", doc! {"$lte": end_time.unwrap()});
+        match (start_time, end_time) {
+            (Some(start), Some(end)) => {
+                filter_params.insert("time_slot", doc! {"$gte": start, "$lte": end});
             }
+            (Some(start), None) => {
+                filter_params.insert("time_slot", doc! {"$gte": start});
+            }
+            (None, Some(end)) => {
+                filter_params.insert("time_slot", doc! {"$lte": end});
+            }
+            (None, None) => {}
         }
 
         match self.0.find(filter_params).await {
@@ -120,7 +132,87 @@ impl From<&DatabaseWrapper> for TradeService {
 
 impl Deref for TradeService {
     type Target = Collection<TradeSchema>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
+#[repr(transparent)]
+pub struct ClearingResultService(pub Collection<ClearingResultSchema>);
+
+impl ClearingResultService {
+    #[tracing::instrument(name = "Saving clearing result", skip(self, result))]
+    pub async fn insert(&self, result: ClearingResultSchema) -> Result<ClearingResultSchema> {
+        self.0.insert_one(result.clone()).await?;
+        Ok(result)
+    }
+
+    #[tracing::instrument(name = "Fetching clearing result by market id", skip(self))]
+    pub async fn get_by_market(&self, market_id: &str) -> Result<Vec<ClearingResultSchema>> {
+        let mut cursor = self.0.find(doc! {"market_id": market_id}).await?;
+        let mut result = Vec::new();
+        while let Some(doc) = cursor.next().await {
+            if let Ok(document) = doc {
+                result.push(document);
+            } else {
+                break;
+            }
+        }
+        Ok(result)
+    }
+}
+
+impl From<&DatabaseWrapper> for ClearingResultService {
+    fn from(db: &DatabaseWrapper) -> Self {
+        ClearingResultService(db.collection("clearing_results"))
+    }
+}
+
+impl Deref for ClearingResultService {
+    type Target = Collection<ClearingResultSchema>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+#[repr(transparent)]
+pub struct MarketRoleService(pub Collection<MarketRoleSchema>);
+
+impl MarketRoleService {
+    #[tracing::instrument(name = "Saving market role", skip(self, role))]
+    pub async fn insert(&self, role: MarketRoleSchema) -> Result<MarketRoleSchema> {
+        self.0.insert_one(role.clone()).await?;
+        Ok(role)
+    }
+
+    #[tracing::instrument(name = "Fetching market role by name", skip(self))]
+    pub async fn get_by_name(&self, role_name: &str) -> Result<Option<MarketRoleSchema>> {
+        Ok(self.0.find_one(doc! {"role_name": role_name}).await?)
+    }
+
+    #[tracing::instrument(name = "Fetching all market roles", skip(self))]
+    pub async fn get_all(&self) -> Result<Vec<MarketRoleSchema>> {
+        let mut cursor = self.0.find(doc! {}).await?;
+        let mut result = Vec::new();
+        while let Some(doc) = cursor.next().await {
+            if let Ok(document) = doc {
+                result.push(document);
+            } else {
+                break;
+            }
+        }
+        Ok(result)
+    }
+}
+
+impl From<&DatabaseWrapper> for MarketRoleService {
+    fn from(db: &DatabaseWrapper) -> Self {
+        MarketRoleService(db.collection("market_roles"))
+    }
+}
+
+impl Deref for MarketRoleService {
+    type Target = Collection<MarketRoleSchema>;
     fn deref(&self) -> &Self::Target {
         &self.0
     }

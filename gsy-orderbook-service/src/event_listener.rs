@@ -1,7 +1,8 @@
 use crate::db::DbRef;
 use anyhow::{Error, Result};
 use gsy_offchain_primitives::db_api_schema::orders::OrderStatus;
-use mongodb::bson;
+use gsy_offchain_primitives::utils::h256_to_string;
+use subxt::utils::H256;
 use subxt::{OnlineClient, SubstrateConfig};
 use tracing::info;
 
@@ -29,11 +30,11 @@ pub async fn init_event_listener(db: DbRef, node_url: String) -> Result<(), Erro
             if let Ok(order_executed) = &event {
                 info!("Order Executed: {:?}", order_executed);
 
-                let id = &bson::to_bson(&order_executed.0.offer_hash).unwrap();
+                let offer_id = h256_to_string(H256(order_executed.0.offer_hash.0));
                 match db
                     .get_ref()
                     .orders()
-                    .update_order_status_by_id(id, OrderStatus::Executed)
+                    .update_order_status_by_id(&offer_id, OrderStatus::Executed)
                     .await
                 {
                     Ok(result) => info!("Update result: {:?}", result),
@@ -42,11 +43,11 @@ pub async fn init_event_listener(db: DbRef, node_url: String) -> Result<(), Erro
                     }
                 }
 
-                let id = &bson::to_bson(&order_executed.0.bid_hash).unwrap();
+                let bid_id = h256_to_string(H256(order_executed.0.bid_hash.0));
                 match db
                     .get_ref()
                     .orders()
-                    .update_order_status_by_id(id, OrderStatus::Executed)
+                    .update_order_status_by_id(&bid_id, OrderStatus::Executed)
                     .await
                 {
                     Ok(result) => info!("Update result: {:?}", result),
@@ -60,11 +61,11 @@ pub async fn init_event_listener(db: DbRef, node_url: String) -> Result<(), Erro
         for event in events.find::<gsy_node::orderbook_registry::events::OrderDeleted>() {
             if let Ok(order_deleted) = &event {
                 info!("Hash of the removed order: {:?}", order_deleted.1);
-                let id = &bson::to_bson(&order_deleted.1).unwrap();
+                let id = h256_to_string(H256(order_deleted.1.0));
                 match db
                     .get_ref()
                     .orders()
-                    .update_order_status_by_id(id, OrderStatus::Deleted)
+                    .update_order_status_by_id(&id, OrderStatus::Deleted)
                     .await
                 {
                     Ok(result) => info!("Update result: {:?}", result),
