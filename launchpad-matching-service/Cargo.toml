@@ -1,0 +1,18 @@
+[package]
+name = "launchpad-matching-service"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+gsy-offchain-primitives = { default-features = false, path = "../offchain-primitives", version = "0" }
+actix-web = "4.5.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1" }
+subxt = { version = "0.50" }
+mongodb = { version = "2.8.2", features = ["tokio-runtime"] }
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+futures-util = "0.3"
+config = "0"
+jsonwebtoken = "9"
+bcrypt = "0.15"

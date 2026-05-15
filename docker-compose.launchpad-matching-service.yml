@@ -1,0 +1,48 @@
+services:
+
+  caddy:
+    container_name: caddy
+    build:
+      context: .
+      dockerfile: ./launchpad-matching-service/Dockerfile.caddy
+    depends_on:
+      - matching-service
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./launchpad-matching-service/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+
+  matching-service:
+    container_name: matching-service
+    build:
+      context: .
+      dockerfile: ./launchpad-matching-service/Dockerfile.matching-service
+    depends_on:
+      - mongodb
+    environment:
+      - RUST_LOG=info
+      - DATABASE_HOST=mongodb
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9876/health-check"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  mongodb:
+    image: mongo:5.0
+    container_name: mongodb
+    volumes:
+      - ./mongodb-data:/data/db
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=gsy
+      - MONGO_INITDB_ROOT_PASSWORD=gsy
+
+volumes:
+  caddy_data:
+  caddy_config:
