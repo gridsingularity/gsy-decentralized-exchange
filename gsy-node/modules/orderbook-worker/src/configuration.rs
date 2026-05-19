@@ -10,7 +10,7 @@ pub struct OrderBookServiceURLs {
 impl Default for OrderBookServiceURLs {
 	fn default() -> Self {
 		// Set the environment variable "URL" for OrderBook_Service
-		let orderbook_url = option_env!("ORDERBOOK_SERVICE_URL").unwrap_or("http://localhost:8080");
+		let orderbook_url = option_env!("OFFCHAIN_STORAGE_URL").unwrap_or("http://localhost:8080");
 
 		OrderBookServiceURLs {
 			orders_url: format!("{}/orders", orderbook_url),

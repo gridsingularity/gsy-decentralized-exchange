@@ -10,12 +10,12 @@ services:
       - "9944:9944"
     environment:
       - CARGO_HOME=/var/www/gsy-node/.cargo
-      - ORDERBOOK_SERVICE_URL=http://gsy-orderbook:8080
+      - OFFCHAIN_STORAGE_URL=http://gsy-offchain-storage:8080
 
-  gsy-orderbook:
-    container_name: gsy-orderbook
+  gsy-offchain-storage:
+    container_name: gsy-offchain-storage
     build:
-      dockerfile: ./gsy-orderbook-service/Dockerfile
+      dockerfile: ./gsy-offchain-storage/Dockerfile
     depends_on:
       mongodb:
         condition: service_started
@@ -38,7 +38,7 @@ services:
     build:
       dockerfile: ./gsy-matching-engine/Dockerfile
     depends_on:
-      gsy-orderbook:
+      gsy-offchain-storage:
         condition: service_started
     working_dir: /var/www/matching-engine
 
@@ -59,7 +59,7 @@ services:
     build:
       dockerfile: ./gsy-execution-engine/Dockerfile
     depends_on:
-      gsy-orderbook:
+      gsy-offchain-storage:
         condition: service_started
     working_dir: /var/www/execution-engine
 

@@ -13,7 +13,7 @@ async fn main() -> Result<(), anyhow::Error> {
     dotenv::dotenv().ok();
 
     let subscriber = get_subscriber(
-        "gsy-orderbook-service".into(),
+        "gsy-offchain-storage".into(),
         "info".into(),
         std::io::stdout,
     );

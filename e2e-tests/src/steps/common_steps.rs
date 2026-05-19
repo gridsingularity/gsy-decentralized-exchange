@@ -4,7 +4,7 @@ use subxt::utils::AccountId32;
 
 #[given("the GSY DEX services are running")]
 async fn services_are_running(world: &mut MyWorld) {
-	let orderbook_url = std::env::var("ORDERBOOK_SERVICE_URL")
+	let orderbook_url = std::env::var("OFFCHAIN_STORAGE_URL")
 		.unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
 	let res = world
 		.http_client

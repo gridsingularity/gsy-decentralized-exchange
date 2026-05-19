@@ -10,7 +10,7 @@ services:
     environment:
       - RUST_LOG=info
       - CARGO_HOME=/var/www/gsy-node/.cargo
-      - ORDERBOOK_SERVICE_URL=http://gsy-orderbook:8080
+      - OFFCHAIN_STORAGE_URL=http://gsy-offchain-storage:8080
     healthcheck:
       test:
         [
@@ -22,11 +22,11 @@ services:
       retries: 10
       start_period: 30s
 
-  gsy-orderbook:
-    container_name: gsy-orderbook
+  gsy-offchain-storage:
+    container_name: gsy-offchain-storage
     build:
       context: .
-      dockerfile: ./gsy-orderbook-service/Dockerfile
+      dockerfile: ./gsy-offchain-storage/Dockerfile
     depends_on:
       - mongodb
     ports:
@@ -54,7 +54,7 @@ services:
     build:
       dockerfile: ./gsy-matching-engine/Dockerfile
     depends_on:
-      gsy-orderbook:
+      gsy-offchain-storage:
         condition: service_healthy
       gsy-node:
         condition: service_healthy
@@ -80,7 +80,7 @@ services:
     build:
       dockerfile: ./gsy-execution-engine/Dockerfile
     depends_on:
-      gsy-orderbook:
+      gsy-offchain-storage:
         condition: service_healthy
       gsy-node:
         condition: service_healthy
@@ -106,7 +106,7 @@ services:
     depends_on:
       gsy-node:
         condition: service_healthy
-      gsy-orderbook:
+      gsy-offchain-storage:
         condition: service_healthy
       gsy-matching-engine:
         condition: service_started

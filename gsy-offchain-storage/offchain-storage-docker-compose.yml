@@ -3,7 +3,7 @@ services:
     container_name: gsy-orderbook
     build:
       context: ..
-      dockerfile: ./gsy-orderbook-service/Dockerfile
+      dockerfile: ./gsy-offchain-storage/Dockerfile
     depends_on:
       mongodb:
         condition: service_started

@@ -36,7 +36,7 @@ async fn submit_offer(world: &mut MyWorld, user_name: String) {
 
 #[when(regex = r#"measurements for "([^"]*)" and "([^"]*)" assets are submitted"#)]
 async fn submit_measurements(world: &mut MyWorld, _user1: String, _user2: String) {
-	let orderbook_url = std::env::var("ORDERBOOK_SERVICE_URL")
+	let orderbook_url = std::env::var("OFFCHAIN_STORAGE_URL")
 		.unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
 	let adapter = AreaMarketInfoAdapter::new(Some(orderbook_url));
 

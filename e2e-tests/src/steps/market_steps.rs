@@ -15,7 +15,7 @@ use tracing::{error, info};
 #[when(regex = r#"the community topology and forecasts of (\d+) energy are submitted"#)]
 async fn submit_topology_forecasts(world: &mut MyWorld, energy: f64) {
 
-	let orderbook_url = std::env::var("ORDERBOOK_SERVICE_URL")
+	let orderbook_url = std::env::var("OFFCHAIN_STORAGE_URL")
 		.unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
 	let adapter = AreaMarketInfoAdapter::new(Some(orderbook_url));
 
