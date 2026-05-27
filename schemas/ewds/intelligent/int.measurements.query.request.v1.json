@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "int.measurements.query.request.v1",
-  "title": "measurements.query request",
+  "title": "measurementsQuery request",
   "type": "object",
   "additionalProperties": false,
   "properties": {

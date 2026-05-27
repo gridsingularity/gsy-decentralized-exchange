@@ -3,7 +3,7 @@ use anyhow::{anyhow, Error, Result};
 use ethers::prelude::*;
 use ethers::utils::keccak256;
 use gsy_offchain_primitives::db_api_schema::orders::{
-    DbOrderSchema, EnergyType, OrderEnum, OrderStatus,
+    DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus,
 };
 use gsy_offchain_primitives::types::{BidOfferMatch, MatchingData, Order};
 use gsy_offchain_primitives::utils::{
@@ -11,6 +11,7 @@ use gsy_offchain_primitives::utils::{
     NODE_FLOAT_SCALING_FACTOR,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::env;
 use std::str::FromStr;
@@ -109,10 +110,50 @@ struct EwdsMessageDto {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EwdsOrderDto {
+    order_id: String,
+    market_id: String,
+    order_type: String,
+    status: String,
+    area_uuid: String,
+    #[serde(default)]
+    nonce: Option<u64>,
+    time_slot: u64,
+    creation_time: u64,
+    quantity: f64,
+    price_limit: f64,
+    created_by: String,
+    #[serde(default)]
+    requirements: Option<EwdsRequirementsDto>,
+    #[serde(default)]
+    attributes: Option<EwdsAttributesDto>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EwdsRequirementsDto {
+    #[serde(default)]
+    trading_partner_id: Option<String>,
+    #[serde(default)]
+    energy_type: Option<String>,
+    #[serde(default)]
+    preferred_energy_rate: Option<f64>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EwdsAttributesDto {
+    #[serde(default)]
+    trading_partner_id: Option<String>,
+    energy_type: String,
+}
+
+#[derive(Deserialize)]
 struct EwdsOrdersQueryResponse {
     request_id: String,
     success: bool,
-    data: Option<Vec<DbOrderSchema>>,
+    data: Option<Vec<Value>>,
     error: Option<EwdsErrorPayload>,
 }
 
@@ -344,23 +385,33 @@ async fn fetch_open_orders_from_orderbook_service(url: String) -> Result<Prepare
 }
 
 async fn fetch_open_orders_via_ewds(fallback_url: String) -> Result<PreparedOrders, Error> {
+    fetch_open_orders_via_ewds_query(fallback_url).await
+}
+
+async fn fetch_open_orders_via_ewds_query(fallback_url: String) -> Result<PreparedOrders, Error> {
     let gateway_base =
         env::var("EWDS_GATEWAY_URL").unwrap_or_else(|_| "http://ewds-gateway-api:3333".to_string());
-    let request_fqcn =
-        env::var("EWDS_REQUEST_FQCN").unwrap_or_else(|_| "gsy.dex.offchain.request".to_string());
-    let response_fqcn =
-        env::var("EWDS_RESPONSE_FQCN").unwrap_or_else(|_| "gsy.dex.offchain.response".to_string());
-    let topic_owner =
-        env::var("EWDS_TOPIC_OWNER").unwrap_or_else(|_| "gsy.dex.offchain-storage".to_string());
+    let request_fqcn = env_var("EWDS_REQUEST_PUBLISH_FQCN")
+        .or_else(|| env_var("EWDS_REQUEST_FQCN"))
+        .unwrap_or_else(|| "gsy.intelligent.requests.pub".to_string());
+    let response_fqcn = env_var("EWDS_RESPONSE_SUBSCRIBE_FQCN")
+        .or_else(|| env_var("EWDS_RESPONSE_FQCN"))
+        .unwrap_or_else(|| "gsy.intelligent.responses.sub".to_string());
+    let topic_owner = env::var("EWDS_TOPIC_OWNER")
+        .unwrap_or_else(|_| "integration.apps.intelligent.auth.ewc".to_string());
+    let topic_version = env::var("EWDS_TOPIC_VERSION").unwrap_or_else(|_| "1.0.0".to_string());
+    let response_client_id = env_var("EWDS_MATCHING_ENGINE_CLIENT_ID")
+        .or_else(|| env_var("EWDS_RESPONSE_CLIENT_ID"))
+        .unwrap_or_else(|| "gsymatchingengine".to_string());
     let request_topic =
-        env::var("EWDS_ORDERS_REQUEST_TOPIC").unwrap_or_else(|_| "orders.query".to_string());
+        env::var("EWDS_ORDERS_REQUEST_TOPIC").unwrap_or_else(|_| "ordersQuery".to_string());
     let response_topic = env::var("EWDS_ORDERS_RESPONSE_TOPIC")
-        .unwrap_or_else(|_| "orders.query.response".to_string());
+        .unwrap_or_else(|_| "ordersQueryResponse".to_string());
 
     let timeout_ms = env::var("EWDS_RESPONSE_TIMEOUT_MS")
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
-        .unwrap_or(8_000);
+        .unwrap_or(60_000);
     let poll_interval_ms = env::var("EWDS_RESPONSE_POLL_INTERVAL_MS")
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
@@ -382,7 +433,7 @@ async fn fetch_open_orders_via_ewds(fallback_url: String) -> Result<PreparedOrde
     let send_message_body = EwdsSendMessageDto {
         fqcn: request_fqcn,
         topic_name: request_topic,
-        topic_version: "1.0.0".to_string(),
+        topic_version,
         topic_owner: topic_owner.clone(),
         transaction_id: request_id.clone(),
         payload: serde_json::to_string(&envelope)?,
@@ -391,20 +442,28 @@ async fn fetch_open_orders_via_ewds(fallback_url: String) -> Result<PreparedOrde
 
     let client = reqwest::Client::new();
     let post_url = format!("{}/api/v2/messages", gateway_base.trim_end_matches('/'));
+    info!(
+        "Publishing EWDS orders.query request (request_id={}, topic={}, response_topic={})",
+        request_id, send_message_body.topic_name, response_topic
+    );
     let send_response = client
         .post(post_url)
         .json(&send_message_body)
         .send()
         .await?;
-    if !send_response.status().is_success() {
+    let send_status = send_response.status();
+    if !send_status.is_success() {
+        let body = send_response.text().await.unwrap_or_default();
         return Err(anyhow!(
-            "EWDS message send failed for orders.query: HTTP {}",
-            send_response.status()
+            "EWDS message send failed for orders.query: HTTP {}{}",
+            send_status,
+            format_response_body(&body)
         ));
     }
 
     let started = Instant::now();
     let get_url = format!("{}/api/v2/messages", gateway_base.trim_end_matches('/'));
+    let poll_client_id = client_id_for_suffix(response_client_id.as_str(), response_topic.as_str());
     loop {
         if started.elapsed().as_millis() as u64 > timeout_ms {
             return Err(anyhow!(
@@ -420,11 +479,13 @@ async fn fetch_open_orders_via_ewds(fallback_url: String) -> Result<PreparedOrde
             query.append_pair("amount", "100");
             query.append_pair("topicName", response_topic.as_str());
             query.append_pair("topicOwner", topic_owner.as_str());
+            query.append_pair("clientId", poll_client_id.as_str());
         }
 
         let response = client.get(poll_url).send().await?;
 
-        if response.status().is_success() {
+        let status = response.status();
+        if status.is_success() {
             let messages = response
                 .json::<Vec<EwdsMessageDto>>()
                 .await
@@ -444,12 +505,23 @@ async fn fetch_open_orders_via_ewds(fallback_url: String) -> Result<PreparedOrde
                                 error_message
                             ));
                         }
-                        let orders = parsed_payload.data.unwrap_or_default();
+                        let orders = parsed_payload
+                            .data
+                            .and_then(parse_order_values)
+                            .unwrap_or_default();
                         info!("Fetched {} total orders from EWDS", orders.len());
                         return Ok(fetch_market_orders(orders));
                     }
                 }
             }
+        } else {
+            let body = response.text().await.unwrap_or_default();
+            return Err(anyhow!(
+                "EWDS response poll failed for orders.query (request_id={}): HTTP {}{}",
+                request_id,
+                status,
+                format_response_body(&body)
+            ));
         }
 
         sleep(Duration::from_millis(poll_interval_ms)).await;
@@ -468,6 +540,136 @@ fn parse_query_params_from_url(url: &str) -> serde_json::Value {
         return serde_json::Value::Object(map);
     }
     serde_json::json!({})
+}
+
+fn format_response_body(body: &str) -> String {
+    let compact = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    if compact.is_empty() {
+        return String::new();
+    }
+
+    let max_chars = 1_024;
+    let truncated = compact.chars().take(max_chars).collect::<String>();
+    if compact.chars().count() > max_chars {
+        format!(": {}...", truncated)
+    } else {
+        format!(": {}", truncated)
+    }
+}
+
+fn env_var(key: &str) -> Option<String> {
+    env::var(key)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn client_id_for_suffix(base: &str, suffix: &str) -> String {
+    let mut value = String::with_capacity(base.len() + suffix.len());
+    value.extend(base.chars().filter(|ch| ch.is_ascii_alphanumeric()));
+    value.extend(suffix.chars().filter(|ch| ch.is_ascii_alphanumeric()));
+
+    if value.is_empty() {
+        "gsymatchingengine".to_string()
+    } else {
+        value
+    }
+}
+
+fn parse_order_values(values: Vec<Value>) -> Option<Vec<DbOrderSchema>> {
+    let original_len = values.len();
+    let orders = values
+        .into_iter()
+        .filter_map(|value| match parse_order_value(value) {
+            Ok(order) => Some(order),
+            Err(error) => {
+                warn!("Skipping EWDS order payload: {}", error);
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+
+    if original_len == 0 || !orders.is_empty() {
+        Some(orders)
+    } else {
+        None
+    }
+}
+
+fn parse_order_value(value: Value) -> Result<DbOrderSchema> {
+    if let Ok(order) = serde_json::from_value::<DbOrderSchema>(value.clone()) {
+        return Ok(order);
+    }
+
+    let dto = serde_json::from_value::<EwdsOrderDto>(value)?;
+    ewds_order_to_db(dto)
+}
+
+fn ewds_order_to_db(order: EwdsOrderDto) -> Result<DbOrderSchema> {
+    let requirements = match order.requirements {
+        Some(requirements) => Some(DbRequirements {
+            trading_partner_id: requirements.trading_partner_id,
+            energy_type: requirements
+                .energy_type
+                .as_deref()
+                .map(ewds_energy_type_to_db)
+                .transpose()?,
+            preferred_energy_rate: requirements.preferred_energy_rate,
+        }),
+        None => None,
+    };
+
+    let attributes = match order.attributes {
+        Some(attributes) => Some(DbAttributes {
+            trading_partner_id: attributes.trading_partner_id,
+            energy_type: ewds_energy_type_to_db(attributes.energy_type.as_str())?,
+        }),
+        None => None,
+    };
+
+    Ok(DbOrderSchema {
+        order_id: order.order_id,
+        status: ewds_order_status_to_db(order.status.as_str())?,
+        order_type: ewds_order_type_to_db(order.order_type.as_str())?,
+        area_uuid: order.area_uuid,
+        market_id: order.market_id,
+        nonce: order.nonce,
+        time_slot: order.time_slot,
+        creation_time: order.creation_time,
+        energy_kWh: order.quantity,
+        energy_rate: order.price_limit,
+        created_by: order.created_by,
+        requirements,
+        attributes,
+    })
+}
+
+fn ewds_order_type_to_db(value: &str) -> Result<OrderEnum> {
+    match value.to_ascii_lowercase().as_str() {
+        "bid" => Ok(OrderEnum::Bid),
+        "offer" => Ok(OrderEnum::Offer),
+        _ => Err(anyhow!("unsupported EWDS order type '{}'", value)),
+    }
+}
+
+fn ewds_order_status_to_db(value: &str) -> Result<OrderStatus> {
+    match value.to_ascii_lowercase().as_str() {
+        "open" => Ok(OrderStatus::Open),
+        "executed" => Ok(OrderStatus::Executed),
+        "expired" => Ok(OrderStatus::Expired),
+        "deleted" => Ok(OrderStatus::Deleted),
+        _ => Err(anyhow!("unsupported EWDS order status '{}'", value)),
+    }
+}
+
+fn ewds_energy_type_to_db(value: &str) -> Result<EnergyType> {
+    match value.to_ascii_lowercase().as_str() {
+        "clean" => Ok(EnergyType::Clean),
+        "battery" => Ok(EnergyType::Battery),
+        "fossilfuel" | "fossil_fuel" | "fossil-fuel" => Ok(EnergyType::FossilFuel),
+        "import" => Ok(EnergyType::Import),
+        _ => Err(anyhow!("unsupported EWDS energy type '{}'", value)),
+    }
 }
 
 fn validate_h256_hex(field_name: &str, value: &str) -> Result<()> {

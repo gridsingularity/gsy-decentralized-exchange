@@ -13,6 +13,14 @@
       "type": "string",
       "pattern": "^0x[a-fA-F0-9]{64}$"
     },
+    "areaUuid": {
+      "type": "string",
+      "pattern": "^0x[a-fA-F0-9]{64}$"
+    },
+    "nonce": {
+      "type": ["integer", "null"],
+      "minimum": 0
+    },
     "orderType": {
       "type": "string",
       "enum": ["bid", "offer"]
@@ -72,6 +80,7 @@
   "required": [
     "orderId",
     "marketId",
+    "areaUuid",
     "orderType",
     "status",
     "quantity",

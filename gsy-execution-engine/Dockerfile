@@ -1,5 +1,5 @@
-FROM rustlang/rust:nightly AS chef
-RUN cargo install cargo-chef
+FROM rust:1.89.0-bookworm AS chef
+RUN cargo install cargo-chef --locked
 
 # First prepare dependencies of offchain-primitives
 WORKDIR /var/www/offchain-primitives
@@ -15,7 +15,7 @@ RUN cargo chef cook --release --recipe-path recipe.json
 
 FROM chef AS builder
 RUN apt-get update && apt-get install -y libssl-dev pkg-config git curl
-RUN cargo install svm-rs && svm install 0.8.20 && ln -s /root/.svm/0.8.20/solc-0.8.20 /usr/local/bin/solc
+RUN cargo install svm-rs --version 0.5.25 --locked && svm install 0.8.20 && ln -s /root/.svm/0.8.20/solc-0.8.20 /usr/local/bin/solc
 RUN curl -L https://foundry.paradigm.xyz | bash
 ENV PATH="/root/.foundry/bin:${PATH}"
 RUN foundryup
@@ -29,7 +29,7 @@ COPY --from=chef /var/www/gsy-execution-engine/target /var/www/gsy-execution-eng
 WORKDIR /var/www/gsy-execution-engine
 RUN cargo build --release
 
-FROM rustlang/rust:nightly AS runtime
+FROM rust:1.89.0-bookworm AS runtime
 WORKDIR /var/www/gsy-execution-engine
 COPY --from=builder /var/www/gsy-execution-engine/target/release/gsy-execution-engine /usr/local/bin
 ENTRYPOINT ["/usr/local/bin/gsy-execution-engine", "web3", "http://gsy-orderbook", "8080", "ws://anvil", "8545", "30", "3600", "0.10"]

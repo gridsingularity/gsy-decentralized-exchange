@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "int.orders.query.request.v1",
-  "title": "orders.query request",
+  "title": "ordersQuery request",
   "type": "object",
   "additionalProperties": false,
   "properties": {

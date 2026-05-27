@@ -56,8 +56,9 @@ async fn main() -> Result<(), anyhow::Error> {
     let ewds_config = EwdsHandlerConfig::from_env();
     if ewds_config.enabled {
         let db_for_ewds = db_connection_wrapper.clone();
+        let request_handler_config = ewds_config.clone();
         tokio::task::spawn(async move {
-            start_ewds_request_handler(db_for_ewds, ewds_config).await;
+            start_ewds_request_handler(db_for_ewds, request_handler_config).await;
         });
     }
 

@@ -31,6 +31,19 @@ Primary files:
 - `int.measurements.upsert.request.v1.json`
 - `int.market.upsert.request.v1.json`
 
+DDHub topic names use camelCase because the Client Gateway UI rejects dots in
+topic names. The schema file names and payload `operation` values keep dotted
+operation names for readability and service routing:
+
+| DDHub topic | Payload operation | Schema file |
+|---|---|---|
+| `ordersQuery` | `orders.query` | `int.orders.query.request.v1.json` |
+| `ordersQueryResponse` | response envelope | `int.orders.query.response.v1.json` |
+| `tradesQuery` | `trades.query` | `int.trades.query.request.v1.json` |
+| `tradesQueryResponse` | response envelope | `int.trades.query.response.v1.json` |
+| `measurementsQuery` | `measurements.query` | `int.measurements.query.request.v1.json` |
+| `measurementsQueryResponse` | response envelope | `int.measurements.query.response.v1.json` |
+
 ## CSV -> Runtime Field Mapping
 
 ### Trade Mapping
@@ -56,6 +69,8 @@ Primary files:
 |---|---|---|
 | `int:orderId` | `orderId` | `DbOrderSchema.order_id` |
 | `int:marketId` | `marketId` | `DbOrderSchema.market_id` |
+| runtime routing field | `areaUuid` | `DbOrderSchema.area_uuid` |
+| runtime settlement field | `nonce` | `DbOrderSchema.nonce` |
 | `int:orderType` | `orderType` | `DbOrderSchema.order_type` |
 | `int:quantity` | `quantity` | `DbOrderSchema.energy_kWh` |
 | `int:priceLimit` | `priceLimit` | `DbOrderSchema.energy_rate` |
@@ -82,24 +97,8 @@ Current implementation baseline:
 - Payload-level minimization is still recommended for EWDS transport (send only required fields).
 - If sensitivity flags are updated in the ontology spreadsheet, schema contracts should be versioned.
 
-## How These Schemas Are Used in EWDS
-
-Planned usage:
-
-1. Register message topics in EWDS client gateway.
-2. Attach request/response schemas to each topic version.
-3. Enforce validators on producer and consumer boundaries.
-4. Reject malformed payloads before business logic execution.
-
 ## Open Decisions
 
-- Final namespace and owner naming conventions in Intelligent EWDS.
 - Whether to normalize all timestamps to RFC3339 before full cutover.
 - Whether trade IDs should be UUID-only (strict pattern) or generic strings.
 - Final representation for market types (`spot`, `flexibility`, `settlement`) across services.
-
-## Next Implementation Step
-
-Register the schema pack as DDHub topic versions and align the Intelligent namespace
-and channel policies so the implemented request/response handlers can be validated
-against the active gateway runtime.

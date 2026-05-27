@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "int.trades.query.request.v1",
-  "title": "trades.query request",
+  "title": "tradesQuery request",
   "type": "object",
   "additionalProperties": false,
   "properties": {

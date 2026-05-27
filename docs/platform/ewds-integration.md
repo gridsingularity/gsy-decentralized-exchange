@@ -64,30 +64,40 @@ A single Intelligent EWDS instance is used as inter-service communication backbo
 
 ### Service Identity Model
 
-Recommended namespaces:
+EWF-confirmed namespace/channel model:
 
-- `gsy.dex.offchain-storage`
-- `gsy.dex.matching-engine`
-- `gsy.dex.execution-engine`
-- `gsy.dex.community-client`
+- Topic owner namespace: `integration.apps.intelligent.auth.ewc`
+- Local Client Gateway channels: managed by us in our gateway, with separate publish/subscribe FQCNs because internal channel names must be unique
+- Topic layout: multiple request/response topics can be associated with the same channel
 
 Each service:
 
 1. Registers identity and credentials with EWDS.
-2. Uses EWDS channels/topics for service-to-service request/response.
+2. Uses the local Client Gateway channel and Intelligent-owned topics for service-to-service request/response.
 3. Uses schema-backed topic contracts for payload validation.
 
 ### Logical Operation Mapping
 
-| Logical operation | Producer | Consumer | Legacy REST equivalent |
+| Payload operation / DDHub topics | Request publisher | Request consumer | Response publisher | Response consumer | Legacy REST equivalent |
+|---|---|---|---|---|---|
+| `orders.query` over `ordersQuery` / `ordersQueryResponse` | matching engine | orderbook service | orderbook service | matching engine | `GET /orders` |
+| `trades.query` over `tradesQuery` / `tradesQueryResponse` | execution engine | orderbook service | orderbook service | execution engine | `GET /trades` |
+| `measurements.query` over `measurementsQuery` / `measurementsQueryResponse` | execution engine | orderbook service | orderbook service | execution engine | `GET /measurements` |
+| `forecasts.upsert` | community client | orderbook service | none | none | `POST /forecasts` |
+| `measurements.upsert` | community client | orderbook service | none | none | `POST /measurements` |
+| `market.upsert` | community client | orderbook service | none | none | `POST /market` |
+| `community-market.query` | community client | orderbook service | orderbook service | community client | `GET /community-market` |
+
+### Local Channel Layout
+
+| Local channel FQCN | Gateway type | Attached topics | Default env var |
 |---|---|---|---|
-| `orders.query` | matching engine | off-chain storage | `GET /orders` |
-| `trades.query` | execution engine | off-chain storage | `GET /trades` |
-| `measurements.query` | execution engine | off-chain storage | `GET /measurements` |
-| `forecasts.upsert` | community client | off-chain storage | `POST /forecasts` |
-| `measurements.upsert` | community client | off-chain storage | `POST /measurements` |
-| `market.upsert` | community client | off-chain storage | `POST /market` |
-| `community-market.query` | community client | off-chain storage | `GET /community-market` |
+| `gsy.intelligent.requests.pub` | Publish | `ordersQuery`, `tradesQuery`, `measurementsQuery` | `EWDS_REQUEST_PUBLISH_FQCN` |
+| `gsy.intelligent.requests.sub` | Subscribe | `ordersQuery`, `tradesQuery`, `measurementsQuery` | `EWDS_REQUEST_SUBSCRIBE_FQCN` |
+| `gsy.intelligent.responses.pub` | Publish | `ordersQueryResponse`, `tradesQueryResponse`, `measurementsQueryResponse` | `EWDS_RESPONSE_PUBLISH_FQCN` |
+| `gsy.intelligent.responses.sub` | Subscribe | `ordersQueryResponse`, `tradesQueryResponse`, `measurementsQueryResponse` | `EWDS_RESPONSE_SUBSCRIBE_FQCN` |
+
+All four channels should use the `user.roles.integration.apps.intelligent.auth.ewc` role restriction for the initial service-to-service tests.
 
 ## DDHub API Surface Used by Integration
 
@@ -101,16 +111,35 @@ References:
 
 - [ddhub-client-gateway](https://github.com/energywebfoundation/ddhub-client-gateway)
 - [ddhub-message-broker](https://github.com/energywebfoundation/ddhub-message-broker)
+- [DDHub Client Gateway topics guide](https://docs.energyweb.org/energy-solutions/digital-spine-by-energy-web/component-guides/ddhub-client-gateway/technical-guide/topics)
+- [DDHub Client Gateway channels guide](https://docs.energyweb.org/energy-solutions/digital-spine-by-energy-web/component-guides/ddhub-client-gateway/technical-guide/channels)
 - [Energy Web Integration Guide (internal)](https://gridsingularity.atlassian.net/wiki/spaces/D3A/pages/3605823489/Energy+Web+Service+Integration)
+
+## EWF Runtime Constraints
+
+EWF confirmed these broker/runtime limits for the shared Intelligent EWDS setup:
+
+- Basic messaging payload limit: 6 MB including metadata.
+- File transfer payload limit: 100 MB.
+- Message retention: 24 hours, then physically removed from broker storage.
+- Payload encryption can be enabled, but it reduces effective message size and adds performance cost.
 
 ## Schema and Validator Strategy
 
-For each operation, define versioned request/response topic schemas:
+For each operation, define versioned request/response topic schemas. DDHub topic names use camelCase because the gateway UI rejects dots in topic names; the payload `operation` field keeps the dotted operation name for service routing.
 
-- `gsy.dex.v1.orders.query.request`
-- `gsy.dex.v1.orders.query.response`
-- `gsy.dex.v1.trades.query.request`
-- `gsy.dex.v1.trades.query.response`
+- `ordersQuery` (`operation=orders.query`)
+- `ordersQueryResponse`
+- `tradesQuery` (`operation=trades.query`)
+- `tradesQueryResponse`
+- `measurementsQuery` (`operation=measurements.query`)
+- `measurementsQueryResponse`
+- `forecastsQuery`
+- `forecastsQueryResponse`
+- `openMarketsQuery`
+- `openMarketsQueryResponse`
+- `topologyQuery`
+- `topologyQueryResponse`
 
 The first concrete schema pack aligned to the Intelligent ontology CSV is now available in:
 
@@ -132,23 +161,26 @@ Validator requirements:
 ### gsy-orderbook-service
 
 - EWDS query handlers are implemented for `orders.query`, `trades.query`, and `measurements.query`.
+- Order payloads are emitted with Intelligent-style camelCase fields; the matching-engine consumer still accepts legacy native `DbOrderSchema` payloads during migration.
 - Keep existing REST endpoints during migration for compatibility.
 - Publish consistent response envelopes and error payloads.
 - Runtime switch for responder path: `EWDS_ENABLE_HANDLER=true`.
 
 ### gsy-matching-engine
 
-- Replace direct `/orders` polling path with EWDS `orders.query` request flow.
+- Replace direct `/orders` polling path with EWDS `orders.query` request/reply over the local client gateway.
 - Keep fallback transport via direct HTTP until cutover is complete.
 - Runtime switch via `OFFCHAIN_STORAGE_TRANSPORT=http|ewds`.
-- EWDS endpoint variables: `EWDS_GATEWAY_URL`, `EWDS_REQUEST_FQCN`, `EWDS_RESPONSE_FQCN`.
+- EWDS endpoint variables: `EWDS_GATEWAY_URL`, `EWDS_REQUEST_PUBLISH_FQCN`, `EWDS_RESPONSE_SUBSCRIBE_FQCN`, `EWDS_TOPIC_OWNER`, `EWDS_TOPIC_VERSION`, `EWDS_MATCHING_ENGINE_CLIENT_ID`.
+- Confirmed runtime defaults: `EWDS_REQUEST_PUBLISH_FQCN=gsy.intelligent.requests.pub`, `EWDS_RESPONSE_SUBSCRIBE_FQCN=gsy.intelligent.responses.sub`, `EWDS_TOPIC_OWNER=integration.apps.intelligent.auth.ewc`.
 
 ### gsy-execution-engine
 
 - Replace direct `/trades` and `/measurements` reads with EWDS operations.
 - Keep fallback transport via direct HTTP until cutover is complete.
 - Runtime switch via `OFFCHAIN_STORAGE_TRANSPORT=http|ewds`.
-- EWDS endpoint variables: `EWDS_GATEWAY_URL`, `EWDS_REQUEST_FQCN`, `EWDS_RESPONSE_FQCN`.
+- EWDS endpoint variables: `EWDS_GATEWAY_URL`, `EWDS_REQUEST_PUBLISH_FQCN`, `EWDS_RESPONSE_SUBSCRIBE_FQCN`, `EWDS_TOPIC_OWNER`, `EWDS_TOPIC_VERSION`, `EWDS_EXECUTION_ENGINE_CLIENT_ID`.
+- Confirmed runtime defaults: `EWDS_REQUEST_PUBLISH_FQCN=gsy.intelligent.requests.pub`, `EWDS_RESPONSE_SUBSCRIBE_FQCN=gsy.intelligent.responses.sub`, `EWDS_TOPIC_OWNER=integration.apps.intelligent.auth.ewc`.
 
 ### gsy-community-client
 
@@ -161,6 +193,30 @@ A local DDHub Client Gateway should be deployed against EWF-hosted EWC Digital S
 
 - Gateway-only stack: `docker-compose.ewds.yml`
 - Full DEX overlay: `docker-compose.yml` plus `docker-compose.ewds.yml` with profile `ewds`
+- Gateway namespace validator: `APPLICATION_NAMESPACE_REGULAR_EXPRESSION=\w+\.apps\..*\.(iam|auth)\.ewc` for both API and scheduler, as required by EWF for Intelligent `.auth.ewc` application namespaces.
+
+Operational startup order:
+
+1. Start the local DDHub Client Gateway stack.
+2. Confirm the gateway dashboard is online, mTLS is valid, IAM login succeeds, and scheduler jobs report success.
+3. In the Client Gateway UI, create or verify the four request/response publish/subscribe channels.
+4. Attach the required Intelligent-owned request/response topics to the matching channels.
+5. Start the GSY services that use the EWDS overlay.
+
+Channel/topic setup notes:
+
+- Topic application/owner: `integration.apps.intelligent.auth.ewc`.
+- Local channel FQCNs: `gsy.intelligent.requests.pub`, `gsy.intelligent.requests.sub`, `gsy.intelligent.responses.pub`, `gsy.intelligent.responses.sub`.
+- Required initial topics: `ordersQuery`, `ordersQueryResponse`, `tradesQuery`, `tradesQueryResponse`, `measurementsQuery`, `measurementsQueryResponse`.
+- Topic creation requires `topiccreator`; channel creation requires gateway admin access.
+- The gateway API validates send requests against a `pub` channel and receive polling against a `sub` channel. The direction-specific FQCN env vars are the default integration path.
+- Gateway smoke testing confirmed that message payloads must be JSON-encoded strings, sends must include `topicVersion`, `transactionId`, and `anonymousRecipient`, and receive polling must use `GET /api/v2/messages` with an alphanumeric `clientId` cursor.
+
+Validated e2e status:
+
+- The full Cucumber e2e suite passed with the EWDS overlay enabled: `2` features, `2` scenarios, and `20` steps passed.
+- The validated test command is documented in `docs/setup/test.md`.
+- DDHub delivery is asynchronous; use `EWDS_RESPONSE_TIMEOUT_MS=60000` for deterministic e2e runs.
 
 Gateway smoke-test example:
 

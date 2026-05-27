@@ -1,4 +1,4 @@
-FROM rust:latest
+FROM rust:1.89.0-bookworm
 
 RUN apt-get update && apt-get install -y \
     libssl-dev \
@@ -6,7 +6,7 @@ RUN apt-get update && apt-get install -y \
     git \
     curl
 
-RUN cargo install svm-rs
+RUN cargo install svm-rs --version 0.5.25 --locked
 RUN svm install 0.8.20
 RUN ln -s /root/.svm/0.8.20/solc-0.8.20 /usr/local/bin/solc
 

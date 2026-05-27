@@ -6,7 +6,7 @@ for GSY DEX off-chain communication over EWDS.
 Scope of this first schema pack:
 
 - Domain entities: `Order`, `Trade`, `Tariff`, `GridFeeModel`, `MarketMechanism`
-- Message contracts: query request/response envelopes for orders, trades, measurements
+- Message contracts: query request/reply envelopes for orders, trades, measurements
 
 Notes:
 
