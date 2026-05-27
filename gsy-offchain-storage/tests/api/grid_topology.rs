@@ -11,7 +11,7 @@ fn base_asset(uuid: &str, asset_type: AssetType, asset_name: &str) -> AssetSchem
         asset_name: asset_name.to_string(),
         facility_name: "Building 1".to_string(),
         creation_time: 1546300800,
-        installed_power: 5.0,
+        installed_power: Some(5.0),
         asset_subtype: None,
         technology_type: None,
         phase_connection: None,
@@ -41,7 +41,7 @@ async fn post_and_get_assets() {
         AssetSchema {
             asset_subtype: Some("Li-ion".to_string()),
             technology_type: Some("SMA".to_string()),
-            installed_power: 5.0,
+            installed_power: Some(5.0),
             energy_capacity: Some(5.0),
             maximum_soc: Some(95.0),
             minimum_soc: Some(5.0),

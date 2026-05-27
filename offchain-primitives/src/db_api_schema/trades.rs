@@ -1,14 +1,9 @@
-//! Trades Storage schemas, as specified in D3.2 §5.3.
-//!
-//! The same database also holds `Market`, `ClearingResult` and
-//! `MarketRole` documents — these all relate to a market's lifecycle
-//! and are colocated to allow joint queries (e.g. trades plus clearing
-//! result for a given market id).
 
 use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[serde(rename_all = "lowercase")]
 pub enum TradeStatus {
     Executed,
     Settled,
@@ -33,8 +28,8 @@ pub struct TradeSchema {
     pub residual_offer_id: Option<String>,
 }
 
-/// Status of a market clearing run.
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[serde(rename_all = "lowercase")]
 pub enum ClearingStatus {
     Cleared,
     Uncleared,
@@ -54,9 +49,6 @@ pub struct ClearingResultSchema {
     pub clearing_time: String,
 }
 
-/// Market participation role assigned to one or more parties (e.g.
-/// Prosumer, Consumer, DSO). Used by the Client API service to
-/// authorise order submissions.
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub struct MarketRoleSchema {
     pub role_name: String,

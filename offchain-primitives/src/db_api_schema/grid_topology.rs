@@ -1,13 +1,6 @@
-//! Grid Topology and Market Storage schemas, as specified in
-//! D3.2 §5.1 (GSY DEX Off-Chain Storage Database Schema — Grid Topology
-//! and Market Storage). All assets share a single document type and are
-//! differentiated by `asset_type`, with optional fields populated per
-//! asset class.
-
 use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
-/// Asset classes persisted in the Grid Topology Storage.
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub enum AssetType {
     EnergyAsset,
@@ -19,9 +12,6 @@ pub enum AssetType {
     EnergyInfrastructure,
 }
 
-/// Unified Asset schema. `asset_type` differentiates the asset class;
-/// optional fields are populated according to the class (e.g. SoC limits
-/// for batteries, target service for heatpumps).
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub struct AssetSchema {
     pub asset_type: AssetType,
@@ -29,7 +19,9 @@ pub struct AssetSchema {
     pub asset_name: String,
     pub facility_name: String,
     pub creation_time: u64,
-    pub installed_power: f64,
+
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub installed_power: Option<f64>,
 
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub asset_subtype: Option<String>,
