@@ -1,8 +1,12 @@
 use anyhow::{anyhow, Result};
 use gsy_offchain_primitives::constants::GLOBAL_CONSTANTS;
-use gsy_offchain_primitives::db_api_schema::{profiles::MeasurementSchema, trades::TradeSchema};
+use gsy_offchain_primitives::db_api_schema::{
+    profiles::{MeasurementPointSchema, MeasurementSchema, TimeseriesSchema},
+    trades::TradeSchema,
+};
 use reqwest::Client;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use std::collections::HashMap;
 use std::env;
 use std::time::Instant;
 use tracing::info;
@@ -36,14 +40,8 @@ pub async fn fetch_trades_and_measurements_for_timeslot(
         "{}/trades?start_time={}&end_time={}",
         base_url, start_time, end_time
     );
-    let measurements_url = format!(
-        "{}/measurements?start_time={}&end_time={}",
-        base_url, start_time, end_time
-    );
     info!("Fetching trades for {}", trades_url);
-    info!("Fetching measurements for {}", measurements_url);
 
-    // 1) Fetch trades
     let trades_resp = client.get(&trades_url).send().await?;
     if !trades_resp.status().is_success() {
         return Err(anyhow!(
@@ -54,18 +52,74 @@ pub async fn fetch_trades_and_measurements_for_timeslot(
     }
     let trades: Vec<TradeSchema> = trades_resp.json().await?;
 
-    // 2) Fetch measurements
-    let measurements_resp = client.get(&measurements_url).send().await?;
-    if !measurements_resp.status().is_success() {
-        return Err(anyhow!(
-            "Failed to fetch measurements for timeslot {}: HTTP {}",
-            timeslot,
-            measurements_resp.status()
-        ));
-    }
-    let measurements: Vec<MeasurementSchema> = measurements_resp.json().await?;
+    let measurements =
+        fetch_measurements_from_timeseries(&client, base_url, start_time, end_time).await?;
 
     Ok((trades, measurements))
+}
+
+async fn fetch_measurements_from_timeseries(
+    client: &Client,
+    base_url: &str,
+    start_time: u64,
+    end_time: u64,
+) -> Result<Vec<MeasurementSchema>> {
+    let measurement_points_url = format!("{}/measurement-points?type=Measurement", base_url);
+    let timeseries_url = format!(
+        "{}/timeseries?start_time={}&end_time={}",
+        base_url,
+        format_timeseries_timestamp(start_time),
+        format_timeseries_timestamp(end_time)
+    );
+    info!("Fetching measurement points for {}", measurement_points_url);
+    info!("Fetching timeseries for {}", timeseries_url);
+
+    let points_resp = client.get(&measurement_points_url).send().await?;
+    if !points_resp.status().is_success() {
+        return Err(anyhow!(
+            "Failed to fetch measurement points for timeslot {}: HTTP {}",
+            start_time,
+            points_resp.status()
+        ));
+    }
+    let points = points_resp.json::<Vec<MeasurementPointSchema>>().await?;
+    let points_by_id = points
+        .into_iter()
+        .map(|point| (point.measurement_id.clone(), point))
+        .collect::<HashMap<_, _>>();
+
+    let timeseries_resp = client.get(&timeseries_url).send().await?;
+    if !timeseries_resp.status().is_success() {
+        return Err(anyhow!(
+            "Failed to fetch timeseries for timeslot {}: HTTP {}",
+            start_time,
+            timeseries_resp.status()
+        ));
+    }
+    let timeseries = timeseries_resp.json::<Vec<TimeseriesSchema>>().await?;
+
+    Ok(timeseries
+        .into_iter()
+        .filter_map(|value| {
+            let point = points_by_id.get(&value.measurement_point)?;
+            let time_slot = parse_timeseries_timestamp(value.timestamp.as_str())?;
+            Some(MeasurementSchema {
+                area_uuid: point.asset_name.clone(),
+                community_uuid: point.datasource_name.clone().unwrap_or_default(),
+                time_slot,
+                creation_time: time_slot,
+                energy_kwh: value.value,
+            })
+        })
+        .collect())
+}
+
+fn format_timeseries_timestamp(timestamp: u64) -> String {
+    format!("{:020}", timestamp)
+}
+
+fn parse_timeseries_timestamp(timestamp: &str) -> Option<u64> {
+    timestamp.parse::<u64>().ok()
 }
 
 #[derive(Serialize)]

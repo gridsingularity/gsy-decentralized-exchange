@@ -37,10 +37,11 @@ services:
       - /app/node_modules
       - contracts-data:/contracts
 
-  gsy-orderbook:
-    container_name: gsy-orderbook
+  gsy-offchain-storage:
+    container_name: gsy-offchain-storage
     build:
-      dockerfile: ./gsy-orderbook-service/Dockerfile
+      context: .
+      dockerfile: ./gsy-offchain-storage/Dockerfile
     depends_on:
       mongodb:
         condition: service_started
@@ -67,28 +68,30 @@ services:
   gsy-matching-engine:
     container_name: gsy-matching-engine
     build:
+      context: .
       dockerfile: ./gsy-matching-engine/Dockerfile
     depends_on:
-      gsy-orderbook:
+      gsy-offchain-storage:
         condition: service_started
       anvil:
         condition: service_healthy
       gsy-contracts-bootstrap:
         condition: service_completed_successfully
     entrypoint: ["/usr/local/bin/gsy-matching-engine"]
-    command: ["web3", "http://gsy-orderbook", "8080", "ws://anvil", "8545"]
+    command: ["web3", "http://gsy-offchain-storage", "8080", "ws://anvil", "8545"]
     environment:
       - OFFCHAIN_STORAGE_TRANSPORT=http
-      - OFFCHAIN_STORAGE_URL=http://gsy-orderbook:8080
+      - OFFCHAIN_STORAGE_URL=http://gsy-offchain-storage:8080
       - TRADE_SETTLEMENT_ADDRESS=0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9
       - MATCHING_ENGINE_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
 
   gsy-community-client:
     container_name: gsy-community-client
     build:
+      context: .
       dockerfile: ./gsy-community-client/Dockerfile
     depends_on:
-      gsy-orderbook:
+      gsy-offchain-storage:
         condition: service_started
       anvil:
         condition: service_healthy
@@ -96,7 +99,7 @@ services:
         condition: service_completed_successfully
     environment:
       - OFFCHAIN_STORAGE_TRANSPORT=http
-      - OFFCHAIN_STORAGE_URL=http://gsy-orderbook:8080
+      - OFFCHAIN_STORAGE_URL=http://gsy-offchain-storage:8080
       - EVM_NODE_URL=ws://anvil:8545
       - ORDER_REGISTRY_ADDRESS=0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0
       - COMMUNITY_CLIENT_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
@@ -104,6 +107,7 @@ services:
   gsy-market-orchestrator:
     container_name: gsy-market-orchestrator
     build:
+      context: .
       dockerfile: ./gsy-market-orchestrator/Dockerfile
     depends_on:
       anvil:
@@ -123,19 +127,20 @@ services:
   gsy-execution-engine:
     container_name: gsy-execution-engine
     build:
+      context: .
       dockerfile: ./gsy-execution-engine/Dockerfile
     depends_on:
-      gsy-orderbook:
+      gsy-offchain-storage:
         condition: service_started
       anvil:
         condition: service_healthy
       gsy-contracts-bootstrap:
         condition: service_completed_successfully
     entrypoint: ["/usr/local/bin/gsy-execution-engine"]
-    command: ["web3", "http://gsy-orderbook", "8080", "ws://anvil", "8545", "5", "900", "0.10"]
+    command: ["web3", "http://gsy-offchain-storage", "8080", "ws://anvil", "8545", "5", "900", "0.10"]
     environment:
       - OFFCHAIN_STORAGE_TRANSPORT=http
-      - OFFCHAIN_STORAGE_URL=http://gsy-orderbook:8080
+      - OFFCHAIN_STORAGE_URL=http://gsy-offchain-storage:8080
       - EXECUTION_ENGINE_OFFSET_MIN=-15
       - TRADE_SETTLEMENT_ADDRESS=0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9
       - EXECUTION_ENGINE_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80

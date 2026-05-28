@@ -32,4 +32,4 @@ RUN cargo build --release
 FROM rust:1.89.0-bookworm AS runtime
 WORKDIR /var/www/gsy-matching-engine
 COPY --from=builder /var/www/gsy-matching-engine/target/release/gsy-matching-engine /usr/local/bin
-ENTRYPOINT ["/usr/local/bin/gsy-matching-engine", "web3", "http://gsy-orderbook", "8080", "ws://anvil", "8545"]
+ENTRYPOINT ["/usr/local/bin/gsy-matching-engine", "web3", "http://gsy-offchain-storage", "8080", "ws://anvil", "8545"]

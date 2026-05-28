@@ -1,3 +1,10 @@
+//! Measurements Storage schemas, as specified in D3.2 §5.2.
+//!
+//! The legacy `MeasurementSchema` and `ForecastSchema` are still used by the
+//! EVM e2e flow and the execution-engine penalty calculator. The Intelligent
+//! `MeasurementPointSchema` and `TimeseriesSchema` types are kept for the
+//! ontology-aligned storage API.
+
 #![allow(non_snake_case)]
 
 use codec::{Decode, Encode};
@@ -92,4 +99,41 @@ pub struct ForecastSchema {
     pub creation_time: u64,
     pub energy_kwh: f64,
     pub confidence: f64,
+}
+
+/// Discriminates a `MeasurementPoint` between measurements and forecasts.
+#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+pub enum MeasurementPointType {
+    Measurement,
+    Forecast,
+}
+
+/// Direction of an energy flow relative to the measured asset.
+#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+pub enum FlowDirection {
+    Import,
+    Export,
+}
+
+#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+pub struct MeasurementPointSchema {
+    #[serde(rename = "type")]
+    pub point_type: MeasurementPointType,
+    pub measurement_id: String,
+    pub property_measured: String,
+    pub unit: String,
+    pub direction: FlowDirection,
+    pub energy_accumulated: bool,
+    pub time_resolution: String,
+    pub phase: u8,
+    pub asset_name: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub datasource_name: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+pub struct TimeseriesSchema {
+    pub measurement_point: String,
+    pub timestamp: String,
+    pub value: f64,
 }

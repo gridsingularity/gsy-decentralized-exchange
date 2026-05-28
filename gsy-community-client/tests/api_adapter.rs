@@ -3,11 +3,10 @@ use gsy_community_client::external_api::{
 };
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use gsy_community_client::time_utils::get_last_and_next_timeslot;
-use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketTopologySchema};
+use gsy_offchain_primitives::db_api_schema::market::AreaTopologySchema;
 use gsy_offchain_primitives::MarketType;
 
 use httpmock::prelude::*;
-use serde_json;
 use tracing::Level;
 use tracing_subscriber;
 
@@ -31,30 +30,9 @@ async fn test_get_or_create_market_topology() {
         }],
     };
 
-    let expected_market = MarketTopologySchema {
-        market_type: MarketType::Spot,
-        creation_time: 123,
-        time_slot: 456,
-        market_id: format!("0x{}", "11".repeat(32)),
-        community_uuid: "comm_uuid".to_string(),
-        community_name: "comm_name".to_string(),
-        community_areas: vec![AreaTopologySchema {
-            area_uuid: "area_uuid".to_string(),
-            name: "area_name".to_string(),
-            area_type: "Area".to_string(),
-        }],
-    };
-
-    let market_json_str = serde_json::to_string(&expected_market).unwrap();
-
     let mock_request = server.mock(|when, then| {
-        when.method(GET)
-            .path("/community-market")
-            .query_param("community_uuid", "comm_uuid")
-            .query_param("time_slot", time_slot.to_string());
-        then.status(200)
-            .header("content-type", "text/html; charset=UTF-8")
-            .body(market_json_str);
+        when.method(POST).path("/markets");
+        then.status(200).header("content-type", "application/json");
     });
 
     let adapter = AreaMarketInfoAdapter::new(Some(server.base_url()));
@@ -62,7 +40,18 @@ async fn test_get_or_create_market_topology() {
         .get_or_create_market_topology(external_topology, time_slot)
         .await
         .unwrap();
-    assert_eq!(market, expected_market);
+    assert_eq!(market.market_type, MarketType::Spot);
+    assert_eq!(market.time_slot, time_slot as u32);
+    assert_eq!(market.community_uuid, "comm_uuid");
+    assert_eq!(market.community_name, "comm_name");
+    assert_eq!(
+        market.community_areas,
+        vec![AreaTopologySchema {
+            area_uuid: "area_uuid".to_string(),
+            name: "area_name".to_string(),
+            area_type: "Area".to_string(),
+        }]
+    );
     mock_request.assert();
 }
 

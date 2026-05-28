@@ -1,0 +1,35 @@
+services:
+  gsy-offchain-storage:
+    container_name: gsy-offchain-storage
+    build:
+      context: ..
+      dockerfile: ./gsy-offchain-storage/Dockerfile
+    depends_on:
+      mongodb:
+        condition: service_started
+    ports:
+      - "8080:8080"
+    environment:
+      - CARGO_HOME=/var/www/gsy-offchain-storage/.cargo
+      - APPLICATION_HOST=0.0.0.0
+      - APPLICATION_PORT=8080
+      - DATABASE_NAME=orderbook
+      - DATABASE_HOST=mongodb
+      - DATABASE_URL_SCHEME=mongodb
+      - DATABASE_USERNAME=gsy
+      - DATABASE_PASSWORD=gsy
+      - EVM_NODE_URL=ws://localhost:8545
+      - CONTRACT_ORDER_REGISTRY=0x0000000000000000000000000000000000000000
+      - CONTRACT_TRADE_SETTLEMENT=0x0000000000000000000000000000000000000000
+      - CONTRACT_MARKET_CONTROLLER=0x0000000000000000000000000000000000000000
+      - SCHEDULER_INTERVAL=900
+
+  mongodb:
+    image: mongo:5.0
+    ports:
+      - "27017:27017"
+    volumes:
+      - ~/mongodb-data:/data/db
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=gsy
+      - MONGO_INITDB_ROOT_PASSWORD=gsy

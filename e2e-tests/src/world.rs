@@ -87,6 +87,7 @@ impl MyWorld {
             users,
             evm_node_url,
             orderbook_service_url: std::env::var("ORDERBOOK_SERVICE_URL")
+                .or_else(|_| std::env::var("OFFCHAIN_STORAGE_URL"))
                 .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string()),
             market_controller_address,
             order_registry_address,

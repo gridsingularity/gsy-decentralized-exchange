@@ -170,7 +170,7 @@ services:
       - ddhub-gateway-UI
       - ddhub-gateway-api
 
-  gsy-orderbook:
+  gsy-offchain-storage:
     profiles: ["ewds"]
     depends_on:
       ddhub-gateway-api:

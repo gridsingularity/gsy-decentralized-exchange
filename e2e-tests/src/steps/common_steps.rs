@@ -36,10 +36,10 @@ async fn services_are_running(world: &mut MyWorld) {
         .get(format!("{}/health_check", world.orderbook_service_url))
         .send()
         .await
-        .expect("Failed to contact orderbook service");
+        .expect("Failed to contact off-chain storage service");
     assert!(
         res.status().is_success(),
-        "Orderbook service is not healthy"
+        "Off-chain storage service is not healthy"
     );
 
     let chain_id = world
