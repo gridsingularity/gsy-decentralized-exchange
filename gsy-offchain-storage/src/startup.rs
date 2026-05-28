@@ -22,7 +22,7 @@ pub fn run(
         App::new()
             .wrap(TracingLogger::default())
             .route("/health_check", web::get().to(health_check))
-            // Order Book Storage (D3.2 §5.4)
+            // Order Book Storage
             .route("/orders-normalized", web::post().to(post_normalized_orders))
             .route("/orders", web::post().to(post_orders))
             .route("/orders", web::get().to(get_orders))
@@ -30,7 +30,7 @@ pub fn run(
             .route("/flexibility-orders", web::get().to(get_flexibility_orders))
             .route("/tariffs", web::post().to(post_tariff))
             .route("/tariffs", web::get().to(get_tariffs))
-            // Trades Storage (D3.2 §5.3)
+            // Trades Storage
             .route("/trades-normalized", web::post().to(post_normalized_trades))
             .route("/trades", web::post().to(post_trades))
             .route("/trades", web::get().to(get_trades))
@@ -44,12 +44,12 @@ pub fn run(
             .route("/clearing-results", web::get().to(get_clearing_results))
             .route("/market-roles", web::post().to(post_market_role))
             .route("/market-roles", web::get().to(get_market_roles))
-            // Measurements Storage (D3.2 §5.2)
+            // Measurements Storage
             .route("/measurement-points", web::post().to(post_measurement_points))
             .route("/measurement-points", web::get().to(get_measurement_points))
             .route("/timeseries", web::post().to(post_timeseries))
             .route("/timeseries", web::get().to(get_timeseries))
-            // Grid Topology and Market Storage (D3.2 §5.1)
+            // Grid Topology and Market Storage
             .route("/assets", web::post().to(post_assets))
             .route("/assets", web::get().to(get_assets))
             .route("/pilot-sites", web::post().to(post_pilot_site))

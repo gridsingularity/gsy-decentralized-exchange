@@ -1,0 +1,999 @@
+openapi: 3.1.0
+info:
+  title: GSY DEX Off-Chain Storage API
+  version: "2.0.0"
+  description: |
+    REST API of the GSY DEX Off-Chain Storage service. The schemas mirror the
+    Rust types defined in `offchain-primitives/src/db_api_schema/` and are
+    grouped by the storage areas of D3.2:
+
+      * §5.1 Grid Topology and Market Storage
+      * §5.2 Measurements Storage
+      * §5.3 Trades and Market Storage
+      * §5.4 Order Book Storage
+
+    The SCALE-encoded ingress endpoints used by the GSY node (`POST /orders`
+    and `POST /trades` for byte payloads) are intentionally omitted; consumers
+    that hand-craft payloads should use the `*-normalized` variants.
+  license:
+    name: GPL-3.0-or-later
+servers:
+  - url: http://localhost:8080
+    description: Local development
+tags:
+  - name: Health
+  - name: Order Book
+    description: D3.2 §5.4
+  - name: Trades & Market
+    description: D3.2 §5.3
+  - name: Measurements
+    description: D3.2 §5.2
+  - name: Grid Topology
+    description: D3.2 §5.1
+
+paths:
+  /health_check:
+    get:
+      tags: [Health]
+      summary: Liveness probe.
+      responses:
+        "200":
+          description: Service is up.
+
+  /orders-normalized:
+    post:
+      tags: [Order Book]
+      summary: Insert orders using the DEX-side normalized schema.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: "#/components/schemas/DbOrderSchema"
+      responses:
+        "200":
+          description: Inserted order IDs.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InsertedIds"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /orders:
+    get:
+      tags: [Order Book]
+      summary: List orders, optionally filtered by market and time window.
+      parameters:
+        - { $ref: "#/components/parameters/MarketIdQuery" }
+        - { $ref: "#/components/parameters/StartTimeQuery" }
+        - { $ref: "#/components/parameters/EndTimeQuery" }
+      responses:
+        "200":
+          description: Matching orders.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DbOrderSchema"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /flexibility-orders:
+    post:
+      tags: [Order Book]
+      summary: Insert flexibility orders.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: "#/components/schemas/FlexibilityOrderSchema"
+      responses:
+        "200":
+          description: Inserted flexibility-order IDs.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InsertedIds"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    get:
+      tags: [Order Book]
+      summary: List all flexibility orders.
+      responses:
+        "200":
+          description: All flexibility orders.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FlexibilityOrderSchema"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /tariffs:
+    post:
+      tags: [Order Book]
+      summary: Persist a tariff definition.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TariffSchema"
+      responses:
+        "200":
+          description: Saved tariff.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TariffSchema"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    get:
+      tags: [Order Book]
+      summary: List all tariffs.
+      responses:
+        "200":
+          description: All tariffs.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TariffSchema"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /trades-normalized:
+    post:
+      tags: [Trades & Market]
+      summary: Insert trades using the DEX-side normalized schema.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: "#/components/schemas/TradeSchema"
+      responses:
+        "200":
+          description: Inserted trade IDs.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InsertedIds"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /trades:
+    get:
+      tags: [Trades & Market]
+      summary: List trades, optionally filtered by time window.
+      parameters:
+        - { $ref: "#/components/parameters/StartTimeQuery" }
+        - { $ref: "#/components/parameters/EndTimeQuery" }
+      responses:
+        "200":
+          description: Matching trades.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TradeSchema"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /market:
+    post:
+      tags: [Trades & Market]
+      summary: Persist a market opening.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MarketSchema"
+      responses:
+        "200":
+          description: Saved market.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketSchema"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    get:
+      tags: [Trades & Market]
+      summary: Look up a market by ID.
+      parameters:
+        - in: query
+          name: market_id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Markets matching the given ID.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MarketSchema"
+        "404":
+          description: No matching market.
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /community-market:
+    get:
+      tags: [Trades & Market]
+      summary: Look up markets opened for a given community.
+      parameters:
+        - in: query
+          name: community_id
+          required: true
+          schema: { type: string }
+        - { $ref: "#/components/parameters/StartTimeQuery" }
+        - { $ref: "#/components/parameters/EndTimeQuery" }
+      responses:
+        "200":
+          description: Markets for the community.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MarketSchema"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /clearing-results:
+    post:
+      tags: [Trades & Market]
+      summary: Persist a clearing result for a market.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClearingResultSchema"
+      responses:
+        "200":
+          description: Saved clearing result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClearingResultSchema"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    get:
+      tags: [Trades & Market]
+      summary: List clearing results for a market.
+      parameters:
+        - in: query
+          name: market_id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Clearing results for the market.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ClearingResultSchema"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /market-roles:
+    post:
+      tags: [Trades & Market]
+      summary: Define a market role.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MarketRoleSchema"
+      responses:
+        "200":
+          description: Saved market role.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketRoleSchema"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    get:
+      tags: [Trades & Market]
+      summary: List all market roles.
+      responses:
+        "200":
+          description: All market roles.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MarketRoleSchema"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /measurement-points:
+    post:
+      tags: [Measurements]
+      summary: Register measurement / forecast points.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: "#/components/schemas/MeasurementPointSchema"
+      responses:
+        "200":
+          description: Inserted measurement-point IDs.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InsertedIds"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    get:
+      tags: [Measurements]
+      summary: List measurement points, optionally filtered by asset and type.
+      parameters:
+        - in: query
+          name: asset_name
+          required: false
+          schema: { type: string }
+        - in: query
+          name: type
+          required: false
+          schema:
+            $ref: "#/components/schemas/MeasurementPointType"
+      responses:
+        "200":
+          description: Matching measurement points.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MeasurementPointSchema"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /timeseries:
+    post:
+      tags: [Measurements]
+      summary: Append timeseries values.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: "#/components/schemas/TimeseriesSchema"
+      responses:
+        "200":
+          description: Inserted timeseries IDs.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InsertedIds"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    get:
+      tags: [Measurements]
+      summary: Query timeseries values for a measurement point.
+      parameters:
+        - in: query
+          name: measurement_point
+          required: false
+          schema: { type: string }
+        - { $ref: "#/components/parameters/StartTimeQuery" }
+        - { $ref: "#/components/parameters/EndTimeQuery" }
+      responses:
+        "200":
+          description: Matching timeseries values.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TimeseriesSchema"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /assets:
+    post:
+      tags: [Grid Topology]
+      summary: Register assets.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: "#/components/schemas/AssetSchema"
+      responses:
+        "200":
+          description: Inserted asset IDs.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InsertedIds"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    get:
+      tags: [Grid Topology]
+      summary: List assets, or look up by UUID / facility.
+      description: |
+        With no query parameters, returns all assets. With `uuid` set, returns a
+        single asset object (or 404). With `facility_name` set, returns the list
+        of assets belonging to that facility.
+      parameters:
+        - in: query
+          name: uuid
+          required: false
+          schema: { type: string }
+        - in: query
+          name: facility_name
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: Asset, list of assets, or list of assets for a facility.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/AssetSchema"
+                  - type: array
+                    items:
+                      $ref: "#/components/schemas/AssetSchema"
+        "404":
+          description: No asset found for the supplied UUID.
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /pilot-sites:
+    post:
+      tags: [Grid Topology]
+      summary: Register a pilot site.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PilotSiteSchema"
+      responses:
+        "200":
+          description: Saved pilot site.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PilotSiteSchema"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    get:
+      tags: [Grid Topology]
+      summary: List all pilot sites.
+      responses:
+        "200":
+          description: All pilot sites.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PilotSiteSchema"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /communities:
+    post:
+      tags: [Grid Topology]
+      summary: Register an energy community.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EnergyCommunitySchema"
+      responses:
+        "200":
+          description: Saved community.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnergyCommunitySchema"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    get:
+      tags: [Grid Topology]
+      summary: List all energy communities.
+      responses:
+        "200":
+          description: All communities.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/EnergyCommunitySchema"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /sites:
+    post:
+      tags: [Grid Topology]
+      summary: Register a site.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SiteSchema"
+      responses:
+        "200":
+          description: Saved site.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SiteSchema"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    get:
+      tags: [Grid Topology]
+      summary: List all sites.
+      responses:
+        "200":
+          description: All sites.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SiteSchema"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /facilities:
+    post:
+      tags: [Grid Topology]
+      summary: Register a facility.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FacilitySchema"
+      responses:
+        "200":
+          description: Saved facility.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FacilitySchema"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    get:
+      tags: [Grid Topology]
+      summary: List all facilities.
+      responses:
+        "200":
+          description: All facilities.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FacilitySchema"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+components:
+  parameters:
+    MarketIdQuery:
+      in: query
+      name: market_id
+      required: false
+      schema: { type: string }
+    StartTimeQuery:
+      in: query
+      name: start_time
+      required: false
+      schema: { type: string, description: "ISO 8601 timestamp." }
+    EndTimeQuery:
+      in: query
+      name: end_time
+      required: false
+      schema: { type: string, description: "ISO 8601 timestamp." }
+
+  responses:
+    InternalError:
+      description: Internal server error.
+
+  schemas:
+    InsertedIds:
+      description: List of identifiers assigned to the inserted documents.
+      type: array
+      items:
+        type: string
+
+    OrderType:
+      type: string
+      enum: [bid, offer]
+
+    OrderStatus:
+      type: string
+      enum: [Open, Executed, Expired, Deleted]
+      default: Open
+
+    DbOrderSchema:
+      type: object
+      required:
+        - order_id
+        - order_type
+        - quantity
+        - price_limit
+        - time_slot
+        - market_id
+        - order_status
+        - creation_time
+        - created_by
+      properties:
+        order_id: { type: string }
+        order_type: { $ref: "#/components/schemas/OrderType" }
+        quantity: { type: number, format: double }
+        price_limit: { type: number, format: double }
+        time_slot: { type: string }
+        market_id: { type: string }
+        order_status: { $ref: "#/components/schemas/OrderStatus" }
+        creation_time: { type: string }
+        created_by: { type: string }
+        energy_source_preference:
+          type: array
+          items: { type: string }
+          nullable: true
+        energy_type:
+          type: array
+          items: { type: string }
+          nullable: true
+        area_uuid:
+          type: string
+          nullable: true
+
+    FlexibilityOrderType:
+      type: string
+      enum: [flexibility_offer, flexibility_bid]
+
+    FlexibilityOrderSchema:
+      type: object
+      required:
+        - order_id
+        - order_type
+        - flexibility_type
+        - available_power
+        - duration
+        - activation_window_start
+        - activation_window_end
+        - price
+        - currency
+        - created_by
+        - from_asset
+      properties:
+        order_id: { type: string }
+        order_type: { $ref: "#/components/schemas/FlexibilityOrderType" }
+        flexibility_type: { type: string }
+        available_power: { type: number, format: double }
+        duration:
+          type: string
+          description: "ISO 8601 duration (e.g. PT30M)."
+        activation_window_start: { type: string }
+        activation_window_end: { type: string }
+        price: { type: number, format: double }
+        currency: { type: string }
+        created_by: { type: string }
+        from_asset: { type: string }
+
+    TariffSchema:
+      type: object
+      required:
+        - tariff_name
+        - tariff_structure
+        - energy_price
+        - grid_fee
+        - taxes
+        - incentives
+        - currency
+        - tariff_start
+        - tariff_end
+      properties:
+        tariff_name: { type: string }
+        tariff_structure: { type: string }
+        energy_price: { type: number, format: double }
+        grid_fee: { type: number, format: double }
+        taxes: { type: number, format: double }
+        incentives: { type: number, format: double }
+        currency: { type: string }
+        tariff_start: { type: string }
+        tariff_end: { type: string }
+
+    TradeStatus:
+      type: string
+      enum: [executed, settled]
+
+    TradeSchema:
+      type: object
+      required:
+        - trade_id
+        - trade_quantity
+        - trade_price
+        - trade_timestamp
+        - time_slot
+        - market_id
+        - trade_status
+        - buyer
+        - seller
+        - bid_id
+        - offer_id
+      properties:
+        trade_id: { type: string }
+        trade_quantity: { type: number, format: double }
+        trade_price: { type: number, format: double }
+        trade_timestamp: { type: string }
+        time_slot: { type: string }
+        market_id: { type: string }
+        trade_status: { $ref: "#/components/schemas/TradeStatus" }
+        buyer: { type: string }
+        seller: { type: string }
+        bid_id: { type: string }
+        offer_id: { type: string }
+        residual_bid_id:
+          type: string
+          nullable: true
+        residual_offer_id:
+          type: string
+          nullable: true
+
+    ClearingStatus:
+      type: string
+      enum: [cleared, uncleared, failed]
+
+    ClearingResultSchema:
+      type: object
+      required:
+        - market_id
+        - clearing_status
+        - clearing_price
+        - total_supply
+        - total_demand
+        - traded_quantity
+        - num_trades
+        - tx_hash
+        - clearing_time
+      properties:
+        market_id: { type: string }
+        clearing_status: { $ref: "#/components/schemas/ClearingStatus" }
+        clearing_price: { type: number, format: double }
+        total_supply: { type: number, format: double }
+        total_demand: { type: number, format: double }
+        traded_quantity: { type: number, format: double }
+        num_trades: { type: integer, format: int32, minimum: 0 }
+        tx_hash: { type: string }
+        clearing_time: { type: string }
+
+    MarketRoleSchema:
+      type: object
+      required: [role_name, role_description, assigned_to]
+      properties:
+        role_name: { type: string }
+        role_description: { type: string }
+        assigned_to:
+          type: array
+          items: { type: string }
+
+    MarketType:
+      type: string
+      enum: [Spot, Flexibility, Settlement]
+
+    MarketSchema:
+      type: object
+      required:
+        - market_id
+        - community_id
+        - opening_time
+        - closing_time
+        - delivery_start_time
+        - delivery_end_time
+        - market_type
+      properties:
+        market_id: { type: string }
+        community_id: { type: string }
+        opening_time: { type: string }
+        closing_time: { type: string }
+        delivery_start_time: { type: string }
+        delivery_end_time: { type: string }
+        market_type: { $ref: "#/components/schemas/MarketType" }
+
+    MeasurementPointType:
+      type: string
+      enum: [Measurement, Forecast]
+
+    FlowDirection:
+      type: string
+      enum: [Import, Export]
+
+    MeasurementPointSchema:
+      type: object
+      required:
+        - type
+        - measurement_id
+        - property_measured
+        - unit
+        - direction
+        - energy_accumulated
+        - time_resolution
+        - phase
+        - asset_name
+      properties:
+        type: { $ref: "#/components/schemas/MeasurementPointType" }
+        measurement_id: { type: string }
+        property_measured: { type: string }
+        unit: { type: string }
+        direction: { $ref: "#/components/schemas/FlowDirection" }
+        energy_accumulated: { type: boolean }
+        time_resolution: { type: string }
+        phase: { type: integer, format: int32, minimum: 0, maximum: 255 }
+        asset_name: { type: string }
+        datasource_name:
+          type: string
+          nullable: true
+
+    TimeseriesSchema:
+      type: object
+      required: [measurement_point, timestamp, value]
+      properties:
+        measurement_point: { type: string }
+        timestamp: { type: string }
+        value: { type: number, format: double }
+
+    AssetType:
+      type: string
+      enum:
+        - EnergyAsset
+        - Battery
+        - PV
+        - Heatpump
+        - DistrictHeating
+        - EVCharger
+        - EnergyInfrastructure
+
+    AssetSchema:
+      type: object
+      required: [asset_type, uuid, asset_name, facility_name, creation_time]
+      properties:
+        asset_type: { $ref: "#/components/schemas/AssetType" }
+        uuid: { type: string }
+        asset_name: { type: string }
+        facility_name: { type: string }
+        creation_time: { type: integer, format: int64, minimum: 0 }
+        installed_power:
+          type: number
+          format: double
+          nullable: true
+        asset_subtype:
+          type: string
+          nullable: true
+        technology_type:
+          type: string
+          nullable: true
+        phase_connection:
+          type: string
+          nullable: true
+        energy_capacity:
+          type: number
+          format: double
+          nullable: true
+        maximum_soc:
+          type: number
+          format: double
+          nullable: true
+        minimum_soc:
+          type: number
+          format: double
+          nullable: true
+        roundtrip_efficiency:
+          type: number
+          format: double
+          nullable: true
+        target_service:
+          type: string
+          nullable: true
+        grid_connection_type:
+          type: string
+          nullable: true
+        max_rated_current:
+          type: number
+          format: double
+          nullable: true
+        has_smart_meter:
+          type: boolean
+          nullable: true
+        tariff_name:
+          type: string
+          nullable: true
+
+    PilotSiteSchema:
+      type: object
+      required:
+        - pilot_name
+        - pilot_description
+        - start_date
+        - end_date
+        - latitude
+        - longitude
+        - communities
+      properties:
+        pilot_name: { type: string }
+        pilot_description: { type: string }
+        start_date: { type: string }
+        end_date: { type: string }
+        latitude: { type: number, format: double }
+        longitude: { type: number, format: double }
+        communities:
+          type: array
+          items: { type: string }
+
+    EnergyCommunitySchema:
+      type: object
+      required: [community_name, sites]
+      properties:
+        community_name: { type: string }
+        sites:
+          type: array
+          items: { type: string }
+
+    SiteSchema:
+      type: object
+      required: [site_name, site_description, facilities]
+      properties:
+        site_name: { type: string }
+        site_description: { type: string }
+        facilities:
+          type: array
+          items: { type: string }
+
+    FacilitySchema:
+      type: object
+      required:
+        - facility_name
+        - address
+        - latitude
+        - longitude
+        - category
+        - number_of_occupants
+      properties:
+        facility_name: { type: string }
+        address: { type: string }
+        latitude: { type: number, format: double }
+        longitude: { type: number, format: double }
+        category: { type: string }
+        number_of_occupants: { type: integer, format: int32, minimum: 0 }
