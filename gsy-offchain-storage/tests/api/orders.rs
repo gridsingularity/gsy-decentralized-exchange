@@ -1,13 +1,7 @@
 use crate::helpers::{init_app, stop_app};
-use actix_web::web;
 use gsy_offchain_primitives::db_api_schema::orders::{
     DbOrderSchema, OrderStatus, OrderType,
 };
-use gsy_offchain_primitives::node_to_api_schema::insert_order::{
-    Bid, Order, OrderComponent, OrderSchema,
-};
-use mongodb::bson::Bson;
-use std::collections::HashMap;
 
 #[tokio::test]
 async fn post_normalized_order_round_trips() {
@@ -31,7 +25,7 @@ async fn post_normalized_order_round_trips() {
 
     let client = reqwest::Client::new();
     let resp = client
-        .post(&format!("{}/orders-normalized", &address))
+        .post(&format!("{}/orders", &address))
         .json(&vec![order.clone()])
         .send()
         .await

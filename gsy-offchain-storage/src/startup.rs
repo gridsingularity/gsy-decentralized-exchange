@@ -5,8 +5,7 @@ use crate::routes::{
     get_pilot_sites, get_sites, get_tariffs, get_timeseries, get_trades, health_check,
     post_assets, post_clearing_result, post_community, post_facility, post_flexibility_orders,
     post_market, post_market_role, post_measurement_points, post_normalized_orders,
-    post_normalized_trades, post_orders, post_pilot_site, post_site, post_tariff, post_timeseries,
-    post_trades,
+    post_normalized_trades, post_pilot_site, post_site, post_tariff, post_timeseries,
 };
 use actix_web::dev::Server;
 use actix_web::{web, App, HttpServer};
@@ -23,16 +22,14 @@ pub fn run(
             .wrap(TracingLogger::default())
             .route("/health_check", web::get().to(health_check))
             // Order Book Storage
-            .route("/orders-normalized", web::post().to(post_normalized_orders))
-            .route("/orders", web::post().to(post_orders))
+            .route("/orders", web::post().to(post_normalized_orders))
             .route("/orders", web::get().to(get_orders))
             .route("/flexibility-orders", web::post().to(post_flexibility_orders))
             .route("/flexibility-orders", web::get().to(get_flexibility_orders))
             .route("/tariffs", web::post().to(post_tariff))
             .route("/tariffs", web::get().to(get_tariffs))
             // Trades Storage
-            .route("/trades-normalized", web::post().to(post_normalized_trades))
-            .route("/trades", web::post().to(post_trades))
+            .route("/trades", web::post().to(post_normalized_trades))
             .route("/trades", web::get().to(get_trades))
             .route("/market", web::post().to(post_market))
             .route("/market", web::get().to(get_market))

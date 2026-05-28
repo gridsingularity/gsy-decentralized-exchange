@@ -1,12 +1,5 @@
 use crate::helpers::{init_app, stop_app};
-use actix_web::web;
 use gsy_offchain_primitives::db_api_schema::trades::{TradeSchema, TradeStatus};
-use gsy_offchain_primitives::node_to_api_schema::insert_order::{
-    Bid as InsertBid, Offer as InsertOffer, OrderComponent as InsertOrderComponent,
-};
-use gsy_offchain_primitives::node_to_api_schema::insert_trades::{
-    Trade, TradeParameters as InsertTradeParameters,
-};
 
 
 #[tokio::test]
@@ -32,7 +25,7 @@ async fn post_normalized_trade_round_trips() {
 
     let client = reqwest::Client::new();
     let resp = client
-        .post(&format!("{}/trades-normalized", &address))
+        .post(&format!("{}/trades", &address))
         .json(&vec![trade.clone()])
         .send()
         .await
