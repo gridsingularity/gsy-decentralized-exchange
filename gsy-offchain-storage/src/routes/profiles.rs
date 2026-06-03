@@ -1,9 +1,264 @@
 use crate::db::DbRef;
 use actix_web::{web::Json, web::Query, HttpResponse, Responder};
+use anyhow::Result;
 use gsy_offchain_primitives::db_api_schema::profiles::{
-    MeasurementPointSchema, MeasurementPointType, TimeseriesSchema,
+    FlowDirection, ForecastSchema, MeasurementPointSchema, MeasurementPointType, MeasurementSchema,
+    TimeseriesSchema,
 };
 use serde::Deserialize;
+use std::collections::HashMap;
+
+#[derive(Deserialize)]
+pub struct ProfilesParameters {
+    area_uuid: Option<String>,
+    start_time: Option<u64>,
+    end_time: Option<u64>,
+}
+
+fn profile_measurement_id(
+    point_type: MeasurementPointType,
+    community_uuid: &str,
+    area_uuid: &str,
+) -> String {
+    let prefix = match point_type {
+        MeasurementPointType::Measurement => "measurement",
+        MeasurementPointType::Forecast => "forecast",
+    };
+    format!("{prefix}:{community_uuid}:{area_uuid}")
+}
+
+fn format_timeseries_timestamp(timestamp: u64) -> String {
+    format!("{:020}", timestamp)
+}
+
+fn parse_timeseries_timestamp(timestamp: &str) -> Option<u64> {
+    timestamp.parse::<u64>().ok()
+}
+
+fn flow_direction(value: f64) -> FlowDirection {
+    if value >= 0.0 {
+        FlowDirection::Import
+    } else {
+        FlowDirection::Export
+    }
+}
+
+fn measurement_point_from_measurement(measurement: &MeasurementSchema) -> MeasurementPointSchema {
+    MeasurementPointSchema {
+        point_type: MeasurementPointType::Measurement,
+        measurement_id: profile_measurement_id(
+            MeasurementPointType::Measurement,
+            measurement.community_uuid.as_str(),
+            measurement.area_uuid.as_str(),
+        ),
+        property_measured: "energy_measured".to_string(),
+        unit: "kWh".to_string(),
+        direction: flow_direction(measurement.energy_kwh),
+        energy_accumulated: false,
+        time_resolution: "PT15M".to_string(),
+        phase: 0,
+        asset_name: measurement.area_uuid.clone(),
+        datasource_name: Some(measurement.community_uuid.clone()),
+    }
+}
+
+fn measurement_timeseries(measurement: &MeasurementSchema) -> TimeseriesSchema {
+    TimeseriesSchema {
+        measurement_point: profile_measurement_id(
+            MeasurementPointType::Measurement,
+            measurement.community_uuid.as_str(),
+            measurement.area_uuid.as_str(),
+        ),
+        timestamp: format_timeseries_timestamp(measurement.time_slot),
+        value: measurement.energy_kwh,
+    }
+}
+
+fn measurement_point_from_forecast(forecast: &ForecastSchema) -> MeasurementPointSchema {
+    MeasurementPointSchema {
+        point_type: MeasurementPointType::Forecast,
+        measurement_id: profile_measurement_id(
+            MeasurementPointType::Forecast,
+            forecast.community_uuid.as_str(),
+            forecast.area_uuid.as_str(),
+        ),
+        property_measured: "energy_forecast".to_string(),
+        unit: "kWh".to_string(),
+        direction: flow_direction(forecast.energy_kwh),
+        energy_accumulated: false,
+        time_resolution: "PT15M".to_string(),
+        phase: 0,
+        asset_name: forecast.area_uuid.clone(),
+        datasource_name: Some(forecast.community_uuid.clone()),
+    }
+}
+
+fn forecast_timeseries(forecast: &ForecastSchema) -> TimeseriesSchema {
+    TimeseriesSchema {
+        measurement_point: profile_measurement_id(
+            MeasurementPointType::Forecast,
+            forecast.community_uuid.as_str(),
+            forecast.area_uuid.as_str(),
+        ),
+        timestamp: format_timeseries_timestamp(forecast.time_slot),
+        value: forecast.energy_kwh,
+    }
+}
+
+async fn fetch_profile_values(
+    db: &crate::db::DatabaseWrapper,
+    point_type: MeasurementPointType,
+    area_uuid: Option<String>,
+    start_time: Option<u64>,
+    end_time: Option<u64>,
+) -> Result<Vec<(MeasurementPointSchema, TimeseriesSchema)>> {
+    let points = db
+        .measurement_points()
+        .filter_points(area_uuid, Some(point_type))
+        .await?;
+    let points_by_id = points
+        .into_iter()
+        .map(|point| (point.measurement_id.clone(), point))
+        .collect::<HashMap<_, _>>();
+
+    let values = db
+        .timeseries()
+        .filter_values(
+            None,
+            start_time.map(format_timeseries_timestamp),
+            end_time.map(format_timeseries_timestamp),
+        )
+        .await?;
+
+    Ok(values
+        .into_iter()
+        .filter_map(|value| {
+            let point = points_by_id.get(&value.measurement_point)?;
+            Some((point.clone(), value))
+        })
+        .collect())
+}
+
+pub async fn post_measurements(
+    measurements: Json<Vec<MeasurementSchema>>,
+    db: DbRef,
+) -> impl Responder {
+    let points = measurements
+        .iter()
+        .map(measurement_point_from_measurement)
+        .collect::<Vec<_>>();
+    let values = measurements
+        .iter()
+        .map(measurement_timeseries)
+        .collect::<Vec<_>>();
+
+    let result = async {
+        db.get_ref()
+            .measurement_points()
+            .insert_points(points)
+            .await?;
+        db.get_ref().timeseries().insert_values(values).await
+    }
+    .await;
+
+    match result {
+        Ok(ids) => HttpResponse::Ok().json(ids),
+        Err(_) => HttpResponse::InternalServerError().finish(),
+    }
+}
+
+pub async fn get_measurements(
+    db: DbRef,
+    query_params: Query<ProfilesParameters>,
+) -> impl Responder {
+    match fetch_profile_values(
+        db.get_ref(),
+        MeasurementPointType::Measurement,
+        query_params.area_uuid.clone(),
+        query_params.start_time,
+        query_params.end_time,
+    )
+    .await
+    {
+        Ok(values) => HttpResponse::Ok().json(
+            values
+                .into_iter()
+                .filter_map(|(point, value)| {
+                    let time_slot = parse_timeseries_timestamp(value.timestamp.as_str())?;
+                    Some(MeasurementSchema {
+                        area_uuid: point.asset_name,
+                        community_uuid: point.datasource_name.unwrap_or_default(),
+                        time_slot,
+                        creation_time: time_slot,
+                        energy_kwh: value.value,
+                    })
+                })
+                .collect::<Vec<_>>(),
+        ),
+        Err(e) => {
+            tracing::error!("Failed to execute query: {:?}", e);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
+pub async fn post_forecasts(forecasts: Json<Vec<ForecastSchema>>, db: DbRef) -> impl Responder {
+    let points = forecasts
+        .iter()
+        .map(measurement_point_from_forecast)
+        .collect::<Vec<_>>();
+    let values = forecasts
+        .iter()
+        .map(forecast_timeseries)
+        .collect::<Vec<_>>();
+
+    let result = async {
+        db.get_ref()
+            .measurement_points()
+            .insert_points(points)
+            .await?;
+        db.get_ref().timeseries().insert_values(values).await
+    }
+    .await;
+
+    match result {
+        Ok(ids) => HttpResponse::Ok().json(ids),
+        Err(_) => HttpResponse::InternalServerError().finish(),
+    }
+}
+
+pub async fn get_forecasts(db: DbRef, query_params: Query<ProfilesParameters>) -> impl Responder {
+    match fetch_profile_values(
+        db.get_ref(),
+        MeasurementPointType::Forecast,
+        query_params.area_uuid.clone(),
+        query_params.start_time,
+        query_params.end_time,
+    )
+    .await
+    {
+        Ok(values) => HttpResponse::Ok().json(
+            values
+                .into_iter()
+                .filter_map(|(point, value)| {
+                    let time_slot = parse_timeseries_timestamp(value.timestamp.as_str())?;
+                    Some(ForecastSchema {
+                        area_uuid: point.asset_name,
+                        community_uuid: point.datasource_name.unwrap_or_default(),
+                        time_slot,
+                        creation_time: time_slot,
+                        energy_kwh: value.value,
+                        confidence: 1.0,
+                    })
+                })
+                .collect::<Vec<_>>(),
+        ),
+        Err(e) => {
+            tracing::error!("Failed to execute query: {:?}", e);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
 
 #[derive(Deserialize)]
 pub struct MeasurementPointQuery {

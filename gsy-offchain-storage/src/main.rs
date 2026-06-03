@@ -3,7 +3,7 @@ use anyhow::{Error, Result};
 use gsy_ethers_listener::{GsyEthersListener, ListenerConfig};
 use gsy_offchain_storage::configuration::get_configuration;
 use gsy_offchain_storage::db::{init_database, DbRef};
-use gsy_offchain_storage::evm_handler::OrderbookEvmHandler;
+use gsy_offchain_storage::evm_handler::OffchainStorageEvmHandler;
 use gsy_offchain_storage::ewds_handler::{start_ewds_request_handler, EwdsHandlerConfig};
 use gsy_offchain_storage::scheduler::start_scheduler;
 use gsy_offchain_storage::startup::run;
@@ -40,7 +40,7 @@ async fn main() -> Result<(), anyhow::Error> {
     };
 
     tokio::task::spawn(async move {
-        let handler = OrderbookEvmHandler {
+        let handler = OffchainStorageEvmHandler {
             db: db_for_listener,
         };
         let listener = GsyEthersListener::new(listener_config, handler);

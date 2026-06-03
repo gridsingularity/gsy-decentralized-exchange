@@ -1,8 +1,8 @@
 //! Market schemas.
 //!
-//! `MarketTopologySchema` is the active GSY community topology contract used by
-//! the community client and EVM e2e tests. `MarketSchema` is the ontology-aligned
-//! market-opening document from the Intelligent update.
+//! `MarketSchema` is the canonical ontology-aligned market-opening document.
+//! `MarketTopologySchema` remains a compatibility DTO for EVM order publication
+//! and is converted at the off-chain storage API edge.
 
 pub use crate::MarketType;
 use codec::{Decode, Encode};

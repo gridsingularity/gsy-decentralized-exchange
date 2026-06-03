@@ -28,7 +28,7 @@ async fn submit_topology_forecasts_three_users(
     user2: String,
     user3: String,
 ) {
-    let adapter = AreaMarketInfoAdapter::new(Some(world.orderbook_service_url.clone()));
+    let adapter = AreaMarketInfoAdapter::new(Some(world.offchain_storage_url.clone()));
 
     let areas = vec![
         ExternalAreaTopology {

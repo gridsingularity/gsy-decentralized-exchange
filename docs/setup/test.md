@@ -16,7 +16,7 @@ Run per component:
 cargo test --manifest-path gsy-market-orchestrator/Cargo.toml --test evm_integration
 cargo test --manifest-path gsy-matching-engine/Cargo.toml --test evm_integration
 cargo test --manifest-path gsy-execution-engine/Cargo.toml --test evm_integration
-cargo test --manifest-path gsy-orderbook-service/Cargo.toml --test api
+cargo test --manifest-path gsy-offchain-storage/Cargo.toml --test api
 cargo test --manifest-path gsy-community-client/Cargo.toml --tests
 ```
 
@@ -46,13 +46,13 @@ docker compose --env-file .env.ewds.local \
   -f docker-compose.test.yml \
   -f docker-compose.ewds.yml \
   --profile ewds \
-  stop e2e-tests gsy-orderbook gsy-matching-engine gsy-execution-engine gsy-community-client gsy-market-orchestrator gsy-contracts-bootstrap anvil mongodb
+  stop e2e-tests gsy-offchain-storage gsy-matching-engine gsy-execution-engine gsy-community-client gsy-market-orchestrator gsy-contracts-bootstrap anvil mongodb
 
 docker compose --env-file .env.ewds.local \
   -f docker-compose.test.yml \
   -f docker-compose.ewds.yml \
   --profile ewds \
-  rm -f e2e-tests gsy-orderbook gsy-matching-engine gsy-execution-engine gsy-community-client gsy-market-orchestrator gsy-contracts-bootstrap anvil mongodb
+  rm -f e2e-tests gsy-offchain-storage gsy-matching-engine gsy-execution-engine gsy-community-client gsy-market-orchestrator gsy-contracts-bootstrap anvil mongodb
 ```
 
 Final validated EWDS e2e command:

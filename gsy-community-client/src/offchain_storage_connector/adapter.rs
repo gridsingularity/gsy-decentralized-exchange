@@ -5,8 +5,8 @@ use gsy_offchain_primitives::db_api_schema::market::{
     AreaTopologySchema, MarketSchema, MarketTopologySchema,
 };
 use gsy_offchain_primitives::db_api_schema::profiles::{
-    FlowDirection, ForecastSchema, MeasurementPointSchema, MeasurementPointType,
-    MeasurementSchema, TimeseriesSchema,
+    FlowDirection, ForecastSchema, MeasurementPointSchema, MeasurementPointType, MeasurementSchema,
+    TimeseriesSchema,
 };
 use gsy_offchain_primitives::MarketType;
 use reqwest::Client;

@@ -16,7 +16,7 @@ This avoids over-triggering while preserving deterministic cadence.
 
 ## Matching Pipeline
 
-1. Fetch open orders from Orderbook API (`/orders`).
+1. Fetch open orders from off-chain storage API (`/orders`).
 2. Convert DB schema into canonical matching primitives.
 3. Run pay-as-bid algorithm with preference phase first.
 4. Build EVM tuple payload for `settleBatch`.
@@ -38,7 +38,7 @@ Before submission, engine checks `hasRole(OPERATOR_ROLE, signer)` on settlement 
 
 ## Key Config
 
-- CLI: `web3 <orderbook_host> <orderbook_port> <node_host> <node_port>`
+- CLI: `web3 <offchain_storage_host> <offchain_storage_port> <node_host> <node_port>`
 - Env:
   - `TRADE_SETTLEMENT_ADDRESS`
   - `MATCHING_ENGINE_PRIVATE_KEY`

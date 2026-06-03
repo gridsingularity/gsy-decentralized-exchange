@@ -13,7 +13,7 @@ This document details the GSY DEX services integration with Energy Web Digital S
 
 In-scope services for EWDS integration:
 
-- `gsy-orderbook-service` (off-chain storage API)
+- `gsy-offchain-storage` (off-chain storage API)
 - `gsy-matching-engine`
 - `gsy-execution-engine`
 
@@ -33,30 +33,29 @@ Related participant service:
 
 ### Off-chain Plane
 
-- `gsy-orderbook-service` indexes chain events and exposes REST APIs.
+- `gsy-offchain-storage` indexes chain events and exposes REST APIs.
 - `gsy-matching-engine` polls `/orders`.
-- `gsy-execution-engine` polls `/trades` and `/measurements`.
-- `gsy-community-client` writes to `/forecasts`, `/measurements`, `/market`.
+- `gsy-execution-engine` polls `/trades`, `/measurement-points`, and `/timeseries`.
+- `gsy-community-client` writes to `/measurement-points`, `/timeseries`, and `/markets`.
 
 ## Existing Endpoint Inventory and Callers
 
-Provider: `gsy-orderbook-service` (`gsy-orderbook-service/src/startup.rs`)
+Provider: `gsy-offchain-storage` (`gsy-offchain-storage/src/startup.rs`)
 
 | Endpoint | Method | Callers | Current runtime hostname |
 |---|---|---|---|
-| `/health_check` | `GET` | compose healthcheck, tests | `http://gsy-orderbook:8080` |
-| `/orders` | `GET` | matching engine, e2e tests | `http://gsy-orderbook:8080/orders` |
-| `/orders` | `POST` | e2e tests/internal tooling | `http://gsy-orderbook:8080/orders` |
-| `/trades` | `GET` | execution engine, e2e tests | `http://gsy-orderbook:8080/trades` |
-| `/trades` | `POST` | e2e tests/internal tooling | `http://gsy-orderbook:8080/trades` |
-| `/measurements` | `GET` | execution engine | `http://gsy-orderbook:8080/measurements` |
-| `/measurements` | `POST` | community client | `http://gsy-orderbook:8080/measurements` |
-| `/forecasts` | `GET` | internal tooling/tests | `http://gsy-orderbook:8080/forecasts` |
-| `/forecasts` | `POST` | community client | `http://gsy-orderbook:8080/forecasts` |
-| `/market` | `GET` | internal tooling/tests | `http://gsy-orderbook:8080/market` |
-| `/market` | `POST` | community client | `http://gsy-orderbook:8080/market` |
-| `/community-market` | `GET` | community client | `http://gsy-orderbook:8080/community-market` |
-| `/asset-measurements` | `GET/POST` | tests/internal | `http://gsy-orderbook:8080/asset-measurements` |
+| `/health_check` | `GET` | compose healthcheck, tests | `http://gsy-offchain-storage:8080` |
+| `/orders` | `GET` | matching engine, e2e tests | `http://gsy-offchain-storage:8080/orders` |
+| `/orders` | `POST` | e2e tests/internal tooling | `http://gsy-offchain-storage:8080/orders` |
+| `/trades` | `GET` | execution engine, e2e tests | `http://gsy-offchain-storage:8080/trades` |
+| `/trades` | `POST` | e2e tests/internal tooling | `http://gsy-offchain-storage:8080/trades` |
+| `/markets` | `GET/POST` | ontology-aligned market-opening API | `http://gsy-offchain-storage:8080/markets` |
+| `/measurement-points` | `GET/POST` | ontology-aligned profile metadata API | `http://gsy-offchain-storage:8080/measurement-points` |
+| `/timeseries` | `GET/POST` | ontology-aligned value API | `http://gsy-offchain-storage:8080/timeseries` |
+| `/measurements` | `GET/POST` | EVM JSON compatibility adapter | converts to/from `MeasurementPoint` + `Timeseries` |
+| `/forecasts` | `GET/POST` | EVM JSON compatibility adapter | converts to/from `MeasurementPoint` + `Timeseries` |
+| `/market` | `GET/POST` | EVM JSON compatibility adapter | converts to/from `Market` |
+| `/community-market` | `GET` | EVM JSON compatibility adapter | queries `Market` by community/delivery window |
 
 ## Target EWDS Communication Model
 
@@ -80,13 +79,13 @@ Each service:
 
 | Payload operation / DDHub topics | Request publisher | Request consumer | Response publisher | Response consumer | Legacy REST equivalent |
 |---|---|---|---|---|---|
-| `orders.query` over `ordersQuery` / `ordersQueryResponse` | matching engine | orderbook service | orderbook service | matching engine | `GET /orders` |
-| `trades.query` over `tradesQuery` / `tradesQueryResponse` | execution engine | orderbook service | orderbook service | execution engine | `GET /trades` |
-| `measurements.query` over `measurementsQuery` / `measurementsQueryResponse` | execution engine | orderbook service | orderbook service | execution engine | `GET /measurements` |
-| `forecasts.upsert` | community client | orderbook service | none | none | `POST /forecasts` |
-| `measurements.upsert` | community client | orderbook service | none | none | `POST /measurements` |
-| `market.upsert` | community client | orderbook service | none | none | `POST /market` |
-| `community-market.query` | community client | orderbook service | orderbook service | community client | `GET /community-market` |
+| `orders.query` over `ordersQuery` / `ordersQueryResponse` | matching engine | off-chain storage service | off-chain storage service | matching engine | `GET /orders` |
+| `trades.query` over `tradesQuery` / `tradesQueryResponse` | execution engine | off-chain storage service | off-chain storage service | execution engine | `GET /trades` |
+| `measurements.query` over `measurementsQuery` / `measurementsQueryResponse` | execution engine | off-chain storage service | off-chain storage service | execution engine | `GET /measurement-points` + `GET /timeseries` |
+| `forecasts.upsert` | community client | off-chain storage service | none | none | `POST /measurement-points` + `POST /timeseries` |
+| `measurements.upsert` | community client | off-chain storage service | none | none | `POST /measurement-points` + `POST /timeseries` |
+| `market.upsert` | community client | off-chain storage service | none | none | `POST /markets` |
+| `community-market.query` | community client | off-chain storage service | off-chain storage service | community client | `GET /markets` |
 
 ### Local Channel Layout
 
@@ -158,7 +157,7 @@ Validator requirements:
 
 ## Service Changes Required
 
-### gsy-orderbook-service
+### gsy-offchain-storage
 
 - EWDS query handlers are implemented for `orders.query`, `trades.query`, and `measurements.query`.
 - Order payloads are emitted with Intelligent-style camelCase fields; the matching-engine consumer still accepts legacy native `DbOrderSchema` payloads during migration.
@@ -176,7 +175,7 @@ Validator requirements:
 
 ### gsy-execution-engine
 
-- Replace direct `/trades` and `/measurements` reads with EWDS operations.
+- Replace direct HTTP reads for `/trades`, `/measurement-points`, and `/timeseries` with EWDS operations.
 - Keep fallback transport via direct HTTP until cutover is complete.
 - Runtime switch via `OFFCHAIN_STORAGE_TRANSPORT=http|ewds`.
 - EWDS endpoint variables: `EWDS_GATEWAY_URL`, `EWDS_REQUEST_PUBLISH_FQCN`, `EWDS_RESPONSE_SUBSCRIBE_FQCN`, `EWDS_TOPIC_OWNER`, `EWDS_TOPIC_VERSION`, `EWDS_EXECUTION_ENGINE_CLIENT_ID`.
@@ -184,7 +183,7 @@ Validator requirements:
 
 ### gsy-community-client
 
-- Route topology/forecast/measurement writes through EWDS-backed endpoint.
+- Route topology, forecast, and measurement writes through ontology-aligned off-chain storage APIs.
 - Keep fallback transport via direct HTTP until cutover is complete.
 
 ## Docker and Local Testing Integration

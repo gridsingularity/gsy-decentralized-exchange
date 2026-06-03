@@ -7,7 +7,7 @@ The default compose files start an EVM-centered local DEX environment:
 1. `anvil` starts and exposes port `8545`.
 2. `gsy-contracts-bootstrap` deploys contracts and grants roles.
 3. Service containers start with predefined contract addresses.
-4. `gsy-orderbook` subscribes to chain events and exposes APIs.
+4. `gsy-offchain-storage` subscribes to chain events and exposes APIs.
 
 ## Main Commands
 
@@ -89,8 +89,8 @@ Channel/topic setup checklist:
 | Local channel FQCN | Gateway type | Attached topics | Used by |
 |---|---|---|---|
 | `gsy.intelligent.requests.pub` | Publish | `ordersQuery`, `tradesQuery`, `measurementsQuery` | matching/execution engines publish requests |
-| `gsy.intelligent.requests.sub` | Subscribe | `ordersQuery`, `tradesQuery`, `measurementsQuery` | orderbook service polls requests |
-| `gsy.intelligent.responses.pub` | Publish | `ordersQueryResponse`, `tradesQueryResponse`, `measurementsQueryResponse` | orderbook service publishes responses |
+| `gsy.intelligent.requests.sub` | Subscribe | `ordersQuery`, `tradesQuery`, `measurementsQuery` | off-chain storage service polls requests |
+| `gsy.intelligent.responses.pub` | Publish | `ordersQueryResponse`, `tradesQueryResponse`, `measurementsQueryResponse` | off-chain storage service publishes responses |
 | `gsy.intelligent.responses.sub` | Subscribe | `ordersQueryResponse`, `tradesQueryResponse`, `measurementsQueryResponse` | matching/execution engines poll responses |
 
 DDHub Client Gateway requires unique internal channel names, so publish and subscribe records cannot reuse the same FQCN. The topic owner and topic names remain the same across channels; only the local channel FQCN changes by direction.
@@ -133,7 +133,6 @@ Useful runtime overrides:
 - `EWDS_DID_REGISTRY_ADDRESS`
 - `EWDS_MTLS_ENABLED`
 - `EWDS_OFFCHAIN_STORAGE_URL`
-- `EWDS_ORDERBOOK_SERVICE_URL`
 - `OFFCHAIN_STORAGE_TRANSPORT` (`http` or `ewds`)
 - `EWDS_GATEWAY_URL` (Docker-internal API URL, defaults to `http://ddhub-gateway-api:3333`)
 - `EWDS_GATEWAY_PROXY_PORT` (browser-facing proxy port, defaults to `3009`)
@@ -141,11 +140,11 @@ Useful runtime overrides:
 - `EWDS_TOPIC_VERSION=1.0.0`
 - `EWDS_REQUEST_PUBLISH_FQCN` / `EWDS_REQUEST_SUBSCRIBE_FQCN`
 - `EWDS_RESPONSE_PUBLISH_FQCN` / `EWDS_RESPONSE_SUBSCRIBE_FQCN`
-- `EWDS_ORDERBOOK_CLIENT_ID` / `EWDS_MATCHING_ENGINE_CLIENT_ID` / `EWDS_EXECUTION_ENGINE_CLIENT_ID`
+- `EWDS_OFFCHAIN_STORAGE_CLIENT_ID` / `EWDS_MATCHING_ENGINE_CLIENT_ID` / `EWDS_EXECUTION_ENGINE_CLIENT_ID`
 - `EWDS_ORDERS_REQUEST_TOPIC` / `EWDS_ORDERS_RESPONSE_TOPIC`
 - `EWDS_TRADES_REQUEST_TOPIC` / `EWDS_TRADES_RESPONSE_TOPIC`
 - `EWDS_MEASUREMENTS_REQUEST_TOPIC` / `EWDS_MEASUREMENTS_RESPONSE_TOPIC`
-- `EWDS_ENABLE_HANDLER=true` (enables EWDS query responder in `gsy-orderbook-service`)
+- `EWDS_ENABLE_HANDLER=true` (enables EWDS query responder in `gsy-offchain-storage`)
 
 ### EWDS Smoke Test
 
@@ -218,7 +217,7 @@ In a second terminal, follow the gateway and GSY service logs:
 docker compose --env-file .env.ewds.local -f docker-compose.yml -f docker-compose.ewds.yml --profile ewds logs -f \
   ddhub-gateway-api \
   ddhub-gateway-scheduler \
-  gsy-orderbook \
+  gsy-offchain-storage \
   gsy-matching-engine \
   gsy-execution-engine
 ```
@@ -227,7 +226,7 @@ Expected healthy signals:
 
 - `ddhub-gateway-scheduler` no longer logs `Timeout has occurred` for `https://ddhub-ewc.energyweb.org/auth/login`.
 - `ddhub-gateway-scheduler` refreshes applications and topics for `integration.apps.intelligent.auth.ewc`.
-- `gsy-orderbook` logs `Starting EWDS request handler` with `request_fqcn=gsy.intelligent.requests.sub` and `response_fqcn=gsy.intelligent.responses.pub`.
+- `gsy-offchain-storage` logs `Starting EWDS request handler` with `request_fqcn=gsy.intelligent.requests.sub` and `response_fqcn=gsy.intelligent.responses.pub`.
 - `gsy-matching-engine` logs `Fetching orders via EWDS transport`.
 - `gsy-execution-engine` sends `tradesQuery` and `measurementsQuery` through EWDS when the execution cycle reaches those reads.
 

@@ -67,8 +67,8 @@ impl EwdsHandlerConfig {
             topic_version: std::env::var("EWDS_TOPIC_VERSION")
                 .unwrap_or_else(|_| "1.0.0".to_string()),
             request_client_id: env_var("EWDS_REQUEST_CLIENT_ID")
-                .or_else(|| env_var("EWDS_ORDERBOOK_CLIENT_ID"))
-                .unwrap_or_else(|| "gsyorderbook".to_string()),
+                .or_else(|| env_var("EWDS_OFFCHAIN_STORAGE_CLIENT_ID"))
+                .unwrap_or_else(|| "gsyoffchainstorage".to_string()),
             orders_request_topic: std::env::var("EWDS_ORDERS_REQUEST_TOPIC")
                 .unwrap_or_else(|_| "ordersQuery".to_string()),
             trades_request_topic: std::env::var("EWDS_TRADES_REQUEST_TOPIC")
@@ -355,16 +355,27 @@ async fn handle_request(
         "trades.query" => {
             let payload = serde_json::from_value::<TimeRangePayload>(envelope.payload.clone())
                 .map_err(|e| anyhow!("trades.query payload parse error: {}", e))?;
+            let request_id = envelope.request_id;
+
+            info!(
+                "Handling EWDS trades.query request (request_id={})",
+                request_id
+            );
 
             let data = db
                 .trades()
                 .filter_trades(payload.start_time, payload.end_time)
                 .await?;
+            info!(
+                "Publishing EWDS trades.query response (request_id={}, orders={})",
+                request_id,
+                data.len()
+            );
 
             send_success_response(
                 client,
                 config,
-                envelope.request_id,
+                request_id,
                 config.trades_response_topic.as_str(),
                 data,
             )
@@ -373,6 +384,12 @@ async fn handle_request(
         "measurements.query" => {
             let payload = serde_json::from_value::<TimeRangePayload>(envelope.payload.clone())
                 .map_err(|e| anyhow!("measurements.query payload parse error: {}", e))?;
+            let request_id = envelope.request_id;
+
+            info!(
+                "Handling EWDS measurements.query request (request_id={})",
+                request_id
+            );
 
             let data = fetch_measurements_from_timeseries(db, payload.start_time, payload.end_time)
                 .await?
@@ -382,11 +399,16 @@ async fn handle_request(
                     None => true,
                 })
                 .collect::<Vec<_>>();
+            info!(
+                "Publishing EWDS measurements.query response (request_id={}, orders={})",
+                request_id,
+                data.len()
+            );
 
             send_success_response(
                 client,
                 config,
-                envelope.request_id,
+                request_id,
                 config.measurements_response_topic.as_str(),
                 data,
             )
@@ -643,7 +665,7 @@ fn client_id_for_suffix(base: &str, suffix: &str) -> String {
     value.extend(suffix.chars().filter(|ch| ch.is_ascii_alphanumeric()));
 
     if value.is_empty() {
-        "gsyorderbook".to_string()
+        "gsyoffchainstorage".to_string()
     } else {
         value
     }

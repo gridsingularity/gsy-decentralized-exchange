@@ -13,7 +13,7 @@ services:
       - CARGO_HOME=/var/www/gsy-offchain-storage/.cargo
       - APPLICATION_HOST=0.0.0.0
       - APPLICATION_PORT=8080
-      - DATABASE_NAME=orderbook
+      - DATABASE_NAME=offchain_storage
       - DATABASE_HOST=mongodb
       - DATABASE_URL_SCHEME=mongodb
       - DATABASE_USERNAME=gsy

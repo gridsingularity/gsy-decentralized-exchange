@@ -14,7 +14,7 @@ This gives:
 
 - **Anvil (EVM chain, chain id 31337)** for local and CI execution.
 - **Smart contracts** (`MarketController`, `OrderRegistry`, `TradeSettlement`, `GsyVault`).
-- **Event indexing layer** (`gsy-ethers-listener` + `gsy-orderbook-service`).
+- **Event indexing layer** (`gsy-ethers-listener` + `gsy-offchain-storage`).
 - **Business services** (orchestrator, matching engine, execution engine, community client).
 
 ## End-to-End Flow
@@ -29,13 +29,13 @@ flowchart LR
     OR -->|events| EL["gsy-ethers-listener"]
     TS -->|events| EL
     MC -->|events| EL
-    EL --> OB["gsy-orderbook-service"]
+    EL --> OB["gsy-offchain-storage"]
 ```
 
 ## Runtime Interfaces
 
 - **EVM WS endpoint**: `ws://anvil:8545` (inside compose network).
-- **Orderbook API**: `http://gsy-orderbook:8080`.
+- **Off-chain storage API**: `http://gsy-offchain-storage:8080`.
 - **Primary trigger model**:
   - Matching runs on block cadence.
   - Execution runs on periodic timeslot cycles.

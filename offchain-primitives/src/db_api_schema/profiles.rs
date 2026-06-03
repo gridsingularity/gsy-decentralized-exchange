@@ -1,9 +1,8 @@
 //! Measurements Storage schemas, as specified in D3.2 §5.2.
 //!
-//! The legacy `MeasurementSchema` and `ForecastSchema` are still used by the
-//! EVM e2e flow and the execution-engine penalty calculator. The Intelligent
-//! `MeasurementPointSchema` and `TimeseriesSchema` types are kept for the
-//! ontology-aligned storage API.
+//! `MeasurementPointSchema` and `TimeseriesSchema` are the canonical
+//! ontology-aligned storage records. `MeasurementSchema` and `ForecastSchema`
+//! remain compatibility DTOs for EVM callers and are converted at the API edge.
 
 #![allow(non_snake_case)]
 

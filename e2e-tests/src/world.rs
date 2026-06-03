@@ -28,7 +28,7 @@ pub struct MyWorld {
     pub http_client: Client,
     pub users: HashMap<String, UserAccount>,
     pub evm_node_url: String,
-    pub orderbook_service_url: String,
+    pub offchain_storage_url: String,
     pub market_controller_address: Address,
     pub order_registry_address: Address,
     pub trade_settlement_address: Address,
@@ -86,8 +86,7 @@ impl MyWorld {
             http_client: Client::new(),
             users,
             evm_node_url,
-            orderbook_service_url: std::env::var("ORDERBOOK_SERVICE_URL")
-                .or_else(|_| std::env::var("OFFCHAIN_STORAGE_URL"))
+            offchain_storage_url: std::env::var("OFFCHAIN_STORAGE_URL")
                 .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string()),
             market_controller_address,
             order_registry_address,

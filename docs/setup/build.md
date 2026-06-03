@@ -8,7 +8,7 @@ From repository root:
 cargo build --release --manifest-path gsy-market-orchestrator/Cargo.toml
 cargo build --release --manifest-path gsy-matching-engine/Cargo.toml
 cargo build --release --manifest-path gsy-execution-engine/Cargo.toml
-cargo build --release --manifest-path gsy-orderbook-service/Cargo.toml
+cargo build --release --manifest-path gsy-offchain-storage/Cargo.toml
 cargo build --release --manifest-path gsy-community-client/Cargo.toml
 ```
 

@@ -10,7 +10,7 @@ penalty batches to `TradeSettlement`.
 Each cycle:
 
 1. Determine target timeslot using configured offset.
-2. Fetch trades and measurements for that window from Orderbook.
+2. Fetch trades plus measurement points/timeseries for that window from off-chain storage.
 3. Compute penalties from traded vs measured energy delta.
 4. Submit penalties to EVM.
 

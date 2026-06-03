@@ -16,7 +16,7 @@ The stack moved from a Substrate runtime approach to an EVM smart-contract-cente
 The domain boundaries are preserved, but implementation responsibilities are now split between:
 
 - On-chain contracts (`gsy-contracts`)
-- Event listener and indexing (`gsy-ethers-listener`, `gsy-orderbook-service`)
+- Event listener and indexing (`gsy-ethers-listener`, `gsy-offchain-storage`)
 - Off-chain matching and execution engines (`gsy-matching-engine`, `gsy-execution-engine`)
 - Market scheduler and opening logic (`gsy-market-orchestrator`)
 - Input publication and data bridging (`gsy-community-client`)
@@ -33,7 +33,7 @@ flowchart LR
     OR --> EL["Ethers Listener"]
     TS --> EL
     MC --> EL
-    EL --> OB["Orderbook Service + MongoDB"]
+    EL --> OB["Off-Chain Storage + MongoDB"]
 ```
 
 ## Documentation Map
@@ -41,7 +41,7 @@ flowchart LR
 - **Platform Architecture**
   - Architecture and data flow.
   - Smart contracts and role model.
-  - Orderbook, matching, execution, orchestrator, and community client internals.
+  - off-chain storage, matching, execution, orchestrator, and community client internals.
 - **Setup and Operations**
   - Installation prerequisites.
   - Build and run instructions.

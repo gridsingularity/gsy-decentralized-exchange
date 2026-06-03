@@ -8,12 +8,14 @@ publication.
 ## Responsibilities
 
 - Pull external community topology, forecasts, and measurements.
-- Normalize and forward profile data to Orderbook REST APIs.
+- Normalize profile data into ontology `MeasurementPoint` and `Timeseries` records.
+- Forward market openings as ontology `Market` records.
 - Publish bid/offer orders on-chain via `OrderRegistry.placeOrder`.
 
 ## Topology and Market Coupling
 
-The client resolves or creates market topology in Orderbook for the target timeslot.
+The client derives market topology locally for order publication and stores the
+market opening in off-chain storage for the target timeslot.
 Market IDs are generated with the same deterministic scheme used by orchestrator.
 
 ## Order Publication Logic

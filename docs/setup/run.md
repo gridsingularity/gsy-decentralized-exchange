@@ -11,7 +11,7 @@ This brings up:
 - `anvil`
 - `gsy-contracts-bootstrap`
 - `mongodb`
-- `gsy-orderbook`
+- `gsy-offchain-storage`
 - `gsy-market-orchestrator`
 - `gsy-matching-engine`
 - `gsy-execution-engine`
@@ -20,7 +20,7 @@ This brings up:
 ## Core Endpoints
 
 - EVM RPC: `http://localhost:8545` (WS available on same port)
-- Orderbook API: `http://localhost:8080`
+- Off-chain storage API: `http://localhost:8080`
 - Health check: `http://localhost:8080/health_check`
 
 ## Stop Stack

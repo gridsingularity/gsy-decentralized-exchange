@@ -6,11 +6,11 @@
 |---|---|---|---|
 | `gsy-contracts` | Deployable EVM contract suite | deployment config, signer keys | contract addresses, role assignments |
 | `gsy-market-orchestrator` | Market open/close management | wall-clock time, market rules | `setMarketStatus` txs |
-| `gsy-community-client` | Publish forecasts/measurements and orders | external topology + profile streams | Orderbook HTTP writes + `placeOrder` txs |
+| `gsy-community-client` | Publish forecasts/measurements and orders | external topology + profile streams | off-chain storage HTTP writes + `placeOrder` txs |
 | `gsy-matching-engine` | Build matches and settle trades | open orders + block progression | `settleBatch` txs |
 | `gsy-execution-engine` | Compute and submit penalties | settled trades + measurements | `submitPenalties` txs |
 | `gsy-ethers-listener` | Contract event subscription | WS stream from EVM node | normalized callback events |
-| `gsy-orderbook-service` | Off-chain API and persistence | listener callbacks + HTTP writes | query APIs for orders/trades/profiles |
+| `gsy-offchain-storage` | Off-chain API and persistence | listener callbacks + HTTP writes | query APIs for orders/trades/profiles |
 | `EWDS (DDHub gateway)` | Inter-service transport and schema governance | service topics/channels | routed request/response messages |
 | `mongodb` | Off-chain storage backend | service writes | persisted state |
 
@@ -19,7 +19,7 @@
 1. `anvil` starts and exposes `8545`.
 2. `gsy-contracts-bootstrap` deploys contracts and grants roles.
 3. Core services start with known contract addresses.
-4. `gsy-orderbook-service` listens for events and exposes HTTP endpoints.
+4. `gsy-offchain-storage` listens for events and exposes HTTP endpoints.
 5. Engine services and e2e tests consume APIs and on-chain state.
 
 When EWDS integration is enabled:

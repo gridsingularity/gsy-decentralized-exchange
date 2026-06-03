@@ -10,6 +10,10 @@ use mongodb::{Collection, Cursor, IndexModel};
 use std::collections::HashMap;
 use std::ops::Deref;
 
+fn time_slot_bson(value: u64) -> Result<Bson> {
+    Ok(Bson::Int64(i64::try_from(value)?))
+}
+
 /// Trade indexes per D3.2 §5.3: `buyer`, `seller`, `market_id` and
 /// `time_slot` accelerate per-asset / per-market / per-slot lookups.
 pub async fn init_trades(db: &DatabaseWrapper) -> Result<()> {
@@ -103,13 +107,16 @@ impl TradeService {
         let mut filter_params = doc! {};
         match (start_time, end_time) {
             (Some(start), Some(end)) => {
-                filter_params.insert("time_slot", doc! {"$gte": start, "$lte": end});
+                filter_params.insert(
+                    "time_slot",
+                    doc! {"$gte": time_slot_bson(start)?, "$lte": time_slot_bson(end)?},
+                );
             }
             (Some(start), None) => {
-                filter_params.insert("time_slot", doc! {"$gte": start});
+                filter_params.insert("time_slot", doc! {"$gte": time_slot_bson(start)?});
             }
             (None, Some(end)) => {
-                filter_params.insert("time_slot", doc! {"$lte": end});
+                filter_params.insert("time_slot", doc! {"$lte": time_slot_bson(end)?});
             }
             (None, None) => {}
         }

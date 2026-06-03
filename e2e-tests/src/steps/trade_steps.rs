@@ -170,7 +170,7 @@ async fn query_market_orders(world: &MyWorld) -> Vec<DbOrderSchema> {
         .http_client
         .get(format!(
             "{}/orders?market_id={}&start_time={}&end_time={}",
-            world.orderbook_service_url, market_id, start_time, end_time
+            world.offchain_storage_url, market_id, start_time, end_time
         ))
         .send()
         .await
@@ -195,7 +195,7 @@ async fn query_market_trades(world: &MyWorld) -> Vec<TradeSchema> {
         .http_client
         .get(format!(
             "{}/trades?start_time={}&end_time={}",
-            world.orderbook_service_url, start_time, end_time
+            world.offchain_storage_url, start_time, end_time
         ))
         .send()
         .await
@@ -213,7 +213,7 @@ async fn query_market_trades(world: &MyWorld) -> Vec<TradeSchema> {
         .expect("Failed to parse trades response")
 }
 
-async fn wait_for_order_in_orderbook(world: &MyWorld, order_id: &str) -> DbOrderSchema {
+async fn wait_for_order_in_offchain_storage(world: &MyWorld, order_id: &str) -> DbOrderSchema {
     for _ in 0..40 {
         let orders = query_market_orders(world).await;
         if let Some(order) = orders
@@ -227,19 +227,19 @@ async fn wait_for_order_in_orderbook(world: &MyWorld, order_id: &str) -> DbOrder
     }
 
     panic!(
-        "Timeout: order {} was not indexed in orderbook service",
+        "Timeout: order {} was not indexed in off-chain storage",
         order_id
     );
 }
 
-async fn upsert_order_in_orderbook(world: &MyWorld, order: DbOrderSchema) {
+async fn upsert_order_in_offchain_storage(world: &MyWorld, order: DbOrderSchema) {
     let response = world
         .http_client
-        .post(format!("{}/orders", world.orderbook_service_url))
+        .post(format!("{}/orders", world.offchain_storage_url))
         .json(&vec![order])
         .send()
         .await
-        .expect("Failed to upsert order in orderbook service");
+        .expect("Failed to upsert order in off-chain storage");
 
     assert!(
         response.status().is_success(),
@@ -303,10 +303,10 @@ async fn place_custom_order(
     );
 
     if requirements.is_some() || attributes.is_some() {
-        let mut indexed_order = wait_for_order_in_orderbook(world, order_id.as_str()).await;
+        let mut indexed_order = wait_for_order_in_offchain_storage(world, order_id.as_str()).await;
         indexed_order.requirements = requirements;
         indexed_order.attributes = attributes;
-        upsert_order_in_orderbook(world, indexed_order).await;
+        upsert_order_in_offchain_storage(world, indexed_order).await;
     }
 
     order_id
@@ -434,7 +434,7 @@ async fn submit_cheaper_offer(world: &mut MyWorld, user_name: String, energy: f6
 
 #[when(regex = r#"^measurements for "([^"]*)" and "([^"]*)" assets are submitted$"#)]
 async fn submit_measurements(world: &mut MyWorld, _user1: String, _user2: String) {
-    let adapter = AreaMarketInfoAdapter::new(Some(world.orderbook_service_url.clone()));
+    let adapter = AreaMarketInfoAdapter::new(Some(world.offchain_storage_url.clone()));
     let buyer_area_id = format!("0x{}", hex::encode(keccak256(world.buyer_id.as_bytes())));
     let seller_area_id = format!("0x{}", hex::encode(keccak256(world.seller_id.as_bytes())));
 
@@ -504,7 +504,7 @@ async fn verify_trade_on_chain(world: &mut MyWorld) {
             let bid = orders
                 .iter()
                 .find(|order| order.order_id.eq_ignore_ascii_case(trade.bid_hash.as_str()))
-                .expect("Bid order not found in orderbook DB");
+                .expect("Bid order not found in off-chain storage DB");
             let ask = orders
                 .iter()
                 .find(|order| {
@@ -512,7 +512,7 @@ async fn verify_trade_on_chain(world: &mut MyWorld) {
                         .order_id
                         .eq_ignore_ascii_case(trade.offer_hash.as_str())
                 })
-                .expect("Ask order not found in orderbook DB");
+                .expect("Ask order not found in off-chain storage DB");
 
             assert_eq!(bid.status, OrderStatus::Executed);
             assert_eq!(ask.status, OrderStatus::Executed);
@@ -650,7 +650,7 @@ async fn verify_charlie_offer_untouched(world: &mut MyWorld) {
                 .order_id
                 .eq_ignore_ascii_case(charlie_offer_order_id.as_str())
         })
-        .expect("Charlie offer order was not found in orderbook");
+        .expect("Charlie offer order was not found in off-chain storage");
     assert_eq!(
         charlie_offer.status,
         OrderStatus::Open,

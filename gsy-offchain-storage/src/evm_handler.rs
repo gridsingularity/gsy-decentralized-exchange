@@ -13,12 +13,12 @@ use gsy_offchain_primitives::utils::NODE_FLOAT_SCALING_FACTOR;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
-pub struct OrderbookEvmHandler {
+pub struct OffchainStorageEvmHandler {
     pub db: DatabaseWrapper,
 }
 
 #[async_trait]
-impl GsyEventHandler for OrderbookEvmHandler {
+impl GsyEventHandler for OffchainStorageEvmHandler {
     async fn handle_order_placed(&self, event: OrderPlacedFilter) -> Result<()> {
         info!(
             "Processing EVM OrderPlaced: {:?}",

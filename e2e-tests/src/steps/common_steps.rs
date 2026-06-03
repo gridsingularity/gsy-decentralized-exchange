@@ -33,7 +33,7 @@ abigen!(
 async fn services_are_running(world: &mut MyWorld) {
     let res = world
         .http_client
-        .get(format!("{}/health_check", world.orderbook_service_url))
+        .get(format!("{}/health_check", world.offchain_storage_url))
         .send()
         .await
         .expect("Failed to contact off-chain storage service");

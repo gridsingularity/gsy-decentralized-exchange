@@ -151,9 +151,9 @@ impl TimeseriesService {
                 .await?;
             upserted_ids.insert(
                 index,
-                result
-                    .upserted_id
-                    .unwrap_or_else(|| Bson::String(format!("{}:{}", measurement_point, timestamp))),
+                result.upserted_id.unwrap_or_else(|| {
+                    Bson::String(format!("{}:{}", measurement_point, timestamp))
+                }),
             );
         }
         Ok(upserted_ids)

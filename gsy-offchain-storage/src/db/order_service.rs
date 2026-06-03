@@ -24,6 +24,10 @@ fn build_order_identifier_filter(id: &Bson) -> mongodb::bson::Document {
     }
 }
 
+fn time_slot_bson(value: u64) -> Result<Bson> {
+    Ok(Bson::Int64(i64::try_from(value)?))
+}
+
 /// Create the indexes required by the Order Book Storage. Per D3.2 §5.4,
 /// `created_by`, `market_id` and `time_slot` are indexed to accelerate
 /// queries that filter bids/offers for an asset, market or time slot.
@@ -104,13 +108,16 @@ impl OrderService {
         }
         match (start_time, end_time) {
             (Some(start), Some(end)) => {
-                filter_params.insert("time_slot", doc! {"$gte": start, "$lte": end});
+                filter_params.insert(
+                    "time_slot",
+                    doc! {"$gte": time_slot_bson(start)?, "$lte": time_slot_bson(end)?},
+                );
             }
             (Some(start), None) => {
-                filter_params.insert("time_slot", doc! {"$gte": start});
+                filter_params.insert("time_slot", doc! {"$gte": time_slot_bson(start)?});
             }
             (None, Some(end)) => {
-                filter_params.insert("time_slot", doc! {"$lte": end});
+                filter_params.insert("time_slot", doc! {"$lte": time_slot_bson(end)?});
             }
             (None, None) => {}
         }
@@ -234,7 +241,7 @@ impl OrderService {
             .0
             .update_many(
                 doc! {
-                    "time_slot": {"$lt": now_time_slot},
+                    "time_slot": {"$lt": time_slot_bson(now_time_slot)?},
                     "status": bson::to_bson(&OrderStatus::Open)?,
                 },
                 doc! {"$set": {"status": bson::to_bson(&status)?}},

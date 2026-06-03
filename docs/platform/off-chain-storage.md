@@ -2,8 +2,8 @@
 
 ## Purpose
 
-`gsy-orderbook-service` is the off-chain state API and persistence layer.  
-It stores indexed on-chain events and supporting data (forecasts, measurements, markets).
+`gsy-offchain-storage` is the off-chain state API and persistence layer.
+It stores indexed on-chain events plus ontology-aligned market and profile data.
 
 Backend: MongoDB (`mongo:5.0`).
 
@@ -14,19 +14,27 @@ Backend: MongoDB (`mongo:5.0`).
    - `OrderCancelled`
    - `TradeSettled`
    - `MarketStatusUpdated`
-2. `OrderbookEvmHandler` maps event payloads into DB schemas.
-3. `gsy-orderbook-service` updates order/trade records and exposes them via REST APIs.
+2. `OffchainStorageEvmHandler` maps event payloads into DB schemas.
+3. `gsy-offchain-storage` updates order/trade records and exposes them via REST APIs.
 
 ## HTTP API Surface
 
 - `/health_check`
 - `/orders` (`GET`, `POST`)
 - `/trades` (`GET`, `POST`)
-- `/measurements` (`GET`, `POST`)
-- `/forecasts` (`GET`, `POST`)
-- `/market` (`GET`, `POST`)
-- `/community-market` (`GET`)
-- `/asset-measurements` (`GET`, `POST`)
+- `/markets` (`GET`, `POST`) for ontology-aligned market-opening records
+- `/measurement-points` (`GET`, `POST`) for ontology-aligned measurement metadata
+- `/timeseries` (`GET`, `POST`) for ontology-aligned values
+
+Compatibility adapters for EVM JSON callers:
+
+- `/measurements` (`GET`, `POST`) converts to/from `MeasurementPoint` + `Timeseries`
+- `/forecasts` (`GET`, `POST`) converts to/from `MeasurementPoint` + `Timeseries`
+- `/market` (`GET`, `POST`) converts market topology JSON to/from `Market`
+- `/community-market` (`GET`) queries ontology market records by community and delivery window
+
+These adapters do not own separate collections. They read and write the same
+`markets`, `measurement_points`, and `timeseries` records as the canonical API.
 
 ## Scheduler Behavior
 

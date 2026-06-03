@@ -6,7 +6,7 @@ use ethers::{
 };
 use gsy_ethers_listener::{GsyEthersListener, ListenerConfig};
 use gsy_offchain_primitives::db_api_schema::orders::OrderEnum;
-use gsy_offchain_storage::evm_handler::OrderbookEvmHandler;
+use gsy_offchain_storage::evm_handler::OffchainStorageEvmHandler;
 use std::{fs::File, io::Write, sync::Arc, time::Duration};
 use tempfile::TempDir;
 
@@ -112,7 +112,7 @@ async fn test_evm_order_listener_persists_to_db() {
         market_controller_address: Address::zero(),
     };
 
-    let handler = OrderbookEvmHandler { db: db.clone() };
+    let handler = OffchainStorageEvmHandler { db: db.clone() };
     let listener = GsyEthersListener::new(config, handler);
 
     tokio::spawn(async move {

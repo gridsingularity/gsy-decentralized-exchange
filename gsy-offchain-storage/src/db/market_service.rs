@@ -23,6 +23,13 @@ pub async fn init_markets(db: &DatabaseWrapper) -> Result<()> {
     controller
         .create_index(IndexModel::builder().keys(doc! {"opening_time": 1}).build())
         .await?;
+    controller
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! {"delivery_start_time": 1})
+                .build(),
+        )
+        .await?;
     Ok(())
 }
 
