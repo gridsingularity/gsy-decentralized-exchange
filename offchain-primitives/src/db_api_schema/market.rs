@@ -1,10 +1,3 @@
-//! Market schema, as specified in D3.2 §5.3.
-//!
-//! Separate documents are persisted for each market type (Spot,
-//! Flexibility, Settlement) and for each market opening — this lets
-//! the database answer queries such as "all currently open markets" or
-//! "all spot markets opened in the past 24 hours" without joins.
-
 use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 

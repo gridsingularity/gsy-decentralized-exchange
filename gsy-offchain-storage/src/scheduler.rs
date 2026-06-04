@@ -8,9 +8,6 @@ pub async fn start_scheduler(db: DbRef, scheduler_interval: u32) {
         .seconds()
         .in_timezone(&Utc)
         .perform(|| async {
-            // `time_slot` is stored as an ISO 8601 string (per D3.2 §5.4);
-            // lexicographic ordering matches chronological ordering for
-            // these timestamps, so a string comparison is correct.
             let now = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
             match db
                 .get_ref()

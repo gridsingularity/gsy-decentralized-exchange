@@ -1,11 +1,3 @@
-//! Convert SCALE-encoded orders emitted by the GSY DEX Node into the
-//! Order Book Storage schema specified in D3.2 §5.4.
-//!
-//! The on-chain representation keeps energy / price in integer units
-//! (scaled by 10_000) and identifies parties via `AccountId32` and
-//! markets/areas via `H256`. The converter normalises these into the
-//! flat off-chain schema (string ids, floats for quantities).
-
 use crate::db_api_schema::orders::{DbOrderSchema, OrderStatus, OrderType};
 use crate::utils::h256_to_string;
 use codec::{Decode, Encode};

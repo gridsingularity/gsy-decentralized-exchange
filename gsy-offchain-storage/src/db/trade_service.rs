@@ -10,8 +10,6 @@ use mongodb::{Collection, Cursor, IndexModel};
 use std::collections::HashMap;
 use std::ops::Deref;
 
-/// Trade indexes per D3.2 §5.3: `buyer`, `seller`, `market_id` and
-/// `time_slot` accelerate per-asset / per-market / per-slot lookups.
 pub async fn init_trades(db: &DatabaseWrapper) -> Result<()> {
     let controller = db.trades();
     controller

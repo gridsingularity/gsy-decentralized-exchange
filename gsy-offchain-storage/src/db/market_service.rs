@@ -41,10 +41,6 @@ impl MarketService {
         Ok(result)
     }
 
-    /// Return markets for a community filtered by an opening-time window.
-    /// `start_time` / `end_time` are matched against `opening_time` as
-    /// ISO 8601 strings (lexicographic ordering matches chronological
-    /// ordering for these timestamps).
     #[tracing::instrument(name = "Fetching markets for a community", skip(self))]
     pub async fn get_community_market(
         &self,

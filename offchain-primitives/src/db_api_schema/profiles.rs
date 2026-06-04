@@ -1,18 +1,9 @@
-//! Measurements Storage schemas, as specified in D3.2 §5.2.
-//!
-//! Measurement and forecast metadata is kept separate from the value
-//! timeseries: `MeasurementPoint` documents describe what is being
-//! measured (and serve as the parent document referenced by the
-//! timeseries), while `Timeseries` documents hold the actual values.
-//! `asset_name` is indexed on `MeasurementPoint`; `measurement_point`
-//! and `timestamp` are indexed on `Timeseries`.
-
 #![allow(non_snake_case)]
 
 use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
-/// Discriminates a `MeasurementPoint` between measurements (telemetry
+/// Differentiates a `MeasurementPoint` between measurements (telemetry
 /// from the field) and forecasts (predicted values).
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub enum MeasurementPointType {
@@ -20,7 +11,7 @@ pub enum MeasurementPointType {
     Forecast,
 }
 
-/// Direction of an energy flow relative to the measured asset.
+/// Direction of the energy flow relative to the measured asset.
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub enum FlowDirection {
     Import,

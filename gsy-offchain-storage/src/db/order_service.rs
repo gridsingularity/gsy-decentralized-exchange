@@ -12,9 +12,6 @@ use mongodb::{bson, Collection, IndexModel};
 use std::collections::HashMap;
 use std::ops::Deref;
 
-/// Create the indexes required by the Order Book Storage. Per D3.2 §5.4,
-/// `created_by`, `market_id` and `time_slot` are indexed to accelerate
-/// queries that filter bids/offers for an asset, market or time slot.
 pub async fn init_orders(db: &DatabaseWrapper) -> Result<()> {
     let controller = db.orders();
     controller

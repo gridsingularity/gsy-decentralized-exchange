@@ -1,15 +1,3 @@
-//! Measurements Storage service layer, per D3.2 §5.2.
-//!
-//! Two collections back this storage subcomponent:
-//!   * `measurement_points` — metadata documents (one per logical
-//!     measurement or forecast stream),
-//!   * `timeseries` — the actual time-stamped values, referencing
-//!     a parent `MeasurementPoint` via `measurement_point`.
-//!
-//! `asset_name` is indexed on the metadata collection;
-//! `measurement_point` and `timestamp` are indexed on the timeseries
-//! collection.
-
 use crate::db::DatabaseWrapper;
 use anyhow::Result;
 use futures::StreamExt;

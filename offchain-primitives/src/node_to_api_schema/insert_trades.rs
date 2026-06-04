@@ -1,9 +1,3 @@
-//! Convert SCALE-encoded trades emitted by the GSY DEX Node into the
-//! Trades Storage schema specified in D3.2 §5.3. The off-chain schema
-//! only persists hash references to the bid and offer (via `bid_id`
-//! and `offer_id`) — the full order payloads themselves live in the
-//! Order Book Storage.
-
 use crate::db_api_schema::trades::{TradeSchema as DbTradeSchema, TradeStatus};
 use crate::node_to_api_schema::insert_order::{Bid, Offer};
 use crate::utils::h256_to_string;

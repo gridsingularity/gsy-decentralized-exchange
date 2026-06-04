@@ -1,10 +1,3 @@
-//! Tariff schema, as specified in D3.2 §5.4.
-//!
-//! Tariffs are persisted alongside the order book so that price
-//! components applied to each asset (energy price, grid fee, taxes,
-//! incentives) are reachable in the same storage that produces the
-//! orders they apply to.
-
 use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 

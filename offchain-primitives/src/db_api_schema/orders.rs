@@ -1,12 +1,3 @@
-//! Order Book Storage schemas, as specified in D3.2 §5.4.
-//!
-//! Regular bids and offers share a single `Order` document type and
-//! are differentiated by `order_type` ("bid"/"offer"). Flexibility
-//! offers and bids use a dedicated `FlexibilityOrder` type because
-//! they carry different attributes (activation window, duration, …).
-//! Tariffs persisted in this storage are kept here so the order book
-//! has direct access to the prices applicable to each asset.
-
 use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
