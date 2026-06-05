@@ -35,7 +35,7 @@ x-gsy-ewds-env: &gsy-ewds-env
 
 services:
   vault_demo:
-    image: hashicorp/vault:latest
+    image: hashicorp/vault:2.0.2
     restart: always
     volumes:
       - ddhub-vault-data:/vault/file
@@ -48,7 +48,7 @@ services:
     entrypoint: "vault server -config=/vault/config/vault.json"
 
   vault-init:
-    image: hashicorp/vault:latest
+    image: hashicorp/vault:2.0.2
     container_name: vault-init
     user: root
     depends_on:
