@@ -11,8 +11,13 @@ use subxt::utils::H256;
 use tracing::{error, info};
 use uuid::Uuid;
 
-fn generate_market_id(market_type: MarketType, delivery_timestamp: u64) -> H256 {
+fn generate_market_id(
+    community_name: &str,
+    market_type: MarketType,
+    delivery_timestamp: u64,
+) -> H256 {
     let mut buffer = Vec::new();
+    buffer.extend_from_slice(community_name.as_bytes());
     buffer.extend_from_slice(market_type.as_str().as_bytes());
     buffer.extend_from_slice(&delivery_timestamp.to_be_bytes());
     H256(
@@ -138,11 +143,13 @@ impl AreaMarketInfoAdapter {
     ) -> Vec<MarketTopologySchema> {
         let mut market_topologies: Vec<MarketTopologySchema> = vec![];
         for community_topology in topology {
-            let community_market_url = self.internal_community_market_url.clone()
-                + "?community_uuid="
-                + community_topology.community_name.as_str()
-                + "&time_slot="
-                + time_slot.to_string().as_str();
+            let community_market_url = format!(
+                "{}?community_name={}&start_time={}&end_time={}",
+                self.internal_community_market_url,
+                community_topology.community_name,
+                time_slot,
+                time_slot
+            );
             let market_topology_res = self
                 .get_existing_market_topology(community_market_url)
                 .await;
@@ -152,7 +159,11 @@ impl AreaMarketInfoAdapter {
                 let new_market = MarketTopologySchema {
                     community_name: community_topology.community_name.clone(),
                     community_uuid: Uuid::new_v4().to_string(),
-                    market_id: h256_to_string(generate_market_id(MarketType::Spot, time_slot)),
+                    market_id: h256_to_string(generate_market_id(
+                        &community_topology.community_name,
+                        MarketType::Spot,
+                        time_slot,
+                    )),
                     time_slot: time_slot as u32,
                     creation_time: get_current_timestamp_in_secs() as u32,
                     community_areas: community_topology
