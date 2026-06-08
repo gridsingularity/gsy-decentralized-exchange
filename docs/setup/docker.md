@@ -27,7 +27,7 @@ docker compose down
 
 ## EWDS Client Gateway Against EWF
 
-Use the EWDS overlay to run a local DDHub Client Gateway against EWF-hosted EWC Digital Spine services. This setup uses the shared EWF broker, public EWC RPC, and public identity cache; it does not run a local broker, IAM chain, or SSI hub.
+Use `docker-compose.ewds.yml` to run only a local DDHub Client Gateway against EWF-hosted EWC Digital Spine services. This setup uses the shared EWF broker, public EWC RPC, and public identity cache; it does not run a local broker, IAM chain, SSI hub, MongoDB, or GSY DEX services.
 
 ```bash
 cp .env.ewds.local.example .env.ewds.local
@@ -112,10 +112,12 @@ Default channel/runtime mapping:
 - `EWDS_RESPONSE_SUBSCRIBE_FQCN=gsy.intelligent.responses.sub`
 
 ```bash
-docker compose --env-file .env.ewds.local -f docker-compose.yml -f docker-compose.ewds.yml --profile ewds up --build
+docker compose --env-file .env.ewds.local -f docker-compose.yml up --build
 ```
 
-GSY topic/channel registration is intentionally separate from the local compose file. EWF confirmed that we manage channels in our local Client Gateway, multiple topics can be associated with one channel, and Intelligent topics should use the `integration.apps.intelligent.auth.ewc` owner namespace.
+GSY topic/channel registration is intentionally separate from the local compose file. EWF confirmed that we manage channels in our local Client Gateway, multiple topics can be associated with one channel, and Intelligent topics should use the `integration.apps.intelligent.auth.ewc` owner namespace. The gateway must be started first with `docker-compose.ewds.yml`; the GSY services read the Docker-internal gateway URL from `.env.ewds.local`.
+
+Run the gateway and GSY commands from the repository root without changing the Compose project name. This keeps both stacks on the same default Docker network so `http://ddhub-gateway-api:3333` resolves from the GSY service containers.
 
 Useful runtime overrides:
 
@@ -201,22 +203,28 @@ curl -G -i 'http://localhost:3009/api/v2/messages' \
   --data-urlencode 'clientId=gsysmoketest'
 ```
 
-Only after this gateway smoke test succeeds, create the GSY request/reply topics and channels from the checklist above, then run the full DEX EWDS overlay.
+Only after this gateway smoke test succeeds, create the GSY request/reply topics and channels from the checklist above, then run the GSY DEX stack with EWDS mode enabled.
 
-### Full EWDS Overlay Validation
+### Full EWDS Validation
 
 After the gateway smoke test succeeds and the GSY request/reply topics/channels exist, start the DEX services with EWDS transport:
 
 ```bash
-docker compose --env-file .env.ewds.local -f docker-compose.yml -f docker-compose.ewds.yml --profile ewds up --build
+docker compose --env-file .env.ewds.local -f docker-compose.yml up --build
 ```
 
-In a second terminal, follow the gateway and GSY service logs:
+In a second terminal, follow gateway logs:
 
 ```bash
-docker compose --env-file .env.ewds.local -f docker-compose.yml -f docker-compose.ewds.yml --profile ewds logs -f \
+docker compose --env-file .env.ewds.local -f docker-compose.ewds.yml logs -f \
   ddhub-gateway-api \
-  ddhub-gateway-scheduler \
+  ddhub-gateway-scheduler
+```
+
+Follow GSY service logs separately:
+
+```bash
+docker compose --env-file .env.ewds.local -f docker-compose.yml logs -f \
   gsy-offchain-storage \
   gsy-matching-engine \
   gsy-execution-engine
@@ -250,12 +258,12 @@ docker compose -f docker-compose.test.yml up --build --abort-on-container-exit e
 EWDS-enabled test execution:
 
 ```bash
-docker compose --env-file .env.ewds.local -f docker-compose.test.yml -f docker-compose.ewds.yml --profile ewds up --build --abort-on-container-exit e2e-tests
+docker compose --env-file .env.ewds.local -f docker-compose.test.yml up --build --abort-on-container-exit e2e-tests
 ```
 
 If the local DDHub Client Gateway is already configured and running, do not use
-`down` with the combined test and EWDS compose files unless you intentionally
-want to stop the gateway, Vault, and Postgres containers too. For the final
+`down` on `docker-compose.ewds.yml` unless you intentionally want to stop the
+gateway, Vault, and Postgres containers too. For the final
 validated e2e workflow and the GSY-only reset commands, see
 `docs/setup/test.md`.
 

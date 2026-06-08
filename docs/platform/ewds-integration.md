@@ -191,7 +191,7 @@ Validator requirements:
 A local DDHub Client Gateway should be deployed against EWF-hosted EWC Digital Spine services:
 
 - Gateway-only stack: `docker-compose.ewds.yml`
-- Full DEX overlay: `docker-compose.yml` plus `docker-compose.ewds.yml` with profile `ewds`
+- GSY DEX EWDS mode: `docker-compose.yml` or `docker-compose.test.yml` with `.env.ewds.local`
 - Gateway namespace validator: `APPLICATION_NAMESPACE_REGULAR_EXPRESSION=\w+\.apps\..*\.(iam|auth)\.ewc` for both API and scheduler, as required by EWF for Intelligent `.auth.ewc` application namespaces.
 
 Operational startup order:
@@ -200,7 +200,7 @@ Operational startup order:
 2. Confirm the gateway dashboard is online, mTLS is valid, IAM login succeeds, and scheduler jobs report success.
 3. In the Client Gateway UI, create or verify the four request/response publish/subscribe channels.
 4. Attach the required Intelligent-owned request/response topics to the matching channels.
-5. Start the GSY services that use the EWDS overlay.
+5. Start the GSY services from the normal compose file with `.env.ewds.local`.
 
 Channel/topic setup notes:
 
@@ -213,7 +213,7 @@ Channel/topic setup notes:
 
 Validated e2e status:
 
-- The full Cucumber e2e suite passed with the EWDS overlay enabled: `2` features, `2` scenarios, and `20` steps passed.
+- The full Cucumber e2e suite passed with EWDS mode enabled: `2` features, `2` scenarios, and `20` steps passed.
 - The validated test command is documented in `docs/setup/test.md`.
 - DDHub delivery is asynchronous; use `EWDS_RESPONSE_TIMEOUT_MS=60000` for deterministic e2e runs.
 
@@ -230,9 +230,12 @@ docker compose --env-file .env.ewds.local -f docker-compose.ewds.yml down --remo
 docker compose --env-file .env.ewds.local -f docker-compose.ewds.yml up --build
 ```
 
-The overlay provides:
+The gateway compose provides:
 
 - DDHub client gateway services.
 - Vault and Postgres dependencies for local gateway setup.
 - EWF mainnet EWC broker/cache/RPC configuration.
-- Service-level env overrides so off-chain calls can target EWDS gateway.
+
+The normal GSY DEX compose files provide MongoDB, Anvil, contract bootstrap, and
+GSY services. They read `.env.ewds.local` to switch service communication from
+direct HTTP to the local DDHub Client Gateway.

@@ -1,17 +1,14 @@
 use crate::world::MyWorld;
 use cucumber::{then, when};
-use ethers::abi::{encode, Token};
 use ethers::prelude::*;
-use ethers::utils::keccak256;
 use gsy_community_client::node_connector::orders::publish_orders;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use gsy_offchain_primitives::db_api_schema::orders::{
-    DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus,
+    DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderStatus,
 };
 use gsy_offchain_primitives::db_api_schema::profiles::MeasurementSchema;
 use gsy_offchain_primitives::db_api_schema::trades::TradeSchema;
-use gsy_offchain_primitives::utils::NODE_FLOAT_SCALING_FACTOR;
-use std::str::FromStr;
+use gsy_offchain_primitives::utils::{parse_or_hash_bytes16, NODE_FLOAT_SCALING_FACTOR};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
@@ -20,7 +17,7 @@ use tracing::info;
 const MATCHING_ENGINE_BLOCK_INTERVAL: u64 = 4;
 const FLOAT_EPSILON: f64 = 0.000_001;
 
-type EvmOrderParamsTuple = (Address, u64, [u8; 32], [u8; 32], u64, u64, u64, u64, bool);
+type EvmOrderParamsTuple = ([u8; 16], [u8; 16], [u8; 16], u64, u64, u64, u64, bool);
 
 abigen!(
     OrderRegistryContract,
@@ -30,7 +27,7 @@ abigen!(
             "name": "getStatus",
             "stateMutability": "view",
             "inputs": [
-                {"name": "orderHash", "type": "bytes32"}
+                {"name": "orderId", "type": "bytes16"}
             ],
             "outputs": [{"name": "", "type": "uint8"}]
         },
@@ -43,10 +40,9 @@ abigen!(
                     "name": "params",
                     "type": "tuple",
                     "components": [
-                        {"name": "owner", "type": "address"},
-                        {"name": "nonce", "type": "uint64"},
-                        {"name": "areaUuid", "type": "bytes32"},
-                        {"name": "marketId", "type": "bytes32"},
+                        {"name": "orderId", "type": "bytes16"},
+                        {"name": "createdBy", "type": "bytes16"},
+                        {"name": "marketId", "type": "bytes16"},
                         {"name": "timeSlot", "type": "uint64"},
                         {"name": "creationTime", "type": "uint64"},
                         {"name": "energy", "type": "uint64"},
@@ -63,7 +59,7 @@ abigen!(
 abigen!(
     TradeSettlementContract,
     r#"[
-        function penaltyEnergyByTrade(bytes32 tradeId) external view returns (uint256)
+        function penaltyEnergyByTrade(bytes16 tradeId) external view returns (uint256)
     ]"#
 );
 
@@ -122,30 +118,8 @@ fn address_to_full_hex(address: Address) -> String {
     format!("0x{}", hex::encode(address.as_bytes()))
 }
 
-fn parse_or_hash_bytes32(value: &str) -> [u8; 32] {
-    if value.starts_with("0x") && value.len() == 66 {
-        if let Ok(parsed) = H256::from_str(value) {
-            return parsed.to_fixed_bytes();
-        }
-    }
-
-    keccak256(value.as_bytes())
-}
-
-fn compute_order_hash(params: &EvmOrderParamsTuple) -> H256 {
-    let encoded = encode(&[
-        Token::Address(params.0),
-        Token::Uint(U256::from(params.1)),
-        Token::FixedBytes(params.2.to_vec()),
-        Token::FixedBytes(params.3.to_vec()),
-        Token::Uint(U256::from(params.4)),
-        Token::Uint(U256::from(params.5)),
-        Token::Uint(U256::from(params.6)),
-        Token::Uint(U256::from(params.7)),
-        Token::Bool(params.8),
-    ]);
-
-    H256::from(keccak256(encoded))
+fn actor_id_as_hex(world: &MyWorld, user_name: &str) -> String {
+    format!("0x{}", hex::encode(world.actor_id_for_user(user_name)))
 }
 
 fn market_id_as_hex(world: &MyWorld) -> String {
@@ -268,15 +242,20 @@ async fn place_custom_order(
         .duration_since(UNIX_EPOCH)
         .expect("System clock before UNIX_EPOCH");
     let creation_time = now.as_secs();
-    let nonce = now.as_micros() as u64;
 
-    let area_uuid = parse_or_hash_bytes32(format!("area{}", user_name).as_str());
+    let actor_id = world.actor_id_for_user(user_name);
     let market_id = world.last_market_id.expect("Missing market id");
+    let order_id_bytes = parse_or_hash_bytes16(
+        format!(
+            "custom:{}:{}:{}:{}:{}",
+            user_name, is_bid, creation_time, energy, energy_rate
+        )
+        .as_str(),
+    );
 
     let params: EvmOrderParamsTuple = (
-        wallet.address(),
-        nonce,
-        area_uuid,
+        order_id_bytes,
+        actor_id,
         market_id,
         world.target_delivery_time,
         creation_time,
@@ -285,8 +264,7 @@ async fn place_custom_order(
         is_bid,
     );
 
-    let order_hash = compute_order_hash(&params);
-    let order_id = format!("0x{}", hex::encode(order_hash.as_bytes()));
+    let order_id = format!("0x{}", hex::encode(order_id_bytes));
 
     let place_order_call = order_registry.place_order(params);
     let pending_tx = place_order_call
@@ -339,14 +317,8 @@ async fn submit_preferred_partner_bid(
     preferred_rate: f64,
     partner_name: String,
 ) {
-    let partner_address = world
-        .users
-        .get(&partner_name)
-        .unwrap_or_else(|| panic!("Unknown partner '{}'", partner_name))
-        .address;
-
     let requirements = DbRequirements {
-        trading_partner_id: Some(address_to_full_hex(partner_address)),
+        trading_partner_id: Some(actor_id_as_hex(world, &partner_name)),
         energy_type: None,
         preferred_energy_rate: Some(preferred_rate),
     };
@@ -397,14 +369,8 @@ async fn submit_preferred_partner_offer(
     _preferred_rate: f64,
     partner_name: String,
 ) {
-    let partner_address = world
-        .users
-        .get(&partner_name)
-        .unwrap_or_else(|| panic!("Unknown partner '{}'", partner_name))
-        .address;
-
     let attributes = DbAttributes {
-        trading_partner_id: Some(address_to_full_hex(partner_address)),
+        trading_partner_id: Some(actor_id_as_hex(world, &partner_name)),
         energy_type: EnergyType::Clean,
     };
 
@@ -435,25 +401,15 @@ async fn submit_cheaper_offer(world: &mut MyWorld, user_name: String, energy: f6
 #[when(regex = r#"^measurements for "([^"]*)" and "([^"]*)" assets are submitted$"#)]
 async fn submit_measurements(world: &mut MyWorld, _user1: String, _user2: String) {
     let adapter = AreaMarketInfoAdapter::new(Some(world.offchain_storage_url.clone()));
-    let buyer_area_id = format!("0x{}", hex::encode(keccak256(world.buyer_id.as_bytes())));
-    let seller_area_id = format!("0x{}", hex::encode(keccak256(world.seller_id.as_bytes())));
+    let market_area_id = market_id_as_hex(world);
 
-    let measurements = vec![
-        MeasurementSchema {
-            area_uuid: buyer_area_id,
-            community_uuid: "community1".to_string(),
-            energy_kwh: 12.0,
-            time_slot: world.target_delivery_time,
-            creation_time: 1,
-        },
-        MeasurementSchema {
-            area_uuid: seller_area_id,
-            community_uuid: "community1".to_string(),
-            energy_kwh: -8.0,
-            time_slot: world.target_delivery_time,
-            creation_time: 1,
-        },
-    ];
+    let measurements = vec![MeasurementSchema {
+        area_uuid: market_area_id,
+        community_uuid: "community1".to_string(),
+        energy_kwh: 12.0,
+        time_slot: world.target_delivery_time,
+        creation_time: 1,
+    }];
 
     adapter
         .forward_measurement(measurements)
@@ -478,20 +434,16 @@ async fn verify_trade_on_chain(world: &mut MyWorld) {
             info!("Found settled trade {}", trade.trade_uuid);
             world.last_trade = Some(trade.clone());
 
-            let bid_hash = H256::from_str(trade.bid_hash.as_str())
-                .expect("Invalid bid hash in trade")
-                .to_fixed_bytes();
-            let ask_hash = H256::from_str(trade.offer_hash.as_str())
-                .expect("Invalid ask hash in trade")
-                .to_fixed_bytes();
+            let bid_id = parse_or_hash_bytes16(trade.bid_hash.as_str());
+            let ask_id = parse_or_hash_bytes16(trade.offer_hash.as_str());
 
             let bid_status = order_registry
-                .get_status(bid_hash)
+                .get_status(bid_id)
                 .call()
                 .await
                 .expect("Failed to read bid status from contract");
             let ask_status = order_registry
-                .get_status(ask_hash)
+                .get_status(ask_id)
                 .call()
                 .await
                 .expect("Failed to read ask status from contract");
@@ -540,20 +492,8 @@ async fn verify_partner_trade(
     let order_registry =
         OrderRegistryContract::new(world.order_registry_address, world.provider.clone());
     let expected_market_id = market_id_as_hex(world).to_lowercase();
-    let expected_buyer = address_to_full_hex(
-        world
-            .users
-            .get(&buyer_name)
-            .unwrap_or_else(|| panic!("Unknown buyer '{}'", buyer_name))
-            .address,
-    );
-    let expected_seller = address_to_full_hex(
-        world
-            .users
-            .get(&seller_name)
-            .unwrap_or_else(|| panic!("Unknown seller '{}'", seller_name))
-            .address,
-    );
+    let expected_buyer = actor_id_as_hex(world, &buyer_name);
+    let expected_seller = actor_id_as_hex(world, &seller_name);
 
     for attempt in 0..60 {
         let trades = query_market_trades(world).await;
@@ -566,20 +506,16 @@ async fn verify_partner_trade(
         }) {
             world.last_trade = Some(trade.clone());
 
-            let bid_hash = H256::from_str(trade.bid_hash.as_str())
-                .expect("Invalid bid hash in trade")
-                .to_fixed_bytes();
-            let ask_hash = H256::from_str(trade.offer_hash.as_str())
-                .expect("Invalid ask hash in trade")
-                .to_fixed_bytes();
+            let bid_id = parse_or_hash_bytes16(trade.bid_hash.as_str());
+            let ask_id = parse_or_hash_bytes16(trade.offer_hash.as_str());
 
             let bid_status = order_registry
-                .get_status(bid_hash)
+                .get_status(bid_id)
                 .call()
                 .await
                 .expect("Failed to read bid status from contract");
             let ask_status = order_registry
-                .get_status(ask_hash)
+                .get_status(ask_id)
                 .call()
                 .await
                 .expect("Failed to read ask status from contract");
@@ -679,7 +615,7 @@ async fn verify_penalties_on_chain(world: &mut MyWorld) {
     let trade_settlement =
         TradeSettlementContract::new(world.trade_settlement_address, world.provider.clone());
 
-    let trade_id = keccak256(trade.trade_uuid.as_bytes());
+    let trade_id = parse_or_hash_bytes16(trade.trade_uuid.as_str());
 
     for attempt in 0..60 {
         let penalty = trade_settlement

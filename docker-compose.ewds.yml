@@ -16,23 +16,6 @@ x-ddhub-gateway-env: &ddhub-gateway-env
   CHAIN_ID: "${EWDS_CHAIN_ID:-246}"
   CHAIN_NAME: ${EWDS_CHAIN_NAME:-EWC}
 
-x-gsy-ewds-env: &gsy-ewds-env
-  EWDS_GATEWAY_URL: ${EWDS_GATEWAY_URL:-http://ddhub-gateway-api:3333}
-  EWDS_REQUEST_PUBLISH_FQCN: ${EWDS_REQUEST_PUBLISH_FQCN:-gsy.intelligent.requests.pub}
-  EWDS_REQUEST_SUBSCRIBE_FQCN: ${EWDS_REQUEST_SUBSCRIBE_FQCN:-gsy.intelligent.requests.sub}
-  EWDS_RESPONSE_PUBLISH_FQCN: ${EWDS_RESPONSE_PUBLISH_FQCN:-gsy.intelligent.responses.pub}
-  EWDS_RESPONSE_SUBSCRIBE_FQCN: ${EWDS_RESPONSE_SUBSCRIBE_FQCN:-gsy.intelligent.responses.sub}
-  EWDS_TOPIC_OWNER: ${EWDS_TOPIC_OWNER:-integration.apps.intelligent.auth.ewc}
-  EWDS_TOPIC_VERSION: ${EWDS_TOPIC_VERSION:-1.0.0}
-  EWDS_ORDERS_REQUEST_TOPIC: ${EWDS_ORDERS_REQUEST_TOPIC:-ordersQuery}
-  EWDS_ORDERS_RESPONSE_TOPIC: ${EWDS_ORDERS_RESPONSE_TOPIC:-ordersQueryResponse}
-  EWDS_TRADES_REQUEST_TOPIC: ${EWDS_TRADES_REQUEST_TOPIC:-tradesQuery}
-  EWDS_TRADES_RESPONSE_TOPIC: ${EWDS_TRADES_RESPONSE_TOPIC:-tradesQueryResponse}
-  EWDS_MEASUREMENTS_REQUEST_TOPIC: ${EWDS_MEASUREMENTS_REQUEST_TOPIC:-measurementsQuery}
-  EWDS_MEASUREMENTS_RESPONSE_TOPIC: ${EWDS_MEASUREMENTS_RESPONSE_TOPIC:-measurementsQueryResponse}
-  EWDS_RESPONSE_TIMEOUT_MS: ${EWDS_RESPONSE_TIMEOUT_MS:-60000}
-  EWDS_RESPONSE_POLL_INTERVAL_MS: ${EWDS_RESPONSE_POLL_INTERVAL_MS:-1000}
-
 services:
   vault_demo:
     image: hashicorp/vault:2.0.2
@@ -169,47 +152,6 @@ services:
     depends_on:
       - ddhub-gateway-UI
       - ddhub-gateway-api
-
-  gsy-offchain-storage:
-    profiles: ["ewds"]
-    depends_on:
-      ddhub-gateway-api:
-        condition: service_started
-    environment:
-      <<: *gsy-ewds-env
-      EWDS_ENABLE_HANDLER: "${EWDS_ENABLE_HANDLER:-true}"
-      EWDS_REQUEST_CLIENT_ID: ${EWDS_OFFCHAIN_STORAGE_CLIENT_ID:-gsyoffchainstorage}
-      EWDS_HANDLER_POLL_INTERVAL_MS: ${EWDS_HANDLER_POLL_INTERVAL_MS:-500}
-      EWDS_HANDLER_BATCH_SIZE: ${EWDS_HANDLER_BATCH_SIZE:-100}
-
-  gsy-matching-engine:
-    profiles: ["ewds"]
-    depends_on:
-      ddhub-gateway-api:
-        condition: service_started
-    environment:
-      <<: *gsy-ewds-env
-      OFFCHAIN_STORAGE_TRANSPORT: ${OFFCHAIN_STORAGE_TRANSPORT:-ewds}
-      EWDS_MATCHING_ENGINE_CLIENT_ID: ${EWDS_MATCHING_ENGINE_CLIENT_ID:-gsymatchingengine}
-
-  gsy-execution-engine:
-    profiles: ["ewds"]
-    depends_on:
-      ddhub-gateway-api:
-        condition: service_started
-    environment:
-      <<: *gsy-ewds-env
-      OFFCHAIN_STORAGE_TRANSPORT: ${OFFCHAIN_STORAGE_TRANSPORT:-ewds}
-      EWDS_EXECUTION_ENGINE_CLIENT_ID: ${EWDS_EXECUTION_ENGINE_CLIENT_ID:-gsyexecutionengine}
-
-  gsy-community-client:
-    profiles: ["ewds"]
-    depends_on:
-      ddhub-gateway-api:
-        condition: service_started
-    environment:
-      <<: *gsy-ewds-env
-      OFFCHAIN_STORAGE_TRANSPORT: ${OFFCHAIN_STORAGE_TRANSPORT:-ewds}
 
 volumes:
   ddhub-vault-data:

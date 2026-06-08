@@ -36,22 +36,31 @@ cp .env.ewds.local.example .env.ewds.local
 # Restart docker-compose.ewds.yml without -v after the UI setup so scheduler/API reload Vault state.
 ```
 
-If the EWDS gateway stack is already running and healthy in the same compose
-project, do not run `down` on the combined compose files because that also stops
-the gateway, Vault, and Postgres containers. Reset only the GSY/e2e containers
-when a clean e2e service run is needed:
+Start and validate the gateway first:
+
+```bash
+docker compose --env-file .env.ewds.local \
+  -f docker-compose.ewds.yml \
+  up --build
+```
+
+After the EWDS gateway stack is running and healthy in the same compose project,
+start the GSY/e2e stack from the normal test compose file. Do not run `down` on
+`docker-compose.ewds.yml` unless you intentionally want to stop the gateway,
+Vault, and Postgres containers. Reset only the GSY/e2e containers when a clean
+e2e service run is needed:
+
+Run both compose commands from the repository root without changing the Compose
+project name so the GSY containers can resolve `ddhub-gateway-api` on the shared
+default Docker network.
 
 ```bash
 docker compose --env-file .env.ewds.local \
   -f docker-compose.test.yml \
-  -f docker-compose.ewds.yml \
-  --profile ewds \
   stop e2e-tests gsy-offchain-storage gsy-matching-engine gsy-execution-engine gsy-community-client gsy-market-orchestrator gsy-contracts-bootstrap anvil mongodb
 
 docker compose --env-file .env.ewds.local \
   -f docker-compose.test.yml \
-  -f docker-compose.ewds.yml \
-  --profile ewds \
   rm -f e2e-tests gsy-offchain-storage gsy-matching-engine gsy-execution-engine gsy-community-client gsy-market-orchestrator gsy-contracts-bootstrap anvil mongodb
 ```
 
@@ -60,8 +69,6 @@ Final validated EWDS e2e command:
 ```bash
 docker compose --env-file .env.ewds.local \
   -f docker-compose.test.yml \
-  -f docker-compose.ewds.yml \
-  --profile ewds \
   up --build --abort-on-container-exit e2e-tests
 ```
 

@@ -5,8 +5,8 @@ use gsy_community_client::external_api::{ExternalAreaTopology, ExternalCommunity
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use gsy_community_client::time_utils::get_last_and_next_timeslot;
 use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
+use gsy_offchain_primitives::utils::parse_uuid_or_hex_bytes16;
 use gsy_offchain_primitives::MarketType;
-use std::str::FromStr;
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::info;
@@ -14,13 +14,11 @@ use tracing::info;
 abigen!(
     MarketControllerContract,
     r#"[
-        function isMarketOpen(bytes32 marketId) external view returns (bool)
+        function isMarketOpen(bytes16 marketId) external view returns (bool)
     ]"#
 );
 
-#[when(
-    regex = r#"^the community topology and forecasts of (\d+) energy are submitted by "([^"]*)", "([^"]*)", and "([^"]*)"$"#
-)]
+#[when(expr = "the community topology and forecasts of {float} energy are submitted by {string}, {string}, and {string}")]
 async fn submit_topology_forecasts_three_users(
     world: &mut MyWorld,
     energy: f64,
@@ -57,9 +55,8 @@ async fn submit_topology_forecasts_three_users(
         .await
         .expect("Topology forwarding failed");
 
-    let market_id = H256::from_str(market.market_id.as_str())
-        .expect("Invalid market id in topology")
-        .to_fixed_bytes();
+    let market_id = parse_uuid_or_hex_bytes16(market.market_id.as_str())
+        .expect("Invalid market id in topology");
 
     world.last_market_id = Some(market_id);
     world.topology_schema = Some(market.clone());
@@ -86,7 +83,7 @@ async fn submit_topology_forecasts_three_users(
     world.offer_forecast = Some(forecasts[1].clone());
 }
 
-#[when(regex = r#"^the community topology and forecasts of (\d+) energy are submitted$"#)]
+#[when(expr = "the community topology and forecasts of {float} energy are submitted")]
 async fn submit_topology_forecasts(world: &mut MyWorld, energy: f64) {
     submit_topology_forecasts_three_users(
         world,
@@ -108,7 +105,7 @@ async fn wait_for_market_to_open(world: &mut MyWorld) {
 
     info!(
         "Waiting for MarketController to open market {:?} for timeslot {}",
-        H256::from(market_id),
+        hex::encode(market_id),
         world.target_delivery_time
     );
 
@@ -132,6 +129,6 @@ async fn wait_for_market_to_open(world: &mut MyWorld) {
 
     panic!(
         "Timeout: Spot market {:?} was not opened by orchestrator",
-        H256::from(market_id)
+        hex::encode(market_id)
     );
 }
