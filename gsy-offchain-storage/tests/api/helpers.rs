@@ -1,7 +1,7 @@
-use gsy_orderbook_service::configuration::get_configuration;
-use gsy_orderbook_service::db::{DatabaseWrapper, init_database};
-use gsy_orderbook_service::startup::run;
-use gsy_orderbook_service::telemetry::{get_subscriber, init_subscriber};
+use gsy_offchain_storage::configuration::get_configuration;
+use gsy_offchain_storage::db::{DatabaseWrapper, init_database};
+use gsy_offchain_storage::startup::run;
+use gsy_offchain_storage::telemetry::{get_subscriber, init_subscriber};
 use once_cell::sync::Lazy;
 use std::net::TcpListener;
 use uuid::Uuid;

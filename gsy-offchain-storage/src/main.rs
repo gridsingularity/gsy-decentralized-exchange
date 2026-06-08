@@ -1,11 +1,11 @@
 use actix_web::web;
 use anyhow::{Error, Result};
-use gsy_orderbook_service::configuration::get_configuration;
-use gsy_orderbook_service::db::{DbRef, init_database};
-use gsy_orderbook_service::event_listener::init_event_listener;
-use gsy_orderbook_service::scheduler::start_scheduler;
-use gsy_orderbook_service::startup::run;
-use gsy_orderbook_service::telemetry::{get_subscriber, init_subscriber};
+use gsy_offchain_storage::configuration::get_configuration;
+use gsy_offchain_storage::db::{DbRef, init_database};
+use gsy_offchain_storage::event_listener::init_event_listener;
+use gsy_offchain_storage::scheduler::start_scheduler;
+use gsy_offchain_storage::startup::run;
+use gsy_offchain_storage::telemetry::{get_subscriber, init_subscriber};
 use std::net::TcpListener;
 
 #[tokio::main]
