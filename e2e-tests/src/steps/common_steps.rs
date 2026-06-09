@@ -43,6 +43,12 @@ async fn users_are_registered(
 
 	for keypair in user_keys.iter() {
 		let account_id: AccountId32 = keypair.public_key().into();
+
+		// Do not try to reregister the same users to avoid the "Priority is too low" error. 
+		if is_user_registered(world, &account_id).await {
+			println!("User already registered, skipping: {:?}", account_id);
+			continue;
+		}
 		println!("Registering user: {:?}", account_id);
 
 		let register_user_call =
@@ -77,6 +83,10 @@ async fn users_are_registered(
 	}
 
 	let alice_account_id: AccountId32 = world.users.get(&alice_name).unwrap().public_key().into();
+	if is_operator_registered(world, &alice_account_id).await {
+		println!("Exchange operator already registered, skipping: {:?}", alice_account_id);
+		return;
+	}
 	println!("Registering market orchestrator/matching engine operator: {:?}", alice_account_id);
 
 	let register_me_call = gsy_node::runtime_types::gsy_node_runtime::RuntimeCall::GsyCollateral(
@@ -95,4 +105,33 @@ async fn users_are_registered(
 		.wait_for_finalized_success()
 		.await
 		.expect("register_exchange_operator extrinsic failed");
+}
+
+async fn is_user_registered(world: &MyWorld, account_id: &AccountId32) -> bool {
+	let storage_address = gsy_node::storage().gsy_collateral().registered_user(account_id.clone());
+	world
+		.subxt_client
+		.storage()
+		.at_latest()
+		.await
+		.expect("Failed to read latest storage")
+		.fetch(&storage_address)
+		.await
+		.expect("Failed to fetch RegisteredUser storage")
+		.is_some()
+}
+
+async fn is_operator_registered(world: &MyWorld, account_id: &AccountId32) -> bool {
+	let storage_address =
+		gsy_node::storage().gsy_collateral().registered_exchange_operator(account_id.clone());
+	world
+		.subxt_client
+		.storage()
+		.at_latest()
+		.await
+		.expect("Failed to read latest storage")
+		.fetch(&storage_address)
+		.await
+		.expect("Failed to fetch RegisteredExchangeOperator storage")
+		.is_some()
 }

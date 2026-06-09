@@ -14,6 +14,11 @@ use tracing::{error, info};
 #[when(regex = r#"the community topology and forecasts of (\d+) energy are submitted"#)]
 async fn submit_topology_forecasts(world: &mut MyWorld, energy: f64) {
 
+	let now = Utc::now();
+	world.target_delivery_time = ((now + ChronoDuration::hours(2)).timestamp() as u64
+		/ GlobalConstants.TIME_SLOT_SEC)
+		* GlobalConstants.TIME_SLOT_SEC;
+
 	let orderbook_url = std::env::var("OFFCHAIN_STORAGE_URL")
 		.unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
 	let adapter = AreaMarketInfoAdapter::new(Some(orderbook_url));
@@ -55,8 +60,8 @@ async fn submit_topology_forecasts(world: &mut MyWorld, energy: f64) {
 	}
 
 	world.last_market_id = Some(string_to_h256(market.market_id.clone()));
-	if world.last_market_id.unwrap() != world.generate_market_id(MarketType::Spot) {
-		error!("Market ID mismatch {} {}", world.last_market_id.unwrap(), world.generate_market_id(MarketType::Spot));
+	if world.last_market_id.unwrap() != world.generate_market_id("Test Community", MarketType::Spot) {
+		error!("Market ID mismatch {} {}", world.last_market_id.unwrap(), world.generate_market_id("Test Community", MarketType::Spot));
 	}
 
 	let bid_forecast = ForecastSchema {
@@ -93,12 +98,7 @@ async fn submit_topology_forecasts(world: &mut MyWorld, energy: f64) {
 #[when("the Market Orchestrator opens the Spot market for the next delivery slot")]
 async fn wait_for_market_to_open(world: &mut MyWorld) {
 	info!("Waiting for the Market Orchestrator to open the Spot market...");
-	let now = Utc::now();
-	let target_timeslot_start = (
-		(now + ChronoDuration::hours(2)).timestamp() as u64 / GlobalConstants.TIME_SLOT_SEC) * GlobalConstants.TIME_SLOT_SEC;
-
-	world.target_delivery_time = target_timeslot_start;
-	let market_id = world.generate_market_id(MarketType::Spot);
+	let market_id = world.generate_market_id("Test Community", MarketType::Spot);
 
 	let mut block_sub = world
 		.subxt_client
@@ -126,7 +126,7 @@ async fn wait_for_market_to_open(world: &mut MyWorld) {
 		if let Some(e) = event {
 			info!("-> Found event: MarketStatusUpdated({:?}, {})", e.0, e.1);
 			if e.0 == market_id && e.1 == true {
-				info!("✅ MarketStatusUpdated(true) event found for market {:?}", market_id);
+				info!("MarketStatusUpdated(true) event found for market {:?}", market_id);
 				sleep(Duration::from_secs(6)).await;
 				return;
 			}
