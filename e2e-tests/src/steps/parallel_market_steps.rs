@@ -187,15 +187,15 @@ async fn wait_for_markets_to_open(world: &mut MyWorld) {
 async fn submit_parallel_orders(world: &mut MyWorld) {
 	let node_url =
 		std::env::var("GSY_NODE_URL").unwrap_or_else(|_| "ws://127.0.0.1:9944".to_string());
-	let charlie = world.users.get("charlie").unwrap().clone();
-	let bob = world.users.get("bob").unwrap().clone();
+	let buyer = world.users.get("charlie").unwrap().clone();
+	let seller = world.users.get("bob").unwrap().clone();
 
 	for community in world.community_markets.clone() {
 		publish_orders(
 			node_url.clone(),
 			vec![community.bid_forecast.clone()],
 			community.topology.clone(),
-			&charlie,
+			&buyer,
 		)
 		.await
 		.expect("Failed to publish bid");
@@ -204,7 +204,7 @@ async fn submit_parallel_orders(world: &mut MyWorld) {
 			node_url.clone(),
 			vec![community.offer_forecast.clone()],
 			community.topology.clone(),
-			&bob,
+			&seller,
 		)
 		.await
 		.expect("Failed to publish offer");
@@ -266,7 +266,7 @@ async fn verify_parallel_trades(world: &mut MyWorld) {
 	for i in 0..40 {
 		if remaining.is_empty() {
 			info!(
-				"✅ Observed a settled trade for all {} community markets.",
+				"Observed a settled trade for all {} community markets.",
 				total
 			);
 			return;
@@ -289,7 +289,7 @@ async fn verify_parallel_trades(world: &mut MyWorld) {
 				let trade = e.0;
 				if remaining.remove(&trade.market_id) {
 					info!(
-						"-> Trade settled in market {:?}: buyer {:?}, seller {:?}, energy {}",
+						"Trade settled in market {:?}: buyer {:?}, seller {:?}, energy {}",
 						trade.market_id, trade.buyer, trade.seller, trade.parameters.selected_energy
 					);
 				}

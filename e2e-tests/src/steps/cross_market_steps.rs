@@ -182,10 +182,10 @@ async fn wait_for_cross_markets_to_open(world: &mut MyWorld) {
 
 #[when("the cross-matching bids and offers are submitted for all communities")]
 async fn submit_cross_orders(world: &mut MyWorld) {
-	let charlie = world.users.get("charlie").unwrap().clone();
-	let bob = world.users.get("bob").unwrap().clone();
-	let buyer_account = AccountId32::from(charlie.public_key());
-	let seller_account = AccountId32::from(bob.public_key());
+	let buyer = world.users.get("charlie").unwrap().clone();
+	let seller = world.users.get("bob").unwrap().clone();
+	let buyer_account = AccountId32::from(buyer.public_key());
+	let seller_account = AccountId32::from(seller.public_key());
 
 	let now = Utc::now().timestamp() as u64;
 
@@ -220,7 +220,7 @@ async fn submit_cross_orders(world: &mut MyWorld) {
 	world
 		.subxt_client
 		.tx()
-		.sign_and_submit_then_watch_default(&bids_tx, &charlie)
+		.sign_and_submit_then_watch_default(&bids_tx, &buyer)
 		.await
 		.expect("Failed to submit bids")
 		.wait_for_finalized_success()
@@ -232,7 +232,7 @@ async fn submit_cross_orders(world: &mut MyWorld) {
 	world
 		.subxt_client
 		.tx()
-		.sign_and_submit_then_watch_default(&offers_tx, &bob)
+		.sign_and_submit_then_watch_default(&offers_tx, &seller)
 		.await
 		.expect("Failed to submit offers")
 		.wait_for_finalized_success()

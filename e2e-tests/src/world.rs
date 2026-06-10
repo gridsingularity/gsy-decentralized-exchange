@@ -40,7 +40,7 @@ pub struct CrossCommunity {
 	pub name: String,
 	pub market_id: H256,
 	pub topology: MarketTopologySchema,
-	/// Positive-energy forecasts, submitted as bids signed by "alice".
+	/// Positive-energy forecasts, submitted as bids signed by "charlie".
 	pub bid_forecasts: Vec<ForecastSchema>,
 	/// Negative-energy forecasts, submitted as offers signed by "bob".
 	pub offer_forecasts: Vec<ForecastSchema>,
@@ -70,8 +70,11 @@ impl MyWorld {
 		let orderbook_url = std::env::var("OFFCHAIN_STORAGE_URL")
 			.unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
 
+		// Setting up dedicated trading accounts. "alice" is not used as a trading user, but only
+		// as the sudo/root and matching-engine operator account. "bob" (seller) and "charlie"
+		// (buyer) are pre-funded dev accounts in genesis, so they can cover transaction fees and
+		// collateral.
 		let mut users = HashMap::new();
-		users.insert("alice".to_string(), subxt_signer::sr25519::dev::alice());
 		users.insert("bob".to_string(), subxt_signer::sr25519::dev::bob());
 		users.insert("charlie".to_string(), subxt_signer::sr25519::dev::charlie());
 

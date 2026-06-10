@@ -88,13 +88,13 @@ async fn verify_trade_on_chain(world: &mut MyWorld) {
 		if let Ok(Some(event)) = order_executed_event {
 			println!("OrderExecuted event found: {:?}", event.0);
 			let trade = event.0;
-			let alice_pubkey = world.users.get("alice").unwrap().public_key();
-			let bob_pubkey = world.users.get("bob").unwrap().public_key();
-			let alice_account_id: subxt::utils::AccountId32 = alice_pubkey.into();
-			let bob_account_id: subxt::utils::AccountId32 = bob_pubkey.into();
+			let buyer_pubkey = world.users.get("charlie").unwrap().public_key();
+			let seller_pubkey = world.users.get("bob").unwrap().public_key();
+			let buyer_account_id: subxt::utils::AccountId32 = buyer_pubkey.into();
+			let seller_account_id: subxt::utils::AccountId32 = seller_pubkey.into();
 
-			assert_eq!(trade.buyer, alice_account_id);
-			assert_eq!(trade.seller, bob_account_id);
+			assert_eq!(trade.buyer, buyer_account_id);
+			assert_eq!(trade.seller, seller_account_id);
 			assert_eq!(trade.parameters.selected_energy, 100000);
 			let expected_rate = 30000;
 			assert_eq!(trade.parameters.energy_rate, expected_rate);

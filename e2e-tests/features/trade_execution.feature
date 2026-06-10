@@ -5,18 +5,18 @@ Feature: GSY DEX Trade Execution
 
   Scenario: A simple bid and offer are matched and executed
     Given the GSY DEX services are running
-    And users "alice", "bob", and "charlie" the matching engine operator are registered and have collateral
+    And users "bob" and "charlie" are registered and have collateral, with "alice" as the matching engine operator
     When the community topology and forecasts of 10 energy are submitted
     And the Market Orchestrator opens the Spot market for the next delivery slot
-    And "alice" submits a bid
+    And "charlie" submits a bid
     And "bob" submits an offer
-    And measurements for "alice" and "bob" assets are submitted
+    And measurements for "charlie" and "bob" assets are submitted
     Then the matching engine matches the bid and offer and a trade is settled on-chain
     And the execution engine submits penalties for the trade
 
   Scenario: Multiple community markets run in parallel and execute trades
     Given the GSY DEX services are running
-    And users "alice", "bob", and "charlie" the matching engine operator are registered and have collateral
+    And users "bob" and "charlie" are registered and have collateral, with "alice" as the matching engine operator
     When the community topologies and forecasts of 10 energy are submitted for communities "CommunityAlpha" and "CommunityBeta"
     And the Market Orchestrator opens the Spot markets for all communities
     And bids and offers are submitted for all communities
@@ -25,7 +25,7 @@ Feature: GSY DEX Trade Execution
 
   Scenario: Bids and offers must not match across community markets
     Given the GSY DEX services are running
-    And users "alice", "bob", and "charlie" the matching engine operator are registered and have collateral
+    And users "bob" and "charlie" are registered and have collateral, with "alice" as the matching engine operator
     When two communities each submit multiple bids and offers selected to cross-match
     And the Market Orchestrator opens the Spot markets for the cross-matching communities
     And the cross-matching bids and offers are submitted for all communities
