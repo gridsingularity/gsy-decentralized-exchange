@@ -1,7 +1,7 @@
 import { loadFixture } from "@nomicfoundation/hardhat-toolbox/network-helpers";
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { hashOrder, ORDER_TYPE_BID } from "./utils";
+import { bytes16Id, ORDER_TYPE_BID } from "./utils";
 
 describe("OrderRegistry", function () {
   async function deployRegistryFixture() {
@@ -19,17 +19,18 @@ describe("OrderRegistry", function () {
       await vault.getAddress(),
     );
 
-    const marketId = ethers.keccak256(ethers.toUtf8Bytes("market-1"));
+    const actorId = bytes16Id("actor:user");
+    const marketId = bytes16Id("market-1");
     const ORCHESTRATOR_ROLE = await controller.ORCHESTRATOR_ROLE();
     await controller.grantRole(ORCHESTRATOR_ROLE, admin.address);
     await controller.setMarketStatus(marketId, true);
 
-    await vault.connect(user).setProxy(proxy.address, true);
+    await vault.registerActor(actorId, user.address);
+    await vault.connect(user).setProxy(actorId, proxy.address, true);
 
     const baseOrder = {
-      owner: user.address,
-      nonce: 1,
-      areaUuid: ethers.keccak256(ethers.toUtf8Bytes("area-1")),
+      orderId: bytes16Id("order-1"),
+      createdBy: actorId,
       marketId: marketId,
       timeSlot: 1000,
       creationTime: 900,
@@ -54,16 +55,13 @@ describe("OrderRegistry", function () {
     const { registry, user, baseOrder } = await loadFixture(
       deployRegistryFixture,
     );
-    const expectedHash = await hashOrder(baseOrder);
 
     await expect(registry.connect(user).placeOrder(baseOrder))
       .to.emit(registry, "OrderPlaced")
       .withArgs(
-        expectedHash,
-        user.address,
+        baseOrder.orderId,
+        baseOrder.createdBy,
         baseOrder.marketId,
-        baseOrder.areaUuid,
-        baseOrder.nonce,
         baseOrder.timeSlot,
         baseOrder.creationTime,
         baseOrder.energy,
@@ -71,7 +69,7 @@ describe("OrderRegistry", function () {
         baseOrder.isBid,
       );
 
-    expect(await registry.getStatus(expectedHash)).to.equal(1); // Open
+    expect(await registry.getStatus(baseOrder.orderId)).to.equal(1); // Open
   });
 
   it("Should revert if market is closed", async function () {
@@ -109,12 +107,27 @@ describe("OrderRegistry", function () {
       deployRegistryFixture,
     );
     await registry.connect(user).placeOrder(baseOrder);
-    const expectedHash = await hashOrder(baseOrder);
 
     await expect(registry.connect(user).cancelOrder(baseOrder))
       .to.emit(registry, "OrderCancelled")
-      .withArgs(expectedHash);
+      .withArgs(baseOrder.orderId);
 
-    expect(await registry.getStatus(expectedHash)).to.equal(3); // Cancelled
+    expect(await registry.getStatus(baseOrder.orderId)).to.equal(3); // Cancelled
+  });
+
+  it("Should reject cancellation with mismatched actor details", async function () {
+    const { registry, user, other, baseOrder } = await loadFixture(
+      deployRegistryFixture,
+    );
+    await registry.connect(user).placeOrder(baseOrder);
+
+    const tamperedOrder = {
+      ...baseOrder,
+      createdBy: bytes16Id("actor:other"),
+    };
+
+    await expect(
+      registry.connect(other).cancelOrder(tamperedOrder),
+    ).to.be.revertedWithCustomError(registry, "Unauthorized");
   });
 });

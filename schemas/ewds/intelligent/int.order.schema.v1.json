@@ -1,92 +1,136 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "int.order.schema.v1",
+  "$id": "https://intelligent-project.eu/ontology/v1.0.0/market/Order",
   "title": "int:Order",
+  "description": "A single buy (Bid) or sell (Offer) order submission to a market slot. Subclass of cim:MarketFactors.",
   "type": "object",
-  "additionalProperties": false,
   "properties": {
     "orderId": {
+      "description": "Primary identifier. IRI: int:orderId. UUID v4.",
       "type": "string",
-      "pattern": "^0x[a-fA-F0-9]{64}$"
+      "format": "uuid"
     },
     "marketId": {
+      "description": "FK to Market. IRI: int:marketId. UUID v4.",
       "type": "string",
-      "pattern": "^0x[a-fA-F0-9]{64}$"
-    },
-    "areaUuid": {
-      "type": "string",
-      "pattern": "^0x[a-fA-F0-9]{64}$"
-    },
-    "nonce": {
-      "type": ["integer", "null"],
-      "minimum": 0
+      "format": "uuid"
     },
     "orderType": {
+      "description": "Buy or sell order. IRI: int:orderType.",
       "type": "string",
-      "enum": ["bid", "offer"]
-    },
-    "status": {
-      "type": "string",
-      "enum": ["open", "executed", "expired", "deleted"]
-    },
-    "quantity": {
-      "type": "number",
-      "minimum": 0
-    },
-    "priceLimit": {
-      "type": "number",
-      "minimum": 0
-    },
-    "timeSlot": {
-      "oneOf": [
-        { "type": "string", "format": "date-time" },
-        { "type": "integer", "minimum": 0 }
+      "enum": [
+        "Bid",
+        "Offer"
       ]
     },
-    "creationTime": {
-      "type": "integer",
-      "minimum": 0
+    "orderStatus": {
+      "description": "Lifecycle status of this order submission. IRI: int:orderStatus.",
+      "type": "string",
+      "enum": [
+        "Submitted",
+        "PartiallyFilled",
+        "Filled",
+        "Cancelled",
+        "Expired",
+        "Rejected",
+        "Executed"
+      ],
+      "default": "Submitted"
+    },
+    "timeSlot": {
+      "description": "Target delivery timeslot. IRI: int:timeSlot. ISO 8601 with timezone.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "quantity": {
+      "description": "Energy quantity in kWh. IRI: int:quantity. Unit: kWh. Must be > 0.",
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "priceLimit": {
+      "description": "Price limit in EUR/kWh. IRI: int:priceLimit. Unit: EUR/kWh.",
+      "type": "number"
+    },
+    "energySourcePreference": {
+      "description": "Preferred energy source types. IRI: int:energySourcePreference.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "GREEN",
+        "PV",
+        "HYDRO",
+        "BIOMASS",
+        "BATTERY",
+        "GREY",
+        null
+      ],
+      "default": null
+    },
+    "energyType": {
+      "description": "Energy type classification for this order. IRI: int:energyType.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "GREEN",
+        "PV",
+        "HYDRO",
+        "BIOMASS",
+        "BATTERY",
+        "GREY",
+        null
+      ],
+      "default": null
     },
     "createdBy": {
-      "type": "string"
+      "description": "FK to Actor who submitted. IRI: int:createdby. UUID v4.",
+      "type": "string",
+      "format": "uuid"
     },
-    "requirements": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "tradingPartnerId": { "type": ["string", "null"] },
-        "energyType": {
-          "type": ["string", "null"],
-          "enum": ["clean", "battery", "fossilFuel", "import", null]
-        },
-        "preferredEnergyRate": {
-          "type": ["number", "null"],
-          "minimum": 0
-        }
-      }
+    "createdAt": {
+      "description": "Order creation datetime. IRI: int:createdAt. ISO 8601 with timezone.",
+      "type": "string",
+      "format": "date-time"
     },
-    "attributes": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "tradingPartnerId": { "type": ["string", "null"] },
-        "energyType": {
-          "type": "string",
-          "enum": ["clean", "battery", "fossilFuel", "import"]
-        }
-      }
+    "updatedAt": {
+      "description": "Order last updated datetime. IRI: int:updatedAt. ISO 8601 with timezone.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time",
+      "default": null
+    },
+    "cancellationReason": {
+      "description": "Human-readable cancellation reason. IRI: int:rejectionReason. Populated when orderStatus = Cancelled.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "preferredTradingPartner": {
+      "description": "Preferred trading partner preferences. IRI: int:preferredTradingPartner.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
     }
   },
   "required": [
     "orderId",
     "marketId",
-    "areaUuid",
     "orderType",
-    "status",
+    "orderStatus",
+    "timeSlot",
     "quantity",
     "priceLimit",
-    "timeSlot",
-    "creationTime",
-    "createdBy"
-  ]
+    "createdBy",
+    "createdAt"
+  ],
+  "additionalProperties": false
 }

@@ -6,93 +6,171 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /**
  * @title GsyVault
- * @notice Holds user collateral (Native Currency) and handles transfers.
+ * @notice Holds actor collateral (Native Currency) and handles transfers.
  */
 contract GsyVault is AccessControl, ReentrancyGuard {
     bytes32 public constant SETTLEMENT_ROLE = keccak256("SETTLEMENT_ROLE");
+    bytes32 public constant ACTOR_REGISTRAR_ROLE =
+        keccak256("ACTOR_REGISTRAR_ROLE");
 
-    // User Address => Balance (scaled, usually wei)
-    mapping(address => uint256) public balances;
+    // Actor UUID (bytes16) => Balance (scaled, usually wei)
+    mapping(bytes16 => uint256) public balances;
 
-    // Delegator => Delegate => isApproved
-    mapping(address => mapping(address => bool)) public proxies;
+    // Actor UUID (bytes16) => Wallet/Delegate => isApproved
+    mapping(bytes16 => mapping(address => bool)) public authorizedWallets;
 
     // Events
-    event Deposited(address indexed user, uint256 amount);
-    event Withdrawn(address indexed user, uint256 amount);
+    event ActorWalletUpdated(
+        bytes16 indexed actorId,
+        address indexed wallet,
+        bool isAuthorized
+    );
+    event Deposited(
+        bytes16 indexed actorId,
+        address indexed wallet,
+        uint256 amount
+    );
+    event Withdrawn(
+        bytes16 indexed actorId,
+        address indexed wallet,
+        uint256 amount
+    );
     event TransferredBySettlement(
-        address indexed from,
-        address indexed to,
+        bytes16 indexed fromActorId,
+        bytes16 indexed toActorId,
         uint256 amount
     );
     event ProxyUpdated(
-        address indexed delegator,
+        bytes16 indexed actorId,
         address indexed delegate,
         bool isApproved
     );
 
     error InsufficientBalance(uint256 available, uint256 required);
+    error InvalidActorId();
+    error InvalidWallet();
     error TransferFailed();
+    error UnauthorizedActorWallet(bytes16 actorId, address wallet);
 
     constructor() {
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        _grantRole(ACTOR_REGISTRAR_ROLE, msg.sender);
+    }
+
+    modifier onlyActorWallet(bytes16 actorId) {
+        if (!authorizedWallets[actorId][msg.sender]) {
+            revert UnauthorizedActorWallet(actorId, msg.sender);
+        }
+        _;
+    }
+
+    /**
+     * @notice Register a wallet as authorized for an actor UUID.
+     */
+    function registerActor(
+        bytes16 actorId,
+        address wallet
+    ) external onlyRole(ACTOR_REGISTRAR_ROLE) {
+        _setActorWallet(actorId, wallet, true);
+    }
+
+    /**
+     * @notice Add or remove a wallet authorized for an actor UUID.
+     */
+    function setActorWallet(
+        bytes16 actorId,
+        address wallet,
+        bool status
+    ) external onlyRole(ACTOR_REGISTRAR_ROLE) {
+        _setActorWallet(actorId, wallet, status);
     }
 
     /**
      * @notice Deposit native currency (EWT) into the vault.
      */
-    function deposit() external payable nonReentrant {
-        balances[msg.sender] += msg.value;
-        emit Deposited(msg.sender, msg.value);
+    function deposit(
+        bytes16 actorId
+    ) external payable nonReentrant onlyActorWallet(actorId) {
+        balances[actorId] += msg.value;
+        emit Deposited(actorId, msg.sender, msg.value);
     }
 
     /**
      * @notice Withdraw native currency.
      */
-    function withdraw(uint256 amount) external nonReentrant {
-        if (balances[msg.sender] < amount)
-            revert InsufficientBalance(balances[msg.sender], amount);
+    function withdraw(
+        bytes16 actorId,
+        uint256 amount
+    ) external nonReentrant onlyActorWallet(actorId) {
+        if (balances[actorId] < amount)
+            revert InsufficientBalance(balances[actorId], amount);
 
-        balances[msg.sender] -= amount;
+        balances[actorId] -= amount;
 
         (bool success, ) = payable(msg.sender).call{value: amount}("");
         if (!success) revert TransferFailed();
 
-        emit Withdrawn(msg.sender, amount);
+        emit Withdrawn(actorId, msg.sender, amount);
     }
 
     /**
-     * @notice Add or remove a proxy (delegate) for the caller.
+     * @notice Add or remove a proxy (delegate) for an actor.
      */
-    function setProxy(address delegate, bool status) external {
-        proxies[msg.sender][delegate] = status;
-        emit ProxyUpdated(msg.sender, delegate, status);
+    function setProxy(
+        bytes16 actorId,
+        address delegate,
+        bool status
+    ) external onlyActorWallet(actorId) {
+        authorizedWallets[actorId][delegate] = status;
+        emit ProxyUpdated(actorId, delegate, status);
     }
 
     /**
-     * @notice Executed by the Settlement Contract to move funds between users.
+     * @notice Executed by the Settlement Contract to move funds between actors.
      */
     function transferBySettlement(
-        address from,
-        address to,
+        bytes16 fromActorId,
+        bytes16 toActorId,
         uint256 amount
     ) external onlyRole(SETTLEMENT_ROLE) {
-        if (balances[from] < amount)
-            revert InsufficientBalance(balances[from], amount);
+        if (balances[fromActorId] < amount)
+            revert InsufficientBalance(balances[fromActorId], amount);
 
-        balances[from] -= amount;
-        balances[to] += amount;
+        balances[fromActorId] -= amount;
+        balances[toActorId] += amount;
 
-        emit TransferredBySettlement(from, to, amount);
+        emit TransferredBySettlement(fromActorId, toActorId, amount);
     }
 
     /**
      * @notice View function to check if a delegate is authorized.
      */
     function isProxy(
-        address delegator,
+        bytes16 actorId,
         address delegate
     ) external view returns (bool) {
-        return proxies[delegator][delegate];
+        return authorizedWallets[actorId][delegate];
+    }
+
+    /**
+     * @notice View function to check if a wallet may act for an actor UUID.
+     */
+    function isAuthorized(
+        bytes16 actorId,
+        address wallet
+    ) external view returns (bool) {
+        return authorizedWallets[actorId][wallet];
+    }
+
+    function _setActorWallet(
+        bytes16 actorId,
+        address wallet,
+        bool status
+    ) private {
+        if (actorId == bytes16(0)) revert InvalidActorId();
+        if (wallet == address(0)) revert InvalidWallet();
+
+        authorizedWallets[actorId][wallet] = status;
+        emit ActorWalletUpdated(actorId, wallet, status);
     }
 }

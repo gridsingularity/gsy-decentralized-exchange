@@ -17,7 +17,7 @@ fn generate_market_id(market_type: MarketType, delivery_timestamp: u64) -> Strin
     let mut buffer = Vec::new();
     buffer.extend_from_slice(market_type.as_str().as_bytes());
     buffer.extend_from_slice(&delivery_timestamp.to_be_bytes());
-    let digest = blake2b(32, &[], &buffer);
+    let digest = blake2b(16, &[], &buffer);
     format!("0x{}", ethers::utils::hex::encode(digest.as_bytes()))
 }
 

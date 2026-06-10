@@ -1,69 +1,94 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "int.trade.schema.v1",
+  "$id": "https://intelligent-project.eu/ontology/v1.0.0/market/Trade",
   "title": "int:Trade",
+  "description": "A matched and settled energy trade between a buyer and a seller. Subclass of cim:MarketDocument.",
   "type": "object",
-  "additionalProperties": false,
   "properties": {
     "tradeId": {
+      "description": "Primary identifier. IRI: int:tradeId. UUID v4.",
       "type": "string",
-      "minLength": 1
-    },
-    "bidId": {
-      "type": "string",
-      "pattern": "^0x[a-fA-F0-9]{64}$"
-    },
-    "offerId": {
-      "type": "string",
-      "pattern": "^0x[a-fA-F0-9]{64}$"
-    },
-    "residualBidId": {
-      "type": ["string", "null"],
-      "pattern": "^0x[a-fA-F0-9]{64}$"
-    },
-    "residualOfferId": {
-      "type": ["string", "null"],
-      "pattern": "^0x[a-fA-F0-9]{64}$"
+      "format": "uuid"
     },
     "marketId": {
+      "description": "FK to Market. IRI: int:marketId. UUID v4.",
       "type": "string",
-      "pattern": "^0x[a-fA-F0-9]{64}$"
+      "format": "uuid"
+    },
+    "bidId": {
+      "description": "FK to bid Order. IRI: int:bidId. UUID v4.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "buyerId": {
+      "description": "FK to buying Actor. IRI: int:buyerId. UUID v4.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "residualBidId": {
+      "description": "FK to residual bid Order. IRI: int:residualBidId. UUID v4. Nullable.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid",
+      "default": null
+    },
+    "offerId": {
+      "description": "FK to offer Order. IRI: int:offerId. UUID v4.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "sellerId": {
+      "description": "FK to selling Actor. IRI: int:sellerId. UUID v4.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "residualOfferId": {
+      "description": "FK to residual offer Order. IRI: int:residualOfferId. UUID v4. Nullable.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid",
+      "default": null
     },
     "tradeStatus": {
+      "description": "Trade lifecycle status. IRI: int:tradeStatus.",
       "type": "string",
-      "enum": ["settled", "executed"]
-    },
-    "tradeQuantity": {
-      "type": "number",
-      "minimum": 0
-    },
-    "tradePrice": {
-      "type": "number",
-      "minimum": 0
-    },
-    "tradeTimestamp": {
-      "oneOf": [
-        { "type": "string", "format": "date-time" },
-        { "type": "integer", "minimum": 0 }
+      "enum": [
+        "matched",
+        "executed",
+        "settled",
+        "rejected"
       ]
     },
-    "buyer": {
-      "type": "string"
+    "tradeQuantity": {
+      "description": "Traded energy quantity in kWh. IRI: int:tradeQuantity. Unit: kWh. Must be > 0.",
+      "type": "number",
+      "exclusiveMinimum": 0
     },
-    "seller": {
-      "type": "string"
+    "tradePrice": {
+      "description": "Settled trade price in EUR/kWh. IRI: int:tradePrice. Unit: EUR/kWh.",
+      "type": "number"
+    },
+    "tradedAt": {
+      "description": "Timestamp when the trade was created/matched. IRI: int:tradedAt. ISO 8601 with timezone.",
+      "type": "string",
+      "format": "date-time"
     }
   },
   "required": [
     "tradeId",
-    "bidId",
-    "offerId",
     "marketId",
+    "bidId",
+    "buyerId",
+    "offerId",
+    "sellerId",
     "tradeStatus",
     "tradeQuantity",
     "tradePrice",
-    "tradeTimestamp",
-    "buyer",
-    "seller"
-  ]
+    "tradedAt"
+  ],
+  "additionalProperties": false
 }

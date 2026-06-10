@@ -3,7 +3,7 @@ use gsy_community_client::node_connector::orders::create_input_orders;
 use gsy_community_client::time_utils::get_current_timestamp_in_secs;
 use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketTopologySchema};
 use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
-use gsy_offchain_primitives::utils::NODE_FLOAT_SCALING_FACTOR;
+use gsy_offchain_primitives::utils::{parse_or_hash_bytes16, NODE_FLOAT_SCALING_FACTOR};
 use gsy_offchain_primitives::MarketType;
 use std::collections::HashSet;
 use std::str::FromStr;
@@ -12,7 +12,7 @@ fn test_market() -> MarketTopologySchema {
     MarketTopologySchema {
         creation_time: 345_345,
         time_slot: 456_456,
-        market_id: format!("0x{}", "11".repeat(32)),
+        market_id: format!("0x{}", "11".repeat(16)),
         market_type: MarketType::Spot,
         community_uuid: "community1".to_string(),
         community_name: "My Community".to_string(),
@@ -60,17 +60,17 @@ fn test_orders_to_evm_params_are_created_correctly() {
     let current_time = get_current_timestamp_in_secs();
 
     let (
-        bid_owner,
-        _bid_nonce,
-        _bid_area,
-        _bid_market,
+        _bid_order_id,
+        bid_created_by,
+        bid_market,
         bid_slot,
         bid_creation,
         bid_energy,
         bid_rate,
         bid_type,
     ) = input_orders[0];
-    assert_eq!(bid_owner, owner);
+    assert_eq!(bid_created_by, parse_or_hash_bytes16("area1"));
+    assert_eq!(bid_market, parse_or_hash_bytes16(market.market_id.as_str()));
     assert_eq!(bid_slot, market.time_slot as u64);
     assert!(current_time >= bid_creation && current_time - bid_creation <= 1);
     assert_eq!(bid_energy, (12.0 * NODE_FLOAT_SCALING_FACTOR) as u64);
@@ -78,17 +78,20 @@ fn test_orders_to_evm_params_are_created_correctly() {
     assert!(bid_type);
 
     let (
-        offer_owner,
-        _offer_nonce,
-        _offer_area,
-        _offer_market,
+        _offer_order_id,
+        offer_created_by,
+        offer_market,
         offer_slot,
         offer_creation,
         offer_energy,
         offer_rate,
         offer_type,
     ) = input_orders[1];
-    assert_eq!(offer_owner, owner);
+    assert_eq!(offer_created_by, parse_or_hash_bytes16("area2"));
+    assert_eq!(
+        offer_market,
+        parse_or_hash_bytes16(market.market_id.as_str())
+    );
     assert_eq!(offer_slot, market.time_slot as u64);
     assert!(current_time >= offer_creation && current_time - offer_creation <= 1);
     assert_eq!(offer_energy, (1.0 * NODE_FLOAT_SCALING_FACTOR) as u64);
@@ -148,11 +151,11 @@ fn test_create_input_orders_skips_zero_energy_forecasts() {
 
     let orders = create_input_orders(forecasts, market, owner);
     assert_eq!(orders.len(), 1);
-    assert!(!orders[0].8);
+    assert!(!orders[0].7);
 }
 
 #[test]
-fn test_create_input_orders_assigns_unique_nonces_and_stable_side_mapping() {
+fn test_create_input_orders_assigns_unique_order_ids_and_stable_side_mapping() {
     let market = test_market();
     let owner = Address::from_str("0x1000000000000000000000000000000000000001").unwrap();
     let forecasts = vec![
@@ -185,10 +188,10 @@ fn test_create_input_orders_assigns_unique_nonces_and_stable_side_mapping() {
     let orders = create_input_orders(forecasts, market, owner);
     assert_eq!(orders.len(), 3);
 
-    assert!(orders[0].8);
-    assert!(!orders[1].8);
-    assert!(orders[2].8);
+    assert!(orders[0].7);
+    assert!(!orders[1].7);
+    assert!(orders[2].7);
 
-    let nonces: HashSet<u64> = orders.iter().map(|order| order.1).collect();
-    assert_eq!(nonces.len(), orders.len());
+    let order_ids: HashSet<[u8; 16]> = orders.iter().map(|order| order.0).collect();
+    assert_eq!(order_ids.len(), orders.len());
 }

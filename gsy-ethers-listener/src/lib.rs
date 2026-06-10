@@ -7,11 +7,11 @@ use tracing::{error, info};
 abigen!(
     GsyContracts,
     r#"[
-        event OrderPlaced(bytes32 indexed orderHash, address indexed owner, bytes32 indexed marketId, bytes32 areaUuid, uint64 nonce, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, bool isBid)
-        event OrderCancelled(bytes32 indexed orderHash)
-        event OrderStatusUpdated(bytes32 indexed orderHash, uint8 status)
-        event TradeSettled(bytes32 indexed tradeId, bytes32 indexed bidHash, bytes32 indexed askHash, uint256 energy, uint256 price)
-        event MarketStatusUpdated(bytes32 indexed marketId, bool isOpen)
+        event OrderPlaced(bytes16 indexed orderId, bytes16 indexed createdBy, bytes16 indexed marketId, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, bool isBid)
+        event OrderCancelled(bytes16 indexed orderId)
+        event OrderStatusUpdated(bytes16 indexed orderId, uint8 status)
+        event TradeSettled(bytes16 indexed tradeId, bytes16 indexed bidId, bytes16 indexed askId, uint256 energy, uint256 price)
+        event MarketStatusUpdated(bytes16 indexed marketId, bool isOpen)
     ]"#
 );
 
@@ -73,7 +73,7 @@ impl<H: GsyEventHandler> GsyEthersListener<H> {
                 Some(log) = stream_order_placed.next() => {
                     match log {
                         Ok(event) => {
-                            info!("Detected OrderPlaced: {:?}", hex::encode(event.order_hash));
+                            info!("Detected OrderPlaced: {:?}", hex::encode(event.order_id));
                             if let Err(e) = self.handler.handle_order_placed(event).await {
                                 error!("Error handling OrderPlaced: {:?}", e);
                             }
@@ -84,7 +84,7 @@ impl<H: GsyEventHandler> GsyEthersListener<H> {
                 Some(log) = stream_order_cancelled.next() => {
                     match log {
                         Ok(event) => {
-                            info!("Detected OrderCancelled: {:?}", hex::encode(event.order_hash));
+                            info!("Detected OrderCancelled: {:?}", hex::encode(event.order_id));
                             if let Err(e) = self.handler.handle_order_cancelled(event).await {
                                 error!("Error handling OrderCancelled: {:?}", e);
                             }

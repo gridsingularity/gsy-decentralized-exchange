@@ -9,9 +9,8 @@ use gsy_offchain_primitives::db_api_schema::{
     orders::{DbOrderSchema, OrderEnum, OrderStatus},
     trades::{TradeParameters, TradeSchema, TradeStatus},
 };
-use gsy_offchain_primitives::utils::NODE_FLOAT_SCALING_FACTOR;
+use gsy_offchain_primitives::utils::{bytes16_to_hex, NODE_FLOAT_SCALING_FACTOR};
 use tracing::{error, info, warn};
-use uuid::Uuid;
 
 pub struct OffchainStorageEvmHandler {
     pub db: DatabaseWrapper,
@@ -22,16 +21,15 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
     async fn handle_order_placed(&self, event: OrderPlacedFilter) -> Result<()> {
         info!(
             "Processing EVM OrderPlaced: {:?}",
-            hex::encode(event.order_hash)
+            hex::encode(event.order_id)
         );
 
         let energy_f64 = event.energy as f64 / NODE_FLOAT_SCALING_FACTOR;
         let rate_f64 = event.energy_rate as f64 / NODE_FLOAT_SCALING_FACTOR;
 
-        let area_uuid_str = format!("0x{}", hex::encode(event.area_uuid));
-        let market_id_str = format!("0x{}", hex::encode(event.market_id));
-        let order_id_str = format!("0x{}", hex::encode(event.order_hash));
-        let owner_str = format!("0x{}", hex::encode(event.owner.as_bytes()));
+        let market_id_str = bytes16_to_hex(event.market_id);
+        let order_id_str = bytes16_to_hex(event.order_id);
+        let created_by_str = bytes16_to_hex(event.created_by);
 
         let order_enum = if event.is_bid {
             OrderEnum::Bid
@@ -43,14 +41,14 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             order_id: order_id_str,
             status: OrderStatus::Open,
             order_type: order_enum,
-            area_uuid: area_uuid_str,
+            area_uuid: market_id_str.clone(),
             market_id: market_id_str,
-            nonce: Some(event.nonce),
+            nonce: None,
             time_slot: event.time_slot,
             creation_time: event.creation_time,
             energy_kWh: energy_f64,
             energy_rate: rate_f64,
-            created_by: owner_str,
+            created_by: created_by_str,
             requirements: None,
             attributes: None,
         };
@@ -66,10 +64,9 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
     async fn handle_order_cancelled(&self, event: OrderCancelledFilter) -> Result<()> {
         info!(
             "Processing EVM OrderCancelled: {:?}",
-            hex::encode(event.order_hash)
+            hex::encode(event.order_id)
         );
-        let id_bson =
-            mongodb::bson::to_bson(&format!("0x{}", hex::encode(event.order_hash))).unwrap();
+        let id_bson = mongodb::bson::to_bson(&bytes16_to_hex(event.order_id)).unwrap();
 
         match self
             .db
@@ -84,14 +81,14 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
     }
 
     async fn handle_trade_settled(&self, event: TradeSettledFilter) -> Result<()> {
-        let trade_hash = format!("0x{}", hex::encode(event.trade_id));
+        let trade_hash = bytes16_to_hex(event.trade_id);
         info!("Processing EVM TradeSettled: {:?}", trade_hash);
 
         let energy_f64 = event.energy.as_u64() as f64 / NODE_FLOAT_SCALING_FACTOR;
         let price_f64 = event.price.as_u64() as f64 / NODE_FLOAT_SCALING_FACTOR;
 
-        let bid_hash_str = format!("0x{}", hex::encode(event.bid_hash));
-        let ask_hash_str = format!("0x{}", hex::encode(event.ask_hash));
+        let bid_hash_str = bytes16_to_hex(event.bid_id);
+        let ask_hash_str = bytes16_to_hex(event.ask_id);
 
         let bid_bson = mongodb::bson::to_bson(&bid_hash_str).unwrap();
         let ask_bson = mongodb::bson::to_bson(&ask_hash_str).unwrap();
@@ -101,7 +98,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
 
         if let (Some(bid_order), Some(ask_order)) = (bid_doc, ask_doc) {
             let trade_schema = TradeSchema {
-                trade_uuid: Uuid::new_v4().to_string(),
+                trade_uuid: trade_hash.clone(),
                 status: TradeStatus::Settled,
                 seller: ask_order.created_by.clone(),
                 buyer: bid_order.created_by.clone(),

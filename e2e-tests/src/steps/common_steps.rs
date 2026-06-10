@@ -24,8 +24,10 @@ abigen!(
 abigen!(
     GsyVaultContract,
     r#"[
-        function deposit() external payable
-        function balances(address account) external view returns (uint256)
+        function registerActor(bytes16 actorId, address wallet) external
+        function deposit(bytes16 actorId) external payable
+        function balances(bytes16 actorId) external view returns (uint256)
+        function hasRole(bytes32 role, address account) external view returns (bool)
     ]"#
 );
 
@@ -98,9 +100,45 @@ async fn users_are_registered(
         third_user.as_str(),
     ];
 
+    let actor_registrar_wallet = std::env::var("ACTOR_REGISTRAR_PRIVATE_KEY")
+        .or_else(|_| std::env::var("ORCHESTRATOR_SIGNER_PRIVATE_KEY"))
+        .unwrap_or_else(|_| world.private_key_for_user("alice"))
+        .parse::<LocalWallet>()
+        .expect("Invalid actor registrar private key")
+        .with_chain_id(world.chain_id);
+    let actor_registrar_signer = Arc::new(SignerMiddleware::new(
+        world.provider.clone(),
+        actor_registrar_wallet.clone(),
+    ));
+    let registrar_vault =
+        GsyVaultContract::new(world.gsy_vault_address, actor_registrar_signer.clone());
+    let actor_registrar_role = keccak256("ACTOR_REGISTRAR_ROLE");
+
+    assert!(
+        registrar_vault
+            .has_role(actor_registrar_role, actor_registrar_wallet.address())
+            .call()
+            .await
+            .expect("Failed to check ACTOR_REGISTRAR_ROLE"),
+        "Actor registrar account does not have ACTOR_REGISTRAR_ROLE"
+    );
+
     for user_name in users {
         let wallet = world.wallet_for_user(user_name);
-        if seen.insert(wallet.address()) {
+        let actor_id = world.actor_id_for_user(user_name);
+        if seen.insert(actor_id) {
+            let register_call = registrar_vault.register_actor(actor_id, wallet.address());
+            let register_receipt = register_call
+                .send()
+                .await
+                .expect("Failed to submit actor registration transaction")
+                .await
+                .expect("Failed awaiting actor registration receipt");
+            assert!(
+                register_receipt.is_some(),
+                "Actor registration tx was dropped without receipt"
+            );
+
             let signer = Arc::new(SignerMiddleware::new(
                 world.provider.clone(),
                 wallet.clone(),
@@ -108,7 +146,7 @@ async fn users_are_registered(
             let vault = GsyVaultContract::new(world.gsy_vault_address, signer.clone());
 
             let existing_balance = vault
-                .balances(wallet.address())
+                .balances(actor_id)
                 .call()
                 .await
                 .expect("Failed to query vault balance before deposit");
@@ -120,7 +158,7 @@ async fn users_are_registered(
             let mut last_error = String::new();
             for attempt in 0..5 {
                 let deposit_call = vault
-                    .deposit()
+                    .deposit(actor_id)
                     .value(U256::from(1_000_000_000_000_000_000u128));
                 match deposit_call.send().await {
                     Ok(pending_tx) => {
@@ -159,7 +197,7 @@ async fn users_are_registered(
             );
 
             let balance = vault
-                .balances(wallet.address())
+                .balances(actor_id)
                 .call()
                 .await
                 .expect("Failed to query vault balance");

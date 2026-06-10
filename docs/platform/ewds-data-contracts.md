@@ -2,11 +2,12 @@
 
 ## Purpose
 
-This page translates the Intelligent ontology spreadsheet into concrete JSON data
+This page translates the Intelligent ontology schemas into concrete JSON data
 contracts for GSY DEX inter-service communication over EWDS.
 
-Source input: ontology CSV definitions for classes and properties such as
-`int:Trade`, `int:Order`, `int:Tariff`, `int:GridFeeModel`, and related attributes.
+Source input: Energy Web Intelligent schemas under
+`schemas/v1.0.0/market`, including `Market`, `MarketTimeSeries`, `Order`,
+`Trade`, and `ClearingResult`.
 
 ## Schema Package Location
 
@@ -18,9 +19,11 @@ Primary files:
 
 - `int.order.schema.v1.json`
 - `int.trade.schema.v1.json`
+- `int.clearing-result.schema.v1.json`
 - `int.measurement.schema.v1.json`
 - `int.forecast.schema.v1.json`
 - `int.market.schema.v1.json`
+- `int.market-time-series.schema.v1.json`
 - `int.orders.query.request.v1.json`
 - `int.orders.query.response.v1.json`
 - `int.trades.query.request.v1.json`
@@ -43,9 +46,6 @@ operation names for readability and service routing:
 | `tradesQueryResponse` | response envelope | `int.trades.query.response.v1.json` |
 | `measurementsQuery` | `measurements.query` | `int.measurements.query.request.v1.json` |
 | `measurementsQueryResponse` | response envelope | `int.measurements.query.response.v1.json` |
-
-## CSV -> Runtime Field Mapping
-
 ### Trade Mapping
 
 | Ontology property | Schema field | Current runtime source |
@@ -59,9 +59,9 @@ operation names for readability and service routing:
 | `int:tradeStatus` | `tradeStatus` | `TradeSchema.status` |
 | `int:tradeQuantity` | `tradeQuantity` | `TradeSchema.parameters.selected_energy_kWh` |
 | `int:tradePrice` | `tradePrice` | `TradeSchema.parameters.energy_rate` |
-| `int:tradeTimestamp` | `tradeTimestamp` | `TradeSchema.creation_time` |
-| `int:buyer` | `buyer` | `TradeSchema.buyer` |
-| `int:seller` | `seller` | `TradeSchema.seller` |
+| `int:tradedAt` | `tradedAt` | `TradeSchema.creation_time` |
+| `int:buyerId` | `buyerId` | `TradeSchema.buyer` |
+| `int:sellerId` | `sellerId` | `TradeSchema.seller` |
 
 ### Order Mapping
 
@@ -69,23 +69,30 @@ operation names for readability and service routing:
 |---|---|---|
 | `int:orderId` | `orderId` | `DbOrderSchema.order_id` |
 | `int:marketId` | `marketId` | `DbOrderSchema.market_id` |
-| runtime routing field | `areaUuid` | `DbOrderSchema.area_uuid` |
-| runtime settlement field | `nonce` | `DbOrderSchema.nonce` |
 | `int:orderType` | `orderType` | `DbOrderSchema.order_type` |
+| `int:orderStatus` | `orderStatus` | `DbOrderSchema.status` |
 | `int:quantity` | `quantity` | `DbOrderSchema.energy_kWh` |
 | `int:priceLimit` | `priceLimit` | `DbOrderSchema.energy_rate` |
 | `int:timeSlot` | `timeSlot` | `DbOrderSchema.time_slot` |
 | `int:createdBy` | `createdBy` | `DbOrderSchema.created_by` |
+| `int:createdAt` | `createdAt` | `DbOrderSchema.creation_time` |
+
+Runtime-only fields not represented in the agreed Intelligent `Order` schema:
+
+- `areaUuid`
+- `nonce`
+- EVM bytes32 `orderId` / `marketId` hash format
+- EVM account address in `createdBy`
 
 ## Validation Rules Applied from CSV
 
 The first schema pack encodes the following validation intent from the spreadsheet:
 
-- Type-safe fields for trade and order identifiers.
-- Required `tradeId` for trade objects.
-- Numeric constraints for quantities and prices (`minimum: 0`).
-- Explicit enums for status and order type.
-- Transitional date handling (`date-time` or unix seconds integer) to match current runtime.
+- UUID fields for Intelligent identifiers.
+- ISO 8601 date-time fields for market, order, trade, and clearing timestamps.
+- Positive numeric constraints for quantities.
+- Explicit enums for market type, matching algorithm, order type/status, trade
+  status, clearing status, and no-bid reason.
 
 ## Sensitivity and Anonymization Baseline
 
@@ -96,9 +103,3 @@ Current implementation baseline:
 - No anonymization transform is applied in schema validation.
 - Payload-level minimization is still recommended for EWDS transport (send only required fields).
 - If sensitivity flags are updated in the ontology spreadsheet, schema contracts should be versioned.
-
-## Open Decisions
-
-- Whether to normalize all timestamps to RFC3339 before full cutover.
-- Whether trade IDs should be UUID-only (strict pattern) or generic strings.
-- Final representation for market types (`spot`, `flexibility`, `settlement`) across services.

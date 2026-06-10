@@ -1,21 +1,39 @@
 name: Security audit
+
+permissions:
+  contents: read
+
 on:
   push:
     paths:
+      - '.github/workflows/audit-on-push.yml'
       - '**/Cargo.toml'
       - '**/Cargo.lock'
+
 jobs:
   security_audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v1
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: nightly
-          override: true
-          components: clippy
-          target: wasm32-unknown-unknown
-      - run: cd $GITHUB_WORKSPACE
-      - uses: actions-rs/audit-check@v1
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/checkout@v5
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Audit Rust lockfiles
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mapfile -d '' lockfiles < <(find . -name Cargo.lock -not -path './target/*' -print0 | sort -z)
+
+          if [ "${#lockfiles[@]}" -eq 0 ]; then
+            echo "No Cargo.lock files found."
+            exit 0
+          fi
+
+          for lockfile in "${lockfiles[@]}"; do
+            crate_dir="$(dirname "$lockfile")"
+            echo "::group::cargo audit ${crate_dir}"
+            (cd "$crate_dir" && cargo audit)
+            echo "::endgroup::"
+          done

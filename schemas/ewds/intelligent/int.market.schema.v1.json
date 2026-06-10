@@ -1,42 +1,75 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "int.market.schema.v1",
-  "title": "GSY Market Topology",
+  "$id": "https://intelligent-project.eu/ontology/v1.0.0/market/Market",
+  "title": "int:Market",
+  "description": "A single energy market slot defining the trading window and delivery period. Subclass of cim:MarketDocument.",
   "type": "object",
-  "additionalProperties": false,
   "properties": {
-    "marketId": { "type": "string", "pattern": "^0x[a-fA-F0-9]{64}$" },
-    "marketType": { "type": "string", "enum": ["spot", "settlement", "flexibility"] },
-    "communityUuid": { "type": "string", "minLength": 1 },
-    "communityName": { "type": "string", "minLength": 1 },
-    "timeSlot": {
-      "oneOf": [
-        { "type": "string", "format": "date-time" },
-        { "type": "integer", "minimum": 0 }
+    "marketId": {
+      "description": "Primary identifier. IRI: int:marketId. UUID v4.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "communityId": {
+      "description": "FK to Community. IRI: int:communityId. UUID v4.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "openingTime": {
+      "description": "Market opens for order submission. IRI: int:openingTime. ISO 8601 with timezone. Must be < closingTime.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "closingTime": {
+      "description": "Market closes for order submission. IRI: int:closingTime. ISO 8601 with timezone. Must be > openingTime and <= deliveryStartTime.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "deliveryStartTime": {
+      "description": "Start of energy delivery period. IRI: int:deliveryStartTime. ISO 8601 with timezone.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "deliveryEndTime": {
+      "description": "End of energy delivery period. IRI: int:deliveryEndTime. ISO 8601 with timezone. Must be > deliveryStartTime.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "marketType": {
+      "description": "Type of market. IRI: int:marketType.",
+      "type": "string",
+      "enum": [
+        "local_spot",
+        "flex",
+        "local_settlement"
       ]
     },
-    "creationTime": { "type": "integer", "minimum": 0 },
-    "communityAreas": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "areaUuid": { "type": "string", "minLength": 1 },
-          "name": { "type": "string", "minLength": 1 },
-          "areaType": { "type": "string", "minLength": 1 }
-        },
-        "required": ["areaUuid", "name", "areaType"]
-      }
+    "matchingAlgorithm": {
+      "description": "Market clearing algorithm applied to this slot. IRI: int:matchingAlgorithm.",
+      "type": "string",
+      "enum": [
+        "PayAsBid",
+        "PayAsClear",
+        "AMM"
+      ],
+      "default": "PayAsBid"
+    },
+    "createdAt": {
+      "description": "Record creation timestamp. IRI: int:createdAt. ISO 8601 with timezone.",
+      "type": "string",
+      "format": "date-time"
     }
   },
   "required": [
     "marketId",
+    "communityId",
+    "openingTime",
+    "closingTime",
+    "deliveryStartTime",
+    "deliveryEndTime",
     "marketType",
-    "communityUuid",
-    "communityName",
-    "timeSlot",
-    "creationTime",
-    "communityAreas"
-  ]
+    "matchingAlgorithm",
+    "createdAt"
+  ],
+  "additionalProperties": false
 }

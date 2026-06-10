@@ -104,14 +104,14 @@ where
     Ok(())
 }
 
-pub fn generate_market_id(market_type: MarketType, delivery_timestamp: u64) -> [u8; 32] {
+pub fn generate_market_id(market_type: MarketType, delivery_timestamp: u64) -> [u8; 16] {
     let mut buffer = Vec::new();
     buffer.extend_from_slice(market_type.as_str().as_bytes());
     buffer.extend_from_slice(&delivery_timestamp.to_be_bytes());
-    blake2b(32, &[], &buffer)
+    blake2b(16, &[], &buffer)
         .as_bytes()
         .try_into()
-        .expect("hash is 32 bytes")
+        .expect("hash is 16 bytes")
 }
 
 fn market_should_be_open(
@@ -135,19 +135,19 @@ mod tests {
 
     #[derive(Default, Clone)]
     struct MockChainClient {
-        market_statuses: Arc<Mutex<HashMap<[u8; 32], bool>>>,
-        updates: Arc<Mutex<Vec<([u8; 32], bool)>>>,
+        market_statuses: Arc<Mutex<HashMap<[u8; 16], bool>>>,
+        updates: Arc<Mutex<Vec<([u8; 16], bool)>>>,
     }
 
     impl MockChainClient {
-        fn with_statuses(statuses: HashMap<[u8; 32], bool>) -> Self {
+        fn with_statuses(statuses: HashMap<[u8; 16], bool>) -> Self {
             Self {
                 market_statuses: Arc::new(Mutex::new(statuses)),
                 updates: Arc::new(Mutex::new(Vec::new())),
             }
         }
 
-        fn updates(&self) -> Vec<([u8; 32], bool)> {
+        fn updates(&self) -> Vec<([u8; 16], bool)> {
             self.updates.lock().expect("updates lock poisoned").clone()
         }
     }
@@ -158,7 +158,7 @@ mod tests {
             Ok(true)
         }
 
-        async fn get_market_status(&self, market_id: [u8; 32]) -> anyhow::Result<bool> {
+        async fn get_market_status(&self, market_id: [u8; 16]) -> anyhow::Result<bool> {
             Ok(*self
                 .market_statuses
                 .lock()
@@ -169,7 +169,7 @@ mod tests {
 
         async fn update_market_status(
             &self,
-            market_id: [u8; 32],
+            market_id: [u8; 16],
             is_open: bool,
         ) -> anyhow::Result<()> {
             self.market_statuses

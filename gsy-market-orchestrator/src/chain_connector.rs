@@ -10,8 +10,8 @@ abigen!(
     MarketControllerContract,
     r#"[
         function hasRole(bytes32 role, address account) external view returns (bool)
-        function isMarketOpen(bytes32 marketId) external view returns (bool)
-        function setMarketStatus(bytes32 marketId, bool isOpen) external
+        function isMarketOpen(bytes16 marketId) external view returns (bool)
+        function setMarketStatus(bytes16 marketId, bool isOpen) external
     ]"#
 );
 
@@ -20,8 +20,8 @@ type WsSignerMiddleware = SignerMiddleware<Provider<Ws>, LocalWallet>;
 #[async_trait]
 pub trait MarketChainClient: Send + Sync {
     async fn is_operator_registered(&self) -> Result<bool>;
-    async fn get_market_status(&self, market_id: [u8; 32]) -> Result<bool>;
-    async fn update_market_status(&self, market_id: [u8; 32], is_open: bool) -> Result<()>;
+    async fn get_market_status(&self, market_id: [u8; 16]) -> Result<bool>;
+    async fn update_market_status(&self, market_id: [u8; 16], is_open: bool) -> Result<()>;
 }
 
 #[derive(Clone)]
@@ -75,7 +75,7 @@ impl MarketChainClient for GsyMarketOrchestratorNodeClient {
         Ok(is_registered)
     }
 
-    async fn get_market_status(&self, market_id: [u8; 32]) -> Result<bool> {
+    async fn get_market_status(&self, market_id: [u8; 16]) -> Result<bool> {
         let status = self
             .market_controller
             .is_market_open(market_id)
@@ -84,7 +84,7 @@ impl MarketChainClient for GsyMarketOrchestratorNodeClient {
         Ok(status)
     }
 
-    async fn update_market_status(&self, market_id: [u8; 32], is_open: bool) -> Result<()> {
+    async fn update_market_status(&self, market_id: [u8; 16], is_open: bool) -> Result<()> {
         let set_market_status_call = self.market_controller.set_market_status(market_id, is_open);
         let pending_tx = set_market_status_call.send().await?;
 

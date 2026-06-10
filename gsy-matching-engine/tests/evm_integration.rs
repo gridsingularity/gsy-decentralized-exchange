@@ -4,7 +4,7 @@ use gsy_matching_engine::connectors::evm_connector::send_settle_batch_transactio
 use gsy_offchain_primitives::db_api_schema::orders::{DbOrderSchema, OrderEnum, OrderStatus};
 use gsy_offchain_primitives::types::{BidOfferMatch, Order};
 use gsy_offchain_primitives::utils::{
-    string_to_account_id, string_to_h256, NODE_FLOAT_SCALING_FACTOR,
+    actor_id_to_account_id, bytes16_to_h256, parse_or_hash_bytes16, NODE_FLOAT_SCALING_FACTOR,
 };
 use std::{collections::HashMap, fs::File, io::Write, sync::Arc};
 use tempfile::TempDir;
@@ -15,8 +15,8 @@ abigen!(
         function settledCount() external view returns (uint256)
         function lastSelectedEnergy() external view returns (uint256)
         function lastClearingPrice() external view returns (uint256)
-        function lastBidOwner() external view returns (address)
-        function lastAskOwner() external view returns (address)
+        function lastBidCreatedBy() external view returns (bytes16)
+        function lastAskCreatedBy() external view returns (bytes16)
     ]"#
 );
 
@@ -44,10 +44,9 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
             mapping(address => mapping(bytes32 => bool)) private roles;
 
             struct OrderData {
-                address owner;
-                uint64 nonce;
-                bytes32 areaUuid;
-                bytes32 marketId;
+                bytes16 orderId;
+                bytes16 createdBy;
+                bytes16 marketId;
                 uint64 timeSlot;
                 uint64 creationTime;
                 uint64 energy;
@@ -55,6 +54,7 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
             }
 
             struct Match {
+                bytes16 tradeId;
                 OrderData bid;
                 OrderData ask;
                 uint256 selectedEnergy;
@@ -64,8 +64,8 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
             uint256 public settledCount;
             uint256 public lastSelectedEnergy;
             uint256 public lastClearingPrice;
-            address public lastBidOwner;
-            address public lastAskOwner;
+            bytes16 public lastBidCreatedBy;
+            bytes16 public lastAskCreatedBy;
 
             constructor() {
                 roles[msg.sender][OPERATOR_ROLE] = true;
@@ -82,8 +82,8 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
                     Match calldata first = matches[0];
                     lastSelectedEnergy = first.selectedEnergy;
                     lastClearingPrice = first.clearingPrice;
-                    lastBidOwner = first.bid.owner;
-                    lastAskOwner = first.ask.owner;
+                    lastBidCreatedBy = first.bid.createdBy;
+                    lastAskCreatedBy = first.ask.createdBy;
                 }
             }
         }
@@ -144,17 +144,16 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
     let contract = factory.deploy(()).unwrap().send().await.unwrap();
     let contract_address = contract.address();
 
-    let bid_owner = anvil.addresses()[1];
-    let ask_owner = anvil.addresses()[2];
-    let canonical_account_id =
-        string_to_account_id("5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY".to_string())
-            .unwrap();
+    let bid_actor_id = format!("0x{}", "aa".repeat(16));
+    let ask_actor_id = format!("0x{}", "bb".repeat(16));
+    let bid_account_id = actor_id_to_account_id(&bid_actor_id).unwrap();
+    let ask_account_id = actor_id_to_account_id(&ask_actor_id).unwrap();
 
-    let bid_order_id = format!("0x{}", "11".repeat(32));
-    let ask_order_id = format!("0x{}", "22".repeat(32));
-    let market_id = format!("0x{}", "33".repeat(32));
-    let bid_area = format!("0x{}", "44".repeat(32));
-    let ask_area = format!("0x{}", "55".repeat(32));
+    let bid_order_id = format!("0x{}", "11".repeat(16));
+    let ask_order_id = format!("0x{}", "22".repeat(16));
+    let market_id = format!("0x{}", "33".repeat(16));
+    let bid_area = bid_actor_id.clone();
+    let ask_area = ask_actor_id.clone();
 
     let bid_db = DbOrderSchema {
         order_id: bid_order_id.clone(),
@@ -162,12 +161,12 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
         order_type: OrderEnum::Bid,
         area_uuid: bid_area.clone(),
         market_id: market_id.clone(),
-        nonce: Some(1),
+        nonce: None,
         time_slot: 1000,
         creation_time: 900,
         energy_kWh: 100.0,
         energy_rate: 50.0,
-        created_by: format!("{:?}", bid_owner),
+        created_by: bid_actor_id.clone(),
         requirements: None,
         attributes: None,
     };
@@ -177,42 +176,42 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
         order_type: OrderEnum::Offer,
         area_uuid: ask_area.clone(),
         market_id: market_id.clone(),
-        nonce: Some(2),
+        nonce: None,
         time_slot: 1000,
         creation_time: 900,
         energy_kWh: 80.0,
         energy_rate: 40.0,
-        created_by: format!("{:?}", ask_owner),
+        created_by: ask_actor_id.clone(),
         requirements: None,
         attributes: None,
     };
 
     let bid_order = Order {
-        order_id: string_to_h256(bid_order_id.clone()),
+        order_id: bytes16_to_h256(parse_or_hash_bytes16(&bid_order_id)),
         order_type: OrderEnum::Bid,
         status: OrderStatus::Open,
-        area_uuid: string_to_h256(bid_area),
-        market_id: string_to_h256(market_id.clone()),
+        area_uuid: bytes16_to_h256(parse_or_hash_bytes16(&bid_area)),
+        market_id: bytes16_to_h256(parse_or_hash_bytes16(&market_id)),
         time_slot: 1000,
         creation_time: 900,
         energy: (100.0 * NODE_FLOAT_SCALING_FACTOR) as u64,
         energy_rate: (50.0 * NODE_FLOAT_SCALING_FACTOR) as u64,
-        created_by: canonical_account_id.clone(),
+        created_by: bid_account_id,
         requirements: None,
         attributes: None,
     };
 
     let ask_order = Order {
-        order_id: string_to_h256(ask_order_id.clone()),
+        order_id: bytes16_to_h256(parse_or_hash_bytes16(&ask_order_id)),
         order_type: OrderEnum::Offer,
         status: OrderStatus::Open,
-        area_uuid: string_to_h256(ask_area),
-        market_id: string_to_h256(market_id),
+        area_uuid: bytes16_to_h256(parse_or_hash_bytes16(&ask_area)),
+        market_id: bytes16_to_h256(parse_or_hash_bytes16(&market_id)),
         time_slot: 1000,
         creation_time: 900,
         energy: (80.0 * NODE_FLOAT_SCALING_FACTOR) as u64,
         energy_rate: (40.0 * NODE_FLOAT_SCALING_FACTOR) as u64,
-        created_by: canonical_account_id,
+        created_by: ask_account_id,
         requirements: None,
         attributes: None,
     };
@@ -220,7 +219,7 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
     let selected_energy = (80.0 * NODE_FLOAT_SCALING_FACTOR) as u64;
     let clearing_price = (50.0 * NODE_FLOAT_SCALING_FACTOR) as u64;
     let matches = vec![BidOfferMatch {
-        market_id: string_to_h256(format!("0x{}", "33".repeat(32))),
+        market_id: bytes16_to_h256(parse_or_hash_bytes16(&market_id)),
         time_slot: 1000,
         bid: bid_order,
         offer: ask_order,
@@ -259,11 +258,11 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
         U256::from(clearing_price)
     );
     assert_eq!(
-        mock_contract.last_bid_owner().call().await.unwrap(),
-        bid_owner
+        mock_contract.last_bid_created_by().call().await.unwrap(),
+        parse_or_hash_bytes16(&bid_actor_id)
     );
     assert_eq!(
-        mock_contract.last_ask_owner().call().await.unwrap(),
-        ask_owner
+        mock_contract.last_ask_created_by().call().await.unwrap(),
+        parse_or_hash_bytes16(&ask_actor_id)
     );
 }
