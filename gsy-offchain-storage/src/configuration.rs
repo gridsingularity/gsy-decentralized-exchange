@@ -1,4 +1,4 @@
-use config::{Config, ConfigError, File};
+use config::{Config, ConfigError, Environment, File};
 use ethers::types::Address;
 use serde::Deserialize;
 
@@ -47,11 +47,9 @@ impl Settings {
 }
 
 pub fn get_configuration() -> Result<Settings, ConfigError> {
-    match envy::from_env::<Settings>() {
-        Ok(settings) => Ok(settings),
-        Err(_) => Config::builder()
-            .add_source(File::with_name("configuration.yaml"))
-            .build()?
-            .try_deserialize(),
-    }
+    Config::builder()
+        .add_source(File::with_name("configuration.yaml").required(false))
+        .add_source(Environment::default().try_parsing(true).ignore_empty(true))
+        .build()?
+        .try_deserialize()
 }
