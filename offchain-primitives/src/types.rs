@@ -130,6 +130,8 @@ impl PayAsBid for MatchingData {
 		for offer in &mut offers {
 			for bid in &mut bids {
 				if offer.offer_component.area_uuid == bid.bid_component.area_uuid
+					|| offer.offer_component.market_id != bid.bid_component.market_id
+					|| offer.offer_component.time_slot != bid.bid_component.time_slot
 					|| offer.offer_component.energy == 0
 					|| bid.bid_component.energy == 0
 				{

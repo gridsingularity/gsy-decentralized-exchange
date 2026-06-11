@@ -256,6 +256,12 @@ async fn verify_parallel_trades(world: &mut MyWorld) {
 		total
 	);
 
+	scan_recent_trades_for_markets(world, &mut remaining).await;
+	if remaining.is_empty() {
+		info!("All community spot markets had already settled before watching started.");
+		return;
+	}
+
 	let mut block_sub = world
 		.subxt_client
 		.blocks()
@@ -300,4 +306,41 @@ async fn verify_parallel_trades(world: &mut MyWorld) {
 		"Timeout: trades were not settled for all community markets. Remaining: {:?}",
 		remaining
 	);
+}
+
+async fn scan_recent_trades_for_markets(world: &MyWorld, remaining: &mut HashSet<H256>) {
+	const MAX_BLOCKS_TO_SCAN: u32 = 60;
+
+	let mut cursor = match world.subxt_client.blocks().at_latest().await {
+		Ok(block) => block,
+		Err(_) => return,
+	};
+	let tip = cursor.number();
+
+	loop {
+		if let Ok(events) = cursor.events().await {
+			for ev in events.find::<gsy_node::orderbook_registry::events::OrderExecuted>() {
+				if let Ok(e) = ev {
+					let trade = e.0;
+					if remaining.remove(&trade.market_id) {
+						info!(
+							"Trade already settled (found in history) in market {:?}",
+							trade.market_id
+						);
+					}
+				}
+			}
+		}
+
+		let number = cursor.number();
+		if remaining.is_empty() || number == 0 || tip.saturating_sub(number) >= MAX_BLOCKS_TO_SCAN {
+			break;
+		}
+
+		let parent_hash = cursor.header().parent_hash;
+		cursor = match world.subxt_client.blocks().at(parent_hash).await {
+			Ok(block) => block,
+			Err(_) => break,
+		};
+	}
 }
