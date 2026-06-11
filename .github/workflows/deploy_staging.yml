@@ -41,7 +41,8 @@ jobs:
           username: ${{ secrets.STAGING_SERVER_USER }}
           key: ${{ secrets.STAGING_SERVER_SSH_KEY }}
           script: |
-            cd /opt/myapp
+            cd /root/gsy-decentralized-exchange
+            git pull --ff-only origin ${{ github.ref_name }}  # update the repo in the server before pulling the images 
             docker compose -f docker-compose.staging.yml pull
             docker compose -f docker-compose.staging.yml up -d
             docker image prune -f
