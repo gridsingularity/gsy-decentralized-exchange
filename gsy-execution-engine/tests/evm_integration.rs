@@ -3,14 +3,15 @@ use ethers_solc::{artifacts::Severity, Project, ProjectPathsConfig};
 use gsy_execution_engine::{
     connectors::evm_connector::submit_penalties, primitives::penalty_calculator::Penalty,
 };
+use gsy_offchain_primitives::utils::parse_or_hash_bytes16;
 use std::{fs::File, io::Write, sync::Arc};
 use tempfile::TempDir;
 
 abigen!(
     MockTradeSettlement,
     r#"[
-        function penaltyEnergyByTrade(bytes32 tradeId) external view returns (uint256)
-        function penaltyEnergyByAccount(address account) external view returns (uint256)
+        function penaltyEnergyByTrade(bytes16 tradeId) external view returns (uint256)
+        function penaltyEnergyByActor(bytes16 actorId) external view returns (uint256)
     ]"#
 );
 
@@ -36,13 +37,13 @@ async fn test_submit_penalties_persists_to_trade_settlement_contract() {
         contract MockTradeSettlement {
             bytes32 public constant EXECUTION_ENGINE_ROLE = keccak256("EXECUTION_ENGINE_ROLE");
             mapping(address => mapping(bytes32 => bool)) private roles;
-            mapping(bytes32 => uint256) public penaltyEnergyByTrade;
-            mapping(address => uint256) public penaltyEnergyByAccount;
+            mapping(bytes16 => uint256) public penaltyEnergyByTrade;
+            mapping(bytes16 => uint256) public penaltyEnergyByActor;
 
             struct TradePenalty {
-                address penalizedAccount;
-                bytes32 marketId;
-                bytes32 tradeId;
+                bytes16 penalizedActorId;
+                bytes16 marketId;
+                bytes16 tradeId;
                 uint64 penaltyEnergy;
             }
 
@@ -58,7 +59,7 @@ async fn test_submit_penalties_persists_to_trade_settlement_contract() {
                 require(roles[msg.sender][EXECUTION_ENGINE_ROLE], "missing execution engine role");
                 for (uint256 i = 0; i < penalties.length; i++) {
                     penaltyEnergyByTrade[penalties[i].tradeId] += penalties[i].penaltyEnergy;
-                    penaltyEnergyByAccount[penalties[i].penalizedAccount] += penalties[i].penaltyEnergy;
+                    penaltyEnergyByActor[penalties[i].penalizedActorId] += penalties[i].penaltyEnergy;
                 }
             }
         }
@@ -119,18 +120,18 @@ async fn test_submit_penalties_persists_to_trade_settlement_contract() {
     let contract = factory.deploy(()).unwrap().send().await.unwrap();
     let contract_address = contract.address();
 
-    let penalized = anvil.addresses()[1];
+    let penalized = format!("0x{}", "aa".repeat(16));
     let trade_uuid = "trade-uuid-123";
     let penalties = vec![
         Penalty {
-            penalized_account: format!("{:?}", penalized),
-            market_id: format!("0x{}", "11".repeat(32)),
+            penalized_account: penalized.clone(),
+            market_id: format!("0x{}", "11".repeat(16)),
             trade_uuid: trade_uuid.to_string(),
             penalty_cost: 100,
         },
         Penalty {
-            penalized_account: format!("{:?}", penalized),
-            market_id: format!("0x{}", "11".repeat(32)),
+            penalized_account: penalized.clone(),
+            market_id: format!("0x{}", "11".repeat(16)),
             trade_uuid: trade_uuid.to_string(),
             penalty_cost: 150,
         },
@@ -146,7 +147,8 @@ async fn test_submit_penalties_persists_to_trade_settlement_contract() {
     .unwrap();
 
     let mock_contract = MockTradeSettlement::new(contract_address, client.clone());
-    let expected_trade_id = ethers::utils::keccak256(trade_uuid.as_bytes());
+    let expected_trade_id = parse_or_hash_bytes16(trade_uuid);
+    let expected_actor_id = parse_or_hash_bytes16(&penalized);
 
     assert_eq!(
         mock_contract
@@ -158,7 +160,7 @@ async fn test_submit_penalties_persists_to_trade_settlement_contract() {
     );
     assert_eq!(
         mock_contract
-            .penalty_energy_by_account(penalized)
+            .penalty_energy_by_actor(expected_actor_id)
             .call()
             .await
             .unwrap(),

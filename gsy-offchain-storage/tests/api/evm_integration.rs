@@ -13,8 +13,8 @@ use tempfile::TempDir;
 abigen!(
     MockEmitter,
     r#"[
-        event OrderPlaced(bytes32 indexed orderHash, address indexed owner, bytes32 indexed marketId, bytes32 areaUuid, uint64 nonce, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, bool isBid)
-        function emitOrderPlaced(bytes32 orderHash, address owner, uint64 energy, uint64 rate) external
+        event OrderPlaced(bytes16 indexed orderId, bytes16 indexed createdBy, bytes16 indexed marketId, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, bool isBid)
+        function emitOrderPlaced(bytes16 orderId, bytes16 createdBy, uint64 energy, uint64 rate) external
     ]"#
 );
 
@@ -41,10 +41,10 @@ async fn test_evm_order_listener_persists_to_db() {
         // SPDX-License-Identifier: MIT
         pragma solidity ^0.8.0;
         contract MockEmitter {
-            event OrderPlaced(bytes32 indexed orderHash, address indexed owner, bytes32 indexed marketId, bytes32 areaUuid, uint64 nonce, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, bool isBid);
-            function emitOrderPlaced(bytes32 orderHash, address owner, uint64 energy, uint64 rate) external {
+            event OrderPlaced(bytes16 indexed orderId, bytes16 indexed createdBy, bytes16 indexed marketId, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, bool isBid);
+            function emitOrderPlaced(bytes16 orderId, bytes16 createdBy, uint64 energy, uint64 rate) external {
                 // emit with hardcoded filler data for non-indexed fields not critical for this test
-                emit OrderPlaced(orderHash, owner, bytes32(0), bytes32(0), 1, 1000, 1234567890, energy, rate, true);
+                emit OrderPlaced(orderId, createdBy, bytes16(0), 1000, 1234567890, energy, rate, true);
             }
         }
     "#;
@@ -122,19 +122,20 @@ async fn test_evm_order_listener_persists_to_db() {
     tokio::time::sleep(Duration::from_millis(1000)).await;
 
     let mock_contract = MockEmitter::new(contract_address, client.clone());
-    let order_hash = [0xAA; 32];
+    let order_id = [0xAA; 16];
+    let created_by = [0xBB; 16];
     let energy_val = 10000; // 1.0 energy scaled
     let rate_val = 5000; // 0.5 rate scaled
 
     let _tx = mock_contract
-        .emit_order_placed(order_hash, anvil.addresses()[0], energy_val, rate_val)
+        .emit_order_placed(order_id, created_by, energy_val, rate_val)
         .send()
         .await
         .unwrap()
         .await
         .unwrap();
 
-    let expected_id = format!("0x{}", hex::encode(order_hash));
+    let expected_id = format!("0x{}", hex::encode(order_id));
 
     let mut found = false;
     for _ in 0..20 {

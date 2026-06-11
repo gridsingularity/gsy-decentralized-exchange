@@ -3,6 +3,7 @@ use ethers_solc::{artifacts::Severity, Project, ProjectPathsConfig};
 use gsy_community_client::node_connector::orders::publish_orders;
 use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketTopologySchema};
 use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
+use gsy_offchain_primitives::utils::parse_or_hash_bytes16;
 use gsy_offchain_primitives::MarketType;
 use std::{fs::File, io::Write, sync::Arc};
 use tempfile::TempDir;
@@ -11,8 +12,8 @@ abigen!(
     MockOrderRegistry,
     r#"[
         function placedCount() external view returns (uint256)
-        function lastOwner() external view returns (address)
-        function lastNonce() external view returns (uint64)
+        function lastCreatedBy() external view returns (bytes16)
+        function lastMarketId() external view returns (bytes16)
         function lastIsBid() external view returns (bool)
     ]"#
 );
@@ -21,7 +22,7 @@ const TEST_PRIVATE_KEY: &str = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5e
 
 fn test_market() -> MarketTopologySchema {
     MarketTopologySchema {
-        market_id: format!("0x{}", "11".repeat(32)),
+        market_id: format!("0x{}", "11".repeat(16)),
         market_type: MarketType::Spot,
         community_uuid: "community-1".to_string(),
         community_name: "Community".to_string(),
@@ -145,10 +146,9 @@ async fn test_publish_orders_calls_evm_order_registry() {
 
         contract MockOrderRegistry {
             struct OrderParams {
-                address owner;
-                uint64 nonce;
-                bytes32 areaUuid;
-                bytes32 marketId;
+                bytes16 orderId;
+                bytes16 createdBy;
+                bytes16 marketId;
                 uint64 timeSlot;
                 uint64 creationTime;
                 uint64 energy;
@@ -157,14 +157,14 @@ async fn test_publish_orders_calls_evm_order_registry() {
             }
 
             uint256 public placedCount;
-            address public lastOwner;
-            uint64 public lastNonce;
+            bytes16 public lastCreatedBy;
+            bytes16 public lastMarketId;
             bool public lastIsBid;
 
             function placeOrder(OrderParams calldata params) external {
                 placedCount += 1;
-                lastOwner = params.owner;
-                lastNonce = params.nonce;
+                lastCreatedBy = params.createdBy;
+                lastMarketId = params.marketId;
                 lastIsBid = params.isBid;
             }
         }
@@ -191,10 +191,13 @@ async fn test_publish_orders_calls_evm_order_registry() {
         U256::from(2u64)
     );
     assert_eq!(
-        mock_contract.last_owner().call().await.unwrap(),
-        anvil.addresses()[0]
+        mock_contract.last_created_by().call().await.unwrap(),
+        parse_or_hash_bytes16("area-b")
     );
-    assert!(mock_contract.last_nonce().call().await.unwrap() > 0);
+    assert_eq!(
+        mock_contract.last_market_id().call().await.unwrap(),
+        parse_or_hash_bytes16("0x11111111111111111111111111111111")
+    );
     assert!(!mock_contract.last_is_bid().call().await.unwrap());
 }
 
@@ -255,10 +258,9 @@ async fn test_publish_orders_returns_error_when_contract_reverts() {
 
         contract MockOrderRegistryReverter {
             struct OrderParams {
-                address owner;
-                uint64 nonce;
-                bytes32 areaUuid;
-                bytes32 marketId;
+                bytes16 orderId;
+                bytes16 createdBy;
+                bytes16 marketId;
                 uint64 timeSlot;
                 uint64 creationTime;
                 uint64 energy;

@@ -2,6 +2,7 @@ use crate::primitives::penalty_calculator::Penalty;
 use anyhow::{anyhow, Result};
 use ethers::prelude::*;
 use ethers::utils::keccak256;
+use gsy_offchain_primitives::utils::parse_or_hash_bytes16;
 use std::{str::FromStr, sync::Arc};
 use tracing::{info, warn};
 
@@ -27,9 +28,9 @@ abigen!(
                     "name": "penalties",
                     "type": "tuple[]",
                     "components": [
-                        {"name": "penalizedAccount", "type": "address"},
-                        {"name": "marketId", "type": "bytes32"},
-                        {"name": "tradeId", "type": "bytes32"},
+                        {"name": "penalizedActorId", "type": "bytes16"},
+                        {"name": "marketId", "type": "bytes16"},
+                        {"name": "tradeId", "type": "bytes16"},
                         {"name": "penaltyEnergy", "type": "uint64"}
                     ]
                 }
@@ -40,40 +41,20 @@ abigen!(
             "type": "function",
             "name": "penaltyEnergyByTrade",
             "stateMutability": "view",
-            "inputs": [{"name": "tradeId", "type": "bytes32"}],
+            "inputs": [{"name": "tradeId", "type": "bytes16"}],
             "outputs": [{"name": "", "type": "uint256"}]
         }
     ]"#
 );
 
-fn parse_or_hash_bytes32(id: &str) -> [u8; 32] {
-    if id.starts_with("0x") && id.len() == 66 {
-        if let Ok(parsed) = H256::from_str(id) {
-            return parsed.to_fixed_bytes();
-        }
-    }
-    keccak256(id.as_bytes())
-}
-
-type EvmPenaltyTuple = (Address, [u8; 32], [u8; 32], u64);
+type EvmPenaltyTuple = ([u8; 16], [u8; 16], [u8; 16], u64);
 
 fn to_evm_penalties(penalties: Vec<Penalty>) -> Vec<EvmPenaltyTuple> {
     penalties
         .into_iter()
         .filter_map(|penalty| {
-            let penalized_account = match Address::from_str(&penalty.penalized_account) {
-                Ok(account) => account,
-                Err(_) => {
-                    warn!(
-                        "Skipping penalty with invalid account '{}'",
-                        penalty.penalized_account
-                    );
-                    return None;
-                }
-            };
-
             if penalty.penalty_cost == 0 {
-                warn!(
+                tracing::warn!(
                     "Skipping penalty for trade '{}' because penalty_cost is zero",
                     penalty.trade_uuid
                 );
@@ -81,9 +62,9 @@ fn to_evm_penalties(penalties: Vec<Penalty>) -> Vec<EvmPenaltyTuple> {
             }
 
             Some((
-                penalized_account,
-                parse_or_hash_bytes32(&penalty.market_id),
-                parse_or_hash_bytes32(&penalty.trade_uuid),
+                parse_or_hash_bytes16(&penalty.penalized_account),
+                parse_or_hash_bytes16(&penalty.market_id),
+                parse_or_hash_bytes16(&penalty.trade_uuid),
                 penalty.penalty_cost,
             ))
         })

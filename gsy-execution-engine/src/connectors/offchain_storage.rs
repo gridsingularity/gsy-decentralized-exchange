@@ -123,6 +123,7 @@ fn parse_timeseries_timestamp(timestamp: &str) -> Option<u64> {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct EwdsRequestEnvelope {
     request_id: String,
     operation: String,
@@ -148,7 +149,9 @@ struct EwdsMessageDto {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct EwdsQueryResponse<T> {
+    #[serde(alias = "request_id")]
     request_id: String,
     success: bool,
     data: Option<Vec<T>>,
@@ -166,8 +169,8 @@ async fn fetch_trades_and_measurements_via_ewds(
     end_time: u64,
 ) -> Result<(Vec<TradeSchema>, Vec<MeasurementSchema>)> {
     let query = serde_json::json!({
-        "start_time": start_time,
-        "end_time": end_time
+        "startTime": start_time,
+        "endTime": end_time
     });
 
     let trades: Vec<TradeSchema> = query_via_ewds(

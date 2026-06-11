@@ -96,3 +96,60 @@ pub struct FlexibilityOrderSchema {
     pub created_by: String,
     pub from_asset: String,
 }
+
+#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, Eq)]
+pub enum IntelligentOrderType {
+    Bid,
+    Offer,
+}
+
+#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, Eq)]
+pub enum IntelligentOrderStatus {
+    Submitted,
+    PartiallyFilled,
+    Filled,
+    Cancelled,
+    Expired,
+    Rejected,
+    Executed,
+}
+
+#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, Eq)]
+pub enum IntelligentEnergyType {
+    #[serde(rename = "GREEN")]
+    Green,
+    #[serde(rename = "PV")]
+    Pv,
+    #[serde(rename = "HYDRO")]
+    Hydro,
+    #[serde(rename = "BIOMASS")]
+    Biomass,
+    #[serde(rename = "BATTERY")]
+    Battery,
+    #[serde(rename = "GREY")]
+    Grey,
+}
+
+#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct IntelligentOrderSchema {
+    pub order_id: String,
+    pub market_id: String,
+    pub order_type: IntelligentOrderType,
+    pub order_status: IntelligentOrderStatus,
+    pub time_slot: String,
+    pub quantity: f64,
+    pub price_limit: f64,
+    #[serde(default)]
+    pub energy_source_preference: Option<IntelligentEnergyType>,
+    #[serde(default)]
+    pub energy_type: Option<IntelligentEnergyType>,
+    pub created_by: String,
+    pub created_at: String,
+    #[serde(default)]
+    pub updated_at: Option<String>,
+    #[serde(default)]
+    pub cancellation_reason: Option<String>,
+    #[serde(default)]
+    pub preferred_trading_partner: Option<String>,
+}

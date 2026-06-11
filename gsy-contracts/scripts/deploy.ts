@@ -55,6 +55,10 @@ async function main() {
     process.env.EXECUTION_ENGINE_PRIVATE_KEY,
     deployerAddress,
   );
+  const actorRegistrarAddress = getAddressFromPrivateKey(
+    process.env.ACTOR_REGISTRAR_PRIVATE_KEY,
+    deployerAddress,
+  );
 
   const gsyVaultFactory = await ethers.getContractFactory("GsyVault");
   const gsyVault = await gsyVaultFactory.deploy();
@@ -88,6 +92,7 @@ async function main() {
   const SETTLEMENT_ROLE = ethers.id("SETTLEMENT_ROLE");
   const OPERATOR_ROLE = ethers.id("OPERATOR_ROLE");
   const EXECUTION_ENGINE_ROLE = ethers.id("EXECUTION_ENGINE_ROLE");
+  const ACTOR_REGISTRAR_ROLE = ethers.id("ACTOR_REGISTRAR_ROLE");
 
   await (
     await marketController.grantRole(ORCHESTRATOR_ROLE, orchestratorAddress)
@@ -105,6 +110,9 @@ async function main() {
       executionEngineAddress,
     )
   ).wait();
+  await (
+    await gsyVault.grantRole(ACTOR_REGISTRAR_ROLE, actorRegistrarAddress)
+  ).wait();
 
   const envFilePath = process.env.CONTRACTS_ENV_PATH ?? "/contracts/addresses.env";
   const envFileContent = [
@@ -115,6 +123,7 @@ async function main() {
     `export CONTRACT_ORDER_REGISTRY=${orderRegistryAddress}`,
     `export TRADE_SETTLEMENT_ADDRESS=${tradeSettlementAddress}`,
     `export CONTRACT_TRADE_SETTLEMENT=${tradeSettlementAddress}`,
+    `export ACTOR_REGISTRAR_ADDRESS=${actorRegistrarAddress}`,
     "",
   ].join("\n");
 
@@ -130,6 +139,7 @@ async function main() {
   console.log(`  orchestratorRole       ${orchestratorAddress}`);
   console.log(`  operatorRole           ${matchingEngineAddress}`);
   console.log(`  executionEngineRole    ${executionEngineAddress}`);
+  console.log(`  actorRegistrarRole     ${actorRegistrarAddress}`);
   console.log(`  envFile                ${envFilePath}`);
 }
 

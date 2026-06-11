@@ -5,6 +5,7 @@ use ethers::prelude::*;
 use gsy_offchain_primitives::db_api_schema::market::MarketTopologySchema;
 use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
 use gsy_offchain_primitives::db_api_schema::trades::TradeSchema;
+use gsy_offchain_primitives::utils::parse_or_hash_bytes16;
 use gsy_offchain_primitives::MarketType;
 use reqwest::Client;
 use std::collections::HashMap;
@@ -33,7 +34,7 @@ pub struct MyWorld {
     pub order_registry_address: Address,
     pub trade_settlement_address: Address,
     pub gsy_vault_address: Address,
-    pub last_market_id: Option<[u8; 32]>,
+    pub last_market_id: Option<[u8; 16]>,
     pub target_delivery_time: u64,
     pub buyer_id: String,
     pub seller_id: String,
@@ -141,13 +142,20 @@ impl MyWorld {
             .clone()
     }
 
-    pub fn generate_market_id(&self, market_type: MarketType) -> [u8; 32] {
+    pub fn generate_market_id(&self, market_type: MarketType) -> [u8; 16] {
         let mut buffer = Vec::new();
         buffer.extend_from_slice(market_type.as_str().as_bytes());
         buffer.extend_from_slice(&self.target_delivery_time.to_be_bytes());
-        blake2b(32, &[], &buffer)
+        blake2b(16, &[], &buffer)
             .as_bytes()
             .try_into()
-            .expect("hash is 32 bytes")
+            .expect("hash is 16 bytes")
+    }
+
+    pub fn actor_id_for_user(&self, user_name: &str) -> [u8; 16] {
+        if !self.users.contains_key(user_name) {
+            panic!("Unknown user '{}'", user_name);
+        }
+        parse_or_hash_bytes16(format!("area{}", user_name).as_str())
     }
 }

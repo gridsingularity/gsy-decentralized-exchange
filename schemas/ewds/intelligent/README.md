@@ -1,17 +1,29 @@
 # Intelligent EWDS Data Schemas
 
-This folder contains draft JSON Schemas derived from the Intelligent ontology CSV
-for GSY DEX off-chain communication over EWDS.
+This folder contains JSON Schemas for GSY DEX off-chain communication over
+EWDS.
 
-Scope of this first schema pack:
+The market-domain entity schemas are aligned with the Energy Web Intelligent
+schemas under `schemas/v1.0.0/market`:
 
-- Domain entities: `Order`, `Trade`, `Tariff`, `GridFeeModel`, `MarketMechanism`
-- Message contracts: query request/reply envelopes for orders, trades, measurements
+- `int.market.schema.v1.json`
+- `int.market-time-series.schema.v1.json`
+- `int.order.schema.v1.json`
+- `int.trade.schema.v1.json`
+- `int.clearing-result.schema.v1.json`
+
+Additional local message contracts wrap these entities for the current
+request/reply topics:
+
+- query request/reply envelopes for orders, trades, and measurements
+- upsert request envelopes for forecasts, measurements, and markets
 
 Notes:
 
-- CSV ontology property names are kept in camelCase where practical (`tradeId`, `marketId`).
+- Intelligent ontology property names are kept in camelCase (`tradeId`, `marketId`).
 - Runtime service fields from GSY DEX are mapped in `docs/platform/ewds-data-contracts.md`.
-- Date/time fields use transitional `oneOf` (`string` date-time or unix seconds integer)
-  to support current service payloads.
-- These schemas are versioned as `v1` and should be registered as EWDS topic schemas.
+- The agreed Intelligent schemas use UUID identifiers and ISO 8601 timestamps.
+- The active DEX EVM settlement path still uses separate runtime DTOs for
+  bytes32 hashes, nonces, area UUID hashes, and unix timeslots.
+- These schemas are versioned as `v1` and should be registered as EWDS topic
+  schemas when the corresponding topics are managed with `topiccreator`.

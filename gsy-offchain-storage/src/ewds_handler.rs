@@ -94,7 +94,9 @@ struct EwdsInboundMessage {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct EwdsRequestEnvelope {
+    #[serde(alias = "request_id")]
     request_id: String,
     operation: String,
     payload: Value,
@@ -146,6 +148,7 @@ struct EwdsSendMessageDto {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct EwdsResponseEnvelope<T> {
     request_id: String,
     success: bool,

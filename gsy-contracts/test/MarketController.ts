@@ -1,6 +1,7 @@
 import { loadFixture } from "@nomicfoundation/hardhat-toolbox/network-helpers";
 import { expect } from "chai";
 import { ethers } from "hardhat";
+import { bytes16Id } from "./utils";
 
 describe("MarketController", function () {
   async function deployControllerFixture() {
@@ -19,7 +20,7 @@ describe("MarketController", function () {
     const { controller, orchestrator } = await loadFixture(
       deployControllerFixture,
     );
-    const marketId = ethers.keccak256(ethers.toUtf8Bytes("market-1"));
+    const marketId = bytes16Id("market-1");
 
     await expect(
       controller.connect(orchestrator).setMarketStatus(marketId, true),
@@ -32,7 +33,7 @@ describe("MarketController", function () {
 
   it("Should prevent unauthorized users from changing status", async function () {
     const { controller, user } = await loadFixture(deployControllerFixture);
-    const marketId = ethers.keccak256(ethers.toUtf8Bytes("market-1"));
+    const marketId = bytes16Id("market-1");
 
     await expect(
       controller.connect(user).setMarketStatus(marketId, true),

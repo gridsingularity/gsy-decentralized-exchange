@@ -10,10 +10,10 @@ import "@openzeppelin/contracts/access/AccessControl.sol";
 contract MarketController is AccessControl {
     bytes32 public constant ORCHESTRATOR_ROLE = keccak256("ORCHESTRATOR_ROLE");
 
-    // MarketId (hash) => isOpen
-    mapping(bytes32 => bool) public marketStatus;
+    // Market UUID (bytes16) => isOpen
+    mapping(bytes16 => bool) public marketStatus;
 
-    event MarketStatusUpdated(bytes32 indexed marketId, bool isOpen);
+    event MarketStatusUpdated(bytes16 indexed marketId, bool isOpen);
 
     constructor() {
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
@@ -21,11 +21,11 @@ contract MarketController is AccessControl {
 
     /**
      * @notice Open or Close a specific market slot.
-     * @param marketId Hash of (MarketType + Timestamp)
+     * @param marketId Intelligent market UUID encoded as bytes16.
      * @param isOpen True to open, False to close
      */
     function setMarketStatus(
-        bytes32 marketId,
+        bytes16 marketId,
         bool isOpen
     ) external onlyRole(ORCHESTRATOR_ROLE) {
         marketStatus[marketId] = isOpen;
@@ -35,7 +35,7 @@ contract MarketController is AccessControl {
     /**
      * @notice Check if a market is open for trading.
      */
-    function isMarketOpen(bytes32 marketId) external view returns (bool) {
+    function isMarketOpen(bytes16 marketId) external view returns (bool) {
         return marketStatus[marketId];
     }
 }

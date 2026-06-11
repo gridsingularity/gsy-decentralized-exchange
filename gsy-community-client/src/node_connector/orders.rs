@@ -1,17 +1,16 @@
 use crate::time_utils::get_current_timestamp_in_secs;
 use anyhow::{Error, Result};
 use ethers::prelude::*;
-use ethers::utils::keccak256;
 use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketTopologySchema};
 use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
-use gsy_offchain_primitives::utils::NODE_FLOAT_SCALING_FACTOR;
+use gsy_offchain_primitives::utils::{parse_or_hash_bytes16, NODE_FLOAT_SCALING_FACTOR};
 use std::str::FromStr;
 use tracing::{info, warn};
 
 const BID_RATE: f64 = 0.3;
 const OFFER_RATE: f64 = 0.07;
 
-pub type EvmOrderParamsTuple = (Address, u64, [u8; 32], [u8; 32], u64, u64, u64, u64, bool);
+pub type EvmOrderParamsTuple = ([u8; 16], [u8; 16], [u8; 16], u64, u64, u64, u64, bool);
 
 pub async fn publish_orders(
     evm_node_url: String,
@@ -94,10 +93,9 @@ abigen!(
                     "name": "params",
                     "type": "tuple",
                     "components": [
-                        {"name": "owner", "type": "address"},
-                        {"name": "nonce", "type": "uint64"},
-                        {"name": "areaUuid", "type": "bytes32"},
-                        {"name": "marketId", "type": "bytes32"},
+                        {"name": "orderId", "type": "bytes16"},
+                        {"name": "createdBy", "type": "bytes16"},
+                        {"name": "marketId", "type": "bytes16"},
                         {"name": "timeSlot", "type": "uint64"},
                         {"name": "creationTime", "type": "uint64"},
                         {"name": "energy", "type": "uint64"},
@@ -111,30 +109,26 @@ abigen!(
     ]"#
 );
 
-fn parse_or_hash_bytes32(value: &str) -> [u8; 32] {
-    if value.starts_with("0x") && value.len() == 66 {
-        if let Ok(parsed) = H256::from_str(value) {
-            return parsed.to_fixed_bytes();
-        }
-    }
-    keccak256(value.as_bytes())
-}
-
 fn build_order_param(
     forecast: &ForecastSchema,
     area_info: &AreaTopologySchema,
     market: &MarketTopologySchema,
     now: u64,
-    owner: Address,
-    nonce: u64,
+    index: usize,
     is_bid: bool,
 ) -> EvmOrderParamsTuple {
     let rate_multiplier = if is_bid { BID_RATE } else { OFFER_RATE };
+    let order_id = parse_or_hash_bytes16(
+        format!(
+            "{}:{}:{}:{}:{}",
+            market.market_id, area_info.area_uuid, market.time_slot, index, is_bid
+        )
+        .as_str(),
+    );
     (
-        owner,
-        nonce,
-        parse_or_hash_bytes32(area_info.area_uuid.as_str()),
-        parse_or_hash_bytes32(market.market_id.as_str()),
+        order_id,
+        parse_or_hash_bytes16(area_info.area_uuid.as_str()),
+        parse_or_hash_bytes16(market.market_id.as_str()),
         market.time_slot as u64,
         now,
         (forecast.energy_kwh.abs() * NODE_FLOAT_SCALING_FACTOR) as u64,
@@ -149,6 +143,7 @@ pub fn create_input_orders(
     owner: Address,
 ) -> Vec<EvmOrderParamsTuple> {
     let now: u64 = get_current_timestamp_in_secs();
+    let _owner = owner;
 
     let mut input_orders = Vec::new();
 
@@ -162,15 +157,13 @@ pub fn create_input_orders(
             continue;
         }
         let area_info = area_info.unwrap();
-        let nonce = now.saturating_add(index as u64);
-
         if forecast.energy_kwh > 0. {
             input_orders.push(build_order_param(
-                &forecast, &area_info, &market, now, owner, nonce, true,
+                &forecast, &area_info, &market, now, index, true,
             ));
         } else if forecast.energy_kwh < 0. {
             input_orders.push(build_order_param(
-                &forecast, &area_info, &market, now, owner, nonce, false,
+                &forecast, &area_info, &market, now, index, false,
             ));
         }
     }

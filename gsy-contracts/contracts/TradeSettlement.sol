@@ -7,7 +7,7 @@ import "./GsyVault.sol";
 
 /**
  * @title TradeSettlement
- * @notice Validates matches and settles trades financially.
+ * @notice Validates matches and settles trades financially by Actor UUID.
  */
 contract TradeSettlement is AccessControl {
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
@@ -18,17 +18,17 @@ contract TradeSettlement is AccessControl {
     GsyVault public vault;
 
     event TradeSettled(
-        bytes32 indexed tradeId,
-        bytes32 indexed bidHash,
-        bytes32 indexed askHash,
+        bytes16 indexed tradeId,
+        bytes16 indexed bidId,
+        bytes16 indexed askId,
         uint256 energy,
         uint256 price
     );
 
     event PenaltyRecorded(
-        address indexed penalizedAccount,
-        bytes32 indexed marketId,
-        bytes32 indexed tradeId,
+        bytes16 indexed penalizedActorId,
+        bytes16 indexed marketId,
+        bytes16 indexed tradeId,
         uint64 penaltyEnergy
     );
     event PenaltiesSubmitted(uint256 count);
@@ -45,12 +45,10 @@ contract TradeSettlement is AccessControl {
         vault = GsyVault(_vault);
     }
 
-    // Structs to reconstruct the Hash on-chain for validation
     struct OrderData {
-        address owner;
-        uint64 nonce;
-        bytes32 areaUuid;
-        bytes32 marketId;
+        bytes16 orderId;
+        bytes16 createdBy;
+        bytes16 marketId;
         uint64 timeSlot;
         uint64 creationTime;
         uint64 energy;
@@ -58,6 +56,7 @@ contract TradeSettlement is AccessControl {
     }
 
     struct Match {
+        bytes16 tradeId;
         OrderData bid;
         OrderData ask;
         uint256 selectedEnergy;
@@ -65,14 +64,14 @@ contract TradeSettlement is AccessControl {
     }
 
     struct TradePenalty {
-        address penalizedAccount;
-        bytes32 marketId;
-        bytes32 tradeId;
+        bytes16 penalizedActorId;
+        bytes16 marketId;
+        bytes16 tradeId;
         uint64 penaltyEnergy;
     }
 
-    mapping(bytes32 => uint256) public penaltyEnergyByTrade;
-    mapping(address => uint256) public penaltyEnergyByAccount;
+    mapping(bytes16 => uint256) public penaltyEnergyByTrade;
+    mapping(bytes16 => uint256) public penaltyEnergyByActor;
 
     /**
      * @notice Settle a batch of matched trades.
@@ -97,19 +96,19 @@ contract TradeSettlement is AccessControl {
             TradePenalty calldata penalty = penalties[i];
 
             if (
-                penalty.penalizedAccount == address(0) ||
-                penalty.tradeId == bytes32(0) ||
+                penalty.penalizedActorId == bytes16(0) ||
+                penalty.tradeId == bytes16(0) ||
                 penalty.penaltyEnergy == 0
             ) {
                 revert InvalidPenalty();
             }
 
             penaltyEnergyByTrade[penalty.tradeId] += penalty.penaltyEnergy;
-            penaltyEnergyByAccount[penalty.penalizedAccount] += penalty
+            penaltyEnergyByActor[penalty.penalizedActorId] += penalty
                 .penaltyEnergy;
 
             emit PenaltyRecorded(
-                penalty.penalizedAccount,
+                penalty.penalizedActorId,
                 penalty.marketId,
                 penalty.tradeId,
                 penalty.penaltyEnergy
@@ -120,47 +119,27 @@ contract TradeSettlement is AccessControl {
     }
 
     function _settleTrade(Match calldata trade) internal {
-        // 1. Reconstruct Hashes to verify these orders actually exist in Registry
-        bytes32 bidHash = keccak256(
-            abi.encode(
-                trade.bid.owner,
-                trade.bid.nonce,
-                trade.bid.areaUuid,
-                trade.bid.marketId,
-                trade.bid.timeSlot,
-                trade.bid.creationTime,
-                trade.bid.energy,
-                trade.bid.energyRate,
-                true // isBid = true
-            )
-        );
-
-        bytes32 askHash = keccak256(
-            abi.encode(
-                trade.ask.owner,
-                trade.ask.nonce,
-                trade.ask.areaUuid,
-                trade.ask.marketId,
-                trade.ask.timeSlot,
-                trade.ask.creationTime,
-                trade.ask.energy,
-                trade.ask.energyRate,
-                false // isBid = false
-            )
-        );
-
-        // 2. Validate Registry Status
-        // Both orders must be Open.
         if (
-            registry.getStatus(bidHash) != OrderRegistry.OrderStatus.Open ||
-            registry.getStatus(askHash) != OrderRegistry.OrderStatus.Open
+            trade.tradeId == bytes16(0) ||
+            trade.bid.orderId == bytes16(0) ||
+            trade.ask.orderId == bytes16(0) ||
+            trade.bid.createdBy == bytes16(0) ||
+            trade.ask.createdBy == bytes16(0) ||
+            trade.bid.marketId != trade.ask.marketId
+        ) {
+            revert InvalidOrderParams();
+        }
+
+        if (
+            registry.getStatus(trade.bid.orderId) != OrderRegistry.OrderStatus.Open ||
+            registry.getStatus(trade.ask.orderId) != OrderRegistry.OrderStatus.Open
         ) {
             revert OrderNotOpen();
         }
 
-        // 3. Validate Matching Logic
-        // Bid Price must be >= Clearing Price
-        // Ask Price must be <= Clearing Price
+        _validateOrderData(trade.bid, registry.getOrder(trade.bid.orderId), true);
+        _validateOrderData(trade.ask, registry.getOrder(trade.ask.orderId), false);
+
         if (
             trade.bid.energyRate < trade.clearingPrice ||
             trade.ask.energyRate > trade.clearingPrice
@@ -168,7 +147,6 @@ contract TradeSettlement is AccessControl {
             revert PriceMismatch();
         }
 
-        // Selected Energy must not exceed available energy
         if (
             trade.selectedEnergy > trade.bid.energy ||
             trade.selectedEnergy > trade.ask.energy
@@ -176,34 +154,42 @@ contract TradeSettlement is AccessControl {
             revert EnergyMismatch();
         }
 
-        // 4. Execute Financial Transfer
-        // Calculation: Cost = Energy * Price / ScalingFactor (if needed).
-        // Assuming inputs are scaled similarly to Substrate (e.g. 10000).
-        // Note: Solidity math requires care with scaling.
-        // For V1, we assume direct multiplication if units match EWT wei, or simple logic.
-        // Let's assume Price is per unit of energy.
         uint256 totalCost = trade.selectedEnergy * trade.clearingPrice;
 
-        vault.transferBySettlement(trade.bid.owner, trade.ask.owner, totalCost);
-
-        // 5. Update Registry
-        // Mark orders as Executed.
-        // NOTE: In this simplified architecture, we mark the whole order hash as Executed.
-        // Residuals would technically generate a NEW Order Hash (new nonce or new amount)
-        // pushed by the Matching Engine off-chain, just like the Rust node did.
-        registry.updateStatus(bidHash, OrderRegistry.OrderStatus.Executed);
-        registry.updateStatus(askHash, OrderRegistry.OrderStatus.Executed);
-
-        // 6. Emit Event
-        bytes32 tradeId = keccak256(
-            abi.encodePacked(bidHash, askHash, block.timestamp)
+        vault.transferBySettlement(
+            trade.bid.createdBy,
+            trade.ask.createdBy,
+            totalCost
         );
+
+        registry.updateStatus(trade.bid.orderId, OrderRegistry.OrderStatus.Executed);
+        registry.updateStatus(trade.ask.orderId, OrderRegistry.OrderStatus.Executed);
+
         emit TradeSettled(
-            tradeId,
-            bidHash,
-            askHash,
+            trade.tradeId,
+            trade.bid.orderId,
+            trade.ask.orderId,
             trade.selectedEnergy,
             trade.clearingPrice
         );
+    }
+
+    function _validateOrderData(
+        OrderData calldata provided,
+        OrderRegistry.OrderParams memory stored,
+        bool expectedBid
+    ) internal pure {
+        if (
+            stored.orderId != provided.orderId ||
+            stored.createdBy != provided.createdBy ||
+            stored.marketId != provided.marketId ||
+            stored.timeSlot != provided.timeSlot ||
+            stored.creationTime != provided.creationTime ||
+            stored.energy != provided.energy ||
+            stored.energyRate != provided.energyRate ||
+            stored.isBid != expectedBid
+        ) {
+            revert InvalidOrderParams();
+        }
     }
 }
