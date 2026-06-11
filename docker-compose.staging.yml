@@ -19,6 +19,7 @@ services:
 
   gsy-offchain-storage:
     container_name: gsy-offchain-storage
+    image: ghcr.io/gridsingularity/gsy-offchain-storage:latest
     build:
       context: .
       dockerfile: ./gsy-offchain-storage/Dockerfile

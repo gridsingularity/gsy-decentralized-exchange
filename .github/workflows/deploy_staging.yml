@@ -27,8 +27,8 @@ jobs:
 
       - name: Build and push all services
         run: |
-          docker compose build
-          docker compose push
+          docker compose -f docker-compose.staging.yml build
+          docker compose -f docker-compose.staging.yml push
 
   deploy:
     needs: build-and-push
@@ -42,6 +42,6 @@ jobs:
           key: ${{ secrets.STAGING_SERVER_SSH_KEY }}
           script: |
             cd /opt/myapp
-            docker compose pull
-            docker compose up -d
+            docker compose -f docker-compose.staging.yml pull
+            docker compose -f docker-compose.staging.yml up -d
             docker image prune -f
