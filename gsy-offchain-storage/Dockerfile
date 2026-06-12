@@ -1,4 +1,4 @@
-FROM rustlang/rust:nightly AS chef
+FROM rust:1.95 AS chef
 RUN cargo install cargo-chef
 
 # First prepare dependencies of offchain-primitives
@@ -24,7 +24,7 @@ COPY --from=chef /var/www/gsy-offchain-storage/target /var/www/gsy-offchain-stor
 WORKDIR /var/www/gsy-offchain-storage/
 RUN cargo build --release
 
-FROM rustlang/rust:nightly
+FROM rust:1.95
 
 WORKDIR /app
 

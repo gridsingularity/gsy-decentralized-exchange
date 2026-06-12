@@ -1,50 +1,57 @@
-use codec::{Encode, Decode};
+
+use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
-use subxt::utils::H256;
-use sp_runtime::traits::{BlakeTwo256, Hash};
-use crate::db_api_schema::orders::{DbOffer, DbBid};
 
-
-/// Trade status
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[serde(rename_all = "lowercase")]
 pub enum TradeStatus {
-    Settled,
     Executed,
-}
-
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
-pub struct TradeParameters {
-    pub selected_energy: f64,
-    pub energy_rate: f64,
-    pub trade_uuid: String,
+    Settled,
 }
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub struct TradeSchema {
-    pub _id: String,
-    pub status: TradeStatus,
-    pub seller: String,
-    pub buyer: String,
+    pub trade_id: String,
+    pub trade_quantity: f64,
+    pub trade_price: f64,
+    pub trade_timestamp: String,
+    pub time_slot: String,
     pub market_id: String,
-    pub time_slot: u64,
-    pub trade_uuid: String,
-    pub creation_time: u64,
-    pub offer: DbOffer,
-    pub offer_hash: String,
-    pub bid: DbBid,
-    pub bid_hash: String,
-    pub residual_offer: Option<DbOffer>,
-    pub residual_bid: Option<DbBid>,
-    pub parameters: TradeParameters,
+    pub trade_status: TradeStatus,
+    pub buyer: String,
+    pub seller: String,
+    pub bid_id: String,
+    pub offer_id: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub residual_bid_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub residual_offer_id: Option<String>,
 }
 
-impl TradeSchema {
-    pub fn hash(&self) -> H256 {
-        H256(BlakeTwo256::hash_of(self).0)
-    }
+#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ClearingStatus {
+    Cleared,
+    Uncleared,
+    Failed,
+}
 
-    pub fn eq(&self, other: &Self) -> bool {
-        self._id == other._id
-    }
+#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+pub struct ClearingResultSchema {
+    pub market_id: String,
+    pub clearing_status: ClearingStatus,
+    pub clearing_price: f64,
+    pub total_supply: f64,
+    pub total_demand: f64,
+    pub traded_quantity: f64,
+    pub num_trades: u32,
+    pub tx_hash: String,
+    pub clearing_time: String,
+}
 
+#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+pub struct MarketRoleSchema {
+    pub role_name: String,
+    pub role_description: String,
+    pub assigned_to: Vec<String>,
 }

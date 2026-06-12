@@ -1,23 +1,20 @@
 use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
-
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
-pub struct AreaTopologySchema {
-    pub area_uuid: String,
-    pub name: String,
-    pub area_hash: String,
-    pub area_type: String
+pub enum MarketType {
+    Spot,
+    Flexibility,
+    Settlement,
 }
 
-
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
-pub struct MarketTopologySchema {
-    // H256-serialized to string for market id
+pub struct MarketSchema {
     pub market_id: String,
-    pub community_uuid: String,
-    pub community_name: String,
-    pub time_slot: u32,
-    pub creation_time: u32,
-    pub community_areas: Vec<AreaTopologySchema>
+    pub community_id: String,
+    pub opening_time: String,
+    pub closing_time: String,
+    pub delivery_start_time: String,
+    pub delivery_end_time: String,
+    pub market_type: MarketType,
 }

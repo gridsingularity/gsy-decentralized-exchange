@@ -1,280 +1,738 @@
 {
 	"info": {
 		"_postman_id": "4fa46240-0d92-4e9a-b1cb-f9f22e80ba5c",
-		"name": "Offchain Storage",
+		"name": "GSY DEX Off-Chain Storage",
+		"description": "API for the GSY DEX Off-Chain Storage service, organised by the storage areas defined in D3.2: Grid Topology (§5.1), Measurements (§5.2), Trades/Market (§5.3), and Order Book (§5.4).",
 		"schema": "https://schema.getpostman.com/json/collection/v2.0.0/collection.json",
 		"_exporter_id": "26429568"
 	},
 	"item": [
 		{
-			"name": "PV measurements",
-			"request": {
-				"method": "POST",
-				"header": [],
-				"body": {
-					"mode": "raw",
-					"raw": "[\n    {\n        \"metadata\": {\n            \"area_uuid\": \"areaid_1\",\n            \"community_uuid\": \"communityid_1\",\n            \"time_slot\": 123124, \n            \"creation_time\": 456456,\n            \"asset_type\": \"PV\"\n        },\n        \"current_A\": 12.1,\n        \"power_kW\": 13.1,\n        \"voltage_V\": 1.2,\n        \"energy_kWh\": 43.2\n    }\n]",
-					"options": {
-						"raw": {
-							"language": "json"
-						}
-					}
-				},
-				"url": "{{hostname}}/asset_measurements"
-			},
-			"response": []
+			"name": "Health",
+			"item": [
+				{
+					"name": "health_check",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": "{{hostname}}/health_check"
+					},
+					"response": []
+				}
+			]
 		},
 		{
-			"name": "Smart Meter measurements",
-			"request": {
-				"method": "POST",
-				"header": [],
-				"body": {
-					"mode": "raw",
-					"raw": "[\n    {\n        \"metadata\": {\n            \"area_uuid\": \"SmartMeter\",\n            \"community_uuid\": \"communityid_1\",\n            \"time_slot\": 123124, \n            \"creation_time\": 456456,\n            \"asset_type\": \"SmartMeter\"\n        },\n        \"energy_grid_injection_kWh\": 4.5,\n        \"energy_grid_injection_day_kWh\": 3.1,\n        \"grid_frequency\": 49.997,\n        \"current_A_p1\": 12.1,\n        \"current_A_p2\": 13.2,\n        \"current_A_p3\": 20.1,\n        \"power_kW_p1\": 45.1,\n        \"power_kW_p2\": 30.7,\n        \"power_kW_p3\": 7.8,\n        \"power_kW_pv\": 12.2,\n        \"reactive_power_kvar_p1\": 12.3,\n        \"reactive_power_kvar_p2\": 32.1,\n        \"reactive_power_kvar_p3\": 45.6,\n        \"voltage_V_p1\": 441.7,\n        \"voltage_V_p2\": 438.9,\n        \"voltage_V_p3\": 450.1\n    }\n]",
-					"options": {
-						"raw": {
-							"language": "json"
-						}
-					}
-				},
-				"url": "{{hostname}}/asset_measurements"
-			},
-			"response": []
-		},
-		{
-			"name": "Battery measurements",
-			"request": {
-				"method": "POST",
-				"header": [],
-				"body": {
-					"mode": "raw",
-					"raw": "[\n    {\n        \"metadata\": {\n            \"area_uuid\": \"Battery\",\n            \"community_uuid\": \"communityid_1\",\n            \"time_slot\": 123124, \n            \"creation_time\": 456456,\n            \"asset_type\": \"Battery\"\n        },\n        \"current_A\": 12.8,\n        \"power_kW\": 60.2,\n        \"power_charge_kW\": 90.6,\n        \"power_discharge_kW\": 30.4,\n        \"soc\": 10.2,\n        \"temperature_C\": 35.4,\n        \"voltage_V\": 435.1,\n        \"energy_charge_kWh\": 54.3,\n        \"energy_discharge_kWh\": 25.1\n    }\n]",
-					"options": {
-						"raw": {
-							"language": "json"
-						}
-					}
-				},
-				"url": "{{hostname}}/asset_measurements"
-			},
-			"response": []
-		},
-		{
-			"name": "Voltage Transformer measurements",
-			"request": {
-				"method": "POST",
-				"header": [],
-				"body": {
-					"mode": "raw",
-					"raw": "[\n    {\n        \"metadata\": {\n            \"area_uuid\": \"VoltageTransformer\",\n            \"community_uuid\": \"communityid_1\",\n            \"time_slot\": 123124, \n            \"creation_time\": 456456,\n            \"asset_type\": \"Transformer\"\n        },\n        \"energy_kWh\": 8.6,\n        \"grid_frequency\": 49.89,\n        \"current_A_p1\": 32.2,\n        \"current_A_p2\": 45.1,\n        \"current_A_p3\": 6.5,\n        \"power_kW_p1\": 52.9,\n        \"power_kW_p2\": 75.4,\n        \"power_kW_p3\": 6.3,\n        \"reactive_power_kvar_p1\": 2.5,\n        \"reactive_power_kvar_p2\": 3.6,\n        \"reactive_power_kvar_p3\": 2.9,\n        \"voltage_V_p1\": 458.6,\n        \"voltage_V_p2\": 465.2,\n        \"voltage_V_p3\": 492.5\n    }\n]",
-					"options": {
-						"raw": {
-							"language": "json"
-						}
-					}
-				},
-				"url": "{{hostname}}/asset_measurements"
-			},
-			"response": []
-		},
-		{
-			"name": "Asset measurements",
-			"request": {
-				"method": "GET",
-				"header": [],
-				"url": {
-					"raw": "{{hostname}}/asset_measurements?community_uuid=communityid_1&area_uuid=VoltageTransformer",
-					"host": [
-						"{{hostname}}"
-					],
-					"path": [
-						"asset_measurements"
-					],
-					"query": [
-						{
-							"key": "community_uuid",
-							"value": "communityid_1"
+			"name": "Order Book Storage (D3.2 §5.4)",
+			"item": [
+				{
+					"name": "POST orders-normalized",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "[\n    {\n        \"order_id\": \"ORDER-IE-0001\",\n        \"order_type\": \"bid\",\n        \"quantity\": 2.5,\n        \"price_limit\": 0.22,\n        \"time_slot\": \"2026-03-28T10:00:00Z\",\n        \"market_id\": \"DEX-SPOT-0001\",\n        \"order_status\": \"Open\",\n        \"creation_time\": \"2026-03-27T18:04:59Z\",\n        \"created_by\": \"PARTY-IE-0007\",\n        \"energy_source_preference\": [\"GREEN\", \"PV\"],\n        \"area_uuid\": \"areaid_1\"\n    },\n    {\n        \"order_id\": \"ORDER-IE-0002\",\n        \"order_type\": \"offer\",\n        \"quantity\": 1.8,\n        \"price_limit\": 0.19,\n        \"time_slot\": \"2026-03-28T10:00:00Z\",\n        \"market_id\": \"DEX-SPOT-0001\",\n        \"order_status\": \"Open\",\n        \"creation_time\": \"2026-03-27T18:05:10Z\",\n        \"created_by\": \"PARTY-IE-0011\"\n    }\n]",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
 						},
-						{
-							"key": "area_uuid",
-							"value": "VoltageTransformer"
-						}
-					]
-				}
-			},
-			"response": []
-		},
-		{
-			"name": "orders",
-			"request": {
-				"method": "POST",
-				"header": [],
-				"body": {
-					"mode": "raw",
-					"raw": "[\n    {\n        \"order_id\": \"id3\",\n        \"status\": \"Open\",\n        \"order_type\": \"Bid\",\n        \"created_by\": \"Account1\",\n        \"area_uuid\": \"areaid_1\",\n        \"market_id\": \"market1\",\n        \"time_slot\": 123123, \n        \"creation_time\": 456456,\n        \"energy\": 0.26,\n        \"energy_rate\": 0.123\n    },\n    {\n        \"order_id\": \"id4\",\n        \"status\": \"Executed\",\n        \"order_type\": \"Offer\",\n        \"created_by\": \"Account2\",\n        \"area_uuid\": \"areaid_2\",\n        \"market_id\": \"market1\",\n        \"time_slot\": 123123, \n        \"creation_time\": 456456,\n        \"energy\": 0.26,\n        \"energy_rate\": 0.122\n    }\n]",
-					"options": {
-						"raw": {
-							"language": "json"
-						}
-					}
+						"description": "Insert one or more orders using the DbOrderSchema (DEX-side normalized) shape.",
+						"url": "{{hostname}}/orders-normalized"
+					},
+					"response": []
 				},
-				"url": "{{hostname}}/orders"
-			},
-			"response": []
-		},
-		{
-			"name": "orders",
-			"request": {
-				"method": "GET",
-				"header": [],
-				"url": "{{hostname}}/orders"
-			},
-			"response": []
-		},
-		{
-			"name": "orders-filter",
-			"request": {
-				"method": "GET",
-				"header": [],
-				"url": {
-					"raw": "{{hostname}}/orders?market_id=market1&start_time=123122&end_time=123124",
-					"host": [
-						"{{hostname}}"
-					],
-					"path": [
-						"orders"
-					],
-					"query": [
-						{
-							"key": "market_id",
-							"value": "market1"
+				{
+					"name": "POST orders (node-encoded)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "[]",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
 						},
-						{
-							"key": "start_time",
-							"value": "123122"
+						"description": "Accepts the SCALE-encoded `Vec<OrderSchema>` produced by the GSY node (sent as a JSON byte array). Use /orders-normalized for hand-crafted DEX-side payloads.",
+						"url": "{{hostname}}/orders"
+					},
+					"response": []
+				},
+				{
+					"name": "GET orders",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": "{{hostname}}/orders"
+					},
+					"response": []
+				},
+				{
+					"name": "GET orders (filter)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{hostname}}/orders?market_id=DEX-SPOT-0001&start_time=2026-03-27T18:00:00Z&end_time=2026-03-27T19:00:00Z",
+							"host": [
+								"{{hostname}}"
+							],
+							"path": [
+								"orders"
+							],
+							"query": [
+								{
+									"key": "market_id",
+									"value": "DEX-SPOT-0001"
+								},
+								{
+									"key": "start_time",
+									"value": "2026-03-27T18:00:00Z"
+								},
+								{
+									"key": "end_time",
+									"value": "2026-03-27T19:00:00Z"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "POST flexibility-orders",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "[\n    {\n        \"order_id\": \"FLEX-ORDER-0001\",\n        \"order_type\": \"flexibility_offer\",\n        \"flexibility_type\": \"upward\",\n        \"available_power\": 12.5,\n        \"duration\": \"PT30M\",\n        \"activation_window_start\": \"2026-03-28T10:00:00Z\",\n        \"activation_window_end\": \"2026-03-28T10:30:00Z\",\n        \"price\": 0.35,\n        \"currency\": \"EUR\",\n        \"created_by\": \"PARTY-IE-0011\",\n        \"from_asset\": \"BAT-IE-007\"\n    }\n]",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
 						},
-						{
-							"key": "end_time",
-							"value": "123124"
-						}
-					]
-				}
-			},
-			"response": []
-		},
-		{
-			"name": "trades",
-			"request": {
-				"method": "POST",
-				"header": [],
-				"body": {
-					"mode": "raw",
-<<<<<<< Updated upstream
-					"raw": "[\n    {\n        \"_id\": \"tradeId\",\n        \"status\": \"Settled\",\n        \"buyer\": \"Account1\",\n        \"seller\": \"Account2\",\n        \"market_id\": \"market1\",\n        \"time_slot\": 123123, \n        \"creation_time\": 456456,\n        \"trade_uuid\": \"tradeUuid1\",\n        \"offer\": {\n            \"seller\": \"Account2\",\n            \"offer_component\": {\n                \"area_uuid\": \"areaid_2\",\n                \"market_id\": \"market1\",\n                \"time_slot\": 123123, \n                \"creation_time\": 456456,\n                \"energy\": 0.26,\n                \"energy_rate\": 0.122\n            }\n        },\n        \"offer_hash\": \"0x12321343\",\n        \"bid\": {\n            \"buyer\": \"Account1\",\n            \"nonce\": 2,\n            \"bid_component\": {\n                \"area_uuid\": \"areaid_1\",\n                \"market_id\": \"market1\",\n                \"time_slot\": 123123, \n                \"creation_time\": 456456,\n                \"energy\": 0.26,\n                \"energy_rate\": 0.123\n            }\n        },\n        \"bid_hash\": \"0x3211233212\",\n        \"residual_offer\": null,\n        \"residual_bid\": null,\n        \"parameters\": {\n            \"selected_energy\": 0.26,\n            \"energy_rate\": 0.122,\n            \"trade_uuid\": \"tradeUuid1\"\n        }\n    }\n]",
-=======
-					"raw": "[\n    {\n        \"trade_uuid\": \"tradeId\",\n        \"status\": \"Settled\",\n        \"buyer\": \"Account1\",\n        \"seller\": \"Account2\",\n        \"market_id\": \"market1\",\n        \"time_slot\": 123123, \n        \"creation_time\": 456456,\n        \"offer\": {\n            \"order_id\": \"id4\",\n            \"status\": \"Executed\",\n            \"order_type\": \"Offer\",\n            \"created_by\": \"Account2\",\n            \"area_uuid\": \"areaid_2\",\n            \"market_id\": \"market1\",\n            \"time_slot\": 123123, \n            \"creation_time\": 456456,\n            \"energy\": 0.26,\n            \"energy_rate\": 0.122\n        },\n        \"offer_hash\": \"0x12321343\",\n        \"bid\": {\n            \"order_id\": \"id3\",\n            \"status\": \"Executed\",\n            \"order_type\": \"Bid\",\n            \"created_by\": \"Account1\",\n            \"area_uuid\": \"areaid_1\",\n            \"market_id\": \"market1\",\n            \"time_slot\": 123123, \n            \"creation_time\": 456456,\n            \"energy\": 0.26,\n            \"energy_rate\": 0.123\n        },\n        \"bid_hash\": \"0x3211233212\",\n        \"residual_offer\": null,\n        \"residual_bid\": null,\n        \"parameters\": null\n    }\n]",
->>>>>>> Stashed changes
-					"options": {
-						"raw": {
-							"language": "json"
-						}
-					}
+						"url": "{{hostname}}/flexibility-orders"
+					},
+					"response": []
 				},
-<<<<<<< Updated upstream
-				"url": "{{hostname}}/trades-normalized"
-=======
-				"url": "{{hostname}}/trades"
->>>>>>> Stashed changes
-			},
-			"response": []
-		},
-		{
-			"name": "trades",
-			"request": {
-				"method": "GET",
-				"header": [],
-				"url": {
-					"raw": "{{hostname}}/trades?market_id=8804548b7fbe4a7aa4446f936d7bdb30",
-					"host": [
-						"{{hostname}}"
-					],
-					"path": [
-						"trades"
-					],
-					"query": [
-						{
-							"key": "market_id",
-							"value": "8804548b7fbe4a7aa4446f936d7bdb30"
-						}
-					]
-				}
-			},
-			"response": []
-		},
-		{
-			"name": "market",
-			"request": {
-				"method": "POST",
-				"header": [],
-				"body": {
-					"mode": "raw",
-					"raw": "{\n    \"market_id\": \"market1\",\n    \"community_uuid\": \"communityid_1\",\n    \"community_name\": \"Community 1\",\n    \"time_slot\": 123123,\n    \"creation_time\": 456456,\n    \"community_areas\": [\n        {\n            \"area_uuid\": \"areaid_1\",\n            \"name\": \"Area 1\",\n            \"area_type\": \"PV\"\n        },\n        {\n            \"area_uuid\": \"load\",\n            \"name\": \"Load\",\n            \"area_type\": \"Load\"\n        },\n        {\n            \"area_uuid\": \"SmartMeter\",\n            \"name\": \"Smart Meter\",\n            \"area_type\": \"SmartMeter\"\n        },\n        {\n            \"area_uuid\": \"Battery\",\n            \"name\": \"Battery\",\n            \"area_type\": \"Battery\"\n        },\n        {\n            \"area_uuid\": \"VoltageTransformer\",\n            \"name\": \"Voltage Transformer\",\n            \"area_type\": \"Transformer\"\n        }\n    ]\n}",
-					"options": {
-						"raw": {
-							"language": "json"
-						}
-					}
+				{
+					"name": "GET flexibility-orders",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": "{{hostname}}/flexibility-orders"
+					},
+					"response": []
 				},
-				"url": "{{hostname}}/market"
-			},
-			"response": []
+				{
+					"name": "POST tariffs",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"tariff_name\": \"ESB-Residential-TOU\",\n    \"tariff_structure\": \"TOU\",\n    \"energy_price\": 0.28,\n    \"grid_fee\": 0.04,\n    \"taxes\": 0.03,\n    \"incentives\": 0.0,\n    \"currency\": \"EUR\",\n    \"tariff_start\": \"2026-03-27T19:00:00Z\",\n    \"tariff_end\": \"2027-03-27T19:00:00Z\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{hostname}}/tariffs"
+					},
+					"response": []
+				},
+				{
+					"name": "GET tariffs",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": "{{hostname}}/tariffs"
+					},
+					"response": []
+				}
+			]
 		},
 		{
-			"name": "market",
-			"request": {
-				"method": "GET",
-				"header": [],
-				"url": {
-					"raw": "{{hostname}}/market?market_id=8804548b7fbe4a7aa4446f936d7bdb30",
-					"host": [
-						"{{hostname}}"
-					],
-					"path": [
-						"market"
-					],
-					"query": [
-						{
-							"key": "market_id",
-							"value": "8804548b7fbe4a7aa4446f936d7bdb30"
+			"name": "Trades & Market Storage (D3.2 §5.3)",
+			"item": [
+				{
+					"name": "POST trades-normalized",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "[\n    {\n        \"trade_id\": \"TRADE-IE-20260328-0001\",\n        \"trade_quantity\": 2.5,\n        \"trade_price\": 0.21,\n        \"trade_timestamp\": \"2026-03-27T18:05:30Z\",\n        \"time_slot\": \"2026-03-28T10:00:00Z\",\n        \"market_id\": \"DEX-SPOT-0001\",\n        \"trade_status\": \"executed\",\n        \"buyer\": \"ACTOR-IE-0007\",\n        \"seller\": \"ACTOR-IE-0011\",\n        \"bid_id\": \"ORDER-IE-0001\",\n        \"offer_id\": \"ORDER-IE-0002\",\n        \"residual_bid_id\": null,\n        \"residual_offer_id\": null\n    }\n]",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Insert one or more trades using the TradeSchema (DEX-side normalized) shape.",
+						"url": "{{hostname}}/trades-normalized"
+					},
+					"response": []
+				},
+				{
+					"name": "POST trades (node-encoded)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "[]",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "Accepts the SCALE-encoded `Vec<Trade>` produced by the GSY node (sent as a JSON byte array). Use /trades-normalized for hand-crafted DEX-side payloads.",
+						"url": "{{hostname}}/trades"
+					},
+					"response": []
+				},
+				{
+					"name": "GET trades",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{hostname}}/trades?start_time=2026-03-27T00:00:00Z&end_time=2026-03-28T00:00:00Z",
+							"host": [
+								"{{hostname}}"
+							],
+							"path": [
+								"trades"
+							],
+							"query": [
+								{
+									"key": "start_time",
+									"value": "2026-03-27T00:00:00Z"
+								},
+								{
+									"key": "end_time",
+									"value": "2026-03-28T00:00:00Z"
+								}
+							]
 						}
-					]
+					},
+					"response": []
+				},
+				{
+					"name": "POST market",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"market_id\": \"DEX-SPOT-0001\",\n    \"community_id\": \"COMMUNITY-IE-0001\",\n    \"opening_time\": \"2026-03-27T18:00:00Z\",\n    \"closing_time\": \"2026-03-28T09:45:00Z\",\n    \"delivery_start_time\": \"2026-03-28T10:00:00Z\",\n    \"delivery_end_time\": \"2026-03-28T10:15:00Z\",\n    \"market_type\": \"Spot\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{hostname}}/market"
+					},
+					"response": []
+				},
+				{
+					"name": "GET market",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{hostname}}/market?market_id=DEX-SPOT-0001",
+							"host": [
+								"{{hostname}}"
+							],
+							"path": [
+								"market"
+							],
+							"query": [
+								{
+									"key": "market_id",
+									"value": "DEX-SPOT-0001"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "GET community-market",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{hostname}}/community-market?community_id=COMMUNITY-IE-0001&start_time=2026-03-27T00:00:00Z&end_time=2026-03-28T00:00:00Z",
+							"host": [
+								"{{hostname}}"
+							],
+							"path": [
+								"community-market"
+							],
+							"query": [
+								{
+									"key": "community_id",
+									"value": "COMMUNITY-IE-0001"
+								},
+								{
+									"key": "start_time",
+									"value": "2026-03-27T00:00:00Z"
+								},
+								{
+									"key": "end_time",
+									"value": "2026-03-28T00:00:00Z"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "POST clearing-results",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"market_id\": \"DEX-SPOT-0001\",\n    \"clearing_status\": \"cleared\",\n    \"clearing_price\": 0.213,\n    \"total_supply\": 3.75,\n    \"total_demand\": 2.10,\n    \"traded_quantity\": 2.10,\n    \"num_trades\": 6,\n    \"tx_hash\": \"0xabc123def456789\",\n    \"clearing_time\": \"2026-03-28T09:45:00Z\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{hostname}}/clearing-results"
+					},
+					"response": []
+				},
+				{
+					"name": "GET clearing-results",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{hostname}}/clearing-results?market_id=DEX-SPOT-0001",
+							"host": [
+								"{{hostname}}"
+							],
+							"path": [
+								"clearing-results"
+							],
+							"query": [
+								{
+									"key": "market_id",
+									"value": "DEX-SPOT-0001"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "POST market-roles",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"role_name\": \"Prosumer\",\n    \"role_description\": \"Generates and consumes energy; can submit both bids and offers.\",\n    \"assigned_to\": [\"PARTY-IE-0007\"]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{hostname}}/market-roles"
+					},
+					"response": []
+				},
+				{
+					"name": "GET market-roles",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": "{{hostname}}/market-roles"
+					},
+					"response": []
 				}
-			},
-			"response": []
+			]
 		},
 		{
-			"name": "community-market",
-			"request": {
-				"method": "GET",
-				"header": [],
-				"url": {
-					"raw": "{{hostname}}/community-market?community_uuid=communityid_1",
-					"host": [
-						"{{hostname}}"
-					],
-					"path": [
-						"community-market"
-					],
-					"query": [
-						{
-							"key": "community_uuid",
-							"value": "communityid_1"
+			"name": "Measurements Storage (D3.2 §5.2)",
+			"item": [
+				{
+					"name": "POST measurement-points",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "[\n    {\n        \"type\": \"Measurement\",\n        \"measurement_id\": \"MSMT-1\",\n        \"property_measured\": \"active_power\",\n        \"unit\": \"kW\",\n        \"direction\": \"Export\",\n        \"energy_accumulated\": false,\n        \"time_resolution\": \"15m\",\n        \"phase\": 1,\n        \"asset_name\": \"PV-IE-007\",\n        \"datasource_name\": \"DS-1-MQTT\"\n    },\n    {\n        \"type\": \"Forecast\",\n        \"measurement_id\": \"FCST-1\",\n        \"property_measured\": \"active_power\",\n        \"unit\": \"kW\",\n        \"direction\": \"Export\",\n        \"energy_accumulated\": false,\n        \"time_resolution\": \"15m\",\n        \"phase\": 1,\n        \"asset_name\": \"PV-IE-007\"\n    }\n]",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{hostname}}/measurement-points"
+					},
+					"response": []
+				},
+				{
+					"name": "GET measurement-points (filter)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{hostname}}/measurement-points?asset_name=PV-IE-007&type=Forecast",
+							"host": [
+								"{{hostname}}"
+							],
+							"path": [
+								"measurement-points"
+							],
+							"query": [
+								{
+									"key": "asset_name",
+									"value": "PV-IE-007"
+								},
+								{
+									"key": "type",
+									"value": "Forecast"
+								}
+							]
 						}
-					]
+					},
+					"response": []
+				},
+				{
+					"name": "POST timeseries",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "[\n    {\n        \"measurement_point\": \"MSMT-1\",\n        \"timestamp\": \"2026-03-27T10:00:30Z\",\n        \"value\": 0.23\n    },\n    {\n        \"measurement_point\": \"MSMT-1\",\n        \"timestamp\": \"2026-03-27T10:15:30Z\",\n        \"value\": 0.45\n    }\n]",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{hostname}}/timeseries"
+					},
+					"response": []
+				},
+				{
+					"name": "GET timeseries (filter)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{hostname}}/timeseries?measurement_point=MSMT-1&start_time=2026-03-27T10:10:00Z&end_time=2026-03-27T11:00:00Z",
+							"host": [
+								"{{hostname}}"
+							],
+							"path": [
+								"timeseries"
+							],
+							"query": [
+								{
+									"key": "measurement_point",
+									"value": "MSMT-1"
+								},
+								{
+									"key": "start_time",
+									"value": "2026-03-27T10:10:00Z"
+								},
+								{
+									"key": "end_time",
+									"value": "2026-03-27T11:00:00Z"
+								}
+							]
+						}
+					},
+					"response": []
 				}
-			},
-			"response": []
+			]
+		},
+		{
+			"name": "Grid Topology Storage (D3.2 §5.1)",
+			"item": [
+				{
+					"name": "POST assets",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "[\n    {\n        \"asset_type\": \"PV\",\n        \"uuid\": \"pv_uuid_1\",\n        \"asset_name\": \"PV-IE-007\",\n        \"facility_name\": \"AIS1-House-1\",\n        \"creation_time\": 1546300800,\n        \"installed_power\": 5.0,\n        \"technology_type\": \"crystalline-silicon\",\n        \"phase_connection\": \"single-phase\"\n    },\n    {\n        \"asset_type\": \"Battery\",\n        \"uuid\": \"battery_uuid_1\",\n        \"asset_name\": \"BAT-IE-007\",\n        \"facility_name\": \"AIS1-House-1\",\n        \"creation_time\": 1546300800,\n        \"installed_power\": 5.0,\n        \"asset_subtype\": \"Li-ion\",\n        \"technology_type\": \"SMA\",\n        \"energy_capacity\": 5.0,\n        \"maximum_soc\": 95.0,\n        \"minimum_soc\": 5.0,\n        \"roundtrip_efficiency\": 95.0\n    },\n    {\n        \"asset_type\": \"EnergyInfrastructure\",\n        \"uuid\": \"grid_connection_uuid_1\",\n        \"asset_name\": \"GridConnection-1\",\n        \"facility_name\": \"AIS1-House-1\",\n        \"creation_time\": 1546300800,\n        \"grid_connection_type\": \"LV\",\n        \"max_rated_current\": 63.0,\n        \"has_smart_meter\": true,\n        \"tariff_name\": \"ESB-Residential-TOU\"\n    }\n]",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"description": "asset_type ∈ EnergyAsset | Battery | PV | Heatpump | DistrictHeating | EVCharger | EnergyInfrastructure",
+						"url": "{{hostname}}/assets"
+					},
+					"response": []
+				},
+				{
+					"name": "GET assets",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": "{{hostname}}/assets"
+					},
+					"response": []
+				},
+				{
+					"name": "GET assets (by uuid)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{hostname}}/assets?uuid=battery_uuid_1",
+							"host": [
+								"{{hostname}}"
+							],
+							"path": [
+								"assets"
+							],
+							"query": [
+								{
+									"key": "uuid",
+									"value": "battery_uuid_1"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "GET assets (by facility)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{hostname}}/assets?facility_name=AIS1-House-1",
+							"host": [
+								"{{hostname}}"
+							],
+							"path": [
+								"assets"
+							],
+							"query": [
+								{
+									"key": "facility_name",
+									"value": "AIS1-House-1"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "POST pilot-sites",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"pilot_name\": \"Aran Islands\",\n    \"pilot_description\": \"Off-grid island demonstration.\",\n    \"start_date\": \"2024-01-01\",\n    \"end_date\": \"2027-12-31\",\n    \"latitude\": 53.12,\n    \"longitude\": -9.65,\n    \"communities\": [\"Aran Islands REC\"]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{hostname}}/pilot-sites"
+					},
+					"response": []
+				},
+				{
+					"name": "GET pilot-sites",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": "{{hostname}}/pilot-sites"
+					},
+					"response": []
+				},
+				{
+					"name": "POST communities",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"community_name\": \"Aran Islands REC\",\n    \"sites\": [\"Aran Islands Site 1\"]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{hostname}}/communities"
+					},
+					"response": []
+				},
+				{
+					"name": "GET communities",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": "{{hostname}}/communities"
+					},
+					"response": []
+				},
+				{
+					"name": "POST sites",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"site_name\": \"Aran Islands Site 1\",\n    \"site_description\": \"Group of 15 residential buildings.\",\n    \"facilities\": [\"AIS1-House-1\"]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{hostname}}/sites"
+					},
+					"response": []
+				},
+				{
+					"name": "GET sites",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": "{{hostname}}/sites"
+					},
+					"response": []
+				},
+				{
+					"name": "POST facilities",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"facility_name\": \"AIS1-House-1\",\n    \"address\": \"Random str. 15, 12345 (anonymized)\",\n    \"latitude\": 53.12,\n    \"longitude\": -9.65,\n    \"category\": \"residential\",\n    \"number_of_occupants\": 4\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{hostname}}/facilities"
+					},
+					"response": []
+				},
+				{
+					"name": "GET facilities",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": "{{hostname}}/facilities"
+					},
+					"response": []
+				}
+			]
 		}
 	],
 	"event": [
