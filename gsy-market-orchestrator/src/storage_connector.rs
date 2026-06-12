@@ -4,9 +4,8 @@ use gsy_offchain_primitives::db_api_schema::market::MarketTopologySchema;
 use reqwest::Client;
 use tracing::info;
 
-/// Read-only connector to the offchain storage. The community client is the
-/// source of truth for which per-community markets exist; the orchestrator only
-/// discovers them and toggles their on-chain status.
+/// Read-only connector to the offchain storage. Responsible for fetching market data that the
+/// market orchestrator needs from the offchain storage.
 #[derive(Clone)]
 pub struct OffchainStorageConnector {
 	client: Client,
@@ -21,8 +20,8 @@ impl OffchainStorageConnector {
 		Self { client: Client::new(), markets_url }
 	}
 
-	/// Fetch every market whose delivery time_slot falls within
-	/// `[start_time, end_time]` (inclusive), across all communities.
+	/// Fetch every market for all communities whose delivery time_slot falls within start_time
+	/// and end_time.
 	pub async fn get_markets_in_window(
 		&self,
 		start_time: u64,

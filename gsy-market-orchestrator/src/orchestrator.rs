@@ -19,7 +19,7 @@ pub async fn run(
 	loop {
 		match client.is_operator_registered().await {
 			Ok(true) => {
-				info!("✅ Orchestrator account is registered. Starting main loop.");
+				info!("Orchestrator account is registered. Starting main loop.");
 				break;
 			},
 			Ok(false) => {
@@ -43,10 +43,9 @@ pub async fn run(
 	}
 }
 
-/// Discover every per-community spot market in the look-ahead window from the
-/// offchain storage and toggle its on-chain status according to the spot
-/// market open/close offsets. The community client owns market creation and
-/// market ids; the orchestrator only opens and closes what already exists.
+/// Discover every per-community spot market from the offchain storage and toggle its on-chain
+/// status if it is in the market open time window. The community client is creating the markets,
+/// the market orchestrator only manages existing markets.
 async fn orchestrate_markets(
 	config: &Config,
 	client: &GsyMarketOrchestratorNodeClient,
