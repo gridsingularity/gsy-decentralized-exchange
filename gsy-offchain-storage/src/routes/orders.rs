@@ -31,11 +31,6 @@ async fn filter_orders_from_db(
     db: DbRef,
     orders_parameters: Query<OrdersParameters>,
 ) -> Result<Vec<DbOrderSchema>, Error> {
-    if let Err(response) =
-        validate_start_end_time(orders_parameters.start_time, orders_parameters.end_time)
-    {
-        return response;
-    }
     if orders_parameters.market_id.is_none()
         && orders_parameters.start_time.is_none()
         && orders_parameters.end_time.is_none()
@@ -54,6 +49,12 @@ async fn filter_orders_from_db(
 }
 
 pub async fn get_orders(db: DbRef, orders_parameters: Query<OrdersParameters>) -> impl Responder {
+    if let Err(response) =
+        validate_start_end_time(orders_parameters.start_time, orders_parameters.end_time)
+    {
+        return response;
+    }
+
     match filter_orders_from_db(db, orders_parameters).await {
         Ok(orders) => HttpResponse::Ok().json(orders),
         Err(e) => {
