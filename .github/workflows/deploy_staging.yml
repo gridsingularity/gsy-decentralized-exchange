@@ -2,8 +2,7 @@ name: Build and Deploy Staging
 
 on:
   push:
-    #  todo: change this to GSYDEXv2
-    branches: [feat/DD-395]
+    branches: [GSYDEXv2]
 
 jobs:
   build-and-push:
