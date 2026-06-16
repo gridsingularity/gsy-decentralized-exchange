@@ -5,4 +5,3 @@ pub mod ewds_handler;
 pub mod routes;
 pub mod scheduler;
 pub mod startup;
-pub mod telemetry;

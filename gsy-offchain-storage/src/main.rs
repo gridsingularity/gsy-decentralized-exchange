@@ -7,7 +7,9 @@ use gsy_offchain_storage::evm_handler::OffchainStorageEvmHandler;
 use gsy_offchain_storage::ewds_handler::{start_ewds_request_handler, EwdsHandlerConfig};
 use gsy_offchain_storage::scheduler::start_scheduler;
 use gsy_offchain_storage::startup::run;
-use gsy_offchain_storage::telemetry::{get_subscriber, init_subscriber};
+use gsy_offchain_primitives::{
+    telemetry::setup_telemetry
+};
 use std::net::TcpListener;
 use tracing::info;
 
@@ -15,12 +17,7 @@ use tracing::info;
 async fn main() -> Result<(), anyhow::Error> {
     dotenv::dotenv().ok();
 
-    let subscriber = get_subscriber(
-        "gsy-offchain-storage".into(),
-        "info".into(),
-        std::io::stdout,
-    );
-    init_subscriber(subscriber);
+    setup_telemetry("gsy-offchain-storage", "info");
 
     let configuration = get_configuration().expect("Failed to load configuration");
     let db_connection_string = configuration.get_connection_string();

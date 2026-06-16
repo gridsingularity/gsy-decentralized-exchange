@@ -4,6 +4,7 @@ pub mod db_api_schema;
 pub mod constants;
 pub mod types;
 pub mod utils;
+pub mod telemetry;
 
 use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
