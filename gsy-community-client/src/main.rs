@@ -1,13 +1,12 @@
+use gsy_community_client::external_forecasts::manager::DemandForecastsManager;
 use gsy_community_client::external_measurements::manager::MeasurementsManager;
 use gsy_community_client::node_connector::orders::publish_orders;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use gsy_community_client::time_utils::{get_current_timestamp_in_secs, get_last_and_next_timeslot};
 use gsy_community_client::topology::TopologyManager;
-use gsy_community_client::types::ExternalForecast;
 use gsy_offchain_primitives::constants::GlobalConstants;
 use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
 use reqwest::Client;
-use std::collections::HashMap;
 use std::time::Duration;
 use subxt_signer::sr25519::dev;
 use tokio::time::sleep;
@@ -18,8 +17,8 @@ struct AppState {
     client: Client,
     api_adapter: AreaMarketInfoAdapter,
     measurements: MeasurementsManager,
+    demand_forecasts: DemandForecastsManager,
     gsy_node_url: String,
-    forecast_url: String,
 }
 
 impl AppState {
@@ -29,15 +28,9 @@ impl AppState {
             client: Client::new(),
             api_adapter,
             measurements: MeasurementsManager::new(),
+            demand_forecasts: DemandForecastsManager::new(),
             gsy_node_url: "http://gsy-node:9944/".to_string(),
-            forecast_url: "http://localhost:8000/forecasts".to_string(),
         }
-    }
-
-    // Function to fetch an array of forecast data
-    async fn fetch_forecasts(&self) -> Result<Vec<ExternalForecast>, reqwest::Error> {
-        let response = self.client.get(&self.forecast_url).send().await?;
-        response.json::<Vec<ExternalForecast>>().await
     }
 
     async fn poll_and_forward(&self) {
@@ -54,49 +47,55 @@ impl AppState {
                 .fetch_and_forward(internal_topology.clone(), seconds_since_epoch)
                 .await;
 
-            // TODO: Fetch forecast data from MySQL Fedecom DB
             for market in internal_topology.clone() {
-                let area_uuid_to_hash: HashMap<String, String> = market
-                    .community_areas
-                    .iter()
-                    .map(|area| (area.area_uuid.clone(), area.area_hash.clone()))
+                let valid_forecasts: Vec<ForecastSchema> = self
+                    .demand_forecasts
+                    .fetch_community_forecasts(&market, next_timeslot)
+                    .await
+                    .into_iter()
+                    .filter(|forecast| {
+                        self.api_adapter
+                            .validate_forecast(forecast, seconds_since_epoch)
+                    })
                     .collect();
-                match self.fetch_forecasts().await {
-                    Ok(forecasts) => {
-                        let valid_forecasts: Vec<ForecastSchema> = forecasts
-                            .into_iter()
-                            .map(|forecast| {
-                                self.api_adapter.convert_forecast_to_internal_schema(
-                                    &forecast,
-                                    area_uuid_to_hash[&forecast.area_uuid].clone(),
-                                )
-                            })
-                            .filter(|forecast| {
-                                self.api_adapter
-                                    .validate_forecast(forecast, seconds_since_epoch)
-                            })
-                            .collect();
-                        if !valid_forecasts.is_empty() {
-                            if let Err(e) = self
-                                .api_adapter
-                                .forward_forecast(valid_forecasts.clone())
-                                .await
-                            {
-                                info!("Failed to forward forecasts: {}", e);
-                            }
-                            publish_orders(
-                                self.gsy_node_url.clone(),
-                                valid_forecasts.clone(),
-                                market.clone(),
-                                &dev::alice(),
-                            )
-                            .await
-                            .unwrap();
-                        } else {
-                            info!("No valid forecasts to forward.");
-                        }
-                    }
-                    Err(e) => error!("Error fetching forecasts: {}", e),
+
+                if valid_forecasts.is_empty() {
+                    info!(
+                        "No valid demand forecasts to forward for community {}.",
+                        market.community_name
+                    );
+                    continue;
+                }
+
+                if let Err(e) = self
+                    .api_adapter
+                    .forward_forecast(valid_forecasts.clone())
+                    .await
+                {
+                    info!("Failed to forward forecasts: {}", e);
+                }
+
+                // The API returns a multi-day forecast series, but only the points for the
+                // upcoming timeslot are tradeable in this market.
+                let next_timeslot_forecasts: Vec<ForecastSchema> = valid_forecasts
+                    .into_iter()
+                    .filter(|forecast| forecast.time_slot == market.time_slot as u64)
+                    .collect();
+                if next_timeslot_forecasts.is_empty() {
+                    continue;
+                }
+                if let Err(e) = publish_orders(
+                    self.gsy_node_url.clone(),
+                    next_timeslot_forecasts,
+                    market.clone(),
+                    &dev::alice(),
+                )
+                .await
+                {
+                    error!(
+                        "Failed to publish orders for community {}: {}",
+                        market.community_name, e
+                    );
                 }
             }
 

@@ -2,7 +2,6 @@
 
 use gsy_offchain_primitives::utils::read_env_or;
 use once_cell::sync::Lazy;
-use std::env;
 
 pub struct Constants {
     pub FEDECOM_ONTOLOGY_URL: String,
@@ -10,6 +9,8 @@ pub struct Constants {
     pub FEDECOM_INFLUX_DB_URL: String,
     pub FEDECOM_INFLUX_DB_ORG: String,
     pub FEDECOM_INFLUX_DB_TOKEN: String,
+    pub FEDECOM_DEMAND_FORECAST_URL: String,
+    pub FEDECOM_DEMAND_FORECAST_API_KEY: String,
 }
 
 impl Constants {
@@ -30,6 +31,14 @@ impl Constants {
             FEDECOM_INFLUX_DB_ORG: read_env_or("FEDECOM_INFLUX_DB_ORG", "fedecom".to_string()),
             // Token is mandatory
             FEDECOM_INFLUX_DB_TOKEN: read_env_or("FEDECOM_INFLUX_DB_TOKEN", "".to_string()),
+            FEDECOM_DEMAND_FORECAST_URL: read_env_or(
+                "FEDECOM_DEMAND_FORECAST_URL",
+                "https://fedecom.imp.bg.ac.rs/demand_forecaster/forecast/gd_lic".to_string(),
+            ),
+            FEDECOM_DEMAND_FORECAST_API_KEY: read_env_or(
+                "FEDECOM_DEMAND_FORECAST_API_KEY",
+                "fedecom_user".to_string(),
+            ),
         }
     }
 }
