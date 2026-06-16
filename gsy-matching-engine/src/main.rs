@@ -1,7 +1,7 @@
 use clap::Parser;
 use gsy_matching_engine::connectors::{evm_subscribe, redis_subscribe};
 use gsy_matching_engine::utils::{Cli, Commands};
-use gsy_offchain_primitives::telemetry::setup_telemetry;
+use gsy_offchain_primitives::log::setup_logging;
 use std::env;
 use std::{thread, time};
 use tracing::{error, info};
@@ -10,7 +10,7 @@ use tracing::{error, info};
 async fn main() {
     let cli = Cli::parse();
 
-    setup_telemetry("matching_engine", "info");
+    setup_logging("matching_engine", "info");
 
     // You can check for the existence of subcommands, and if found use their
     // matches just as you would the top level cmd

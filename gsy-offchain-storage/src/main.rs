@@ -1,7 +1,7 @@
 use actix_web::web;
 use anyhow::Result;
 use gsy_ethers_listener::{GsyEthersListener, ListenerConfig};
-use gsy_offchain_primitives::telemetry::setup_telemetry;
+use gsy_offchain_primitives::log::setup_logging;
 use gsy_offchain_storage::configuration::get_configuration;
 use gsy_offchain_storage::db::{init_database, DbRef};
 use gsy_offchain_storage::evm_handler::OffchainStorageEvmHandler;
@@ -14,7 +14,7 @@ use tracing::info;
 async fn main() -> Result<(), anyhow::Error> {
     dotenv::dotenv().ok();
 
-    setup_telemetry("gsy-offchain-storage", "info");
+    setup_logging("gsy-offchain-storage", "info");
 
     let configuration = get_configuration().expect("Failed to load configuration");
     let db_connection_string = configuration.get_connection_string();

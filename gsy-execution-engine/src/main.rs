@@ -8,14 +8,14 @@ use gsy_execution_engine::{
 use gsy_offchain_primitives::{
     constants::GLOBAL_CONSTANTS,
     utils::timestamp_to_datetime_string,
-    telemetry::setup_telemetry
+    log::setup_logging
 };
 use std::env;
 use tracing::{error, info};
 
 #[tokio::main]
 async fn main() {
-    setup_telemetry("gsy-execution-engine", "info");
+    setup_logging("gsy-execution-engine", "info");
 
     let cli = Cli::parse();
     match cli.command {
