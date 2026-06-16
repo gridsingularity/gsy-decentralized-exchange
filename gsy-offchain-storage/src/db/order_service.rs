@@ -28,7 +28,7 @@ fn time_slot_bson(value: u64) -> Result<Bson> {
     Ok(Bson::Int64(i64::try_from(value)?))
 }
 
-/// Create the indexes required by the Order Book Storage. Per D3.2 §5.4,
+/// Create the indexes required by the Order Book Storage. Per D3.2 section 5.4,
 /// `created_by`, `market_id` and `time_slot` are indexed to accelerate
 /// queries that filter bids/offers for an asset, market or time slot.
 pub async fn init_orders(db: &DatabaseWrapper) -> Result<()> {
@@ -314,15 +314,10 @@ impl Deref for FlexibilityOrderService {
 pub struct TariffService(pub Collection<TariffSchema>);
 
 impl TariffService {
-    #[tracing::instrument(name = "Inserting tariff", skip(self, tariff))]
+    #[tracing::instrument(name = "Saving tariff", skip(self, tariff))]
     pub async fn insert(&self, tariff: TariffSchema) -> Result<TariffSchema> {
         self.0.insert_one(tariff.clone()).await?;
         Ok(tariff)
-    }
-
-    #[tracing::instrument(name = "Fetching tariff by name", skip(self))]
-    pub async fn get_by_name(&self, tariff_name: &str) -> Result<Option<TariffSchema>> {
-        Ok(self.0.find_one(doc! {"tariff_name": tariff_name}).await?)
     }
 
     #[tracing::instrument(name = "Fetching all tariffs", skip(self))]

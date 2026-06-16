@@ -1,4 +1,4 @@
-//! Measurements Storage schemas, as specified in D3.2 §5.2.
+//! Measurements Storage schemas, as specified in D3.2 section 5.2.
 //!
 //! `MeasurementPointSchema` and `TimeseriesSchema` are the canonical
 //! ontology-aligned storage records. `MeasurementSchema` and `ForecastSchema`
@@ -100,14 +100,14 @@ pub struct ForecastSchema {
     pub confidence: f64,
 }
 
-/// Discriminates a `MeasurementPoint` between measurements and forecasts.
+/// Differentiates a `MeasurementPoint` between measurements from the field and forecasts.
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub enum MeasurementPointType {
     Measurement,
     Forecast,
 }
 
-/// Direction of an energy flow relative to the measured asset.
+/// Direction of the energy flow relative to the measured asset.
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub enum FlowDirection {
     Import,

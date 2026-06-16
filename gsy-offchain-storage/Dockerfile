@@ -1,5 +1,5 @@
-FROM rust:1.89.0-bookworm AS chef
-RUN cargo install cargo-chef --locked
+FROM rust:1.95 AS chef
+RUN cargo install cargo-chef
 
 WORKDIR /var/www/offchain-primitives
 COPY ./offchain-primitives/Cargo.lock ./offchain-primitives/Cargo.toml /var/www/offchain-primitives/
@@ -40,9 +40,7 @@ COPY --from=chef /var/www/gsy-offchain-storage/target /var/www/gsy-offchain-stor
 WORKDIR /var/www/gsy-offchain-storage/
 RUN cargo build --release
 
-FROM rust:1.89.0-bookworm
-
-RUN apt-get update && apt-get install -y libssl-dev && rm -rf /var/lib/apt/lists/*
+FROM rust:1.95
 
 WORKDIR /app
 COPY --from=builder /var/www/gsy-offchain-storage/target/release/gsy-offchain-storage .

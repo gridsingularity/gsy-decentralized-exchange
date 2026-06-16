@@ -58,7 +58,7 @@ pub struct DbOrderSchema {
     pub attributes: Option<DbAttributes>,
 }
 
-/// Order status
+/// Order status.
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, PartialOrd)]
 #[serde(rename_all = "lowercase")]
 pub enum OrderStatus {
@@ -87,7 +87,7 @@ pub struct FlexibilityOrderSchema {
     pub order_type: FlexibilityOrderType,
     pub flexibility_type: String,
     pub available_power: f64,
-    /// ISO 8601 duration (e.g. "PT30M").
+    /// ISO 8601 duration, for example `PT30M`.
     pub duration: String,
     pub activation_window_start: String,
     pub activation_window_end: String,

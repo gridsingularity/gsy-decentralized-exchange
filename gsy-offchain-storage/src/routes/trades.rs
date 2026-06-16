@@ -1,4 +1,5 @@
 use crate::db::DbRef;
+use crate::routes::validate_start_end_time;
 use actix_web::web::Query;
 use actix_web::{web::Json, HttpResponse, Responder};
 use gsy_offchain_primitives::db_api_schema::orders::OrderStatus;
@@ -41,6 +42,9 @@ pub struct GetTradesParams {
 
 #[tracing::instrument(name = "Retrieve trades", skip(db))]
 pub async fn get_trades(db: DbRef, query_params: Query<GetTradesParams>) -> impl Responder {
+    if let Err(response) = validate_start_end_time(query_params.start_time, query_params.end_time) {
+        return response;
+    }
     match db
         .get_ref()
         .trades()
