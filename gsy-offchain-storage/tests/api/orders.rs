@@ -115,14 +115,16 @@ async fn post_orders_returns_400_for_invalid_payload() {
     let address = app.address.clone();
 
     let client = reqwest::Client::new();
-    let resp = client
-        .post(&format!("{}/orders", &address))
-        .header("Content-Type", "application/json")
-        .body("invalid-json")
-        .send()
-        .await
-        .expect("Failed to execute request.");
+    for invalid_body in ["test", "test2"] {
+        let resp = client
+            .post(&format!("{}/orders", &address))
+            .header("Content-Type", "application/json")
+            .body(invalid_body)
+            .send()
+            .await
+            .expect("Failed to execute request.");
 
-    assert_eq!(400, resp.status().as_u16());
+        assert_eq!(400, resp.status().as_u16());
+    }
     stop_app(app).await;
 }

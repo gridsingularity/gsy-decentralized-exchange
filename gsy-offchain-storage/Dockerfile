@@ -1,21 +1,17 @@
-FROM rust:1.89.0-bookworm AS chef
+FROM rust:1.95 AS chef
 RUN cargo install cargo-chef --locked
 
-WORKDIR /var/www/offchain-primitives
+WORKDIR /var/www
 COPY ./offchain-primitives/Cargo.lock ./offchain-primitives/Cargo.toml /var/www/offchain-primitives/
-RUN mkdir src && touch src/lib.rs
-RUN cargo chef prepare --recipe-path recipe.json
-RUN cargo chef cook --release --recipe-path recipe.json
+RUN mkdir -p /var/www/offchain-primitives/src && touch /var/www/offchain-primitives/src/lib.rs
 
-WORKDIR /var/www/gsy-ethers-listener
 COPY ./gsy-ethers-listener/Cargo.lock ./gsy-ethers-listener/Cargo.toml /var/www/gsy-ethers-listener/
-RUN mkdir src && touch src/lib.rs
-RUN cargo chef prepare --recipe-path recipe.json
-RUN cargo chef cook --release --recipe-path recipe.json
+RUN mkdir -p /var/www/gsy-ethers-listener/src && touch /var/www/gsy-ethers-listener/src/lib.rs
 
 WORKDIR /var/www/gsy-offchain-storage
 COPY ./gsy-offchain-storage/Cargo.lock ./gsy-offchain-storage/Cargo.toml /var/www/gsy-offchain-storage/
-RUN mkdir src && touch src/lib.rs src/main.rs
+RUN mkdir -p /var/www/gsy-offchain-storage/src \
+    && touch /var/www/gsy-offchain-storage/src/lib.rs /var/www/gsy-offchain-storage/src/main.rs
 RUN cargo chef prepare --recipe-path recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
 
@@ -29,20 +25,21 @@ ENV PATH="/root/.foundry/bin:${PATH}"
 RUN foundryup
 
 COPY offchain-primitives /var/www/offchain-primitives/
-COPY --from=chef /var/www/offchain-primitives/target /var/www/offchain-primitives/target
 
 COPY gsy-ethers-listener /var/www/gsy-ethers-listener/
-COPY --from=chef /var/www/gsy-ethers-listener/target /var/www/gsy-ethers-listener/target
 
 COPY gsy-offchain-storage /var/www/gsy-offchain-storage/
 COPY --from=chef /var/www/gsy-offchain-storage/target /var/www/gsy-offchain-storage/target
 
 WORKDIR /var/www/gsy-offchain-storage/
+RUN rm -rf \
+    target/release/.fingerprint/gsy-* \
+    target/release/build/gsy-* \
+    target/release/deps/gsy_* \
+    target/release/deps/libgsy_*
 RUN cargo build --release
 
-FROM rust:1.89.0-bookworm
-
-RUN apt-get update && apt-get install -y libssl-dev && rm -rf /var/lib/apt/lists/*
+FROM rust:1.95
 
 WORKDIR /app
 COPY --from=builder /var/www/gsy-offchain-storage/target/release/gsy-offchain-storage .

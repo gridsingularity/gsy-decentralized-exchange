@@ -1,8 +1,3 @@
-//! Grid Topology service layer, per D3.2 §5.1. Provides per-collection
-//! wrappers for the five document classes that make up the Grid
-//! Topology and Market Storage: assets (unified), pilot sites,
-//! communities, sites and facilities.
-
 use crate::db::DatabaseWrapper;
 use anyhow::Result;
 use futures::StreamExt;

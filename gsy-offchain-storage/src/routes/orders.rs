@@ -1,4 +1,5 @@
 use crate::db::DbRef;
+use crate::routes::validate_start_end_time;
 use actix_web::{web::Json, web::Query, HttpResponse, Responder};
 use anyhow::{Error, Result};
 use gsy_offchain_primitives::db_api_schema::orders::{DbOrderSchema, FlexibilityOrderSchema};
@@ -48,6 +49,12 @@ async fn filter_orders_from_db(
 }
 
 pub async fn get_orders(db: DbRef, orders_parameters: Query<OrdersParameters>) -> impl Responder {
+    if let Err(response) =
+        validate_start_end_time(orders_parameters.start_time, orders_parameters.end_time)
+    {
+        return response;
+    }
+
     match filter_orders_from_db(db, orders_parameters).await {
         Ok(orders) => HttpResponse::Ok().json(orders),
         Err(e) => {

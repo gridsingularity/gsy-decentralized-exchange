@@ -12,8 +12,8 @@ path = "src/main.rs"
 name = "gsy-offchain-storage"
 
 [dependencies]
-gsy-offchain-primitives = { default-features = false, path = "../offchain-primitives", version = "0" }
-gsy-ethers-listener = { path = "../gsy-ethers-listener" }
+gsy-offchain-primitives = { default-features = false, path = "../offchain-primitives", version = "0.1.0" }
+gsy-ethers-listener = { path = "../gsy-ethers-listener", version = "0.1.0" }
 anyhow = "1"
 actix-web = "4.5.1"
 chrono = { version = "0.4.37", features = ["serde"] }

@@ -14,7 +14,7 @@ fn time_slot_bson(value: u64) -> Result<Bson> {
     Ok(Bson::Int64(i64::try_from(value)?))
 }
 
-/// Trade indexes per D3.2 §5.3: `buyer`, `seller`, `market_id` and
+/// Trade indexes per D3.2 section 5.3: `buyer`, `seller`, `market_id` and
 /// `time_slot` accelerate per-asset / per-market / per-slot lookups.
 pub async fn init_trades(db: &DatabaseWrapper) -> Result<()> {
     let controller = db.trades();
