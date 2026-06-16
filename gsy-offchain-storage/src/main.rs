@@ -1,16 +1,13 @@
 use actix_web::web;
-use anyhow::{Error, Result};
+use anyhow::Result;
 use gsy_ethers_listener::{GsyEthersListener, ListenerConfig};
+use gsy_offchain_primitives::telemetry::setup_telemetry;
 use gsy_offchain_storage::configuration::get_configuration;
 use gsy_offchain_storage::db::{init_database, DbRef};
 use gsy_offchain_storage::evm_handler::OffchainStorageEvmHandler;
 use gsy_offchain_storage::ewds_handler::{start_ewds_request_handler, EwdsHandlerConfig};
+use gsy_offchain_storage::http_server::start_server;
 use gsy_offchain_storage::update_db::update_db_periodically;
-use gsy_offchain_storage::startup::run;
-use gsy_offchain_primitives::{
-    telemetry::setup_telemetry
-};
-use std::net::TcpListener;
 use tracing::info;
 
 #[tokio::main]
@@ -63,12 +60,5 @@ async fn main() -> Result<(), anyhow::Error> {
         "{}:{}",
         configuration.application_host, configuration.application_port
     );
-    let listener = TcpListener::bind(address).expect("Failed to bind");
-
-    info!("Server listening on {}", listener.local_addr().unwrap());
-
-    match run(listener, db_connection_wrapper)?.await {
-        Ok(_) => Ok(()),
-        Err(e) => Err(Error::from(e)),
-    }
+    start_server(&address, db_connection_wrapper).await
 }
