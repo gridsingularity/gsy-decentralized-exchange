@@ -38,7 +38,7 @@ These adapters do not own separate collections. They read and write the same
 
 ## Scheduler Behavior
 
-`start_scheduler` periodically marks stale open orders as `Expired` using `time_slot` and current time.
+`update_db_periodically` periodically marks stale open orders as `Expired` using `time_slot` and current time.
 
 ## Data Model Notes
 
@@ -55,4 +55,4 @@ Key env variables:
 - `CONTRACT_TRADE_SETTLEMENT`
 - `CONTRACT_MARKET_CONTROLLER`
 - `DATABASE_*`
-- `SCHEDULER_INTERVAL`
+- `UPDATE_INTERVAL`
