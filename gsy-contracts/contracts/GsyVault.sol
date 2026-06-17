@@ -6,10 +6,9 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /**
  * @title GsyVault
- * @notice Holds actor collateral (Native Currency) and handles transfers.
+ * @notice Holds actor collateral (Native Currency) and actor wallet authorizations.
  */
 contract GsyVault is AccessControl, ReentrancyGuard {
-    bytes32 public constant SETTLEMENT_ROLE = keccak256("SETTLEMENT_ROLE");
     bytes32 public constant ACTOR_REGISTRAR_ROLE =
         keccak256("ACTOR_REGISTRAR_ROLE");
 
@@ -33,11 +32,6 @@ contract GsyVault is AccessControl, ReentrancyGuard {
     event Withdrawn(
         bytes16 indexed actorId,
         address indexed wallet,
-        uint256 amount
-    );
-    event TransferredBySettlement(
-        bytes16 indexed fromActorId,
-        bytes16 indexed toActorId,
         uint256 amount
     );
     event ProxyUpdated(
@@ -123,23 +117,6 @@ contract GsyVault is AccessControl, ReentrancyGuard {
     ) external onlyActorWallet(actorId) {
         authorizedWallets[actorId][delegate] = status;
         emit ProxyUpdated(actorId, delegate, status);
-    }
-
-    /**
-     * @notice Executed by the Settlement Contract to move funds between actors.
-     */
-    function transferBySettlement(
-        bytes16 fromActorId,
-        bytes16 toActorId,
-        uint256 amount
-    ) external onlyRole(SETTLEMENT_ROLE) {
-        if (balances[fromActorId] < amount)
-            revert InsufficientBalance(balances[fromActorId], amount);
-
-        balances[fromActorId] -= amount;
-        balances[toActorId] += amount;
-
-        emit TransferredBySettlement(fromActorId, toActorId, amount);
     }
 
     /**

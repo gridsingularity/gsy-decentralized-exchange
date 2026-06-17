@@ -39,6 +39,17 @@ async function waitForRpcAndGetDeployer() {
   );
 }
 
+async function deployContract(contractName: string, args: any[] = []): Promise<
+  readonly [any, string]
+> {
+  const factory = await ethers.getContractFactory(contractName);
+  const contract = await factory.deploy(...args);
+  await contract.waitForDeployment();
+  const address = await contract.getAddress();
+
+  return [contract, address] as const;
+}
+
 async function main() {
   const deployer = await waitForRpcAndGetDeployer();
   const deployerAddress = await deployer.getAddress();
@@ -60,33 +71,17 @@ async function main() {
     deployerAddress,
   );
 
-  const gsyVaultFactory = await ethers.getContractFactory("GsyVault");
-  const gsyVault = await gsyVaultFactory.deploy();
-  await gsyVault.waitForDeployment();
-  const gsyVaultAddress = await gsyVault.getAddress();
-
-  const marketControllerFactory =
-    await ethers.getContractFactory("MarketController");
-  const marketController = await marketControllerFactory.deploy();
-  await marketController.waitForDeployment();
-  const marketControllerAddress = await marketController.getAddress();
-
-  const orderRegistryFactory = await ethers.getContractFactory("OrderRegistry");
-  const orderRegistry = await orderRegistryFactory.deploy(
-    marketControllerAddress,
-    gsyVaultAddress,
+  const [gsyVault, gsyVaultAddress] = await deployContract("GsyVault");
+  const [marketController, marketControllerAddress] =
+    await deployContract("MarketController");
+  const [orderRegistry, orderRegistryAddress] = await deployContract(
+    "OrderRegistry",
+    [marketControllerAddress, gsyVaultAddress],
   );
-  await orderRegistry.waitForDeployment();
-  const orderRegistryAddress = await orderRegistry.getAddress();
-
-  const tradeSettlementFactory =
-    await ethers.getContractFactory("TradeSettlement");
-  const tradeSettlement = await tradeSettlementFactory.deploy(
-    orderRegistryAddress,
-    gsyVaultAddress,
+  const [tradeSettlement, tradeSettlementAddress] = await deployContract(
+    "TradeSettlement",
+    [orderRegistryAddress],
   );
-  await tradeSettlement.waitForDeployment();
-  const tradeSettlementAddress = await tradeSettlement.getAddress();
 
   const ORCHESTRATOR_ROLE = ethers.id("ORCHESTRATOR_ROLE");
   const SETTLEMENT_ROLE = ethers.id("SETTLEMENT_ROLE");
@@ -100,7 +95,6 @@ async function main() {
   await (
     await orderRegistry.grantRole(SETTLEMENT_ROLE, tradeSettlementAddress)
   ).wait();
-  await (await gsyVault.grantRole(SETTLEMENT_ROLE, tradeSettlementAddress)).wait();
   await (
     await tradeSettlement.grantRole(OPERATOR_ROLE, matchingEngineAddress)
   ).wait();

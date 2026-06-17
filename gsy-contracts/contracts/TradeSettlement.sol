@@ -3,11 +3,10 @@ pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/access/AccessControl.sol";
 import "./OrderRegistry.sol";
-import "./GsyVault.sol";
 
 /**
  * @title TradeSettlement
- * @notice Validates matches and settles trades financially by Actor UUID.
+ * @notice Validates matches and emits settlement records by Actor UUID.
  */
 contract TradeSettlement is AccessControl {
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
@@ -15,12 +14,17 @@ contract TradeSettlement is AccessControl {
         keccak256("EXECUTION_ENGINE_ROLE");
 
     OrderRegistry public registry;
-    GsyVault public vault;
 
     event TradeSettled(
         bytes16 indexed tradeId,
         bytes16 indexed bidId,
-        bytes16 indexed askId,
+        bytes16 indexed offerId,
+        bytes16 buyerId,
+        bytes16 sellerId,
+        bytes16 marketId,
+        uint64 timeSlot,
+        bytes16 residualBidId,
+        bytes16 residualOfferId,
         uint256 energy,
         uint256 price
     );
@@ -39,10 +43,9 @@ contract TradeSettlement is AccessControl {
     error EnergyMismatch();
     error InvalidPenalty();
 
-    constructor(address _registry, address _vault) {
+    constructor(address _registry) {
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         registry = OrderRegistry(_registry);
-        vault = GsyVault(_vault);
     }
 
     struct OrderData {
@@ -58,7 +61,9 @@ contract TradeSettlement is AccessControl {
     struct Match {
         bytes16 tradeId;
         OrderData bid;
-        OrderData ask;
+        OrderData offer;
+        bytes16 residualBidId;
+        bytes16 residualOfferId;
         uint256 selectedEnergy;
         uint256 clearingPrice;
     }
@@ -122,53 +127,56 @@ contract TradeSettlement is AccessControl {
         if (
             trade.tradeId == bytes16(0) ||
             trade.bid.orderId == bytes16(0) ||
-            trade.ask.orderId == bytes16(0) ||
+            trade.offer.orderId == bytes16(0) ||
             trade.bid.createdBy == bytes16(0) ||
-            trade.ask.createdBy == bytes16(0) ||
-            trade.bid.marketId != trade.ask.marketId
+            trade.offer.createdBy == bytes16(0) ||
+            trade.bid.marketId != trade.offer.marketId ||
+            trade.bid.timeSlot != trade.offer.timeSlot
         ) {
             revert InvalidOrderParams();
         }
 
         if (
             registry.getStatus(trade.bid.orderId) != OrderRegistry.OrderStatus.Open ||
-            registry.getStatus(trade.ask.orderId) != OrderRegistry.OrderStatus.Open
+            registry.getStatus(trade.offer.orderId) != OrderRegistry.OrderStatus.Open
         ) {
             revert OrderNotOpen();
         }
 
         _validateOrderData(trade.bid, registry.getOrder(trade.bid.orderId), true);
-        _validateOrderData(trade.ask, registry.getOrder(trade.ask.orderId), false);
+        _validateOrderData(
+            trade.offer,
+            registry.getOrder(trade.offer.orderId),
+            false
+        );
 
         if (
             trade.bid.energyRate < trade.clearingPrice ||
-            trade.ask.energyRate > trade.clearingPrice
+            trade.offer.energyRate > trade.clearingPrice
         ) {
             revert PriceMismatch();
         }
 
         if (
             trade.selectedEnergy > trade.bid.energy ||
-            trade.selectedEnergy > trade.ask.energy
+            trade.selectedEnergy > trade.offer.energy
         ) {
             revert EnergyMismatch();
         }
 
-        uint256 totalCost = trade.selectedEnergy * trade.clearingPrice;
-
-        vault.transferBySettlement(
-            trade.bid.createdBy,
-            trade.ask.createdBy,
-            totalCost
-        );
-
         registry.updateStatus(trade.bid.orderId, OrderRegistry.OrderStatus.Executed);
-        registry.updateStatus(trade.ask.orderId, OrderRegistry.OrderStatus.Executed);
+        registry.updateStatus(trade.offer.orderId, OrderRegistry.OrderStatus.Executed);
 
         emit TradeSettled(
             trade.tradeId,
             trade.bid.orderId,
-            trade.ask.orderId,
+            trade.offer.orderId,
+            trade.bid.createdBy,
+            trade.offer.createdBy,
+            trade.bid.marketId,
+            trade.bid.timeSlot,
+            trade.residualBidId,
+            trade.residualOfferId,
             trade.selectedEnergy,
             trade.clearingPrice
         );

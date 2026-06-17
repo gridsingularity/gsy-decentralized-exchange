@@ -1,3 +1,4 @@
+use crate::connectors::evm_contracts::TradeSettlementContract;
 use crate::primitives::penalty_calculator::Penalty;
 use anyhow::{anyhow, Result};
 use ethers::prelude::*;
@@ -5,47 +6,6 @@ use ethers::utils::keccak256;
 use gsy_offchain_primitives::utils::parse_or_hash_bytes16;
 use std::{str::FromStr, sync::Arc};
 use tracing::{info, warn};
-
-abigen!(
-    TradeSettlementContract,
-    r#"[
-        {
-            "type": "function",
-            "name": "hasRole",
-            "stateMutability": "view",
-            "inputs": [
-                {"name": "role", "type": "bytes32"},
-                {"name": "account", "type": "address"}
-            ],
-            "outputs": [{"name": "", "type": "bool"}]
-        },
-        {
-            "type": "function",
-            "name": "submitPenalties",
-            "stateMutability": "nonpayable",
-            "inputs": [
-                {
-                    "name": "penalties",
-                    "type": "tuple[]",
-                    "components": [
-                        {"name": "penalizedActorId", "type": "bytes16"},
-                        {"name": "marketId", "type": "bytes16"},
-                        {"name": "tradeId", "type": "bytes16"},
-                        {"name": "penaltyEnergy", "type": "uint64"}
-                    ]
-                }
-            ],
-            "outputs": []
-        },
-        {
-            "type": "function",
-            "name": "penaltyEnergyByTrade",
-            "stateMutability": "view",
-            "inputs": [{"name": "tradeId", "type": "bytes16"}],
-            "outputs": [{"name": "", "type": "uint256"}]
-        }
-    ]"#
-);
 
 type EvmPenaltyTuple = ([u8; 16], [u8; 16], [u8; 16], u64);
 

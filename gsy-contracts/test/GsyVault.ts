@@ -5,29 +5,21 @@ import { bytes16Id } from "./utils";
 
 describe("GsyVault", function () {
   async function deployVaultFixture() {
-    const [admin, user, settlement, delegate] = await ethers.getSigners();
+    const [admin, user, delegate] = await ethers.getSigners();
     const GsyVault = await ethers.getContractFactory("GsyVault");
     const vault = await GsyVault.deploy();
 
-    const SETTLEMENT_ROLE = await vault.SETTLEMENT_ROLE();
-    await vault.grantRole(SETTLEMENT_ROLE, settlement.address);
-
     const ACTOR_REGISTRAR_ROLE = await vault.ACTOR_REGISTRAR_ROLE();
     const actorId = bytes16Id("actor:user");
-    const delegateActorId = bytes16Id("actor:delegate");
     await vault.registerActor(actorId, user.address);
-    await vault.registerActor(delegateActorId, delegate.address);
 
     return {
       vault,
       admin,
       user,
-      settlement,
       delegate,
-      SETTLEMENT_ROLE,
       ACTOR_REGISTRAR_ROLE,
       actorId,
-      delegateActorId,
     };
   }
 
@@ -91,29 +83,5 @@ describe("GsyVault", function () {
       .withArgs(actorId, delegate.address, true);
 
     expect(await vault.isProxy(actorId, delegate.address)).to.be.true;
-  });
-
-  it("Should allow settlement transfers only by authorized role", async function () {
-    const { vault, user, delegate, settlement, actorId, delegateActorId } =
-      await loadFixture(deployVaultFixture);
-    const amount = ethers.parseEther("1.0");
-    await vault.connect(user).deposit(actorId, { value: amount });
-
-    await expect(
-      vault
-        .connect(delegate)
-        .transferBySettlement(actorId, delegateActorId, amount),
-    ).to.be.revertedWithCustomError(vault, "AccessControlUnauthorizedAccount");
-
-    await expect(
-      vault
-        .connect(settlement)
-        .transferBySettlement(actorId, delegateActorId, amount),
-    )
-      .to.emit(vault, "TransferredBySettlement")
-      .withArgs(actorId, delegateActorId, amount);
-
-    expect(await vault.balances(actorId)).to.equal(0);
-    expect(await vault.balances(delegateActorId)).to.equal(amount);
   });
 });
