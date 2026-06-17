@@ -244,7 +244,6 @@ async fn submit_cross_orders(world: &mut MyWorld) {
 #[then("every settled trade pairs a bid and an offer from the same community market")]
 async fn verify_no_cross_market_trades(world: &mut MyWorld) {
 	let our_markets: HashSet<H256> = world.cross_communities.iter().map(|c| c.market_id).collect();
-	let expected_min = world.cross_communities.len();
 
 	info!(
 		"Watching settled trades across {} community markets; every trade must keep its bid and offer in the same market...",
@@ -258,18 +257,19 @@ async fn verify_no_cross_market_trades(world: &mut MyWorld) {
 		.await
 		.expect("Failed to subscribe to finalized blocks");
 
-	let mut same_market_trades = 0usize;
+	let mut markets_with_trades: HashSet<H256> = HashSet::new();
 	for i in 0..40 {
-		if same_market_trades >= expected_min {
+		if markets_with_trades.len() >= our_markets.len() {
 			info!(
-				"Observed {} settled trades and every one stayed within its community market.",
-				same_market_trades
+				"Observed settled trades in all {} community markets and every one stayed within its market.",
+				our_markets.len()
 			);
 			return;
 		}
 		info!(
-			"Waiting for OrderExecuted... {} same-market trade(s) so far, check {}/40",
-			same_market_trades,
+			"Waiting for OrderExecuted... {}/{} community markets have settled a same-market trade so far, check {}/40",
+			markets_with_trades.len(),
+			our_markets.len(),
 			i + 1
 		);
 
@@ -299,7 +299,7 @@ async fn verify_no_cross_market_trades(world: &mut MyWorld) {
 					bid_market, offer_market, trade.market_id
 				);
 
-				same_market_trades += 1;
+				markets_with_trades.insert(bid_market);
 				info!(
 					"Same-market trade settled in {:?} ({} energy units)",
 					trade.market_id, trade.parameters.selected_energy
@@ -308,9 +308,15 @@ async fn verify_no_cross_market_trades(world: &mut MyWorld) {
 		}
 	}
 
-	assert!(
-		same_market_trades > 0,
-		"Timeout: no trade settled for the cross-matching community markets after 40 blocks"
+	assert_eq!(
+		markets_with_trades.len(),
+		our_markets.len(),
+		"Timeout: only {} of {} community markets settled a same-market trade after 40 blocks \
+		 (markets with trades: {:?}, expected: {:?})",
+		markets_with_trades.len(),
+		our_markets.len(),
+		markets_with_trades,
+		our_markets
 	);
 }
 

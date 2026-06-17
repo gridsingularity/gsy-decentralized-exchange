@@ -237,6 +237,9 @@ pub mod pallet {
 			) || !Self::validate_energy_rate(
 				bid_offer_match.bid.bid_component.energy_rate,
 				bid_offer_match.offer.offer_component.energy_rate,
+			) || !Self::validate_market_ids(
+				bid_offer_match.bid.bid_component.market_id,
+				bid_offer_match.offer.offer_component.market_id,
 			) || !Self::validate_time_slots(
 				bid_offer_match
 					.bid
@@ -308,6 +311,13 @@ pub mod pallet {
 
 		fn validate_energy_rate(bid_energy_rate: u64, offer_energy_rate: u64) -> bool {
 			bid_energy_rate >= offer_energy_rate
+		}
+
+		fn validate_market_ids(
+			bid_market_id: gsy_primitives::v0::Hash,
+			offer_market_id: gsy_primitives::v0::Hash,
+		) -> bool {
+			bid_market_id == offer_market_id
 		}
 
 		fn validate_residual_bid(

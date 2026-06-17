@@ -1,7 +1,7 @@
 use crate::algorithms::PayAsBid;
 use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::convert::Into;
 use subxt::utils::H256;
 use subxt::config::{substrate::BlakeTwo256, Hasher};
@@ -125,10 +125,15 @@ impl PayAsBid for MatchingData {
 		bids.sort_by(|a, b| b.bid_component.energy_rate.cmp(&a.bid_component.energy_rate));
 		offers.sort_by(|a, b| a.offer_component.energy_rate.cmp(&b.offer_component.energy_rate));
 
-		let mut available_order_energy: HashMap<H256, u64> = HashMap::new();
+		let mut consumed_bids: HashSet<H256> = HashSet::new();
 
-		for offer in &mut offers {
-			for bid in &mut bids {
+		for offer in &offers {
+			for bid in &bids {
+				let bid_id = BlakeTwo256.hash_of(&bid);
+				if consumed_bids.contains(&bid_id) {
+					continue;
+				}
+
 				if offer.offer_component.area_uuid == bid.bid_component.area_uuid
 					|| offer.offer_component.market_id != bid.bid_component.market_id
 					|| offer.offer_component.time_slot != bid.bid_component.time_slot
@@ -142,28 +147,20 @@ impl PayAsBid for MatchingData {
 					continue;
 				}
 
-				let bid_id = BlakeTwo256.hash_of(&bid);
-				let offer_id = BlakeTwo256.hash_of(&offer);
-
-				let offer_energy =
-					*available_order_energy.entry(offer_id).or_insert(offer.offer_component.energy);
-				let bid_energy =
-					*available_order_energy.entry(bid_id).or_insert(bid.bid_component.energy);
-
-				let selected_energy = offer_energy.min(bid_energy);
+				let selected_energy =
+					offer.offer_component.energy.min(bid.bid_component.energy);
 
 				if selected_energy == 0 {
 					continue;
 				}
 
-				available_order_energy.insert(bid_id, bid_energy - selected_energy);
-				available_order_energy.insert(offer_id, offer_energy - selected_energy);
+				consumed_bids.insert(bid_id);
 
-				let residual_bid = if bid_energy > selected_energy {
+				let residual_bid = if bid.bid_component.energy > selected_energy {
 					Some(Bid {
 						nonce: bid.nonce.wrapping_add(1),
 						bid_component: OrderComponent {
-							energy: bid_energy - selected_energy,
+							energy: bid.bid_component.energy - selected_energy,
 							..bid.bid_component.clone()
 						},
 						..bid.clone()
@@ -172,11 +169,11 @@ impl PayAsBid for MatchingData {
 					None
 				};
 
-				let residual_offer = if offer_energy > selected_energy {
+				let residual_offer = if offer.offer_component.energy > selected_energy {
 					Some(Offer {
 						nonce: offer.nonce.wrapping_add(1),
 						offer_component: OrderComponent {
-							energy: offer_energy - selected_energy,
+							energy: offer.offer_component.energy - selected_energy,
 							..offer.offer_component.clone()
 						},
 						..offer.clone()
@@ -197,6 +194,8 @@ impl PayAsBid for MatchingData {
 				};
 
 				bid_offer_pairs.push(new_bid_offer_match);
+				// This offer is now consumed for this cycle; move to the next one.
+				break;
 			}
 		}
 		bid_offer_pairs
