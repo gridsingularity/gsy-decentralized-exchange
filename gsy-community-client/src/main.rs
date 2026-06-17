@@ -1,10 +1,12 @@
+use gsy_community_client::constants::CommunityClientConstants;
 use gsy_community_client::external_forecasts::manager::DemandForecastsManager;
 use gsy_community_client::external_measurements::manager::MeasurementsManager;
-use gsy_community_client::node_connector::orders::publish_orders;
+use gsy_community_client::node_connector::orders::{publish_orders, calculate_order_rate};
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use gsy_community_client::time_utils::{get_current_timestamp_in_secs, get_last_and_next_timeslot};
 use gsy_community_client::topology::TopologyManager;
 use gsy_offchain_primitives::constants::GlobalConstants;
+use gsy_offchain_primitives::db_api_schema::market::MarketTopologySchema;
 use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
 use reqwest::Client;
 use std::time::Duration;
@@ -47,6 +49,10 @@ impl AppState {
                 .fetch_and_forward(internal_topology.clone(), seconds_since_epoch)
                 .await;
 
+            // Gather the tradeable forecasts for every market once per slot. Only the
+            // order price changes between resubmissions within the slot, so the energy
+            // forecasts are fetched a single time here.
+            let mut market_forecasts: Vec<(MarketTopologySchema, Vec<ForecastSchema>)> = Vec::new();
             for market in internal_topology.clone() {
                 let valid_forecasts: Vec<ForecastSchema> = self
                     .demand_forecasts
@@ -84,23 +90,42 @@ impl AppState {
                 if next_timeslot_forecasts.is_empty() {
                     continue;
                 }
-                if let Err(e) = publish_orders(
-                    self.gsy_node_url.clone(),
-                    next_timeslot_forecasts,
-                    market.clone(),
-                    &dev::alice(),
-                )
-                .await
-                {
-                    error!(
-                        "Failed to publish orders for community {}: {}",
-                        market.community_name, e
-                    );
-                }
+                market_forecasts.push((market, next_timeslot_forecasts));
             }
 
-            // Sleep for 15 minutes before polling again
-            sleep(Duration::from_secs(GlobalConstants.TIME_SLOT_SEC)).await;
+            // Resubmit the orders several times within the slot, fluctuating only the
+            // price each time. The number of resubmissions is derived from the slot
+            // length and the configurable resubmission interval.
+            let interval_sec = CommunityClientConstants.ORDER_RESUBMISSION_INTERVAL_SEC.max(1);
+            let resubmissions = (GlobalConstants.TIME_SLOT_SEC / interval_sec).max(1);
+
+            for _ in 0..resubmissions {
+                let energy_rate = calculate_order_rate(
+                    CommunityClientConstants.MIN_ORDER_RATE,
+                    CommunityClientConstants.MAX_ORDER_RATE,
+                );
+
+                for (market, forecasts) in &market_forecasts {
+                    if let Err(e) = publish_orders(
+                        self.gsy_node_url.clone(),
+                        forecasts.clone(),
+                        market.clone(),
+                        energy_rate,
+                        &dev::alice(),
+                    )
+                    .await
+                    {
+                        error!(
+                            "Failed to publish orders for community {}: {}",
+                            market.community_name, e
+                        );
+                    }
+                }
+
+                // Spreading the resubmissions across the interval keeps the outer loop
+                // roughly aligned with the market slot boundaries.
+                sleep(Duration::from_secs(interval_sec)).await;
+            }
         }
     }
 }

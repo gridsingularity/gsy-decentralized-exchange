@@ -195,6 +195,7 @@ async fn submit_parallel_orders(world: &mut MyWorld) {
 			node_url.clone(),
 			vec![community.bid_forecast.clone()],
 			community.topology.clone(),
+			0.3,
 			&buyer,
 		)
 		.await
@@ -204,6 +205,7 @@ async fn submit_parallel_orders(world: &mut MyWorld) {
 			node_url.clone(),
 			vec![community.offer_forecast.clone()],
 			community.topology.clone(),
+			0.07,
 			&seller,
 		)
 		.await

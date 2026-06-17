@@ -6,25 +6,29 @@ use anyhow::{Error, Result};
 use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketTopologySchema};
 use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
 use gsy_offchain_primitives::utils::{NODE_FLOAT_SCALING_FACTOR, string_to_h256};
+use rand::Rng;
 use subxt::{OnlineClient, SubstrateConfig, utils::AccountId32};
 use subxt_signer::sr25519::Keypair;
 use tracing::info;
 
-const BID_RATE: f64 = 0.3;
-const OFFER_RATE: f64 = 0.07;
-
 #[subxt::subxt(runtime_metadata_path = "../offchain-primitives/metadata.scale")]
 pub mod gsy_node {}
+
+
+pub fn calculate_order_rate(min_rate: f64, max_rate: f64) -> f64 {
+    30f64
+}
 
 pub async fn publish_orders(
     url: String,
     forecasts: Vec<ForecastSchema>,
     market: MarketTopologySchema,
+    energy_rate: f64,
     signer: &Keypair,
 ) -> Result<(), Error> {
     let api = OnlineClient::<SubstrateConfig>::from_insecure_url(url).await?;
 
-    let input_orders = create_input_orders(forecasts, market, signer);
+    let input_orders = create_input_orders(forecasts, market, energy_rate, signer);
     let register_order_tx = gsy_node::tx()
         .orderbook_worker()
         .insert_orders(input_orders);
@@ -52,6 +56,7 @@ fn _create_bid_object(
     forecast: ForecastSchema,
     area_info: AreaTopologySchema,
     market: MarketTopologySchema,
+    energy_rate: f64,
     now: u64,
     signer: &Keypair,
 ) -> InputOrder<AccountId32> {
@@ -61,7 +66,7 @@ fn _create_bid_object(
             bid_component: OrderComponent {
                 area_uuid: string_to_h256(area_info.area_hash.clone()),
                 energy: (forecast.energy_kwh.abs() * NODE_FLOAT_SCALING_FACTOR) as u64,
-                energy_rate: (forecast.energy_kwh.abs() * BID_RATE * NODE_FLOAT_SCALING_FACTOR)
+                energy_rate: (forecast.energy_kwh.abs() * energy_rate * NODE_FLOAT_SCALING_FACTOR)
                     as u64,
                 market_id: string_to_h256(market.market_id.clone()),
                 creation_time: now,
@@ -75,6 +80,7 @@ fn _create_offer_object(
     forecast: ForecastSchema,
     area_info: AreaTopologySchema,
     market: MarketTopologySchema,
+    energy_rate: f64,
     now: u64,
     signer: &Keypair,
 ) -> InputOrder<AccountId32> {
@@ -84,7 +90,7 @@ fn _create_offer_object(
             offer_component: OrderComponent {
                 area_uuid: string_to_h256(area_info.area_hash.clone()),
                 energy: (forecast.energy_kwh.abs() * NODE_FLOAT_SCALING_FACTOR) as u64,
-                energy_rate: (forecast.energy_kwh.abs() * OFFER_RATE * NODE_FLOAT_SCALING_FACTOR)
+                energy_rate: (forecast.energy_kwh.abs() * energy_rate * NODE_FLOAT_SCALING_FACTOR)
                     as u64,
                 market_id: string_to_h256(market.market_id.clone()),
                 creation_time: now,
@@ -97,6 +103,7 @@ fn _create_offer_object(
 pub fn create_input_orders(
     forecasts: Vec<ForecastSchema>,
     market: MarketTopologySchema,
+    energy_rate: f64,
     signer: &Keypair,
 ) -> Vec<InputOrder<AccountId32>> {
     let now: u64 = get_current_timestamp_in_secs();
@@ -117,6 +124,7 @@ pub fn create_input_orders(
                 forecast,
                 area_info.unwrap().clone(),
                 market.clone(),
+                energy_rate,
                 now,
                 signer,
             ));
@@ -125,6 +133,7 @@ pub fn create_input_orders(
                 forecast,
                 area_info.unwrap().clone(),
                 market.clone(),
+                energy_rate,
                 now,
                 signer,
             ));

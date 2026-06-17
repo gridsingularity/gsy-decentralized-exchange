@@ -11,6 +11,12 @@ pub struct Constants {
     pub FEDECOM_INFLUX_DB_TOKEN: String,
     pub FEDECOM_DEMAND_FORECAST_URL: String,
     pub FEDECOM_DEMAND_FORECAST_API_KEY: String,
+    /// How often, in seconds, bids and offers are resubmitted within a market slot.
+    pub ORDER_RESUBMISSION_INTERVAL_SEC: u64,
+    /// Lower bound of the order price range, in currency units per kWh.
+    pub MIN_ORDER_RATE: f64,
+    /// Upper bound of the order price range, in currency units per kWh.
+    pub MAX_ORDER_RATE: f64,
 }
 
 impl Constants {
@@ -39,6 +45,9 @@ impl Constants {
                 "FEDECOM_DEMAND_FORECAST_API_KEY",
                 "fedecom_user".to_string(),
             ),
+            ORDER_RESUBMISSION_INTERVAL_SEC: read_env_or("ORDER_RESUBMISSION_INTERVAL_SEC", 300),
+            MIN_ORDER_RATE: read_env_or("MIN_ORDER_RATE", 0.07),
+            MAX_ORDER_RATE: read_env_or("MAX_ORDER_RATE", 0.30),
         }
     }
 }
