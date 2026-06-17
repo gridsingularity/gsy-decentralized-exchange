@@ -60,7 +60,7 @@ pub mod pallet {
 
 	#[pallet::config]
 	pub trait Config:
-		frame_system::Config
+		frame_system::Config<Hash = gsy_primitives::v0::Hash>
 		+ orderbook_registry::Config
 		+ orderbook_worker::Config
 		+ gsy_collateral::Config
@@ -238,6 +238,7 @@ pub mod pallet {
 				bid_offer_match.bid.bid_component.energy_rate,
 				bid_offer_match.offer.offer_component.energy_rate,
 			) || !Self::validate_market_ids(
+				bid_offer_match.market_id,
 				bid_offer_match.bid.bid_component.market_id,
 				bid_offer_match.offer.offer_component.market_id,
 			) || !Self::validate_time_slots(
@@ -314,10 +315,11 @@ pub mod pallet {
 		}
 
 		fn validate_market_ids(
+			match_market_id: gsy_primitives::v0::Hash,
 			bid_market_id: gsy_primitives::v0::Hash,
 			offer_market_id: gsy_primitives::v0::Hash,
 		) -> bool {
-			bid_market_id == offer_market_id
+			bid_market_id == offer_market_id && bid_market_id == match_market_id
 		}
 
 		fn validate_residual_bid(

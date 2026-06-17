@@ -86,7 +86,7 @@ pub trait Validator {
 	/// Check the energy rate of the bid against energy rate of the offer.
 	fn validate_energy_rate(energy_rate: u64, offer_energy_rate: u64) -> bool;
 	/// Check that the bid and offer belong to the same market.
-	fn validate_market_ids(bid_market_id: Hash, offer_market_id: Hash) -> bool;
+	fn validate_market_ids(match_market_id: Hash, bid_market_id: Hash, offer_market_id: Hash) -> bool;
 	/// Check the residual bid in the bid/offer match.
 	fn validate_residual_bid(
 		residual_bid: &Bid<Self::AccountId>,
