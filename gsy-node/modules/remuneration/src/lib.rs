@@ -1062,7 +1062,8 @@ pub mod pallet {
 			// Base payment is for energy actually delivered up to the requested amount
 			let base: u128 = (core::cmp::min(flexi_requested, flexi_delivered) as u128)
 				.saturating_mul(price as u128);
-			// Penalty computed via piecewise quadratic policy (energy units), then converted to value with price
+			// The piecewise penalty is an empirical score multiplied by price; saturating
+			// subtraction floors settlement at zero as a fail-safe.
 			let penalty_energy: u128 =
 				Self::calc_piecewise_quadratic_penalty(flexi_requested, flexi_delivered) as u128;
 			let penalty_value: u128 = penalty_energy.saturating_mul(price as u128);
@@ -1207,7 +1208,7 @@ pub mod pallet {
 		/// ## Update Piecewise Parameters
 		///
 		/// Updates all piecewise parameters used for flexible settlement calculations.
-		/// - `new_alpha_pw`: New alpha_piecewise value (dimensionless, integer scaling factor)
+		/// - `new_alpha_pw`: New alpha_piecewise value (raw integer empirical scale parameter)
 		/// - `new_eps1`: New eps_piecewise_1 value (fixed-point 1e6)
 		/// - `new_eps2`: New eps_piecewise_2 value (fixed-point 1e6)
 		///
@@ -1552,18 +1553,25 @@ pub mod pallet {
 			}
 		}
 
-		/// Calculate piecewise quadratic under-delivery penalty based on global parameters.
+		/// Calculate the piecewise quadratic under-delivery penalty score.
 		/// Inputs:
 		/// - flexi_requested (E_r)
 		/// - flexi_delivered (E_m)
-		/// Global params (fixed-point 1e6):
-		/// - alpha_piecewise, eps_piecewise_1, eps_piecewise_2
+		/// Global params:
+		/// - alpha_piecewise: raw integer empirical scale parameter; not fixed-point and
+		///   not divided by FIXED_POINT_SCALE; multiplies both linear and quadratic terms
+		/// - eps_piecewise_1, eps_piecewise_2: fixed-point fractions
+		///   (FIXED_POINT_SCALE = 1_000_000 = 1.0)
 		/// Piecewise rule:
-		/// e1 = E_r * (1 - eps1)
-		/// e2 = E_r * (1 - eps2)
+		/// e1 = E_r * (F - eps1) / F
+		/// e2 = E_r * (F - eps2) / F
 		/// if E_m >= e1: 0
 		/// else if e2 <= E_m < e1: alpha*(e1 - E_m)
 		/// else (E_m < e2): alpha*(e1 - E_m) + alpha*(e2 - E_m)^2
+		/// The return value is an empirical energy-like score used in settlement. The
+		/// linear and quadratic terms scale differently, so calibration assumes a fixed
+		/// energy representation. Saturating arithmetic is intentional and fail-safe
+		/// toward zero settlement; it never inflates the payment.
 		pub fn calc_piecewise_quadratic_penalty(flexi_requested: u64, flexi_delivered: u64) -> u64 {
 			let f: u128 = FIXED_POINT_SCALE as u128;
 			let er: u128 = flexi_requested as u128;

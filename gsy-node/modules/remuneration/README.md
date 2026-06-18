@@ -42,44 +42,71 @@ Parameters (all fixed-point with 1.0 = 1_000_000):
 
 ### Piecewise Quadratic Under-Delivery Penalty (PW Quad)
 
-Besides the linear/tolerance model, the module supports a piecewise quadratic penalty for under-delivery. In this variant, over-delivery does not grant any bonus (it is ignored). The final payment is:
+Besides the linear/tolerance model, the module supports a piecewise quadratic penalty for under-delivery. In this variant, over-delivery does not grant any bonus and is ignored by the penalty helper.
+
+The implementation uses fixed-point scale `F = 1_000_000` for the epsilon thresholds:
 
 ```
-base_payment = min(E_r, E_m) * price
-penalty_value = P(E_r, E_m) * price
-final_amount = max(0, base_payment - penalty_value)
+e1 = (F - eps1) * E_r / F
+e2 = (F - eps2) * E_r / F
 ```
 
-Where the penalty in energy units, P(E_r, E_m), is computed via a piecewise rule using two thresholds derived from the requested energy and configured epsilons:
+The divisions use integer truncation. The empirical penalty score `P(E_r, E_m)` is:
 
-- Fixed-point scale F = 1_000_000
-- e1 = E_r * (1 - eps1/F)
-- e2 = E_r * (1 - eps2/F)
-
-Piecewise penalty (energy units):
 ```
 if E_m >= e1:
     P = 0
 elif e2 <= E_m < e1:
-    P = alpha_piecewise * (e1 - E_m)
+    P = AlphaPiecewise * (e1 - E_m)
 else:  # E_m < e2
-    P = alpha_piecewise * (e1 - E_m) + alpha_piecewise * (e2 - E_m)^2
+    P = AlphaPiecewise * (e1 - E_m) + AlphaPiecewise * (e2 - E_m)^2
 ```
-Notes:
-- eps1 and eps2 are fixed-point fractions in [0, 1] with F = 1_000_000
-- alpha_piecewise is a dimensionless integer scaling factor applied directly in energy units
-- Over-delivery is ignored (no bonus added)
+
+Settlement then applies:
+
+```
+BasePayment = min(E_r, E_m) * price
+PenaltyValue = P(E_r, E_m) * price
+Settlement = max(0, BasePayment - PenaltyValue)
+```
+
+Parameter conventions:
+
+| Parameter | Convention |
+| --- | --- |
+| AlphaPiecewise | Raw integer empirical scaling parameter |
+| EpsPiecewise1 | Fixed-point fraction, 1_000_000 = 1.0 |
+| EpsPiecewise2 | Fixed-point fraction, 1_000_000 = 1.0 |
+
+`AlphaPiecewise = 1` means multiplier `1`. `AlphaPiecewise = 1_000_000` does not mean `1.0`.
+
+The piecewise-quadratic approach is retained as an empirical two-threshold penalty model. AlphaPiecewise is a raw integer calibration parameter rather than a fixed-point coefficient, and its numerical value is specific to the selected energy unit. The formulation is value-continuous at both thresholds and provides a linear penalty for moderate under-delivery followed by a stronger quadratic escalation for severe under-delivery. Because the quadratic term is not normalised, the model is not invariant to changes in the energy unit; pilot deployments must therefore use a fixed energy representation and calibrate the coefficient accordingly. The model is retained alongside the normalised hybrid approach because the two methods represent distinct experimental remuneration strategies.
+
+The curve is an empirical scoring rule, not a physical law. The linear term scales with the energy deviation, while the quadratic term scales with the square of the severe deviation. A single coefficient is used for both terms, so the model is not dimensionally normalised. The energy unit must be fixed by the pilot configuration and used consistently during calibration and operation. Coefficients calibrated for one energy unit cannot be reused unchanged with another; for example, changing from kWh to Wh changes the quadratic term disproportionately, so `AlphaPiecewise` must be recalibrated when the energy representation changes.
+
+The penalty is zero at and above `e1`, value-continuous at `e1`, and value- and slope-continuous at `e2`. There is a kink at `e1`, then stronger quadratic escalation below `e2`.
+
+The implementation uses saturating arithmetic. Extreme parameters or deviations may saturate the penalty score, and the final payment then floors to zero. Overflow does not create an inflated positive payment. Unlike the hybrid path, this model does not return an arithmetic-overflow error.
+
+Compared with the hybrid model, PW Quad is empirical, uses two under-delivery thresholds, applies a raw-integer alpha, and depends on energy-unit-specific calibration. The hybrid model is normalised, uses fixed-point coefficients, checked arithmetic, and signed over-delivery adjustment, making it more portable across energy scales. Retaining both models is intentional because they represent distinct modelling approaches.
+
+Example with `E_r = 100`, `E_m = 75`, `eps1 = 0.10`, `eps2 = 0.20`, and `AlphaPiecewise = 1`:
+
+```
+e1 = 90
+e2 = 80
+linear = 90 - 75 = 15
+quadratic = (80 - 75)^2 = 25
+P = 15 + 25 = 40
+```
+
+With `price = 50`, `PenaltyValue = 2_000`, `BasePayment = min(100, 75) * 50 = 3_750`, and `Settlement = 1_750`.
 
 Related storage parameters and extrinsics:
-- Storage: alpha_piecewise, eps_piecewise_1, eps_piecewise_2
-- Extrinsic: `set_piecewise_parameters(new_alpha_pw: u64, new_eps1: u64, new_eps2: u64)` (eps values are fixed-point)
-
-Settlement extrinsic using the PW Quad penalty:
-- `settle_flexibility_payment_with_pw_quad_penalty(receiver, requested, delivered, price, payment_type)`
-
-Helper (read-only) API:
-- `calc_piecewise_quadratic_penalty(requested: u64, delivered: u64) -> u64`
-  - Returns the penalty in energy units P(E_r, E_m) computed via the above piecewise rule
+- Storage: `alpha_piecewise`, `eps_piecewise_1`, `eps_piecewise_2`
+- Extrinsic: `set_piecewise_parameters(new_alpha_pw: u64, new_eps1: u64, new_eps2: u64)` (epsilon values are fixed-point)
+- Settlement extrinsic: `settle_flexibility_payment_with_pw_quad_penalty(receiver, requested, delivered, price, payment_type)`
+- Helper API: `calc_piecewise_quadratic_penalty(requested: u64, delivered: u64) -> u64`
 
 ### Hybrid Settlement Model (Corrected D6.4)
 
