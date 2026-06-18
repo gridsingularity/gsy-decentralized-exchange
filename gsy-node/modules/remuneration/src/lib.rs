@@ -327,18 +327,24 @@ pub mod pallet {
 
 	/// ## Hybrid Model Parameters
 	/// Additional parameters for the hybrid settlement model.
+	/// `GammaOverHybrid` is a signed fixed-point coefficient (1.0 = FIXED_POINT_SCALE):
+	/// positive rewards over-delivery, zero applies no adjustment, negative penalises it.
 	#[pallet::storage]
 	#[pallet::getter(fn gamma_over_hybrid)]
-	pub(super) type GammaOverHybrid<T: Config> = StorageValue<_, u64, ValueQuery>;
+	pub(super) type GammaOverHybrid<T: Config> = StorageValue<_, i64, ValueQuery>;
+	/// `GammaUnderHybrid` is a non-negative fixed-point penalty magnitude; the formula
+	/// supplies the negative sign for the under-delivery branch.
 	#[pallet::storage]
 	#[pallet::getter(fn gamma_under_hybrid)]
 	pub(super) type GammaUnderHybrid<T: Config> = StorageValue<_, u64, ValueQuery>;
+	/// `EpsHybrid` is a fixed-point tolerance fraction in [0, FIXED_POINT_SCALE].
 	#[pallet::storage]
 	#[pallet::getter(fn eps_hybrid)]
 	pub(super) type EpsHybrid<T: Config> = StorageValue<_, u64, ValueQuery>;
+	/// `NHybrid` is the integer exponent. The implemented curve is restricted to `n == 2`.
 	#[pallet::storage]
 	#[pallet::getter(fn n_hybrid)]
-	pub(super) type NHybrid<T: Config> = StorageValue<_, u64, ValueQuery>;
+	pub(super) type NHybrid<T: Config> = StorageValue<_, u32, ValueQuery>;
 
 	#[pallet::storage]
 	pub(super) type BridgeEscrows<T: Config> = StorageMap<
@@ -505,10 +511,24 @@ pub mod pallet {
 
 		/// Emitted when hybrid model parameters are updated.
 		HybridModelParametersUpdated {
-			gamma_over: u64,
+			gamma_over: i64,
 			gamma_under: u64,
 			eps: u64,
-			n: u64,
+			n: u32,
+		},
+
+		/// Emitted when a flexibility payment is settled using the hybrid adjustment model.
+		/// `net_adjustment` is the signed MONETARY adjustment (currency units, i.e. the energy
+		/// adjustment already multiplied by price) applied on top of the base payment before the
+		/// final clamp to zero.
+		HybridFlexibilitySettled {
+			requester: T::AccountId,
+			provider: T::AccountId,
+			requested: u64,
+			delivered: u64,
+			price: u64,
+			calculated_amount: BalanceOf<T>,
+			net_adjustment: i128,
 		},
 		BridgeFundsReserved {
 			bridge_id: Vec<u8>,
@@ -563,6 +583,10 @@ pub mod pallet {
 		InvalidPiecewiseThresholdOrder,
 		SettlementArithmeticOverflow,
 		AdaptiveCalculationOverflow,
+		/// Hybrid epsilon tolerance is outside the valid range [0, FIXED_POINT_SCALE].
+		InvalidHybridEpsilonRange,
+		/// Hybrid exponent is unsupported; only the quadratic case `n == 2` is implemented.
+		InvalidHybridExponent,
 	}
 
 	/// # Dispatchable Calls for the Remuneration Pallet
@@ -1230,18 +1254,28 @@ pub mod pallet {
 		///
 		/// Sets gamma_over_hybrid, gamma_under_hybrid, eps_hybrid, and n_hybrid atomically.
 		/// Custodian-only. Emits a single consolidated update event.
+		///
+		/// - `new_gamma_over`: signed fixed-point coefficient (any `i64`).
+		/// - `new_gamma_under`: non-negative fixed-point penalty magnitude (any `u64`).
+		/// - `new_eps`: fixed-point tolerance fraction; must be in `[0, FIXED_POINT_SCALE]`.
+		/// - `new_n`: integer exponent; only the quadratic case `n == 2` is supported.
+		///
+		/// All four parameters are validated before any storage write, so an invalid call leaves
+		/// every hybrid parameter unchanged and emits no event.
 		#[transactional]
 		#[pallet::weight(<T as Config>::RemunerationWeightInfo::set_hybrid_model_parameters())]
 		#[pallet::call_index(21)]
 		pub fn set_hybrid_model_parameters(
 			origin: OriginFor<T>,
-			new_gamma_over: u64,
+			new_gamma_over: i64,
 			new_gamma_under: u64,
 			new_eps: u64,
-			new_n: u64,
+			new_n: u32,
 		) -> DispatchResult {
 			let sender = ensure_signed(origin)?;
 			ensure!(Some(sender) == Custodian::<T>::get(), Error::<T>::NotCustodian);
+			ensure!(new_eps <= FIXED_POINT_SCALE, Error::<T>::InvalidHybridEpsilonRange);
+			ensure!(new_n == 2, Error::<T>::InvalidHybridExponent);
 			GammaOverHybrid::<T>::put(new_gamma_over);
 			GammaUnderHybrid::<T>::put(new_gamma_under);
 			EpsHybrid::<T>::put(new_eps);
@@ -1251,6 +1285,55 @@ pub mod pallet {
 				gamma_under: new_gamma_under,
 				eps: new_eps,
 				n: new_n,
+			});
+			Ok(())
+		}
+
+		/// ## Settle Flexibility Payment with Hybrid Adjustment
+		///
+		/// Settles a flexibility payment using the corrected hybrid net-adjustment model
+		/// (a corrected interpretation preserving the intended qualitative shape of D6.4
+		/// Equation 3, not a mathematically equivalent rewriting of the printed equation).
+		///
+		/// The over/under coefficients, tolerance and exponent are read from on-chain storage
+		/// (set via `set_hybrid_model_parameters`), never supplied by the caller.
+		#[transactional]
+		#[pallet::weight(<T as Config>::RemunerationWeightInfo::settle_flexibility_payment_with_hybrid_adjustment())]
+		#[pallet::call_index(24)]
+		pub fn settle_flexibility_payment_with_hybrid_adjustment(
+			origin: OriginFor<T>,
+			receiver: T::AccountId,
+			flexi_requested: u64,
+			flexi_delivered: u64,
+			price: u64,
+			payment_type: u8,
+		) -> DispatchResult {
+			let sender = ensure_signed(origin.clone())?;
+
+			let gamma_over = GammaOverHybrid::<T>::get();
+			let gamma_under = GammaUnderHybrid::<T>::get();
+			let eps = EpsHybrid::<T>::get();
+			let n = NHybrid::<T>::get();
+
+			let (final_amount, net_adjustment) = Self::calculate_hybrid_settlement_amount(
+				flexi_requested,
+				flexi_delivered,
+				price,
+				gamma_over,
+				gamma_under,
+				eps,
+				n,
+			)?;
+			let amount = Self::settlement_amount_into_balance(final_amount)?;
+			Self::add_payment(origin, receiver.clone(), amount, payment_type)?;
+			Self::deposit_event(Event::HybridFlexibilitySettled {
+				requester: sender,
+				provider: receiver,
+				requested: flexi_requested,
+				delivered: flexi_delivered,
+				price,
+				calculated_amount: amount,
+				net_adjustment,
 			});
 			Ok(())
 		}
@@ -1342,6 +1425,114 @@ pub mod pallet {
 					.ok_or(Error::<T>::SettlementArithmeticOverflow)?;
 				Ok(amount_after_under.saturating_sub(penalty))
 			}
+		}
+
+		/// Pure hybrid settlement calculation.
+		///
+		/// Implements the corrected interpretation of the D6.4 hybrid model (a corrected
+		/// interpretation preserving the intended qualitative shape, not a rewriting of the
+		/// printed equation). All arithmetic uses checked `u128`/`i128` intermediates; there are
+		/// no narrowing casts, no wrapping, no saturation inside the formula and no panics.
+		///
+		/// Returns `(final_settlement, net_monetary_adjustment)` where:
+		/// - `final_settlement` is a non-negative `u128` after the clamp to zero;
+		/// - `net_monetary_adjustment` is the signed monetary adjustment (currency units, i.e.
+		///   the energy adjustment already multiplied by price) added to the base payment before
+		///   clamping.
+		///
+		/// Boundaries (closed band, checked `u128`):
+		///   lower = Er * (F - eps) / F
+		///   upper = Er * (F + eps) / F
+		/// Over-delivery (Em > upper): A_over = gamma_over * (Em - upper) / F   [signed energy]
+		/// Under-delivery (Em < lower, Er > 0):
+		///   A_under = -gamma_under * (lower - Em)^2 / (F * Er)                 [n == 2 only]
+		/// Flat band (lower <= Em <= upper) and Er == 0: adjustment = 0.
+		/// Settlement = max(0, min(Er, Em) * p + A * p), truncating integer division.
+		pub(crate) fn calculate_hybrid_settlement_amount(
+			flexi_requested: u64,
+			flexi_delivered: u64,
+			price: u64,
+			gamma_over: i64,
+			gamma_under: u64,
+			eps: u64,
+			n: u32,
+		) -> Result<(u128, i128), Error<T>> {
+			// Defensive validation so the helper is safe even if called outside the setter.
+			ensure!(eps <= FIXED_POINT_SCALE, Error::<T>::InvalidHybridEpsilonRange);
+			ensure!(n == 2, Error::<T>::InvalidHybridExponent);
+
+			let f = u128::from(FIXED_POINT_SCALE);
+			let requested = u128::from(flexi_requested);
+			let delivered = u128::from(flexi_delivered);
+			let price_u = u128::from(price);
+			let eps_u = u128::from(eps);
+
+			// Base payment preserves the existing convention: min(Er, Em) * p.
+			let base = core::cmp::min(requested, delivered)
+				.checked_mul(price_u)
+				.ok_or(Error::<T>::SettlementArithmeticOverflow)?;
+
+			// Closed tolerance band boundaries. `F + eps` cannot overflow u128.
+			let lower = requested
+				.checked_mul(f.checked_sub(eps_u).ok_or(Error::<T>::SettlementArithmeticOverflow)?)
+				.and_then(|value| value.checked_div(f))
+				.ok_or(Error::<T>::SettlementArithmeticOverflow)?;
+			let upper = requested
+				.checked_mul(f.checked_add(eps_u).ok_or(Error::<T>::SettlementArithmeticOverflow)?)
+				.and_then(|value| value.checked_div(f))
+				.ok_or(Error::<T>::SettlementArithmeticOverflow)?;
+
+			// Signed energy adjustment. Er == 0 collapses the band to a point; define A = 0.
+			let adjustment_energy: i128 = if requested == 0 {
+				0
+			} else if delivered > upper {
+				let over_deviation =
+					delivered.checked_sub(upper).ok_or(Error::<T>::SettlementArithmeticOverflow)?;
+				let over_deviation_i = i128::try_from(over_deviation)
+					.map_err(|_| Error::<T>::SettlementArithmeticOverflow)?;
+				i128::from(gamma_over)
+					.checked_mul(over_deviation_i)
+					.and_then(|value| value.checked_div(i128::from(FIXED_POINT_SCALE)))
+					.ok_or(Error::<T>::SettlementArithmeticOverflow)?
+			} else if delivered < lower {
+				let under_deviation =
+					lower.checked_sub(delivered).ok_or(Error::<T>::SettlementArithmeticOverflow)?;
+				let under_deviation_squared = under_deviation
+					.checked_mul(under_deviation)
+					.ok_or(Error::<T>::SettlementArithmeticOverflow)?;
+				let denominator =
+					f.checked_mul(requested).ok_or(Error::<T>::SettlementArithmeticOverflow)?;
+				let magnitude = u128::from(gamma_under)
+					.checked_mul(under_deviation_squared)
+					.and_then(|value| value.checked_div(denominator))
+					.ok_or(Error::<T>::SettlementArithmeticOverflow)?;
+				let magnitude_i = i128::try_from(magnitude)
+					.map_err(|_| Error::<T>::SettlementArithmeticOverflow)?;
+				magnitude_i.checked_neg().ok_or(Error::<T>::SettlementArithmeticOverflow)?
+			} else {
+				0
+			};
+
+			// Convert the signed energy adjustment to a signed monetary adjustment.
+			let price_i =
+				i128::try_from(price_u).map_err(|_| Error::<T>::SettlementArithmeticOverflow)?;
+			let adjustment_value = adjustment_energy
+				.checked_mul(price_i)
+				.ok_or(Error::<T>::SettlementArithmeticOverflow)?;
+
+			let base_i =
+				i128::try_from(base).map_err(|_| Error::<T>::SettlementArithmeticOverflow)?;
+			let signed_final = base_i
+				.checked_add(adjustment_value)
+				.ok_or(Error::<T>::SettlementArithmeticOverflow)?;
+
+			let final_amount = if signed_final <= 0 {
+				0
+			} else {
+				u128::try_from(signed_final)
+					.map_err(|_| Error::<T>::SettlementArithmeticOverflow)?
+			};
+			Ok((final_amount, adjustment_value))
 		}
 
 		fn checked_adaptive_factor(
@@ -1493,8 +1684,8 @@ pub mod pallet {
 			)
 		}
 
-		/// Query hybrid model parameters.
-		pub fn query_hybrid_model_params() -> (u64, u64, u64, u64) {
+		/// Query hybrid model parameters as `(gamma_over, gamma_under, eps, n)`.
+		pub fn query_hybrid_model_params() -> (i64, u64, u64, u32) {
 			(
 				Self::gamma_over_hybrid(),
 				Self::gamma_under_hybrid(),

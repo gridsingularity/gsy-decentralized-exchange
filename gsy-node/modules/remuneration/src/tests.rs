@@ -2664,23 +2664,87 @@ mod pw_quad_penalty_tests {
 mod hybrid_model_tests {
 	use super::*;
 
+	fn set_custodian() {
+		System::set_block_number(1);
+		assert_ok!(Remuneration::update_custodian(
+			RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+			ALICE_THE_CUSTODIAN
+		));
+	}
+
+	fn has_hybrid_params_event(gamma_over: i64, gamma_under: u64, eps: u64, n: u32) -> bool {
+		System::events().iter().any(|record| {
+			matches!(
+				record.event,
+				RuntimeEvent::Remuneration(crate::Event::HybridModelParametersUpdated {
+					gamma_over: go,
+					gamma_under: gu,
+					eps: e,
+					n: nn,
+				}) if go == gamma_over && gu == gamma_under && e == eps && nn == n
+			)
+		})
+	}
+
+	fn has_any_hybrid_params_event() -> bool {
+		System::events().iter().any(|record| {
+			matches!(
+				record.event,
+				RuntimeEvent::Remuneration(crate::Event::HybridModelParametersUpdated { .. })
+			)
+		})
+	}
+
+	fn has_hybrid_settled_event(
+		requested: u64,
+		delivered: u64,
+		price: u64,
+		calculated_amount: u128,
+		net_adjustment: i128,
+	) -> bool {
+		System::events().iter().any(|record| {
+			matches!(
+				record.event,
+				RuntimeEvent::Remuneration(crate::Event::HybridFlexibilitySettled {
+					requested: req,
+					delivered: del,
+					price: pr,
+					calculated_amount: amt,
+					net_adjustment: net,
+					..
+				}) if req == requested
+					&& del == delivered
+					&& pr == price
+					&& amt == calculated_amount
+					&& net == net_adjustment
+			)
+		})
+	}
+
+	// ---------------------------------------------------------------------
+	// Hybrid parameter setter / getter tests
+	// ---------------------------------------------------------------------
+
+	#[test]
+	fn hybrid_model_parameters_defaults_are_zero() {
+		new_test_ext().execute_with(|| {
+			assert_eq!(Remuneration::gamma_over_hybrid(), 0i64);
+			assert_eq!(Remuneration::gamma_under_hybrid(), 0u64);
+			assert_eq!(Remuneration::eps_hybrid(), 0u64);
+			assert_eq!(Remuneration::n_hybrid(), 0u32);
+			assert_eq!(Remuneration::query_hybrid_model_params(), (0i64, 0u64, 0u64, 0u32));
+		});
+	}
+
 	#[test]
 	fn hybrid_model_parameters_management() {
 		new_test_ext().execute_with(|| {
-			assert_ok!(Remuneration::update_custodian(
-				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
-				ALICE_THE_CUSTODIAN
-			));
-			// Defaults
-			assert_eq!(Remuneration::gamma_over_hybrid(), 0);
-			assert_eq!(Remuneration::gamma_under_hybrid(), 0);
-			assert_eq!(Remuneration::eps_hybrid(), 0);
-			assert_eq!(Remuneration::n_hybrid(), 0);
-			// Update
-			let go = 300_000u64;
-			let gu = 500_000u64;
-			let eps = 100_000u64;
-			let n = 2u64;
+			set_custodian();
+			// Update with signed gamma_over and quadratic exponent.
+			let go: i64 = 300_000;
+			let gu: u64 = 500_000;
+			let eps: u64 = 100_000;
+			let n: u32 = 2;
 			assert_ok!(Remuneration::set_hybrid_model_parameters(
 				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
 				go,
@@ -2693,30 +2757,680 @@ mod hybrid_model_tests {
 			assert_eq!(Remuneration::eps_hybrid(), eps);
 			assert_eq!(Remuneration::n_hybrid(), n);
 			assert_eq!(Remuneration::query_hybrid_model_params(), (go, gu, eps, n));
+			assert!(has_hybrid_params_event(go, gu, eps, n));
+		});
+	}
+
+	#[test]
+	fn hybrid_model_parameters_accepts_positive_zero_and_negative_gamma_over() {
+		new_test_ext().execute_with(|| {
+			set_custodian();
+			for go in [1_000_000i64, 0i64, -1_000_000i64] {
+				assert_ok!(Remuneration::set_hybrid_model_parameters(
+					RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+					go,
+					500_000,
+					100_000,
+					2
+				));
+				assert_eq!(Remuneration::gamma_over_hybrid(), go);
+			}
+		});
+	}
+
+	#[test]
+	fn hybrid_model_parameters_accepts_large_gamma_under() {
+		new_test_ext().execute_with(|| {
+			set_custodian();
+			assert_ok!(Remuneration::set_hybrid_model_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				0,
+				u64::MAX,
+				0,
+				2
+			));
+			assert_eq!(Remuneration::gamma_under_hybrid(), u64::MAX);
+		});
+	}
+
+	#[test]
+	fn hybrid_model_parameters_accepts_eps_zero_and_eps_f() {
+		new_test_ext().execute_with(|| {
+			set_custodian();
+			assert_ok!(Remuneration::set_hybrid_model_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				0,
+				0,
+				0,
+				2
+			));
+			assert_eq!(Remuneration::eps_hybrid(), 0);
+			assert_ok!(Remuneration::set_hybrid_model_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				0,
+				0,
+				FIXED_POINT_SCALE,
+				2
+			));
+			assert_eq!(Remuneration::eps_hybrid(), FIXED_POINT_SCALE);
+		});
+	}
+
+	#[test]
+	fn hybrid_model_parameters_rejects_eps_above_f_atomically() {
+		new_test_ext().execute_with(|| {
+			set_custodian();
+			// Establish a known valid baseline.
+			assert_ok!(Remuneration::set_hybrid_model_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				123,
+				456,
+				789,
+				2
+			));
+			let before = Remuneration::query_hybrid_model_params();
+			let events_before = event_count();
+			assert_noop!(
+				Remuneration::set_hybrid_model_parameters(
+					RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+					999,
+					999,
+					FIXED_POINT_SCALE + 1,
+					2
+				),
+				Error::<Test>::InvalidHybridEpsilonRange
+			);
+			// All four parameters preserved, no new event.
+			assert_eq!(Remuneration::query_hybrid_model_params(), before);
+			assert_eq!(event_count(), events_before);
+		});
+	}
+
+	#[test]
+	fn hybrid_model_parameters_accepts_only_quadratic_exponent() {
+		new_test_ext().execute_with(|| {
+			set_custodian();
+			assert_ok!(Remuneration::set_hybrid_model_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				0,
+				0,
+				0,
+				2
+			));
+			assert_eq!(Remuneration::n_hybrid(), 2);
+		});
+	}
+
+	#[test]
+	fn hybrid_model_parameters_rejects_non_quadratic_exponents_atomically() {
+		new_test_ext().execute_with(|| {
+			set_custodian();
+			assert_ok!(Remuneration::set_hybrid_model_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				11,
+				22,
+				33,
+				2
+			));
+			let before = Remuneration::query_hybrid_model_params();
+			for bad_n in [0u32, 1u32, 3u32] {
+				let events_before = event_count();
+				assert_noop!(
+					Remuneration::set_hybrid_model_parameters(
+						RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+						100,
+						200,
+						300,
+						bad_n
+					),
+					Error::<Test>::InvalidHybridExponent
+				);
+				assert_eq!(Remuneration::query_hybrid_model_params(), before);
+				assert_eq!(event_count(), events_before);
+			}
 		});
 	}
 
 	#[test]
 	fn hybrid_model_parameters_not_custodian_fails() {
 		new_test_ext().execute_with(|| {
-			assert_ok!(Remuneration::update_custodian(
-				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
-				ALICE_THE_CUSTODIAN
-			));
+			set_custodian();
+			let events_before = event_count();
 			assert_noop!(
 				Remuneration::set_hybrid_model_parameters(
 					RawOrigin::Signed(BOB_THE_CHEATER).into(),
 					1,
 					2,
 					3,
-					4
+					2
 				),
 				Error::<Test>::NotCustodian
 			);
-			assert_eq!(Remuneration::gamma_over_hybrid(), 0);
-			assert_eq!(Remuneration::gamma_under_hybrid(), 0);
-			assert_eq!(Remuneration::eps_hybrid(), 0);
-			assert_eq!(Remuneration::n_hybrid(), 0);
+			assert_eq!(Remuneration::query_hybrid_model_params(), (0i64, 0u64, 0u64, 0u32));
+			assert!(!has_any_hybrid_params_event());
+			assert_eq!(event_count(), events_before);
+		});
+	}
+
+	#[test]
+	fn hybrid_model_query_returns_signed_and_typed_values() {
+		new_test_ext().execute_with(|| {
+			set_custodian();
+			assert_ok!(Remuneration::set_hybrid_model_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				-750_000,
+				900_000,
+				250_000,
+				2
+			));
+			let (go, gu, eps, n) = Remuneration::query_hybrid_model_params();
+			assert_eq!(go, -750_000i64);
+			assert_eq!(gu, 900_000u64);
+			assert_eq!(eps, 250_000u64);
+			assert_eq!(n, 2u32);
+		});
+	}
+
+	// ---------------------------------------------------------------------
+	// Pure calculation tests (calculate_hybrid_settlement_amount)
+	// ---------------------------------------------------------------------
+	// Reference values for Er=100, eps=100_000 (10%): lower=90, upper=110.
+
+	#[test]
+	fn hybrid_calc_exact_lower_boundary_is_zero_adjustment() {
+		new_test_ext().execute_with(|| {
+			// Em == lower == 90 -> flat band, adjustment 0, settlement = min(100,90)*5 = 450.
+			let res = Remuneration::calculate_hybrid_settlement_amount(
+				100, 90, 5, 1_000_000, 1_000_000, 100_000, 2,
+			)
+			.unwrap();
+			assert_eq!(res, (450u128, 0i128));
+		});
+	}
+
+	#[test]
+	fn hybrid_calc_exact_upper_boundary_is_zero_adjustment() {
+		new_test_ext().execute_with(|| {
+			// Em == upper == 110 -> flat band, adjustment 0, settlement = min(100,110)*5 = 500.
+			let res = Remuneration::calculate_hybrid_settlement_amount(
+				100, 110, 5, 1_000_000, 1_000_000, 100_000, 2,
+			)
+			.unwrap();
+			assert_eq!(res, (500u128, 0i128));
+		});
+	}
+
+	#[test]
+	fn hybrid_calc_inside_band_is_zero_adjustment() {
+		new_test_ext().execute_with(|| {
+			// Em == 100 in [90,110] -> adjustment 0, settlement = 100*5 = 500.
+			let res = Remuneration::calculate_hybrid_settlement_amount(
+				100, 100, 5, 1_000_000, 1_000_000, 100_000, 2,
+			)
+			.unwrap();
+			assert_eq!(res, (500u128, 0i128));
+		});
+	}
+
+	#[test]
+	fn hybrid_calc_positive_gamma_over_rewards_over_delivery() {
+		new_test_ext().execute_with(|| {
+			// Em=120 > upper=110, over_dev=10, A_over=+10 energy, *price 5 => +50.
+			// base = min(100,120)*5 = 500 => final 550.
+			let res = Remuneration::calculate_hybrid_settlement_amount(
+				100, 120, 5, 1_000_000, 0, 100_000, 2,
+			)
+			.unwrap();
+			assert_eq!(res, (550u128, 50i128));
+		});
+	}
+
+	#[test]
+	fn hybrid_calc_zero_gamma_over_gives_no_over_adjustment() {
+		new_test_ext().execute_with(|| {
+			let res =
+				Remuneration::calculate_hybrid_settlement_amount(100, 120, 5, 0, 0, 100_000, 2)
+					.unwrap();
+			assert_eq!(res, (500u128, 0i128));
+		});
+	}
+
+	#[test]
+	fn hybrid_calc_negative_gamma_over_penalises_over_delivery() {
+		new_test_ext().execute_with(|| {
+			// A_over=-10 energy, *5 => -50, base 500 => 450.
+			let res = Remuneration::calculate_hybrid_settlement_amount(
+				100, 120, 5, -1_000_000, 0, 100_000, 2,
+			)
+			.unwrap();
+			assert_eq!(res, (450u128, -50i128));
+		});
+	}
+
+	#[test]
+	fn hybrid_calc_quadratic_under_delivery_penalty() {
+		new_test_ext().execute_with(|| {
+			// Em=80 < lower=90, under_dev=10, magnitude=1e6*100/(1e6*100)=1 energy.
+			// *price 5 => -5; base = min(100,80)*5 = 400 => 395.
+			let res = Remuneration::calculate_hybrid_settlement_amount(
+				100, 80, 5, 0, 1_000_000, 100_000, 2,
+			)
+			.unwrap();
+			assert_eq!(res, (395u128, -5i128));
+		});
+	}
+
+	#[test]
+	fn hybrid_calc_penalty_grows_nonlinearly() {
+		new_test_ext().execute_with(|| {
+			// under_dev 10 -> energy magnitude 1; under_dev 20 -> magnitude 4 (quadratic).
+			let r1 = Remuneration::calculate_hybrid_settlement_amount(
+				100, 80, 1, 0, 1_000_000, 100_000, 2,
+			)
+			.unwrap();
+			let r2 = Remuneration::calculate_hybrid_settlement_amount(
+				100, 70, 1, 0, 1_000_000, 100_000, 2,
+			)
+			.unwrap();
+			// net adjustments: -1 and -4 (monetary == energy because price=1).
+			assert_eq!(r1.1, -1i128);
+			assert_eq!(r2.1, -4i128);
+		});
+	}
+
+	#[test]
+	fn hybrid_calc_clamps_to_zero_when_penalty_exceeds_base() {
+		new_test_ext().execute_with(|| {
+			// Er=100, Em=10, eps=0 => lower=upper=100, under_dev=90, magnitude=1e6*8100/1e8=81.
+			// base = min(100,10)*1 = 10; final = max(0, 10-81) = 0.
+			let res =
+				Remuneration::calculate_hybrid_settlement_amount(100, 10, 1, 0, 1_000_000, 0, 2)
+					.unwrap();
+			assert_eq!(res, (0u128, -81i128));
+		});
+	}
+
+	#[test]
+	fn hybrid_calc_requested_zero_yields_zero() {
+		new_test_ext().execute_with(|| {
+			let res = Remuneration::calculate_hybrid_settlement_amount(
+				0, 100, 5, 1_000_000, 1_000_000, 100_000, 2,
+			)
+			.unwrap();
+			assert_eq!(res, (0u128, 0i128));
+		});
+	}
+
+	#[test]
+	fn hybrid_calc_delivered_zero_under_penalty() {
+		new_test_ext().execute_with(|| {
+			// Em=0 < lower=90, under_dev=90, magnitude=1e6*8100/1e8=81, *5 => -405.
+			// base = min(100,0)*5 = 0 => final clamps to 0.
+			let res = Remuneration::calculate_hybrid_settlement_amount(
+				100, 0, 5, 0, 1_000_000, 100_000, 2,
+			)
+			.unwrap();
+			assert_eq!(res, (0u128, -405i128));
+		});
+	}
+
+	#[test]
+	fn hybrid_calc_price_zero_yields_zero() {
+		new_test_ext().execute_with(|| {
+			let res = Remuneration::calculate_hybrid_settlement_amount(
+				100, 120, 0, 1_000_000, 1_000_000, 100_000, 2,
+			)
+			.unwrap();
+			assert_eq!(res, (0u128, 0i128));
+		});
+	}
+
+	#[test]
+	fn hybrid_calc_eps_zero_collapses_band() {
+		new_test_ext().execute_with(|| {
+			// eps=0 => lower=upper=Er=100. Em=100 in band => 500.
+			let res = Remuneration::calculate_hybrid_settlement_amount(
+				100, 100, 5, 1_000_000, 1_000_000, 0, 2,
+			)
+			.unwrap();
+			assert_eq!(res, (500u128, 0i128));
+		});
+	}
+
+	#[test]
+	fn hybrid_calc_eps_full_scale_wide_band() {
+		new_test_ext().execute_with(|| {
+			// eps=F => lower=0, upper=2*Er=200. Em=150 in band => settlement = min(100,150)*5 = 500.
+			let res = Remuneration::calculate_hybrid_settlement_amount(
+				100,
+				150,
+				5,
+				1_000_000,
+				1_000_000,
+				FIXED_POINT_SCALE,
+				2,
+			)
+			.unwrap();
+			assert_eq!(res, (500u128, 0i128));
+		});
+	}
+
+	#[test]
+	fn hybrid_calc_large_representable_values() {
+		new_test_ext().execute_with(|| {
+			// Er=Em=1e9, price=1e6, eps=0 => flat band, base = 1e9*1e6 = 1e15 (no truncation).
+			let res = Remuneration::calculate_hybrid_settlement_amount(
+				1_000_000_000,
+				1_000_000_000,
+				1_000_000,
+				0,
+				0,
+				0,
+				2,
+			)
+			.unwrap();
+			assert_eq!(res, (1_000_000_000_000_000u128, 0i128));
+		});
+	}
+
+	#[test]
+	fn hybrid_calc_overflow_returns_error() {
+		new_test_ext().execute_with(|| {
+			// Force overflow in the monetary multiplication step.
+			let res = Remuneration::calculate_hybrid_settlement_amount(
+				1,
+				100_000_000_000_000,
+				u64::MAX,
+				1_000_000_000_000,
+				0,
+				0,
+				2,
+			);
+			assert!(matches!(res, Err(Error::<Test>::SettlementArithmeticOverflow)));
+		});
+	}
+
+	#[test]
+	fn hybrid_calc_extreme_gamma_in_band_does_not_panic() {
+		new_test_ext().execute_with(|| {
+			// In-band: adjustment is 0 regardless of gamma magnitudes.
+			let res = Remuneration::calculate_hybrid_settlement_amount(
+				100,
+				100,
+				5,
+				i64::MAX,
+				u64::MAX,
+				0,
+				2,
+			)
+			.unwrap();
+			assert_eq!(res, (500u128, 0i128));
+		});
+	}
+
+	#[test]
+	fn hybrid_calc_continuity_at_boundaries() {
+		new_test_ext().execute_with(|| {
+			// Just inside vs at the lower boundary differ by integer-rounding precision only.
+			let at_lower = Remuneration::calculate_hybrid_settlement_amount(
+				100, 90, 5, 1_000_000, 1_000_000, 100_000, 2,
+			)
+			.unwrap();
+			let below_lower = Remuneration::calculate_hybrid_settlement_amount(
+				100, 89, 5, 1_000_000, 1_000_000, 100_000, 2,
+			)
+			.unwrap();
+			assert_eq!(at_lower.1, 0i128);
+			// under_dev=1 => magnitude = 1e6*1/(1e6*100) = 0 (truncates), so net adjustment 0 too.
+			assert_eq!(below_lower.1, 0i128);
+
+			// At the upper boundary the over deviation is zero -> adjustment 0.
+			let at_upper = Remuneration::calculate_hybrid_settlement_amount(
+				100, 110, 5, 1_000_000, 1_000_000, 100_000, 2,
+			)
+			.unwrap();
+			let above_upper = Remuneration::calculate_hybrid_settlement_amount(
+				100, 111, 5, 1_000_000, 0, 100_000, 2,
+			)
+			.unwrap();
+			assert_eq!(at_upper.1, 0i128);
+			// over_dev=1 => A_over = 1, *5 => +5.
+			assert_eq!(above_upper.1, 5i128);
+		});
+	}
+
+	#[test]
+	fn hybrid_calc_defensive_rejects_bad_eps_and_exponent() {
+		new_test_ext().execute_with(|| {
+			assert!(matches!(
+				Remuneration::calculate_hybrid_settlement_amount(
+					100,
+					100,
+					5,
+					0,
+					0,
+					FIXED_POINT_SCALE + 1,
+					2
+				),
+				Err(Error::<Test>::InvalidHybridEpsilonRange)
+			));
+			assert!(matches!(
+				Remuneration::calculate_hybrid_settlement_amount(100, 100, 5, 0, 0, 0, 3),
+				Err(Error::<Test>::InvalidHybridExponent)
+			));
+		});
+	}
+
+	// ---------------------------------------------------------------------
+	// End-to-end extrinsic tests
+	// ---------------------------------------------------------------------
+
+	fn set_hybrid_params(go: i64, gu: u64, eps: u64, n: u32) {
+		assert_ok!(Remuneration::set_hybrid_model_parameters(
+			RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+			go,
+			gu,
+			eps,
+			n
+		));
+	}
+
+	#[test]
+	fn hybrid_settlement_flat_band_succeeds_and_records_payment() {
+		new_test_ext().execute_with(|| {
+			setup_intra_community_settlement(1_000, 0);
+			set_hybrid_params(0, 0, 0, 2);
+			assert_ok!(Remuneration::settle_flexibility_payment_with_hybrid_adjustment(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				100,
+				100,
+				5,
+				INTRA_COMMUNITY
+			));
+			assert_eq!(Remuneration::balances(PROSUMER1), 500);
+			assert_eq!(Remuneration::balances(PROSUMER2), 500);
+			// Payment ledger entry exists (1_000ms timestamp -> 1s).
+			let now = 1u32;
+			assert!(crate::Payments::<Test>::contains_key((PROSUMER1, PROSUMER2, now)));
+			assert!(has_hybrid_settled_event(100, 100, 5, 500, 0));
+		});
+	}
+
+	#[test]
+	fn hybrid_settlement_positive_over_delivery() {
+		new_test_ext().execute_with(|| {
+			setup_intra_community_settlement(1_000, 0);
+			set_hybrid_params(1_000_000, 0, 100_000, 2);
+			assert_ok!(Remuneration::settle_flexibility_payment_with_hybrid_adjustment(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				100,
+				120,
+				5,
+				INTRA_COMMUNITY
+			));
+			assert_eq!(Remuneration::balances(PROSUMER1), 450);
+			assert_eq!(Remuneration::balances(PROSUMER2), 550);
+			assert!(has_hybrid_settled_event(100, 120, 5, 550, 50));
+		});
+	}
+
+	#[test]
+	fn hybrid_settlement_negative_over_delivery() {
+		new_test_ext().execute_with(|| {
+			setup_intra_community_settlement(1_000, 0);
+			set_hybrid_params(-1_000_000, 0, 100_000, 2);
+			assert_ok!(Remuneration::settle_flexibility_payment_with_hybrid_adjustment(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				100,
+				120,
+				5,
+				INTRA_COMMUNITY
+			));
+			assert_eq!(Remuneration::balances(PROSUMER1), 550);
+			assert_eq!(Remuneration::balances(PROSUMER2), 450);
+			assert!(has_hybrid_settled_event(100, 120, 5, 450, -50));
+		});
+	}
+
+	#[test]
+	fn hybrid_settlement_nonlinear_under_delivery() {
+		new_test_ext().execute_with(|| {
+			setup_intra_community_settlement(1_000, 0);
+			set_hybrid_params(0, 1_000_000, 100_000, 2);
+			// Em=70 => under_dev=20 => magnitude 4 energy => -20 monetary; base 350 => 330.
+			assert_ok!(Remuneration::settle_flexibility_payment_with_hybrid_adjustment(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				100,
+				70,
+				5,
+				INTRA_COMMUNITY
+			));
+			assert_eq!(Remuneration::balances(PROSUMER1), 670);
+			assert_eq!(Remuneration::balances(PROSUMER2), 330);
+			assert!(has_hybrid_settled_event(100, 70, 5, 330, -20));
+		});
+	}
+
+	#[test]
+	fn hybrid_settlement_clamps_to_zero() {
+		new_test_ext().execute_with(|| {
+			setup_intra_community_settlement(1_000, 0);
+			set_hybrid_params(0, 1_000_000, 0, 2);
+			// Er=100, Em=10, price=1, eps=0 => final 0, net -81.
+			assert_ok!(Remuneration::settle_flexibility_payment_with_hybrid_adjustment(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				100,
+				10,
+				1,
+				INTRA_COMMUNITY
+			));
+			assert_eq!(Remuneration::balances(PROSUMER1), 1_000);
+			assert_eq!(Remuneration::balances(PROSUMER2), 0);
+			assert!(has_hybrid_settled_event(100, 10, 1, 0, -81));
+		});
+	}
+
+	#[test]
+	fn hybrid_settlement_insufficient_balance_fails_atomically() {
+		new_test_ext().execute_with(|| {
+			setup_intra_community_settlement(100, 0);
+			set_hybrid_params(0, 0, 0, 2);
+			let events_before = event_count();
+			// Flat band base = 100*5 = 500 > sender balance 100.
+			assert_noop!(
+				Remuneration::settle_flexibility_payment_with_hybrid_adjustment(
+					RawOrigin::Signed(PROSUMER1).into(),
+					PROSUMER2,
+					100,
+					100,
+					5,
+					INTRA_COMMUNITY
+				),
+				Error::<Test>::InsufficientBalance
+			);
+			assert_eq!(Remuneration::balances(PROSUMER1), 100);
+			assert_eq!(Remuneration::balances(PROSUMER2), 0);
+			assert_eq!(event_count(), events_before);
+		});
+	}
+
+	#[test]
+	fn hybrid_settlement_arithmetic_failure_is_atomic() {
+		new_test_ext().execute_with(|| {
+			setup_intra_community_settlement(1_000, 0);
+			set_hybrid_params(1_000_000_000_000, 0, 0, 2);
+			let events_before = event_count();
+			let now = 1u32;
+			assert_noop!(
+				Remuneration::settle_flexibility_payment_with_hybrid_adjustment(
+					RawOrigin::Signed(PROSUMER1).into(),
+					PROSUMER2,
+					1,
+					100_000_000_000_000,
+					u64::MAX,
+					INTRA_COMMUNITY
+				),
+				Error::<Test>::SettlementArithmeticOverflow
+			);
+			assert_eq!(Remuneration::balances(PROSUMER1), 1_000);
+			assert_eq!(Remuneration::balances(PROSUMER2), 0);
+			assert!(!crate::Payments::<Test>::contains_key((PROSUMER1, PROSUMER2, now)));
+			assert_eq!(event_count(), events_before);
+		});
+	}
+
+	#[test]
+	fn hybrid_settlement_large_value_not_truncated() {
+		new_test_ext().execute_with(|| {
+			setup_intra_community_settlement(20_000_000_000, 0);
+			set_hybrid_params(0, 0, 0, 2);
+			// base = 1_000_000 * 10_000 = 10_000_000_000 > u32::MAX.
+			assert_ok!(Remuneration::settle_flexibility_payment_with_hybrid_adjustment(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				1_000_000,
+				1_000_000,
+				10_000,
+				INTRA_COMMUNITY
+			));
+			assert_eq!(Remuneration::balances(PROSUMER2), 10_000_000_000u128);
+			assert!(Remuneration::balances(PROSUMER2) > u128::from(u32::MAX));
+		});
+	}
+
+	#[test]
+	fn hybrid_settlement_reads_parameters_from_storage() {
+		new_test_ext().execute_with(|| {
+			setup_intra_community_settlement(2_000, 0);
+			// First with a reward coefficient.
+			set_hybrid_params(1_000_000, 0, 100_000, 2);
+			assert_ok!(Remuneration::settle_flexibility_payment_with_hybrid_adjustment(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				100,
+				120,
+				5,
+				INTRA_COMMUNITY
+			));
+			// 550 transferred (base 500 + bonus 50), proving stored gamma_over was applied.
+			assert_eq!(Remuneration::balances(PROSUMER2), 550);
+			// Now update storage to a penalty coefficient and settle again.
+			set_hybrid_params(-1_000_000, 0, 100_000, 2);
+			assert_ok!(Remuneration::settle_flexibility_payment_with_hybrid_adjustment(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				100,
+				120,
+				5,
+				INTRA_COMMUNITY
+			));
+			// Second settlement transfers 450 (base 500 - penalty 50): total received 1_000.
+			assert_eq!(Remuneration::balances(PROSUMER2), 1_000);
 		});
 	}
 }

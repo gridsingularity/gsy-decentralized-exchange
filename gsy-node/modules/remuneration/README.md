@@ -81,6 +81,138 @@ Helper (read-only) API:
 - `calc_piecewise_quadratic_penalty(requested: u64, delivered: u64) -> u64`
   - Returns the penalty in energy units P(E_r, E_m) computed via the above piecewise rule
 
+### Hybrid Settlement Model (Corrected D6.4)
+
+The hybrid model combines a *tolerance band* with an asymmetric over/under-delivery
+net adjustment applied on top of the base payment.
+
+> **Interpretation note.** D6.4 Equation 3 as printed is mathematically inconsistent
+> (it raises a negative base to a fractional power, flips signs, is discontinuous at the
+> tolerance edges and is dimensionally ambiguous). The implementation below is a
+> **corrected interpretation preserving the intended qualitative shape** of D6.4 — it is
+> **not** a mathematically equivalent rewriting of the printed equation, and it does
+> **not** implement fractional exponents.
+
+#### Fixed-point convention
+
+All coefficients use the module-wide fixed-point scale `F = FIXED_POINT_SCALE = 1_000_000`
+(so `1_000_000` represents `1.0`). Energies (`E_r`, `E_m`), price `p` and balances are
+plain integers. All intermediate arithmetic uses checked `u128`/`i128` operations; there
+are no narrowing casts, no wrapping, no floating point and no panics.
+
+#### Boundaries (closed tolerance band)
+
+```
+lower = E_r * (F - eps) / F
+upper = E_r * (F + eps) / F
+```
+
+The band `lower <= E_m <= upper` is **closed**: at either exact boundary the net
+adjustment is exactly zero.
+
+#### Net energy adjustment A
+
+- Over-delivery, `E_m > upper`:
+
+```
+A_over = gamma_over * (E_m - upper) / F          (signed energy)
+```
+
+  `gamma_over` is signed fixed point: positive rewards over-delivery, zero applies no
+  adjustment, negative penalises over-delivery.
+
+- Under-delivery, `E_m < lower` and `E_r > 0` (quadratic, `n == 2` only):
+
+```
+A_under = -gamma_under * (lower - E_m)^2 / (F * E_r)   (signed energy, always <= 0)
+```
+
+  `gamma_under` is an unsigned fixed-point magnitude; the formula supplies the negative
+  sign, so under-delivery can never become a reward. The penalty grows quadratically with
+  the shortfall.
+
+- Flat band, `lower <= E_m <= upper`, and the degenerate case `E_r == 0`:
+
+```
+A = 0
+```
+
+#### Base-payment integration and final clamp
+
+The existing base-payment convention is preserved:
+
+```
+BasePayment = min(E_r, E_m) * p
+Settlement  = max(0, BasePayment + A * p)
+```
+
+`A` is a *signed energy* adjustment; multiplying by price gives a *signed monetary*
+adjustment. Only the **final settlement** is clamped to zero — the base-payment semantics
+are unchanged.
+
+#### Rounding
+
+All divisions use integer truncation toward zero, consistent with the existing standard
+and piecewise settlement helpers. Sub-unit penalties/bonuses therefore round down in
+magnitude.
+
+#### Parameters, validation and API
+
+Storage (re-typed from the previous unused scaffolding):
+
+| Storage | Type | Meaning |
+|---------|------|---------|
+| `GammaOverHybrid` | `i64` | signed fixed-point over-delivery coefficient |
+| `GammaUnderHybrid` | `u64` | unsigned fixed-point under-delivery penalty magnitude |
+| `EpsHybrid` | `u64` | fixed-point tolerance fraction in `[0, F]` |
+| `NHybrid` | `u32` | integer exponent (only `n == 2` is implemented) |
+
+Setter `set_hybrid_model_parameters(gamma_over: i64, gamma_under: u64, eps: u64, n: u32)`
+(call index **21**, custodian-only) validates **all** fields before writing any storage:
+
+- `eps`: accepted for `0 <= eps <= F` (`eps = 0` collapses the band to `lower = upper = E_r`);
+  `eps > F` is rejected with `InvalidHybridEpsilonRange`.
+- `n`: only `n == 2` is accepted; `0`, `1`, `3`, … are rejected with `InvalidHybridExponent`.
+- `gamma_over` may be any `i64`, `gamma_under` may be any `u64`; there are no arbitrary
+  economic caps — overflow during settlement returns an explicit error instead of saturating.
+
+An invalid setter call leaves all four parameters unchanged and emits no event.
+`query_hybrid_model_params() -> (i64, u64, u64, u32)` reads them back.
+
+Settlement extrinsic
+`settle_flexibility_payment_with_hybrid_adjustment(receiver, requested, delivered, price, payment_type)`
+(call index **24**, `#[transactional]`): reads the four hybrid parameters from storage
+(they are never supplied by the caller), computes the settlement via the pure helper, and
+applies it through the existing checked balance conversion and `add_payment` ledger path.
+It emits `HybridFlexibilitySettled { requester, provider, requested, delivered, price,
+calculated_amount, net_adjustment }`, where **`net_adjustment` is the signed *monetary*
+adjustment** (currency units, i.e. the energy adjustment already multiplied by price)
+applied before the final clamp to zero.
+
+Pure helper (crate-internal):
+`calculate_hybrid_settlement_amount(requested, delivered, price, gamma_over, gamma_under, eps, n) -> Result<(u128, i128), Error<T>>`
+returns `(final_settlement, net_monetary_adjustment)` and writes no storage.
+
+#### Metadata / migration note
+
+Re-typing `GammaOverHybrid` to `i64` and `NHybrid` to `u32` changes storage and metadata
+layout, but **no migration is required**: the previous hybrid scaffolding was never
+exercised by any running chain, so there is no encoded state to migrate.
+
+#### Example
+
+With `F = 1_000_000`, `E_r = 100`, `eps = 100_000` (10%) → `lower = 90`, `upper = 110`.
+
+- Over-delivery reward: `E_m = 120`, `p = 5`, `gamma_over = +1_000_000` (=`+1.0`):
+  `A_over = +10` energy → `+50` monetary; `BasePayment = 100*5 = 500` → `Settlement = 550`.
+- Over-delivery penalty: same inputs with `gamma_over = -1_000_000` → `Settlement = 450`.
+- Quadratic under-delivery: `E_m = 70`, `p = 5`, `gamma_under = 1_000_000`:
+  `(lower - E_m) = 20`, `A_under = -1_000_000 * 400 / (1_000_000 * 100) = -4` energy →
+  `-20` monetary; `BasePayment = 70*5 = 350` → `Settlement = 330`. Halving the shortfall to
+  `10` reduces the penalty four-fold to `-1` energy (quadratic shape).
+- Clamp: `E_r = 100`, `E_m = 10`, `p = 1`, `eps = 0`, `gamma_under = 1_000_000`:
+  penalty `-81` exceeds `BasePayment = 10`, so `Settlement = 0`.
+
 ### Adaptive Parameter Mechanism
 
 Adaptive control now covers alpha, beta, and under-delivery tolerance via two extrinsics:
@@ -161,7 +293,9 @@ let under_tol = Remuneration::under_tolerance();
 | 18 | set_adaptation_params | Configure adaptation policy |
 | 19 | dynamically_adapt_parameters | Adapt alpha, beta, under tolerance |
 | 20 | set_piecewise_parameters | Set alpha_pw, eps1, eps2 for PW Quad |
+| 21 | set_hybrid_model_parameters | Set gamma_over (i64), gamma_under, eps, n for the hybrid model |
 | 23 | settle_flexibility_payment_with_pw_quad_penalty | PW Quad model: compute & transfer |
+| 24 | settle_flexibility_payment_with_hybrid_adjustment | Hybrid model: compute & transfer |
 
 ### Usage Examples
 
