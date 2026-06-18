@@ -264,10 +264,10 @@ pub mod pallet {
 
 	/// ## Beta Parameter
 	/// Used in settlement calculations for over-delivery adjustment.
-	/// This is a fixed-point representation where 1.0 = 1_000_000
+	/// This is a signed fixed-point representation where 1.0 = 1_000_000
 	#[pallet::storage]
 	#[pallet::getter(fn beta)]
-	pub(super) type Beta<T: Config> = StorageValue<_, u64, ValueQuery>;
+	pub(super) type Beta<T: Config> = StorageValue<_, i64, ValueQuery>;
 
 	/// ## Under Tolerance Parameter
 	/// Used in settlement calculations for acceptable under-delivery deviation thresholds.
@@ -434,8 +434,8 @@ pub mod pallet {
 		/// - `old_value`: The previous value.
 		/// - `new_value`: The new value.
 		BetaUpdated {
-			old_value: u64,
-			new_value: u64,
+			old_value: i64,
+			new_value: i64,
 		},
 
 		/// Emitted when the Under-Delivery Tolerance parameter is updated.
@@ -481,8 +481,8 @@ pub mod pallet {
 		AlphaBetaAdapted {
 			old_alpha: u64,
 			new_alpha: u64,
-			old_beta: u64,
-			new_beta: u64,
+			old_beta: i64,
+			new_beta: i64,
 			u_avg: u64,
 			o_avg: u64,
 		},
@@ -561,6 +561,8 @@ pub mod pallet {
 		InvalidToleranceRange,
 		InvalidPiecewiseEpsilonRange,
 		InvalidPiecewiseThresholdOrder,
+		SettlementArithmeticOverflow,
+		AdaptiveCalculationOverflow,
 	}
 
 	/// # Dispatchable Calls for the Remuneration Pallet
@@ -933,7 +935,7 @@ pub mod pallet {
 		pub fn set_main_parameters(
 			origin: OriginFor<T>,
 			new_alpha: u64,
-			new_beta: u64,
+			new_beta: i64,
 			new_under_tol: u64,
 			new_over_tol: u64,
 		) -> DispatchResult {
@@ -998,33 +1000,16 @@ pub mod pallet {
 			let beta = Beta::<T>::get();
 			let under_tol = UnderTolerance::<T>::get();
 			let over_tol = OverTolerance::<T>::get();
-			let f: u64 = FIXED_POINT_SCALE;
-
-			let base = core::cmp::min(flexi_requested, flexi_delivered).saturating_mul(price);
-			let threshold_under =
-				under_tol.saturating_mul(flexi_requested).checked_div(f).unwrap_or(0);
-			let threshold_over =
-				over_tol.saturating_mul(flexi_requested).checked_div(f).unwrap_or(0);
-			let under_diff =
-				flexi_requested.saturating_sub(flexi_delivered).saturating_sub(threshold_under);
-			let under_penalty = if under_diff > 0 {
-				alpha
-					.saturating_mul(under_diff)
-					.saturating_mul(price)
-					.checked_div(f)
-					.unwrap_or(0)
-			} else {
-				0
-			};
-			let over_diff =
-				flexi_delivered.saturating_sub(flexi_requested).saturating_sub(threshold_over);
-			let over_bonus = if over_diff > 0 {
-				beta.saturating_mul(over_diff).saturating_mul(price).checked_div(f).unwrap_or(0)
-			} else {
-				0
-			};
-			let final_amount = base.saturating_sub(under_penalty).saturating_add(over_bonus);
-			let amount = Self::settlement_amount_into_balance(final_amount as u128)?;
+			let final_amount = Self::calculate_standard_settlement_amount(
+				flexi_requested,
+				flexi_delivered,
+				price,
+				alpha,
+				beta,
+				under_tol,
+				over_tol,
+			)?;
+			let amount = Self::settlement_amount_into_balance(final_amount)?;
 			Self::add_payment(origin, receiver.clone(), amount, payment_type)?;
 			Self::deposit_event(Event::FlexibilitySettled {
 				requester: sender,
@@ -1116,18 +1101,22 @@ pub mod pallet {
 			ensure!(Some(sender) == Custodian::<T>::get(), Error::<T>::NotCustodian);
 			let n_cfg = AdaptationWindowSize::<T>::get();
 			ensure!(n_cfg > 0, Error::<T>::InvalidWindowSize);
-			let n_u = u_measurements.len() as u32;
-			let n_o = o_measurements.len() as u32;
+			let n_u = u32::try_from(u_measurements.len())
+				.map_err(|_| Error::<T>::MeasurementsExceedWindow)?;
+			let n_o = u32::try_from(o_measurements.len())
+				.map_err(|_| Error::<T>::MeasurementsExceedWindow)?;
 			ensure!(n_u > 0 && n_o > 0, Error::<T>::EmptyMeasurements);
 			ensure!(n_u == n_o, Error::<T>::MismatchedMeasurements);
 			ensure!(n_u == n_cfg, Error::<T>::MeasurementsExceedWindow);
 			let sum_u: u128 =
-				u_measurements.iter().fold(0u128, |a, v| a.saturating_add(*v as u128));
+				u_measurements.iter().fold(0u128, |a, v| a.saturating_add(u128::from(*v)));
 			let sum_o: u128 =
-				o_measurements.iter().fold(0u128, |a, v| a.saturating_add(*v as u128));
-			let n: u128 = n_u as u128;
-			let u_avg = (sum_u / n) as u64;
-			let o_avg = (sum_o / n) as u64;
+				o_measurements.iter().fold(0u128, |a, v| a.saturating_add(u128::from(*v)));
+			let n: u128 = u128::from(n_u);
+			let u_avg =
+				u64::try_from(sum_u / n).map_err(|_| Error::<T>::AdaptiveCalculationOverflow)?;
+			let o_avg =
+				u64::try_from(sum_o / n).map_err(|_| Error::<T>::AdaptiveCalculationOverflow)?;
 			let alpha = Alpha::<T>::get();
 			let beta = Beta::<T>::get();
 			let under_old = UnderTolerance::<T>::get();
@@ -1136,33 +1125,37 @@ pub mod pallet {
 			let k_alpha = KAlpha::<T>::get();
 			let k_beta = KBeta::<T>::get();
 			let k_under = KUnderTol::<T>::get();
-			let f: i128 = FIXED_POINT_SCALE as i128;
+			let f: i128 = i128::from(FIXED_POINT_SCALE);
 			// Alpha adaptation
-			let delta_u = (u_avg as i128) - (u_ref as i128);
-			let factor_a = f + ((k_alpha as i128).saturating_mul(delta_u)) / f;
+			let delta_u = i128::from(u_avg) - i128::from(u_ref);
+			let factor_a = f + (i128::from(k_alpha).saturating_mul(delta_u)) / f;
 			let mut new_alpha_i =
-				(alpha as i128).saturating_mul(factor_a).checked_div(f).unwrap_or(0);
+				i128::from(alpha).saturating_mul(factor_a).checked_div(f).unwrap_or(0);
 			if new_alpha_i < 0 {
 				new_alpha_i = 0;
 			}
-			let new_alpha: u64 = new_alpha_i.clamp(0, u64::MAX as i128) as u64;
+			let new_alpha_i = new_alpha_i.clamp(0, i128::from(u64::MAX));
+			let new_alpha =
+				u64::try_from(new_alpha_i).map_err(|_| Error::<T>::AdaptiveCalculationOverflow)?;
 			// Beta adaptation
-			let delta_o = (o_avg as i128) - (o_ref as i128);
-			let factor_b = f + ((k_beta as i128).saturating_mul(delta_o)) / f;
-			let mut new_beta_i =
-				(beta as i128).saturating_mul(factor_b).checked_div(f).unwrap_or(0);
-			if new_beta_i < 0 {
-				new_beta_i = 0;
-			}
-			let new_beta: u64 = new_beta_i.clamp(0, u64::MAX as i128) as u64;
+			let delta_o = i128::from(o_avg) - i128::from(o_ref);
+			let factor_b = Self::checked_adaptive_factor(k_beta, delta_o, f, true)?;
+			let new_beta_i = i128::from(beta)
+				.checked_mul(factor_b)
+				.and_then(|value| value.checked_div(f))
+				.ok_or(Error::<T>::AdaptiveCalculationOverflow)?;
+			let new_beta: i64 =
+				i64::try_from(new_beta_i).map_err(|_| Error::<T>::AdaptiveCalculationOverflow)?;
 			// Under tolerance adaptation: under_next = under_old * (1 - k_under * (u_avg - u_ref))
-			let factor_ut = f - ((k_under as i128).saturating_mul(delta_u)) / f; // 1 - k*(delta_u)
+			let factor_ut = f - (i128::from(k_under).saturating_mul(delta_u)) / f; // 1 - k*(delta_u)
 			let mut new_ut_i =
-				(under_old as i128).saturating_mul(factor_ut).checked_div(f).unwrap_or(0);
+				i128::from(under_old).saturating_mul(factor_ut).checked_div(f).unwrap_or(0);
 			if new_ut_i < 0 {
 				new_ut_i = 0;
 			}
-			let new_under: u64 = new_ut_i.clamp(0, FIXED_POINT_SCALE as i128) as u64;
+			let new_ut_i = new_ut_i.clamp(0, i128::from(FIXED_POINT_SCALE));
+			let new_under =
+				u64::try_from(new_ut_i).map_err(|_| Error::<T>::AdaptiveCalculationOverflow)?;
 			// Persist
 			Alpha::<T>::put(new_alpha);
 			Beta::<T>::put(new_beta);
@@ -1283,6 +1276,91 @@ pub mod pallet {
 				.map_err(|_| Error::<T>::SettlementAmountConversionFailed)
 		}
 
+		fn calculate_standard_settlement_amount(
+			flexi_requested: u64,
+			flexi_delivered: u64,
+			price: u64,
+			alpha: u64,
+			beta: i64,
+			under_tol: u64,
+			over_tol: u64,
+		) -> Result<u128, Error<T>> {
+			let f = u128::from(FIXED_POINT_SCALE);
+			let requested = u128::from(flexi_requested);
+			let delivered = u128::from(flexi_delivered);
+			let price = u128::from(price);
+
+			let base = core::cmp::min(requested, delivered)
+				.checked_mul(price)
+				.ok_or(Error::<T>::SettlementArithmeticOverflow)?;
+			let threshold_under = u128::from(under_tol)
+				.checked_mul(requested)
+				.and_then(|value| value.checked_div(f))
+				.ok_or(Error::<T>::SettlementArithmeticOverflow)?;
+			let threshold_over = u128::from(over_tol)
+				.checked_mul(requested)
+				.and_then(|value| value.checked_div(f))
+				.ok_or(Error::<T>::SettlementArithmeticOverflow)?;
+
+			let under_diff = requested.saturating_sub(delivered).saturating_sub(threshold_under);
+			let under_penalty = if under_diff > 0 {
+				u128::from(alpha)
+					.checked_mul(under_diff)
+					.and_then(|value| value.checked_mul(price))
+					.and_then(|value| value.checked_div(f))
+					.ok_or(Error::<T>::SettlementArithmeticOverflow)?
+			} else {
+				0
+			};
+			let amount_after_under = base.saturating_sub(under_penalty);
+
+			let over_diff = delivered.saturating_sub(requested).saturating_sub(threshold_over);
+			if over_diff == 0 || beta == 0 {
+				return Ok(amount_after_under);
+			}
+
+			let over_diff_i =
+				i128::try_from(over_diff).map_err(|_| Error::<T>::SettlementArithmeticOverflow)?;
+			let price_i =
+				i128::try_from(price).map_err(|_| Error::<T>::SettlementArithmeticOverflow)?;
+			let over_adjustment = i128::from(beta)
+				.checked_mul(over_diff_i)
+				.and_then(|value| value.checked_mul(price_i))
+				.and_then(|value| value.checked_div(i128::from(FIXED_POINT_SCALE)))
+				.ok_or(Error::<T>::SettlementArithmeticOverflow)?;
+
+			if over_adjustment > 0 {
+				let bonus = u128::try_from(over_adjustment)
+					.map_err(|_| Error::<T>::SettlementArithmeticOverflow)?;
+				amount_after_under
+					.checked_add(bonus)
+					.ok_or(Error::<T>::SettlementArithmeticOverflow)
+			} else {
+				let penalty = over_adjustment
+					.checked_neg()
+					.and_then(|value| u128::try_from(value).ok())
+					.ok_or(Error::<T>::SettlementArithmeticOverflow)?;
+				Ok(amount_after_under.saturating_sub(penalty))
+			}
+		}
+
+		fn checked_adaptive_factor(
+			gain: u64,
+			delta: i128,
+			scale: i128,
+			add_delta: bool,
+		) -> Result<i128, Error<T>> {
+			let term = i128::from(gain)
+				.checked_mul(delta)
+				.and_then(|value| value.checked_div(scale))
+				.ok_or(Error::<T>::AdaptiveCalculationOverflow)?;
+			if add_delta {
+				scale.checked_add(term).ok_or(Error::<T>::AdaptiveCalculationOverflow)
+			} else {
+				scale.checked_sub(term).ok_or(Error::<T>::AdaptiveCalculationOverflow)
+			}
+		}
+
 		/// Calculate piecewise quadratic under-delivery penalty based on global parameters.
 		/// Inputs:
 		/// - flexi_requested (E_r)
@@ -1390,7 +1468,7 @@ pub mod pallet {
 		///
 		/// - **Returns**:
 		///   - The current beta parameter value.
-		pub fn query_beta() -> u64 {
+		pub fn query_beta() -> i64 {
 			Self::beta()
 		}
 

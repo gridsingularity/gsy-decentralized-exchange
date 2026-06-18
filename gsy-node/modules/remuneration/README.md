@@ -23,7 +23,7 @@ This module is integral to maintaining accountability, enabling transparent reco
 - **Flexibility Service Settlement**: Calculates payments for flexibility services with incentives/penalties based on performance
 - **Adaptive Incentive & Policy System**: Dynamically adjusts:
   - Under-delivery penalty factor (alpha)
-  - Over-delivery bonus factor (beta)
+  - Signed over-delivery adjustment factor (beta)
   - Under-delivery tolerance (UnderTolerance) via feedback on recent performance
 
 ### Flexibility Payment Calculation (Linear + Tolerances)
@@ -32,13 +32,13 @@ The module includes a settlement mechanism for flexibility services with:
 
 - **Base Payment**: min(requested, delivered) * price
 - **Under-delivery Penalties**: Applied when delivered flexibility is less than requested beyond the under-delivery tolerance
-- **Over-delivery Bonuses**: Applied when delivered flexibility exceeds requested amount beyond the over-delivery tolerance
+- **Over-delivery Adjustments**: Applied when delivered flexibility exceeds requested amount beyond the over-delivery tolerance. Positive beta rewards over-delivery, zero beta applies no adjustment, and negative beta penalizes over-delivery.
 
 Parameters (all fixed-point with 1.0 = 1_000_000):
 - **Alpha**: Under-delivery penalty scaler
-- **Beta**: Over-delivery bonus scaler
+- **Beta**: Signed over-delivery adjustment scaler (`+1_000_000 = +1.0`, `0 = no adjustment`, `-1_000_000 = -1.0`)
 - **UnderTolerance**: Allowed fractional shortfall before penalty (per request)
-- **OverTolerance**: Allowed fractional excess before bonus
+- **OverTolerance**: Allowed fractional excess before any over-delivery adjustment
 
 ### Piecewise Quadratic Under-Delivery Penalty (PW Quad)
 
@@ -103,10 +103,10 @@ u_avg = mean(u_measurements)
 o_avg = mean(o_measurements)
 
 alpha_{t+1} = clamp( alpha_t * ( 1 + k_alpha * (u_avg - u_ref) ) )
-beta_{t+1}  = clamp( beta_t  * ( 1 + k_beta  * (o_avg - o_ref) ) )
+beta_{t+1}  = checked_signed( beta_t * ( 1 + k_beta * (o_avg - o_ref) ) )
 underTol_{t+1} = clamp( underTol_t * ( 1 - k_under_tol * (u_avg - u_ref) ) )
 ```
-Where `clamp` applies `[0, u64::MAX]` after fixed-point arithmetic; negative intermediate factors drive values toward zero.
+Alpha remains unsigned and clamps to `[0, u64::MAX]` after fixed-point arithmetic. Beta is signed (`i64`) and is adapted with the same multiplicative factor; it may remain positive or negative, become zero, or cross sign when the factor is negative. Beta adaptation fails atomically if the signed result cannot be represented.
 
 Internal integer form (F = 1_000_000):
 ```
@@ -141,7 +141,7 @@ Remuneration::dynamically_adapt_parameters(
 );
 
 let alpha_now = Remuneration::alpha();
-let beta_now  = Remuneration::beta();
+let beta_now  = Remuneration::beta(); // signed fixed-point value
 let under_tol = Remuneration::under_tolerance();
 ```
 
@@ -170,7 +170,7 @@ let under_tol = Remuneration::under_tolerance();
 Remuneration::update_custodian(origin, admin);
 
 // Linear settlement parameters (all at once)
-Remuneration::set_main_parameters(origin, 500_000, 200_000, 100_000, 150_000);
+Remuneration::set_main_parameters(origin, 500_000, -200_000, 100_000, 150_000);
 
 // Piecewise quadratic parameters
 Remuneration::set_piecewise_parameters(origin, 1, 200_000, 400_000);
@@ -229,9 +229,16 @@ threshold_over        = OverTolerance  * requested / 1_000_000
 under_excess          = max(0, (requested - delivered) - threshold_under)
 under_delivery_penalty= alpha * under_excess * price / 1_000_000
 over_excess           = max(0, (delivered - requested) - threshold_over)
-over_delivery_bonus   = beta  * over_excess  * price / 1_000_000
-final_amount          = base_payment - under_delivery_penalty + over_delivery_bonus
+over_delivery_adjustment = beta * over_excess * price / 1_000_000
+final_amount             = max(0, base_payment - under_delivery_penalty + over_delivery_adjustment)
 ```
+
+Beta is signed:
+- `beta > 0`: the over-delivery adjustment is a bonus.
+- `beta = 0`: no over-delivery adjustment is applied.
+- `beta < 0`: the over-delivery adjustment is a penalty, and the final payment is bounded below by zero.
+
+Compatibility note: signed beta changes `Beta` storage from `u64` to `i64` and changes the `set_main_parameters` beta argument and beta-related events from unsigned to signed. Existing chain state encoded with the old `u64` beta storage would require a storage migration before upgrade; no migration is included in this research branch.
 
 ## Adaptive Parameter Validation
 
@@ -240,8 +247,9 @@ final_amount          = base_payment - under_delivery_penalty + over_delivery_bo
   - Non-empty
   - Same length
   - Length == `window_size`
-- Negative scaling => clamp to 0
-- Multiplication overflow => clamp to `u64::MAX`
+- Negative alpha scaling => clamp alpha to 0
+- Alpha multiplication overflow => clamp alpha to `u64::MAX`
+- Signed beta adaptation may cross zero; signed beta overflow or representability failure rejects the adaptive update atomically
 - UnderTolerance adaptation only (OverTolerance is manual via `set_main_parameters`)
 
 ## Events
@@ -326,7 +334,13 @@ cargo test -p remuneration
   - adaptation_alpha_beta_mismatched_lengths_fail
   - adaptation_alpha_beta_window_size_mismatch_fail
   - adaptation_alpha_beta_negative_factor_clamps_to_zero
-  - adaptation_alpha_beta_overflow_clamps_to_u64_max
+  - adaptation_alpha_overflow_clamps_to_u64_max_and_signed_beta_updates
+  - adaptation_signed_beta_decreases_while_remaining_positive
+  - adaptation_signed_beta_positive_crosses_to_negative
+  - adaptation_signed_beta_negative_remains_negative_under_positive_factor
+  - adaptation_signed_beta_negative_crosses_to_positive
+  - adaptation_signed_beta_zero_remains_zero
+  - adaptation_signed_beta_overflow_fails_atomically
 
 - Runtime integrity (from mock runtime)
   - mock::__construct_runtime_integrity_test::runtime_integrity_tests

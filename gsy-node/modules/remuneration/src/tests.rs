@@ -33,6 +33,66 @@ fn has_under_tolerance_event(old_value: u64, new_value: u64) -> bool {
 	})
 }
 
+fn has_beta_event(old_value: i64, new_value: i64) -> bool {
+	System::events().iter().any(|record| {
+		matches!(
+			record.event,
+			RuntimeEvent::Remuneration(crate::Event::BetaUpdated {
+				old_value: old,
+				new_value: new,
+			}) if old == old_value && new == new_value
+		)
+	})
+}
+
+fn has_alpha_beta_adapted_event(old_beta: i64, new_beta: i64) -> bool {
+	System::events().iter().any(|record| {
+		matches!(
+			record.event,
+			RuntimeEvent::Remuneration(crate::Event::AlphaBetaAdapted {
+				old_beta: old,
+				new_beta: new,
+				..
+			}) if old == old_beta && new == new_beta
+		)
+	})
+}
+
+fn setup_intra_community_settlement(sender_balance: u128, receiver_balance: u128) {
+	System::set_block_number(1);
+	Timestamp::set_timestamp(1_000);
+	assert_ok!(Remuneration::update_custodian(
+		RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+		ALICE_THE_CUSTODIAN
+	));
+	assert_ok!(Remuneration::add_community(
+		RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+		COMMUNITY1,
+		DSO,
+		COMMUNITY1_OWNER
+	));
+	assert_ok!(Remuneration::add_prosumer(
+		RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+		PROSUMER1,
+		COMMUNITY1
+	));
+	assert_ok!(Remuneration::add_prosumer(
+		RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+		PROSUMER2,
+		COMMUNITY1
+	));
+	assert_ok!(Remuneration::set_balance(
+		RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+		PROSUMER1,
+		sender_balance
+	));
+	assert_ok!(Remuneration::set_balance(
+		RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+		PROSUMER2,
+		receiver_balance
+	));
+}
+
 #[cfg(test)]
 mod admin_tests {
 	use super::*;
@@ -292,6 +352,62 @@ mod admin_tests {
 			));
 			assert_eq!(Remuneration::under_tolerance(), FIXED_POINT_SCALE);
 			assert_eq!(Remuneration::over_tolerance(), FIXED_POINT_SCALE);
+		});
+	}
+
+	#[test]
+	fn main_parameter_signed_beta_storage_query_and_events() {
+		new_test_ext().execute_with(|| {
+			System::set_block_number(1);
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				11,
+				200_000,
+				30,
+				40,
+			));
+			assert_eq!(Remuneration::beta(), 200_000);
+			assert_eq!(Remuneration::query_beta(), 200_000);
+			assert!(has_beta_event(0, 200_000));
+
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				11,
+				0,
+				30,
+				40,
+			));
+			assert_eq!(Remuneration::beta(), 0);
+			assert!(has_beta_event(200_000, 0));
+
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				11,
+				-200_000,
+				30,
+				40,
+			));
+			assert_eq!(Remuneration::beta(), -200_000);
+			assert_eq!(Remuneration::query_beta(), -200_000);
+			assert_eq!(Remuneration::alpha(), 11);
+			assert_eq!(Remuneration::under_tolerance(), 30);
+			assert_eq!(Remuneration::over_tolerance(), 40);
+			assert!(has_beta_event(0, -200_000));
+
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				11,
+				i64::MIN,
+				30,
+				40,
+			));
+			assert_eq!(Remuneration::beta(), i64::MIN);
+			assert!(has_beta_event(-200_000, i64::MIN));
 		});
 	}
 
@@ -1025,6 +1141,190 @@ mod basic_settlement_tests {
 	}
 
 	#[test]
+	fn settle_flexibility_zero_beta_applies_no_over_delivery_adjustment() {
+		new_test_ext().execute_with(|| {
+			setup_intra_community_settlement(1_000, 0);
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				0,
+				0,
+				0,
+				0,
+			));
+
+			assert_ok!(Remuneration::settle_flexibility_payment(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				100,
+				120,
+				5,
+				INTRA_COMMUNITY
+			));
+			assert_eq!(Remuneration::balances(PROSUMER1), 500);
+			assert_eq!(Remuneration::balances(PROSUMER2), 500);
+		});
+	}
+
+	#[test]
+	fn settle_flexibility_negative_beta_penalizes_over_delivery_beyond_tolerance() {
+		new_test_ext().execute_with(|| {
+			setup_intra_community_settlement(1_000, 0);
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				0,
+				-200_000,
+				0,
+				0,
+			));
+
+			assert_ok!(Remuneration::settle_flexibility_payment(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				100,
+				120,
+				5,
+				INTRA_COMMUNITY
+			));
+			// base=500, over_excess=20, beta=-0.2 => penalty=20
+			assert_eq!(Remuneration::balances(PROSUMER1), 520);
+			assert_eq!(Remuneration::balances(PROSUMER2), 480);
+		});
+	}
+
+	#[test]
+	fn settle_flexibility_negative_beta_respects_over_tolerance() {
+		new_test_ext().execute_with(|| {
+			setup_intra_community_settlement(1_000, 0);
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				0,
+				-1_000_000,
+				0,
+				200_000,
+			));
+
+			assert_ok!(Remuneration::settle_flexibility_payment(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				100,
+				115,
+				5,
+				INTRA_COMMUNITY
+			));
+			assert_eq!(Remuneration::balances(PROSUMER1), 500);
+			assert_eq!(Remuneration::balances(PROSUMER2), 500);
+		});
+	}
+
+	#[test]
+	fn settle_flexibility_negative_beta_clamps_payment_to_zero() {
+		new_test_ext().execute_with(|| {
+			setup_intra_community_settlement(1_000, 0);
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				0,
+				-10_000_000,
+				0,
+				0,
+			));
+
+			assert_ok!(Remuneration::settle_flexibility_payment(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				100,
+				200,
+				5,
+				INTRA_COMMUNITY
+			));
+			assert_eq!(Remuneration::balances(PROSUMER1), 1_000);
+			assert_eq!(Remuneration::balances(PROSUMER2), 0);
+		});
+	}
+
+	#[test]
+	fn settle_flexibility_over_tolerance_boundary_has_no_adjustment() {
+		new_test_ext().execute_with(|| {
+			setup_intra_community_settlement(1_000, 0);
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				0,
+				-1_000_000,
+				0,
+				200_000,
+			));
+
+			assert_ok!(Remuneration::settle_flexibility_payment(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				100,
+				120,
+				5,
+				INTRA_COMMUNITY
+			));
+			assert_eq!(Remuneration::balances(PROSUMER1), 500);
+			assert_eq!(Remuneration::balances(PROSUMER2), 500);
+		});
+	}
+
+	#[test]
+	fn settle_flexibility_signed_beta_large_representable_values() {
+		new_test_ext().execute_with(|| {
+			let starting_balance = u128::from(u32::MAX) + 2_000;
+			setup_intra_community_settlement(starting_balance, 0);
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				0,
+				1_000_000,
+				0,
+				0,
+			));
+
+			assert_ok!(Remuneration::settle_flexibility_payment(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				u64::from(u32::MAX),
+				u64::from(u32::MAX) + 1_000,
+				1,
+				INTRA_COMMUNITY
+			));
+			let expected = u128::from(u32::MAX) + 1_000;
+			assert_eq!(Remuneration::balances(PROSUMER2), expected);
+			assert_eq!(Remuneration::balances(PROSUMER1), starting_balance - expected);
+		});
+	}
+
+	#[test]
+	fn settle_flexibility_signed_beta_overflow_preserves_state() {
+		new_test_ext().execute_with(|| {
+			setup_intra_community_settlement(u128::MAX, 0);
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				0,
+				i64::MAX,
+				0,
+				0,
+			));
+			let before_events = event_count();
+
+			assert_noop!(
+				Remuneration::settle_flexibility_payment(
+					RawOrigin::Signed(PROSUMER1).into(),
+					PROSUMER2,
+					1,
+					u64::MAX,
+					u64::MAX,
+					INTRA_COMMUNITY
+				),
+				Error::<Test>::SettlementArithmeticOverflow
+			);
+			assert_eq!(Remuneration::balances(PROSUMER1), u128::MAX);
+			assert_eq!(Remuneration::balances(PROSUMER2), 0);
+			assert_eq!(Remuneration::query_payment(PROSUMER1, PROSUMER2, 1), None);
+			assert_eq!(event_count(), before_events);
+		});
+	}
+
+	#[test]
 	fn settle_flexibility_with_tolerance() {
 		new_test_ext().execute_with(|| {
 			// Set a block and a timestamp
@@ -1616,7 +1916,7 @@ mod dynamic_adaptation_tests {
 	}
 
 	#[test]
-	fn adaptation_alpha_beta_overflow_clamps_to_u64_max() {
+	fn adaptation_alpha_overflow_clamps_to_u64_max_and_signed_beta_updates() {
 		new_test_ext().execute_with(|| {
 			assert_ok!(Remuneration::update_custodian(
 				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
@@ -1626,7 +1926,7 @@ mod dynamic_adaptation_tests {
 			assert_ok!(Remuneration::set_main_parameters(
 				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
 				near_max,
-				near_max,
+				1_000_000,
 				Remuneration::under_tolerance(),
 				Remuneration::over_tolerance(),
 			));
@@ -1647,19 +1947,20 @@ mod dynamic_adaptation_tests {
 				vec![1_000_000]
 			));
 			assert_eq!(Remuneration::alpha(), u64::MAX);
-			assert_eq!(Remuneration::beta(), u64::MAX);
+			assert_eq!(Remuneration::beta(), 2_000_000);
 		});
 	}
 
 	#[test]
 	fn adaptation_alpha_beta_success_updates_and_events() {
 		new_test_ext().execute_with(|| {
+			System::set_block_number(1);
 			assert_ok!(Remuneration::update_custodian(
 				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
 				ALICE_THE_CUSTODIAN
 			));
 			let initial_alpha = 2_000_000u64; // 2.0
-			let initial_beta = 1_500_000u64; // 1.5
+			let initial_beta = 1_500_000i64; // 1.5
 			assert_ok!(Remuneration::set_main_parameters(
 				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
 				initial_alpha,
@@ -1696,9 +1997,212 @@ mod dynamic_adaptation_tests {
 			let factor_a = f + (k_alpha as i128 * (u_avg as i128 - u_ref as i128)) / f; // 1_020_000
 			let factor_b = f + (k_beta as i128 * (o_avg as i128 - o_ref as i128)) / f; // 1_040_000
 			let expected_alpha = (initial_alpha as i128 * factor_a / f) as u64; // 2_040_000
-			let expected_beta = (initial_beta as i128 * factor_b / f) as u64; // 1_560_000
+			let expected_beta = (initial_beta as i128 * factor_b / f) as i64; // 1_560_000
 			assert_eq!(Remuneration::alpha(), expected_alpha);
 			assert_eq!(Remuneration::beta(), expected_beta);
+			assert!(has_alpha_beta_adapted_event(initial_beta, expected_beta));
+		});
+	}
+
+	#[test]
+	fn adaptation_signed_beta_decreases_while_remaining_positive() {
+		new_test_ext().execute_with(|| {
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				1,
+				1_000_000,
+				0,
+				0,
+			));
+			assert_ok!(Remuneration::set_adaptation_params(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				0,
+				1_000_000,
+				0,
+				500_000,
+				0,
+				1
+			));
+			assert_ok!(Remuneration::dynamically_adapt_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				vec![0],
+				vec![500_000]
+			));
+			assert_eq!(Remuneration::beta(), 750_000);
+		});
+	}
+
+	#[test]
+	fn adaptation_signed_beta_positive_crosses_to_negative() {
+		new_test_ext().execute_with(|| {
+			System::set_block_number(1);
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				1,
+				1_000_000,
+				0,
+				0,
+			));
+			assert_ok!(Remuneration::set_adaptation_params(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				0,
+				1_000_000,
+				0,
+				2_000_000,
+				0,
+				1
+			));
+			assert_ok!(Remuneration::dynamically_adapt_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				vec![0],
+				vec![0]
+			));
+			assert_eq!(Remuneration::beta(), -1_000_000);
+			assert!(has_alpha_beta_adapted_event(1_000_000, -1_000_000));
+		});
+	}
+
+	#[test]
+	fn adaptation_signed_beta_negative_remains_negative_under_positive_factor() {
+		new_test_ext().execute_with(|| {
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				1,
+				-1_000_000,
+				0,
+				0,
+			));
+			assert_ok!(Remuneration::set_adaptation_params(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				0,
+				0,
+				0,
+				500_000,
+				0,
+				1
+			));
+			assert_ok!(Remuneration::dynamically_adapt_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				vec![0],
+				vec![1_000_000]
+			));
+			assert_eq!(Remuneration::beta(), -1_500_000);
+		});
+	}
+
+	#[test]
+	fn adaptation_signed_beta_negative_crosses_to_positive() {
+		new_test_ext().execute_with(|| {
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				1,
+				-1_000_000,
+				0,
+				0,
+			));
+			assert_ok!(Remuneration::set_adaptation_params(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				0,
+				1_000_000,
+				0,
+				2_000_000,
+				0,
+				1
+			));
+			assert_ok!(Remuneration::dynamically_adapt_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				vec![0],
+				vec![0]
+			));
+			assert_eq!(Remuneration::beta(), 1_000_000);
+		});
+	}
+
+	#[test]
+	fn adaptation_signed_beta_zero_remains_zero() {
+		new_test_ext().execute_with(|| {
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				1,
+				0,
+				0,
+				0,
+			));
+			assert_ok!(Remuneration::set_adaptation_params(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				0,
+				0,
+				0,
+				2_000_000,
+				0,
+				1
+			));
+			assert_ok!(Remuneration::dynamically_adapt_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				vec![0],
+				vec![1_000_000]
+			));
+			assert_eq!(Remuneration::beta(), 0);
+		});
+	}
+
+	#[test]
+	fn adaptation_signed_beta_overflow_fails_atomically() {
+		new_test_ext().execute_with(|| {
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				10,
+				i64::MAX,
+				500_000,
+				0,
+			));
+			assert_ok!(Remuneration::set_adaptation_params(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				0,
+				0,
+				0,
+				2_000_000,
+				0,
+				1
+			));
+			let before_events = event_count();
+
+			assert_noop!(
+				Remuneration::dynamically_adapt_parameters(
+					RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+					vec![0],
+					vec![1_000_000]
+				),
+				Error::<Test>::AdaptiveCalculationOverflow
+			);
+			assert_eq!(Remuneration::alpha(), 10);
+			assert_eq!(Remuneration::beta(), i64::MAX);
+			assert_eq!(Remuneration::under_tolerance(), 500_000);
+			assert_eq!(event_count(), before_events);
 		});
 	}
 
