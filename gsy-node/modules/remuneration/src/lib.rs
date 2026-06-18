@@ -47,12 +47,14 @@ pub mod pallet {
 	use frame_support::transactional;
 	use frame_support::{dispatch::DispatchResult, pallet_prelude::*, traits::UnixTime};
 	use frame_system::{ensure_signed, pallet_prelude::*};
+	use sp_runtime::traits::{CheckedAdd, CheckedSub};
 	use sp_std::marker::PhantomData;
 	use sp_std::vec;
 	use sp_std::vec::Vec;
 
 	pub const INTRA_COMMUNITY: u8 = 1;
 	pub const INTER_COMMUNITY: u8 = 2;
+	pub const FIXED_POINT_SCALE: u64 = 1_000_000;
 
 	#[derive(Encode, Decode, Clone, Copy, PartialEq, Eq, RuntimeDebug, TypeInfo, MaxEncodedLen)]
 	pub enum BridgeEscrowStatus {
@@ -553,6 +555,12 @@ pub mod pallet {
 		BridgeIdTooLong,
 		BridgeExternalRefTooLong,
 		BalanceConflictsWithBridgeEscrow,
+		SettlementAmountConversionFailed,
+		BalanceOverflow,
+		BalanceUnderflow,
+		InvalidToleranceRange,
+		InvalidPiecewiseEpsilonRange,
+		InvalidPiecewiseThresholdOrder,
 	}
 
 	/// # Dispatchable Calls for the Remuneration Pallet
@@ -845,10 +853,10 @@ pub mod pallet {
 			// Fetch the receiver's balance
 			let receiver_balance = Balances::<T>::get(&receiver);
 
-			let updated_sender_balance = sender_balance - amount;
-			let updated_receiver_balance = receiver_balance + amount;
-			// let updated_sender_balance = sender_balance.saturating_sub(amount);
-			// let updated_receiver_balance = receiver_balance.saturating_add(amount);
+			let updated_sender_balance =
+				sender_balance.checked_sub(&amount).ok_or(Error::<T>::BalanceUnderflow)?;
+			let updated_receiver_balance =
+				receiver_balance.checked_add(&amount).ok_or(Error::<T>::BalanceOverflow)?;
 			// Update balances
 			Balances::<T>::insert(&sender, updated_sender_balance);
 			Balances::<T>::insert(&receiver, updated_receiver_balance);
@@ -931,6 +939,10 @@ pub mod pallet {
 		) -> DispatchResult {
 			let sender = ensure_signed(origin)?;
 			ensure!(Some(sender) == Custodian::<T>::get(), Error::<T>::NotCustodian);
+			Self::ensure_valid_percentage(new_under_tol)
+				.map_err(|_| Error::<T>::InvalidToleranceRange)?;
+			Self::ensure_valid_percentage(new_over_tol)
+				.map_err(|_| Error::<T>::InvalidToleranceRange)?;
 			let old_alpha = Alpha::<T>::get();
 			let old_beta = Beta::<T>::get();
 			let old_under = UnderTolerance::<T>::get();
@@ -986,7 +998,7 @@ pub mod pallet {
 			let beta = Beta::<T>::get();
 			let under_tol = UnderTolerance::<T>::get();
 			let over_tol = OverTolerance::<T>::get();
-			let f: u64 = 1_000_000;
+			let f: u64 = FIXED_POINT_SCALE;
 
 			let base = core::cmp::min(flexi_requested, flexi_delivered).saturating_mul(price);
 			let threshold_under =
@@ -1012,7 +1024,7 @@ pub mod pallet {
 				0
 			};
 			let final_amount = base.saturating_sub(under_penalty).saturating_add(over_bonus);
-			let amount = BalanceOf::<T>::from(final_amount as u32);
+			let amount = Self::settlement_amount_into_balance(final_amount as u128)?;
 			Self::add_payment(origin, receiver.clone(), amount, payment_type)?;
 			Self::deposit_event(Event::FlexibilitySettled {
 				requester: sender,
@@ -1046,8 +1058,7 @@ pub mod pallet {
 				Self::calc_piecewise_quadratic_penalty(flexi_requested, flexi_delivered) as u128;
 			let penalty_value: u128 = penalty_energy.saturating_mul(price as u128);
 			let final_amount_u128 = base.saturating_sub(penalty_value);
-			let final_amount_u64 = final_amount_u128.min(u128::from(u64::MAX)) as u64;
-			let amount = BalanceOf::<T>::from(final_amount_u64 as u32);
+			let amount = Self::settlement_amount_into_balance(final_amount_u128)?;
 
 			Self::add_payment(origin, receiver.clone(), amount, payment_type)?;
 			Self::deposit_event(Event::FlexibilitySettled {
@@ -1125,7 +1136,7 @@ pub mod pallet {
 			let k_alpha = KAlpha::<T>::get();
 			let k_beta = KBeta::<T>::get();
 			let k_under = KUnderTol::<T>::get();
-			let f: i128 = 1_000_000;
+			let f: i128 = FIXED_POINT_SCALE as i128;
 			// Alpha adaptation
 			let delta_u = (u_avg as i128) - (u_ref as i128);
 			let factor_a = f + ((k_alpha as i128).saturating_mul(delta_u)) / f;
@@ -1151,7 +1162,7 @@ pub mod pallet {
 			if new_ut_i < 0 {
 				new_ut_i = 0;
 			}
-			let new_under: u64 = new_ut_i.clamp(0, u64::MAX as i128) as u64;
+			let new_under: u64 = new_ut_i.clamp(0, FIXED_POINT_SCALE as i128) as u64;
 			// Persist
 			Alpha::<T>::put(new_alpha);
 			Beta::<T>::put(new_beta);
@@ -1195,6 +1206,11 @@ pub mod pallet {
 		) -> DispatchResult {
 			let sender = ensure_signed(origin)?;
 			ensure!(Some(sender) == Custodian::<T>::get(), Error::<T>::NotCustodian);
+			Self::ensure_valid_percentage(new_eps1)
+				.map_err(|_| Error::<T>::InvalidPiecewiseEpsilonRange)?;
+			Self::ensure_valid_percentage(new_eps2)
+				.map_err(|_| Error::<T>::InvalidPiecewiseEpsilonRange)?;
+			ensure!(new_eps2 > new_eps1, Error::<T>::InvalidPiecewiseThresholdOrder);
 			let old_alpha = AlphaPiecewise::<T>::get();
 			let old_eps1 = EpsPiecewise1::<T>::get();
 			let old_eps2 = EpsPiecewise2::<T>::get();
@@ -1254,6 +1270,19 @@ pub mod pallet {
 	/// structured and efficient manner. The methods included here are read-only and do not alter the state
 	/// of the storage.
 	impl<T: Config> Pallet<T> {
+		fn ensure_valid_percentage(value: u64) -> Result<(), ()> {
+			if value <= FIXED_POINT_SCALE {
+				Ok(())
+			} else {
+				Err(())
+			}
+		}
+
+		fn settlement_amount_into_balance(amount: u128) -> Result<BalanceOf<T>, Error<T>> {
+			BalanceOf::<T>::try_from(amount)
+				.map_err(|_| Error::<T>::SettlementAmountConversionFailed)
+		}
+
 		/// Calculate piecewise quadratic under-delivery penalty based on global parameters.
 		/// Inputs:
 		/// - flexi_requested (E_r)
@@ -1267,7 +1296,7 @@ pub mod pallet {
 		/// else if e2 <= E_m < e1: alpha*(e1 - E_m)
 		/// else (E_m < e2): alpha*(e1 - E_m) + alpha*(e2 - E_m)^2
 		pub fn calc_piecewise_quadratic_penalty(flexi_requested: u64, flexi_delivered: u64) -> u64 {
-			let f: u128 = 1_000_000u128;
+			let f: u128 = FIXED_POINT_SCALE as u128;
 			let er: u128 = flexi_requested as u128;
 			let em: u128 = flexi_delivered as u128;
 			let alpha: u128 = AlphaPiecewise::<T>::get() as u128;
@@ -1406,9 +1435,14 @@ pub mod pallet {
 
 			let balance = Balances::<T>::get(&who);
 			ensure!(balance >= amount, Error::<T>::BridgeInsufficientBalance);
+			let updated_balance =
+				balance.checked_sub(&amount).ok_or(Error::<T>::BalanceUnderflow)?;
+			let reserved = BridgeReservedBalances::<T>::get(&who);
+			let updated_reserved =
+				reserved.checked_add(&amount).ok_or(Error::<T>::BalanceOverflow)?;
 
-			Balances::<T>::insert(&who, balance - amount);
-			BridgeReservedBalances::<T>::mutate(&who, |reserved| *reserved += amount);
+			Balances::<T>::insert(&who, updated_balance);
+			BridgeReservedBalances::<T>::insert(&who, updated_reserved);
 			BridgeEscrows::<T>::insert(
 				&bid,
 				BridgeEscrowRecord {
@@ -1432,9 +1466,15 @@ pub mod pallet {
 
 			let who = record.owner.clone();
 			let amount = record.amount;
+			let balance = Balances::<T>::get(&who);
+			let updated_balance =
+				balance.checked_add(&amount).ok_or(Error::<T>::BalanceOverflow)?;
+			let reserved = BridgeReservedBalances::<T>::get(&who);
+			let updated_reserved =
+				reserved.checked_sub(&amount).ok_or(Error::<T>::BalanceUnderflow)?;
 
-			Balances::<T>::mutate(&who, |balance| *balance += amount);
-			BridgeReservedBalances::<T>::mutate(&who, |reserved| *reserved -= amount);
+			Balances::<T>::insert(&who, updated_balance);
+			BridgeReservedBalances::<T>::insert(&who, updated_reserved);
 
 			record.status = BridgeEscrowStatus::Released;
 			BridgeEscrows::<T>::insert(&bid, record);
@@ -1453,8 +1493,11 @@ pub mod pallet {
 
 			let who = record.owner.clone();
 			let amount = record.amount;
+			let reserved = BridgeReservedBalances::<T>::get(&who);
+			let updated_reserved =
+				reserved.checked_sub(&amount).ok_or(Error::<T>::BalanceUnderflow)?;
 
-			BridgeReservedBalances::<T>::mutate(&who, |reserved| *reserved -= amount);
+			BridgeReservedBalances::<T>::insert(&who, updated_reserved);
 
 			record.status = BridgeEscrowStatus::Finalized;
 			BridgeEscrows::<T>::insert(&bid, record);
@@ -1477,8 +1520,11 @@ pub mod pallet {
 				!ConsumedExternalCredits::<T>::get(&external_ref_bounded),
 				Error::<T>::BridgeDuplicateExternalCredit
 			);
+			let balance = Balances::<T>::get(&who);
+			let updated_balance =
+				balance.checked_add(&amount).ok_or(Error::<T>::BalanceOverflow)?;
 
-			Balances::<T>::mutate(&who, |balance| *balance += amount);
+			Balances::<T>::insert(&who, updated_balance);
 			ConsumedExternalCredits::<T>::insert(&external_ref_bounded, true);
 
 			Self::deposit_event(Event::BridgeInboundCredited { external_ref, who, amount });

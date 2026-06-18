@@ -1,4 +1,4 @@
-use crate::{mock::*, CommunityInfo, Error, INTER_COMMUNITY, INTRA_COMMUNITY};
+use crate::{mock::*, CommunityInfo, Error, FIXED_POINT_SCALE, INTER_COMMUNITY, INTRA_COMMUNITY};
 use frame_support::{assert_noop, assert_ok};
 use frame_system::RawOrigin;
 use gsy_primitives::v0::AccountId;
@@ -16,6 +16,22 @@ pub const COMMUNITY2_OWNER: AccountId = AccountId::new(*b"0124356123012345678901
 pub const PROSUMER1: AccountId = AccountId::new(*b"01234653535968356825544612432351");
 pub const PROSUMER2: AccountId = AccountId::new(*b"01234653135168356825544612432352");
 pub const PROSUMER3: AccountId = AccountId::new(*b"01234653135168356825544612432353");
+
+fn event_count() -> usize {
+	System::events().len()
+}
+
+fn has_under_tolerance_event(old_value: u64, new_value: u64) -> bool {
+	System::events().iter().any(|record| {
+		matches!(
+			record.event,
+			RuntimeEvent::Remuneration(crate::Event::UnderToleranceUpdated {
+				old_value: old,
+				new_value: new,
+			}) if old == old_value && new == new_value
+		)
+	})
+}
 
 #[cfg(test)]
 mod admin_tests {
@@ -248,6 +264,86 @@ mod admin_tests {
 			);
 		});
 	}
+
+	#[test]
+	fn main_parameter_tolerance_boundaries_are_valid() {
+		new_test_ext().execute_with(|| {
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				1,
+				2,
+				0,
+				0,
+			));
+			assert_eq!(Remuneration::under_tolerance(), 0);
+			assert_eq!(Remuneration::over_tolerance(), 0);
+
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				1,
+				2,
+				FIXED_POINT_SCALE,
+				FIXED_POINT_SCALE,
+			));
+			assert_eq!(Remuneration::under_tolerance(), FIXED_POINT_SCALE);
+			assert_eq!(Remuneration::over_tolerance(), FIXED_POINT_SCALE);
+		});
+	}
+
+	#[test]
+	fn main_parameter_invalid_tolerances_are_atomic_and_emit_no_success_event() {
+		new_test_ext().execute_with(|| {
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				10,
+				20,
+				30,
+				40,
+			));
+
+			let before_events = event_count();
+			assert_noop!(
+				Remuneration::set_main_parameters(
+					RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+					100,
+					200,
+					FIXED_POINT_SCALE + 1,
+					400,
+				),
+				Error::<Test>::InvalidToleranceRange
+			);
+			assert_eq!(Remuneration::alpha(), 10);
+			assert_eq!(Remuneration::beta(), 20);
+			assert_eq!(Remuneration::under_tolerance(), 30);
+			assert_eq!(Remuneration::over_tolerance(), 40);
+			assert_eq!(event_count(), before_events);
+
+			assert_noop!(
+				Remuneration::set_main_parameters(
+					RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+					100,
+					200,
+					300,
+					FIXED_POINT_SCALE + 1,
+				),
+				Error::<Test>::InvalidToleranceRange
+			);
+			assert_eq!(Remuneration::alpha(), 10);
+			assert_eq!(Remuneration::beta(), 20);
+			assert_eq!(Remuneration::under_tolerance(), 30);
+			assert_eq!(Remuneration::over_tolerance(), 40);
+			assert_eq!(event_count(), before_events);
+		});
+	}
 }
 
 #[cfg(test)]
@@ -435,6 +531,105 @@ mod payments_tests {
 
 			assert_eq!(Remuneration::balances(PROSUMER1), balance_info_before_p1);
 			assert_eq!(Remuneration::balances(PROSUMER2), balance_info_before_p2);
+		});
+	}
+
+	#[test]
+	fn receiver_balance_overflow_does_not_debit_sender() {
+		new_test_ext().execute_with(|| {
+			System::set_block_number(1);
+			Timestamp::set_timestamp(1_000);
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_ok!(Remuneration::add_community(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				COMMUNITY1,
+				DSO,
+				COMMUNITY1_OWNER
+			));
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				COMMUNITY1
+			));
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				COMMUNITY1
+			));
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				10
+			));
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				u128::MAX - 5
+			));
+
+			assert_noop!(
+				Remuneration::add_payment(
+					RawOrigin::Signed(PROSUMER1).into(),
+					PROSUMER2,
+					10,
+					INTRA_COMMUNITY
+				),
+				Error::<Test>::BalanceOverflow
+			);
+			assert_eq!(Remuneration::balances(PROSUMER1), 10);
+			assert_eq!(Remuneration::balances(PROSUMER2), u128::MAX - 5);
+		});
+	}
+
+	#[test]
+	fn successful_payment_preserves_total_internal_ledger_value() {
+		new_test_ext().execute_with(|| {
+			System::set_block_number(1);
+			Timestamp::set_timestamp(1_000);
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_ok!(Remuneration::add_community(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				COMMUNITY1,
+				DSO,
+				COMMUNITY1_OWNER
+			));
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				COMMUNITY1
+			));
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				COMMUNITY1
+			));
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				500
+			));
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				100
+			));
+
+			let total_before =
+				Remuneration::balances(PROSUMER1) + Remuneration::balances(PROSUMER2);
+			assert_ok!(Remuneration::add_payment(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				125,
+				INTRA_COMMUNITY
+			));
+			let total_after = Remuneration::balances(PROSUMER1) + Remuneration::balances(PROSUMER2);
+			assert_eq!(total_after, total_before);
 		});
 	}
 
@@ -631,6 +826,57 @@ mod basic_settlement_tests {
 			// Check balances after settlement
 			assert_eq!(Remuneration::balances(PROSUMER1), 500); // 1000 - 500
 			assert_eq!(Remuneration::balances(PROSUMER2), 500); // 0 + 500
+		});
+	}
+
+	#[test]
+	fn settle_flexibility_large_amount_above_u32_max_is_not_truncated() {
+		new_test_ext().execute_with(|| {
+			System::set_block_number(1);
+			Timestamp::set_timestamp(1_000);
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_ok!(Remuneration::add_community(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				COMMUNITY1,
+				DSO,
+				COMMUNITY1_OWNER
+			));
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				COMMUNITY1
+			));
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				COMMUNITY1
+			));
+
+			let large_amount = u32::MAX as u128 + 123;
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				large_amount
+			));
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				0
+			));
+
+			assert_ok!(Remuneration::settle_flexibility_payment(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				large_amount as u64,
+				large_amount as u64,
+				1,
+				INTRA_COMMUNITY
+			));
+			assert_eq!(Remuneration::balances(PROSUMER1), 0);
+			assert_eq!(Remuneration::balances(PROSUMER2), large_amount);
 		});
 	}
 
@@ -1309,6 +1555,40 @@ mod dynamic_adaptation_tests {
 	}
 
 	#[test]
+	fn adaptation_under_tolerance_clamps_to_fixed_point_max() {
+		new_test_ext().execute_with(|| {
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				1_000,
+				1_000,
+				FIXED_POINT_SCALE,
+				0,
+			));
+			assert_ok!(Remuneration::set_adaptation_params(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				FIXED_POINT_SCALE,
+				0,
+				0,
+				0,
+				FIXED_POINT_SCALE,
+				1
+			));
+
+			assert_ok!(Remuneration::dynamically_adapt_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				vec![0],
+				vec![0]
+			));
+			assert_eq!(Remuneration::under_tolerance(), FIXED_POINT_SCALE);
+			assert!(!has_under_tolerance_event(FIXED_POINT_SCALE, FIXED_POINT_SCALE));
+		});
+	}
+
+	#[test]
 	fn adaptation_alpha_beta_not_custodian_fails() {
 		new_test_ext().execute_with(|| {
 			assert_ok!(Remuneration::update_custodian(
@@ -1587,6 +1867,92 @@ mod pw_quad_penalty_tests {
 	}
 
 	#[test]
+	fn piecewise_parameter_validation_rejects_invalid_ranges_and_ordering_atomically() {
+		new_test_ext().execute_with(|| {
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_ok!(Remuneration::set_piecewise_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				7,
+				200_000,
+				400_000
+			));
+
+			let before_events = event_count();
+			assert_noop!(
+				Remuneration::set_piecewise_parameters(
+					RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+					8,
+					FIXED_POINT_SCALE + 1,
+					400_000
+				),
+				Error::<Test>::InvalidPiecewiseEpsilonRange
+			);
+			assert_eq!(Remuneration::alpha_piecewise(), 7);
+			assert_eq!(Remuneration::eps_piecewise_1(), 200_000);
+			assert_eq!(Remuneration::eps_piecewise_2(), 400_000);
+			assert_eq!(event_count(), before_events);
+
+			assert_noop!(
+				Remuneration::set_piecewise_parameters(
+					RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+					8,
+					200_000,
+					FIXED_POINT_SCALE + 1
+				),
+				Error::<Test>::InvalidPiecewiseEpsilonRange
+			);
+			assert_eq!(Remuneration::alpha_piecewise(), 7);
+			assert_eq!(Remuneration::eps_piecewise_1(), 200_000);
+			assert_eq!(Remuneration::eps_piecewise_2(), 400_000);
+			assert_eq!(event_count(), before_events);
+
+			assert_noop!(
+				Remuneration::set_piecewise_parameters(
+					RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+					8,
+					200_000,
+					200_000
+				),
+				Error::<Test>::InvalidPiecewiseThresholdOrder
+			);
+			assert_noop!(
+				Remuneration::set_piecewise_parameters(
+					RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+					8,
+					400_000,
+					200_000
+				),
+				Error::<Test>::InvalidPiecewiseThresholdOrder
+			);
+			assert_eq!(Remuneration::alpha_piecewise(), 7);
+			assert_eq!(Remuneration::eps_piecewise_1(), 200_000);
+			assert_eq!(Remuneration::eps_piecewise_2(), 400_000);
+			assert_eq!(event_count(), before_events);
+		});
+	}
+
+	#[test]
+	fn piecewise_parameter_boundary_values_are_valid_when_ordered() {
+		new_test_ext().execute_with(|| {
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_ok!(Remuneration::set_piecewise_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				1,
+				0,
+				FIXED_POINT_SCALE
+			));
+			assert_eq!(Remuneration::eps_piecewise_1(), 0);
+			assert_eq!(Remuneration::eps_piecewise_2(), FIXED_POINT_SCALE);
+		});
+	}
+
+	#[test]
 	fn settle_flexibility_payment_with_pw_quad_penalty() {
 		new_test_ext().execute_with(|| {
 			System::set_block_number(1);
@@ -1731,6 +2097,63 @@ mod pw_quad_penalty_tests {
 			assert_eq!(Remuneration::balances(PROSUMER2), 500);
 		});
 	}
+
+	#[test]
+	fn settle_flexibility_payment_with_pw_quad_penalty_large_amount_above_u32_max() {
+		new_test_ext().execute_with(|| {
+			System::set_block_number(1);
+			Timestamp::set_timestamp(1_000);
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_ok!(Remuneration::add_community(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				COMMUNITY1,
+				DSO,
+				COMMUNITY1_OWNER
+			));
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				COMMUNITY1
+			));
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				COMMUNITY1
+			));
+			assert_ok!(Remuneration::set_piecewise_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				1,
+				200_000,
+				400_000
+			));
+
+			let large_amount = u32::MAX as u128 + 456;
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				large_amount
+			));
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				0
+			));
+
+			assert_ok!(Remuneration::settle_flexibility_payment_with_pw_quad_penalty(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				large_amount as u64,
+				large_amount as u64,
+				1,
+				INTRA_COMMUNITY
+			));
+			assert_eq!(Remuneration::balances(PROSUMER1), 0);
+			assert_eq!(Remuneration::balances(PROSUMER2), large_amount);
+		});
+	}
 }
 
 #[cfg(test)]
@@ -1842,6 +2265,22 @@ mod stripe_bridge_tests {
 	}
 
 	#[test]
+	fn bridge_reserve_funds_reserved_overflow_preserves_state() {
+		new_test_ext().execute_with(|| {
+			setup_custodian_and_balance(PROSUMER1, 10);
+			crate::pallet::BridgeReservedBalances::<Test>::insert(PROSUMER1, u128::MAX - 5);
+
+			assert_noop!(
+				Remuneration::bridge_reserve_funds(b"esc-overflow-reserve".to_vec(), PROSUMER1, 10),
+				Error::<Test>::BalanceOverflow
+			);
+			assert_eq!(Remuneration::balances(PROSUMER1), 10);
+			assert_eq!(Remuneration::query_bridge_reserved(&PROSUMER1), u128::MAX - 5);
+			assert!(Remuneration::query_bridge_escrow(b"esc-overflow-reserve").is_none());
+		});
+	}
+
+	#[test]
 	fn bridge_reserve_reduces_normal_balance_immediately() {
 		new_test_ext().execute_with(|| {
 			setup_custodian_and_balance(PROSUMER1, 500);
@@ -1871,6 +2310,54 @@ mod stripe_bridge_tests {
 
 			let record = Remuneration::query_bridge_escrow(b"esc-005").unwrap();
 			assert_eq!(record.status, crate::pallet::BridgeEscrowStatus::Released);
+		});
+	}
+
+	#[test]
+	fn bridge_release_funds_balance_overflow_preserves_escrow_and_reserved_state() {
+		new_test_ext().execute_with(|| {
+			setup_custodian_and_balance(PROSUMER1, 1000);
+			assert_ok!(Remuneration::bridge_reserve_funds(
+				b"esc-release-overflow".to_vec(),
+				PROSUMER1,
+				400
+			));
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				u128::MAX
+			));
+
+			assert_noop!(
+				Remuneration::bridge_release_funds(b"esc-release-overflow".to_vec()),
+				Error::<Test>::BalanceOverflow
+			);
+			assert_eq!(Remuneration::balances(PROSUMER1), u128::MAX);
+			assert_eq!(Remuneration::query_bridge_reserved(&PROSUMER1), 400);
+			let record = Remuneration::query_bridge_escrow(b"esc-release-overflow").unwrap();
+			assert_eq!(record.status, crate::pallet::BridgeEscrowStatus::Active);
+		});
+	}
+
+	#[test]
+	fn bridge_release_funds_reserved_underflow_preserves_state() {
+		new_test_ext().execute_with(|| {
+			setup_custodian_and_balance(PROSUMER1, 1000);
+			assert_ok!(Remuneration::bridge_reserve_funds(
+				b"esc-release-underflow".to_vec(),
+				PROSUMER1,
+				400
+			));
+			crate::pallet::BridgeReservedBalances::<Test>::insert(PROSUMER1, 399);
+
+			assert_noop!(
+				Remuneration::bridge_release_funds(b"esc-release-underflow".to_vec()),
+				Error::<Test>::BalanceUnderflow
+			);
+			assert_eq!(Remuneration::balances(PROSUMER1), 600);
+			assert_eq!(Remuneration::query_bridge_reserved(&PROSUMER1), 399);
+			let record = Remuneration::query_bridge_escrow(b"esc-release-underflow").unwrap();
+			assert_eq!(record.status, crate::pallet::BridgeEscrowStatus::Active);
 		});
 	}
 
@@ -1907,6 +2394,28 @@ mod stripe_bridge_tests {
 	}
 
 	#[test]
+	fn bridge_finalize_outbound_reserved_underflow_preserves_escrow_state() {
+		new_test_ext().execute_with(|| {
+			setup_custodian_and_balance(PROSUMER1, 1000);
+			assert_ok!(Remuneration::bridge_reserve_funds(
+				b"esc-finalize-underflow".to_vec(),
+				PROSUMER1,
+				500
+			));
+			crate::pallet::BridgeReservedBalances::<Test>::insert(PROSUMER1, 499);
+
+			assert_noop!(
+				Remuneration::bridge_finalize_outbound(b"esc-finalize-underflow".to_vec()),
+				Error::<Test>::BalanceUnderflow
+			);
+			assert_eq!(Remuneration::balances(PROSUMER1), 500);
+			assert_eq!(Remuneration::query_bridge_reserved(&PROSUMER1), 499);
+			let record = Remuneration::query_bridge_escrow(b"esc-finalize-underflow").unwrap();
+			assert_eq!(record.status, crate::pallet::BridgeEscrowStatus::Active);
+		});
+	}
+
+	#[test]
 	fn bridge_finalize_outbound_fails_not_active() {
 		new_test_ext().execute_with(|| {
 			assert_noop!(
@@ -1927,6 +2436,25 @@ mod stripe_bridge_tests {
 				250
 			));
 			assert_eq!(Remuneration::balances(PROSUMER1), 350);
+		});
+	}
+
+	#[test]
+	fn bridge_credit_inbound_balance_overflow_preserves_state() {
+		new_test_ext().execute_with(|| {
+			setup_custodian_and_balance(PROSUMER1, u128::MAX);
+
+			assert_noop!(
+				Remuneration::bridge_credit_inbound(b"stripe_pi_overflow".to_vec(), PROSUMER1, 1),
+				Error::<Test>::BalanceOverflow
+			);
+			assert_eq!(Remuneration::balances(PROSUMER1), u128::MAX);
+			assert_ok!(Remuneration::bridge_credit_inbound(
+				b"stripe_pi_overflow".to_vec(),
+				PROSUMER2,
+				1
+			));
+			assert_eq!(Remuneration::balances(PROSUMER2), 1);
 		});
 	}
 
