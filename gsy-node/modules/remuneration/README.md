@@ -6,6 +6,8 @@ The Remuneration module manages the financial interactions within a decentralize
 
 This module is integral to maintaining accountability, enabling transparent record-keeping, and simplifying energy trade settlements among participants, including specialized flexibility service payments.
 
+> For a high-level, cross-module view of how this pallet fits into FEDECOM T6.4 (including its interaction with `stripe-bridge`), see [`gsy-node/docs/fedecom-t6.4/architecture-overview.md`](../../docs/fedecom-t6.4/architecture-overview.md).
+
 ## Features
 
 ### Administrative Functions

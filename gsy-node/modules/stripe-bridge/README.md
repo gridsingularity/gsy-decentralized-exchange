@@ -5,6 +5,8 @@
 > [Section 15](#15-known-limitations-and-deferred-production-features) for the
 > full list of research-scope limitations and deferred production features.
 
+> For a high-level, cross-module view of how this pallet fits into FEDECOM T6.4 (including its interaction with `remuneration`), see [`gsy-node/docs/fedecom-t6.4/architecture-overview.md`](../../docs/fedecom-t6.4/architecture-overview.md).
+
 ## 1. Purpose and scope
 
 This pallet demonstrates a Stripe-backed bridge workflow for FEDECOM research
