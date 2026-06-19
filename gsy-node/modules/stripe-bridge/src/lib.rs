@@ -277,6 +277,7 @@ pub mod pallet {
 	// -----------------------------------------------------------------------
 
 	/// Payments queued for Stripe processing.
+	/// Legacy queue model: not integrated with remuneration escrow. See README section 7.
 	#[pallet::storage]
 	#[pallet::getter(fn pending_payments)]
 	pub type PendingPayments<T: Config> =
@@ -482,6 +483,10 @@ pub mod pallet {
 
 	#[pallet::hooks]
 	impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
+		// Off-chain-worker "courier" entry point: non-deterministic, runs only on nodes
+		// that execute OCWs and hold a key. It reads pending on-chain work, talks to Stripe
+		// over HTTP, and submits signed result payloads as unsigned extrinsics. It performs
+		// no on-chain state writes itself. See README sections 2, 8 and 9.
 		fn offchain_worker(_block_number: BlockNumberFor<T>) {
 			if !StripeEnabled::<T>::get() {
 				return;
@@ -643,6 +648,9 @@ pub mod pallet {
 		}
 
 		/// Record a trusted inbound Stripe confirmation and credit remuneration exactly once.
+		/// Custodian-trusted: there is no Stripe webhook or OCW verification of the Stripe
+		/// object; the amount, external reference and Stripe object id are trusted as provided.
+		/// Duplicate external references are rejected by remuneration. See README section 5.
 		#[transactional]
 		#[pallet::weight(<T as Config>::WeightInfo::confirm_transfer_from_stripe())]
 		#[pallet::call_index(5)]
@@ -934,6 +942,11 @@ pub mod pallet {
 	impl<T: Config> ValidateUnsigned for Pallet<T> {
 		type Call = Call<T>;
 
+		// Transaction-pool validation for the unsigned OCW result calls. Dispatch of these
+		// calls only checks `ensure_none`; the application-level payload signature is verified
+		// HERE (BadProof on failure), so this layer is essential, not optional. `provides` tags
+		// are pool-level duplicate controls only; on-chain status guards remain authoritative.
+		// See README section 9.
 		fn validate_unsigned(_source: TransactionSource, call: &Self::Call) -> TransactionValidity {
 			let valid_tx = |provide| {
 				ValidTransaction::with_tag_prefix("stripe-bridge")
