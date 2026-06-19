@@ -9,9 +9,14 @@ use crate::{
 };
 use codec::Encode;
 use frame_support::{assert_noop, assert_ok, traits::Hooks};
+use frame_system::offchain::{SignedPayload, SigningTypes};
 use gsy_primitives::v0::AccountId;
 use remuneration::pallet::BridgeEscrowStatus;
 use sp_core::sr25519;
+use sp_runtime::{
+	traits::ValidateUnsigned,
+	transaction_validity::{InvalidTransaction, TransactionSource, TransactionValidityError},
+};
 
 fn alice() -> AccountId {
 	AccountId::from(sr25519::Public::from_raw([1u8; 32]))
@@ -1917,5 +1922,516 @@ fn full_balance_check_lifecycle() {
 		assert_eq!(info.available_amount, 100000);
 		assert_eq!(info.available_currency.as_slice(), b"chf");
 		assert_eq!(info.pending_amount, 25000);
+	});
+}
+
+// ===========================================================================
+//  Section 4: ValidateUnsigned transaction-pool validation tests
+// ===========================================================================
+//
+// The tests in this section exercise the *real* transaction-pool validation
+// path, `<StripeBridge as ValidateUnsigned>::validate_unsigned`, used by the
+// off-chain worker result extrinsics. The dispatch-based tests above call the
+// extrinsics with `RuntimeOrigin::none()`, which only runs `ensure_none` plus
+// the call body and NEVER invokes `ValidateUnsigned`. As a result the
+// signature verification, transaction priority, longevity, propagate flag and
+// `provides` deduplication tags were previously untested.
+//
+// Key facts these tests pin down:
+//   * the signed payload authenticates the *payload contents*, not just the
+//     unsigned origin, so altering a logical id after signing must fail;
+//   * `provides` tags are a pool-level duplicate control (per logical id for
+//     payment/refund/outbound, singleton for balance) and are distinct from
+//     the on-chain state-machine guards exercised by the dispatch tests;
+//   * an invalid signature is rejected with `InvalidTransaction::BadProof`.
+//
+// Valid signatures are produced with the same crypto path as the OCW
+// (`SignedPayload::sign::<crate::crypto::TestAuthId>`), backed by the test
+// keystore set up in `new_test_ext_with_offchain`. No production shortcut is
+// used: the resulting signature passes the exact `SignedPayload::verify`
+// check called inside `validate_unsigned`.
+
+const EXPECTED_UNSIGNED_PRIORITY: u64 = 1 << 20;
+const EXPECTED_UNSIGNED_LONGEVITY: u64 = 3;
+
+type OcwPublic = <Test as SigningTypes>::Public;
+type OcwSignature = <Test as SigningTypes>::Signature;
+
+/// Public key of the OCW authority held in the test keystore (set up by
+/// `new_test_ext_with_offchain`). Payloads must carry this exact key so the
+/// signature produced with the keystore verifies in `validate_unsigned`.
+fn ocw_public() -> OcwPublic {
+	let keys = sp_io::crypto::sr25519_public_keys(crate::KEY_TYPE);
+	assert!(!keys.is_empty(), "offchain test keystore must contain an OCW authority key");
+	keys[0].into()
+}
+
+/// A signature that is valid in shape but never matches a real payload.
+fn zero_signature() -> OcwSignature {
+	sp_runtime::MultiSignature::Sr25519(sp_core::sr25519::Signature::from_raw([0u8; 64]))
+}
+
+fn payment_payload(payment_index: u64) -> crate::pallet::PaymentResultPayload<OcwPublic> {
+	crate::pallet::PaymentResultPayload::<OcwPublic> {
+		payment_index,
+		stripe_payment_id: b"pi_validate_unsigned".to_vec(),
+		status: b"succeeded".to_vec(),
+		gross_amount: 1000,
+		stripe_fee: 29,
+		net_amount: 971,
+		public: ocw_public(),
+	}
+}
+
+fn refund_payload(refund_index: u64) -> crate::pallet::RefundResultPayload<OcwPublic> {
+	crate::pallet::RefundResultPayload::<OcwPublic> {
+		refund_index,
+		refund_id: b"re_validate_unsigned".to_vec(),
+		status: b"succeeded".to_vec(),
+		amount: 2000,
+		public: ocw_public(),
+	}
+}
+
+fn balance_payload(available_amount: i64) -> crate::pallet::BalanceResultPayload<OcwPublic> {
+	crate::pallet::BalanceResultPayload::<OcwPublic> {
+		available_amount,
+		available_currency: b"chf".to_vec(),
+		pending_amount: 0,
+		pending_currency: b"chf".to_vec(),
+		public: ocw_public(),
+	}
+}
+
+fn outbound_payload(
+	bridge_id: u64,
+	success: bool,
+) -> crate::pallet::OutboundTransferResultPayload<OcwPublic> {
+	crate::pallet::OutboundTransferResultPayload::<OcwPublic> {
+		bridge_id,
+		success,
+		stripe_object_id: b"pi_outbound_validate".to_vec(),
+		stripe_status: b"succeeded".to_vec(),
+		error_message: Vec::new(),
+		public: ocw_public(),
+	}
+}
+
+/// Sign a payload with the OCW authority key from the keystore, exactly as the
+/// off-chain worker does. Requires a keystore extension (offchain test ext).
+fn sign<P: SignedPayload<Test>>(payload: &P) -> OcwSignature {
+	payload
+		.sign::<crate::crypto::TestAuthId>()
+		.expect("payload must be signable in test keystore")
+}
+
+/// Run the pallet's real `ValidateUnsigned` implementation against a call.
+fn validate(
+	call: crate::pallet::Call<Test>,
+) -> sp_runtime::transaction_validity::TransactionValidity {
+	<StripeBridge as ValidateUnsigned>::validate_unsigned(TransactionSource::External, &call)
+}
+
+/// Assert the common accepted-transaction metadata shared by every result call.
+fn assert_accepted_metadata(
+	validity: sp_runtime::transaction_validity::TransactionValidity,
+) -> Vec<Vec<u8>> {
+	let valid = validity.expect("a correctly signed result call must pass ValidateUnsigned");
+	assert_eq!(valid.priority, EXPECTED_UNSIGNED_PRIORITY, "unexpected transaction priority");
+	assert_eq!(valid.longevity, EXPECTED_UNSIGNED_LONGEVITY, "unexpected transaction longevity");
+	assert!(valid.propagate, "result transactions must propagate across the network");
+	assert!(!valid.provides.is_empty(), "result transactions must expose a provides tag");
+	valid.provides
+}
+
+// --- Valid signature acceptance -------------------------------------------
+
+// Verifies that a correctly signed payment result passes the transaction-pool
+// validator with the expected priority, longevity, propagate flag and a
+// non-empty provides tag.
+#[test]
+fn validate_unsigned_accepts_valid_payment_result_signature() {
+	let (mut ext, _offchain_state, _pool_state) = new_test_ext_with_offchain();
+	ext.execute_with(|| {
+		let payload = payment_payload(0);
+		let signature = sign(&payload);
+		let validity =
+			validate(crate::pallet::Call::<Test>::submit_payment_result { payload, signature });
+		assert_accepted_metadata(validity);
+	});
+}
+
+// Verifies that a correctly signed refund result passes the transaction-pool
+// validator with the expected metadata.
+#[test]
+fn validate_unsigned_accepts_valid_refund_result_signature() {
+	let (mut ext, _offchain_state, _pool_state) = new_test_ext_with_offchain();
+	ext.execute_with(|| {
+		let payload = refund_payload(0);
+		let signature = sign(&payload);
+		let validity =
+			validate(crate::pallet::Call::<Test>::submit_refund_result { payload, signature });
+		assert_accepted_metadata(validity);
+	});
+}
+
+// Verifies that a correctly signed balance result passes the transaction-pool
+// validator with the expected metadata.
+#[test]
+fn validate_unsigned_accepts_valid_balance_result_signature() {
+	let (mut ext, _offchain_state, _pool_state) = new_test_ext_with_offchain();
+	ext.execute_with(|| {
+		let payload = balance_payload(50_000);
+		let signature = sign(&payload);
+		let validity =
+			validate(crate::pallet::Call::<Test>::submit_balance_result { payload, signature });
+		assert_accepted_metadata(validity);
+	});
+}
+
+// Verifies that a correctly signed canonical outbound bridge result passes the
+// transaction-pool validator. This is the most important FEDECOM path because
+// the dispatched call finalises or releases remuneration escrow.
+#[test]
+fn validate_unsigned_accepts_valid_outbound_result_signature() {
+	let (mut ext, _offchain_state, _pool_state) = new_test_ext_with_offchain();
+	ext.execute_with(|| {
+		let payload = outbound_payload(0, true);
+		let signature = sign(&payload);
+		let validity = validate(crate::pallet::Call::<Test>::submit_outbound_transfer_result {
+			payload,
+			signature,
+		});
+		assert_accepted_metadata(validity);
+	});
+}
+
+// --- Invalid signature rejection ------------------------------------------
+
+// Verifies that a payment result carrying a bogus signature is rejected with
+// `InvalidTransaction::BadProof` at the transaction-pool layer.
+#[test]
+fn validate_unsigned_rejects_payment_result_bad_signature() {
+	let (mut ext, _offchain_state, _pool_state) = new_test_ext_with_offchain();
+	ext.execute_with(|| {
+		let payload = payment_payload(0);
+		let validity = validate(crate::pallet::Call::<Test>::submit_payment_result {
+			payload,
+			signature: zero_signature(),
+		});
+		assert_eq!(validity, Err(TransactionValidityError::Invalid(InvalidTransaction::BadProof)));
+	});
+}
+
+// Verifies that a refund result carrying a bogus signature is rejected with
+// `InvalidTransaction::BadProof`.
+#[test]
+fn validate_unsigned_rejects_refund_result_bad_signature() {
+	let (mut ext, _offchain_state, _pool_state) = new_test_ext_with_offchain();
+	ext.execute_with(|| {
+		let payload = refund_payload(0);
+		let validity = validate(crate::pallet::Call::<Test>::submit_refund_result {
+			payload,
+			signature: zero_signature(),
+		});
+		assert_eq!(validity, Err(TransactionValidityError::Invalid(InvalidTransaction::BadProof)));
+	});
+}
+
+// Verifies that a balance result carrying a bogus signature is rejected with
+// `InvalidTransaction::BadProof`.
+#[test]
+fn validate_unsigned_rejects_balance_result_bad_signature() {
+	let (mut ext, _offchain_state, _pool_state) = new_test_ext_with_offchain();
+	ext.execute_with(|| {
+		let payload = balance_payload(50_000);
+		let validity = validate(crate::pallet::Call::<Test>::submit_balance_result {
+			payload,
+			signature: zero_signature(),
+		});
+		assert_eq!(validity, Err(TransactionValidityError::Invalid(InvalidTransaction::BadProof)));
+	});
+}
+
+// Verifies that an outbound bridge result carrying a bogus signature is
+// rejected with `InvalidTransaction::BadProof`.
+#[test]
+fn validate_unsigned_rejects_outbound_result_bad_signature() {
+	let (mut ext, _offchain_state, _pool_state) = new_test_ext_with_offchain();
+	ext.execute_with(|| {
+		let payload = outbound_payload(0, true);
+		let validity = validate(crate::pallet::Call::<Test>::submit_outbound_transfer_result {
+			payload,
+			signature: zero_signature(),
+		});
+		assert_eq!(validity, Err(TransactionValidityError::Invalid(InvalidTransaction::BadProof)));
+	});
+}
+
+// --- Payload / signature mismatch -----------------------------------------
+
+// Verifies that a signature produced for `payment_index = A` does not validate
+// a payload with `payment_index = B`. This proves the payment index cannot be
+// altered after signing without invalidating the proof.
+#[test]
+fn validate_unsigned_rejects_payment_result_payload_mismatch() {
+	let (mut ext, _offchain_state, _pool_state) = new_test_ext_with_offchain();
+	ext.execute_with(|| {
+		// Sign payment_index = 1 ...
+		let signed = payment_payload(1);
+		let signature = sign(&signed);
+		// ... then attempt to reuse that signature for payment_index = 2.
+		let mut tampered = payment_payload(2);
+		tampered.public = signed.public.clone();
+		let validity = validate(crate::pallet::Call::<Test>::submit_payment_result {
+			payload: tampered,
+			signature,
+		});
+		assert_eq!(validity, Err(TransactionValidityError::Invalid(InvalidTransaction::BadProof)));
+	});
+}
+
+// Verifies that a signature produced for `bridge_id = A` does not validate a
+// payload with `bridge_id = B`. This proves the logical bridge id used to
+// finalise/release remuneration escrow cannot be swapped after signing.
+#[test]
+fn validate_unsigned_rejects_outbound_result_payload_mismatch() {
+	let (mut ext, _offchain_state, _pool_state) = new_test_ext_with_offchain();
+	ext.execute_with(|| {
+		// Sign bridge_id = 1 ...
+		let signed = outbound_payload(1, true);
+		let signature = sign(&signed);
+		// ... then attempt to reuse that signature for bridge_id = 2.
+		let mut tampered = outbound_payload(2, true);
+		tampered.public = signed.public.clone();
+		let validity = validate(crate::pallet::Call::<Test>::submit_outbound_transfer_result {
+			payload: tampered,
+			signature,
+		});
+		assert_eq!(validity, Err(TransactionValidityError::Invalid(InvalidTransaction::BadProof)));
+	});
+}
+
+// --- Provides-tag (pool-level duplicate control) coverage ------------------
+
+// Verifies that two valid payment results with different payment indexes
+// expose different provides tags, while two with the same index share a tag.
+#[test]
+fn validate_unsigned_payment_result_provides_tag_depends_on_index() {
+	let (mut ext, _offchain_state, _pool_state) = new_test_ext_with_offchain();
+	ext.execute_with(|| {
+		let payload_a = payment_payload(1);
+		let sig_a = sign(&payload_a);
+		let provides_a = assert_accepted_metadata(validate(
+			crate::pallet::Call::<Test>::submit_payment_result {
+				payload: payload_a,
+				signature: sig_a,
+			},
+		));
+
+		let payload_b = payment_payload(2);
+		let sig_b = sign(&payload_b);
+		let provides_b = assert_accepted_metadata(validate(
+			crate::pallet::Call::<Test>::submit_payment_result {
+				payload: payload_b,
+				signature: sig_b,
+			},
+		));
+
+		let payload_a_again = payment_payload(1);
+		let sig_a_again = sign(&payload_a_again);
+		let provides_a_again = assert_accepted_metadata(validate(
+			crate::pallet::Call::<Test>::submit_payment_result {
+				payload: payload_a_again,
+				signature: sig_a_again,
+			},
+		));
+
+		assert_ne!(
+			provides_a, provides_b,
+			"different payment indexes must not collide in the pool"
+		);
+		assert_eq!(provides_a, provides_a_again, "same payment index must produce a stable tag");
+	});
+}
+
+// Verifies that two valid refund results with different refund indexes expose
+// different provides tags, while two with the same index share a tag.
+#[test]
+fn validate_unsigned_refund_result_provides_tag_depends_on_index() {
+	let (mut ext, _offchain_state, _pool_state) = new_test_ext_with_offchain();
+	ext.execute_with(|| {
+		let payload_a = refund_payload(1);
+		let sig_a = sign(&payload_a);
+		let provides_a =
+			assert_accepted_metadata(validate(crate::pallet::Call::<Test>::submit_refund_result {
+				payload: payload_a,
+				signature: sig_a,
+			}));
+
+		let payload_b = refund_payload(2);
+		let sig_b = sign(&payload_b);
+		let provides_b =
+			assert_accepted_metadata(validate(crate::pallet::Call::<Test>::submit_refund_result {
+				payload: payload_b,
+				signature: sig_b,
+			}));
+
+		let payload_a_again = refund_payload(1);
+		let sig_a_again = sign(&payload_a_again);
+		let provides_a_again =
+			assert_accepted_metadata(validate(crate::pallet::Call::<Test>::submit_refund_result {
+				payload: payload_a_again,
+				signature: sig_a_again,
+			}));
+
+		assert_ne!(provides_a, provides_b, "different refund indexes must not collide in the pool");
+		assert_eq!(provides_a, provides_a_again, "same refund index must produce a stable tag");
+	});
+}
+
+// Verifies that two valid outbound bridge results with different bridge ids
+// expose different provides tags, while two with the same bridge id share a
+// tag. This is the duplicate control protecting remuneration escrow settlement.
+#[test]
+fn validate_unsigned_outbound_result_provides_tag_depends_on_bridge_id() {
+	let (mut ext, _offchain_state, _pool_state) = new_test_ext_with_offchain();
+	ext.execute_with(|| {
+		let payload_a = outbound_payload(1, true);
+		let sig_a = sign(&payload_a);
+		let provides_a = assert_accepted_metadata(validate(
+			crate::pallet::Call::<Test>::submit_outbound_transfer_result {
+				payload: payload_a,
+				signature: sig_a,
+			},
+		));
+
+		let payload_b = outbound_payload(2, true);
+		let sig_b = sign(&payload_b);
+		let provides_b = assert_accepted_metadata(validate(
+			crate::pallet::Call::<Test>::submit_outbound_transfer_result {
+				payload: payload_b,
+				signature: sig_b,
+			},
+		));
+
+		let payload_a_again = outbound_payload(1, true);
+		let sig_a_again = sign(&payload_a_again);
+		let provides_a_again = assert_accepted_metadata(validate(
+			crate::pallet::Call::<Test>::submit_outbound_transfer_result {
+				payload: payload_a_again,
+				signature: sig_a_again,
+			},
+		));
+
+		assert_ne!(provides_a, provides_b, "different bridge ids must not collide in the pool");
+		assert_eq!(provides_a, provides_a_again, "same bridge id must produce a stable tag");
+	});
+}
+
+// Verifies that balance results use a singleton provides tag: two valid balance
+// results with *different* contents intentionally share the same tag, because
+// the balance check is modeled as a singleton request/result flow. This is
+// documented current behaviour, not a bug.
+#[test]
+fn validate_unsigned_balance_result_uses_singleton_provides_tag() {
+	let (mut ext, _offchain_state, _pool_state) = new_test_ext_with_offchain();
+	ext.execute_with(|| {
+		let payload_a = balance_payload(50_000);
+		let sig_a = sign(&payload_a);
+		let provides_a = assert_accepted_metadata(validate(
+			crate::pallet::Call::<Test>::submit_balance_result {
+				payload: payload_a,
+				signature: sig_a,
+			},
+		));
+
+		let payload_b = balance_payload(99_999);
+		let sig_b = sign(&payload_b);
+		let provides_b = assert_accepted_metadata(validate(
+			crate::pallet::Call::<Test>::submit_balance_result {
+				payload: payload_b,
+				signature: sig_b,
+			},
+		));
+
+		assert_eq!(
+			provides_a, provides_b,
+			"balance results intentionally share a singleton provides tag regardless of contents"
+		);
+	});
+}
+
+// --- Irrelevant / non-result calls ----------------------------------------
+
+// Verifies that `validate_unsigned` rejects calls that are not OCW result
+// submissions. A signed administrative call such as `set_stripe_enabled` is
+// not a valid unsigned transaction and hits the `_ => InvalidTransaction::Call`
+// fallback. Note: a remuneration call cannot be expressed here because the
+// pallet validator's associated `Call` type is `stripe_bridge::Call<Test>`;
+// the runtime-level aggregate validator routes by pallet before reaching this
+// code, so the stripe-bridge fallback is the relevant unit under test.
+#[test]
+fn validate_unsigned_rejects_irrelevant_calls() {
+	new_test_ext().execute_with(|| {
+		let validity = validate(crate::pallet::Call::<Test>::set_stripe_enabled { enabled: true });
+		assert_eq!(validity, Err(TransactionValidityError::Invalid(InvalidTransaction::Call)));
+	});
+}
+
+// --- ValidateUnsigned + dispatch integration ------------------------------
+
+// Verifies that the canonical outbound result call is valid at the
+// transaction-pool layer AND, when dispatched with `RuntimeOrigin::none()`,
+// performs the expected on-chain state transition: escrow is finalised and the
+// reserved remuneration funds are settled. This proves the two layers agree on
+// the same call. It complements, and does not replace, the existing dispatch
+// tests.
+#[test]
+fn validate_unsigned_then_dispatch_outbound_result_finalizes_escrow() {
+	let (mut ext, _offchain_state, _pool_state) = new_test_ext_with_offchain();
+	ext.execute_with(|| {
+		set_custodian(alice());
+		set_remuneration_balance(bob(), 1000);
+		assert_ok!(StripeBridge::set_stripe_enabled(RuntimeOrigin::signed(alice()), true));
+		assert_ok!(StripeBridge::request_transfer_to_stripe(
+			RuntimeOrigin::signed(alice()),
+			bob(),
+			400,
+			b"chf".to_vec(),
+		));
+
+		// Bridge transfer 0 is now in FundsReserved.
+		let transfer = StripeBridge::query_bridge_transfer(0).expect("transfer should exist");
+		assert_eq!(transfer.status, BridgeTransferStatus::FundsReserved);
+
+		let payload = outbound_payload(0, true);
+		let signature = sign(&payload);
+
+		// Transaction-pool layer accepts the signed result.
+		assert_accepted_metadata(validate(
+			crate::pallet::Call::<Test>::submit_outbound_transfer_result {
+				payload: payload.clone(),
+				signature: signature.clone(),
+			},
+		));
+
+		// Same call dispatched as unsigned performs the state transition.
+		assert_ok!(StripeBridge::submit_outbound_transfer_result(
+			RuntimeOrigin::none(),
+			payload,
+			signature,
+		));
+
+		let transfer = StripeBridge::query_bridge_transfer(0).expect("transfer should exist");
+		assert_eq!(transfer.status, BridgeTransferStatus::Finalized);
+		assert_eq!(Remuneration::balances(bob()), 600);
+		assert_eq!(Remuneration::query_bridge_reserved(&bob()), 0);
+		assert_eq!(
+			Remuneration::query_bridge_escrow(&bridge_reference(0))
+				.expect("escrow should exist")
+				.status,
+			BridgeEscrowStatus::Finalized
+		);
 	});
 }
