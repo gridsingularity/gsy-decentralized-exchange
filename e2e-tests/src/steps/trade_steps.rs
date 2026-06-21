@@ -14,7 +14,7 @@ async fn submit_bid(world: &mut MyWorld, user_name: String) {
 		std::env::var("GSY_NODE_URL").unwrap_or_else(|_| "ws://127.0.0.1:9944".to_string());
 
 	publish_orders(node_url, vec![world.bid_forecast.clone().unwrap()],
-				   world.topology_schema.clone().unwrap(), 0.3, &user)
+				   world.topology_schema.clone().unwrap(), 0.3, 0.07, &user)
 		.await
 		.expect("Failed to publish bid");
 	println!("Submitted bid for {}", user_name);
@@ -28,7 +28,7 @@ async fn submit_offer(world: &mut MyWorld, user_name: String) {
 		std::env::var("GSY_NODE_URL").unwrap_or_else(|_| "ws://127.0.0.1:9944".to_string());
 
 	publish_orders(node_url, vec![world.offer_forecast.clone().unwrap()],
-				   world.topology_schema.clone().unwrap(), 0.07, &user)
+				   world.topology_schema.clone().unwrap(), 0.3, 0.07, &user)
 		.await
 		.expect("Failed to publish offer");
 	println!("Submitted offer for {}", user_name);

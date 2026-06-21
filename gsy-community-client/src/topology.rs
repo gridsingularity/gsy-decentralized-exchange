@@ -225,4 +225,31 @@ impl TopologyManager {
             }
         }
     }
+
+    /// Fetch the external topology once and recreate the per-community markets for every
+    /// requested delivery timeslot, returning the markets paired with their timeslot.
+    pub async fn get_for_timeslots(
+        &self,
+        timeslots: &[u64],
+    ) -> Vec<(u64, Vec<MarketTopologySchema>)> {
+        let external_topology_res = self.fetch_topology().await;
+        match external_topology_res {
+            Ok(topology) => {
+                let all_assets = self.get_all_assets_for_all_communities(topology).await;
+                let mut markets_per_timeslot = Vec::with_capacity(timeslots.len());
+                for &timeslot in timeslots {
+                    let markets = self
+                        .api_adapter
+                        .get_or_create_market_topology(all_assets.clone(), timeslot)
+                        .await;
+                    markets_per_timeslot.push((timeslot, markets));
+                }
+                markets_per_timeslot
+            }
+            Err(error) => {
+                error!("Failed to fetch external topology: {}", error);
+                vec![]
+            }
+        }
+    }
 }

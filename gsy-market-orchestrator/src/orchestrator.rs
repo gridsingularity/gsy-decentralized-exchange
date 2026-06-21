@@ -68,10 +68,7 @@ async fn orchestrate_markets(
 	for market in markets {
 		let delivery_secs = market.time_slot as u64;
 		let market_id = string_to_h256(market.market_id.clone());
-		let open_time =
-			(delivery_secs as i64 + GlobalConstants.SPOT_MARKET_OPEN_OFFSET_MIN * 60) as u64;
-		let close_time =
-			(delivery_secs as i64 + GlobalConstants.SPOT_MARKET_CLOSE_OFFSET_MIN * 60) as u64;
+		let (open_time, close_time) = GlobalConstants.spot_market_window(delivery_secs);
 
 		let on_chain_status = client.get_market_status(market_id).await?;
 		let should_be_open = now >= open_time && now < close_time;

@@ -66,9 +66,10 @@ mod tests {
             ],
         };
 
-        let energy_rate = 0.3;
+        let bid_rate = 0.3;
+        let offer_rate = 0.07;
         let input_orders =
-            create_input_orders(forecasts, market.clone(), energy_rate, &dev::alice());
+            create_input_orders(forecasts, market.clone(), bid_rate, offer_rate, &dev::alice());
         assert_eq!(input_orders.len(), 2);
         let current_time = get_current_timestamp_in_secs();
 
@@ -101,7 +102,7 @@ mod tests {
                     );
                     assert!((current_time - offer.offer_component.creation_time) < 1);
                     assert_eq!(offer.offer_component.time_slot, 456456);
-                    assert_eq!(offer.offer_component.energy_rate, 3000);
+                    assert_eq!(offer.offer_component.energy_rate, 700);
                     assert_eq!(offer.offer_component.energy, 10000);
                 }
             }

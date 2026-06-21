@@ -31,7 +31,9 @@ pub struct MyWorld {
 	pub community_client_api: AreaMarketInfoAdapter,
 	pub community_uuid: Option<String>,
 	pub community_markets: Vec<CommunityMarket>,
-	pub cross_communities: Vec<CrossCommunity>
+	pub cross_communities: Vec<CrossCommunity>,
+	pub initial_trade_energy: Option<u64>,
+	pub residual_trade_energy: Option<u64>,
 }
 
 // Community state used by the cross-community matching scenario.
@@ -84,7 +86,8 @@ impl MyWorld {
 			buyer_hash: None, seller_hash: None,
 			bid_forecast: None, offer_forecast: None, topology_schema: None,
 			community_client_api: AreaMarketInfoAdapter::new(Some(orderbook_url)), community_uuid: None,
-			community_markets: Vec::new(), cross_communities: Vec::new()
+			community_markets: Vec::new(), cross_communities: Vec::new(),
+			initial_trade_energy: None, residual_trade_energy: None,
 		})
 	}
 
