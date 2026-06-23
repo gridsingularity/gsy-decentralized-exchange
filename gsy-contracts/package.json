@@ -6,7 +6,8 @@
     "test": "hardhat test",
     "compile": "hardhat compile",
     "deploy": "hardhat run scripts/deploy.ts",
-    "upgrade": "hardhat run scripts/upgrade.ts"
+    "upgrade": "hardhat run scripts/upgrade.ts",
+    "gas-report": "hardhat run scripts/gas-report.ts"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^4.0.0",

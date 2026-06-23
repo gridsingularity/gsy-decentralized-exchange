@@ -27,3 +27,9 @@ mongodb-data
 # Local EWDS gateway secrets.
 .env.ewds.local
 secrets/
+
+# Generated contract deployment addresses and machine-readable gas reports.
+contracts-output/*
+!contracts-output/gas-report.md
+!contracts-output/volta-gas-report.md
+!contracts-output/ewc-gas-report.md

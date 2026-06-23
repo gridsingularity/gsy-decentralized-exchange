@@ -2,7 +2,7 @@
 
 ## Contract Set
 
-The refactored chain layer uses Solidity `^0.8.22` and is deployed by
+The chain layer uses Solidity `^0.8.22` and is deployed by
 `gsy-contracts/scripts/deploy.ts`. Hardhat compiles with `evmVersion: "paris"`
 to keep bytecode compatible with the local/EWC-style runtime assumptions.
 
@@ -13,16 +13,68 @@ The contract suite uses the OpenZeppelin transparent proxy pattern:
 - Each business contract is deployed as an implementation contract.
 - Each runtime address used by services is a `TransparentUpgradeableProxy`.
 - Each proxy is controlled by a `ProxyAdmin` contract.
-- `PROXY_ADMIN_PRIVATE_KEY` controls the `ProxyAdmin` ownership during local bootstrap.
+- `PROXY_ADMIN_PRIVATE_KEY` controls the `ProxyAdmin` ownership during deployment.
 - Services must always use the proxy addresses (`ACTOR_REGISTRY_ADDRESS`,
   `MARKET_CONTROLLER_ADDRESS`, `ORDER_REGISTRY_ADDRESS`, `TRADE_SETTLEMENT_ADDRESS`),
   not the implementation addresses.
 
 Implementations use OpenZeppelin upgradeable base contracts, `initialize(...)`
 functions instead of constructors, and implementation contracts disable direct
-initialization in their constructors. The bootstrap script exports both proxy
+initialization in their constructors. The deployment script exports both proxy
 addresses and implementation/admin addresses to `/contracts/addresses.env` for
 inspection and future upgrade operations.
+
+Local Docker deployment writes the same values to
+`contracts-output/addresses.env` on the host:
+
+```bash
+./scripts/contracts.sh local deploy
+```
+
+Use that generated file when starting the services or e2e tests:
+
+```bash
+docker compose --env-file contracts-output/addresses.env up --build
+```
+
+Remote deployments are supported through the dedicated contracts compose stack:
+
+```bash
+DEPLOYER_PRIVATE_KEY=0x... ./scripts/contracts.sh volta deploy
+
+DEPLOYER_PRIVATE_KEY=0x... \
+ALLOW_EWC_MAINNET_DEPLOY=true \
+./scripts/contracts.sh ewc deploy
+```
+
+See [Contract Deployment and Gas Reports](../setup/contracts.md) for the full
+network matrix and safety flags.
+
+## Gas Reporting
+
+`gsy-contracts/scripts/gas-report.ts` deploys a benchmark contract suite and
+records gas for deployment, proxy initialization, role setup, mutating contract
+calls, and view-call estimates.
+
+Local report:
+
+```bash
+./scripts/contracts.sh local gas-report
+```
+
+Outputs:
+
+- `contracts-output/gas-report.md`
+- `contracts-output/gas-report.json`
+
+Remote gas reports require an explicit opt-in because they deploy contracts and
+send state-changing transactions on the target network:
+
+```bash
+DEPLOYER_PRIVATE_KEY=0x... \
+GAS_REPORT_ALLOW_REMOTE=true \
+./scripts/contracts.sh volta gas-report
+```
 
 Generic upgrade command:
 
