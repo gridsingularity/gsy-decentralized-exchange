@@ -4,6 +4,8 @@ import { dirname } from "path";
 
 const RPC_RETRY_ATTEMPTS = 60;
 const RPC_RETRY_DELAY_MS = 1000;
+const ERC1967_ADMIN_SLOT =
+  "0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103";
 
 function getAddressFromPrivateKey(
   privateKey: string | undefined,
@@ -39,15 +41,49 @@ async function waitForRpcAndGetDeployer() {
   );
 }
 
-async function deployContract(contractName: string, args: any[] = []): Promise<
-  readonly [any, string]
+async function getProxyAdminAddress(proxyAddress: string): Promise<string> {
+  const storageValue = await ethers.provider.getStorage(
+    proxyAddress,
+    ERC1967_ADMIN_SLOT,
+  );
+  return ethers.getAddress(`0x${storageValue.slice(-40)}`);
+}
+
+async function deployUpgradeableContract(
+  contractName: string,
+  proxyAdminOwner: string,
+  initializerArgs: any[] = [],
+): Promise<
+  readonly [any, string, string, string]
 > {
   const factory = await ethers.getContractFactory(contractName);
-  const contract = await factory.deploy(...args);
-  await contract.waitForDeployment();
-  const address = await contract.getAddress();
+  const implementation = await factory.deploy();
+  await implementation.waitForDeployment();
+  const implementationAddress = await implementation.getAddress();
 
-  return [contract, address] as const;
+  const initData = factory.interface.encodeFunctionData(
+    "initialize",
+    initializerArgs,
+  );
+  const proxyFactory = await ethers.getContractFactory(
+    "TransparentUpgradeableProxy",
+  );
+  const proxy = await proxyFactory.deploy(
+    implementationAddress,
+    proxyAdminOwner,
+    initData,
+  );
+  await proxy.waitForDeployment();
+  const proxyAddress = await proxy.getAddress();
+  const proxyAdminAddress = await getProxyAdminAddress(proxyAddress);
+  const proxiedContract = factory.attach(proxyAddress);
+
+  return [
+    proxiedContract,
+    proxyAddress,
+    implementationAddress,
+    proxyAdminAddress,
+  ] as const;
 }
 
 async function main() {
@@ -70,18 +106,50 @@ async function main() {
     process.env.ACTOR_REGISTRAR_PRIVATE_KEY,
     deployerAddress,
   );
-
-  const [actorRegistry, actorRegistryAddress] =
-    await deployContract("ActorRegistry");
-  const [marketController, marketControllerAddress] =
-    await deployContract("MarketController");
-  const [orderRegistry, orderRegistryAddress] = await deployContract(
-    "OrderRegistry",
-    [marketControllerAddress, actorRegistryAddress],
+  const proxyAdminOwnerAddress = getAddressFromPrivateKey(
+    process.env.PROXY_ADMIN_PRIVATE_KEY,
+    deployerAddress,
   );
-  const [tradeSettlement, tradeSettlementAddress] = await deployContract(
+
+  const [
+    actorRegistry,
+    actorRegistryAddress,
+    actorRegistryImplementationAddress,
+    actorRegistryProxyAdminAddress,
+  ] = await deployUpgradeableContract(
+    "ActorRegistry",
+    proxyAdminOwnerAddress,
+    [deployerAddress],
+  );
+  const [
+    marketController,
+    marketControllerAddress,
+    marketControllerImplementationAddress,
+    marketControllerProxyAdminAddress,
+  ] = await deployUpgradeableContract(
+    "MarketController",
+    proxyAdminOwnerAddress,
+    [deployerAddress],
+  );
+  const [
+    orderRegistry,
+    orderRegistryAddress,
+    orderRegistryImplementationAddress,
+    orderRegistryProxyAdminAddress,
+  ] = await deployUpgradeableContract(
+    "OrderRegistry",
+    proxyAdminOwnerAddress,
+    [deployerAddress, marketControllerAddress, actorRegistryAddress],
+  );
+  const [
+    tradeSettlement,
+    tradeSettlementAddress,
+    tradeSettlementImplementationAddress,
+    tradeSettlementProxyAdminAddress,
+  ] = await deployUpgradeableContract(
     "TradeSettlement",
-    [orderRegistryAddress],
+    proxyAdminOwnerAddress,
+    [deployerAddress, orderRegistryAddress],
   );
 
   const ORCHESTRATOR_ROLE = ethers.id("ORCHESTRATOR_ROLE");
@@ -112,13 +180,22 @@ async function main() {
   const envFilePath = process.env.CONTRACTS_ENV_PATH ?? "/contracts/addresses.env";
   const envFileContent = [
     `export ACTOR_REGISTRY_ADDRESS=${actorRegistryAddress}`,
+    `export ACTOR_REGISTRY_IMPLEMENTATION_ADDRESS=${actorRegistryImplementationAddress}`,
+    `export ACTOR_REGISTRY_PROXY_ADMIN_ADDRESS=${actorRegistryProxyAdminAddress}`,
     `export MARKET_CONTROLLER_ADDRESS=${marketControllerAddress}`,
+    `export MARKET_CONTROLLER_IMPLEMENTATION_ADDRESS=${marketControllerImplementationAddress}`,
+    `export MARKET_CONTROLLER_PROXY_ADMIN_ADDRESS=${marketControllerProxyAdminAddress}`,
     `export CONTRACT_MARKET_CONTROLLER=${marketControllerAddress}`,
     `export ORDER_REGISTRY_ADDRESS=${orderRegistryAddress}`,
+    `export ORDER_REGISTRY_IMPLEMENTATION_ADDRESS=${orderRegistryImplementationAddress}`,
+    `export ORDER_REGISTRY_PROXY_ADMIN_ADDRESS=${orderRegistryProxyAdminAddress}`,
     `export CONTRACT_ORDER_REGISTRY=${orderRegistryAddress}`,
     `export TRADE_SETTLEMENT_ADDRESS=${tradeSettlementAddress}`,
+    `export TRADE_SETTLEMENT_IMPLEMENTATION_ADDRESS=${tradeSettlementImplementationAddress}`,
+    `export TRADE_SETTLEMENT_PROXY_ADMIN_ADDRESS=${tradeSettlementProxyAdminAddress}`,
     `export CONTRACT_TRADE_SETTLEMENT=${tradeSettlementAddress}`,
     `export ACTOR_REGISTRAR_ADDRESS=${actorRegistrarAddress}`,
+    `export PROXY_ADMIN_OWNER_ADDRESS=${proxyAdminOwnerAddress}`,
     "",
   ].join("\n");
 
@@ -131,6 +208,15 @@ async function main() {
   console.log(`  marketController       ${marketControllerAddress}`);
   console.log(`  orderRegistry          ${orderRegistryAddress}`);
   console.log(`  tradeSettlement        ${tradeSettlementAddress}`);
+  console.log(`  actorRegistryImpl      ${actorRegistryImplementationAddress}`);
+  console.log(`  marketControllerImpl   ${marketControllerImplementationAddress}`);
+  console.log(`  orderRegistryImpl      ${orderRegistryImplementationAddress}`);
+  console.log(`  tradeSettlementImpl    ${tradeSettlementImplementationAddress}`);
+  console.log(`  actorRegistryAdmin     ${actorRegistryProxyAdminAddress}`);
+  console.log(`  marketControllerAdmin  ${marketControllerProxyAdminAddress}`);
+  console.log(`  orderRegistryAdmin     ${orderRegistryProxyAdminAddress}`);
+  console.log(`  tradeSettlementAdmin   ${tradeSettlementProxyAdminAddress}`);
+  console.log(`  proxyAdminOwner        ${proxyAdminOwnerAddress}`);
   console.log(`  orchestratorRole       ${orchestratorAddress}`);
   console.log(`  operatorRole           ${matchingEngineAddress}`);
   console.log(`  executionEngineRole    ${executionEngineAddress}`);

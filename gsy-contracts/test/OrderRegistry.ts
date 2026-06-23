@@ -1,23 +1,23 @@
 import { loadFixture } from "@nomicfoundation/hardhat-toolbox/network-helpers";
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { bytes16Id, ORDER_TYPE_BID } from "./utils";
+import { bytes16Id, deployUpgradeableContract, ORDER_TYPE_BID } from "./utils";
 
 describe("OrderRegistry", function () {
   async function deployRegistryFixture() {
     const [admin, user, proxy, other] = await ethers.getSigners();
 
-    const MarketController =
-      await ethers.getContractFactory("MarketController");
-    const controller = await MarketController.deploy();
-    const ActorRegistry = await ethers.getContractFactory("ActorRegistry");
-    const actorRegistry = await ActorRegistry.deploy();
-
-    const OrderRegistry = await ethers.getContractFactory("OrderRegistry");
-    const registry = await OrderRegistry.deploy(
+    const controller = await deployUpgradeableContract("MarketController", [
+      admin.address,
+    ]);
+    const actorRegistry = await deployUpgradeableContract("ActorRegistry", [
+      admin.address,
+    ]);
+    const registry = await deployUpgradeableContract("OrderRegistry", [
+      admin.address,
       await controller.getAddress(),
       await actorRegistry.getAddress(),
-    );
+    ]);
 
     const actorId = bytes16Id("actor:user");
     const marketId = bytes16Id("market-1");

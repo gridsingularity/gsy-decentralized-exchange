@@ -279,3 +279,5 @@ The services expect these deployed addresses:
 - `ACTOR_REGISTRY_ADDRESS`
 
 In default local setup, they are provisioned by the bootstrap container and injected via compose env.
+These are proxy addresses. The bootstrap container also writes implementation and
+`ProxyAdmin` addresses to `/contracts/addresses.env` for upgrade operations.
