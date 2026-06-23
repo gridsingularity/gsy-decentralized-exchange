@@ -1,5 +1,4 @@
 use super::*;
-use gsy_primitives::HashT;
 use sp_core::H256;
 
 use gsy_collateral::Pallet as GsyCollateral;
@@ -67,7 +66,7 @@ impl TestOrderbookFunctions {
 		selected_energy: u64,
 		energy_rate: u64,
 	) -> BidOfferMatch<T::AccountId, T::Hash> {
-		let market_hash = <T as frame_system::Config>::Hashing::hash_of(&[1u8; 32]);
+		let market_hash = H256::from_slice(&[1u8; 32]);
 		BidOfferMatch {
 			market_id: market_hash,
 			time_slot: block_number,

@@ -6,7 +6,7 @@ pub use pallet_timestamp;
 use sp_core::H256;
 use sp_runtime::{
 	testing::TestXt,
-	traits::{BlakeTwo256, Extrinsic as ExtrinsicT, IdentityLookup, Verify},
+	traits::{BlakeTwo256, IdentityLookup, Verify},
 	BuildStorage,
 };
 
@@ -61,6 +61,7 @@ impl system::Config for Test {
 	type PreInherents = ();
 	type PostInherents = ();
 	type PostTransactions = ();
+	type ExtensionsWeightInfo = ();
 }
 
 pub const ALICE: AccountId = AccountId::new(*b"01234567890123456789012345678901");
@@ -90,6 +91,7 @@ impl pallet_balances::Config for Test {
 	type MaxFreezes = ();
 	type RuntimeHoldReason = ();
 	type RuntimeFreezeReason = ();
+	type DoneSlashHandler = ();
 }
 
 parameter_types! {
@@ -146,17 +148,36 @@ impl frame_system::offchain::SigningTypes for Test {
 	type Signature = Signature;
 }
 
+impl<LocalCall> frame_system::offchain::CreateTransactionBase<LocalCall> for Test
+where
+	RuntimeCall: From<LocalCall>,
+{
+	type RuntimeCall = RuntimeCall;
+	type Extrinsic = Extrinsic;
+}
+
+impl<LocalCall> frame_system::offchain::CreateBare<LocalCall> for Test
+where
+	RuntimeCall: From<LocalCall>,
+{
+	fn create_bare(call: Self::RuntimeCall) -> Self::Extrinsic {
+		Extrinsic::new_bare(call)
+	}
+}
+
 impl<LocalCall> frame_system::offchain::CreateSignedTransaction<LocalCall> for Test
 where
 	RuntimeCall: From<LocalCall>,
 {
-	fn create_transaction<C: frame_system::offchain::AppCrypto<Self::Public, Self::Signature>>(
+	fn create_signed_transaction<
+		C: frame_system::offchain::AppCrypto<Self::Public, Self::Signature>,
+	>(
 		call: RuntimeCall,
 		_public: <Signature as Verify>::Signer,
 		_account: AccountId,
 		nonce: u64,
-	) -> Option<(RuntimeCall, <Extrinsic as ExtrinsicT>::SignaturePayload)> {
-		Some((call, (nonce, ())))
+	) -> Option<Extrinsic> {
+		Some(Extrinsic::new_signed(call, nonce, (), ()))
 	}
 }
 
