@@ -71,12 +71,13 @@ async function main() {
     deployerAddress,
   );
 
-  const [gsyVault, gsyVaultAddress] = await deployContract("GsyVault");
+  const [actorRegistry, actorRegistryAddress] =
+    await deployContract("ActorRegistry");
   const [marketController, marketControllerAddress] =
     await deployContract("MarketController");
   const [orderRegistry, orderRegistryAddress] = await deployContract(
     "OrderRegistry",
-    [marketControllerAddress, gsyVaultAddress],
+    [marketControllerAddress, actorRegistryAddress],
   );
   const [tradeSettlement, tradeSettlementAddress] = await deployContract(
     "TradeSettlement",
@@ -105,12 +106,12 @@ async function main() {
     )
   ).wait();
   await (
-    await gsyVault.grantRole(ACTOR_REGISTRAR_ROLE, actorRegistrarAddress)
+    await actorRegistry.grantRole(ACTOR_REGISTRAR_ROLE, actorRegistrarAddress)
   ).wait();
 
   const envFilePath = process.env.CONTRACTS_ENV_PATH ?? "/contracts/addresses.env";
   const envFileContent = [
-    `export GSY_VAULT_ADDRESS=${gsyVaultAddress}`,
+    `export ACTOR_REGISTRY_ADDRESS=${actorRegistryAddress}`,
     `export MARKET_CONTROLLER_ADDRESS=${marketControllerAddress}`,
     `export CONTRACT_MARKET_CONTROLLER=${marketControllerAddress}`,
     `export ORDER_REGISTRY_ADDRESS=${orderRegistryAddress}`,
@@ -126,7 +127,7 @@ async function main() {
 
   console.log("Contracts deployed and roles granted:");
   console.log(`  deployer               ${deployerAddress}`);
-  console.log(`  gsyVault               ${gsyVaultAddress}`);
+  console.log(`  actorRegistry          ${actorRegistryAddress}`);
   console.log(`  marketController       ${marketControllerAddress}`);
   console.log(`  orderRegistry          ${orderRegistryAddress}`);
   console.log(`  tradeSettlement        ${tradeSettlementAddress}`);

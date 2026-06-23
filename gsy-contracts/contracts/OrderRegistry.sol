@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/access/AccessControl.sol";
 import "./MarketController.sol";
-import "./GsyVault.sol";
+import "./ActorRegistry.sol";
 
 /**
  * @title OrderRegistry
@@ -20,7 +20,7 @@ contract OrderRegistry is AccessControl {
     }
 
     MarketController public marketController;
-    GsyVault public vault;
+    ActorRegistry public actorRegistry;
 
     struct OrderParams {
         bytes16 orderId;
@@ -56,10 +56,10 @@ contract OrderRegistry is AccessControl {
     error OrderNotOpen();
     error OrderAlreadyExists();
 
-    constructor(address _marketController, address _vault) {
+    constructor(address _marketController, address _actorRegistry) {
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         marketController = MarketController(_marketController);
-        vault = GsyVault(_vault);
+        actorRegistry = ActorRegistry(_actorRegistry);
     }
 
     /**
@@ -79,7 +79,7 @@ contract OrderRegistry is AccessControl {
             revert MarketClosed();
         }
 
-        if (!vault.isAuthorized(params.createdBy, msg.sender)) {
+        if (!actorRegistry.isAuthorized(params.createdBy, msg.sender)) {
             revert Unauthorized();
         }
 
@@ -116,7 +116,7 @@ contract OrderRegistry is AccessControl {
             revert Unauthorized();
         }
 
-        if (!vault.isAuthorized(storedOrder.createdBy, msg.sender)) {
+        if (!actorRegistry.isAuthorized(storedOrder.createdBy, msg.sender)) {
             revert Unauthorized();
         }
 

@@ -12,13 +12,13 @@ describe("TradeSettlement", function () {
       await ethers.getContractFactory("MarketController");
     const controller = await MarketController.deploy();
 
-    const GsyVault = await ethers.getContractFactory("GsyVault");
-    const vault = await GsyVault.deploy();
+    const ActorRegistry = await ethers.getContractFactory("ActorRegistry");
+    const actorRegistry = await ActorRegistry.deploy();
 
     const OrderRegistry = await ethers.getContractFactory("OrderRegistry");
     const registry = await OrderRegistry.deploy(
       await controller.getAddress(),
-      await vault.getAddress(),
+      await actorRegistry.getAddress(),
     );
 
     const TradeSettlement = await ethers.getContractFactory("TradeSettlement");
@@ -45,8 +45,8 @@ describe("TradeSettlement", function () {
     const marketId = bytes16Id("market-1");
     await controller.setMarketStatus(marketId, true);
 
-    await vault.registerActor(buyerActorId, buyer.address);
-    await vault.registerActor(sellerActorId, seller.address);
+    await actorRegistry.registerActor(buyerActorId, buyer.address);
+    await actorRegistry.registerActor(sellerActorId, seller.address);
 
     const bid = {
       orderId: bytes16Id("bid-1"),
@@ -73,7 +73,6 @@ describe("TradeSettlement", function () {
     return {
       settlement,
       registry,
-      vault,
       buyer,
       seller,
       operator,

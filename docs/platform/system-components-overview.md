@@ -30,15 +30,16 @@ When EWDS integration is enabled:
 ## Role and Trust Boundaries
 
 - `MarketController.ORCHESTRATOR_ROLE` is held by orchestrator signer.
+- `ActorRegistry.ACTOR_REGISTRAR_ROLE` is held by the actor registrar signer.
 - `TradeSettlement.OPERATOR_ROLE` is held by matching engine signer.
 - `TradeSettlement.EXECUTION_ENGINE_ROLE` is held by execution engine signer.
-- `OrderRegistry.SETTLEMENT_ROLE` and `GsyVault.SETTLEMENT_ROLE` are granted to settlement contract.
+- `OrderRegistry.SETTLEMENT_ROLE` is granted to settlement contract.
 
-This ensures only dedicated components can update market status, settle matches, or submit penalties.
+This ensures only dedicated components can register actor wallets, update market status, settle matches, or submit penalties.
 
 ## Data Planes
 
-- **On-chain plane**: market status, order status transitions, settlement transfers, penalty ledger.
+- **On-chain plane**: actor authorization, market status, order status transitions, settlement events, penalty ledger.
 - **Off-chain plane**: indexed orders/trades, forecasts/measurements, analytics and querying.
 - **Inter-service transport plane**: EWDS channels/topics for resilient authenticated messaging.
 

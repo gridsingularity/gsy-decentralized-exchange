@@ -276,6 +276,6 @@ The services expect these deployed addresses:
 - `MARKET_CONTROLLER_ADDRESS`
 - `ORDER_REGISTRY_ADDRESS`
 - `TRADE_SETTLEMENT_ADDRESS`
-- `GSY_VAULT_ADDRESS`
+- `ACTOR_REGISTRY_ADDRESS`
 
 In default local setup, they are provisioned by the bootstrap container and injected via compose env.

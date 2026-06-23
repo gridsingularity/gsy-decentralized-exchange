@@ -13,7 +13,7 @@ This gives:
 ## Core Building Blocks
 
 - **Anvil (EVM chain, chain id 31337)** for local and CI execution.
-- **Smart contracts** (`MarketController`, `OrderRegistry`, `TradeSettlement`, `GsyVault`).
+- **Smart contracts** (`ActorRegistry`, `MarketController`, `OrderRegistry`, `TradeSettlement`).
 - **Event indexing layer** (`gsy-ethers-listener` + `gsy-offchain-storage`).
 - **Business services** (orchestrator, matching engine, execution engine, community client).
 
@@ -22,10 +22,10 @@ This gives:
 ```mermaid
 flowchart LR
     MO["Market Orchestrator"] -->|setMarketStatus| MC["MarketController"]
+    AR["ActorRegistry"] -->|isAuthorized| OR["OrderRegistry"]
     CC["Community Client"] -->|placeOrder| OR["OrderRegistry"]
     ME["Matching Engine"] -->|settleBatch| TS["TradeSettlement"]
     EE["Execution Engine"] -->|submitPenalties| TS
-    TS -->|transferBySettlement| GV["GsyVault"]
     OR -->|events| EL["gsy-ethers-listener"]
     TS -->|events| EL
     MC -->|events| EL

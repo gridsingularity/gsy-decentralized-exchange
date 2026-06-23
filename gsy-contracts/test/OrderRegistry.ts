@@ -10,13 +10,13 @@ describe("OrderRegistry", function () {
     const MarketController =
       await ethers.getContractFactory("MarketController");
     const controller = await MarketController.deploy();
-    const GsyVault = await ethers.getContractFactory("GsyVault");
-    const vault = await GsyVault.deploy();
+    const ActorRegistry = await ethers.getContractFactory("ActorRegistry");
+    const actorRegistry = await ActorRegistry.deploy();
 
     const OrderRegistry = await ethers.getContractFactory("OrderRegistry");
     const registry = await OrderRegistry.deploy(
       await controller.getAddress(),
-      await vault.getAddress(),
+      await actorRegistry.getAddress(),
     );
 
     const actorId = bytes16Id("actor:user");
@@ -25,8 +25,8 @@ describe("OrderRegistry", function () {
     await controller.grantRole(ORCHESTRATOR_ROLE, admin.address);
     await controller.setMarketStatus(marketId, true);
 
-    await vault.registerActor(actorId, user.address);
-    await vault.connect(user).setProxy(actorId, proxy.address, true);
+    await actorRegistry.registerActor(actorId, user.address);
+    await actorRegistry.connect(user).setProxy(actorId, proxy.address, true);
 
     const baseOrder = {
       orderId: bytes16Id("order-1"),
@@ -42,7 +42,6 @@ describe("OrderRegistry", function () {
     return {
       registry,
       controller,
-      vault,
       user,
       proxy,
       other,

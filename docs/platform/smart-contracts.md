@@ -5,30 +5,32 @@
 The refactored chain layer is implemented in Solidity (`0.8.20`) and deployed by
 `gsy-contracts/scripts/deploy.ts`.
 
-### `GsyVault`
+### `ActorRegistry`
 
 Purpose:
 
-- Holds user collateral.
-- Supports user `deposit` and `withdraw`.
-- Supports settlement-driven balance transfer (`transferBySettlement`).
-- Supports account delegation (`setProxy`, `isProxy`).
+- Maps Intelligent Actor UUIDs (`bytes16`) to authorized EVM wallets.
+- Supports registrar-managed wallet authorization (`registerActor`, `setActorWallet`).
+- Supports actor-managed delegate/proxy authorization (`setProxy`, `isProxy`).
+- Provides the authorization check used by `OrderRegistry` before accepting actor-owned order actions.
+
+`ActorRegistry` does not hold collateral and does not expose deposit/withdraw logic. Billing and payment remain outside the DEX contract suite.
 
 ### `MarketController`
 
 Purpose:
 
 - Stores market open/closed state keyed by `marketId`.
-- Exposes `setMarketStatus(bytes32,bool)` and `isMarketOpen(bytes32)`.
+- Exposes `setMarketStatus(bytes16,bool)` and `isMarketOpen(bytes16)`.
 - Restricts updates to `ORCHESTRATOR_ROLE`.
 
 ### `OrderRegistry`
 
 Purpose:
 
-- Records order lifecycle as hash commitments.
+- Records order lifecycle commitments keyed by Intelligent Order UUID.
 - Validates market openness before order acceptance.
-- Accepts owner or approved proxy as sender.
+- Accepts the actor wallet or an approved proxy as sender.
 - Emits `OrderPlaced`, `OrderCancelled`, `OrderStatusUpdated`.
 
 ### `TradeSettlement`
@@ -37,16 +39,18 @@ Purpose:
 
 - Validates and settles matched trades (`settleBatch`).
 - Updates order statuses to executed.
-- Moves funds via `GsyVault.transferBySettlement`.
+- Emits all settlement data needed by off-chain storage to create a Trade object.
 - Records penalties via `submitPenalties`.
+
+`TradeSettlement` does not move funds. Billing and payment are handled by external services.
 
 ## Role Assignment at Bootstrap
 
 Deployment script assigns:
 
-- `ORCHESTRATOR_ROLE` -> orchestrator signer.
+- `ACTOR_REGISTRAR_ROLE` on `ActorRegistry` -> actor registrar signer.
+- `ORCHESTRATOR_ROLE` on `MarketController` -> orchestrator signer.
 - `SETTLEMENT_ROLE` on `OrderRegistry` -> `TradeSettlement`.
-- `SETTLEMENT_ROLE` on `GsyVault` -> `TradeSettlement`.
 - `OPERATOR_ROLE` on `TradeSettlement` -> matching engine signer.
 - `EXECUTION_ENGINE_ROLE` on `TradeSettlement` -> execution engine signer.
 
@@ -54,17 +58,18 @@ Deployment script assigns:
 
 `settleBatch` enforces:
 
-- Both order hashes are currently open.
-- Price window consistency (`bid >= clearing price >= ask`).
-- Selected energy does not exceed available bid/ask energy.
+- Both order UUIDs are currently open.
+- Submitted order data matches the canonical `OrderRegistry` data.
+- Price window consistency (`bid >= clearing price >= offer`).
+- Selected energy does not exceed available bid/offer energy.
 
-If checks pass, settlement transfers collateral and marks orders executed.
+If checks pass, settlement marks orders executed and emits `TradeSettled`.
 
 ## Penalty Persistence
 
 `submitPenalties` enforces non-empty penalty entries and accumulates:
 
 - `penaltyEnergyByTrade[tradeId]`
-- `penaltyEnergyByAccount[account]`
+- `penaltyEnergyByActor[actorId]`
 
 Off-chain execution logic checks existing on-chain penalty values to skip already submitted trades.
