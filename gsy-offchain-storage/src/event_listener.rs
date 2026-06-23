@@ -1,7 +1,9 @@
 use crate::db::DbRef;
 use anyhow::{Error, Result};
 use gsy_offchain_primitives::db_api_schema::orders::OrderStatus;
+use gsy_offchain_primitives::utils::h256_to_string;
 use mongodb::bson;
+use subxt::utils::H256;
 use subxt::{OnlineClient, SubstrateConfig};
 use tracing::info;
 
@@ -21,50 +23,29 @@ pub async fn init_event_listener(db: DbRef, node_url: String) -> Result<(), Erro
         let events = block.events().await?;
 
         let block_hash = block.hash();
-        // let events = events?;
-        // let block_hash = events.block_hash;
-        // let event = events.event;
         info!("Events at block {:?}:", block_hash);
         for event in events.find::<gsy_node::orderbook_registry::events::OrderExecuted>() {
             if let Ok(order_executed) = &event {
-                info!("Order Executed: {:?}", order_executed);
+                let trade = &order_executed.0;
+                info!("Order Executed: {:?}", trade);
 
-                let id = &bson::to_bson(&order_executed.0.offer_hash).unwrap();
-                match db
-                    .get_ref()
-                    .orders()
-                    .update_order_status_by_id(id, OrderStatus::Executed)
-                    .await
-                {
-                    Ok(result) => info!("Update result: {:?}", result),
-                    Err(e) => {
-                        tracing::error!("Failed to execute update: {:?}", e);
-                    }
-                }
-
-                let id = &bson::to_bson(&order_executed.0.bid_hash).unwrap();
-                match db
-                    .get_ref()
-                    .orders()
-                    .update_order_status_by_id(id, OrderStatus::Executed)
-                    .await
-                {
-                    Ok(result) => info!("Update result: {:?}", result),
-                    Err(e) => {
-                        tracing::error!("Failed to execute update: {:?}", e);
-                    }
-                }
+                // Mark the matched offer and bid as executed in the off-chain orderbook so the
+                // matching engine stops offering them. Any residual order left by a partial match
+                // is synced to the orderbook by the node's offchain worker, so the listener only
+                // needs to handle the status transition here.
+                mark_order_executed(&db, trade.offer_hash).await;
+                mark_order_executed(&db, trade.bid_hash).await;
             }
         }
 
         for event in events.find::<gsy_node::orderbook_registry::events::OrderDeleted>() {
             if let Ok(order_deleted) = &event {
                 info!("Hash of the removed order: {:?}", order_deleted.1);
-                let id = &bson::to_bson(&order_deleted.1).unwrap();
+                let id = bson::Bson::String(h256_to_string(order_deleted.1));
                 match db
                     .get_ref()
                     .orders()
-                    .update_order_status_by_id(id, OrderStatus::Deleted)
+                    .update_order_status_by_id(&id, OrderStatus::Deleted)
                     .await
                 {
                     Ok(result) => info!("Update result: {:?}", result),
@@ -77,4 +58,20 @@ pub async fn init_event_listener(db: DbRef, node_url: String) -> Result<(), Erro
     }
 
     Ok(())
+}
+
+/// Mark an order identified by its on-chain hash as executed in the off-chain orderbook.
+async fn mark_order_executed(db: &DbRef, order_hash: H256) {
+    let id = bson::Bson::String(h256_to_string(order_hash));
+    match db
+        .get_ref()
+        .orders()
+        .update_order_status_by_id(&id, OrderStatus::Executed)
+        .await
+    {
+        Ok(result) => info!("Marked order {:?} as executed: {:?}", id, result),
+        Err(e) => {
+            tracing::error!("Failed to mark order as executed: {:?}", e);
+        }
+    }
 }
