@@ -9,8 +9,20 @@ use tracing::{info, warn};
 
 const BID_RATE: f64 = 0.3;
 const OFFER_RATE: f64 = 0.07;
+const ENERGY_TYPE_UNSPECIFIED: u8 = 0;
 
-pub type EvmOrderParamsTuple = ([u8; 16], [u8; 16], [u8; 16], u64, u64, u64, u64, bool);
+pub type EvmOrderParamsTuple = (
+    [u8; 16],
+    [u8; 16],
+    [u8; 16],
+    u64,
+    u64,
+    u64,
+    u64,
+    u8,
+    u8,
+    bool,
+);
 
 pub async fn publish_orders(
     evm_node_url: String,
@@ -100,6 +112,8 @@ abigen!(
                         {"name": "creationTime", "type": "uint64"},
                         {"name": "energy", "type": "uint64"},
                         {"name": "energyRate", "type": "uint64"},
+                        {"name": "energySourcePreference", "type": "uint8"},
+                        {"name": "energyType", "type": "uint8"},
                         {"name": "isBid", "type": "bool"}
                     ]
                 }
@@ -133,6 +147,8 @@ fn build_order_param(
         now,
         (forecast.energy_kwh.abs() * NODE_FLOAT_SCALING_FACTOR) as u64,
         (forecast.energy_kwh.abs() * rate_multiplier * NODE_FLOAT_SCALING_FACTOR) as u64,
+        ENERGY_TYPE_UNSPECIFIED,
+        ENERGY_TYPE_UNSPECIFIED,
         is_bid,
     )
 }

@@ -1,7 +1,7 @@
 use crate::db::DatabaseWrapper;
 use anyhow::{anyhow, Result};
 use gsy_offchain_primitives::db_api_schema::orders::{
-    DbOrderSchema, EnergyType, OrderEnum, OrderStatus,
+    DbOrderSchema, IntelligentEnergyType, OrderEnum, OrderStatus,
 };
 use gsy_offchain_primitives::db_api_schema::profiles::{MeasurementPointType, MeasurementSchema};
 use reqwest::Client;
@@ -124,7 +124,7 @@ struct EwdsOrderDto {
 #[serde(rename_all = "camelCase")]
 struct EwdsRequirementsDto {
     trading_partner_id: Option<String>,
-    energy_type: Option<String>,
+    energy_type: Option<IntelligentEnergyType>,
     preferred_energy_rate: Option<f64>,
 }
 
@@ -132,7 +132,7 @@ struct EwdsRequirementsDto {
 #[serde(rename_all = "camelCase")]
 struct EwdsAttributesDto {
     trading_partner_id: Option<String>,
-    energy_type: String,
+    energy_type: IntelligentEnergyType,
 }
 
 #[derive(Serialize)]
@@ -546,14 +546,12 @@ impl From<DbOrderSchema> for EwdsOrderDto {
             created_by: order.created_by,
             requirements: order.requirements.map(|requirements| EwdsRequirementsDto {
                 trading_partner_id: requirements.trading_partner_id,
-                energy_type: requirements
-                    .energy_type
-                    .map(|value| energy_type_to_ewds(&value).to_string()),
+                energy_type: requirements.energy_type,
                 preferred_energy_rate: requirements.preferred_energy_rate,
             }),
             attributes: order.attributes.map(|attributes| EwdsAttributesDto {
                 trading_partner_id: attributes.trading_partner_id,
-                energy_type: energy_type_to_ewds(&attributes.energy_type).to_string(),
+                energy_type: attributes.energy_type,
             }),
         }
     }
@@ -572,15 +570,6 @@ fn order_status_to_ewds(status: &OrderStatus) -> &'static str {
         OrderStatus::Executed => "executed",
         OrderStatus::Expired => "expired",
         OrderStatus::Deleted => "deleted",
-    }
-}
-
-fn energy_type_to_ewds(energy_type: &EnergyType) -> &'static str {
-    match energy_type {
-        EnergyType::Clean => "clean",
-        EnergyType::Battery => "battery",
-        EnergyType::FossilFuel => "fossilFuel",
-        EnergyType::Import => "import",
     }
 }
 

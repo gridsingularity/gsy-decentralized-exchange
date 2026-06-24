@@ -4,7 +4,7 @@ use ethers::prelude::*;
 use gsy_community_client::node_connector::orders::publish_orders;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use gsy_offchain_primitives::db_api_schema::orders::{
-    DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderStatus,
+    DbAttributes, DbOrderSchema, DbRequirements, IntelligentEnergyType, OrderStatus,
 };
 use gsy_offchain_primitives::db_api_schema::profiles::MeasurementSchema;
 use gsy_offchain_primitives::db_api_schema::trades::TradeSchema;
@@ -16,8 +16,20 @@ use tracing::info;
 
 const MATCHING_ENGINE_BLOCK_INTERVAL: u64 = 4;
 const FLOAT_EPSILON: f64 = 0.000_001;
+const ENERGY_TYPE_UNSPECIFIED: u8 = 0;
 
-type EvmOrderParamsTuple = ([u8; 16], [u8; 16], [u8; 16], u64, u64, u64, u64, bool);
+type EvmOrderParamsTuple = (
+    [u8; 16],
+    [u8; 16],
+    [u8; 16],
+    u64,
+    u64,
+    u64,
+    u64,
+    u8,
+    u8,
+    bool,
+);
 
 abigen!(
     OrderRegistryContract,
@@ -47,6 +59,8 @@ abigen!(
                         {"name": "creationTime", "type": "uint64"},
                         {"name": "energy", "type": "uint64"},
                         {"name": "energyRate", "type": "uint64"},
+                        {"name": "energySourcePreference", "type": "uint8"},
+                        {"name": "energyType", "type": "uint8"},
                         {"name": "isBid", "type": "bool"}
                     ]
                 }
@@ -222,6 +236,32 @@ async fn upsert_order_in_offchain_storage(world: &MyWorld, order: DbOrderSchema)
     );
 }
 
+fn energy_type_to_contract(energy_type: &IntelligentEnergyType) -> u8 {
+    match energy_type {
+        IntelligentEnergyType::Green => 1,
+        IntelligentEnergyType::Pv => 2,
+        IntelligentEnergyType::Hydro => 3,
+        IntelligentEnergyType::Biomass => 4,
+        IntelligentEnergyType::Battery => 5,
+        IntelligentEnergyType::Grey => 6,
+    }
+}
+
+fn order_energy_source_preference(requirements: &Option<DbRequirements>) -> u8 {
+    requirements
+        .as_ref()
+        .and_then(|requirements| requirements.energy_type.as_ref())
+        .map(energy_type_to_contract)
+        .unwrap_or(ENERGY_TYPE_UNSPECIFIED)
+}
+
+fn order_energy_type(attributes: &Option<DbAttributes>) -> u8 {
+    attributes
+        .as_ref()
+        .map(|attributes| energy_type_to_contract(&attributes.energy_type))
+        .unwrap_or(ENERGY_TYPE_UNSPECIFIED)
+}
+
 async fn place_custom_order(
     world: &MyWorld,
     user_name: &str,
@@ -261,6 +301,8 @@ async fn place_custom_order(
         creation_time,
         (energy * NODE_FLOAT_SCALING_FACTOR).round() as u64,
         (energy_rate * NODE_FLOAT_SCALING_FACTOR).round() as u64,
+        order_energy_source_preference(&requirements),
+        order_energy_type(&attributes),
         is_bid,
     );
 
@@ -371,7 +413,7 @@ async fn submit_preferred_partner_offer(
 ) {
     let attributes = DbAttributes {
         trading_partner_id: Some(actor_id_as_hex(world, &partner_name)),
-        energy_type: EnergyType::Clean,
+        energy_type: IntelligentEnergyType::Green,
     };
 
     place_custom_order(

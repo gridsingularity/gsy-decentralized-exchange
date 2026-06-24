@@ -14,6 +14,8 @@ abigen!(
         function placedCount() external view returns (uint256)
         function lastCreatedBy() external view returns (bytes16)
         function lastMarketId() external view returns (bytes16)
+        function lastEnergySourcePreference() external view returns (uint8)
+        function lastEnergyType() external view returns (uint8)
         function lastIsBid() external view returns (bool)
     ]"#
 );
@@ -153,18 +155,24 @@ async fn test_publish_orders_calls_evm_order_registry() {
                 uint64 creationTime;
                 uint64 energy;
                 uint64 energyRate;
+                uint8 energySourcePreference;
+                uint8 energyType;
                 bool isBid;
             }
 
             uint256 public placedCount;
             bytes16 public lastCreatedBy;
             bytes16 public lastMarketId;
+            uint8 public lastEnergySourcePreference;
+            uint8 public lastEnergyType;
             bool public lastIsBid;
 
             function placeOrder(OrderParams calldata params) external {
                 placedCount += 1;
                 lastCreatedBy = params.createdBy;
                 lastMarketId = params.marketId;
+                lastEnergySourcePreference = params.energySourcePreference;
+                lastEnergyType = params.energyType;
                 lastIsBid = params.isBid;
             }
         }
@@ -198,6 +206,15 @@ async fn test_publish_orders_calls_evm_order_registry() {
         mock_contract.last_market_id().call().await.unwrap(),
         parse_or_hash_bytes16("0x11111111111111111111111111111111")
     );
+    assert_eq!(
+        mock_contract
+            .last_energy_source_preference()
+            .call()
+            .await
+            .unwrap(),
+        0u8
+    );
+    assert_eq!(mock_contract.last_energy_type().call().await.unwrap(), 0u8);
     assert!(!mock_contract.last_is_bid().call().await.unwrap());
 }
 
@@ -265,6 +282,8 @@ async fn test_publish_orders_returns_error_when_contract_reverts() {
                 uint64 creationTime;
                 uint64 energy;
                 uint64 energyRate;
+                uint8 energySourcePreference;
+                uint8 energyType;
                 bool isBid;
             }
 

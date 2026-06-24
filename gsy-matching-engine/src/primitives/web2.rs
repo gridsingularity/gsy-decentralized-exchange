@@ -1,5 +1,6 @@
 use chrono::NaiveDateTime;
 use gsy_offchain_primitives::algorithms::PayAsBid;
+use gsy_offchain_primitives::db_api_schema::orders::IntelligentEnergyType;
 use serde::{Deserialize, Serialize, Serializer};
 use std::collections::HashMap;
 
@@ -23,23 +24,15 @@ where
 }
 
 #[derive(Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize)]
-pub enum EnergyType {
-    Clean,
-    Battery,
-    FossilFuel,
-    Import,
-}
-
-#[derive(Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub struct Requirements {
     pub trading_partner_id: Option<String>,
-    pub energy_type: Option<EnergyType>,
+    pub energy_type: Option<IntelligentEnergyType>,
     pub preferred_energy_rate: Option<f32>,
 }
 
 #[derive(Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub struct Attributes {
-    pub energy_type: Option<EnergyType>,
+    pub energy_type: Option<IntelligentEnergyType>,
 }
 
 #[derive(Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize)]

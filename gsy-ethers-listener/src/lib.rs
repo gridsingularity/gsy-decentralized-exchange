@@ -10,7 +10,7 @@ const RECONNECT_DELAY: Duration = Duration::from_secs(2);
 abigen!(
     GsyContracts,
     r#"[
-        event OrderPlaced(bytes16 indexed orderId, bytes16 indexed createdBy, bytes16 indexed marketId, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, bool isBid)
+        event OrderPlaced(bytes16 indexed orderId, bytes16 indexed createdBy, bytes16 indexed marketId, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, uint8 energySourcePreference, uint8 energyType, bool isBid)
         event OrderCancelled(bytes16 indexed orderId)
         event OrderStatusUpdated(bytes16 indexed orderId, uint8 status)
         event TradeSettled(bytes16 indexed tradeId, bytes16 indexed bidId, bytes16 indexed offerId, bytes16 buyerId, bytes16 sellerId, bytes16 marketId, uint64 timeSlot, bytes16 residualBidId, bytes16 residualOfferId, uint256 energy, uint256 price)

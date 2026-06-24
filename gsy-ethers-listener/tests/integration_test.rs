@@ -42,7 +42,7 @@ mod mock_contract {
     abigen!(
         MockEmitter,
         r#"[
-            event OrderPlaced(bytes16 indexed orderId, bytes16 indexed createdBy, bytes16 indexed marketId, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, bool isBid)
+            event OrderPlaced(bytes16 indexed orderId, bytes16 indexed createdBy, bytes16 indexed marketId, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, uint8 energySourcePreference, uint8 energyType, bool isBid)
             function emitOrderPlaced(bytes16 orderId, bytes16 createdBy) external
         ]"#
     );
@@ -70,9 +70,9 @@ async fn test_listener_captures_event_from_chain() -> Result<()> {
         // SPDX-License-Identifier: MIT
         pragma solidity ^0.8.0;
         contract MockEmitter {
-            event OrderPlaced(bytes16 indexed orderId, bytes16 indexed createdBy, bytes16 indexed marketId, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, bool isBid);
+            event OrderPlaced(bytes16 indexed orderId, bytes16 indexed createdBy, bytes16 indexed marketId, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, uint8 energySourcePreference, uint8 energyType, bool isBid);
             function emitOrderPlaced(bytes16 orderId, bytes16 createdBy) external {
-                emit OrderPlaced(orderId, createdBy, bytes16(0), 100, 100, 1000, 50, true);
+                emit OrderPlaced(orderId, createdBy, bytes16(0), 100, 100, 1000, 50, 1, 0, true);
             }
         }
     "#;

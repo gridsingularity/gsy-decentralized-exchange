@@ -1,7 +1,14 @@
 import { loadFixture } from "@nomicfoundation/hardhat-toolbox/network-helpers";
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { bytes16Id, ORDER_TYPE_BID, ORDER_TYPE_ASK, ZERO_BYTES16 } from "./utils";
+import {
+  bytes16Id,
+  ENERGY_TYPE_GREEN,
+  ENERGY_TYPE_UNSPECIFIED,
+  ORDER_TYPE_BID,
+  ORDER_TYPE_ASK,
+  ZERO_BYTES16,
+} from "./utils";
 
 describe("TradeSettlement", function () {
   async function deploySettlementFixture() {
@@ -56,6 +63,8 @@ describe("TradeSettlement", function () {
       creationTime: 900,
       energy: 100,
       energyRate: 50,
+      energySourcePreference: ENERGY_TYPE_GREEN,
+      energyType: ENERGY_TYPE_UNSPECIFIED,
       isBid: ORDER_TYPE_BID,
     };
 
@@ -67,6 +76,8 @@ describe("TradeSettlement", function () {
       creationTime: 900,
       energy: 100,
       energyRate: 40,
+      energySourcePreference: ENERGY_TYPE_UNSPECIFIED,
+      energyType: ENERGY_TYPE_GREEN,
       isBid: ORDER_TYPE_ASK,
     };
 

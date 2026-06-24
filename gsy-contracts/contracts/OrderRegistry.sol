@@ -22,6 +22,14 @@ contract OrderRegistry is AccessControl {
     MarketController public marketController;
     GsyVault public vault;
 
+    uint8 public constant ENERGY_TYPE_UNSPECIFIED = 0;
+    uint8 public constant ENERGY_TYPE_GREEN = 1;
+    uint8 public constant ENERGY_TYPE_PV = 2;
+    uint8 public constant ENERGY_TYPE_HYDRO = 3;
+    uint8 public constant ENERGY_TYPE_BIOMASS = 4;
+    uint8 public constant ENERGY_TYPE_BATTERY = 5;
+    uint8 public constant ENERGY_TYPE_GREY = 6;
+
     struct OrderParams {
         bytes16 orderId;
         bytes16 createdBy;
@@ -30,6 +38,8 @@ contract OrderRegistry is AccessControl {
         uint64 creationTime;
         uint64 energy;
         uint64 energyRate;
+        uint8 energySourcePreference;
+        uint8 energyType;
         bool isBid;
     }
 
@@ -45,6 +55,8 @@ contract OrderRegistry is AccessControl {
         uint64 creationTime,
         uint64 energy,
         uint64 energyRate,
+        uint8 energySourcePreference,
+        uint8 energyType,
         bool isBid
     );
     event OrderCancelled(bytes16 indexed orderId);
@@ -70,7 +82,9 @@ contract OrderRegistry is AccessControl {
         if (
             params.orderId == bytes16(0) ||
             params.createdBy == bytes16(0) ||
-            params.marketId == bytes16(0)
+            params.marketId == bytes16(0) ||
+            params.energySourcePreference > ENERGY_TYPE_GREY ||
+            params.energyType > ENERGY_TYPE_GREY
         ) {
             revert InvalidOrderParams();
         }
@@ -98,6 +112,8 @@ contract OrderRegistry is AccessControl {
             params.creationTime,
             params.energy,
             params.energyRate,
+            params.energySourcePreference,
+            params.energyType,
             params.isBid
         );
     }
