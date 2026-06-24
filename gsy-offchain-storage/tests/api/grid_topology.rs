@@ -127,6 +127,7 @@ async fn post_community_site_facility() {
 
     let community = EnergyCommunitySchema {
         community_name: "Aran Islands REC".to_string(),
+        community_id: "community_uuid".to_string(),
         sites: vec!["Aran Islands Site 1".to_string()],
     };
     assert_eq!(

@@ -12,6 +12,7 @@ abigen!(
         function hasRole(bytes32 role, address account) external view returns (bool)
         function isMarketOpen(bytes16 marketId) external view returns (bool)
         function setMarketStatus(bytes16 marketId, bool isOpen) external
+        function createMarket(bytes16 marketId, bytes16 communityId, uint64 openingTime, uint64 closingTime, uint64 deliveryStartTime, uint64 deliveryEndTime, uint64 createdAt, uint8 matchingAlgorithm, uint8 marketType, bool isOpen) external
     ]"#
 );
 
@@ -22,6 +23,19 @@ pub trait MarketChainClient: Send + Sync {
     async fn is_operator_registered(&self) -> Result<bool>;
     async fn get_market_status(&self, market_id: [u8; 16]) -> Result<bool>;
     async fn update_market_status(&self, market_id: [u8; 16], is_open: bool) -> Result<()>;
+    async fn create_market(
+        &self,
+        market_id: [u8; 16],
+        community_id: [u8; 16],
+        opening_time: u64,
+        closing_time: u64,
+        delivery_start: u64,
+        delivery_end: u64,
+        created_at: u64,
+        matching_algorithm: u8,
+        market_type: u8,
+        is_open: bool,
+    ) -> Result<()>;
 }
 
 #[derive(Clone)]
@@ -112,6 +126,61 @@ impl MarketChainClient for GsyMarketOrchestratorNodeClient {
             }
             None => Err(anyhow!(
                 "Market status transaction {:?} dropped without receipt",
+                tx_hash
+            )),
+        }
+    }
+    async fn create_market(
+        &self,
+        market_id: [u8; 16],
+        community_id: [u8; 16],
+        opening_time: u64,
+        closing_time: u64,
+        delivery_start: u64,
+        delivery_end: u64,
+        created_at: u64,
+        matching_algorithm: u8,
+        market_type: u8,
+        is_open: bool,
+    ) -> Result<()> {
+        let create_market_call = self.market_controller.create_market(
+            market_id,
+            community_id,
+            opening_time,
+            closing_time,
+            delivery_start,
+            delivery_end,
+            created_at,
+            matching_algorithm,
+            market_type,
+            is_open,
+        );
+        let pending_tx = create_market_call.send().await?;
+
+        let tx_hash = pending_tx.tx_hash();
+        let receipt = pending_tx.await?;
+
+        match receipt {
+            Some(receipt) => {
+                let status = receipt
+                    .status
+                    .map(|value| value.as_u64())
+                    .unwrap_or_default();
+                if status != 1 {
+                    return Err(anyhow!(
+                        "Market info transaction {:?} reverted with status {:?}",
+                        tx_hash,
+                        receipt.status
+                    ));
+                }
+                info!(
+                    "Successfully finalized market info update tx {:?}",
+                    tx_hash
+                );
+                Ok(())
+            }
+            None => Err(anyhow!(
+                "Market info transaction {:?} dropped without receipt",
                 tx_hash
             )),
         }

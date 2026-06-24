@@ -5,6 +5,7 @@ pub mod constants;
 pub mod types;
 pub mod utils;
 pub mod log;
+pub mod ewds_utils;
 
 use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};

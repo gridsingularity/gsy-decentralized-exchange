@@ -2,14 +2,20 @@ use crate::db::DatabaseWrapper;
 use anyhow::Result;
 use async_trait::async_trait;
 use gsy_ethers_listener::{
-    GsyEventHandler, MarketStatusUpdatedFilter, OrderCancelledFilter, OrderPlacedFilter,
+    GsyEventHandler, MarketInfoUpdatedFilter, OrderCancelledFilter, OrderPlacedFilter,
     TradeSettledFilter,
 };
 use gsy_offchain_primitives::db_api_schema::{
     orders::{DbOrderSchema, OrderEnum, OrderStatus},
     trades::{TradeParameters, TradeSchema, TradeStatus},
+    market::{IntelligentMarketSchema, IntelligentMarketType, MatchingAlgorithm},
 };
-use gsy_offchain_primitives::utils::{bytes16_to_hex, NODE_FLOAT_SCALING_FACTOR};
+use gsy_offchain_primitives::utils::{
+    bytes16_to_hex,
+    NODE_FLOAT_SCALING_FACTOR,
+    timestamp_to_datetime_string,
+    convert_bytes_to_uuid_string
+};
 use tracing::{error, info, warn};
 
 pub struct OffchainStorageEvmHandler {
@@ -136,12 +142,24 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         Ok(())
     }
 
-    async fn handle_market_status(&self, event: MarketStatusUpdatedFilter) -> Result<()> {
+    async fn handle_market_info(&self, event: MarketInfoUpdatedFilter) -> Result<()> {
         info!(
-            "Processing EVM MarketStatus: {:?} -> Open? {}",
+            "Processing EVM MarketInfo: {:?}",
             hex::encode(event.market_id),
-            event.is_open
         );
+        let market_schema = IntelligentMarketSchema {
+            market_id: convert_bytes_to_uuid_string(event.market_id),
+            community_id: convert_bytes_to_uuid_string(event.community_id),
+            opening_time: timestamp_to_datetime_string(event.opening_time),
+            closing_time: timestamp_to_datetime_string(event.closing_time),
+            delivery_start_time: timestamp_to_datetime_string(event.delivery_start_time),
+            delivery_end_time: timestamp_to_datetime_string(event.delivery_end_time),
+            market_type: IntelligentMarketType::from(event.market_type)?,
+            matching_algorithm: event.matching_algorithm,
+            created_at: timestamp_to_datetime_string(event.created_at),
+        };
+        self.db.markets().insert(market_schema).await?;
+
         Ok(())
     }
 }

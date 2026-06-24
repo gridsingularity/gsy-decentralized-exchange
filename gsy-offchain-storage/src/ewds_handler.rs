@@ -23,9 +23,13 @@ pub struct EwdsHandlerConfig {
     pub orders_request_topic: String,
     pub trades_request_topic: String,
     pub measurements_request_topic: String,
+    pub ontology_request_topic: String,
+    pub markets_request_topic: String,
     pub orders_response_topic: String,
     pub trades_response_topic: String,
     pub measurements_response_topic: String,
+    pub ontology_response_topic: String,
+    pub markets_response_topic: String,
     pub poll_interval_ms: u64,
     pub request_batch_size: u32,
 }
@@ -75,12 +79,20 @@ impl EwdsHandlerConfig {
                 .unwrap_or_else(|_| "tradesQuery".to_string()),
             measurements_request_topic: std::env::var("EWDS_MEASUREMENTS_REQUEST_TOPIC")
                 .unwrap_or_else(|_| "measurementsQuery".to_string()),
+            ontology_request_topic: std::env::var("EWDS_ONTOLOGY_REQUEST_TOPIC")
+                .unwrap_or_else(|_| "ontologyQuery".to_string()),
+            markets_request_topic: std::env::var("EWDS_MARKETS_REQUEST_TOPIC")
+                .unwrap_or_else(|_| "marketsQuery".to_string()),
             orders_response_topic: std::env::var("EWDS_ORDERS_RESPONSE_TOPIC")
                 .unwrap_or_else(|_| "ordersQueryResponse".to_string()),
             trades_response_topic: std::env::var("EWDS_TRADES_RESPONSE_TOPIC")
                 .unwrap_or_else(|_| "tradesQueryResponse".to_string()),
             measurements_response_topic: std::env::var("EWDS_MEASUREMENTS_RESPONSE_TOPIC")
                 .unwrap_or_else(|_| "measurementsQueryResponse".to_string()),
+            ontology_response_topic: std::env::var("EWDS_ONTOLOGY_RESPONSE_TOPIC")
+                .unwrap_or_else(|_| "ontologyQueryResponse".to_string()),
+            markets_response_topic: std::env::var("EWDS_MARKETS_RESPONSE_TOPIC")
+                .unwrap_or_else(|_| "marketsQueryResponse".to_string()),
             poll_interval_ms,
             request_batch_size,
         }
@@ -188,6 +200,19 @@ struct TimeRangePayload {
     area_uuid: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct MarketsQueryPayload {
+    #[serde(alias = "marketType")]
+    #[serde(default)]
+    market_type: Option<u8>,
+    #[serde(alias = "communityId")]
+    #[serde(default)]
+    community_id: Option<String>,
+    #[serde(alias = "openTime")]
+    #[serde(default)]
+    open_time: Option<u64>,
+}
+
 pub async fn start_ewds_request_handler(db: DatabaseWrapper, config: EwdsHandlerConfig) {
     if !config.enabled {
         info!("EWDS request handler disabled");
@@ -233,6 +258,8 @@ async fn process_batch(
         config.orders_request_topic.as_str(),
         config.trades_request_topic.as_str(),
         config.measurements_request_topic.as_str(),
+        config.ontology_request_topic.as_str(),
+        config.markets_request_topic.as_str(),
     ] {
         messages
             .extend(poll_requests_for_topic(client, config, topic_name, amount.as_str()).await?);
@@ -417,6 +444,55 @@ async fn handle_request(
             )
             .await
         }
+        "markets.query" => {
+            let payload = serde_json::from_value::<MarketsQueryPayload>(envelope.payload.clone())
+                .map_err(|e| anyhow!("markets.query payload parse error: {}", e))?;
+            let request_id = envelope.request_id;
+            let data = db
+                .markets()
+                .filter(
+                    None,
+                    payload.market_type.map(|n| n.to_string()),
+                    payload.community_id.clone(),
+                    payload.open_time.map(|n| n.to_string()),
+                    None
+                    )
+                .await?;
+            info!(
+                "Publishing EWDS communities.query response (request_id={}, communities={})",
+                request_id,
+                data.len()
+            );
+            send_success_response(
+                client,
+                config,
+                request_id,
+                config.markets_response_topic.as_str(),
+                data,
+            )
+                .await
+        }
+        "communities.query" => {
+            let request_id = envelope.request_id;
+
+            let data = db
+                .communities()
+                .get_all()
+                .await?;
+            info!(
+                "Publishing EWDS communities.query response (request_id={}, communities={})",
+                request_id,
+                data.len()
+            );
+            send_success_response(
+                client,
+                config,
+                request_id,
+                config.ontology_response_topic.as_str(),
+                data,
+            )
+                .await
+        }
         unsupported => {
             send_error_response(
                 client,
@@ -428,6 +504,7 @@ async fn handle_request(
             )
             .await
         }
+
     }
 }
 

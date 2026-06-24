@@ -67,6 +67,7 @@ pub struct IntelligentMarketSchema {
     pub market_type: IntelligentMarketType,
     pub matching_algorithm: MatchingAlgorithm,
     pub created_at: String,
+    pub is_open: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, Eq)]
