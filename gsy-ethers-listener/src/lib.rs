@@ -11,7 +11,7 @@ abigen!(
         event OrderCancelled(bytes16 indexed orderId)
         event OrderStatusUpdated(bytes16 indexed orderId, uint8 status)
         event TradeSettled(bytes16 indexed tradeId, bytes16 indexed bidId, bytes16 indexed askId, uint256 energy, uint256 price)
-        event MarketStatusUpdated(bytes16 indexed marketId, bool isOpen)
+        event MarketInfoUpdated(bytes16 marketId, bytes16 communityId, uint64 openingTime, uint64 closingTime, uint64 deliveryStartTime, uint64 deliveryEndTime, uint64 createdAt, uint8 matchingAlgorithm, uint8 marketType, bool isOpen)
     ]"#
 );
 
@@ -28,7 +28,8 @@ pub trait GsyEventHandler: Send + Sync + 'static {
     async fn handle_order_placed(&self, event: OrderPlacedFilter) -> Result<()>;
     async fn handle_order_cancelled(&self, event: OrderCancelledFilter) -> Result<()>;
     async fn handle_trade_settled(&self, event: TradeSettledFilter) -> Result<()>;
-    async fn handle_market_status(&self, event: MarketStatusUpdatedFilter) -> Result<()>;
+    // # todo: add market open status
+    async fn handle_market_info(&self, event: MarketInfoUpdatedFilter) -> Result<()>;
 }
 
 pub struct GsyEthersListener<H: GsyEventHandler> {
@@ -59,12 +60,12 @@ impl<H: GsyEventHandler> GsyEthersListener<H> {
         let order_placed_filter = order_registry.event::<OrderPlacedFilter>();
         let order_cancelled_filter = order_registry.event::<OrderCancelledFilter>();
         let trade_settled_filter = trade_settlement.event::<TradeSettledFilter>();
-        let market_status_filter = market_controller.event::<MarketStatusUpdatedFilter>();
+        let market_info_filter = market_controller.event::<MarketInfoUpdatedFilter>();
 
         let mut stream_order_placed = order_placed_filter.subscribe().await?;
         let mut stream_order_cancelled = order_cancelled_filter.subscribe().await?;
         let mut stream_trade_settled = trade_settled_filter.subscribe().await?;
-        let mut stream_market_status = market_status_filter.subscribe().await?;
+        let mut stream_market_info = market_info_filter.subscribe().await?;
 
         info!("GSy Ethers Listener started. Waiting for events...");
 
@@ -103,15 +104,15 @@ impl<H: GsyEventHandler> GsyEthersListener<H> {
                         Err(e) => error!("Error in TradeSettled stream: {:?}", e),
                     }
                 }
-                Some(log) = stream_market_status.next() => {
+                Some(log) = stream_market_info.next() => {
                     match log {
                         Ok(event) => {
-                            info!("Detected MarketStatusUpdated: {:?}", hex::encode(event.market_id));
-                            if let Err(e) = self.handler.handle_market_status(event).await {
-                                error!("Error handling MarketStatus: {:?}", e);
+                            info!("Detected MarketInfoUpdated: {:?}", hex::encode(event.market_id));
+                            if let Err(e) = self.handler.handle_market_info(event).await {
+                                error!("Error handling MarketInfo: {:?}", e);
                             }
                         },
-                        Err(e) => error!("Error in MarketStatus stream: {:?}", e),
+                        Err(e) => error!("Error in MarketInfo stream: {:?}", e),
                     }
                 }
             }

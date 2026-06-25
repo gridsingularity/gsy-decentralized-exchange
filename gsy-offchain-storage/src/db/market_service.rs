@@ -41,6 +41,7 @@ impl MarketService {
     pub async fn filter(
         &self,
         market_id: Option<String>,
+        market_type: Option<String>,
         community_id: Option<String>,
         start_time: Option<String>,
         end_time: Option<String>,
@@ -48,6 +49,9 @@ impl MarketService {
         let mut filter_params = doc! {};
         if let Some(market_id) = market_id {
             filter_params.insert("market_id", market_id);
+        }
+        if let Some(market_type) = market_type {
+            filter_params.insert("market_type", market_type);
         }
         if let Some(community_id) = community_id {
             filter_params.insert("community_id", community_id);

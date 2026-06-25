@@ -53,7 +53,7 @@ pub async fn get_market_topology(db: DbRef, params: Query<MarketTopologyQuery>) 
     match db
         .get_ref()
         .markets()
-        .filter(Some(params.market_id.clone()), None, None, None)
+        .filter(None, Some(params.market_id.clone()), None, None, None)
         .await
     {
         Ok(markets) => get_only_one_market(
@@ -77,7 +77,7 @@ pub async fn get_market_topology_from_community(
     match db
         .get_ref()
         .markets()
-        .filter(None, Some(params.community_uuid.clone()), None, None)
+        .filter(None, None, Some(params.community_uuid.clone()), None, None)
         .await
     {
         Ok(markets) => HttpResponse::Ok().json(

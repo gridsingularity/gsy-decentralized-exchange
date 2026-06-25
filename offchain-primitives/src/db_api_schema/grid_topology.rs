@@ -69,6 +69,7 @@ pub struct PilotSiteSchema {
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub struct EnergyCommunitySchema {
     pub community_name: String,
+    pub community_id: String,
     pub sites: Vec<String>,
 }
 
