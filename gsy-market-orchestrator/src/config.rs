@@ -1,5 +1,7 @@
 use ethers::types::Address;
-use gsy_offchain_primitives::{constants::GLOBAL_CONSTANTS, MarketType};
+use gsy_offchain_primitives::{
+    constants::GLOBAL_CONSTANTS,
+    utils::MarketType};
 use once_cell::sync::Lazy;
 use serde::Deserialize;
 
@@ -49,7 +51,7 @@ pub struct MarketRule {
 pub static MARKET_RULES: Lazy<Vec<MarketRule>> = Lazy::new(|| {
     vec![
         MarketRule {
-            market_type: MarketType::Spot,
+            market_type: MarketType::LocalSpot,
             open_offset_mins: GLOBAL_CONSTANTS.spot_market_open_offset_min,
             close_offset_mins: GLOBAL_CONSTANTS.spot_market_close_offset_min,
         },
@@ -59,7 +61,7 @@ pub static MARKET_RULES: Lazy<Vec<MarketRule>> = Lazy::new(|| {
             close_offset_mins: GLOBAL_CONSTANTS.flex_market_close_offset_min,
         },
         MarketRule {
-            market_type: MarketType::Settlement,
+            market_type: MarketType::LocalSettlement,
             open_offset_mins: GLOBAL_CONSTANTS.settlement_market_open_offset_min,
             close_offset_mins: GLOBAL_CONSTANTS.settlement_market_close_offset_min,
         },

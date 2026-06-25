@@ -3,6 +3,7 @@ use sp_core::H256;
 use sp_runtime::AccountId32;
 use std::env;
 use std::str::FromStr;
+use anyhow::Result;
 
 pub const NODE_FLOAT_SCALING_FACTOR: f64 = 10000.0;
 
@@ -98,4 +99,13 @@ pub fn read_env_or<T: FromStr>(variable_name: &str, default_value: T) -> T {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(default_value)
+}
+
+pub fn format_timeseries_timestamp(timestamp: u64) -> String {
+    format!("{:020}", timestamp)
+}
+
+pub fn string_to_timestamp(timestamp_string: &str) -> Result<u64> {
+    let ts: u64 = timestamp_string.parse()?;
+    Ok(ts)
 }

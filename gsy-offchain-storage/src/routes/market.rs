@@ -1,7 +1,8 @@
 use crate::db::DbRef;
 use actix_web::{web::Json, web::Query, HttpResponse, Responder};
-use gsy_offchain_primitives::db_api_schema::market::{MarketSchema, MarketTopologySchema};
+use gsy_offchain_primitives::db_api_schema::market::MarketSchema;
 use gsy_offchain_primitives::db_api_schema::trades::{ClearingResultSchema, MarketRoleSchema};
+use gsy_offchain_primitives::utils::format_timeseries_timestamp;
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -13,7 +14,7 @@ pub struct MarketsQuery {
 }
 
 #[derive(Deserialize)]
-pub struct MarketTopologyQuery {
+pub struct MarketQuery {
     market_id: String,
 }
 
@@ -24,32 +25,7 @@ pub struct CommunityMarketQuery {
     end_time: Option<u64>,
 }
 
-fn format_timeseries_timestamp(timestamp: u64) -> String {
-    format!("{:020}", timestamp)
-}
-
-fn market_schema_from_topology(market: &MarketTopologySchema) -> MarketSchema {
-    let delivery_start_time = u64::from(market.time_slot);
-    MarketSchema {
-        market_id: market.market_id.clone(),
-        community_id: market.community_uuid.clone(),
-        opening_time: format_timeseries_timestamp(u64::from(market.creation_time)),
-        closing_time: format_timeseries_timestamp(delivery_start_time),
-        delivery_start_time: format_timeseries_timestamp(delivery_start_time),
-        delivery_end_time: format_timeseries_timestamp(delivery_start_time + 900),
-        market_type: market.market_type,
-    }
-}
-
-pub async fn post_market_topology(market: Json<MarketTopologySchema>, db: DbRef) -> impl Responder {
-    let market = market_schema_from_topology(&market);
-    match db.get_ref().markets().insert(market).await {
-        Ok(saved) => HttpResponse::Ok().json(saved),
-        Err(_) => HttpResponse::InternalServerError().finish(),
-    }
-}
-
-pub async fn get_market_topology(db: DbRef, params: Query<MarketTopologyQuery>) -> impl Responder {
+pub async fn get_market(db: DbRef, params: Query<MarketQuery>) -> impl Responder {
     match db
         .get_ref()
         .markets()
@@ -114,13 +90,6 @@ fn get_only_one_market(markets: Vec<MarketSchema>, tracing_description: String) 
             );
             HttpResponse::InternalServerError().finish()
         }
-    }
-}
-
-pub async fn post_market(market: Json<MarketSchema>, db: DbRef) -> impl Responder {
-    match db.get_ref().markets().insert(market.to_owned()).await {
-        Ok(saved) => HttpResponse::Ok().json(saved),
-        Err(_) => HttpResponse::InternalServerError().finish(),
     }
 }
 

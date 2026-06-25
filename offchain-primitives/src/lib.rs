@@ -8,19 +8,31 @@ pub mod utils;
 use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
-#[derive(Deserialize, Serialize, Debug, Encode, Decode, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, Eq)]
 pub enum MarketType {
-    Spot,
-    Flexibility,
-    Settlement,
+    #[serde(rename = "local_spot")]
+    LocalSpot,
+    #[serde(rename = "flex")]
+    Flex,
+    #[serde(rename = "local_settlement")]
+    LocalSettlement,
+}
+#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, Eq)]
+pub enum MatchingAlgorithm {
+    #[serde(rename = "pay_as_bid")]
+    PayAsBid,
+    #[serde(rename = "pay_as_clear")]
+    PayAsClear,
+    #[serde(rename = "amm")]
+    AMM,
 }
 
-impl MarketType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            MarketType::Spot => "Spot",
-            MarketType::Flexibility => "Flexibility",
-            MarketType::Settlement => "Settlement",
-        }
-    }
+#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, Eq)]
+pub enum MarketTimeSeriesGranularity {
+    #[serde(rename = "15min")]
+    FifteenMinutes,
+    #[serde(rename = "1h")]
+    OneHour,
+    #[serde(rename = "1d")]
+    OneDay,
 }
