@@ -4,5 +4,4 @@ pub mod trade_steps;
 pub mod community_client_steps;
 pub mod parallel_market_steps;
 pub mod cross_market_steps;
-pub mod residual_trade_steps;
-pub mod partial_trade_steps;
+pub mod residual_matching_steps;

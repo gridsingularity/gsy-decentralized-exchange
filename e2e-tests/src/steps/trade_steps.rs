@@ -6,7 +6,7 @@ use gsy_offchain_primitives::db_api_schema::profiles::MeasurementSchema;
 use std::time::Duration;
 use tracing::info;
 
-#[when(regex = r#""([^"]*)" submits a bid"#)]
+#[when(regex = r#"^"([^"]*)" submits a bid$"#)]
 async fn submit_bid(world: &mut MyWorld, user_name: String) {
 	let user = world.users.get(&user_name).unwrap().clone();
 
@@ -20,7 +20,7 @@ async fn submit_bid(world: &mut MyWorld, user_name: String) {
 	println!("Submitted bid for {}", user_name);
 }
 
-#[when(regex = r#""([^"]*)" submits an offer"#)]
+#[when(regex = r#"^"([^"]*)" submits an offer$"#)]
 async fn submit_offer(world: &mut MyWorld, user_name: String) {
 	let user = world.users.get(&user_name).unwrap().clone();
 
