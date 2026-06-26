@@ -2,7 +2,6 @@ use crate::db::DbRef;
 use actix_web::{web::Json, web::Query, HttpResponse, Responder};
 use gsy_offchain_primitives::db_api_schema::market::MarketSchema;
 use gsy_offchain_primitives::db_api_schema::trades::{ClearingResultSchema, MarketRoleSchema};
-use gsy_offchain_primitives::utils::timestamp_to_string_with_padding;
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -18,13 +17,6 @@ pub struct MarketQuery {
     market_id: String,
 }
 
-#[derive(Deserialize)]
-pub struct CommunityMarketQuery {
-    community_uuid: String,
-    start_time: Option<u64>,
-    end_time: Option<u64>,
-}
-
 pub async fn get_market(db: DbRef, params: Query<MarketQuery>) -> impl Responder {
     match db
         .get_ref()
@@ -35,39 +27,6 @@ pub async fn get_market(db: DbRef, params: Query<MarketQuery>) -> impl Responder
         Ok(markets) => get_only_one_market(
             markets,
             format!("market id ({})", params.market_id.as_str()),
-        ),
-        Err(e) => {
-            tracing::error!("Failed to execute query: {:?}", e);
-            HttpResponse::InternalServerError().finish()
-        }
-    }
-}
-
-pub async fn get_market_topology_from_community(
-    db: DbRef,
-    params: Query<CommunityMarketQuery>,
-) -> impl Responder {
-    let start_time = params.start_time.map(timestamp_to_string_with_padding);
-    let end_time = params.end_time.map(timestamp_to_string_with_padding);
-
-    match db
-        .get_ref()
-        .markets()
-        .filter(None, Some(params.community_uuid.clone()), None, None)
-        .await
-    {
-        Ok(markets) => HttpResponse::Ok().json(
-            markets
-                .into_iter()
-                .filter(|market| match start_time.as_ref() {
-                    Some(start_time) => market.delivery_start_time.as_str() >= start_time.as_str(),
-                    None => true,
-                })
-                .filter(|market| match end_time.as_ref() {
-                    Some(end_time) => market.delivery_start_time.as_str() <= end_time.as_str(),
-                    None => true,
-                })
-                .collect::<Vec<_>>(),
         ),
         Err(e) => {
             tracing::error!("Failed to execute query: {:?}", e);
