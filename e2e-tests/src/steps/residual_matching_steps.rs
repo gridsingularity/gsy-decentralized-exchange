@@ -12,16 +12,16 @@ use std::time::Duration;
 use subxt::utils::{AccountId32, H256};
 use tracing::info;
 
-// Residual community (one buyer, one seller): residual cleared by a follow-up order.
+// Distinct community names isolate the two scenarios' markets (market_id is derived from the
+// community name), since both run in the same delivery slot.
 const RESIDUAL_COMMUNITY: &str = "Residual Community";
-const RESIDUAL_BUYER_AREA: &str = "residualBuyer";
-const RESIDUAL_SELLER_AREA: &str = "residualSeller";
-
-// Partial community (one buyer, two sellers): residual cleared from an offer already in the book.
 const PARTIAL_COMMUNITY: &str = "Partial Community";
-const PARTIAL_BUYER_AREA: &str = "partialBuyer";
-const PARTIAL_SELLER_AREA_ONE: &str = "partialSellerOne";
-const PARTIAL_SELLER_AREA_TWO: &str = "partialSellerTwo";
+
+// Shared area labels: the residual scenario uses one seller, the partial scenario uses both.
+// Area uuids/hashes are random per market, so reusing these names across communities is safe.
+const BUYER_AREA: &str = "buyer";
+const SELLER_AREA_ONE: &str = "sellerOne";
+const SELLER_AREA_TWO: &str = "sellerTwo";
 
 const BID_RATE: f64 = 0.3;
 const OFFER_RATE: f64 = 0.07;
@@ -97,11 +97,11 @@ async fn submit_residual_topology(world: &mut MyWorld, bid_energy: f64, offer_en
 				areas: vec![
 					ExternalAreaTopology {
 						area_type: AssetType::SMART_METER,
-						area_name: RESIDUAL_BUYER_AREA.to_string(),
+						area_name: BUYER_AREA.to_string(),
 					},
 					ExternalAreaTopology {
 						area_type: AssetType::PV,
-						area_name: RESIDUAL_SELLER_AREA.to_string(),
+						area_name: SELLER_AREA_ONE.to_string(),
 					},
 				],
 			}],
@@ -120,8 +120,8 @@ async fn submit_residual_topology(world: &mut MyWorld, bid_energy: f64, offer_en
 		RESIDUAL_COMMUNITY
 	);
 
-	let bid_forecast = forecast_for_area(&market, RESIDUAL_BUYER_AREA, bid_energy, time_slot);
-	let offer_forecast = forecast_for_area(&market, RESIDUAL_SELLER_AREA, -offer_energy, time_slot);
+	let bid_forecast = forecast_for_area(&market, BUYER_AREA, bid_energy, time_slot);
+	let offer_forecast = forecast_for_area(&market, SELLER_AREA_ONE, -offer_energy, time_slot);
 
 	adapter
 		.forward_forecast(vec![bid_forecast.clone(), offer_forecast.clone()])
@@ -292,15 +292,15 @@ async fn submit_partial_topology(world: &mut MyWorld) {
 				areas: vec![
 					ExternalAreaTopology {
 						area_type: AssetType::SMART_METER,
-						area_name: PARTIAL_BUYER_AREA.to_string(),
+						area_name: BUYER_AREA.to_string(),
 					},
 					ExternalAreaTopology {
 						area_type: AssetType::PV,
-						area_name: PARTIAL_SELLER_AREA_ONE.to_string(),
+						area_name: SELLER_AREA_ONE.to_string(),
 					},
 					ExternalAreaTopology {
 						area_type: AssetType::PV,
-						area_name: PARTIAL_SELLER_AREA_TWO.to_string(),
+						area_name: SELLER_AREA_TWO.to_string(),
 					},
 				],
 			}],
@@ -341,9 +341,9 @@ async fn submit_partial_orders(
 	let buyer = world.users.get(&buyer_name).unwrap().clone();
 	let seller = world.users.get(&seller_name).unwrap().clone();
 
-	let bid_forecast = forecast_for_area(&market, PARTIAL_BUYER_AREA, bid_energy, time_slot);
-	let offer_one = forecast_for_area(&market, PARTIAL_SELLER_AREA_ONE, -offer_one_energy, time_slot);
-	let offer_two = forecast_for_area(&market, PARTIAL_SELLER_AREA_TWO, -offer_two_energy, time_slot);
+	let bid_forecast = forecast_for_area(&market, BUYER_AREA, bid_energy, time_slot);
+	let offer_one = forecast_for_area(&market, SELLER_AREA_ONE, -offer_one_energy, time_slot);
+	let offer_two = forecast_for_area(&market, SELLER_AREA_TWO, -offer_two_energy, time_slot);
 
 	// Publish the single, over-sized bid.
 	publish_orders(
