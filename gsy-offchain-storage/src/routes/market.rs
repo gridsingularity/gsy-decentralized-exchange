@@ -2,7 +2,7 @@ use crate::db::DbRef;
 use actix_web::{web::Json, web::Query, HttpResponse, Responder};
 use gsy_offchain_primitives::db_api_schema::market::MarketSchema;
 use gsy_offchain_primitives::db_api_schema::trades::{ClearingResultSchema, MarketRoleSchema};
-use gsy_offchain_primitives::utils::format_timeseries_timestamp;
+use gsy_offchain_primitives::utils::timestamp_to_string_with_padding;
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -47,8 +47,8 @@ pub async fn get_market_topology_from_community(
     db: DbRef,
     params: Query<CommunityMarketQuery>,
 ) -> impl Responder {
-    let start_time = params.start_time.map(format_timeseries_timestamp);
-    let end_time = params.end_time.map(format_timeseries_timestamp);
+    let start_time = params.start_time.map(timestamp_to_string_with_padding);
+    let end_time = params.end_time.map(timestamp_to_string_with_padding);
 
     match db
         .get_ref()

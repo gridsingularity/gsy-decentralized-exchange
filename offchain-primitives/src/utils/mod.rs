@@ -101,7 +101,7 @@ pub fn read_env_or<T: FromStr>(variable_name: &str, default_value: T) -> T {
         .unwrap_or(default_value)
 }
 
-pub fn format_timeseries_timestamp(timestamp: u64) -> String {
+pub fn timestamp_to_string_with_padding(timestamp: u64) -> String {
     format!("{:020}", timestamp)
 }
 

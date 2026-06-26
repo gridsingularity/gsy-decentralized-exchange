@@ -6,6 +6,7 @@ use gsy_offchain_primitives::db_api_schema::profiles::{
     FlowDirection, ForecastSchema, MeasurementPointSchema, MeasurementPointType, MeasurementSchema,
     TimeseriesSchema,
 };
+use gsy_offchain_primitives::utils::timestamp_to_string_with_padding;
 use gsy_offchain_primitives::{MarketType, MatchingAlgorithm};
 use reqwest::Client;
 use std::env;
@@ -59,7 +60,7 @@ impl AreaMarketInfoAdapter {
                     forecast.community_uuid.as_str(),
                     forecast.area_uuid.as_str(),
                 ),
-                timestamp: format_timeseries_timestamp(forecast.time_slot),
+                timestamp: timestamp_to_string_with_padding(forecast.time_slot),
                 value: forecast.energy_kwh,
             })
             .collect::<Vec<_>>();
@@ -95,7 +96,7 @@ impl AreaMarketInfoAdapter {
                     measurement.community_uuid.as_str(),
                     measurement.area_uuid.as_str(),
                 ),
-                timestamp: format_timeseries_timestamp(measurement.time_slot),
+                timestamp: timestamp_to_string_with_padding(measurement.time_slot),
                 value: measurement.energy_kwh,
             })
             .collect::<Vec<_>>();
@@ -166,13 +167,13 @@ impl AreaMarketInfoAdapter {
         let market_schema = MarketSchema {
             market_id: generate_market_id(MarketType::LocalSpot, time_slot),
             community_id: topology.community_uuid,
-            opening_time: format_timeseries_timestamp(creation_time),
-            closing_time: format_timeseries_timestamp(time_slot),
-            delivery_start_time: format_timeseries_timestamp(time_slot),
-            delivery_end_time: format_timeseries_timestamp(time_slot + 900),
+            opening_time: timestamp_to_string_with_padding(creation_time),
+            closing_time: timestamp_to_string_with_padding(time_slot),
+            delivery_start_time: timestamp_to_string_with_padding(time_slot),
+            delivery_end_time: timestamp_to_string_with_padding(time_slot + 900),
             market_type: MarketType::LocalSpot,
             matching_algorithm:MatchingAlgorithm::PayAsBid,
-            created_at: format_timeseries_timestamp(creation_time),
+            created_at: timestamp_to_string_with_padding(creation_time),
         };
 
         match self
@@ -251,8 +252,4 @@ fn flow_direction(value: f64) -> FlowDirection {
     } else {
         FlowDirection::Export
     }
-}
-
-fn format_timeseries_timestamp(timestamp: u64) -> String {
-    format!("{:020}", timestamp)
 }
