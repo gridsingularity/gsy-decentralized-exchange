@@ -10,12 +10,12 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, Eq)]
 pub enum MarketType {
-    #[serde(rename = "local_spot")]
-    LocalSpot,
+    #[serde(rename = "spot")]
+    Spot,
     #[serde(rename = "flex")]
     Flex,
-    #[serde(rename = "local_settlement")]
-    LocalSettlement,
+    #[serde(rename = "settlement")]
+    Settlement,
 }
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, Eq)]
 pub enum MatchingAlgorithm {

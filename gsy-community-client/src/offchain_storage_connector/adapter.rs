@@ -165,13 +165,13 @@ impl AreaMarketInfoAdapter {
     ) -> Option<MarketSchema> {
         let creation_time = get_current_timestamp_in_secs();
         let market_schema = MarketSchema {
-            market_id: generate_market_id(MarketType::LocalSpot, time_slot),
+            market_id: generate_market_id(MarketType::Spot, time_slot),
             community_id: topology.community_uuid,
             opening_time: timestamp_to_string_with_padding(creation_time),
             closing_time: timestamp_to_string_with_padding(time_slot),
             delivery_start_time: timestamp_to_string_with_padding(time_slot),
             delivery_end_time: timestamp_to_string_with_padding(time_slot + 900),
-            market_type: MarketType::LocalSpot,
+            market_type: MarketType::Spot,
             matching_algorithm:MatchingAlgorithm::PayAsBid,
             created_at: timestamp_to_string_with_padding(creation_time),
         };

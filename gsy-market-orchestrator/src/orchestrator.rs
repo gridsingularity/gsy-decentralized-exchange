@@ -273,8 +273,8 @@ mod tests {
     fn generate_market_id_is_deterministic() {
         let delivery = 1_700_000_000;
 
-        let first = generate_market_id(MarketType::LocalSpot, delivery);
-        let second = generate_market_id(MarketType::LocalSpot, delivery);
+        let first = generate_market_id(MarketType::Spot, delivery);
+        let second = generate_market_id(MarketType::Spot, delivery);
         let different = generate_market_id(MarketType::Flex, delivery);
 
         assert_eq!(first, second);
