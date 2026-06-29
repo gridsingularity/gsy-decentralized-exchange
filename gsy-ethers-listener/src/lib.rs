@@ -25,6 +25,7 @@ pub struct ListenerConfig {
 
 #[async_trait]
 pub trait GsyEventHandler: Send + Sync + 'static {
+    // *Filter types are automatically generated from the ABI based on the event name.
     async fn handle_order_placed(&self, event: OrderPlacedFilter) -> Result<()>;
     async fn handle_order_cancelled(&self, event: OrderCancelledFilter) -> Result<()>;
     async fn handle_trade_settled(&self, event: TradeSettledFilter) -> Result<()>;
