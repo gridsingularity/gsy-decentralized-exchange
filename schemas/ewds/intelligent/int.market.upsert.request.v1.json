@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "int.market.upsert.request.v1",
+  "title": "market.upsert request",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "requestId": { "type": "string", "minLength": 1 },
+    "operation": { "const": "market.upsert" },
+    "payload": { "$ref": "./int.market.schema.v1.json" }
+  },
+  "required": ["requestId", "operation", "payload"]
+}

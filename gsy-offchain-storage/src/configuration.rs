@@ -1,6 +1,8 @@
-use config::{Config, ConfigError, File};
+use config::{Config, ConfigError, Environment, File};
+use ethers::types::Address;
+use serde::Deserialize;
 
-#[derive(serde::Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct Settings {
     pub database_host: String,
     pub database_username: String,
@@ -9,8 +11,24 @@ pub struct Settings {
     pub database_url_scheme: String,
     pub application_host: String,
     pub application_port: u16,
-    pub node_url: String,
     pub scheduler_interval: u32,
+
+    #[serde(default = "default_evm_url")]
+    pub evm_node_url: String,
+    #[serde(default = "default_address")]
+    pub contract_order_registry: Address,
+    #[serde(default = "default_address")]
+    pub contract_trade_settlement: Address,
+    #[serde(default = "default_address")]
+    pub contract_market_controller: Address,
+}
+
+fn default_evm_url() -> String {
+    "ws://localhost:8545".to_string()
+}
+
+fn default_address() -> Address {
+    Address::zero()
 }
 
 impl Settings {
@@ -23,20 +41,15 @@ impl Settings {
             self.database_host
         )
     }
-    pub fn get_node_url(&self) -> String {
-        self.node_url.clone()
-    }
     pub fn get_scheduler_interval(&self) -> u32 {
         self.scheduler_interval
     }
 }
 
 pub fn get_configuration() -> Result<Settings, ConfigError> {
-    match envy::from_env::<Settings>() {
-        Ok(settings) => Ok(settings),
-        Err(_) => Config::builder()
-            .add_source(File::with_name("configuration.yaml"))
-            .build()?
-            .try_deserialize(),
-    }
+    Config::builder()
+        .add_source(File::with_name("configuration.yaml").required(false))
+        .add_source(Environment::default().try_parsing(true).ignore_empty(true))
+        .build()?
+        .try_deserialize()
 }

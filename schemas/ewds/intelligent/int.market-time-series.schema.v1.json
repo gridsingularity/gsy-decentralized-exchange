@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intelligent-project.eu/ontology/v1.0.0/market/MarketTimeSeries",
+  "title": "int:MarketTimeSeries",
+  "description": "Header record for a historical market time-series dataset provided by TUM for FOS optimisation.",
+  "type": "object",
+  "properties": {
+    "communityId": {
+      "description": "FK to Community. IRI: int:communityId. UUID v4.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "marketIds": {
+      "description": "List of market IDs recorded in this time series. IRI: int:marketIds. UUID v4 array.",
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "default": []
+    },
+    "periodFrom": {
+      "description": "Start of the historical data period. IRI: int:periodFrom. ISO 8601 with timezone. Must be < periodUntil.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "periodUntil": {
+      "description": "End of the historical data period. IRI: int:periodUntil. ISO 8601 with timezone.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "granularity": {
+      "description": "Time resolution of child records. IRI: int:granularity.",
+      "type": "string",
+      "enum": [
+        "15min",
+        "1h",
+        "1d"
+      ]
+    }
+  },
+  "required": [
+    "communityId",
+    "periodFrom",
+    "periodUntil",
+    "granularity"
+  ],
+  "additionalProperties": false
+}

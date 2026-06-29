@@ -32,6 +32,7 @@ pub async fn init_timeseries(db: &DatabaseWrapper) -> Result<()> {
         .create_index(
             IndexModel::builder()
                 .keys(doc! {"measurement_point": 1, "timestamp": 1})
+                .options(IndexOptions::builder().unique(true).build())
                 .build(),
         )
         .await?;
@@ -50,7 +51,26 @@ impl MeasurementPointService {
         &self,
         points: Vec<MeasurementPointSchema>,
     ) -> Result<HashMap<usize, Bson>> {
-        Ok(self.0.insert_many(points).await?.inserted_ids)
+        let mut upserted_ids = HashMap::new();
+        for (index, point) in points.into_iter().enumerate() {
+            let measurement_id = point.measurement_id.clone();
+            let point_doc = mongodb::bson::to_document(&point)?;
+            let result = self
+                .0
+                .update_one(
+                    doc! {"measurement_id": measurement_id.clone()},
+                    doc! {"$set": point_doc},
+                )
+                .upsert(true)
+                .await?;
+            upserted_ids.insert(
+                index,
+                result
+                    .upserted_id
+                    .unwrap_or_else(|| Bson::String(measurement_id.clone())),
+            );
+        }
+        Ok(upserted_ids)
     }
 
     #[tracing::instrument(name = "Fetching measurement points", skip(self))]
@@ -101,7 +121,30 @@ impl TimeseriesService {
         &self,
         points: Vec<TimeseriesSchema>,
     ) -> Result<HashMap<usize, Bson>> {
-        Ok(self.0.insert_many(points).await?.inserted_ids)
+        let mut upserted_ids = HashMap::new();
+        for (index, point) in points.into_iter().enumerate() {
+            let measurement_point = point.measurement_point.clone();
+            let timestamp = point.timestamp.clone();
+            let point_doc = mongodb::bson::to_document(&point)?;
+            let result = self
+                .0
+                .update_one(
+                    doc! {
+                        "measurement_point": measurement_point.clone(),
+                        "timestamp": timestamp.clone(),
+                    },
+                    doc! {"$set": point_doc},
+                )
+                .upsert(true)
+                .await?;
+            upserted_ids.insert(
+                index,
+                result.upserted_id.unwrap_or_else(|| {
+                    Bson::String(format!("{}:{}", measurement_point, timestamp))
+                }),
+            );
+        }
+        Ok(upserted_ids)
     }
 
     #[tracing::instrument(name = "Fetching timeseries values", skip(self))]

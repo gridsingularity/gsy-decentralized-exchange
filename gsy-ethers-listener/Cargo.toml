@@ -1,0 +1,17 @@
+[package]
+name = "gsy-ethers-listener"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ethers = { version = "2.0", features = ["ws", "abigen", "rustls"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+async-trait = "0.1"
+anyhow = "1.0"
+tracing = "0.1"
+hex = "0.4"
+
+[dev-dependencies]
+ethers = { version = "2.0", features = ["ws", "abigen", "rustls", "solc"] }
+tokio = { version = "1", features = ["full"] }
+tempfile = "3.10"

@@ -1,12 +1,12 @@
-use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use gsy_community_client::external_api::{
-    ExternalForecast, ExternalMeasurement, ExternalCommunityTopology, ExternalAreaTopology};
-use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketTopologySchema};
-use gsy_offchain_primitives::utils::h256_to_string;
+    ExternalAreaTopology, ExternalCommunityTopology, ExternalForecast, ExternalMeasurement,
+};
+use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use gsy_community_client::time_utils::get_last_and_next_timeslot;
+use gsy_offchain_primitives::db_api_schema::market::AreaTopologySchema;
+use gsy_offchain_primitives::db_api_schema::profiles::{ForecastSchema, MeasurementSchema};
+use gsy_offchain_primitives::MarketType;
 
-use subxt::utils::H256;
-use serde_json;
 use httpmock::prelude::*;
 use tracing::Level;
 use tracing_subscriber;
@@ -14,7 +14,6 @@ use tracing_subscriber;
 fn setup_tracing() {
     tracing_subscriber::fmt().with_max_level(Level::INFO).init();
 }
-
 
 #[tokio::test]
 async fn test_get_or_create_market_topology() {
@@ -26,59 +25,99 @@ async fn test_get_or_create_market_topology() {
     let external_topology = ExternalCommunityTopology {
         community_name: "comm_name".to_string(),
         community_uuid: "comm_uuid".to_string(),
-        areas: vec![
-            ExternalAreaTopology {
-                area_uuid: "area_uuid".to_string(),
-                area_name: "area_name".to_string(),
-            }
-        ]
+        areas: vec![ExternalAreaTopology {
+            area_uuid: "area_uuid".to_string(),
+            area_name: "area_name".to_string(),
+        }],
     };
-
-    let expected_market = MarketTopologySchema {
-        creation_time: 123,
-        time_slot: 456,
-        market_id: h256_to_string(H256::random()),
-        community_uuid: "comm_uuid".to_string(),
-        community_name: "comm_name".to_string(),
-        community_areas: vec![
-            AreaTopologySchema {
-                area_uuid: "area_uuid".to_string(),
-                name: "area_name".to_string(),
-                area_hash: h256_to_string(H256::random()),
-            }
-        ]
-    };
-
-    let market_json_str = serde_json::to_string(&expected_market).unwrap();
 
     let mock_request = server.mock(|when, then| {
-        when.method(GET)
-            .path("/community-market")
-            .query_param("community_uuid", "comm_uuid")
-            .query_param("time_slot", time_slot.to_string());
-        then.status(200)
-            .header("content-type", "text/html; charset=UTF-8")
-            .body(market_json_str);
+        when.method(POST).path("/markets");
+        then.status(200).header("content-type", "application/json");
     });
 
-    let adapter = AreaMarketInfoAdapter::new(
-        Some(server.base_url()));
-    let market = adapter.get_or_create_market_topology(
-        external_topology, time_slot).await.unwrap();
-    assert_eq!(market, expected_market);
+    let adapter = AreaMarketInfoAdapter::new(Some(server.base_url()));
+    let market = adapter
+        .get_or_create_market_topology(external_topology, time_slot)
+        .await
+        .unwrap();
+    assert_eq!(market.market_type, MarketType::Spot);
+    assert_eq!(market.time_slot, time_slot as u32);
+    assert_eq!(market.community_uuid, "comm_uuid");
+    assert_eq!(market.community_name, "comm_name");
+    assert_eq!(
+        market.community_areas,
+        vec![AreaTopologySchema {
+            area_uuid: "area_uuid".to_string(),
+            name: "area_name".to_string(),
+            area_type: "Area".to_string(),
+        }]
+    );
     mock_request.assert();
 }
 
+#[tokio::test]
+async fn test_forward_forecast_uses_ontology_profile_endpoints() {
+    let server = MockServer::start();
+
+    let measurement_points_request = server.mock(|when, then| {
+        when.method(POST).path("/measurement-points");
+        then.status(200);
+    });
+    let timeseries_request = server.mock(|when, then| {
+        when.method(POST).path("/timeseries");
+        then.status(200);
+    });
+
+    let adapter = AreaMarketInfoAdapter::new(Some(server.base_url()));
+    adapter
+        .forward_forecast(vec![ForecastSchema {
+            area_uuid: "area_uuid".to_string(),
+            community_uuid: "comm_uuid".to_string(),
+            time_slot: 123123,
+            creation_time: 456456,
+            energy_kwh: 11.,
+            confidence: 0.4,
+        }])
+        .await
+        .unwrap();
+
+    measurement_points_request.assert();
+    timeseries_request.assert();
+}
+
+#[tokio::test]
+async fn test_forward_measurement_uses_ontology_profile_endpoints() {
+    let server = MockServer::start();
+
+    let measurement_points_request = server.mock(|when, then| {
+        when.method(POST).path("/measurement-points");
+        then.status(200);
+    });
+    let timeseries_request = server.mock(|when, then| {
+        when.method(POST).path("/timeseries");
+        then.status(200);
+    });
+
+    let adapter = AreaMarketInfoAdapter::new(Some(server.base_url()));
+    adapter
+        .forward_measurement(vec![MeasurementSchema {
+            area_uuid: "area_uuid".to_string(),
+            community_uuid: "comm_uuid".to_string(),
+            time_slot: 123123,
+            creation_time: 456456,
+            energy_kwh: 11.,
+        }])
+        .await
+        .unwrap();
+
+    measurement_points_request.assert();
+    timeseries_request.assert();
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tracing::Level;
-    use tracing_subscriber;
-
-    fn setup_tracing() {
-        tracing_subscriber::fmt().with_max_level(Level::INFO).init();
-    }
 
     #[test]
     fn test_convert_forecast_to_internal_schema() {
@@ -89,9 +128,10 @@ mod tests {
             community_uuid: "comm_uuid".to_string(),
             energy_kwh: 11.,
             area_uuid: "area_uuid".to_string(),
-            confidence: 0.4
+            confidence: 0.4,
         };
-        let converted_forecast = adapter.convert_forecast_to_internal_schema(&forecast);
+        let converted_forecast =
+            adapter.convert_forecast_to_internal_schema(&forecast, "ignored".to_string());
         assert_eq!(converted_forecast.area_uuid, "area_uuid");
         assert_eq!(converted_forecast.community_uuid, "comm_uuid");
         assert_eq!(converted_forecast.energy_kwh, 11.);
@@ -110,12 +150,12 @@ mod tests {
             energy_kwh: 11.,
             area_uuid: "area_uuid".to_string(),
         };
-        let converted_measurement = adapter.convert_measurement_to_internal_schema(&measurement);
+        let converted_measurement =
+            adapter.convert_measurement_to_internal_schema(&measurement, "ignored".to_string());
         assert_eq!(converted_measurement.area_uuid, "area_uuid");
         assert_eq!(converted_measurement.community_uuid, "comm_uuid");
         assert_eq!(converted_measurement.energy_kwh, 11.);
         assert_eq!(converted_measurement.time_slot, 123123);
         assert_eq!(converted_measurement.creation_time, 456456);
     }
-
 }

@@ -1,67 +1,177 @@
+x-gsy-ewds-env: &gsy-ewds-env
+  EWDS_GATEWAY_URL: ${EWDS_GATEWAY_URL:-http://ddhub-gateway-api:3333}
+  EWDS_REQUEST_PUBLISH_FQCN: ${EWDS_REQUEST_PUBLISH_FQCN:-gsy.intelligent.requests.pub}
+  EWDS_REQUEST_SUBSCRIBE_FQCN: ${EWDS_REQUEST_SUBSCRIBE_FQCN:-gsy.intelligent.requests.sub}
+  EWDS_RESPONSE_PUBLISH_FQCN: ${EWDS_RESPONSE_PUBLISH_FQCN:-gsy.intelligent.responses.pub}
+  EWDS_RESPONSE_SUBSCRIBE_FQCN: ${EWDS_RESPONSE_SUBSCRIBE_FQCN:-gsy.intelligent.responses.sub}
+  EWDS_TOPIC_OWNER: ${EWDS_TOPIC_OWNER:-integration.apps.intelligent.auth.ewc}
+  EWDS_TOPIC_VERSION: ${EWDS_TOPIC_VERSION:-1.0.0}
+  EWDS_ORDERS_REQUEST_TOPIC: ${EWDS_ORDERS_REQUEST_TOPIC:-ordersQuery}
+  EWDS_ORDERS_RESPONSE_TOPIC: ${EWDS_ORDERS_RESPONSE_TOPIC:-ordersQueryResponse}
+  EWDS_TRADES_REQUEST_TOPIC: ${EWDS_TRADES_REQUEST_TOPIC:-tradesQuery}
+  EWDS_TRADES_RESPONSE_TOPIC: ${EWDS_TRADES_RESPONSE_TOPIC:-tradesQueryResponse}
+  EWDS_MEASUREMENTS_REQUEST_TOPIC: ${EWDS_MEASUREMENTS_REQUEST_TOPIC:-measurementsQuery}
+  EWDS_MEASUREMENTS_RESPONSE_TOPIC: ${EWDS_MEASUREMENTS_RESPONSE_TOPIC:-measurementsQueryResponse}
+  EWDS_RESPONSE_TIMEOUT_MS: ${EWDS_RESPONSE_TIMEOUT_MS:-60000}
+  EWDS_RESPONSE_POLL_INTERVAL_MS: ${EWDS_RESPONSE_POLL_INTERVAL_MS:-1000}
+
 services:
-  gsy-node:
-    container_name: gsy-node
-    build:
-      dockerfile: ./gsy-node/Dockerfile
-    depends_on:
-      gsy-matching-engine:
-        condition: service_started
+
+  anvil:
+    container_name: anvil
+    image: ghcr.io/foundry-rs/foundry:latest
+    entrypoint: ["anvil"]
+    command: ["--host", "0.0.0.0", "--port", "8545", "--chain-id", "${ANVIL_CHAIN_ID:-31337}"]
     ports:
-      - "9944:9944"
+      - "8545:8545"
+    healthcheck:
+      test: ["CMD", "sh", "-c", "cast block-number --rpc-url http://localhost:8545 > /dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
+  gsy-contracts-bootstrap:
+    container_name: gsy-contracts-bootstrap
+    build:
+      context: ./gsy-contracts
+      dockerfile: Dockerfile
+    network_mode: "service:anvil"
+    depends_on:
+      anvil:
+        condition: service_healthy
+    command: >
+      sh -lc "npx hardhat run scripts/deploy.ts --network anvil"
     environment:
-      - CARGO_HOME=/var/www/gsy-node/.cargo
-      - OFFCHAIN_STORAGE_URL=http://gsy-offchain-storage:8080
+      - ANVIL_RPC_URL=http://127.0.0.1:8545
+      - ANVIL_CHAIN_ID=${ANVIL_CHAIN_ID:-31337}
+      - CONTRACTS_ENV_PATH=/contracts/addresses.env
+      - ORCHESTRATOR_SIGNER_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+      - MATCHING_ENGINE_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+      - EXECUTION_ENGINE_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+      - ACTOR_REGISTRAR_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+    volumes:
+      - ./gsy-contracts:/app
+      - /app/node_modules
+      - contracts-data:/contracts
 
   gsy-offchain-storage:
     container_name: gsy-offchain-storage
     build:
+      context: .
       dockerfile: ./gsy-offchain-storage/Dockerfile
     depends_on:
       mongodb:
         condition: service_started
+      anvil:
+        condition: service_healthy
+      gsy-contracts-bootstrap:
+        condition: service_completed_successfully
     ports:
       - "8080:8080"
     environment:
-      - CARGO_HOME=/var/www/orderbook/.cargo
-      - APPLICATION_HOST=0.0.0.0
-      - APPLICATION_PORT=8080
-      - DATABASE_NAME=orderbook
-      - DATABASE_HOST=mongodb
-      - DATABASE_URL_SCHEME=mongodb
-      - DATABASE_USERNAME=gsy
-      - DATABASE_PASSWORD=gsy
-      - NODE_URL=gsy-node:9944
-      - SCHEDULER_INTERVAL=900
+      <<: *gsy-ewds-env
+      APPLICATION_HOST: "0.0.0.0"
+      APPLICATION_PORT: "8080"
+      DATABASE_NAME: offchain_storage
+      DATABASE_HOST: mongodb
+      DATABASE_URL_SCHEME: mongodb
+      DATABASE_USERNAME: gsy
+      DATABASE_PASSWORD: gsy
+      SCHEDULER_INTERVAL: "900"
+      EVM_NODE_URL: "ws://anvil:8545"
+      CONTRACT_ORDER_REGISTRY: "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"
+      CONTRACT_TRADE_SETTLEMENT: "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9"
+      CONTRACT_MARKET_CONTROLLER: "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"
+      EWDS_ENABLE_HANDLER: "${EWDS_ENABLE_HANDLER:-false}"
+      EWDS_REQUEST_CLIENT_ID: ${EWDS_OFFCHAIN_STORAGE_CLIENT_ID:-gsyoffchainstorage}
+      EWDS_HANDLER_POLL_INTERVAL_MS: ${EWDS_HANDLER_POLL_INTERVAL_MS:-500}
+      EWDS_HANDLER_BATCH_SIZE: ${EWDS_HANDLER_BATCH_SIZE:-100}
 
   gsy-matching-engine:
     container_name: gsy-matching-engine
     build:
+      context: .
       dockerfile: ./gsy-matching-engine/Dockerfile
     depends_on:
       gsy-offchain-storage:
         condition: service_started
-    working_dir: /var/www/matching-engine
+      anvil:
+        condition: service_healthy
+      gsy-contracts-bootstrap:
+        condition: service_completed_successfully
+    entrypoint: ["/usr/local/bin/gsy-matching-engine"]
+    command: ["web3", "http://gsy-offchain-storage", "8080", "ws://anvil", "8545"]
+    environment:
+      <<: *gsy-ewds-env
+      OFFCHAIN_STORAGE_TRANSPORT: ${OFFCHAIN_STORAGE_TRANSPORT:-http}
+      OFFCHAIN_STORAGE_URL: "http://gsy-offchain-storage:8080"
+      TRADE_SETTLEMENT_ADDRESS: "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9"
+      MATCHING_ENGINE_PRIVATE_KEY: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+      EWDS_MATCHING_ENGINE_CLIENT_ID: ${EWDS_MATCHING_ENGINE_CLIENT_ID:-gsymatchingengine}
+
+  gsy-community-client:
+    container_name: gsy-community-client
+    build:
+      context: .
+      dockerfile: ./gsy-community-client/Dockerfile
+    depends_on:
+      gsy-offchain-storage:
+        condition: service_started
+      anvil:
+        condition: service_healthy
+      gsy-contracts-bootstrap:
+        condition: service_completed_successfully
+    environment:
+      <<: *gsy-ewds-env
+      OFFCHAIN_STORAGE_TRANSPORT: ${OFFCHAIN_STORAGE_TRANSPORT:-http}
+      OFFCHAIN_STORAGE_URL: "http://gsy-offchain-storage:8080"
+      EVM_NODE_URL: "ws://anvil:8545"
+      ORDER_REGISTRY_ADDRESS: "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"
+      COMMUNITY_CLIENT_PRIVATE_KEY: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
 
   gsy-market-orchestrator:
     container_name: gsy-market-orchestrator
     build:
+      context: .
       dockerfile: ./gsy-market-orchestrator/Dockerfile
     depends_on:
-      gsy-node:
-        condition: service_started
+      anvil:
+        condition: service_healthy
+      gsy-contracts-bootstrap:
+        condition: service_completed_successfully
     environment:
       - RUST_LOG=info,gsy_market_orchestrator=debug
-      - GSY_NODE_URL=ws://gsy-node:9944
-      - ORCHESTRATOR_SIGNER_SURI=//Alice
+      - EVM_NODE_URL=ws://anvil:8545
+      - MARKET_CONTROLLER_ADDRESS=0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
+      - ORCHESTRATOR_SIGNER_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+      - SPOT_MARKET_OPEN_OFFSET_MIN=-30
+      - SPOT_MARKET_CLOSE_OFFSET_MIN=30
+      - TICK_INTERVAL_SECONDS=5
+      - LOOK_AHEAD_HOURS=1
 
   gsy-execution-engine:
     container_name: gsy-execution-engine
     build:
+      context: .
       dockerfile: ./gsy-execution-engine/Dockerfile
     depends_on:
       gsy-offchain-storage:
         condition: service_started
-    working_dir: /var/www/execution-engine
+      anvil:
+        condition: service_healthy
+      gsy-contracts-bootstrap:
+        condition: service_completed_successfully
+    entrypoint: ["/usr/local/bin/gsy-execution-engine"]
+    command: ["web3", "http://gsy-offchain-storage", "8080", "ws://anvil", "8545", "5", "900", "0.10"]
+    environment:
+      <<: *gsy-ewds-env
+      OFFCHAIN_STORAGE_TRANSPORT: ${OFFCHAIN_STORAGE_TRANSPORT:-http}
+      OFFCHAIN_STORAGE_URL: "http://gsy-offchain-storage:8080"
+      EXECUTION_ENGINE_OFFSET_MIN: "-15"
+      TRADE_SETTLEMENT_ADDRESS: "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9"
+      EXECUTION_ENGINE_PRIVATE_KEY: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+      EWDS_EXECUTION_ENGINE_CLIENT_ID: ${EWDS_EXECUTION_ENGINE_CLIENT_ID:-gsyexecutionengine}
 
   mongodb:
     image: mongo:5.0
@@ -72,3 +182,16 @@ services:
     environment:
       - MONGO_INITDB_ROOT_USERNAME=gsy
       - MONGO_INITDB_ROOT_PASSWORD=gsy
+
+  gsy-contracts:
+    container_name: gsy-contracts
+    build:
+      context: ./gsy-contracts
+      dockerfile: Dockerfile
+    volumes:
+      - ./gsy-contracts:/app
+      - /app/node_modules
+    command: tail -f /dev/null
+
+volumes:
+  contracts-data:

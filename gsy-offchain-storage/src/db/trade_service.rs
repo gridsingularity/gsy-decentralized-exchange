@@ -10,12 +10,18 @@ use mongodb::{Collection, Cursor, IndexModel};
 use std::collections::HashMap;
 use std::ops::Deref;
 
+fn time_slot_bson(value: u64) -> Result<Bson> {
+    Ok(Bson::Int64(i64::try_from(value)?))
+}
+
+/// Trade indexes per D3.2 section 5.3: `buyer`, `seller`, `market_id` and
+/// `time_slot` accelerate per-asset / per-market / per-slot lookups.
 pub async fn init_trades(db: &DatabaseWrapper) -> Result<()> {
     let controller = db.trades();
     controller
         .create_index(
             IndexModel::builder()
-                .keys(doc! {"trade_id": 1})
+                .keys(doc! {"trade_uuid": 1})
                 .options(IndexOptions::builder().unique(true).build())
                 .build(),
         )
@@ -95,19 +101,22 @@ impl TradeService {
     #[tracing::instrument(name = "Filter trades by time slot", skip(self))]
     pub async fn filter_trades(
         &self,
-        start_time: Option<String>,
-        end_time: Option<String>,
+        start_time: Option<u64>,
+        end_time: Option<u64>,
     ) -> Result<Vec<TradeSchema>> {
         let mut filter_params = doc! {};
         match (start_time, end_time) {
             (Some(start), Some(end)) => {
-                filter_params.insert("time_slot", doc! {"$gte": start, "$lte": end});
+                filter_params.insert(
+                    "time_slot",
+                    doc! {"$gte": time_slot_bson(start)?, "$lte": time_slot_bson(end)?},
+                );
             }
             (Some(start), None) => {
-                filter_params.insert("time_slot", doc! {"$gte": start});
+                filter_params.insert("time_slot", doc! {"$gte": time_slot_bson(start)?});
             }
             (None, Some(end)) => {
-                filter_params.insert("time_slot", doc! {"$lte": end});
+                filter_params.insert("time_slot", doc! {"$lte": time_slot_bson(end)?});
             }
             (None, None) => {}
         }

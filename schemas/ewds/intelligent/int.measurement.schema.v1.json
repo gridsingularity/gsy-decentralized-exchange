@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "int.measurement.schema.v1",
+  "title": "GSY Measurement",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "areaUuid": { "type": "string", "minLength": 1 },
+    "communityUuid": { "type": "string", "minLength": 1 },
+    "timeSlot": {
+      "oneOf": [
+        { "type": "string", "format": "date-time" },
+        { "type": "integer", "minimum": 0 }
+      ]
+    },
+    "creationTime": { "type": "integer", "minimum": 0 },
+    "energyKwh": { "type": "number" }
+  },
+  "required": ["areaUuid", "communityUuid", "timeSlot", "creationTime", "energyKwh"]
+}

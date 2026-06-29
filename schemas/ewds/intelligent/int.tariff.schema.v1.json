@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "int.tariff.schema.v1",
+  "title": "int:Tariff",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "tariffName": { "type": "string", "minLength": 1 },
+    "tariffStructure": {
+      "type": "string",
+      "enum": ["flat", "time-of-use", "dynamic", "other"]
+    },
+    "energyPrice": { "type": "number" },
+    "gridFee": { "type": "number" },
+    "taxes": { "type": "number" },
+    "incentives": { "type": "number" },
+    "currency": { "type": "string", "minLength": 3, "maxLength": 3 }
+  },
+  "required": ["tariffName", "tariffStructure", "energyPrice", "currency"]
+}

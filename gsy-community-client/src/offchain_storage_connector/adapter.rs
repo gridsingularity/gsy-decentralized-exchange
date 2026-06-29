@@ -1,161 +1,275 @@
 use crate::external_api::{ExternalCommunityTopology, ExternalForecast, ExternalMeasurement};
 use crate::time_utils::get_current_timestamp_in_secs;
 use blake2_rfc::blake2b::blake2b;
-use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketTopologySchema};
-use gsy_offchain_primitives::db_api_schema::profiles::{ForecastSchema, MeasurementSchema};
-use gsy_offchain_primitives::utils::h256_to_string;
+use gsy_offchain_primitives::db_api_schema::market::{
+    AreaTopologySchema, MarketSchema, MarketTopologySchema,
+};
+use gsy_offchain_primitives::db_api_schema::profiles::{
+    FlowDirection, ForecastSchema, MeasurementPointSchema, MeasurementPointType, MeasurementSchema,
+    TimeseriesSchema,
+};
 use gsy_offchain_primitives::MarketType;
 use reqwest::Client;
-use subxt::utils::H256;
+use std::env;
 use tracing::info;
 
-fn generate_market_id(market_type: MarketType, delivery_timestamp: u64) -> H256 {
-	let mut buffer = Vec::new();
-	buffer.extend_from_slice(market_type.as_str().as_bytes());
-	buffer.extend_from_slice(&delivery_timestamp.to_be_bytes());
-	H256(blake2b(32, &[], &buffer).as_bytes().try_into().expect("hash is 32 bytes"))
+fn generate_market_id(market_type: MarketType, delivery_timestamp: u64) -> String {
+    let mut buffer = Vec::new();
+    buffer.extend_from_slice(market_type.as_str().as_bytes());
+    buffer.extend_from_slice(&delivery_timestamp.to_be_bytes());
+    let digest = blake2b(16, &[], &buffer);
+    format!("0x{}", ethers::utils::hex::encode(digest.as_bytes()))
 }
 
 #[derive(Clone)]
 pub struct AreaMarketInfoAdapter {
-	client: Client,
-	internal_forecast_url: String,
-	internal_measurements_url: String,
-	pub internal_topology_url: String,
-	pub internal_community_market_url: String,
+    client: Client,
+    internal_markets_url: String,
+    internal_measurement_points_url: String,
+    internal_timeseries_url: String,
 }
 
 impl AreaMarketInfoAdapter {
-	pub fn new(host: Option<String>) -> Self {
-		let hostname = host.unwrap_or_else(|| "http://gsy-orderbook:8080".to_string());
-		AreaMarketInfoAdapter {
-			client: Client::new(),
-			internal_forecast_url: hostname.clone() + "/forecasts",
-			internal_measurements_url: hostname.clone() + "/measurements",
-			internal_topology_url: hostname.clone() + "/market",
-			internal_community_market_url: hostname.clone() + "/community-market",
-		}
-	}
+    pub fn new(host: Option<String>) -> Self {
+        let hostname = env::var("OFFCHAIN_STORAGE_URL")
+            .ok()
+            .or(host)
+            .unwrap_or_else(|| "http://gsy-offchain-storage:8080".to_string());
+        let base_url = hostname.trim_end_matches('/').to_string();
+        AreaMarketInfoAdapter {
+            client: Client::new(),
+            internal_markets_url: base_url.clone() + "/markets",
+            internal_measurement_points_url: base_url.clone() + "/measurement-points",
+            internal_timeseries_url: base_url + "/timeseries",
+        }
+    }
 
-	// Function to forward the forecast data to internal API
-	pub async fn forward_forecast(
-		&self,
-		forecasts: Vec<ForecastSchema>,
-	) -> Result<(), reqwest::Error> {
-		self.client.post(&self.internal_forecast_url).json(&forecasts).send().await?;
-		Ok(())
-	}
+    pub async fn forward_forecast(
+        &self,
+        forecasts: Vec<ForecastSchema>,
+    ) -> Result<(), reqwest::Error> {
+        let measurement_points = forecasts
+            .iter()
+            .map(forecast_measurement_point)
+            .collect::<Vec<_>>();
+        let timeseries = forecasts
+            .iter()
+            .map(|forecast| TimeseriesSchema {
+                measurement_point: profile_measurement_id(
+                    MeasurementPointType::Forecast,
+                    forecast.community_uuid.as_str(),
+                    forecast.area_uuid.as_str(),
+                ),
+                timestamp: format_timeseries_timestamp(forecast.time_slot),
+                value: forecast.energy_kwh,
+            })
+            .collect::<Vec<_>>();
 
-	// Function to forward the measurement data to internal API
-	pub async fn forward_measurement(
-		&self,
-		measurements: Vec<MeasurementSchema>,
-	) -> Result<(), reqwest::Error> {
-		self.client
-			.post(&self.internal_measurements_url)
-			.json(&measurements)
-			.send()
-			.await?;
-		Ok(())
-	}
+        self.client
+            .post(&self.internal_measurement_points_url)
+            .json(&measurement_points)
+            .send()
+            .await?
+            .error_for_status()?;
+        self.client
+            .post(&self.internal_timeseries_url)
+            .json(&timeseries)
+            .send()
+            .await?
+            .error_for_status()?;
+        Ok(())
+    }
 
-	// Validation logic (basic validation, can be extended)
-	pub fn validate_forecast(&self, forecast: &ForecastSchema, seconds_since_epoch: u64) -> bool {
-		forecast.energy_kwh > 0.0 && forecast.time_slot > seconds_since_epoch
-	}
+    pub async fn forward_measurement(
+        &self,
+        measurements: Vec<MeasurementSchema>,
+    ) -> Result<(), reqwest::Error> {
+        let measurement_points = measurements
+            .iter()
+            .map(measurement_point)
+            .collect::<Vec<_>>();
+        let timeseries = measurements
+            .iter()
+            .map(|measurement| TimeseriesSchema {
+                measurement_point: profile_measurement_id(
+                    MeasurementPointType::Measurement,
+                    measurement.community_uuid.as_str(),
+                    measurement.area_uuid.as_str(),
+                ),
+                timestamp: format_timeseries_timestamp(measurement.time_slot),
+                value: measurement.energy_kwh,
+            })
+            .collect::<Vec<_>>();
 
-	pub fn validate_measurement(
-		&self,
-		measurement: &MeasurementSchema,
-		seconds_since_epoch: u64,
-	) -> bool {
-		measurement.energy_kwh > 0.0 && measurement.time_slot <= seconds_since_epoch
-	}
+        self.client
+            .post(&self.internal_measurement_points_url)
+            .json(&measurement_points)
+            .send()
+            .await?
+            .error_for_status()?;
+        self.client
+            .post(&self.internal_timeseries_url)
+            .json(&timeseries)
+            .send()
+            .await?
+            .error_for_status()?;
+        Ok(())
+    }
 
-	pub fn convert_forecast_to_internal_schema(
-		&self,
-		forecast: &ExternalForecast,
-		area_hash: String
-	) -> ForecastSchema {
-		ForecastSchema {
-			area_uuid: forecast.area_uuid.clone(),
-			area_hash: area_hash.clone(),
-			community_uuid: forecast.community_uuid.clone(),
-			time_slot: forecast.time_slot,
-			creation_time: forecast.creation_time,
-			energy_kwh: forecast.energy_kwh,
-			confidence: forecast.confidence,
-		}
-	}
+    // Validation logic (basic validation, can be extended)
+    pub fn validate_forecast(&self, forecast: &ForecastSchema, seconds_since_epoch: u64) -> bool {
+        forecast.energy_kwh > 0.0 && forecast.time_slot > seconds_since_epoch
+    }
 
-	pub fn convert_measurement_to_internal_schema(
-		&self,
-		measurement: &ExternalMeasurement,
-		area_hash: String,
-	) -> MeasurementSchema {
-		MeasurementSchema {
-			area_uuid: measurement.area_uuid.clone(),
-			area_hash: area_hash.clone(),
-			community_uuid: measurement.community_uuid.clone(),
-			time_slot: measurement.time_slot,
-			creation_time: measurement.creation_time,
-			energy_kwh: measurement.energy_kwh,
-		}
-	}
+    pub fn validate_measurement(
+        &self,
+        measurement: &MeasurementSchema,
+        seconds_since_epoch: u64,
+    ) -> bool {
+        measurement.energy_kwh > 0.0 && measurement.time_slot <= seconds_since_epoch
+    }
 
-	async fn get_existing_market_topology(&self, community_market_url: String) -> Option<MarketTopologySchema> {
-		let response = match self.client.get(community_market_url).send().await {
-			Ok(resp) if resp.status().is_success() => resp,
-			_ => return None,
-		};
-		match response.json::<MarketTopologySchema>().await {
-			Ok(body) => Some(body),
-			Err(_) => None,
-		}
-	}
+    pub fn convert_forecast_to_internal_schema(
+        &self,
+        forecast: &ExternalForecast,
+        _area_hash: String,
+    ) -> ForecastSchema {
+        ForecastSchema {
+            area_uuid: forecast.area_uuid.clone(),
+            community_uuid: forecast.community_uuid.clone(),
+            time_slot: forecast.time_slot,
+            creation_time: forecast.creation_time,
+            energy_kwh: forecast.energy_kwh,
+            confidence: forecast.confidence,
+        }
+    }
 
-	pub async fn get_or_create_market_topology(
-		&self,
-		topology: ExternalCommunityTopology,
-		time_slot: u64,
-	) -> Option<MarketTopologySchema> {
-		let community_market_url = self.internal_community_market_url.clone()
-			+ "?community_uuid="
-			+ topology.community_uuid.as_str()
-			+ "&time_slot="
-			+ time_slot.to_string().as_str();
-		let market_topology = self.get_existing_market_topology(community_market_url).await;
-		match market_topology {
-			Some(topology) => Some(topology),
-			None => {
-				let new_market = MarketTopologySchema {
-					community_name: topology.community_name.clone(),
-					community_uuid: topology.community_uuid.clone(),
-					market_id: h256_to_string(generate_market_id(MarketType::Spot, time_slot)),
-					time_slot: time_slot as u32,
-					creation_time: get_current_timestamp_in_secs() as u32,
-					community_areas: topology
-						.areas
-						.clone()
-						.into_iter()
-						.map(|area| AreaTopologySchema {
-							area_uuid: area.area_uuid.clone(),
-							name: area.area_name.clone(),
-							area_hash: h256_to_string(H256::random()),
-						})
-						.collect(),
-				};
-				let topology_resp =
-					self.client.post(&self.internal_topology_url).json(&new_market).send().await;
+    pub fn convert_measurement_to_internal_schema(
+        &self,
+        measurement: &ExternalMeasurement,
+        _area_hash: String,
+    ) -> MeasurementSchema {
+        MeasurementSchema {
+            area_uuid: measurement.area_uuid.clone(),
+            community_uuid: measurement.community_uuid.clone(),
+            time_slot: measurement.time_slot,
+            creation_time: measurement.creation_time,
+            energy_kwh: measurement.energy_kwh,
+        }
+    }
 
-				match topology_resp {
-					Ok(_) => Some(new_market),
-					Err(error) => {
-						info!("New topology creation failed with error: {}", error.to_string());
-						None
-					},
-				}
-			},
-		}
-	}
+    pub async fn get_or_create_market_topology(
+        &self,
+        topology: ExternalCommunityTopology,
+        time_slot: u64,
+    ) -> Option<MarketTopologySchema> {
+        let creation_time = get_current_timestamp_in_secs();
+        let new_market = MarketTopologySchema {
+            market_type: MarketType::Spot,
+            community_name: topology.community_name.clone(),
+            community_uuid: topology.community_uuid.clone(),
+            market_id: generate_market_id(MarketType::Spot, time_slot),
+            time_slot: time_slot as u32,
+            creation_time: creation_time as u32,
+            community_areas: topology
+                .areas
+                .clone()
+                .into_iter()
+                .map(|area| AreaTopologySchema {
+                    area_uuid: area.area_uuid.clone(),
+                    name: area.area_name.clone(),
+                    area_type: "Area".to_string(),
+                })
+                .collect(),
+        };
+        let market_schema = MarketSchema {
+            market_id: new_market.market_id.clone(),
+            community_id: topology.community_uuid,
+            opening_time: format_timeseries_timestamp(creation_time),
+            closing_time: format_timeseries_timestamp(time_slot),
+            delivery_start_time: format_timeseries_timestamp(time_slot),
+            delivery_end_time: format_timeseries_timestamp(time_slot + 900),
+            market_type: MarketType::Spot,
+        };
+
+        match self
+            .client
+            .post(&self.internal_markets_url)
+            .json(&market_schema)
+            .send()
+            .await
+        {
+            Ok(response) if response.status().is_success() => Some(new_market),
+            Ok(response) => {
+                info!("Market upsert failed with status {}", response.status());
+                None
+            }
+            Err(error) => {
+                info!("Market upsert failed with error: {}", error);
+                None
+            }
+        }
+    }
+}
+
+fn profile_measurement_id(
+    point_type: MeasurementPointType,
+    community_uuid: &str,
+    area_uuid: &str,
+) -> String {
+    let prefix = match point_type {
+        MeasurementPointType::Measurement => "measurement",
+        MeasurementPointType::Forecast => "forecast",
+    };
+    format!("{prefix}:{community_uuid}:{area_uuid}")
+}
+
+fn forecast_measurement_point(forecast: &ForecastSchema) -> MeasurementPointSchema {
+    MeasurementPointSchema {
+        point_type: MeasurementPointType::Forecast,
+        measurement_id: profile_measurement_id(
+            MeasurementPointType::Forecast,
+            forecast.community_uuid.as_str(),
+            forecast.area_uuid.as_str(),
+        ),
+        property_measured: "energy_forecast".to_string(),
+        unit: "kWh".to_string(),
+        direction: flow_direction(forecast.energy_kwh),
+        energy_accumulated: false,
+        time_resolution: "PT15M".to_string(),
+        phase: 0,
+        asset_name: forecast.area_uuid.clone(),
+        datasource_name: Some(forecast.community_uuid.clone()),
+    }
+}
+
+fn measurement_point(measurement: &MeasurementSchema) -> MeasurementPointSchema {
+    MeasurementPointSchema {
+        point_type: MeasurementPointType::Measurement,
+        measurement_id: profile_measurement_id(
+            MeasurementPointType::Measurement,
+            measurement.community_uuid.as_str(),
+            measurement.area_uuid.as_str(),
+        ),
+        property_measured: "energy_measured".to_string(),
+        unit: "kWh".to_string(),
+        direction: flow_direction(measurement.energy_kwh),
+        energy_accumulated: false,
+        time_resolution: "PT15M".to_string(),
+        phase: 0,
+        asset_name: measurement.area_uuid.clone(),
+        datasource_name: Some(measurement.community_uuid.clone()),
+    }
+}
+
+fn flow_direction(value: f64) -> FlowDirection {
+    if value >= 0.0 {
+        FlowDirection::Import
+    } else {
+        FlowDirection::Export
+    }
+}
+
+fn format_timeseries_timestamp(timestamp: u64) -> String {
+    format!("{:020}", timestamp)
 }

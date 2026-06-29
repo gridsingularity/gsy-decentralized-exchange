@@ -1,31 +1,141 @@
 use crate::db::DbRef;
 use actix_web::{web::Json, web::Query, HttpResponse, Responder};
+use gsy_offchain_primitives::db_api_schema::market::{MarketSchema, MarketTopologySchema};
 use gsy_offchain_primitives::db_api_schema::trades::{ClearingResultSchema, MarketRoleSchema};
-use gsy_offchain_primitives::db_api_schema::market::MarketSchema;
 use serde::Deserialize;
 
 #[derive(Deserialize)]
-pub struct MarketParameters {
-    market_id: String,
-}
-
-#[derive(Deserialize)]
-pub struct MarketFromCommunityParameters {
-    community_id: String,
+pub struct MarketsQuery {
+    market_id: Option<String>,
+    community_id: Option<String>,
     start_time: Option<String>,
     end_time: Option<String>,
 }
 
-pub async fn post_market(market: Json<MarketSchema>, db: DbRef) -> impl Responder {
-    match db.get_ref().markets().insert(market.to_owned()).await {
+#[derive(Deserialize)]
+pub struct MarketTopologyQuery {
+    market_id: String,
+}
+
+#[derive(Deserialize)]
+pub struct CommunityMarketQuery {
+    community_uuid: String,
+    start_time: Option<u64>,
+    end_time: Option<u64>,
+}
+
+fn format_timeseries_timestamp(timestamp: u64) -> String {
+    format!("{:020}", timestamp)
+}
+
+fn market_schema_from_topology(market: &MarketTopologySchema) -> MarketSchema {
+    let delivery_start_time = u64::from(market.time_slot);
+    MarketSchema {
+        market_id: market.market_id.clone(),
+        community_id: market.community_uuid.clone(),
+        opening_time: format_timeseries_timestamp(u64::from(market.creation_time)),
+        closing_time: format_timeseries_timestamp(delivery_start_time),
+        delivery_start_time: format_timeseries_timestamp(delivery_start_time),
+        delivery_end_time: format_timeseries_timestamp(delivery_start_time + 900),
+        market_type: market.market_type,
+    }
+}
+
+pub async fn post_market_topology(market: Json<MarketTopologySchema>, db: DbRef) -> impl Responder {
+    let market = market_schema_from_topology(&market);
+    match db.get_ref().markets().upsert(market).await {
         Ok(saved) => HttpResponse::Ok().json(saved),
         Err(_) => HttpResponse::InternalServerError().finish(),
     }
 }
 
-pub async fn get_market(db: DbRef, params: Query<MarketParameters>) -> impl Responder {
-    let market_service = db.get_ref().markets();
-    match market_service.filter(params.market_id.clone()).await {
+pub async fn get_market_topology(db: DbRef, params: Query<MarketTopologyQuery>) -> impl Responder {
+    match db
+        .get_ref()
+        .markets()
+        .filter(Some(params.market_id.clone()), None, None, None)
+        .await
+    {
+        Ok(markets) => get_only_one_market(
+            markets,
+            format!("market id ({})", params.market_id.as_str()),
+        ),
+        Err(e) => {
+            tracing::error!("Failed to execute query: {:?}", e);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
+pub async fn get_market_topology_from_community(
+    db: DbRef,
+    params: Query<CommunityMarketQuery>,
+) -> impl Responder {
+    let start_time = params.start_time.map(format_timeseries_timestamp);
+    let end_time = params.end_time.map(format_timeseries_timestamp);
+
+    match db
+        .get_ref()
+        .markets()
+        .filter(None, Some(params.community_uuid.clone()), None, None)
+        .await
+    {
+        Ok(markets) => HttpResponse::Ok().json(
+            markets
+                .into_iter()
+                .filter(|market| match start_time.as_ref() {
+                    Some(start_time) => market.delivery_start_time.as_str() >= start_time.as_str(),
+                    None => true,
+                })
+                .filter(|market| match end_time.as_ref() {
+                    Some(end_time) => market.delivery_start_time.as_str() <= end_time.as_str(),
+                    None => true,
+                })
+                .collect::<Vec<_>>(),
+        ),
+        Err(e) => {
+            tracing::error!("Failed to execute query: {:?}", e);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
+fn get_only_one_market(markets: Vec<MarketSchema>, tracing_description: String) -> HttpResponse {
+    match markets.len() {
+        0 => HttpResponse::NotFound().finish(),
+        1 => {
+            let market = markets.into_iter().next().unwrap();
+            HttpResponse::Ok().json(market)
+        }
+        _ => {
+            tracing::error!(
+                "Returned multiple markets for market id {:?}",
+                tracing_description
+            );
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
+pub async fn post_market(market: Json<MarketSchema>, db: DbRef) -> impl Responder {
+    match db.get_ref().markets().upsert(market.to_owned()).await {
+        Ok(saved) => HttpResponse::Ok().json(saved),
+        Err(_) => HttpResponse::InternalServerError().finish(),
+    }
+}
+
+pub async fn get_markets(db: DbRef, params: Query<MarketsQuery>) -> impl Responder {
+    match db
+        .get_ref()
+        .markets()
+        .filter(
+            params.market_id.clone(),
+            params.community_id.clone(),
+            params.start_time.clone(),
+            params.end_time.clone(),
+        )
+        .await
+    {
         Ok(markets) if markets.is_empty() => HttpResponse::NotFound().finish(),
         Ok(markets) => HttpResponse::Ok().json(markets),
         Err(e) => {
@@ -35,31 +145,7 @@ pub async fn get_market(db: DbRef, params: Query<MarketParameters>) -> impl Resp
     }
 }
 
-pub async fn get_market_from_community(
-    db: DbRef,
-    params: Query<MarketFromCommunityParameters>,
-) -> impl Responder {
-    let market_service = db.get_ref().markets();
-    match market_service
-        .get_community_market(
-            params.community_id.clone(),
-            params.start_time.clone(),
-            params.end_time.clone(),
-        )
-        .await
-    {
-        Ok(markets) => HttpResponse::Ok().json(markets),
-        Err(e) => {
-            tracing::error!("Failed to execute query: {:?}", e);
-            HttpResponse::InternalServerError().finish()
-        }
-    }
-}
-
-pub async fn post_clearing_result(
-    result: Json<ClearingResultSchema>,
-    db: DbRef,
-) -> impl Responder {
+pub async fn post_clearing_result(result: Json<ClearingResultSchema>, db: DbRef) -> impl Responder {
     match db
         .get_ref()
         .clearing_results()
@@ -76,10 +162,7 @@ pub struct ClearingResultQuery {
     market_id: String,
 }
 
-pub async fn get_clearing_results(
-    db: DbRef,
-    params: Query<ClearingResultQuery>,
-) -> impl Responder {
+pub async fn get_clearing_results(db: DbRef, params: Query<ClearingResultQuery>) -> impl Responder {
     match db
         .get_ref()
         .clearing_results()

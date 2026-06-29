@@ -21,7 +21,11 @@ pub async fn init_assets(db: &DatabaseWrapper) -> Result<()> {
         )
         .await?;
     controller
-        .create_index(IndexModel::builder().keys(doc! {"facility_name": 1}).build())
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! {"facility_name": 1})
+                .build(),
+        )
         .await?;
     Ok(())
 }
@@ -107,10 +111,7 @@ impl AssetService {
     }
 
     pub async fn get_by_facility(&self, facility_name: &str) -> Result<Vec<AssetSchema>> {
-        let mut cursor = self
-            .0
-            .find(doc! {"facility_name": facility_name})
-            .await?;
+        let mut cursor = self.0.find(doc! {"facility_name": facility_name}).await?;
         let mut result = Vec::new();
         while let Some(doc) = cursor.next().await {
             if let Ok(document) = doc {
@@ -180,10 +181,7 @@ impl EnergyCommunityService {
         Ok(community)
     }
 
-    pub async fn get_by_name(
-        &self,
-        community_name: &str,
-    ) -> Result<Option<EnergyCommunitySchema>> {
+    pub async fn get_by_name(&self, community_name: &str) -> Result<Option<EnergyCommunitySchema>> {
         Ok(self
             .0
             .find_one(doc! {"community_name": community_name})

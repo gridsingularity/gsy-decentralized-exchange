@@ -18,3 +18,12 @@
 mongodb-data
 
 .idea
+
+**/typechain-types/
+**/cache/
+**/artifacts
+**/node_modules
+
+# Local EWDS gateway secrets.
+.env.ewds.local
+secrets/

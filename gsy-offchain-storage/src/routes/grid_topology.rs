@@ -67,7 +67,12 @@ pub async fn get_pilot_sites(db: DbRef) -> impl Responder {
 }
 
 pub async fn post_community(community: Json<EnergyCommunitySchema>, db: DbRef) -> impl Responder {
-    match db.get_ref().communities().insert(community.to_owned()).await {
+    match db
+        .get_ref()
+        .communities()
+        .insert(community.to_owned())
+        .await
+    {
         Ok(saved) => HttpResponse::Ok().json(saved),
         Err(_) => HttpResponse::InternalServerError().finish(),
     }

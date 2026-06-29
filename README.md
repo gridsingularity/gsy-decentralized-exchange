@@ -27,24 +27,20 @@ Change to the project's directory using the command:
 cd gsy-decentralized-exchange
 ```
 
-### Build & Run the Project services
-#### GSY Node
-```sh
-cd gsy-node
-```
-Use the following command to build the node without launching it:
+### Build & Run the Project Services
+
+GSY DEX v2 is EVM-native. The local stack uses Anvil, Solidity contracts,
+`gsy-ethers-listener`, and the `gsy-offchain-storage` API instead of the older
+Substrate node runtime.
+
+Build the Rust services from the repository root:
 
 ```sh
-cargo build --release
-```
-
-Use Rust's native `cargo run` command to build and launch the gsy-node:
-```sh
-cargo run --release -- --dev --tmp
-```
-or if you have already built using `cargo build` you can launch the gsy-node using the following command:
-```sh
-./target/release/gsy-node --dev --tmp
+cargo build --release --manifest-path gsy-offchain-storage/Cargo.toml
+cargo build --release --manifest-path gsy-market-orchestrator/Cargo.toml
+cargo build --release --manifest-path gsy-matching-engine/Cargo.toml
+cargo build --release --manifest-path gsy-execution-engine/Cargo.toml
+cargo build --release --manifest-path gsy-community-client/Cargo.toml
 ```
 
 ### Run Service using Docker Compose
@@ -58,8 +54,8 @@ Build and tag the docker image:
 docker build -t gsy_dex_image .
 docker tag gsy_dex_image:latest gsy_dex_image:staging
 ```
-and start docker-compose:
+and start Docker Compose:
 
 ```bash
-docker-compose up
+docker compose up --build
 ```

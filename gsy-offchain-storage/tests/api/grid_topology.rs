@@ -36,7 +36,11 @@ async fn post_and_get_assets() {
     let assets = vec![
         AssetSchema {
             phase_connection: Some("single-phase".to_string()),
-            ..base_asset("energy_asset_uuid", AssetType::EnergyAsset, "Home 1 Consumption")
+            ..base_asset(
+                "energy_asset_uuid",
+                AssetType::EnergyAsset,
+                "Home 1 Consumption",
+            )
         },
         AssetSchema {
             asset_subtype: Some("Li-ion".to_string()),
@@ -58,7 +62,11 @@ async fn post_and_get_assets() {
         .unwrap();
     assert_eq!(200, resp.status().as_u16());
 
-    let resp = client.get(&format!("{}/assets", &address)).send().await.unwrap();
+    let resp = client
+        .get(&format!("{}/assets", &address))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(200, resp.status().as_u16());
     let returned: Vec<AssetSchema> = resp.json().await.unwrap();
     assert_eq!(returned.len(), 2);

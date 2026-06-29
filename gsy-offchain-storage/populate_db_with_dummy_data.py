@@ -7,34 +7,14 @@ def _random_hex_str():
     return str(uuid.uuid4().hex)
 
 def post_market(market_id, time_slot, creation_time):
-    return requests.post(url + "/market", json={
+    return requests.post(url + "/markets", json={
         "market_id": market_id,
-        "community_uuid": "communityid_1",
-        "community_name": "Community 1",
-        "time_slot": time_slot,
-        "creation_time": creation_time,
-        "community_areas": [
-            {
-                "area_uuid": "areaid_1",
-                "name": "Area 1",
-                "area_hash": _random_hex_str(),
-            },
-            {
-                "area_uuid": "areaid_2",
-                "name": "Area 2",
-                "area_hash": _random_hex_str(),
-            },
-            {
-                "area_uuid": "areaid_3",
-                "name": "Area 3",
-                "area_hash": _random_hex_str(),
-            },
-            {
-                "area_uuid": "areaid_4",
-                "name": "Area 4",
-                "area_hash": _random_hex_str(),
-            }
-        ]
+        "community_id": "communityid_1",
+        "opening_time": str(creation_time).zfill(20),
+        "closing_time": str(time_slot).zfill(20),
+        "delivery_start_time": str(time_slot).zfill(20),
+        "delivery_end_time": str(time_slot + 900).zfill(20),
+        "market_type": "Spot",
     })
 
 
@@ -50,7 +30,6 @@ def post_trade(trade_index, order_index, market_id, time_slot, creation_time, se
         "trade_uuid": "tradeUuid" + str(trade_index),
         "offer": {
             "seller": "Account2",
-            "nonce": order_index,
             "offer_component": {
                 "area_uuid": "areaid_" + str(seller_index),
                 "market_id": market_id,
@@ -63,7 +42,6 @@ def post_trade(trade_index, order_index, market_id, time_slot, creation_time, se
         "offer_hash": _random_hex_str(),
         "bid": {
             "buyer": "Account1",
-            "nonce": order_index + 1,
             "bid_component": {
                 "area_uuid": "areaid_" + str(buyer_index),
                 "market_id": market_id,
@@ -84,24 +62,45 @@ def post_trade(trade_index, order_index, market_id, time_slot, creation_time, se
     }])
 
 
-def post_measurements(area_uuid, time_slot, creation_time, energy):
-    requests.post(url + "/measurements", json=[{
-        "area_uuid": area_uuid,
-        "community_uuid": "communityid_1",
-        "time_slot": time_slot,
-        "creation_time": creation_time,
-        "energy_kwh": energy
+def post_measurements(area_uuid, time_slot, _creation_time, energy):
+    measurement_point = "measurement:communityid_1:" + area_uuid
+    requests.post(url + "/measurement-points", json=[{
+        "type": "Measurement",
+        "measurement_id": measurement_point,
+        "property_measured": "energy_measured",
+        "unit": "kWh",
+        "direction": "Import" if energy >= 0 else "Export",
+        "energy_accumulated": False,
+        "time_resolution": "PT15M",
+        "phase": 0,
+        "asset_name": area_uuid,
+        "datasource_name": "communityid_1"
+    }])
+    requests.post(url + "/timeseries", json=[{
+        "measurement_point": measurement_point,
+        "timestamp": str(time_slot).zfill(20),
+        "value": energy
     }])
 
 
-def post_forecasts(area_uuid, time_slot, creation_time, energy):
-    requests.post(url + "/forecasts", json=[{
-        "area_uuid": area_uuid,
-        "community_uuid": "communityid_1",
-        "time_slot": time_slot,
-        "creation_time": creation_time,
-        "energy_kwh": energy,
-        "confidence": 0.7
+def post_forecasts(area_uuid, time_slot, _creation_time, energy):
+    measurement_point = "forecast:communityid_1:" + area_uuid
+    requests.post(url + "/measurement-points", json=[{
+        "type": "Forecast",
+        "measurement_id": measurement_point,
+        "property_measured": "energy_forecast",
+        "unit": "kWh",
+        "direction": "Import" if energy >= 0 else "Export",
+        "energy_accumulated": False,
+        "time_resolution": "PT15M",
+        "phase": 0,
+        "asset_name": area_uuid,
+        "datasource_name": "communityid_1"
+    }])
+    requests.post(url + "/timeseries", json=[{
+        "measurement_point": measurement_point,
+        "timestamp": str(time_slot).zfill(20),
+        "value": energy
     }])
 
 

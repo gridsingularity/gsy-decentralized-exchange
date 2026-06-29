@@ -1,8 +1,8 @@
-use subxt::utils::{AccountId32, H256};
-use std::str::FromStr;
-use chrono::{Utc, prelude::DateTime};
+use chrono::{prelude::DateTime, Utc};
+use sp_core::H256;
+use sp_runtime::AccountId32;
 use std::env;
-
+use std::str::FromStr;
 
 pub const NODE_FLOAT_SCALING_FACTOR: f64 = 10000.0;
 
@@ -18,6 +18,73 @@ pub fn string_to_h256(hex_string: String) -> H256 {
 
 pub fn string_to_account_id(account_id_str: String) -> Option<AccountId32> {
     AccountId32::from_str(&account_id_str).ok()
+}
+
+pub fn evm_address_to_account_id(evm_address: &str) -> Option<AccountId32> {
+    let trimmed = evm_address.trim();
+    let hex = trimmed.strip_prefix("0x").unwrap_or(trimmed);
+    if hex.len() != 40 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+
+    let raw = hex::decode(hex).ok()?;
+    if raw.len() != 20 {
+        return None;
+    }
+
+    let mut padded = [0u8; 32];
+    padded[12..].copy_from_slice(&raw);
+    Some(AccountId32::from(padded))
+}
+
+pub fn bytes16_to_hex(value: [u8; 16]) -> String {
+    format!("0x{}", hex::encode(value))
+}
+
+pub fn parse_uuid_or_hex_bytes16(value: &str) -> Option<[u8; 16]> {
+    let trimmed = value.trim();
+    let hex_value = if let Some(stripped) = trimmed.strip_prefix("0x") {
+        stripped.to_string()
+    } else {
+        trimmed.replace('-', "")
+    };
+
+    if hex_value.len() != 32 || !hex_value.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+
+    let decoded = hex::decode(hex_value).ok()?;
+    decoded.try_into().ok()
+}
+
+pub fn parse_or_hash_bytes16(value: &str) -> [u8; 16] {
+    if let Some(parsed) = parse_uuid_or_hex_bytes16(value) {
+        return parsed;
+    }
+
+    let hash = sp_core::hashing::blake2_256(value.as_bytes());
+    hash[0..16]
+        .try_into()
+        .expect("blake2 hash prefix is 16 bytes")
+}
+
+pub fn bytes16_to_h256(value: [u8; 16]) -> H256 {
+    let mut padded = [0u8; 32];
+    padded[..16].copy_from_slice(&value);
+    H256::from(padded)
+}
+
+pub fn h256_to_bytes16_hex(value: H256) -> String {
+    let mut bytes = [0u8; 16];
+    bytes.copy_from_slice(&value.as_bytes()[..16]);
+    bytes16_to_hex(bytes)
+}
+
+pub fn actor_id_to_account_id(value: &str) -> Option<AccountId32> {
+    let actor_id = parse_uuid_or_hex_bytes16(value)?;
+    let mut padded = [0u8; 32];
+    padded[..16].copy_from_slice(&actor_id);
+    Some(AccountId32::from(padded))
 }
 
 pub fn timestamp_to_datetime_string(timestamp: u64) -> String {

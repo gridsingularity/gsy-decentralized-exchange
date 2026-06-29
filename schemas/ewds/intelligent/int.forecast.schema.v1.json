@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "int.forecast.schema.v1",
+  "title": "GSY Forecast",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "areaUuid": { "type": "string", "minLength": 1 },
+    "communityUuid": { "type": "string", "minLength": 1 },
+    "timeSlot": {
+      "oneOf": [
+        { "type": "string", "format": "date-time" },
+        { "type": "integer", "minimum": 0 }
+      ]
+    },
+    "creationTime": { "type": "integer", "minimum": 0 },
+    "energyKwh": { "type": "number" },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+  },
+  "required": ["areaUuid", "communityUuid", "timeSlot", "creationTime", "energyKwh", "confidence"]
+}

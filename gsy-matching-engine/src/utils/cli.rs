@@ -15,7 +15,7 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Commands {
     /// Web2 version
-    Web2{
+    Web2 {
         #[clap(default_value_t = String::from("redis://127.0.0.1"))]
         orderbook_host: String,
         #[clap(default_value_t = String::from("6379"))]
@@ -23,14 +23,14 @@ pub enum Commands {
     },
 
     /// Web3 version
-    Web3{
+    Web3 {
         #[clap(default_value_t = String::from("http://127.0.0.1"))]
         orderbook_host: String,
         #[clap(default_value_t = String::from("8080"))]
         orderbook_port: String,
         #[clap(default_value_t = String::from("ws://127.0.0.1"))]
         node_host: String,
-        #[clap(default_value_t = String::from("9944"))]
+        #[clap(default_value_t = String::from("8545"))]
         node_port: String,
-    }
+    },
 }

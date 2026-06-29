@@ -1,36 +1,125 @@
-## Test
+# Testing
 
-You can verify the logic in your runtime by constructing a mock runtime environment. The configuration type Test is defined as a Rust enum with implementations for each of the pallet configuration traits that are used in the mock runtime.
+## Contract Tests
 
-```rust
-// Configure a mock runtime to test the pallet.
-frame_support::construct_runtime!(
-	pub enum Test where
-		Block = Block,
-		NodeBlock = Block,
-		UncheckedExtrinsic = UncheckedExtrinsic,
-	{
-		System: frame_system::{Pallet, Call, Config, Storage, Event<T>},
-		Balances: pallet_balances::{Pallet, Call, Storage, Config<T>, Event<T>},
-		OrderbookRegistry: orderbook_registry::{Pallet, Call, Storage, Event<T>},
-	}
-);
-
-impl frame_system::Config for Test {
- // -- snip --
- type MaxConsumers = frame_support::traits::ConstU32<16>;
-}
+```bash
+cd gsy-contracts
+npm install
+npx hardhat test
 ```
 
-Use Rust's native `cargo` command to build and execute the tests on the `gsy-node` runtime:
+## Rust Integration Tests
 
-```sh
-cd gsy-node
-cargo test
+Run per component:
+
+```bash
+cargo test --manifest-path gsy-market-orchestrator/Cargo.toml --test evm_integration
+cargo test --manifest-path gsy-matching-engine/Cargo.toml --test evm_integration
+cargo test --manifest-path gsy-execution-engine/Cargo.toml --test evm_integration
+cargo test --manifest-path gsy-offchain-storage/Cargo.toml --test api
+cargo test --manifest-path gsy-community-client/Cargo.toml --tests
 ```
 
-For more information about using the Rust cargo test command and testing framework, run the following command:
+## End-to-End Cucumber Tests
 
-```sh
-cargo help test
+```bash
+docker compose -f docker-compose.test.yml up --build --abort-on-container-exit e2e-tests
 ```
+
+### EWDS Transport E2E
+
+Run E2E through a local DDHub Client Gateway connected to the EWF-hosted EWC broker/cache services. This requires a Switchboard-enrolled DID private key, active IAM roles, mTLS configured on the gateway, and the GSY request/response topics/channels created in the gateway before the tests can exchange messages.
+
+```bash
+cp .env.ewds.local.example .env.ewds.local
+# Configure the DID/private key and upload mTLS material through http://localhost:3009 first.
+# Restart docker-compose.ewds.yml without -v after the UI setup so scheduler/API reload Vault state.
+```
+
+Start and validate the gateway first:
+
+```bash
+docker compose --env-file .env.ewds.local \
+  -f docker-compose.ewds.yml \
+  up --build
+```
+
+After the EWDS gateway stack is running and healthy in the same compose project,
+start the GSY/e2e stack from the normal test compose file. Do not run `down` on
+`docker-compose.ewds.yml` unless you intentionally want to stop the gateway,
+Vault, and Postgres containers. Reset only the GSY/e2e containers when a clean
+e2e service run is needed:
+
+Run both compose commands from the repository root without changing the Compose
+project name so the GSY containers can resolve `ddhub-gateway-api` on the shared
+default Docker network.
+
+```bash
+docker compose --env-file .env.ewds.local \
+  -f docker-compose.test.yml \
+  stop e2e-tests gsy-offchain-storage gsy-matching-engine gsy-execution-engine gsy-community-client gsy-market-orchestrator gsy-contracts-bootstrap anvil mongodb
+
+docker compose --env-file .env.ewds.local \
+  -f docker-compose.test.yml \
+  rm -f e2e-tests gsy-offchain-storage gsy-matching-engine gsy-execution-engine gsy-community-client gsy-market-orchestrator gsy-contracts-bootstrap anvil mongodb
+```
+
+Final validated EWDS e2e command:
+
+```bash
+docker compose --env-file .env.ewds.local \
+  -f docker-compose.test.yml \
+  up --build --abort-on-container-exit e2e-tests
+```
+
+This command was validated with the local DDHub Client Gateway connected to the
+EWF-hosted broker and the following local channels/topics:
+
+- `gsy.intelligent.requests.pub` / `gsy.intelligent.requests.sub`
+- `gsy.intelligent.responses.pub` / `gsy.intelligent.responses.sub`
+- `ordersQuery` / `ordersQueryResponse`
+- `tradesQuery` / `tradesQueryResponse`
+- `measurementsQuery` / `measurementsQueryResponse`
+
+Expected passing summary:
+
+```text
+2 features
+2 scenarios (2 passed)
+20 steps (20 passed)
+```
+
+Keep these timeout settings in `.env.ewds.local` for deterministic runs over
+the asynchronous DDHub broker path:
+
+```bash
+EWDS_RESPONSE_TIMEOUT_MS=60000
+EWDS_RESPONSE_POLL_INTERVAL_MS=1000
+EWDS_HANDLER_POLL_INTERVAL_MS=500
+EWDS_HANDLER_BATCH_SIZE=100
+```
+
+Important EWDS variables for test runs:
+
+- `EWDS_BROKER_BASE_URL`
+- `EWDS_CACHE_SERVER_URL`
+- `EWDS_EVENT_SERVER_URL`
+- `EWDS_RPC_URL` / `EWDS_ENS_URL`
+- `EWDS_CHAIN_ID` / `EWDS_CHAIN_NAME`
+- `EWDS_PARENT_NAMESPACE`
+- `EWDS_DID_REGISTRY_ADDRESS`
+- `EWDS_MTLS_ENABLED`
+- `OFFCHAIN_STORAGE_TRANSPORT`
+- `EWDS_ENABLE_HANDLER`
+- `EWDS_RESPONSE_TIMEOUT_MS`
+- `EWDS_RESPONSE_POLL_INTERVAL_MS`
+- `EWDS_HANDLER_POLL_INTERVAL_MS`
+- `EWDS_HANDLER_BATCH_SIZE`
+- `EWDS_GATEWAY_PLATFORM` (set `linux/amd64` on Apple Silicon when using current EWDS images)
+
+Current e2e suite validates:
+
+- Standard bid/offer matching and on-chain settlement.
+- Preference-based matching behavior and preferred price selection.
+- Penalty submission from execution engine.
+- EWDS request/response transport for order reads through the local Client Gateway.

@@ -1,19 +1,74 @@
 name: Security audit
+
+permissions:
+  contents: read
+
 on:
   schedule:
-    - cron: '0 0 * * *'
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+
 jobs:
   audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v1
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: nightly
-          override: true
-          components: clippy
-          target: wasm32-unknown-unknown
-      - run: cd $GITHUB_WORKSPACE && cp -r ./gsy-node/* . && rm -rf ./gsy-node
-      - uses: actions-rs/audit-check@v1
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/checkout@v5
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Audit Rust lockfiles
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mapfile -d '' lockfiles < <(find . -name Cargo.lock -not -path './target/*' -print0 | sort -z)
+
+          if [ "${#lockfiles[@]}" -eq 0 ]; then
+            echo "No Cargo.lock files found."
+            exit 0
+          fi
+
+          # Accepted transitive advisories that are currently pinned by upstream stacks
+          # such as ethers 2.x. Keep bytes unignored because it can
+          # be fixed with a lockfile refresh to >= 1.11.1.
+          ignored_advisories=(
+            RUSTSEC-2024-0344 # curve25519-dalek via Substrate / schnorrkel
+            RUSTSEC-2025-0009 # ring 0.16 via ethers-providers -> jsonwebtoken 8
+            RUSTSEC-2026-0012 # rustls-webpki 0.101 via ethers-providers -> reqwest 0.11
+            RUSTSEC-2026-0049 # rustls-webpki via rustls stacks pulled by ethers / reqwest
+            RUSTSEC-2026-0098 # rustls-webpki via rustls stacks pulled by ethers / reqwest
+            RUSTSEC-2026-0099 # rustls-webpki via rustls stacks pulled by ethers / reqwest
+            RUSTSEC-2026-0104 # rustls-webpki via rustls stacks pulled by ethers / reqwest
+            RUSTSEC-2026-0097 # rand warning; no direct rand::rng custom logger usage
+            RUSTSEC-2024-0442 # wasmtime-jit-debug via Substrate / wasmtime runtime
+            RUSTSEC-2025-0055 # tracing-subscriber via transitive logging stacks
+            RUSTSEC-2023-0091 # wasmtime via Substrate / sp-io dependency graph
+            RUSTSEC-2024-0438 # wasmtime via Substrate / sp-io dependency graph
+            RUSTSEC-2025-0118 # wasmtime via Substrate / sp-io dependency graph
+            RUSTSEC-2026-0020 # wasmtime via Substrate / sp-io dependency graph
+            RUSTSEC-2026-0021 # wasmtime via Substrate / sp-io dependency graph
+            RUSTSEC-2026-0085 # wasmtime via Substrate / sp-io dependency graph
+            RUSTSEC-2026-0086 # wasmtime via Substrate / sp-io dependency graph
+            RUSTSEC-2026-0087 # wasmtime via Substrate / sp-io dependency graph
+            RUSTSEC-2026-0088 # wasmtime via Substrate / sp-io dependency graph
+            RUSTSEC-2026-0089 # wasmtime via Substrate / sp-io dependency graph
+            RUSTSEC-2026-0091 # wasmtime via Substrate / sp-io dependency graph
+            RUSTSEC-2026-0092 # wasmtime via Substrate / sp-io dependency graph
+            RUSTSEC-2026-0093 # wasmtime via Substrate / sp-io dependency graph
+            RUSTSEC-2026-0094 # wasmtime via Substrate / sp-io dependency graph
+            RUSTSEC-2026-0095 # wasmtime via Substrate / sp-io dependency graph
+            RUSTSEC-2026-0096 # wasmtime via Substrate / sp-io dependency graph
+          )
+
+          audit_args=()
+          for advisory in "${ignored_advisories[@]}"; do
+            audit_args+=(--ignore "$advisory")
+          done
+
+          for lockfile in "${lockfiles[@]}"; do
+            crate_dir="$(dirname "$lockfile")"
+            echo "::group::cargo audit ${crate_dir}"
+            (cd "$crate_dir" && cargo audit "${audit_args[@]}")
+            echo "::endgroup::"
+          done

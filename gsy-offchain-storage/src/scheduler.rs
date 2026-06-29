@@ -1,5 +1,5 @@
 use crate::db::DbRef;
-use chrono::{SecondsFormat, Utc};
+use chrono::Utc;
 use gsy_offchain_primitives::db_api_schema::orders::OrderStatus;
 use tokio_schedule::{every, Job};
 
@@ -8,7 +8,7 @@ pub async fn start_scheduler(db: DbRef, scheduler_interval: u32) {
         .seconds()
         .in_timezone(&Utc)
         .perform(|| async {
-            let now = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
+            let now = Utc::now().timestamp() as u64;
             match db
                 .get_ref()
                 .orders()

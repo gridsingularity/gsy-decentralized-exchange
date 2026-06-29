@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "int.market-mechanism.schema.v1",
+  "title": "int:MarketMechanism",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "mechanismName": { "type": "string", "minLength": 1 },
+    "mechanismDescription": { "type": "string" }
+  },
+  "required": ["mechanismName"]
+}

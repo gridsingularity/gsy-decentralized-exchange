@@ -1,11 +1,13 @@
 use crate::db::DatabaseWrapper;
 use crate::routes::{
     get_assets, get_clearing_results, get_communities, get_facilities, get_flexibility_orders,
-    get_market, get_market_from_community, get_market_roles, get_measurement_points, get_orders,
-    get_pilot_sites, get_sites, get_tariffs, get_timeseries, get_trades, health_check,
-    post_assets, post_clearing_result, post_community, post_facility, post_flexibility_orders,
-    post_market, post_market_role, post_measurement_points, post_normalized_orders,
-    post_normalized_trades, post_pilot_site, post_site, post_tariff, post_timeseries,
+    get_forecasts, get_market_roles, get_market_topology, get_market_topology_from_community,
+    get_markets, get_measurement_points, get_measurements, get_orders, get_pilot_sites, get_sites,
+    get_tariffs, get_timeseries, get_trades, health_check, post_assets, post_clearing_result,
+    post_community, post_facility, post_flexibility_orders, post_forecasts, post_market,
+    post_market_role, post_market_topology, post_measurement_points, post_measurements,
+    post_normalized_orders, post_normalized_trades, post_orders, post_pilot_site, post_site,
+    post_tariff, post_timeseries, post_trades,
 };
 use actix_web::dev::Server;
 use actix_web::{web, App, HttpServer};
@@ -21,32 +23,46 @@ pub fn run(
         App::new()
             .wrap(TracingLogger::default())
             .route("/health_check", web::get().to(health_check))
-            // Order Book Storage
-            .route("/orders", web::post().to(post_normalized_orders))
+            // Order Book Storage (D3.2 section 5.4)
+            .route("/orders-normalized", web::post().to(post_normalized_orders))
+            .route("/orders", web::post().to(post_orders))
             .route("/orders", web::get().to(get_orders))
-            .route("/flexibility-orders", web::post().to(post_flexibility_orders))
+            .route(
+                "/flexibility-orders",
+                web::post().to(post_flexibility_orders),
+            )
             .route("/flexibility-orders", web::get().to(get_flexibility_orders))
             .route("/tariffs", web::post().to(post_tariff))
             .route("/tariffs", web::get().to(get_tariffs))
-            // Trades Storage
-            .route("/trades", web::post().to(post_normalized_trades))
+            // Trades Storage (D3.2 section 5.3)
+            .route("/trades-normalized", web::post().to(post_normalized_trades))
+            .route("/trades", web::post().to(post_trades))
             .route("/trades", web::get().to(get_trades))
-            .route("/market", web::post().to(post_market))
-            .route("/market", web::get().to(get_market))
+            .route("/market", web::post().to(post_market_topology))
+            .route("/market", web::get().to(get_market_topology))
             .route(
                 "/community-market",
-                web::get().to(get_market_from_community),
+                web::get().to(get_market_topology_from_community),
             )
+            .route("/markets", web::post().to(post_market))
+            .route("/markets", web::get().to(get_markets))
             .route("/clearing-results", web::post().to(post_clearing_result))
             .route("/clearing-results", web::get().to(get_clearing_results))
             .route("/market-roles", web::post().to(post_market_role))
             .route("/market-roles", web::get().to(get_market_roles))
-            // Measurements Storage
-            .route("/measurement-points", web::post().to(post_measurement_points))
+            // Measurements Storage (D3.2 section 5.2)
+            .route("/measurements", web::post().to(post_measurements))
+            .route("/measurements", web::get().to(get_measurements))
+            .route("/forecasts", web::post().to(post_forecasts))
+            .route("/forecasts", web::get().to(get_forecasts))
+            .route(
+                "/measurement-points",
+                web::post().to(post_measurement_points),
+            )
             .route("/measurement-points", web::get().to(get_measurement_points))
             .route("/timeseries", web::post().to(post_timeseries))
             .route("/timeseries", web::get().to(get_timeseries))
-            // Grid Topology and Market Storage
+            // Grid Topology and Market Storage (D3.2 section 5.1)
             .route("/assets", web::post().to(post_assets))
             .route("/assets", web::get().to(get_assets))
             .route("/pilot-sites", web::post().to(post_pilot_site))

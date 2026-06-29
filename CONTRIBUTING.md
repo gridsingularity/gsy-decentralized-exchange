@@ -34,7 +34,7 @@ Changes that are cosmetic in nature and do not add anything substantial to the s
 
 #### **No AI**
 
-Do not contribute anything using generative AI tools. 
+Do not contribute anything using generative AI tools.
 
 #### **License**
 
