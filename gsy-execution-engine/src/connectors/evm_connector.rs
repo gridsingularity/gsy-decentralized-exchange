@@ -7,44 +7,8 @@ use std::{str::FromStr, sync::Arc};
 use tracing::{info, warn};
 
 abigen!(
-    TradeSettlementContract,
-    r#"[
-        {
-            "type": "function",
-            "name": "hasRole",
-            "stateMutability": "view",
-            "inputs": [
-                {"name": "role", "type": "bytes32"},
-                {"name": "account", "type": "address"}
-            ],
-            "outputs": [{"name": "", "type": "bool"}]
-        },
-        {
-            "type": "function",
-            "name": "submitPenalties",
-            "stateMutability": "nonpayable",
-            "inputs": [
-                {
-                    "name": "penalties",
-                    "type": "tuple[]",
-                    "components": [
-                        {"name": "penalizedActorId", "type": "bytes16"},
-                        {"name": "marketId", "type": "bytes16"},
-                        {"name": "tradeId", "type": "bytes16"},
-                        {"name": "penaltyEnergy", "type": "uint64"}
-                    ]
-                }
-            ],
-            "outputs": []
-        },
-        {
-            "type": "function",
-            "name": "penaltyEnergyByTrade",
-            "stateMutability": "view",
-            "inputs": [{"name": "tradeId", "type": "bytes16"}],
-            "outputs": [{"name": "", "type": "uint256"}]
-        }
-    ]"#
+    SubmitPenaltiesContract,
+    "src/connectors/abi/submit_penalties.json"
 );
 
 type EvmPenaltyTuple = ([u8; 16], [u8; 16], [u8; 16], u64);
@@ -73,7 +37,7 @@ fn to_evm_penalties(penalties: Vec<Penalty>) -> Vec<EvmPenaltyTuple> {
 
 pub async fn submit_penalties(
     evm_node_url: &str,
-    trade_settlement_address: &str,
+    submit_penalties_contract_address: &str,
     execution_engine_private_key: &str,
     penalties: Vec<Penalty>,
 ) -> Result<()> {
@@ -82,10 +46,10 @@ pub async fn submit_penalties(
         return Ok(());
     }
 
-    let trade_settlement_address = Address::from_str(trade_settlement_address).map_err(|e| {
+    let submit_penalties_contract_address = Address::from_str(submit_penalties_contract_address).map_err(|e| {
         anyhow!(
             "Invalid trade settlement address '{}': {}",
-            trade_settlement_address,
+            submit_penalties_contract_address,
             e
         )
     })?;
@@ -105,16 +69,16 @@ pub async fn submit_penalties(
     let signer_address = wallet.address();
 
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
-    let trade_settlement = TradeSettlementContract::new(trade_settlement_address, client.clone());
+    let submit_penalties_contract = SubmitPenaltiesContract::new(submit_penalties_contract_address, client.clone());
 
     let execution_engine_role = keccak256("EXECUTION_ENGINE_ROLE");
-    let has_role = trade_settlement
+    let has_role = submit_penalties_contract
         .has_role(execution_engine_role, signer_address)
         .call()
         .await?;
     if !has_role {
         warn!(
-            "Signer {:?} does not currently have EXECUTION_ENGINE_ROLE in TradeSettlement",
+            "Signer {:?} does not currently have EXECUTION_ENGINE_ROLE in SubmitPenalties",
             signer_address
         );
     }
@@ -122,7 +86,7 @@ pub async fn submit_penalties(
     let mut penalties_to_submit: Vec<EvmPenaltyTuple> = Vec::new();
     let mut skipped_existing = 0usize;
     for penalty in evm_penalties {
-        let existing = trade_settlement
+        let existing = submit_penalties_contract
             .penalty_energy_by_trade(penalty.2)
             .call()
             .await?;
@@ -146,7 +110,7 @@ pub async fn submit_penalties(
         penalties_to_submit.len(),
         skipped_existing
     );
-    let submit_penalties_call = trade_settlement.submit_penalties(penalties_to_submit);
+    let submit_penalties_call = submit_penalties_contract.submit_penalties(penalties_to_submit);
     let pending_tx = submit_penalties_call.send().await?;
     let tx_hash = pending_tx.tx_hash();
     let receipt = pending_tx.await?;

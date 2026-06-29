@@ -1,0 +1,58 @@
+[
+    {
+        "type": "function",
+        "name": "hasRole",
+        "stateMutability": "view",
+        "inputs": [
+            {"name": "role", "type": "bytes32"},
+            {"name": "account", "type": "address"}
+        ],
+        "outputs": [{"name": "", "type": "bool"}]
+    },
+    {
+        "type": "function",
+        "name": "settleBatch",
+        "stateMutability": "nonpayable",
+        "inputs": [
+            {
+                "name": "matches",
+                "type": "tuple[]",
+                "components": [
+                    {
+                        "name": "tradeId",
+                        "type": "bytes16"
+                    },
+                    {
+                        "name": "bid",
+                        "type": "tuple",
+                        "components": [
+                            {"name": "orderId", "type": "bytes16"},
+                            {"name": "createdBy", "type": "bytes16"},
+                            {"name": "marketId", "type": "bytes16"},
+                            {"name": "timeSlot", "type": "uint64"},
+                            {"name": "creationTime", "type": "uint64"},
+                            {"name": "energy", "type": "uint64"},
+                            {"name": "energyRate", "type": "uint64"}
+                        ]
+                    },
+                    {
+                        "name": "ask",
+                        "type": "tuple",
+                        "components": [
+                            {"name": "orderId", "type": "bytes16"},
+                            {"name": "createdBy", "type": "bytes16"},
+                            {"name": "marketId", "type": "bytes16"},
+                            {"name": "timeSlot", "type": "uint64"},
+                            {"name": "creationTime", "type": "uint64"},
+                            {"name": "energy", "type": "uint64"},
+                            {"name": "energyRate", "type": "uint64"}
+                        ]
+                    },
+                    {"name": "selectedEnergy", "type": "uint256"},
+                    {"name": "clearingPrice", "type": "uint256"}
+                ]
+            }
+        ],
+        "outputs": []
+    }
+]
