@@ -73,6 +73,9 @@ substrate-build-script-utils = { workspace = true }
 [features]
 default = ["std"]
 std = ["gsy-node-runtime/std"]
+# Enables the `four-node-poa` chain spec (`--chain four-node-poa`) for deployment.
+# Off by default so e2e/dev builds are unaffected.
+four-node-poa = ["gsy-node-runtime/four-node-poa"]
 # Dependencies that are only required if runtime benchmarking should be build.
 runtime-benchmarks = [
     "frame-benchmarking-cli/runtime-benchmarks",
