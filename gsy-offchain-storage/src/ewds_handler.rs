@@ -1,7 +1,7 @@
 use crate::db::DatabaseWrapper;
 use anyhow::{anyhow, Result};
 use gsy_offchain_primitives::db_api_schema::orders::{
-    DbOrderSchema, EnergyType, OrderEnum, OrderStatus,
+    DbOrderSchema, order_type_to_string, order_status_to_string, energy_type_to_string
 };
 use gsy_offchain_primitives::db_api_schema::profiles::{MeasurementPointType, MeasurementSchema};
 use reqwest::Client;
@@ -532,8 +532,8 @@ impl From<DbOrderSchema> for EwdsOrderDto {
         Self {
             order_id: order.order_id,
             market_id: order.market_id,
-            order_type: order_type_to_ewds(&order.order_type).to_string(),
-            status: order_status_to_ewds(&order.status).to_string(),
+            order_type: order_type_to_string(&order.order_type).to_string(),
+            status: order_status_to_string(&order.status).to_string(),
             area_uuid: order.area_uuid,
             nonce: order.nonce,
             time_slot: order.time_slot,
@@ -543,41 +543,14 @@ impl From<DbOrderSchema> for EwdsOrderDto {
             created_by: order.created_by,
             requirements: order.requirements.map(|requirements| EwdsRequirementsDto {
                 trading_partner_id: requirements.trading_partner_id,
-                energy_type: requirements
-                    .energy_type
-                    .map(|value| energy_type_to_ewds(&value).to_string()),
+                energy_type: Some(energy_type_to_string(requirements.energy_type).to_string()),
                 preferred_energy_rate: requirements.preferred_energy_rate,
             }),
             attributes: order.attributes.map(|attributes| EwdsAttributesDto {
                 trading_partner_id: attributes.trading_partner_id,
-                energy_type: energy_type_to_ewds(&attributes.energy_type).to_string(),
+                energy_type: energy_type_to_string(Some(attributes.energy_type)).to_string(),
             }),
         }
-    }
-}
-
-fn order_type_to_ewds(order_type: &OrderEnum) -> &'static str {
-    match order_type {
-        OrderEnum::Bid => "bid",
-        OrderEnum::Offer => "offer",
-    }
-}
-
-fn order_status_to_ewds(status: &OrderStatus) -> &'static str {
-    match status {
-        OrderStatus::Open => "open",
-        OrderStatus::Executed => "executed",
-        OrderStatus::Expired => "expired",
-        OrderStatus::Deleted => "deleted",
-    }
-}
-
-fn energy_type_to_ewds(energy_type: &EnergyType) -> &'static str {
-    match energy_type {
-        EnergyType::Clean => "clean",
-        EnergyType::Battery => "battery",
-        EnergyType::FossilFuel => "fossilFuel",
-        EnergyType::Import => "import",
     }
 }
 

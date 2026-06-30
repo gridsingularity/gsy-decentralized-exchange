@@ -3,12 +3,12 @@ use crate::routes::validate_start_end_time;
 use actix_web::web::Query;
 use actix_web::{web::Json, HttpResponse, Responder};
 use gsy_offchain_primitives::db_api_schema::orders::OrderStatus;
-use gsy_offchain_primitives::db_api_schema::trades::TradeSchema;
+use gsy_offchain_primitives::db_api_schema::trades::DbTradeSchema;
 use mongodb::bson::Bson;
 use serde::Deserialize;
 
 #[tracing::instrument(name = "Adding new trades", skip(db), fields(trades = ?trades))]
-pub async fn post_trades(trades: Json<Vec<TradeSchema>>, db: DbRef) -> impl Responder {
+pub async fn post_trades(trades: Json<Vec<DbTradeSchema>>, db: DbRef) -> impl Responder {
     for trade in trades.iter() {
         let bid_id = Bson::String(trade.bid_hash.clone());
         let offer_id = Bson::String(trade.offer_hash.clone());
@@ -30,7 +30,7 @@ pub async fn post_trades(trades: Json<Vec<TradeSchema>>, db: DbRef) -> impl Resp
     }
 }
 
-pub async fn post_normalized_trades(trades: Json<Vec<TradeSchema>>, db: DbRef) -> impl Responder {
+pub async fn post_normalized_trades(trades: Json<Vec<DbTradeSchema>>, db: DbRef) -> impl Responder {
     post_trades(trades, db).await
 }
 

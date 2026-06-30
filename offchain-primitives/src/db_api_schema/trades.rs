@@ -4,12 +4,13 @@ use crate::db_api_schema::orders::DbOrderSchema;
 use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
-/// Trade status
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum TradeStatus {
+    Matched,
     Executed,
     Settled,
+    Rejected,
 }
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
@@ -19,7 +20,7 @@ pub struct TradeParameters {
 }
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
-pub struct TradeSchema {
+pub struct DbTradeSchema {
     pub trade_uuid: String,
     pub status: TradeStatus,
     pub seller: String,
@@ -36,31 +37,10 @@ pub struct TradeSchema {
     pub parameters: TradeParameters,
 }
 
-impl TradeSchema {
+impl DbTradeSchema {
     pub fn eq(&self, other: &Self) -> bool {
         self.trade_uuid == other.trade_uuid
     }
-}
-
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum ClearingStatus {
-    Cleared,
-    Uncleared,
-    Failed,
-}
-
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
-pub struct ClearingResultSchema {
-    pub market_id: String,
-    pub clearing_status: ClearingStatus,
-    pub clearing_price: f64,
-    pub total_supply: f64,
-    pub total_demand: f64,
-    pub traded_quantity: f64,
-    pub num_trades: u32,
-    pub tx_hash: String,
-    pub clearing_time: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
@@ -70,18 +50,11 @@ pub struct MarketRoleSchema {
     pub assigned_to: Vec<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum IntelligentTradeStatus {
-    Matched,
-    Executed,
-    Settled,
-    Rejected,
-}
+
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-pub struct IntelligentTradeSchema {
+pub struct TradeSchema {
     pub trade_id: String,
     pub market_id: String,
     pub bid_id: String,
@@ -92,14 +65,14 @@ pub struct IntelligentTradeSchema {
     pub seller_id: String,
     #[serde(default)]
     pub residual_offer_id: Option<String>,
-    pub trade_status: IntelligentTradeStatus,
+    pub trade_status: TradeStatus,
     pub trade_quantity: f64,
     pub trade_price: f64,
-    pub traded_at: String,
+    pub timestamp: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, Eq)]
-pub enum IntelligentClearingStatus {
+pub enum ClearingStatus {
     #[serde(rename = "FINAL")]
     Final,
     #[serde(rename = "PARTIAL")]
@@ -112,7 +85,7 @@ pub enum IntelligentClearingStatus {
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum IntelligentNoBidReason {
+pub enum NoBidReason {
     InvalidInputs,
     StaleInput,
     HardConstraints,
@@ -125,17 +98,17 @@ pub enum IntelligentNoBidReason {
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-pub struct IntelligentClearingResultSchema {
+pub struct ClearingResultSchema {
     pub market_id: String,
-    pub clearing_status: IntelligentClearingStatus,
+    pub clearing_status: ClearingStatus,
     #[serde(default)]
-    pub no_bid_reason: Option<IntelligentNoBidReason>,
+    pub no_bid_reason: Option<NoBidReason>,
     pub clearing_price: f64,
     pub total_supply: f64,
     pub total_demand: f64,
-    pub traded_quantity: f64,
+    pub trade_quantity: f64,
     pub num_trades: u32,
     pub tx_hash: String,
     #[serde(default)]
-    pub created_at: Option<String>,
+    pub clearing_time: Option<String>,
 }

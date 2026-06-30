@@ -6,13 +6,6 @@ pub use crate::{MarketType, MatchingAlgorithm, MarketTimeSeriesGranularity};
 use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub struct AreaTopologySchema {
-    pub area_uuid: String,
-    pub name: String,
-    pub area_type: String,
-}
-
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub struct MarketSchema {
     pub market_id: String,

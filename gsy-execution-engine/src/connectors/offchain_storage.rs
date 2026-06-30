@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use gsy_offchain_primitives::constants::GLOBAL_CONSTANTS;
 use gsy_offchain_primitives::db_api_schema::{
     profiles::{MeasurementPointSchema, MeasurementSchema, TimeseriesSchema},
-    trades::TradeSchema,
+    trades::DbTradeSchema,
 };
 use gsy_offchain_primitives::utils::timestamp_to_string_with_padding;
 use reqwest::Client;
@@ -20,7 +20,7 @@ pub async fn fetch_trades_and_measurements_for_timeslot(
     base_url: &str,
     timeslot: u64,
     market_duration: u64,
-) -> Result<(Vec<TradeSchema>, Vec<MeasurementSchema>)> {
+) -> Result<(Vec<DbTradeSchema>, Vec<MeasurementSchema>)> {
     let start_time = round_down_timeslot(timeslot);
     let end_time = start_time
         + (market_duration
@@ -51,7 +51,7 @@ pub async fn fetch_trades_and_measurements_for_timeslot(
             trades_resp.status()
         ));
     }
-    let trades: Vec<TradeSchema> = trades_resp.json().await?;
+    let trades: Vec<DbTradeSchema> = trades_resp.json().await?;
 
     let measurements =
         fetch_measurements_from_timeseries(&client, base_url, start_time, end_time).await?;
@@ -163,13 +163,13 @@ struct EwdsErrorPayload {
 async fn fetch_trades_and_measurements_via_ewds(
     start_time: u64,
     end_time: u64,
-) -> Result<(Vec<TradeSchema>, Vec<MeasurementSchema>)> {
+) -> Result<(Vec<DbTradeSchema>, Vec<MeasurementSchema>)> {
     let query = serde_json::json!({
         "startTime": start_time,
         "endTime": end_time
     });
 
-    let trades: Vec<TradeSchema> = query_via_ewds(
+    let trades: Vec<DbTradeSchema> = query_via_ewds(
         "trades.query",
         query.clone(),
         "EWDS_TRADES_REQUEST_TOPIC",

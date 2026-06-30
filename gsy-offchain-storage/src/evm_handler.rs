@@ -6,8 +6,8 @@ use gsy_ethers_listener::{
     TradeSettledFilter,
 };
 use gsy_offchain_primitives::db_api_schema::{
-    orders::{DbOrderSchema, OrderEnum, OrderStatus},
-    trades::{TradeParameters, TradeSchema, TradeStatus},
+    orders::{DbOrderSchema, OrderType, OrderStatus},
+    trades::{TradeParameters, DbTradeSchema, TradeStatus},
 };
 use gsy_offchain_primitives::utils::{bytes16_to_hex, NODE_FLOAT_SCALING_FACTOR};
 use tracing::{error, info, warn};
@@ -32,14 +32,14 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         let created_by_str = bytes16_to_hex(event.created_by);
 
         let order_enum = if event.is_bid {
-            OrderEnum::Bid
+            OrderType::Bid
         } else {
-            OrderEnum::Offer
+            OrderType::Offer
         };
 
         let schema = DbOrderSchema {
             order_id: order_id_str,
-            status: OrderStatus::Open,
+            status: OrderStatus::Submitted,
             order_type: order_enum,
             area_uuid: market_id_str.clone(),
             market_id: market_id_str,
@@ -71,10 +71,10 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         match self
             .db
             .orders()
-            .update_order_status_by_id(&id_bson, OrderStatus::Deleted)
+            .update_order_status_by_id(&id_bson, OrderStatus::Cancelled)
             .await
         {
-            Ok(_) => info!("Successfully marked order as deleted"),
+            Ok(_) => info!("Successfully marked order as cancelled"),
             Err(e) => error!("Failed to update order status: {:?}", e),
         }
         Ok(())
@@ -97,7 +97,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         let ask_doc = self.db.orders().get_order_by_id(&ask_bson).await?;
 
         if let (Some(bid_order), Some(ask_order)) = (bid_doc, ask_doc) {
-            let trade_schema = TradeSchema {
+            let trade_schema = DbTradeSchema {
                 trade_uuid: trade_hash.clone(),
                 status: TradeStatus::Settled,
                 seller: ask_order.created_by.clone(),

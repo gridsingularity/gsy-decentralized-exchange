@@ -3,7 +3,8 @@ use anyhow::{anyhow, Error, Result};
 use ethers::prelude::*;
 use ethers::utils::keccak256;
 use gsy_offchain_primitives::db_api_schema::orders::{
-    DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus,
+    DbAttributes, DbOrderSchema, DbRequirements, OrderType, OrderStatus,
+    string_to_energy_type, string_to_order_status, string_to_order_type
 };
 use gsy_offchain_primitives::types::{BidOfferMatch, MatchingData, Order};
 use gsy_offchain_primitives::utils::{
@@ -290,15 +291,15 @@ fn fetch_market_orders(body: Vec<DbOrderSchema>) -> PreparedOrders {
 
     for db_order_schema in body
         .into_iter()
-        .filter(|order| order.status == OrderStatus::Open)
+        .filter(|order| order.status == OrderStatus::Submitted)
     {
         let order_id = db_order_schema.order_id.to_ascii_lowercase();
         match convert_db_order_to_canonical(&db_order_schema) {
             Ok(order) => {
                 by_order_id.insert(order_id, db_order_schema);
                 match order.order_type {
-                    OrderEnum::Bid => open_bids.push(order),
-                    OrderEnum::Offer => open_offers.push(order),
+                    OrderType::Bid => open_bids.push(order),
+                    OrderType::Offer => open_offers.push(order),
                 }
             }
             Err(e) => {
@@ -560,7 +561,7 @@ fn ewds_order_to_db(order: EwdsOrderDto) -> Result<DbOrderSchema> {
             energy_type: requirements
                 .energy_type
                 .as_deref()
-                .map(ewds_energy_type_to_db)
+                .map(string_to_energy_type)
                 .transpose()?,
             preferred_energy_rate: requirements.preferred_energy_rate,
         }),
@@ -570,15 +571,15 @@ fn ewds_order_to_db(order: EwdsOrderDto) -> Result<DbOrderSchema> {
     let attributes = match order.attributes {
         Some(attributes) => Some(DbAttributes {
             trading_partner_id: attributes.trading_partner_id,
-            energy_type: ewds_energy_type_to_db(attributes.energy_type.as_str())?,
+            energy_type: string_to_energy_type(attributes.energy_type.as_str())?,
         }),
         None => None,
     };
 
     Ok(DbOrderSchema {
         order_id: order.order_id,
-        status: ewds_order_status_to_db(order.status.as_str())?,
-        order_type: ewds_order_type_to_db(order.order_type.as_str())?,
+        status: string_to_order_status(order.status.as_str())?,
+        order_type: string_to_order_type(order.order_type.as_str())?,
         area_uuid: order.area_uuid,
         market_id: order.market_id,
         nonce: order.nonce,
@@ -592,33 +593,33 @@ fn ewds_order_to_db(order: EwdsOrderDto) -> Result<DbOrderSchema> {
     })
 }
 
-fn ewds_order_type_to_db(value: &str) -> Result<OrderEnum> {
-    match value.to_ascii_lowercase().as_str() {
-        "bid" => Ok(OrderEnum::Bid),
-        "offer" => Ok(OrderEnum::Offer),
-        _ => Err(anyhow!("unsupported EWDS order type '{}'", value)),
-    }
-}
-
-fn ewds_order_status_to_db(value: &str) -> Result<OrderStatus> {
-    match value.to_ascii_lowercase().as_str() {
-        "open" => Ok(OrderStatus::Open),
-        "executed" => Ok(OrderStatus::Executed),
-        "expired" => Ok(OrderStatus::Expired),
-        "deleted" => Ok(OrderStatus::Deleted),
-        _ => Err(anyhow!("unsupported EWDS order status '{}'", value)),
-    }
-}
-
-fn ewds_energy_type_to_db(value: &str) -> Result<EnergyType> {
-    match value.to_ascii_lowercase().as_str() {
-        "clean" => Ok(EnergyType::Clean),
-        "battery" => Ok(EnergyType::Battery),
-        "fossilfuel" | "fossil_fuel" | "fossil-fuel" => Ok(EnergyType::FossilFuel),
-        "import" => Ok(EnergyType::Import),
-        _ => Err(anyhow!("unsupported EWDS energy type '{}'", value)),
-    }
-}
+// fn ewds_order_type_to_db(value: &str) -> Result<OrderType> {
+//     match value.to_ascii_lowercase().as_str() {
+//         "bid" => Ok(OrderType::Bid),
+//         "offer" => Ok(OrderType::Offer),
+//         _ => Err(anyhow!("unsupported EWDS order type '{}'", value)),
+//     }
+// }
+//
+// fn ewds_order_status_to_db(value: &str) -> Result<OrderStatus> {
+//     match value.to_ascii_lowercase().as_str() {
+//         "open" => Ok(OrderStatus::Open),
+//         "executed" => Ok(OrderStatus::Executed),
+//         "expired" => Ok(OrderStatus::Expired),
+//         "deleted" => Ok(OrderStatus::Deleted),
+//         _ => Err(anyhow!("unsupported EWDS order status '{}'", value)),
+//     }
+// }
+//
+// fn ewds_energy_type_to_db(value: &str) -> Result<EnergyType> {
+//     match value.to_ascii_lowercase().as_str() {
+//         "clean" => Ok(EnergyType::Clean),
+//         "battery" => Ok(EnergyType::Battery),
+//         "fossilfuel" | "fossil_fuel" | "fossil-fuel" => Ok(EnergyType::FossilFuel),
+//         "import" => Ok(EnergyType::Import),
+//         _ => Err(anyhow!("unsupported EWDS energy type '{}'", value)),
+//     }
+// }
 
 fn parse_bytes16_field(field_name: &str, value: &str) -> Result<[u8; 16]> {
     parse_uuid_or_hex_bytes16(value)
@@ -635,11 +636,11 @@ fn convert_db_order_to_canonical(order: &DbOrderSchema) -> Result<Order> {
     let area_uuid = bytes16_to_h256(parse_bytes16_field("area_uuid", &order.area_uuid)?);
 
     Ok(match order.order_type {
-        OrderEnum::Bid => Order {
+        OrderType::Bid => Order {
             created_by: parse_account_or_address(order.created_by.as_str())
                 .ok_or_else(|| anyhow!("Invalid buyer actor/account: {}", order.created_by))?,
             order_id,
-            order_type: OrderEnum::Bid,
+            order_type: OrderType::Bid,
             status: order.status.clone(),
             area_uuid,
             market_id,
@@ -653,7 +654,7 @@ fn convert_db_order_to_canonical(order: &DbOrderSchema) -> Result<Order> {
                         .trading_partner_id
                         .as_deref()
                         .and_then(parse_account_or_address),
-                    energy_type: r.energy_type.as_ref().map(map_energy_type),
+                    energy_type: r.energy_type.clone(),
                     preferred_energy_rate: r
                         .preferred_energy_rate
                         .map(|rate| (rate * NODE_FLOAT_SCALING_FACTOR).round() as u64),
@@ -661,7 +662,7 @@ fn convert_db_order_to_canonical(order: &DbOrderSchema) -> Result<Order> {
             }),
             attributes: None,
         },
-        OrderEnum::Offer => Order {
+        OrderType::Offer => Order {
             order_id,
             order_type: order.order_type.clone(),
             status: order.status.clone(),
@@ -680,23 +681,14 @@ fn convert_db_order_to_canonical(order: &DbOrderSchema) -> Result<Order> {
                         .trading_partner_id
                         .as_deref()
                         .and_then(parse_account_or_address),
-                    energy_type: map_energy_type(&a.energy_type),
+                    energy_type: a.energy_type.clone(),
                 }
             }),
         },
     })
 }
 
-fn map_energy_type(energy_type: &EnergyType) -> gsy_offchain_primitives::types::EnergyType {
-    match energy_type {
-        EnergyType::Clean => gsy_offchain_primitives::types::EnergyType::Clean,
-        EnergyType::Battery => gsy_offchain_primitives::types::EnergyType::Battery,
-        EnergyType::FossilFuel => gsy_offchain_primitives::types::EnergyType::FossilFuel,
-        EnergyType::Import => gsy_offchain_primitives::types::EnergyType::Import,
-    }
-}
-
-fn to_evm_order_data(order: &DbOrderSchema, expected_type: OrderEnum) -> Result<EvmOrderDataTuple> {
+fn to_evm_order_data(order: &DbOrderSchema, expected_type: OrderType) -> Result<EvmOrderDataTuple> {
     if order.order_type != expected_type {
         return Err(anyhow!(
             "Order {} type mismatch. Expected {:?}, got {:?}",
@@ -742,8 +734,8 @@ fn to_evm_matches(
 
             Ok((
                 derive_trade_id(&bid_id, &ask_id, item.selected_energy, item.energy_rate),
-                to_evm_order_data(bid_order, OrderEnum::Bid)?,
-                to_evm_order_data(ask_order, OrderEnum::Offer)?,
+                to_evm_order_data(bid_order, OrderType::Bid)?,
+                to_evm_order_data(ask_order, OrderType::Offer)?,
                 U256::from(item.selected_energy),
                 U256::from(item.energy_rate),
             ))

@@ -1,4 +1,4 @@
-use gsy_offchain_primitives::db_api_schema::{profiles::MeasurementSchema, trades::TradeSchema};
+use gsy_offchain_primitives::db_api_schema::{profiles::MeasurementSchema, trades::DbTradeSchema};
 use std::collections::HashMap;
 
 #[derive(Debug)]
@@ -19,7 +19,7 @@ pub struct Penalty {
 ///
 /// # Arguments
 ///
-/// * `trades` - A slice of TradeSchema records.
+/// * `trades` - A slice of DbTradeSchema records.
 /// * `measurements` - A slice of MeasurementSchema records.
 /// * `penalty_rate` - The penalty rate as a f64 (e.g., 0.10 for 10%).
 ///
@@ -27,7 +27,7 @@ pub struct Penalty {
 ///
 /// A vector of Penalty structs.
 pub fn compute_penalties(
-    trades: &[TradeSchema],
+    trades: &[DbTradeSchema],
     measurements: &[MeasurementSchema],
     penalty_rate: f64,
 ) -> Vec<Penalty> {

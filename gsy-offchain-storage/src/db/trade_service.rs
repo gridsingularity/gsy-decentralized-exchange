@@ -2,7 +2,7 @@ use crate::db::DatabaseWrapper;
 use anyhow::Result;
 use futures::StreamExt;
 use gsy_offchain_primitives::db_api_schema::trades::{
-    ClearingResultSchema, MarketRoleSchema, TradeSchema,
+    ClearingResultSchema, MarketRoleSchema, DbTradeSchema,
 };
 use mongodb::bson::{doc, Bson};
 use mongodb::options::IndexOptions;
@@ -56,11 +56,11 @@ pub async fn init_market_roles(db: &DatabaseWrapper) -> Result<()> {
 }
 
 #[repr(transparent)]
-pub struct TradeService(pub Collection<TradeSchema>);
+pub struct TradeService(pub Collection<DbTradeSchema>);
 
 impl TradeService {
     #[tracing::instrument(name = "Fetching trades from database", skip(self))]
-    pub async fn get_all_trades(&self) -> Result<Vec<TradeSchema>> {
+    pub async fn get_all_trades(&self) -> Result<Vec<DbTradeSchema>> {
         let cursor = self.0.find(doc! {}).await?;
         self.create_vector_from_cursor(cursor).await
     }
@@ -72,7 +72,7 @@ impl TradeService {
     )]
     pub async fn insert_trades(
         &self,
-        trade_schema: Vec<TradeSchema>,
+        trade_schema: Vec<DbTradeSchema>,
     ) -> Result<HashMap<usize, Bson>> {
         match self.0.insert_many(trade_schema).await {
             Ok(db_result) => Ok(db_result.inserted_ids),
@@ -85,9 +85,9 @@ impl TradeService {
 
     async fn create_vector_from_cursor(
         &self,
-        mut cursor: Cursor<TradeSchema>,
-    ) -> Result<Vec<TradeSchema>> {
-        let mut result: Vec<TradeSchema> = Vec::new();
+        mut cursor: Cursor<DbTradeSchema>,
+    ) -> Result<Vec<DbTradeSchema>> {
+        let mut result: Vec<DbTradeSchema> = Vec::new();
         while let Some(doc) = cursor.next().await {
             if let Ok(document) = doc {
                 result.push(document);
@@ -103,7 +103,7 @@ impl TradeService {
         &self,
         start_time: Option<u64>,
         end_time: Option<u64>,
-    ) -> Result<Vec<TradeSchema>> {
+    ) -> Result<Vec<DbTradeSchema>> {
         let mut filter_params = doc! {};
         match (start_time, end_time) {
             (Some(start), Some(end)) => {
@@ -138,7 +138,7 @@ impl From<&DatabaseWrapper> for TradeService {
 }
 
 impl Deref for TradeService {
-    type Target = Collection<TradeSchema>;
+    type Target = Collection<DbTradeSchema>;
     fn deref(&self) -> &Self::Target {
         &self.0
     }

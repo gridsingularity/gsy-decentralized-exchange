@@ -1,19 +1,12 @@
 #![allow(non_snake_case)]
 
 use crate::algorithms::PayAsBid;
-use crate::db_api_schema::orders::{OrderEnum, OrderStatus};
+use crate::db_api_schema::orders::{OrderType, OrderStatus, EnergyType};
 use serde::{Deserialize, Serialize};
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use std::collections::HashMap;
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd)]
-pub enum EnergyType {
-    Clean,
-    Battery,
-    FossilFuel,
-    Import,
-}
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd)]
 pub struct Requirements {
@@ -31,7 +24,7 @@ pub struct Attributes {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd)]
 pub struct Order {
     pub order_id: H256,
-    pub order_type: OrderEnum,
+    pub order_type: OrderType,
     pub status: OrderStatus,
     pub area_uuid: H256,
     pub market_id: H256,
