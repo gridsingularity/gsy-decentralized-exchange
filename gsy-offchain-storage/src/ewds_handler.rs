@@ -5,6 +5,7 @@ use gsy_offchain_primitives::db_api_schema::orders::{
 };
 use gsy_offchain_primitives::db_api_schema::profiles::{MeasurementPointType, MeasurementSchema};
 use reqwest::Client;
+use gsy_offchain_primitives::utils::timestamp_to_string_with_padding;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -449,8 +450,8 @@ async fn fetch_measurements_from_timeseries(
         .timeseries()
         .filter_values(
             None,
-            start_time.map(format_timeseries_timestamp),
-            end_time.map(format_timeseries_timestamp),
+            start_time.map(timestamp_to_string_with_padding),
+            end_time.map(timestamp_to_string_with_padding),
         )
         .await?;
 
@@ -468,10 +469,6 @@ async fn fetch_measurements_from_timeseries(
             })
         })
         .collect())
-}
-
-fn format_timeseries_timestamp(timestamp: u64) -> String {
-    format!("{:020}", timestamp)
 }
 
 fn parse_timeseries_timestamp(timestamp: &str) -> Option<u64> {
