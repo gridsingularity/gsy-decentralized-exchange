@@ -7,7 +7,6 @@ use gsy_community_client::time_utils::{get_current_timestamp_in_secs, get_last_a
 use gsy_offchain_primitives::constants::GLOBAL_CONSTANTS;
 use gsy_offchain_primitives::db_api_schema::profiles::{ForecastSchema, MeasurementSchema};
 use reqwest::Client;
-use std::collections::HashMap;
 use std::env;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -85,23 +84,14 @@ impl AppState {
                 )
                 .await
                 .unwrap();
-            // TBD: how do we check for valid area_uuids?
-            let area_uuid_to_hash: HashMap<String, String> = internal_topology
-                .community_areas
-                .iter()
-                .map(|area| (area.area_uuid.clone(), area.area_uuid.clone()))
-                .collect();
+            let area_hash = "".to_string(); // workaround to be fixed in DD-404
             match self.fetch_forecasts().await {
                 Ok(forecasts) => {
                     let valid_forecasts: Vec<ForecastSchema> = forecasts
                         .into_iter()
-                        .filter_map(|forecast| {
-                            area_uuid_to_hash.get(&forecast.area_uuid).map(|area_hash| {
-                                self.api_adapter.convert_forecast_to_internal_schema(
-                                    &forecast,
-                                    area_hash.clone(),
-                                )
-                            })
+                        .map(|forecast| {
+                            self.api_adapter.convert_forecast_to_internal_schema(
+                                &forecast, area_hash.clone())
                         })
                         .filter(|forecast| {
                             self.api_adapter
@@ -137,15 +127,9 @@ impl AppState {
                 Ok(measurements) => {
                     let valid_measurements: Vec<MeasurementSchema> = measurements
                         .into_iter()
-                        .filter_map(|measurement| {
-                            area_uuid_to_hash
-                                .get(&measurement.area_uuid)
-                                .map(|area_hash| {
-                                    self.api_adapter.convert_measurement_to_internal_schema(
-                                        &measurement,
-                                        area_hash.clone(),
-                                    )
-                                })
+                        .map(|measurement| {
+                            self.api_adapter.convert_measurement_to_internal_schema(
+                                &measurement, area_hash.clone())
                         })
                         .filter(|measurement| {
                             self.api_adapter
