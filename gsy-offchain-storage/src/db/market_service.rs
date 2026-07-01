@@ -78,7 +78,7 @@ impl MarketService {
     }
 
     #[tracing::instrument(name = "Saving market", skip(self, market), fields(market = ?market))]
-    pub async fn insert(&self, market: MarketSchema) -> Result<MarketSchema> {
+    pub async fn upsert(&self, market: MarketSchema) -> Result<MarketSchema> {
         let market_doc = bson::to_document(&market)?;
         match self
             .0

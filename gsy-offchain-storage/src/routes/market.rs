@@ -43,7 +43,7 @@ fn market_schema_from_topology(market: &MarketTopologySchema) -> MarketSchema {
 
 pub async fn post_market_topology(market: Json<MarketTopologySchema>, db: DbRef) -> impl Responder {
     let market = market_schema_from_topology(&market);
-    match db.get_ref().markets().insert(market).await {
+    match db.get_ref().markets().upsert(market).await {
         Ok(saved) => HttpResponse::Ok().json(saved),
         Err(_) => HttpResponse::InternalServerError().finish(),
     }
@@ -118,7 +118,7 @@ fn get_only_one_market(markets: Vec<MarketSchema>, tracing_description: String) 
 }
 
 pub async fn post_market(market: Json<MarketSchema>, db: DbRef) -> impl Responder {
-    match db.get_ref().markets().insert(market.to_owned()).await {
+    match db.get_ref().markets().upsert(market.to_owned()).await {
         Ok(saved) => HttpResponse::Ok().json(saved),
         Err(_) => HttpResponse::InternalServerError().finish(),
     }
