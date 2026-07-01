@@ -1,9 +1,12 @@
 use chrono::NaiveDateTime;
-use gsy_offchain_primitives::algorithms::PayAsBid;
+use gsy_offchain_primitives::{
+    algorithms::PayAsBid,
+    db_api_schema::orders::DbRequirements as Requirements,
+    db_api_schema::orders::DbRequirements as Attributes};
 use serde::{Deserialize, Serialize, Serializer};
 use std::collections::HashMap;
 
-const FLOATING_POINT_TOLERANCE: f32 = 0.00001;
+const FLOATING_POINT_TOLERANCE: f64 = 0.00001;
 
 pub fn serialize_datetime<S>(
     datetime: &Option<NaiveDateTime>,
@@ -22,34 +25,15 @@ where
     }
 }
 
-#[derive(Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize)]
-pub enum EnergyType {
-    Clean,
-    Battery,
-    FossilFuel,
-    Import,
-}
-
-#[derive(Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize)]
-pub struct Requirements {
-    pub trading_partner_id: Option<String>,
-    pub energy_type: Option<EnergyType>,
-    pub preferred_energy_rate: Option<f32>,
-}
-
-#[derive(Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize)]
-pub struct Attributes {
-    pub energy_type: Option<EnergyType>,
-}
 
 #[derive(Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub struct Bid {
     pub r#type: String,
     pub id: String,
     pub market_id: String,
-    pub energy: f32,
-    pub energy_rate: f32,
-    pub original_price: f32,
+    pub energy: f64,
+    pub energy_rate: f64,
+    pub original_price: f64,
     pub requirements: Option<Requirements>,
     pub buyer_origin: String,
     pub buyer_origin_id: String,
@@ -65,9 +49,9 @@ pub struct Offer {
     pub r#type: String,
     pub id: String,
     pub market_id: String,
-    pub energy: f32,
-    pub energy_rate: f32,
-    pub original_price: f32,
+    pub energy: f64,
+    pub energy_rate: f64,
+    pub original_price: f64,
     pub attributes: Option<Attributes>,
     pub seller_origin: String,
     pub seller_origin_id: String,
@@ -84,9 +68,9 @@ pub struct BidOfferMatch {
     #[serde(serialize_with = "serialize_datetime")]
     pub time_slot: Option<NaiveDateTime>,
     pub bid: Bid,
-    pub selected_energy: f32,
+    pub selected_energy: f64,
     pub offer: Offer,
-    pub trade_rate: f32,
+    pub trade_rate: f64,
 }
 
 #[derive(Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize)]
@@ -107,8 +91,8 @@ impl PayAsBid for MatchingData {
 
         let mut preference_matches = Vec::new();
         let mut remaining_bids_after_pref = Vec::new();
-        let mut bid_matched_amounts: HashMap<String, f32> = HashMap::new();
-        let mut offer_matched_amounts: HashMap<String, f32> = HashMap::new();
+        let mut bid_matched_amounts: HashMap<String, f64> = HashMap::new();
+        let mut offer_matched_amounts: HashMap<String, f64> = HashMap::new();
 
         let (preference_bids, non_preference_bids): (Vec<_>, Vec<_>) =
             available_bids.into_iter().partition(|b| {
@@ -180,7 +164,7 @@ impl PayAsBid for MatchingData {
         remaining_offers_after_pref
             .sort_by(|a, b| a.energy_rate.partial_cmp(&b.energy_rate).unwrap());
 
-        let mut available_order_energy: HashMap<String, f32> = HashMap::new();
+        let mut available_order_energy: HashMap<String, f64> = HashMap::new();
 
         for offer in remaining_offers_after_pref.iter() {
             for bid in remaining_bids_after_pref.iter() {
