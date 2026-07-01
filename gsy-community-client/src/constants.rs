@@ -11,6 +11,11 @@ pub struct Constants {
     pub FEDECOM_INFLUX_DB_TOKEN: String,
     pub FEDECOM_DEMAND_FORECAST_URL: String,
     pub FEDECOM_DEMAND_FORECAST_API_KEY: String,
+    pub FEDECOM_PV_FORECAST_URL: String,
+    pub FEDECOM_PV_FORECAST_API_KEY: String,
+    /// Endpoint of the temporary AIC demand forecaster.
+    pub FEDECOM_AIC_FORECAST_URL: String,
+    pub FEDECOM_AIC_FORECAST_API_KEY: String,
     /// How often, in seconds, bids and offers are resubmitted within a market slot.
     pub ORDER_RESUBMISSION_INTERVAL_SEC: u64,
     /// Lower bound of the order price range, in currency units per kWh.
@@ -49,6 +54,20 @@ impl Constants {
             ),
             FEDECOM_DEMAND_FORECAST_API_KEY: read_env_or(
                 "FEDECOM_DEMAND_FORECAST_API_KEY",
+                "fedecom_user".to_string(),
+            ),
+            FEDECOM_PV_FORECAST_URL: read_env_or(
+                "FEDECOM_PV_FORECAST_URL",
+                "https://fedecom.imp.bg.ac.rs/pv_forecaster_aic/forecast/pv_aic".to_string(),
+            ),
+            FEDECOM_PV_FORECAST_API_KEY: read_env_or(
+                "FEDECOM_PV_FORECAST_API_KEY",
+                "fedecom_user".to_string(),
+            ),
+            // TODO(B3): finalize AIC endpoint URL pending Eleni. Defaults to empty until then.
+            FEDECOM_AIC_FORECAST_URL: read_env_or("FEDECOM_AIC_FORECAST_URL", "".to_string()),
+            FEDECOM_AIC_FORECAST_API_KEY: read_env_or(
+                "FEDECOM_AIC_FORECAST_API_KEY",
                 "fedecom_user".to_string(),
             ),
             ORDER_RESUBMISSION_INTERVAL_SEC: read_env_or("ORDER_RESUBMISSION_INTERVAL_SEC", 300),
