@@ -85,6 +85,7 @@ impl AppState {
                 )
                 .await
                 .unwrap();
+            // TBD: how do we check for valid area_uuids?
             let area_uuid_to_hash: HashMap<String, String> = internal_topology
                 .community_areas
                 .iter()

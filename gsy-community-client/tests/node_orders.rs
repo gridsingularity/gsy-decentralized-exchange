@@ -1,33 +1,24 @@
 use ethers::types::Address;
 use gsy_community_client::node_connector::orders::create_input_orders;
 use gsy_community_client::time_utils::get_current_timestamp_in_secs;
-use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketTopologySchema};
+use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketSchema};
 use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
 use gsy_offchain_primitives::utils::{parse_or_hash_bytes16, NODE_FLOAT_SCALING_FACTOR};
 use gsy_offchain_primitives::MarketType;
 use std::collections::HashSet;
 use std::str::FromStr;
 
-fn test_market() -> MarketTopologySchema {
-    MarketTopologySchema {
-        creation_time: 345_345,
-        time_slot: 456_456,
+fn test_market() -> MarketSchema {
+    MarketSchema {
         market_id: format!("0x{}", "11".repeat(16)),
+        community_id: "community-1".to_string(),
+        opening_time: 456_446,
+        closing_time: 456_447,
+        delivery_start_time: 456_456,
+        delivery_end_time: 456_457,
         market_type: MarketType::Spot,
-        community_uuid: "community1".to_string(),
-        community_name: "My Community".to_string(),
-        community_areas: vec![
-            AreaTopologySchema {
-                area_uuid: "area1".to_string(),
-                name: "Area 1".to_string(),
-                area_type: "Area".to_string(),
-            },
-            AreaTopologySchema {
-                area_uuid: "area2".to_string(),
-                name: "Area 2".to_string(),
-                area_type: "Area".to_string(),
-            },
-        ],
+        matching_algorithm: MatchingAlgorithm::PayAsBid,
+        created_at: 345_345,
     }
 }
 

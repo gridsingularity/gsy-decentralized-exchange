@@ -1,9 +1,12 @@
 use crate::time_utils::get_current_timestamp_in_secs;
 use anyhow::{Error, Result};
 use ethers::prelude::*;
-use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketTopologySchema};
+use gsy_offchain_primitives::db_api_schema::market::MarketSchema;
 use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
-use gsy_offchain_primitives::utils::{parse_or_hash_bytes16, NODE_FLOAT_SCALING_FACTOR};
+use gsy_offchain_primitives::utils::{
+    parse_or_hash_bytes16,
+    NODE_FLOAT_SCALING_FACTOR,
+    string_to_timestamp};
 use std::str::FromStr;
 use tracing::{info, warn};
 
@@ -15,7 +18,7 @@ pub type EvmOrderParamsTuple = ([u8; 16], [u8; 16], [u8; 16], u64, u64, u64, u64
 pub async fn publish_orders(
     evm_node_url: String,
     forecasts: Vec<ForecastSchema>,
-    market: MarketTopologySchema,
+    market: MarketSchema,
     order_registry_address: String,
     community_signer_private_key: String,
 ) -> Result<(), Error> {
@@ -111,8 +114,8 @@ abigen!(
 
 fn build_order_param(
     forecast: &ForecastSchema,
-    area_info: &AreaTopologySchema,
-    market: &MarketTopologySchema,
+    area_uuid: &String,
+    market: &MarketSchema,
     now: u64,
     index: usize,
     is_bid: bool,
@@ -121,15 +124,17 @@ fn build_order_param(
     let order_id = parse_or_hash_bytes16(
         format!(
             "{}:{}:{}:{}:{}",
-            market.market_id, area_info.area_uuid, market.time_slot, index, is_bid
+            market.market_id, area_uuid, market.delivery_start_time, index, is_bid
         )
         .as_str(),
     );
+    let delivery_start : u64 = string_to_timestamp(&market.delivery_start_time)
+        .expect("invalid delivery_start_time");
     (
         order_id,
-        parse_or_hash_bytes16(area_info.area_uuid.as_str()),
+        parse_or_hash_bytes16(area_uuid.as_str()),
         parse_or_hash_bytes16(market.market_id.as_str()),
-        market.time_slot as u64,
+        delivery_start,
         now,
         (forecast.energy_kwh.abs() * NODE_FLOAT_SCALING_FACTOR) as u64,
         (forecast.energy_kwh.abs() * rate_multiplier * NODE_FLOAT_SCALING_FACTOR) as u64,
@@ -139,7 +144,7 @@ fn build_order_param(
 
 pub fn create_input_orders(
     forecasts: Vec<ForecastSchema>,
-    market: MarketTopologySchema,
+    market: MarketSchema,
     owner: Address,
 ) -> Vec<EvmOrderParamsTuple> {
     let now: u64 = get_current_timestamp_in_secs();
@@ -148,22 +153,13 @@ pub fn create_input_orders(
     let mut input_orders = Vec::new();
 
     for (index, forecast) in forecasts.into_iter().enumerate() {
-        let area_info = market
-            .community_areas
-            .iter()
-            .find(|area| area.area_uuid == forecast.area_uuid)
-            .cloned();
-        if area_info.is_none() {
-            continue;
-        }
-        let area_info = area_info.unwrap();
         if forecast.energy_kwh > 0. {
             input_orders.push(build_order_param(
-                &forecast, &area_info, &market, now, index, true,
+                &forecast, &forecast.area_uuid, &market, now, index, true,
             ));
         } else if forecast.energy_kwh < 0. {
             input_orders.push(build_order_param(
-                &forecast, &area_info, &market, now, index, false,
+                &forecast, &forecast.area_uuid, &market, now, index, false,
             ));
         }
     }
