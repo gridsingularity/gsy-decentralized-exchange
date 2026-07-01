@@ -1,7 +1,7 @@
 use ethers::{prelude::*, utils::Anvil};
 use ethers_solc::{artifacts::Severity, Project, ProjectPathsConfig};
 use gsy_community_client::node_connector::orders::publish_orders;
-use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketTopologySchema};
+use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketSchema};
 use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
 use gsy_offchain_primitives::utils::parse_or_hash_bytes16;
 use gsy_offchain_primitives::MarketType;
@@ -20,44 +20,35 @@ abigen!(
 
 const TEST_PRIVATE_KEY: &str = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
-fn test_market() -> MarketTopologySchema {
-    MarketTopologySchema {
+fn test_market() -> MarketSchema {
+    MarketSchema {
         market_id: format!("0x{}", "11".repeat(16)),
+        community_id: "community-1".to_string(),
+        opening_time: 2_700_000_000u32,
+        closing_time: 2_800_000_000u32,
+        delivery_start_time: 1_700_000_000u32,
+        delivery_end_time: 1_800_000_000u32,
         market_type: MarketType::Spot,
-        community_uuid: "community-1".to_string(),
-        community_name: "Community".to_string(),
-        time_slot: 1_700_000_000u32,
-        creation_time: 1_699_999_000u32,
-        community_areas: vec![
-            AreaTopologySchema {
-                area_uuid: "area-a".to_string(),
-                name: "Area A".to_string(),
-                area_type: "Area".to_string(),
-            },
-            AreaTopologySchema {
-                area_uuid: "area-b".to_string(),
-                name: "Area B".to_string(),
-                area_type: "Area".to_string(),
-            },
-        ],
+        matching_algorithm: MatchingAlgorithm::PayAsBid,
+        created_at: 1_699_999_000u32,
     }
 }
 
-fn test_forecasts(market: &MarketTopologySchema) -> Vec<ForecastSchema> {
+fn test_forecasts(market: &MarketSchema) -> Vec<ForecastSchema> {
     vec![
         ForecastSchema {
             area_uuid: "area-a".to_string(),
             community_uuid: "community-1".to_string(),
-            time_slot: market.time_slot as u64,
-            creation_time: market.creation_time as u64,
+            time_slot: market.delivery_start_time as u64,
+            creation_time: market.created_at as u64,
             energy_kwh: 12.0,
             confidence: 0.9,
         },
         ForecastSchema {
             area_uuid: "area-b".to_string(),
             community_uuid: "community-1".to_string(),
-            time_slot: market.time_slot as u64,
-            creation_time: market.creation_time as u64,
+            time_slot: market.delivery_start_time as u64,
+            creation_time: market.created_at as u64,
             energy_kwh: -3.0,
             confidence: 0.7,
         },

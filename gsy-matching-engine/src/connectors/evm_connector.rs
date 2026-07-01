@@ -22,67 +22,8 @@ use tracing::{error, info, warn};
 const MATCH_PER_NR_BLOCKS: u64 = 4;
 
 abigen!(
-    TradeSettlementContract,
-    r#"[
-        {
-            "type": "function",
-            "name": "hasRole",
-            "stateMutability": "view",
-            "inputs": [
-                {"name": "role", "type": "bytes32"},
-                {"name": "account", "type": "address"}
-            ],
-            "outputs": [{"name": "", "type": "bool"}]
-        },
-        {
-            "type": "function",
-            "name": "settleBatch",
-            "stateMutability": "nonpayable",
-            "inputs": [
-                {
-                    "name": "matches",
-                    "type": "tuple[]",
-                    "components": [
-                        {
-                            "name": "tradeId",
-                            "type": "bytes16"
-                        },
-                        {
-                            "name": "bid",
-                            "type": "tuple",
-                            "components": [
-                                {"name": "orderId", "type": "bytes16"},
-                                {"name": "createdBy", "type": "bytes16"},
-                                {"name": "marketId", "type": "bytes16"},
-                                {"name": "timeSlot", "type": "uint64"},
-                                {"name": "creationTime", "type": "uint64"},
-                                {"name": "energy", "type": "uint64"},
-                                {"name": "energyRate", "type": "uint64"}
-                            ]
-                        },
-                        {
-                            "name": "offer",
-                            "type": "tuple",
-                            "components": [
-                                {"name": "orderId", "type": "bytes16"},
-                                {"name": "createdBy", "type": "bytes16"},
-                                {"name": "marketId", "type": "bytes16"},
-                                {"name": "timeSlot", "type": "uint64"},
-                                {"name": "creationTime", "type": "uint64"},
-                                {"name": "energy", "type": "uint64"},
-                                {"name": "energyRate", "type": "uint64"}
-                            ]
-                        },
-                        {"name": "residualBidId", "type": "bytes16"},
-                        {"name": "residualOfferId", "type": "bytes16"},
-                        {"name": "selectedEnergy", "type": "uint256"},
-                        {"name": "clearingPrice", "type": "uint256"}
-                    ]
-                }
-            ],
-            "outputs": []
-        }
-    ]"#
+    SettleOrderBatchContract,
+    "src/connectors/abi/settle_order_batch.json"
 );
 
 type EvmOrderDataTuple = ([u8; 16], [u8; 16], [u8; 16], u64, u64, u64, u64);
@@ -187,7 +128,7 @@ struct PreparedOrders {
 pub async fn evm_subscribe(
     orderbook_url: String,
     node_url: String,
-    trade_settlement_address: String,
+    settle_order_batch_address: String,
     matching_engine_private_key: String,
 ) -> Result<(), Error> {
     info!("Connecting to EVM node {}", node_url);
@@ -213,7 +154,7 @@ pub async fn evm_subscribe(
                 if let Err(error) = run_matching_cycle(
                     orderbook_url.as_str(),
                     node_url.as_str(),
-                    trade_settlement_address.as_str(),
+                    settle_order_batch_address.as_str(),
                     matching_engine_private_key.as_str(),
                 )
                 .await
@@ -234,7 +175,7 @@ pub async fn evm_subscribe(
 async fn run_matching_cycle(
     orderbook_url: &str,
     evm_node_url: &str,
-    trade_settlement_address: &str,
+    settle_order_batch_address: &str,
     matching_engine_private_key: &str,
 ) -> Result<()> {
     info!("Starting matching cycle");
@@ -268,7 +209,7 @@ async fn run_matching_cycle(
     info!("Generated {} matches", bid_offer_matches.len());
     send_settle_batch_transaction(
         evm_node_url,
-        trade_settlement_address,
+        settle_order_batch_address,
         matching_engine_private_key,
         bid_offer_matches,
         prepared_orders.by_order_id,
@@ -279,7 +220,7 @@ async fn run_matching_cycle(
 
 pub async fn send_settle_batch_transaction(
     evm_node_url: &str,
-    trade_settlement_address: &str,
+    settle_order_batch_address: &str,
     matching_engine_private_key: &str,
     matches: Vec<BidOfferMatch>,
     order_lookup: HashMap<String, DbOrderSchema>,
@@ -289,10 +230,10 @@ pub async fn send_settle_batch_transaction(
         return Ok(());
     }
 
-    let trade_settlement_address = Address::from_str(trade_settlement_address).map_err(|e| {
+    let settle_order_batch_address = Address::from_str(settle_order_batch_address).map_err(|e| {
         anyhow!(
             "Invalid trade settlement address '{}': {}",
-            trade_settlement_address,
+            settle_order_batch_address,
             e
         )
     })?;
@@ -306,10 +247,10 @@ pub async fn send_settle_batch_transaction(
         .with_chain_id(chain_id);
     let signer_address = wallet.address();
     let client = std::sync::Arc::new(SignerMiddleware::new(provider, wallet));
-    let trade_settlement = TradeSettlementContract::new(trade_settlement_address, client.clone());
+    let settle_order_batch = SettleOrderBatchContract::new(settle_order_batch_address, client.clone());
 
     let operator_role = keccak256("OPERATOR_ROLE");
-    let has_role = trade_settlement
+    let has_role = settle_order_batch
         .has_role(operator_role, signer_address)
         .call()
         .await?;
@@ -321,7 +262,7 @@ pub async fn send_settle_batch_transaction(
     }
 
     info!("Submitting {} matches to settleBatch", evm_matches.len());
-    let settle_batch_call = trade_settlement.settle_batch(evm_matches);
+    let settle_batch_call = settle_order_batch.settle_batch(evm_matches);
     let pending_tx = settle_batch_call.send().await?;
     let tx_hash = pending_tx.tx_hash();
     let receipt = pending_tx.await?;
