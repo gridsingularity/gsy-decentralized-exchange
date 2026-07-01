@@ -1,4 +1,4 @@
-use crate::external_forecasts::demand_api::DemandForecastApiConnection;
+use crate::external_forecasts::demand_api::{DemandForecastApiConnection, DemandForecastError};
 use chrono::{DateTime, Utc};
 use gsy_offchain_primitives::db_api_schema::market::{AssetType, MarketTopologySchema};
 use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
@@ -77,9 +77,14 @@ impl DemandForecastsManager {
                         });
                     }
                 }
-                Err(e) => error!(
-                    "Failed to fetch demand forecast for meter {} of community {}: {}",
+                Err(DemandForecastError::Http(e)) => error!(
+                    "HTTP error fetching demand forecast for meter {} of community {}: {}",
                     area.name, market.community_name, e
+                ),
+                Err(DemandForecastError::Api(msg)) => error!(
+                    "API-reported error fetching demand forecast for meter {} of community {} \
+                     (skipping — server-side issue): {}",
+                    area.name, market.community_name, msg
                 ),
             }
         }
