@@ -1,9 +1,9 @@
+use anyhow::Result;
 use chrono::{prelude::DateTime, Utc};
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use std::env;
 use std::str::FromStr;
-use anyhow::Result;
 
 pub const NODE_FLOAT_SCALING_FACTOR: f64 = 10000.0;
 

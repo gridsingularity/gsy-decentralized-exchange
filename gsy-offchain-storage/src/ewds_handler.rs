@@ -4,8 +4,8 @@ use gsy_offchain_primitives::db_api_schema::orders::{
     DbOrderSchema, EnergyType, OrderEnum, OrderStatus,
 };
 use gsy_offchain_primitives::db_api_schema::profiles::{MeasurementPointType, MeasurementSchema};
-use reqwest::Client;
 use gsy_offchain_primitives::utils::timestamp_to_string_with_padding;
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet, VecDeque};

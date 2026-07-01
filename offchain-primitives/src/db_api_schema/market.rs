@@ -2,7 +2,7 @@
 //!
 //! `MarketSchema` is the canonical ontology-aligned market-opening document.
 
-pub use crate::{MarketType, MatchingAlgorithm, MarketTimeSeriesGranularity};
+pub use crate::{MarketTimeSeriesGranularity, MarketType, MatchingAlgorithm};
 use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 

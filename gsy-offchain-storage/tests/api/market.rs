@@ -1,8 +1,6 @@
 use crate::helpers::{init_app, stop_app};
 use actix_web::web;
-use gsy_offchain_primitives::db_api_schema::market::{
-    MarketSchema, MarketType, MatchingAlgorithm
-};
+use gsy_offchain_primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
 use gsy_offchain_primitives::db_api_schema::trades::{
     ClearingResultSchema, ClearingStatus, MarketRoleSchema,
 };
