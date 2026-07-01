@@ -7,6 +7,7 @@
 //! ontology structs are kept alongside it for topic/schema evolution without
 //! breaking the current EVM integration path.
 
+use crate::utils::string_to_timestamp;
 use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 use anyhow::{anyhow, Result, Error};
@@ -184,4 +185,33 @@ pub struct OrderSchema {
     pub cancellation_reason: Option<String>,
     #[serde(default)]
     pub preferred_trading_partner: Option<String>,
+}
+
+impl From<OrderSchema> for DbOrderSchema {
+    fn from(o: OrderSchema) -> Self {
+        let requirements = DbRequirements{
+            energy_type: o.energy_source_preference,
+            trading_partner_id: o.preferred_trading_partner,
+            preferred_energy_rate: None
+        };
+        let attributes = DbAttributes{
+            energy_type: o.energy_type.unwrap_or(EnergyType::Grey),
+            trading_partner_id: Some(o.created_by.clone()),
+        };
+        DbOrderSchema {
+            order_id: o.order_id.clone(),
+            status: o.order_status.clone(),
+            order_type: o.order_type.clone(),
+            area_uuid: o.created_by.clone(),
+            market_id: o.market_id.clone(),
+            nonce: None,
+            time_slot: string_to_timestamp(&o.time_slot).unwrap_or(0),
+            creation_time: string_to_timestamp(&o.creation_time).unwrap_or(0),
+            energy_kWh: o.quantity.clone(),
+            energy_rate: o.price_limit.clone(),
+            created_by: o.created_by.clone(),
+            requirements: Some(requirements),
+            attributes: Some(attributes)
+        }
+    }
 }

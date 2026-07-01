@@ -2,18 +2,24 @@ use crate::db::DbRef;
 use crate::routes::validate_start_end_time;
 use actix_web::{web::Json, web::Query, HttpResponse, Responder};
 use anyhow::{Error, Result};
-use gsy_offchain_primitives::db_api_schema::orders::{DbOrderSchema, FlexibilityOrderSchema};
+use gsy_offchain_primitives::db_api_schema::orders::{
+    DbOrderSchema, FlexibilityOrderSchema, OrderSchema};
 use serde::Deserialize;
 
 #[tracing::instrument(name = "Adding new orders", skip(db), fields(orders = ?orders))]
-pub async fn post_orders(orders: Json<Vec<DbOrderSchema>>, db: DbRef) -> impl Responder {
-    match db.get_ref().orders().insert_orders(orders.to_vec()).await {
+pub async fn post_orders(orders: Json<Vec<OrderSchema>>, db: DbRef) -> impl Responder {
+    let db_orders: Vec<DbOrderSchema> = orders
+        .into_inner()
+        .into_iter()
+        .map(DbOrderSchema::from)
+        .collect();
+    match db.get_ref().orders().insert_orders(db_orders.to_vec()).await {
         Ok(ids) => HttpResponse::Ok().json(ids),
         Err(_) => HttpResponse::InternalServerError().finish(),
     }
 }
 
-pub async fn post_normalized_orders(orders: Json<Vec<DbOrderSchema>>, db: DbRef) -> impl Responder {
+pub async fn post_normalized_orders(orders: Json<Vec<OrderSchema>>, db: DbRef) -> impl Responder {
     post_orders(orders, db).await
 }
 
