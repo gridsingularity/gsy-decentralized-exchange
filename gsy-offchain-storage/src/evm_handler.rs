@@ -105,12 +105,10 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
                 market_id: bid_order.market_id.clone(),
                 time_slot: bid_order.time_slot,
                 creation_time: chrono::Utc::now().timestamp() as u64,
-                offer: ask_order,
-                offer_hash: ask_hash_str,
-                bid: bid_order,
-                bid_hash: bid_hash_str,
-                residual_offer: None,
-                residual_bid: None,
+                offer_id: ask_hash_str,
+                bid_id: bid_hash_str,
+                residual_offer_id: String::new(), // todo: TradeSettled event needs to emit this
+                residual_bid_id: String::new(), // todo: TradeSettled event needs to emit this
                 parameters: TradeParameters {
                     selected_energy_kWh: energy_f64,
                     energy_rate: price_f64,

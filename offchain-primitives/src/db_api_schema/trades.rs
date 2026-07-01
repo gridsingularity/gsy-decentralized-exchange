@@ -1,6 +1,6 @@
 #![allow(non_snake_case)]
 
-use crate::db_api_schema::orders::DbOrderSchema;
+use crate::utils::string_to_timestamp;
 use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
@@ -28,12 +28,10 @@ pub struct DbTradeSchema {
     pub market_id: String,
     pub time_slot: u64,
     pub creation_time: u64,
-    pub offer: DbOrderSchema,
-    pub offer_hash: String,
-    pub bid: DbOrderSchema,
-    pub bid_hash: String,
-    pub residual_offer: Option<DbOrderSchema>,
-    pub residual_bid: Option<DbOrderSchema>,
+    pub offer_id: String,
+    pub bid_id: String,
+    pub residual_offer_id: String,
+    pub residual_bid_id: String,
     pub parameters: TradeParameters,
 }
 
@@ -69,6 +67,30 @@ pub struct TradeSchema {
     pub trade_quantity: f64,
     pub trade_price: f64,
     pub timestamp: String,
+}
+
+impl From<TradeSchema> for DbTradeSchema {
+    fn from(t: TradeSchema) -> Self {
+        let time_slot = string_to_timestamp(&t.timestamp).unwrap_or(0);
+
+        DbTradeSchema {
+            trade_uuid: t.trade_id,
+            status: t.trade_status,
+            seller: t.seller_id,
+            buyer: t.buyer_id,
+            market_id: t.market_id,
+            time_slot,
+            creation_time: time_slot,
+            offer_id: t.offer_id,
+            bid_id: t.bid_id,
+            residual_offer_id: t.residual_offer_id.unwrap_or_default(),
+            residual_bid_id: t.residual_bid_id.unwrap_or_default(),
+            parameters: TradeParameters {
+                selected_energy_kWh: t.trade_quantity,
+                energy_rate: t.trade_price,
+            },
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, Eq)]
