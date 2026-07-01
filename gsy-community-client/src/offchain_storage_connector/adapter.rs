@@ -1,21 +1,21 @@
 use crate::external_api::{ExternalCommunityTopology, ExternalForecast, ExternalMeasurement};
 use crate::time_utils::get_current_timestamp_in_secs;
 use blake2_rfc::blake2b::blake2b;
-use gsy_offchain_primitives::db_api_schema::market::{
-    AreaTopologySchema, MarketSchema, MarketTopologySchema,
-};
+use gsy_offchain_primitives::db_api_schema::market::MarketSchema;
 use gsy_offchain_primitives::db_api_schema::profiles::{
     FlowDirection, ForecastSchema, MeasurementPointSchema, MeasurementPointType, MeasurementSchema,
     TimeseriesSchema,
 };
-use gsy_offchain_primitives::MarketType;
+use gsy_offchain_primitives::utils::timestamp_to_string_with_padding;
+use gsy_offchain_primitives::{MarketType, MatchingAlgorithm};
 use reqwest::Client;
 use std::env;
 use tracing::info;
 
 fn generate_market_id(market_type: MarketType, delivery_timestamp: u64) -> String {
     let mut buffer = Vec::new();
-    buffer.extend_from_slice(market_type.as_str().as_bytes());
+    // Method will be different in DD-398
+    // buffer.extend_from_slice(market_type.as_str().as_bytes());
     buffer.extend_from_slice(&delivery_timestamp.to_be_bytes());
     let digest = blake2b(16, &[], &buffer);
     format!("0x{}", ethers::utils::hex::encode(digest.as_bytes()))
@@ -60,7 +60,7 @@ impl AreaMarketInfoAdapter {
                     forecast.community_uuid.as_str(),
                     forecast.area_uuid.as_str(),
                 ),
-                timestamp: format_timeseries_timestamp(forecast.time_slot),
+                timestamp: timestamp_to_string_with_padding(forecast.time_slot),
                 value: forecast.energy_kwh,
             })
             .collect::<Vec<_>>();
@@ -96,7 +96,7 @@ impl AreaMarketInfoAdapter {
                     measurement.community_uuid.as_str(),
                     measurement.area_uuid.as_str(),
                 ),
-                timestamp: format_timeseries_timestamp(measurement.time_slot),
+                timestamp: timestamp_to_string_with_padding(measurement.time_slot),
                 value: measurement.energy_kwh,
             })
             .collect::<Vec<_>>();
@@ -162,34 +162,18 @@ impl AreaMarketInfoAdapter {
         &self,
         topology: ExternalCommunityTopology,
         time_slot: u64,
-    ) -> Option<MarketTopologySchema> {
+    ) -> Option<MarketSchema> {
         let creation_time = get_current_timestamp_in_secs();
-        let new_market = MarketTopologySchema {
-            market_type: MarketType::Spot,
-            community_name: topology.community_name.clone(),
-            community_uuid: topology.community_uuid.clone(),
-            market_id: generate_market_id(MarketType::Spot, time_slot),
-            time_slot: time_slot as u32,
-            creation_time: creation_time as u32,
-            community_areas: topology
-                .areas
-                .clone()
-                .into_iter()
-                .map(|area| AreaTopologySchema {
-                    area_uuid: area.area_uuid.clone(),
-                    name: area.area_name.clone(),
-                    area_type: "Area".to_string(),
-                })
-                .collect(),
-        };
         let market_schema = MarketSchema {
-            market_id: new_market.market_id.clone(),
+            market_id: generate_market_id(MarketType::Spot, time_slot),
             community_id: topology.community_uuid,
-            opening_time: format_timeseries_timestamp(creation_time),
-            closing_time: format_timeseries_timestamp(time_slot),
-            delivery_start_time: format_timeseries_timestamp(time_slot),
-            delivery_end_time: format_timeseries_timestamp(time_slot + 900),
+            opening_time: timestamp_to_string_with_padding(creation_time),
+            closing_time: timestamp_to_string_with_padding(time_slot),
+            delivery_start_time: timestamp_to_string_with_padding(time_slot),
+            delivery_end_time: timestamp_to_string_with_padding(time_slot + 900),
             market_type: MarketType::Spot,
+            matching_algorithm:MatchingAlgorithm::PayAsBid,
+            created_at: timestamp_to_string_with_padding(creation_time),
         };
 
         match self
@@ -199,7 +183,7 @@ impl AreaMarketInfoAdapter {
             .send()
             .await
         {
-            Ok(response) if response.status().is_success() => Some(new_market),
+            Ok(response) if response.status().is_success() => Some(market_schema),
             Ok(response) => {
                 info!("Market upsert failed with status {}", response.status());
                 None
@@ -268,8 +252,4 @@ fn flow_direction(value: f64) -> FlowDirection {
     } else {
         FlowDirection::Export
     }
-}
-
-fn format_timeseries_timestamp(timestamp: u64) -> String {
-    format!("{:020}", timestamp)
 }

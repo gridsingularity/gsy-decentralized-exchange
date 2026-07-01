@@ -14,14 +14,6 @@ pub fn value_to_str(value: &Value) -> String {
     }
 }
 
-pub fn value_to_f32(value: &Value) -> f32 {
-    // Helper function to convert the serde Value to f32
-    match value.as_f64() {
-        Some(..) => value.as_f64().unwrap() as f32,
-        None => 0 as f32,
-    }
-}
-
 pub fn value_to_datetime(value: &Value) -> Option<NaiveDateTime> {
     // Helper function to convert the serde Value to NaiveDateTime
     match value.as_str() {
@@ -43,9 +35,9 @@ pub fn read_bids(orders: &Value) -> Vec<Bid> {
             r#type: value_to_str(&bid["type"]),
             id: value_to_str(&bid["id"]),
             market_id: value_to_str(&bid["market_id"]),
-            energy: value_to_f32(&bid["energy"]),
-            energy_rate: value_to_f32(&bid["energy_rate"]),
-            original_price: value_to_f32(&bid["original_price"]),
+            energy: bid["energy"].as_f64().unwrap(),
+            energy_rate: bid["energy_rate"].as_f64().unwrap(),
+            original_price: bid["original_price"].as_f64().unwrap(),
             requirements: serde_json::from_value(bid["requirements"].clone()).ok(),
             buyer_origin: value_to_str(&bid["buyer_origin"]),
             buyer_origin_id: value_to_str(&bid["buyer_origin_id"]),
@@ -67,9 +59,9 @@ pub fn read_offers(orders: &Value) -> Vec<Offer> {
             r#type: value_to_str(&offer["type"]),
             id: value_to_str(&offer["id"]),
             market_id: value_to_str(&offer["market_id"]),
-            energy: value_to_f32(&offer["energy"]),
-            energy_rate: value_to_f32(&offer["energy_rate"]),
-            original_price: value_to_f32(&offer["original_price"]),
+            energy: offer["energy"].as_f64().unwrap(),
+            energy_rate: offer["energy_rate"].as_f64().unwrap(),
+            original_price: offer["original_price"].as_f64().unwrap(),
             attributes: serde_json::from_value(offer["attributes"].clone()).ok(),
             seller_origin: value_to_str(&offer["seller_origin"]),
             seller_origin_id: value_to_str(&offer["seller_origin_id"]),
