@@ -182,22 +182,7 @@ impl TopologyManager {
         let mut external_topologies: Vec<ExternalCommunityTopology> = vec![];
         for community in communities {
             let assets = self.fetch_assets(community.community_name.clone()).await;
-            let mut asset_objects: Vec<ExternalAreaTopology> = vec![];
-            for asset in assets.unwrap().results.bindings {
-                let asset_subtype = if asset.asset_sub_type.is_some() {
-                    Some(asset.asset_sub_type.unwrap().field_type)
-                } else {
-                    None
-                };
-                asset_objects.push(ExternalAreaTopology {
-                    area_name: asset.asset_name.value,
-                    area_type: self.map_fedecom_asset_type_to_asset_type(
-                        asset.asset_type.field_type,
-                        asset_subtype,
-                    ),
-                });
-            }
-
+            let asset_objects = self.map_assets_to_topology(assets.unwrap());
             external_topologies.push(ExternalCommunityTopology {
                 areas: asset_objects,
                 community_name: community.community_name.clone(),
@@ -205,6 +190,32 @@ impl TopologyManager {
         }
 
         external_topologies
+    }
+
+    /// Map a parsed `LECCommunityAssetsResults` response into the internal topology
+    /// representation. This is a pure transformation (no I/O) and is `pub` so that
+    /// unit tests can exercise the full field-selection + mapping path without making
+    /// HTTP calls.
+    pub fn map_assets_to_topology(
+        &self,
+        assets: LECCommunityAssetsResults,
+    ) -> Vec<ExternalAreaTopology> {
+        let mut asset_objects: Vec<ExternalAreaTopology> = vec![];
+        for asset in assets.results.bindings {
+            let asset_subtype = if asset.asset_sub_type.is_some() {
+                Some(asset.asset_sub_type.unwrap().value)
+            } else {
+                None
+            };
+            asset_objects.push(ExternalAreaTopology {
+                area_name: asset.asset_name.value,
+                area_type: self.map_fedecom_asset_type_to_asset_type(
+                    asset.asset_type.value,
+                    asset_subtype,
+                ),
+            });
+        }
+        asset_objects
     }
 
     pub async fn get(&self, next_timeslot: u64) -> Vec<MarketTopologySchema> {

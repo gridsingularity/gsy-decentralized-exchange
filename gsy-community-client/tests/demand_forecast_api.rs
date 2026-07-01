@@ -76,16 +76,20 @@ mod tests {
         assert!(forecasts.is_empty());
     }
 
+    /// LIC02SM is excluded by *name*, even when the ontology mislabels it as SMART_METER.
+    /// LIC03PV is excluded by *type* (PV is not a forecastable meter type).
     #[tokio::test]
-    async fn test_fetch_community_forecasts_ignores_non_meter_assets() {
+    async fn test_fetch_community_forecasts_ignores_excluded_assets() {
         let manager = DemandForecastsManager::new();
         let market = create_market(
             "LugaggiaInnovationCommunity",
             vec![
+                // LIC02SM is a battery in practice; the ontology may classify it as
+                // SMART_METER.  The name-based guard must exclude it regardless of type.
                 AreaTopologySchema {
                     area_uuid: "battery-uuid".to_string(),
                     name: "LIC02SM".to_string(),
-                    area_type: AssetType::BATTERY,
+                    area_type: AssetType::SMART_METER,
                     area_hash: "battery-hash".to_string(),
                 },
                 AreaTopologySchema {
