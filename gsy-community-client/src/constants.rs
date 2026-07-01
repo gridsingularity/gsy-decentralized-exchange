@@ -17,6 +17,12 @@ pub struct Constants {
     pub MIN_ORDER_RATE: f64,
     /// Upper bound of the order price range, in currency units per kWh.
     pub MAX_ORDER_RATE: f64,
+    /// Overall request timeout (in seconds) applied to every external HTTP call.
+    /// Keeps a slow/hung endpoint from blocking indefinitely. Set above the demand
+    /// forecaster's observed ~30s response latency so valid slow responses are not cut off.
+    pub HTTP_REQUEST_TIMEOUT_SEC: u64,
+    /// TCP connect timeout (in seconds) applied to every external HTTP call.
+    pub HTTP_CONNECT_TIMEOUT_SEC: u64,
 }
 
 impl Constants {
@@ -48,6 +54,8 @@ impl Constants {
             ORDER_RESUBMISSION_INTERVAL_SEC: read_env_or("ORDER_RESUBMISSION_INTERVAL_SEC", 300),
             MIN_ORDER_RATE: read_env_or("MIN_ORDER_RATE", 0.07),
             MAX_ORDER_RATE: read_env_or("MAX_ORDER_RATE", 0.30),
+            HTTP_REQUEST_TIMEOUT_SEC: read_env_or("HTTP_REQUEST_TIMEOUT_SEC", 60u64),
+            HTTP_CONNECT_TIMEOUT_SEC: read_env_or("HTTP_CONNECT_TIMEOUT_SEC", 10u64),
         }
     }
 }

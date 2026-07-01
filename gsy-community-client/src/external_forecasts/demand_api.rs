@@ -35,7 +35,15 @@ pub struct DemandForecastApiConnection {
 impl DemandForecastApiConnection {
     pub fn new() -> Self {
         DemandForecastApiConnection {
-            client: ReqwestClient::new(),
+            client: ReqwestClient::builder()
+                .timeout(std::time::Duration::from_secs(
+                    CommunityClientConstants.HTTP_REQUEST_TIMEOUT_SEC,
+                ))
+                .connect_timeout(std::time::Duration::from_secs(
+                    CommunityClientConstants.HTTP_CONNECT_TIMEOUT_SEC,
+                ))
+                .build()
+                .expect("Failed to build demand forecast HTTP client"),
             address: CommunityClientConstants.FEDECOM_DEMAND_FORECAST_URL.clone(),
             api_key: CommunityClientConstants
                 .FEDECOM_DEMAND_FORECAST_API_KEY

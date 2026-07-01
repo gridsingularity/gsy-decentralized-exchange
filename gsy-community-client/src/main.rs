@@ -33,7 +33,15 @@ impl AppState {
     fn new() -> Self {
         let api_adapter = AreaMarketInfoAdapter::new(None);
         AppState {
-            client: Client::new(),
+            client: Client::builder()
+                .timeout(Duration::from_secs(
+                    CommunityClientConstants.HTTP_REQUEST_TIMEOUT_SEC,
+                ))
+                .connect_timeout(Duration::from_secs(
+                    CommunityClientConstants.HTTP_CONNECT_TIMEOUT_SEC,
+                ))
+                .build()
+                .expect("Failed to build topology HTTP client"),
             api_adapter,
             measurements: MeasurementsManager::new(),
             demand_forecasts: DemandForecastsManager::new(),
