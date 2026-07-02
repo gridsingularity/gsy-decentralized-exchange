@@ -8,8 +8,7 @@ use gsy_offchain_primitives::node_to_api_schema::insert_trades::{
     Trade, TradeParameters as InsertTradeParameters,
 };
 use gsy_offchain_primitives::utils::h256_to_string;
-use subxt::ext::sp_core::H256;
-use subxt::ext::sp_runtime::AccountId32;
+use subxt::utils::{AccountId32, H256};
 
 #[tokio::test]
 async fn post_trade_request_writes_trades_to_the_db() {

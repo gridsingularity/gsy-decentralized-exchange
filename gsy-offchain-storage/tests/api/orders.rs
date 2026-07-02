@@ -8,9 +8,8 @@ use gsy_offchain_primitives::node_to_api_schema::insert_order::{
 use gsy_offchain_primitives::utils::h256_to_string;
 use mongodb::bson::Bson;
 use std::collections::HashMap;
-use subxt::ext::sp_core::crypto::AccountId32;
-use subxt::ext::sp_runtime::traits::{BlakeTwo256, Hash as HashT};
-use subxt::utils::H256;
+use subxt::config::{substrate::BlakeTwo256, Hasher as HashT};
+use subxt::utils::{AccountId32, H256};
 
 pub fn create_test_accountid() -> AccountId32 {
     // A fixed 32-byte value, typically derived from a public key
@@ -44,7 +43,7 @@ async fn subscribe_return_a_200_for_valid_form_data() {
             creation_time: 1677453190,
         },
     };
-    let bid_id = h256_to_string(BlakeTwo256::hash_of(&bid));
+    let bid_id = h256_to_string(BlakeTwo256.hash_of(&bid));
 
     let order = OrderSchema {
         _id: order_id,

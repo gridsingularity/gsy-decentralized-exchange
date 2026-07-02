@@ -1,6 +1,5 @@
 use crate::primitives::penalty_calculator::Penalty;
-use anyhow::{anyhow, Error, Result};
-use codec::{Decode, Encode};
+use anyhow::{Error, Result};
 use std::str::FromStr;
 use subxt::{
 	utils::{AccountId32, H256},

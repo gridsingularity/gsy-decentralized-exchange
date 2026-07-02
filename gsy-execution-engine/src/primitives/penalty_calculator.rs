@@ -1,6 +1,5 @@
 use gsy_offchain_primitives::db_api_schema::{profiles::MeasurementSchema, trades::TradeSchema};
 use std::collections::HashMap;
-use tracing::info;
 
 #[derive(Debug)]
 pub struct Penalty {
