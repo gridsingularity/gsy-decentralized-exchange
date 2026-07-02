@@ -34,6 +34,50 @@ function bytes16Id(seed: string): string {
   return ethers.dataSlice(ethers.keccak256(ethers.toUtf8Bytes(seed)), 0, 16);
 }
 
+function parseSettleBatchSizes(): number[] {
+  const raw = process.env.GAS_REPORT_SETTLE_BATCH_SIZES ?? "1,2,5";
+  const sizes = raw.split(",").map((value) => {
+    const parsed = Number(value.trim());
+    if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+      throw new Error(
+        `Invalid GAS_REPORT_SETTLE_BATCH_SIZES value '${value}'. Expected comma-separated positive integers.`,
+      );
+    }
+    return parsed;
+  });
+
+  return [...new Set(sizes)].sort((left, right) => left - right);
+}
+
+function settlementOrderData(order: any) {
+  return {
+    orderId: order.orderId,
+    createdBy: order.createdBy,
+    marketId: order.marketId,
+    timeSlot: order.timeSlot,
+    creationTime: order.creationTime,
+    energy: order.energy,
+    energyRate: order.energyRate,
+  };
+}
+
+function buildMatch(
+  tradeId: string,
+  bid: any,
+  offer: any,
+  residualOfferId: string,
+) {
+  return {
+    tradeId,
+    bid: settlementOrderData(bid),
+    offer: settlementOrderData(offer),
+    residualBidId: ethers.ZeroHash.slice(0, 34),
+    residualOfferId,
+    selectedEnergy: 100_000,
+    clearingPrice: 12_000,
+  };
+}
+
 function nativeSymbol(chainId: bigint): string {
   if (chainId === 246n) return "EWT";
   if (chainId === 73799n) return "VT";
@@ -267,6 +311,7 @@ function writeReports(
     "",
     "- View functions are reported as `estimateGas` values only; they do not consume gas when called off-chain.",
     "- Proxy deployment rows include the `TransparentUpgradeableProxy`, the internally created `ProxyAdmin`, and initializer delegatecall gas.",
+    "- `settleBatch(Match[N])` rows are measured for `GAS_REPORT_SETTLE_BATCH_SIZES` values; prerequisite dummy order placements are reported as separate mutating calls.",
     "- Mainnet/Volta values depend on live gas price at execution time.",
     "",
   ].join("\n");
@@ -421,6 +466,7 @@ async function main() {
   const actorRegistryRegistrar = actorRegistryContract.connect(
     actorRegistrar,
   ) as any;
+  const settleBatchSizes = parseSettleBatchSizes();
   const buyerActor = bytes16Id("gas:buyer-actor");
   const sellerActor = bytes16Id("gas:seller-actor");
   const revokedActor = bytes16Id("gas:revoked-actor");
@@ -561,38 +607,67 @@ async function main() {
     "Measured with benchmark-only settlement role granted to deployer.",
   );
 
-  const match = {
-    tradeId,
-    bid: {
-      orderId: bidOrder.orderId,
-      createdBy: bidOrder.createdBy,
-      marketId: bidOrder.marketId,
-      timeSlot: bidOrder.timeSlot,
-      creationTime: bidOrder.creationTime,
-      energy: bidOrder.energy,
-      energyRate: bidOrder.energyRate,
-    },
-    offer: {
-      orderId: offerOrder.orderId,
-      createdBy: offerOrder.createdBy,
-      marketId: offerOrder.marketId,
-      timeSlot: offerOrder.timeSlot,
-      creationTime: offerOrder.creationTime,
-      energy: offerOrder.energy,
-      energyRate: offerOrder.energyRate,
-    },
-    residualBidId: ethers.ZeroHash.slice(0, 34),
-    residualOfferId,
-    selectedEnergy: 100_000,
-    clearingPrice: 12_000,
-  };
+  const settleBatchMatches = new Map<number, any[]>();
+  settleBatchMatches.set(1, [
+    buildMatch(tradeId, bidOrder, offerOrder, residualOfferId),
+  ]);
 
-  await recordTx(
-    "Mutating calls",
-    "settleBatch(Match[1])",
-    "TradeSettlement",
-    tradeSettlementContract.settleBatch([match]),
-  );
+  for (const batchSize of settleBatchSizes.filter((size) => size !== 1)) {
+    const matches = [];
+    for (let index = 0; index < batchSize; index++) {
+      const bid = {
+        ...bidOrder,
+        orderId: bytes16Id(`gas:settle-batch-${batchSize}:bid:${index}`),
+        creationTime: now + 10 + batchSize * 100 + index * 2,
+      };
+      const offer = {
+        ...offerOrder,
+        orderId: bytes16Id(`gas:settle-batch-${batchSize}:offer:${index}`),
+        creationTime: now + 11 + batchSize * 100 + index * 2,
+      };
+
+      await recordTx(
+        "Mutating calls",
+        `placeOrder(OrderParams) settleBatch[${batchSize}] bid ${index + 1}`,
+        "OrderRegistry",
+        orderRegistryContract.placeOrder(bid),
+        "Prepares unique open bid for settleBatch gas benchmark.",
+      );
+      await recordTx(
+        "Mutating calls",
+        `placeOrder(OrderParams) settleBatch[${batchSize}] offer ${index + 1}`,
+        "OrderRegistry",
+        orderRegistryContract.placeOrder(offer),
+        "Prepares unique open offer for settleBatch gas benchmark.",
+      );
+
+      matches.push(
+        buildMatch(
+          bytes16Id(`gas:settle-batch-${batchSize}:trade:${index}`),
+          bid,
+          offer,
+          bytes16Id(`gas:settle-batch-${batchSize}:residual-offer:${index}`),
+        ),
+      );
+    }
+    settleBatchMatches.set(batchSize, matches);
+  }
+
+  for (const batchSize of settleBatchSizes) {
+    const matches = settleBatchMatches.get(batchSize);
+    if (!matches) {
+      throw new Error(`Missing settleBatch matches for batch size ${batchSize}`);
+    }
+
+    await recordTx(
+      "Mutating calls",
+      `settleBatch(Match[${batchSize}])`,
+      "TradeSettlement",
+      tradeSettlementContract.settleBatch(matches),
+      "Batch-size benchmark row. Prerequisite order placement gas is reported separately.",
+    );
+  }
+
   await recordTx(
     "Mutating calls",
     "submitPenalties(TradePenalty[1])",
@@ -664,6 +739,7 @@ async function main() {
       network: `${network.name} (${network.chainId})`,
       deployer: deployerAddress,
       nativeSymbol: symbol,
+      settleBatchSizes: settleBatchSizes.join(","),
       actorRegistryProxy: actorRegistry.proxyAddress,
       marketControllerProxy: marketController.proxyAddress,
       orderRegistryProxy: orderRegistry.proxyAddress,
