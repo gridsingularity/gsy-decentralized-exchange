@@ -1,12 +1,12 @@
 use crate::db::DatabaseWrapper;
 use anyhow::{anyhow, Result};
-use gsy_offchain_primitives::db_api_schema::orders::{
-    DbOrderSchema, EnergyType, OrderEnum, OrderStatus,
-};
 use gsy_offchain_primitives::db_api_schema::profiles::{MeasurementPointType, MeasurementSchema};
+use gsy_offchain_primitives::ewds::{
+    client_id_for_suffix, env_var, format_response_body, EwdsInboundMessage, EwdsOperation,
+    EwdsOrderDto, EwdsRequestEnvelope, EwdsResponseEnvelope, EwdsSendMessageDto,
+};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::collections::{HashMap, HashSet, VecDeque};
 use tokio::time::{sleep, Duration};
 use tracing::{error, info, warn};
@@ -85,81 +85,6 @@ impl EwdsHandlerConfig {
             request_batch_size,
         }
     }
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct EwdsInboundMessage {
-    payload: String,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct EwdsRequestEnvelope {
-    #[serde(alias = "request_id")]
-    request_id: String,
-    operation: String,
-    payload: Value,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct EwdsOrderDto {
-    order_id: String,
-    market_id: String,
-    order_type: String,
-    status: String,
-    area_uuid: String,
-    nonce: Option<u64>,
-    time_slot: u64,
-    creation_time: u64,
-    quantity: f64,
-    price_limit: f64,
-    created_by: String,
-    requirements: Option<EwdsRequirementsDto>,
-    attributes: Option<EwdsAttributesDto>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct EwdsRequirementsDto {
-    trading_partner_id: Option<String>,
-    energy_type: Option<String>,
-    preferred_energy_rate: Option<f64>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct EwdsAttributesDto {
-    trading_partner_id: Option<String>,
-    energy_type: String,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct EwdsSendMessageDto {
-    fqcn: String,
-    topic_name: String,
-    topic_version: String,
-    topic_owner: String,
-    transaction_id: String,
-    payload: String,
-    anonymous_recipient: Vec<String>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct EwdsResponseEnvelope<T> {
-    request_id: String,
-    success: bool,
-    data: Vec<T>,
-    error: Option<EwdsErrorPayload>,
-}
-
-#[derive(Serialize)]
-struct EwdsErrorPayload {
-    code: String,
-    message: String,
 }
 
 #[derive(Deserialize)]
@@ -322,8 +247,8 @@ async fn handle_request(
     config: &EwdsHandlerConfig,
     envelope: EwdsRequestEnvelope,
 ) -> Result<()> {
-    match envelope.operation.as_str() {
-        "orders.query" => {
+    match envelope.operation {
+        EwdsOperation::OrdersQuery => {
             let payload = serde_json::from_value::<OrdersQueryPayload>(envelope.payload.clone())
                 .map_err(|e| anyhow!("orders.query payload parse error: {}", e))?;
             let request_id = envelope.request_id;
@@ -355,7 +280,7 @@ async fn handle_request(
             )
             .await
         }
-        "trades.query" => {
+        EwdsOperation::TradesQuery => {
             let payload = serde_json::from_value::<TimeRangePayload>(envelope.payload.clone())
                 .map_err(|e| anyhow!("trades.query payload parse error: {}", e))?;
             let request_id = envelope.request_id;
@@ -384,7 +309,7 @@ async fn handle_request(
             )
             .await
         }
-        "measurements.query" => {
+        EwdsOperation::MeasurementsQuery => {
             let payload = serde_json::from_value::<TimeRangePayload>(envelope.payload.clone())
                 .map_err(|e| anyhow!("measurements.query payload parse error: {}", e))?;
             let request_id = envelope.request_id;
@@ -414,17 +339,6 @@ async fn handle_request(
                 request_id,
                 config.measurements_response_topic.as_str(),
                 data,
-            )
-            .await
-        }
-        unsupported => {
-            send_error_response(
-                client,
-                config,
-                envelope.request_id,
-                format!("{}.response", unsupported),
-                "unsupported_operation",
-                format!("Operation '{}' is not supported", unsupported),
             )
             .await
         }
@@ -502,88 +416,6 @@ async fn send_success_response<T: Serialize>(
     .await
 }
 
-async fn send_error_response(
-    client: &Client,
-    config: &EwdsHandlerConfig,
-    request_id: String,
-    topic_name: String,
-    code: &str,
-    message: String,
-) -> Result<()> {
-    let payload: EwdsResponseEnvelope<Value> = EwdsResponseEnvelope {
-        request_id: request_id.clone(),
-        success: false,
-        data: Vec::new(),
-        error: Some(EwdsErrorPayload {
-            code: code.to_string(),
-            message,
-        }),
-    };
-
-    send_message(
-        client,
-        config,
-        request_id,
-        topic_name,
-        serde_json::to_string(&payload)?,
-    )
-    .await
-}
-
-impl From<DbOrderSchema> for EwdsOrderDto {
-    fn from(order: DbOrderSchema) -> Self {
-        Self {
-            order_id: order.order_id,
-            market_id: order.market_id,
-            order_type: order_type_to_ewds(&order.order_type).to_string(),
-            status: order_status_to_ewds(&order.status).to_string(),
-            area_uuid: order.area_uuid,
-            nonce: order.nonce,
-            time_slot: order.time_slot,
-            creation_time: order.creation_time,
-            quantity: order.energy_kWh,
-            price_limit: order.energy_rate,
-            created_by: order.created_by,
-            requirements: order.requirements.map(|requirements| EwdsRequirementsDto {
-                trading_partner_id: requirements.trading_partner_id,
-                energy_type: requirements
-                    .energy_type
-                    .map(|value| energy_type_to_ewds(&value).to_string()),
-                preferred_energy_rate: requirements.preferred_energy_rate,
-            }),
-            attributes: order.attributes.map(|attributes| EwdsAttributesDto {
-                trading_partner_id: attributes.trading_partner_id,
-                energy_type: energy_type_to_ewds(&attributes.energy_type).to_string(),
-            }),
-        }
-    }
-}
-
-fn order_type_to_ewds(order_type: &OrderEnum) -> &'static str {
-    match order_type {
-        OrderEnum::Bid => "bid",
-        OrderEnum::Offer => "offer",
-    }
-}
-
-fn order_status_to_ewds(status: &OrderStatus) -> &'static str {
-    match status {
-        OrderStatus::Open => "open",
-        OrderStatus::Executed => "executed",
-        OrderStatus::Expired => "expired",
-        OrderStatus::Deleted => "deleted",
-    }
-}
-
-fn energy_type_to_ewds(energy_type: &EnergyType) -> &'static str {
-    match energy_type {
-        EnergyType::Clean => "clean",
-        EnergyType::Battery => "battery",
-        EnergyType::FossilFuel => "fossilFuel",
-        EnergyType::Import => "import",
-    }
-}
-
 async fn send_message(
     client: &Client,
     config: &EwdsHandlerConfig,
@@ -638,38 +470,4 @@ async fn send_message_with_fqcn(
     }
 
     Ok(())
-}
-
-fn format_response_body(body: &str) -> String {
-    let compact = body.split_whitespace().collect::<Vec<_>>().join(" ");
-    if compact.is_empty() {
-        return String::new();
-    }
-
-    let max_chars = 1_024;
-    let truncated = compact.chars().take(max_chars).collect::<String>();
-    if compact.chars().count() > max_chars {
-        format!(": {}...", truncated)
-    } else {
-        format!(": {}", truncated)
-    }
-}
-
-fn env_var(key: &str) -> Option<String> {
-    std::env::var(key)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-}
-
-fn client_id_for_suffix(base: &str, suffix: &str) -> String {
-    let mut value = String::with_capacity(base.len() + suffix.len());
-    value.extend(base.chars().filter(|ch| ch.is_ascii_alphanumeric()));
-    value.extend(suffix.chars().filter(|ch| ch.is_ascii_alphanumeric()));
-
-    if value.is_empty() {
-        "gsyoffchainstorage".to_string()
-    } else {
-        value
-    }
 }

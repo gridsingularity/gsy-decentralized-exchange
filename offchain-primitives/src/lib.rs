@@ -2,6 +2,7 @@ pub mod algorithms;
 pub mod db_api_schema;
 
 pub mod constants;
+pub mod ewds;
 pub mod types;
 pub mod utils;
 
