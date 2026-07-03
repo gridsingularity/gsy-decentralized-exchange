@@ -2,6 +2,8 @@ use crate::constants::CommunityClientConstants;
 use chrono::{DateTime, SecondsFormat, Utc};
 use reqwest::Client as ReqwestClient;
 use serde::{Deserialize, Serialize};
+use std::future::Future;
+use std::pin::Pin;
 
 #[derive(Serialize, Debug)]
 struct DemandForecastRequestParams {
@@ -68,6 +70,43 @@ impl std::error::Error for DemandForecastError {
 impl From<reqwest::Error> for DemandForecastError {
     fn from(e: reqwest::Error) -> Self {
         DemandForecastError::Http(e)
+    }
+}
+
+/// Boxed future returned by [`DemandForecaster::fetch`].
+///
+/// A hand-rolled boxed future is used instead of an `async fn` in the trait because the
+/// manager holds the forecaster behind a trait object (`Arc<dyn DemandForecaster>`), and
+/// native `async fn` in traits is not object-safe. `async-trait` is deliberately avoided so
+/// no new dependency is pulled in.
+pub type DemandForecastFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<DemandForecastResponse, DemandForecastError>> + Send + 'a>>;
+
+/// Common seam over the FEDECOM forecasting back-ends (GD/LIC demand, temporary AIC demand,
+/// and PV). Each back-end parses its own  format and normalises it into the shared
+/// [`DemandForecastResponse`] so the manager stays back-end agnostic and new back-ends
+/// can be added without touching the manager.
+pub trait DemandForecaster: Send + Sync {
+    // Fetch the forecast time series for one meter, starting at start_time. Passing the
+    // community/site name as meter returns the aggregated demand (for the GD/LIC back-end).
+    fn fetch<'a>(
+        &'a self,
+        meter: &'a str,
+        site: &'a str,
+        start_time: DateTime<Utc>,
+    ) -> DemandForecastFuture<'a>;
+}
+
+impl DemandForecaster for DemandForecastApiConnection {
+    fn fetch<'a>(
+        &'a self,
+        meter: &'a str,
+        site: &'a str,
+        start_time: DateTime<Utc>,
+    ) -> DemandForecastFuture<'a> {
+        Box::pin(DemandForecastApiConnection::fetch(
+            self, meter, site, start_time,
+        ))
     }
 }
 
