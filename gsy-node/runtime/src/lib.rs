@@ -130,8 +130,20 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
 /// `SLOT_DURATION` is picked up by `pallet_timestamp` which is in turn picked
 /// up by `pallet_aura` to implement `fn slot_duration()`.
 ///
-/// Change this to adjust the block time.
+///
+/// The block time is feature-gated so that the default build (used by the e2e
+/// docker compose and local/dev chains) keeps the original fast 6s blocks,
+/// while the `four-node-poa` deployment build targets a slower 15s block time.
+/// The slower cadence reduces per-block storage overhead and disk I/O on the
+/// validator nodes, which is what allows them to run on small (~20GB) plain
+/// HDD volumes. See `docs/setup/deployment.md`.
+///
+/// NOTE: the slot duration cannot be changed after a chain has started, so this
+/// must be fixed before the four-node-poa network is launched from genesis.
+#[cfg(not(feature = "four-node-poa"))]
 pub const MILLISECS_PER_BLOCK: u64 = 6000;
+#[cfg(feature = "four-node-poa")]
+pub const MILLISECS_PER_BLOCK: u64 = 15000;
 
 // NOTE: Currently it is not possible to change the slot duration after the chain has started.
 //       Attempting to do so will brick block production.

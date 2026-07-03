@@ -24,6 +24,10 @@ use sp_consensus_grandpa::AuthorityId as GrandpaId;
 use sp_genesis_builder::{self, PresetId};
 use sp_keyring::Sr25519Keyring;
 
+/// Identifier of the four-node PoA genesis preset (`--chain four-node-poa`).
+#[cfg(feature = "four-node-poa")]
+pub const FOUR_NODE_POA_RUNTIME_PRESET: &str = "four-node-poa";
+
 // Returns the genesis config presets populated with given parameters.
 fn testnet_genesis(
     initial_authorities: Vec<(AuraId, GrandpaId)>,
@@ -98,11 +102,58 @@ pub fn local_config_genesis() -> Value {
     )
 }
 
+/// Return the four-node PoA genesis config preset.
+///
+/// Authorities are the well-known Alice/Bob/Charlie/Dave keys, giving a
+/// deterministic 4-validator Aura+GRANDPA set. For a real deployment with
+/// externally generated keys, build a chain spec and edit the authority
+/// lists instead.
+#[cfg(feature = "four-node-poa")]
+pub fn four_node_poa_config_genesis() -> Value {
+    testnet_genesis(
+        vec![
+            (
+                sp_keyring::Sr25519Keyring::Alice.public().into(),
+                sp_keyring::Ed25519Keyring::Alice.public().into(),
+            ),
+            (
+                sp_keyring::Sr25519Keyring::Bob.public().into(),
+                sp_keyring::Ed25519Keyring::Bob.public().into(),
+            ),
+            (
+                sp_keyring::Sr25519Keyring::Charlie.public().into(),
+                sp_keyring::Ed25519Keyring::Charlie.public().into(),
+            ),
+            (
+                sp_keyring::Sr25519Keyring::Dave.public().into(),
+                sp_keyring::Ed25519Keyring::Dave.public().into(),
+            ),
+        ],
+        vec![
+            Sr25519Keyring::Alice.to_account_id(),
+            Sr25519Keyring::Bob.to_account_id(),
+            Sr25519Keyring::Charlie.to_account_id(),
+            Sr25519Keyring::Dave.to_account_id(),
+            Sr25519Keyring::Eve.to_account_id(),
+            Sr25519Keyring::Ferdie.to_account_id(),
+            Sr25519Keyring::AliceStash.to_account_id(),
+            Sr25519Keyring::BobStash.to_account_id(),
+            Sr25519Keyring::CharlieStash.to_account_id(),
+            Sr25519Keyring::DaveStash.to_account_id(),
+            Sr25519Keyring::EveStash.to_account_id(),
+            Sr25519Keyring::FerdieStash.to_account_id(),
+        ],
+        Sr25519Keyring::Alice.to_account_id(),
+    )
+}
+
 /// Provides the JSON representation of predefined genesis config for given `id`.
 pub fn get_preset(id: &PresetId) -> Option<Vec<u8>> {
     let patch = match id.as_ref() {
         sp_genesis_builder::DEV_RUNTIME_PRESET => development_config_genesis(),
         sp_genesis_builder::LOCAL_TESTNET_RUNTIME_PRESET => local_config_genesis(),
+        #[cfg(feature = "four-node-poa")]
+        FOUR_NODE_POA_RUNTIME_PRESET => four_node_poa_config_genesis(),
         _ => return None,
     };
     Some(
@@ -117,5 +168,7 @@ pub fn preset_names() -> Vec<PresetId> {
     vec![
         PresetId::from(sp_genesis_builder::DEV_RUNTIME_PRESET),
         PresetId::from(sp_genesis_builder::LOCAL_TESTNET_RUNTIME_PRESET),
+        #[cfg(feature = "four-node-poa")]
+        PresetId::from(FOUR_NODE_POA_RUNTIME_PRESET),
     ]
 }
