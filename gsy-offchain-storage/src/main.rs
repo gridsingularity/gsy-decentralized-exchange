@@ -7,7 +7,7 @@ use gsy_offchain_storage::db::{init_database, DbRef};
 use gsy_offchain_storage::evm_handler::OffchainStorageEvmHandler;
 use gsy_offchain_storage::ewds_handler::{start_ewds_request_handler, EwdsHandlerConfig};
 use gsy_offchain_storage::http_server::start_server;
-use gsy_offchain_storage::update_db::update_db_periodically;
+use gsy_offchain_storage::update_db::expire_orders_scheduler;
 use tracing::info;
 
 #[tokio::main]
@@ -18,7 +18,7 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let configuration = get_configuration().expect("Failed to load configuration");
     let db_connection_string = configuration.get_connection_string();
-    let update_interval = configuration.get_update_db_interval();
+    let update_interval = configuration.get_scheduler_interval();
 
     let db_connection_wrapper =
         init_database(db_connection_string, configuration.database_name).await?;
@@ -44,7 +44,7 @@ async fn main() -> Result<(), anyhow::Error> {
     });
 
     tokio::task::spawn(async move {
-        update_db_periodically(db, update_interval).await;
+        expire_orders_scheduler(db, update_interval).await;
     });
 
     let ewds_config = EwdsHandlerConfig::from_env();

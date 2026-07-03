@@ -5,7 +5,7 @@ database_username: "gsy"
 database_password: "gsy"
 database_name: "offchain_storage"
 database_url_scheme: "mongodb"
-update_interval: 1000
+scheduler_interval: 1000
 evm_node_url: "ws://localhost:8545"
 contract_order_registry: "0x0000000000000000000000000000000000000000"
 contract_trade_settlement: "0x0000000000000000000000000000000000000000"
