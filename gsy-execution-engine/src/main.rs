@@ -3,17 +3,19 @@ use gsy_execution_engine::{
     services::execution_orchestrator::run_execution_cycle,
     utils::{
         cli::{Cli, Commands},
-        telemetry::{get_subscriber, init_subscriber},
     },
 };
-use gsy_offchain_primitives::{constants::GLOBAL_CONSTANTS, utils::timestamp_to_datetime_string};
+use gsy_offchain_primitives::{
+    constants::GLOBAL_CONSTANTS,
+    utils::timestamp_to_datetime_string,
+    log::setup_logging
+};
 use std::env;
 use tracing::{error, info};
 
 #[tokio::main]
 async fn main() {
-    let subscriber = get_subscriber("gsy-execution-engine", "info", std::io::stdout);
-    init_subscriber(subscriber);
+    setup_logging("gsy-execution-engine", "info");
 
     let cli = Cli::parse();
     match cli.command {
