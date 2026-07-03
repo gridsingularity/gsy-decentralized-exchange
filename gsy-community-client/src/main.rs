@@ -1,17 +1,21 @@
 use gsy_community_client::constants::CommunityClientConstants;
 use gsy_community_client::external_forecasts::manager::DemandForecastsManager;
 use gsy_community_client::external_measurements::manager::MeasurementsManager;
+use gsy_community_client::inter_community::eligible_inter_community;
 use gsy_community_client::node_connector::orders::{
-    calculate_order_rate, publish_orders, remove_orders,
+    calculate_order_rate, create_inter_community_order, publish_input_orders, publish_orders,
+    remove_orders,
 };
 use gsy_community_client::offchain_storage_connector::adapter::{
     AreaMarketInfoAdapter, plan_residual_replacement,
 };
 use gsy_community_client::time_utils::{get_current_timestamp_in_secs, open_spot_market_timeslots};
 use gsy_community_client::topology::TopologyManager;
+use gsy_offchain_primitives::aggregation::aggregate_net_import;
 use gsy_offchain_primitives::constants::GlobalConstants;
 use gsy_offchain_primitives::db_api_schema::market::MarketTopologySchema;
 use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
+use gsy_offchain_primitives::utils::{community_id_from_uuid, h256_to_string, string_to_h256};
 use reqwest::Client;
 use std::collections::HashSet;
 use std::time::Duration;
@@ -46,6 +50,83 @@ impl AppState {
             measurements: MeasurementsManager::new(),
             demand_forecasts: DemandForecastsManager::new(),
             gsy_node_url: "http://gsy-node:9944/".to_string(),
+        }
+    }
+
+    /// Publish at most one aggregated net order per eligible community into the
+    /// inter-community market, replacing (not stacking) the community's previous order.
+    async fn publish_inter_community_orders(
+        &self,
+        inter_market: &MarketTopologySchema,
+        timeslot: u64,
+        now: u64,
+        bid_rate: f64,
+        offer_rate: f64,
+        trader: &str,
+        community_forecasts: Vec<(String, String, Vec<ForecastSchema>)>,
+    ) {
+        let market_id = string_to_h256(inter_market.market_id.clone());
+        for (community_name, community_uuid, forecasts) in community_forecasts {
+            // TODO: include production/PV forecasts in the net once that source lands
+            // (handled in a separate effort); the demand forecaster currently supplies
+            // consumption only, so the net degenerates to pure consumption.
+            let net_import_kwh = aggregate_net_import(&forecasts, &community_uuid, timeslot);
+            let community_id = community_id_from_uuid(&community_uuid);
+
+            // Residual replacement keyed on community_id so a re-tick replaces the
+            // community's single order rather than stacking a new one.
+            let net_forecast = ForecastSchema {
+                area_uuid: community_uuid.clone(),
+                area_hash: h256_to_string(community_id),
+                community_uuid: community_uuid.clone(),
+                time_slot: timeslot,
+                creation_time: now,
+                energy_kwh: net_import_kwh,
+                confidence: 1.0,
+            };
+            let open_orders = self
+                .api_adapter
+                .get_orders_for_market(&inter_market.market_id)
+                .await;
+            let (hashes_to_delete, adjusted) =
+                plan_residual_replacement(&open_orders, trader, vec![net_forecast]);
+
+            if let Err(e) =
+                remove_orders(self.gsy_node_url.clone(), hashes_to_delete, &dev::alice()).await
+            {
+                error!(
+                    "Failed to remove previous inter-community order for community {}: {}",
+                    community_name, e
+                );
+            }
+
+            let Some(replacement) = adjusted.into_iter().next() else {
+                continue;
+            };
+            let rate = if replacement.energy_kwh > 0.0 {
+                bid_rate
+            } else {
+                offer_rate
+            };
+            let Some(order) = create_inter_community_order(
+                replacement.energy_kwh,
+                community_id,
+                market_id,
+                timeslot,
+                rate,
+                &dev::alice(),
+            ) else {
+                continue;
+            };
+
+            if let Err(e) =
+                publish_input_orders(self.gsy_node_url.clone(), vec![order], &dev::alice()).await
+            {
+                error!(
+                    "Failed to publish inter-community order for community {}: {}",
+                    community_name, e
+                );
+            }
         }
     }
 
@@ -92,6 +173,15 @@ impl AppState {
                     false,
                 );
 
+                // Single inter-community market per timeslot, created outside the
+                // per-community loop (its id is community-independent).
+                let inter_market = self
+                    .api_adapter
+                    .get_or_create_inter_community_market(timeslot)
+                    .await;
+                let mut inter_community_forecasts: Vec<(String, String, Vec<ForecastSchema>)> =
+                    Vec::new();
+
                 for market in markets {
                     if seen_communities.insert(market.community_name.clone()) {
                         measurement_topologies.push(market.clone());
@@ -129,6 +219,14 @@ impl AppState {
                         continue;
                     }
 
+                    if eligible_inter_community(&market.community_name) {
+                        inter_community_forecasts.push((
+                            market.community_name.clone(),
+                            market.community_uuid.clone(),
+                            timeslot_forecasts.clone(),
+                        ));
+                    }
+
                     let open_orders =
                         self.api_adapter.get_orders_for_market(&market.market_id).await;
                     let (hashes_to_delete, replacement_forecasts) =
@@ -163,6 +261,19 @@ impl AppState {
                             market.community_name, e
                         );
                     }
+                }
+
+                if let Some(inter_market) = inter_market {
+                    self.publish_inter_community_orders(
+                        &inter_market,
+                        timeslot,
+                        now,
+                        bid_rate,
+                        offer_rate,
+                        &trader,
+                        inter_community_forecasts,
+                    )
+                    .await;
                 }
             }
 

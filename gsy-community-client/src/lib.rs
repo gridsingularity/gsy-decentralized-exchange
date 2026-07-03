@@ -12,4 +12,6 @@ pub mod external_forecasts;
 
 pub mod external_measurements;
 
+pub mod inter_community;
+
 pub mod types;
