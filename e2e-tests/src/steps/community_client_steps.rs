@@ -17,7 +17,9 @@ async fn read_fedecom_ontology_data(world: &mut MyWorld) {
 
 #[then(regex = r#"the ontology data are saved to GSY DEX offchain storage"#)]
 async fn fedecom_ontology_saved_to_storage(world: &mut MyWorld) {
-    let community_market_endpoint = "http://gsy-orderbook:8080/community-market?community_name=".to_owned() +
+    let orderbook_url = std::env::var("OFFCHAIN_STORAGE_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
+    let community_market_endpoint = orderbook_url + "/community-market?community_name=" +
         world.community_uuid.clone().unwrap().as_str() +
         "&time_slot=" + (world.target_delivery_time as u32).to_string().as_str();
     let stored_topology_res = world.community_client_api.get_existing_market_topology(

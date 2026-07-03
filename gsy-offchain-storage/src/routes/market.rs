@@ -9,6 +9,12 @@ pub struct MarketParameters {
 }
 
 #[derive(Deserialize)]
+pub struct MarketWindowParameters {
+    start_time: u32,
+    end_time: u32,
+}
+
+#[derive(Deserialize)]
 pub struct MarketFromCommunityParameters {
     community_name: String,
     start_time: Option<u32>,
@@ -47,6 +53,23 @@ pub async fn get_market_from_community(
             params.start_time,
             params.end_time,
         )
+        .await
+    {
+        Ok(markets) => HttpResponse::Ok().json(markets),
+        Err(e) => {
+            tracing::error!("Failed to execute query: {:?}", e);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
+pub async fn get_markets_in_window(
+    db: DbRef,
+    params: Query<MarketWindowParameters>,
+) -> impl Responder {
+    let market_service = db.get_ref().markets();
+    match market_service
+        .get_markets_in_time_range(params.start_time, params.end_time)
         .await
     {
         Ok(markets) => HttpResponse::Ok().json(markets),

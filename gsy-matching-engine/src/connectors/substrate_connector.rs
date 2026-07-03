@@ -10,8 +10,10 @@ use gsy_offchain_primitives::types::{
 use gsy_offchain_primitives::utils::{
 	string_to_account_id, string_to_h256, NODE_FLOAT_SCALING_FACTOR,
 };
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::{thread, time};
+use subxt::config::DefaultExtrinsicParamsBuilder;
 use subxt::{utils::AccountId32, OnlineClient, SubstrateConfig};
 use subxt::utils::H256;
 use subxt_signer::sr25519::dev;
@@ -34,7 +36,7 @@ pub async fn substrate_subscribe(orderbook_url: String, node_url: String) -> Res
 	while let Some(Ok(block)) = gsy_blocks_events.next().await {
 		info!("Block {:?} finalized: {:?}", block.number(), block.hash());
 
-		let matches = Arc::new(Mutex::new(Vec::new()));
+		let matches: Arc<Mutex<Vec<Vec<BidOfferMatch>>>> = Arc::new(Mutex::new(Vec::new()));
 
 		if (block.number() as u64) % MATCH_PER_NR_BLOCKS == 0 {
 			info!("Starting matching cycle");
@@ -59,14 +61,46 @@ pub async fn substrate_subscribe(orderbook_url: String, node_url: String) -> Res
 					info!("Open Bid - {:?}", open_bid);
 					info!("Open Offer - {:?}", open_offer);
 
-					let mut matching_data = MatchingData {
-						bids: open_bid,
-						offers: open_offer,
-						market_id: H256::random(),
-					};
-					let bid_offer_matches = matching_data.pay_as_bid();
-					matches_clone_one.lock().unwrap().extend(bid_offer_matches);
-					info!("Matches - {:?}", matches_clone_one.lock().unwrap());
+					let mut bids_by_market: HashMap<H256, Vec<Bid>> = HashMap::new();
+					for bid in open_bid {
+						bids_by_market
+							.entry(bid.bid_component.market_id)
+							.or_default()
+							.push(bid);
+					}
+
+					let mut offers_by_market: HashMap<H256, Vec<Offer>> = HashMap::new();
+					for offer in open_offer {
+						offers_by_market
+							.entry(offer.offer_component.market_id)
+							.or_default()
+							.push(offer);
+					}
+
+					for (market_id, bids) in bids_by_market {
+						let offers = match offers_by_market.remove(&market_id) {
+							Some(offers) => offers,
+							None => continue,
+						};
+
+						info!(
+							"Matching market {:?} with {} bid(s) and {} offer(s)",
+							market_id,
+							bids.len(),
+							offers.len()
+						);
+
+						let mut matching_data = MatchingData { bids, offers, market_id };
+						let bid_offer_matches = matching_data.pay_as_bid();
+						if !bid_offer_matches.is_empty() {
+							info!(
+								"Market {:?} produced {} match(es)",
+								market_id,
+								bid_offer_matches.len()
+							);
+							matches_clone_one.lock().unwrap().push(bid_offer_matches);
+						}
+					}
 				} else {
 					info!("No open orders to match");
 				}
@@ -76,8 +110,9 @@ pub async fn substrate_subscribe(orderbook_url: String, node_url: String) -> Res
 				error!("Error while fetching the orderbook - {:?}", error);
 			}
 
-			if matches_clone_two.lock().unwrap().len() > 0 {
-				settle_matched_orders(node_url_clone, matches_clone_two).await;
+			let market_matches = std::mem::take(&mut *matches_clone_two.lock().unwrap());
+			if !market_matches.is_empty() {
+				settle_matched_orders(node_url_clone, market_matches).await;
 			}
 		}
 	}
@@ -151,23 +186,23 @@ fn convert_db_order_component_to_canonical(component: DbOrderComponent) -> Order
 		market_id: string_to_h256(component.market_id),
 		time_slot: component.time_slot,
 		creation_time: component.creation_time,
-		energy: (component.energy * NODE_FLOAT_SCALING_FACTOR) as u64,
-		energy_rate: (component.energy_rate * NODE_FLOAT_SCALING_FACTOR) as u64,
+		energy: (component.energy * NODE_FLOAT_SCALING_FACTOR).round() as u64,
+		energy_rate: (component.energy_rate * NODE_FLOAT_SCALING_FACTOR).round() as u64,
 	}
 }
 
 async fn send_settle_trades_extrinsic(
-	url: String,
+	api: &OnlineClient<SubstrateConfig>,
+	signer: &subxt_signer::sr25519::Keypair,
+	nonce: u64,
 	matches: Vec<NodeBidOfferMatch<AccountId32, H256>>,
 ) -> Result<(), Error> {
-	let api = OnlineClient::<SubstrateConfig>::from_insecure_url(url).await?;
-
 	let trade_settlement_tx = gsy_node::tx().trades_settlement().settle_trades(matches);
 
-	let signer = dev::alice();
+	let params = DefaultExtrinsicParamsBuilder::<SubstrateConfig>::new().nonce(nonce).build();
 	let order_submit_and_watch = api
 		.tx()
-		.sign_and_submit_then_watch_default(&trade_settlement_tx, &signer)
+		.sign_and_submit_then_watch(&trade_settlement_tx, signer, params)
 		.await?
 		.wait_for_finalized_success()
 		.await?;
@@ -186,26 +221,52 @@ async fn send_settle_trades_extrinsic(
 
 async fn settle_matched_orders(
 	node_url: Arc<Mutex<String>>,
-	matches: Arc<Mutex<Vec<BidOfferMatch>>>,
+	market_matches: Vec<Vec<BidOfferMatch>>,
 ) {
-	tokio::task::spawn(async move {
-		info!("Settling following matches - {:?}", matches.lock().unwrap());
+	let node_url = node_url.lock().unwrap().to_string();
 
-		let node_url = node_url.lock().unwrap().to_string();
-		let matches: Vec<BidOfferMatch> = matches.lock().unwrap().clone();
+	let api = match OnlineClient::<SubstrateConfig>::from_insecure_url(node_url).await {
+		Ok(api) => api,
+		Err(e) => {
+			error!("Failed to connect to the node for settlement: {:?}", e);
+			return;
+		},
+	};
 
-		let transcode_bid_offer_matches: Vec<NodeBidOfferMatch<AccountId32, H256>> =
-			matches.iter().map(|bid_offer_match| -> NodeBidOfferMatch<AccountId32, H256> {
-				bid_offer_match.clone().into()
-			}).collect();
+	let signer = dev::alice();
+	let operator_account = AccountId32(signer.public_key().0);
 
-		match send_settle_trades_extrinsic(node_url, transcode_bid_offer_matches).await {
+	let mut nonce = match api.tx().account_nonce(&operator_account).await {
+		Ok(nonce) => nonce,
+		Err(e) => {
+			error!("Failed to fetch the operator account nonce: {:?}", e);
+			return;
+		},
+	};
+
+	for matches in market_matches {
+		if matches.is_empty() {
+			continue;
+		}
+		let market_id = matches[0].market_id;
+		info!("Settling {} match(es) for market {:?}", matches.len(), market_id);
+
+		let transcode_bid_offer_matches: Vec<NodeBidOfferMatch<AccountId32, H256>> = matches
+			.into_iter()
+			.map(|bid_offer_match| -> NodeBidOfferMatch<AccountId32, H256> {
+				bid_offer_match.into()
+			})
+			.collect();
+
+		match send_settle_trades_extrinsic(&api, &signer, nonce, transcode_bid_offer_matches).await
+		{
 			Ok(()) => {
-				info!("Settling trades successful");
+				info!("Settling trades successful for market {:?}", market_id);
 			},
 			Err(e) => {
-				error!("Settling trades failed with error: {:?}", e);
+				error!("Settling trades failed for market {:?} with error: {:?}", market_id, e);
 			},
 		}
-	});
+		nonce += 1;
+	}
 }

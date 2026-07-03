@@ -60,7 +60,7 @@ pub mod pallet {
 
 	#[pallet::config]
 	pub trait Config:
-		frame_system::Config
+		frame_system::Config<Hash = gsy_primitives::v0::Hash>
 		+ orderbook_registry::Config
 		+ orderbook_worker::Config
 		+ gsy_collateral::Config
@@ -137,10 +137,13 @@ pub mod pallet {
 				for valid_match in valid_matches.clone() {
 					// Check residual orders and add them to storage.
 					if let Some(residual_bid) = valid_match.residual_bid {
-						// Add residual bid in the orderbook registry.
+						// Add residual bid in the orderbook registry. The registry is keyed by the
+						// hash of the bare order (see `orderbook_worker::insert_orders`), which is
+						// also what `clear_order` uses to look the order up when it is later
+						// matched, so the residual must be registered the same way.
 						<orderbook_registry::Pallet<T>>::insert_orders(
 							RawOrigin::Signed(residual_bid.buyer.clone()).into(),
-							vec![T::Hashing::hash_of(&Order::Bid(residual_bid.clone()))],
+							vec![T::Hashing::hash_of(&residual_bid)],
 						)?;
 						// Add residual in the orderbook worker.
 						<orderbook_worker::Pallet<T>>::add_order(
@@ -149,10 +152,11 @@ pub mod pallet {
 						)?;
 					}
 					if let Some(residual_offer) = valid_match.residual_offer {
-						// Add residual in the orderbook registry.
+						// Add residual in the orderbook registry, keyed by the bare-order hash to
+						// match how `orderbook_worker::insert_orders` and `clear_order` hash orders.
 						<orderbook_registry::Pallet<T>>::insert_orders(
 							RawOrigin::Signed(residual_offer.seller.clone()).into(),
-							vec![T::Hashing::hash_of(&Order::Offer(residual_offer.clone()))],
+							vec![T::Hashing::hash_of(&residual_offer)],
 						)?;
 						// Add residual in the orderbook worker.
 						<orderbook_worker::Pallet<T>>::add_order(
@@ -237,6 +241,10 @@ pub mod pallet {
 			) || !Self::validate_energy_rate(
 				bid_offer_match.bid.bid_component.energy_rate,
 				bid_offer_match.offer.offer_component.energy_rate,
+			) || !Self::validate_market_ids(
+				bid_offer_match.market_id,
+				bid_offer_match.bid.bid_component.market_id,
+				bid_offer_match.offer.offer_component.market_id,
 			) || !Self::validate_time_slots(
 				bid_offer_match
 					.bid
@@ -308,6 +316,14 @@ pub mod pallet {
 
 		fn validate_energy_rate(bid_energy_rate: u64, offer_energy_rate: u64) -> bool {
 			bid_energy_rate >= offer_energy_rate
+		}
+
+		fn validate_market_ids(
+			match_market_id: gsy_primitives::v0::Hash,
+			bid_market_id: gsy_primitives::v0::Hash,
+			offer_market_id: gsy_primitives::v0::Hash,
+		) -> bool {
+			bid_market_id == offer_market_id && bid_market_id == match_market_id
 		}
 
 		fn validate_residual_bid(

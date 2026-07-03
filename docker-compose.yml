@@ -49,10 +49,13 @@ services:
     depends_on:
       gsy-node:
         condition: service_started
+      gsy-offchain-storage:
+        condition: service_started
     environment:
       - RUST_LOG=info,gsy_market_orchestrator=debug
       - GSY_NODE_URL=ws://gsy-node:9944
       - ORCHESTRATOR_SIGNER_SURI=//Alice
+      - OFFCHAIN_STORAGE_URL=http://gsy-offchain-storage:8080
 
   gsy-execution-engine:
     container_name: gsy-execution-engine
