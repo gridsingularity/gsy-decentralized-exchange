@@ -77,6 +77,9 @@ substrate-wasm-builder = { optional = true, workspace = true, default-features =
 
 [features]
 default = ["std"]
+# Adds the deterministic 4-validator "four-node-poa" genesis preset.
+# Off by default so normal builds (e.g. e2e) keep the original genesis/code blob.
+four-node-poa = []
 std = [
 	"codec/std",
 	"frame-benchmarking?/std",
