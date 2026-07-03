@@ -32,7 +32,7 @@ pub struct MyWorld {
     pub market_controller_address: Address,
     pub order_registry_address: Address,
     pub trade_settlement_address: Address,
-    pub gsy_vault_address: Address,
+    pub actor_registry_address: Address,
     pub last_market_id: Option<[u8; 16]>,
     pub target_delivery_time: u64,
     pub buyer_id: String,
@@ -77,7 +77,7 @@ impl MyWorld {
         let market_controller_address = Self::read_address_env("MARKET_CONTROLLER_ADDRESS")?;
         let order_registry_address = Self::read_address_env("ORDER_REGISTRY_ADDRESS")?;
         let trade_settlement_address = Self::read_address_env("TRADE_SETTLEMENT_ADDRESS")?;
-        let gsy_vault_address = Self::read_address_env("GSY_VAULT_ADDRESS")?;
+        let actor_registry_address = Self::read_address_env("ACTOR_REGISTRY_ADDRESS")?;
 
         Ok(Self {
             provider,
@@ -90,7 +90,7 @@ impl MyWorld {
             market_controller_address,
             order_registry_address,
             trade_settlement_address,
-            gsy_vault_address,
+            actor_registry_address,
             last_market_id: None,
             target_delivery_time: 0,
             buyer_id: "areaalice".to_string(),

@@ -17,44 +17,6 @@ x-gsy-ewds-env: &gsy-ewds-env
 
 services:
 
-  anvil:
-    container_name: anvil
-    image: ghcr.io/foundry-rs/foundry:latest
-    entrypoint: ["anvil"]
-    command: ["--host", "0.0.0.0", "--port", "8545", "--chain-id", "${ANVIL_CHAIN_ID:-31337}"]
-    ports:
-      - "8545:8545"
-    healthcheck:
-      test: ["CMD", "sh", "-c", "cast block-number --rpc-url http://localhost:8545 > /dev/null 2>&1"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-      start_period: 5s
-
-  gsy-contracts-bootstrap:
-    container_name: gsy-contracts-bootstrap
-    build:
-      context: ./gsy-contracts
-      dockerfile: Dockerfile
-    network_mode: "service:anvil"
-    depends_on:
-      anvil:
-        condition: service_healthy
-    command: >
-      sh -lc "npx hardhat run scripts/deploy.ts --network anvil"
-    environment:
-      - ANVIL_RPC_URL=http://127.0.0.1:8545
-      - ANVIL_CHAIN_ID=${ANVIL_CHAIN_ID:-31337}
-      - CONTRACTS_ENV_PATH=/contracts/addresses.env
-      - ORCHESTRATOR_SIGNER_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
-      - MATCHING_ENGINE_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
-      - EXECUTION_ENGINE_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
-      - ACTOR_REGISTRAR_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
-    volumes:
-      - ./gsy-contracts:/app
-      - /app/node_modules
-      - contracts-data:/contracts
-
   gsy-offchain-storage:
     container_name: gsy-offchain-storage
     build:
@@ -63,10 +25,6 @@ services:
     depends_on:
       mongodb:
         condition: service_started
-      anvil:
-        condition: service_healthy
-      gsy-contracts-bootstrap:
-        condition: service_completed_successfully
     ports:
       - "8080:8080"
     environment:
@@ -80,10 +38,10 @@ services:
       DATABASE_USERNAME: gsy
       DATABASE_PASSWORD: gsy
       SCHEDULER_INTERVAL: "900"
-      EVM_NODE_URL: "ws://anvil:8545"
-      CONTRACT_ORDER_REGISTRY: "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"
-      CONTRACT_TRADE_SETTLEMENT: "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9"
-      CONTRACT_MARKET_CONTROLLER: "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"
+      EVM_NODE_URL: ${EVM_NODE_URL:-ws://anvil:8545}
+      CONTRACT_ORDER_REGISTRY: ${ORDER_REGISTRY_ADDRESS:-0x5FC8d32690cc91D4c39d9d3abcBD16989F875707}
+      CONTRACT_TRADE_SETTLEMENT: ${TRADE_SETTLEMENT_ADDRESS:-0xa513E6E4b8f2a923D98304ec87F64353C4D5C853}
+      CONTRACT_MARKET_CONTROLLER: ${MARKET_CONTROLLER_ADDRESS:-0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9}
       EWDS_ENABLE_HANDLER: "${EWDS_ENABLE_HANDLER:-false}"
       EWDS_REQUEST_CLIENT_ID: ${EWDS_OFFCHAIN_STORAGE_CLIENT_ID:-gsyoffchainstorage}
       EWDS_HANDLER_POLL_INTERVAL_MS: ${EWDS_HANDLER_POLL_INTERVAL_MS:-500}
@@ -103,17 +61,13 @@ services:
     depends_on:
       gsy-offchain-storage:
         condition: service_healthy
-      anvil:
-        condition: service_healthy
-      gsy-contracts-bootstrap:
-        condition: service_completed_successfully
     entrypoint: ["/usr/local/bin/gsy-matching-engine"]
-    command: ["web3", "http://gsy-offchain-storage", "8080", "ws://anvil", "8545"]
+    command: ["web3", "http://gsy-offchain-storage", "8080", "${EVM_NODE_HOST:-ws://anvil}", "${EVM_NODE_PORT:-8545}"]
     environment:
       <<: *gsy-ewds-env
       OFFCHAIN_STORAGE_TRANSPORT: ${OFFCHAIN_STORAGE_TRANSPORT:-http}
       OFFCHAIN_STORAGE_URL: "http://gsy-offchain-storage:8080"
-      TRADE_SETTLEMENT_ADDRESS: "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9"
+      TRADE_SETTLEMENT_ADDRESS: ${TRADE_SETTLEMENT_ADDRESS:-0xa513E6E4b8f2a923D98304ec87F64353C4D5C853}
       MATCHING_ENGINE_PRIVATE_KEY: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
       EWDS_MATCHING_ENGINE_CLIENT_ID: ${EWDS_MATCHING_ENGINE_CLIENT_ID:-gsymatchingengine}
 
@@ -125,16 +79,12 @@ services:
     depends_on:
       gsy-offchain-storage:
         condition: service_healthy
-      anvil:
-        condition: service_healthy
-      gsy-contracts-bootstrap:
-        condition: service_completed_successfully
     environment:
       <<: *gsy-ewds-env
       OFFCHAIN_STORAGE_TRANSPORT: ${OFFCHAIN_STORAGE_TRANSPORT:-http}
       OFFCHAIN_STORAGE_URL: "http://gsy-offchain-storage:8080"
-      EVM_NODE_URL: "ws://anvil:8545"
-      ORDER_REGISTRY_ADDRESS: "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"
+      EVM_NODE_URL: ${EVM_NODE_URL:-ws://anvil:8545}
+      ORDER_REGISTRY_ADDRESS: ${ORDER_REGISTRY_ADDRESS:-0x5FC8d32690cc91D4c39d9d3abcBD16989F875707}
       COMMUNITY_CLIENT_PRIVATE_KEY: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
 
   gsy-market-orchestrator:
@@ -142,15 +92,10 @@ services:
     build:
       context: .
       dockerfile: ./gsy-market-orchestrator/Dockerfile
-    depends_on:
-      anvil:
-        condition: service_healthy
-      gsy-contracts-bootstrap:
-        condition: service_completed_successfully
     environment:
       - RUST_LOG=info,gsy_market_orchestrator=debug
-      - EVM_NODE_URL=ws://anvil:8545
-      - MARKET_CONTROLLER_ADDRESS=0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
+      - EVM_NODE_URL=${EVM_NODE_URL:-ws://anvil:8545}
+      - MARKET_CONTROLLER_ADDRESS=${MARKET_CONTROLLER_ADDRESS:-0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9}
       - ORCHESTRATOR_SIGNER_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
       - SPOT_MARKET_OPEN_OFFSET_MIN=-30
       - SPOT_MARKET_CLOSE_OFFSET_MIN=30
@@ -165,18 +110,14 @@ services:
     depends_on:
       gsy-offchain-storage:
         condition: service_healthy
-      anvil:
-        condition: service_healthy
-      gsy-contracts-bootstrap:
-        condition: service_completed_successfully
     entrypoint: ["/usr/local/bin/gsy-execution-engine"]
-    command: ["web3", "http://gsy-offchain-storage", "8080", "ws://anvil", "8545", "5", "900", "0.10"]
+    command: ["web3", "http://gsy-offchain-storage", "8080", "${EVM_NODE_HOST:-ws://anvil}", "${EVM_NODE_PORT:-8545}", "5", "900", "0.10"]
     environment:
       <<: *gsy-ewds-env
       OFFCHAIN_STORAGE_TRANSPORT: ${OFFCHAIN_STORAGE_TRANSPORT:-http}
       OFFCHAIN_STORAGE_URL: "http://gsy-offchain-storage:8080"
       EXECUTION_ENGINE_OFFSET_MIN: "-15"
-      TRADE_SETTLEMENT_ADDRESS: "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9"
+      TRADE_SETTLEMENT_ADDRESS: ${TRADE_SETTLEMENT_ADDRESS:-0xa513E6E4b8f2a923D98304ec87F64353C4D5C853}
       EXECUTION_ENGINE_PRIVATE_KEY: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
       EWDS_EXECUTION_ENGINE_CLIENT_ID: ${EWDS_EXECUTION_ENGINE_CLIENT_ID:-gsyexecutionengine}
 
@@ -203,18 +144,14 @@ services:
         condition: service_started
       gsy-market-orchestrator:
         condition: service_started
-      anvil:
-        condition: service_healthy
-      gsy-contracts-bootstrap:
-        condition: service_completed_successfully
     environment:
       - RUST_BACKTRACE=1
-      - EVM_NODE_URL=ws://anvil:8545
+      - EVM_NODE_URL=${EVM_NODE_URL:-ws://anvil:8545}
       - OFFCHAIN_STORAGE_URL=${EWDS_OFFCHAIN_STORAGE_URL:-http://gsy-offchain-storage:8080}
-      - MARKET_CONTROLLER_ADDRESS=0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
-      - ORDER_REGISTRY_ADDRESS=0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0
-      - TRADE_SETTLEMENT_ADDRESS=0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9
-      - GSY_VAULT_ADDRESS=0x5FbDB2315678afecb367f032d93F642f64180aa3
+      - MARKET_CONTROLLER_ADDRESS=${MARKET_CONTROLLER_ADDRESS:-0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9}
+      - ORDER_REGISTRY_ADDRESS=${ORDER_REGISTRY_ADDRESS:-0x5FC8d32690cc91D4c39d9d3abcBD16989F875707}
+      - TRADE_SETTLEMENT_ADDRESS=${TRADE_SETTLEMENT_ADDRESS:-0xa513E6E4b8f2a923D98304ec87F64353C4D5C853}
+      - ACTOR_REGISTRY_ADDRESS=${ACTOR_REGISTRY_ADDRESS:-0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512}
       - ALICE_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
       - BOB_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
       - CHARLIE_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
@@ -305,6 +242,3 @@ services:
     working_dir: /var/www/gsy-community-client
     environment:
       - RUST_LOG=info
-
-volumes:
-  contracts-data:

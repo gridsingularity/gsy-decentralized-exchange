@@ -27,7 +27,15 @@ abigen!(
 );
 
 type EvmOrderDataTuple = ([u8; 16], [u8; 16], [u8; 16], u64, u64, u64, u64);
-type EvmMatchTuple = ([u8; 16], EvmOrderDataTuple, EvmOrderDataTuple, U256, U256);
+type EvmMatchTuple = (
+    [u8; 16],
+    EvmOrderDataTuple,
+    EvmOrderDataTuple,
+    [u8; 16],
+    [u8; 16],
+    U256,
+    U256,
+);
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -717,9 +725,29 @@ fn to_evm_order_data(order: &DbOrderSchema, expected_type: OrderEnum) -> Result<
     ))
 }
 
-fn derive_trade_id(bid_id: &str, ask_id: &str, selected_energy: u64, energy_rate: u64) -> [u8; 16] {
-    let hash =
-        keccak256(format!("{}:{}:{}:{}", bid_id, ask_id, selected_energy, energy_rate).as_bytes());
+fn optional_order_id_to_bytes16(order: Option<&Order>) -> [u8; 16] {
+    order
+        .map(|order| {
+            order.order_id.as_bytes()[..16]
+                .try_into()
+                .expect("order id prefix is 16 bytes")
+        })
+        .unwrap_or([0u8; 16])
+}
+
+fn derive_trade_id(
+    bid_id: &str,
+    offer_id: &str,
+    selected_energy: u64,
+    energy_rate: u64,
+) -> [u8; 16] {
+    let hash = keccak256(
+        format!(
+            "{}:{}:{}:{}",
+            bid_id, offer_id, selected_energy, energy_rate
+        )
+        .as_bytes(),
+    );
     hash[..16].try_into().expect("hash prefix is 16 bytes")
 }
 
@@ -731,19 +759,21 @@ fn to_evm_matches(
         .into_iter()
         .map(|item| {
             let bid_id = h256_to_bytes16_hex(item.bid.order_id).to_ascii_lowercase();
-            let ask_id = h256_to_bytes16_hex(item.offer.order_id).to_ascii_lowercase();
+            let offer_id = h256_to_bytes16_hex(item.offer.order_id).to_ascii_lowercase();
 
             let bid_order = order_lookup
                 .get(&bid_id)
                 .ok_or_else(|| anyhow!("Could not find bid order '{}' in lookup map", bid_id))?;
-            let ask_order = order_lookup
-                .get(&ask_id)
-                .ok_or_else(|| anyhow!("Could not find ask order '{}' in lookup map", ask_id))?;
+            let offer_order = order_lookup.get(&offer_id).ok_or_else(|| {
+                anyhow!("Could not find offer order '{}' in lookup map", offer_id)
+            })?;
 
             Ok((
-                derive_trade_id(&bid_id, &ask_id, item.selected_energy, item.energy_rate),
+                derive_trade_id(&bid_id, &offer_id, item.selected_energy, item.energy_rate),
                 to_evm_order_data(bid_order, OrderEnum::Bid)?,
-                to_evm_order_data(ask_order, OrderEnum::Offer)?,
+                to_evm_order_data(offer_order, OrderEnum::Offer)?,
+                optional_order_id_to_bytes16(item.residual_bid.as_ref()),
+                optional_order_id_to_bytes16(item.residual_offer.as_ref()),
                 U256::from(item.selected_energy),
                 U256::from(item.energy_rate),
             ))

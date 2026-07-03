@@ -34,6 +34,8 @@ fn make_trade(trade_uuid: &str, bid: DbOrderSchema, offer: DbOrderSchema) -> Tra
         creation_time: 1_677_453_191,
         offer,
         bid,
+        residual_offer_id: None,
+        residual_bid_id: None,
         residual_offer: None,
         residual_bid: None,
         parameters: TradeParameters {

@@ -18,7 +18,9 @@ abigen!(
     ]"#
 );
 
-#[when(expr = "the community topology and forecasts of {float} energy are submitted by {string}, {string}, and {string}")]
+#[when(
+    expr = "the community topology and forecasts of {float} energy are submitted by {string}, {string}, and {string}"
+)]
 async fn submit_topology_forecasts_three_users(
     world: &mut MyWorld,
     energy: f64,

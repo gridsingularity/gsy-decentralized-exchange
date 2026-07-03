@@ -6,7 +6,7 @@ The Grid Singularity Decentralized Energy Exchange (GSY DEX) provides a modular 
 platform for community energy markets.  
 The system currently runs on an EVM-based architecture with:
 
-- Smart contracts for market state, order lifecycle, settlement, and collateral.
+- Smart contracts for actor authorization, market state, order lifecycle, and settlement.
 - Off-chain services for indexing, matching, execution, orchestration, and APIs.
 - End-to-end workflows validated through integration and BDD tests.
 
@@ -26,10 +26,10 @@ The domain boundaries are preserved, but implementation responsibilities are now
 ```mermaid
 flowchart LR
     CC["Community Client"] --> OR["OrderRegistry"]
+    AR["ActorRegistry"] --> OR
     MO["Market Orchestrator"] --> MC["MarketController"]
     ME["Matching Engine"] --> TS["TradeSettlement"]
     EE["Execution Engine"] --> TS
-    TS --> GV["GsyVault"]
     OR --> EL["Ethers Listener"]
     TS --> EL
     MC --> EL
