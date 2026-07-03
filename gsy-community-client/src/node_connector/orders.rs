@@ -114,7 +114,7 @@ abigen!(
 
 fn build_order_param(
     forecast: &ForecastSchema,
-    area_uuid: &String,
+    facility_id: &String,
     market: &MarketSchema,
     now: u64,
     index: usize,
@@ -124,7 +124,7 @@ fn build_order_param(
     let order_id = parse_or_hash_bytes16(
         format!(
             "{}:{}:{}:{}:{}",
-            market.market_id, area_uuid, market.delivery_start_time, index, is_bid
+            market.market_id, facility_id, market.delivery_start_time, index, is_bid
         )
         .as_str(),
     );
@@ -132,7 +132,7 @@ fn build_order_param(
         .expect("invalid delivery_start_time");
     (
         order_id,
-        parse_or_hash_bytes16(area_uuid.as_str()),
+        parse_or_hash_bytes16(facility_id.as_str()),
         parse_or_hash_bytes16(market.market_id.as_str()),
         delivery_start,
         now,
@@ -155,11 +155,11 @@ pub fn create_input_orders(
     for (index, forecast) in forecasts.into_iter().enumerate() {
         if forecast.energy_kwh > 0. {
             input_orders.push(build_order_param(
-                &forecast, &forecast.area_uuid, &market, now, index, true,
+                &forecast, &forecast.facility_id, &market, now, index, true,
             ));
         } else if forecast.energy_kwh < 0. {
             input_orders.push(build_order_param(
-                &forecast, &forecast.area_uuid, &market, now, index, false,
+                &forecast, &forecast.facility_id, &market, now, index, false,
             ));
         }
     }

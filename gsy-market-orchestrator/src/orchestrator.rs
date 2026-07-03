@@ -108,8 +108,7 @@ where
 
 pub fn generate_market_id(market_type: MarketType, delivery_timestamp: u64) -> [u8; 16] {
     let mut buffer = Vec::new();
-    // Will be changed in DD-398
-    // buffer.extend_from_slice(market_type.as_str().as_bytes());
+    buffer.extend_from_slice(market_type.as_str().as_bytes());
     buffer.extend_from_slice(&delivery_timestamp.to_be_bytes());
     blake2b(16, &[], &buffer)
         .as_bytes()

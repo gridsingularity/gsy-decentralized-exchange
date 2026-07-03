@@ -39,7 +39,7 @@ pub fn compute_penalties(
     let mut measurement_map: HashMap<String, f64> = HashMap::new();
     for meas in measurements {
         measurement_map.insert(
-            meas.area_uuid.clone(),
+            meas.facility_id.clone(),
             meas.energy_kwh, // energy is f64; positive means consumption, negative means production
         );
     }

@@ -186,7 +186,7 @@ struct TimeRangePayload {
     end_time: Option<u64>,
     #[serde(alias = "areaUuid")]
     #[serde(default)]
-    area_uuid: Option<String>,
+    facility_id: Option<String>,
 }
 
 pub async fn start_ewds_request_handler(db: DatabaseWrapper, config: EwdsHandlerConfig) {
@@ -398,8 +398,8 @@ async fn handle_request(
             let data = fetch_measurements_from_timeseries(db, payload.start_time, payload.end_time)
                 .await?
                 .into_iter()
-                .filter(|measurement| match payload.area_uuid.as_ref() {
-                    Some(area_uuid) => measurement.area_uuid == *area_uuid,
+                .filter(|measurement| match payload.facility_id.as_ref() {
+                    Some(facility_id) => measurement.facility_id == *facility_id,
                     None => true,
                 })
                 .collect::<Vec<_>>();
@@ -461,7 +461,7 @@ async fn fetch_measurements_from_timeseries(
             let point = points_by_id.get(&value.measurement_point)?;
             let time_slot = parse_timeseries_timestamp(value.timestamp.as_str())?;
             Some(MeasurementSchema {
-                area_uuid: point.asset_name.clone(),
+                facility_id: point.asset_name.clone(),
                 community_uuid: point.datasource_name.clone().unwrap_or_default(),
                 time_slot,
                 creation_time: time_slot,

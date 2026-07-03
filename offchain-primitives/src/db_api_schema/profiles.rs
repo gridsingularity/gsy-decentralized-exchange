@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub struct MeasurementMetadataSchema {
-    pub area_uuid: String,
+    pub facility_id: String,
     pub community_uuid: String,
     pub asset_type: String,
     pub time_slot: u64,
@@ -20,7 +20,7 @@ pub struct MeasurementMetadataSchema {
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub struct MeasurementSchema {
-    pub area_uuid: String,
+    pub facility_id: String,
     pub community_uuid: String,
     pub time_slot: u64,
     pub creation_time: u64,
@@ -92,7 +92,7 @@ pub struct TransformerMeasurementSchema {
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub struct ForecastSchema {
-    pub area_uuid: String,
+    pub facility_id: String,
     pub community_uuid: String,
     pub time_slot: u64,
     pub creation_time: u64,

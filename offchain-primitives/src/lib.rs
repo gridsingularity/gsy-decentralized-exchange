@@ -17,6 +17,16 @@ pub enum MarketType {
     #[serde(rename = "settlement")]
     Settlement,
 }
+impl MarketType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MarketType::Spot => "spot",
+            MarketType::Flex => "flex",
+            MarketType::Settlement => "settlement",
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, Eq)]
 pub enum MatchingAlgorithm {
     #[serde(rename = "pay_as_bid")]
