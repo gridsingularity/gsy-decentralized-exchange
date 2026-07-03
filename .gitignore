@@ -8,6 +8,9 @@
 
 # The cache for docker container dependency
 .cargo
+# ...but keep the repo-root workspace cargo config (shared target-dir) tracked
+!/.cargo/
+!/.cargo/config.toml
 
 # The cache for chain data in container
 .local

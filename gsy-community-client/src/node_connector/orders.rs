@@ -6,25 +6,53 @@ use anyhow::{Error, Result};
 use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketTopologySchema};
 use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
 use gsy_offchain_primitives::utils::{NODE_FLOAT_SCALING_FACTOR, string_to_h256};
+use subxt::utils::H256;
 use subxt::{OnlineClient, SubstrateConfig, utils::AccountId32};
 use subxt_signer::sr25519::Keypair;
 use tracing::info;
 
-const BID_RATE: f64 = 0.3;
-const OFFER_RATE: f64 = 0.07;
-
 #[subxt::subxt(runtime_metadata_path = "../offchain-primitives/metadata.scale")]
 pub mod gsy_node {}
+
+/// Linearly interpolate an order price (currency units per kWh) within the
+/// `[min_rate, max_rate]` range based on how far `now` has progressed through the
+/// market's `[open_time, close_time]` window.
+///
+/// When `increasing` is `true` (bids) the rate ramps from `min_rate` at market open
+/// up to `max_rate` at market close; when `false` (offers) it ramps the other way,
+/// from `max_rate` down to `min_rate`. Outside the window the rate is clamped to the
+/// respective endpoint.
+pub fn calculate_order_rate(
+    min_rate: f64,
+    max_rate: f64,
+    now: u64,
+    open_time: u64,
+    close_time: u64,
+    increasing: bool,
+) -> f64 {
+    let progress = if close_time <= open_time {
+        1.0
+    } else {
+        (now.saturating_sub(open_time) as f64 / (close_time - open_time) as f64).clamp(0.0, 1.0)
+    };
+    if increasing {
+        min_rate + progress * (max_rate - min_rate)
+    } else {
+        max_rate - progress * (max_rate - min_rate)
+    }
+}
 
 pub async fn publish_orders(
     url: String,
     forecasts: Vec<ForecastSchema>,
     market: MarketTopologySchema,
+    bid_rate: f64,
+    offer_rate: f64,
     signer: &Keypair,
 ) -> Result<(), Error> {
     let api = OnlineClient::<SubstrateConfig>::from_insecure_url(url).await?;
 
-    let input_orders = create_input_orders(forecasts, market, signer);
+    let input_orders = create_input_orders(forecasts, market, bid_rate, offer_rate, signer);
     let register_order_tx = gsy_node::tx()
         .orderbook_worker()
         .insert_orders(input_orders);
@@ -48,10 +76,41 @@ pub async fn publish_orders(
     Ok(())
 }
 
+/// Remove the given open orders from the chain by their on-chain order hashes.
+///
+/// Used to clear a trader's existing open orders for a market before publishing the
+/// replacement batch, so there is a single order per trader/area instead of orders
+/// stacking on top of each other. The hashes come from the off-chain order book (the
+/// `_id` of each stored order equals its on-chain hash).
+pub async fn remove_orders(
+    url: String,
+    order_hashes: Vec<H256>,
+    signer: &Keypair,
+) -> Result<(), Error> {
+    if order_hashes.is_empty() {
+        return Ok(());
+    }
+
+    let api = OnlineClient::<SubstrateConfig>::from_insecure_url(url).await?;
+
+    let remove_order_tx = gsy_node::tx()
+        .orderbook_worker()
+        .remove_orders(order_hashes);
+
+    api.tx()
+        .sign_and_submit_then_watch_default(&remove_order_tx, signer)
+        .await?
+        .wait_for_finalized_success()
+        .await?;
+
+    Ok(())
+}
+
 fn _create_bid_object(
     forecast: ForecastSchema,
     area_info: AreaTopologySchema,
     market: MarketTopologySchema,
+    energy_rate: f64,
     now: u64,
     signer: &Keypair,
 ) -> InputOrder<AccountId32> {
@@ -61,7 +120,7 @@ fn _create_bid_object(
             bid_component: OrderComponent {
                 area_uuid: string_to_h256(area_info.area_hash.clone()),
                 energy: (forecast.energy_kwh.abs() * NODE_FLOAT_SCALING_FACTOR) as u64,
-                energy_rate: (forecast.energy_kwh.abs() * BID_RATE * NODE_FLOAT_SCALING_FACTOR)
+                energy_rate: (forecast.energy_kwh.abs() * energy_rate * NODE_FLOAT_SCALING_FACTOR)
                     as u64,
                 market_id: string_to_h256(market.market_id.clone()),
                 creation_time: now,
@@ -75,6 +134,7 @@ fn _create_offer_object(
     forecast: ForecastSchema,
     area_info: AreaTopologySchema,
     market: MarketTopologySchema,
+    energy_rate: f64,
     now: u64,
     signer: &Keypair,
 ) -> InputOrder<AccountId32> {
@@ -84,7 +144,7 @@ fn _create_offer_object(
             offer_component: OrderComponent {
                 area_uuid: string_to_h256(area_info.area_hash.clone()),
                 energy: (forecast.energy_kwh.abs() * NODE_FLOAT_SCALING_FACTOR) as u64,
-                energy_rate: (forecast.energy_kwh.abs() * OFFER_RATE * NODE_FLOAT_SCALING_FACTOR)
+                energy_rate: (forecast.energy_kwh.abs() * energy_rate * NODE_FLOAT_SCALING_FACTOR)
                     as u64,
                 market_id: string_to_h256(market.market_id.clone()),
                 creation_time: now,
@@ -97,6 +157,8 @@ fn _create_offer_object(
 pub fn create_input_orders(
     forecasts: Vec<ForecastSchema>,
     market: MarketTopologySchema,
+    bid_rate: f64,
+    offer_rate: f64,
     signer: &Keypair,
 ) -> Vec<InputOrder<AccountId32>> {
     let now: u64 = get_current_timestamp_in_secs();
@@ -117,6 +179,7 @@ pub fn create_input_orders(
                 forecast,
                 area_info.unwrap().clone(),
                 market.clone(),
+                bid_rate,
                 now,
                 signer,
             ));
@@ -125,6 +188,7 @@ pub fn create_input_orders(
                 forecast,
                 area_info.unwrap().clone(),
                 market.clone(),
+                offer_rate,
                 now,
                 signer,
             ));

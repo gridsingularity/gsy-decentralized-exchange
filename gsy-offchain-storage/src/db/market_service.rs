@@ -91,6 +91,32 @@ impl MarketService {
     }
 
     #[tracing::instrument(
+        name = "Fetching all markets within a delivery time window",
+        skip(self)
+    )]
+    pub async fn get_markets_in_time_range(
+        &self,
+        start_time: u32,
+        end_time: u32,
+    ) -> Result<Vec<MarketTopologySchema>> {
+        let filter_params = doc! {"time_slot": {"$gte": start_time, "$lte": end_time}};
+
+        let mut cursor = self.0.find(filter_params).await.unwrap();
+        let mut result: Vec<MarketTopologySchema> = Vec::new();
+        while let Some(doc) = cursor.next().await {
+            match doc {
+                Ok(document) => {
+                    result.push(document);
+                }
+                _ => {
+                    break;
+                }
+            }
+        }
+        Ok(result)
+    }
+
+    #[tracing::instrument(
         name = "Saving market to database",
         skip(self, market),
         fields(

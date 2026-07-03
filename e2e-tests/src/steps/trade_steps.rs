@@ -6,7 +6,7 @@ use gsy_offchain_primitives::db_api_schema::profiles::MeasurementSchema;
 use std::time::Duration;
 use tracing::info;
 
-#[when(regex = r#""([^"]*)" submits a bid"#)]
+#[when(regex = r#"^"([^"]*)" submits a bid$"#)]
 async fn submit_bid(world: &mut MyWorld, user_name: String) {
 	let user = world.users.get(&user_name).unwrap().clone();
 
@@ -14,13 +14,13 @@ async fn submit_bid(world: &mut MyWorld, user_name: String) {
 		std::env::var("GSY_NODE_URL").unwrap_or_else(|_| "ws://127.0.0.1:9944".to_string());
 
 	publish_orders(node_url, vec![world.bid_forecast.clone().unwrap()],
-				   world.topology_schema.clone().unwrap(), &user)
+				   world.topology_schema.clone().unwrap(), 0.3, 0.07, &user)
 		.await
 		.expect("Failed to publish bid");
 	println!("Submitted bid for {}", user_name);
 }
 
-#[when(regex = r#""([^"]*)" submits an offer"#)]
+#[when(regex = r#"^"([^"]*)" submits an offer$"#)]
 async fn submit_offer(world: &mut MyWorld, user_name: String) {
 	let user = world.users.get(&user_name).unwrap().clone();
 
@@ -28,7 +28,7 @@ async fn submit_offer(world: &mut MyWorld, user_name: String) {
 		std::env::var("GSY_NODE_URL").unwrap_or_else(|_| "ws://127.0.0.1:9944".to_string());
 
 	publish_orders(node_url, vec![world.offer_forecast.clone().unwrap()],
-				   world.topology_schema.clone().unwrap(), &user)
+				   world.topology_schema.clone().unwrap(), 0.3, 0.07, &user)
 		.await
 		.expect("Failed to publish offer");
 	println!("Submitted offer for {}", user_name);
@@ -88,13 +88,13 @@ async fn verify_trade_on_chain(world: &mut MyWorld) {
 		if let Ok(Some(event)) = order_executed_event {
 			println!("OrderExecuted event found: {:?}", event.0);
 			let trade = event.0;
-			let alice_pubkey = world.users.get("alice").unwrap().public_key();
-			let bob_pubkey = world.users.get("bob").unwrap().public_key();
-			let alice_account_id: subxt::utils::AccountId32 = alice_pubkey.into();
-			let bob_account_id: subxt::utils::AccountId32 = bob_pubkey.into();
+			let buyer_pubkey = world.users.get("charlie").unwrap().public_key();
+			let seller_pubkey = world.users.get("bob").unwrap().public_key();
+			let buyer_account_id: subxt::utils::AccountId32 = buyer_pubkey.into();
+			let seller_account_id: subxt::utils::AccountId32 = seller_pubkey.into();
 
-			assert_eq!(trade.buyer, alice_account_id);
-			assert_eq!(trade.seller, bob_account_id);
+			assert_eq!(trade.buyer, buyer_account_id);
+			assert_eq!(trade.seller, seller_account_id);
 			assert_eq!(trade.parameters.selected_energy, 100000);
 			let expected_rate = 30000;
 			assert_eq!(trade.parameters.energy_rate, expected_rate);

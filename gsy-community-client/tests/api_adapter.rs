@@ -259,6 +259,103 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_asset_type_mapping_from_ontology_json() {
+        let external_assets: String = r#"
+        {
+        "head": {
+            "vars": ["location", "assetName", "assetType", "assetSubType"]
+        },
+        "results": {
+            "bindings": [
+                {
+                    "location": {
+                        "type": "uri",
+                        "value": "http://w3id.org/fedecom/characterization-main#LugaggiaInnovationCommunity"
+                    },
+                    "assetName": {
+                        "type": "literal",
+                        "value": "LIC02DBATT"
+                    },
+                    "assetType": {
+                        "type": "uri",
+                        "value": "http://w3id.org/fedecom/battery#Battery"
+                    }
+                },
+                {
+                    "location": {
+                        "type": "uri",
+                        "value": "http://w3id.org/fedecom/characterization-main#LugaggiaInnovationCommunity"
+                    },
+                    "assetName": {
+                        "type": "literal",
+                        "value": "LIC00SGIM"
+                    },
+                    "assetType": {
+                        "type": "uri",
+                        "value": "http://w3id.org/fedecom/energyasset#Meter"
+                    },
+                    "assetSubType": {
+                        "type": "uri",
+                        "value": "http://w3id.org/fedecom/energyasset#GridMeter"
+                    }
+                },
+                {
+                    "location": {
+                        "type": "uri",
+                        "value": "http://w3id.org/fedecom/characterization-main#LugaggiaInnovationCommunity"
+                    },
+                    "assetName": {
+                        "type": "literal",
+                        "value": "LIC02SM"
+                    },
+                    "assetType": {
+                        "type": "uri",
+                        "value": "http://w3id.org/fedecom/energyasset#Meter"
+                    },
+                    "assetSubType": {
+                        "type": "uri",
+                        "value": "http://w3id.org/fedecom/energyasset#SmartMeter"
+                    }
+                }
+            ]
+        }
+        }
+        "#.to_string();
+
+        let assets_result =
+            serde_json::from_str::<LECCommunityAssetsResults>(external_assets.as_str()).unwrap();
+
+        let manager = TopologyManager::new(&Client::new(), &AreaMarketInfoAdapter::new(None));
+        let mapped = manager.map_assets_to_topology(assets_result);
+
+        assert_eq!(mapped.len(), 3);
+
+        // LIC02DBATT has assetType Battery → must classify as BATTERY, not AREA.
+        let batt = mapped.iter().find(|a| a.area_name == "LIC02DBATT").unwrap();
+        assert_eq!(
+            batt.area_type,
+            gsy_offchain_primitives::db_api_schema::market::AssetType::BATTERY,
+            "LIC02DBATT should map to BATTERY"
+        );
+
+        // LIC00SGIM has assetType Meter + assetSubType GridMeter → must classify as GRID_METER.
+        let grid = mapped.iter().find(|a| a.area_name == "LIC00SGIM").unwrap();
+        assert_eq!(
+            grid.area_type,
+            gsy_offchain_primitives::db_api_schema::market::AssetType::GRID_METER,
+            "LIC00SGIM should map to GRID_METER"
+        );
+
+        // LIC02SM has assetType Meter + assetSubType SmartMeter → must classify as SMART_METER.
+        let smart = mapped.iter().find(|a| a.area_name == "LIC02SM").unwrap();
+        assert_eq!(
+            smart.area_type,
+            gsy_offchain_primitives::db_api_schema::market::AssetType::SMART_METER,
+            "LIC02SM should map to SMART_METER"
+        );
+    }
+
     #[tokio::test]
     async fn test_fetch_topology_returns_all_pilot_sites() {
         let manager = TopologyManager::new(&Client::new(), &AreaMarketInfoAdapter::new(None));

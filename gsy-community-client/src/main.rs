@@ -1,14 +1,21 @@
+use gsy_community_client::constants::CommunityClientConstants;
+use gsy_community_client::external_forecasts::manager::DemandForecastsManager;
 use gsy_community_client::external_measurements::manager::MeasurementsManager;
-use gsy_community_client::node_connector::orders::publish_orders;
-use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
-use gsy_community_client::time_utils::{get_current_timestamp_in_secs, get_last_and_next_timeslot};
+use gsy_community_client::node_connector::orders::{
+    calculate_order_rate, publish_orders, remove_orders,
+};
+use gsy_community_client::offchain_storage_connector::adapter::{
+    AreaMarketInfoAdapter, plan_residual_replacement,
+};
+use gsy_community_client::time_utils::{get_current_timestamp_in_secs, open_spot_market_timeslots};
 use gsy_community_client::topology::TopologyManager;
-use gsy_community_client::types::ExternalForecast;
 use gsy_offchain_primitives::constants::GlobalConstants;
+use gsy_offchain_primitives::db_api_schema::market::MarketTopologySchema;
 use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
 use reqwest::Client;
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::time::Duration;
+use subxt::utils::AccountId32;
 use subxt_signer::sr25519::dev;
 use tokio::time::sleep;
 use tracing::{error, info};
@@ -18,90 +25,152 @@ struct AppState {
     client: Client,
     api_adapter: AreaMarketInfoAdapter,
     measurements: MeasurementsManager,
+    demand_forecasts: DemandForecastsManager,
     gsy_node_url: String,
-    forecast_url: String,
 }
 
 impl AppState {
     fn new() -> Self {
         let api_adapter = AreaMarketInfoAdapter::new(None);
         AppState {
-            client: Client::new(),
+            client: Client::builder()
+                .timeout(Duration::from_secs(
+                    CommunityClientConstants.HTTP_REQUEST_TIMEOUT_SEC,
+                ))
+                .connect_timeout(Duration::from_secs(
+                    CommunityClientConstants.HTTP_CONNECT_TIMEOUT_SEC,
+                ))
+                .build()
+                .expect("Failed to build topology HTTP client"),
             api_adapter,
             measurements: MeasurementsManager::new(),
+            demand_forecasts: DemandForecastsManager::new(),
             gsy_node_url: "http://gsy-node:9944/".to_string(),
-            forecast_url: "http://localhost:8000/forecasts".to_string(),
         }
     }
 
-    // Function to fetch an array of forecast data
-    async fn fetch_forecasts(&self) -> Result<Vec<ExternalForecast>, reqwest::Error> {
-        let response = self.client.get(&self.forecast_url).send().await?;
-        response.json::<Vec<ExternalForecast>>().await
-    }
-
     async fn poll_and_forward(&self) {
+        // The client re-posts orders to every open market on this interval.
+        let interval_sec = CommunityClientConstants.ORDER_RESUBMISSION_INTERVAL_SEC.max(1);
+
+        // The account every order is signed with.
+        let trader = AccountId32::from(dev::alice().public_key()).to_string();
+
         loop {
-            let seconds_since_epoch = get_current_timestamp_in_secs();
+            let now = get_current_timestamp_in_secs();
 
-            let (_last_timeslot, next_timeslot) = get_last_and_next_timeslot();
+            let open_timeslots = open_spot_market_timeslots(now);
+            if open_timeslots.is_empty() {
+                info!("No spot markets are currently open for order submission.");
+                sleep(Duration::from_secs(interval_sec)).await;
+                continue;
+            }
 
-            let internal_topology = TopologyManager::new(&self.client, &self.api_adapter)
-                .get(next_timeslot)
+            let markets_per_timeslot = TopologyManager::new(&self.client, &self.api_adapter)
+                .get_for_timeslots(&open_timeslots)
                 .await;
 
-            self.measurements
-                .fetch_and_forward(internal_topology.clone(), seconds_since_epoch)
-                .await;
+            let mut measurement_topologies: Vec<MarketTopologySchema> = Vec::new();
+            let mut seen_communities: HashSet<String> = HashSet::new();
 
-            // TODO: Fetch forecast data from MySQL Fedecom DB
-            for market in internal_topology.clone() {
-                let area_uuid_to_hash: HashMap<String, String> = market
-                    .community_areas
-                    .iter()
-                    .map(|area| (area.area_uuid.clone(), area.area_hash.clone()))
-                    .collect();
-                match self.fetch_forecasts().await {
-                    Ok(forecasts) => {
-                        let valid_forecasts: Vec<ForecastSchema> = forecasts
-                            .into_iter()
-                            .map(|forecast| {
-                                self.api_adapter.convert_forecast_to_internal_schema(
-                                    &forecast,
-                                    area_uuid_to_hash[&forecast.area_uuid].clone(),
-                                )
-                            })
-                            .filter(|forecast| {
-                                self.api_adapter
-                                    .validate_forecast(forecast, seconds_since_epoch)
-                            })
-                            .collect();
-                        if !valid_forecasts.is_empty() {
-                            if let Err(e) = self
-                                .api_adapter
-                                .forward_forecast(valid_forecasts.clone())
-                                .await
-                            {
-                                info!("Failed to forward forecasts: {}", e);
-                            }
-                            publish_orders(
-                                self.gsy_node_url.clone(),
-                                valid_forecasts.clone(),
-                                market.clone(),
-                                &dev::alice(),
-                            )
-                            .await
-                            .unwrap();
-                        } else {
-                            info!("No valid forecasts to forward.");
-                        }
+            for (timeslot, markets) in markets_per_timeslot {
+                let (open_time, close_time) = GlobalConstants.spot_market_window(timeslot);
+                let bid_rate = calculate_order_rate(
+                    CommunityClientConstants.MIN_ORDER_RATE,
+                    CommunityClientConstants.MAX_ORDER_RATE,
+                    now,
+                    open_time,
+                    close_time,
+                    true,
+                );
+                let offer_rate = calculate_order_rate(
+                    CommunityClientConstants.MIN_ORDER_RATE,
+                    CommunityClientConstants.MAX_ORDER_RATE,
+                    now,
+                    open_time,
+                    close_time,
+                    false,
+                );
+
+                for market in markets {
+                    if seen_communities.insert(market.community_name.clone()) {
+                        measurement_topologies.push(market.clone());
                     }
-                    Err(e) => error!("Error fetching forecasts: {}", e),
+
+                    let valid_forecasts: Vec<ForecastSchema> = self
+                        .demand_forecasts
+                        .fetch_community_forecasts(&market, timeslot)
+                        .await
+                        .into_iter()
+                        .filter(|forecast| self.api_adapter.validate_forecast(forecast, now))
+                        .collect();
+
+                    if valid_forecasts.is_empty() {
+                        info!(
+                            "No valid demand forecasts to forward for community {} (delivery {}).",
+                            market.community_name, timeslot
+                        );
+                        continue;
+                    }
+
+                    if let Err(e) = self
+                        .api_adapter
+                        .forward_forecast(valid_forecasts.clone())
+                        .await
+                    {
+                        info!("Failed to forward forecasts: {}", e);
+                    }
+
+                    let timeslot_forecasts: Vec<ForecastSchema> = valid_forecasts
+                        .into_iter()
+                        .filter(|forecast| forecast.time_slot == timeslot)
+                        .collect();
+                    if timeslot_forecasts.is_empty() {
+                        continue;
+                    }
+
+                    let open_orders =
+                        self.api_adapter.get_orders_for_market(&market.market_id).await;
+                    let (hashes_to_delete, replacement_forecasts) =
+                        plan_residual_replacement(&open_orders, &trader, timeslot_forecasts);
+
+                    if let Err(e) =
+                        remove_orders(self.gsy_node_url.clone(), hashes_to_delete, &dev::alice())
+                            .await
+                    {
+                        error!(
+                            "Failed to remove previous orders for community {}: {}",
+                            market.community_name, e
+                        );
+                    }
+
+                    if replacement_forecasts.is_empty() {
+                        continue;
+                    }
+
+                    if let Err(e) = publish_orders(
+                        self.gsy_node_url.clone(),
+                        replacement_forecasts,
+                        market.clone(),
+                        bid_rate,
+                        offer_rate,
+                        &dev::alice(),
+                    )
+                    .await
+                    {
+                        error!(
+                            "Failed to publish orders for community {}: {}",
+                            market.community_name, e
+                        );
+                    }
                 }
             }
 
-            // Sleep for 15 minutes before polling again
-            sleep(Duration::from_secs(GlobalConstants.TIME_SLOT_SEC)).await;
+            self.measurements
+                .fetch_and_forward(measurement_topologies, now)
+                .await;
+
+            sleep(Duration::from_secs(interval_sec)).await;
         }
     }
 }

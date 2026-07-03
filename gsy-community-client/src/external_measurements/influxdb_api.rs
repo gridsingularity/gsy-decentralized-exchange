@@ -102,7 +102,15 @@ impl MeasurementInfluxDBConnection {
             query: query_str.clone(),
             org_id: CommunityClientConstants.FEDECOM_INFLUX_DB_ORG.clone(),
         };
-        let client = ReqwestClient::new();
+        let client = ReqwestClient::builder()
+            .timeout(std::time::Duration::from_secs(
+                CommunityClientConstants.HTTP_REQUEST_TIMEOUT_SEC,
+            ))
+            .connect_timeout(std::time::Duration::from_secs(
+                CommunityClientConstants.HTTP_CONNECT_TIMEOUT_SEC,
+            ))
+            .build()
+            .expect("Failed to build InfluxDB HTTP client");
         let response = client
             .post(self.url())
             .header("Accept", "application/json")

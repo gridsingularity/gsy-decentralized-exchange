@@ -66,7 +66,10 @@ mod tests {
             ],
         };
 
-        let input_orders = create_input_orders(forecasts, market.clone(), &dev::alice());
+        let bid_rate = 0.3;
+        let offer_rate = 0.07;
+        let input_orders =
+            create_input_orders(forecasts, market.clone(), bid_rate, offer_rate, &dev::alice());
         assert_eq!(input_orders.len(), 2);
         let current_time = get_current_timestamp_in_secs();
 
