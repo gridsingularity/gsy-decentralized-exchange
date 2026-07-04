@@ -10,6 +10,7 @@ nav:
       - Build: setup/build.md
       - Connect UI: setup/connect-ui.md
       - Docker: setup/docker.md
+      - Four-node PoA deployment: setup/deployment.md
     - Node Structure:
         - Node: node/node.md
         - Runtime: node/runtime.md

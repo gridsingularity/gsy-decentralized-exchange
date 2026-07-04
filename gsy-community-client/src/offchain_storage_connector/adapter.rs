@@ -306,12 +306,12 @@ pub fn plan_residual_replacement(
         let mut residual_energy = 0.0;
         let mut matched_existing = false;
 
-        for stored in open_orders {
-            if stored.status != OrderStatus::Open {
+        for open_order in open_orders {
+            if open_order.status != OrderStatus::Open {
                 continue;
             }
             // Match the order to this forecast's area and side, and only the trader's own.
-            let component = match (&stored.order, is_bid) {
+            let component = match (&open_order.order, is_bid) {
                 (Order::Bid(bid), true) if bid.buyer == trader => &bid.bid_component,
                 (Order::Offer(offer), false) if offer.seller == trader => &offer.offer_component,
                 _ => continue,
@@ -321,7 +321,7 @@ pub fn plan_residual_replacement(
             }
             residual_energy += component.energy;
             matched_existing = true;
-            if let Some(hash) = parse_order_hash(&stored._id) {
+            if let Some(hash) = parse_order_hash(&open_order._id) {
                 hashes_to_delete.push(hash);
             }
         }
