@@ -55,7 +55,7 @@ pub async fn get_trades(db: DbRef, query_params: Query<GetTradesParams>) -> impl
         .get_ref()
         .trades()
         .filter_trades(
-            // query_params.market_id.clone(),
+            query_params.market_id.clone(),
             query_params.start_time,
             query_params.end_time,
         )

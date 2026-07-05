@@ -93,9 +93,9 @@ services:
         condition: service_healthy
       mongo3:
         condition: service_healthy
-    entrypoint: ["bash", "/rs-init.sh"]
+    entrypoint: ["bash", "/mongo-rs-init.sh"]
     volumes:
-      - ../deploy/mongodb-dev/rs-init.sh:/rs-init.sh:ro
+      - ../deployment/mongodb-dev/rs-init.sh:/mongo-rs-init.sh:ro
     restart: "no"
 
 volumes:
