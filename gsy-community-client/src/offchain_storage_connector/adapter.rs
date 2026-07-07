@@ -127,7 +127,6 @@ impl AreaMarketInfoAdapter {
         measurement.energy_kwh > 0.0 && measurement.time_slot <= seconds_since_epoch
     }
 
-
     pub async fn create_market(
         &self,
         community_uuid: String,
@@ -142,7 +141,7 @@ impl AreaMarketInfoAdapter {
             delivery_start_time: timestamp_to_string_with_padding(time_slot),
             delivery_end_time: timestamp_to_string_with_padding(time_slot + 900),
             market_type: MarketType::Spot,
-            matching_algorithm:MatchingAlgorithm::PayAsBid,
+            matching_algorithm: MatchingAlgorithm::PayAsBid,
             created_at: timestamp_to_string_with_padding(creation_time),
         };
 
@@ -155,7 +154,9 @@ impl AreaMarketInfoAdapter {
         {
             Ok(response) if response.status().is_success() => Some(market_schema),
             Ok(response) => {
-                info!("Market upsert failed with status {}", response.status());
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                info!("Market upsert failed with status {}: {}", status, body);
                 None
             }
             Err(error) => {

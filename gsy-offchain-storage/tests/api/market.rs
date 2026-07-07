@@ -1,8 +1,6 @@
 use crate::helpers::{init_app, stop_app};
 use actix_web::web;
-use gsy_offchain_primitives::db_api_schema::market::{
-    MarketSchema, MarketType, MatchingAlgorithm
-};
+use gsy_offchain_primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
 use gsy_offchain_primitives::db_api_schema::trades::{
     ClearingResultSchema, ClearingStatus, MarketRoleSchema,
 };
@@ -19,6 +17,28 @@ fn make_market(market_id: &str, community_id: &str, opening_time: &str) -> Marke
         matching_algorithm: MatchingAlgorithm::PayAsBid,
         created_at: "2026-03-28T09:45:00Z".to_string(),
     }
+}
+
+#[tokio::test]
+async fn post_market_succeeds() {
+    let app = init_app().await;
+    let address = app.address.clone();
+
+    let market = make_market("my_market", "community1", "2026-03-27T18:00:00Z");
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(&format!("{}/markets", &address))
+        .json(&market)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(200, resp.status().as_u16());
+    let saved: MarketSchema = resp.json().await.unwrap();
+    assert_eq!(saved.market_id, "my_market");
+    assert_eq!(saved.community_id, "community1");
+    stop_app(app).await;
 }
 
 #[tokio::test]

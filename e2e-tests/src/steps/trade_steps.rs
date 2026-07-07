@@ -295,10 +295,7 @@ async fn submit_bid(world: &mut MyWorld, user_name: String) {
     publish_orders(
         world.evm_node_url.clone(),
         vec![world.bid_forecast.clone().expect("Missing bid forecast")],
-        world
-            .market_schema
-            .clone()
-            .expect("Missing market schema"),
+        world.market_schema.clone().expect("Missing market schema"),
         address_to_full_hex(world.order_registry_address),
         world.private_key_for_user(user_name.as_str()),
     )
@@ -306,7 +303,9 @@ async fn submit_bid(world: &mut MyWorld, user_name: String) {
     .expect("Failed to publish bid order");
 }
 
-#[when(expr = "{string} submits a bid for {float} energy at a normal rate of {float}, with a preferred rate of {float} for partner {string}")]
+#[when(
+    expr = "{string} submits a bid for {float} energy at a normal rate of {float}, with a preferred rate of {float} for partner {string}"
+)]
 async fn submit_preferred_partner_bid(
     world: &mut MyWorld,
     user_name: String,
@@ -341,10 +340,7 @@ async fn submit_offer(world: &mut MyWorld, user_name: String) {
             .offer_forecast
             .clone()
             .expect("Missing offer forecast")],
-        world
-            .market_schema
-            .clone()
-            .expect("Missing market schema"),
+        world.market_schema.clone().expect("Missing market schema"),
         address_to_full_hex(world.order_registry_address),
         world.private_key_for_user(user_name.as_str()),
     )
@@ -384,7 +380,9 @@ async fn submit_preferred_partner_offer(
     .await;
 }
 
-#[when(expr = "{string} submits a cheaper open-market offer for {float} energy at a rate of {float}")]
+#[when(
+    expr = "{string} submits a cheaper open-market offer for {float} energy at a rate of {float}"
+)]
 async fn submit_cheaper_offer(world: &mut MyWorld, user_name: String, energy: f64, rate: f64) {
     let order_id =
         place_custom_order(world, user_name.as_str(), false, energy, rate, None, None).await;
@@ -398,16 +396,14 @@ async fn submit_cheaper_offer(world: &mut MyWorld, user_name: String, energy: f6
 async fn submit_measurements(world: &mut MyWorld) {
     let adapter = AreaMarketInfoAdapter::new(Some(world.offchain_storage_url.clone()));
     let mut measurements = vec![];
-    for facility in world.facilities_topology.iter(){
-        measurements.push(
-            MeasurementSchema {
-                facility_id: facility.facility_id.clone(),
-                community_uuid: "community1".to_string(),
-                energy_kwh: 12.0,
-                time_slot: world.target_delivery_time,
-                creation_time: 1,
-            }
-        )
+    for facility in world.facilities_topology.iter() {
+        measurements.push(MeasurementSchema {
+            facility_id: facility.facility_id.clone(),
+            community_uuid: "community1".to_string(),
+            energy_kwh: 12.0,
+            time_slot: world.target_delivery_time,
+            creation_time: 1,
+        })
     }
 
     // send measurements to offchain storage

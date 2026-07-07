@@ -1,7 +1,7 @@
 use crate::world::MyWorld;
 use cucumber::when;
 use ethers::prelude::*;
-use gsy_community_client::external_api::{ExternalFacilityTopology};
+use gsy_community_client::external_api::ExternalFacilityTopology;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use gsy_community_client::time_utils::get_last_and_next_timeslot;
 use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
@@ -18,7 +18,9 @@ abigen!(
     ]"#
 );
 
-#[when(expr = "the community market and forecasts of {float} energy are submitted by {string}, {string}, and {string}")]
+#[when(
+    expr = "the community market and forecasts of {float} energy are submitted by {string}, {string}, and {string}"
+)]
 async fn submit_market_forecasts_three_users(
     world: &mut MyWorld,
     energy: f64,
@@ -46,7 +48,12 @@ async fn submit_market_forecasts_three_users(
     let market = adapter
         .create_market("community1".to_string(), world.target_delivery_time)
         .await
-        .expect("market_creation_failed");
+        .unwrap_or_else(|| {
+            panic!(
+                "market_creation_failed community=community1 time_slot={} offchain_storage_url={}",
+                world.target_delivery_time, world.offchain_storage_url
+            )
+        });
 
     let market_id = parse_uuid_or_hex_bytes16(market.market_id.as_str())
         .expect("Invalid market id in topology");

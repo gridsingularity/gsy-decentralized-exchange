@@ -41,7 +41,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             order_id: order_id_str,
             status: OrderStatus::Open,
             order_type: order_enum,
-            area_uuid: market_id_str.clone(),
+            area_uuid: created_by_str.clone(),
             market_id: market_id_str,
             nonce: None,
             time_slot: event.time_slot,
