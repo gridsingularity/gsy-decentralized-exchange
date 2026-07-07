@@ -1,3 +1,4 @@
+use crate::connectors::evm_contracts::TradeSettlementContract;
 use crate::primitives::penalty_calculator::Penalty;
 use anyhow::{anyhow, Result};
 use ethers::prelude::*;

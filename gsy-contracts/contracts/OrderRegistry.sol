@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
-import "@openzeppelin/contracts/access/AccessControl.sol";
+import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "./MarketController.sol";
-import "./GsyVault.sol";
+import "./ActorRegistry.sol";
 
 /**
  * @title OrderRegistry
  * @notice Stores order commitments and validities using Intelligent UUID identities.
  */
-contract OrderRegistry is AccessControl {
+contract OrderRegistry is Initializable, AccessControlUpgradeable {
     bytes32 public constant SETTLEMENT_ROLE = keccak256("SETTLEMENT_ROLE");
 
     enum OrderStatus {
@@ -20,7 +21,7 @@ contract OrderRegistry is AccessControl {
     }
 
     MarketController public marketController;
-    GsyVault public vault;
+    ActorRegistry public actorRegistry;
 
     struct OrderParams {
         bytes16 orderId;
@@ -56,10 +57,19 @@ contract OrderRegistry is AccessControl {
     error OrderNotOpen();
     error OrderAlreadyExists();
 
-    constructor(address _marketController, address _vault) {
-        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(
+        address admin,
+        address _marketController,
+        address _actorRegistry
+    ) external initializer {
+        __AccessControl_init();
+        _grantRole(DEFAULT_ADMIN_ROLE, admin);
         marketController = MarketController(_marketController);
-        vault = GsyVault(_vault);
+        actorRegistry = ActorRegistry(_actorRegistry);
     }
 
     /**
@@ -79,7 +89,7 @@ contract OrderRegistry is AccessControl {
             revert MarketClosed();
         }
 
-        if (!vault.isAuthorized(params.createdBy, msg.sender)) {
+        if (!actorRegistry.isAuthorized(params.createdBy, msg.sender)) {
             revert Unauthorized();
         }
 
@@ -116,7 +126,7 @@ contract OrderRegistry is AccessControl {
             revert Unauthorized();
         }
 
-        if (!vault.isAuthorized(storedOrder.createdBy, msg.sender)) {
+        if (!actorRegistry.isAuthorized(storedOrder.createdBy, msg.sender)) {
             revert Unauthorized();
         }
 

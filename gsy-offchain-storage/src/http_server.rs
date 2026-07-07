@@ -10,10 +10,13 @@ use crate::routes::{
 };
 use actix_web::dev::Server;
 use actix_web::{web, App, HttpServer};
+use anyhow::{Error, Result};
 use std::net::TcpListener;
+use tracing::info;
 use tracing_actix_web::TracingLogger;
 
-pub fn run(
+/// Start http server that listens to exposed API endpoints
+fn run_http_server(
     listener: TcpListener,
     db_connection_wrapper: DatabaseWrapper,
 ) -> Result<Server, std::io::Error> {
@@ -73,4 +76,19 @@ pub fn run(
     .run();
 
     Ok(server)
+}
+
+/// Create a TCP listener and run http server that exposes API endpoints
+pub async fn start_server(
+    address: &str,
+    db_connection_wrapper: DatabaseWrapper,
+) -> Result<(), Error> {
+    let listener = TcpListener::bind(address).expect("Failed to bind");
+
+    info!("Server listening on {}", listener.local_addr().unwrap());
+
+    match run_http_server(listener, db_connection_wrapper)?.await {
+        Ok(_) => Ok(()),
+        Err(e) => Err(Error::from(e)),
+    }
 }

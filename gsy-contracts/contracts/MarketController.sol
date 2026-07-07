@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
-import "@openzeppelin/contracts/access/AccessControl.sol";
+import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 
 /**
  * @title MarketController
  * @notice Manages the open/closed state of market time slots.
  */
-contract MarketController is AccessControl {
+contract MarketController is Initializable, AccessControlUpgradeable {
     bytes32 public constant ORCHESTRATOR_ROLE = keccak256("ORCHESTRATOR_ROLE");
 
     // Market UUID (bytes16) => isOpen
@@ -16,7 +17,12 @@ contract MarketController is AccessControl {
     event MarketStatusUpdated(bytes16 indexed marketId, bool isOpen);
 
     constructor() {
-        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        _disableInitializers();
+    }
+
+    function initialize(address admin) external initializer {
+        __AccessControl_init();
+        _grantRole(DEFAULT_ADMIN_ROLE, admin);
     }
 
     /**

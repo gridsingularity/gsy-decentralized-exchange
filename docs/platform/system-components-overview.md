@@ -16,9 +16,9 @@
 
 ## Deployment Topology (Docker Compose)
 
-1. `anvil` starts and exposes `8545`.
-2. `gsy-contracts-bootstrap` deploys contracts and grants roles.
-3. Core services start with known contract addresses.
+1. `docker-compose.contracts.yml` starts the target local Anvil chain when using the local workflow.
+2. `./scripts/contracts.sh local deploy` deploys contracts, grants roles, and writes `contracts-output/addresses.env`.
+3. Core services start with generated proxy addresses from `contracts-output/addresses.env`.
 4. `gsy-offchain-storage` listens for events and exposes HTTP endpoints.
 5. Engine services and e2e tests consume APIs and on-chain state.
 
@@ -30,15 +30,16 @@ When EWDS integration is enabled:
 ## Role and Trust Boundaries
 
 - `MarketController.ORCHESTRATOR_ROLE` is held by orchestrator signer.
+- `ActorRegistry.ACTOR_REGISTRAR_ROLE` is held by the actor registrar signer.
 - `TradeSettlement.OPERATOR_ROLE` is held by matching engine signer.
 - `TradeSettlement.EXECUTION_ENGINE_ROLE` is held by execution engine signer.
-- `OrderRegistry.SETTLEMENT_ROLE` and `GsyVault.SETTLEMENT_ROLE` are granted to settlement contract.
+- `OrderRegistry.SETTLEMENT_ROLE` is granted to settlement contract.
 
-This ensures only dedicated components can update market status, settle matches, or submit penalties.
+This ensures only dedicated components can register actor wallets, update market status, settle matches, or submit penalties.
 
 ## Data Planes
 
-- **On-chain plane**: market status, order status transitions, settlement transfers, penalty ledger.
+- **On-chain plane**: actor authorization, market status, order status transitions, settlement events, penalty ledger.
 - **Off-chain plane**: indexed orders/trades, forecasts/measurements, analytics and querying.
 - **Inter-service transport plane**: EWDS channels/topics for resilient authenticated messaging.
 

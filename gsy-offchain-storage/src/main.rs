@@ -1,30 +1,24 @@
 use actix_web::web;
-use anyhow::{Error, Result};
+use anyhow::Result;
 use gsy_ethers_listener::{GsyEthersListener, ListenerConfig};
+use gsy_offchain_primitives::log::setup_logging;
 use gsy_offchain_storage::configuration::get_configuration;
 use gsy_offchain_storage::db::{init_database, DbRef};
 use gsy_offchain_storage::evm_handler::OffchainStorageEvmHandler;
 use gsy_offchain_storage::ewds_handler::{start_ewds_request_handler, EwdsHandlerConfig};
-use gsy_offchain_storage::scheduler::start_scheduler;
-use gsy_offchain_storage::startup::run;
-use gsy_offchain_storage::telemetry::{get_subscriber, init_subscriber};
-use std::net::TcpListener;
+use gsy_offchain_storage::http_server::start_server;
+use gsy_offchain_storage::update_db::expire_orders_scheduler;
 use tracing::info;
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     dotenv::dotenv().ok();
 
-    let subscriber = get_subscriber(
-        "gsy-offchain-storage".into(),
-        "info".into(),
-        std::io::stdout,
-    );
-    init_subscriber(subscriber);
+    setup_logging("gsy-offchain-storage", "info");
 
     let configuration = get_configuration().expect("Failed to load configuration");
     let db_connection_string = configuration.get_connection_string();
-    let scheduler_interval = configuration.get_scheduler_interval();
+    let update_interval = configuration.get_scheduler_interval();
 
     let db_connection_wrapper =
         init_database(db_connection_string, configuration.database_name).await?;
@@ -50,7 +44,7 @@ async fn main() -> Result<(), anyhow::Error> {
     });
 
     tokio::task::spawn(async move {
-        start_scheduler(db, scheduler_interval).await;
+        expire_orders_scheduler(db, update_interval).await;
     });
 
     let ewds_config = EwdsHandlerConfig::from_env();
@@ -66,12 +60,5 @@ async fn main() -> Result<(), anyhow::Error> {
         "{}:{}",
         configuration.application_host, configuration.application_port
     );
-    let listener = TcpListener::bind(address).expect("Failed to bind");
-
-    info!("Server listening on {}", listener.local_addr().unwrap());
-
-    match run(listener, db_connection_wrapper)?.await {
-        Ok(_) => Ok(()),
-        Err(e) => Err(Error::from(e)),
-    }
+    start_server(&address, db_connection_wrapper).await
 }

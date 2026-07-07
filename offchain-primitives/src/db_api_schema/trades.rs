@@ -31,6 +31,10 @@ pub struct TradeSchema {
     pub offer_hash: String,
     pub bid: DbOrderSchema,
     pub bid_hash: String,
+    #[serde(default)]
+    pub residual_offer_id: Option<String>,
+    #[serde(default)]
+    pub residual_bid_id: Option<String>,
     pub residual_offer: Option<DbOrderSchema>,
     pub residual_bid: Option<DbOrderSchema>,
     pub parameters: TradeParameters,

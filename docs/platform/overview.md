@@ -12,8 +12,8 @@ This gives:
 
 ## Core Building Blocks
 
-- **Anvil (EVM chain, chain id 31337)** for local and CI execution.
-- **Smart contracts** (`MarketController`, `OrderRegistry`, `TradeSettlement`, `GsyVault`).
+- **Target EVM chain**: local Anvil for Docker/e2e, or Energy Web Volta/EWC for remote deployment.
+- **Smart contracts** (`ActorRegistry`, `MarketController`, `OrderRegistry`, `TradeSettlement`).
 - **Event indexing layer** (`gsy-ethers-listener` + `gsy-offchain-storage`).
 - **Business services** (orchestrator, matching engine, execution engine, community client).
 
@@ -22,10 +22,10 @@ This gives:
 ```mermaid
 flowchart LR
     MO["Market Orchestrator"] -->|setMarketStatus| MC["MarketController"]
+    AR["ActorRegistry"] -->|isAuthorized| OR["OrderRegistry"]
     CC["Community Client"] -->|placeOrder| OR["OrderRegistry"]
     ME["Matching Engine"] -->|settleBatch| TS["TradeSettlement"]
     EE["Execution Engine"] -->|submitPenalties| TS
-    TS -->|transferBySettlement| GV["GsyVault"]
     OR -->|events| EL["gsy-ethers-listener"]
     TS -->|events| EL
     MC -->|events| EL
@@ -34,7 +34,7 @@ flowchart LR
 
 ## Runtime Interfaces
 
-- **EVM WS endpoint**: `ws://anvil:8545` (inside compose network).
+- **EVM WS endpoint**: `ws://anvil:8545` for the local contracts stack, or the configured remote RPC endpoint.
 - **Off-chain storage API**: `http://gsy-offchain-storage:8080`.
 - **Primary trigger model**:
   - Matching runs on block cadence.

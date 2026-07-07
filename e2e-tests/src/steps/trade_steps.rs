@@ -431,21 +431,21 @@ async fn verify_trade_on_chain(world: &mut MyWorld) {
             world.last_trade = Some(trade.clone());
 
             let bid_id = parse_or_hash_bytes16(trade.bid_hash.as_str());
-            let ask_id = parse_or_hash_bytes16(trade.offer_hash.as_str());
+            let offer_id = parse_or_hash_bytes16(trade.offer_hash.as_str());
 
             let bid_status = order_registry
                 .get_status(bid_id)
                 .call()
                 .await
                 .expect("Failed to read bid status from contract");
-            let ask_status = order_registry
-                .get_status(ask_id)
+            let offer_status = order_registry
+                .get_status(offer_id)
                 .call()
                 .await
-                .expect("Failed to read ask status from contract");
+                .expect("Failed to read offer status from contract");
 
             assert_eq!(bid_status, 2u8, "Bid order is not Executed on-chain");
-            assert_eq!(ask_status, 2u8, "Ask order is not Executed on-chain");
+            assert_eq!(offer_status, 2u8, "Offer order is not Executed on-chain");
 
             let orders = query_market_orders(world).await;
 
@@ -453,17 +453,17 @@ async fn verify_trade_on_chain(world: &mut MyWorld) {
                 .iter()
                 .find(|order| order.order_id.eq_ignore_ascii_case(trade.bid_hash.as_str()))
                 .expect("Bid order not found in off-chain storage DB");
-            let ask = orders
+            let offer = orders
                 .iter()
                 .find(|order| {
                     order
                         .order_id
                         .eq_ignore_ascii_case(trade.offer_hash.as_str())
                 })
-                .expect("Ask order not found in off-chain storage DB");
+                .expect("Offer order not found in off-chain storage DB");
 
             assert_eq!(bid.status, OrderStatus::Executed);
-            assert_eq!(ask.status, OrderStatus::Executed);
+            assert_eq!(offer.status, OrderStatus::Executed);
 
             return;
         }
@@ -503,21 +503,21 @@ async fn verify_partner_trade(
             world.last_trade = Some(trade.clone());
 
             let bid_id = parse_or_hash_bytes16(trade.bid_hash.as_str());
-            let ask_id = parse_or_hash_bytes16(trade.offer_hash.as_str());
+            let offer_id = parse_or_hash_bytes16(trade.offer_hash.as_str());
 
             let bid_status = order_registry
                 .get_status(bid_id)
                 .call()
                 .await
                 .expect("Failed to read bid status from contract");
-            let ask_status = order_registry
-                .get_status(ask_id)
+            let offer_status = order_registry
+                .get_status(offer_id)
                 .call()
                 .await
-                .expect("Failed to read ask status from contract");
+                .expect("Failed to read offer status from contract");
 
             assert_eq!(bid_status, 2u8, "Bid order is not Executed on-chain");
-            assert_eq!(ask_status, 2u8, "Ask order is not Executed on-chain");
+            assert_eq!(offer_status, 2u8, "Offer order is not Executed on-chain");
             return;
         }
 

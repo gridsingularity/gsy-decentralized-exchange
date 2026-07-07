@@ -88,29 +88,36 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         let price_f64 = event.price.as_u64() as f64 / NODE_FLOAT_SCALING_FACTOR;
 
         let bid_hash_str = bytes16_to_hex(event.bid_id);
-        let ask_hash_str = bytes16_to_hex(event.ask_id);
+        let offer_hash_str = bytes16_to_hex(event.offer_id);
+        let residual_bid_id = bytes16_to_optional_hex(event.residual_bid_id);
+        let residual_offer_id = bytes16_to_optional_hex(event.residual_offer_id);
 
         let bid_bson = mongodb::bson::to_bson(&bid_hash_str).unwrap();
-        let ask_bson = mongodb::bson::to_bson(&ask_hash_str).unwrap();
+        let offer_bson = mongodb::bson::to_bson(&offer_hash_str).unwrap();
 
         let bid_doc = self.db.orders().get_order_by_id(&bid_bson).await?;
-        let ask_doc = self.db.orders().get_order_by_id(&ask_bson).await?;
+        let offer_doc = self.db.orders().get_order_by_id(&offer_bson).await?;
 
-        if let (Some(bid_order), Some(ask_order)) = (bid_doc, ask_doc) {
+        if let (Some(bid_order), Some(offer_order)) = (bid_doc, offer_doc) {
+            let residual_bid = get_optional_order(&self.db, residual_bid_id.as_ref()).await?;
+            let residual_offer = get_optional_order(&self.db, residual_offer_id.as_ref()).await?;
+
             let trade_schema = TradeSchema {
                 trade_uuid: trade_hash.clone(),
                 status: TradeStatus::Settled,
-                seller: ask_order.created_by.clone(),
-                buyer: bid_order.created_by.clone(),
-                market_id: bid_order.market_id.clone(),
-                time_slot: bid_order.time_slot,
+                seller: bytes16_to_hex(event.seller_id),
+                buyer: bytes16_to_hex(event.buyer_id),
+                market_id: bytes16_to_hex(event.market_id),
+                time_slot: event.time_slot,
                 creation_time: chrono::Utc::now().timestamp() as u64,
-                offer: ask_order,
-                offer_hash: ask_hash_str,
+                offer: offer_order,
+                offer_hash: offer_hash_str,
                 bid: bid_order,
                 bid_hash: bid_hash_str,
-                residual_offer: None,
-                residual_bid: None,
+                residual_offer_id,
+                residual_bid_id,
+                residual_offer,
+                residual_bid,
                 parameters: TradeParameters {
                     selected_energy_kWh: energy_f64,
                     energy_rate: price_f64,
@@ -125,7 +132,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
                 .await?;
             self.db
                 .orders()
-                .update_order_status_by_id(&ask_bson, OrderStatus::Executed)
+                .update_order_status_by_id(&offer_bson, OrderStatus::Executed)
                 .await?;
 
             info!("Trade persisted and orders updated.");
@@ -144,4 +151,24 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         );
         Ok(())
     }
+}
+
+fn bytes16_to_optional_hex(value: [u8; 16]) -> Option<String> {
+    if value == [0u8; 16] {
+        None
+    } else {
+        Some(bytes16_to_hex(value))
+    }
+}
+
+async fn get_optional_order(
+    db: &DatabaseWrapper,
+    order_id: Option<&String>,
+) -> Result<Option<DbOrderSchema>> {
+    let Some(order_id) = order_id else {
+        return Ok(None);
+    };
+
+    let order_bson = mongodb::bson::to_bson(order_id).unwrap();
+    db.orders().get_order_by_id(&order_bson).await
 }

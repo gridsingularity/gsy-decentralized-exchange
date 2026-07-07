@@ -4,8 +4,6 @@ use ethers::prelude::*;
 use ethers::utils::keccak256;
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::time::Duration;
-use tokio::time::sleep;
 
 abigen!(
     MarketControllerContract,
@@ -22,11 +20,9 @@ abigen!(
 );
 
 abigen!(
-    GsyVaultContract,
+    ActorRegistryContract,
     r#"[
         function registerActor(bytes16 actorId, address wallet) external
-        function deposit(bytes16 actorId) external payable
-        function balances(bytes16 actorId) external view returns (uint256)
         function hasRole(bytes32 role, address account) external view returns (bool)
     ]"#
 );
@@ -56,6 +52,11 @@ async fn services_are_running(world: &mut MyWorld) {
         .get_code(world.market_controller_address, None)
         .await
         .expect("Failed to read MarketController bytecode");
+    let actor_registry_code = world
+        .provider
+        .get_code(world.actor_registry_address, None)
+        .await
+        .expect("Failed to read ActorRegistry bytecode");
     let order_registry_code = world
         .provider
         .get_code(world.order_registry_address, None)
@@ -72,6 +73,10 @@ async fn services_are_running(world: &mut MyWorld) {
         "MarketController is not deployed"
     );
     assert!(
+        !actor_registry_code.0.is_empty(),
+        "ActorRegistry is not deployed"
+    );
+    assert!(
         !order_registry_code.0.is_empty(),
         "OrderRegistry is not deployed"
     );
@@ -84,9 +89,9 @@ async fn services_are_running(world: &mut MyWorld) {
 }
 
 #[given(
-    regex = r#"users "([^"]*)", "([^"]*)", and "([^"]*)" the matching engine operator are registered and have collateral"#
+    regex = r#"users "([^"]*)", "([^"]*)", and "([^"]*)" the matching engine operator are registered"#
 )]
-#[given(regex = r#"users "([^"]*)", "([^"]*)", and "([^"]*)" are registered and have collateral"#)]
+#[given(regex = r#"users "([^"]*)", "([^"]*)", and "([^"]*)" are registered"#)]
 async fn users_are_registered(
     world: &mut MyWorld,
     first_user: String,
@@ -110,12 +115,12 @@ async fn users_are_registered(
         world.provider.clone(),
         actor_registrar_wallet.clone(),
     ));
-    let registrar_vault =
-        GsyVaultContract::new(world.gsy_vault_address, actor_registrar_signer.clone());
+    let actor_registry =
+        ActorRegistryContract::new(world.actor_registry_address, actor_registrar_signer.clone());
     let actor_registrar_role = keccak256("ACTOR_REGISTRAR_ROLE");
 
     assert!(
-        registrar_vault
+        actor_registry
             .has_role(actor_registrar_role, actor_registrar_wallet.address())
             .call()
             .await
@@ -127,7 +132,7 @@ async fn users_are_registered(
         let wallet = world.wallet_for_user(user_name);
         let actor_id = world.actor_id_for_user(user_name);
         if seen.insert(actor_id) {
-            let register_call = registrar_vault.register_actor(actor_id, wallet.address());
+            let register_call = actor_registry.register_actor(actor_id, wallet.address());
             let register_receipt = register_call
                 .send()
                 .await
@@ -137,75 +142,6 @@ async fn users_are_registered(
             assert!(
                 register_receipt.is_some(),
                 "Actor registration tx was dropped without receipt"
-            );
-
-            let signer = Arc::new(SignerMiddleware::new(
-                world.provider.clone(),
-                wallet.clone(),
-            ));
-            let vault = GsyVaultContract::new(world.gsy_vault_address, signer.clone());
-
-            let existing_balance = vault
-                .balances(actor_id)
-                .call()
-                .await
-                .expect("Failed to query vault balance before deposit");
-            if existing_balance > U256::zero() {
-                continue;
-            }
-
-            let mut deposited = false;
-            let mut last_error = String::new();
-            for attempt in 0..5 {
-                let deposit_call = vault
-                    .deposit(actor_id)
-                    .value(U256::from(1_000_000_000_000_000_000u128));
-                match deposit_call.send().await {
-                    Ok(pending_tx) => {
-                        let receipt = pending_tx
-                            .await
-                            .expect("Failed awaiting collateral deposit receipt");
-                        assert!(
-                            receipt.is_some(),
-                            "Collateral deposit tx was dropped without receipt"
-                        );
-                        deposited = true;
-                        break;
-                    }
-                    Err(error) => {
-                        last_error = error.to_string();
-                        let is_retryable_nonce_error = last_error.contains("nonce too low")
-                            || last_error.contains("already known")
-                            || last_error.contains("replacement transaction underpriced");
-                        if is_retryable_nonce_error && attempt < 4 {
-                            sleep(Duration::from_millis(300)).await;
-                            continue;
-                        }
-
-                        panic!(
-                            "Failed to submit collateral deposit transaction: {:?}",
-                            error
-                        );
-                    }
-                };
-            }
-
-            assert!(
-                deposited,
-                "Could not submit collateral deposit transaction after retries: {}",
-                last_error
-            );
-
-            let balance = vault
-                .balances(actor_id)
-                .call()
-                .await
-                .expect("Failed to query vault balance");
-
-            assert!(
-                balance > U256::zero(),
-                "Vault balance for {} is zero after deposit",
-                user_name
             );
         }
     }

@@ -38,7 +38,7 @@ These adapters do not own separate collections. They read and write the same
 
 ## Scheduler Behavior
 
-`start_scheduler` periodically marks stale open orders as `Expired` using `time_slot` and current time.
+`expire_orders_scheduler` periodically marks stale open orders as `Expired` using `time_slot` and current time.
 
 ## Data Model Notes
 

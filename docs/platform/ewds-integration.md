@@ -236,6 +236,8 @@ The gateway compose provides:
 - Vault and Postgres dependencies for local gateway setup.
 - EWF mainnet EWC broker/cache/RPC configuration.
 
-The normal GSY DEX compose files provide MongoDB, Anvil, contract bootstrap, and
-GSY services. They read `.env.ewds.local` to switch service communication from
-direct HTTP to the local DDHub Client Gateway.
+The contracts compose file provides the local Anvil chain and contract
+deployment. The normal GSY DEX compose files provide MongoDB and GSY services.
+They read `contracts-output/addresses.env` for contract addresses and
+`.env.ewds.local` to switch service communication from direct HTTP to the local
+DDHub Client Gateway.
