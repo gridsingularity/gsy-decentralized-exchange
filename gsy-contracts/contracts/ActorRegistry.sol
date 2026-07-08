@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
-import "@openzeppelin/contracts/access/AccessControl.sol";
+import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 
 /**
  * @title ActorRegistry
  * @notice Maintains Actor UUID to wallet/delegate authorizations.
  */
-contract ActorRegistry is AccessControl {
+contract ActorRegistry is Initializable, AccessControlUpgradeable {
     bytes32 public constant ACTOR_REGISTRAR_ROLE =
         keccak256("ACTOR_REGISTRAR_ROLE");
 
@@ -30,8 +31,13 @@ contract ActorRegistry is AccessControl {
     error UnauthorizedActorWallet(bytes16 actorId, address wallet);
 
     constructor() {
-        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
-        _grantRole(ACTOR_REGISTRAR_ROLE, msg.sender);
+        _disableInitializers();
+    }
+
+    function initialize(address admin) external initializer {
+        __AccessControl_init();
+        _grantRole(DEFAULT_ADMIN_ROLE, admin);
+        _grantRole(ACTOR_REGISTRAR_ROLE, admin);
     }
 
     modifier onlyActorWallet(bytes16 actorId) {

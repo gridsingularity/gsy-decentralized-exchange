@@ -1,13 +1,14 @@
 import { loadFixture } from "@nomicfoundation/hardhat-toolbox/network-helpers";
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { bytes16Id } from "./utils";
+import { bytes16Id, deployUpgradeableContract } from "./utils";
 
 describe("ActorRegistry", function () {
   async function deployActorRegistryFixture() {
     const [admin, user, delegate] = await ethers.getSigners();
-    const ActorRegistry = await ethers.getContractFactory("ActorRegistry");
-    const actorRegistry = await ActorRegistry.deploy();
+    const actorRegistry = await deployUpgradeableContract("ActorRegistry", [
+      admin.address,
+    ]);
 
     const ACTOR_REGISTRAR_ROLE = await actorRegistry.ACTOR_REGISTRAR_ROLE();
     const actorId = bytes16Id("actor:user");
