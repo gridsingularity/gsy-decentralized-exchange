@@ -23,8 +23,20 @@ cargo test --manifest-path gsy-community-client/Cargo.toml --tests
 ## End-to-End Cucumber Tests
 
 ```bash
-docker compose -f docker-compose.test.yml up --build --abort-on-container-exit e2e-tests
+./scripts/contracts.sh local deploy
+
+docker compose --env-file contracts-output/addresses.env \
+  -f docker-compose.test.yml \
+  up --build --force-recreate \
+  --abort-on-container-exit \
+  --exit-code-from e2e-tests \
+  e2e-tests
 ```
+
+The contracts command starts the dedicated local Anvil container, deploys the
+upgradeable contract suite, grants service roles, and writes
+`contracts-output/addresses.env`. Keep that Anvil container running while the
+e2e compose stack executes.
 
 ### EWDS Transport E2E
 
@@ -45,31 +57,38 @@ docker compose --env-file .env.ewds.local \
 ```
 
 After the EWDS gateway stack is running and healthy in the same compose project,
-start the GSY/e2e stack from the normal test compose file. Do not run `down` on
-`docker-compose.ewds.yml` unless you intentionally want to stop the gateway,
-Vault, and Postgres containers. Reset only the GSY/e2e containers when a clean
-e2e service run is needed:
+deploy the local contracts stack, then start the GSY/e2e stack from the normal
+test compose file. Do not run `down` on `docker-compose.ewds.yml` unless you
+intentionally want to stop the gateway, Vault, and Postgres containers. Reset
+only the GSY/e2e containers when a clean e2e service run is needed:
 
 Run both compose commands from the repository root without changing the Compose
 project name so the GSY containers can resolve `ddhub-gateway-api` on the shared
-default Docker network.
+default Docker network. The same rule applies to `docker-compose.contracts.yml`;
+the local `anvil` container must be on the same default network.
 
 ```bash
 docker compose --env-file .env.ewds.local \
   -f docker-compose.test.yml \
-  stop e2e-tests gsy-offchain-storage gsy-matching-engine gsy-execution-engine gsy-community-client gsy-market-orchestrator gsy-contracts-bootstrap anvil mongodb
+  stop e2e-tests gsy-offchain-storage gsy-matching-engine gsy-execution-engine gsy-community-client gsy-market-orchestrator mongodb
 
 docker compose --env-file .env.ewds.local \
   -f docker-compose.test.yml \
-  rm -f e2e-tests gsy-offchain-storage gsy-matching-engine gsy-execution-engine gsy-community-client gsy-market-orchestrator gsy-contracts-bootstrap anvil mongodb
+  rm -f e2e-tests gsy-offchain-storage gsy-matching-engine gsy-execution-engine gsy-community-client gsy-market-orchestrator mongodb
 ```
 
 Final validated EWDS e2e command:
 
 ```bash
+./scripts/contracts.sh local deploy
+
 docker compose --env-file .env.ewds.local \
+  --env-file contracts-output/addresses.env \
   -f docker-compose.test.yml \
-  up --build --abort-on-container-exit e2e-tests
+  up --build --force-recreate \
+  --abort-on-container-exit \
+  --exit-code-from e2e-tests \
+  e2e-tests
 ```
 
 This command was validated with the local DDHub Client Gateway connected to the

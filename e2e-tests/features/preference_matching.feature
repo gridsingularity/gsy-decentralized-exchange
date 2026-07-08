@@ -2,7 +2,7 @@ Feature: Preference-Based Matching with Dedicated Pricing
 
   Scenario: A bilateral preferred partner trade is matched with its special price
     Given the GSY DEX services are running
-    And users "alice", "bob", and "charlie" are registered and have collateral
+    And users "alice", "bob", and "charlie" are registered
     When the Market Orchestrator opens the Spot market for the next delivery slot
     And the community topology and forecasts of 100 energy are submitted by "alice", "bob", and "charlie"
 

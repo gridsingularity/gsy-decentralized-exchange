@@ -3,6 +3,7 @@ import { expect } from "chai";
 import { ethers } from "hardhat";
 import {
   bytes16Id,
+  deployUpgradeableContract,
   ENERGY_TYPE_GREEN,
   ENERGY_TYPE_UNSPECIFIED,
   ORDER_TYPE_BID,
@@ -15,23 +16,21 @@ describe("TradeSettlement", function () {
     const [admin, buyer, seller, operator, executionEngine] =
       await ethers.getSigners();
 
-    const MarketController =
-      await ethers.getContractFactory("MarketController");
-    const controller = await MarketController.deploy();
-
-    const GsyVault = await ethers.getContractFactory("GsyVault");
-    const vault = await GsyVault.deploy();
-
-    const OrderRegistry = await ethers.getContractFactory("OrderRegistry");
-    const registry = await OrderRegistry.deploy(
+    const controller = await deployUpgradeableContract("MarketController", [
+      admin.address,
+    ]);
+    const actorRegistry = await deployUpgradeableContract("ActorRegistry", [
+      admin.address,
+    ]);
+    const registry = await deployUpgradeableContract("OrderRegistry", [
+      admin.address,
       await controller.getAddress(),
-      await vault.getAddress(),
-    );
-
-    const TradeSettlement = await ethers.getContractFactory("TradeSettlement");
-    const settlement = await TradeSettlement.deploy(
+      await actorRegistry.getAddress(),
+    ]);
+    const settlement = await deployUpgradeableContract("TradeSettlement", [
+      admin.address,
       await registry.getAddress(),
-    );
+    ]);
 
     const ORCHESTRATOR_ROLE = await controller.ORCHESTRATOR_ROLE();
     await controller.grantRole(ORCHESTRATOR_ROLE, admin.address);
@@ -52,8 +51,8 @@ describe("TradeSettlement", function () {
     const marketId = bytes16Id("market-1");
     await controller.setMarketStatus(marketId, true);
 
-    await vault.registerActor(buyerActorId, buyer.address);
-    await vault.registerActor(sellerActorId, seller.address);
+    await actorRegistry.registerActor(buyerActorId, buyer.address);
+    await actorRegistry.registerActor(sellerActorId, seller.address);
 
     const bid = {
       orderId: bytes16Id("bid-1"),
@@ -84,7 +83,6 @@ describe("TradeSettlement", function () {
     return {
       settlement,
       registry,
-      vault,
       buyer,
       seller,
       operator,
