@@ -2,12 +2,20 @@
 
 ## Compose Topology
 
-The default compose files start an EVM-centered local DEX environment:
+Contract deployment and local chain startup are handled by
+`docker-compose.contracts.yml`. The application and e2e compose files consume
+the generated contract addresses and connect to the already-running target EVM.
 
-1. `anvil` starts and exposes port `8545`.
-2. `gsy-contracts-bootstrap` deploys contracts and grants roles.
-3. Service containers start with predefined contract addresses.
+Recommended local sequence:
+
+1. Run `./scripts/contracts.sh local deploy`.
+2. Keep the local Anvil container running.
+3. Start `docker-compose.yml` or `docker-compose.test.yml` with
+   `--env-file contracts-output/addresses.env`.
 4. `gsy-offchain-storage` subscribes to chain events and exposes APIs.
+
+For remote Energy Web Chain or Volta deployments, see
+[Contract Deployment and Gas Reports](contracts.md).
 
 ## Main Commands
 
@@ -15,11 +23,14 @@ The default compose files start an EVM-centered local DEX environment:
 # build all images
 docker compose build
 
-# run core stack
-docker compose up
+# deploy local contracts first
+./scripts/contracts.sh local deploy
+
+# run core stack against deployed local contracts
+docker compose --env-file contracts-output/addresses.env up
 
 # run and rebuild
-docker compose up --build
+docker compose --env-file contracts-output/addresses.env up --build
 
 # stop
 docker compose down
@@ -254,13 +265,28 @@ Errors that indicate channel/topic setup is still incomplete:
 Use the test compose file to run e2e and integration scenarios:
 
 ```bash
-docker compose -f docker-compose.test.yml up --build --abort-on-container-exit e2e-tests
+./scripts/contracts.sh local deploy
+
+docker compose --env-file contracts-output/addresses.env \
+  -f docker-compose.test.yml \
+  up --build --force-recreate \
+  --abort-on-container-exit \
+  --exit-code-from e2e-tests \
+  e2e-tests
 ```
 
 EWDS-enabled test execution:
 
 ```bash
-docker compose --env-file .env.ewds.local -f docker-compose.test.yml up --build --abort-on-container-exit e2e-tests
+./scripts/contracts.sh local deploy
+
+docker compose --env-file .env.ewds.local \
+  --env-file contracts-output/addresses.env \
+  -f docker-compose.test.yml \
+  up --build --force-recreate \
+  --abort-on-container-exit \
+  --exit-code-from e2e-tests \
+  e2e-tests
 ```
 
 If the local DDHub Client Gateway is already configured and running, do not use
@@ -278,4 +304,7 @@ The services expect these deployed addresses:
 - `TRADE_SETTLEMENT_ADDRESS`
 - `ACTOR_REGISTRY_ADDRESS`
 
-In default local setup, they are provisioned by the bootstrap container and injected via compose env.
+In default local setup, they are provisioned by `./scripts/contracts.sh local
+deploy` and injected with `--env-file contracts-output/addresses.env`. These
+are proxy addresses. The deployment script also writes implementation and
+`ProxyAdmin` addresses for inspection and upgrade operations.

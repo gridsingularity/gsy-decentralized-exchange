@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.22;
 
-import "@openzeppelin/contracts/access/AccessControl.sol";
+import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "./OrderRegistry.sol";
 
 /**
  * @title TradeSettlement
  * @notice Validates matches and emits settlement records by Actor UUID.
  */
-contract TradeSettlement is AccessControl {
+contract TradeSettlement is Initializable, AccessControlUpgradeable {
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
     bytes32 public constant EXECUTION_ENGINE_ROLE =
         keccak256("EXECUTION_ENGINE_ROLE");
@@ -43,8 +44,13 @@ contract TradeSettlement is AccessControl {
     error EnergyMismatch();
     error InvalidPenalty();
 
-    constructor(address _registry) {
-        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(address admin, address _registry) external initializer {
+        __AccessControl_init();
+        _grantRole(DEFAULT_ADMIN_ROLE, admin);
         registry = OrderRegistry(_registry);
     }
 

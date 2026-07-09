@@ -1,30 +1,34 @@
 import { loadFixture } from "@nomicfoundation/hardhat-toolbox/network-helpers";
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { bytes16Id, ORDER_TYPE_BID, ORDER_TYPE_ASK, ZERO_BYTES16 } from "./utils";
+import {
+  bytes16Id,
+  deployUpgradeableContract,
+  ORDER_TYPE_ASK,
+  ORDER_TYPE_BID,
+  ZERO_BYTES16,
+} from "./utils";
 
 describe("TradeSettlement", function () {
   async function deploySettlementFixture() {
     const [admin, buyer, seller, operator, executionEngine] =
       await ethers.getSigners();
 
-    const MarketController =
-      await ethers.getContractFactory("MarketController");
-    const controller = await MarketController.deploy();
-
-    const ActorRegistry = await ethers.getContractFactory("ActorRegistry");
-    const actorRegistry = await ActorRegistry.deploy();
-
-    const OrderRegistry = await ethers.getContractFactory("OrderRegistry");
-    const registry = await OrderRegistry.deploy(
+    const controller = await deployUpgradeableContract("MarketController", [
+      admin.address,
+    ]);
+    const actorRegistry = await deployUpgradeableContract("ActorRegistry", [
+      admin.address,
+    ]);
+    const registry = await deployUpgradeableContract("OrderRegistry", [
+      admin.address,
       await controller.getAddress(),
       await actorRegistry.getAddress(),
-    );
-
-    const TradeSettlement = await ethers.getContractFactory("TradeSettlement");
-    const settlement = await TradeSettlement.deploy(
+    ]);
+    const settlement = await deployUpgradeableContract("TradeSettlement", [
+      admin.address,
       await registry.getAddress(),
-    );
+    ]);
 
     const ORCHESTRATOR_ROLE = await controller.ORCHESTRATOR_ROLE();
     await controller.grantRole(ORCHESTRATOR_ROLE, admin.address);

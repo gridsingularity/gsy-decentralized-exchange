@@ -16,9 +16,9 @@
 
 ## Deployment Topology (Docker Compose)
 
-1. `anvil` starts and exposes `8545`.
-2. `gsy-contracts-bootstrap` deploys contracts and grants roles.
-3. Core services start with known contract addresses.
+1. `docker-compose.contracts.yml` starts the target local Anvil chain when using the local workflow.
+2. `./scripts/contracts.sh local deploy` deploys contracts, grants roles, and writes `contracts-output/addresses.env`.
+3. Core services start with generated proxy addresses from `contracts-output/addresses.env`.
 4. `gsy-offchain-storage` listens for events and exposes HTTP endpoints.
 5. Engine services and e2e tests consume APIs and on-chain state.
 

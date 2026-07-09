@@ -18,6 +18,7 @@ nav:
     - Installation: setup/installation.md
     - Rust Setup: setup/rust-setup.md
     - Build: setup/build.md
+    - Contract Deployment and Gas Reports: setup/contracts.md
     - Run: setup/run.md
     - Docker: setup/docker.md
     - Testing: setup/test.md

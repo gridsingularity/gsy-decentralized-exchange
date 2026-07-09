@@ -1,14 +1,14 @@
 import { loadFixture } from "@nomicfoundation/hardhat-toolbox/network-helpers";
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { bytes16Id } from "./utils";
+import { bytes16Id, deployUpgradeableContract } from "./utils";
 
 describe("MarketController", function () {
   async function deployControllerFixture() {
     const [admin, orchestrator, user] = await ethers.getSigners();
-    const MarketController =
-      await ethers.getContractFactory("MarketController");
-    const controller = await MarketController.deploy();
+    const controller = await deployUpgradeableContract("MarketController", [
+      admin.address,
+    ]);
 
     const ORCHESTRATOR_ROLE = await controller.ORCHESTRATOR_ROLE();
     await controller.grantRole(ORCHESTRATOR_ROLE, orchestrator.address);

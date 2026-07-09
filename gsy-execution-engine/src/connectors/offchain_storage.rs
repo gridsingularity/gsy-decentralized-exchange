@@ -5,6 +5,7 @@ use gsy_offchain_primitives::db_api_schema::{
     trades::TradeSchema,
 };
 use gsy_offchain_primitives::ewds::{query_via_ewds, EwdsOperation, EwdsQueryRequest};
+use gsy_offchain_primitives::utils::timestamp_to_string_with_padding;
 use reqwest::Client;
 use std::collections::HashMap;
 use std::env;
@@ -67,8 +68,8 @@ async fn fetch_measurements_from_timeseries(
     let timeseries_url = format!(
         "{}/timeseries?start_time={}&end_time={}",
         base_url,
-        format_timeseries_timestamp(start_time),
-        format_timeseries_timestamp(end_time)
+        timestamp_to_string_with_padding(start_time),
+        timestamp_to_string_with_padding(end_time)
     );
     info!("Fetching measurement points for {}", measurement_points_url);
     info!("Fetching timeseries for {}", timeseries_url);
@@ -112,11 +113,6 @@ async fn fetch_measurements_from_timeseries(
         })
         .collect())
 }
-
-fn format_timeseries_timestamp(timestamp: u64) -> String {
-    format!("{:020}", timestamp)
-}
-
 fn parse_timeseries_timestamp(timestamp: &str) -> Option<u64> {
     timestamp.parse::<u64>().ok()
 }

@@ -1,20 +1,23 @@
 use crate::db::DatabaseWrapper;
 use crate::routes::{
     get_assets, get_clearing_results, get_communities, get_facilities, get_flexibility_orders,
-    get_forecasts, get_market_roles, get_market_topology, get_market_topology_from_community,
+    get_forecasts, get_market_roles,
     get_markets, get_measurement_points, get_measurements, get_orders, get_pilot_sites, get_sites,
     get_tariffs, get_timeseries, get_trades, health_check, post_assets, post_clearing_result,
-    post_community, post_facility, post_flexibility_orders, post_forecasts, post_market,
-    post_market_role, post_market_topology, post_measurement_points, post_measurements,
+    post_community, post_facility, post_flexibility_orders, post_forecasts,
+    post_market_role, post_measurement_points, post_measurements,
     post_normalized_orders, post_normalized_trades, post_orders, post_pilot_site, post_site,
-    post_tariff, post_timeseries, post_trades,
+    post_tariff, post_timeseries, post_trades, get_market
 };
 use actix_web::dev::Server;
 use actix_web::{web, App, HttpServer};
+use anyhow::{Error, Result};
 use std::net::TcpListener;
+use tracing::info;
 use tracing_actix_web::TracingLogger;
 
-pub fn run(
+/// Start http server that listens to exposed API endpoints
+fn run_http_server(
     listener: TcpListener,
     db_connection_wrapper: DatabaseWrapper,
 ) -> Result<Server, std::io::Error> {
@@ -38,13 +41,7 @@ pub fn run(
             .route("/trades-normalized", web::post().to(post_normalized_trades))
             .route("/trades", web::post().to(post_trades))
             .route("/trades", web::get().to(get_trades))
-            .route("/market", web::post().to(post_market_topology))
-            .route("/market", web::get().to(get_market_topology))
-            .route(
-                "/community-market",
-                web::get().to(get_market_topology_from_community),
-            )
-            .route("/markets", web::post().to(post_market))
+            .route("/market", web::get().to(get_market))
             .route("/markets", web::get().to(get_markets))
             .route("/clearing-results", web::post().to(post_clearing_result))
             .route("/clearing-results", web::get().to(get_clearing_results))
@@ -79,4 +76,19 @@ pub fn run(
     .run();
 
     Ok(server)
+}
+
+/// Create a TCP listener and run http server that exposes API endpoints
+pub async fn start_server(
+    address: &str,
+    db_connection_wrapper: DatabaseWrapper,
+) -> Result<(), Error> {
+    let listener = TcpListener::bind(address).expect("Failed to bind");
+
+    info!("Server listening on {}", listener.local_addr().unwrap());
+
+    match run_http_server(listener, db_connection_wrapper)?.await {
+        Ok(_) => Ok(()),
+        Err(e) => Err(Error::from(e)),
+    }
 }

@@ -2,8 +2,96 @@
 
 ## Contract Set
 
-The refactored chain layer is implemented in Solidity (`0.8.20`) and deployed by
-`gsy-contracts/scripts/deploy.ts`.
+The chain layer uses Solidity `^0.8.22` and is deployed by
+`gsy-contracts/scripts/deploy.ts`. Hardhat compiles with `evmVersion: "paris"`
+to keep bytecode compatible with the local/EWC-style runtime assumptions.
+
+## Upgrade Strategy
+
+The contract suite uses the OpenZeppelin transparent proxy pattern:
+
+- Each business contract is deployed as an implementation contract.
+- Each runtime address used by services is a `TransparentUpgradeableProxy`.
+- Each proxy is controlled by a `ProxyAdmin` contract.
+- `PROXY_ADMIN_PRIVATE_KEY` controls the `ProxyAdmin` ownership during deployment.
+- Services must always use the proxy addresses (`ACTOR_REGISTRY_ADDRESS`,
+  `MARKET_CONTROLLER_ADDRESS`, `ORDER_REGISTRY_ADDRESS`, `TRADE_SETTLEMENT_ADDRESS`),
+  not the implementation addresses.
+
+Implementations use OpenZeppelin upgradeable base contracts, `initialize(...)`
+functions instead of constructors, and implementation contracts disable direct
+initialization in their constructors. The deployment script exports both proxy
+addresses and implementation/admin addresses to `/contracts/addresses.env` for
+inspection and future upgrade operations.
+
+Local Docker deployment writes the same values to
+`contracts-output/addresses.env` on the host:
+
+```bash
+./scripts/contracts.sh local deploy
+```
+
+Use that generated file when starting the services or e2e tests:
+
+```bash
+docker compose --env-file contracts-output/addresses.env up --build
+```
+
+Remote deployments are supported through the dedicated contracts compose stack:
+
+```bash
+DEPLOYER_PRIVATE_KEY=0x... ./scripts/contracts.sh volta deploy
+
+DEPLOYER_PRIVATE_KEY=0x... \
+ALLOW_EWC_MAINNET_DEPLOY=true \
+./scripts/contracts.sh ewc deploy
+```
+
+See [Contract Deployment and Gas Reports](../setup/contracts.md) for the full
+network matrix and safety flags.
+
+## Gas Reporting
+
+`gsy-contracts/scripts/gas-report.ts` deploys a benchmark contract suite and
+records gas for deployment, proxy initialization, role setup, mutating contract
+calls, and view-call estimates.
+
+Local report:
+
+```bash
+./scripts/contracts.sh local gas-report
+```
+
+Outputs:
+
+- `contracts-output/gas-report.md`
+- `contracts-output/gas-report.json`
+
+Remote gas reports require an explicit opt-in because they deploy contracts and
+send state-changing transactions on the target network:
+
+```bash
+DEPLOYER_PRIVATE_KEY=0x... \
+GAS_REPORT_ALLOW_REMOTE=true \
+./scripts/contracts.sh volta gas-report
+```
+
+Generic upgrade command:
+
+```bash
+UPGRADE_CONTRACT_NAME=ActorRegistry \
+UPGRADE_PROXY_ADDRESS="$ACTOR_REGISTRY_ADDRESS" \
+UPGRADE_PROXY_ADMIN_ADDRESS="$ACTOR_REGISTRY_PROXY_ADMIN_ADDRESS" \
+PROXY_ADMIN_PRIVATE_KEY="$PROXY_ADMIN_PRIVATE_KEY" \
+npx hardhat run scripts/upgrade.ts --network anvil
+```
+
+Set `UPGRADE_CALL_DATA` when an upgrade needs a post-upgrade initializer or
+migration call; otherwise the script uses `0x`.
+
+Future implementations must preserve storage layout: do not reorder, remove, or
+change existing state variable types; append new storage only after existing
+state variables.
 
 ### `ActorRegistry`
 
@@ -48,6 +136,7 @@ Purpose:
 
 Deployment script assigns:
 
+- Proxy admin ownership -> proxy admin owner signer.
 - `ACTOR_REGISTRAR_ROLE` on `ActorRegistry` -> actor registrar signer.
 - `ORCHESTRATOR_ROLE` on `MarketController` -> orchestrator signer.
 - `SETTLEMENT_ROLE` on `OrderRegistry` -> `TradeSettlement`.

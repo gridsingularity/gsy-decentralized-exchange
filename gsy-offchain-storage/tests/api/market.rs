@@ -1,7 +1,7 @@
 use crate::helpers::{init_app, stop_app};
 use actix_web::web;
 use gsy_offchain_primitives::db_api_schema::market::{
-    AreaTopologySchema, MarketSchema, MarketTopologySchema, MarketType,
+    MarketSchema, MarketType, MatchingAlgorithm
 };
 use gsy_offchain_primitives::db_api_schema::trades::{
     ClearingResultSchema, ClearingStatus, MarketRoleSchema,
@@ -16,84 +16,9 @@ fn make_market(market_id: &str, community_id: &str, opening_time: &str) -> Marke
         delivery_start_time: "2026-03-28T10:00:00Z".to_string(),
         delivery_end_time: "2026-03-28T10:15:00Z".to_string(),
         market_type: MarketType::Spot,
+        matching_algorithm: MatchingAlgorithm::PayAsBid,
+        created_at: "2026-03-28T09:45:00Z".to_string(),
     }
-}
-
-fn make_market_topology(
-    market_id: &str,
-    community_uuid: &str,
-    time_slot: u32,
-) -> MarketTopologySchema {
-    MarketTopologySchema {
-        market_id: market_id.to_string(),
-        market_type: MarketType::Spot,
-        community_uuid: community_uuid.to_string(),
-        community_name: "Test Community".to_string(),
-        time_slot,
-        creation_time: time_slot - 60,
-        community_areas: vec![AreaTopologySchema {
-            area_uuid: "area-1".to_string(),
-            name: "Area 1".to_string(),
-            area_type: "Area".to_string(),
-        }],
-    }
-}
-
-#[tokio::test]
-async fn post_and_get_market_topology() {
-    let app = init_app().await;
-    let address = app.address.clone();
-    let market = make_market_topology("market-topology-1", "community1", 1_900_000_000);
-
-    let client = reqwest::Client::new();
-    let resp = client
-        .post(&format!("{}/market", &address))
-        .json(&market)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(200, resp.status().as_u16());
-
-    let resp = client
-        .get(&format!("{}/market?market_id=market-topology-1", &address))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(200, resp.status().as_u16());
-    let saved: MarketSchema = resp.json().await.unwrap();
-    assert_eq!(saved.market_id, market.market_id);
-    assert_eq!(saved.community_id, "community1");
-    stop_app(app).await;
-}
-
-#[tokio::test]
-async fn get_community_market_topologies() {
-    let app = init_app().await;
-    let address = app.address.clone();
-
-    let client = reqwest::Client::new();
-    let market = make_market_topology("market-topology-2", "community2", 1_900_000_000);
-    let resp = client
-        .post(&format!("{}/market", &address))
-        .json(&market)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(200, resp.status().as_u16());
-
-    let resp = client
-        .get(&format!(
-            "{}/community-market?community_uuid=community2&start_time=1900000000",
-            &address
-        ))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(200, resp.status().as_u16());
-    let saved: Vec<MarketSchema> = resp.json().await.unwrap();
-    assert_eq!(saved.len(), 1);
-    assert_eq!(saved[0].market_id, "market-topology-2");
-    stop_app(app).await;
 }
 
 #[tokio::test]
@@ -159,34 +84,6 @@ async fn get_market_returns_404_for_wrong_market_id() {
         .unwrap();
 
     assert_eq!(404, resp.status().as_u16());
-    stop_app(app).await;
-}
-
-#[tokio::test]
-async fn post_market_succeeds() {
-    let app = init_app().await;
-    let address = app.address.clone();
-    let market = make_market("new_market", "my_community", "2026-03-27T18:00:00Z");
-
-    let client = reqwest::Client::new();
-    let resp = client
-        .post(&format!("{}/markets", &address))
-        .json(&market)
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(200, resp.status().as_u16());
-
-    let db = web::Data::new(app.db_wrapper.clone());
-    let saved = db
-        .get_ref()
-        .markets()
-        .filter(Some("new_market".to_string()), None, None, None)
-        .await
-        .unwrap();
-    let first = saved.first().unwrap();
-    assert_eq!(*first, market);
     stop_app(app).await;
 }
 

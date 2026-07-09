@@ -5,6 +5,7 @@ use gsy_offchain_primitives::db_api_schema::profiles::{
     FlowDirection, ForecastSchema, MeasurementPointSchema, MeasurementPointType, MeasurementSchema,
     TimeseriesSchema,
 };
+use gsy_offchain_primitives::utils::timestamp_to_string_with_padding;
 use serde::Deserialize;
 use std::collections::HashMap;
 
@@ -25,10 +26,6 @@ fn profile_measurement_id(
         MeasurementPointType::Forecast => "forecast",
     };
     format!("{prefix}:{community_uuid}:{area_uuid}")
-}
-
-fn format_timeseries_timestamp(timestamp: u64) -> String {
-    format!("{:020}", timestamp)
 }
 
 fn parse_timeseries_timestamp(timestamp: &str) -> Option<u64> {
@@ -69,7 +66,7 @@ fn measurement_timeseries(measurement: &MeasurementSchema) -> TimeseriesSchema {
             measurement.community_uuid.as_str(),
             measurement.area_uuid.as_str(),
         ),
-        timestamp: format_timeseries_timestamp(measurement.time_slot),
+        timestamp: timestamp_to_string_with_padding(measurement.time_slot),
         value: measurement.energy_kwh,
     }
 }
@@ -100,7 +97,7 @@ fn forecast_timeseries(forecast: &ForecastSchema) -> TimeseriesSchema {
             forecast.community_uuid.as_str(),
             forecast.area_uuid.as_str(),
         ),
-        timestamp: format_timeseries_timestamp(forecast.time_slot),
+        timestamp: timestamp_to_string_with_padding(forecast.time_slot),
         value: forecast.energy_kwh,
     }
 }
@@ -125,8 +122,8 @@ async fn fetch_profile_values(
         .timeseries()
         .filter_values(
             None,
-            start_time.map(format_timeseries_timestamp),
-            end_time.map(format_timeseries_timestamp),
+            start_time.map(timestamp_to_string_with_padding),
+            end_time.map(timestamp_to_string_with_padding),
         )
         .await?;
 
