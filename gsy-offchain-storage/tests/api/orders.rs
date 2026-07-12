@@ -1,7 +1,9 @@
 use crate::helpers::init_app;
 use actix_web::web;
 use codec::Encode;
-use gsy_offchain_primitives::db_api_schema::orders::OrderStatus;
+use gsy_offchain_primitives::db_api_schema::orders::{
+    DbBid, DbOffer, DbOrderComponent, DbOrderSchema, Order as DbOrder, OrderStatus,
+};
 use gsy_offchain_primitives::node_to_api_schema::insert_order::{
     Bid, Order, OrderComponent, OrderSchema,
 };
@@ -94,6 +96,96 @@ async fn subscribe_return_a_200_for_valid_form_data() {
         .await
         .unwrap();
     assert_eq!(updated_order.unwrap().status, OrderStatus::Executed);
+}
+
+fn db_bid_order(id: &str, market_id: &str, time_slot: u64) -> DbOrderSchema {
+    DbOrderSchema {
+        _id: id.to_string(),
+        status: OrderStatus::Open,
+        order: DbOrder::Bid(DbBid {
+            buyer: "buyer".to_string(),
+            nonce: 1,
+            bid_component: DbOrderComponent {
+                area_uuid: "area".to_string(),
+                market_id: market_id.to_string(),
+                time_slot,
+                creation_time: 1677453190,
+                energy: 100.0,
+                energy_rate: 10.0,
+            },
+        }),
+    }
+}
+
+fn db_offer_order(id: &str, market_id: &str, time_slot: u64) -> DbOrderSchema {
+    DbOrderSchema {
+        _id: id.to_string(),
+        status: OrderStatus::Open,
+        order: DbOrder::Offer(DbOffer {
+            seller: "seller".to_string(),
+            nonce: 1,
+            offer_component: DbOrderComponent {
+                area_uuid: "area".to_string(),
+                market_id: market_id.to_string(),
+                time_slot,
+                creation_time: 1677453190,
+                energy: 100.0,
+                energy_rate: 10.0,
+            },
+        }),
+    }
+}
+
+#[tokio::test]
+async fn filter_orders_by_time_window_matches_component_time_slot() {
+    let app = init_app().await;
+    let db = web::Data::new(app.db_wrapper);
+
+    // Bid and Offer orders at distinct component time_slots across two markets.
+    let orders = vec![
+        db_bid_order("bid_100_a", "market_a", 100),
+        db_offer_order("offer_200_a", "market_a", 200),
+        db_bid_order("bid_300_b", "market_b", 300),
+    ];
+    db.get_ref()
+        .orders()
+        .insert_orders(orders)
+        .await
+        .expect("Failed to insert orders");
+
+    // Time window [150, 250] should match only the Offer at time_slot 200
+    // (covers both a Bid and an Offer document via the $or on component paths).
+    let mut result = db
+        .get_ref()
+        .orders()
+        .filter_orders(None, Some(150), Some(250))
+        .await
+        .expect("Failed to filter orders");
+    result.sort_by(|a, b| a._id.cmp(&b._id));
+    let ids: Vec<&str> = result.iter().map(|o| o._id.as_str()).collect();
+    assert_eq!(ids, vec!["offer_200_a"]);
+
+    // Open-ended window (only start_time) should match time_slots >= 250.
+    let result = db
+        .get_ref()
+        .orders()
+        .filter_orders(None, Some(250), None)
+        .await
+        .expect("Failed to filter orders");
+    let ids: Vec<&str> = result.iter().map(|o| o._id.as_str()).collect();
+    assert_eq!(ids, vec!["bid_300_b"]);
+
+    // market_id + time window combined (the $and case on the Mongo side, both
+    // predicate conjuncts in-memory): market_a within [50, 150] matches only
+    // the Bid at time_slot 100, excluding the Offer at 200 in the same market.
+    let result = db
+        .get_ref()
+        .orders()
+        .filter_orders(Some("market_a".to_string()), Some(50), Some(150))
+        .await
+        .expect("Failed to filter orders");
+    let ids: Vec<&str> = result.iter().map(|o| o._id.as_str()).collect();
+    assert_eq!(ids, vec!["bid_100_a"]);
 }
 
 #[tokio::test]

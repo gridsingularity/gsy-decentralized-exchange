@@ -264,6 +264,25 @@ pub(crate) fn apply_time_window(
     }
 }
 
+/// Build the optional `[start_time, end_time]` range sub-document (the inner
+/// `{$gte, $lte}` doc). Callers that place the range under a top-level
+/// `time_slot` field use [`apply_time_window`]; callers that need the range
+/// under a custom field path (e.g. nested component paths) use this directly.
+/// Returns `None` when neither bound is set.
+pub(crate) fn time_window_bounds(
+    start_time: Option<u32>,
+    end_time: Option<u32>,
+) -> Option<Document> {
+    let mut bounds = Document::new();
+    if let Some(start) = start_time {
+        bounds.insert("$gte", start);
+    }
+    if let Some(end) = end_time {
+        bounds.insert("$lte", end);
+    }
+    if bounds.is_empty() { None } else { Some(bounds) }
+}
+
 /// In-memory counterpart of [`apply_time_window`].
 pub(crate) fn in_time_window(time_slot: u64, start_time: Option<u32>, end_time: Option<u32>) -> bool {
     start_time.is_none_or(|start| time_slot >= start as u64)

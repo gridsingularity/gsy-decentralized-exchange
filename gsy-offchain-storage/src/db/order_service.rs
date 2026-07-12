@@ -1,5 +1,5 @@
 use crate::db::DatabaseWrapper;
-use crate::db::collection::{Coll, UpdateSummary, apply_time_window};
+use crate::db::collection::{Coll, UpdateSummary, in_time_window, time_window_bounds};
 use anyhow::Result;
 use gsy_offchain_primitives::db_api_schema::orders::{DbOrderSchema, Order, OrderStatus};
 use mongodb::bson::{Bson, doc};
@@ -22,6 +22,13 @@ fn order_market_id(order: &Order) -> &str {
     }
 }
 
+fn order_time_slot(order: &Order) -> u64 {
+    match order {
+        Order::Bid(bid) => bid.bid_component.time_slot,
+        Order::Offer(offer) => offer.offer_component.time_slot,
+    }
+}
+
 impl OrderService {
     #[tracing::instrument(name = "Fetching orders from database", skip(self))]
     pub async fn get_all_orders(&self) -> Result<Vec<DbOrderSchema>> {
@@ -35,27 +42,38 @@ impl OrderService {
         start_time: Option<u32>,
         end_time: Option<u32>,
     ) -> Result<Vec<DbOrderSchema>> {
-        let mut filter_params = doc! {};
+        // An order is either a Bid or an Offer, so its market_id / time_slot
+        // live under exactly one of the two nested component paths. Each filter
+        // is expressed as an `$or` over both paths; when both are present they
+        // are combined with `$and` (two `$or` keys cannot coexist in one doc).
+        let mut clauses: Vec<mongodb::bson::Document> = Vec::new();
 
         if let Some(market_id) = &market_id {
-            filter_params = doc! {"$or": [
+            clauses.push(doc! {"$or": [
                 { "order.data.offer_component.market_id": market_id.clone() },
                 { "order.data.bid_component.market_id": market_id.clone() }
-            ]};
+            ]});
         }
 
-        // TODO: Correct time_slot filtering based on nested offer / bid structs.
-        apply_time_window(&mut filter_params, start_time, end_time);
+        if let Some(bounds) = time_window_bounds(start_time, end_time) {
+            clauses.push(doc! {"$or": [
+                { "order.data.bid_component.time_slot": bounds.clone() },
+                { "order.data.offer_component.time_slot": bounds }
+            ]});
+        }
 
-        // DbOrderSchema has no top-level `time_slot` field, so the Mongo time
-        // filter above matches no documents (see TODO); the predicate mirrors that.
-        let has_time_filter = start_time.is_some() || end_time.is_some();
+        let filter_params = match clauses.len() {
+            0 => doc! {},
+            1 => clauses.pop().unwrap(),
+            _ => doc! {"$and": clauses},
+        };
+
         self.0
             .query(filter_params, |order| {
-                !has_time_filter
-                    && market_id
-                        .as_ref()
-                        .is_none_or(|market_id| order_market_id(&order.order) == market_id)
+                market_id
+                    .as_ref()
+                    .is_none_or(|market_id| order_market_id(&order.order) == market_id)
+                    && in_time_window(order_time_slot(&order.order), start_time, end_time)
             })
             .await
     }
