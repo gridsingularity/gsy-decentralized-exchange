@@ -188,6 +188,67 @@ async fn filter_orders_by_time_window_matches_component_time_slot() {
     assert_eq!(ids, vec!["bid_100_a"]);
 }
 
+fn db_bid_order_at(id: &str, area_uuid: &str, market_id: &str) -> DbOrderSchema {
+    let mut order = db_bid_order(id, market_id, 1);
+    if let DbOrder::Bid(bid) = &mut order.order {
+        bid.bid_component.area_uuid = area_uuid.to_string();
+    }
+    order
+}
+
+fn db_offer_order_at(id: &str, area_uuid: &str, market_id: &str) -> DbOrderSchema {
+    let mut order = db_offer_order(id, market_id, 1);
+    if let DbOrder::Offer(offer) = &mut order.order {
+        offer.offer_component.area_uuid = area_uuid.to_string();
+    }
+    order
+}
+
+async fn status_of(db: &web::Data<gsy_offchain_storage::db::DatabaseWrapper>, id: &str) -> OrderStatus {
+    db.get_ref()
+        .orders()
+        .get_order_by_id(&Bson::String(id.to_string()))
+        .await
+        .expect("Failed to fetch order")
+        .expect("Order not found")
+        .status
+}
+
+#[tokio::test]
+async fn update_order_by_area_market_id_marks_matching_orders_executed() {
+    let app = init_app().await;
+    let db = web::Data::new(app.db_wrapper);
+
+    // A Bid and an Offer that both match (area_x / market_x), plus two orders
+    // that fail exactly one of the two conditions (both must match together).
+    let orders = vec![
+        db_bid_order_at("bid_match", "area_x", "market_x"),
+        db_offer_order_at("offer_match", "area_x", "market_x"),
+        db_bid_order_at("bid_wrong_area", "area_y", "market_x"),
+        db_offer_order_at("offer_wrong_market", "area_x", "market_y"),
+    ];
+    db.get_ref()
+        .orders()
+        .insert_orders(orders)
+        .await
+        .expect("Failed to insert orders");
+
+    let ok = db
+        .get_ref()
+        .orders()
+        .update_order_by_area_market_id("area_x".to_string(), "market_x".to_string())
+        .await
+        .expect("Failed to update orders");
+    assert!(ok);
+
+    // Both matching orders (Bid and Offer) flip to Executed.
+    assert_eq!(status_of(&db, "bid_match").await, OrderStatus::Executed);
+    assert_eq!(status_of(&db, "offer_match").await, OrderStatus::Executed);
+    // Orders failing either condition stay Open.
+    assert_eq!(status_of(&db, "bid_wrong_area").await, OrderStatus::Open);
+    assert_eq!(status_of(&db, "offer_wrong_market").await, OrderStatus::Open);
+}
+
 #[tokio::test]
 async fn subscribe_return_a_400_when_data_is_missing() {
     let app = init_app().await;

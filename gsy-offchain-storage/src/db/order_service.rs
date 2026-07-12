@@ -29,6 +29,13 @@ fn order_time_slot(order: &Order) -> u64 {
     }
 }
 
+fn order_area_uuid(order: &Order) -> &str {
+    match order {
+        Order::Bid(bid) => &bid.bid_component.area_uuid,
+        Order::Offer(offer) => &offer.offer_component.area_uuid,
+    }
+}
+
 impl OrderService {
     #[tracing::instrument(name = "Fetching orders from database", skip(self))]
     pub async fn get_all_orders(&self) -> Result<Vec<DbOrderSchema>> {
@@ -108,12 +115,19 @@ impl OrderService {
         area_uuid: String,
         market_id: String,
     ) -> Result<bool> {
-        // DbOrderSchema has no top-level `area_uuid`/`market_id` fields, so this
-        // filter matches no documents on either backend (predicate mirrors Mongo).
-        let filter = doc! {
-            "area_uuid": area_uuid,
-            "market_id": market_id
-        };
+        // An order is either a Bid or an Offer, so its area_uuid / market_id
+        // live under exactly one nested component path. Match both fields
+        // together within each `$or` branch.
+        let filter = doc! {"$or": [
+            {
+                "order.data.bid_component.area_uuid": &area_uuid,
+                "order.data.bid_component.market_id": &market_id,
+            },
+            {
+                "order.data.offer_component.area_uuid": &area_uuid,
+                "order.data.offer_component.market_id": &market_id,
+            }
+        ]};
 
         let update = doc! {
             "$set": {
@@ -122,7 +136,19 @@ impl OrderService {
         };
 
         self.0
-            .update_many(filter, update, |_| false, |_| false)
+            .update_many(
+                filter,
+                update,
+                |order| {
+                    order_area_uuid(&order.order) == area_uuid
+                        && order_market_id(&order.order) == market_id
+                },
+                |order| {
+                    let modified = order.status != OrderStatus::Executed;
+                    order.status = OrderStatus::Executed;
+                    modified
+                },
+            )
             .await?;
         Ok(true)
     }
