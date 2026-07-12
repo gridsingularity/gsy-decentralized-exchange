@@ -250,6 +250,41 @@ async fn update_order_by_area_market_id_marks_matching_orders_executed() {
 }
 
 #[tokio::test]
+async fn update_expired_orders_expires_only_past_open_orders() {
+    let app = init_app().await;
+    let db = web::Data::new(app.db_wrapper);
+
+    // Open order in the past -> should expire.
+    let past_open = db_bid_order("past_open", "market_a", 100);
+    // Open order in the future -> should stay Open.
+    let future_open = db_offer_order("future_open", "market_a", 300);
+    // Already-Executed order in the past -> should stay Executed.
+    let mut past_executed = db_bid_order("past_executed", "market_a", 100);
+    past_executed.status = OrderStatus::Executed;
+
+    db.get_ref()
+        .orders()
+        .insert_orders(vec![past_open, future_open, past_executed])
+        .await
+        .expect("Failed to insert orders");
+
+    // now_time_slot = 200: only past (time_slot < 200) AND Open orders expire.
+    let summary = db
+        .get_ref()
+        .orders()
+        .update_expired_orders(200, OrderStatus::Expired)
+        .await
+        .expect("Failed to update expired orders");
+
+    assert_eq!(summary.matched_count, 1);
+    assert_eq!(summary.modified_count, 1);
+
+    assert_eq!(status_of(&db, "past_open").await, OrderStatus::Expired);
+    assert_eq!(status_of(&db, "future_open").await, OrderStatus::Open);
+    assert_eq!(status_of(&db, "past_executed").await, OrderStatus::Executed);
+}
+
+#[tokio::test]
 async fn subscribe_return_a_400_when_data_is_missing() {
     let app = init_app().await;
     let address = app.address;

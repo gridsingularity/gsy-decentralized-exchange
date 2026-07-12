@@ -183,20 +183,31 @@ impl OrderService {
         now_time_slot: u64,
         status: OrderStatus,
     ) -> Result<UpdateSummary> {
-        // The order's time_slot lives at `order.data.{bid,offer}_component.time_slot`,
-        // so the `order.data.time_slot` filter matches no documents on either
-        // backend (predicate mirrors Mongo).
+        // An order is either a Bid or an Offer, so its time_slot lives under
+        // exactly one nested component path. Expire Open orders whose component
+        // time_slot is in the past (`$lt` now_time_slot).
+        let time_bound = doc! { "$lt": bson::to_bson(&now_time_slot).unwrap() };
         self.0
             .update_many(
                 doc! {
-                    "order.data.time_slot": { "$lt": bson::to_bson(&now_time_slot).unwrap()},
-                    "status": bson::to_bson(&OrderStatus::Open).unwrap()
+                    "status": bson::to_bson(&OrderStatus::Open).unwrap(),
+                    "$or": [
+                        { "order.data.bid_component.time_slot": time_bound.clone() },
+                        { "order.data.offer_component.time_slot": time_bound }
+                    ]
                 },
                 doc! {
                     "$set": { "status": bson::to_bson(&status).unwrap()},
                 },
-                |_| false,
-                |_| false,
+                |order| {
+                    order.status == OrderStatus::Open
+                        && order_time_slot(&order.order) < now_time_slot
+                },
+                |order| {
+                    let modified = order.status != status;
+                    order.status = status.clone();
+                    modified
+                },
             )
             .await
     }
