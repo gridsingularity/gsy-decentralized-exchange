@@ -1,48 +1,20 @@
 use crate::db::DatabaseWrapper;
+use crate::db::collection::{Coll, apply_time_window, in_time_window};
 use anyhow::{Result, bail};
-use futures::StreamExt;
 use gsy_offchain_primitives::db_api_schema::market::MarketTopologySchema;
 use mongodb::bson::doc;
-use mongodb::options::IndexOptions;
-use mongodb::{Collection, IndexModel};
-use std::ops::Deref;
 
-/// this function will call after connected to database
-pub async fn init_markets(db: &DatabaseWrapper) -> Result<()> {
-    // create index in this block
-
-    let controller = db.markets();
-    let index: IndexModel = IndexModel::builder()
-        .keys(doc! {"_id":1})
-        .options(IndexOptions::builder().build())
-        .build();
-    controller.create_index(index).await?;
-    Ok(())
-}
-
-#[repr(transparent)]
-pub struct MarketService(pub Collection<MarketTopologySchema>);
+pub struct MarketService(pub(crate) Coll<MarketTopologySchema>);
 
 impl MarketService {
     #[tracing::instrument(name = "Fetching market information from database", skip(self))]
     pub async fn filter(&self, market_id: String) -> Result<Vec<MarketTopologySchema>> {
-        let mut cursor = self
+        let result = self
             .0
-            .find(doc! {"market_id": market_id.clone()})
-            .await
-            .unwrap();
-
-        let mut result: Vec<MarketTopologySchema> = Vec::new();
-        while let Some(doc) = cursor.next().await {
-            match doc {
-                Ok(document) => {
-                    result.push(document);
-                }
-                _ => {
-                    break;
-                }
-            }
-        }
+            .query(doc! {"market_id": market_id.clone()}, |market| {
+                market.market_id == market_id
+            })
+            .await?;
         if result.len() > 1 {
             bail!("Found more than one market information for {}", market_id);
         }
@@ -61,33 +33,14 @@ impl MarketService {
     ) -> Result<Vec<MarketTopologySchema>> {
         let mut filter_params = doc! {};
         filter_params.insert("community_name", community_name.clone());
-        if start_time.is_some() {
-            filter_params.insert("time_slot", doc! {"$gte": start_time.unwrap()});
-        }
-        if end_time.is_some() {
-            if start_time.is_some() {
-                filter_params.insert(
-                    "time_slot",
-                    doc! {"$gte": start_time.unwrap(), "$lte": end_time.unwrap()},
-                );
-            } else {
-                filter_params.insert("time_slot", doc! {"$lte": end_time.unwrap()});
-            }
-        }
+        apply_time_window(&mut filter_params, start_time, end_time);
 
-        let mut cursor = self.0.find(filter_params).await.unwrap();
-        let mut result: Vec<MarketTopologySchema> = Vec::new();
-        while let Some(doc) = cursor.next().await {
-            match doc {
-                Ok(document) => {
-                    result.push(document);
-                }
-                _ => {
-                    break;
-                }
-            }
-        }
-        Ok(result)
+        self.0
+            .query(filter_params, |market| {
+                market.community_name == community_name
+                    && in_time_window(market.time_slot as u64, start_time, end_time)
+            })
+            .await
     }
 
     #[tracing::instrument(
@@ -99,21 +52,12 @@ impl MarketService {
         start_time: u32,
         end_time: u32,
     ) -> Result<Vec<MarketTopologySchema>> {
-        let filter_params = doc! {"time_slot": {"$gte": start_time, "$lte": end_time}};
-
-        let mut cursor = self.0.find(filter_params).await.unwrap();
-        let mut result: Vec<MarketTopologySchema> = Vec::new();
-        while let Some(doc) = cursor.next().await {
-            match doc {
-                Ok(document) => {
-                    result.push(document);
-                }
-                _ => {
-                    break;
-                }
-            }
-        }
-        Ok(result)
+        self.0
+            .query(
+                doc! {"time_slot": {"$gte": start_time, "$lte": end_time}},
+                |market| market.time_slot >= start_time && market.time_slot <= end_time,
+            )
+            .await
     }
 
     #[tracing::instrument(
@@ -126,20 +70,16 @@ impl MarketService {
     pub async fn insert(&self, market: MarketTopologySchema) -> Result<MarketTopologySchema> {
         self.check_if_market_exists(market.market_id.clone())
             .await?;
-        match self.0.insert_one(market.clone()).await {
-            Ok(_db_result) => Ok(market),
-            Err(e) => {
-                tracing::error!("Failed to execute query: {:?}", e);
-                Err(anyhow::Error::from(e))
-            }
-        }
+        self.0.insert_one(market.clone()).await?;
+        Ok(market)
     }
 
     async fn check_if_market_exists(&self, market_id: String) -> Result<bool> {
+        // NOTE: mirrors historical behavior — a successful lookup reports `true`
+        // even with zero matches, so this never actually prevents duplicates.
         match self
             .0
-            .find(doc! {"market_id": market_id.clone()})
-            .limit(1)
+            .query(doc! {"market_id": market_id.clone()}, |_| false)
             .await
         {
             Ok(_) => Ok(true),
@@ -152,14 +92,6 @@ impl MarketService {
 
 impl From<&DatabaseWrapper> for MarketService {
     fn from(db: &DatabaseWrapper) -> Self {
-        MarketService(db.collection("market"))
-    }
-}
-
-impl Deref for MarketService {
-    type Target = Collection<MarketTopologySchema>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
+        MarketService(db.coll("market", |store| store.markets.clone()))
     }
 }

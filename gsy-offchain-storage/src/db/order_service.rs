@@ -1,54 +1,31 @@
 use crate::db::DatabaseWrapper;
+use crate::db::collection::{Coll, UpdateSummary, apply_time_window};
 use anyhow::Result;
-use futures::StreamExt;
-use gsy_offchain_primitives::db_api_schema::orders::{DbOrderSchema, OrderStatus};
+use gsy_offchain_primitives::db_api_schema::orders::{DbOrderSchema, Order, OrderStatus};
 use mongodb::bson::{Bson, doc};
-use mongodb::options::IndexOptions;
-use mongodb::results::UpdateResult;
-use mongodb::{Collection, IndexModel, bson};
+use mongodb::bson;
 use std::collections::HashMap;
-use std::ops::Deref;
-
-/// this function will call after connected to database
-pub async fn init_orders(db: &DatabaseWrapper) -> Result<()> {
-    // create index in this block
-
-    let controller = db.orders();
-    let index: IndexModel = IndexModel::builder()
-        .keys(doc! {"_id":1})
-        .options(IndexOptions::builder().build())
-        .build();
-    controller.create_index(index).await?;
-    Ok(())
-}
 
 /// this struct is wrapper to `Collection<Order>` should have function to help to manage order
-#[repr(transparent)]
-pub struct OrderService(pub Collection<DbOrderSchema>);
+pub struct OrderService(pub(crate) Coll<DbOrderSchema>);
 
 impl From<&DatabaseWrapper> for OrderService {
     fn from(db: &DatabaseWrapper) -> Self {
-        OrderService(db.collection("orders"))
+        OrderService(db.coll("orders", |store| store.orders.clone()))
+    }
+}
+
+fn order_market_id(order: &Order) -> &str {
+    match order {
+        Order::Bid(bid) => &bid.bid_component.market_id,
+        Order::Offer(offer) => &offer.offer_component.market_id,
     }
 }
 
 impl OrderService {
     #[tracing::instrument(name = "Fetching orders from database", skip(self))]
     pub async fn get_all_orders(&self) -> Result<Vec<DbOrderSchema>> {
-        let mut cursor = self.0.find(doc! {}).await.unwrap();
-        let mut result: Vec<DbOrderSchema> = Vec::new();
-        while let Some(doc) = cursor.next().await {
-            match doc {
-                Ok(document) => {
-                    result.push(document);
-                }
-                Err(err) => {
-                    tracing::error!("Error while fetching orders: {}", err.to_string());
-                    break;
-                }
-            }
-        }
-        Ok(result)
+        self.0.all().await
     }
 
     #[tracing::instrument(name = "Filter orders from database", skip(self))]
@@ -60,42 +37,27 @@ impl OrderService {
     ) -> Result<Vec<DbOrderSchema>> {
         let mut filter_params = doc! {};
 
-        if market_id.is_some() {
-            let market_id_str = market_id.unwrap();
+        if let Some(market_id) = &market_id {
             filter_params = doc! {"$or": [
-                { "order.data.offer_component.market_id": market_id_str.clone() },
-                { "order.data.bid_component.market_id": market_id_str.clone() }
+                { "order.data.offer_component.market_id": market_id.clone() },
+                { "order.data.bid_component.market_id": market_id.clone() }
             ]};
         }
 
         // TODO: Correct time_slot filtering based on nested offer / bid structs.
-        if start_time.is_some() {
-            filter_params.insert("time_slot", doc! {"$gte": start_time.unwrap()});
-        }
-        if end_time.is_some() {
-            if start_time.is_some() {
-                filter_params.insert(
-                    "time_slot",
-                    doc! {"$gte": start_time.unwrap(), "$lte": end_time.unwrap()},
-                );
-            } else {
-                filter_params.insert("time_slot", doc! {"$lte": end_time.unwrap()});
-            }
-        }
+        apply_time_window(&mut filter_params, start_time, end_time);
 
-        let mut cursor = self.0.find(filter_params).await.unwrap();
-        let mut result: Vec<DbOrderSchema> = Vec::new();
-        while let Some(doc) = cursor.next().await {
-            match doc {
-                Ok(document) => {
-                    result.push(document);
-                }
-                _ => {
-                    break;
-                }
-            }
-        }
-        Ok(result)
+        // DbOrderSchema has no top-level `time_slot` field, so the Mongo time
+        // filter above matches no documents (see TODO); the predicate mirrors that.
+        let has_time_filter = start_time.is_some() || end_time.is_some();
+        self.0
+            .query(filter_params, |order| {
+                !has_time_filter
+                    && market_id
+                        .as_ref()
+                        .is_none_or(|market_id| order_market_id(&order.order) == market_id)
+            })
+            .await
     }
 
     #[tracing::instrument(
@@ -109,24 +71,18 @@ impl OrderService {
         &self,
         orders_schema: Vec<DbOrderSchema>,
     ) -> Result<HashMap<usize, Bson>> {
-        match self.0.insert_many(orders_schema).await {
-            Ok(db_result) => Ok(db_result.inserted_ids),
-            Err(e) => {
-                tracing::error!("Failed to execute query: {:?}", e);
-                Err(anyhow::Error::from(e))
-            }
-        }
+        self.0
+            .insert_many(orders_schema, |order| Bson::String(order._id.clone()))
+            .await
     }
 
     #[tracing::instrument(name = "Fetching order by id from database", skip(self, id))]
     pub async fn get_order_by_id(&self, id: &Bson) -> Result<Option<DbOrderSchema>> {
-        match self.0.find_one(doc! {"_id": id}).await {
-            Ok(doc) => Ok(doc),
-            Err(e) => {
-                tracing::error!("Failed to execute query: {:?}", e);
-                Err(anyhow::Error::from(e))
-            }
-        }
+        self.0
+            .find_one(doc! {"_id": id}, |order| {
+                matches!(id, Bson::String(id) if &order._id == id)
+            })
+            .await
     }
 
     pub async fn update_order_by_area_market_id(
@@ -134,6 +90,8 @@ impl OrderService {
         area_uuid: String,
         market_id: String,
     ) -> Result<bool> {
+        // DbOrderSchema has no top-level `area_uuid`/`market_id` fields, so this
+        // filter matches no documents on either backend (predicate mirrors Mongo).
         let filter = doc! {
             "area_uuid": area_uuid,
             "market_id": market_id
@@ -145,13 +103,10 @@ impl OrderService {
             }
         };
 
-        match self.0.update_many(filter, update).await {
-            Ok(_doc) => Ok(true),
-            Err(e) => {
-                tracing::error!("Failed to execute query: {:?}", e);
-                Err(anyhow::Error::from(e))
-            }
-        }
+        self.0
+            .update_many(filter, update, |_| false, |_| false)
+            .await?;
+        Ok(true)
     }
 
     #[tracing::instrument(name = "Update order status by id", skip(self, id, status))]
@@ -159,9 +114,8 @@ impl OrderService {
         &self,
         id: &Bson,
         status: OrderStatus,
-    ) -> Result<UpdateResult> {
-        match self
-            .0
+    ) -> Result<UpdateSummary> {
+        self.0
             .update_one(
                 doc! {
                     "_id": id
@@ -169,15 +123,14 @@ impl OrderService {
                 doc! {
                     "$set": {"status": bson::to_bson(&status).unwrap()}
                 },
+                |order| matches!(id, Bson::String(id) if &order._id == id),
+                |order| {
+                    let modified = order.status != status;
+                    order.status = status.clone();
+                    modified
+                },
             )
             .await
-        {
-            Ok(doc) => Ok(doc),
-            Err(e) => {
-                tracing::error!("Failed to execute query: {:?}", e);
-                Err(anyhow::Error::from(e))
-            }
-        }
     }
 
     #[tracing::instrument(name = "Update expired orders", skip(self, now_time_slot))]
@@ -185,9 +138,11 @@ impl OrderService {
         &self,
         now_time_slot: u64,
         status: OrderStatus,
-    ) -> Result<UpdateResult> {
-        match self
-            .0
+    ) -> Result<UpdateSummary> {
+        // The order's time_slot lives at `order.data.{bid,offer}_component.time_slot`,
+        // so the `order.data.time_slot` filter matches no documents on either
+        // backend (predicate mirrors Mongo).
+        self.0
             .update_many(
                 doc! {
                     "order.data.time_slot": { "$lt": bson::to_bson(&now_time_slot).unwrap()},
@@ -196,22 +151,9 @@ impl OrderService {
                 doc! {
                     "$set": { "status": bson::to_bson(&status).unwrap()},
                 },
+                |_| false,
+                |_| false,
             )
             .await
-        {
-            Ok(doc) => Ok(doc),
-            Err(e) => {
-                tracing::error!("Failed to execute query: {:?}", e);
-                Err(anyhow::Error::from(e))
-            }
-        }
-    }
-}
-
-impl Deref for OrderService {
-    type Target = Collection<DbOrderSchema>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
     }
 }

@@ -1,28 +1,11 @@
 use crate::db::DatabaseWrapper;
+use crate::db::collection::{Coll, apply_time_window, in_time_window};
 use anyhow::Result;
-use futures::StreamExt;
 use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
 use mongodb::bson::{Bson, doc};
-use mongodb::options::IndexOptions;
-use mongodb::{Collection, IndexModel};
 use std::collections::HashMap;
-use std::ops::Deref;
 
-/// this function will call after connected to database
-pub async fn init_forecasts(db: &DatabaseWrapper) -> Result<()> {
-    // create index in this block
-
-    let controller = db.forecasts();
-    let index: IndexModel = IndexModel::builder()
-        .keys(doc! {"_id":1})
-        .options(IndexOptions::builder().build())
-        .build();
-    controller.create_index(index).await?;
-    Ok(())
-}
-
-#[repr(transparent)]
-pub struct ForecastsService(pub Collection<ForecastSchema>);
+pub struct ForecastsService(pub(crate) Coll<ForecastSchema>);
 
 impl ForecastsService {
     #[tracing::instrument(name = "Fetching forecasts from database for one area", skip(self))]
@@ -33,35 +16,19 @@ impl ForecastsService {
         end_time: Option<u32>,
     ) -> Result<Vec<ForecastSchema>> {
         let mut filter_params = doc! {};
-        if area_uuid.is_some() {
-            filter_params.insert("area_uuid", area_uuid.unwrap());
+        if let Some(area_uuid) = &area_uuid {
+            filter_params.insert("area_uuid", area_uuid.clone());
         }
-        if start_time.is_some() {
-            filter_params.insert("time_slot", doc! {"$gte": start_time.unwrap()});
-        }
-        if end_time.is_some() {
-            if start_time.is_some() {
-                filter_params.insert(
-                    "time_slot",
-                    doc! {"$gte": start_time.unwrap(), "$lte": end_time.unwrap()},
-                );
-            } else {
-                filter_params.insert("time_slot", doc! {"$lte": end_time.unwrap()});
-            }
-        }
-        let mut cursor = self.0.find(filter_params).await.unwrap();
-        let mut result: Vec<ForecastSchema> = Vec::new();
-        while let Some(doc) = cursor.next().await {
-            match doc {
-                Ok(document) => {
-                    result.push(document);
-                }
-                _ => {
-                    break;
-                }
-            }
-        }
-        Ok(result)
+        apply_time_window(&mut filter_params, start_time, end_time);
+
+        self.0
+            .query(filter_params, |forecast| {
+                area_uuid
+                    .as_ref()
+                    .is_none_or(|area_uuid| &forecast.area_uuid == area_uuid)
+                    && in_time_window(forecast.time_slot, start_time, end_time)
+            })
+            .await
     }
 
     #[tracing::instrument(
@@ -75,26 +42,16 @@ impl ForecastsService {
         &self,
         forecasts: Vec<ForecastSchema>,
     ) -> Result<HashMap<usize, Bson>> {
-        match self.0.insert_many(forecasts).await {
-            Ok(db_result) => Ok(db_result.inserted_ids),
-            Err(e) => {
-                tracing::error!("Failed to execute query: {:?}", e);
-                Err(anyhow::Error::from(e))
-            }
-        }
+        // NOTE: ForecastSchema has no `_id`, so the fabricated in-memory ids
+        // (area_uuid) diverge from Mongo's generated ObjectIds and are not unique.
+        self.0
+            .insert_many(forecasts, |forecast| Bson::String(forecast.area_uuid.clone()))
+            .await
     }
 }
 
 impl From<&DatabaseWrapper> for ForecastsService {
     fn from(db: &DatabaseWrapper) -> Self {
-        ForecastsService(db.collection("forecasts"))
-    }
-}
-
-impl Deref for ForecastsService {
-    type Target = Collection<ForecastSchema>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
+        ForecastsService(db.coll("forecasts", |store| store.forecasts.clone()))
     }
 }
