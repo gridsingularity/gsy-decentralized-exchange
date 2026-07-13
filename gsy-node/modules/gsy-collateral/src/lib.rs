@@ -1,3 +1,5 @@
+#![allow(clippy::type_complexity)]
+
 // This file is part of GSy-Decentralized Energy Exchange.
 
 // Copyright (C) Grid Singularity Gmbh.
@@ -21,9 +23,8 @@
 //! A collateral management system is a system that manages the collateral of a registered user
 //! in the GSy-Decentralized Energy Exchange. This module allows the user to deposit a collateral
 //! and withdraw it from the system. Moreover it allows the registered user to add or remove proxy
-//!	accounts which can insert order on behalf of the registered user.
+//! accounts which can insert order on behalf of the registered user.
 //! It also allows the root user to register new users allowing them to deposit collateral.
-
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
@@ -42,43 +43,39 @@ pub use weights::*;
 
 #[frame_support::pallet]
 pub mod pallet {
-	use super::*;
+	use crate::weights::WeightInfo;
 	use codec::{FullCodec, MaxEncodedLen};
+	use core::fmt::Debug;
 	use core::ops::AddAssign;
-	use frame_support::{
-		dispatch::DispatchResult,
-		pallet_prelude::*,
-		sp_runtime::DispatchError
-	};
+	use frame_support::{dispatch::DispatchResult, pallet_prelude::*, sp_runtime::DispatchError};
 	use frame_support::{
 		require_transactional,
 		sp_runtime::traits::Hash,
+		sp_runtime::SaturatedConversion,
 		traits::{tokens::ExistenceRequirement, Currency},
-		transactional, PalletId, sp_runtime::SaturatedConversion
+		transactional, PalletId,
 	};
-	use core::fmt::Debug;
 	use frame_system::pallet_prelude::*;
 	use gsy_primitives::v0::{CollateralInfo, Vault, VaultInfo, VaultStatus, VaultWithStatus};
-	use num_traits::{ One, Zero};
+	use num_traits::{One, Zero};
 	use scale_info::TypeInfo;
-	use crate::weights::WeightInfo;
 
 	pub type BalanceOf<T> =
-	<<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
+		<<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
 
 	// The proxy struct for the pallet.
 	#[derive(
-	Encode,
-	Decode,
-	Clone,
-	Copy,
-	Eq,
-	PartialEq,
-	Ord,
-	PartialOrd,
-	RuntimeDebug,
-	MaxEncodedLen,
-	TypeInfo,
+		Encode,
+		Decode,
+		Clone,
+		Copy,
+		Eq,
+		PartialEq,
+		Ord,
+		PartialOrd,
+		RuntimeDebug,
+		MaxEncodedLen,
+		TypeInfo,
 	)]
 	pub struct ProxyDefinition<AccountId> {
 		// The account which may act as proxy.
@@ -88,9 +85,9 @@ pub mod pallet {
 	/// Configure the pallet by specifying the parameters and types on which it depends.
 	#[pallet::config]
 	pub trait Config: frame_system::Config {
-		/// Because this pallet emits events, it depends on the runtime's definition of an event.
-		type RuntimeEvent: From<Event<Self>>
-			+ IsType<<Self as frame_system::Config>::RuntimeEvent>;
+		#[allow(deprecated)]
+		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
+
 		/// The Currency handler for the gsy-collateral pallet.
 		type Currency: Currency<Self::AccountId>;
 
@@ -104,19 +101,19 @@ pub mod pallet {
 
 		/// Key type for the vaults. `VaultId` uniquely identifies a vault. The identifiers are
 		type VaultId: AddAssign
-		+ FullCodec
-		+ One
-		+ Eq
-		+ PartialEq
-		+ Copy
-		+ MaybeSerializeDeserialize
-		+ Debug
-		+ Default
-		+ TypeInfo
-		+ MaxEncodedLen
-		+ Encode
-		+ Into<u128>
-		+ From<u64>;
+			+ FullCodec
+			+ One
+			+ Eq
+			+ PartialEq
+			+ Copy
+			+ MaybeSerializeDeserialize
+			+ Debug
+			+ Default
+			+ TypeInfo
+			+ MaxEncodedLen
+			+ Encode
+			+ Into<u128>
+			+ From<u64>;
 
 		type WeightInfo: WeightInfo;
 	}
@@ -131,13 +128,13 @@ pub mod pallet {
 	#[pallet::getter(fn registered_user)]
 	/// Keeps track of the registered user.
 	pub type RegisteredUser<T: Config> =
-	StorageMap<_, Twox64Concat, T::AccountId, T::Hash, ValueQuery>;
+		StorageMap<_, Twox64Concat, T::AccountId, T::Hash, ValueQuery>;
 
 	#[pallet::storage]
-	#[pallet::getter(fn registered_matching_engine)]
+	#[pallet::getter(fn registered_exchange_operator)]
 	/// Keeps track of the registered user.
-	pub type RegisteredMatchingEngine<T: Config> =
-	StorageMap<_, Twox64Concat, T::AccountId, T::Hash, ValueQuery>;
+	pub type RegisteredExchangeOperator<T: Config> =
+		StorageMap<_, Twox64Concat, T::AccountId, T::Hash, ValueQuery>;
 
 	#[pallet::storage]
 	#[pallet::getter(fn proxy_accounts)]
@@ -179,8 +176,8 @@ pub mod pallet {
 		ProxyAccountUnregistered(T::AccountId, T::AccountId),
 		/// User has been registered. \[user_account\]
 		UserRegistered(T::AccountId),
-		/// Matching Engine operator has been registered. \[matching_engine_operator\]
-		MatchingEngineOperatorRegistered(T::AccountId),
+		/// Exchange operator has been registered. \[exchange_operator\]
+		ExchangeOperatorRegistered(T::AccountId),
 		/// New vault has been created. \[vault_id, vault_owner\]
 		VaultCreated(T::VaultId, T::AccountId),
 		/// A Vault has been successfully restarted. \[vault_owner\]
@@ -204,8 +201,8 @@ pub mod pallet {
 		NoSelfProxy,
 		/// Ensure that the account is a registered user.
 		NotARegisteredUserAccount,
-		/// Ensure that the account is a registered matching_engine operator.
-		NotARegisteredMatchingEngineOperator,
+		/// Ensure that the account is a registered exchange operator.
+		NotARegisteredExchangeOperator,
 		/// Ensure that the account is a proxy account.
 		NotARegisteredProxyAccount,
 		/// Ensure that the user has registered some proxy accounts.
@@ -274,22 +271,22 @@ pub mod pallet {
 			Self::add_proxy_account(&user_account, proxy_account)
 		}
 
-		/// Register a matching_engine operator account in the System.
+		/// Register a exchange operator account in the System.
 		///
 		/// # Parameters:
 		/// * `origin`: The origin of the extrinsic. The root user.
-		/// * `matching_engine_operator_account`: The matching_engine operator account that is being registered.
+		/// * `operator_account`: The operator account that is being registered.
 		#[transactional]
-		#[pallet::weight(<T as Config>::WeightInfo::register_matching_engine_operator())]
+		#[pallet::weight(<T as Config>::WeightInfo::register_exchange_operator())]
 		#[pallet::call_index(2)]
-		pub fn register_matching_engine_operator(
+		pub fn register_exchange_operator(
 			origin: OriginFor<T>,
-			matching_engine_operator_account: T::AccountId,
+			operator_account: T::AccountId,
 		) -> DispatchResult {
 			// Verify that the user is root.
 			ensure_root(origin)?;
-			log::info!("Registering matching_engine operator account: {:?}", matching_engine_operator_account);
-			Self::add_matching_engine_operator(matching_engine_operator_account)
+			log::info!("Registering exchange operator account: {:?}", operator_account);
+			Self::add_exchange_operator(operator_account)
 		}
 
 		/// Register a new user in the System. (Only the root user can register a new user)
@@ -385,20 +382,20 @@ pub mod pallet {
 	}
 
 	impl<T: Config> Pallet<T> {
-		/// Register a new matching_engine operator account in the System.
+		/// Register a new operator account in the System.
 		///
 		/// # Parameters:
-		/// * `matching_engine_operator_account`: The matching_engine operator account that is being registered.
-		pub fn add_matching_engine_operator(matching_engine_operator_account: T::AccountId) -> DispatchResult {
+		/// * `operator_account`: The operator account that is being registered.
+		pub fn add_exchange_operator(operator_account: T::AccountId) -> DispatchResult {
 			ensure!(
-				!Self::is_registered_matching_engine_operator(&matching_engine_operator_account),
+				!Self::is_registered_exchange_operator(&operator_account),
 				<Error<T>>::AlreadyRegistered
 			);
-			let account_hash = T::Hashing::hash_of(&matching_engine_operator_account);
+			let account_hash = T::Hashing::hash_of(&operator_account);
 			log::info!("Account Hash - {:?} ", account_hash);
-			<RegisteredMatchingEngine<T>>::insert(&matching_engine_operator_account, account_hash);
-			// Deposit the MatchingEngineOperatorRegistered event.
-			Self::deposit_event(Event::<T>::MatchingEngineOperatorRegistered(matching_engine_operator_account));
+			<RegisteredExchangeOperator<T>>::insert(&operator_account, account_hash);
+			// Deposit the ExchangeOperatorRegistered event.
+			Self::deposit_event(Event::<T>::ExchangeOperatorRegistered(operator_account));
 			Ok(())
 		}
 
@@ -467,7 +464,7 @@ pub mod pallet {
 
 				let vault_info = VaultInfo {
 					owner: user_account.clone(),
-					id: vault_id.clone(),
+					id: vault_id,
 					collateral: CollateralInfo {
 						amount: Zero::zero(),
 						deposit_time: <frame_system::Pallet<T>>::block_number(),
@@ -506,14 +503,14 @@ pub mod pallet {
 				collateral_amount,
 				ExistenceRequirement::KeepAlive,
 			)
-				.map_err(|_| <Error<T>>::TransferFailed)?;
+			.map_err(|_| <Error<T>>::TransferFailed)?;
 
 			let collateral_info = vault_info.collateral;
 			let deposit_time = <frame_system::Pallet<T>>::block_number();
 			let new_collateral_info =
 				CollateralInfo { amount: collateral_info.amount + collateral_amount, deposit_time };
 			let new_vault_info = VaultInfo { collateral: new_collateral_info, ..vault_info };
-			<Vaults<T>>::insert(&user_account, new_vault_info);
+			<Vaults<T>>::insert(user_account, new_vault_info);
 			Ok(collateral_amount)
 		}
 
@@ -542,22 +539,22 @@ pub mod pallet {
 				collateral_amount,
 				ExistenceRequirement::KeepAlive,
 			)
-				.map_err(|_| <Error<T>>::NotEnoughCollateralForFee)?;
+			.map_err(|_| <Error<T>>::NotEnoughCollateralForFee)?;
 
 			let deposit_time = <frame_system::Pallet<T>>::block_number();
 			let new_collateral_info =
 				CollateralInfo { amount: collateral_info.amount - collateral_amount, deposit_time };
 			let new_vault_info = VaultInfo { collateral: new_collateral_info, ..vault_info };
-			<Vaults<T>>::insert(&user_account, new_vault_info);
+			<Vaults<T>>::insert(user_account, new_vault_info);
 			Ok(collateral_amount)
 		}
 
-		/// Helper function to check if a given user is a registered matching_engine operator
+		/// Helper function to check if a given user is a registered exchange operator
 		///
 		/// Parameters:
-		/// * `matching_engine_operator_account`: The matching_engine operator account that is being checked.
-		pub fn is_registered_matching_engine_operator(matching_engine_operator_account: &T::AccountId) -> bool {
-			<RegisteredMatchingEngine<T>>::contains_key(matching_engine_operator_account)
+		/// * `operator_account`: The exchange operator account that is being checked.
+		pub fn is_registered_exchange_operator(operator_account: &T::AccountId) -> bool {
+			<RegisteredExchangeOperator<T>>::contains_key(operator_account)
 		}
 
 		/// Helper function to check if a given user is registered.
@@ -622,7 +619,7 @@ pub mod pallet {
 		pub fn transfer_collateral(
 			from_account: &T::AccountId,
 			to_account: &T::AccountId,
-			collateral_amount: BalanceOf<T>,
+			collateral_amount: u64,
 		) -> DispatchResult {
 			let from_vault_info = Self::vault_info(from_account)?;
 			let to_vault_info = Self::vault_info(to_account)?;
@@ -639,28 +636,33 @@ pub mod pallet {
 			let to_collateral_info = to_vault_info.collateral;
 
 			ensure!(
-				from_collateral_info.amount >= collateral_amount,
+				from_collateral_info.amount >= collateral_amount.saturated_into(),
 				<Error<T>>::NotEnoughCollateral
 			);
 
-			T::Currency::transfer(&from, &to, collateral_amount, ExistenceRequirement::KeepAlive)
-				.map_err(|_| <Error<T>>::NotEnoughCollateralForFee)?;
+			T::Currency::transfer(
+				&from,
+				&to,
+				collateral_amount.saturated_into(),
+				ExistenceRequirement::KeepAlive,
+			)
+			.map_err(|_| <Error<T>>::NotEnoughCollateralForFee)?;
 
 			let deposit_time = <frame_system::Pallet<T>>::block_number();
 			let new_from_collateral_info = CollateralInfo {
-				amount: from_collateral_info.amount - collateral_amount,
+				amount: from_collateral_info.amount - collateral_amount.saturated_into(),
 				deposit_time,
 			};
 			let new_to_collateral_info = CollateralInfo {
-				amount: to_collateral_info.amount + collateral_amount,
+				amount: to_collateral_info.amount + collateral_amount.saturated_into(),
 				deposit_time,
 			};
 			let new_from_vault_info =
 				VaultInfo { collateral: new_from_collateral_info, ..from_vault_info };
 			let new_to_vault_info =
 				VaultInfo { collateral: new_to_collateral_info, ..to_vault_info };
-			<Vaults<T>>::insert(&from_account, new_from_vault_info);
-			<Vaults<T>>::insert(&to_account, new_to_vault_info);
+			<Vaults<T>>::insert(from_account, new_from_vault_info);
+			<Vaults<T>>::insert(to_account, new_to_vault_info);
 			Ok(())
 		}
 
@@ -670,8 +672,10 @@ pub mod pallet {
 		/// - `user_account`: The account of the user.
 		fn vault_info(
 			user_account: &T::AccountId,
-		) -> Result<VaultInfo<T::AccountId, BalanceOf<T>, BlockNumberFor<T>, T::VaultId>, DispatchError>
-		{
+		) -> Result<
+			VaultInfo<T::AccountId, BalanceOf<T>, BlockNumberFor<T>, T::VaultId>,
+			DispatchError,
+		> {
 			Ok(<Vaults<T>>::try_get(user_account).map_err(|_err| <Error<T>>::VaultDoesNotExist)?)
 		}
 
@@ -680,17 +684,13 @@ pub mod pallet {
 		/// Parameters:
 		/// - `amount`: The account of the user.
 		/// - `vault_owner`: AccountId of the vault owner.
-		pub fn verify_collateral_amount(
-			amount: u64,
-			vault_owner: &T::AccountId,
-		) -> bool {
+		pub fn verify_collateral_amount(amount: u64, vault_owner: &T::AccountId) -> bool {
 			let vault_info = Self::vault_info(vault_owner).expect("VaultDoesNotExist");
 			// Todo: Add a variable fee to calculate fee value for the transaction and check (amount + fee < collateral_amount)
-			let fee= 1000u64;
+			let fee = 1000u64;
 			let change: BalanceOf<T> = amount.checked_add(fee).unwrap().saturated_into();
 			vault_info.collateral.amount > change
 		}
-
 	}
 
 	impl<T: Config> Vault for Pallet<T> {
@@ -701,7 +701,10 @@ pub mod pallet {
 
 		fn account_id(vault_id: &Self::VaultId) -> Self::AccountId {
 			sp_runtime::traits::AccountIdConversion::try_into_sub_account(
-				&T::PalletId::get(), vault_id).unwrap()
+				&T::PalletId::get(),
+				vault_id,
+			)
+			.unwrap()
 		}
 
 		fn create(account_id: Self::AccountId) -> Result<Self::VaultId, DispatchError> {

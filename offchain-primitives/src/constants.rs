@@ -1,0 +1,40 @@
+#![allow(non_snake_case,non_upper_case_globals)]
+
+use crate::utils::read_env_or;
+use once_cell::sync::Lazy;
+
+pub struct Constants {
+    pub TIME_SLOT_SEC: u64,
+    pub EXECUTION_ENGINE_OFFSET_MIN: i64,
+    pub SPOT_MARKET_OPEN_OFFSET_MIN: i64,
+    pub SPOT_MARKET_CLOSE_OFFSET_MIN: i64,
+    pub FLEX_MARKET_OPEN_OFFSET_MIN: i64,
+    pub FLEX_MARKET_CLOSE_OFFSET_MIN: i64,
+    pub SETTLEMENT_MARKET_OPEN_OFFSET_MIN: i64,
+    pub SETTLEMENT_MARKET_CLOSE_OFFSET_MIN: i64,
+}
+
+impl Constants {
+    fn new() -> Self {
+        Self {
+            TIME_SLOT_SEC: read_env_or("TIME_SLOT_SEC", 900),
+            EXECUTION_ENGINE_OFFSET_MIN: read_env_or("EXECUTION_ENGINE_OFFSET_MIN", -120),
+            SPOT_MARKET_OPEN_OFFSET_MIN: read_env_or("SPOT_MARKET_OPEN_OFFSET_MIN", -180),
+            SPOT_MARKET_CLOSE_OFFSET_MIN: read_env_or("SPOT_MARKET_CLOSE_OFFSET_MIN", -60),
+            FLEX_MARKET_OPEN_OFFSET_MIN: read_env_or("FLEX_MARKET_OPEN_OFFSET_MIN", -15),
+            FLEX_MARKET_CLOSE_OFFSET_MIN: read_env_or("FLEX_MARKET_CLOSE_OFFSET_MIN", 0),
+            SETTLEMENT_MARKET_OPEN_OFFSET_MIN: read_env_or("SETTLEMENT_MARKET_OPEN_OFFSET_MIN", -60),
+            SETTLEMENT_MARKET_CLOSE_OFFSET_MIN: read_env_or("SETTLEMENT_MARKET_CLOSE_OFFSET_MIN", -30),
+        }
+    }
+
+    /// Compute the [open, close] timestamps during which the spot market for a given delivery
+    /// time_slot accepts orders.
+    pub fn spot_market_window(&self, time_slot: u64) -> (u64, u64) {
+        let open = (time_slot as i64 + self.SPOT_MARKET_OPEN_OFFSET_MIN * 60) as u64;
+        let close = (time_slot as i64 + self.SPOT_MARKET_CLOSE_OFFSET_MIN * 60) as u64;
+        (open, close)
+    }
+}
+
+pub static GlobalConstants: Lazy<Constants> = Lazy::new(Constants::new);

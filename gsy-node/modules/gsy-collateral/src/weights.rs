@@ -8,7 +8,7 @@ use sp_std::marker::PhantomData;
 pub trait WeightInfo {
 	fn deposit_collateral() -> Weight;
 	fn register_proxy_account() -> Weight;
-	fn register_matching_engine_operator() -> Weight;
+	fn register_exchange_operator() -> Weight;
 	fn register_user() -> Weight;
 	fn restart_vault() -> Weight;
 	fn shutdown_vault() -> Weight;
@@ -33,8 +33,8 @@ impl<T: frame_system::Config> WeightInfo for SubstrateWeightInfo<T> {
 			.saturating_add(T::DbWeight::get().reads(2))
 			.saturating_add(T::DbWeight::get().writes(1))
 	}
-	// Storage: GsyCollateral RegisteredMatchingEngine (r:1 w:1)
-	fn register_matching_engine_operator() -> Weight {
+	// Storage: GsyCollateral RegisteredExchangeOperator (r:1 w:1)
+	fn register_exchange_operator() -> Weight {
 		Weight::from_parts(20_000_000, 0)
 			.saturating_add(T::DbWeight::get().reads(1))
 			.saturating_add(T::DbWeight::get().writes(1))

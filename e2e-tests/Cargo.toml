@@ -1,0 +1,24 @@
+[package]
+name = "e2e-tests"
+version = "0.1.0"
+authors = ["Grid Singularity <info@gridsingularity.com>"]
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "trade_executor"
+path = "src/main.rs"
+
+[dependencies]
+cucumber = "0"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0", features = ["json"] }
+anyhow = "1.0"
+subxt = { version = "0.44" }
+subxt-signer = { version = "0.44" }
+gsy-offchain-primitives = { path = "../offchain-primitives", version = "0" }
+gsy-community-client = { path = "../gsy-community-client", version = "0" }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+blake2-rfc = { version = "0.2.18", default-features = false }
+chrono = { version = "0.4.37", features = ["serde"] }

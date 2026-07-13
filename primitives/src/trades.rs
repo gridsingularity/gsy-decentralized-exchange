@@ -1,25 +1,25 @@
 use crate::orders::{Bid, Offer};
 use crate::v0::{AccountId, Hash};
-use codec::{Decode, Encode};
+use codec::{Decode, Encode, MaxEncodedLen, DecodeWithMemTracking};
 use scale_info::TypeInfo;
 pub use sp_runtime::traits::{BlakeTwo256, Hash as HashT};
 
 /// Trade struct
-#[derive(Debug, Encode, Decode, Clone, PartialEq, Eq, TypeInfo)]
+#[derive(Debug, Encode, Decode, Clone, PartialEq, Eq, TypeInfo, MaxEncodedLen, DecodeWithMemTracking)]
 #[cfg_attr(feature = "std", derive(Hash, Default))]
-pub struct Trade<AccountId, Hash> {
-	pub seller: AccountId,
-	pub buyer: AccountId,
-	pub market_id: u8,
+pub struct Trade<AccountId32, Hash> {
+	pub seller: AccountId32,
+	pub buyer: AccountId32,
+	pub market_id: Hash,
 	pub trade_uuid: Hash,
 	pub creation_time: u64,
 	pub time_slot: u64,
-	pub offer: Offer<AccountId>,
+	pub offer: Offer<AccountId32>,
 	pub offer_hash: Hash,
-	pub bid: Bid<AccountId>,
+	pub bid: Bid<AccountId32>,
 	pub bid_hash: Hash,
-	pub residual_offer: Option<Offer<AccountId>>,
-	pub residual_bid: Option<Bid<AccountId>>,
+	pub residual_bid: Option<Bid<AccountId32>>,
+	pub residual_offer: Option<Offer<AccountId32>>,
 	pub parameters: TradeParameters<Hash>,
 }
 
@@ -29,7 +29,17 @@ impl Trade<AccountId, Hash> {
 		BlakeTwo256::hash_of(self)
 	}
 }
-#[derive(Debug, Encode, Decode, Clone, Copy, PartialEq, Eq, TypeInfo)]
+
+#[derive(Debug, Encode, Decode, Clone, PartialEq, Eq, TypeInfo, MaxEncodedLen, DecodeWithMemTracking)]
+#[cfg_attr(feature = "std", derive(Hash, Default))]
+pub struct TradesPenalties<AccountId, Hash> {
+	pub penalized_account: AccountId,
+	pub market_uuid: Hash,
+	pub trade_uuid: Hash,
+	pub penalty_energy: u64,
+}
+
+#[derive(Debug, Encode, Decode, Clone, Copy, PartialEq, Eq, TypeInfo, MaxEncodedLen, DecodeWithMemTracking)]
 #[cfg_attr(feature = "std", derive(Hash, Default))]
 pub struct TradeParameters<Hash> {
 	/// The amount of energy that is traded.
@@ -40,21 +50,21 @@ pub struct TradeParameters<Hash> {
 	pub trade_uuid: Hash,
 }
 
-#[derive(Debug, Encode, Decode, Clone, PartialEq, Eq, TypeInfo)]
+#[derive(Debug, Encode, Decode, Clone, PartialEq, Eq, TypeInfo, DecodeWithMemTracking)]
 #[cfg_attr(feature = "std", derive(Hash, Default))]
-pub struct BidOfferMatch<AccountId> {
+pub struct BidOfferMatch<AccountId, Hash> {
 	/// The market ID
-	pub market_id: u8,
+	pub market_id: Hash,
 	/// The time slot
 	pub time_slot: u64,
 	/// The bid
 	pub bid: Bid<AccountId>,
 	/// The offer
 	pub offer: Offer<AccountId>,
-	/// The residual offer (if any)
-	pub residual_offer: Option<Offer<AccountId>>,
 	/// The residual bid (if any)
 	pub residual_bid: Option<Bid<AccountId>>,
+	/// The residual offer (if any)
+	pub residual_offer: Option<Offer<AccountId>>,
 	/// The amount of energy that is traded.
 	pub selected_energy: u64,
 	/// The price of the selected energy.
@@ -65,14 +75,18 @@ pub struct BidOfferMatch<AccountId> {
 pub trait Validator {
 	type AccountId;
 
+	type Hash;
+
 	/// Validate a bid/offer match.
-	fn validate(bid_offer_match: &BidOfferMatch<Self::AccountId>) -> bool;
+	fn validate(bid_offer_match: &BidOfferMatch<Self::AccountId, Self::Hash>) -> bool;
 	/// Check the energy amount of the bid against the selected energy amount.
 	fn validate_bid_energy_component(bid_component_energy: u64, selected_energy: u64) -> bool;
 	/// Check the energy amount of the offer against the selected energy amount.
 	fn validate_offer_energy_component(offer_component_energy: u64, selected_energy: u64) -> bool;
 	/// Check the energy rate of the bid against energy rate of the offer.
 	fn validate_energy_rate(energy_rate: u64, offer_energy_rate: u64) -> bool;
+	/// Check that the bid and offer belong to the same market.
+	fn validate_market_ids(match_market_id: Hash, bid_market_id: Hash, offer_market_id: Hash) -> bool;
 	/// Check the residual bid in the bid/offer match.
 	fn validate_residual_bid(
 		residual_bid: &Bid<Self::AccountId>,

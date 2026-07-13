@@ -29,7 +29,7 @@ pub fn dummy_bid(buyer: AccountId, energy: u64, energy_rate: u64) -> Bid<Account
 		nonce: rand::thread_rng().gen_range(1..101),
 		bid_component: OrderComponent {
 			area_uuid: 1,
-			market_uuid: rand::thread_rng().gen_range(1..101),
+			market_id: rand::thread_rng().gen_range(1..101),
 			time_slot: rand::thread_rng().gen_range(1..101),
 			creation_time: 1677453190,
 			energy,
@@ -49,7 +49,7 @@ pub fn dummy_offer(
 		nonce: rand::thread_rng().gen_range(1..101),
 		offer_component: OrderComponent {
 			area_uuid: 2,
-			market_uuid: rand::thread_rng().gen_range(1..101),
+			market_id: rand::thread_rng().gen_range(1..101),
 			time_slot: rand::thread_rng().gen_range(1..101),
 			creation_time: 1677453190,
 			energy,

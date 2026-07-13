@@ -1,0 +1,40 @@
+[Unit]
+Description=GSy DEX four-node-poa archive node (full history, non-validator)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=gsy
+Group=gsy
+EnvironmentFile=/etc/gsy/env
+# Path to the binary built with: cargo build --release --features four-node-poa
+ExecStart=/usr/local/bin/gsy-node \
+    --name ${GSY_NAME}-archive \
+    --chain ${GSY_CHAIN} \
+    --base-path /var/lib/gsy \
+    --node-key-file /etc/gsy/node.key \
+    --database paritydb \
+    --state-pruning archive \
+    --blocks-pruning archive \
+    --db-cache 2048 \
+    --trie-cache-size 1073741824 \
+    --listen-addr /ip4/${GSY_VPN_IP}/tcp/30333 \
+    --public-addr /ip4/${GSY_VPN_IP}/tcp/30333 \
+    --reserved-nodes ${GSY_RESERVED_NODES} \
+    --reserved-only \
+    --no-mdns
+# Not a validator: keeps full history for explorer/analytics and acts as the
+# resync source for new or recovered nodes. To expose RPC to an explorer, add:
+#   --rpc-external --rpc-cors all   (bind it behind the VPN / a reverse proxy)
+Restart=always
+RestartSec=5
+LimitNOFILE=65536
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/gsy
+
+[Install]
+WantedBy=multi-user.target

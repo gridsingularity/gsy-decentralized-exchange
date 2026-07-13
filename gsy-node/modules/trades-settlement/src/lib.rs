@@ -19,8 +19,8 @@
 //!
 //!
 //! A trades settlement system is a system that manages the settlement of  the trades executed
-//! within the GSy-Decentralized Energy Exchange. This module allows the registered matching engine
-//! (Matching Engine) to add the trade structs for the orders inserted by the users into the
+//! within the GSy-Decentralized Energy Exchange. This module allows the registered exchange
+//! operator to add the trade structs for the orders inserted by the users into the
 //! GSy-Decentralized Energy Exchange. Moreover, it verifies the correctness of the matched trades
 //! and updates the orders status and the involved structures after the trade execution.
 
@@ -40,25 +40,37 @@ mod test_orders;
 
 #[cfg(feature = "runtime-benchmarks")]
 mod benchmarking;
+
+#[cfg(feature = "runtime-benchmarks")]
+mod test_orders;
+
 pub mod weights;
 
 #[frame_support::pallet]
 pub mod pallet {
 	use crate::weights::TradeSettlementWeightInfo;
-	use frame_support::{dispatch::DispatchResult, pallet_prelude::*, dispatch::RawOrigin};
+	use frame_support::{dispatch::DispatchResult, dispatch::RawOrigin, pallet_prelude::*};
 	use frame_support::{sp_runtime::traits::Hash, transactional};
 	use frame_system::{ensure_signed, pallet_prelude::*};
+	use gsy_primitives::v0::{
+		Bid, BidOfferMatch, Offer, Order, OrderComponent, Trade, TradesPenalties, Validator,
+	};
 	use scale_info::prelude::vec::Vec;
 	use sp_std::vec;
-	use gsy_primitives::v0::{Bid, BidOfferMatch, Offer, Order, OrderComponent, Validator};
 
 	use remuneration::RemunerationHandler;
 	type BalanceOf<T> = <T as pallet_balances::Config>::Balance;
 
 	#[pallet::config]
 	pub trait Config:
-		frame_system::Config + orderbook_registry::Config + orderbook_worker::Config + pallet_balances::Config + remuneration::Config
+		frame_system::Config<Hash = gsy_primitives::v0::Hash>
+		+ orderbook_registry::Config
+		+ orderbook_worker::Config
+		+ gsy_collateral::Config
+		+ remuneration::Config
 	{
+
+		#[allow(deprecated)]
 		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
 
 		type TradeSettlementWeightInfo: TradeSettlementWeightInfo;
@@ -74,10 +86,16 @@ pub mod pallet {
 	// #[pallet::generate_store(pub (super) trait Store)]
 	pub struct Pallet<T>(_);
 
+	#[pallet::storage]
+	#[pallet::getter(fn trades_penalties)]
+	pub type PenaltiesRegistry<T: Config> =
+		StorageMap<_, Twox64Concat, T::Hash, TradesPenalties<T::AccountId, T::Hash>>;
+
 	#[pallet::event]
 	#[pallet::generate_deposit(pub (super) fn deposit_event)]
 	pub enum Event<T: Config> {
 		TradesSettled(T::Hash),
+		PenaltiesSubmitted(TradesPenalties<T::AccountId, T::Hash>, T::Hash),
 	}
 
 	#[pallet::error]
@@ -114,30 +132,33 @@ pub mod pallet {
 		/// Verify the recommended trade matches
 		///
 		/// # Parameters
-		/// `origin`: The origin of the extrinsic. The Matching Engine operator who wants to settle the matches.
+		/// `origin`: The origin of the extrinsic. The Exchange operator who wants to settle the matches.
 		/// `proposed_matches`: Vector of BidOfferMatch structures. Recommended matches for potential trades.
 		#[transactional]
 		#[pallet::weight(< T as Config >::TradeSettlementWeightInfo::settle_trades())]
 		#[pallet::call_index(0)]
 		pub fn settle_trades(
 			origin: OriginFor<T>,
-			proposed_matches: Vec<BidOfferMatch<T::AccountId>>,
+			proposed_matches: Vec<BidOfferMatch<T::AccountId, T::Hash>>,
 		) -> DispatchResult {
-			let matching_engine_operator = ensure_signed(origin)?;
+			let operator_account = ensure_signed(origin)?;
 
 			let valid_matches: Vec<_> = proposed_matches
 				.into_iter()
-				.filter(|bid_offer_match| <Self as Validator>::validate(bid_offer_match))
+				.filter(<Self as Validator>::validate)
 				.collect();
 
-			if valid_matches.len() > 0 {
+			if !valid_matches.is_empty() {
 				for valid_match in valid_matches.clone() {
 					// Check residual orders and add them to storage.
 					if let Some(residual_bid) = valid_match.residual_bid {
-						// Add residual bid in the orderbook registry.
+						// Add residual bid in the orderbook registry. The registry is keyed by the
+						// hash of the bare order (see `orderbook_worker::insert_orders`), which is
+						// also what `clear_order` uses to look the order up when it is later
+						// matched, so the residual must be registered the same way.
 						<orderbook_registry::Pallet<T>>::insert_orders(
 							RawOrigin::Signed(residual_bid.buyer.clone()).into(),
-							vec![T::Hashing::hash_of(&Order::Bid(residual_bid.clone()))],
+							vec![T::Hashing::hash_of(&residual_bid)],
 						)?;
 						// Add residual in the orderbook worker.
 						<orderbook_worker::Pallet<T>>::add_order(
@@ -146,10 +167,11 @@ pub mod pallet {
 						)?;
 					}
 					if let Some(residual_offer) = valid_match.residual_offer {
-						// Add residual in the orderbook registry.
+						// Add residual in the orderbook registry, keyed by the bare-order hash to
+						// match how `orderbook_worker::insert_orders` and `clear_order` hash orders.
 						<orderbook_registry::Pallet<T>>::insert_orders(
 							RawOrigin::Signed(residual_offer.seller.clone()).into(),
-							vec![T::Hashing::hash_of(&Order::Offer(residual_offer.clone()))],
+							vec![T::Hashing::hash_of(&residual_offer)],
 						)?;
 						// Add residual in the orderbook worker.
 						<orderbook_worker::Pallet<T>>::add_order(
@@ -159,19 +181,72 @@ pub mod pallet {
 					}
 				}
 
-				<orderbook_registry::Pallet<T>>::clear_orders_batch(matching_engine_operator, valid_matches.clone())?;
-				Self::deposit_event(Event::TradesSettled(T::Hashing::hash_of(&valid_matches)));
+				let mut trades = Vec::<Trade<T::AccountId, T::Hash>>::new();
+				for valid_match in valid_matches.clone() {
+					let trade_result = <orderbook_registry::Pallet<T>>::clear_order(
+						operator_account.clone(),
+						valid_match.clone(),
+					);
+					if trade_result.is_err() {
+						return Err(trade_result.unwrap_err());
+					}
+					trades.push(trade_result.unwrap());
+				}
+
+				for trade in trades.clone() {
+					<orderbook_worker::Pallet<T>>::add_trade(
+						operator_account.clone(),
+						trade.clone(),
+					)?;
+				}
+
+				Self::deposit_event(Event::TradesSettled(T::Hashing::hash_of(&trades)));
 				Ok(())
 			} else {
 				Err(Error::<T>::NoValidMatchToSettle.into())
 			}
 		}
+
+		/// Submit penalties received from the execution engine.
+		///
+		/// This function is restricted to the execution engine operator (here enforced by require
+		/// that the origin is root). It accepts a vector of penalty records and stores each one
+		/// in the `TradesPenalties` storage map.
+		#[transactional]
+		#[pallet::call_index(1)]
+		#[pallet::weight(<T as Config>::TradeSettlementWeightInfo::submit_penalties())]
+		pub fn submit_penalties(
+			origin: OriginFor<T>,
+			penalties: Vec<TradesPenalties<T::AccountId, T::Hash>>,
+		) -> DispatchResult {
+			let operator_account = ensure_signed(origin)?;
+			// Verify that the user is a registered operator account.
+			ensure!(
+				<gsy_collateral::Pallet<T>>::is_registered_exchange_operator(&operator_account),
+				gsy_collateral::Error::<T>::NotARegisteredExchangeOperator
+			);
+			log::info!("Submitting penalties {:?}...", penalties.len());
+			// For each penalty in the input vector, compute a unique hash and insert it.
+			for penalty in penalties.into_iter() {
+				let penalty_hash = T::Hashing::hash_of(&penalty);
+
+				log::info!("Inserting penalty {:?} {:?}...", penalty_hash, penalty.penalty_energy);
+
+				<PenaltiesRegistry<T>>::insert(penalty_hash, penalty.clone());
+
+				log::info!("Emitting penalty event...");
+				Self::deposit_event(Event::PenaltiesSubmitted(penalty, penalty_hash));
+			}
+			log::info!("Exited penalty submission...");
+			Ok(())
+		}
 	}
 
 	impl<T: Config> Validator for Pallet<T> {
 		type AccountId = T::AccountId;
+		type Hash = T::Hash;
 
-		fn validate(bid_offer_match: &BidOfferMatch<Self::AccountId>) -> bool {
+		fn validate(bid_offer_match: &BidOfferMatch<Self::AccountId, Self::Hash>) -> bool {
 			if !Self::validate_bid_energy_component(
 				bid_offer_match.bid.bid_component.energy,
 				bid_offer_match.selected_energy,
@@ -181,6 +256,10 @@ pub mod pallet {
 			) || !Self::validate_energy_rate(
 				bid_offer_match.bid.bid_component.energy_rate,
 				bid_offer_match.offer.offer_component.energy_rate,
+			) || !Self::validate_market_ids(
+				bid_offer_match.market_id,
+				bid_offer_match.bid.bid_component.market_id,
+				bid_offer_match.offer.offer_component.market_id,
 			) || !Self::validate_time_slots(
 				bid_offer_match
 					.bid
@@ -254,15 +333,23 @@ pub mod pallet {
 			bid_energy_rate >= offer_energy_rate
 		}
 
+		fn validate_market_ids(
+			match_market_id: gsy_primitives::v0::Hash,
+			bid_market_id: gsy_primitives::v0::Hash,
+			offer_market_id: gsy_primitives::v0::Hash,
+		) -> bool {
+			bid_market_id == offer_market_id && bid_market_id == match_market_id
+		}
+
 		fn validate_residual_bid(
 			residual_bid: &Bid<Self::AccountId>,
 			bid: &Bid<Self::AccountId>,
 			selected_energy: u64,
 		) -> bool {
 			residual_bid.eq(&Bid {
-				nonce: bid.nonce.clone().checked_add(1).unwrap(),
+				nonce: bid.nonce.checked_add(1).unwrap(),
 				bid_component: OrderComponent {
-					energy: (bid.bid_component.energy.checked_sub(selected_energy).unwrap()).into(),
+					energy: (bid.bid_component.energy.checked_sub(selected_energy).unwrap()),
 					..bid.bid_component.clone()
 				},
 				..bid.clone()
@@ -275,10 +362,9 @@ pub mod pallet {
 			selected_energy: u64,
 		) -> bool {
 			residual_offer.eq(&Offer {
-				nonce: offer.nonce.clone().checked_add(1).unwrap(),
+				nonce: offer.nonce.checked_add(1).unwrap(),
 				offer_component: OrderComponent {
-					energy: (offer.offer_component.energy.checked_sub(selected_energy).unwrap())
-						.into(),
+					energy: (offer.offer_component.energy.checked_sub(selected_energy).unwrap()),
 					..offer.offer_component.clone()
 				},
 				..offer.clone()
@@ -290,8 +376,7 @@ pub mod pallet {
 			offer_market_slot: u64,
 			proposed_match_market_slot: u64,
 		) -> bool {
-			offer_market_slot == bid_market_slot
-				&& proposed_match_market_slot == offer_market_slot
+			offer_market_slot == bid_market_slot && proposed_match_market_slot == offer_market_slot
 		}
 	}
 }

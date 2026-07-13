@@ -1,9 +1,9 @@
 use crate::{mock::*, Error};
 use frame_support::{assert_noop, assert_ok};
-use sp_runtime::DispatchError::BadOrigin;
-use sp_core::H256;
-use std::str::FromStr;
 use frame_system::RawOrigin;
+use sp_core::H256;
+use sp_runtime::DispatchError::BadOrigin;
+use std::str::FromStr;
 
 #[test]
 fn add_already_registered_proxies_should_fail() {
@@ -12,7 +12,7 @@ fn add_already_registered_proxies_should_fail() {
 		assert_ok!(GsyCollateral::register_user(RawOrigin::Root.into(), ALICE));
 		// Register a proxy.
 		assert_ok!(GsyCollateral::register_proxy_account(RawOrigin::Signed(ALICE).into(), BOB));
-		assert_eq!(GsyCollateral::is_registered_proxy_account(&ALICE, BOB), true);
+		assert!(GsyCollateral::is_registered_proxy_account(&ALICE, BOB));
 		assert_noop!(
 			GsyCollateral::register_proxy_account(RawOrigin::Signed(ALICE).into(), BOB),
 			gsy_collateral::Error::<Test>::AlreadyRegisteredProxyAccount
@@ -21,12 +21,12 @@ fn add_already_registered_proxies_should_fail() {
 }
 
 #[test]
-fn add_matching_engine_operator_works() {
+fn add_exchange_operator_works() {
 	new_test_ext().execute_with(|| {
-		// Register a matching_engine operator.
-		assert_ok!(GsyCollateral::register_matching_engine_operator(RawOrigin::Root.into(), ALICE));
+		// Register an exchange operator.
+		assert_ok!(GsyCollateral::register_exchange_operator(RawOrigin::Root.into(), ALICE));
 		assert_noop!(
-			GsyCollateral::register_matching_engine_operator(RawOrigin::Root.into(), ALICE),
+			GsyCollateral::register_exchange_operator(RawOrigin::Root.into(), ALICE),
 			gsy_collateral::Error::<Test>::AlreadyRegistered
 		);
 	});
@@ -55,7 +55,7 @@ fn add_proxies_works() {
 		assert_ok!(GsyCollateral::register_user(RawOrigin::Root.into(), ALICE));
 		// Register a proxy.
 		assert_ok!(GsyCollateral::register_proxy_account(RawOrigin::Signed(ALICE).into(), BOB));
-		assert_eq!(GsyCollateral::is_registered_proxy_account(&ALICE, BOB), true);
+		assert!(GsyCollateral::is_registered_proxy_account(&ALICE, BOB));
 	});
 }
 
@@ -102,18 +102,15 @@ fn delete_orders_works() {
 		assert_ok!(GsyCollateral::register_user(RawOrigin::Root.into(), ALICE));
 		// Insert orders
 		let mut orders_hash: Vec<H256> = Vec::new();
-		let order_hash: H256 = H256::from_str(
-			"0x3c80a50a11b8838f1beae03697797f54e095641f5c271d4ac19e8a7aa29a66e5"
-		).unwrap();
+		let order_hash: H256 =
+			H256::from_str("0x3c80a50a11b8838f1beae03697797f54e095641f5c271d4ac19e8a7aa29a66e5")
+				.unwrap();
 		orders_hash.push(order_hash);
 		assert_ok!(OrderbookRegistry::insert_orders(
 			RawOrigin::Signed(ALICE).into(),
 			orders_hash.clone()
 		));
-		assert_ok!(OrderbookRegistry::delete_orders(
-			RawOrigin::Signed(ALICE).into(),
-			orders_hash
-		));
+		assert_ok!(OrderbookRegistry::delete_orders(RawOrigin::Signed(ALICE).into(), orders_hash));
 	});
 }
 
@@ -126,9 +123,9 @@ fn delete_orders_by_proxy_works() {
 		assert_ok!(GsyCollateral::register_proxy_account(RawOrigin::Signed(ALICE).into(), BOB));
 		// Insert orders
 		let mut orders_hash: Vec<H256> = Vec::new();
-		let order_hash: H256 = H256::from_str(
-			"0x3c80a50a11b8838f1beae03697797f54e095641f5c271d4ac19e8a7aa29a66e5"
-		).unwrap();
+		let order_hash: H256 =
+			H256::from_str("0x3c80a50a11b8838f1beae03697797f54e095641f5c271d4ac19e8a7aa29a66e5")
+				.unwrap();
 		orders_hash.push(order_hash);
 		assert_ok!(OrderbookRegistry::insert_orders_by_proxy(
 			RawOrigin::Signed(BOB).into(),
@@ -150,14 +147,11 @@ fn insert_orders_works() {
 		assert_ok!(GsyCollateral::register_user(RawOrigin::Root.into(), ALICE));
 		// Insert orders
 		let mut orders_hash: Vec<H256> = Vec::new();
-		let order_hash: H256 = H256::from_str(
-			"0x3c80a50a11b8838f1beae03697797f54e095641f5c271d4ac19e8a7aa29a66e5"
-		).unwrap();
+		let order_hash: H256 =
+			H256::from_str("0x3c80a50a11b8838f1beae03697797f54e095641f5c271d4ac19e8a7aa29a66e5")
+				.unwrap();
 		orders_hash.push(order_hash);
-		assert_ok!(OrderbookRegistry::insert_orders(
-			RawOrigin::Signed(ALICE).into(),
-			orders_hash
-		));
+		assert_ok!(OrderbookRegistry::insert_orders(RawOrigin::Signed(ALICE).into(), orders_hash));
 	});
 }
 
@@ -170,9 +164,9 @@ fn insert_orders_by_proxy_works() {
 		assert_ok!(GsyCollateral::register_proxy_account(RawOrigin::Signed(ALICE).into(), BOB));
 		// Insert orders
 		let mut orders_hash: Vec<H256> = Vec::new();
-		let order_hash: H256 = H256::from_str(
-			"0x3c80a50a11b8838f1beae03697797f54e095641f5c271d4ac19e8a7aa29a66e5"
-		).unwrap();
+		let order_hash: H256 =
+			H256::from_str("0x3c80a50a11b8838f1beae03697797f54e095641f5c271d4ac19e8a7aa29a66e5")
+				.unwrap();
 		orders_hash.push(order_hash);
 		assert_ok!(OrderbookRegistry::insert_orders_by_proxy(
 			RawOrigin::Signed(BOB).into(),
@@ -189,17 +183,16 @@ fn insert_same_orders_should_fail() {
 		assert_ok!(GsyCollateral::register_user(RawOrigin::Root.into(), ALICE));
 		// Insert orders
 		let mut orders_hash: Vec<H256> = Vec::new();
-		let order_hash: H256 = H256::from_str(
-			"0x3c80a50a11b8838f1beae03697797f54e095641f5c271d4ac19e8a7aa29a66e5"
-		).unwrap();
+		let order_hash: H256 =
+			H256::from_str("0x3c80a50a11b8838f1beae03697797f54e095641f5c271d4ac19e8a7aa29a66e5")
+				.unwrap();
 		orders_hash.push(order_hash);
 		assert_ok!(OrderbookRegistry::insert_orders(
 			RawOrigin::Signed(ALICE).into(),
 			orders_hash.clone()
 		));
-		assert_noop!(OrderbookRegistry::insert_orders(
-			RawOrigin::Signed(ALICE).into(),
-			orders_hash),
+		assert_noop!(
+			OrderbookRegistry::insert_orders(RawOrigin::Signed(ALICE).into(), orders_hash),
 			Error::<Test>::OrderAlreadyInserted
 		);
 	});
@@ -214,30 +207,32 @@ fn insert_same_orders_by_proxy_works() {
 		assert_ok!(GsyCollateral::register_proxy_account(RawOrigin::Signed(ALICE).into(), BOB));
 		// Insert orders
 		let mut orders_hash: Vec<H256> = Vec::new();
-		let order_hash: H256 = H256::from_str(
-			"0x3c80a50a11b8838f1beae03697797f54e095641f5c271d4ac19e8a7aa29a66e5"
-		).unwrap();
+		let order_hash: H256 =
+			H256::from_str("0x3c80a50a11b8838f1beae03697797f54e095641f5c271d4ac19e8a7aa29a66e5")
+				.unwrap();
 		orders_hash.push(order_hash);
 		assert_ok!(OrderbookRegistry::insert_orders_by_proxy(
 			RawOrigin::Signed(BOB).into(),
 			ALICE,
 			orders_hash.clone()
 		));
-		assert_noop!(OrderbookRegistry::insert_orders_by_proxy(
-			RawOrigin::Signed(BOB).into(),
-			ALICE,
-			orders_hash),
+		assert_noop!(
+			OrderbookRegistry::insert_orders_by_proxy(
+				RawOrigin::Signed(BOB).into(),
+				ALICE,
+				orders_hash
+			),
 			Error::<Test>::OrderAlreadyInserted
 		);
 	});
 }
 
 #[test]
-fn registered_matching_engine_operator_must_be_added_by_root() {
+fn registered_exchange_operator_must_be_added_by_root() {
 	new_test_ext().execute_with(|| {
-		// Register a matching_engine operator.
+		// Register an exchange operator.
 		assert_noop!(
-			GsyCollateral::register_matching_engine_operator(RawOrigin::Signed(ALICE).into(), BOB),
+			GsyCollateral::register_exchange_operator(RawOrigin::Signed(ALICE).into(), BOB),
 			BadOrigin
 		);
 	});
@@ -258,9 +253,9 @@ fn remove_proxies_works() {
 		assert_ok!(GsyCollateral::register_user(RawOrigin::Root.into(), ALICE));
 		// Register a proxy.
 		assert_ok!(GsyCollateral::register_proxy_account(RawOrigin::Signed(ALICE).into(), BOB));
-		assert_eq!(GsyCollateral::is_registered_proxy_account(&ALICE, BOB), true);
+		assert!(GsyCollateral::is_registered_proxy_account(&ALICE, BOB));
 		// Remove proxies.
 		assert_ok!(GsyCollateral::unregister_proxy_account(RawOrigin::Signed(ALICE).into(), BOB));
-		assert_eq!(GsyCollateral::is_registered_proxy_account(&ALICE, BOB), false);
+		assert!(!GsyCollateral::is_registered_proxy_account(&ALICE, BOB));
 	});
 }

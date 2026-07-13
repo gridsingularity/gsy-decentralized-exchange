@@ -1,27 +1,50 @@
-FROM ubuntu:22.04
-
+FROM ubuntu:24.04 AS chef
 WORKDIR /root
 ENV PATH=$PATH:/root/.cargo/bin
-
 RUN apt-get update && \
     apt-get upgrade -y && \
-    apt-get install -y cmake curl libssl-dev git clang llvm libudev-dev protobuf-compiler && \
+    apt-get install -y cmake curl libssl-dev git clang llvm libudev-dev protobuf-compiler libclang-dev && \
     apt-get clean && \
-    curl https://sh.rustup.rs -sSf | sh -s -- -y
-RUN rustup default stable && \
-    rustup update && \
-    rustup update nightly && \
-    rustup component add rust-src --toolchain stable-x86_64-unknown-linux-gnu && \
-    rustup target add wasm32-unknown-unknown --toolchain stable-x86_64-unknown-linux-gnu
+    rm -rf /var/lib/apt/lists/* && \
+    curl https://sh.rustup.rs -sSf | sh -s -- -y --no-modify-path
+RUN rustup install 1.93.0
+RUN rustup default 1.93.0
+RUN rustup target add wasm32-unknown-unknown --toolchain 1.93.0
+RUN rustup component add rust-src --toolchain 1.93.0
+RUN cargo install cargo-chef
 
-ADD gsy-node /var/www/gsy-node/
-ADD primitives /var/www/primitives/
+FROM chef AS planner
+# First prepare dependencies of primitives
+WORKDIR /var/www/primitives
+COPY ./primitives/Cargo.lock ./primitives/Cargo.toml /var/www/primitives/
+RUN cargo chef prepare --recipe-path recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json
 
+# And then dependencies of the node
+WORKDIR /var/www/gsy-node
+COPY ./gsy-node/Cargo.lock ./gsy-node/Cargo.toml /var/www/gsy-node/
+COPY ./gsy-node/node/Cargo.toml /var/www/gsy-node/node/
+COPY ./gsy-node/runtime/Cargo.toml /var/www/gsy-node/runtime/
+COPY ./gsy-node/modules/gsy-collateral/Cargo.toml /var/www/gsy-node/modules/gsy-collateral/
+COPY ./gsy-node/modules/orderbook-registry/Cargo.toml /var/www/gsy-node/modules/orderbook-registry/
+COPY ./gsy-node/modules/orderbook-worker/Cargo.toml /var/www/gsy-node/modules/orderbook-worker/
+COPY ./gsy-node/modules/trades-settlement/Cargo.toml /var/www/gsy-node/modules/trades-settlement/
+RUN cargo chef prepare --recipe-path recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json
+
+FROM chef AS builder
+COPY gsy-node /var/www/gsy-node/
+COPY primitives /var/www/primitives/
+COPY --from=planner /var/www/primitives/target /var/www/primitives/target
+COPY --from=planner /var/www/gsy-node/target /var/www/gsy-node/target
 WORKDIR /var/www/gsy-node/
-
-ENV ORDERBOOK_SERVICE_URL=gsy-orderbook:8080
+ENV OFFCHAIN_STORAGE_URL=http://gsy-offchain-storage:8080
 RUN cargo build --release
 
-EXPOSE 9944
+FROM chef AS runtime
 
-ENTRYPOINT ["./target/release/gsy-node", "--dev", "--rpc-external", "--ws-external"]
+WORKDIR /var/www/gsy-node/
+COPY --from=builder /var/www/gsy-node/target /var/www/gsy-node/target
+ENV OFFCHAIN_STORAGE_URL=http://gsy-offchain-storage:8080
+EXPOSE 9944
+ENTRYPOINT ["./target/release/gsy-node", "--dev", "--rpc-external"]

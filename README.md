@@ -2,17 +2,13 @@
   <img src="./docs/images/Profile.png" alt="GSy Logo" title="GSy Logo" width="200" />
 </p>
 
-# GSy Decentralized Energy Exchange
+# Grid Singularity Decentralized Energy Exchange (GSY DEX)
+The Grid Singularity Decentralized Energy Exchange (GSY DEX) is developed by [Grid Singularity](https://gridsingularity.com/) as an open source GPL v.3 codebase (see [Licensing](https://gridsingularity.github.io/gsy-e/licensing/)) to model, simulate, optimise and deploy interconnected, grid-aware energy marketplaces. Grid Singularity has been proclaimed the [World Tech Pioneer by the World Economic Forum](https://www.weforum.org/organizations/grid-singularity-gmbh-gsy-gmbh) and is also known as a co-founder of the [Energy Web Foundation](https://www.energyweb.org/) that gathers leading energy and sustainability organisations globally, co-developing a shared decentralised digital trust platform.
 
-The GSy Decentralized Energy Exchange (DEX) aims to revolutionize the way energy is traded and managed by leveraging the power of distributed ledger technology, such as blockchain, and advanced distributed runtime functionalities. 
-
-The target of the decentralized energy exchange is to design, develop, and implement a robust, secure, and efficient platform for energy trading in a decentralized environment. 
-
-The GSy Decentralized Energy Exchange can effectively facilitate peer-to-peer energy trading, optimize energy consumption and generation, and ultimately contribute to a more sustainable and resilient energy infrastructure.
 
 ## Installation Instructions
 
-Follow the steps below to set up the GSy Decentralized Energy Exchange locally.
+Follow the steps below to set up the GSY Decentralized Energy Exchange locally.
 
 ### Prerequisites
 
@@ -33,7 +29,7 @@ cd gsy-decentralized-exchange
 ```
 
 ### Build & Run the Project services
-#### GSy Node
+#### GSY Node
 ```sh
 cd gsy-node
 ```

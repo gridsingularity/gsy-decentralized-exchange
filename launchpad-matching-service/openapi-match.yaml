@@ -1,0 +1,176 @@
+openapi: 3.0.3
+info:
+  title: GSY Matching Service API - Match Endpoint
+  description: API for matching energy orders using the Pay-As-Bid algorithm.
+  version: 1.0.0
+tags:
+  - name: Endpoints
+    description: All service endpoints
+servers:
+  - url: https://localhost
+    description: Local server
+
+paths:
+  /match:
+    post:
+      tags:
+        - Endpoints
+      summary: Process orders for matching
+      description: Processes a list of bid and offer orders using the Pay-As-Bid algorithm and returns the matches found.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrdersToMatch'
+      responses:
+        '200':
+          description: Successful matching result
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/DbBidOfferMatch'
+components:
+  schemas:
+    OrdersToMatch:
+      type: object
+      required:
+        - user_id
+        - orders
+      properties:
+        user_id:
+          type: string
+        orders:
+          type: array
+          items:
+            $ref: '#/components/schemas/DbOrderSchema'
+
+    DbOrderSchema:
+      type: object
+      required:
+        - _id
+        - status
+        - order
+      properties:
+        _id:
+          type: string
+        status:
+          $ref: '#/components/schemas/OrderStatus'
+        order:
+          $ref: '#/components/schemas/Order'
+
+    OrderStatus:
+      type: string
+      enum: [Open, Executed, Expired, Deleted]
+
+    Order:
+      type: object
+      required:
+        - type
+        - data
+      properties:
+        type:
+          type: string
+          enum: [Bid, Offer]
+        data:
+          oneOf:
+            - $ref: '#/components/schemas/DbBid'
+            - $ref: '#/components/schemas/DbOffer'
+
+    DbBid:
+      type: object
+      required:
+        - buyer
+        - nonce
+        - bid_component
+      properties:
+        buyer:
+          type: string
+        nonce:
+          type: integer
+          format: int32
+        bid_component:
+          $ref: '#/components/schemas/DbOrderComponent'
+
+    DbOffer:
+      type: object
+      required:
+        - seller
+        - nonce
+        - offer_component
+      properties:
+        seller:
+          type: string
+        nonce:
+          type: integer
+          format: int32
+        offer_component:
+          $ref: '#/components/schemas/DbOrderComponent'
+
+    DbOrderComponent:
+      type: object
+      required:
+        - area_uuid
+        - market_id
+        - time_slot
+        - creation_time
+        - energy
+        - energy_rate
+      properties:
+        area_uuid:
+          type: string
+        market_id:
+          type: string
+        time_slot:
+          type: integer
+          format: int64
+        creation_time:
+          type: integer
+          format: int64
+        energy:
+          type: number
+          format: double
+        energy_rate:
+          type: number
+          format: double
+
+    DbBidOfferMatch:
+      type: object
+      required:
+        - user_id
+        - market_id
+        - time_slot
+        - bid
+        - offer
+        - selected_energy
+        - energy_rate
+      properties:
+        user_id:
+          type: string
+        market_id:
+          type: string
+        time_slot:
+          type: integer
+          format: int64
+        bid:
+          $ref: '#/components/schemas/DbBid'
+        offer:
+          $ref: '#/components/schemas/DbOffer'
+        residual_bid:
+          nullable: true
+          anyOf:
+            - $ref: '#/components/schemas/DbBid'
+        residual_offer:
+          nullable: true
+          anyOf:
+            - $ref: '#/components/schemas/DbOffer'
+        selected_energy:
+          type: number
+          format: double
+        energy_rate:
+          type: number
+          format: double

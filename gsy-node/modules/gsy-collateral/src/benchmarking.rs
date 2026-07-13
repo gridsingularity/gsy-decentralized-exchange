@@ -5,21 +5,19 @@ use super::*;
 
 #[allow(unused)]
 use crate::Pallet as GsyCollateral;
-use gsy_primitives::{Vault, VaultWithStatus};
-use frame_benchmarking::{benchmarks, impl_benchmark_test_suite, whitelisted_caller};
-use frame_system::{EventRecord, RawOrigin};
+use frame_benchmarking::{account, benchmarks, impl_benchmark_test_suite, whitelisted_caller};
 use frame_support::traits::Currency;
+use frame_system::{EventRecord, RawOrigin};
+use gsy_primitives::{Vault, VaultWithStatus};
 
-fn assert_last_event<T: Config>(generic_event: <T as Config>::Event) {
+fn assert_last_event<T>(generic_event: <T as pallet::Config>::RuntimeEvent) where T: Config {
 	let events = frame_system::Pallet::<T>::events();
-	let system_event: <T as frame_system::Config>::Event = generic_event.into();
+	let system_event = generic_event.into();
 	let EventRecord { event, .. } = &events[events.len() - 1];
 	assert_eq!(event, &system_event);
 }
 
-fn add_user<T: Config>(
-	user: T::AccountId,
-) -> Result<(), &'static str> {
+fn add_user<T: Config>(user: T::AccountId) -> Result<(), &'static str> {
 	let _ = GsyCollateral::<T>::add_user(user);
 	Ok(())
 }
@@ -38,7 +36,7 @@ benchmarks! {
 		add_user::<T>(caller.clone()).unwrap();
 		let _ = GsyCollateral::<T>::create(caller.clone());
 		let amount: BalanceOf<T> = 10_000_000u32.into();
-		T::Currency::deposit_creating(&caller, amount * 2u32.into());
+		let _ = T::Currency::deposit_creating(&caller, amount * 2u32.into());
 	}: _(RawOrigin::Signed(caller.clone()), amount)
 	verify {
 		assert_last_event::<T>(Event::CollateralDeposited(
@@ -50,7 +48,7 @@ benchmarks! {
 	register_proxy_account {
 		let caller: T::AccountId = whitelisted_caller();
 		add_user::<T>(caller.clone()).unwrap();
-		let proxy_account: T::AccountId = T::AccountId::default();
+		let proxy_account: T::AccountId = account("Name", 1, 12);
 	}: _(RawOrigin::Signed(caller.clone()), proxy_account.clone())
 	verify {
 		assert_last_event::<T>(Event::ProxyAccountRegistered(
@@ -59,12 +57,12 @@ benchmarks! {
 		).into());
 	}
 
-	register_matching_engine_operator {
-		let matching_engine_operator: T::AccountId = whitelisted_caller();
-	}: _(RawOrigin::Root, matching_engine_operator.clone())
+	register_exchange_operator {
+		let operator_account: T::AccountId = whitelisted_caller();
+	}: _(RawOrigin::Root, operator_account.clone())
 	verify {
-		assert_last_event::<T>(Event::MatchingEngineOperatorRegistered(
-			matching_engine_operator.clone(),
+		assert_last_event::<T>(Event::ExchangeOperatorRegistered(
+			operator_account.clone(),
 		).into());
 	}
 
@@ -105,7 +103,7 @@ benchmarks! {
 	unregister_proxy_account {
 		let caller: T::AccountId = whitelisted_caller();
 		add_user::<T>(caller.clone()).unwrap();
-		let proxy_account: T::AccountId = T::AccountId::default();
+		let proxy_account: T::AccountId = account("Name", 1, 12);
 		add_proxy_account::<T>(&caller, proxy_account.clone()).unwrap();
 	}: _(RawOrigin::Signed(caller.clone()), proxy_account.clone())
 	verify {
@@ -120,7 +118,7 @@ benchmarks! {
 		add_user::<T>(caller.clone()).unwrap();
 		let _ = GsyCollateral::<T>::create(caller.clone());
 		let amount: BalanceOf<T> = 10_000_000u32.into();
-		T::Currency::deposit_creating(&caller, amount * 2u32.into());
+		let _ = T::Currency::deposit_creating(&caller, amount * 2u32.into());
 		let _ = GsyCollateral::<T>::deposit(&caller, amount);
 		let withdraw_amount: BalanceOf<T> = 9_000_000u32.into();
 	}: _(RawOrigin::Signed(caller.clone()), withdraw_amount)
@@ -132,8 +130,4 @@ benchmarks! {
 	}
 }
 
-impl_benchmark_test_suite!(
-	GsyCollateral,
-	crate::mock::new_test_ext(),
-	crate::mock::Test
-);
+impl_benchmark_test_suite!(GsyCollateral, crate::mock::new_test_ext(), crate::mock::Test);

@@ -1,0 +1,105 @@
+x-mongo-node: &mongo-node
+  image: mongo:8.0
+  command: ["mongod", "--replSet", "rs0", "--keyFile", "/keyfile/mongo-keyfile", "--bind_ip_all"]
+  restart: unless-stopped
+  depends_on:
+    mongo-keyfile-init:
+      condition: service_completed_successfully
+  healthcheck:
+    test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+    interval: 10s
+    timeout: 5s
+    retries: 10
+    start_period: 20s
+
+services:
+  gsy-orderbook:
+    container_name: gsy-orderbook
+    build:
+      context: ..
+      dockerfile: ./gsy-offchain-storage/Dockerfile
+    depends_on:
+      mongo-init:
+        condition: service_completed_successfully
+    ports:
+      - "8080:8080"
+    environment:
+      - CARGO_HOME=/var/www/orderbook/.cargo
+      - APPLICATION_HOST=0.0.0.0
+      - APPLICATION_PORT=8080
+      - DATABASE_NAME=orderbook
+      - DATABASE_HOST=mongo1:27017,mongo2:27017,mongo3:27017
+      - DATABASE_REPLICA_SET=rs0
+      - DATABASE_AUTH_SOURCE=admin
+      - DATABASE_URL_SCHEME=mongodb
+      - DATABASE_USERNAME=gsy
+      - DATABASE_PASSWORD=gsy
+      - NODE_URL=
+      - SCHEDULER_INTERVAL=900
+
+  # --- MongoDB replica set (rs0), dev topology ---
+  mongo-keyfile-init:
+    image: mongo:8.0
+    entrypoint:
+      - bash
+      - -c
+      - |
+        set -e
+        if [ ! -s /keyfile/mongo-keyfile ]; then
+          head -c 756 /dev/urandom | base64 > /keyfile/mongo-keyfile
+        fi
+        chmod 400 /keyfile/mongo-keyfile
+        chown 999:999 /keyfile/mongo-keyfile
+    volumes:
+      - mongo-keyfile:/keyfile
+    restart: "no"
+
+  mongo1:
+    <<: *mongo-node
+    container_name: mongo1
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=gsy
+      - MONGO_INITDB_ROOT_PASSWORD=gsy
+    volumes:
+      - mongo1-data:/data/db
+      - mongo-keyfile:/keyfile:ro
+
+  mongo2:
+    <<: *mongo-node
+    container_name: mongo2
+    ports:
+      - "27018:27017"
+    volumes:
+      - mongo2-data:/data/db
+      - mongo-keyfile:/keyfile:ro
+
+  mongo3:
+    <<: *mongo-node
+    container_name: mongo3
+    ports:
+      - "27019:27017"
+    volumes:
+      - mongo3-data:/data/db
+      - mongo-keyfile:/keyfile:ro
+
+  mongo-init:
+    image: mongo:8.0
+    depends_on:
+      mongo1:
+        condition: service_healthy
+      mongo2:
+        condition: service_healthy
+      mongo3:
+        condition: service_healthy
+    entrypoint: ["bash", "/rs-init.sh"]
+    volumes:
+      - ../deploy/mongodb-dev/rs-init.sh:/rs-init.sh:ro
+    restart: "no"
+
+volumes:
+  mongo-keyfile:
+  mongo1-data:
+  mongo2-data:
+  mongo3-data:
