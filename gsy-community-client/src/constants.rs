@@ -3,6 +3,9 @@
 use gsy_offchain_primitives::utils::read_env_or;
 use once_cell::sync::Lazy;
 
+/// Reserved community name identifying the single inter-community market per timeslot.
+pub const INTER_COMMUNITY_MARKET_NAME: &str = "INTER_COMMUNITY";
+
 pub struct Constants {
     pub FEDECOM_ONTOLOGY_URL: String,
     pub FEDECOM_ONTOLOGY_ASSETS_URL: String,

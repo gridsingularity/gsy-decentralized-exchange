@@ -35,6 +35,25 @@ pub struct MyWorld {
 	pub initial_trade_energy: Option<u64>,
 	pub residual_trade_energy: Option<u64>,
 	pub active_community_name: Option<String>,
+	pub inter_community_market: Option<MarketTopologySchema>,
+	pub inter_communities: Vec<InterCommunityParticipant>,
+}
+
+/// Single community participating in the shared inter-community market.
+#[derive(Debug, Clone)]
+pub struct InterCommunityParticipant {
+	pub name: String,
+	/// The community's uuid, hashed into `community_id` and carried on its measurements.
+	pub community_uuid: String,
+	/// `community_id_from_uuid(community_uuid)` — the aggregated order's `area_uuid`.
+	pub community_id: H256,
+	/// The community's per-community Spot market id; the reserved inter-community id must
+	/// differ from it.
+	pub spot_market_id: H256,
+	/// Per-asset (mixed-sign) forecasts that aggregate to `net_kwh`.
+	pub forecasts: Vec<ForecastSchema>,
+	/// `aggregate_net_import` over `forecasts`; >0 → Bid, <0 → Offer.
+	pub net_kwh: f64,
 }
 
 // Community state used by the cross-community matching scenario.
@@ -90,6 +109,7 @@ impl MyWorld {
 			community_markets: Vec::new(), cross_communities: Vec::new(),
 			initial_trade_energy: None, residual_trade_energy: None,
 			active_community_name: None,
+			inter_community_market: None, inter_communities: Vec::new(),
 		})
 	}
 

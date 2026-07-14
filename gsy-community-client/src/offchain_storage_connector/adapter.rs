@@ -1,3 +1,5 @@
+use crate::constants::INTER_COMMUNITY_MARKET_NAME;
+use crate::inter_community::inter_community_market_id;
 use crate::time_utils::get_current_timestamp_in_secs;
 use crate::topology::ExternalCommunityTopology;
 use crate::types::{ExternalForecast, ExternalMeasurement};
@@ -14,7 +16,7 @@ use uuid::Uuid;
 
 const RESIDUAL_ENERGY_TOLERANCE_KWH: f64 = 1e-9;
 
-fn generate_market_id(
+pub fn generate_market_id(
     community_name: &str,
     market_type: MarketType,
     delivery_timestamp: u64,
@@ -222,6 +224,49 @@ impl AreaMarketInfoAdapter {
             }
         }
         market_topologies
+    }
+
+    /// Upsert the single inter-community market for a timeslot. Its id is
+    /// community-independent, so this must be called once per timeslot, outside any
+    /// per-community loop; storage-side dedup is keyed on `market_id`.
+    pub async fn get_or_create_inter_community_market(
+        &self,
+        time_slot: u64,
+    ) -> Option<MarketTopologySchema> {
+        let community_market_url = format!(
+            "{}?community_name={}&start_time={}&end_time={}",
+            self.internal_community_market_url, INTER_COMMUNITY_MARKET_NAME, time_slot, time_slot
+        );
+        let existing = self
+            .get_existing_market_topology(community_market_url)
+            .await;
+        if let Some(market) = existing.into_iter().next() {
+            return Some(market);
+        }
+        let new_market = MarketTopologySchema {
+            community_name: INTER_COMMUNITY_MARKET_NAME.to_string(),
+            community_uuid: Uuid::new_v4().to_string(),
+            market_id: h256_to_string(inter_community_market_id(time_slot)),
+            time_slot: time_slot as u32,
+            creation_time: get_current_timestamp_in_secs() as u32,
+            community_areas: vec![],
+        };
+        match self
+            .client
+            .post(&self.internal_topology_url)
+            .json(&new_market)
+            .send()
+            .await
+        {
+            Ok(_) => Some(new_market),
+            Err(error) => {
+                info!(
+                    "Inter-community market creation failed with error: {}",
+                    error.to_string()
+                );
+                None
+            }
+        }
     }
 }
 

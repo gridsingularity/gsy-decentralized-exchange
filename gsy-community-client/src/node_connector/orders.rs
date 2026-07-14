@@ -3,6 +3,9 @@ use crate::node_connector::orders::gsy_node::runtime_types::gsy_primitives::orde
 };
 use crate::time_utils::get_current_timestamp_in_secs;
 use anyhow::{Error, Result};
+use gsy_offchain_primitives::aggregation::{
+    OrderType, RESIDUAL_ENERGY_TOLERANCE_KWH, net_to_order_type,
+};
 use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketTopologySchema};
 use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
 use gsy_offchain_primitives::utils::{NODE_FLOAT_SCALING_FACTOR, string_to_h256};
@@ -50,9 +53,21 @@ pub async fn publish_orders(
     offer_rate: f64,
     signer: &Keypair,
 ) -> Result<(), Error> {
+    let input_orders = create_input_orders(forecasts, market, bid_rate, offer_rate, signer);
+    publish_input_orders(url, input_orders, signer).await
+}
+
+/// Sign and submit prebuilt input orders through `orderbook_worker.insert_orders`.
+pub async fn publish_input_orders(
+    url: String,
+    input_orders: Vec<InputOrder<AccountId32>>,
+    signer: &Keypair,
+) -> Result<(), Error> {
+    if input_orders.is_empty() {
+        return Ok(());
+    }
     let api = OnlineClient::<SubstrateConfig>::from_insecure_url(url).await?;
 
-    let input_orders = create_input_orders(forecasts, market, bid_rate, offer_rate, signer);
     let register_order_tx = gsy_node::tx()
         .orderbook_worker()
         .insert_orders(input_orders);
@@ -151,6 +166,39 @@ fn _create_offer_object(
                 time_slot: market.time_slot as u64,
             },
         },
+    }
+}
+
+/// Build at most one aggregated inter-community order from a community's net import.
+/// `net_import_kwh > 0` (deficit) yields a Bid, `< 0` (surplus) an Offer, a tie none.
+/// `area_uuid` carries the `community_id` hash; `market_id` is the reserved
+/// inter-community market id for the timeslot.
+pub fn create_inter_community_order(
+    net_import_kwh: f64,
+    community_id: H256,
+    market_id: H256,
+    time_slot: u64,
+    rate: f64,
+    signer: &Keypair,
+) -> Option<InputOrder<AccountId32>> {
+    let component = OrderComponent {
+        area_uuid: community_id,
+        energy: (net_import_kwh.abs() * NODE_FLOAT_SCALING_FACTOR) as u64,
+        energy_rate: (net_import_kwh.abs() * rate * NODE_FLOAT_SCALING_FACTOR) as u64,
+        market_id,
+        creation_time: get_current_timestamp_in_secs(),
+        time_slot,
+    };
+    match net_to_order_type(net_import_kwh, RESIDUAL_ENERGY_TOLERANCE_KWH) {
+        OrderType::Bid => Some(InputOrder::Bid(InputBid {
+            buyer: AccountId32::from(signer.public_key()),
+            bid_component: component,
+        })),
+        OrderType::Offer => Some(InputOrder::Offer(InputOffer {
+            seller: AccountId32::from(signer.public_key()),
+            offer_component: component,
+        })),
+        OrderType::None => None,
     }
 }
 

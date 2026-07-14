@@ -1,28 +1,11 @@
 use crate::db::DatabaseWrapper;
+use crate::db::collection::{Coll, apply_time_window, in_time_window};
 use anyhow::Result;
-use futures::StreamExt;
 use gsy_offchain_primitives::db_api_schema::profiles::MeasurementSchema;
 use mongodb::bson::{Bson, doc};
-use mongodb::options::IndexOptions;
-use mongodb::{Collection, IndexModel};
 use std::collections::HashMap;
-use std::ops::Deref;
 
-/// this function will call after connected to database
-pub async fn init_measurements(db: &DatabaseWrapper) -> Result<()> {
-    // create index in this block
-
-    let controller = db.measurements();
-    let index: IndexModel = IndexModel::builder()
-        .keys(doc! {"_id":1})
-        .options(IndexOptions::builder().build())
-        .build();
-    controller.create_index(index).await?;
-    Ok(())
-}
-
-#[repr(transparent)]
-pub struct MeasurementsService(pub Collection<MeasurementSchema>);
+pub struct MeasurementsService(pub(crate) Coll<MeasurementSchema>);
 
 impl MeasurementsService {
     #[tracing::instrument(name = "Fetching measurements from database for one area", skip(self))]
@@ -33,36 +16,19 @@ impl MeasurementsService {
         end_time: Option<u32>,
     ) -> Result<Vec<MeasurementSchema>> {
         let mut filter_params = doc! {};
-        if area_uuid.is_some() {
-            filter_params.insert("area_uuid", area_uuid.unwrap());
+        if let Some(area_uuid) = &area_uuid {
+            filter_params.insert("area_uuid", area_uuid.clone());
         }
-        if start_time.is_some() {
-            filter_params.insert("time_slot", doc! {"$gte": start_time.unwrap()});
-        }
-        if end_time.is_some() {
-            if start_time.is_some() {
-                filter_params.insert(
-                    "time_slot",
-                    doc! {"$gte": start_time.unwrap(), "$lte": end_time.unwrap()},
-                );
-            } else {
-                filter_params.insert("time_slot", doc! {"$lte": end_time.unwrap()});
-            }
-        }
+        apply_time_window(&mut filter_params, start_time, end_time);
 
-        let mut cursor = self.0.find(filter_params).await.unwrap();
-        let mut result: Vec<MeasurementSchema> = Vec::new();
-        while let Some(doc) = cursor.next().await {
-            match doc {
-                Ok(document) => {
-                    result.push(document);
-                }
-                _ => {
-                    break;
-                }
-            }
-        }
-        Ok(result)
+        self.0
+            .query(filter_params, |measurement| {
+                area_uuid
+                    .as_ref()
+                    .is_none_or(|area_uuid| &measurement.area_uuid == area_uuid)
+                    && in_time_window(measurement.time_slot, start_time, end_time)
+            })
+            .await
     }
 
     #[tracing::instrument(
@@ -76,26 +42,18 @@ impl MeasurementsService {
         &self,
         measurements: Vec<MeasurementSchema>,
     ) -> Result<HashMap<usize, Bson>> {
-        match self.0.insert_many(measurements).await {
-            Ok(db_result) => Ok(db_result.inserted_ids),
-            Err(e) => {
-                tracing::error!("Failed to execute query: {:?}", e);
-                Err(anyhow::Error::from(e))
-            }
-        }
+        // NOTE: MeasurementSchema has no `_id`, so the fabricated in-memory ids
+        // (area_uuid) diverge from Mongo's generated ObjectIds and are not unique.
+        self.0
+            .insert_many(measurements, |measurement| {
+                Bson::String(measurement.area_uuid.clone())
+            })
+            .await
     }
 }
 
 impl From<&DatabaseWrapper> for MeasurementsService {
     fn from(db: &DatabaseWrapper) -> Self {
-        MeasurementsService(db.collection("measurements"))
-    }
-}
-
-impl Deref for MeasurementsService {
-    type Target = Collection<MeasurementSchema>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
+        MeasurementsService(db.coll("measurements", |store| store.measurements.clone()))
     }
 }
