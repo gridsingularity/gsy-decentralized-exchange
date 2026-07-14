@@ -1,5 +1,5 @@
 use core::option_env;
-use scale_info::prelude::{format, string::String};
+use scale_info::prelude::{format, string::{String, ToString}};
 
 #[derive(Debug)]
 pub struct OrderBookServiceURLs {

@@ -86,7 +86,7 @@ pub mod pallet {
 	use super::*;
 	use crate::stripe_client;
 	use alloc::format;
-	use codec::{Decode, Encode};
+	use codec::{Decode, DecodeWithMemTracking, Encode};
 	use frame_support::{pallet_prelude::*, transactional};
 	use frame_system::{
 		offchain::{AppCrypto, SendUnsignedTransaction, SignedPayload, Signer, SigningTypes},
@@ -142,14 +142,14 @@ pub mod pallet {
 	}
 
 	/// Direction of a canonical bridge transfer.
-	#[derive(Encode, Decode, Clone, Copy, PartialEq, Eq, RuntimeDebug, TypeInfo, MaxEncodedLen)]
+	#[derive(Encode, Decode, DecodeWithMemTracking, Clone, Copy, PartialEq, Eq, RuntimeDebug, TypeInfo, MaxEncodedLen)]
 	pub enum BridgeTransferDirection {
 		ToStripe,
 		FromStripe,
 	}
 
 	/// Lifecycle state of a canonical bridge transfer.
-	#[derive(Encode, Decode, Clone, Copy, PartialEq, Eq, RuntimeDebug, TypeInfo, MaxEncodedLen)]
+	#[derive(Encode, Decode, DecodeWithMemTracking, Clone, Copy, PartialEq, Eq, RuntimeDebug, TypeInfo, MaxEncodedLen)]
 	pub enum BridgeTransferStatus {
 		Requested,
 		FundsReserved,
@@ -181,7 +181,7 @@ pub mod pallet {
 	// Unsigned-transaction payloads
 	// -----------------------------------------------------------------------
 
-	#[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug, TypeInfo)]
+	#[derive(Encode, Decode, DecodeWithMemTracking, Clone, PartialEq, Eq, RuntimeDebug, TypeInfo)]
 	pub struct PaymentResultPayload<Public> {
 		pub payment_index: u64,
 		pub stripe_payment_id: Vec<u8>,
@@ -198,7 +198,7 @@ pub mod pallet {
 		}
 	}
 
-	#[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug, TypeInfo)]
+	#[derive(Encode, Decode, DecodeWithMemTracking, Clone, PartialEq, Eq, RuntimeDebug, TypeInfo)]
 	pub struct RefundResultPayload<Public> {
 		pub refund_index: u64,
 		pub refund_id: Vec<u8>,
@@ -213,7 +213,7 @@ pub mod pallet {
 		}
 	}
 
-	#[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug, TypeInfo)]
+	#[derive(Encode, Decode, DecodeWithMemTracking, Clone, PartialEq, Eq, RuntimeDebug, TypeInfo)]
 	pub struct BalanceResultPayload<Public> {
 		pub available_amount: i64,
 		pub available_currency: Vec<u8>,
@@ -228,7 +228,7 @@ pub mod pallet {
 		}
 	}
 
-	#[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug, TypeInfo)]
+	#[derive(Encode, Decode, DecodeWithMemTracking, Clone, PartialEq, Eq, RuntimeDebug, TypeInfo)]
 	pub struct OutboundTransferResultPayload<Public> {
 		pub bridge_id: u64,
 		pub success: bool,
@@ -251,7 +251,7 @@ pub mod pallet {
 	#[pallet::config]
 	pub trait Config:
 		frame_system::offchain::CreateSignedTransaction<Call<Self>>
-		+ frame_system::offchain::SendTransactionTypes<Call<Self>>
+		+ frame_system::offchain::CreateBare<Call<Self>>
 		+ frame_system::Config
 		+ remuneration::Config
 	{

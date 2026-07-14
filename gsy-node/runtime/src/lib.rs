@@ -80,7 +80,6 @@ pub use orderbook_worker;
 pub use trades_settlement;
 pub use remuneration;
 pub use stripe_bridge;
-pub use gsy_primitives::v0::{AccountId, Balance, BlockNumber, Hash, Signature, Nonce};
 
 /// Index of a transaction in the chain.
 pub type Index = u32;

@@ -1,3 +1,6 @@
-# Repo-wide cargo configuration.
+# Repository level cargo configuration.
 [build]
 target-dir = "target"
+
+[env]
+WASM_BUILD_WORKSPACE_HINT = { value = "gsy-node", relative = true }
