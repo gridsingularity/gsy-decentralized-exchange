@@ -366,7 +366,6 @@ mod tests {
             .as_secs();
         let secs_since_last_timeslot = now % ((TIMESLOT_MINUTES * 60) as u64);
         let last_quarter = now - secs_since_last_timeslot;
-        let current_timeslot = last_quarter + TIMESLOT_SECS;
         let pilot_sites = manager.fetch_topology().await.unwrap();
         let results = pilot_sites.results.bindings;
         let sites_names: HashSet<String> = results.iter().map(|x| x.site_name.value.clone()).collect();

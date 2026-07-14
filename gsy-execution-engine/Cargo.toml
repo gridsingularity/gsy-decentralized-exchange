@@ -23,3 +23,7 @@ tracing-subscriber = { version = "0.3", features = ["registry", "env-filter"] }
 [[bin]]
 name = "gsy-execution-engine"
 path = "src/main.rs"
+
+[lib]
+name = "gsy_execution_engine"
+path = "src/lib.rs"

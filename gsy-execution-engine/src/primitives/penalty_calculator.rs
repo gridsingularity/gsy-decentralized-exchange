@@ -1,6 +1,7 @@
+use gsy_offchain_primitives::aggregation::aggregate_net_import;
 use gsy_offchain_primitives::db_api_schema::{profiles::MeasurementSchema, trades::TradeSchema};
-use std::collections::HashMap;
-use tracing::info;
+use gsy_offchain_primitives::utils::{community_id_from_uuid, h256_to_string};
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug)]
 pub struct Penalty {
@@ -11,22 +12,6 @@ pub struct Penalty {
 }
 
 /// Computes penalties for each trade based on the measured energy.
-///
-/// For each trade, the measurement is looked up (by using the area_uuid and market_id from the Bid).
-/// The delta is computed as:
-///   delta = measured_energy - traded_energy
-/// If delta > 0.0, it indicates under-trading for consumption and the buyer is penalized.
-/// If delta < 0.0, it indicates under-trading for production and the seller is penalized.
-///
-/// # Arguments
-///
-/// * `trades` - A slice of TradeSchema records.
-/// * `measurements` - A slice of MeasurementSchema records.
-/// * `penalty_rate` - The penalty rate as a f64 (e.g., 0.10 for 10%).
-///
-/// # Returns
-///
-/// A vector of Penalty structs.
 pub fn compute_penalties(
 	trades: &[TradeSchema],
 	measurements: &[MeasurementSchema],
@@ -43,6 +28,17 @@ pub fn compute_penalties(
 			meas.area_hash.clone(),
 			meas.energy_kwh, // energy is f64; positive means consumption, negative means production
 		);
+	}
+	let mut seen_communities: HashSet<(&str, u64)> = HashSet::new();
+	for meas in measurements {
+		if seen_communities.insert((meas.community_uuid.as_str(), meas.time_slot)) {
+			let community_net_import =
+				aggregate_net_import(measurements, &meas.community_uuid, meas.time_slot);
+			measurement_map.insert(
+				h256_to_string(community_id_from_uuid(&meas.community_uuid)),
+				community_net_import,
+			);
+		}
 	}
 
 	// Iterate over each trade and compute the penalty if a measurement exists.

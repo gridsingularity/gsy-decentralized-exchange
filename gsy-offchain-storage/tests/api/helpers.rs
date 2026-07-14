@@ -1,10 +1,8 @@
-use gsy_offchain_storage::configuration::get_configuration;
-use gsy_offchain_storage::db::{DatabaseWrapper, init_database};
+use gsy_offchain_storage::db::DatabaseWrapper;
 use gsy_offchain_storage::startup::run;
 use gsy_offchain_storage::telemetry::{get_subscriber, init_subscriber};
 use once_cell::sync::Lazy;
 use std::net::TcpListener;
-use uuid::Uuid;
 
 static TRACING: Lazy<()> = Lazy::new(|| {
     let default_filter_level = "info".to_string();
@@ -30,15 +28,8 @@ pub async fn init_app() -> TestApp {
     let port = listener.local_addr().unwrap().port();
     let address = format!("http://127.0.0.1:{}", port);
 
-    let mut configuration = get_configuration().expect("Failed to read configuration");
-    configuration.database_name = Uuid::new_v4().to_string();
-
-    let db_wrapper = init_database(
-        configuration.get_connection_string(),
-        configuration.database_name,
-    )
-    .await
-    .unwrap();
+    // Use the in-memory storage backend so the tests run without a MongoDB instance.
+    let db_wrapper = DatabaseWrapper::in_memory();
     let server = run(listener, db_wrapper.clone()).expect("Failed to bind address");
 
     let _ = tokio::spawn(server);
