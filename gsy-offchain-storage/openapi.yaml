@@ -1,0 +1,863 @@
+openapi: 3.0.3
+info:
+  title: GSY DEX Off-Chain Storage API
+  version: 0.1.0
+  description: |
+    HTTP API of the GSY DEX off-chain storage service (actix-web), which persists
+    orders, trades, market topologies, measurements and forecasts to MongoDB
+    (or an in-memory backend for tests) and exposes read endpoints for them.
+
+    **Authentication is not yet implemented.** All endpoints are currently
+    unauthenticated; JWT-based authentication is planned to be added globally
+    at a later stage.
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+tags:
+  - name: system
+    description: Service health and diagnostics
+  - name: orders
+    description: Bid and offer order storage
+  - name: trades
+    description: Trade storage
+  - name: markets
+    description: Market topology storage
+  - name: profiles
+    description: Asset measurement and forecast profiles
+  - name: analytics
+    description: Aggregated time-series derived from stored data
+paths:
+  /health_check:
+    get:
+      tags: [system]
+      summary: Health check
+      description: Returns 200 with an empty body when the service is up.
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Service is up. Empty response body.
+  /orders:
+    post:
+      tags: [orders]
+      summary: Insert SCALE-encoded orders from the gsy-node
+      description: |
+        Accepts a JSON array of unsigned bytes (integers 0-255) that is the
+        SCALE encoding of a `Vec<Order>` as produced by the gsy-node runtime.
+        The service decodes the bytes and converts each order to the
+        `DbOrderSchema` document format before insertion. For submitting
+        already-normalized JSON documents use `POST /orders-normalized`.
+      operationId: postOrders
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScaleEncodedBytes'
+      responses:
+        '200':
+          description: Orders inserted. Map of array index to inserted document id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InsertedIdsMap'
+        '400':
+          description: Malformed JSON body (not an array of integers 0-255).
+        '500':
+          description: Database insertion failed. Empty response body.
+    get:
+      tags: [orders]
+      summary: List or filter stored orders
+      description: |
+        Returns all stored orders when no query parameter is provided,
+        otherwise filters by market id and/or an inclusive `time_slot` window.
+      operationId: getOrders
+      parameters:
+        - name: market_id
+          in: query
+          required: false
+          description: Only return orders belonging to this market id.
+          schema:
+            type: string
+        - name: start_time
+          in: query
+          required: false
+          description: Lower bound (inclusive) for the order `time_slot`, in unix seconds.
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+        - name: end_time
+          in: query
+          required: false
+          description: Upper bound (inclusive) for the order `time_slot`, in unix seconds.
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+      responses:
+        '200':
+          description: Matching orders.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DbOrderSchema'
+        '400':
+          description: Query parameter has an invalid type (e.g. non-integer time bound).
+        '500':
+          description: Database query failed. Empty response body.
+  /orders-normalized:
+    post:
+      tags: [orders]
+      summary: Insert normalized order documents
+      description: Inserts a JSON array of `DbOrderSchema` documents as-is.
+      operationId: postNormalizedOrders
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/DbOrderSchema'
+      responses:
+        '200':
+          description: Orders inserted. Map of array index to inserted document id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InsertedIdsMap'
+        '400':
+          description: Malformed JSON body (does not deserialize to an array of DbOrderSchema).
+        '500':
+          description: Database insertion failed. Empty response body.
+  /trades:
+    post:
+      tags: [trades]
+      summary: Insert SCALE-encoded trades from the gsy-node
+      description: |
+        Accepts a JSON array of unsigned bytes (integers 0-255) that is the
+        SCALE encoding of a `Vec<Trade>` as produced by the gsy-node runtime.
+        The service decodes the bytes, converts each trade to the
+        `TradeSchema` document format, marks the matched bid/offer orders of
+        each trade as executed, and inserts the trades. For submitting
+        already-normalized JSON documents use `POST /trades-normalized`.
+      operationId: postTrades
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScaleEncodedBytes'
+      responses:
+        '200':
+          description: Trades inserted. Map of array index to inserted document id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InsertedIdsMap'
+        '400':
+          description: Malformed JSON body (not an array of integers 0-255).
+        '500':
+          description: Database insertion failed. Empty response body.
+    get:
+      tags: [trades]
+      summary: List or filter stored trades
+      description: Filters trades by market id and/or an inclusive `time_slot` window; all parameters are optional.
+      operationId: getTrades
+      parameters:
+        - name: market_id
+          in: query
+          required: false
+          description: Only return trades belonging to this market id.
+          schema:
+            type: string
+        - name: start_time
+          in: query
+          required: false
+          description: Lower bound (inclusive) for the trade `time_slot`, in unix seconds.
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+        - name: end_time
+          in: query
+          required: false
+          description: Upper bound (inclusive) for the trade `time_slot`, in unix seconds.
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+      responses:
+        '200':
+          description: Matching trades.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TradeSchema'
+        '400':
+          description: Query parameter has an invalid type (e.g. non-integer time bound).
+        '500':
+          description: Database query failed. Empty response body.
+  /trades-normalized:
+    post:
+      tags: [trades]
+      summary: Insert normalized trade documents
+      description: Inserts a JSON array of `TradeSchema` documents as-is.
+      operationId: postNormalizedTrades
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/TradeSchema'
+      responses:
+        '200':
+          description: Trades inserted. Map of array index to inserted document id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InsertedIdsMap'
+        '400':
+          description: Malformed JSON body (does not deserialize to an array of TradeSchema).
+        '500':
+          description: Database insertion failed. Empty response body.
+  /traded-energy:
+    get:
+      tags: [analytics]
+      summary: Traded energy time-series for an area
+      description: |
+        Aggregates the `selected_energy` of all trades in which the given area
+        participates (on the bid or the offer side) per `time_slot`, and returns
+        the resulting time-series sorted ascending by timestamp. The optional
+        time bounds restrict the trade `time_slot` window (inclusive).
+      operationId: getTradedEnergy
+      parameters:
+        - name: id
+          in: query
+          required: true
+          description: Area UUID whose traded energy is aggregated.
+          schema:
+            type: string
+        - name: start_time
+          in: query
+          required: false
+          description: Lower bound (inclusive) for the trade `time_slot`, in unix seconds.
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+        - name: end_time
+          in: query
+          required: false
+          description: Upper bound (inclusive) for the trade `time_slot`, in unix seconds.
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+      responses:
+        '200':
+          description: Aggregated traded energy per time slot (empty series when no trades match).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TradedEnergyResponse'
+        '400':
+          description: Missing required `id` parameter or invalid parameter type.
+        '500':
+          description: Database query failed. Empty response body.
+  /measurements:
+    post:
+      tags: [profiles]
+      summary: Insert asset measurements
+      description: Inserts a JSON array of `MeasurementSchema` documents.
+      operationId: postMeasurements
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/MeasurementSchema'
+      responses:
+        '200':
+          description: Measurements inserted. Map of array index to inserted document id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InsertedIdsMap'
+        '400':
+          description: Malformed JSON body (does not deserialize to an array of MeasurementSchema).
+        '500':
+          description: Database insertion failed. Empty response body.
+    get:
+      tags: [profiles]
+      summary: List or filter asset measurements
+      description: Filters measurements by area UUID and/or an inclusive `time_slot` window; all parameters are optional.
+      operationId: getMeasurements
+      parameters:
+        - name: area_uuid
+          in: query
+          required: false
+          description: Only return measurements for this area UUID.
+          schema:
+            type: string
+        - name: start_time
+          in: query
+          required: false
+          description: Lower bound (inclusive) for the measurement `time_slot`, in unix seconds.
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+        - name: end_time
+          in: query
+          required: false
+          description: Upper bound (inclusive) for the measurement `time_slot`, in unix seconds.
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+      responses:
+        '200':
+          description: Matching measurements.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MeasurementSchema'
+        '400':
+          description: Query parameter has an invalid type (e.g. non-integer time bound).
+        '500':
+          description: Database query failed. Empty response body.
+  /forecasts:
+    post:
+      tags: [profiles]
+      summary: Insert asset forecasts
+      description: Inserts a JSON array of `ForecastSchema` documents.
+      operationId: postForecasts
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/ForecastSchema'
+      responses:
+        '200':
+          description: Forecasts inserted. Map of array index to inserted document id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InsertedIdsMap'
+        '400':
+          description: Malformed JSON body (does not deserialize to an array of ForecastSchema).
+        '500':
+          description: Database insertion failed. Empty response body.
+    get:
+      tags: [profiles]
+      summary: List or filter asset forecasts
+      description: Filters forecasts by area UUID and/or an inclusive `time_slot` window; all parameters are optional.
+      operationId: getForecasts
+      parameters:
+        - name: area_uuid
+          in: query
+          required: false
+          description: Only return forecasts for this area UUID.
+          schema:
+            type: string
+        - name: start_time
+          in: query
+          required: false
+          description: Lower bound (inclusive) for the forecast `time_slot`, in unix seconds.
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+        - name: end_time
+          in: query
+          required: false
+          description: Upper bound (inclusive) for the forecast `time_slot`, in unix seconds.
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+      responses:
+        '200':
+          description: Matching forecasts.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ForecastSchema'
+        '400':
+          description: Query parameter has an invalid type (e.g. non-integer time bound).
+        '500':
+          description: Database query failed. Empty response body.
+  /market:
+    post:
+      tags: [markets]
+      summary: Insert a market topology
+      description: Inserts a single `MarketTopologySchema` document and echoes it back on success.
+      operationId: postMarket
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MarketTopologySchema'
+      responses:
+        '200':
+          description: Market inserted. The stored market topology is returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MarketTopologySchema'
+        '400':
+          description: Malformed JSON body (does not deserialize to MarketTopologySchema).
+        '500':
+          description: Database insertion failed. Empty response body.
+    get:
+      tags: [markets]
+      summary: Get a market topology by market id
+      description: |
+        Returns the single market topology matching the given market id.
+        Responds 404 when no market matches and 500 when more than one market
+        matches (data inconsistency) or the database query fails.
+      operationId: getMarket
+      parameters:
+        - name: market_id
+          in: query
+          required: true
+          description: Market id (H256 hash serialized as string).
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The matching market topology.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MarketTopologySchema'
+        '400':
+          description: Missing required `market_id` parameter.
+        '404':
+          description: No market found for the given market id. Empty response body.
+        '500':
+          description: Database query failed or multiple markets share the id. Empty response body.
+  /markets:
+    get:
+      tags: [markets]
+      summary: List market topologies in a time window
+      description: Returns all market topologies whose `time_slot` lies within the given inclusive window. Both bounds are required.
+      operationId: getMarketsInWindow
+      parameters:
+        - name: start_time
+          in: query
+          required: true
+          description: Lower bound (inclusive) for the market `time_slot`, in unix seconds.
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+        - name: end_time
+          in: query
+          required: true
+          description: Upper bound (inclusive) for the market `time_slot`, in unix seconds.
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+      responses:
+        '200':
+          description: Market topologies in the window (possibly empty).
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MarketTopologySchema'
+        '400':
+          description: Missing or invalid `start_time`/`end_time` parameter.
+        '500':
+          description: Database query failed. Empty response body.
+  /community-market:
+    get:
+      tags: [markets]
+      summary: List market topologies of a community
+      description: Returns the market topologies for a community name, optionally restricted to an inclusive `time_slot` window.
+      operationId: getMarketFromCommunity
+      parameters:
+        - name: community_name
+          in: query
+          required: true
+          description: Name of the community whose markets are returned.
+          schema:
+            type: string
+        - name: start_time
+          in: query
+          required: false
+          description: Lower bound (inclusive) for the market `time_slot`, in unix seconds.
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+        - name: end_time
+          in: query
+          required: false
+          description: Upper bound (inclusive) for the market `time_slot`, in unix seconds.
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+      responses:
+        '200':
+          description: Matching market topologies (possibly empty).
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MarketTopologySchema'
+        '400':
+          description: Missing required `community_name` parameter or invalid parameter type.
+        '500':
+          description: Database query failed. Empty response body.
+components:
+  schemas:
+    ScaleEncodedBytes:
+      type: array
+      description: |
+        SCALE-encoded payload produced by the gsy-node, transported as a JSON
+        array of unsigned bytes (integers in the range 0-255). The service
+        decodes this byte array with the parity-scale-codec before converting
+        the decoded items to their database document schemas.
+      items:
+        type: integer
+        minimum: 0
+        maximum: 255
+      example: [8, 0, 1, 42, 255]
+    InsertedIdsMap:
+      type: object
+      description: |
+        Map from the zero-based index of each inserted document (JSON object
+        keys, so the indices are strings) to the id it was stored under.
+        For orders and trades the id is the document `_id` string. For
+        measurements and forecasts stored in MongoDB the id is a generated
+        ObjectId, which serializes in extended JSON form (`{"$oid": "..."}`),
+        while the in-memory test backend reports the `area_uuid` string.
+      additionalProperties:
+        description: Inserted document id (string or MongoDB extended-JSON ObjectId).
+      example:
+        '0': '0x6a3f...c9'
+        '1': '0x91bd...04'
+    OrderStatus:
+      type: string
+      description: Lifecycle status of an order.
+      enum: [Open, Executed, Expired, Deleted]
+    DbOrderComponent:
+      type: object
+      description: Common component of bid and offer orders.
+      required: [area_uuid, market_id, time_slot, creation_time, energy, energy_rate]
+      properties:
+        area_uuid:
+          type: string
+          description: UUID of the area the order belongs to.
+        market_id:
+          type: string
+          description: Market id (H256 hash serialized as string).
+        time_slot:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Market time slot, unix seconds.
+        creation_time:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Order creation time, unix seconds.
+        energy:
+          type: number
+          format: double
+          description: Energy amount of the order (kWh).
+        energy_rate:
+          type: number
+          format: double
+          description: Energy rate of the order.
+    DbBid:
+      type: object
+      description: Bid order.
+      required: [buyer, nonce, bid_component]
+      properties:
+        buyer:
+          type: string
+          description: Account/address of the buyer.
+        nonce:
+          type: integer
+          format: int32
+          minimum: 0
+        bid_component:
+          $ref: '#/components/schemas/DbOrderComponent'
+    DbOffer:
+      type: object
+      description: Offer (ask) order.
+      required: [seller, nonce, offer_component]
+      properties:
+        seller:
+          type: string
+          description: Account/address of the seller.
+        nonce:
+          type: integer
+          format: int32
+          minimum: 0
+        offer_component:
+          $ref: '#/components/schemas/DbOrderComponent'
+    Order:
+      description: |
+        A bid or an offer, serialized with an internal tag: the `type` field is
+        `"Bid"` or `"Offer"` and the `data` field holds the corresponding
+        payload.
+      oneOf:
+        - type: object
+          required: [type, data]
+          properties:
+            type:
+              type: string
+              enum: [Bid]
+            data:
+              $ref: '#/components/schemas/DbBid'
+        - type: object
+          required: [type, data]
+          properties:
+            type:
+              type: string
+              enum: [Offer]
+            data:
+              $ref: '#/components/schemas/DbOffer'
+    DbOrderSchema:
+      type: object
+      description: Order document as stored in the database.
+      required: [_id, status, order]
+      properties:
+        _id:
+          type: string
+          description: BlakeTwo256 hash of the order, serialized as string.
+        status:
+          $ref: '#/components/schemas/OrderStatus'
+        order:
+          $ref: '#/components/schemas/Order'
+    TradeStatus:
+      type: string
+      description: Status of a trade.
+      enum: [Settled, Executed]
+    TradeParameters:
+      type: object
+      description: Matched parameters of a trade.
+      required: [selected_energy, energy_rate, trade_uuid]
+      properties:
+        selected_energy:
+          type: number
+          format: double
+          description: Energy amount matched in the trade (kWh).
+        energy_rate:
+          type: number
+          format: double
+          description: Clearing energy rate of the trade.
+        trade_uuid:
+          type: string
+    TradeSchema:
+      type: object
+      description: Trade document as stored in the database.
+      required:
+        - _id
+        - status
+        - seller
+        - buyer
+        - market_id
+        - time_slot
+        - trade_uuid
+        - creation_time
+        - offer
+        - offer_hash
+        - bid
+        - bid_hash
+        - parameters
+      properties:
+        _id:
+          type: string
+          description: Trade document id.
+        status:
+          $ref: '#/components/schemas/TradeStatus'
+        seller:
+          type: string
+          description: Account/address of the seller.
+        buyer:
+          type: string
+          description: Account/address of the buyer.
+        market_id:
+          type: string
+          description: Market id (H256 hash serialized as string).
+        time_slot:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Market time slot, unix seconds.
+        trade_uuid:
+          type: string
+        creation_time:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Trade creation time, unix seconds.
+        offer:
+          $ref: '#/components/schemas/DbOffer'
+        offer_hash:
+          type: string
+        bid:
+          $ref: '#/components/schemas/DbBid'
+        bid_hash:
+          type: string
+        residual_offer:
+          allOf:
+            - $ref: '#/components/schemas/DbOffer'
+          nullable: true
+          description: Remaining offer after partial matching, if any.
+        residual_bid:
+          allOf:
+            - $ref: '#/components/schemas/DbBid'
+          nullable: true
+          description: Remaining bid after partial matching, if any.
+        parameters:
+          $ref: '#/components/schemas/TradeParameters'
+    TimeSeriesPoint:
+      type: object
+      description: Single point of a time-series.
+      required: [timestamp, value]
+      properties:
+        timestamp:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Time slot, unix seconds.
+        value:
+          type: number
+          format: double
+          description: Aggregated traded energy in the time slot (kWh).
+    TradedEnergyResponse:
+      type: object
+      description: Traded energy time-series of an area, sorted ascending by timestamp.
+      required: [id, traded_energy]
+      properties:
+        id:
+          type: string
+          description: Area UUID the series was computed for (echo of the `id` query parameter).
+        traded_energy:
+          type: array
+          items:
+            $ref: '#/components/schemas/TimeSeriesPoint'
+    MeasurementSchema:
+      type: object
+      description: Measured energy profile point of an asset/area.
+      required: [area_uuid, area_hash, community_uuid, time_slot, creation_time, energy_kwh]
+      properties:
+        area_uuid:
+          type: string
+        area_hash:
+          type: string
+        community_uuid:
+          type: string
+        time_slot:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Time slot of the measurement, unix seconds.
+        creation_time:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Creation time, unix seconds.
+        energy_kwh:
+          type: number
+          format: double
+          description: Measured energy (kWh).
+    ForecastSchema:
+      type: object
+      description: Forecasted energy profile point of an asset/area.
+      required: [area_uuid, area_hash, community_uuid, time_slot, creation_time, energy_kwh, confidence]
+      properties:
+        area_uuid:
+          type: string
+        area_hash:
+          type: string
+        community_uuid:
+          type: string
+        time_slot:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Time slot of the forecast, unix seconds.
+        creation_time:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Creation time, unix seconds.
+        energy_kwh:
+          type: number
+          format: double
+          description: Forecasted energy (kWh).
+        confidence:
+          type: number
+          format: double
+          description: Confidence level of the forecast.
+    AssetType:
+      type: string
+      description: Type of an asset or area.
+      enum: [BATTERY, SMART_METER, PV, GRID_METER, EV, HEAT_PUMP, BOILER, AREA]
+    AreaTopologySchema:
+      type: object
+      description: Area entry of a market topology.
+      required: [area_uuid, name, area_type, area_hash]
+      properties:
+        area_uuid:
+          type: string
+        name:
+          type: string
+        area_type:
+          $ref: '#/components/schemas/AssetType'
+        area_hash:
+          type: string
+    MarketTopologySchema:
+      type: object
+      description: Market topology document as stored in the database.
+      required: [market_id, community_uuid, community_name, time_slot, creation_time, community_areas]
+      properties:
+        market_id:
+          type: string
+          description: Market id (H256 hash serialized as string).
+        community_uuid:
+          type: string
+        community_name:
+          type: string
+        time_slot:
+          type: integer
+          format: int32
+          minimum: 0
+          description: Market time slot, unix seconds.
+        creation_time:
+          type: integer
+          format: int32
+          minimum: 0
+          description: Creation time, unix seconds.
+        community_areas:
+          type: array
+          items:
+            $ref: '#/components/schemas/AreaTopologySchema'
