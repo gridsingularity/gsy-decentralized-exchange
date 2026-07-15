@@ -2060,6 +2060,7 @@ dependencies = [
 name = "gsy-offchain-primitives"
 version = "0.1.0"
 dependencies = [
+ "blake2-rfc",
  "chrono",
  "hex",
  "once_cell",
@@ -2086,6 +2087,7 @@ dependencies = [
  "parity-scale-codec",
  "reqwest",
  "serde",
+ "serde_json",
  "subxt",
  "tokio",
  "tokio_schedule",

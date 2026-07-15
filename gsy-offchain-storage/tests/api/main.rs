@@ -1,3 +1,4 @@
+mod asset_measurements;
 mod health_check;
 mod helpers;
 mod market;

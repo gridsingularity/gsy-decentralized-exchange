@@ -1,3 +1,4 @@
+use crate::db::asset_measurements_service::AssetMeasurementsService;
 use crate::db::collection::Coll;
 use crate::db::forecasts_service::ForecastsService;
 use crate::db::in_memory::{InMemoryCollection, InMemoryDb};
@@ -45,6 +46,9 @@ impl DatabaseWrapper {
         self.into()
     }
     pub fn measurements(&self) -> MeasurementsService {
+        self.into()
+    }
+    pub fn asset_measurements(&self) -> AssetMeasurementsService {
         self.into()
     }
     pub fn forecasts(&self) -> ForecastsService {

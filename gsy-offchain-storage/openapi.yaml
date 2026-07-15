@@ -271,6 +271,49 @@ paths:
           description: Missing required `id` parameter or invalid parameter type.
         '500':
           description: Database query failed. Empty response body.
+  /guarantees-of-origin-measurements:
+    get:
+      tags: [analytics]
+      summary: Asset measurements for guarantees-of-origin reporting
+      description: |
+        Returns the produced/consumed energy measurements of all individual
+        assets (smart meters, PVs, batteries, heat pumps) across all
+        communities, e.g. as input for guarantees-of-origin reporting.
+        Community-level measurements (entries posted for the community itself,
+        stored with `area_uuid` equal to `community_uuid`) are excluded. The
+        optional time bounds restrict the measurement `time_slot` window
+        (inclusive).
+      operationId: getGuaranteesOfOrigin
+      parameters:
+        - name: start_time
+          in: query
+          required: false
+          description: Lower bound (inclusive) for the measurement `time_slot`, in unix seconds.
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+        - name: end_time
+          in: query
+          required: false
+          description: Upper bound (inclusive) for the measurement `time_slot`, in unix seconds.
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+      responses:
+        '200':
+          description: Matching asset measurements (possibly empty).
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AssetMeasurementSchema'
+        '400':
+          description: Query parameter has an invalid type (e.g. non-integer time bound).
+        '500':
+          description: Database query failed. Empty response body.
   /measurements:
     post:
       tags: [profiles]
@@ -775,6 +818,35 @@ components:
           type: string
         community_uuid:
           type: string
+        time_slot:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Time slot of the measurement, unix seconds.
+        creation_time:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Creation time, unix seconds.
+        energy_kwh:
+          type: number
+          format: double
+          description: Measured energy (kWh).
+    AssetMeasurementSchema:
+      type: object
+      description: |
+        Measured energy profile point of an individual asset, as reported by
+        the guarantees-of-origin endpoint. This is a `MeasurementSchema` with
+        `area_uuid`/`community_uuid` renamed to `asset_id`/`community_id` and
+        without the `area_hash` field.
+      required: [asset_id, community_id, time_slot, creation_time, energy_kwh]
+      properties:
+        asset_id:
+          type: string
+          description: UUID of the asset the measurement belongs to.
+        community_id:
+          type: string
+          description: UUID of the community the asset belongs to.
         time_slot:
           type: integer
           format: int64
