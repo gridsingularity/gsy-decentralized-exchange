@@ -2087,6 +2087,7 @@ dependencies = [
  "parity-scale-codec",
  "reqwest",
  "serde",
+ "serde_json",
  "subxt",
  "tokio",
  "tokio_schedule",

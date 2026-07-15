@@ -52,6 +52,30 @@ impl TradeService {
             })
             .await
     }
+
+    #[tracing::instrument(name = "Fetching trades by area uuid from database", skip(self))]
+    pub async fn get_trades_by_area(
+        &self,
+        area_uuid: String,
+        start_time: Option<u32>,
+        end_time: Option<u32>,
+    ) -> Result<Vec<TradeSchema>> {
+        // The area participates in a trade on either the bid or the offer side,
+        // so match its area_uuid under both nested component paths with `$or`.
+        let mut filter_params = doc! {"$or": [
+            { "bid.bid_component.area_uuid": &area_uuid },
+            { "offer.offer_component.area_uuid": &area_uuid }
+        ]};
+        apply_time_window(&mut filter_params, start_time, end_time);
+
+        self.0
+            .query(filter_params, |trade| {
+                (trade.bid.bid_component.area_uuid == area_uuid
+                    || trade.offer.offer_component.area_uuid == area_uuid)
+                    && in_time_window(trade.time_slot, start_time, end_time)
+            })
+            .await
+    }
 }
 
 impl From<&DatabaseWrapper> for TradeService {
