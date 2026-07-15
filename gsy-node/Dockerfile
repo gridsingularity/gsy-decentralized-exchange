@@ -29,6 +29,8 @@ COPY ./gsy-node/modules/gsy-collateral/Cargo.toml /var/www/gsy-node/modules/gsy-
 COPY ./gsy-node/modules/orderbook-registry/Cargo.toml /var/www/gsy-node/modules/orderbook-registry/
 COPY ./gsy-node/modules/orderbook-worker/Cargo.toml /var/www/gsy-node/modules/orderbook-worker/
 COPY ./gsy-node/modules/trades-settlement/Cargo.toml /var/www/gsy-node/modules/trades-settlement/
+COPY ./gsy-node/modules/remuneration/Cargo.toml /var/www/gsy-node/modules/remuneration/
+COPY ./gsy-node/modules/stripe-bridge/Cargo.toml /var/www/gsy-node/modules/stripe-bridge/
 RUN cargo chef prepare --recipe-path recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
 

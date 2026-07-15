@@ -58,12 +58,16 @@ pub mod pallet {
 	use scale_info::prelude::vec::Vec;
 	use sp_std::vec;
 
+	use remuneration::RemunerationHandler;
+	type BalanceOf<T> = <T as pallet_balances::Config>::Balance;
+
 	#[pallet::config]
 	pub trait Config:
 		frame_system::Config<Hash = gsy_primitives::v0::Hash>
 		+ orderbook_registry::Config
 		+ orderbook_worker::Config
 		+ gsy_collateral::Config
+		+ remuneration::Config
 	{
 
 		#[allow(deprecated)]
@@ -74,6 +78,8 @@ pub mod pallet {
 		/// The length of the market slot in seconds.
 		#[pallet::constant]
 		type MarketSlotDuration: Get<u64>;
+
+		type Remuneration: RemunerationHandler<Self::AccountId, BalanceOf<Self>>;
 	}
 
 	#[pallet::pallet]
@@ -110,6 +116,15 @@ pub mod pallet {
 		BidEnergyLessThanSelectedEnergy,
 		/// Ensure that the energy subtraction in the validation is correct.
 		UnableToSubtractEnergy,
+		// SUPSI errors definition
+		/// Ensure that the provided amount is valid and within acceptable bounds.
+		InvalidAmount,
+		/// Prevent any overflow during calculations or updates.
+		Overflow,
+		/// Ensure that a custodian has been defined in the remuneration pallet.
+		NoCustodian,
+		/// Ensure the caller is the designated custodian.
+		NotCustodian,
 	}
 
 	#[pallet::call]
@@ -250,19 +265,19 @@ pub mod pallet {
 					.bid
 					.bid_component
 					.time_slot
-					.checked_div(T::MarketSlotDuration::get())
+					.checked_div(<T as Config>::MarketSlotDuration::get())
 					.unwrap_or(0),
 				bid_offer_match
 					.offer
 					.offer_component
 					.time_slot
-					.checked_div(T::MarketSlotDuration::get())
+					.checked_div(<T as Config>::MarketSlotDuration::get())
 					.unwrap_or(0),
 				// T::TimeProvider::now()
 				// 	.as_secs()
 				// 	.checked_div(T::MarketSlotDuration::get())
 				// 	.unwrap_or(0),
-				bid_offer_match.time_slot.checked_div(T::MarketSlotDuration::get()).unwrap_or(0),
+				bid_offer_match.time_slot.checked_div(<T as Config>::MarketSlotDuration::get()).unwrap_or(0),
 			) {
 				return false;
 			}

@@ -1,8 +1,7 @@
-use crate as trades_settlement;
+use crate as stripe_bridge;
 use frame_support::{parameter_types, PalletId};
 use frame_system as system;
 use gsy_primitives::v0::{AccountId, Signature};
-pub use pallet_timestamp;
 use sp_core::H256;
 use sp_runtime::{
 	testing::TestXt,
@@ -12,7 +11,6 @@ use sp_runtime::{
 
 type Block = frame_system::mocking::MockBlock<Test>;
 
-// Configure a mock runtime to test the pallet.
 frame_support::construct_runtime!(
 	pub enum Test
 	{
@@ -21,16 +19,15 @@ frame_support::construct_runtime!(
 		GsyCollateral: gsy_collateral,
 		OrderbookRegistry: orderbook_registry,
 		OrderbookWorker: orderbook_worker,
-		TradesSettlement: trades_settlement,
 		Timestamp: pallet_timestamp,
 		Remuneration: remuneration,
+		StripeBridge: stripe_bridge,
 	}
 );
 
 parameter_types! {
 	pub const BlockHashCount: u64 = 250;
 	pub const SS58Prefix: u8 = 42;
-	pub const RemunerationMarketSlotDuration: u64 = 900;
 }
 
 impl system::Config for Test {
@@ -66,22 +63,14 @@ impl system::Config for Test {
 	type ExtensionsWeightInfo = ();
 }
 
-pub const ALICE: AccountId = AccountId::new(*b"01234567890123456789012345678901");
-pub const BOB: AccountId = AccountId::new(*b"01234567890203894950392012432351");
-pub const CHARLIE: AccountId = AccountId::new(*b"01234653535968356825454652432351");
-pub const MIKE: AccountId = AccountId::new(*b"45678901234568356825456789012345");
-
 parameter_types! {
-	pub const MarketSlotDuration: u64 = 900;
 	pub const ExistentialDeposit: u128 = 1;
 	pub const MaxLocks: u32 = 50;
 }
 
 impl pallet_balances::Config for Test {
-	/// The type for recording an account's balance.
 	type Balance = u128;
 	type DustRemoval = ();
-	/// The ubiquitous event type.
 	type RuntimeEvent = RuntimeEvent;
 	type ExistentialDeposit = ExistentialDeposit;
 	type AccountStore = System;
@@ -125,30 +114,32 @@ impl orderbook_registry::Config for Test {
 	type TimeProvider = pallet_timestamp::Pallet<Test>;
 }
 
-impl remuneration::Config for Test {
-	type RuntimeEvent = RuntimeEvent;
-	type RemunerationWeightInfo = remuneration::weights::SubstrateWeightInfo<Test>;
-	type MarketSlotDuration = RemunerationMarketSlotDuration;
-	type RemunerationHandler = Remuneration;
-}
-
-impl trades_settlement::Config for Test {
-	type RuntimeEvent = RuntimeEvent;
-	type TradeSettlementWeightInfo = trades_settlement::weights::SubstrateWeightInfo<Test>;
-	type MarketSlotDuration = MarketSlotDuration;
-	type Remuneration = Remuneration;
-}
-
 parameter_types! {
-	// Priority for a transaction. Additive. Higher is better.
+	pub const MarketSlotDuration: u64 = 900;
 	pub const UnsignedPriority: u64 = 1 << 20;
 }
+
 impl orderbook_worker::Config for Test {
 	type AuthorityId = orderbook_worker::crypto::TestAuthId;
 	type RuntimeEvent = RuntimeEvent;
 	type Call = frame_system::pallet_prelude::RuntimeCallFor<Test>;
 	type UnsignedPriority = UnsignedPriority;
 	type WeightInfo = orderbook_worker::weights::SubstrateWeightInfo<Test>;
+}
+
+impl remuneration::Config for Test {
+	type RuntimeEvent = RuntimeEvent;
+	type RemunerationWeightInfo = remuneration::weights::SubstrateWeightInfo<Test>;
+	type MarketSlotDuration = MarketSlotDuration;
+	type RemunerationHandler = remuneration::Pallet<Test>;
+}
+
+impl stripe_bridge::Config for Test {
+	type AuthorityId = crate::crypto::TestAuthId;
+	type RuntimeEvent = RuntimeEvent;
+	type RuntimeCall = RuntimeCall;
+	type UnsignedPriority = UnsignedPriority;
+	type WeightInfo = crate::weights::SubstrateWeightInfo<Test>;
 }
 
 type Extrinsic = TestXt<RuntimeCall, ()>;
@@ -191,7 +182,38 @@ where
 	}
 }
 
-// Build genesis storage according to the mock runtime.
+/// Simple test externalities without offchain extensions (for on-chain tests).
 pub fn new_test_ext() -> sp_io::TestExternalities {
 	system::GenesisConfig::<Test>::default().build_storage().unwrap().into()
+}
+
+/// Test externalities with offchain worker + DB + transaction pool extensions.
+/// Returns (ext, offchain_state, pool_state) for HTTP mocking and tx verification.
+pub fn new_test_ext_with_offchain() -> (
+	sp_io::TestExternalities,
+	std::sync::Arc<parking_lot::RwLock<sp_core::offchain::testing::OffchainState>>,
+	std::sync::Arc<parking_lot::RwLock<sp_core::offchain::testing::PoolState>>,
+) {
+	use sp_core::offchain::{
+		testing::{TestOffchainExt, TestTransactionPoolExt},
+		OffchainDbExt, OffchainWorkerExt, TransactionPoolExt,
+	};
+	use sp_keystore::{testing::MemoryKeystore, KeystoreExt};
+
+	let storage = system::GenesisConfig::<Test>::default().build_storage().unwrap();
+
+	let mut ext = sp_io::TestExternalities::new(storage);
+
+	let (offchain, offchain_state) = TestOffchainExt::new();
+	let (pool, pool_state) = TestTransactionPoolExt::new();
+	let keystore = MemoryKeystore::new();
+	sp_keystore::Keystore::sr25519_generate_new(&keystore, crate::KEY_TYPE, None)
+		.expect("insert key");
+
+	ext.register_extension(OffchainWorkerExt::new(offchain.clone()));
+	ext.register_extension(OffchainDbExt::new(offchain));
+	ext.register_extension(TransactionPoolExt::new(pool));
+	ext.register_extension(KeystoreExt::new(keystore));
+
+	(ext, offchain_state, pool_state)
 }

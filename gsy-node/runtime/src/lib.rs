@@ -78,6 +78,8 @@ pub use gsy_primitives::v0::{AccountId, Balance, BlockNumber, Hash, Nonce, Signa
 pub use orderbook_registry;
 pub use orderbook_worker;
 pub use trades_settlement;
+pub use remuneration;
+pub use stripe_bridge;
 
 /// Index of a transaction in the chain.
 pub type Index = u32;
@@ -179,6 +181,7 @@ parameter_types! {
 	pub BlockLength: frame_system::limits::BlockLength = frame_system::limits::BlockLength
 		::max_with_normal_ratio(5 * 1024 * 1024, NORMAL_DISPATCH_RATIO);
 	pub const SS58Prefix: u8 = 42;
+	pub const RemunerationMarketSlotDuration: u64 = 900;
 }
 
 // Configure FRAME pallets to include in runtime.
@@ -330,6 +333,15 @@ impl trades_settlement::Config for Runtime {
 	type RuntimeEvent = RuntimeEvent;
 	type MarketSlotDuration = MarketSlotDuration;
 	type TradeSettlementWeightInfo = trades_settlement::weights::SubstrateWeightInfo<Runtime>;
+
+	type Remuneration = remuneration::Pallet<Runtime>;
+}
+
+impl remuneration::Config for Runtime {
+	type RuntimeEvent = RuntimeEvent;
+	type RemunerationWeightInfo = remuneration::weights::SubstrateWeightInfo<Runtime>;
+		type MarketSlotDuration = RemunerationMarketSlotDuration;
+	type RemunerationHandler = remuneration::Pallet<Runtime>;
 }
 
 parameter_types! {
@@ -349,6 +361,13 @@ impl orderbook_worker::Config for Runtime {
 	type WeightInfo = orderbook_worker::weights::SubstrateWeightInfo<Runtime>;
 }
 
+impl stripe_bridge::Config for Runtime {
+	type AuthorityId = stripe_bridge::crypto::TestAuthId;
+	type RuntimeEvent = RuntimeEvent;
+	type RuntimeCall = RuntimeCall;
+	type UnsignedPriority = UnsignedPriority;
+	type WeightInfo = stripe_bridge::weights::SubstrateWeightInfo<Runtime>;
+}
 
 impl frame_system::offchain::AppCrypto<sp_runtime::MultiSigner, sp_runtime::MultiSignature>
 for AuraAuthId
@@ -494,6 +513,12 @@ mod runtime {
 	// Include the custom logic from the gsy-collateral in the runtime.
 	#[runtime::pallet_index(10)]
 	pub type TradesSettlement = trades_settlement;
+
+	#[runtime::pallet_index(11)]
+	pub type Remuneration = remuneration;
+
+	#[runtime::pallet_index(13)]
+	pub type StripeBridge = stripe_bridge;
 }
 
 /// The address format for describing accounts.

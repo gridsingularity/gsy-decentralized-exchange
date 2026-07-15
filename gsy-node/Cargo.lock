@@ -3675,6 +3675,7 @@ dependencies = [
  "pallet-transaction-payment",
  "pallet-transaction-payment-rpc-runtime-api",
  "parity-scale-codec",
+ "remuneration",
  "scale-info",
  "serde_json",
  "sp-api",
@@ -3692,6 +3693,7 @@ dependencies = [
  "sp-storage",
  "sp-transaction-pool",
  "sp-version",
+ "stripe-bridge",
  "substrate-wasm-builder",
  "trades-settlement",
 ]
@@ -8068,6 +8070,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a2d987857b319362043e95f5353c0535c1f58eec5336fdfcf626430af7def58"
 
 [[package]]
+name = "remuneration"
+version = "0.0.2"
+dependencies = [
+ "frame-benchmarking",
+ "frame-support",
+ "frame-system",
+ "gsy-collateral",
+ "gsy-primitives",
+ "log",
+ "orderbook-registry",
+ "orderbook-worker",
+ "pallet-balances",
+ "pallet-timestamp",
+ "parity-scale-codec",
+ "scale-info",
+ "sp-arithmetic",
+ "sp-core",
+ "sp-io",
+ "sp-runtime",
+ "sp-std",
+]
+
+[[package]]
 name = "resolv-conf"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11053,6 +11078,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "stripe-bridge"
+version = "0.0.2"
+dependencies = [
+ "frame-benchmarking",
+ "frame-support",
+ "frame-system",
+ "gsy-collateral",
+ "gsy-primitives",
+ "log",
+ "orderbook-registry",
+ "orderbook-worker",
+ "pallet-balances",
+ "pallet-timestamp",
+ "parity-scale-codec",
+ "parking_lot 0.12.5",
+ "remuneration",
+ "scale-info",
+ "serde_json",
+ "sp-core",
+ "sp-io",
+ "sp-keystore",
+ "sp-runtime",
+ "sp-std",
+]
+
+[[package]]
 name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11991,6 +12042,7 @@ dependencies = [
  "pallet-balances",
  "pallet-timestamp",
  "parity-scale-codec",
+ "remuneration",
  "scale-info",
  "sp-core",
  "sp-io",

@@ -1,4 +1,4 @@
-use crate as trades_settlement;
+use crate as remuneration;
 use frame_support::{parameter_types, PalletId};
 use frame_system as system;
 use gsy_primitives::v0::{AccountId, Signature};
@@ -21,7 +21,7 @@ frame_support::construct_runtime!(
 		GsyCollateral: gsy_collateral,
 		OrderbookRegistry: orderbook_registry,
 		OrderbookWorker: orderbook_worker,
-		TradesSettlement: trades_settlement,
+		// TradesSettlement: trades_settlement,
 		Timestamp: pallet_timestamp,
 		Remuneration: remuneration,
 	}
@@ -30,7 +30,6 @@ frame_support::construct_runtime!(
 parameter_types! {
 	pub const BlockHashCount: u64 = 250;
 	pub const SS58Prefix: u8 = 42;
-	pub const RemunerationMarketSlotDuration: u64 = 900;
 }
 
 impl system::Config for Test {
@@ -65,11 +64,6 @@ impl system::Config for Test {
 	type PostTransactions = ();
 	type ExtensionsWeightInfo = ();
 }
-
-pub const ALICE: AccountId = AccountId::new(*b"01234567890123456789012345678901");
-pub const BOB: AccountId = AccountId::new(*b"01234567890203894950392012432351");
-pub const CHARLIE: AccountId = AccountId::new(*b"01234653535968356825454652432351");
-pub const MIKE: AccountId = AccountId::new(*b"45678901234568356825456789012345");
 
 parameter_types! {
 	pub const MarketSlotDuration: u64 = 900;
@@ -128,15 +122,8 @@ impl orderbook_registry::Config for Test {
 impl remuneration::Config for Test {
 	type RuntimeEvent = RuntimeEvent;
 	type RemunerationWeightInfo = remuneration::weights::SubstrateWeightInfo<Test>;
-	type MarketSlotDuration = RemunerationMarketSlotDuration;
-	type RemunerationHandler = Remuneration;
-}
-
-impl trades_settlement::Config for Test {
-	type RuntimeEvent = RuntimeEvent;
-	type TradeSettlementWeightInfo = trades_settlement::weights::SubstrateWeightInfo<Test>;
 	type MarketSlotDuration = MarketSlotDuration;
-	type Remuneration = Remuneration;
+	type RemunerationHandler = remuneration::Pallet<Test>;
 }
 
 parameter_types! {

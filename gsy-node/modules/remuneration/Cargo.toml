@@ -1,46 +1,40 @@
 [package]
-name = 'trades-settlement'
+name = 'remuneration'
 version = '0.0.2'
-description = 'Trades-settlement module for handling the GSy-Decentralized Exchange trades settlement system'
-authors = ['Grid Singularity <https://github.com/gridsingularity>']
-homepage = 'https://gridsingularity.com/'
-edition = '2024'
+description = 'Remuneration module'
+authors = ['SUPSI-DACD-ISAAC <https://github.com/supsi-dacd-isaac/>']
+homepage = 'https://www.supsi.ch/en/isaac'
+edition = '2021'
 license = 'Unlicense'
 publish = false
 repository = 'https://github.com/gridsingularity/gsy-node'
 
-[lib]
-name = "trades_settlement"
-path = "src/lib.rs"
-crate-type = ["rlib"]
-
 [package.metadata.docs.rs]
 targets = ['x86_64-unknown-linux-gnu']
 
+[lib]
+name = "remuneration"
+path = "src/lib.rs"
+crate-type = ["rlib"]
+
 [dependencies]
-codec = { features = ["derive"], workspace = true }
-scale-info = { features = ["derive"], workspace = true }
+codec = { workspace = true }
+scale-info = { workspace = true }
 frame-support = { workspace = true }
 frame-system = { workspace = true }
+sp-runtime = { workspace = true }
 gsy-primitives = { workspace = true }
 gsy-collateral = { version = '0.0.2', default-features = false, path = '../gsy-collateral' }
 orderbook-registry = { version = '0.0.2', default-features = false, path = '../orderbook-registry' }
 orderbook-worker = { version = '0.0.2', default-features = false, path = '../orderbook-worker' }
+log = { version = "0.4.21", default-features = false }
 pallet-balances = { workspace = true }
 pallet-timestamp = { workspace = true }
-
-sp-std = { workspace = true }
 sp-core = { workspace = true }
-remuneration = { version = "0.0.2", path = "../remuneration", default-features = false}
-
-frame-benchmarking = { default-features = false, workspace = true, optional = true }
-
-log = { version = "0", default-features = false }
-
-[dev-dependencies]
-sp-core = { workspace = true, default-features = true }
-sp-io = { workspace = true, default-features = true }
-sp-runtime = { workspace = true, default-features = true }
+sp-io = { workspace = true }
+sp-std = { workspace = true }
+sp-arithmetic = { workspace = true }
+frame-benchmarking = { workspace = true, optional = true }
 
 [features]
 default = ['std']

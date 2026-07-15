@@ -7,6 +7,7 @@ use sp_std::marker::PhantomData;
 
 pub trait TradeSettlementWeightInfo {
 	fn settle_trades() -> Weight;
+	fn set_energy_to_money_factor() -> Weight;
 	fn submit_penalties() -> Weight;
 }
 
@@ -18,6 +19,11 @@ impl<T: frame_system::Config> TradeSettlementWeightInfo for SubstrateWeightInfo<
 	// Storage: GsyCollateral Vaults (r:1 w:1)
 	// Storage: OrderbookRegistry TradesRegistry (r:0 w:1)
 	fn settle_trades() -> Weight {
+		Weight::from_parts(5_586_000_000, 0)
+			.saturating_add(T::DbWeight::get().reads(202))
+			.saturating_add(T::DbWeight::get().writes(202))
+	}
+	fn set_energy_to_money_factor() -> Weight {
 		Weight::from_parts(5_586_000_000, 0)
 			.saturating_add(T::DbWeight::get().reads(202))
 			.saturating_add(T::DbWeight::get().writes(202))
