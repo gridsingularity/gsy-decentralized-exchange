@@ -1,7 +1,6 @@
 use crate::external_forecasts::aic_api::{AicForecastApiConnection, aic_meters};
-use crate::external_forecasts::demand_api::{
-    DemandForecastApiConnection, DemandForecastError, DemandForecaster,
-};
+use crate::external_forecasts::demand_api::{DemandForecastApiConnection, DemandForecaster};
+use crate::external_forecasts::ForecastApiError;
 use crate::external_forecasts::pv_api::PvForecastApiConnection;
 use chrono::{DateTime, Utc};
 use gsy_offchain_primitives::db_api_schema::market::{AssetType, MarketTopologySchema};
@@ -25,8 +24,11 @@ const EXCLUDED_METERS: [&str; 1] = ["LIC02SM"];
 pub struct DemandForecastsManager {
     demand_forecast_api: Arc<dyn DemandForecaster + Send + Sync>,
     aic_forecast_api: Arc<dyn DemandForecaster + Send + Sync>,
+    // PV uses its own inherent `fetch` (distinct response shape and energy-sign /
+    // confidence semantics), so it is held as a concrete type rather than behind the
+    // shared `DemandForecaster` trait. Wired into the forecast pipeline in a later step.
     #[allow(dead_code)]
-    pv_forecast_api: Arc<dyn DemandForecaster + Send + Sync>,
+    pv_forecast_api: Arc<PvForecastApiConnection>,
 }
 
 impl DemandForecastsManager {
@@ -95,11 +97,11 @@ impl DemandForecastsManager {
                         });
                     }
                 }
-                Err(DemandForecastError::Http(e)) => error!(
+                Err(ForecastApiError::Http(e)) => error!(
                     "HTTP error fetching demand forecast for meter {} of community {}: {}",
                     area.name, market.community_name, e
                 ),
-                Err(DemandForecastError::Api(msg)) => error!(
+                Err(ForecastApiError::Api(msg)) => error!(
                     "API-reported error fetching demand forecast for meter {} of community {} \
                      (skipping — server-side issue): {}",
                     area.name, market.community_name, msg
@@ -145,11 +147,11 @@ impl DemandForecastsManager {
                         });
                     }
                 }
-                Err(DemandForecastError::Http(e)) => error!(
+                Err(ForecastApiError::Http(e)) => error!(
                     "HTTP error fetching AIC demand forecast for meter {}: {}",
                     meter, e
                 ),
-                Err(DemandForecastError::Api(msg)) => error!(
+                Err(ForecastApiError::Api(msg)) => error!(
                     "API-reported error fetching AIC demand forecast for meter {} \
                      (skipping — server-side issue): {}",
                     meter, msg

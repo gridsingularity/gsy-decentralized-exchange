@@ -1,7 +1,8 @@
 use crate::constants::CommunityClientConstants;
 use crate::external_forecasts::demand_api::{
-    DemandForecastError, DemandForecastFuture, DemandForecastResponse, DemandForecaster,
+    DemandForecastFuture, DemandForecastResponse, DemandForecaster,
 };
+use crate::external_forecasts::ForecastApiError;
 use chrono::{DateTime, SecondsFormat, Utc};
 use reqwest::Client as ReqwestClient;
 use serde::{Deserialize, Serialize};
@@ -85,7 +86,7 @@ impl AicForecastApiConnection {
         meter: &str,
         site: &str,
         start_time: DateTime<Utc>,
-    ) -> Result<DemandForecastResponse, DemandForecastError> {
+    ) -> Result<DemandForecastResponse, ForecastApiError> {
         let request_params = AicForecastRequestParams {
             meter: meter.to_string(),
             site: site.to_string(),
@@ -103,7 +104,7 @@ impl AicForecastApiConnection {
             .await?;
         match raw {
             AicForecastApiResponse::Success(r) => Ok(r),
-            AicForecastApiResponse::Error { error } => Err(DemandForecastError::Api(error)),
+            AicForecastApiResponse::Error { error } => Err(ForecastApiError::Api(error)),
         }
     }
 }
