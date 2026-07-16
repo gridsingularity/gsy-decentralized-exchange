@@ -3,17 +3,25 @@ use crate::external_forecasts::demand_api::{
     DemandForecastError, DemandForecastFuture, DemandForecastResponse, DemandForecaster,
 };
 use chrono::{DateTime, SecondsFormat, Utc};
+use gsy_offchain_primitives::constants::GlobalConstants;
 use reqwest::Client as ReqwestClient;
 use serde::{Deserialize, Serialize};
 
-// PV forecast request parameters. The PV forecaster authenticates with the
-// `api_key` embedded INSIDE the JSON body, not via an `X-API-Key` header.
+/// The PV forecaster reports average power in watts over a single market slot. This
+/// function converts the average power to the energy delivered over one slot. The
+/// slot duration in hours is derived from TIME_SLOT_SEC global constant.
+pub fn pv_avg_watts_to_kwh(avg_watts: f64) -> f64 {
+    let slot_hours = GlobalConstants.TIME_SLOT_SEC as f64 / 3600.0;
+    avg_watts / 1000.0 * slot_hours
+}
+
+/// PV forecast request parameters.
 #[derive(Serialize, Debug)]
-struct PvForecastRequestParams {
-    meter: String,
-    site: String,
-    start_time: String,
-    api_key: String,
+pub struct PvForecastRequestParams {
+    pub meter: String,
+    pub site: String,
+    pub start_time: String,
+    pub api_key: String,
 }
 
 #[derive(Deserialize)]
@@ -88,24 +96,5 @@ impl DemandForecaster for PvForecastApiConnection {
         Box::pin(PvForecastApiConnection::fetch(
             self, meter, site, start_time,
         ))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn request_body_embeds_api_key() {
-        let params = PvForecastRequestParams {
-            meter: "aic01".to_string(),
-            site: "AIC".to_string(),
-            start_time: "2026-05-21T16:15:00+00:00".to_string(),
-            api_key: "fedecom_user".to_string(),
-        };
-        let json = serde_json::to_value(&params).unwrap();
-        assert_eq!(json["api_key"], "fedecom_user");
-        assert_eq!(json["meter"], "aic01");
-        assert_eq!(json["site"], "AIC");
     }
 }

@@ -89,6 +89,7 @@ impl DemandForecastsManager {
                             community_uuid: market.community_uuid.clone(),
                             time_slot: point.timestamp.timestamp() as u64,
                             creation_time: Utc::now().timestamp() as u64,
+                            // The demand forecaster already reports energy in kWh.
                             energy_kwh: point.forecast,
                             confidence: DEMAND_FORECAST_CONFIDENCE,
                         });
