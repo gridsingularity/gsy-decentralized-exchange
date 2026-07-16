@@ -3,12 +3,12 @@ use cucumber::{then, when};
 use ethers::prelude::*;
 use gsy_community_client::node_connector::orders::publish_orders;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
-use gsy_offchain_primitives::db_api_schema::orders::{
+use primitives::db_api_schema::orders::{
     DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderStatus,
 };
-use gsy_offchain_primitives::db_api_schema::profiles::MeasurementSchema;
-use gsy_offchain_primitives::db_api_schema::trades::TradeSchema;
-use gsy_offchain_primitives::utils::{parse_or_hash_bytes16, NODE_FLOAT_SCALING_FACTOR};
+use primitives::db_api_schema::profiles::MeasurementSchema;
+use primitives::db_api_schema::trades::TradeSchema;
+use primitives::utils::{parse_or_hash_bytes16, NODE_FLOAT_SCALING_FACTOR};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
@@ -290,15 +290,12 @@ async fn place_custom_order(
     order_id
 }
 
-#[when(regex = r#"^"([^"]*)" submits a bid$"#)]
+#[when(expr = "{string} submits a bid")]
 async fn submit_bid(world: &mut MyWorld, user_name: String) {
     publish_orders(
         world.evm_node_url.clone(),
         vec![world.bid_forecast.clone().expect("Missing bid forecast")],
-        world
-            .topology_schema
-            .clone()
-            .expect("Missing topology schema"),
+        world.market_schema.clone().expect("Missing market schema"),
         address_to_full_hex(world.order_registry_address),
         world.private_key_for_user(user_name.as_str()),
     )
@@ -307,7 +304,7 @@ async fn submit_bid(world: &mut MyWorld, user_name: String) {
 }
 
 #[when(
-    regex = r#"^"([^"]*)" submits a bid for (\d+) energy at a normal rate of (\d+), with a preferred rate of (\d+) for partner "([^"]*)"$"#
+    expr = "{string} submits a bid for {float} energy at a normal rate of {float}, with a preferred rate of {float} for partner {string}"
 )]
 async fn submit_preferred_partner_bid(
     world: &mut MyWorld,
@@ -335,7 +332,7 @@ async fn submit_preferred_partner_bid(
     .await;
 }
 
-#[when(regex = r#"^"([^"]*)" submits an offer$"#)]
+#[when(expr = "{string} submits an offer")]
 async fn submit_offer(world: &mut MyWorld, user_name: String) {
     publish_orders(
         world.evm_node_url.clone(),
@@ -343,10 +340,7 @@ async fn submit_offer(world: &mut MyWorld, user_name: String) {
             .offer_forecast
             .clone()
             .expect("Missing offer forecast")],
-        world
-            .topology_schema
-            .clone()
-            .expect("Missing topology schema"),
+        world.market_schema.clone().expect("Missing market schema"),
         address_to_full_hex(world.order_registry_address),
         world.private_key_for_user(user_name.as_str()),
     )
@@ -387,7 +381,7 @@ async fn submit_preferred_partner_offer(
 }
 
 #[when(
-    regex = r#"^"([^"]*)" submits a cheaper open-market offer for (\d+) energy at a rate of (\d+)$"#
+    expr = "{string} submits a cheaper open-market offer for {float} energy at a rate of {float}"
 )]
 async fn submit_cheaper_offer(world: &mut MyWorld, user_name: String, energy: f64, rate: f64) {
     let order_id =
@@ -398,19 +392,21 @@ async fn submit_cheaper_offer(world: &mut MyWorld, user_name: String, energy: f6
     emit_until_matching_block(world, 12).await;
 }
 
-#[when(regex = r#"^measurements for "([^"]*)" and "([^"]*)" assets are submitted$"#)]
-async fn submit_measurements(world: &mut MyWorld, _user1: String, _user2: String) {
+#[when(expr = "measurements for facilities are submitted")]
+async fn submit_measurements(world: &mut MyWorld) {
     let adapter = AreaMarketInfoAdapter::new(Some(world.offchain_storage_url.clone()));
-    let market_area_id = market_id_as_hex(world);
+    let mut measurements = vec![];
+    for facility in world.facilities_topology.iter() {
+        measurements.push(MeasurementSchema {
+            facility_id: facility.facility_id.clone(),
+            community_uuid: "community1".to_string(),
+            energy_kwh: 12.0,
+            time_slot: world.target_delivery_time,
+            creation_time: 1,
+        })
+    }
 
-    let measurements = vec![MeasurementSchema {
-        area_uuid: market_area_id,
-        community_uuid: "community1".to_string(),
-        energy_kwh: 12.0,
-        time_slot: world.target_delivery_time,
-        creation_time: 1,
-    }];
-
+    // send measurements to offchain storage
     adapter
         .forward_measurement(measurements)
         .await

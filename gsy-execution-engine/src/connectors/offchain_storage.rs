@@ -1,11 +1,11 @@
-use anyhow::{anyhow, Result};
-use gsy_offchain_primitives::constants::GLOBAL_CONSTANTS;
-use gsy_offchain_primitives::db_api_schema::{
+use ::primitives::constants::GLOBAL_CONSTANTS;
+use ::primitives::db_api_schema::{
     profiles::{MeasurementPointSchema, MeasurementSchema, TimeseriesSchema},
     trades::TradeSchema,
 };
-use gsy_offchain_primitives::ewds::{query_via_ewds, EwdsOperation, EwdsQueryRequest};
-use gsy_offchain_primitives::utils::timestamp_to_string_with_padding;
+use ::primitives::ewds::{query_via_ewds, EwdsOperation, EwdsQueryRequest};
+use ::primitives::utils::timestamp_to_string_with_padding;
+use anyhow::{anyhow, Result};
 use reqwest::Client;
 use std::collections::HashMap;
 use std::env;
@@ -104,7 +104,7 @@ async fn fetch_measurements_from_timeseries(
             let point = points_by_id.get(&value.measurement_point)?;
             let time_slot = parse_timeseries_timestamp(value.timestamp.as_str())?;
             Some(MeasurementSchema {
-                area_uuid: point.asset_name.clone(),
+                facility_id: point.asset_name.clone(),
                 community_uuid: point.datasource_name.clone().unwrap_or_default(),
                 time_slot,
                 creation_time: time_slot,

@@ -1,18 +1,21 @@
+use crate::types::{AccountId32, H256};
+use anyhow::Result;
+use blake2::digest::{Update, VariableOutput};
+use blake2::Blake2bVar;
 use chrono::{prelude::DateTime, Utc};
-use sp_core::H256;
-use sp_runtime::AccountId32;
 use std::env;
 use std::str::FromStr;
-use anyhow::Result;
 
 pub const NODE_FLOAT_SCALING_FACTOR: f64 = 10000.0;
 
 pub fn h256_to_string(hash: H256) -> String {
-    format!("{:?}", hash)
+    format!("0x{}", hex::encode(hash.as_bytes()))
 }
 
 pub fn string_to_h256(hex_string: String) -> H256 {
-    let hex_stripped = &hex_string[2..];
+    let hex_stripped = hex_string
+        .strip_prefix("0x")
+        .expect("H256 string must start with 0x");
     let bytes = hex::decode(hex_stripped).expect("Invalid hex");
     H256::from_slice(&bytes)
 }
@@ -63,7 +66,12 @@ pub fn parse_or_hash_bytes16(value: &str) -> [u8; 16] {
         return parsed;
     }
 
-    let hash = sp_core::hashing::blake2_256(value.as_bytes());
+    let mut hash = [0u8; 32];
+    let mut hasher = Blake2bVar::new(32).expect("valid Blake2b output size");
+    hasher.update(value.as_bytes());
+    hasher
+        .finalize_variable(&mut hash)
+        .expect("valid Blake2b output buffer");
     hash[0..16]
         .try_into()
         .expect("blake2 hash prefix is 16 bytes")

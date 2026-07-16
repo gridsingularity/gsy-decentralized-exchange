@@ -1,9 +1,9 @@
 use ethers::{prelude::*, utils::Anvil};
 use ethers_solc::{artifacts::Severity, Project, ProjectPathsConfig};
 use gsy_matching_engine::connectors::evm_connector::send_settle_batch_transaction;
-use gsy_offchain_primitives::db_api_schema::orders::{DbOrderSchema, OrderEnum, OrderStatus};
-use gsy_offchain_primitives::types::{BidOfferMatch, Order};
-use gsy_offchain_primitives::utils::{
+use primitives::db_api_schema::orders::{DbOrderSchema, OrderEnum, OrderStatus};
+use primitives::types::{BidOfferMatch, Order};
+use primitives::utils::{
     actor_id_to_account_id, bytes16_to_h256, parse_or_hash_bytes16, NODE_FLOAT_SCALING_FACTOR,
 };
 use std::{collections::HashMap, fs::File, io::Write, sync::Arc};

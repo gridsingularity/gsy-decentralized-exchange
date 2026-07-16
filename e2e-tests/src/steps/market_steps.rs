@@ -1,12 +1,12 @@
 use crate::world::MyWorld;
 use cucumber::when;
 use ethers::prelude::*;
-use gsy_community_client::external_api::{ExternalAreaTopology, ExternalCommunityTopology};
+use gsy_community_client::external_api::ExternalFacilityTopology;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use gsy_community_client::time_utils::get_last_and_next_timeslot;
-use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
-use gsy_offchain_primitives::utils::parse_uuid_or_hex_bytes16;
-use gsy_offchain_primitives::MarketType;
+use primitives::db_api_schema::profiles::ForecastSchema;
+use primitives::utils::parse_uuid_or_hex_bytes16;
+use primitives::MarketType;
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::info;
@@ -19,9 +19,9 @@ abigen!(
 );
 
 #[when(
-    expr = "the community topology and forecasts of {float} energy are submitted by {string}, {string}, and {string}"
+    expr = "the community market and forecasts of {float} energy are submitted by {string}, {string}, and {string}"
 )]
-async fn submit_topology_forecasts_three_users(
+async fn submit_market_forecasts_three_users(
     world: &mut MyWorld,
     energy: f64,
     user1: String,
@@ -30,44 +30,42 @@ async fn submit_topology_forecasts_three_users(
 ) {
     let adapter = AreaMarketInfoAdapter::new(Some(world.offchain_storage_url.clone()));
 
-    let areas = vec![
-        ExternalAreaTopology {
-            area_uuid: format!("area{}", user1),
-            area_name: user1.clone(),
+    let facilities = vec![
+        ExternalFacilityTopology {
+            facility_id: format!("area{}", user1),
+            facility_name: user1.clone(),
         },
-        ExternalAreaTopology {
-            area_uuid: format!("area{}", user2),
-            area_name: user2.clone(),
+        ExternalFacilityTopology {
+            facility_id: format!("area{}", user2),
+            facility_name: user2.clone(),
         },
-        ExternalAreaTopology {
-            area_uuid: format!("area{}", user3),
-            area_name: user3.clone(),
+        ExternalFacilityTopology {
+            facility_id: format!("area{}", user3),
+            facility_name: user3.clone(),
         },
     ];
 
     let market = adapter
-        .get_or_create_market_topology(
-            ExternalCommunityTopology {
-                community_uuid: "community1".to_string(),
-                community_name: "Test Community".to_string(),
-                areas: areas.clone(),
-            },
-            world.target_delivery_time,
-        )
+        .create_market("community1".to_string(), world.target_delivery_time)
         .await
-        .expect("Topology forwarding failed");
+        .unwrap_or_else(|| {
+            panic!(
+                "market_creation_failed community=community1 time_slot={} offchain_storage_url={}",
+                world.target_delivery_time, world.offchain_storage_url
+            )
+        });
 
     let market_id = parse_uuid_or_hex_bytes16(market.market_id.as_str())
         .expect("Invalid market id in topology");
 
     world.last_market_id = Some(market_id);
-    world.topology_schema = Some(market.clone());
+    world.market_schema = Some(market.clone());
 
     let mut forecasts = Vec::new();
-    for (index, area) in areas.iter().enumerate() {
+    for (index, facility) in facilities.iter().enumerate() {
         let energy_value = if index == 0 { energy } else { -energy };
         forecasts.push(ForecastSchema {
-            area_uuid: area.area_uuid.clone(),
+            facility_id: facility.facility_id.clone(),
             community_uuid: "community1".to_string(),
             time_slot: world.target_delivery_time,
             creation_time: 1,
@@ -76,6 +74,7 @@ async fn submit_topology_forecasts_three_users(
         });
     }
 
+    // send forecasts to offchain storage
     adapter
         .forward_forecast(forecasts.clone())
         .await
@@ -83,11 +82,12 @@ async fn submit_topology_forecasts_three_users(
 
     world.bid_forecast = Some(forecasts[0].clone());
     world.offer_forecast = Some(forecasts[1].clone());
+    world.facilities_topology = facilities;
 }
 
-#[when(expr = "the community topology and forecasts of {float} energy are submitted")]
-async fn submit_topology_forecasts(world: &mut MyWorld, energy: f64) {
-    submit_topology_forecasts_three_users(
+#[when(expr = "the community market and forecasts of {float} energy are submitted")]
+async fn submit_market_forecasts(world: &mut MyWorld, energy: f64) {
+    submit_market_forecasts_three_users(
         world,
         energy,
         "alice".to_string(),
@@ -102,7 +102,7 @@ async fn wait_for_market_to_open(world: &mut MyWorld) {
     let (_, next_timeslot) = get_last_and_next_timeslot();
     world.target_delivery_time = next_timeslot;
 
-    let market_id = world.generate_market_id(MarketType::Spot);
+    let market_id = world.generate_market_id(MarketType::Spot, world.target_delivery_time);
     world.last_market_id = Some(market_id);
 
     info!(

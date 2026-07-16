@@ -19,7 +19,7 @@ In-scope services for EWDS integration:
 
 Related participant service:
 
-- `gsy-community-client` (writes forecasts, measurements, market topology)
+- `gsy-community-client` (writes forecasts, measurements, and market records)
 
 ## Current Refactored Runtime
 
@@ -183,7 +183,7 @@ Validator requirements:
 
 ### gsy-community-client
 
-- Route topology, forecast, and measurement writes through ontology-aligned off-chain storage APIs.
+- Route facility-topology-derived market, forecast, and measurement writes through ontology-aligned off-chain storage APIs.
 - Keep fallback transport via direct HTTP until cutover is complete.
 
 ## Docker and Local Testing Integration

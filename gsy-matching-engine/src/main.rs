@@ -1,7 +1,7 @@
 use clap::Parser;
-use gsy_matching_engine::connectors::{evm_subscribe, redis_subscribe};
+use gsy_matching_engine::connectors::evm_subscribe;
 use gsy_matching_engine::utils::{Cli, Commands};
-use gsy_offchain_primitives::log::setup_logging;
+use primitives::log::setup_logging;
 use std::env;
 use std::{thread, time};
 use tracing::{error, info};
@@ -15,34 +15,6 @@ async fn main() {
     // You can check for the existence of subcommands, and if found use their
     // matches just as you would the top level cmd
     match &cli.command {
-        Commands::Web2 {
-            orderbook_host,
-            orderbook_port,
-        } => {
-            async {
-                let orders_response_channel =
-                    String::from("external-matching-engine/*/offers-bids/response/");
-                let recommendations_channel =
-                    String::from("external-matching-engine/*/recommendations");
-                let tick_channel = String::from("external-matching-engine/*/events/");
-
-                let channels = vec![
-                    tick_channel.clone(),
-                    orders_response_channel.clone(),
-                    recommendations_channel.clone(),
-                ];
-
-                info!("Connecting to: {}:{}", orderbook_host, orderbook_port);
-
-                let url = format!("{}:{}", orderbook_host, orderbook_port);
-
-                if let Err(error) = redis_subscribe(channels.clone(), url).await {
-                    error!("Error - {:?}", error);
-                    panic!("{:?}", error);
-                }
-            }
-            .await
-        }
         Commands::Web3 {
             orderbook_host,
             orderbook_port,

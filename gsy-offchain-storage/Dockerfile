@@ -2,8 +2,8 @@ FROM rust:1.95 AS chef
 RUN cargo install cargo-chef --locked
 
 WORKDIR /var/www
-COPY ./offchain-primitives/Cargo.lock ./offchain-primitives/Cargo.toml /var/www/offchain-primitives/
-RUN mkdir -p /var/www/offchain-primitives/src && touch /var/www/offchain-primitives/src/lib.rs
+COPY ./primitives/Cargo.lock ./primitives/Cargo.toml /var/www/primitives/
+RUN mkdir -p /var/www/primitives/src && touch /var/www/primitives/src/lib.rs
 
 COPY ./gsy-ethers-listener/Cargo.lock ./gsy-ethers-listener/Cargo.toml /var/www/gsy-ethers-listener/
 RUN mkdir -p /var/www/gsy-ethers-listener/src && touch /var/www/gsy-ethers-listener/src/lib.rs
@@ -24,7 +24,7 @@ RUN curl -L https://foundry.paradigm.xyz | bash
 ENV PATH="/root/.foundry/bin:${PATH}"
 RUN foundryup
 
-COPY offchain-primitives /var/www/offchain-primitives/
+COPY primitives /var/www/primitives/
 
 COPY gsy-ethers-listener /var/www/gsy-ethers-listener/
 
@@ -33,8 +33,12 @@ COPY --from=chef /var/www/gsy-offchain-storage/target /var/www/gsy-offchain-stor
 
 WORKDIR /var/www/gsy-offchain-storage/
 RUN rm -rf \
+    target/release/.fingerprint/primitives-* \
     target/release/.fingerprint/gsy-* \
+    target/release/build/primitives-* \
     target/release/build/gsy-* \
+    target/release/deps/primitives-* \
+    target/release/deps/libprimitives* \
     target/release/deps/gsy_* \
     target/release/deps/libgsy_*
 RUN cargo build --release

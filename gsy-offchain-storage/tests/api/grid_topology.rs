@@ -1,8 +1,8 @@
 use crate::helpers::{init_app, stop_app};
-use gsy_offchain_primitives::db_api_schema::grid_topology::{
+use primitives::db_api_schema::grid_topology::{
     AssetSchema, AssetType, EnergyCommunitySchema, FacilitySchema, PilotSiteSchema, SiteSchema,
 };
-use gsy_offchain_primitives::db_api_schema::tariff::TariffSchema;
+use primitives::db_api_schema::tariff::TariffSchema;
 
 fn base_asset(uuid: &str, asset_type: AssetType, asset_name: &str) -> AssetSchema {
     AssetSchema {
@@ -159,12 +159,10 @@ async fn post_community_site_facility() {
     );
 
     let facility = FacilitySchema {
+        facility_id: "AIS1-House-1".to_string(),
         facility_name: "AIS1-House-1".to_string(),
-        address: "Random str. 15, 12345 (anonymized)".to_string(),
-        latitude: 53.12,
-        longitude: -9.65,
-        category: "residential".to_string(),
-        number_of_occupants: 4,
+        site_id: "site 1".to_string(),
+        owner_id: "owner 1".to_string(),
     };
     assert_eq!(
         200,

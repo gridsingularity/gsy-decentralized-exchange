@@ -1,5 +1,5 @@
+use ::primitives::utils::timestamp_to_datetime_string;
 use anyhow::Result;
-use gsy_offchain_primitives::utils::timestamp_to_datetime_string;
 use tracing::info;
 
 use crate::{

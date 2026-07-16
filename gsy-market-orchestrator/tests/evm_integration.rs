@@ -8,7 +8,7 @@ use gsy_market_orchestrator::{
     config::Config,
     orchestrator::generate_market_id,
 };
-use gsy_offchain_primitives::MarketType;
+use primitives::MarketType;
 use std::{fs::File, io::Write, sync::Arc, time::Duration};
 use tempfile::TempDir;
 

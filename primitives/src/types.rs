@@ -2,10 +2,86 @@
 
 use crate::algorithms::PayAsBid;
 use crate::db_api_schema::orders::{OrderEnum, OrderStatus};
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
-use sp_core::H256;
-use sp_runtime::AccountId32;
 use std::collections::HashMap;
+use std::fmt;
+use std::str::FromStr;
+
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct H256([u8; 32]);
+
+impl H256 {
+    pub fn zero() -> Self {
+        Self([0u8; 32])
+    }
+
+    pub fn random() -> Self {
+        let mut bytes = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut bytes);
+        Self(bytes)
+    }
+
+    pub fn from_slice(bytes: &[u8]) -> Self {
+        let mut value = [0u8; 32];
+        value.copy_from_slice(bytes);
+        Self(value)
+    }
+
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
+impl From<[u8; 32]> for H256 {
+    fn from(value: [u8; 32]) -> Self {
+        Self(value)
+    }
+}
+
+impl fmt::Debug for H256 {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "0x{}", hex::encode(self.0))
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AccountId32([u8; 32]);
+
+impl AccountId32 {
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
+impl From<[u8; 32]> for AccountId32 {
+    fn from(value: [u8; 32]) -> Self {
+        Self(value)
+    }
+}
+
+impl fmt::Debug for AccountId32 {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "0x{}", hex::encode(self.0))
+    }
+}
+
+impl FromStr for AccountId32 {
+    type Err = hex::FromHexError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let trimmed = value.trim();
+        let hex_value = trimmed.strip_prefix("0x").unwrap_or(trimmed);
+        let decoded = hex::decode(hex_value)?;
+        if decoded.len() != 32 {
+            return Err(hex::FromHexError::InvalidStringLength);
+        }
+
+        let mut bytes = [0u8; 32];
+        bytes.copy_from_slice(&decoded);
+        Ok(Self(bytes))
+    }
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd)]
 pub enum EnergyType {

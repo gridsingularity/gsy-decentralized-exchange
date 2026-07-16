@@ -1,11 +1,7 @@
 use crate::helpers::{init_app, stop_app};
 use actix_web::web;
-use gsy_offchain_primitives::db_api_schema::market::{
-    MarketSchema, MarketType, MatchingAlgorithm
-};
-use gsy_offchain_primitives::db_api_schema::trades::{
-    ClearingResultSchema, ClearingStatus, MarketRoleSchema,
-};
+use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
+use primitives::db_api_schema::trades::{ClearingResultSchema, ClearingStatus, MarketRoleSchema};
 
 fn make_market(market_id: &str, community_id: &str, opening_time: &str) -> MarketSchema {
     MarketSchema {
@@ -22,6 +18,28 @@ fn make_market(market_id: &str, community_id: &str, opening_time: &str) -> Marke
 }
 
 #[tokio::test]
+async fn post_market_succeeds() {
+    let app = init_app().await;
+    let address = app.address.clone();
+
+    let market = make_market("my_market", "community1", "2026-03-27T18:00:00Z");
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(&format!("{}/markets", &address))
+        .json(&market)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(200, resp.status().as_u16());
+    let saved: MarketSchema = resp.json().await.unwrap();
+    assert_eq!(saved.market_id, "my_market");
+    assert_eq!(saved.community_id, "community1");
+    stop_app(app).await;
+}
+
+#[tokio::test]
 async fn get_market_succeeds() {
     let app = init_app().await;
     let address = app.address.clone();
@@ -31,8 +49,8 @@ async fn get_market_succeeds() {
 
     let db = web::Data::new(app.db_wrapper.clone());
     let market_ref = db.get_ref().markets();
-    market_ref.insert(market1.clone()).await.unwrap();
-    market_ref.insert(market2.clone()).await.unwrap();
+    market_ref.insert_one(market1.clone()).await.unwrap();
+    market_ref.insert_one(market2.clone()).await.unwrap();
 
     let client = reqwest::Client::new();
     let resp = client
@@ -56,7 +74,7 @@ async fn get_market_from_community_succeeds() {
     let market1 = make_market("my_market", "communityhash", "2026-03-27T18:00:00Z");
     let db = web::Data::new(app.db_wrapper.clone());
     let market_ref = db.get_ref().markets();
-    market_ref.insert(market1).await.unwrap();
+    market_ref.insert_one(market1).await.unwrap();
 
     let client = reqwest::Client::new();
     let resp = client

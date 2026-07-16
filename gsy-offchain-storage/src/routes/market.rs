@@ -1,7 +1,7 @@
 use crate::db::DbRef;
 use actix_web::{web::Json, web::Query, HttpResponse, Responder};
-use gsy_offchain_primitives::db_api_schema::market::MarketSchema;
-use gsy_offchain_primitives::db_api_schema::trades::{ClearingResultSchema, MarketRoleSchema};
+use primitives::db_api_schema::market::MarketSchema;
+use primitives::db_api_schema::trades::{ClearingResultSchema, MarketRoleSchema};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -68,6 +68,16 @@ pub async fn get_markets(db: DbRef, params: Query<MarketsQuery>) -> impl Respond
         Ok(markets) => HttpResponse::Ok().json(markets),
         Err(e) => {
             tracing::error!("Failed to execute query: {:?}", e);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
+pub async fn post_market(market: Json<MarketSchema>, db: DbRef) -> impl Responder {
+    match db.get_ref().markets().upsert(market.to_owned()).await {
+        Ok(saved) => HttpResponse::Ok().json(saved),
+        Err(e) => {
+            tracing::error!("Failed to upsert market: {:?}", e);
             HttpResponse::InternalServerError().finish()
         }
     }

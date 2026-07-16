@@ -5,11 +5,11 @@ use gsy_ethers_listener::{
     GsyEventHandler, MarketStatusUpdatedFilter, OrderCancelledFilter, OrderPlacedFilter,
     TradeSettledFilter,
 };
-use gsy_offchain_primitives::db_api_schema::{
+use primitives::db_api_schema::{
     orders::{DbOrderSchema, OrderEnum, OrderStatus},
     trades::{TradeParameters, TradeSchema, TradeStatus},
 };
-use gsy_offchain_primitives::utils::{bytes16_to_hex, NODE_FLOAT_SCALING_FACTOR};
+use primitives::utils::{bytes16_to_hex, NODE_FLOAT_SCALING_FACTOR};
 use tracing::{error, info, warn};
 
 pub struct OffchainStorageEvmHandler {
@@ -41,7 +41,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             order_id: order_id_str,
             status: OrderStatus::Open,
             order_type: order_enum,
-            area_uuid: market_id_str.clone(),
+            area_uuid: created_by_str.clone(),
             market_id: market_id_str,
             nonce: None,
             time_slot: event.time_slot,

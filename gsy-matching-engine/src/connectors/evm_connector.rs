@@ -2,14 +2,12 @@ use crate::algorithms::PayAsBid;
 use anyhow::{anyhow, Error, Result};
 use ethers::prelude::*;
 use ethers::utils::keccak256;
-use gsy_offchain_primitives::db_api_schema::orders::{
+use primitives::db_api_schema::orders::{
     DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus,
 };
-use gsy_offchain_primitives::ewds::{
-    query_via_ewds, EwdsOperation, EwdsOrderDto, EwdsQueryRequest,
-};
-use gsy_offchain_primitives::types::{BidOfferMatch, MatchingData, Order};
-use gsy_offchain_primitives::utils::{
+use primitives::ewds::{query_via_ewds, EwdsOperation, EwdsOrderDto, EwdsQueryRequest};
+use primitives::types::{BidOfferMatch, MatchingData, Order};
+use primitives::utils::{
     actor_id_to_account_id, bytes16_to_h256, h256_to_bytes16_hex, parse_uuid_or_hex_bytes16,
     string_to_account_id, NODE_FLOAT_SCALING_FACTOR,
 };
@@ -149,13 +147,14 @@ pub async fn send_settle_batch_transaction(
         return Ok(());
     }
 
-    let settle_order_batch_address = Address::from_str(settle_order_batch_address).map_err(|e| {
-        anyhow!(
-            "Invalid trade settlement address '{}': {}",
-            settle_order_batch_address,
-            e
-        )
-    })?;
+    let settle_order_batch_address =
+        Address::from_str(settle_order_batch_address).map_err(|e| {
+            anyhow!(
+                "Invalid trade settlement address '{}': {}",
+                settle_order_batch_address,
+                e
+            )
+        })?;
     let evm_matches = to_evm_matches(matches, &order_lookup)?;
 
     let provider = Provider::<Ws>::connect(evm_node_url).await?;
@@ -166,7 +165,8 @@ pub async fn send_settle_batch_transaction(
         .with_chain_id(chain_id);
     let signer_address = wallet.address();
     let client = std::sync::Arc::new(SignerMiddleware::new(provider, wallet));
-    let settle_order_batch = SettleOrderBatchContract::new(settle_order_batch_address, client.clone());
+    let settle_order_batch =
+        SettleOrderBatchContract::new(settle_order_batch_address, client.clone());
 
     let operator_role = keccak256("OPERATOR_ROLE");
     let has_role = settle_order_batch
@@ -421,8 +421,10 @@ fn convert_db_order_to_canonical(order: &DbOrderSchema) -> Result<Order> {
             creation_time: order.creation_time,
             energy: (order.energy_kWh * NODE_FLOAT_SCALING_FACTOR).round() as u64,
             energy_rate: (order.energy_rate * NODE_FLOAT_SCALING_FACTOR).round() as u64,
-            requirements: order.requirements.as_ref().map(|r| {
-                gsy_offchain_primitives::types::Requirements {
+            requirements: order
+                .requirements
+                .as_ref()
+                .map(|r| primitives::types::Requirements {
                     trading_partner_id: r
                         .trading_partner_id
                         .as_deref()
@@ -431,8 +433,7 @@ fn convert_db_order_to_canonical(order: &DbOrderSchema) -> Result<Order> {
                     preferred_energy_rate: r
                         .preferred_energy_rate
                         .map(|rate| (rate * NODE_FLOAT_SCALING_FACTOR).round() as u64),
-                }
-            }),
+                }),
             attributes: None,
         },
         OrderEnum::Offer => Order {
@@ -448,25 +449,26 @@ fn convert_db_order_to_canonical(order: &DbOrderSchema) -> Result<Order> {
             energy: (order.energy_kWh * NODE_FLOAT_SCALING_FACTOR).round() as u64,
             energy_rate: (order.energy_rate * NODE_FLOAT_SCALING_FACTOR).round() as u64,
             requirements: None,
-            attributes: order.attributes.as_ref().map(|a| {
-                gsy_offchain_primitives::types::Attributes {
+            attributes: order
+                .attributes
+                .as_ref()
+                .map(|a| primitives::types::Attributes {
                     trading_partner_id: a
                         .trading_partner_id
                         .as_deref()
                         .and_then(parse_account_or_address),
                     energy_type: map_energy_type(&a.energy_type),
-                }
-            }),
+                }),
         },
     })
 }
 
-fn map_energy_type(energy_type: &EnergyType) -> gsy_offchain_primitives::types::EnergyType {
+fn map_energy_type(energy_type: &EnergyType) -> primitives::types::EnergyType {
     match energy_type {
-        EnergyType::Clean => gsy_offchain_primitives::types::EnergyType::Clean,
-        EnergyType::Battery => gsy_offchain_primitives::types::EnergyType::Battery,
-        EnergyType::FossilFuel => gsy_offchain_primitives::types::EnergyType::FossilFuel,
-        EnergyType::Import => gsy_offchain_primitives::types::EnergyType::Import,
+        EnergyType::Clean => primitives::types::EnergyType::Clean,
+        EnergyType::Battery => primitives::types::EnergyType::Battery,
+        EnergyType::FossilFuel => primitives::types::EnergyType::FossilFuel,
+        EnergyType::Import => primitives::types::EnergyType::Import,
     }
 }
 

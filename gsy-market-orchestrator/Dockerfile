@@ -7,7 +7,7 @@ ENV PATH="/root/.foundry/bin:${PATH}"
 RUN foundryup
 
 ADD gsy-market-orchestrator /var/www/gsy-market-orchestrator/
-ADD offchain-primitives /var/www/offchain-primitives/
+ADD primitives /var/www/primitives/
 
 RUN rm -rf /var/www/gsy-market-orchestrator/target/
 

@@ -2,9 +2,9 @@ use crate::db::DbRef;
 use crate::routes::validate_start_end_time;
 use actix_web::web::Query;
 use actix_web::{web::Json, HttpResponse, Responder};
-use gsy_offchain_primitives::db_api_schema::orders::OrderStatus;
-use gsy_offchain_primitives::db_api_schema::trades::TradeSchema;
 use mongodb::bson::Bson;
+use primitives::db_api_schema::orders::OrderStatus;
+use primitives::db_api_schema::trades::TradeSchema;
 use serde::Deserialize;
 
 #[tracing::instrument(name = "Adding new trades", skip(db), fields(trades = ?trades))]

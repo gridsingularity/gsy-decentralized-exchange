@@ -1,7 +1,6 @@
-use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum AssetType {
     EnergyAsset,
     Battery,
@@ -12,7 +11,7 @@ pub enum AssetType {
     EnergyInfrastructure,
 }
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct AssetSchema {
     pub asset_type: AssetType,
     pub uuid: String,
@@ -55,7 +54,7 @@ pub struct AssetSchema {
     pub tariff_name: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct PilotSiteSchema {
     pub pilot_name: String,
     pub pilot_description: String,
@@ -66,25 +65,23 @@ pub struct PilotSiteSchema {
     pub communities: Vec<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct EnergyCommunitySchema {
     pub community_name: String,
     pub sites: Vec<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct SiteSchema {
     pub site_name: String,
     pub site_description: String,
     pub facilities: Vec<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct FacilitySchema {
+    pub facility_id: String,
     pub facility_name: String,
-    pub address: String,
-    pub latitude: f64,
-    pub longitude: f64,
-    pub category: String,
-    pub number_of_occupants: u32,
+    pub site_id: String,
+    pub owner_id: String,
 }

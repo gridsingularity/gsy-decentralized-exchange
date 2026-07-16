@@ -5,7 +5,7 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "areaUuid": { "type": "string", "minLength": 1 },
+    "facilityId": { "type": "string", "minLength": 1 },
     "communityUuid": { "type": "string", "minLength": 1 },
     "timeSlot": {
       "oneOf": [
@@ -17,5 +17,5 @@
     "energyKwh": { "type": "number" },
     "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
   },
-  "required": ["areaUuid", "communityUuid", "timeSlot", "creationTime", "energyKwh", "confidence"]
+  "required": ["facilityId", "communityUuid", "timeSlot", "creationTime", "energyKwh", "confidence"]
 }

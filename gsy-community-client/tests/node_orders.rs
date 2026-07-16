@@ -1,10 +1,10 @@
 use ethers::types::Address;
 use gsy_community_client::node_connector::orders::create_input_orders;
 use gsy_community_client::time_utils::get_current_timestamp_in_secs;
-use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketSchema};
-use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
-use gsy_offchain_primitives::utils::{parse_or_hash_bytes16, NODE_FLOAT_SCALING_FACTOR};
-use gsy_offchain_primitives::MarketType;
+use primitives::db_api_schema::market::MarketSchema;
+use primitives::db_api_schema::profiles::ForecastSchema;
+use primitives::utils::{parse_or_hash_bytes16, NODE_FLOAT_SCALING_FACTOR};
+use primitives::{MarketType, MatchingAlgorithm};
 use std::collections::HashSet;
 use std::str::FromStr;
 
@@ -12,13 +12,13 @@ fn test_market() -> MarketSchema {
     MarketSchema {
         market_id: format!("0x{}", "11".repeat(16)),
         community_id: "community-1".to_string(),
-        opening_time: 456_446,
-        closing_time: 456_447,
-        delivery_start_time: 456_456,
-        delivery_end_time: 456_457,
+        opening_time: "00000000000000456446".to_string(),
+        closing_time: "00000000000000456447".to_string(),
+        delivery_start_time: "00000000000000456456".to_string(),
+        delivery_end_time: "00000000000000456457".to_string(),
         market_type: MarketType::Spot,
         matching_algorithm: MatchingAlgorithm::PayAsBid,
-        created_at: 345_345,
+        created_at: "00000000000000345345".to_string(),
     }
 }
 
@@ -26,7 +26,7 @@ fn test_market() -> MarketSchema {
 fn test_orders_to_evm_params_are_created_correctly() {
     let forecasts: Vec<ForecastSchema> = vec![
         ForecastSchema {
-            area_uuid: "area1".to_string(),
+            facility_id: "area1".to_string(),
             creation_time: 123_123,
             time_slot: 456_456,
             energy_kwh: 12.0,
@@ -34,7 +34,7 @@ fn test_orders_to_evm_params_are_created_correctly() {
             confidence: 0.8,
         },
         ForecastSchema {
-            area_uuid: "area2".to_string(),
+            facility_id: "area2".to_string(),
             creation_time: 234_234,
             time_slot: 456_456,
             energy_kwh: -1.0,
@@ -62,7 +62,7 @@ fn test_orders_to_evm_params_are_created_correctly() {
     ) = input_orders[0];
     assert_eq!(bid_created_by, parse_or_hash_bytes16("area1"));
     assert_eq!(bid_market, parse_or_hash_bytes16(market.market_id.as_str()));
-    assert_eq!(bid_slot, market.time_slot as u64);
+    assert_eq!(bid_slot, 456_456);
     assert!(current_time >= bid_creation && current_time - bid_creation <= 1);
     assert_eq!(bid_energy, (12.0 * NODE_FLOAT_SCALING_FACTOR) as u64);
     assert_eq!(bid_rate, (12.0 * 0.3 * NODE_FLOAT_SCALING_FACTOR) as u64);
@@ -83,7 +83,7 @@ fn test_orders_to_evm_params_are_created_correctly() {
         offer_market,
         parse_or_hash_bytes16(market.market_id.as_str())
     );
-    assert_eq!(offer_slot, market.time_slot as u64);
+    assert_eq!(offer_slot, 456_456);
     assert!(current_time >= offer_creation && current_time - offer_creation <= 1);
     assert_eq!(offer_energy, (1.0 * NODE_FLOAT_SCALING_FACTOR) as u64);
     assert_eq!(offer_rate, (1.0 * 0.07 * NODE_FLOAT_SCALING_FACTOR) as u64);
@@ -91,22 +91,22 @@ fn test_orders_to_evm_params_are_created_correctly() {
 }
 
 #[test]
-fn test_create_input_orders_skips_unknown_area_uuid() {
+fn test_create_input_orders_keeps_all_non_zero_facility_forecasts() {
     let market = test_market();
     let owner = Address::from_str("0x1000000000000000000000000000000000000001").unwrap();
     let forecasts = vec![
         ForecastSchema {
-            area_uuid: "area1".to_string(),
+            facility_id: "area1".to_string(),
             creation_time: 1,
-            time_slot: market.time_slot as u64,
+            time_slot: 456_456,
             energy_kwh: 5.0,
             community_uuid: "community1".to_string(),
             confidence: 0.9,
         },
         ForecastSchema {
-            area_uuid: "missing-area".to_string(),
+            facility_id: "missing-facility".to_string(),
             creation_time: 1,
-            time_slot: market.time_slot as u64,
+            time_slot: 456_456,
             energy_kwh: 7.0,
             community_uuid: "community1".to_string(),
             confidence: 0.9,
@@ -114,7 +114,7 @@ fn test_create_input_orders_skips_unknown_area_uuid() {
     ];
 
     let orders = create_input_orders(forecasts, market, owner);
-    assert_eq!(orders.len(), 1);
+    assert_eq!(orders.len(), 2);
 }
 
 #[test]
@@ -123,17 +123,17 @@ fn test_create_input_orders_skips_zero_energy_forecasts() {
     let owner = Address::from_str("0x1000000000000000000000000000000000000001").unwrap();
     let forecasts = vec![
         ForecastSchema {
-            area_uuid: "area1".to_string(),
+            facility_id: "area1".to_string(),
             creation_time: 1,
-            time_slot: market.time_slot as u64,
+            time_slot: 456_456,
             energy_kwh: 0.0,
             community_uuid: "community1".to_string(),
             confidence: 0.9,
         },
         ForecastSchema {
-            area_uuid: "area2".to_string(),
+            facility_id: "area2".to_string(),
             creation_time: 1,
-            time_slot: market.time_slot as u64,
+            time_slot: 456_456,
             energy_kwh: -2.0,
             community_uuid: "community1".to_string(),
             confidence: 0.9,
@@ -151,25 +151,25 @@ fn test_create_input_orders_assigns_unique_order_ids_and_stable_side_mapping() {
     let owner = Address::from_str("0x1000000000000000000000000000000000000001").unwrap();
     let forecasts = vec![
         ForecastSchema {
-            area_uuid: "area1".to_string(),
+            facility_id: "area1".to_string(),
             creation_time: 1,
-            time_slot: market.time_slot as u64,
+            time_slot: 456_456,
             energy_kwh: 2.0,
             community_uuid: "community1".to_string(),
             confidence: 0.9,
         },
         ForecastSchema {
-            area_uuid: "area2".to_string(),
+            facility_id: "area2".to_string(),
             creation_time: 1,
-            time_slot: market.time_slot as u64,
+            time_slot: 456_456,
             energy_kwh: -3.0,
             community_uuid: "community1".to_string(),
             confidence: 0.9,
         },
         ForecastSchema {
-            area_uuid: "area1".to_string(),
+            facility_id: "area1".to_string(),
             creation_time: 1,
-            time_slot: market.time_slot as u64,
+            time_slot: 456_456,
             energy_kwh: 4.0,
             community_uuid: "community1".to_string(),
             confidence: 0.9,

@@ -1,1 +1,1 @@
-pub use gsy_offchain_primitives::algorithms::PayAsBid;
+pub use primitives::algorithms::PayAsBid;

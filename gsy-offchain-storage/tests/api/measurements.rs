@@ -1,12 +1,12 @@
 use crate::helpers::{init_app, stop_app};
-use gsy_offchain_primitives::db_api_schema::profiles::{
+use primitives::db_api_schema::profiles::{
     FlowDirection, ForecastSchema, MeasurementPointSchema, MeasurementPointType, MeasurementSchema,
     TimeseriesSchema,
 };
 
-fn make_measurement(area_uuid: &str, time_slot: u64, energy_kwh: f64) -> MeasurementSchema {
+fn make_measurement(facility_id: &str, time_slot: u64, energy_kwh: f64) -> MeasurementSchema {
     MeasurementSchema {
-        area_uuid: area_uuid.to_string(),
+        facility_id: facility_id.to_string(),
         community_uuid: "community1".to_string(),
         time_slot,
         creation_time: time_slot - 1,
@@ -14,9 +14,9 @@ fn make_measurement(area_uuid: &str, time_slot: u64, energy_kwh: f64) -> Measure
     }
 }
 
-fn make_forecast(area_uuid: &str, time_slot: u64, energy_kwh: f64) -> ForecastSchema {
+fn make_forecast(facility_id: &str, time_slot: u64, energy_kwh: f64) -> ForecastSchema {
     ForecastSchema {
-        area_uuid: area_uuid.to_string(),
+        facility_id: facility_id.to_string(),
         community_uuid: "community1".to_string(),
         time_slot,
         creation_time: time_slot - 100,
@@ -70,7 +70,7 @@ async fn post_and_filter_measurements() {
     assert_eq!(200, resp.status().as_u16());
     let returned: Vec<MeasurementSchema> = resp.json().await.unwrap();
     assert_eq!(returned.len(), 1);
-    assert_eq!(returned[0].area_uuid, "area-1");
+    assert_eq!(returned[0].facility_id, "area-1");
 
     let resp = client
         .get(&format!(
@@ -120,14 +120,14 @@ async fn post_and_filter_forecasts() {
     assert_eq!(200, resp.status().as_u16());
 
     let resp = client
-        .get(&format!("{}/forecasts?area_uuid=area-2", &address))
+        .get(&format!("{}/forecasts?facility_id=area-2", &address))
         .send()
         .await
         .unwrap();
     assert_eq!(200, resp.status().as_u16());
     let returned: Vec<ForecastSchema> = resp.json().await.unwrap();
     assert_eq!(returned.len(), 1);
-    assert_eq!(returned[0].area_uuid, "area-2");
+    assert_eq!(returned[0].facility_id, "area-2");
 
     let resp = client
         .get(&format!(

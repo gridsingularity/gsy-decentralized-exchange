@@ -1,9 +1,9 @@
 use crate::connectors::evm_contracts::TradeSettlementContract;
 use crate::primitives::penalty_calculator::Penalty;
+use ::primitives::utils::parse_or_hash_bytes16;
 use anyhow::{anyhow, Result};
 use ethers::prelude::*;
 use ethers::utils::keccak256;
-use gsy_offchain_primitives::utils::parse_or_hash_bytes16;
 use std::{str::FromStr, sync::Arc};
 use tracing::{info, warn};
 
@@ -47,13 +47,14 @@ pub async fn submit_penalties(
         return Ok(());
     }
 
-    let submit_penalties_contract_address = Address::from_str(submit_penalties_contract_address).map_err(|e| {
-        anyhow!(
-            "Invalid trade settlement address '{}': {}",
-            submit_penalties_contract_address,
-            e
-        )
-    })?;
+    let submit_penalties_contract_address = Address::from_str(submit_penalties_contract_address)
+        .map_err(|e| {
+            anyhow!(
+                "Invalid trade settlement address '{}': {}",
+                submit_penalties_contract_address,
+                e
+            )
+        })?;
 
     let evm_penalties = to_evm_penalties(penalties);
     if evm_penalties.is_empty() {
@@ -70,7 +71,8 @@ pub async fn submit_penalties(
     let signer_address = wallet.address();
 
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
-    let submit_penalties_contract = SubmitPenaltiesContract::new(submit_penalties_contract_address, client.clone());
+    let submit_penalties_contract =
+        SubmitPenaltiesContract::new(submit_penalties_contract_address, client.clone());
 
     let execution_engine_role = keccak256("EXECUTION_ENGINE_ROLE");
     let has_role = submit_penalties_contract

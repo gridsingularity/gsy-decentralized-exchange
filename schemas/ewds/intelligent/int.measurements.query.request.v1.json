@@ -13,7 +13,7 @@
       "properties": {
         "startTime": { "type": "integer", "minimum": 0 },
         "endTime": { "type": "integer", "minimum": 0 },
-        "areaUuid": { "type": "string" },
+        "facilityId": { "type": "string" },
         "communityUuid": { "type": "string" }
       },
       "required": ["startTime", "endTime"]

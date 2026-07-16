@@ -1,12 +1,9 @@
 use crate::time_utils::get_current_timestamp_in_secs;
 use anyhow::{Error, Result};
 use ethers::prelude::*;
-use gsy_offchain_primitives::db_api_schema::market::MarketSchema;
-use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
-use gsy_offchain_primitives::utils::{
-    parse_or_hash_bytes16,
-    NODE_FLOAT_SCALING_FACTOR,
-    string_to_timestamp};
+use primitives::db_api_schema::market::MarketSchema;
+use primitives::db_api_schema::profiles::ForecastSchema;
+use primitives::utils::{parse_or_hash_bytes16, string_to_timestamp, NODE_FLOAT_SCALING_FACTOR};
 use std::str::FromStr;
 use tracing::{info, warn};
 
@@ -114,7 +111,7 @@ abigen!(
 
 fn build_order_param(
     forecast: &ForecastSchema,
-    area_uuid: &String,
+    facility_id: &String,
     market: &MarketSchema,
     now: u64,
     index: usize,
@@ -124,15 +121,15 @@ fn build_order_param(
     let order_id = parse_or_hash_bytes16(
         format!(
             "{}:{}:{}:{}:{}",
-            market.market_id, area_uuid, market.delivery_start_time, index, is_bid
+            market.market_id, facility_id, market.delivery_start_time, index, is_bid
         )
         .as_str(),
     );
-    let delivery_start : u64 = string_to_timestamp(&market.delivery_start_time)
-        .expect("invalid delivery_start_time");
+    let delivery_start: u64 =
+        string_to_timestamp(&market.delivery_start_time).expect("invalid delivery_start_time");
     (
         order_id,
-        parse_or_hash_bytes16(area_uuid.as_str()),
+        parse_or_hash_bytes16(facility_id.as_str()),
         parse_or_hash_bytes16(market.market_id.as_str()),
         delivery_start,
         now,
@@ -155,11 +152,21 @@ pub fn create_input_orders(
     for (index, forecast) in forecasts.into_iter().enumerate() {
         if forecast.energy_kwh > 0. {
             input_orders.push(build_order_param(
-                &forecast, &forecast.area_uuid, &market, now, index, true,
+                &forecast,
+                &forecast.facility_id,
+                &market,
+                now,
+                index,
+                true,
             ));
         } else if forecast.energy_kwh < 0. {
             input_orders.push(build_order_param(
-                &forecast, &forecast.area_uuid, &market, now, index, false,
+                &forecast,
+                &forecast.facility_id,
+                &market,
+                now,
+                index,
+                false,
             ));
         }
     }

@@ -1,9 +1,9 @@
+use ::primitives::utils::parse_or_hash_bytes16;
 use ethers::{prelude::*, utils::Anvil};
 use ethers_solc::{artifacts::Severity, Project, ProjectPathsConfig};
 use gsy_execution_engine::{
     connectors::evm_connector::submit_penalties, primitives::penalty_calculator::Penalty,
 };
-use gsy_offchain_primitives::utils::parse_or_hash_bytes16;
 use std::{fs::File, io::Write, sync::Arc};
 use tempfile::TempDir;
 

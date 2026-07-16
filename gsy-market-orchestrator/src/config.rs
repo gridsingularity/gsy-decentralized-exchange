@@ -1,7 +1,7 @@
 use ethers::types::Address;
-use gsy_offchain_primitives::constants::GLOBAL_CONSTANTS;
-use gsy_offchain_primitives::MarketType;
 use once_cell::sync::Lazy;
+use primitives::constants::GLOBAL_CONSTANTS;
+use primitives::MarketType;
 use serde::Deserialize;
 
 #[derive(Deserialize, Debug, Clone)]

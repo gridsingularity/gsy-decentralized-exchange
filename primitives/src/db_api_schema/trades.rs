@@ -1,24 +1,23 @@
 #![allow(non_snake_case)]
 
 use crate::db_api_schema::orders::DbOrderSchema;
-use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
 /// Trade status
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum TradeStatus {
     Executed,
     Settled,
 }
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct TradeParameters {
     pub selected_energy_kWh: f64,
     pub energy_rate: f64,
 }
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct TradeSchema {
     pub trade_uuid: String,
     pub status: TradeStatus,
@@ -46,7 +45,7 @@ impl TradeSchema {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum ClearingStatus {
     Cleared,
@@ -54,7 +53,7 @@ pub enum ClearingStatus {
     Failed,
 }
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ClearingResultSchema {
     pub market_id: String,
     pub clearing_status: ClearingStatus,
@@ -67,14 +66,14 @@ pub struct ClearingResultSchema {
     pub clearing_time: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct MarketRoleSchema {
     pub role_name: String,
     pub role_description: String,
     pub assigned_to: Vec<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum IntelligentTradeStatus {
     Matched,
@@ -83,7 +82,7 @@ pub enum IntelligentTradeStatus {
     Rejected,
 }
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct IntelligentTradeSchema {
     pub trade_id: String,
@@ -102,7 +101,7 @@ pub struct IntelligentTradeSchema {
     pub traded_at: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum IntelligentClearingStatus {
     #[serde(rename = "FINAL")]
     Final,
@@ -114,7 +113,7 @@ pub enum IntelligentClearingStatus {
     NoBid,
 }
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum IntelligentNoBidReason {
     InvalidInputs,
@@ -127,7 +126,7 @@ pub enum IntelligentNoBidReason {
     MarketReject,
 }
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct IntelligentClearingResultSchema {
     pub market_id: String,

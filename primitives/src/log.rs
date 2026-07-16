@@ -5,11 +5,7 @@ use tracing_log::LogTracer;
 use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::{layer::SubscriberExt, EnvFilter, Registry};
 
-fn build_logger<Sink>(
-    name: String,
-    env_filter: String,
-    sink: Sink,
-) -> impl Subscriber + Send + Sync
+fn build_logger<Sink>(name: String, env_filter: String, sink: Sink) -> impl Subscriber + Send + Sync
 where
     Sink: for<'a> MakeWriter<'a> + Send + Sync + 'static,
 {

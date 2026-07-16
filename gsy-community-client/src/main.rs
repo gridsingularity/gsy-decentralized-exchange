@@ -4,10 +4,10 @@ use gsy_community_client::external_api::{
 use gsy_community_client::node_connector::orders::publish_orders;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use gsy_community_client::time_utils::{get_current_timestamp_in_secs, get_last_and_next_timeslot};
-use gsy_offchain_primitives::constants::GLOBAL_CONSTANTS;
-use gsy_offchain_primitives::db_api_schema::profiles::{ForecastSchema, MeasurementSchema};
+use primitives::constants::GLOBAL_CONSTANTS;
+use primitives::db_api_schema::profiles::{ForecastSchema, MeasurementSchema};
 use reqwest::Client;
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::env;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -68,7 +68,7 @@ impl AppState {
 
             let (_last_timeslot, next_timeslot) = get_last_and_next_timeslot();
 
-            // Fetch and forward topology
+            // Fetch topology to validate facility ids, then create the market document for the slot.
             let external_topology_res = self.fetch_topology().await;
             if external_topology_res.is_err() {
                 error!(
@@ -77,31 +77,33 @@ impl AppState {
                 );
                 continue;
             }
-            let internal_topology = self
+            let external_topology = external_topology_res.unwrap();
+            let market = self
                 .api_adapter
-                .get_or_create_market_topology(
-                    external_topology_res.unwrap().clone(),
-                    next_timeslot,
-                )
+                .create_market(external_topology.community_uuid.clone(), next_timeslot)
                 .await
                 .unwrap();
-            // TBD: how do we check for valid area_uuids?
-            let area_uuid_to_hash: HashMap<String, String> = internal_topology
-                .community_areas
+            let facility_ids: HashSet<String> = external_topology
+                .facilities
                 .iter()
-                .map(|area| (area.area_uuid.clone(), area.area_uuid.clone()))
+                .map(|facility| facility.facility_id.clone())
                 .collect();
+
             match self.fetch_forecasts().await {
                 Ok(forecasts) => {
                     let valid_forecasts: Vec<ForecastSchema> = forecasts
                         .into_iter()
                         .filter_map(|forecast| {
-                            area_uuid_to_hash.get(&forecast.area_uuid).map(|area_hash| {
-                                self.api_adapter.convert_forecast_to_internal_schema(
-                                    &forecast,
-                                    area_hash.clone(),
-                                )
-                            })
+                            facility_ids
+                                .contains(&forecast.facility_id)
+                                .then(|| ForecastSchema {
+                                    facility_id: forecast.facility_id,
+                                    community_uuid: forecast.community_uuid,
+                                    time_slot: forecast.time_slot,
+                                    creation_time: forecast.creation_time,
+                                    energy_kwh: forecast.energy_kwh,
+                                    confidence: forecast.confidence,
+                                })
                         })
                         .filter(|forecast| {
                             self.api_adapter
@@ -119,7 +121,7 @@ impl AppState {
                         publish_orders(
                             self.evm_node_url.clone(),
                             valid_forecasts.clone(),
-                            internal_topology.clone(),
+                            market.clone(),
                             self.order_registry_address.clone(),
                             self.community_signer_private_key.clone(),
                         )
@@ -138,14 +140,15 @@ impl AppState {
                     let valid_measurements: Vec<MeasurementSchema> = measurements
                         .into_iter()
                         .filter_map(|measurement| {
-                            area_uuid_to_hash
-                                .get(&measurement.area_uuid)
-                                .map(|area_hash| {
-                                    self.api_adapter.convert_measurement_to_internal_schema(
-                                        &measurement,
-                                        area_hash.clone(),
-                                    )
-                                })
+                            facility_ids.contains(&measurement.facility_id).then(|| {
+                                MeasurementSchema {
+                                    facility_id: measurement.facility_id,
+                                    community_uuid: measurement.community_uuid,
+                                    time_slot: measurement.time_slot,
+                                    creation_time: measurement.creation_time,
+                                    energy_kwh: measurement.energy_kwh,
+                                }
+                            })
                         })
                         .filter(|measurement| {
                             self.api_adapter

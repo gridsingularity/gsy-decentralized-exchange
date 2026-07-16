@@ -1,14 +1,12 @@
 use crate::db::DatabaseWrapper;
 use anyhow::Result;
 use futures::StreamExt;
-use gsy_offchain_primitives::db_api_schema::orders::{
-    DbOrderSchema, FlexibilityOrderSchema, OrderStatus,
-};
-use gsy_offchain_primitives::db_api_schema::tariff::TariffSchema;
 use mongodb::bson::{doc, Bson};
 use mongodb::options::IndexOptions;
 use mongodb::results::UpdateResult;
 use mongodb::{bson, Collection, IndexModel};
+use primitives::db_api_schema::orders::{DbOrderSchema, FlexibilityOrderSchema, OrderStatus};
+use primitives::db_api_schema::tariff::TariffSchema;
 use std::collections::HashMap;
 use std::ops::Deref;
 

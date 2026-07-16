@@ -5,8 +5,8 @@ use ethers::{
     utils::Anvil,
 };
 use gsy_ethers_listener::{GsyEthersListener, ListenerConfig};
-use gsy_offchain_primitives::db_api_schema::orders::OrderEnum;
 use gsy_offchain_storage::evm_handler::OffchainStorageEvmHandler;
+use primitives::db_api_schema::orders::OrderEnum;
 use std::{fs::File, io::Write, sync::Arc, time::Duration};
 use tempfile::TempDir;
 
@@ -145,6 +145,7 @@ async fn test_evm_order_listener_persists_to_db() {
             assert_eq!(order.order_type, OrderEnum::Bid);
             assert_eq!(order.energy_kWh, 1.0);
             assert_eq!(order.energy_rate, 0.5);
+            assert_eq!(order.area_uuid, format!("0x{}", hex::encode(created_by)));
             break;
         }
         tokio::time::sleep(Duration::from_millis(200)).await;

@@ -1,6 +1,6 @@
-use sp_core::H256;
+use primitives::types::H256;
 
-use gsy_offchain_primitives::utils::{h256_to_string, string_to_h256};
+use primitives::utils::{h256_to_string, string_to_h256};
 
 #[cfg(test)]
 mod tests {
