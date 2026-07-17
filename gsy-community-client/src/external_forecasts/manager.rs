@@ -24,7 +24,7 @@ const DEMAND_FORECAST_CONFIDENCE: f64 = 0.9;
 const EXCLUDED_METERS: [&str; 1] = ["LIC02SM"];
 
 #[derive(Clone)]
-pub struct DemandForecastsManager {
+pub struct ForecastsManager {
     demand_forecast_api: Arc<dyn DemandForecaster + Send + Sync>,
     aic_forecast_api: Arc<dyn DemandForecaster + Send + Sync>,
     // PV uses its own inherent `fetch` (distinct response shape and energy-sign /
@@ -33,9 +33,9 @@ pub struct DemandForecastsManager {
     pv_forecast_api: Arc<PvForecastApiConnection>,
 }
 
-impl DemandForecastsManager {
+impl ForecastsManager {
     pub fn new() -> Self {
-        DemandForecastsManager {
+        ForecastsManager {
             demand_forecast_api: Arc::new(DemandForecastApiConnection::new()),
             aic_forecast_api: Arc::new(AicForecastApiConnection::new()),
             pv_forecast_api: Arc::new(PvForecastApiConnection::new()),
@@ -261,11 +261,11 @@ mod tests {
 
     #[test]
     fn forecastable_meter_types_are_accepted() {
-        assert!(DemandForecastsManager::is_forecastable_meter(
+        assert!(ForecastsManager::is_forecastable_meter(
             "LIC08SM",
             &AssetType::SMART_METER
         ));
-        assert!(DemandForecastsManager::is_forecastable_meter(
+        assert!(ForecastsManager::is_forecastable_meter(
             "LIC00SGIM",
             &AssetType::GRID_METER
         ));
@@ -273,11 +273,11 @@ mod tests {
 
     #[test]
     fn non_meter_types_are_rejected() {
-        assert!(!DemandForecastsManager::is_forecastable_meter(
+        assert!(!ForecastsManager::is_forecastable_meter(
             "LIC03PV",
             &AssetType::PV
         ));
-        assert!(!DemandForecastsManager::is_forecastable_meter(
+        assert!(!ForecastsManager::is_forecastable_meter(
             "LIC02DBATT",
             &AssetType::BATTERY
         ));
@@ -287,7 +287,7 @@ mod tests {
     fn excluded_meters_are_rejected_even_when_typed_as_meter() {
         // LIC02SM is a battery the ontology mislabels as SMART_METER; the name guard must
         // exclude it regardless of type.
-        assert!(!DemandForecastsManager::is_forecastable_meter(
+        assert!(!ForecastsManager::is_forecastable_meter(
             "LIC02SM",
             &AssetType::SMART_METER
         ));

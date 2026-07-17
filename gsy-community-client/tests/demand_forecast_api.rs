@@ -2,7 +2,7 @@ use chrono::{TimeZone, Utc};
 use gsy_community_client::external_forecasts::demand_api::{
     DemandForecastApiConnection, DemandForecastResponse,
 };
-use gsy_community_client::external_forecasts::manager::DemandForecastsManager;
+use gsy_community_client::external_forecasts::manager::ForecastsManager;
 use gsy_offchain_primitives::db_api_schema::market::{
     AreaTopologySchema, AssetType, MarketTopologySchema,
 };
@@ -60,7 +60,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_fetch_community_forecasts_ignores_non_aem_pilot_communities() {
-        let manager = DemandForecastsManager::new();
+        let manager = ForecastsManager::new();
         let market = create_market(
             "ENBRO_Community",
             vec![AreaTopologySchema {
@@ -80,7 +80,7 @@ mod tests {
     /// LIC03PV is excluded by *type* (PV is not a forecastable meter type).
     #[tokio::test]
     async fn test_fetch_community_forecasts_ignores_excluded_assets() {
-        let manager = DemandForecastsManager::new();
+        let manager = ForecastsManager::new();
         let market = create_market(
             "LugaggiaInnovationCommunity",
             vec![
@@ -108,7 +108,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_fetch_community_forecasts_converts_to_internal_schema() {
-        let manager = DemandForecastsManager::new();
+        let manager = ForecastsManager::new();
         let start_timestamp = Utc
             .with_ymd_and_hms(2026, 5, 21, 16, 15, 0)
             .unwrap()

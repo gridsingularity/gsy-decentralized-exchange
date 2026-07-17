@@ -1,5 +1,5 @@
 use chrono::NaiveDate;
-use gsy_community_client::external_forecasts::manager::DemandForecastsManager;
+use gsy_community_client::external_forecasts::manager::ForecastsManager;
 use gsy_community_client::external_forecasts::pv_api::PvForecastPoint;
 use gsy_community_client::external_forecasts::pv_pricing::PvCommitmentConfig;
 use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, AssetType};
@@ -44,20 +44,20 @@ mod tests {
 
     #[test]
     fn pv_asset_type_is_accepted() {
-        assert!(DemandForecastsManager::is_pv_asset("LIC03PV", &AssetType::PV));
+        assert!(ForecastsManager::is_pv_asset("LIC03PV", &AssetType::PV));
     }
 
     #[test]
     fn non_pv_asset_types_are_rejected() {
-        assert!(!DemandForecastsManager::is_pv_asset(
+        assert!(!ForecastsManager::is_pv_asset(
             "LIC08SM",
             &AssetType::SMART_METER
         ));
-        assert!(!DemandForecastsManager::is_pv_asset(
+        assert!(!ForecastsManager::is_pv_asset(
             "LIC00SGIM",
             &AssetType::GRID_METER
         ));
-        assert!(!DemandForecastsManager::is_pv_asset(
+        assert!(!ForecastsManager::is_pv_asset(
             "LIC02DBATT",
             &AssetType::BATTERY
         ));
@@ -66,7 +66,7 @@ mod tests {
     #[test]
     fn excluded_meters_are_rejected_even_when_typed_as_pv() {
         // Mirror the demand path's EXCLUDED_METERS name guard for PV areas too.
-        assert!(!DemandForecastsManager::is_pv_asset(
+        assert!(!ForecastsManager::is_pv_asset(
             "LIC02SM",
             &AssetType::PV
         ));
@@ -79,7 +79,7 @@ mod tests {
         // 12000 W => 3.0 kWh point forecast; p5 8000 W => 2.0 kWh, p95 16000 W => 4.0 kWh.
         let p = point(12000.0, vec![8000.0], vec![16000.0]);
         let schema =
-            DemandForecastsManager::pv_forecast_schema_from_point(&p, &pv_area(), "community-uuid", &default_cfg())
+            ForecastsManager::pv_forecast_schema_from_point(&p, &pv_area(), "community-uuid", &default_cfg())
                 .expect("daytime slot should produce an offer");
 
         // risk_aversion = 1.0 commits q5 = 2.0 kWh, emitted as a negative production offer.
@@ -99,7 +99,7 @@ mod tests {
     fn mapping_time_slot_is_unix_seconds_of_utc_timestamp() {
         let p = point(12000.0, vec![8000.0], vec![16000.0]);
         let schema =
-            DemandForecastsManager::pv_forecast_schema_from_point(&p, &pv_area(), "community-uuid", &default_cfg())
+            ForecastsManager::pv_forecast_schema_from_point(&p, &pv_area(), "community-uuid", &default_cfg())
                 .unwrap();
         let expected = NaiveDate::from_ymd_opt(2026, 7, 15)
             .unwrap()
@@ -114,7 +114,7 @@ mod tests {
     fn night_slot_is_skipped() {
         // Zero production => zero committed energy => no order.
         let p = point(0.0, vec![0.0], vec![0.0]);
-        let schema = DemandForecastsManager::pv_forecast_schema_from_point(
+        let schema = ForecastsManager::pv_forecast_schema_from_point(
             &p,
             &pv_area(),
             "community-uuid",

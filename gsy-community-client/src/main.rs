@@ -1,5 +1,5 @@
 use gsy_community_client::constants::CommunityClientConstants;
-use gsy_community_client::external_forecasts::manager::DemandForecastsManager;
+use gsy_community_client::external_forecasts::manager::ForecastsManager;
 use gsy_community_client::external_measurements::manager::MeasurementsManager;
 use gsy_community_client::inter_community::eligible_inter_community;
 use gsy_community_client::node_connector::orders::{
@@ -29,7 +29,7 @@ struct AppState {
     client: Client,
     api_adapter: AreaMarketInfoAdapter,
     measurements: MeasurementsManager,
-    demand_forecasts: DemandForecastsManager,
+    forecasts_manager: ForecastsManager,
     gsy_node_url: String,
 }
 
@@ -48,7 +48,7 @@ impl AppState {
                 .expect("Failed to build topology HTTP client"),
             api_adapter,
             measurements: MeasurementsManager::new(),
-            demand_forecasts: DemandForecastsManager::new(),
+            forecasts_manager: ForecastsManager::new(),
             gsy_node_url: "http://gsy-node:9944/".to_string(),
         }
     }
@@ -188,7 +188,7 @@ impl AppState {
                     }
 
                     let valid_forecasts: Vec<ForecastSchema> = self
-                        .demand_forecasts
+                        .forecasts_manager
                         .fetch_community_forecasts(&market, timeslot)
                         .await
                         .into_iter()
