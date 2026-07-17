@@ -39,6 +39,10 @@ pub struct Constants {
     /// Keeps a slow/hung endpoint from blocking indefinitely. Set above the demand
     /// forecaster's observed ~30s response latency so valid slow responses are not cut off.
     pub HTTP_REQUEST_TIMEOUT_SEC: u64,
+    /// Overall request timeout (in seconds) applied to the PV forecaster HTTP call only.
+    /// The PV forecaster can take up to ~2 minutes to respond, far longer than the demand
+    /// forecaster, so it gets a dedicated, larger timeout.
+    pub PV_HTTP_REQUEST_TIMEOUT_SEC: u64,
     /// TCP connect timeout (in seconds) applied to every external HTTP call.
     pub HTTP_CONNECT_TIMEOUT_SEC: u64,
 }
@@ -91,6 +95,7 @@ impl Constants {
             PV_MIN_CONFIDENCE: read_env_or("PV_MIN_CONFIDENCE", 0.1),
             PV_MIN_FORECAST_KWH: read_env_or("PV_MIN_FORECAST_KWH", 0.05),
             HTTP_REQUEST_TIMEOUT_SEC: read_env_or("HTTP_REQUEST_TIMEOUT_SEC", 60u64),
+            PV_HTTP_REQUEST_TIMEOUT_SEC: read_env_or("PV_HTTP_REQUEST_TIMEOUT_SEC", 150u64),
             HTTP_CONNECT_TIMEOUT_SEC: read_env_or("HTTP_CONNECT_TIMEOUT_SEC", 10u64),
         }
     }

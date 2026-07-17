@@ -1,9 +1,12 @@
 use crate::external_forecasts::aic_api::{AicForecastApiConnection, aic_meters};
 use crate::external_forecasts::demand_api::{DemandForecastApiConnection, DemandForecaster};
 use crate::external_forecasts::ForecastApiError;
-use crate::external_forecasts::pv_api::PvForecastApiConnection;
+use crate::external_forecasts::pv_api::{PvForecastApiConnection, PvForecastPoint};
+use crate::external_forecasts::pv_pricing::{commitment_from_point, PvCommitmentConfig};
 use chrono::{DateTime, Utc};
-use gsy_offchain_primitives::db_api_schema::market::{AssetType, MarketTopologySchema};
+use gsy_offchain_primitives::db_api_schema::market::{
+    AreaTopologySchema, AssetType, MarketTopologySchema,
+};
 use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
 use std::sync::Arc;
 use tracing::{error, info};
@@ -26,8 +29,7 @@ pub struct DemandForecastsManager {
     aic_forecast_api: Arc<dyn DemandForecaster + Send + Sync>,
     // PV uses its own inherent `fetch` (distinct response shape and energy-sign /
     // confidence semantics), so it is held as a concrete type rather than behind the
-    // shared `DemandForecaster` trait. Wired into the forecast pipeline in a later step.
-    #[allow(dead_code)]
+    // shared `DemandForecaster` trait.
     pv_forecast_api: Arc<PvForecastApiConnection>,
 }
 
@@ -49,6 +51,10 @@ impl DemandForecastsManager {
             && !EXCLUDED_METERS.contains(&area_name)
     }
 
+    pub fn is_pv_asset(area_name: &str, area_type: &AssetType) -> bool {
+        matches!(area_type, AssetType::PV) && !EXCLUDED_METERS.contains(&area_name)
+    }
+
     pub async fn fetch_community_forecasts(
         &self,
         market: &MarketTopologySchema,
@@ -57,17 +63,22 @@ impl DemandForecastsManager {
         let start_time = DateTime::<Utc>::from_timestamp(start_timestamp as i64, 0)
             .expect("valid unix timestamp");
 
-        // The temporary AIC back-end is selected by site name; it does not go through the AEM
-        // pilot community gate or the ontology-driven meter list (see T8 / B3).
-        if market.community_name == AIC_SITE {
-            return self.fetch_aic_forecasts(market, start_time).await;
-        }
-
-        if !AEM_PILOT_COMMUNITIES.contains(&market.community_name.as_str()) {
+        // Communities that are neither AIC nor an AEM pilot are not served by any forecaster.
+        if market.community_name != AIC_SITE
+            && !AEM_PILOT_COMMUNITIES.contains(&market.community_name.as_str())
+        {
             return vec![];
         }
 
-        let mut forecasts: Vec<ForecastSchema> = vec![];
+        let mut forecasts = self.fetch_pv_forecasts(market, start_time).await;
+
+        // The temporary AIC back-end is selected by site name; it does not go through the AEM
+        // pilot community gate or the ontology-driven meter list.
+        if market.community_name == AIC_SITE {
+            forecasts.extend(self.fetch_aic_forecasts(market, start_time).await);
+            return forecasts;
+        }
+
         for area in market.community_areas.iter() {
             if !Self::is_forecastable_meter(&area.name, &area.area_type) {
                 continue;
@@ -155,6 +166,88 @@ impl DemandForecastsManager {
                     "API-reported error fetching AIC demand forecast for meter {} \
                      (skipping — server-side issue): {}",
                     meter, msg
+                ),
+            }
+        }
+        forecasts
+    }
+
+    // Build a PV `ForecastSchema` for one forecast point. Returns `None` for night slots
+    // (zero committed energy → post no order). Factored out as a pure function so the
+    // point → schema mapping (production sign, per-slot confidence, unix time_slot) is
+    // unit-testable offline without a live PV endpoint.
+    pub fn pv_forecast_schema_from_point(
+        point: &PvForecastPoint,
+        area: &AreaTopologySchema,
+        community_uuid: &str,
+        cfg: &PvCommitmentConfig,
+    ) -> Option<ForecastSchema> {
+        let commitment = commitment_from_point(point, cfg);
+        // Night slots commit zero energy: post no order.
+        if commitment.energy_kwh == 0.0 {
+            return None;
+        }
+        Some(ForecastSchema {
+            area_uuid: area.area_uuid.clone(),
+            area_hash: area.area_hash.clone(),
+            community_uuid: community_uuid.to_string(),
+            time_slot: point.timestamp_utc().timestamp() as u64,
+            creation_time: Utc::now().timestamp() as u64,
+            // Negative energy marks a production offer (see node_connector/orders.rs); the
+            // magnitude is the confidence-adjusted committed quantity from pv_pricing.
+            energy_kwh: -commitment.energy_kwh,
+            // The real per-slot confidence, not the fixed demand constant.
+            confidence: commitment.confidence,
+        })
+    }
+
+    // Fetch PV production forecasts for every PV asset in the market topology and map each
+    // forecast point to a production (negative-energy) `ForecastSchema`. Mirrors the demand
+    // path: the meter id is the area name and the site is the community name, both taken from
+    // the ontology-driven topology. One failing PV meter is logged and skipped so it does not
+    // sink the whole fetch.
+    async fn fetch_pv_forecasts(
+        &self,
+        market: &MarketTopologySchema,
+        start_time: DateTime<Utc>,
+    ) -> Vec<ForecastSchema> {
+        let cfg = PvCommitmentConfig::from_constants();
+        let mut forecasts: Vec<ForecastSchema> = vec![];
+        for area in market.community_areas.iter() {
+            if !Self::is_pv_asset(&area.name, &area.area_type) {
+                continue;
+            }
+            match self
+                .pv_forecast_api
+                .fetch(&area.name, &market.community_name, start_time)
+                .await
+            {
+                Ok(response) => {
+                    info!(
+                        "Fetched {} PV forecast points for meter {} of community {}",
+                        response.data.pv_forecasts.len(),
+                        area.name,
+                        market.community_name
+                    );
+                    for point in &response.data.pv_forecasts {
+                        if let Some(schema) = Self::pv_forecast_schema_from_point(
+                            point,
+                            area,
+                            &market.community_uuid,
+                            &cfg,
+                        ) {
+                            forecasts.push(schema);
+                        }
+                    }
+                }
+                Err(ForecastApiError::Http(e)) => error!(
+                    "HTTP error fetching PV forecast for meter {} of community {}: {}",
+                    area.name, market.community_name, e
+                ),
+                Err(ForecastApiError::Api(msg)) => error!(
+                    "API-reported error fetching PV forecast for meter {} of community {} \
+                     (skipping — server-side issue): {}",
+                    area.name, market.community_name, msg
                 ),
             }
         }
