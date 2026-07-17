@@ -25,6 +25,16 @@ pub struct Constants {
     pub MIN_ORDER_RATE: f64,
     /// Upper bound of the order price range, in currency units per kWh.
     pub MAX_ORDER_RATE: f64,
+    /// Risk aversion for percentile-based PV offer-energy commitment. 0.0 commits
+    /// the point forecast; 1.0 (default) commits the conservative p5 quantile.
+    pub PV_RISK_AVERSION: f64,
+    /// Normalizer for the relative p5..p95 spread when deriving the confidence scalar.
+    pub PV_SPREAD_NORM: f64,
+    /// Lower clamp for the per-slot confidence scalar.
+    pub PV_MIN_CONFIDENCE: f64,
+    /// Floor (kWh) for the denominator of the relative spread; avoids divide-by-zero
+    /// at night / near-zero output.
+    pub PV_MIN_FORECAST_KWH: f64,
     /// Overall request timeout (in seconds) applied to every external HTTP call.
     /// Keeps a slow/hung endpoint from blocking indefinitely. Set above the demand
     /// forecaster's observed ~30s response latency so valid slow responses are not cut off.
@@ -76,6 +86,10 @@ impl Constants {
             ORDER_RESUBMISSION_INTERVAL_SEC: read_env_or("ORDER_RESUBMISSION_INTERVAL_SEC", 300),
             MIN_ORDER_RATE: read_env_or("MIN_ORDER_RATE", 0.07),
             MAX_ORDER_RATE: read_env_or("MAX_ORDER_RATE", 0.30),
+            PV_RISK_AVERSION: read_env_or("PV_RISK_AVERSION", 1.0),
+            PV_SPREAD_NORM: read_env_or("PV_SPREAD_NORM", 1.0),
+            PV_MIN_CONFIDENCE: read_env_or("PV_MIN_CONFIDENCE", 0.1),
+            PV_MIN_FORECAST_KWH: read_env_or("PV_MIN_FORECAST_KWH", 0.05),
             HTTP_REQUEST_TIMEOUT_SEC: read_env_or("HTTP_REQUEST_TIMEOUT_SEC", 60u64),
             HTTP_CONNECT_TIMEOUT_SEC: read_env_or("HTTP_CONNECT_TIMEOUT_SEC", 10u64),
         }

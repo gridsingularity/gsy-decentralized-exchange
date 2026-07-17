@@ -49,10 +49,6 @@ enum DemandForecastApiResponse {
 pub type DemandForecastFuture<'a> =
     Pin<Box<dyn Future<Output = Result<DemandForecastResponse, ForecastApiError>> + Send + 'a>>;
 
-/// Common seam over the FEDECOM forecasting back-ends (GD/LIC demand, temporary AIC demand,
-/// and PV). Each back-end parses its own  format and normalises it into the shared
-/// [`DemandForecastResponse`] so the manager stays back-end agnostic and new back-ends
-/// can be added without touching the manager.
 pub trait DemandForecaster: Send + Sync {
     // Fetch the forecast time series for one meter, starting at start_time. Passing the
     // community/site name as meter returns the aggregated demand (for the GD/LIC back-end).

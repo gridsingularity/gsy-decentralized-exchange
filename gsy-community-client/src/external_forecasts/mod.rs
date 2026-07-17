@@ -4,6 +4,8 @@ pub mod demand_api;
 
 pub mod pv_api;
 
+pub mod pv_pricing;
+
 pub mod aic_api;
 
 /// Distinguishes a transport / HTTP-level failure from an API-reported error.
