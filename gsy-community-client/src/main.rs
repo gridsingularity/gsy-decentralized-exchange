@@ -67,9 +67,9 @@ impl AppState {
     ) {
         let market_id = string_to_h256(inter_market.market_id.clone());
         for (community_name, community_uuid, forecasts) in community_forecasts {
-            // TODO: include production/PV forecasts in the net once that source lands
-            // (handled in a separate effort); the demand forecaster currently supplies
-            // consumption only, so the net degenerates to pure consumption.
+            // PV production forecasts now flow into the community forecast vec as
+            // negative `energy_kwh`, so this genuinely nets production against
+            // consumption per community/timeslot (surplus -> offer, deficit -> bid).
             let net_import_kwh = aggregate_net_import(&forecasts, &community_uuid, timeslot);
             let community_id = community_id_from_uuid(&community_uuid);
 
@@ -251,7 +251,8 @@ impl AppState {
                         replacement_forecasts,
                         market.clone(),
                         bid_rate,
-                        offer_rate,
+                        open_time,
+                        close_time,
                         &dev::alice(),
                     )
                     .await

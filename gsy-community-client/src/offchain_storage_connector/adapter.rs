@@ -102,9 +102,8 @@ impl AreaMarketInfoAdapter {
         Ok(())
     }
 
-    // Validation logic (basic validation, can be extended)
     pub fn validate_forecast(&self, forecast: &ForecastSchema, seconds_since_epoch: u64) -> bool {
-        forecast.energy_kwh > 0.0 && forecast.time_slot > seconds_since_epoch
+        forecast.energy_kwh != 0.0 && forecast.time_slot > seconds_since_epoch
     }
 
     pub fn validate_measurement(

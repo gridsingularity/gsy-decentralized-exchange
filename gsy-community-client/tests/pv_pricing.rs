@@ -1,6 +1,7 @@
 use gsy_community_client::external_forecasts::pv_api::{pv_avg_watts_to_kwh, PvForecastPoint};
 use gsy_community_client::external_forecasts::pv_pricing::{
-    commitment_from_point, offer_commitment, PvCommitment, PvCommitmentConfig,
+    commitment_from_point, effective_offer_min_rate, offer_commitment, PvCommitment,
+    PvCommitmentConfig,
 };
 
 const TOL: f64 = 1e-9;
@@ -131,6 +132,64 @@ fn commitment_from_point_applies_same_kwh_factor_to_all_three() {
     // converted to kWh with the same factor as forecast and q95.
     approx(c.energy_kwh, pv_avg_watts_to_kwh(61.84117647058823));
     assert!(c.confidence >= cfg.min_confidence && c.confidence <= 1.0);
+}
+
+// ---- effective_offer_min_rate (lever 3: confidence-modulated rate floor) ----
+
+const MIN: f64 = 0.07;
+const MAX: f64 = 0.30;
+
+#[test]
+fn rate_full_confidence_leaves_floor_at_min() {
+    // confidence == 1.0 => today's behavior: floor stays at min_rate.
+    approx(effective_offer_min_rate(MIN, MAX, 1.0, 0.5), MIN);
+}
+
+#[test]
+fn rate_zero_confidence_full_weight_reaches_max() {
+    // confidence == 0 with weight 1.0 => floor rises all the way to max_rate.
+    approx(effective_offer_min_rate(MIN, MAX, 0.0, 1.0), MAX);
+}
+
+#[test]
+fn rate_zero_weight_leaves_floor_at_min_regardless_of_confidence() {
+    // weight 0.0 disables modulation entirely.
+    approx(effective_offer_min_rate(MIN, MAX, 0.0, 0.0), MIN);
+    approx(effective_offer_min_rate(MIN, MAX, 0.5, 0.0), MIN);
+    approx(effective_offer_min_rate(MIN, MAX, 1.0, 0.0), MIN);
+}
+
+#[test]
+fn rate_mid_confidence_interpolates() {
+    // confidence 0.1, weight 0.5:
+    //   0.07 + (1 - 0.1) * 0.5 * (0.30 - 0.07) = 0.07 + 0.9 * 0.5 * 0.23 = 0.1735
+    approx(effective_offer_min_rate(MIN, MAX, 0.1, 0.5), 0.1735);
+    // confidence 0.5, weight 0.5:
+    //   0.07 + 0.5 * 0.5 * 0.23 = 0.1275
+    approx(effective_offer_min_rate(MIN, MAX, 0.5, 0.5), 0.1275);
+}
+
+#[test]
+fn rate_clamps_confidence_below_zero() {
+    // Defensive: confidence < 0 clamps to 0 (== zero-confidence result).
+    approx(
+        effective_offer_min_rate(MIN, MAX, -3.0, 1.0),
+        effective_offer_min_rate(MIN, MAX, 0.0, 1.0),
+    );
+}
+
+#[test]
+fn rate_clamps_confidence_above_one() {
+    // Defensive: confidence > 1 clamps to 1 (== full-confidence result == min).
+    approx(effective_offer_min_rate(MIN, MAX, 5.0, 1.0), MIN);
+}
+
+#[test]
+fn rate_result_stays_within_band() {
+    // Even with an over-unity weight the floor never exceeds max_rate.
+    let r = effective_offer_min_rate(MIN, MAX, 0.0, 3.0);
+    assert!((MIN..=MAX).contains(&r), "rate {} out of [{}, {}]", r, MIN, MAX);
+    approx(r, MAX);
 }
 
 #[test]

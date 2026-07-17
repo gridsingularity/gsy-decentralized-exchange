@@ -1,6 +1,7 @@
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use gsy_community_client::topology::{LECCommunityAssetsResults, LECCommunityMembersResults, TopologyManager};
 use gsy_community_client::types::{ExternalForecast, ExternalMeasurement};
+use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
 use gsy_offchain_primitives::utils::h256_to_string;
 use reqwest::Client;
 use std::collections::HashSet;
@@ -53,6 +54,58 @@ mod tests {
         assert_eq!(converted_measurement.energy_kwh, 11.);
         assert_eq!(converted_measurement.time_slot, 123123);
         assert_eq!(converted_measurement.creation_time, 456456);
+    }
+
+    fn forecast_with(energy_kwh: f64, time_slot: u64) -> ForecastSchema {
+        ForecastSchema {
+            area_uuid: "area_uuid".to_string(),
+            area_hash: h256_to_string(H256::random()),
+            community_uuid: "comm_uuid".to_string(),
+            time_slot,
+            creation_time: 0,
+            energy_kwh,
+            confidence: 0.9,
+        }
+    }
+
+    #[test]
+    fn test_validate_forecast_accepts_negative_energy_production_offer() {
+        // Negative energy = PV/production Offer; must pass with a future time slot.
+        let adapter = AreaMarketInfoAdapter::new(None);
+        let now = 1_000;
+        let forecast = forecast_with(-2.5, now + 900);
+        assert!(adapter.validate_forecast(&forecast, now));
+    }
+
+    #[test]
+    fn test_validate_forecast_rejects_zero_energy() {
+        // Zero energy would produce no order, so it is dropped regardless of time slot.
+        let adapter = AreaMarketInfoAdapter::new(None);
+        let now = 1_000;
+        let forecast = forecast_with(0.0, now + 900);
+        assert!(!adapter.validate_forecast(&forecast, now));
+    }
+
+    #[test]
+    fn test_validate_forecast_accepts_positive_energy_consumption_bid() {
+        // Regression: positive energy = demand Bid; still passes with a future time slot.
+        let adapter = AreaMarketInfoAdapter::new(None);
+        let now = 1_000;
+        let forecast = forecast_with(3.0, now + 900);
+        assert!(adapter.validate_forecast(&forecast, now));
+    }
+
+    #[test]
+    fn test_validate_forecast_rejects_past_time_slot_for_both_signs() {
+        // A non-future time slot fails regardless of energy sign.
+        let adapter = AreaMarketInfoAdapter::new(None);
+        let now = 1_000;
+        // Strictly in the past.
+        assert!(!adapter.validate_forecast(&forecast_with(3.0, now - 900), now));
+        assert!(!adapter.validate_forecast(&forecast_with(-3.0, now - 900), now));
+        // Equal to now is not strictly future, so it also fails.
+        assert!(!adapter.validate_forecast(&forecast_with(3.0, now), now));
+        assert!(!adapter.validate_forecast(&forecast_with(-3.0, now), now));
     }
 
     #[tokio::test]

@@ -1,10 +1,13 @@
-//! Percentile-based offer-energy commitment for PV-forecast-driven orders.
-//! Converts a point forecast plus its p5/p95 quantile bounds into
-//! the single energy quantity that is committed to an on-chain offer, together with
-//! a per-slot confidence scalar.
-//! Only the *energy quantity* of an offer is calculated using the percentiles;
-//! energy rates are not modified. The [`PvCommitment::confidence`] scalar is
-//! still computed and returned so that energy rates can be adapted.
+//! Percentile-based offer-energy commitment and confidence-modulated rate floor for
+//! PV-forecast-driven orders.
+//!
+//! Two levers operate off the same PV forecast:
+//! - Energy quantity: a point forecast plus its p5/p95 quantile bounds is converted
+//!   into the single energy quantity committed to an on-chain offer (see
+//!   [`offer_commitment`]).
+//! - Offer rate floor (now active): the per-slot [`PvCommitment::confidence`] scalar
+//!   raises the lower bound of the offer's price ramp when confidence is low (see
+//!   [`effective_offer_min_rate`]).
 
 use crate::constants::CommunityClientConstants;
 use crate::external_forecasts::pv_api::{pv_avg_watts_to_kwh, PvForecastPoint};
@@ -82,6 +85,25 @@ pub fn offer_commitment(
         energy_kwh,
         confidence: confidence_from_spread(forecast_kwh, q5_kwh, q95_kwh, cfg),
     }
+}
+
+/// Confidence-modulated lower bound (floor) for an offer's price ramp.
+///
+/// The offer's time ramp runs from `max_rate` down to this floor instead of down to
+/// `min_rate`. Rationale for a seller: an unmatched offer carries no penalty, whereas
+/// a matched-but-underproduced offer does. Low confidence therefore raises the floor
+/// so that uncertain energy only matches at prices carrying a risk premium; high
+/// confidence (`confidence -> 1.0`) leaves the floor at `min_rate`, i.e. today's
+/// behavior.
+///
+/// `weight` scales the effect: `0.0` disables modulation entirely (floor stays at
+/// `min_rate`); `1.0` lets a zero-confidence offer ramp no lower than `max_rate`.
+/// The result is clamped to `[min_rate, max_rate]`; `confidence` outside `[0, 1]` is
+/// clamped defensively.
+pub fn effective_offer_min_rate(min_rate: f64, max_rate: f64, confidence: f64, weight: f64) -> f64 {
+    let confidence = confidence.clamp(0.0, 1.0);
+    let effective = min_rate + (1.0 - confidence) * weight * (max_rate - min_rate);
+    effective.clamp(min_rate, max_rate)
 }
 
 /// Bridging the PV API forecast point type to an offer commitment.
