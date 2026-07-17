@@ -204,4 +204,139 @@ mod tests {
         assert_eq!(new_penalties[0].market_id, market_id);
         assert_eq!(new_penalties[0].penalty_cost, 2000);
     }
+
+    // The `trade` helper places the offer (seller) area at `format!("{bid_area}_seller")`,
+    // so a measurement for that key exercises the seller-side lookup, while a measurement
+    // for `bid_area` exercises the buyer-side lookup. The two are independent.
+
+    /// (a) Seller underproduces (measured production < selected_energy) -> seller penalized
+    /// on the shortfall, judged by the OFFER area's meter (the original bug used the bid meter).
+    #[test]
+    fn seller_underproduction_penalizes_seller_on_shortfall() {
+        // Seller area = "buyerA_seller", measured net = -3.0 kWh -> production magnitude 3.0.
+        // No buyer-side measurement, so only the seller check can fire.
+        let measurements = vec![measurement("buyerA_seller", "Comm", -3.0)];
+
+        let market_id = "prod_market";
+        let selected_energy = 5.0;
+        let trades = vec![trade(
+            "buyer_acc",
+            "seller_acc",
+            "buyerA",
+            market_id,
+            selected_energy,
+            "trade-a",
+        )];
+
+        let penalties = compute_penalties(&trades, &measurements, PENALTY_RATE);
+
+        // shortfall = 5.0 - 3.0 = 2.0; penalty_cost = (2.0 * 0.10 * 10_000).round() = 2000.
+        assert_eq!(penalties.len(), 1);
+        assert_eq!(penalties[0].penalized_account, "seller_acc");
+        assert_eq!(penalties[0].market_id, market_id); // seller uses trade.market_id
+        assert_eq!(penalties[0].trade_uuid, "trade-a");
+        assert_eq!(penalties[0].penalty_cost, 2000);
+    }
+
+    /// (b) Seller overproduces (measured production >= selected_energy) -> no penalty.
+    #[test]
+    fn seller_overproduction_yields_no_penalty() {
+        // Seller area measured net = -10.0 -> production magnitude 10.0 >= 5.0 traded.
+        let measurements = vec![measurement("buyerB_seller", "Comm", -10.0)];
+
+        let trades = vec![trade(
+            "buyer_acc",
+            "seller_acc",
+            "buyerB",
+            "prod_market",
+            5.0,
+            "trade-b",
+        )];
+
+        let penalties = compute_penalties(&trades, &measurements, PENALTY_RATE);
+
+        assert!(penalties.is_empty());
+    }
+
+    /// (c) Buyer over-consumes (measured consumption > selected_energy) -> buyer penalized
+    /// on the excess (existing behavior preserved).
+    #[test]
+    fn buyer_overconsumption_penalizes_buyer_on_excess() {
+        // Buyer (bid) area measured net = +8.0 (consumption) > 5.0 traded.
+        let measurements = vec![measurement("buyerC", "Comm", 8.0)];
+
+        let market_id = "cons_market";
+        let trades = vec![trade(
+            "buyer_acc",
+            "seller_acc",
+            "buyerC",
+            market_id,
+            5.0,
+            "trade-c",
+        )];
+
+        let penalties = compute_penalties(&trades, &measurements, PENALTY_RATE);
+
+        // excess = 8.0 - 5.0 = 3.0; penalty_cost = (3.0 * 0.10 * 10_000).round() = 3000.
+        assert_eq!(penalties.len(), 1);
+        assert_eq!(penalties[0].penalized_account, "buyer_acc");
+        // buyer uses trade.offer.offer_component.market_id (same value as market_id here).
+        assert_eq!(penalties[0].market_id, market_id);
+        assert_eq!(penalties[0].trade_uuid, "trade-c");
+        assert_eq!(penalties[0].penalty_cost, 3000);
+    }
+
+    /// (d) Production trade with NO buyer measurement but a seller measurement present ->
+    /// the seller penalty is still computed. Guards the original bug where a missing buyer
+    /// measurement skipped the whole trade and the seller was never checked.
+    #[test]
+    fn seller_penalty_computed_without_buyer_measurement() {
+        // Only the seller (offer) area has a measurement: net = -2.0 -> production 2.0 < 5.0.
+        let measurements = vec![measurement("buyerD_seller", "Comm", -2.0)];
+
+        let market_id = "prod_market";
+        let trades = vec![trade(
+            "buyer_acc",
+            "seller_acc",
+            "buyerD",
+            market_id,
+            5.0,
+            "trade-d",
+        )];
+
+        let penalties = compute_penalties(&trades, &measurements, PENALTY_RATE);
+
+        // shortfall = 5.0 - 2.0 = 3.0; penalty_cost = (3.0 * 0.10 * 10_000).round() = 3000.
+        assert_eq!(penalties.len(), 1);
+        assert_eq!(penalties[0].penalized_account, "seller_acc");
+        assert_eq!(penalties[0].market_id, market_id);
+        assert_eq!(penalties[0].trade_uuid, "trade-d");
+        assert_eq!(penalties[0].penalty_cost, 3000);
+    }
+
+    /// (e) Buyer under-consumes while the seller delivered in full -> NO penalty for anyone.
+    /// Guards against the old conflated `delta < 0` branch, which penalized the SELLER for the
+    /// BUYER's under-consumption (single signed delta on the buyer's meter).
+    #[test]
+    fn buyer_underconsumption_with_full_delivery_yields_no_penalty() {
+        let measurements = vec![
+            // Buyer area consumed only 2.0 (< 5.0 traded) -> buyer check must NOT fire.
+            measurement("buyerE", "Comm", 2.0),
+            // Seller delivered in full: production magnitude 5.0 >= 5.0 -> seller check must NOT fire.
+            measurement("buyerE_seller", "Comm", -5.0),
+        ];
+
+        let trades = vec![trade(
+            "buyer_acc",
+            "seller_acc",
+            "buyerE",
+            "spot_market",
+            5.0,
+            "trade-e",
+        )];
+
+        let penalties = compute_penalties(&trades, &measurements, PENALTY_RATE);
+
+        assert!(penalties.is_empty());
+    }
 }
