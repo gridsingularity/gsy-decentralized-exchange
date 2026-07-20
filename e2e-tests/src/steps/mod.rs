@@ -6,3 +6,4 @@ pub mod parallel_market_steps;
 pub mod cross_market_steps;
 pub mod residual_matching_steps;
 pub mod inter_community_steps;
+pub mod pv_forecasting_steps;
