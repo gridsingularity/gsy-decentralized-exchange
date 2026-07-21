@@ -44,6 +44,25 @@ pub struct MyWorld {
 	/// Per-slot confidence carried by the ingested PV offer forecast; drives the
 	/// confidence-lifted offer rate floor asserted after publication.
 	pub pv_offer_confidence: f64,
+	// PV penalty (waterfall) scenario state.
+	/// The community market whose single PV asset is split across two trades.
+	pub pv_penalty_market: Option<MarketTopologySchema>,
+	/// The single 5.0 kWh PV production offer forecast (negative energy).
+	pub pv_penalty_offer: Option<ForecastSchema>,
+	/// The two demand bid forecasts (3.0 kWh and 2.0 kWh, positive energy).
+	pub pv_penalty_bids: Vec<ForecastSchema>,
+	/// The two settled trades on the PV area, captured from `OrderExecuted`.
+	pub pv_penalty_trades: Vec<CapturedTrade>,
+}
+
+/// A settled trade captured from an `OrderExecuted` event, carrying exactly the fields the
+/// penalty-waterfall assertions need: the TOP-LEVEL `trade_uuid` (the same H256 a penalty
+/// references), the scaled `selected_energy`, and the `creation_time` (the waterfall sort key).
+#[derive(Debug, Clone)]
+pub struct CapturedTrade {
+	pub trade_uuid: H256,
+	pub selected_energy: u64,
+	pub creation_time: u64,
 }
 
 /// Single community participating in the shared inter-community market.
@@ -119,6 +138,8 @@ impl MyWorld {
 			inter_community_market: None, inter_communities: Vec::new(),
 			pv_market: None, pv_offer_forecast: None, demand_bid_forecast: None,
 			pv_offer_confidence: 0.0,
+			pv_penalty_market: None, pv_penalty_offer: None,
+			pv_penalty_bids: Vec::new(), pv_penalty_trades: Vec::new(),
 		})
 	}
 

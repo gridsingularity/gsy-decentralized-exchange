@@ -42,6 +42,20 @@ mod tests {
         selected_energy: f64,
         trade_uuid: &str,
     ) -> TradeSchema {
+        // Default creation_time 0; use `trade_at` when the waterfall order matters.
+        trade_at(buyer, seller, bid_area, market_id, selected_energy, trade_uuid, 0)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn trade_at(
+        buyer: &str,
+        seller: &str,
+        bid_area: &str,
+        market_id: &str,
+        selected_energy: f64,
+        trade_uuid: &str,
+        creation_time: u64,
+    ) -> TradeSchema {
         TradeSchema {
             _id: trade_uuid.to_string(),
             status: TradeStatus::Settled,
@@ -50,7 +64,7 @@ mod tests {
             market_id: market_id.to_string(),
             time_slot: TIME_SLOT,
             trade_uuid: trade_uuid.to_string(),
-            creation_time: 0,
+            creation_time,
             offer: DbOffer {
                 seller: seller.to_string(),
                 nonce: 0,
@@ -338,5 +352,165 @@ mod tests {
         let penalties = compute_penalties(&trades, &measurements, PENALTY_RATE);
 
         assert!(penalties.is_empty());
+    }
+
+    /// (1) A PV offer of 5 kWh matched into two trades (2 + 3), actual production 4 kWh.
+    /// Per-trade checks would have emitted ZERO (4 >= 2 and 4 >= 3). Under the new
+    /// waterfall the measured production fills the trades in `(creation_time, trade_uuid)`
+    /// order, so the earlier (2.0) trade is fully covered and the LATER (3.0) trade absorbs
+    /// the whole 1 kWh shortfall.
+    #[test]
+    fn seller_aggregate_shortfall_is_waterfalled_to_later_trade() {
+        // Single seller-area measurement: net -4.0 -> production magnitude 4.0.
+        let measurements = vec![measurement("buyerAgg_seller", "Comm", -4.0)];
+
+        let market_id = "prod_market";
+        // The 2.0 trade is EARLIER (creation_time 1), the 3.0 trade is LATER (creation_time 2).
+        let trades = vec![
+            trade_at("buyer_acc", "seller_acc", "buyerAgg", market_id, 2.0, "trade-1", 1),
+            trade_at("buyer_acc", "seller_acc", "buyerAgg", market_id, 3.0, "trade-2", 2),
+        ];
+
+        let penalties = compute_penalties(&trades, &measurements, PENALTY_RATE);
+
+        // Waterfall: production 4.0 covers the earlier 2.0 trade in full (no penalty),
+        // then covers 2.0 of the later 3.0 trade -> uncovered 1.0 on the later trade only.
+        // penalty_cost = (1.0 * 0.10 * 10_000).round() = 1000 on trade-2.
+        // (The old pro-rata behavior would have emitted 400 on trade-1 + 600 on trade-2.)
+        assert_eq!(penalties.len(), 1);
+        assert_eq!(penalties[0].penalized_account, "seller_acc");
+        assert_eq!(penalties[0].market_id, market_id);
+        assert_eq!(penalties[0].trade_uuid, "trade-2");
+        assert_eq!(penalties[0].penalty_cost, 1000);
+    }
+
+    /// (2) Aggregate sold exactly equals production -> no penalty.
+    #[test]
+    fn seller_aggregate_exactly_met_yields_no_penalty() {
+        // Production magnitude 5.0 == total sold 5.0.
+        let measurements = vec![measurement("buyerMet_seller", "Comm", -5.0)];
+
+        let trades = vec![
+            trade("buyer_acc", "seller_acc", "buyerMet", "prod_market", 2.0, "trade-1"),
+            trade("buyer_acc", "seller_acc", "buyerMet", "prod_market", 3.0, "trade-2"),
+        ];
+
+        let penalties = compute_penalties(&trades, &measurements, PENALTY_RATE);
+
+        assert!(penalties.is_empty());
+    }
+
+    /// (3) Buyer mirror: two bids for the same buyer area, aggregate consumption exceeds
+    /// the summed bought energy -> aggregate excess penalized and apportioned.
+    #[test]
+    fn buyer_aggregate_excess_penalized_and_apportioned() {
+        // Buyer (bid) area measured net = +6.0 (consumption); total bought = 5.0.
+        let measurements = vec![measurement("buyerXs", "Comm", 6.0)];
+
+        let market_id = "cons_market";
+        let trades = vec![
+            trade("buyer_acc", "seller_acc", "buyerXs", market_id, 2.0, "trade-1"),
+            trade("buyer_acc", "seller_acc", "buyerXs", market_id, 3.0, "trade-2"),
+        ];
+
+        let penalties = compute_penalties(&trades, &measurements, PENALTY_RATE);
+
+        // aggregate_excess = 6.0 - 5.0 = 1.0; aggregate_penalty_cost = 1000.
+        // Apportioned 2/5 and 3/5 -> 400 and 600 to the buyer account.
+        assert_eq!(penalties.len(), 2);
+        for p in &penalties {
+            assert_eq!(p.penalized_account, "buyer_acc");
+            assert_eq!(p.market_id, market_id);
+        }
+        let tuples = as_tuples(&penalties);
+        assert!(tuples.contains(&(
+            "buyer_acc".to_string(),
+            market_id.to_string(),
+            "trade-1".to_string(),
+            400
+        )));
+        assert!(tuples.contains(&(
+            "buyer_acc".to_string(),
+            market_id.to_string(),
+            "trade-2".to_string(),
+            600
+        )));
+        let total: u64 = penalties.iter().map(|p| p.penalty_cost).sum();
+        assert_eq!(total, 1000);
+    }
+
+    /// (4) Seller waterfall across three trades where production covers the first fully,
+    /// the second partially, and the third not at all. Verifies the fill order
+    /// `(creation_time, trade_uuid)` and that only the uncovered tail is penalized.
+    #[test]
+    fn seller_waterfall_partial_then_full_shortfall() {
+        // Three trades of 1.0 each on the same seller area, creation_times 1, 2, 3.
+        // Production magnitude 1.5 (net -1.5): covers trade-1 in full, 0.5 of trade-2,
+        // and 0.0 of trade-3.
+        let measurements = vec![measurement("buyerLR_seller", "Comm", -1.5)];
+
+        let market_id = "prod_market";
+        let trades = vec![
+            trade_at("buyer_acc", "seller_acc", "buyerLR", market_id, 1.0, "trade-1", 1),
+            trade_at("buyer_acc", "seller_acc", "buyerLR", market_id, 1.0, "trade-2", 2),
+            trade_at("buyer_acc", "seller_acc", "buyerLR", market_id, 1.0, "trade-3", 3),
+        ];
+
+        let penalties = compute_penalties(&trades, &measurements, PENALTY_RATE);
+
+        // trade-1: covered 1.0 -> uncovered 0.0 -> no penalty.
+        // trade-2: covered 0.5 -> uncovered 0.5 -> penalty (0.5 * 0.10 * 10_000) = 500.
+        // trade-3: covered 0.0 -> uncovered 1.0 -> penalty (1.0 * 0.10 * 10_000) = 1000.
+        assert_eq!(penalties.len(), 2);
+        for p in &penalties {
+            assert_eq!(p.penalized_account, "seller_acc");
+            assert_eq!(p.market_id, market_id);
+        }
+        let by_uuid: HashMap<String, u64> = penalties
+            .iter()
+            .map(|p| (p.trade_uuid.clone(), p.penalty_cost))
+            .collect();
+        assert!(!by_uuid.contains_key("trade-1"));
+        assert_eq!(by_uuid["trade-2"], 500);
+        assert_eq!(by_uuid["trade-3"], 1000);
+    }
+
+    /// (5) Two inter-community trades under the same community hash / slot: their summed
+    /// selected_energy is compared ONCE against the community net-import aggregate, and the
+    /// aggregate penalty is apportioned across the two trades.
+    #[test]
+    fn inter_community_multiple_trades_aggregate() {
+        // Community "CommAgg" per-asset measurements:
+        // net import = 5.0 - 1.0 + 1.0 = 5.0 (Σ consumption − Σ production).
+        let measurements = vec![
+            measurement("assetB1", "CommAgg", 5.0),
+            measurement("assetB2", "CommAgg", -1.0),
+            measurement("assetB3", "CommAgg", 1.0),
+        ];
+
+        let community_area = h256_to_string(community_id_from_uuid("CommAgg"));
+        let market_id = "inter_community_market";
+        let trades = vec![
+            trade("buyer_acc", "seller_acc", &community_area, market_id, 1.0, "trade-ic-1"),
+            trade("buyer_acc", "seller_acc", &community_area, market_id, 3.0, "trade-ic-2"),
+        ];
+
+        let penalties = compute_penalties(&trades, &measurements, PENALTY_RATE);
+
+        // Buyer side: total_bought = 4.0; measured net import 5.0 > 4.0 -> excess 1.0.
+        // aggregate_penalty_cost = 1000. Apportioned 1/4 and 3/4 -> 250 and 750.
+        assert_eq!(penalties.len(), 2);
+        for p in &penalties {
+            assert_eq!(p.penalized_account, "buyer_acc");
+            assert_eq!(p.market_id, market_id);
+        }
+        let by_uuid: HashMap<String, u64> = penalties
+            .iter()
+            .map(|p| (p.trade_uuid.clone(), p.penalty_cost))
+            .collect();
+        assert_eq!(by_uuid["trade-ic-1"], 250);
+        assert_eq!(by_uuid["trade-ic-2"], 750);
+        let total: u64 = penalties.iter().map(|p| p.penalty_cost).sum();
+        assert_eq!(total, 1000);
     }
 }
