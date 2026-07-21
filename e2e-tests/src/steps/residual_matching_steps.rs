@@ -24,7 +24,6 @@ const SELLER_AREA_ONE: &str = "sellerOne";
 const SELLER_AREA_TWO: &str = "sellerTwo";
 
 const BID_RATE: f64 = 0.3;
-const OFFER_RATE: f64 = 0.07;
 
 struct MatchedTrade {
 	buyer: AccountId32,
@@ -141,12 +140,16 @@ async fn submit_residual_topology(world: &mut MyWorld, bid_energy: f64, offer_en
 #[when(regex = r#""([^"]*)" submits the residual-trade bid"#)]
 async fn submit_residual_bid(world: &mut MyWorld, user_name: String) {
 	let user = world.users.get(&user_name).unwrap().clone();
+	// open_time == close_time fully progresses the offer rate ramp so it resolves to the
+	// (confidence-1.0) floor MIN_ORDER_RATE, preserving the old flat offer rate.
+	let slot = world.topology_schema.as_ref().unwrap().time_slot as u64;
 	publish_orders(
 		node_url(),
 		vec![world.bid_forecast.clone().unwrap()],
 		world.topology_schema.clone().unwrap(),
 		BID_RATE,
-		OFFER_RATE,
+		slot,
+		slot,
 		&user,
 	)
 	.await
@@ -157,12 +160,14 @@ async fn submit_residual_bid(world: &mut MyWorld, user_name: String) {
 #[when(regex = r#""([^"]*)" submits the residual-trade offer"#)]
 async fn submit_residual_offer(world: &mut MyWorld, user_name: String) {
 	let user = world.users.get(&user_name).unwrap().clone();
+	let slot = world.topology_schema.as_ref().unwrap().time_slot as u64;
 	publish_orders(
 		node_url(),
 		vec![world.offer_forecast.clone().unwrap()],
 		world.topology_schema.clone().unwrap(),
 		BID_RATE,
-		OFFER_RATE,
+		slot,
+		slot,
 		&user,
 	)
 	.await
@@ -178,12 +183,14 @@ async fn submit_followup_offer(world: &mut MyWorld, user_name: String, energy: f
 	let mut forecast = world.offer_forecast.clone().unwrap();
 	forecast.energy_kwh = -energy;
 
+	let slot = world.topology_schema.as_ref().unwrap().time_slot as u64;
 	publish_orders(
 		node_url(),
 		vec![forecast],
 		world.topology_schema.clone().unwrap(),
 		BID_RATE,
-		OFFER_RATE,
+		slot,
+		slot,
 		&user,
 	)
 	.await
@@ -345,13 +352,15 @@ async fn submit_partial_orders(
 	let offer_one = forecast_for_area(&market, SELLER_AREA_ONE, -offer_one_energy, time_slot);
 	let offer_two = forecast_for_area(&market, SELLER_AREA_TWO, -offer_two_energy, time_slot);
 
-	// Publish the single, over-sized bid.
+	// Publish the single, over-sized bid. open_time == close_time (both the delivery slot)
+	// fully progresses the offer rate ramp to the confidence-1.0 floor MIN_ORDER_RATE.
 	publish_orders(
 		node_url(),
 		vec![bid_forecast],
 		market.clone(),
 		BID_RATE,
-		OFFER_RATE,
+		time_slot,
+		time_slot,
 		&buyer,
 	)
 	.await
@@ -365,7 +374,8 @@ async fn submit_partial_orders(
 		vec![offer_one, offer_two],
 		market.clone(),
 		BID_RATE,
-		OFFER_RATE,
+		time_slot,
+		time_slot,
 		&seller,
 	)
 	.await

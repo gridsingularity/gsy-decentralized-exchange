@@ -37,6 +37,13 @@ pub struct MyWorld {
 	pub active_community_name: Option<String>,
 	pub inter_community_market: Option<MarketTopologySchema>,
 	pub inter_communities: Vec<InterCommunityParticipant>,
+	// PV/demand-forecasting scenario state (single-community scenario).
+	pub pv_market: Option<MarketTopologySchema>,
+	pub pv_offer_forecast: Option<ForecastSchema>,
+	pub demand_bid_forecast: Option<ForecastSchema>,
+	/// Per-slot confidence carried by the ingested PV offer forecast; drives the
+	/// confidence-lifted offer rate floor asserted after publication.
+	pub pv_offer_confidence: f64,
 }
 
 /// Single community participating in the shared inter-community market.
@@ -110,6 +117,8 @@ impl MyWorld {
 			initial_trade_energy: None, residual_trade_energy: None,
 			active_community_name: None,
 			inter_community_market: None, inter_communities: Vec::new(),
+			pv_market: None, pv_offer_forecast: None, demand_bid_forecast: None,
+			pv_offer_confidence: 0.0,
 		})
 	}
 

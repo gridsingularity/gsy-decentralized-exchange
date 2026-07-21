@@ -54,7 +54,7 @@ impl MeasurementsManager {
                             area_uuid: sensor_id.clone(),
                             time_slot: timestamp.timestamp() as u64,
                             creation_time: Utc::now().timestamp() as u64,
-                            energy_kwh: record.net_energy_Wh(),
+                            energy_kwh: record.net_energy_kWh(),
                         })
                     }
                 }

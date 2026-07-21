@@ -1,5 +1,5 @@
 use gsy_community_client::constants::CommunityClientConstants;
-use gsy_community_client::external_forecasts::manager::DemandForecastsManager;
+use gsy_community_client::external_forecasts::manager::ForecastsManager;
 use gsy_community_client::external_measurements::manager::MeasurementsManager;
 use gsy_community_client::inter_community::eligible_inter_community;
 use gsy_community_client::node_connector::orders::{
@@ -29,7 +29,7 @@ struct AppState {
     client: Client,
     api_adapter: AreaMarketInfoAdapter,
     measurements: MeasurementsManager,
-    demand_forecasts: DemandForecastsManager,
+    forecasts_manager: ForecastsManager,
     gsy_node_url: String,
 }
 
@@ -48,7 +48,7 @@ impl AppState {
                 .expect("Failed to build topology HTTP client"),
             api_adapter,
             measurements: MeasurementsManager::new(),
-            demand_forecasts: DemandForecastsManager::new(),
+            forecasts_manager: ForecastsManager::new(),
             gsy_node_url: "http://gsy-node:9944/".to_string(),
         }
     }
@@ -67,9 +67,9 @@ impl AppState {
     ) {
         let market_id = string_to_h256(inter_market.market_id.clone());
         for (community_name, community_uuid, forecasts) in community_forecasts {
-            // TODO: include production/PV forecasts in the net once that source lands
-            // (handled in a separate effort); the demand forecaster currently supplies
-            // consumption only, so the net degenerates to pure consumption.
+            // PV production forecasts now flow into the community forecast vec as
+            // negative `energy_kwh`, so this genuinely nets production against
+            // consumption per community/timeslot (surplus -> offer, deficit -> bid).
             let net_import_kwh = aggregate_net_import(&forecasts, &community_uuid, timeslot);
             let community_id = community_id_from_uuid(&community_uuid);
 
@@ -188,7 +188,7 @@ impl AppState {
                     }
 
                     let valid_forecasts: Vec<ForecastSchema> = self
-                        .demand_forecasts
+                        .forecasts_manager
                         .fetch_community_forecasts(&market, timeslot)
                         .await
                         .into_iter()
@@ -251,7 +251,8 @@ impl AppState {
                         replacement_forecasts,
                         market.clone(),
                         bid_rate,
-                        offer_rate,
+                        open_time,
+                        close_time,
                         &dev::alice(),
                     )
                     .await

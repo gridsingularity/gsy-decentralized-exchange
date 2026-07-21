@@ -1,4 +1,5 @@
 use crate::constants::CommunityClientConstants;
+use crate::external_forecasts::ForecastApiError;
 use chrono::{DateTime, SecondsFormat, Utc};
 use reqwest::Client as ReqwestClient;
 use serde::{Deserialize, Serialize};
@@ -39,40 +40,6 @@ enum DemandForecastApiResponse {
     Error { error: String },
 }
 
-/// Distinguishes a transport / HTTP-level failure from an API-reported error
-/// (HTTP 200 body containing `{"error": "..."}`).
-#[derive(Debug)]
-pub enum DemandForecastError {
-    /// A `reqwest` send / status / decode error.
-    Http(reqwest::Error),
-    /// The server returned HTTP 200 but with an error body (e.g. empty-series pandas bug).
-    Api(String),
-}
-
-impl std::fmt::Display for DemandForecastError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            DemandForecastError::Http(e) => write!(f, "HTTP error: {}", e),
-            DemandForecastError::Api(msg) => write!(f, "API-reported error: {}", msg),
-        }
-    }
-}
-
-impl std::error::Error for DemandForecastError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            DemandForecastError::Http(e) => Some(e),
-            DemandForecastError::Api(_) => None,
-        }
-    }
-}
-
-impl From<reqwest::Error> for DemandForecastError {
-    fn from(e: reqwest::Error) -> Self {
-        DemandForecastError::Http(e)
-    }
-}
-
 /// Boxed future returned by [`DemandForecaster::fetch`].
 ///
 /// A hand-rolled boxed future is used instead of an `async fn` in the trait because the
@@ -80,12 +47,8 @@ impl From<reqwest::Error> for DemandForecastError {
 /// native `async fn` in traits is not object-safe. `async-trait` is deliberately avoided so
 /// no new dependency is pulled in.
 pub type DemandForecastFuture<'a> =
-    Pin<Box<dyn Future<Output = Result<DemandForecastResponse, DemandForecastError>> + Send + 'a>>;
+    Pin<Box<dyn Future<Output = Result<DemandForecastResponse, ForecastApiError>> + Send + 'a>>;
 
-/// Common seam over the FEDECOM forecasting back-ends (GD/LIC demand, temporary AIC demand,
-/// and PV). Each back-end parses its own  format and normalises it into the shared
-/// [`DemandForecastResponse`] so the manager stays back-end agnostic and new back-ends
-/// can be added without touching the manager.
 pub trait DemandForecaster: Send + Sync {
     // Fetch the forecast time series for one meter, starting at start_time. Passing the
     // community/site name as meter returns the aggregated demand (for the GD/LIC back-end).
@@ -143,7 +106,7 @@ impl DemandForecastApiConnection {
         meter: &str,
         site: &str,
         start_time: DateTime<Utc>,
-    ) -> Result<DemandForecastResponse, DemandForecastError> {
+    ) -> Result<DemandForecastResponse, ForecastApiError> {
         let request_params = DemandForecastRequestParams {
             meter: meter.to_string(),
             site: site.to_string(),
@@ -161,7 +124,7 @@ impl DemandForecastApiConnection {
             .await?;
         match raw {
             DemandForecastApiResponse::Success(r) => Ok(r),
-            DemandForecastApiResponse::Error { error } => Err(DemandForecastError::Api(error)),
+            DemandForecastApiResponse::Error { error } => Err(ForecastApiError::Api(error)),
         }
     }
 }

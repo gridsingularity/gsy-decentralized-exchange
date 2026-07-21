@@ -53,8 +53,12 @@ pub struct InfluxMeasurementMeterData {
 }
 
 impl InfluxMeasurementMeterData {
-    pub fn net_energy_Wh(&self) -> f64 {
-        self.import_Wh - self.export_Wh
+    pub fn net_energy_kWh(&self) -> f64 {
+        (self.import_Wh - self.export_Wh) / 1000.0
+    }
+
+    pub fn export_pv_kWh(&self) -> f64 {
+        self.export_pv_Wh / 1000.0
     }
 }
 
@@ -185,3 +189,4 @@ impl MeasurementInfluxDBConnection {
         smart_meter_measurements
     }
 }
+
