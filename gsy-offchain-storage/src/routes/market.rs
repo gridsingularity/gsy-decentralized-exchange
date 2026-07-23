@@ -7,6 +7,7 @@ use serde::Deserialize;
 #[derive(Deserialize)]
 pub struct MarketsQuery {
     market_id: Option<String>,
+    market_type: Option<String>,
     community_id: Option<String>,
     start_time: Option<String>,
     end_time: Option<String>,
@@ -21,7 +22,7 @@ pub async fn get_market(db: DbRef, params: Query<MarketQuery>) -> impl Responder
     match db
         .get_ref()
         .markets()
-        .filter(Some(params.market_id.clone()), None, None, None)
+        .filter(Some(params.market_id.clone()), None, None, None, None)
         .await
     {
         Ok(markets) => get_only_one_market(
@@ -58,6 +59,7 @@ pub async fn get_markets(db: DbRef, params: Query<MarketsQuery>) -> impl Respond
         .markets()
         .filter(
             params.market_id.clone(),
+            params.market_type.clone(),
             params.community_id.clone(),
             params.start_time.clone(),
             params.end_time.clone(),

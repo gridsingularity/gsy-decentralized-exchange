@@ -13,6 +13,10 @@ pub enum EwdsOperation {
     TradesQuery,
     #[serde(rename = "measurements.query")]
     MeasurementsQuery,
+    #[serde(rename = "communities.query")]
+    CommunitiesQuery,
+    #[serde(rename = "markets.query")]
+    MarketsQuery,
 }
 
 impl EwdsOperation {
@@ -21,6 +25,8 @@ impl EwdsOperation {
             Self::OrdersQuery => "orders.query",
             Self::TradesQuery => "trades.query",
             Self::MeasurementsQuery => "measurements.query",
+            Self::CommunitiesQuery => "communities.query",
+            Self::MarketsQuery => "markets.query",
         }
     }
 
@@ -29,6 +35,8 @@ impl EwdsOperation {
             Self::OrdersQuery => "orders-query",
             Self::TradesQuery => "trades-query",
             Self::MeasurementsQuery => "measurements-query",
+            Self::CommunitiesQuery => "communities-query",
+            Self::MarketsQuery => "markets-query",
         }
     }
 }

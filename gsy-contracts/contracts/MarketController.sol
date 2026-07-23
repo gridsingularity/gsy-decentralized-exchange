@@ -11,10 +11,31 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 contract MarketController is Initializable, AccessControlUpgradeable {
     bytes32 public constant ORCHESTRATOR_ROLE = keccak256("ORCHESTRATOR_ROLE");
 
-    // Market UUID (bytes16) => isOpen
-    mapping(bytes16 => bool) public marketStatus;
+    struct MarketInfo {
+        bytes16 communityId;
+        uint64 openingTime;
+        uint64 closingTime;
+        uint64 deliveryStartTime;
+        uint64 deliveryEndTime;
+        uint64 createdAt;
+        uint8 matchingAlgorithm;
+        uint8 marketType;
+        bool isOpen;
+    }
+    mapping(bytes16 => MarketInfo) public marketRegistry;
 
-    event MarketStatusUpdated(bytes16 indexed marketId, bool isOpen);
+    event MarketInfoUpdated(
+        bytes16 indexed marketId,
+        bytes16 indexed communityId,
+        uint64 openingTime,
+        uint64 closingTime,
+        uint64 deliveryStartTime,
+        uint64 deliveryEndTime,
+        uint64 createdAt,
+        uint8 matchingAlgorithm,
+        uint8 marketType,
+        bool isOpen
+    );
 
     constructor() {
         _disableInitializers();
@@ -34,14 +55,65 @@ contract MarketController is Initializable, AccessControlUpgradeable {
         bytes16 marketId,
         bool isOpen
     ) external onlyRole(ORCHESTRATOR_ROLE) {
-        marketStatus[marketId] = isOpen;
-        emit MarketStatusUpdated(marketId, isOpen);
+        marketRegistry[marketId].isOpen = isOpen;
+        MarketInfo storage market_info = marketRegistry[marketId];
+        emit MarketInfoUpdated(
+            marketId,
+            market_info.communityId,
+            market_info.openingTime,
+            market_info.closingTime,
+            market_info.deliveryStartTime,
+            market_info.deliveryEndTime,
+            market_info.createdAt,
+            market_info.matchingAlgorithm,
+            market_info.marketType,
+            market_info.isOpen
+        );
     }
-
+    /**
+     * @notice Create or overwrite a market slot in the registry.
+     */
+    function createMarket(
+        bytes16 marketId,
+        bytes16 communityId,
+        uint64 openingTime,
+        uint64 closingTime,
+        uint64 deliveryStartTime,
+        uint64 deliveryEndTime,
+        uint64 createdAt,
+        uint8 matchingAlgorithm,
+        uint8 marketType,
+        bool isOpen
+    ) external onlyRole(ORCHESTRATOR_ROLE) {
+        MarketInfo memory mInfo = MarketInfo({
+            communityId: communityId,
+            openingTime: openingTime,
+            closingTime: closingTime,
+            deliveryStartTime: deliveryStartTime,
+            deliveryEndTime: deliveryEndTime,
+            createdAt: createdAt,
+            matchingAlgorithm: matchingAlgorithm,
+            marketType: marketType,
+            isOpen: isOpen
+        });
+        marketRegistry[marketId] = mInfo;
+        emit MarketInfoUpdated(
+            marketId,
+            mInfo.communityId,
+            mInfo.openingTime,
+            mInfo.closingTime,
+            mInfo.deliveryStartTime,
+            mInfo.deliveryEndTime,
+            mInfo.createdAt,
+            mInfo.matchingAlgorithm,
+            mInfo.marketType,
+            mInfo.isOpen
+        );
+    }
     /**
      * @notice Check if a market is open for trading.
      */
     function isMarketOpen(bytes16 marketId) external view returns (bool) {
-        return marketStatus[marketId];
+        return marketRegistry[marketId].isOpen;
     }
 }

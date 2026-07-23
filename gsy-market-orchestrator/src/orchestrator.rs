@@ -1,11 +1,17 @@
 use crate::chain_connector::MarketChainClient;
-use crate::config::{Config, MARKET_RULES};
+use crate::config::{Config, MARKET_RULES, MarketRule};
+use crate::ewds_connector::{fetch_list_of_community_ids_via_ewds, fetch_list_of_markets_via_ewds};
 use blake2_rfc::blake2b::blake2b;
-use primitives::MarketType;
-use primitives::{constants::GLOBAL_CONSTANTS, utils::timestamp_to_datetime_string};
+use primitives::{
+    constants::GLOBAL_CONSTANTS, utils::timestamp_to_datetime_string,
+    utils::{string_to_timestamp, convert_uuid_string_to_bytes},
+    db_api_schema::market::MarketSchema,
+            MatchingAlgorithm
+};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
 use tracing::{error, info, warn};
+use uuid::Uuid;
 
 pub async fn run<C>(config: Config, client: C) -> anyhow::Result<()>
 where
@@ -33,26 +39,30 @@ where
         sleep(Duration::from_secs(10)).await;
     }
 
-    let interval = Duration::from_secs(config.tick_interval_seconds);
+    let tick_interval = Duration::from_secs(config.tick_interval_seconds);
+    let community_ids = fetch_list_of_community_ids_via_ewds().await?; // todo
 
     loop {
         info!("-- Orchestrator Tick --");
-        if let Err(e) = orchestrate_markets(&config, &client).await {
+        if let Err(e) = orchestrate_markets(&config, &client, community_ids.clone()).await {
             error!("An error occurred during orchestration tick: {:?}", e);
         }
-        sleep(interval).await;
+        sleep(tick_interval).await;
     }
 }
 
-async fn orchestrate_markets<C>(config: &Config, client: &C) -> anyhow::Result<()>
+async fn orchestrate_markets<C>(config: &Config, client: &C, community_ids: Vec<[u8; 16]>
+) -> anyhow::Result<()>
 where
     C: MarketChainClient + ?Sized,
 {
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-    orchestrate_markets_at(config, client, now).await
+    orchestrate_markets_at(config, client, now, community_ids).await;
+    Ok(())
 }
 
-async fn orchestrate_markets_at<C>(config: &Config, client: &C, now: u64) -> anyhow::Result<()>
+async fn orchestrate_markets_at<C>(config: &Config, client: &C, now: u64, community_ids: Vec<[u8; 16]>
+) -> anyhow::Result<()>
 where
     C: MarketChainClient + ?Sized,
 {
@@ -66,62 +76,120 @@ where
         now, look_ahead_horizon
     );
 
-    while current_delivery_secs <= look_ahead_horizon {
+    for community_id in community_ids.iter() {
         for rule in MARKET_RULES.iter() {
-            let market_id = generate_market_id(rule.market_type.clone(), current_delivery_secs);
-            let open_time = (current_delivery_secs as i64 + rule.open_offset_mins * 60) as u64;
-            let close_time = (current_delivery_secs as i64 + rule.close_offset_mins * 60) as u64;
+            let markets = fetch_list_of_markets_via_ewds(
+                rule.market_type.clone() as u8, current_delivery_secs, community_id.clone()).await?;
+            let mut existing_market_slots = Vec::new();
+            for market in markets.iter() {
+                open_close_market(client, now, current_delivery_secs, market, rule).await?;
+                let market_slot = string_to_timestamp(&market.delivery_start_time)?;
+                existing_market_slots.push(market_slot);
+            }
 
-            let on_chain_status = client.get_market_status(market_id).await?;
-            let should_be_open = market_should_be_open(
+            create_markets(
+                client,
                 now,
                 current_delivery_secs,
-                rule.open_offset_mins,
-                rule.close_offset_mins,
-            );
-
-            if should_be_open && !on_chain_status {
-                error!(
-                    "OPENING market '{:?}' for delivery at {}. Opening time {}.",
-                    rule.market_type,
-                    timestamp_to_datetime_string(current_delivery_secs),
-                    timestamp_to_datetime_string(open_time)
-                );
-                client.update_market_status(market_id, true).await?;
-            } else if !should_be_open && on_chain_status {
-                error!(
-                    "CLOSING market '{:?}' for delivery at {}. Closing time {}.",
-                    rule.market_type,
-                    timestamp_to_datetime_string(current_delivery_secs),
-                    timestamp_to_datetime_string(close_time)
-                );
-                client.update_market_status(market_id, false).await?;
-            }
+                community_id,
+                rule,
+                existing_market_slots).await?;
+            current_delivery_secs += GLOBAL_CONSTANTS.time_slot_sec;
         }
-        current_delivery_secs += GLOBAL_CONSTANTS.time_slot_sec;
     }
     Ok(())
 }
 
-pub fn generate_market_id(market_type: MarketType, delivery_timestamp: u64) -> [u8; 16] {
+pub async fn create_markets<C>(
+    client: &C,
+    now: u64,
+    current_delivery_secs: u64,
+    community_id: &[u8; 16],
+    rule: &MarketRule,
+    existing_market_slots: Vec<u64>,
+) -> anyhow::Result<()>
+where
+    C: MarketChainClient + ?Sized,
+{
+    let start_current_market_slots = current_delivery_secs as u64;
+    let end_current_market_slots = current_delivery_secs + (rule.open_offset_mins.abs() * 60) as u64;
+    let market_slot_start_times: Vec<u64> = (
+        start_current_market_slots..=end_current_market_slots).step_by(
+        GLOBAL_CONSTANTS.time_slot_sec as usize).collect();
+    for market_slot_start_time in market_slot_start_times {
+        if !existing_market_slots.contains(&market_slot_start_time) {
+            let open_time = (
+                current_delivery_secs as i64 + rule.open_offset_mins * 60) as u64;
+            let close_time = (
+                current_delivery_secs as i64 + rule.close_offset_mins * 60) as u64;
+            let delivery_start_time = market_slot_start_time as u64;
+            let market_id = generate_market_id();
+            client.create_market(
+                market_id,
+                *community_id,
+                open_time,
+                close_time,
+                delivery_start_time,
+                (market_slot_start_time + GLOBAL_CONSTANTS.time_slot_sec) as u64,
+                now,
+                MatchingAlgorithm::PayAsBid as u8,
+                rule.market_type.clone() as u8,
+                true
+            );
+        }
+    }
+    Ok(())
+}
+
+pub async fn open_close_market<C>(
+    client: &C, now: u64, current_delivery_secs: u64, market: &MarketSchema,
+    rule: &MarketRule
+) -> anyhow::Result<()>
+where
+    C: MarketChainClient + ?Sized,
+{
+    let opening_time = string_to_timestamp(&market.opening_time)?;
+    let closing_time = string_to_timestamp(&market.closing_time)?;
+    let should_be_open = market_should_be_open(
+        now,
+        opening_time,
+        closing_time,
+    );
+    let market_id = convert_uuid_string_to_bytes(&market.market_id)?;
+    if should_be_open && !market.is_open {
+        info!(
+            "OPENING market '{:?}' for delivery at {}. Opening time {}.",
+            rule.market_type,
+            timestamp_to_datetime_string(current_delivery_secs),
+            timestamp_to_datetime_string(opening_time)
+            );
+    } else if !should_be_open && market.is_open {
+        info!(
+            "CLOSING market '{:?}' for delivery at {}. Closing time {}.",
+            rule.market_type,
+            timestamp_to_datetime_string(current_delivery_secs),
+            timestamp_to_datetime_string(closing_time)
+            );
+        client.update_market_status(market_id, false).await?;
+    }
+    Ok(())
+}
+
+pub fn generate_market_id() -> [u8; 16] {
     let mut buffer = Vec::new();
-    buffer.extend_from_slice(market_type.as_str().as_bytes());
-    buffer.extend_from_slice(&delivery_timestamp.to_be_bytes());
+    let id = Uuid::new_v4();
+    buffer.extend_from_slice(id.as_bytes());
     blake2b(16, &[], &buffer)
         .as_bytes()
         .try_into()
-        .expect("hash is 16 bytes")
 }
 
 fn market_should_be_open(
     now: u64,
-    delivery_time: u64,
-    open_offset_mins: i64,
-    close_offset_mins: i64,
+    opening_time: u64,
+    closing_time: u64,
 ) -> bool {
-    let open_time = (delivery_time as i64 + open_offset_mins * 60) as u64;
-    let close_time = (delivery_time as i64 + close_offset_mins * 60) as u64;
-    now >= open_time && now < close_time
+    now >= opening_time && now < closing_time
 }
 
 #[cfg(test)]
@@ -131,6 +199,7 @@ mod tests {
     use ethers::types::Address;
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
+    use crate::MarketType;
 
     #[derive(Default, Clone)]
     struct MockChainClient {

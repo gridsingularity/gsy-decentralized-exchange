@@ -29,6 +29,17 @@ impl MarketType {
     }
 }
 
+impl MarketType {
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "spot" => Some(MarketType::Spot),
+            "flex" => Some(MarketType::Flex),
+            "settlement" => Some(MarketType::Settlement),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum MatchingAlgorithm {
     #[serde(rename = "pay_as_bid")]

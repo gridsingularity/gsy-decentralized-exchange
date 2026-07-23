@@ -23,6 +23,7 @@ pub struct MarketSchema {
     pub market_type: MarketType,
     pub matching_algorithm: MatchingAlgorithm,
     pub created_at: String,
+    pub is_open: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]

@@ -5,6 +5,7 @@ use blake2::Blake2bVar;
 use chrono::{prelude::DateTime, Utc};
 use std::env;
 use std::str::FromStr;
+use uuid::Uuid;
 
 pub const NODE_FLOAT_SCALING_FACTOR: f64 = 10000.0;
 
@@ -116,4 +117,12 @@ pub fn timestamp_to_string_with_padding(timestamp: u64) -> String {
 pub fn string_to_timestamp(timestamp_string: &str) -> Result<u64> {
     let ts: u64 = timestamp_string.parse()?;
     Ok(ts)
+}
+
+pub fn convert_uuid_string_to_bytes(uuid_string: &str) -> anyhow::Result<[u8; 16]> {
+    Ok(Uuid::parse_str(uuid_string)?.into_bytes())
+}
+
+pub fn convert_bytes_to_uuid_string(bytes: [u8; 16]) -> String {
+    Uuid::from_bytes(bytes).to_string()
 }
