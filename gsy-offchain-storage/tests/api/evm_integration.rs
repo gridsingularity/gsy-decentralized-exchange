@@ -5,7 +5,7 @@ use ethers::{
     utils::Anvil,
 };
 use gsy_ethers_listener::{GsyEthersListener, ListenerConfig};
-use gsy_offchain_primitives::db_api_schema::orders::OrderEnum;
+use gsy_offchain_primitives::db_api_schema::orders::{IntelligentEnergyType, OrderEnum};
 use gsy_offchain_storage::evm_handler::OffchainStorageEvmHandler;
 use std::{fs::File, io::Write, sync::Arc, time::Duration};
 use tempfile::TempDir;
@@ -13,7 +13,7 @@ use tempfile::TempDir;
 abigen!(
     MockEmitter,
     r#"[
-        event OrderPlaced(bytes16 indexed orderId, bytes16 indexed createdBy, bytes16 indexed marketId, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, bool isBid)
+        event OrderPlaced(bytes16 indexed orderId, bytes16 indexed createdBy, bytes16 indexed marketId, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, uint8 energySourcePreference, uint8 energyType, bool isBid)
         function emitOrderPlaced(bytes16 orderId, bytes16 createdBy, uint64 energy, uint64 rate) external
     ]"#
 );
@@ -41,10 +41,10 @@ async fn test_evm_order_listener_persists_to_db() {
         // SPDX-License-Identifier: MIT
         pragma solidity ^0.8.0;
         contract MockEmitter {
-            event OrderPlaced(bytes16 indexed orderId, bytes16 indexed createdBy, bytes16 indexed marketId, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, bool isBid);
+            event OrderPlaced(bytes16 indexed orderId, bytes16 indexed createdBy, bytes16 indexed marketId, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, uint8 energySourcePreference, uint8 energyType, bool isBid);
             function emitOrderPlaced(bytes16 orderId, bytes16 createdBy, uint64 energy, uint64 rate) external {
                 // emit with hardcoded filler data for non-indexed fields not critical for this test
-                emit OrderPlaced(orderId, createdBy, bytes16(0), 1000, 1234567890, energy, rate, true);
+                emit OrderPlaced(orderId, createdBy, bytes16(0), 1000, 1234567890, energy, rate, 1, 0, true);
             }
         }
     "#;
@@ -145,6 +145,12 @@ async fn test_evm_order_listener_persists_to_db() {
             assert_eq!(order.order_type, OrderEnum::Bid);
             assert_eq!(order.energy_kWh, 1.0);
             assert_eq!(order.energy_rate, 0.5);
+            assert_eq!(
+                order
+                    .requirements
+                    .and_then(|requirements| requirements.energy_type),
+                Some(IntelligentEnergyType::Green)
+            );
             break;
         }
         tokio::time::sleep(Duration::from_millis(200)).await;

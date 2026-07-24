@@ -114,7 +114,7 @@ pub enum IntelligentOrderStatus {
     Executed,
 }
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, Eq, PartialOrd)]
 pub enum IntelligentEnergyType {
     #[serde(rename = "GREEN")]
     Green,
@@ -128,6 +128,19 @@ pub enum IntelligentEnergyType {
     Battery,
     #[serde(rename = "GREY")]
     Grey,
+}
+
+#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+pub struct DbRequirements {
+    pub trading_partner_id: Option<String>,
+    pub energy_type: Option<IntelligentEnergyType>,
+    pub preferred_energy_rate: Option<f64>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+pub struct DbAttributes {
+    pub trading_partner_id: Option<String>,
+    pub energy_type: IntelligentEnergyType,
 }
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]

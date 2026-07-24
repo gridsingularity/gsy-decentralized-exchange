@@ -1,31 +1,23 @@
 #![allow(non_snake_case)]
 
 use crate::algorithms::PayAsBid;
-use crate::db_api_schema::orders::{OrderEnum, OrderStatus};
+use crate::db_api_schema::orders::{IntelligentEnergyType, OrderEnum, OrderStatus};
 use serde::{Deserialize, Serialize};
 use sp_core::H256;
 use sp_runtime::AccountId32;
 use std::collections::HashMap;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd)]
-pub enum EnergyType {
-    Clean,
-    Battery,
-    FossilFuel,
-    Import,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd)]
 pub struct Requirements {
     pub trading_partner_id: Option<AccountId32>,
-    pub energy_type: Option<EnergyType>,
+    pub energy_type: Option<IntelligentEnergyType>,
     pub preferred_energy_rate: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd)]
 pub struct Attributes {
     pub trading_partner_id: Option<AccountId32>,
-    pub energy_type: EnergyType,
+    pub energy_type: IntelligentEnergyType,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd)]
