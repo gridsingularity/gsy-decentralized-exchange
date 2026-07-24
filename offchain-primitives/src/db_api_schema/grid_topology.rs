@@ -81,10 +81,8 @@ pub struct SiteSchema {
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub struct FacilitySchema {
+    pub facility_id: String,
     pub facility_name: String,
-    pub address: String,
-    pub latitude: f64,
-    pub longitude: f64,
-    pub category: String,
-    pub number_of_occupants: u32,
+    pub site_id: String,
+    pub owner_id: String,
 }
