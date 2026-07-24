@@ -40,6 +40,17 @@ export interface MarketTopologySchema {
   community_areas: AreaTopologySchema[];
 }
 
+// Summary of a community, derived by reducing all of its markets on the
+// backend. `community_name` is the stable identity; `community_uuid` is
+// randomized per market creation and is informational only, NOT a stable key.
+export interface CommunitySummary {
+  community_name: string;
+  community_uuid: string;
+  market_count: number; // u32
+  earliest_slot: number; // u32 seconds
+  latest_slot: number; // u32 seconds
+}
+
 export interface DbOrderComponent {
   // NB: `area_uuid` actually carries the asset's `area_hash` (footgun #1).
   area_uuid: string;

@@ -5,6 +5,7 @@
 // u32::MAX — the backend types them as u32 and would silently truncate.
 
 import type {
+  CommunitySummary,
   DbOrderSchema,
   ForecastSchema,
   MarketTopologySchema,
@@ -74,6 +75,11 @@ export function getTrades(
   params?: { market_id?: string } & TimeWindow,
 ): Promise<TradeSchema[]> {
   return apiGet<TradeSchema[]>('/trades', { ...params });
+}
+
+/** GET /communities — enumerate all communities (keyed on community_name). */
+export function getCommunities(): Promise<CommunitySummary[]> {
+  return apiGet<CommunitySummary[]>('/communities');
 }
 
 /** GET /markets?start_time=&end_time= — both params REQUIRED (u32 seconds). */

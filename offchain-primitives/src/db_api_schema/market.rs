@@ -34,3 +34,12 @@ pub struct MarketTopologySchema {
     pub community_areas: Vec<AreaTopologySchema>
 }
 
+#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+pub struct CommunitySummary {
+    pub community_name: String,
+    pub community_uuid: String,
+    pub market_count: u32,
+    pub earliest_slot: u32,
+    pub latest_slot: u32,
+}
+
