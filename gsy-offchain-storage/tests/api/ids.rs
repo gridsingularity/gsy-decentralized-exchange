@@ -1,13 +1,12 @@
 // tests/id_service.rs  (or src/db/id_mapping.rs `#[cfg(test)] mod tests`)
 use crate::helpers::{init_app, stop_app, TestApp};
-use anyhow::Result;
-use gsy_offchain_storage::db::DatabaseWrapper;
-use gsy_offchain_storage::db::id_service::{init_id_mapping, IdService};
-use primitives::db_api_schema::ids::{IdMappingSchema, IdType};
 use actix_web::web;
-use mongodb::bson::doc;
+use anyhow::Result;
 use futures::StreamExt;
-
+use gsy_offchain_storage::db::id_service::{init_id_mapping, IdService};
+use gsy_offchain_storage::db::DatabaseWrapper;
+use mongodb::bson::doc;
+use primitives::db_api_schema::ids::{IdMappingSchema, IdType};
 
 /// Spins up a wrapper against a throwaway database.
 pub async fn spawn_app_with_db() -> (TestApp, web::Data<DatabaseWrapper>) {
@@ -72,8 +71,12 @@ async fn filter_by_onchain_id() -> Result<()> {
     init_id_mapping(&db).await?;
     let service = IdService::from(&**db);
 
-    service.get_or_create(mapping("off-1", "0x111", IdType::ActorId)).await?;
-    service.get_or_create(mapping("off-2", "0x222", IdType::MarketId)).await?;
+    service
+        .get_or_create(mapping("off-1", "0x111", IdType::ActorId))
+        .await?;
+    service
+        .get_or_create(mapping("off-2", "0x222", IdType::MarketId))
+        .await?;
 
     let found = service.filter(Some("0x111".into()), None, None).await?;
     assert_eq!(found.len(), 1);
@@ -89,7 +92,9 @@ async fn filter_by_offchain_id_and_type() -> Result<()> {
     init_id_mapping(&db).await?;
     let service = IdService::from(&**db);
 
-    service.get_or_create(mapping("off-3", "0x333", IdType::TradeId)).await?;
+    service
+        .get_or_create(mapping("off-3", "0x333", IdType::TradeId))
+        .await?;
 
     let hit = service
         .filter(None, Some("off-3".into()), Some("trade_id".into()))
@@ -112,9 +117,15 @@ async fn filter_by_type_only_returns_all_of_that_type() -> Result<()> {
     init_id_mapping(&db).await?;
     let service = IdService::from(&**db);
 
-    service.get_or_create(mapping("off-4", "0x444", IdType::ActorId)).await?;
-    service.get_or_create(mapping("off-5", "0x555", IdType::ActorId)).await?;
-    service.get_or_create(mapping("off-6", "0x666", IdType::MarketId)).await?;
+    service
+        .get_or_create(mapping("off-4", "0x444", IdType::ActorId))
+        .await?;
+    service
+        .get_or_create(mapping("off-5", "0x555", IdType::ActorId))
+        .await?;
+    service
+        .get_or_create(mapping("off-6", "0x666", IdType::MarketId))
+        .await?;
 
     let actors = service.filter(None, None, Some("actor_id".into())).await?;
     assert_eq!(actors.len(), 2);

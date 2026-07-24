@@ -5,6 +5,7 @@ use blake2::Blake2bVar;
 use chrono::{prelude::DateTime, Utc};
 use std::env;
 use std::str::FromStr;
+use thiserror::Error;
 
 pub const NODE_FLOAT_SCALING_FACTOR: f64 = 10000.0;
 
@@ -116,4 +117,54 @@ pub fn timestamp_to_string_with_padding(timestamp: u64) -> String {
 pub fn string_to_timestamp(timestamp_string: &str) -> Result<u64> {
     let ts: u64 = timestamp_string.parse()?;
     Ok(ts)
+}
+
+
+
+#[derive(Error, Debug)]
+pub enum ConvertError {
+    #[error("invalid byte length")]
+    InvalidByteLength,
+    #[error("failed to parse byte to utf-8")]
+    FailedToParseByte,
+    #[error("missing encryption key")]
+    MissingKey,
+    #[error("invalid encryption key")]
+    InvalidKey,
+    #[error("invalid encryption key length")]
+    InvalidKeyLength,
+}
+
+/// Packs a string into a fixed 16-byte buffer, right-padded with zeros.
+///
+/// The string's UTF-8 bytes are copied into the start of the buffer; any
+/// remaining bytes are left as zero.
+pub fn string_to_bytes16(s: &str) -> Result<[u8; 16], ConvertError> {
+    let mut buf = [0u8; 16];
+    let src = s.as_bytes();
+    if src.len() > 16 {
+        return Err(ConvertError::InvalidByteLength);
+    }
+    let n = src.len().min(16);
+    buf[..n].copy_from_slice(&src[..n]);
+    Ok(buf)
+}
+
+/// Converts a 16-byte buffer back into a string, stripping zero padding.
+///
+/// Reads up to the first zero byte (the padding boundary written by
+/// [`string_to_bytes16`]) and interprets the preceding bytes as UTF-8.
+pub fn bytes16_to_string(buf: &[u8; 16]) -> Result<String, ConvertError>{
+    let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+    String::from_utf8(buf[..end].to_vec()).map_err(|_| ConvertError::FailedToParseByte)
+}
+
+pub fn create_encrypted_bytes16_from_string(input_string: &str) -> [u8; 16] {
+    let mut hash = [0u8; 16];
+    let mut hasher = Blake2bVar::new(16).expect("valid Blake2b output size");
+    hasher.update(input_string.as_bytes());
+    hasher
+        .finalize_variable(&mut hash)
+        .expect("valid Blake2b output buffer");
+    hash
 }

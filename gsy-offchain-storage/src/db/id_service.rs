@@ -1,11 +1,14 @@
 use crate::db::DatabaseWrapper;
+use anyhow::Context;
+use anyhow::{bail, Result};
+use futures::StreamExt;
+use mongodb::bson::{doc, to_bson};
+use mongodb::options::ReturnDocument;
 use mongodb::{Collection, IndexModel};
 use primitives::db_api_schema::ids::IdMappingSchema;
-use mongodb::options::ReturnDocument;
-use mongodb::bson::{doc, to_bson};
-use anyhow::{bail, Result};
+use primitives::utils::{bytes16_to_hex, create_encrypted_bytes16_from_string};
 use std::ops::Deref;
-use futures::StreamExt;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub async fn init_id_mapping(db: &DatabaseWrapper) -> Result<()> {
     let controller = db.id_mapping();
@@ -18,19 +21,17 @@ pub async fn init_id_mapping(db: &DatabaseWrapper) -> Result<()> {
     Ok(())
 }
 
-
 #[repr(transparent)]
 pub struct IdService(pub Collection<IdMappingSchema>);
 
 impl IdService {
-
     #[tracing::instrument(name = "Fetching ids", skip(self))]
     pub async fn filter(
         &self,
         onchain_id: Option<String>,
         offchain_id: Option<String>,
         id_type: Option<String>,
-    )-> Result<Vec<IdMappingSchema>> {
+    ) -> Result<Vec<IdMappingSchema>> {
         let mut filter_params = doc! {};
         if onchain_id.is_some() && offchain_id.is_some() {
             bail!("onchain_id and offchain_id are mutually exclusive");
@@ -61,27 +62,32 @@ impl IdService {
 
     #[tracing::instrument(
         name = "get or create id",
-        skip(self, id),
-        fields(offchain_id = %id.offchain_id)
+        skip(self),
+        fields(offchain_id = %offchain_id)
     )]
-    pub async fn get_or_create(&self, id: IdMappingSchema) -> Result<IdMappingSchema> {
+    pub async fn get_or_create(
+        &self,
+        offchain_id: String,
+        id_type: String,
+    ) -> Result<IdMappingSchema> {
         let result = self
             .0
             .find_one_and_update(
-                doc! {"offchain_id": &id.offchain_id},
+                doc! {"offchain_id": &offchain_id, "id_type": to_bson(&id_type)?},
                 doc! {"$setOnInsert": {
-            "onchain_id": id.onchain_id,
-            "id_type": to_bson(&id.id_type)?,
-            "creation_time": id.creation_time,
-        }},
+                "onchain_id": bytes16_to_hex(create_encrypted_bytes16_from_string(&offchain_id)),
+                "creation_time": SystemTime::now()
+                    .duration_since(UNIX_EPOCH)?
+                    .as_secs() as i64
+                }},
             )
             .upsert(true)
             .return_document(ReturnDocument::After)
             .await?;
-        Ok(result.expect("Error getting or creating id mapping"))
+
+        Ok(result.context("upsert returned no document")?)
     }
 }
-
 
 impl From<&DatabaseWrapper> for IdService {
     fn from(db: &DatabaseWrapper) -> Self {

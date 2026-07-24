@@ -2,7 +2,7 @@ use crate::db::grid_topology_service::{
     init_assets, init_communities, init_facilities, init_pilot_sites, init_sites, AssetService,
     EnergyCommunityService, FacilityService, PilotSiteService, SiteService,
 };
-use crate::db::id_service::{IdService, init_id_mapping};
+use crate::db::id_service::{init_id_mapping, IdService};
 use crate::db::market_service::{init_markets, MarketService};
 use crate::db::measurements_service::{
     init_measurement_points, init_timeseries, MeasurementPointService, TimeseriesService,

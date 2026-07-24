@@ -17,5 +17,5 @@ pub struct IdMappingSchema{
     pub offchain_id: String,
     pub onchain_id: String,
     pub id_type: IdType,
-    pub creation_time: String,
+    pub creation_time: u64,
 }
