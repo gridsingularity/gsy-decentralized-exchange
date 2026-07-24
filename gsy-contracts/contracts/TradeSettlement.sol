@@ -62,6 +62,8 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
         uint64 creationTime;
         uint64 energy;
         uint64 energyRate;
+        uint8 energySourcePreference;
+        uint8 energyType;
     }
 
     struct Match {
@@ -201,6 +203,8 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
             stored.creationTime != provided.creationTime ||
             stored.energy != provided.energy ||
             stored.energyRate != provided.energyRate ||
+            stored.energySourcePreference != provided.energySourcePreference ||
+            stored.energyType != provided.energyType ||
             stored.isBid != expectedBid
         ) {
             revert InvalidOrderParams();

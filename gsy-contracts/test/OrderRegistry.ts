@@ -1,7 +1,13 @@
 import { loadFixture } from "@nomicfoundation/hardhat-toolbox/network-helpers";
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { bytes16Id, deployUpgradeableContract, ORDER_TYPE_BID } from "./utils";
+import {
+  bytes16Id,
+  deployUpgradeableContract,
+  ENERGY_TYPE_GREEN,
+  ENERGY_TYPE_UNSPECIFIED,
+  ORDER_TYPE_BID,
+} from "./utils";
 
 describe("OrderRegistry", function () {
   async function deployRegistryFixture() {
@@ -36,6 +42,8 @@ describe("OrderRegistry", function () {
       creationTime: 900,
       energy: 100,
       energyRate: 50,
+      energySourcePreference: ENERGY_TYPE_GREEN,
+      energyType: ENERGY_TYPE_UNSPECIFIED,
       isBid: ORDER_TYPE_BID,
     };
 
@@ -65,6 +73,8 @@ describe("OrderRegistry", function () {
         baseOrder.creationTime,
         baseOrder.energy,
         baseOrder.energyRate,
+        baseOrder.energySourcePreference,
+        baseOrder.energyType,
         baseOrder.isBid,
       );
 
@@ -99,6 +109,22 @@ describe("OrderRegistry", function () {
     await expect(
       registry.connect(other).placeOrder(baseOrder),
     ).to.be.revertedWithCustomError(registry, "Unauthorized");
+  });
+
+  it("Should reject unsupported energy metadata values", async function () {
+    const { registry, user, baseOrder } = await loadFixture(
+      deployRegistryFixture,
+    );
+
+    await expect(
+      registry
+        .connect(user)
+        .placeOrder({ ...baseOrder, energySourcePreference: 99 }),
+    ).to.be.revertedWithCustomError(registry, "InvalidOrderParams");
+
+    await expect(
+      registry.connect(user).placeOrder({ ...baseOrder, energyType: 99 }),
+    ).to.be.revertedWithCustomError(registry, "InvalidOrderParams");
   });
 
   it("Should cancel an open order", async function () {

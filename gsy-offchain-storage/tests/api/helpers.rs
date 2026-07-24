@@ -1,7 +1,6 @@
 use gsy_offchain_storage::configuration::get_configuration;
 use gsy_offchain_storage::db::{delete_database, init_database, DatabaseWrapper};
-use gsy_offchain_storage::startup::run;
-use once_cell::sync::Lazy;
+use gsy_offchain_storage::http_server::run_http_server;
 use std::net::TcpListener;
 use uuid::Uuid;
 
@@ -12,8 +11,6 @@ pub struct TestApp {
 }
 
 pub async fn init_app() -> TestApp {
-    Lazy::force(&TRACING);
-
     let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind to random port");
     let port = listener.local_addr().unwrap().port();
     let address = format!("http://127.0.0.1:{}", port);
@@ -27,7 +24,7 @@ pub async fn init_app() -> TestApp {
     )
     .await
     .unwrap();
-    let server = run(listener, db_wrapper.clone()).expect("Failed to bind address");
+    let server = run_http_server(listener, db_wrapper.clone()).expect("Failed to bind address");
     let _ = tokio::spawn(server);
     TestApp {
         address,

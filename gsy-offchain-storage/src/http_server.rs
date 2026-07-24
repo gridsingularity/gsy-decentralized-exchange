@@ -16,7 +16,7 @@ use tracing::info;
 use tracing_actix_web::TracingLogger;
 
 /// Start http server that listens to exposed API endpoints
-fn run_http_server(
+pub fn run_http_server(
     listener: TcpListener,
     db_connection_wrapper: DatabaseWrapper,
 ) -> Result<Server, std::io::Error> {
