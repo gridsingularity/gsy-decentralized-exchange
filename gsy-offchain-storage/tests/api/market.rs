@@ -272,3 +272,38 @@ async fn post_market_succeeds() {
     let first_element = saved.iter().nth(0).unwrap();
     assert_eq!(*first_element, market);
 }
+
+#[tokio::test]
+async fn insert_market_rejects_duplicate_market_id() {
+    let app = init_app().await;
+
+    let (market, _areas) = create_market_topology_schema(
+        "dup_market".to_string(),
+        "communityhash".to_string(),
+        "community1".to_string(),
+        "area1".to_string(),
+        "area1hash".to_string(),
+        "area2".to_string(),
+        "area2hash".to_string(),
+    );
+
+    let db = web::Data::new(app.db_wrapper);
+    let market_ref = db.get_ref().markets();
+
+    // First insert of a fresh market_id succeeds.
+    let saved = market_ref.insert(market.clone()).await.unwrap();
+    assert_eq!(saved.market_id, "dup_market");
+
+    // Re-inserting the same market_id is rejected rather than silently
+    // creating a duplicate.
+    let duplicate = market_ref.insert(market.clone()).await;
+    assert!(
+        duplicate.is_err(),
+        "inserting a duplicate market_id must be rejected"
+    );
+
+    // Exactly one copy is stored, so reads stay healthy (no "more than one
+    // market" error).
+    let stored = market_ref.filter("dup_market".to_string()).await.unwrap();
+    assert_eq!(stored.len(), 1);
+}

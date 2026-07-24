@@ -68,21 +68,31 @@ impl MarketService {
         )
     )]
     pub async fn insert(&self, market: MarketTopologySchema) -> Result<MarketTopologySchema> {
-        self.check_if_market_exists(market.market_id.clone())
-            .await?;
+        if self
+            .check_if_market_exists(market.market_id.clone())
+            .await?
+        {
+            bail!(
+                "Market with id {} already exists; refusing to insert a duplicate",
+                market.market_id
+            );
+        }
         self.0.insert_one(market.clone()).await?;
         Ok(market)
     }
 
+    /// Returns whether a market with `market_id` already exists. Uses a bounded
+    /// `find_one` probe (not an unbounded drain) and reports existence from
+    /// whether a document was actually matched.
     async fn check_if_market_exists(&self, market_id: String) -> Result<bool> {
-        // NOTE: mirrors historical behavior — a successful lookup reports `true`
-        // even with zero matches, so this never actually prevents duplicates.
         match self
             .0
-            .query(doc! {"market_id": market_id.clone()}, |_| false)
+            .find_one(doc! {"market_id": market_id.clone()}, |market| {
+                market.market_id == market_id
+            })
             .await
         {
-            Ok(_) => Ok(true),
+            Ok(existing) => Ok(existing.is_some()),
             Err(_) => {
                 bail!("Failed find market with id: {:?}", market_id);
             }
