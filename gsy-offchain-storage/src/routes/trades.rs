@@ -16,14 +16,35 @@ use std::collections::BTreeMap;
 pub async fn post_trades(trades: Json<Vec<u8>>, db: DbRef) -> impl Responder {
     let deserialized_trades = convert_gsy_node_trades_schema_to_db_schema(trades.to_vec());
     for trade in deserialized_trades.clone() {
-        let _ = db.get_ref().orders().update_order_by_area_market_id(
-            trade.market_id.clone(),
-            trade.offer.offer_component.area_uuid.clone(),
-        );
-        let _ = db.get_ref().orders().update_order_by_area_market_id(
-            trade.market_id.clone(),
-            trade.bid.bid_component.area_uuid.clone(),
-        );
+        let orders = db.get_ref().orders();
+        if let Err(e) = orders
+            .update_order_by_area_market_id(
+                trade.offer.offer_component.area_uuid.clone(),
+                trade.market_id.clone(),
+            )
+            .await
+        {
+            tracing::error!(
+                "Failed to mark offer order Executed (area {}, market {}): {:?}",
+                trade.offer.offer_component.area_uuid,
+                trade.market_id,
+                e
+            );
+        }
+        if let Err(e) = orders
+            .update_order_by_area_market_id(
+                trade.bid.bid_component.area_uuid.clone(),
+                trade.market_id.clone(),
+            )
+            .await
+        {
+            tracing::error!(
+                "Failed to mark bid order Executed (area {}, market {}): {:?}",
+                trade.bid.bid_component.area_uuid,
+                trade.market_id,
+                e
+            );
+        }
     }
     match db
         .get_ref()

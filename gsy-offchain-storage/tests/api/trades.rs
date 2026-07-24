@@ -1,6 +1,9 @@
 use crate::helpers::init_app;
 use actix_web::web;
 use codec::Encode;
+use gsy_offchain_primitives::db_api_schema::orders::{
+    DbBid, DbOffer, DbOrderComponent, DbOrderSchema, Order as DbOrder, OrderStatus,
+};
 use gsy_offchain_primitives::node_to_api_schema::insert_order::{
     Bid as InsertBid, Offer as InsertOffer, OrderComponent as InsertOrderComponent,
 };
@@ -8,6 +11,7 @@ use gsy_offchain_primitives::node_to_api_schema::insert_trades::{
     Trade, TradeParameters as InsertTradeParameters,
 };
 use gsy_offchain_primitives::utils::h256_to_string;
+use mongodb::bson::Bson;
 use subxt::utils::{AccountId32, H256};
 
 #[tokio::test]
@@ -84,6 +88,130 @@ async fn post_trade_request_writes_trades_to_the_db() {
 
     let result_trade = saved.first().unwrap();
     assert_eq!(result_trade.trade_uuid, h256_to_string(trade1.trade_uuid));
+}
+
+#[tokio::test]
+async fn post_trades_marks_matching_orders_executed() {
+    let app = init_app().await;
+    let address = app.address;
+    let account: AccountId32 = crate::orders::create_test_accountid();
+    let market_id = H256::random();
+    let bid_area = H256::random();
+    let offer_area = H256::random();
+
+    // Seed an Open bid and an Open offer whose (area_uuid, market_id) — once
+    // hashed to strings — match what the trade will carry.
+    let db = web::Data::new(app.db_wrapper);
+    let seed_bid = DbOrderSchema {
+        _id: "seed_bid".to_string(),
+        status: OrderStatus::Open,
+        order: DbOrder::Bid(DbBid {
+            buyer: "buyer".to_string(),
+            nonce: 1,
+            bid_component: DbOrderComponent {
+                area_uuid: h256_to_string(bid_area),
+                market_id: h256_to_string(market_id),
+                time_slot: 1,
+                creation_time: 1677453190,
+                energy: 100.0,
+                energy_rate: 10.0,
+            },
+        }),
+    };
+    let seed_offer = DbOrderSchema {
+        _id: "seed_offer".to_string(),
+        status: OrderStatus::Open,
+        order: DbOrder::Offer(DbOffer {
+            seller: "seller".to_string(),
+            nonce: 1,
+            offer_component: DbOrderComponent {
+                area_uuid: h256_to_string(offer_area),
+                market_id: h256_to_string(market_id),
+                time_slot: 1,
+                creation_time: 1677453190,
+                energy: 100.0,
+                energy_rate: 10.0,
+            },
+        }),
+    };
+    db.get_ref()
+        .orders()
+        .insert_orders(vec![seed_bid, seed_offer])
+        .await
+        .expect("Failed to insert seed orders");
+
+    // Build and POST a trade referencing those same areas + market.
+    let bid = InsertBid {
+        buyer: account.clone(),
+        nonce: 1,
+        bid_component: InsertOrderComponent {
+            energy: 100,
+            energy_rate: 10,
+            area_uuid: bid_area,
+            market_id,
+            time_slot: 1,
+            creation_time: 1677453190,
+        },
+    };
+    let offer = InsertOffer {
+        seller: account.clone(),
+        nonce: 1,
+        offer_component: InsertOrderComponent {
+            energy: 100,
+            energy_rate: 10,
+            area_uuid: offer_area,
+            market_id,
+            time_slot: 1,
+            creation_time: 1677453190,
+        },
+    };
+    let trade_uuid = H256::random();
+    let trade = Trade {
+        seller: account.clone(),
+        buyer: account.clone(),
+        market_id,
+        time_slot: 123456123,
+        trade_uuid,
+        creation_time: 123456123,
+        offer,
+        offer_hash: H256::random(),
+        bid,
+        bid_hash: H256::random(),
+        residual_offer: None,
+        residual_bid: None,
+        parameters: InsertTradeParameters {
+            selected_energy: 14,
+            energy_rate: 3,
+            trade_uuid,
+        },
+    };
+    let body = Vec::<Trade<AccountId32, H256>>::encode(&vec![trade]);
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(&format!("{}/trades", &address))
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(200, resp.status().as_u16());
+
+    // Both seeded orders must now be Executed.
+    let status_of = |id: &'static str| {
+        let db = db.clone();
+        async move {
+            db.get_ref()
+                .orders()
+                .get_order_by_id(&Bson::String(id.to_string()))
+                .await
+                .expect("Failed to fetch order")
+                .expect("Order not found")
+                .status
+        }
+    };
+    assert_eq!(status_of("seed_bid").await, OrderStatus::Executed);
+    assert_eq!(status_of("seed_offer").await, OrderStatus::Executed);
 }
 
 #[tokio::test]
