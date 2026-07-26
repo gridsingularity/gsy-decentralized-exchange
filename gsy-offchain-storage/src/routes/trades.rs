@@ -1,10 +1,10 @@
 use crate::db::DbRef;
 use actix_web::web::Query;
 use actix_web::{HttpResponse, Responder, web::Json};
-use gsy_offchain_primitives::db_api_schema::trades::TradeSchema;
+use gsy_offchain_primitives::db_api_schema::trades::{TradeCanonicalSchema, TradeSchema};
 use gsy_offchain_primitives::node_to_api_schema::insert_trades::convert_gsy_node_trades_schema_to_db_schema;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 #[tracing::instrument(
     name = "Adding new trades",
@@ -89,6 +89,67 @@ pub async fn get_trades(db: DbRef, query_params: Query<GetTradesParams>) -> impl
             HttpResponse::InternalServerError().finish()
         }
     }
+}
+
+#[tracing::instrument(name = "Retrieve canonical trades with resolved asset names", skip(db))]
+pub async fn get_trades_canonical(
+    db: DbRef,
+    query_params: Query<GetTradesParams>,
+) -> impl Responder {
+    let trades = match db
+        .get_ref()
+        .trades()
+        .filter_trades(
+            query_params.market_id.clone(),
+            query_params.start_time,
+            query_params.end_time,
+        )
+        .await
+    {
+        Ok(trades) => trades,
+        Err(e) => {
+            tracing::error!("Failed to execute query: {:?}", e);
+            return HttpResponse::InternalServerError().finish();
+        }
+    };
+
+    let markets = match db.get_ref().markets().all_markets().await {
+        Ok(markets) => markets,
+        Err(e) => {
+            tracing::error!("Failed to fetch markets: {:?}", e);
+            return HttpResponse::InternalServerError().finish();
+        }
+    };
+
+    // Build a global area_hash -> name map from every market's topology.
+    // area_hash is globally unique (randomized per market) so this is
+    // unambiguous even across markets.
+    let mut name_by_area_hash: HashMap<String, String> = HashMap::new();
+    for market in &markets {
+        for area in &market.community_areas {
+            name_by_area_hash.insert(area.area_hash.clone(), area.name.clone());
+        }
+    }
+
+    // Each trade component's `area_uuid` holds the asset's `area_hash`.
+    let canonical: Vec<TradeCanonicalSchema> = trades
+        .into_iter()
+        .map(|trade| {
+            let seller_name = name_by_area_hash
+                .get(&trade.offer.offer_component.area_uuid)
+                .cloned();
+            let buyer_name = name_by_area_hash
+                .get(&trade.bid.bid_component.area_uuid)
+                .cloned();
+            TradeCanonicalSchema {
+                trade,
+                seller_name,
+                buyer_name,
+            }
+        })
+        .collect();
+
+    HttpResponse::Ok().json(canonical)
 }
 
 #[derive(Deserialize, Debug)]

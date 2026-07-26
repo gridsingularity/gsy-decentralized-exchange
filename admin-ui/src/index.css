@@ -18,6 +18,21 @@ body {
   font-size: 0.85em;
 }
 
+/* Trade party cell: asset name primary, raw account as muted subtitle. */
+.party-cell {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+
+.party-name {
+  font-weight: 600;
+}
+
+.party-account {
+  font-size: 0.72rem;
+}
+
 .error {
   background: #fff0f0;
   border: 1px solid #cf222e;
@@ -36,6 +51,16 @@ body {
   border-radius: 4px;
   font-size: 0.8rem;
   margin: 0 0 0.75rem;
+}
+
+/* Fallback shown by the top-level ErrorBoundary instead of a blank page. */
+.error-boundary {
+  max-width: 720px;
+  margin-top: 1rem;
+}
+
+.error-boundary h2 {
+  margin: 0 0 0.4rem;
 }
 
 /* --- shell --- */
@@ -230,17 +255,7 @@ body {
   font-size: 0.85rem;
 }
 
-/* --- market placeholder --- */
-.market-placeholder {
-  border: 1px dashed #bbb;
-  border-radius: 6px;
-  padding: 0.9rem 1rem;
-  background: #fcfcfc;
-}
-.market-placeholder h2 {
-  margin: 0 0 0.5rem;
-  font-size: 1rem;
-}
+/* --- key/value grid (reused by trade detail cards) --- */
 .kv {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -256,14 +271,238 @@ body {
   margin: 0;
   word-break: break-all;
 }
-.area-name-list {
-  list-style: none;
-  margin: 0 0 0.75rem;
-  padding: 0;
+
+/* --- market view (M4) --- */
+.market-view {
+  border: 1px solid #e2e2e2;
+  border-radius: 6px;
+  padding: 0.9rem 1rem;
+  background: #fff;
+}
+.market-view h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.05rem;
+}
+.market-view h3 {
+  margin: 1.1rem 0 0.4rem;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #666;
+}
+.market-header {
+  border-bottom: 1px solid #eee;
+  padding-bottom: 0.6rem;
+}
+.market-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.5rem;
+  margin: 0;
+}
+.market-stats div {
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
+}
+.market-stats dt {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #888;
+  font-weight: 600;
+}
+.market-stats dd {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+.pill {
+  display: inline-block;
+  border-radius: 10px;
+  padding: 0.05rem 0.5rem;
+  font-size: 0.8rem;
+  background: #eef;
+}
+.pill.selected {
+  background: #e6f0ff;
+  border: 1px solid #4a90e2;
+}
+
+/* --- asset view (M5) --- */
+.asset-view {
+  border: 1px solid #e2e2e2;
+  border-radius: 6px;
+  padding: 0.9rem 1rem;
+  background: #fff;
+}
+.asset-view h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.05rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.asset-view h3 {
+  margin: 1.1rem 0 0.4rem;
   font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #666;
+}
+.link-btn {
+  background: none;
+  border: none;
+  color: #4a90e2;
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+  padding: 0.4rem 0;
+  text-align: left;
+}
+.link-btn:hover {
+  text-decoration: underline;
+}
+.asset-slots {
+  margin-bottom: 0.5rem;
+}
+
+/* clickable topology asset nodes */
+.topo-btn {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  font: inherit;
+  padding: 0.1rem 0.35rem;
+}
+.topo-btn:hover {
+  background: #eef4ff;
+  border-color: #b9d0ff;
+}
+.topo-btn.selected {
+  background: #e6f0ff;
+  border-color: #4a90e2;
+}
+
+.pill.role-bid {
+  background: #e6f0ff;
+  color: #234;
+}
+.pill.role-offer {
+  background: #fff0e0;
+  color: #7a4a00;
+}
+
+/* --- data tables --- */
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+.data-table th,
+.data-table td {
+  text-align: left;
+  padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid #eee;
+}
+.data-table th {
+  color: #666;
+  font-weight: 600;
+  border-bottom: 1px solid #ddd;
+}
+.data-table th.num,
+.data-table td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.data-table tbody tr.selected {
+  background: #e6f0ff;
+}
+.raw-trade-row {
+  cursor: pointer;
+}
+.raw-trade-row:hover {
+  background: #f5f8ff;
+}
+.raw-trade-row .expander {
+  color: #888;
+  width: 1.2rem;
+}
+.raw-trade-detail > td {
+  background: #fafcff;
+}
+.caption {
+  margin: 0 0 0.5rem;
+}
+.caption code {
+  background: #eef;
+  border-radius: 3px;
+  padding: 0.02rem 0.25rem;
+}
+.trade-detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+  padding: 0.4rem 0;
+}
+.component-card {
+  border: 1px solid #e2e2e2;
+  border-radius: 5px;
+  padding: 0.4rem 0.6rem;
+  background: #fff;
+}
+.component-card h5 {
+  margin: 0 0 0.3rem;
+  font-size: 0.8rem;
+}
+.residual-note {
+  margin: 0.2rem 0 0.4rem;
+}
+
+/* --- bar charts --- */
+.chart-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin: 0.5rem 0 0.5rem;
+}
+.bar-chart {
+  margin: 0;
+  border: 1px solid #eee;
+  border-radius: 5px;
+  padding: 0.4rem 0.5rem;
+  background: #fcfcfc;
+}
+.bar-chart-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  margin-bottom: 0.2rem;
+}
+.bar-chart-svg {
+  display: block;
+}
+.bar-chart-axis {
+  stroke: #ccc;
+  stroke-width: 1;
+}
+.bar-chart-axis-label {
+  font-size: 8px;
+  fill: #999;
+}
+.bar-chart-x-label {
+  font-size: 8px;
+  fill: #888;
+}
+.bar-chart-empty {
+  font-size: 11px;
+  fill: #aaa;
+  text-anchor: middle;
+}
+.bar-chart-bar {
+  fill: #4a90e2;
+}
+.bar-chart-bar.selected {
+  fill: #f5a623;
 }
 
 @media (max-width: 860px) {
@@ -271,6 +510,10 @@ body {
     grid-template-columns: 1fr;
   }
   .detail-grid {
+    grid-template-columns: 1fr;
+  }
+  .chart-row,
+  .trade-detail-grid {
     grid-template-columns: 1fr;
   }
 }

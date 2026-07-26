@@ -112,6 +112,16 @@ export interface TradeSchema {
   parameters: TradeParameters;
 }
 
+// Returned by GET /trades-canonical: a TradeSchema (all fields flattened at the
+// top level, including the raw `seller`/`buyer` account ids) enriched with the
+// human-readable asset names resolved from the topology `area_hash` -> `name`
+// map. `seller_name`/`buyer_name` are null when the component `area_uuid`
+// (which carries the asset's `area_hash`, footgun #1) cannot be resolved.
+export interface TradeCanonicalSchema extends TradeSchema {
+  seller_name: string | null;
+  buyer_name: string | null;
+}
+
 export interface MeasurementSchema {
   // area_uuid here carries the asset `name` (sensor id), area_hash the per-market
   // random hash — see plan §9.4 before joining.

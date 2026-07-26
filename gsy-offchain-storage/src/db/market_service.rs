@@ -61,9 +61,14 @@ impl MarketService {
             .await
     }
 
+    #[tracing::instrument(name = "Fetching all markets from database", skip(self))]
+    pub async fn all_markets(&self) -> Result<Vec<MarketTopologySchema>> {
+        self.0.all().await
+    }
+
     #[tracing::instrument(name = "Listing communities from database", skip(self))]
     pub async fn list_communities(&self) -> Result<Vec<CommunitySummary>> {
-        let markets = self.0.all().await?;
+        let markets = self.all_markets().await?;
 
         let mut groups: HashMap<String, CommunitySummary> = HashMap::new();
         // Track the time_slot of the market that currently supplies each

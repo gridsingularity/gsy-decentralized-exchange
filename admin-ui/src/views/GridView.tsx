@@ -16,15 +16,20 @@ import {
 } from '../api/client';
 import type { CommunitySummary, MarketTopologySchema } from '../api/schema';
 import { formatSlot, type Window } from '../lib/time';
+import { truncate } from '../lib/format';
 import TopologyTree from '../components/TopologyTree';
-import MarketViewPlaceholder from '../components/MarketViewPlaceholder';
+import { Empty, ErrorNote, Loading } from '../components/AsyncState';
+import MarketView from './MarketView';
+import AssetView from './AssetView';
 
 interface Props {
   window: Window;
   community: string | undefined;
   market: string | undefined;
+  asset: string | undefined;
   onSelectCommunity: (name: string | undefined) => void;
   onSelectMarket: (marketId: string | undefined) => void;
+  onSelectAsset: (name: string) => void;
 }
 
 type CommunitiesSource = 'communities' | 'markets-fallback';
@@ -66,8 +71,10 @@ export default function GridView({
   window,
   community,
   market,
+  asset,
   onSelectCommunity,
   onSelectMarket,
+  onSelectAsset,
 }: Props) {
   const [communities, setCommunities] = useState<CommunitiesState>({
     loading: true,
@@ -128,14 +135,12 @@ export default function GridView({
               /markets in the selected window
             </p>
           )}
-        {communities.loading && <p className="muted">Loading communities…</p>}
-        {communities.error && (
-          <pre className="error">{communities.error}</pre>
-        )}
+        {communities.loading && <Loading label="Loading communities…" />}
+        {communities.error && <ErrorNote error={communities.error} />}
         {!communities.loading &&
           !communities.error &&
           communities.items.length === 0 && (
-            <p className="muted">No communities in this window.</p>
+            <Empty>No communities in this window.</Empty>
           )}
         <ul className="community-list">
           {communities.items.map((c) => (
@@ -167,10 +172,12 @@ export default function GridView({
             window={window}
             community={community}
             market={market}
+            asset={asset}
             onSelectMarket={onSelectMarket}
+            onSelectAsset={onSelectAsset}
           />
         ) : (
-          <p className="muted">Select a community to view its topology.</p>
+          <Empty>Select a community to view its topology.</Empty>
         )}
       </section>
     </div>
@@ -181,7 +188,9 @@ interface DetailProps {
   window: Window;
   community: string;
   market: string | undefined;
+  asset: string | undefined;
   onSelectMarket: (marketId: string | undefined) => void;
+  onSelectAsset: (name: string) => void;
 }
 
 interface MarketsState {
@@ -194,7 +203,9 @@ function CommunityDetail({
   window,
   community,
   market,
+  asset,
   onSelectMarket,
+  onSelectAsset,
 }: DetailProps) {
   const [state, setState] = useState<MarketsState>({
     loading: true,
@@ -227,29 +238,28 @@ function CommunityDetail({
     };
   }, [community, window.start, window.end]);
 
-  if (state.loading) return <p className="muted">Loading markets…</p>;
-  if (state.error) return <pre className="error">{state.error}</pre>;
+  if (state.loading) return <Loading label="Loading markets…" />;
+  if (state.error) return <ErrorNote error={state.error} />;
   if (state.items.length === 0) {
     return (
-      <p className="muted">
-        No markets for “{community}” in the selected window.
-      </p>
+      <Empty>No markets for “{community}” in the selected window.</Empty>
     );
   }
 
   // Canonical topology = the most-recent market's areas (max time_slot).
   const sorted = [...state.items].sort((a, b) => b.time_slot - a.time_slot);
   const canonical = sorted[0];
-  const selectedMarket = market
-    ? state.items.find((m) => m.market_id === market)
-    : undefined;
 
   return (
     <div className="detail-grid">
       <div className="detail-col">
         <h2>{community}</h2>
         <h3>Topology (most recent slot)</h3>
-        <TopologyTree areas={canonical.community_areas} />
+        <TopologyTree
+          areas={canonical.community_areas}
+          onSelectAsset={onSelectAsset}
+          selectedAsset={asset}
+        />
 
         <h3>Markets ({sorted.length})</h3>
         <ul className="slot-list">
@@ -274,17 +284,21 @@ function CommunityDetail({
       </div>
 
       <div className="detail-col">
-        {selectedMarket ? (
-          <MarketViewPlaceholder market={selectedMarket} />
+        {asset ? (
+          <AssetView markets={sorted} assetName={asset} window={window} />
+        ) : market ? (
+          <MarketView
+            markets={sorted}
+            selectedMarketId={market}
+            window={window}
+          />
         ) : (
-          <p className="muted">Select a market slot to open its (M4) view.</p>
+          <Empty>
+            Select a market slot to open its (M4) view, or an asset in the
+            topology to open its (M5) view.
+          </Empty>
         )}
       </div>
     </div>
   );
-}
-
-function truncate(value: string, head = 8, tail = 6): string {
-  if (value.length <= head + tail + 1) return value;
-  return `${value.slice(0, head)}…${value.slice(-tail)}`;
 }

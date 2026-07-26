@@ -1,5 +1,11 @@
 // Tiny typed fetch wrapper around the gsy-offchain-storage REST API.
-// All calls go through the Vite dev proxy under `/api` (same-origin in dev).
+//
+// Base URL: configurable via the `VITE_API_BASE_URL` build-time env var.
+//   - Unset (dev default) -> `/api`, which the Vite dev proxy rewrites to the
+//     backend on http://localhost:8080 (same-origin in dev, no CORS needed).
+//   - Set to a full origin (e.g. `http://some-host:8080`) -> calls go directly
+//     there. Running the built app against a remote backend that way requires
+//     that backend to allow this origin (CORS) — out of scope for this UI.
 //
 // Time bounds (start_time/end_time) are Unix seconds and must never exceed
 // u32::MAX — the backend types them as u32 and would silently truncate.
@@ -10,11 +16,12 @@ import type {
   ForecastSchema,
   MarketTopologySchema,
   MeasurementSchema,
+  TradeCanonicalSchema,
   TradeSchema,
   TradedEnergyResponse,
 } from './schema';
 
-const API_BASE = '/api';
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '/api';
 
 export type QueryParams = Record<
   string,
@@ -75,6 +82,33 @@ export function getTrades(
   params?: { market_id?: string } & TimeWindow,
 ): Promise<TradeSchema[]> {
   return apiGet<TradeSchema[]>('/trades', { ...params });
+}
+
+/**
+ * GET /trades-canonical?market_id?&start_time?&end_time?
+ * Same params as getTrades, but each trade is enriched with resolved
+ * seller_name/buyer_name asset names (null when unresolvable).
+ */
+export function getTradesCanonical(
+  params?: { market_id?: string } & TimeWindow,
+): Promise<TradeCanonicalSchema[]> {
+  return apiGet<TradeCanonicalSchema[]>('/trades-canonical', { ...params });
+}
+
+/**
+ * Resilient trades fetch used by the views. Prefers /trades-canonical, but
+ * falls back to /trades (mapping names to null) when the backend does not yet
+ * expose the canonical endpoint — e.g. an older Docker container that 404s.
+ */
+export async function getTradesResolved(
+  params?: { market_id?: string } & TimeWindow,
+): Promise<TradeCanonicalSchema[]> {
+  try {
+    return await getTradesCanonical(params);
+  } catch {
+    const trades = await getTrades(params);
+    return trades.map((t) => ({ ...t, seller_name: null, buyer_name: null }));
+  }
 }
 
 /** GET /communities — enumerate all communities (keyed on community_name). */

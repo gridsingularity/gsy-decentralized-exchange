@@ -26,9 +26,17 @@ function meta(type: AssetType) {
 
 interface Props {
   areas: AreaTopologySchema[];
+  /** Selecting an asset node calls this with the asset's stable `name`. */
+  onSelectAsset?: (name: string) => void;
+  /** Highlight the active asset (matched by `name`). */
+  selectedAsset?: string;
 }
 
-export default function TopologyTree({ areas }: Props) {
+export default function TopologyTree({
+  areas,
+  onSelectAsset,
+  selectedAsset,
+}: Props) {
   if (areas.length === 0) {
     return <p className="muted">No areas in this market.</p>;
   }
@@ -40,7 +48,11 @@ export default function TopologyTree({ areas }: Props) {
     <ul className="topo-tree">
       {containers.map((c) => (
         <li key={c.name} className="topo-node topo-container">
-          <AssetLabel node={c} />
+          <AssetLabel
+            node={c}
+            onSelectAsset={onSelectAsset}
+            selectedAsset={selectedAsset}
+          />
         </li>
       ))}
       {leaves.length > 0 && (
@@ -51,7 +63,11 @@ export default function TopologyTree({ areas }: Props) {
           <ul className="topo-leaves">
             {leaves.map((leaf) => (
               <li key={leaf.name} className="topo-node topo-leaf">
-                <AssetLabel node={leaf} />
+                <AssetLabel
+                  node={leaf}
+                  onSelectAsset={onSelectAsset}
+                  selectedAsset={selectedAsset}
+                />
               </li>
             ))}
           </ul>
@@ -61,13 +77,41 @@ export default function TopologyTree({ areas }: Props) {
   );
 }
 
-function AssetLabel({ node }: { node: AreaTopologySchema }) {
+function AssetLabel({
+  node,
+  onSelectAsset,
+  selectedAsset,
+}: {
+  node: AreaTopologySchema;
+  onSelectAsset?: (name: string) => void;
+  selectedAsset?: string;
+}) {
   const m = meta(node.area_type);
-  return (
-    <span className="topo-label" title={`${node.area_type} • ${node.name}`}>
+  const isSelected = node.name === selectedAsset;
+  const inner = (
+    <>
       <span className="topo-icon">{m.icon}</span>
       <span className="topo-badge">{m.label}</span>
       <span className="topo-name">{node.name}</span>
-    </span>
+    </>
+  );
+
+  if (!onSelectAsset) {
+    return (
+      <span className="topo-label" title={`${node.area_type} • ${node.name}`}>
+        {inner}
+      </span>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      className={isSelected ? 'topo-label topo-btn selected' : 'topo-label topo-btn'}
+      title={`${node.area_type} • ${node.name}`}
+      onClick={() => onSelectAsset(node.name)}
+    >
+      {inner}
+    </button>
   );
 }

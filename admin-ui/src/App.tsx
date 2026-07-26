@@ -45,10 +45,14 @@ export default function App() {
         window={window}
         community={params.community}
         market={params.market}
+        asset={params.asset}
         onSelectCommunity={(name) =>
-          setParams({ community: name, market: undefined })
+          setParams({ community: name, market: undefined, asset: undefined })
         }
-        onSelectMarket={(marketId) => setParams({ market: marketId })}
+        onSelectMarket={(marketId) =>
+          setParams({ market: marketId, asset: undefined })
+        }
+        onSelectAsset={(name) => setParams({ asset: name, market: undefined })}
       />
     </main>
   );
