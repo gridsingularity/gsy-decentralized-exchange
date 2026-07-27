@@ -37,7 +37,8 @@ use sp_runtime::{
 	generic::Era,
 	impl_opaque_keys,
 	traits::{
-		self, AccountIdLookup, BlakeTwo256, One, SaturatedConversion, StaticLookup,
+		self, AccountIdLookup, BlakeTwo256, ConvertInto, One, OpaqueKeys, SaturatedConversion,
+		StaticLookup,
 	},
 	transaction_validity::TransactionPriority,
 };
@@ -80,6 +81,7 @@ pub use orderbook_worker;
 pub use trades_settlement;
 pub use remuneration;
 pub use stripe_bridge;
+pub use validator_set;
 
 /// Index of a transaction in the chain.
 pub type Index = u32;
@@ -135,16 +137,16 @@ pub const VERSION: RuntimeVersion = RuntimeVersion {
 ///
 /// The block time is feature-gated so that the default build (used by the e2e
 /// docker compose and local/dev chains) keeps the original fast 6s blocks,
-/// while the `four-node-poa` deployment build targets a slower 15s block time.
+/// while the `poa` deployment build targets a slower 15s block time.
 /// The slower cadence reduces per-block storage overhead and disk I/O on the
 /// validator nodes, which is what allows them to run on small (~20GB) plain
 /// HDD volumes. See `docs/setup/deployment.md`.
 ///
 /// NOTE: the slot duration cannot be changed after a chain has started, so this
-/// must be fixed before the four-node-poa network is launched from genesis.
-#[cfg(not(feature = "four-node-poa"))]
+/// must be fixed before the poa network is launched from genesis.
+#[cfg(not(feature = "poa"))]
 pub const MILLISECS_PER_BLOCK: u64 = 6000;
-#[cfg(feature = "four-node-poa")]
+#[cfg(feature = "poa")]
 pub const MILLISECS_PER_BLOCK: u64 = 15000;
 
 // NOTE: Currently it is not possible to change the slot duration after the chain has started.
@@ -242,7 +244,9 @@ impl pallet_grandpa::Config for Runtime {
 	type WeightInfo = ();
 	type MaxAuthorities = ConstU32<32>;
 	type MaxNominators = ConstU32<0>;
-	type MaxSetIdSessionEntries = ConstU64<0>;
+	// Retain a window of (set id -> session) entries now that GRANDPA authority
+	// changes are driven by session rotations rather than fixed at genesis.
+	type MaxSetIdSessionEntries = ConstU64<168>;
 
 	type KeyOwnerProof = sp_core::Void;
 	type EquivocationReportSystem = ();
@@ -274,7 +278,9 @@ impl pallet_balances::Config for Runtime {
 	type WeightInfo = pallet_balances::weights::SubstrateWeight<Runtime>;
 	type FreezeIdentifier = ();
 	type MaxFreezes = ();
-	type RuntimeHoldReason = ();
+	// Aggregated hold reasons; required so `pallet-session` can place its
+	// (zero-value) key deposit hold via the fungible `HoldMutate` trait.
+	type RuntimeHoldReason = RuntimeHoldReason;
 	type RuntimeFreezeReason = ();
 
 	type DoneSlashHandler = ();
@@ -298,6 +304,41 @@ impl pallet_sudo::Config for Runtime {
 	type RuntimeEvent = RuntimeEvent;
 	type RuntimeCall = RuntimeCall;
 	type WeightInfo = pallet_sudo::weights::SubstrateWeight<Runtime>;
+}
+
+parameter_types! {
+	/// Number of blocks per session. A validator added/removed via `ValidatorSet`
+	/// becomes active at the next session boundary, so this also bounds how
+	/// quickly authority-set changes take effect.
+	pub const SessionPeriod: BlockNumber = HOURS;
+	pub const SessionOffset: BlockNumber = 0;
+	/// Upper bound on the active validator set. Must stay <= the Aura/GRANDPA
+	/// `MaxAuthorities` (32).
+	pub const MaxValidatorSetSize: u32 = 32;
+	/// The active set is never allowed to drop below this, to protect finality.
+	pub const MinValidatorSetSize: u32 = 1;
+}
+
+impl pallet_session::Config for Runtime {
+	type RuntimeEvent = RuntimeEvent;
+	type ValidatorId = AccountId;
+	type ValidatorIdOf = ConvertInto;
+	type ShouldEndSession = pallet_session::PeriodicSessions<SessionPeriod, SessionOffset>;
+	type NextSessionRotation = pallet_session::PeriodicSessions<SessionPeriod, SessionOffset>;
+	type SessionManager = ValidatorSet;
+	type SessionHandler = <SessionKeys as OpaqueKeys>::KeyTypeIdProviders;
+	type Keys = SessionKeys;
+	type DisablingStrategy = pallet_session::disabling::UpToLimitWithReEnablingDisablingStrategy;
+	type WeightInfo = ();
+	type Currency = Balances;
+	// No economic deposit for setting session keys on this PoA network.
+	type KeyDeposit = ConstU128<0>;
+}
+
+impl validator_set::Config for Runtime {
+	type RuntimeEvent = RuntimeEvent;
+	type MaxValidators = MaxValidatorSetSize;
+	type MinValidators = MinValidatorSetSize;
 }
 
 parameter_types! {
@@ -519,6 +560,16 @@ mod runtime {
 
 	#[runtime::pallet_index(13)]
 	pub type StripeBridge = stripe_bridge;
+
+	// Session management: drives the Aura and GRANDPA authority sets, so
+	// validators can be added/removed on a live chain instead of being fixed
+	// at genesis.
+	#[runtime::pallet_index(14)]
+	pub type Session = pallet_session;
+
+	// Sudo-gated add/remove of validators; acts as the session manager.
+	#[runtime::pallet_index(15)]
+	pub type ValidatorSet = validator_set;
 }
 
 /// The address format for describing accounts.

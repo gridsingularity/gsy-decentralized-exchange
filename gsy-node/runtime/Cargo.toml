@@ -29,6 +29,7 @@ gsy-primitives = { workspace = true }
 pallet-aura = { workspace = true }
 pallet-balances = { workspace = true }
 pallet-grandpa = { workspace = true }
+pallet-session = { workspace = true }
 pallet-sudo = { workspace = true }
 pallet-timestamp = { workspace = true }
 pallet-transaction-payment = { workspace = true }
@@ -60,6 +61,7 @@ gsy-collateral = { workspace = true }
 trades-settlement = { workspace = true }
 remuneration = { workspace = true }
 stripe-bridge = { workspace = true }
+validator-set = { workspace = true }
 
 # Used for the GSy node's RPCs
 frame-system-rpc-runtime-api = { workspace = true }
@@ -79,9 +81,10 @@ substrate-wasm-builder = { optional = true, workspace = true, default-features =
 
 [features]
 default = ["std"]
-# Adds the deterministic 4-validator "four-node-poa" genesis preset.
+# Adds the "poa" genesis preset: a growable PoA network seeded with 2 validators
+# (validators can be added/removed on a live chain via the validator-set pallet).
 # Off by default so normal builds (e.g. e2e) keep the original genesis/code blob.
-four-node-poa = []
+poa = []
 std = [
 	"codec/std",
 	"frame-benchmarking?/std",
@@ -95,11 +98,13 @@ std = [
 	"pallet-aura/std",
 	"pallet-balances/std",
 	"pallet-grandpa/std",
+	"pallet-session/std",
 	"pallet-sudo/std",
 	"orderbook-registry/std",
 	"orderbook-worker/std",
 	"gsy-collateral/std",
 	"trades-settlement/std",
+	"validator-set/std",
 	"pallet-timestamp/std",
 	"pallet-transaction-payment-rpc-runtime-api/std",
 	"pallet-transaction-payment/std",
@@ -127,12 +132,14 @@ runtime-benchmarks = [
 	"frame-system/runtime-benchmarks",
 	"pallet-balances/runtime-benchmarks",
 	"pallet-grandpa/runtime-benchmarks",
+	"pallet-session/runtime-benchmarks",
 	"pallet-sudo/runtime-benchmarks",
 	"pallet-timestamp/runtime-benchmarks",
 	"orderbook-registry/runtime-benchmarks",
 	"orderbook-worker/runtime-benchmarks",
 	"gsy-collateral/runtime-benchmarks",
 	"trades-settlement/runtime-benchmarks",
+	"validator-set/runtime-benchmarks",
 	"pallet-transaction-payment/runtime-benchmarks",
 	"sp-runtime/runtime-benchmarks",
 ]
@@ -144,6 +151,7 @@ try-runtime = [
 	"pallet-aura/try-runtime",
 	"pallet-balances/try-runtime",
 	"pallet-grandpa/try-runtime",
+	"pallet-session/try-runtime",
 	"pallet-sudo/try-runtime",
 	"pallet-timestamp/try-runtime",
 	"pallet-transaction-payment/try-runtime",
@@ -152,6 +160,7 @@ try-runtime = [
 	"orderbook-worker/try-runtime",
 	"gsy-collateral/try-runtime",
 	"trades-settlement/try-runtime",
+	"validator-set/try-runtime",
 ]
 
 # Enable the metadata hash generation.

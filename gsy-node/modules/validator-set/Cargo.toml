@@ -1,0 +1,55 @@
+[package]
+name = 'validator-set'
+version = '0.0.2'
+description = 'PoA validator-set management for pallet-session (sudo-gated add/remove).'
+authors = ['Grid Singularity <https://github.com/gridsingularity>']
+homepage = 'https://gridsingularity.com/'
+edition = '2021'
+license = 'Unlicense'
+publish = false
+repository = 'https://github.com/gridsingularity/gsy-node'
+
+[package.metadata.docs.rs]
+targets = ['x86_64-unknown-linux-gnu']
+
+[lib]
+name = "validator_set"
+path = "src/lib.rs"
+crate-type = ["rlib"]
+
+[dependencies]
+codec = { workspace = true }
+scale-info = { workspace = true }
+frame-support = { workspace = true }
+frame-system = { workspace = true }
+pallet-session = { workspace = true }
+sp-runtime = { workspace = true }
+sp-std = { workspace = true }
+log = { version = "0.4.21", default-features = false }
+frame-benchmarking = { workspace = true, optional = true }
+
+[features]
+default = ['std']
+std = [
+    'codec/std',
+    'scale-info/std',
+    'frame-support/std',
+    'frame-system/std',
+    'pallet-session/std',
+    'sp-runtime/std',
+    'sp-std/std',
+    'log/std',
+    'frame-benchmarking?/std',
+]
+runtime-benchmarks = [
+    "frame-benchmarking/runtime-benchmarks",
+    "frame-support/runtime-benchmarks",
+    "frame-system/runtime-benchmarks",
+    "sp-runtime/runtime-benchmarks",
+]
+try-runtime = [
+    "frame-support/try-runtime",
+    "frame-system/try-runtime",
+    "pallet-session/try-runtime",
+    "sp-runtime/try-runtime",
+]

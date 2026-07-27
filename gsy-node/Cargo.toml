@@ -6,6 +6,7 @@ members = [
     "modules/orderbook-worker",
     "modules/remuneration",
     "modules/stripe-bridge",
+    "modules/validator-set",
     "runtime",
 ]
 resolver = "1"
@@ -23,6 +24,7 @@ orderbook-worker = { version = '0.0.2', default-features = false, path = './modu
 trades-settlement = { version = '0.0.2', default-features = false, path = './modules/trades-settlement' }
 remuneration = { version = '0.0.2', default-features = false, path = './modules/remuneration' }
 stripe-bridge = { version = '0.0.2', default-features = false, path = './modules/stripe-bridge' }
+validator-set = { version = '0.0.2', default-features = false, path = './modules/validator-set' }
 
 # Base substrate frame dependencies
 codec = { package = "parity-scale-codec", version = "3.6.9", default-features = false, features = ["derive"] }
@@ -44,6 +46,7 @@ frame-benchmarking-cli = { git = "https://github.com/paritytech/polkadot-sdk.git
 pallet-aura = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.21.0", default-features = false }
 pallet-balances = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.21.0", default-features = false }
 pallet-grandpa = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.21.0", default-features = false }
+pallet-session = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.21.0", default-features = false }
 pallet-sudo = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.21.0", default-features = false }
 pallet-timestamp = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.21.0", default-features = false }
 pallet-transaction-payment = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.21.0", default-features = false }

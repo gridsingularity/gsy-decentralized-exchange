@@ -1,5 +1,5 @@
 [Unit]
-Description=GSy DEX four-node-poa archive node (full history, non-validator)
+Description=GSy DEX poa archive node (full history, non-validator)
 After=network-online.target
 Wants=network-online.target
 
@@ -7,7 +7,7 @@ Wants=network-online.target
 User=gsy
 Group=gsy
 EnvironmentFile=/etc/gsy/env
-# Path to the binary built with: cargo build --release --features four-node-poa
+# Path to the binary built with: cargo build --release --features poa
 ExecStart=/usr/local/bin/gsy-node \
     --name ${GSY_NAME}-archive \
     --chain ${GSY_CHAIN} \
