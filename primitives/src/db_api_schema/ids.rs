@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 pub enum IdType {
     #[serde(rename = "actor_id")]
     ActorId,
-    #[serde(rename = "oder_id")]
+    #[serde(rename = "order_id")]
     OrderId,
     #[serde(rename = "trade_id")]
     TradeId,
