@@ -23,7 +23,8 @@ COPY --from=chef /var/www/gsy-matching-engine/target /var/www/gsy-matching-engin
 WORKDIR /var/www/gsy-matching-engine
 RUN cargo build --release
 
-FROM rustlang/rust:nightly AS runtime
+FROM debian:trixie-slim AS runtime
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates openssl && rm -rf /var/lib/apt/lists/*
 WORKDIR /var/www/gsy-matching-engine
 COPY --from=builder /var/www/gsy-matching-engine/target/release/gsy-matching-engine /usr/local/bin
 ENTRYPOINT ["/usr/local/bin/gsy-matching-engine", "web3", "http://gsy-orderbook", "8080", "ws://gsy-node", "9944"]

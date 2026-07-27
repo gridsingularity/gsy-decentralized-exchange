@@ -31,9 +31,9 @@ COPY --from=chef /app/gsy-community-client/target /app/gsy-community-client/targ
 WORKDIR /app/e2e-tests
 RUN cargo build --release --bin trade_executor
 
-FROM chef AS runtime
+FROM debian:trixie-slim AS runtime
 
-#RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates openssl && rm -rf /var/lib/apt/lists/*
 WORKDIR /usr/src/app
 COPY --from=builder /app/e2e-tests/target/release/trade_executor .
 COPY --from=builder /app/e2e-tests/features ./features

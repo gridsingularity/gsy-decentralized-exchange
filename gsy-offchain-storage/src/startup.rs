@@ -1,9 +1,9 @@
 use crate::db::DatabaseWrapper;
 use crate::routes::{
-    get_forecasts, get_guarantees_of_origin, get_market, get_market_from_community,
-    get_markets_in_window, get_measurements, get_orders, get_traded_energy, get_trades,
-    health_check, post_forecasts, post_market, post_measurements, post_normalized_orders,
-    post_normalized_trades, post_orders, post_trades,
+    get_communities, get_forecasts, get_guarantees_of_origin, get_market,
+    get_market_from_community, get_markets_in_window, get_measurements, get_orders,
+    get_traded_energy, get_trades, get_trades_canonical, health_check, post_forecasts, post_market,
+    post_measurements, post_normalized_orders, post_normalized_trades, post_orders, post_trades,
 };
 use actix_web::dev::Server;
 use actix_web::{App, HttpServer, web};
@@ -25,6 +25,7 @@ pub fn run(
             .route("/trades-normalized", web::post().to(post_normalized_trades))
             .route("/trades", web::post().to(post_trades))
             .route("/trades", web::get().to(get_trades))
+            .route("/trades-canonical", web::get().to(get_trades_canonical))
             .route("/traded-energy", web::get().to(get_traded_energy))
             .route(
                 "/guarantees-of-origin-measurements",
@@ -41,6 +42,7 @@ pub fn run(
                 "/community-market",
                 web::get().to(get_market_from_community),
             )
+            .route("/communities", web::get().to(get_communities))
             .app_data(db_connection_wrapper.clone())
     })
     .listen(listener)?

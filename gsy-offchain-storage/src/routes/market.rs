@@ -80,6 +80,17 @@ pub async fn get_markets_in_window(
     }
 }
 
+pub async fn get_communities(db: DbRef) -> impl Responder {
+    let market_service = db.get_ref().markets();
+    match market_service.list_communities().await {
+        Ok(communities) => HttpResponse::Ok().json(communities),
+        Err(e) => {
+            tracing::error!("Failed to execute query: {:?}", e);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
 fn get_only_one_market(
     markets: Vec<MarketTopologySchema>,
     tracing_description: String,

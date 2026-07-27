@@ -6,3 +6,4 @@ mod measurements_forecasts;
 mod orders;
 mod traded_energy;
 pub mod trades;
+mod trades_canonical;

@@ -1,7 +1,7 @@
 use crate::helpers::init_app;
 use actix_web::web;
 use gsy_offchain_primitives::db_api_schema::market::{
-    AreaTopologySchema, AssetType, MarketTopologySchema,
+    AreaTopologySchema, AssetType, CommunitySummary, MarketTopologySchema,
 };
 use gsy_offchain_primitives::utils::h256_to_string;
 use subxt::utils::H256;
@@ -271,4 +271,123 @@ async fn post_market_succeeds() {
 
     let first_element = saved.iter().nth(0).unwrap();
     assert_eq!(*first_element, market);
+}
+
+fn market_with_slot(
+    market_id: &str,
+    community_name: &str,
+    community_uuid: &str,
+    time_slot: u32,
+) -> MarketTopologySchema {
+    MarketTopologySchema {
+        market_id: market_id.to_string(),
+        community_areas: vec![AreaTopologySchema {
+            name: "area1".to_string(),
+            area_uuid: "area1uuid".to_string(),
+            area_hash: h256_to_string(H256::random()),
+            area_type: AssetType::AREA,
+        }],
+        time_slot,
+        creation_time: time_slot,
+        community_name: community_name.to_string(),
+        community_uuid: community_uuid.to_string(),
+    }
+}
+
+#[tokio::test]
+async fn get_communities_summarizes_markets_per_community() {
+    let app = init_app().await;
+    let address = app.address;
+
+    let db = web::Data::new(app.db_wrapper);
+    let market_ref = db.get_ref().markets();
+
+    // Community "zeta": two markets across two slots. The uuid is randomized
+    // per market; the summary should report the uuid of the LATEST slot.
+    market_ref
+        .insert(market_with_slot("zeta_1", "zeta", "zeta_uuid_early", 1000))
+        .await
+        .unwrap();
+    market_ref
+        .insert(market_with_slot("zeta_2", "zeta", "zeta_uuid_late", 3000))
+        .await
+        .unwrap();
+
+    // Community "alpha": three markets across three slots.
+    market_ref
+        .insert(market_with_slot("alpha_1", "alpha", "alpha_uuid_a", 2000))
+        .await
+        .unwrap();
+    market_ref
+        .insert(market_with_slot("alpha_2", "alpha", "alpha_uuid_b", 500))
+        .await
+        .unwrap();
+    market_ref
+        .insert(market_with_slot("alpha_3", "alpha", "alpha_uuid_latest", 5000))
+        .await
+        .unwrap();
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(&format!("{}/communities", &address))
+        .header("Content-Type", "application/json")
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(200, resp.status().as_u16());
+    let communities: Vec<CommunitySummary> = resp.json().await.unwrap();
+
+    // Two distinct communities, sorted by name ascending.
+    assert_eq!(communities.len(), 2);
+    assert_eq!(communities[0].community_name, "alpha");
+    assert_eq!(communities[1].community_name, "zeta");
+
+    let alpha = &communities[0];
+    assert_eq!(alpha.market_count, 3);
+    assert_eq!(alpha.earliest_slot, 500);
+    assert_eq!(alpha.latest_slot, 5000);
+    // uuid comes from the market with the latest time_slot (5000).
+    assert_eq!(alpha.community_uuid, "alpha_uuid_latest");
+
+    let zeta = &communities[1];
+    assert_eq!(zeta.market_count, 2);
+    assert_eq!(zeta.earliest_slot, 1000);
+    assert_eq!(zeta.latest_slot, 3000);
+    assert_eq!(zeta.community_uuid, "zeta_uuid_late");
+}
+
+#[tokio::test]
+async fn insert_market_rejects_duplicate_market_id() {
+    let app = init_app().await;
+
+    let (market, _areas) = create_market_topology_schema(
+        "dup_market".to_string(),
+        "communityhash".to_string(),
+        "community1".to_string(),
+        "area1".to_string(),
+        "area1hash".to_string(),
+        "area2".to_string(),
+        "area2hash".to_string(),
+    );
+
+    let db = web::Data::new(app.db_wrapper);
+    let market_ref = db.get_ref().markets();
+
+    // First insert of a fresh market_id succeeds.
+    let saved = market_ref.insert(market.clone()).await.unwrap();
+    assert_eq!(saved.market_id, "dup_market");
+
+    // Re-inserting the same market_id is rejected rather than silently
+    // creating a duplicate.
+    let duplicate = market_ref.insert(market.clone()).await;
+    assert!(
+        duplicate.is_err(),
+        "inserting a duplicate market_id must be rejected"
+    );
+
+    // Exactly one copy is stored, so reads stay healthy (no "more than one
+    // market" error).
+    let stored = market_ref.filter("dup_market".to_string()).await.unwrap();
+    assert_eq!(stored.len(), 1);
 }

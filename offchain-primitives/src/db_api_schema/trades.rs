@@ -48,3 +48,15 @@ impl TradeSchema {
     }
 
 }
+
+/// A trade enriched with the human-readable asset names for the seller and
+/// buyer sides, resolved from the topology `area_hash` -> `name` mapping.
+/// The original `TradeSchema` fields (including the `seller`/`buyer` account
+/// ids) are flattened in at the top level and left untouched.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct TradeCanonicalSchema {
+    #[serde(flatten)]
+    pub trade: TradeSchema,
+    pub seller_name: Option<String>,
+    pub buyer_name: Option<String>,
+}

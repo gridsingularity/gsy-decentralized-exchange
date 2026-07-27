@@ -24,7 +24,9 @@ COPY --from=chef /var/www/gsy-offchain-storage/target /var/www/gsy-offchain-stor
 WORKDIR /var/www/gsy-offchain-storage/
 RUN cargo build --release
 
-FROM rustlang/rust:nightly
+FROM debian:trixie-slim AS runtime
+# curl is required by the compose healthcheck (/health_check probe).
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates openssl curl && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 

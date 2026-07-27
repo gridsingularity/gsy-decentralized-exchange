@@ -43,10 +43,12 @@ WORKDIR /var/www/gsy-node/
 ENV OFFCHAIN_STORAGE_URL=http://gsy-offchain-storage:8080
 RUN cargo build --release
 
-FROM chef AS runtime
+FROM ubuntu:24.04 AS runtime
+# curl is required by the compose healthcheck (system_health RPC probe).
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates openssl curl && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /var/www/gsy-node/
-COPY --from=builder /var/www/gsy-node/target /var/www/gsy-node/target
+COPY --from=builder /var/www/gsy-node/target/release/gsy-node /var/www/gsy-node/target/release/gsy-node
 ENV OFFCHAIN_STORAGE_URL=http://gsy-offchain-storage:8080
 EXPOSE 9944
 ENTRYPOINT ["./target/release/gsy-node", "--dev", "--rpc-external"]
