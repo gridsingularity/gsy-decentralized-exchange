@@ -1,8 +1,8 @@
 use chrono::NaiveDateTime;
 use gsy_offchain_primitives::{
-    algorithms::PayAsBid,
-    db_api_schema::orders::DbRequirements as Requirements,
-    db_api_schema::orders::DbRequirements as Attributes};
+    algorithms::PayAsBid, db_api_schema::orders::DbRequirements as Requirements,
+    db_api_schema::orders::DbRequirements as Attributes,
+};
 use serde::{Deserialize, Serialize, Serializer};
 use std::collections::HashMap;
 
@@ -24,7 +24,6 @@ where
         None => serializer.serialize_none(),
     }
 }
-
 
 #[derive(Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub struct Bid {

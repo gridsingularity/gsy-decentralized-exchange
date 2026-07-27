@@ -16,7 +16,7 @@ abigen!(
         function lastSelectedEnergy() external view returns (uint256)
         function lastClearingPrice() external view returns (uint256)
         function lastBidCreatedBy() external view returns (bytes16)
-        function lastAskCreatedBy() external view returns (bytes16)
+        function lastOfferCreatedBy() external view returns (bytes16)
     ]"#
 );
 
@@ -51,12 +51,16 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
                 uint64 creationTime;
                 uint64 energy;
                 uint64 energyRate;
+                uint8 energySourcePreference;
+                uint8 energyType;
             }
 
             struct Match {
                 bytes16 tradeId;
                 OrderData bid;
-                OrderData ask;
+                OrderData offer;
+                bytes16 residualBidId;
+                bytes16 residualOfferId;
                 uint256 selectedEnergy;
                 uint256 clearingPrice;
             }
@@ -65,7 +69,7 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
             uint256 public lastSelectedEnergy;
             uint256 public lastClearingPrice;
             bytes16 public lastBidCreatedBy;
-            bytes16 public lastAskCreatedBy;
+            bytes16 public lastOfferCreatedBy;
 
             constructor() {
                 roles[msg.sender][OPERATOR_ROLE] = true;
@@ -83,7 +87,7 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
                     lastSelectedEnergy = first.selectedEnergy;
                     lastClearingPrice = first.clearingPrice;
                     lastBidCreatedBy = first.bid.createdBy;
-                    lastAskCreatedBy = first.ask.createdBy;
+                    lastOfferCreatedBy = first.offer.createdBy;
                 }
             }
         }
@@ -262,7 +266,7 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
         parse_or_hash_bytes16(&bid_actor_id)
     );
     assert_eq!(
-        mock_contract.last_ask_created_by().call().await.unwrap(),
+        mock_contract.last_offer_created_by().call().await.unwrap(),
         parse_or_hash_bytes16(&ask_actor_id)
     );
 }

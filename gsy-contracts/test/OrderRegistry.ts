@@ -1,23 +1,29 @@
 import { loadFixture } from "@nomicfoundation/hardhat-toolbox/network-helpers";
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { bytes16Id, ORDER_TYPE_BID } from "./utils";
+import {
+  bytes16Id,
+  deployUpgradeableContract,
+  ENERGY_TYPE_GREEN,
+  ENERGY_TYPE_UNSPECIFIED,
+  ORDER_TYPE_BID,
+} from "./utils";
 
 describe("OrderRegistry", function () {
   async function deployRegistryFixture() {
     const [admin, user, proxy, other] = await ethers.getSigners();
 
-    const MarketController =
-      await ethers.getContractFactory("MarketController");
-    const controller = await MarketController.deploy();
-    const GsyVault = await ethers.getContractFactory("GsyVault");
-    const vault = await GsyVault.deploy();
-
-    const OrderRegistry = await ethers.getContractFactory("OrderRegistry");
-    const registry = await OrderRegistry.deploy(
+    const controller = await deployUpgradeableContract("MarketController", [
+      admin.address,
+    ]);
+    const actorRegistry = await deployUpgradeableContract("ActorRegistry", [
+      admin.address,
+    ]);
+    const registry = await deployUpgradeableContract("OrderRegistry", [
+      admin.address,
       await controller.getAddress(),
-      await vault.getAddress(),
-    );
+      await actorRegistry.getAddress(),
+    ]);
 
     const actorId = bytes16Id("actor:user");
     const marketId = bytes16Id("market-1");
@@ -25,8 +31,8 @@ describe("OrderRegistry", function () {
     await controller.grantRole(ORCHESTRATOR_ROLE, admin.address);
     await controller.setMarketStatus(marketId, true);
 
-    await vault.registerActor(actorId, user.address);
-    await vault.connect(user).setProxy(actorId, proxy.address, true);
+    await actorRegistry.registerActor(actorId, user.address);
+    await actorRegistry.connect(user).setProxy(actorId, proxy.address, true);
 
     const baseOrder = {
       orderId: bytes16Id("order-1"),
@@ -36,13 +42,14 @@ describe("OrderRegistry", function () {
       creationTime: 900,
       energy: 100,
       energyRate: 50,
+      energySourcePreference: ENERGY_TYPE_GREEN,
+      energyType: ENERGY_TYPE_UNSPECIFIED,
       isBid: ORDER_TYPE_BID,
     };
 
     return {
       registry,
       controller,
-      vault,
       user,
       proxy,
       other,
@@ -66,6 +73,8 @@ describe("OrderRegistry", function () {
         baseOrder.creationTime,
         baseOrder.energy,
         baseOrder.energyRate,
+        baseOrder.energySourcePreference,
+        baseOrder.energyType,
         baseOrder.isBid,
       );
 
@@ -100,6 +109,22 @@ describe("OrderRegistry", function () {
     await expect(
       registry.connect(other).placeOrder(baseOrder),
     ).to.be.revertedWithCustomError(registry, "Unauthorized");
+  });
+
+  it("Should reject unsupported energy metadata values", async function () {
+    const { registry, user, baseOrder } = await loadFixture(
+      deployRegistryFixture,
+    );
+
+    await expect(
+      registry
+        .connect(user)
+        .placeOrder({ ...baseOrder, energySourcePreference: 99 }),
+    ).to.be.revertedWithCustomError(registry, "InvalidOrderParams");
+
+    await expect(
+      registry.connect(user).placeOrder({ ...baseOrder, energyType: 99 }),
+    ).to.be.revertedWithCustomError(registry, "InvalidOrderParams");
   });
 
   it("Should cancel an open order", async function () {

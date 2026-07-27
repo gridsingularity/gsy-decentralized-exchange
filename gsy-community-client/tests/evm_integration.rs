@@ -1,10 +1,10 @@
 use ethers::{prelude::*, utils::Anvil};
 use ethers_solc::{artifacts::Severity, Project, ProjectPathsConfig};
 use gsy_community_client::node_connector::orders::publish_orders;
-use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketSchema};
+use gsy_offchain_primitives::db_api_schema::market::MarketSchema;
 use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
 use gsy_offchain_primitives::utils::parse_or_hash_bytes16;
-use gsy_offchain_primitives::MarketType;
+use gsy_offchain_primitives::{MarketType, MatchingAlgorithm};
 use std::{fs::File, io::Write, sync::Arc};
 use tempfile::TempDir;
 
@@ -14,6 +14,8 @@ abigen!(
         function placedCount() external view returns (uint256)
         function lastCreatedBy() external view returns (bytes16)
         function lastMarketId() external view returns (bytes16)
+        function lastEnergySourcePreference() external view returns (uint8)
+        function lastEnergyType() external view returns (uint8)
         function lastIsBid() external view returns (bool)
     ]"#
 );
@@ -24,31 +26,31 @@ fn test_market() -> MarketSchema {
     MarketSchema {
         market_id: format!("0x{}", "11".repeat(16)),
         community_id: "community-1".to_string(),
-        opening_time: 2_700_000_000u32,
-        closing_time: 2_800_000_000u32,
-        delivery_start_time: 1_700_000_000u32,
-        delivery_end_time: 1_800_000_000u32,
+        opening_time: "00000000002700000000".to_string(),
+        closing_time: "00000000002800000000".to_string(),
+        delivery_start_time: "00000000001700000000".to_string(),
+        delivery_end_time: "00000000001800000000".to_string(),
         market_type: MarketType::Spot,
         matching_algorithm: MatchingAlgorithm::PayAsBid,
-        created_at: 1_699_999_000u32,
+        created_at: "00000000001699999000".to_string(),
     }
 }
 
 fn test_forecasts(market: &MarketSchema) -> Vec<ForecastSchema> {
     vec![
         ForecastSchema {
-            area_uuid: "area-a".to_string(),
+            facility_id: "area-a".to_string(),
             community_uuid: "community-1".to_string(),
-            time_slot: market.delivery_start_time as u64,
-            creation_time: market.created_at as u64,
+            time_slot: 1_700_000_000,
+            creation_time: 1_699_999_000,
             energy_kwh: 12.0,
             confidence: 0.9,
         },
         ForecastSchema {
-            area_uuid: "area-b".to_string(),
+            facility_id: "area-b".to_string(),
             community_uuid: "community-1".to_string(),
-            time_slot: market.delivery_start_time as u64,
-            creation_time: market.created_at as u64,
+            time_slot: 1_700_000_000,
+            creation_time: 1_699_999_000,
             energy_kwh: -3.0,
             confidence: 0.7,
         },
@@ -144,18 +146,24 @@ async fn test_publish_orders_calls_evm_order_registry() {
                 uint64 creationTime;
                 uint64 energy;
                 uint64 energyRate;
+                uint8 energySourcePreference;
+                uint8 energyType;
                 bool isBid;
             }
 
             uint256 public placedCount;
             bytes16 public lastCreatedBy;
             bytes16 public lastMarketId;
+            uint8 public lastEnergySourcePreference;
+            uint8 public lastEnergyType;
             bool public lastIsBid;
 
             function placeOrder(OrderParams calldata params) external {
                 placedCount += 1;
                 lastCreatedBy = params.createdBy;
                 lastMarketId = params.marketId;
+                lastEnergySourcePreference = params.energySourcePreference;
+                lastEnergyType = params.energyType;
                 lastIsBid = params.isBid;
             }
         }
@@ -189,6 +197,15 @@ async fn test_publish_orders_calls_evm_order_registry() {
         mock_contract.last_market_id().call().await.unwrap(),
         parse_or_hash_bytes16("0x11111111111111111111111111111111")
     );
+    assert_eq!(
+        mock_contract
+            .last_energy_source_preference()
+            .call()
+            .await
+            .unwrap(),
+        0u8
+    );
+    assert_eq!(mock_contract.last_energy_type().call().await.unwrap(), 0u8);
     assert!(!mock_contract.last_is_bid().call().await.unwrap());
 }
 
@@ -256,6 +273,8 @@ async fn test_publish_orders_returns_error_when_contract_reverts() {
                 uint64 creationTime;
                 uint64 energy;
                 uint64 energyRate;
+                uint8 energySourcePreference;
+                uint8 energyType;
                 bool isBid;
             }
 

@@ -6,7 +6,9 @@ use gsy_ethers_listener::{
     TradeSettledFilter,
 };
 use gsy_offchain_primitives::db_api_schema::{
-    orders::{DbOrderSchema, OrderEnum, OrderStatus},
+    orders::{
+        DbAttributes, DbOrderSchema, DbRequirements, IntelligentEnergyType, OrderEnum, OrderStatus,
+    },
     trades::{TradeParameters, TradeSchema, TradeStatus},
 };
 use gsy_offchain_primitives::utils::{bytes16_to_hex, NODE_FLOAT_SCALING_FACTOR};
@@ -41,7 +43,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             order_id: order_id_str,
             status: OrderStatus::Open,
             order_type: order_enum,
-            area_uuid: market_id_str.clone(),
+            area_uuid: created_by_str.clone(),
             market_id: market_id_str,
             nonce: None,
             time_slot: event.time_slot,
@@ -49,8 +51,8 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             energy_kWh: energy_f64,
             energy_rate: rate_f64,
             created_by: created_by_str,
-            requirements: None,
-            attributes: None,
+            requirements: requirements_from_event(&event),
+            attributes: attributes_from_event(&event),
         };
 
         match self.db.orders().insert_orders(vec![schema]).await {
@@ -88,29 +90,36 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         let price_f64 = event.price.as_u64() as f64 / NODE_FLOAT_SCALING_FACTOR;
 
         let bid_hash_str = bytes16_to_hex(event.bid_id);
-        let ask_hash_str = bytes16_to_hex(event.ask_id);
+        let offer_hash_str = bytes16_to_hex(event.offer_id);
+        let residual_bid_id = bytes16_to_optional_hex(event.residual_bid_id);
+        let residual_offer_id = bytes16_to_optional_hex(event.residual_offer_id);
 
         let bid_bson = mongodb::bson::to_bson(&bid_hash_str).unwrap();
-        let ask_bson = mongodb::bson::to_bson(&ask_hash_str).unwrap();
+        let offer_bson = mongodb::bson::to_bson(&offer_hash_str).unwrap();
 
         let bid_doc = self.db.orders().get_order_by_id(&bid_bson).await?;
-        let ask_doc = self.db.orders().get_order_by_id(&ask_bson).await?;
+        let offer_doc = self.db.orders().get_order_by_id(&offer_bson).await?;
 
-        if let (Some(bid_order), Some(ask_order)) = (bid_doc, ask_doc) {
+        if let (Some(bid_order), Some(offer_order)) = (bid_doc, offer_doc) {
+            let residual_bid = get_optional_order(&self.db, residual_bid_id.as_ref()).await?;
+            let residual_offer = get_optional_order(&self.db, residual_offer_id.as_ref()).await?;
+
             let trade_schema = TradeSchema {
                 trade_uuid: trade_hash.clone(),
                 status: TradeStatus::Settled,
-                seller: ask_order.created_by.clone(),
-                buyer: bid_order.created_by.clone(),
-                market_id: bid_order.market_id.clone(),
-                time_slot: bid_order.time_slot,
+                seller: bytes16_to_hex(event.seller_id),
+                buyer: bytes16_to_hex(event.buyer_id),
+                market_id: bytes16_to_hex(event.market_id),
+                time_slot: event.time_slot,
                 creation_time: chrono::Utc::now().timestamp() as u64,
-                offer: ask_order,
-                offer_hash: ask_hash_str,
+                offer: offer_order,
+                offer_hash: offer_hash_str,
                 bid: bid_order,
                 bid_hash: bid_hash_str,
-                residual_offer: None,
-                residual_bid: None,
+                residual_offer_id,
+                residual_bid_id,
+                residual_offer,
+                residual_bid,
                 parameters: TradeParameters {
                     selected_energy_kWh: energy_f64,
                     energy_rate: price_f64,
@@ -125,7 +134,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
                 .await?;
             self.db
                 .orders()
-                .update_order_status_by_id(&ask_bson, OrderStatus::Executed)
+                .update_order_status_by_id(&offer_bson, OrderStatus::Executed)
                 .await?;
 
             info!("Trade persisted and orders updated.");
@@ -144,4 +153,59 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         );
         Ok(())
     }
+}
+
+fn energy_type_from_contract(value: u8) -> Option<IntelligentEnergyType> {
+    match value {
+        1 => Some(IntelligentEnergyType::Green),
+        2 => Some(IntelligentEnergyType::Pv),
+        3 => Some(IntelligentEnergyType::Hydro),
+        4 => Some(IntelligentEnergyType::Biomass),
+        5 => Some(IntelligentEnergyType::Battery),
+        6 => Some(IntelligentEnergyType::Grey),
+        _ => None,
+    }
+}
+
+fn requirements_from_event(event: &OrderPlacedFilter) -> Option<DbRequirements> {
+    if !event.is_bid {
+        return None;
+    }
+
+    energy_type_from_contract(event.energy_source_preference).map(|energy_type| DbRequirements {
+        trading_partner_id: None,
+        energy_type: Some(energy_type),
+        preferred_energy_rate: None,
+    })
+}
+
+fn attributes_from_event(event: &OrderPlacedFilter) -> Option<DbAttributes> {
+    if event.is_bid {
+        return None;
+    }
+
+    energy_type_from_contract(event.energy_type).map(|energy_type| DbAttributes {
+        trading_partner_id: None,
+        energy_type,
+    })
+}
+
+fn bytes16_to_optional_hex(value: [u8; 16]) -> Option<String> {
+    if value == [0u8; 16] {
+        None
+    } else {
+        Some(bytes16_to_hex(value))
+    }
+}
+
+async fn get_optional_order(
+    db: &DatabaseWrapper,
+    order_id: Option<&String>,
+) -> Result<Option<DbOrderSchema>> {
+    let Some(order_id) = order_id else {
+        return Ok(None);
+    };
+
+    let order_bson = mongodb::bson::to_bson(order_id).unwrap();
+    db.orders().get_order_by_id(&order_bson).await
 }

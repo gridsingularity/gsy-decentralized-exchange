@@ -4,6 +4,7 @@ pub mod db_api_schema;
 pub mod constants;
 pub mod types;
 pub mod utils;
+pub mod log;
 
 use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
@@ -17,6 +18,16 @@ pub enum MarketType {
     #[serde(rename = "settlement")]
     Settlement,
 }
+impl MarketType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MarketType::Spot => "spot",
+            MarketType::Flex => "flex",
+            MarketType::Settlement => "settlement",
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, Eq)]
 pub enum MatchingAlgorithm {
     #[serde(rename = "pay_as_bid")]

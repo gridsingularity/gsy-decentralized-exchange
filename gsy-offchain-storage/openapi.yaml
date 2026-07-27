@@ -646,6 +646,10 @@ components:
       enum: [Open, Executed, Expired, Deleted]
       default: Open
 
+    IntelligentEnergyType:
+      type: string
+      enum: [GREEN, PV, HYDRO, BIOMASS, BATTERY, GREY]
+
     DbOrderSchema:
       type: object
       required:
@@ -669,12 +673,10 @@ components:
         creation_time: { type: string }
         created_by: { type: string }
         energy_source_preference:
-          type: array
-          items: { type: string }
+          $ref: "#/components/schemas/IntelligentEnergyType"
           nullable: true
         energy_type:
-          type: array
-          items: { type: string }
+          $ref: "#/components/schemas/IntelligentEnergyType"
           nullable: true
         area_uuid:
           type: string

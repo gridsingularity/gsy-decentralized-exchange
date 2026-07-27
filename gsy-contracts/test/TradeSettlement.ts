@@ -1,37 +1,39 @@
 import { loadFixture } from "@nomicfoundation/hardhat-toolbox/network-helpers";
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { bytes16Id, ORDER_TYPE_BID, ORDER_TYPE_ASK, ZERO_BYTES16 } from "./utils";
+import {
+  bytes16Id,
+  deployUpgradeableContract,
+  ENERGY_TYPE_GREEN,
+  ENERGY_TYPE_UNSPECIFIED,
+  ORDER_TYPE_BID,
+  ORDER_TYPE_ASK,
+  ZERO_BYTES16,
+} from "./utils";
 
 describe("TradeSettlement", function () {
   async function deploySettlementFixture() {
     const [admin, buyer, seller, operator, executionEngine] =
       await ethers.getSigners();
 
-    const MarketController =
-      await ethers.getContractFactory("MarketController");
-    const controller = await MarketController.deploy();
-
-    const GsyVault = await ethers.getContractFactory("GsyVault");
-    const vault = await GsyVault.deploy();
-
-    const OrderRegistry = await ethers.getContractFactory("OrderRegistry");
-    const registry = await OrderRegistry.deploy(
+    const controller = await deployUpgradeableContract("MarketController", [
+      admin.address,
+    ]);
+    const actorRegistry = await deployUpgradeableContract("ActorRegistry", [
+      admin.address,
+    ]);
+    const registry = await deployUpgradeableContract("OrderRegistry", [
+      admin.address,
       await controller.getAddress(),
-      await vault.getAddress(),
-    );
-
-    const TradeSettlement = await ethers.getContractFactory("TradeSettlement");
-    const settlement = await TradeSettlement.deploy(
+      await actorRegistry.getAddress(),
+    ]);
+    const settlement = await deployUpgradeableContract("TradeSettlement", [
+      admin.address,
       await registry.getAddress(),
-      await vault.getAddress(),
-    );
+    ]);
 
     const ORCHESTRATOR_ROLE = await controller.ORCHESTRATOR_ROLE();
     await controller.grantRole(ORCHESTRATOR_ROLE, admin.address);
-
-    const SETTLEMENT_ROLE_VAULT = await vault.SETTLEMENT_ROLE();
-    await vault.grantRole(SETTLEMENT_ROLE_VAULT, await settlement.getAddress());
 
     const SETTLEMENT_ROLE_REGISTRY = await registry.SETTLEMENT_ROLE();
     await registry.grantRole(
@@ -49,11 +51,8 @@ describe("TradeSettlement", function () {
     const marketId = bytes16Id("market-1");
     await controller.setMarketStatus(marketId, true);
 
-    await vault.registerActor(buyerActorId, buyer.address);
-    await vault.registerActor(sellerActorId, seller.address);
-
-    const depositAmount = 10000;
-    await vault.connect(buyer).deposit(buyerActorId, { value: depositAmount });
+    await actorRegistry.registerActor(buyerActorId, buyer.address);
+    await actorRegistry.registerActor(sellerActorId, seller.address);
 
     const bid = {
       orderId: bytes16Id("bid-1"),
@@ -63,66 +62,132 @@ describe("TradeSettlement", function () {
       creationTime: 900,
       energy: 100,
       energyRate: 50,
+      energySourcePreference: ENERGY_TYPE_GREEN,
+      energyType: ENERGY_TYPE_UNSPECIFIED,
       isBid: ORDER_TYPE_BID,
     };
 
-    const ask = {
-      orderId: bytes16Id("ask-1"),
+    const offer = {
+      orderId: bytes16Id("offer-1"),
       createdBy: sellerActorId,
       marketId: marketId,
       timeSlot: 1000,
       creationTime: 900,
       energy: 100,
       energyRate: 40,
+      energySourcePreference: ENERGY_TYPE_UNSPECIFIED,
+      energyType: ENERGY_TYPE_GREEN,
       isBid: ORDER_TYPE_ASK,
     };
 
     return {
       settlement,
       registry,
-      vault,
       buyer,
       seller,
       operator,
       executionEngine,
       bid,
-      ask,
+      offer,
       buyerActorId,
       sellerActorId,
       marketId,
-      depositAmount,
     };
   }
 
   it("Should settle a valid trade", async function () {
-    const { settlement, registry, vault, buyer, seller, operator, bid, ask, buyerActorId, sellerActorId } =
+    const {
+      settlement,
+      registry,
+      buyer,
+      seller,
+      operator,
+      bid,
+      offer,
+      buyerActorId,
+      sellerActorId,
+      marketId,
+    } =
       await loadFixture(deploySettlementFixture);
 
     await registry.connect(buyer).placeOrder(bid);
-    await registry.connect(seller).placeOrder(ask);
+    await registry.connect(seller).placeOrder(offer);
 
     const matchData = {
       tradeId: bytes16Id("trade-1"),
       bid,
-      ask,
+      offer,
+      residualBidId: ZERO_BYTES16,
+      residualOfferId: ZERO_BYTES16,
       selectedEnergy: 100,
       clearingPrice: 45,
     };
 
-    const totalCost = matchData.selectedEnergy * matchData.clearingPrice;
-
-    expect(await vault.balances(buyerActorId)).to.equal(10000);
-    expect(await vault.balances(sellerActorId)).to.equal(0);
-
-    await expect(settlement.connect(operator).settleBatch([matchData])).to.emit(
-      settlement,
-      "TradeSettled",
-    );
-
-    expect(await vault.balances(buyerActorId)).to.equal(10000 - totalCost);
-    expect(await vault.balances(sellerActorId)).to.equal(totalCost);
+    await expect(settlement.connect(operator).settleBatch([matchData]))
+      .to.emit(settlement, "TradeSettled")
+      .withArgs(
+        matchData.tradeId,
+        bid.orderId,
+        offer.orderId,
+        buyerActorId,
+        sellerActorId,
+        marketId,
+        bid.timeSlot,
+        ZERO_BYTES16,
+        ZERO_BYTES16,
+        matchData.selectedEnergy,
+        matchData.clearingPrice,
+      );
 
     expect(await registry.getStatus(bid.orderId)).to.equal(2); // Executed
+    expect(await registry.getStatus(offer.orderId)).to.equal(2); // Executed
+  });
+
+  it("Should emit residual order ids for partially filled orders", async function () {
+    const {
+      settlement,
+      registry,
+      buyer,
+      seller,
+      operator,
+      bid,
+      offer,
+      buyerActorId,
+      sellerActorId,
+      marketId,
+    } = await loadFixture(deploySettlementFixture);
+
+    const partialOffer = { ...offer, energy: 150 };
+    const residualOfferId = bytes16Id("residual-offer-1");
+
+    await registry.connect(buyer).placeOrder(bid);
+    await registry.connect(seller).placeOrder(partialOffer);
+
+    const matchData = {
+      tradeId: bytes16Id("trade-partial-1"),
+      bid,
+      offer: partialOffer,
+      residualBidId: ZERO_BYTES16,
+      residualOfferId,
+      selectedEnergy: 100,
+      clearingPrice: 45,
+    };
+
+    await expect(settlement.connect(operator).settleBatch([matchData]))
+      .to.emit(settlement, "TradeSettled")
+      .withArgs(
+        matchData.tradeId,
+        bid.orderId,
+        partialOffer.orderId,
+        buyerActorId,
+        sellerActorId,
+        marketId,
+        bid.timeSlot,
+        ZERO_BYTES16,
+        residualOfferId,
+        matchData.selectedEnergy,
+        matchData.clearingPrice,
+      );
   });
 
   it("Should submit penalties from the execution engine", async function () {
@@ -201,11 +266,19 @@ describe("TradeSettlement", function () {
   });
 
   it("Should fail if orders are not open", async function () {
-    const { settlement, operator, bid, ask } = await loadFixture(
+    const { settlement, operator, bid, offer } = await loadFixture(
       deploySettlementFixture,
     );
 
-    const matchData = { tradeId: bytes16Id("trade-1"), bid, ask, selectedEnergy: 100, clearingPrice: 45 };
+    const matchData = {
+      tradeId: bytes16Id("trade-1"),
+      bid,
+      offer,
+      residualBidId: ZERO_BYTES16,
+      residualOfferId: ZERO_BYTES16,
+      selectedEnergy: 100,
+      clearingPrice: 45,
+    };
 
     await expect(
       settlement.connect(operator).settleBatch([matchData]),
@@ -213,17 +286,19 @@ describe("TradeSettlement", function () {
   });
 
   it("Should fail if match order details do not match stored orders", async function () {
-    const { settlement, registry, buyer, seller, operator, bid, ask } =
+    const { settlement, registry, buyer, seller, operator, bid, offer } =
       await loadFixture(deploySettlementFixture);
 
     await registry.connect(buyer).placeOrder(bid);
-    await registry.connect(seller).placeOrder(ask);
+    await registry.connect(seller).placeOrder(offer);
 
     const tamperedBid = { ...bid, energyRate: bid.energyRate + 1 };
     const matchData = {
       tradeId: bytes16Id("trade-1"),
       bid: tamperedBid,
-      ask,
+      offer,
+      residualBidId: ZERO_BYTES16,
+      residualOfferId: ZERO_BYTES16,
       selectedEnergy: 100,
       clearingPrice: 45,
     };
@@ -233,18 +308,20 @@ describe("TradeSettlement", function () {
     ).to.be.revertedWithCustomError(settlement, "InvalidOrderParams");
   });
 
-  it("Should fail on price mismatch (Ask > Bid)", async function () {
-    const { settlement, registry, buyer, seller, operator, bid, ask } =
+  it("Should fail on price mismatch (Offer > Bid)", async function () {
+    const { settlement, registry, buyer, seller, operator, bid, offer } =
       await loadFixture(deploySettlementFixture);
 
-    const highAsk = { ...ask, energyRate: 60 };
+    const highOffer = { ...offer, energyRate: 60 };
     await registry.connect(buyer).placeOrder(bid);
-    await registry.connect(seller).placeOrder(highAsk);
+    await registry.connect(seller).placeOrder(highOffer);
 
     const matchData = {
       tradeId: bytes16Id("trade-1"),
       bid,
-      ask: highAsk,
+      offer: highOffer,
+      residualBidId: ZERO_BYTES16,
+      residualOfferId: ZERO_BYTES16,
       selectedEnergy: 100,
       clearingPrice: 55,
     };

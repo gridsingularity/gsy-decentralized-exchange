@@ -11,8 +11,20 @@ use tracing::{info, warn};
 
 const BID_RATE: f64 = 0.3;
 const OFFER_RATE: f64 = 0.07;
+const ENERGY_TYPE_UNSPECIFIED: u8 = 0;
 
-pub type EvmOrderParamsTuple = ([u8; 16], [u8; 16], [u8; 16], u64, u64, u64, u64, bool);
+pub type EvmOrderParamsTuple = (
+    [u8; 16],
+    [u8; 16],
+    [u8; 16],
+    u64,
+    u64,
+    u64,
+    u64,
+    u8,
+    u8,
+    bool,
+);
 
 pub async fn publish_orders(
     evm_node_url: String,
@@ -102,6 +114,8 @@ abigen!(
                         {"name": "creationTime", "type": "uint64"},
                         {"name": "energy", "type": "uint64"},
                         {"name": "energyRate", "type": "uint64"},
+                        {"name": "energySourcePreference", "type": "uint8"},
+                        {"name": "energyType", "type": "uint8"},
                         {"name": "isBid", "type": "bool"}
                     ]
                 }
@@ -113,7 +127,7 @@ abigen!(
 
 fn build_order_param(
     forecast: &ForecastSchema,
-    area_uuid: &String,
+    facility_id: &String,
     market: &MarketSchema,
     now: u64,
     index: usize,
@@ -123,7 +137,7 @@ fn build_order_param(
     let order_id = parse_or_hash_bytes16(
         format!(
             "{}:{}:{}:{}:{}",
-            market.market_id, area_uuid, market.delivery_start_time, index, is_bid
+            market.market_id, facility_id, market.delivery_start_time, index, is_bid
         )
         .as_str(),
     );
@@ -131,12 +145,14 @@ fn build_order_param(
         string_to_timestamp(&market.delivery_start_time).expect("invalid delivery_start_time");
     (
         order_id,
-        parse_or_hash_bytes16(area_uuid.as_str()),
+        parse_or_hash_bytes16(facility_id.as_str()),
         parse_or_hash_bytes16(market.market_id.as_str()),
         delivery_start,
         now,
         (forecast.energy_kwh.abs() * NODE_FLOAT_SCALING_FACTOR) as u64,
         (forecast.energy_kwh.abs() * rate_multiplier * NODE_FLOAT_SCALING_FACTOR) as u64,
+        ENERGY_TYPE_UNSPECIFIED,
+        ENERGY_TYPE_UNSPECIFIED,
         is_bid,
     )
 }
@@ -155,7 +171,7 @@ pub fn create_input_orders(
         if forecast.energy_kwh > 0. {
             input_orders.push(build_order_param(
                 &forecast,
-                &forecast.area_uuid,
+                &forecast.facility_id,
                 &market,
                 now,
                 index,
@@ -164,7 +180,7 @@ pub fn create_input_orders(
         } else if forecast.energy_kwh < 0. {
             input_orders.push(build_order_param(
                 &forecast,
-                &forecast.area_uuid,
+                &forecast.facility_id,
                 &market,
                 now,
                 index,

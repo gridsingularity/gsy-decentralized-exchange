@@ -4,6 +4,8 @@ use cucumber::World;
 use ethers::prelude::*;
 use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
 use gsy_offchain_primitives::db_api_schema::trades::TradeSchema;
+use gsy_offchain_primitives::db_api_schema::market::MarketSchema;
+use gsy_community_client::external_api::ExternalFacilityTopology;
 use gsy_offchain_primitives::utils::parse_or_hash_bytes16;
 use gsy_offchain_primitives::MarketType;
 use reqwest::Client;
@@ -32,7 +34,7 @@ pub struct MyWorld {
     pub market_controller_address: Address,
     pub order_registry_address: Address,
     pub trade_settlement_address: Address,
-    pub gsy_vault_address: Address,
+    pub actor_registry_address: Address,
     pub last_market_id: Option<[u8; 16]>,
     pub target_delivery_time: u64,
     pub buyer_id: String,
@@ -41,6 +43,8 @@ pub struct MyWorld {
     pub offer_forecast: Option<ForecastSchema>,
     pub last_trade: Option<TradeSchema>,
     pub last_charlie_offer_order_id: Option<String>,
+    pub market_schema: Option<MarketSchema>,
+    pub facilities_topology: Vec<ExternalFacilityTopology>,
 }
 
 impl MyWorld {
@@ -77,7 +81,7 @@ impl MyWorld {
         let market_controller_address = Self::read_address_env("MARKET_CONTROLLER_ADDRESS")?;
         let order_registry_address = Self::read_address_env("ORDER_REGISTRY_ADDRESS")?;
         let trade_settlement_address = Self::read_address_env("TRADE_SETTLEMENT_ADDRESS")?;
-        let gsy_vault_address = Self::read_address_env("GSY_VAULT_ADDRESS")?;
+        let actor_registry_address = Self::read_address_env("ACTOR_REGISTRY_ADDRESS")?;
 
         Ok(Self {
             provider,
@@ -90,7 +94,7 @@ impl MyWorld {
             market_controller_address,
             order_registry_address,
             trade_settlement_address,
-            gsy_vault_address,
+            actor_registry_address,
             last_market_id: None,
             target_delivery_time: 0,
             buyer_id: "areaalice".to_string(),
@@ -99,6 +103,8 @@ impl MyWorld {
             offer_forecast: None,
             last_trade: None,
             last_charlie_offer_order_id: None,
+            market_schema: None,
+            facilities_topology: vec![],
         })
     }
 
@@ -139,10 +145,10 @@ impl MyWorld {
             .clone()
     }
 
-    pub fn generate_market_id(&self, market_type: MarketType) -> [u8; 16] {
+    pub fn generate_market_id(&self, market_type: MarketType, delivery_timestamp: u64) -> [u8; 16] {
         let mut buffer = Vec::new();
         buffer.extend_from_slice(market_type.as_str().as_bytes());
-        buffer.extend_from_slice(&self.target_delivery_time.to_be_bytes());
+        buffer.extend_from_slice(&delivery_timestamp.to_be_bytes());
         blake2b(16, &[], &buffer)
             .as_bytes()
             .try_into()

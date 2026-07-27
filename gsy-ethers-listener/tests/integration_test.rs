@@ -16,14 +16,14 @@ use std::time::Duration;
 use tempfile::TempDir;
 
 struct MockHandler {
-    pub received_hashes: Arc<Mutex<Vec<[u8; 32]>>>,
+    pub received_hashes: Arc<Mutex<Vec<[u8; 16]>>>,
 }
 
 #[async_trait]
 impl GsyEventHandler for MockHandler {
     async fn handle_order_placed(&self, event: OrderPlacedFilter) -> Result<()> {
         let mut store = self.received_hashes.lock().unwrap();
-        store.push(event.order_hash);
+        store.push(event.order_id);
         Ok(())
     }
     async fn handle_order_cancelled(&self, _: OrderCancelledFilter) -> Result<()> {
@@ -42,8 +42,8 @@ mod mock_contract {
     abigen!(
         MockEmitter,
         r#"[
-            event OrderPlaced(bytes32 indexed orderHash, address indexed owner, bytes32 indexed marketId, bytes32 areaUuid, uint64 nonce, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, bool isBid)
-            function emitOrderPlaced(bytes32 orderHash, address owner) external
+            event OrderPlaced(bytes16 indexed orderId, bytes16 indexed createdBy, bytes16 indexed marketId, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, uint8 energySourcePreference, uint8 energyType, bool isBid)
+            function emitOrderPlaced(bytes16 orderId, bytes16 createdBy) external
         ]"#
     );
 }
@@ -70,9 +70,9 @@ async fn test_listener_captures_event_from_chain() -> Result<()> {
         // SPDX-License-Identifier: MIT
         pragma solidity ^0.8.0;
         contract MockEmitter {
-            event OrderPlaced(bytes32 indexed orderHash, address indexed owner, bytes32 indexed marketId, bytes32 areaUuid, uint64 nonce, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, bool isBid);
-            function emitOrderPlaced(bytes32 orderHash, address owner) external {
-                emit OrderPlaced(orderHash, owner, bytes32(0), bytes32(0), 1, 100, 100, 1000, 50, true);
+            event OrderPlaced(bytes16 indexed orderId, bytes16 indexed createdBy, bytes16 indexed marketId, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, uint8 energySourcePreference, uint8 energyType, bool isBid);
+            function emitOrderPlaced(bytes16 orderId, bytes16 createdBy) external {
+                emit OrderPlaced(orderId, createdBy, bytes16(0), 100, 100, 1000, 50, 1, 0, true);
             }
         }
     "#;
@@ -155,9 +155,10 @@ async fn test_listener_captures_event_from_chain() -> Result<()> {
     tokio::time::sleep(Duration::from_millis(1000)).await;
 
     let mock_contract = MockEmitter::new(contract_address, client.clone());
-    let test_hash = [1u8; 32];
+    let test_hash = [1u8; 16];
+    let created_by = [2u8; 16];
     let _tx = mock_contract
-        .emit_order_placed(test_hash, anvil.addresses()[0])
+        .emit_order_placed(test_hash, created_by)
         .send()
         .await?
         .await?;
