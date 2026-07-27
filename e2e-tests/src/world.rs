@@ -28,6 +28,7 @@ pub struct PayAsClearScenario {
     pub unmatched_bid_order_id: String,
     pub unmatched_offer_order_id: String,
     pub expected_match_count: usize,
+    pub preferred_order_ids: Option<(String, String)>,
 }
 
 #[derive(Debug, World)]
@@ -55,6 +56,7 @@ pub struct MyWorld {
     pub facilities_topology: Vec<ExternalFacilityTopology>,
     pub pay_as_clear_scenario: Option<PayAsClearScenario>,
     pub pay_as_clear_trades: Vec<TradeSchema>,
+    pub preferred_trade: Option<TradeSchema>,
 }
 
 impl MyWorld {
@@ -117,6 +119,7 @@ impl MyWorld {
             facilities_topology: vec![],
             pay_as_clear_scenario: None,
             pay_as_clear_trades: vec![],
+            preferred_trade: None,
         })
     }
 

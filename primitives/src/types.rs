@@ -137,6 +137,7 @@ pub struct MatchingData {
     pub bids: Vec<Order>,
     pub offers: Vec<Order>,
     pub market_id: H256,
+    pub time_slot: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -146,7 +147,46 @@ struct ClearingPoint {
 }
 
 impl MatchingData {
-    fn match_preferences(&self) -> (Vec<BidOfferMatch>, Vec<Order>, Vec<Order>) {
+    pub fn validate_market_slot(&self) -> Result<(), String> {
+        let mismatched_order =
+            self.bids.iter().chain(self.offers.iter()).find(|order| {
+                order.market_id != self.market_id || order.time_slot != self.time_slot
+            });
+
+        if let Some(order) = mismatched_order {
+            return Err(format!(
+                "Order {:?} belongs to market {:?} timeslot {}, expected market {:?} timeslot {}",
+                order.order_id, order.market_id, order.time_slot, self.market_id, self.time_slot
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn orders_for_market_slot(&self) -> (Vec<Order>, Vec<Order>) {
+        (
+            self.bids
+                .iter()
+                .filter(|order| {
+                    order.market_id == self.market_id && order.time_slot == self.time_slot
+                })
+                .cloned()
+                .collect(),
+            self.offers
+                .iter()
+                .filter(|order| {
+                    order.market_id == self.market_id && order.time_slot == self.time_slot
+                })
+                .cloned()
+                .collect(),
+        )
+    }
+
+    fn match_preferences(
+        &self,
+        bids: Vec<Order>,
+        offers: Vec<Order>,
+    ) -> (Vec<BidOfferMatch>, Vec<Order>, Vec<Order>) {
         let mut matches = Vec::new();
 
         type OrderKey = H256;
@@ -155,7 +195,7 @@ impl MatchingData {
         let mut offer_matched_amounts: HashMap<OrderKey, u64> = HashMap::new();
 
         let (preference_bids, _non_preference_bids): (Vec<&Order>, Vec<&Order>) =
-            self.bids.iter().partition(|b| {
+            bids.iter().partition(|b| {
                 b.requirements
                     .as_ref()
                     .and_then(|r| r.trading_partner_id.as_ref())
@@ -167,10 +207,13 @@ impl MatchingData {
             let partner_id = req.trading_partner_id.as_ref().unwrap();
             let bid_key = bid.order_id;
 
-            let partner_offers: Vec<&Order> = self
-                .offers
+            let partner_offers: Vec<&Order> = offers
                 .iter()
-                .filter(|o| &o.created_by == partner_id)
+                .filter(|offer| {
+                    offer.market_id == bid.market_id
+                        && offer.time_slot == bid.time_slot
+                        && &offer.created_by == partner_id
+                })
                 .collect();
 
             for offer in partner_offers {
@@ -214,7 +257,7 @@ impl MatchingData {
 
         let mut remaining_bids = Vec::new();
 
-        for bid in self.bids.iter() {
+        for bid in &bids {
             let has_reqs = bid
                 .requirements
                 .as_ref()
@@ -239,7 +282,7 @@ impl MatchingData {
         }
 
         let mut remaining_offers = Vec::new();
-        for offer in self.offers.iter() {
+        for offer in &offers {
             let offer_key = offer.order_id;
             let matched_amount = *offer_matched_amounts.get(&offer_key).unwrap_or(&0);
 
@@ -295,6 +338,10 @@ impl MatchingData {
                     continue;
                 }
 
+                if offer.market_id != bid.market_id || offer.time_slot != bid.time_slot {
+                    continue;
+                }
+
                 if offer.energy_rate > bid.energy_rate {
                     continue;
                 }
@@ -317,9 +364,7 @@ impl MatchingData {
                     continue;
                 }
 
-                let selected_energy = offer_energy
-                    .min(bid_energy)
-                    .min(remaining_clearing_energy);
+                let selected_energy = offer_energy.min(bid_energy).min(remaining_clearing_energy);
 
                 available_energy_bid.insert(bid_key.clone(), bid_energy - selected_energy);
                 available_energy_offer.insert(offer_key.clone(), offer_energy - selected_energy);
@@ -364,11 +409,7 @@ impl MatchingData {
         matches
     }
 
-    fn calculate_clearing_point(
-        &self,
-        bids: &[Order],
-        offers: &[Order],
-    ) -> Option<ClearingPoint> {
+    fn calculate_clearing_point(&self, bids: &[Order], offers: &[Order]) -> Option<ClearingPoint> {
         let mut bids = bids.iter().collect::<Vec<_>>();
         let mut offers = offers.iter().collect::<Vec<_>>();
         bids.sort_by(|a, b| b.energy_rate.cmp(&a.energy_rate));
@@ -377,10 +418,7 @@ impl MatchingData {
         let mut bid_index = 0;
         let mut offer_index = 0;
         let mut bid_energy = bids.first().map(|bid| bid.energy).unwrap_or_default();
-        let mut offer_energy = offers
-            .first()
-            .map(|offer| offer.energy)
-            .unwrap_or_default();
+        let mut offer_energy = offers.first().map(|offer| offer.energy).unwrap_or_default();
         let mut traded_energy = 0u64;
         let mut clearing_price = None;
 
@@ -443,8 +481,9 @@ impl PayAsBid for MatchingData {
 
     fn pay_as_bid(&mut self) -> Vec<Self::Output> {
         let mut all_matches = Vec::new();
+        let (bids, offers) = self.orders_for_market_slot();
 
-        let (pref_matches, remaining_bids, remaining_offers) = self.match_preferences();
+        let (pref_matches, remaining_bids, remaining_offers) = self.match_preferences(bids, offers);
         all_matches.extend(pref_matches);
 
         let standard_matches = self.match_standard(remaining_bids, remaining_offers);
@@ -459,15 +498,16 @@ impl PayAsClear for MatchingData {
 
     fn pay_as_clear(&mut self) -> Vec<Self::Output> {
         let mut all_matches = Vec::new();
+        let (bids, offers) = self.orders_for_market_slot();
 
         // Keep bilateral preference matching compatible with the existing
         // preference contract. The uniform clearing price applies to the
         // remaining merit-order market.
-        let (preference_matches, remaining_bids, remaining_offers) = self.match_preferences();
+        let (preference_matches, remaining_bids, remaining_offers) =
+            self.match_preferences(bids, offers);
         all_matches.extend(preference_matches);
 
-        let standard_matches =
-            self.match_standard_pay_as_clear(remaining_bids, remaining_offers);
+        let standard_matches = self.match_standard_pay_as_clear(remaining_bids, remaining_offers);
         all_matches.extend(standard_matches);
 
         all_matches
@@ -511,6 +551,7 @@ mod tests {
                 order(6, OrderEnum::Offer, 6, 1, 12),
             ],
             market_id: H256::from([99; 32]),
+            time_slot: 1,
         };
 
         let matches = matching_data.pay_as_clear();
@@ -545,6 +586,7 @@ mod tests {
                 order(6, OrderEnum::Offer, 6, 1, 21),
             ],
             market_id: H256::from([99; 32]),
+            time_slot: 1,
         };
 
         let clearing_point = matching_data
@@ -567,5 +609,125 @@ mod tests {
         assert!(matches
             .iter()
             .all(|item| item.offer.order_id != rejected_offer_id));
+    }
+
+    #[test]
+    fn pay_as_clear_prices_preferences_before_the_standard_market() {
+        let preferred_bid_id = H256::from([1; 32]);
+        let preferred_offer_id = H256::from([2; 32]);
+        let unmatched_bid_id = H256::from([5; 32]);
+        let unmatched_offer_id = H256::from([8; 32]);
+
+        let mut preferred_bid = order(1, OrderEnum::Bid, 1, 2, 20);
+        preferred_bid.requirements = Some(Requirements {
+            trading_partner_id: Some(AccountId32::from([2; 32])),
+            energy_type: None,
+            preferred_energy_rate: Some(11),
+        });
+        let preferred_offer = order(2, OrderEnum::Offer, 2, 2, 15);
+
+        let mut matching_data = MatchingData {
+            bids: vec![
+                preferred_bid,
+                order(3, OrderEnum::Bid, 3, 3, 20),
+                order(4, OrderEnum::Bid, 4, 4, 17),
+                order(5, OrderEnum::Bid, 5, 1, 9),
+            ],
+            offers: vec![
+                preferred_offer,
+                order(6, OrderEnum::Offer, 6, 3, 8),
+                order(7, OrderEnum::Offer, 7, 4, 10),
+                order(8, OrderEnum::Offer, 8, 1, 12),
+            ],
+            market_id: H256::from([99; 32]),
+            time_slot: 1,
+        };
+
+        let matches = matching_data.pay_as_clear();
+        let preferred_match = matches
+            .iter()
+            .find(|item| {
+                item.bid.order_id == preferred_bid_id && item.offer.order_id == preferred_offer_id
+            })
+            .expect("Preferred pair should match before standard clearing");
+        assert_eq!(preferred_match.selected_energy, 2);
+        assert_eq!(preferred_match.energy_rate, 11);
+
+        let standard_matches = matches
+            .iter()
+            .filter(|item| item.bid.order_id != preferred_bid_id)
+            .collect::<Vec<_>>();
+        assert_eq!(standard_matches.len(), 2);
+        assert_eq!(
+            standard_matches
+                .iter()
+                .map(|item| item.selected_energy)
+                .sum::<u64>(),
+            7
+        );
+        assert!(standard_matches.iter().all(|item| item.energy_rate == 10));
+        assert!(matches
+            .iter()
+            .all(|item| item.bid.order_id != unmatched_bid_id));
+        assert!(matches
+            .iter()
+            .all(|item| item.offer.order_id != unmatched_offer_id));
+    }
+
+    #[test]
+    fn pay_as_bid_does_not_match_across_market_or_time_slot() {
+        let mut different_market_offer = order(2, OrderEnum::Offer, 2, 1, 10);
+        different_market_offer.market_id = H256::from([100; 32]);
+        let mut different_slot_offer = order(3, OrderEnum::Offer, 3, 1, 10);
+        different_slot_offer.time_slot = 2;
+        let mut matching_data = MatchingData {
+            bids: vec![order(1, OrderEnum::Bid, 1, 1, 20)],
+            offers: vec![different_market_offer, different_slot_offer],
+            market_id: H256::from([99; 32]),
+            time_slot: 1,
+        };
+
+        assert!(matching_data.pay_as_bid().is_empty());
+    }
+
+    #[test]
+    fn pay_as_clear_ignores_other_market_and_time_slot_prices() {
+        let expected_bid = order(1, OrderEnum::Bid, 1, 1, 20);
+        let expected_offer = order(2, OrderEnum::Offer, 2, 1, 10);
+        let mut other_market_offer = order(3, OrderEnum::Offer, 3, 1, 1);
+        other_market_offer.market_id = H256::from([100; 32]);
+        let mut other_slot_offer = order(4, OrderEnum::Offer, 4, 1, 2);
+        other_slot_offer.time_slot = 2;
+        let mut matching_data = MatchingData {
+            bids: vec![expected_bid],
+            offers: vec![expected_offer, other_market_offer, other_slot_offer],
+            market_id: H256::from([99; 32]),
+            time_slot: 1,
+        };
+
+        let matches = matching_data.pay_as_clear();
+
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].energy_rate, 10);
+        assert_eq!(matches[0].market_id, H256::from([99; 32]));
+        assert_eq!(matches[0].time_slot, 1);
+    }
+
+    #[test]
+    fn rejects_a_mixed_market_or_time_slot_order_book() {
+        let mut other_market_offer = order(2, OrderEnum::Offer, 2, 1, 10);
+        other_market_offer.market_id = H256::from([100; 32]);
+        let mut matching_data = MatchingData {
+            bids: vec![order(1, OrderEnum::Bid, 1, 1, 20)],
+            offers: vec![other_market_offer],
+            market_id: H256::from([99; 32]),
+            time_slot: 1,
+        };
+
+        let error = crate::MatchingAlgorithm::PayAsBid
+            .match_orders(&mut matching_data)
+            .expect_err("A mixed order book must be rejected");
+
+        assert!(error.contains("expected market"));
     }
 }

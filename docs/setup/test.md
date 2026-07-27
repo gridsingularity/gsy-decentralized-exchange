@@ -34,8 +34,8 @@ docker compose --env-file contracts-output/addresses.env \
 ```
 
 The default `MATCHING_ALGORITHM=pay_as_bid` run executes the features under
-`e2e-tests/features/pay_as_bid`. To run the isolated two-sided pay-as-clear
-scenario, set the same value for the matching engine and e2e runner through
+`e2e-tests/features/pay_as_bid`. To run the two-sided pay-as-clear scenarios,
+set the same value for the matching engine and e2e runner through
 Compose:
 
 ```bash
@@ -48,11 +48,14 @@ docker compose --env-file contracts-output/addresses.env \
   e2e-tests
 ```
 
-The E2E runner selects `features/pay_as_clear` from this value and verifies
-that the cumulative curves stop where the next bid drops below the next offer,
-accepted trades share the marginal accepted-offer clearing price, and both
-orders beyond that crossing remain open. It also verifies that every accepted
-trade is settled on-chain and receives a non-zero execution-engine penalty.
+The E2E runner selects `features/pay_as_clear` from this value. The first
+scenario verifies that cumulative curves stop where the next bid drops below
+the next offer, accepted trades share the marginal accepted-offer clearing
+price, and both orders beyond that crossing remain open. The combined scenario
+also verifies that a preferred bilateral trade keeps its negotiated rate while
+the remaining standard order book clears at one uniform price. Both scenarios
+verify on-chain settlement and non-zero execution-engine penalties for every
+accepted trade.
 `pay_as_clear` defaults to a `64`-block matching interval so all scenario
 orders are collected before one clearing cycle. Override it with a positive
 `MATCHING_ENGINE_BLOCK_INTERVAL` value only when both the matching engine and
@@ -152,15 +155,16 @@ Expected passing summary:
 20 steps (20 passed)
 ```
 
-The isolated pay-as-clear run has this expected summary:
+The pay-as-clear run has this expected summary:
 
 ```text
 1 feature
-1 scenario (1 passed)
-11 steps (11 passed)
+2 scenarios (2 passed)
+23 steps (23 passed)
 ```
 
-The pay-as-clear command runs one dedicated feature and scenario.
+The pay-as-clear command runs one dedicated feature with a standard clearing
+scenario and a combined preference-plus-standard scenario.
 
 If the Client Gateway returns HTTP `400` with a nested broker `status code 429`,
 the request was rate-limited before it reached the matching algorithm. Validate

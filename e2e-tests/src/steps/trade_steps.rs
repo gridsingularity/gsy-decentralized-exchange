@@ -427,13 +427,15 @@ async fn submit_cheaper_offer(world: &mut MyWorld, user_name: String, energy: f6
 async fn submit_pay_as_clear_order_book(world: &mut MyWorld) {
     // A uniform-price auction must observe the complete book in one interval.
     ensure_matching_window_capacity(world, 8).await;
+    world.pay_as_clear_scenario = Some(place_standard_pay_as_clear_order_book(world).await);
 
-    let first_offer =
-        place_custom_order(world, "charlie", false, 3.0, 8.0, None, None).await;
-    let second_offer =
-        place_custom_order(world, "charlie", false, 4.0, 10.0, None, None).await;
-    let unmatched_offer =
-        place_custom_order(world, "charlie", false, 1.0, 12.0, None, None).await;
+    mine_until_matching_block(world, matching_engine_block_interval() as usize + 1).await;
+}
+
+async fn place_standard_pay_as_clear_order_book(world: &MyWorld) -> PayAsClearScenario {
+    let first_offer = place_custom_order(world, "charlie", false, 3.0, 8.0, None, None).await;
+    let second_offer = place_custom_order(world, "charlie", false, 4.0, 10.0, None, None).await;
+    let unmatched_offer = place_custom_order(world, "charlie", false, 1.0, 12.0, None, None).await;
     wait_for_order_in_offchain_storage(world, first_offer.as_str()).await;
     wait_for_order_in_offchain_storage(world, second_offer.as_str()).await;
     wait_for_order_in_offchain_storage(world, unmatched_offer.as_str()).await;
@@ -442,18 +444,62 @@ async fn submit_pay_as_clear_order_book(world: &mut MyWorld) {
     // crosses at 9 < 12, so both orders must remain outside the clearing point.
     let first_bid = place_custom_order(world, "alice", true, 3.0, 20.0, None, None).await;
     let second_bid = place_custom_order(world, "bob", true, 4.0, 17.0, None, None).await;
-    let unmatched_bid =
-        place_custom_order(world, "alice", true, 1.0, 9.0, None, None).await;
+    let unmatched_bid = place_custom_order(world, "alice", true, 1.0, 9.0, None, None).await;
     wait_for_order_in_offchain_storage(world, first_bid.as_str()).await;
     wait_for_order_in_offchain_storage(world, second_bid.as_str()).await;
     wait_for_order_in_offchain_storage(world, unmatched_bid.as_str()).await;
 
-    world.pay_as_clear_scenario = Some(PayAsClearScenario {
+    PayAsClearScenario {
         accepted_order_ids: vec![first_bid, second_bid, first_offer, second_offer],
         unmatched_bid_order_id: unmatched_bid,
         unmatched_offer_order_id: unmatched_offer,
         expected_match_count: 2,
-    });
+        preferred_order_ids: None,
+    }
+}
+
+#[when("a preferred bilateral pair and standard pay-as-clear order book are submitted")]
+async fn submit_combined_pay_as_clear_order_book(world: &mut MyWorld) {
+    // Submit both pricing paths before reaching the same clearing boundary.
+    ensure_matching_window_capacity(world, 12).await;
+
+    let preferred_bid_requirements = DbRequirements {
+        trading_partner_id: Some(actor_id_as_hex(world, "bob")),
+        energy_type: None,
+        preferred_energy_rate: Some(11.0),
+    };
+    let preferred_bid = place_custom_order(
+        world,
+        "alice",
+        true,
+        2.0,
+        20.0,
+        Some(preferred_bid_requirements),
+        None,
+    )
+    .await;
+
+    let preferred_offer_attributes = DbAttributes {
+        trading_partner_id: Some(actor_id_as_hex(world, "alice")),
+        energy_type: EnergyType::Clean,
+    };
+    let preferred_offer = place_custom_order(
+        world,
+        "bob",
+        false,
+        2.0,
+        15.0,
+        None,
+        Some(preferred_offer_attributes),
+    )
+    .await;
+
+    wait_for_order_in_offchain_storage(world, preferred_bid.as_str()).await;
+    wait_for_order_in_offchain_storage(world, preferred_offer.as_str()).await;
+
+    let mut scenario = place_standard_pay_as_clear_order_book(world).await;
+    scenario.preferred_order_ids = Some((preferred_bid, preferred_offer));
+    world.pay_as_clear_scenario = Some(scenario);
 
     mine_until_matching_block(world, matching_engine_block_interval() as usize + 1).await;
 }
@@ -697,6 +743,66 @@ async fn verify_pay_as_clear_result(
     panic!("Timeout: pay-as-clear trades were not indexed in off-chain storage");
 }
 
+#[then(
+    expr = "the preferred bilateral trade clears {float} energy at a negotiated price of {float}"
+)]
+async fn verify_combined_preferred_trade(
+    world: &mut MyWorld,
+    expected_energy: f64,
+    expected_price: f64,
+) {
+    let scenario = world
+        .pay_as_clear_scenario
+        .as_ref()
+        .expect("Missing pay-as-clear scenario state");
+    let (preferred_bid_id, preferred_offer_id) = scenario
+        .preferred_order_ids
+        .as_ref()
+        .expect("Missing preferred order ids for combined pay-as-clear scenario");
+
+    for attempt in 0..60 {
+        let preferred_trade = query_market_trades(world).await.into_iter().find(|trade| {
+            trade.bid_hash.eq_ignore_ascii_case(preferred_bid_id)
+                && trade.offer_hash.eq_ignore_ascii_case(preferred_offer_id)
+        });
+
+        if let Some(trade) = preferred_trade {
+            assert!(
+                approx_eq(trade.parameters.selected_energy_kWh, expected_energy),
+                "Preferred trade energy mismatch: expected {}, got {}",
+                expected_energy,
+                trade.parameters.selected_energy_kWh
+            );
+            assert!(
+                approx_eq(trade.parameters.energy_rate, expected_price),
+                "Preferred trade price mismatch: expected {}, got {}",
+                expected_price,
+                trade.parameters.energy_rate
+            );
+            assert_trade_settled_on_chain(world, &trade).await;
+            world.preferred_trade = Some(trade);
+            return;
+        }
+
+        info!(
+            "Combined preferred trade not available yet (attempt {}/60). Retrying...",
+            attempt + 1
+        );
+        sleep(Duration::from_secs(2)).await;
+    }
+
+    panic!("Timeout: combined preferred trade was not indexed in off-chain storage");
+}
+
+#[then(expr = "the remaining standard market clears {float} energy at a uniform price of {float}")]
+async fn verify_remaining_pay_as_clear_result(
+    world: &mut MyWorld,
+    expected_energy: f64,
+    expected_price: f64,
+) {
+    verify_pay_as_clear_result(world, expected_energy, expected_price).await;
+}
+
 #[then("orders beyond the clearing point remain open")]
 async fn verify_pay_as_clear_unmatched_orders(world: &mut MyWorld) {
     let scenario = world
@@ -803,14 +909,18 @@ async fn verify_charlie_offer_untouched(world: &mut MyWorld) {
 
 #[then("the execution engine submits penalties for the trade")]
 async fn verify_penalties_on_chain(world: &mut MyWorld) {
-    let trades = if world.pay_as_clear_trades.is_empty() {
-        vec![world
-            .last_trade
-            .clone()
-            .expect("No trade captured in the previous step")]
-    } else {
-        world.pay_as_clear_trades.clone()
-    };
+    let mut trades = world.pay_as_clear_trades.clone();
+    if let Some(preferred_trade) = world.preferred_trade.clone() {
+        trades.push(preferred_trade);
+    }
+    if trades.is_empty() {
+        trades.push(
+            world
+                .last_trade
+                .clone()
+                .expect("No trade captured in the previous step"),
+        );
+    }
     let trade_settlement =
         TradeSettlementContract::new(world.trade_settlement_address, world.provider.clone());
     let mut recorded_trade_ids = HashSet::new();

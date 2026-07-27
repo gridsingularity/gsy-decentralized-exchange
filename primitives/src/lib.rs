@@ -57,6 +57,8 @@ impl MatchingAlgorithm {
     ) -> Result<Vec<types::BidOfferMatch>, String> {
         use algorithms::{PayAsBid, PayAsClear};
 
+        matching_data.validate_market_slot()?;
+
         match self {
             MatchingAlgorithm::PayAsBid => Ok(matching_data.pay_as_bid()),
             MatchingAlgorithm::PayAsClear => Ok(matching_data.pay_as_clear()),

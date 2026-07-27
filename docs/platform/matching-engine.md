@@ -23,9 +23,11 @@ longer represent one uniform-price auction.
 
 1. Fetch open orders from off-chain storage API (`/orders`).
 2. Convert DB schema into canonical matching primitives.
-3. Run the configured matching algorithm with preference phase first.
-4. Build EVM tuple payload for `settleBatch`.
-5. Submit transaction with matching engine signer.
+3. Partition orders by `(market_id, time_slot)`.
+4. Run the configured matching algorithm independently for each partition,
+   with preference phase first.
+5. Build EVM tuple payload for `settleBatch`.
+6. Submit transaction with matching engine signer.
 
 ## Matching Algorithms
 
@@ -41,6 +43,13 @@ longer represent one uniform-price auction.
 The existing bilateral preference phase runs before either standard-market
 algorithm. Preference matches retain their negotiated preferred rate; the
 uniform clearing price applies to the remaining merit-order book.
+The pay-as-clear E2E feature covers both the standalone merit-order auction
+and a combined clearing cycle containing a preferred bilateral trade plus
+standard bids and offers.
+
+Both algorithms operate on one market and delivery slot at a time. Orders from
+different markets or slots cannot match each other, and each pay-as-clear
+partition calculates its own clearing volume and price.
 
 ## Preference Matching Behavior
 
