@@ -1,6 +1,7 @@
 use gsy_offchain_storage::configuration::get_configuration;
 use gsy_offchain_storage::db::{delete_database, init_database, DatabaseWrapper};
-use gsy_offchain_storage::startup::run;
+use primitives::log::setup_logging;
+use gsy_offchain_storage::http_server::run_http_server;
 use once_cell::sync::Lazy;
 use std::net::TcpListener;
 use uuid::Uuid;
@@ -10,6 +11,16 @@ pub struct TestApp {
     pub db_wrapper: DatabaseWrapper,
     pub db_name: String,
 }
+
+static TRACING: Lazy<()> = Lazy::new(|| {
+    let default_filter_level = "info".to_string();
+    let subscriber_name = "test".to_string();
+    if std::env::var("TEST_LOG").is_ok() {
+        setup_logging(subscriber_name, default_filter_level)
+    } else {
+        setup_logging(subscriber_name, default_filter_level)
+    };
+});
 
 pub async fn init_app() -> TestApp {
     Lazy::force(&TRACING);
@@ -27,7 +38,7 @@ pub async fn init_app() -> TestApp {
     )
     .await
     .unwrap();
-    let server = run(listener, db_wrapper.clone()).expect("Failed to bind address");
+    let server = run_http_server(listener, db_wrapper.clone()).expect("Failed to bind address");
     let _ = tokio::spawn(server);
     TestApp {
         address,
