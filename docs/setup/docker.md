@@ -160,6 +160,7 @@ Useful runtime overrides:
 - `EWDS_ENABLE_HANDLER=true` (enables EWDS query responder in `gsy-offchain-storage`)
 - `EWDS_HANDLER_POLL_INTERVAL_MS` / `EWDS_HANDLER_BATCH_SIZE`
 - `EWDS_RESPONSE_TIMEOUT_MS` / `EWDS_RESPONSE_POLL_INTERVAL_MS`
+- `EWDS_RATE_LIMIT_BACKOFF_MS` / `EWDS_RATE_LIMIT_MAX_BACKOFF_MS`
 
 ### EWDS Smoke Test
 

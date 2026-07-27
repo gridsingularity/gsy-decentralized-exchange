@@ -215,7 +215,10 @@ Validated e2e status:
 
 - The full Cucumber e2e suite passed with EWDS mode enabled: `2` features, `2` scenarios, and `20` steps passed.
 - The validated test command is documented in `docs/setup/test.md`.
-- DDHub delivery is asynchronous; use `EWDS_RESPONSE_TIMEOUT_MS=60000` for deterministic e2e runs.
+- DDHub delivery is asynchronous; use `EWDS_RESPONSE_TIMEOUT_MS=60000` for
+  deterministic e2e runs. The GSY clients and responder apply exponential
+  backoff to direct or Client-Gateway-wrapped `429` responses; tune it with
+  `EWDS_RATE_LIMIT_BACKOFF_MS` and `EWDS_RATE_LIMIT_MAX_BACKOFF_MS`.
 
 Gateway smoke-test example:
 

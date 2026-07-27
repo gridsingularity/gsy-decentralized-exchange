@@ -8,6 +8,8 @@ pub mod types;
 pub mod utils;
 
 use serde::{Deserialize, Serialize};
+use std::fmt;
+use std::str::FromStr;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum MarketType {
@@ -37,6 +39,60 @@ pub enum MatchingAlgorithm {
     PayAsClear,
     #[serde(rename = "amm")]
     AMM,
+}
+
+impl MatchingAlgorithm {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MatchingAlgorithm::PayAsBid => "pay_as_bid",
+            MatchingAlgorithm::PayAsClear => "pay_as_clear",
+            MatchingAlgorithm::AMM => "amm",
+        }
+    }
+
+    /// Runs the configured algorithm against one market order book.
+    pub fn match_orders(
+        &self,
+        matching_data: &mut types::MatchingData,
+    ) -> Result<Vec<types::BidOfferMatch>, String> {
+        use algorithms::{PayAsBid, PayAsClear};
+
+        match self {
+            MatchingAlgorithm::PayAsBid => Ok(matching_data.pay_as_bid()),
+            MatchingAlgorithm::PayAsClear => Ok(matching_data.pay_as_clear()),
+            MatchingAlgorithm::AMM => {
+                Err("Matching algorithm 'amm' is not implemented".to_string())
+            }
+        }
+    }
+}
+
+impl Default for MatchingAlgorithm {
+    fn default() -> Self {
+        Self::PayAsBid
+    }
+}
+
+impl fmt::Display for MatchingAlgorithm {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl FromStr for MatchingAlgorithm {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "pay_as_bid" | "pay-as-bid" => Ok(Self::PayAsBid),
+            "pay_as_clear" | "pay-as-clear" => Ok(Self::PayAsClear),
+            "amm" => Ok(Self::AMM),
+            _ => Err(format!(
+                "Unsupported matching algorithm '{}'. Expected pay_as_bid, pay_as_clear, or amm",
+                value
+            )),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]

@@ -6,9 +6,11 @@ use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAda
 use gsy_community_client::time_utils::{get_current_timestamp_in_secs, get_last_and_next_timeslot};
 use primitives::constants::GLOBAL_CONSTANTS;
 use primitives::db_api_schema::profiles::{ForecastSchema, MeasurementSchema};
+use primitives::MatchingAlgorithm;
 use reqwest::Client;
 use std::collections::HashSet;
 use std::env;
+use std::str::FromStr;
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{error, info};
@@ -20,6 +22,7 @@ struct AppState {
     evm_node_url: String,
     order_registry_address: String,
     community_signer_private_key: String,
+    matching_algorithm: MatchingAlgorithm,
     forecast_url: String,
     measurements_url: String,
     topology_url: String,
@@ -39,6 +42,12 @@ impl AppState {
                     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string()
                 },
             ),
+            matching_algorithm: {
+                let configured_value = env::var("MATCHING_ALGORITHM")
+                    .unwrap_or_else(|_| MatchingAlgorithm::default().to_string());
+                MatchingAlgorithm::from_str(configured_value.as_str())
+                    .unwrap_or_else(|error| panic!("Invalid MATCHING_ALGORITHM: {}", error))
+            },
             forecast_url: "http://localhost:8000/forecasts".to_string(),
             measurements_url: "http://localhost:8000/measurements".to_string(),
             topology_url: "http://localhost:8000/ontology".to_string(),
@@ -80,7 +89,11 @@ impl AppState {
             let external_topology = external_topology_res.unwrap();
             let market = self
                 .api_adapter
-                .create_market(external_topology.community_uuid.clone(), next_timeslot)
+                .create_market(
+                    external_topology.community_uuid.clone(),
+                    next_timeslot,
+                    self.matching_algorithm.clone(),
+                )
                 .await
                 .unwrap();
             let facility_ids: HashSet<String> = external_topology

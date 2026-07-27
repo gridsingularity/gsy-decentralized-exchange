@@ -1,6 +1,6 @@
 #![allow(non_snake_case)]
 
-use crate::algorithms::PayAsBid;
+use crate::algorithms::{PayAsBid, PayAsClear};
 use crate::db_api_schema::orders::{OrderEnum, OrderStatus};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -139,6 +139,12 @@ pub struct MatchingData {
     pub market_id: H256,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ClearingPoint {
+    traded_energy: u64,
+    clearing_price: u64,
+}
+
 impl MatchingData {
     fn match_preferences(&self) -> (Vec<BidOfferMatch>, Vec<Order>, Vec<Order>) {
         let mut matches = Vec::new();
@@ -250,8 +256,20 @@ impl MatchingData {
         (matches, remaining_bids, remaining_offers)
     }
 
-    fn match_standard(&self, mut bids: Vec<Order>, mut offers: Vec<Order>) -> Vec<BidOfferMatch> {
+    fn match_standard(&self, bids: Vec<Order>, offers: Vec<Order>) -> Vec<BidOfferMatch> {
+        self.match_standard_at_clearing_point(bids, offers, None)
+    }
+
+    fn match_standard_at_clearing_point(
+        &self,
+        mut bids: Vec<Order>,
+        mut offers: Vec<Order>,
+        clearing_point: Option<ClearingPoint>,
+    ) -> Vec<BidOfferMatch> {
         let mut matches = Vec::new();
+        let mut remaining_clearing_energy = clearing_point
+            .map(|point| point.traded_energy)
+            .unwrap_or(u64::MAX);
 
         bids.sort_by(|a, b| b.energy_rate.cmp(&a.energy_rate));
         offers.sort_by(|a, b| a.energy_rate.cmp(&b.energy_rate));
@@ -269,12 +287,24 @@ impl MatchingData {
 
         for offer in &mut offers {
             for bid in &mut bids {
+                if remaining_clearing_energy == 0 {
+                    return matches;
+                }
+
                 if offer.area_uuid == bid.area_uuid {
                     continue;
                 }
 
                 if offer.energy_rate > bid.energy_rate {
                     continue;
+                }
+
+                if let Some(point) = clearing_point {
+                    if bid.energy_rate < point.clearing_price
+                        || offer.energy_rate > point.clearing_price
+                    {
+                        continue;
+                    }
                 }
 
                 let bid_key = bid.order_id;
@@ -287,10 +317,13 @@ impl MatchingData {
                     continue;
                 }
 
-                let selected_energy = offer_energy.min(bid_energy);
+                let selected_energy = offer_energy
+                    .min(bid_energy)
+                    .min(remaining_clearing_energy);
 
                 available_energy_bid.insert(bid_key.clone(), bid_energy - selected_energy);
                 available_energy_offer.insert(offer_key.clone(), offer_energy - selected_energy);
+                remaining_clearing_energy -= selected_energy;
 
                 let residual_bid = if bid_energy > selected_energy {
                     Some(Order {
@@ -320,13 +353,88 @@ impl MatchingData {
                     residual_bid,
                     residual_offer,
                     selected_energy: selected_energy,
-                    energy_rate: bid.energy_rate,
+                    energy_rate: clearing_point
+                        .map(|point| point.clearing_price)
+                        .unwrap_or(bid.energy_rate),
                 };
 
                 matches.push(new_bid_offer_match);
             }
         }
         matches
+    }
+
+    fn calculate_clearing_point(
+        &self,
+        bids: &[Order],
+        offers: &[Order],
+    ) -> Option<ClearingPoint> {
+        let mut bids = bids.iter().collect::<Vec<_>>();
+        let mut offers = offers.iter().collect::<Vec<_>>();
+        bids.sort_by(|a, b| b.energy_rate.cmp(&a.energy_rate));
+        offers.sort_by(|a, b| a.energy_rate.cmp(&b.energy_rate));
+
+        let mut bid_index = 0;
+        let mut offer_index = 0;
+        let mut bid_energy = bids.first().map(|bid| bid.energy).unwrap_or_default();
+        let mut offer_energy = offers
+            .first()
+            .map(|offer| offer.energy)
+            .unwrap_or_default();
+        let mut traded_energy = 0u64;
+        let mut clearing_price = None;
+
+        while bid_index < bids.len() && offer_index < offers.len() {
+            if bid_energy == 0 {
+                bid_index += 1;
+                bid_energy = bids
+                    .get(bid_index)
+                    .map(|bid| bid.energy)
+                    .unwrap_or_default();
+                continue;
+            }
+
+            if offer_energy == 0 {
+                offer_index += 1;
+                offer_energy = offers
+                    .get(offer_index)
+                    .map(|offer| offer.energy)
+                    .unwrap_or_default();
+                continue;
+            }
+
+            let bid = &bids[bid_index];
+            let offer = &offers[offer_index];
+
+            // The curves cross before this tranche: everything to the right
+            // remains outside the current clearing interval.
+            if bid.energy_rate < offer.energy_rate {
+                break;
+            }
+
+            let accepted_energy = bid_energy.min(offer_energy);
+            traded_energy += accepted_energy;
+            clearing_price = Some(offer.energy_rate);
+            bid_energy -= accepted_energy;
+            offer_energy -= accepted_energy;
+        }
+
+        clearing_price.map(|clearing_price| ClearingPoint {
+            traded_energy,
+            clearing_price,
+        })
+    }
+
+    fn match_standard_pay_as_clear(
+        &self,
+        bids: Vec<Order>,
+        offers: Vec<Order>,
+    ) -> Vec<BidOfferMatch> {
+        let Some(clearing_point) = self.calculate_clearing_point(&bids, &offers) else {
+            return Vec::new();
+        };
+
+        self.match_standard_at_clearing_point(bids, offers, Some(clearing_point))
     }
 }
 
@@ -343,5 +451,121 @@ impl PayAsBid for MatchingData {
         all_matches.extend(standard_matches);
 
         all_matches
+    }
+}
+
+impl PayAsClear for MatchingData {
+    type Output = BidOfferMatch;
+
+    fn pay_as_clear(&mut self) -> Vec<Self::Output> {
+        let mut all_matches = Vec::new();
+
+        // Keep bilateral preference matching compatible with the existing
+        // preference contract. The uniform clearing price applies to the
+        // remaining merit-order market.
+        let (preference_matches, remaining_bids, remaining_offers) = self.match_preferences();
+        all_matches.extend(preference_matches);
+
+        let standard_matches =
+            self.match_standard_pay_as_clear(remaining_bids, remaining_offers);
+        all_matches.extend(standard_matches);
+
+        all_matches
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn order(id: u8, order_type: OrderEnum, area: u8, energy: u64, energy_rate: u64) -> Order {
+        Order {
+            order_id: H256::from([id; 32]),
+            order_type,
+            status: OrderStatus::Open,
+            area_uuid: H256::from([area; 32]),
+            market_id: H256::from([99; 32]),
+            time_slot: 1,
+            creation_time: 1,
+            energy,
+            energy_rate,
+            created_by: AccountId32::from([id; 32]),
+            requirements: None,
+            attributes: None,
+        }
+    }
+
+    #[test]
+    fn pay_as_clear_uses_the_marginal_accepted_offer_price() {
+        let unmatched_bid_id = H256::from([3; 32]);
+        let unmatched_offer_id = H256::from([6; 32]);
+        let mut matching_data = MatchingData {
+            bids: vec![
+                order(1, OrderEnum::Bid, 1, 3, 20),
+                order(2, OrderEnum::Bid, 2, 4, 17),
+                order(3, OrderEnum::Bid, 3, 1, 9),
+            ],
+            offers: vec![
+                order(4, OrderEnum::Offer, 4, 3, 8),
+                order(5, OrderEnum::Offer, 5, 4, 10),
+                order(6, OrderEnum::Offer, 6, 1, 12),
+            ],
+            market_id: H256::from([99; 32]),
+        };
+
+        let matches = matching_data.pay_as_clear();
+
+        assert_eq!(matches.len(), 2);
+        assert_eq!(
+            matches.iter().map(|item| item.selected_energy).sum::<u64>(),
+            7
+        );
+        assert!(matches.iter().all(|item| item.energy_rate == 10));
+        assert!(matches
+            .iter()
+            .all(|item| item.bid.order_id != unmatched_bid_id));
+        assert!(matches
+            .iter()
+            .all(|item| item.offer.order_id != unmatched_offer_id));
+    }
+
+    #[test]
+    fn pay_as_clear_stops_when_the_bid_curve_drops_below_the_offer_curve() {
+        let rejected_bid_id = H256::from([3; 32]);
+        let rejected_offer_id = H256::from([6; 32]);
+        let mut matching_data = MatchingData {
+            bids: vec![
+                order(1, OrderEnum::Bid, 1, 1, 28),
+                order(2, OrderEnum::Bid, 2, 1, 23),
+                order(3, OrderEnum::Bid, 3, 1, 17),
+            ],
+            offers: vec![
+                order(4, OrderEnum::Offer, 4, 1, 10),
+                order(5, OrderEnum::Offer, 5, 1, 15),
+                order(6, OrderEnum::Offer, 6, 1, 21),
+            ],
+            market_id: H256::from([99; 32]),
+        };
+
+        let clearing_point = matching_data
+            .calculate_clearing_point(&matching_data.bids, &matching_data.offers)
+            .expect("The first two bid/offer tranches should clear");
+        let matches = matching_data.pay_as_clear();
+
+        assert_eq!(
+            clearing_point,
+            ClearingPoint {
+                traded_energy: 2,
+                clearing_price: 15,
+            }
+        );
+        assert_eq!(matches.len(), 2);
+        assert!(matches.iter().all(|item| item.energy_rate == 15));
+        assert!(matches
+            .iter()
+            .all(|item| item.bid.order_id != rejected_bid_id));
+        assert!(matches
+            .iter()
+            .all(|item| item.offer.order_id != rejected_offer_id));
     }
 }

@@ -2,13 +2,15 @@ use crate::db::DatabaseWrapper;
 use anyhow::{anyhow, Result};
 use primitives::db_api_schema::profiles::{MeasurementPointType, MeasurementSchema};
 use primitives::ewds::{
-    client_id_for_suffix, env_var, format_response_body, EwdsInboundMessage, EwdsOperation,
+    client_id_for_suffix, env_var, ewds_rate_limit_backoff_ms, format_response_body,
+    is_rate_limited_message, is_rate_limited_response, EwdsInboundMessage, EwdsOperation,
     EwdsOrderDto, EwdsRequestEnvelope, EwdsResponseEnvelope, EwdsSendMessageDto,
 };
 use primitives::utils::timestamp_to_string_with_padding;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::time::Instant;
 use tokio::time::{sleep, Duration};
 use tracing::{error, info, warn};
 
@@ -29,6 +31,7 @@ pub struct EwdsHandlerConfig {
     pub measurements_response_topic: String,
     pub poll_interval_ms: u64,
     pub request_batch_size: u32,
+    pub response_send_timeout_ms: u64,
 }
 
 impl EwdsHandlerConfig {
@@ -49,6 +52,10 @@ impl EwdsHandlerConfig {
             .ok()
             .and_then(|value| value.parse::<u32>().ok())
             .unwrap_or(100);
+        let response_send_timeout_ms = std::env::var("EWDS_RESPONSE_TIMEOUT_MS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(60_000);
 
         let request_fqcn = env_var("EWDS_REQUEST_SUBSCRIBE_FQCN")
             .or_else(|| env_var("EWDS_REQUEST_FQCN"))
@@ -84,6 +91,7 @@ impl EwdsHandlerConfig {
                 .unwrap_or_else(|_| "measurementsQueryResponse".to_string()),
             poll_interval_ms,
             request_batch_size,
+            response_send_timeout_ms,
         }
     }
 }
@@ -128,41 +136,58 @@ pub async fn start_ewds_request_handler(db: DatabaseWrapper, config: EwdsHandler
     let client = Client::new();
     let mut seen_request_ids: HashSet<String> = HashSet::new();
     let mut seen_queue: VecDeque<String> = VecDeque::new();
+    let mut next_topic_index = 0usize;
+    let mut rate_limit_attempt = 0u32;
 
     loop {
-        if let Err(error) = process_batch(
+        let delay_ms = match process_next_topic_batch(
             &db,
             &client,
             &config,
             &mut seen_request_ids,
             &mut seen_queue,
+            &mut next_topic_index,
         )
         .await
         {
-            warn!("EWDS batch processing failed: {}", error);
-        }
+            Ok(()) => {
+                rate_limit_attempt = 0;
+                config.poll_interval_ms
+            }
+            Err(error) => {
+                warn!("EWDS batch processing failed: {}", error);
+                if is_rate_limited_message(error.to_string().as_str()) {
+                    let backoff_ms = ewds_rate_limit_backoff_ms(rate_limit_attempt);
+                    rate_limit_attempt = rate_limit_attempt.saturating_add(1);
+                    backoff_ms
+                } else {
+                    config.poll_interval_ms
+                }
+            }
+        };
 
-        sleep(Duration::from_millis(config.poll_interval_ms)).await;
+        sleep(Duration::from_millis(delay_ms)).await;
     }
 }
 
-async fn process_batch(
+async fn process_next_topic_batch(
     db: &DatabaseWrapper,
     client: &Client,
     config: &EwdsHandlerConfig,
     seen_request_ids: &mut HashSet<String>,
     seen_queue: &mut VecDeque<String>,
+    next_topic_index: &mut usize,
 ) -> Result<()> {
     let amount = config.request_batch_size.to_string();
-    let mut messages = Vec::new();
-    for topic_name in [
+    let topic_names = [
         config.orders_request_topic.as_str(),
         config.trades_request_topic.as_str(),
         config.measurements_request_topic.as_str(),
-    ] {
-        messages
-            .extend(poll_requests_for_topic(client, config, topic_name, amount.as_str()).await?);
-    }
+    ];
+    let topic_name = topic_names[*next_topic_index % topic_names.len()];
+    *next_topic_index = (*next_topic_index + 1) % topic_names.len();
+    let messages =
+        poll_requests_for_topic(client, config, topic_name, amount.as_str()).await?;
 
     for message in messages {
         let parsed = serde_json::from_str::<EwdsRequestEnvelope>(&message.payload);
@@ -175,11 +200,16 @@ async fn process_batch(
             continue;
         }
 
-        remember_request_id(&envelope.request_id, seen_request_ids, seen_queue);
-
+        let request_id = envelope.request_id.clone();
         if let Err(error) = handle_request(db, client, config, envelope).await {
-            error!("EWDS request handling failed: {}", error);
+            error!(
+                "EWDS request handling failed (request_id={}): {}",
+                request_id, error
+            );
+            return Err(error);
         }
+
+        remember_request_id(&request_id, seen_request_ids, seen_queue);
     }
 
     Ok(())
@@ -453,10 +483,39 @@ async fn send_message_with_fqcn(
         anonymous_recipient: Vec::new(),
     };
 
-    let response = client.post(post_url).json(&request_body).send().await?;
-    let status = response.status();
-    if !status.is_success() {
+    let started = Instant::now();
+    let mut rate_limit_attempt = 0u32;
+    loop {
+        if started.elapsed() > Duration::from_millis(config.response_send_timeout_ms) {
+            return Err(anyhow!(
+                "EWDS response send timed out for fqcn='{}', topic='{}'",
+                request_body.fqcn,
+                request_body.topic_name
+            ));
+        }
+
+        let response = client
+            .post(post_url.as_str())
+            .json(&request_body)
+            .send()
+            .await?;
+        let status = response.status();
+        if status.is_success() {
+            return Ok(());
+        }
+
         let error_body = response.text().await.unwrap_or_default();
+        if is_rate_limited_response(status, error_body.as_str()) {
+            let delay_ms = ewds_rate_limit_backoff_ms(rate_limit_attempt);
+            warn!(
+                "EWDS rate limit while publishing response for topic '{}'; retrying in {} ms",
+                request_body.topic_name, delay_ms
+            );
+            rate_limit_attempt = rate_limit_attempt.saturating_add(1);
+            sleep(Duration::from_millis(delay_ms)).await;
+            continue;
+        }
+
         return Err(anyhow!(
             "EWDS message send failed for fqcn='{}', topic='{}': HTTP {}{}",
             request_body.fqcn,
@@ -465,6 +524,4 @@ async fn send_message_with_fqcn(
             format_response_body(&error_body)
         ));
     }
-
-    Ok(())
 }

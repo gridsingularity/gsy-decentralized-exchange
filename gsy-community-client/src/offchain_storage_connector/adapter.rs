@@ -131,6 +131,7 @@ impl AreaMarketInfoAdapter {
         &self,
         community_uuid: String,
         time_slot: u64,
+        matching_algorithm: MatchingAlgorithm,
     ) -> Option<MarketSchema> {
         let creation_time = get_current_timestamp_in_secs();
         let market_schema = MarketSchema {
@@ -141,7 +142,7 @@ impl AreaMarketInfoAdapter {
             delivery_start_time: timestamp_to_string_with_padding(time_slot),
             delivery_end_time: timestamp_to_string_with_padding(time_slot + 900),
             market_type: MarketType::Spot,
-            matching_algorithm: MatchingAlgorithm::PayAsBid,
+            matching_algorithm,
             created_at: timestamp_to_string_with_padding(creation_time),
         };
 
