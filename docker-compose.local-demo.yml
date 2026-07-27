@@ -1,0 +1,214 @@
+# =============================================================================
+# GSY DEX — fully-local demo stack
+# =============================================================================
+# Runs the whole exchange locally: a single dev gsy-node, off-chain storage on a
+# 3-node MongoDB replica set, the matching / market-orchestrator / execution
+# engines, and the community client. The community client connects to the REAL
+# external FEDECOM forecaster / measurement services, so this stack exercises
+# those live integrations end-to-end.
+#
+# REQUIRES outbound internet (HTTPS) from the community-client container to the
+# FEDECOM hosts, plus valid credentials in .env/gsy-community-client.env
+# (FEDECOM_INFLUX_DB_TOKEN and the *_API_KEY fields).
+#
+# How to run (after a fresh clone, materialise the real env files first, then
+# fill in the forecaster credentials):
+#
+#   for f in .env/*.example; do cp "$f" "${f%.example}"; done
+#   # edit .env/gsy-community-client.env — add FEDECOM_INFLUX_DB_TOKEN etc.
+#   docker compose -f docker-compose.local-demo.yml build
+#   docker compose -f docker-compose.local-demo.yml up
+#
+# Endpoints once up:
+#   node RPC   ws://localhost:9944
+#   storage    http://localhost:8080/health_check
+#
+# Tear down (including mongo data volumes):
+#   docker compose -f docker-compose.local-demo.yml down -v
+#
+# NOTE: the community client addresses the node as `gsy-node` and the off-chain
+# storage as `gsy-orderbook` (both hard-coded in its source), so `gsy-offchain-
+# storage` is given the network alias `gsy-orderbook` below.
+# =============================================================================
+
+x-mongo-node: &mongo-node
+  image: mongo:8.0
+  command: ["mongod", "--replSet", "rs0", "--keyFile", "/keyfile/mongo-keyfile", "--bind_ip_all"]
+  restart: unless-stopped
+  depends_on:
+    mongo-keyfile-init:
+      condition: service_completed_successfully
+  healthcheck:
+    test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+    interval: 10s
+    timeout: 5s
+    retries: 10
+    start_period: 20s
+
+services:
+  gsy-node:
+    container_name: gsy-node
+    build:
+      context: .
+      dockerfile: ./gsy-node/Dockerfile
+    env_file:
+      - ./.env/gsy-node.env
+    ports:
+      - "9944:9944"
+      - "9933:9933"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'curl -H ''Content-Type: application/json'' -d ''{"id":1, "jsonrpc":"2.0", "method":"system_health"}'' http://localhost:9944 | grep -q ''"result":''',
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  gsy-offchain-storage:
+    container_name: gsy-offchain-storage
+    build:
+      context: .
+      dockerfile: ./gsy-offchain-storage/Dockerfile
+    env_file:
+      - ./.env/gsy-offchain-storage.env
+    depends_on:
+      mongo-init:
+        condition: service_completed_successfully
+    ports:
+      - "8080:8080"
+    networks:
+      default:
+        # The community client / matching / execution engines address off-chain
+        # storage as `gsy-orderbook`; expose that alias here.
+        aliases:
+          - gsy-orderbook
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health_check"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  gsy-matching-engine:
+    container_name: gsy-matching-engine
+    build:
+      context: .
+      dockerfile: ./gsy-matching-engine/Dockerfile
+    env_file:
+      - ./.env/gsy-matching-engine.env
+    depends_on:
+      gsy-offchain-storage:
+        condition: service_healthy
+      gsy-node:
+        condition: service_healthy
+    working_dir: /var/www/matching-engine
+    entrypoint: ["/usr/local/bin/gsy-matching-engine", "web3", "http://gsy-offchain-storage", "8080", "ws://gsy-node", "9944"]
+
+  gsy-market-orchestrator:
+    container_name: gsy-market-orchestrator
+    build:
+      context: .
+      dockerfile: ./gsy-market-orchestrator/Dockerfile
+    env_file:
+      - ./.env/gsy-market-orchestrator.env
+    depends_on:
+      gsy-node:
+        condition: service_healthy
+      gsy-offchain-storage:
+        condition: service_healthy
+
+  gsy-execution-engine:
+    container_name: gsy-execution-engine
+    build:
+      context: .
+      dockerfile: ./gsy-execution-engine/Dockerfile
+    env_file:
+      - ./.env/gsy-execution-engine.env
+    depends_on:
+      gsy-offchain-storage:
+        condition: service_healthy
+      gsy-node:
+        condition: service_healthy
+    entrypoint: ["/usr/local/bin/gsy-execution-engine", "web3", "http://gsy-offchain-storage", "8080", "ws://gsy-node", "9944", "30", "3600", "0.10"]
+
+  gsy-community-client:
+    container_name: gsy-community-client
+    build:
+      context: .
+      dockerfile: ./gsy-community-client/Dockerfile
+    env_file:
+      - ./.env/gsy-community-client.env
+    depends_on:
+      gsy-node:
+        condition: service_healthy
+      gsy-offchain-storage:
+        condition: service_healthy
+
+  # --- MongoDB replica set (rs0), test topology ---
+  mongo-keyfile-init:
+    image: mongo:8.0
+    entrypoint:
+      - bash
+      - -c
+      - |
+        set -e
+        if [ ! -s /keyfile/mongo-keyfile ]; then
+          head -c 756 /dev/urandom | base64 > /keyfile/mongo-keyfile
+        fi
+        chmod 400 /keyfile/mongo-keyfile
+        chown 999:999 /keyfile/mongo-keyfile
+    volumes:
+      - mongo-keyfile:/keyfile
+    restart: "no"
+
+  mongo1:
+    <<: *mongo-node
+    container_name: mongo1
+    env_file:
+      - ./.env/mongo.env
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo1-data:/data/db
+      - mongo-keyfile:/keyfile:ro
+
+  mongo2:
+    <<: *mongo-node
+    container_name: mongo2
+    ports:
+      - "27018:27017"
+    volumes:
+      - mongo2-data:/data/db
+      - mongo-keyfile:/keyfile:ro
+
+  mongo3:
+    <<: *mongo-node
+    container_name: mongo3
+    ports:
+      - "27019:27017"
+    volumes:
+      - mongo3-data:/data/db
+      - mongo-keyfile:/keyfile:ro
+
+  mongo-init:
+    image: mongo:8.0
+    depends_on:
+      mongo1:
+        condition: service_healthy
+      mongo2:
+        condition: service_healthy
+      mongo3:
+        condition: service_healthy
+    entrypoint: ["bash", "/mongo-rs-init.sh"]
+    volumes:
+      - ./deployment/mongodb-dev/mongo-rs-init.sh:/mongo-rs-init.sh:ro
+    restart: "no"
+
+volumes:
+  mongo-keyfile:
+  mongo1-data:
+  mongo2-data:
+  mongo3-data:
