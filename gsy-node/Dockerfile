@@ -31,6 +31,7 @@ COPY ./gsy-node/modules/orderbook-worker/Cargo.toml /var/www/gsy-node/modules/or
 COPY ./gsy-node/modules/trades-settlement/Cargo.toml /var/www/gsy-node/modules/trades-settlement/
 COPY ./gsy-node/modules/remuneration/Cargo.toml /var/www/gsy-node/modules/remuneration/
 COPY ./gsy-node/modules/stripe-bridge/Cargo.toml /var/www/gsy-node/modules/stripe-bridge/
+COPY ./gsy-node/modules/validator-set/Cargo.toml /var/www/gsy-node/modules/validator-set/
 RUN cargo chef prepare --recipe-path recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
 

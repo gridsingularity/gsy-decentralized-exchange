@@ -7,6 +7,10 @@
 # external FEDECOM forecaster / measurement services, so this stack exercises
 # those live integrations end-to-end.
 #
+# A one-shot `gsy-bootstrap` service sudo-registers the trading user (//Alice)
+# and the exchange operator on-chain before the orchestrator / community client
+# start, so the stack comes up ready to trade (no manual registration needed).
+#
 # REQUIRES outbound internet (HTTPS) from the community-client container to the
 # FEDECOM hosts, plus valid credentials in .env/gsy-community-client.env
 # (FEDECOM_INFLUX_DB_TOKEN and the *_API_KEY fields).
@@ -107,6 +111,21 @@ services:
     working_dir: /var/www/matching-engine
     entrypoint: ["/usr/local/bin/gsy-matching-engine", "web3", "http://gsy-offchain-storage", "8080", "ws://gsy-node", "9944"]
 
+  # One-shot: sudo-registers the trading user (//Alice) and the exchange operator
+  # so the orchestrator will create markets and the community client's orders are
+  # accepted. Exits 0 when done. See deployment/bootstrap/README.md.
+  gsy-bootstrap:
+    container_name: gsy-bootstrap
+    build:
+      context: ./deployment/bootstrap
+      dockerfile: Dockerfile
+    env_file:
+      - ./.env/gsy-bootstrap.env
+    depends_on:
+      gsy-node:
+        condition: service_healthy
+    restart: "no"
+
   gsy-market-orchestrator:
     container_name: gsy-market-orchestrator
     build:
@@ -119,6 +138,8 @@ services:
         condition: service_healthy
       gsy-offchain-storage:
         condition: service_healthy
+      gsy-bootstrap:
+        condition: service_completed_successfully
 
   gsy-execution-engine:
     container_name: gsy-execution-engine
@@ -146,6 +167,8 @@ services:
         condition: service_healthy
       gsy-offchain-storage:
         condition: service_healthy
+      gsy-bootstrap:
+        condition: service_completed_successfully
 
   # --- MongoDB replica set (rs0), test topology ---
   mongo-keyfile-init:
