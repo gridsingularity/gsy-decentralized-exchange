@@ -2,6 +2,7 @@ use anyhow::{anyhow, Result};
 use blake2_rfc::blake2b::blake2b;
 use cucumber::World;
 use ethers::prelude::*;
+use gsy_offchain_primitives::db_api_schema::market::MarketSchema;
 use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
 use gsy_offchain_primitives::db_api_schema::trades::TradeSchema;
 use gsy_offchain_primitives::utils::parse_or_hash_bytes16;
@@ -39,6 +40,7 @@ pub struct MyWorld {
     pub seller_id: String,
     pub bid_forecast: Option<ForecastSchema>,
     pub offer_forecast: Option<ForecastSchema>,
+    pub topology_schema: Option<MarketSchema>,
     pub last_trade: Option<TradeSchema>,
     pub last_charlie_offer_order_id: Option<String>,
 }
@@ -97,6 +99,7 @@ impl MyWorld {
             seller_id: "areabob".to_string(),
             bid_forecast: None,
             offer_forecast: None,
+            topology_schema: None,
             last_trade: None,
             last_charlie_offer_order_id: None,
         })

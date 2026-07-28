@@ -3,11 +3,10 @@ use anyhow::{anyhow, Error, Result};
 use ethers::prelude::*;
 use ethers::utils::keccak256;
 use gsy_offchain_primitives::db_api_schema::orders::{
-    DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus,
+    DbOrderSchema, EnergyType, OrderEnum, OrderStatus,
 };
-use gsy_offchain_primitives::ewds::{
-    query_via_ewds, EwdsOperation, EwdsOrderDto, EwdsQueryRequest,
-};
+use gsy_offchain_primitives::ewds::dto::EwdsOrderDto;
+use gsy_offchain_primitives::ewds::{EwdsClient, EwdsOperation};
 use gsy_offchain_primitives::types::{BidOfferMatch, MatchingData, Order};
 use gsy_offchain_primitives::utils::{
     actor_id_to_account_id, bytes16_to_h256, h256_to_bytes16_hex, parse_uuid_or_hex_bytes16,
@@ -266,18 +265,14 @@ async fn fetch_open_orders_via_ewds(fallback_url: String) -> Result<PreparedOrde
 async fn fetch_open_orders_via_ewds_query(fallback_url: String) -> Result<PreparedOrders, Error> {
     let query_payload = parse_query_params_from_url(&fallback_url);
     info!("Publishing EWDS orders.query request");
-    let values: Vec<Value> = query_via_ewds(EwdsQueryRequest {
-        operation: EwdsOperation::OrdersQuery,
-        query_payload,
-        request_topic_env: "EWDS_ORDERS_REQUEST_TOPIC",
-        request_topic_default: "ordersQuery",
-        response_topic_env: "EWDS_ORDERS_RESPONSE_TOPIC",
-        response_topic_default: "ordersQueryResponse",
-        response_client_id_env: "EWDS_MATCHING_ENGINE_CLIENT_ID",
-        response_client_id_default: "gsymatchingengine",
-        timeout_ms_default: 60_000,
-    })
-    .await?;
+    let ewds_client = EwdsClient::from_env(
+        "EWDS_MATCHING_ENGINE_CLIENT_ID",
+        "gsymatchingengine",
+        60_000,
+    );
+    let values: Vec<Value> = ewds_client
+        .query(EwdsOperation::OrdersQuery, query_payload)
+        .await?;
 
     let orders = parse_order_values(values).unwrap_or_default();
     info!("Fetched {} total orders from EWDS", orders.len());
@@ -324,74 +319,7 @@ fn parse_order_value(value: Value) -> Result<DbOrderSchema> {
     }
 
     let dto = serde_json::from_value::<EwdsOrderDto>(value)?;
-    ewds_order_to_db(dto)
-}
-
-fn ewds_order_to_db(order: EwdsOrderDto) -> Result<DbOrderSchema> {
-    let requirements = match order.requirements {
-        Some(requirements) => Some(DbRequirements {
-            trading_partner_id: requirements.trading_partner_id,
-            energy_type: requirements
-                .energy_type
-                .as_deref()
-                .map(ewds_energy_type_to_db)
-                .transpose()?,
-            preferred_energy_rate: requirements.preferred_energy_rate,
-        }),
-        None => None,
-    };
-
-    let attributes = match order.attributes {
-        Some(attributes) => Some(DbAttributes {
-            trading_partner_id: attributes.trading_partner_id,
-            energy_type: ewds_energy_type_to_db(attributes.energy_type.as_str())?,
-        }),
-        None => None,
-    };
-
-    Ok(DbOrderSchema {
-        order_id: order.order_id,
-        status: ewds_order_status_to_db(order.status.as_str())?,
-        order_type: ewds_order_type_to_db(order.order_type.as_str())?,
-        area_uuid: order.area_uuid,
-        market_id: order.market_id,
-        nonce: order.nonce,
-        time_slot: order.time_slot,
-        creation_time: order.creation_time,
-        energy_kWh: order.quantity,
-        energy_rate: order.price_limit,
-        created_by: order.created_by,
-        requirements,
-        attributes,
-    })
-}
-
-fn ewds_order_type_to_db(value: &str) -> Result<OrderEnum> {
-    match value.to_ascii_lowercase().as_str() {
-        "bid" => Ok(OrderEnum::Bid),
-        "offer" => Ok(OrderEnum::Offer),
-        _ => Err(anyhow!("unsupported EWDS order type '{}'", value)),
-    }
-}
-
-fn ewds_order_status_to_db(value: &str) -> Result<OrderStatus> {
-    match value.to_ascii_lowercase().as_str() {
-        "open" => Ok(OrderStatus::Open),
-        "executed" => Ok(OrderStatus::Executed),
-        "expired" => Ok(OrderStatus::Expired),
-        "deleted" => Ok(OrderStatus::Deleted),
-        _ => Err(anyhow!("unsupported EWDS order status '{}'", value)),
-    }
-}
-
-fn ewds_energy_type_to_db(value: &str) -> Result<EnergyType> {
-    match value.to_ascii_lowercase().as_str() {
-        "clean" => Ok(EnergyType::Clean),
-        "battery" => Ok(EnergyType::Battery),
-        "fossilfuel" | "fossil_fuel" | "fossil-fuel" => Ok(EnergyType::FossilFuel),
-        "import" => Ok(EnergyType::Import),
-        _ => Err(anyhow!("unsupported EWDS energy type '{}'", value)),
-    }
+    dto.try_into()
 }
 
 fn parse_bytes16_field(field_name: &str, value: &str) -> Result<[u8; 16]> {

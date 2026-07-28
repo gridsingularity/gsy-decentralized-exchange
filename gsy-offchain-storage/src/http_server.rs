@@ -1,13 +1,12 @@
 use crate::db::DatabaseWrapper;
 use crate::routes::{
     get_assets, get_clearing_results, get_communities, get_facilities, get_flexibility_orders,
-    get_forecasts, get_market_roles,
-    get_markets, get_measurement_points, get_measurements, get_orders, get_pilot_sites, get_sites,
-    get_tariffs, get_timeseries, get_trades, health_check, post_assets, post_clearing_result,
-    post_community, post_facility, post_flexibility_orders, post_forecasts,
-    post_market_role, post_measurement_points, post_measurements,
-    post_normalized_orders, post_normalized_trades, post_orders, post_pilot_site, post_site,
-    post_tariff, post_timeseries, post_trades, get_market
+    get_forecasts, get_market, get_market_roles, get_markets, get_measurement_points,
+    get_measurements, get_orders, get_pilot_sites, get_sites, get_tariffs, get_timeseries,
+    get_trades, health_check, post_assets, post_clearing_result, post_community, post_facility,
+    post_flexibility_orders, post_forecasts, post_market, post_market_role,
+    post_measurement_points, post_measurements, post_normalized_orders, post_normalized_trades,
+    post_orders, post_pilot_site, post_site, post_tariff, post_timeseries, post_trades,
 };
 use actix_web::dev::Server;
 use actix_web::{web, App, HttpServer};
@@ -42,6 +41,7 @@ fn run_http_server(
             .route("/trades", web::post().to(post_trades))
             .route("/trades", web::get().to(get_trades))
             .route("/market", web::get().to(get_market))
+            .route("/markets", web::post().to(post_market))
             .route("/markets", web::get().to(get_markets))
             .route("/clearing-results", web::post().to(post_clearing_result))
             .route("/clearing-results", web::get().to(get_clearing_results))

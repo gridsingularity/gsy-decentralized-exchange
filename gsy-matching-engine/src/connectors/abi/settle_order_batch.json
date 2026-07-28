@@ -36,7 +36,7 @@
                         ]
                     },
                     {
-                        "name": "ask",
+                        "name": "offer",
                         "type": "tuple",
                         "components": [
                             {"name": "orderId", "type": "bytes16"},
@@ -48,6 +48,8 @@
                             {"name": "energyRate", "type": "uint64"}
                         ]
                     },
+                    {"name": "residualBidId", "type": "bytes16"},
+                    {"name": "residualOfferId", "type": "bytes16"},
                     {"name": "selectedEnergy", "type": "uint256"},
                     {"name": "clearingPrice", "type": "uint256"}
                 ]

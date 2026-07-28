@@ -14,8 +14,7 @@ use tracing::info;
 
 fn generate_market_id(market_type: MarketType, delivery_timestamp: u64) -> String {
     let mut buffer = Vec::new();
-    // Method will be different in DD-398
-    // buffer.extend_from_slice(market_type.as_str().as_bytes());
+    buffer.extend_from_slice(market_type.as_str().as_bytes());
     buffer.extend_from_slice(&delivery_timestamp.to_be_bytes());
     let digest = blake2b(16, &[], &buffer);
     format!("0x{}", ethers::utils::hex::encode(digest.as_bytes()))
@@ -172,7 +171,7 @@ impl AreaMarketInfoAdapter {
             delivery_start_time: timestamp_to_string_with_padding(time_slot),
             delivery_end_time: timestamp_to_string_with_padding(time_slot + 900),
             market_type: MarketType::Spot,
-            matching_algorithm:MatchingAlgorithm::PayAsBid,
+            matching_algorithm: MatchingAlgorithm::PayAsBid,
             created_at: timestamp_to_string_with_padding(creation_time),
         };
 
