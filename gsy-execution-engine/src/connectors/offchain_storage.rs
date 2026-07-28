@@ -104,7 +104,7 @@ async fn fetch_measurements_from_timeseries(
             let point = points_by_id.get(&value.measurement_point)?;
             let time_slot = parse_timeseries_timestamp(value.timestamp.as_str())?;
             Some(MeasurementSchema {
-                area_uuid: point.asset_name.clone(),
+                facility_id: point.asset_name.clone(),
                 community_uuid: point.datasource_name.clone().unwrap_or_default(),
                 time_slot,
                 creation_time: time_slot,

@@ -2,6 +2,7 @@ use anyhow::{anyhow, Result};
 use blake2_rfc::blake2b::blake2b;
 use cucumber::World;
 use ethers::prelude::*;
+use gsy_community_client::external_api::ExternalFacilityTopology;
 use gsy_offchain_primitives::db_api_schema::market::MarketSchema;
 use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
 use gsy_offchain_primitives::db_api_schema::trades::TradeSchema;
@@ -40,9 +41,10 @@ pub struct MyWorld {
     pub seller_id: String,
     pub bid_forecast: Option<ForecastSchema>,
     pub offer_forecast: Option<ForecastSchema>,
-    pub topology_schema: Option<MarketSchema>,
     pub last_trade: Option<TradeSchema>,
     pub last_charlie_offer_order_id: Option<String>,
+    pub market_schema: Option<MarketSchema>,
+    pub facilities_topology: Vec<ExternalFacilityTopology>,
 }
 
 impl MyWorld {
@@ -99,9 +101,10 @@ impl MyWorld {
             seller_id: "areabob".to_string(),
             bid_forecast: None,
             offer_forecast: None,
-            topology_schema: None,
             last_trade: None,
             last_charlie_offer_order_id: None,
+            market_schema: None,
+            facilities_topology: vec![],
         })
     }
 
@@ -142,10 +145,10 @@ impl MyWorld {
             .clone()
     }
 
-    pub fn generate_market_id(&self, market_type: MarketType) -> [u8; 16] {
+    pub fn generate_market_id(&self, market_type: MarketType, delivery_timestamp: u64) -> [u8; 16] {
         let mut buffer = Vec::new();
         buffer.extend_from_slice(market_type.as_str().as_bytes());
-        buffer.extend_from_slice(&self.target_delivery_time.to_be_bytes());
+        buffer.extend_from_slice(&delivery_timestamp.to_be_bytes());
         blake2b(16, &[], &buffer)
             .as_bytes()
             .try_into()

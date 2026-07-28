@@ -4,7 +4,7 @@ use ethers::prelude::*;
 use gsy_community_client::node_connector::orders::publish_orders;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use gsy_offchain_primitives::db_api_schema::orders::{
-    DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderStatus,
+    DbAttributes, DbOrderSchema, DbRequirements, IntelligentEnergyType, OrderStatus,
 };
 use gsy_offchain_primitives::db_api_schema::profiles::MeasurementSchema;
 use gsy_offchain_primitives::db_api_schema::trades::TradeSchema;
@@ -16,8 +16,20 @@ use tracing::info;
 
 const MATCHING_ENGINE_BLOCK_INTERVAL: u64 = 4;
 const FLOAT_EPSILON: f64 = 0.000_001;
+const ENERGY_TYPE_UNSPECIFIED: u8 = 0;
 
-type EvmOrderParamsTuple = ([u8; 16], [u8; 16], [u8; 16], u64, u64, u64, u64, bool);
+type EvmOrderParamsTuple = (
+    [u8; 16],
+    [u8; 16],
+    [u8; 16],
+    u64,
+    u64,
+    u64,
+    u64,
+    u8,
+    u8,
+    bool,
+);
 
 abigen!(
     OrderRegistryContract,
@@ -47,6 +59,8 @@ abigen!(
                         {"name": "creationTime", "type": "uint64"},
                         {"name": "energy", "type": "uint64"},
                         {"name": "energyRate", "type": "uint64"},
+                        {"name": "energySourcePreference", "type": "uint8"},
+                        {"name": "energyType", "type": "uint8"},
                         {"name": "isBid", "type": "bool"}
                     ]
                 }
@@ -222,6 +236,32 @@ async fn upsert_order_in_offchain_storage(world: &MyWorld, order: DbOrderSchema)
     );
 }
 
+fn energy_type_to_contract(energy_type: &IntelligentEnergyType) -> u8 {
+    match energy_type {
+        IntelligentEnergyType::Green => 1,
+        IntelligentEnergyType::Pv => 2,
+        IntelligentEnergyType::Hydro => 3,
+        IntelligentEnergyType::Biomass => 4,
+        IntelligentEnergyType::Battery => 5,
+        IntelligentEnergyType::Grey => 6,
+    }
+}
+
+fn order_energy_source_preference(requirements: &Option<DbRequirements>) -> u8 {
+    requirements
+        .as_ref()
+        .and_then(|requirements| requirements.energy_type.as_ref())
+        .map(energy_type_to_contract)
+        .unwrap_or(ENERGY_TYPE_UNSPECIFIED)
+}
+
+fn order_energy_type(attributes: &Option<DbAttributes>) -> u8 {
+    attributes
+        .as_ref()
+        .map(|attributes| energy_type_to_contract(&attributes.energy_type))
+        .unwrap_or(ENERGY_TYPE_UNSPECIFIED)
+}
+
 async fn place_custom_order(
     world: &MyWorld,
     user_name: &str,
@@ -261,6 +301,8 @@ async fn place_custom_order(
         creation_time,
         (energy * NODE_FLOAT_SCALING_FACTOR).round() as u64,
         (energy_rate * NODE_FLOAT_SCALING_FACTOR).round() as u64,
+        order_energy_source_preference(&requirements),
+        order_energy_type(&attributes),
         is_bid,
     );
 
@@ -290,15 +332,12 @@ async fn place_custom_order(
     order_id
 }
 
-#[when(regex = r#"^"([^"]*)" submits a bid$"#)]
+#[when(expr = "{string} submits a bid")]
 async fn submit_bid(world: &mut MyWorld, user_name: String) {
     publish_orders(
         world.evm_node_url.clone(),
         vec![world.bid_forecast.clone().expect("Missing bid forecast")],
-        world
-            .topology_schema
-            .clone()
-            .expect("Missing topology schema"),
+        world.market_schema.clone().expect("Missing market schema"),
         address_to_full_hex(world.order_registry_address),
         world.private_key_for_user(user_name.as_str()),
     )
@@ -307,7 +346,7 @@ async fn submit_bid(world: &mut MyWorld, user_name: String) {
 }
 
 #[when(
-    regex = r#"^"([^"]*)" submits a bid for (\d+) energy at a normal rate of (\d+), with a preferred rate of (\d+) for partner "([^"]*)"$"#
+    expr = "{string} submits a bid for {float} energy at a normal rate of {float}, with a preferred rate of {float} for partner {string}"
 )]
 async fn submit_preferred_partner_bid(
     world: &mut MyWorld,
@@ -335,7 +374,7 @@ async fn submit_preferred_partner_bid(
     .await;
 }
 
-#[when(regex = r#"^"([^"]*)" submits an offer$"#)]
+#[when(expr = "{string} submits an offer")]
 async fn submit_offer(world: &mut MyWorld, user_name: String) {
     publish_orders(
         world.evm_node_url.clone(),
@@ -343,10 +382,7 @@ async fn submit_offer(world: &mut MyWorld, user_name: String) {
             .offer_forecast
             .clone()
             .expect("Missing offer forecast")],
-        world
-            .topology_schema
-            .clone()
-            .expect("Missing topology schema"),
+        world.market_schema.clone().expect("Missing market schema"),
         address_to_full_hex(world.order_registry_address),
         world.private_key_for_user(user_name.as_str()),
     )
@@ -371,7 +407,7 @@ async fn submit_preferred_partner_offer(
 ) {
     let attributes = DbAttributes {
         trading_partner_id: Some(actor_id_as_hex(world, &partner_name)),
-        energy_type: EnergyType::Clean,
+        energy_type: IntelligentEnergyType::Green,
     };
 
     place_custom_order(
@@ -387,7 +423,7 @@ async fn submit_preferred_partner_offer(
 }
 
 #[when(
-    regex = r#"^"([^"]*)" submits a cheaper open-market offer for (\d+) energy at a rate of (\d+)$"#
+    expr = "{string} submits a cheaper open-market offer for {float} energy at a rate of {float}"
 )]
 async fn submit_cheaper_offer(world: &mut MyWorld, user_name: String, energy: f64, rate: f64) {
     let order_id =
@@ -398,19 +434,21 @@ async fn submit_cheaper_offer(world: &mut MyWorld, user_name: String, energy: f6
     emit_until_matching_block(world, 12).await;
 }
 
-#[when(regex = r#"^measurements for "([^"]*)" and "([^"]*)" assets are submitted$"#)]
-async fn submit_measurements(world: &mut MyWorld, _user1: String, _user2: String) {
+#[when(expr = "measurements for facilities are submitted")]
+async fn submit_measurements(world: &mut MyWorld) {
     let adapter = AreaMarketInfoAdapter::new(Some(world.offchain_storage_url.clone()));
-    let market_area_id = market_id_as_hex(world);
+    let mut measurements = vec![];
+    for facility in world.facilities_topology.iter() {
+        measurements.push(MeasurementSchema {
+            facility_id: facility.facility_id.clone(),
+            community_uuid: "community1".to_string(),
+            energy_kwh: 12.0,
+            time_slot: world.target_delivery_time,
+            creation_time: 1,
+        })
+    }
 
-    let measurements = vec![MeasurementSchema {
-        area_uuid: market_area_id,
-        community_uuid: "community1".to_string(),
-        energy_kwh: 12.0,
-        time_slot: world.target_delivery_time,
-        creation_time: 1,
-    }];
-
+    // send measurements to offchain storage
     adapter
         .forward_measurement(measurements)
         .await

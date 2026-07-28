@@ -1,6 +1,6 @@
 use super::EwdsOperation;
 use crate::db_api_schema::orders::{
-    DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus,
+    DbAttributes, DbOrderSchema, DbRequirements, IntelligentEnergyType, OrderEnum, OrderStatus,
 };
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
@@ -91,7 +91,7 @@ pub struct EwdsRequirementsDto {
     #[serde(default)]
     pub trading_partner_id: Option<String>,
     #[serde(default)]
-    pub energy_type: Option<String>,
+    pub energy_type: Option<IntelligentEnergyType>,
     #[serde(default)]
     pub preferred_energy_rate: Option<f64>,
 }
@@ -101,7 +101,7 @@ pub struct EwdsRequirementsDto {
 pub struct EwdsAttributesDto {
     #[serde(default)]
     pub trading_partner_id: Option<String>,
-    pub energy_type: String,
+    pub energy_type: IntelligentEnergyType,
 }
 
 impl From<DbOrderSchema> for EwdsOrderDto {
@@ -120,14 +120,12 @@ impl From<DbOrderSchema> for EwdsOrderDto {
             created_by: order.created_by,
             requirements: order.requirements.map(|requirements| EwdsRequirementsDto {
                 trading_partner_id: requirements.trading_partner_id,
-                energy_type: requirements
-                    .energy_type
-                    .map(|value| energy_type_to_ewds(&value).to_string()),
+                energy_type: requirements.energy_type,
                 preferred_energy_rate: requirements.preferred_energy_rate,
             }),
             attributes: order.attributes.map(|attributes| EwdsAttributesDto {
                 trading_partner_id: attributes.trading_partner_id,
-                energy_type: energy_type_to_ewds(&attributes.energy_type).to_string(),
+                energy_type: attributes.energy_type,
             }),
         }
     }
@@ -140,11 +138,7 @@ impl TryFrom<EwdsOrderDto> for DbOrderSchema {
         let requirements = match order.requirements {
             Some(requirements) => Some(DbRequirements {
                 trading_partner_id: requirements.trading_partner_id,
-                energy_type: requirements
-                    .energy_type
-                    .as_deref()
-                    .map(energy_type_from_ewds)
-                    .transpose()?,
+                energy_type: requirements.energy_type,
                 preferred_energy_rate: requirements.preferred_energy_rate,
             }),
             None => None,
@@ -153,7 +147,7 @@ impl TryFrom<EwdsOrderDto> for DbOrderSchema {
         let attributes = match order.attributes {
             Some(attributes) => Some(DbAttributes {
                 trading_partner_id: attributes.trading_partner_id,
-                energy_type: energy_type_from_ewds(attributes.energy_type.as_str())?,
+                energy_type: attributes.energy_type,
             }),
             None => None,
         };
@@ -192,15 +186,6 @@ fn order_status_to_ewds(status: &OrderStatus) -> &'static str {
     }
 }
 
-fn energy_type_to_ewds(energy_type: &EnergyType) -> &'static str {
-    match energy_type {
-        EnergyType::Clean => "clean",
-        EnergyType::Battery => "battery",
-        EnergyType::FossilFuel => "fossilFuel",
-        EnergyType::Import => "import",
-    }
-}
-
 fn order_type_from_ewds(value: &str) -> Result<OrderEnum> {
     match value.to_ascii_lowercase().as_str() {
         "bid" => Ok(OrderEnum::Bid),
@@ -216,16 +201,6 @@ fn order_status_from_ewds(value: &str) -> Result<OrderStatus> {
         "expired" => Ok(OrderStatus::Expired),
         "deleted" => Ok(OrderStatus::Deleted),
         _ => Err(anyhow!("unsupported EWDS order status '{}'", value)),
-    }
-}
-
-fn energy_type_from_ewds(value: &str) -> Result<EnergyType> {
-    match value.to_ascii_lowercase().as_str() {
-        "clean" => Ok(EnergyType::Clean),
-        "battery" => Ok(EnergyType::Battery),
-        "fossilfuel" | "fossil_fuel" | "fossil-fuel" => Ok(EnergyType::FossilFuel),
-        "import" => Ok(EnergyType::Import),
-        _ => Err(anyhow!("unsupported EWDS energy type '{}'", value)),
     }
 }
 
@@ -248,7 +223,7 @@ mod tests {
             created_by: "actor-id".to_string(),
             requirements: Some(DbRequirements {
                 trading_partner_id: Some("partner-id".to_string()),
-                energy_type: Some(EnergyType::Clean),
+                energy_type: Some(IntelligentEnergyType::Green),
                 preferred_energy_rate: Some(11.0),
             }),
             attributes: None,

@@ -51,6 +51,8 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
                 uint64 creationTime;
                 uint64 energy;
                 uint64 energyRate;
+                uint8 energySourcePreference;
+                uint8 energyType;
             }
 
             struct Match {

@@ -3,7 +3,7 @@ use anyhow::{anyhow, Error, Result};
 use ethers::prelude::*;
 use ethers::utils::keccak256;
 use gsy_offchain_primitives::db_api_schema::orders::{
-    DbOrderSchema, EnergyType, OrderEnum, OrderStatus,
+    DbOrderSchema, IntelligentEnergyType, OrderEnum, OrderStatus,
 };
 use gsy_offchain_primitives::ewds::dto::EwdsOrderDto;
 use gsy_offchain_primitives::ewds::{EwdsClient, EwdsOperation};
@@ -20,13 +20,14 @@ use tokio::time::{sleep, Duration};
 use tracing::{error, info, warn};
 
 const MATCH_PER_NR_BLOCKS: u64 = 4;
+const ENERGY_TYPE_UNSPECIFIED: u8 = 0;
 
 abigen!(
     SettleOrderBatchContract,
     "src/connectors/abi/settle_order_batch.json"
 );
 
-type EvmOrderDataTuple = ([u8; 16], [u8; 16], [u8; 16], u64, u64, u64, u64);
+type EvmOrderDataTuple = ([u8; 16], [u8; 16], [u8; 16], u64, u64, u64, u64, u8, u8);
 type EvmMatchTuple = (
     [u8; 16],
     EvmOrderDataTuple,
@@ -148,13 +149,14 @@ pub async fn send_settle_batch_transaction(
         return Ok(());
     }
 
-    let settle_order_batch_address = Address::from_str(settle_order_batch_address).map_err(|e| {
-        anyhow!(
-            "Invalid trade settlement address '{}': {}",
-            settle_order_batch_address,
-            e
-        )
-    })?;
+    let settle_order_batch_address =
+        Address::from_str(settle_order_batch_address).map_err(|e| {
+            anyhow!(
+                "Invalid trade settlement address '{}': {}",
+                settle_order_batch_address,
+                e
+            )
+        })?;
     let evm_matches = to_evm_matches(matches, &order_lookup)?;
 
     let provider = Provider::<Ws>::connect(evm_node_url).await?;
@@ -165,7 +167,8 @@ pub async fn send_settle_batch_transaction(
         .with_chain_id(chain_id);
     let signer_address = wallet.address();
     let client = std::sync::Arc::new(SignerMiddleware::new(provider, wallet));
-    let settle_order_batch = SettleOrderBatchContract::new(settle_order_batch_address, client.clone());
+    let settle_order_batch =
+        SettleOrderBatchContract::new(settle_order_batch_address, client.clone());
 
     let operator_role = keccak256("OPERATOR_ROLE");
     let has_role = settle_order_batch
@@ -355,7 +358,7 @@ fn convert_db_order_to_canonical(order: &DbOrderSchema) -> Result<Order> {
                         .trading_partner_id
                         .as_deref()
                         .and_then(parse_account_or_address),
-                    energy_type: r.energy_type.as_ref().map(map_energy_type),
+                    energy_type: r.energy_type.clone(),
                     preferred_energy_rate: r
                         .preferred_energy_rate
                         .map(|rate| (rate * NODE_FLOAT_SCALING_FACTOR).round() as u64),
@@ -382,20 +385,39 @@ fn convert_db_order_to_canonical(order: &DbOrderSchema) -> Result<Order> {
                         .trading_partner_id
                         .as_deref()
                         .and_then(parse_account_or_address),
-                    energy_type: map_energy_type(&a.energy_type),
+                    energy_type: a.energy_type.clone(),
                 }
             }),
         },
     })
 }
 
-fn map_energy_type(energy_type: &EnergyType) -> gsy_offchain_primitives::types::EnergyType {
+fn energy_type_to_contract(energy_type: &IntelligentEnergyType) -> u8 {
     match energy_type {
-        EnergyType::Clean => gsy_offchain_primitives::types::EnergyType::Clean,
-        EnergyType::Battery => gsy_offchain_primitives::types::EnergyType::Battery,
-        EnergyType::FossilFuel => gsy_offchain_primitives::types::EnergyType::FossilFuel,
-        EnergyType::Import => gsy_offchain_primitives::types::EnergyType::Import,
+        IntelligentEnergyType::Green => 1,
+        IntelligentEnergyType::Pv => 2,
+        IntelligentEnergyType::Hydro => 3,
+        IntelligentEnergyType::Biomass => 4,
+        IntelligentEnergyType::Battery => 5,
+        IntelligentEnergyType::Grey => 6,
     }
+}
+
+fn order_energy_source_preference(order: &DbOrderSchema) -> u8 {
+    order
+        .requirements
+        .as_ref()
+        .and_then(|requirements| requirements.energy_type.as_ref())
+        .map(energy_type_to_contract)
+        .unwrap_or(ENERGY_TYPE_UNSPECIFIED)
+}
+
+fn order_energy_type(order: &DbOrderSchema) -> u8 {
+    order
+        .attributes
+        .as_ref()
+        .map(|attributes| energy_type_to_contract(&attributes.energy_type))
+        .unwrap_or(ENERGY_TYPE_UNSPECIFIED)
 }
 
 fn to_evm_order_data(order: &DbOrderSchema, expected_type: OrderEnum) -> Result<EvmOrderDataTuple> {
@@ -416,6 +438,8 @@ fn to_evm_order_data(order: &DbOrderSchema, expected_type: OrderEnum) -> Result<
         order.creation_time,
         (order.energy_kWh * NODE_FLOAT_SCALING_FACTOR).round() as u64,
         (order.energy_rate * NODE_FLOAT_SCALING_FACTOR).round() as u64,
+        order_energy_source_preference(order),
+        order_energy_type(order),
     ))
 }
 

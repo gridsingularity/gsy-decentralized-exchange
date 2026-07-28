@@ -50,8 +50,8 @@ async fn get_market_succeeds() {
 
     let db = web::Data::new(app.db_wrapper.clone());
     let market_ref = db.get_ref().markets();
-    market_ref.insert(market1.clone()).await.unwrap();
-    market_ref.insert(market2.clone()).await.unwrap();
+    market_ref.insert_one(market1.clone()).await.unwrap();
+    market_ref.insert_one(market2.clone()).await.unwrap();
 
     let client = reqwest::Client::new();
     let resp = client
@@ -75,7 +75,7 @@ async fn get_market_from_community_succeeds() {
     let market1 = make_market("my_market", "communityhash", "2026-03-27T18:00:00Z");
     let db = web::Data::new(app.db_wrapper.clone());
     let market_ref = db.get_ref().markets();
-    market_ref.insert(market1).await.unwrap();
+    market_ref.insert_one(market1).await.unwrap();
 
     let client = reqwest::Client::new();
     let resp = client

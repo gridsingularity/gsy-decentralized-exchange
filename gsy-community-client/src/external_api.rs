@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 // Struct for forecast data received from external API
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ExternalForecast {
-    pub area_uuid: String,
+    pub facility_id: String,
     pub community_uuid: String,
     pub time_slot: u64,
     pub creation_time: u64,
@@ -14,7 +14,7 @@ pub struct ExternalForecast {
 // Struct for measurement data received from external API
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ExternalMeasurement {
-    pub area_uuid: String,
+    pub facility_id: String,
     pub community_uuid: String,
     pub time_slot: u64,
     pub creation_time: u64,
@@ -23,15 +23,15 @@ pub struct ExternalMeasurement {
 
 // Struct for forecast data received from external API
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ExternalAreaTopology {
-    pub area_uuid: String,
-    pub area_name: String,
+pub struct ExternalFacilityTopology {
+    pub facility_id: String,
+    pub facility_name: String,
 }
 
 // Struct for forecast data received from external API
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ExternalCommunityTopology {
-    pub areas: Vec<ExternalAreaTopology>,
+    pub facilities: Vec<ExternalFacilityTopology>,
     pub community_uuid: String,
     pub community_name: String,
 }

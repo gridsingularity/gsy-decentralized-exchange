@@ -6,7 +6,9 @@ use gsy_ethers_listener::{
     TradeSettledFilter,
 };
 use gsy_offchain_primitives::db_api_schema::{
-    orders::{DbOrderSchema, OrderEnum, OrderStatus},
+    orders::{
+        DbAttributes, DbOrderSchema, DbRequirements, IntelligentEnergyType, OrderEnum, OrderStatus,
+    },
     trades::{TradeParameters, TradeSchema, TradeStatus},
 };
 use gsy_offchain_primitives::utils::{bytes16_to_hex, NODE_FLOAT_SCALING_FACTOR};
@@ -41,7 +43,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             order_id: order_id_str,
             status: OrderStatus::Open,
             order_type: order_enum,
-            area_uuid: market_id_str.clone(),
+            area_uuid: created_by_str.clone(),
             market_id: market_id_str,
             nonce: None,
             time_slot: event.time_slot,
@@ -49,8 +51,8 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             energy_kWh: energy_f64,
             energy_rate: rate_f64,
             created_by: created_by_str,
-            requirements: None,
-            attributes: None,
+            requirements: requirements_from_event(&event),
+            attributes: attributes_from_event(&event),
         };
 
         match self.db.orders().insert_orders(vec![schema]).await {
@@ -151,6 +153,41 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         );
         Ok(())
     }
+}
+
+fn energy_type_from_contract(value: u8) -> Option<IntelligentEnergyType> {
+    match value {
+        1 => Some(IntelligentEnergyType::Green),
+        2 => Some(IntelligentEnergyType::Pv),
+        3 => Some(IntelligentEnergyType::Hydro),
+        4 => Some(IntelligentEnergyType::Biomass),
+        5 => Some(IntelligentEnergyType::Battery),
+        6 => Some(IntelligentEnergyType::Grey),
+        _ => None,
+    }
+}
+
+fn requirements_from_event(event: &OrderPlacedFilter) -> Option<DbRequirements> {
+    if !event.is_bid {
+        return None;
+    }
+
+    energy_type_from_contract(event.energy_source_preference).map(|energy_type| DbRequirements {
+        trading_partner_id: None,
+        energy_type: Some(energy_type),
+        preferred_energy_rate: None,
+    })
+}
+
+fn attributes_from_event(event: &OrderPlacedFilter) -> Option<DbAttributes> {
+    if event.is_bid {
+        return None;
+    }
+
+    energy_type_from_contract(event.energy_type).map(|energy_type| DbAttributes {
+        trading_partner_id: None,
+        energy_type,
+    })
 }
 
 fn bytes16_to_optional_hex(value: [u8; 16]) -> Option<String> {

@@ -48,7 +48,9 @@ cp .env.ewds.local.example .env.ewds.local
 # Restart docker-compose.ewds.yml without -v after the UI setup so scheduler/API reload Vault state.
 ```
 
-Start and validate the gateway first:
+### Validated EWDS E2E Sequence
+
+1. Start the local DDHub Client Gateway stack and keep it running:
 
 ```bash
 docker compose --env-file .env.ewds.local \
@@ -56,16 +58,47 @@ docker compose --env-file .env.ewds.local \
   up --build
 ```
 
-After the EWDS gateway stack is running and healthy in the same compose project,
-deploy the local contracts stack, then start the GSY/e2e stack from the normal
-test compose file. Do not run `down` on `docker-compose.ewds.yml` unless you
-intentionally want to stop the gateway, Vault, and Postgres containers. Reset
-only the GSY/e2e containers when a clean e2e service run is needed:
+Before running the GSY services, verify the gateway is connected to EWDS and the
+required local gateway channels/topics are configured.
 
-Run both compose commands from the repository root without changing the Compose
-project name so the GSY containers can resolve `ddhub-gateway-api` on the shared
-default Docker network. The same rule applies to `docker-compose.contracts.yml`;
-the local `anvil` container must be on the same default network.
+2. In a separate shell, deploy the local contracts stack:
+
+```bash
+./scripts/contracts.sh local deploy
+```
+
+This starts the dedicated local `anvil` container, deploys the upgradeable
+contract suite, grants service roles, and writes
+`contracts-output/addresses.env`. Keep the `anvil` container running while the
+e2e compose stack executes.
+
+3. Run the GSY e2e stack against the already-running gateway and local Anvil:
+
+```bash
+docker compose --env-file .env.ewds.local \
+  --env-file contracts-output/addresses.env \
+  -f docker-compose.test.yml \
+  up --build \
+  --abort-on-container-exit \
+  --exit-code-from e2e-tests \
+  e2e-tests
+```
+
+Run all commands from the repository root without changing the Compose project
+name. The gateway, contracts, and GSY test stacks must share the same default
+Docker network so services can resolve `ddhub-gateway-api` and `anvil`.
+
+Do not include `-f docker-compose.ewds.yml` in the e2e command if the gateway
+stack is already running. The GSY services only need `.env.ewds.local` for EWDS
+client settings and `contracts-output/addresses.env` for deployed contract
+addresses.
+
+Use `--force-recreate` on the e2e command only when you explicitly want Docker
+to recreate the GSY/e2e containers.
+
+Do not run `down` on `docker-compose.ewds.yml` unless you intentionally want to
+stop the gateway, Vault, and Postgres containers. Reset only the GSY/e2e
+containers when a clean e2e service run is needed:
 
 ```bash
 docker compose --env-file .env.ewds.local \
@@ -77,21 +110,7 @@ docker compose --env-file .env.ewds.local \
   rm -f e2e-tests gsy-offchain-storage gsy-matching-engine gsy-execution-engine gsy-community-client gsy-market-orchestrator mongodb
 ```
 
-Final validated EWDS e2e command:
-
-```bash
-./scripts/contracts.sh local deploy
-
-docker compose --env-file .env.ewds.local \
-  --env-file contracts-output/addresses.env \
-  -f docker-compose.test.yml \
-  up --build --force-recreate \
-  --abort-on-container-exit \
-  --exit-code-from e2e-tests \
-  e2e-tests
-```
-
-This command was validated with the local DDHub Client Gateway connected to the
+This sequence was validated with the local DDHub Client Gateway connected to the
 EWF-hosted broker and the following local channels/topics:
 
 - `gsy.intelligent.requests.pub` / `gsy.intelligent.requests.sub`

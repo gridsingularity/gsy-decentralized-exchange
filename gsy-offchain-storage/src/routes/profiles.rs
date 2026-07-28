@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 #[derive(Deserialize)]
 pub struct ProfilesParameters {
-    area_uuid: Option<String>,
+    facility_id: Option<String>,
     start_time: Option<u64>,
     end_time: Option<u64>,
 }
@@ -19,13 +19,13 @@ pub struct ProfilesParameters {
 fn profile_measurement_id(
     point_type: MeasurementPointType,
     community_uuid: &str,
-    area_uuid: &str,
+    facility_id: &str,
 ) -> String {
     let prefix = match point_type {
         MeasurementPointType::Measurement => "measurement",
         MeasurementPointType::Forecast => "forecast",
     };
-    format!("{prefix}:{community_uuid}:{area_uuid}")
+    format!("{prefix}:{community_uuid}:{facility_id}")
 }
 
 fn parse_timeseries_timestamp(timestamp: &str) -> Option<u64> {
@@ -46,7 +46,7 @@ fn measurement_point_from_measurement(measurement: &MeasurementSchema) -> Measur
         measurement_id: profile_measurement_id(
             MeasurementPointType::Measurement,
             measurement.community_uuid.as_str(),
-            measurement.area_uuid.as_str(),
+            measurement.facility_id.as_str(),
         ),
         property_measured: "energy_measured".to_string(),
         unit: "kWh".to_string(),
@@ -54,7 +54,7 @@ fn measurement_point_from_measurement(measurement: &MeasurementSchema) -> Measur
         energy_accumulated: false,
         time_resolution: "PT15M".to_string(),
         phase: 0,
-        asset_name: measurement.area_uuid.clone(),
+        asset_name: measurement.facility_id.clone(),
         datasource_name: Some(measurement.community_uuid.clone()),
     }
 }
@@ -64,7 +64,7 @@ fn measurement_timeseries(measurement: &MeasurementSchema) -> TimeseriesSchema {
         measurement_point: profile_measurement_id(
             MeasurementPointType::Measurement,
             measurement.community_uuid.as_str(),
-            measurement.area_uuid.as_str(),
+            measurement.facility_id.as_str(),
         ),
         timestamp: timestamp_to_string_with_padding(measurement.time_slot),
         value: measurement.energy_kwh,
@@ -77,7 +77,7 @@ fn measurement_point_from_forecast(forecast: &ForecastSchema) -> MeasurementPoin
         measurement_id: profile_measurement_id(
             MeasurementPointType::Forecast,
             forecast.community_uuid.as_str(),
-            forecast.area_uuid.as_str(),
+            forecast.facility_id.as_str(),
         ),
         property_measured: "energy_forecast".to_string(),
         unit: "kWh".to_string(),
@@ -85,7 +85,7 @@ fn measurement_point_from_forecast(forecast: &ForecastSchema) -> MeasurementPoin
         energy_accumulated: false,
         time_resolution: "PT15M".to_string(),
         phase: 0,
-        asset_name: forecast.area_uuid.clone(),
+        asset_name: forecast.facility_id.clone(),
         datasource_name: Some(forecast.community_uuid.clone()),
     }
 }
@@ -95,7 +95,7 @@ fn forecast_timeseries(forecast: &ForecastSchema) -> TimeseriesSchema {
         measurement_point: profile_measurement_id(
             MeasurementPointType::Forecast,
             forecast.community_uuid.as_str(),
-            forecast.area_uuid.as_str(),
+            forecast.facility_id.as_str(),
         ),
         timestamp: timestamp_to_string_with_padding(forecast.time_slot),
         value: forecast.energy_kwh,
@@ -105,13 +105,13 @@ fn forecast_timeseries(forecast: &ForecastSchema) -> TimeseriesSchema {
 async fn fetch_profile_values(
     db: &crate::db::DatabaseWrapper,
     point_type: MeasurementPointType,
-    area_uuid: Option<String>,
+    facility_id: Option<String>,
     start_time: Option<u64>,
     end_time: Option<u64>,
 ) -> Result<Vec<(MeasurementPointSchema, TimeseriesSchema)>> {
     let points = db
         .measurement_points()
-        .filter_points(area_uuid, Some(point_type))
+        .filter_points(facility_id, Some(point_type))
         .await?;
     let points_by_id = points
         .into_iter()
@@ -171,7 +171,7 @@ pub async fn get_measurements(
     match fetch_profile_values(
         db.get_ref(),
         MeasurementPointType::Measurement,
-        query_params.area_uuid.clone(),
+        query_params.facility_id.clone(),
         query_params.start_time,
         query_params.end_time,
     )
@@ -183,7 +183,7 @@ pub async fn get_measurements(
                 .filter_map(|(point, value)| {
                     let time_slot = parse_timeseries_timestamp(value.timestamp.as_str())?;
                     Some(MeasurementSchema {
-                        area_uuid: point.asset_name,
+                        facility_id: point.asset_name,
                         community_uuid: point.datasource_name.unwrap_or_default(),
                         time_slot,
                         creation_time: time_slot,
@@ -228,7 +228,7 @@ pub async fn get_forecasts(db: DbRef, query_params: Query<ProfilesParameters>) -
     match fetch_profile_values(
         db.get_ref(),
         MeasurementPointType::Forecast,
-        query_params.area_uuid.clone(),
+        query_params.facility_id.clone(),
         query_params.start_time,
         query_params.end_time,
     )
@@ -240,7 +240,7 @@ pub async fn get_forecasts(db: DbRef, query_params: Query<ProfilesParameters>) -
                 .filter_map(|(point, value)| {
                     let time_slot = parse_timeseries_timestamp(value.timestamp.as_str())?;
                     Some(ForecastSchema {
-                        area_uuid: point.asset_name,
+                        facility_id: point.asset_name,
                         community_uuid: point.datasource_name.unwrap_or_default(),
                         time_slot,
                         creation_time: time_slot,

@@ -1,4 +1,3 @@
-use crate::external_api::{ExternalCommunityTopology, ExternalForecast, ExternalMeasurement};
 use crate::time_utils::get_current_timestamp_in_secs;
 use blake2_rfc::blake2b::blake2b;
 use gsy_offchain_primitives::db_api_schema::market::MarketSchema;
@@ -57,7 +56,7 @@ impl AreaMarketInfoAdapter {
                 measurement_point: profile_measurement_id(
                     MeasurementPointType::Forecast,
                     forecast.community_uuid.as_str(),
-                    forecast.area_uuid.as_str(),
+                    forecast.facility_id.as_str(),
                 ),
                 timestamp: timestamp_to_string_with_padding(forecast.time_slot),
                 value: forecast.energy_kwh,
@@ -93,7 +92,7 @@ impl AreaMarketInfoAdapter {
                 measurement_point: profile_measurement_id(
                     MeasurementPointType::Measurement,
                     measurement.community_uuid.as_str(),
-                    measurement.area_uuid.as_str(),
+                    measurement.facility_id.as_str(),
                 ),
                 timestamp: timestamp_to_string_with_padding(measurement.time_slot),
                 value: measurement.energy_kwh,
@@ -128,44 +127,15 @@ impl AreaMarketInfoAdapter {
         measurement.energy_kwh > 0.0 && measurement.time_slot <= seconds_since_epoch
     }
 
-    pub fn convert_forecast_to_internal_schema(
+    pub async fn create_market(
         &self,
-        forecast: &ExternalForecast,
-        _area_hash: String,
-    ) -> ForecastSchema {
-        ForecastSchema {
-            area_uuid: forecast.area_uuid.clone(),
-            community_uuid: forecast.community_uuid.clone(),
-            time_slot: forecast.time_slot,
-            creation_time: forecast.creation_time,
-            energy_kwh: forecast.energy_kwh,
-            confidence: forecast.confidence,
-        }
-    }
-
-    pub fn convert_measurement_to_internal_schema(
-        &self,
-        measurement: &ExternalMeasurement,
-        _area_hash: String,
-    ) -> MeasurementSchema {
-        MeasurementSchema {
-            area_uuid: measurement.area_uuid.clone(),
-            community_uuid: measurement.community_uuid.clone(),
-            time_slot: measurement.time_slot,
-            creation_time: measurement.creation_time,
-            energy_kwh: measurement.energy_kwh,
-        }
-    }
-
-    pub async fn get_or_create_market_topology(
-        &self,
-        topology: ExternalCommunityTopology,
+        community_uuid: String,
         time_slot: u64,
     ) -> Option<MarketSchema> {
         let creation_time = get_current_timestamp_in_secs();
         let market_schema = MarketSchema {
             market_id: generate_market_id(MarketType::Spot, time_slot),
-            community_id: topology.community_uuid,
+            community_id: community_uuid,
             opening_time: timestamp_to_string_with_padding(creation_time),
             closing_time: timestamp_to_string_with_padding(time_slot),
             delivery_start_time: timestamp_to_string_with_padding(time_slot),
@@ -184,7 +154,9 @@ impl AreaMarketInfoAdapter {
         {
             Ok(response) if response.status().is_success() => Some(market_schema),
             Ok(response) => {
-                info!("Market upsert failed with status {}", response.status());
+                let status = response.status();
+                let body = response.text().await.unwrap_or_default();
+                info!("Market upsert failed with status {}: {}", status, body);
                 None
             }
             Err(error) => {
@@ -198,13 +170,13 @@ impl AreaMarketInfoAdapter {
 fn profile_measurement_id(
     point_type: MeasurementPointType,
     community_uuid: &str,
-    area_uuid: &str,
+    facility_id: &str,
 ) -> String {
     let prefix = match point_type {
         MeasurementPointType::Measurement => "measurement",
         MeasurementPointType::Forecast => "forecast",
     };
-    format!("{prefix}:{community_uuid}:{area_uuid}")
+    format!("{prefix}:{community_uuid}:{facility_id}")
 }
 
 fn forecast_measurement_point(forecast: &ForecastSchema) -> MeasurementPointSchema {
@@ -213,7 +185,7 @@ fn forecast_measurement_point(forecast: &ForecastSchema) -> MeasurementPointSche
         measurement_id: profile_measurement_id(
             MeasurementPointType::Forecast,
             forecast.community_uuid.as_str(),
-            forecast.area_uuid.as_str(),
+            forecast.facility_id.as_str(),
         ),
         property_measured: "energy_forecast".to_string(),
         unit: "kWh".to_string(),
@@ -221,7 +193,7 @@ fn forecast_measurement_point(forecast: &ForecastSchema) -> MeasurementPointSche
         energy_accumulated: false,
         time_resolution: "PT15M".to_string(),
         phase: 0,
-        asset_name: forecast.area_uuid.clone(),
+        asset_name: forecast.facility_id.clone(),
         datasource_name: Some(forecast.community_uuid.clone()),
     }
 }
@@ -232,7 +204,7 @@ fn measurement_point(measurement: &MeasurementSchema) -> MeasurementPointSchema 
         measurement_id: profile_measurement_id(
             MeasurementPointType::Measurement,
             measurement.community_uuid.as_str(),
-            measurement.area_uuid.as_str(),
+            measurement.facility_id.as_str(),
         ),
         property_measured: "energy_measured".to_string(),
         unit: "kWh".to_string(),
@@ -240,7 +212,7 @@ fn measurement_point(measurement: &MeasurementSchema) -> MeasurementPointSchema 
         energy_accumulated: false,
         time_resolution: "PT15M".to_string(),
         phase: 0,
-        asset_name: measurement.area_uuid.clone(),
+        asset_name: measurement.facility_id.clone(),
         datasource_name: Some(measurement.community_uuid.clone()),
     }
 }
