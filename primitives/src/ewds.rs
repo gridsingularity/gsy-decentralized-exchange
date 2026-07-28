@@ -1,5 +1,9 @@
-use crate::db_api_schema::orders::{DbOrderSchema, EnergyType, OrderEnum, OrderStatus};
-use anyhow::{anyhow, Result};
+use crate::db_api_schema::{
+    orders::{DbOrderSchema, EnergyType, OrderEnum, OrderStatus},
+    ids::{IdType, IdMappingSchema}
+};
+use crate::utils::string_to_bytes16;
+use anyhow::{anyhow, Result, Context};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use std::{env, fmt, time::Instant};
@@ -13,6 +17,8 @@ pub enum EwdsOperation {
     TradesQuery,
     #[serde(rename = "measurements.query")]
     MeasurementsQuery,
+    #[serde(rename = "ids.query")]
+    IdsQuery,
 }
 
 impl EwdsOperation {
@@ -21,6 +27,7 @@ impl EwdsOperation {
             Self::OrdersQuery => "orders.query",
             Self::TradesQuery => "trades.query",
             Self::MeasurementsQuery => "measurements.query",
+            Self::IdsQuery => "ids.query",
         }
     }
 
@@ -29,6 +36,7 @@ impl EwdsOperation {
             Self::OrdersQuery => "orders-query",
             Self::TradesQuery => "trades-query",
             Self::MeasurementsQuery => "measurements-query",
+            Self::IdsQuery => "ids-query",
         }
     }
 }
@@ -370,4 +378,44 @@ fn energy_type_to_ewds(energy_type: &EnergyType) -> &'static str {
         EnergyType::FossilFuel => "fossilFuel",
         EnergyType::Import => "import",
     }
+}
+
+async fn get_onchain_id_via_ewds(
+    offchain_id: String,
+    id_type: IdType,
+) -> Result<String> {
+    let query = serde_json::json!({
+        "offchain_id": offchain_id,
+        "id_type": serde_json::to_string(&id_type).unwrap(),
+    });
+    eprintln!("get_onchain_id_via_ewds{}", query);
+    let ids: Vec<IdMappingSchema> = query_via_ewds(EwdsQueryRequest {
+        operation: EwdsOperation::IdsQuery,
+        query_payload: query.clone(),
+        request_topic_env: "EWDS_ID_REQUEST_TOPIC",
+        request_topic_default: "idsQuery",
+        response_topic_env: "EWDS_ID_RESPONSE_TOPIC",
+        response_topic_default: "idsQueryResponse",
+        response_client_id_env: "EWDS_MARKET_ORCHESTRATOR_ID", //todo
+        response_client_id_default: "idsQueryUser", //todo
+        timeout_ms_default: 8_000,
+    }
+    )
+        .await?;
+    eprintln!("test return value: {:?}", ids);
+    let result = match ids.len() {
+        1 => ids.into_iter().next().unwrap().onchain_id,
+        n => anyhow::bail!("expected exactly one result, got {n}"),
+    };
+    Ok(result)
+}
+
+pub async fn get_onchain_id(
+    offchain_id: String,
+    id_type: IdType,
+) -> Result<[u8; 16]> {
+    let onchain_id = string_to_bytes16(
+        &get_onchain_id_via_ewds(offchain_id, id_type).await?
+    ).context("failed to convert order id to bytes16")?;
+    Ok(onchain_id)
 }

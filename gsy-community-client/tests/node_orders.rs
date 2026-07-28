@@ -22,8 +22,8 @@ fn test_market() -> MarketSchema {
     }
 }
 
-#[test]
-fn test_orders_to_evm_params_are_created_correctly() {
+#[tokio::test]
+async fn test_orders_to_evm_params_are_created_correctly() -> anyhow::Result<()> {
     let forecasts: Vec<ForecastSchema> = vec![
         ForecastSchema {
             facility_id: "area1".to_string(),
@@ -45,7 +45,7 @@ fn test_orders_to_evm_params_are_created_correctly() {
 
     let market = test_market();
     let owner = Address::from_str("0x1000000000000000000000000000000000000001").unwrap();
-    let input_orders = create_input_orders(forecasts, market.clone(), owner);
+    let input_orders = create_input_orders(forecasts, market.clone(), owner).await?;
     assert_eq!(input_orders.len(), 2);
 
     let current_time = get_current_timestamp_in_secs();
@@ -88,10 +88,11 @@ fn test_orders_to_evm_params_are_created_correctly() {
     assert_eq!(offer_energy, (1.0 * NODE_FLOAT_SCALING_FACTOR) as u64);
     assert_eq!(offer_rate, (1.0 * 0.07 * NODE_FLOAT_SCALING_FACTOR) as u64);
     assert!(!offer_type);
+    Ok(())
 }
 
-#[test]
-fn test_create_input_orders_keeps_all_non_zero_facility_forecasts() {
+#[tokio::test]
+async fn test_create_input_orders_keeps_all_non_zero_facility_forecasts() -> anyhow::Result<()> {
     let market = test_market();
     let owner = Address::from_str("0x1000000000000000000000000000000000000001").unwrap();
     let forecasts = vec![
@@ -113,12 +114,13 @@ fn test_create_input_orders_keeps_all_non_zero_facility_forecasts() {
         },
     ];
 
-    let orders = create_input_orders(forecasts, market, owner);
+    let orders = create_input_orders(forecasts, market, owner).await?;
     assert_eq!(orders.len(), 2);
+    Ok(())
 }
 
-#[test]
-fn test_create_input_orders_skips_zero_energy_forecasts() {
+#[tokio::test]
+async fn test_create_input_orders_skips_zero_energy_forecasts() -> anyhow::Result<()> {
     let market = test_market();
     let owner = Address::from_str("0x1000000000000000000000000000000000000001").unwrap();
     let forecasts = vec![
@@ -140,13 +142,15 @@ fn test_create_input_orders_skips_zero_energy_forecasts() {
         },
     ];
 
-    let orders = create_input_orders(forecasts, market, owner);
+    let orders = create_input_orders(forecasts, market, owner).await?;
     assert_eq!(orders.len(), 1);
     assert!(!orders[0].7);
+    Ok(())
 }
 
-#[test]
-fn test_create_input_orders_assigns_unique_order_ids_and_stable_side_mapping() {
+#[tokio::test]
+async fn test_create_input_orders_assigns_unique_order_ids_and_stable_side_mapping()
+    -> anyhow::Result<()> {
     let market = test_market();
     let owner = Address::from_str("0x1000000000000000000000000000000000000001").unwrap();
     let forecasts = vec![
@@ -176,7 +180,7 @@ fn test_create_input_orders_assigns_unique_order_ids_and_stable_side_mapping() {
         },
     ];
 
-    let orders = create_input_orders(forecasts, market, owner);
+    let orders = create_input_orders(forecasts, market, owner).await?;
     assert_eq!(orders.len(), 3);
 
     assert!(orders[0].7);
@@ -185,4 +189,5 @@ fn test_create_input_orders_assigns_unique_order_ids_and_stable_side_mapping() {
 
     let order_ids: HashSet<[u8; 16]> = orders.iter().map(|order| order.0).collect();
     assert_eq!(order_ids.len(), orders.len());
+    Ok(())
 }

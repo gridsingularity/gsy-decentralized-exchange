@@ -509,6 +509,7 @@ fn derive_trade_id(
     selected_energy: u64,
     energy_rate: u64,
 ) -> [u8; 16] {
+    // todo: get id from offchain storage
     let hash = keccak256(
         format!(
             "{}:{}:{}:{}",
