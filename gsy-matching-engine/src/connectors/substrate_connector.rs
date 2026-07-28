@@ -8,8 +8,9 @@ use gsy_offchain_primitives::types::{
 	gsy_node, Bid, BidOfferMatch, MatchingData, Offer, Order, OrderComponent, NodeBidOfferMatch
 };
 use gsy_offchain_primitives::utils::{
-	string_to_account_id, string_to_h256, NODE_FLOAT_SCALING_FACTOR,
+	read_env_or, string_to_account_id, string_to_h256, NODE_FLOAT_SCALING_FACTOR,
 };
+use reqwest::header::{HeaderMap, HeaderValue};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::{thread, time};
@@ -129,10 +130,25 @@ pub async fn substrate_subscribe(orderbook_url: String, node_url: String) -> Res
 	}
 }
 
+/// Build a reqwest client that sends the `x-api-key` header the off-chain storage now
+/// requires. The key comes from the `API_KEY` env var (default `fedecom_user`) and must
+/// match the storage service's configured key.
+fn authorized_storage_client() -> reqwest::Client {
+	let api_key = read_env_or("API_KEY", "fedecom_user".to_string());
+	let mut headers = HeaderMap::new();
+	if let Ok(value) = HeaderValue::from_str(&api_key) {
+		headers.insert("x-api-key", value);
+	}
+	reqwest::Client::builder()
+		.default_headers(headers)
+		.build()
+		.expect("Failed to build off-chain storage HTTP client")
+}
+
 async fn fetch_open_orders_from_orderbook_service(
 	url: String,
 ) -> Result<(Vec<Bid>, Vec<Offer>), Error> {
-	let res = reqwest::get(url).await?;
+	let res = authorized_storage_client().get(url).send().await?;
 	info!("Response: {:?} {}", res.version(), res.status());
 	info!("Headers: {:#?}\n", res.headers());
 

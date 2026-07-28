@@ -42,6 +42,10 @@ COPY --from=planner /var/www/primitives/target /var/www/primitives/target
 COPY --from=planner /var/www/gsy-node/target /var/www/gsy-node/target
 WORKDIR /var/www/gsy-node/
 ENV OFFCHAIN_STORAGE_URL=http://gsy-offchain-storage:8080
+# Baked at COMPILE time via option_env! in the orderbook-worker; sent as the x-api-key
+# header on its POSTs to off-chain storage. Override with --build-arg-style ENV for a
+# non-default key. Must match the storage service's API_KEY.
+ENV API_KEY=fedecom_user
 RUN cargo build --release
 
 FROM ubuntu:24.04 AS runtime
@@ -51,5 +55,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 WORKDIR /var/www/gsy-node/
 COPY --from=builder /var/www/gsy-node/target/release/gsy-node /var/www/gsy-node/target/release/gsy-node
 ENV OFFCHAIN_STORAGE_URL=http://gsy-offchain-storage:8080
+ENV API_KEY=fedecom_user
 EXPOSE 9944
 ENTRYPOINT ["./target/release/gsy-node", "--dev", "--rpc-external"]

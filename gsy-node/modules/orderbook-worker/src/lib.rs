@@ -542,6 +542,7 @@ pub mod pallet {
 			let pending = request
 				.deadline(deadline)
 				.add_header("Content-Type", "application/json")
+				.add_header("x-api-key", &orderbook_service_urls.api_key)
 				.send()
 				.inspect_err(|&e| {
 					log::error!("❌ Failed to send the trade HTTP request: {:?}", e);
@@ -571,6 +572,7 @@ pub mod pallet {
 			let pending = request
 				.deadline(deadline)
 				.add_header("Content-Type", "application/json")
+				.add_header("x-api-key", &orderbook_service_url.api_key)
 				.send()
 				.inspect_err(|&e| {
 					log::error!("❌ Failed to send order HTTP request: {:?}", e);

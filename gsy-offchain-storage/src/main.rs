@@ -22,6 +22,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let db_connection_string = configuration.get_connection_string();
     let node_url = configuration.get_node_url();
     let scheduler_interval = configuration.get_scheduler_interval();
+    let api_key = configuration.api_key.clone();
     let db_connection_wrapper =
         init_database(db_connection_string, configuration.database_name).await?;
     let db: DbRef = web::Data::new(db_connection_wrapper.clone());
@@ -39,7 +40,7 @@ async fn main() -> Result<(), anyhow::Error> {
         configuration.application_host, configuration.application_port
     );
     let listener = TcpListener::bind(address).expect("Failed to bind");
-    match run(listener, db_connection_wrapper)?.await {
+    match run(listener, db_connection_wrapper, api_key)?.await {
         Ok(_) => Ok(()),
         Err(e) => Err(Error::from(e)),
     }

@@ -5,6 +5,10 @@ use scale_info::prelude::{format, string::{String, ToString}};
 pub struct OrderBookServiceURLs {
 	pub orders_url: String,
 	pub trades_url: String,
+	/// API key sent as the `x-api-key` header the off-chain storage now requires. Read at
+	/// compile time (like the URL above) because an offchain worker cannot read host env
+	/// vars at runtime; defaults to `fedecom_user` and must match the storage's key.
+	pub api_key: String,
 }
 
 impl Default for OrderBookServiceURLs {
@@ -17,6 +21,7 @@ impl Default for OrderBookServiceURLs {
 		OrderBookServiceURLs {
 			orders_url: format!("{}/orders", orderbook_url),
 			trades_url: format!("{}/trades", orderbook_url),
+			api_key: option_env!("API_KEY").unwrap_or("fedecom_user").to_string(),
 		}
 	}
 }

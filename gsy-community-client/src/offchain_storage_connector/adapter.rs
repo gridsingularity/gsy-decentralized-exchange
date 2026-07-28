@@ -8,13 +8,29 @@ use gsy_offchain_primitives::MarketType;
 use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketTopologySchema};
 use gsy_offchain_primitives::db_api_schema::orders::{DbOrderSchema, Order, OrderStatus};
 use gsy_offchain_primitives::db_api_schema::profiles::{ForecastSchema, MeasurementSchema};
-use gsy_offchain_primitives::utils::{h256_to_string, string_to_h256};
+use gsy_offchain_primitives::utils::{h256_to_string, read_env_or, string_to_h256};
 use reqwest::Client;
+use reqwest::header::{HeaderMap, HeaderValue};
 use subxt::utils::H256;
 use tracing::{error, info};
 use uuid::Uuid;
 
 const RESIDUAL_ENERGY_TOLERANCE_KWH: f64 = 1e-9;
+
+/// Build a reqwest client that sends the `x-api-key` header the off-chain storage now
+/// requires, on every request. The key comes from the `API_KEY` env var (default
+/// `fedecom_user`) and must match the storage service's configured key.
+fn authorized_storage_client() -> Client {
+    let api_key = read_env_or("API_KEY", "fedecom_user".to_string());
+    let mut headers = HeaderMap::new();
+    if let Ok(value) = HeaderValue::from_str(&api_key) {
+        headers.insert("x-api-key", value);
+    }
+    Client::builder()
+        .default_headers(headers)
+        .build()
+        .expect("Failed to build off-chain storage HTTP client")
+}
 
 /// Fixed, app-local namespace for the `Uuid::new_v5` community/area identity
 /// derivation below. Any stable namespace works — v5 already differentiates purely by
@@ -123,7 +139,7 @@ impl AreaMarketInfoAdapter {
     pub fn new(host: Option<String>) -> Self {
         let hostname = host.unwrap_or_else(|| "http://gsy-orderbook:8080".to_string());
         AreaMarketInfoAdapter {
-            client: Client::new(),
+            client: authorized_storage_client(),
             internal_forecast_url: hostname.clone() + "/forecasts",
             internal_measurements_url: hostname.clone() + "/measurements",
             internal_orders_url: hostname.clone() + "/orders",
