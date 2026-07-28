@@ -41,12 +41,17 @@ COPY primitives /var/www/primitives/
 COPY --from=planner /var/www/primitives/target /var/www/primitives/target
 COPY --from=planner /var/www/gsy-node/target /var/www/gsy-node/target
 WORKDIR /var/www/gsy-node/
-ENV OFFCHAIN_STORAGE_URL=http://gsy-offchain-storage:8080
-# Baked at COMPILE time via option_env! in the orderbook-worker; sent as the x-api-key
-# header on its POSTs to off-chain storage. Override with --build-arg-style ENV for a
-# non-default key. Must match the storage service's API_KEY.
-ENV API_KEY=fedecom_user
-RUN cargo build --release
+# Compile-time config the orderbook-worker bakes in via option_env! (offchain HTTP calls).
+# Both are build args so a remote validator image can bake a PUBLIC storage URL + real key:
+#   docker build --build-arg OFFCHAIN_STORAGE_URL=http://storage.example:8080 --build-arg API_KEY=...
+ARG OFFCHAIN_STORAGE_URL=http://gsy-offchain-storage:8080
+ENV OFFCHAIN_STORAGE_URL=${OFFCHAIN_STORAGE_URL}
+ARG API_KEY=fedecom_user
+ENV API_KEY=${API_KEY}
+# Optional extra cargo features. Validator/poa deployments pass "--features poa" to compile
+# in the poa chain spec; the default (empty) keeps the --dev image test/local-demo use.
+ARG NODE_BUILD_FEATURES=
+RUN cargo build --release ${NODE_BUILD_FEATURES}
 
 FROM ubuntu:24.04 AS runtime
 # curl is required by the compose healthcheck (system_health RPC probe).
