@@ -6,6 +6,9 @@ use serde::Deserialize;
 #[derive(Deserialize)]
 pub struct ProfilesParameters {
     area_uuid: Option<String>,
+    /// Filters `/forecasts` to a single community's rows in one GET. Ignored by
+    /// `/measurements`.
+    community_uuid: Option<String>,
     start_time: Option<u32>,
     end_time: Option<u32>,
 }
@@ -53,7 +56,7 @@ pub async fn post_forecasts(forecasts: Json<Vec<ForecastSchema>>, db: DbRef) -> 
         .insert_forecasts(forecasts.to_vec())
         .await
     {
-        Ok(ids) => HttpResponse::Ok().json(ids),
+        Ok(upserted_count) => HttpResponse::Ok().json(upserted_count),
         Err(_) => HttpResponse::InternalServerError().finish(),
     }
 }
@@ -63,6 +66,7 @@ pub async fn get_forecasts(db: DbRef, query_params: Query<ProfilesParameters>) -
     match forecasts_service
         .filter_forecasts(
             query_params.area_uuid.clone(),
+            query_params.community_uuid.clone(),
             query_params.start_time,
             query_params.end_time,
         )

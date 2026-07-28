@@ -22,6 +22,17 @@ pub fn get_last_and_next_timeslot() -> (u64, u64) {
     (last_quarter, next_quarter)
 }
 
+const SECS_PER_DAY: u64 = 86_400;
+
+/// Floor `now` to 00:00 UTC and subtract one day. This is the day-ahead ingestion
+/// `start_time`: forecasters return a 48-hour window from `start_time`, so starting at
+/// yesterday's midnight always covers the remainder of today plus all of tomorrow, and
+/// re-asking hourly rolls that window forward.
+pub fn start_of_previous_day(now: u64) -> u64 {
+    let start_of_today = (now / SECS_PER_DAY) * SECS_PER_DAY;
+    start_of_today - SECS_PER_DAY
+}
+
 /// Return every delivery timeslot whose spot market is currently open for order submission
 /// at now, using the same open/close offsets the market orchestrator uses.
 pub fn open_spot_market_timeslots(now: u64) -> Vec<u64> {
@@ -47,7 +58,10 @@ mod tests {
     fn open_spot_market_timeslots_lie_within_their_window() {
         let now = 1_700_000_000u64;
         let slots = open_spot_market_timeslots(now);
-        assert!(!slots.is_empty(), "expected several markets open in parallel");
+        assert!(
+            !slots.is_empty(),
+            "expected several markets open in parallel"
+        );
         let mut previous: Option<u64> = None;
         for timeslot in &slots {
             let (open_time, close_time) = GlobalConstants.spot_market_window(*timeslot);

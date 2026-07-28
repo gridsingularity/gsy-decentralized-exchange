@@ -21,6 +21,13 @@ pub struct Constants {
     pub FEDECOM_AIC_FORECAST_API_KEY: String,
     /// How often, in seconds, bids and offers are resubmitted within a market slot.
     pub ORDER_RESUBMISSION_INTERVAL_SEC: u64,
+    /// How often, in seconds, the day-ahead ingestion loop re-asks the forecasters and
+    /// upserts the result to storage.
+    pub FORECAST_INGEST_INTERVAL_SEC: u64,
+    /// Coverage window, in seconds, the day-ahead ingestion loop expects the forecasters
+    /// to return from `start_time` (48h). Only used for logging/metrics; never sent to the
+    /// forecaster, which returns its own fixed forward window regardless.
+    pub FORECAST_INGEST_HORIZON_SEC: u64,
     /// Lower bound of the order price range, in currency units per kWh.
     pub MIN_ORDER_RATE: f64,
     /// Upper bound of the order price range, in currency units per kWh.
@@ -92,6 +99,8 @@ impl Constants {
                 "fedecom_user".to_string(),
             ),
             ORDER_RESUBMISSION_INTERVAL_SEC: read_env_or("ORDER_RESUBMISSION_INTERVAL_SEC", 300),
+            FORECAST_INGEST_INTERVAL_SEC: read_env_or("FORECAST_INGEST_INTERVAL_SEC", 3600),
+            FORECAST_INGEST_HORIZON_SEC: read_env_or("FORECAST_INGEST_HORIZON_SEC", 172_800),
             MIN_ORDER_RATE: read_env_or("MIN_ORDER_RATE", 0.07),
             MAX_ORDER_RATE: read_env_or("MAX_ORDER_RATE", 0.30),
             PV_RISK_AVERSION: read_env_or("PV_RISK_AVERSION", 1.0),

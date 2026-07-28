@@ -16,6 +16,11 @@ use uuid::Uuid;
 
 const RESIDUAL_ENERGY_TOLERANCE_KWH: f64 = 1e-9;
 
+/// Fixed, app-local namespace for the `Uuid::new_v5` community/area identity
+/// derivation below. Any stable namespace works — v5 already differentiates purely by
+/// the `name` bytes passed alongside it — this one has no meaning beyond being fixed.
+const IDENTITY_NAMESPACE: Uuid = Uuid::NAMESPACE_OID;
+
 pub fn generate_market_id(
     community_name: &str,
     market_type: MarketType,
@@ -31,6 +36,77 @@ pub fn generate_market_id(
             .try_into()
             .expect("hash is 32 bytes"),
     )
+}
+
+/// Deterministic community id, stable across both the ingestion and publish loops (and
+/// across process restarts). This is the inter-community matching key
+/// (`aggregation.rs::aggregate_net_import`, `community_id_from_uuid`), so it must be
+/// derived the same way everywhere a community's identity is needed, instead of the
+/// random `Uuid::new_v4()` a freshly created market used to get.
+pub fn deterministic_community_uuid(community_name: &str) -> String {
+    Uuid::new_v5(&IDENTITY_NAMESPACE, community_name.as_bytes()).to_string()
+}
+
+/// Deterministic area id, unique per `(community_name, area_name)` pair and stable
+/// across calls.
+pub fn deterministic_area_uuid(community_name: &str, area_name: &str) -> String {
+    let name = format!("{community_name}:{area_name}");
+    Uuid::new_v5(&IDENTITY_NAMESPACE, name.as_bytes()).to_string()
+}
+
+/// Deterministic area hash, mirroring [`generate_market_id`]'s construction. This is
+/// the de-facto area matching key end-to-end (`create_input_orders`,
+/// `plan_residual_replacement`), so a stored forecast's `area_hash` must match the
+/// market's `area.area_hash` for the same `(community_name, area_name)` across both
+/// loops.
+pub fn deterministic_area_hash(community_name: &str, area_name: &str) -> H256 {
+    let mut buffer = Vec::new();
+    buffer.extend_from_slice(community_name.as_bytes());
+    buffer.extend_from_slice(area_name.as_bytes());
+    H256(
+        blake2b(32, &[], &buffer)
+            .as_bytes()
+            .try_into()
+            .expect("hash is 32 bytes"),
+    )
+}
+
+/// Build the `MarketTopologySchema` for a community/timeslot with fully deterministic
+/// identity (community_uuid, market_id, per-area area_uuid/area_hash). Kept as a pure
+/// function so the decoupled ingestion and publication loops derive identical ids and so
+/// the derivation is unit-testable without a live storage server.
+pub fn build_new_market_topology(
+    community_topology: &ExternalCommunityTopology,
+    time_slot: u64,
+) -> MarketTopologySchema {
+    MarketTopologySchema {
+        community_name: community_topology.community_name.clone(),
+        community_uuid: deterministic_community_uuid(&community_topology.community_name),
+        market_id: h256_to_string(generate_market_id(
+            &community_topology.community_name,
+            MarketType::Spot,
+            time_slot,
+        )),
+        time_slot: time_slot as u32,
+        creation_time: get_current_timestamp_in_secs() as u32,
+        community_areas: community_topology
+            .areas
+            .clone()
+            .into_iter()
+            .map(|area| AreaTopologySchema {
+                area_uuid: deterministic_area_uuid(
+                    &community_topology.community_name,
+                    &area.area_name,
+                ),
+                area_type: area.area_type.clone(),
+                name: area.area_name.clone(),
+                area_hash: h256_to_string(deterministic_area_hash(
+                    &community_topology.community_name,
+                    &area.area_name,
+                )),
+            })
+            .collect(),
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -62,7 +138,10 @@ impl AreaMarketInfoAdapter {
         let response = match self.client.get(url).send().await {
             Ok(resp) if resp.status().is_success() => resp,
             Ok(resp) => {
-                error!("Fetching market orders failed with status: {}", resp.status());
+                error!(
+                    "Fetching market orders failed with status: {}",
+                    resp.status()
+                );
                 return vec![];
             }
             Err(err) => {
@@ -70,10 +149,53 @@ impl AreaMarketInfoAdapter {
                 return vec![];
             }
         };
-        response.json::<Vec<DbOrderSchema>>().await.unwrap_or_else(|err| {
-            error!("Failed to deserialize market orders response: {:?}", err);
-            vec![]
-        })
+        response
+            .json::<Vec<DbOrderSchema>>()
+            .await
+            .unwrap_or_else(|err| {
+                error!("Failed to deserialize market orders response: {:?}", err);
+                vec![]
+            })
+    }
+
+    /// Fetch every forecast stored for a community within `[start_time, end_time]`, in one
+    /// GET. Used by the order-publication loop, which no longer calls the forecasters
+    /// itself; it reads whatever the ingestion loop has already persisted, so it stays
+    /// resilient to forecaster downtime. Empty on error, mirroring [`Self::get_orders_for_market`].
+    pub async fn get_forecasts_for_community(
+        &self,
+        community_uuid: &str,
+        start_time: u64,
+        end_time: u64,
+    ) -> Vec<ForecastSchema> {
+        let url = format!(
+            "{}?community_uuid={}&start_time={}&end_time={}",
+            self.internal_forecast_url, community_uuid, start_time, end_time
+        );
+        let response = match self.client.get(url).send().await {
+            Ok(resp) if resp.status().is_success() => resp,
+            Ok(resp) => {
+                error!(
+                    "Fetching community forecasts failed with status: {}",
+                    resp.status()
+                );
+                return vec![];
+            }
+            Err(err) => {
+                error!("Fetching community forecasts failed: {:?}", err);
+                return vec![];
+            }
+        };
+        response
+            .json::<Vec<ForecastSchema>>()
+            .await
+            .unwrap_or_else(|err| {
+                error!(
+                    "Failed to deserialize community forecasts response: {:?}",
+                    err
+                );
+                vec![]
+            })
     }
 
     // Function to forward the forecast data to internal API
@@ -182,28 +304,7 @@ impl AreaMarketInfoAdapter {
             if !market_topology_res.is_empty() {
                 market_topologies.push(market_topology_res.get(0).unwrap().clone());
             } else {
-                let new_market = MarketTopologySchema {
-                    community_name: community_topology.community_name.clone(),
-                    community_uuid: Uuid::new_v4().to_string(),
-                    market_id: h256_to_string(generate_market_id(
-                        &community_topology.community_name,
-                        MarketType::Spot,
-                        time_slot,
-                    )),
-                    time_slot: time_slot as u32,
-                    creation_time: get_current_timestamp_in_secs() as u32,
-                    community_areas: community_topology
-                        .areas
-                        .clone()
-                        .into_iter()
-                        .map(|area| AreaTopologySchema {
-                            area_uuid: Uuid::new_v4().to_string(),
-                            area_type: area.area_type.clone(),
-                            name: area.area_name.clone(),
-                            area_hash: h256_to_string(H256::random()),
-                        })
-                        .collect(),
-                };
+                let new_market = build_new_market_topology(&community_topology, time_slot);
                 let topology_resp = self
                     .client
                     .post(&self.internal_topology_url)
@@ -330,7 +431,11 @@ pub fn plan_residual_replacement(
             if residual_energy <= RESIDUAL_ENERGY_TOLERANCE_KWH {
                 continue;
             }
-            forecast.energy_kwh = if is_bid { residual_energy } else { -residual_energy };
+            forecast.energy_kwh = if is_bid {
+                residual_energy
+            } else {
+                -residual_energy
+            };
         }
         adjusted_forecasts.push(forecast);
     }

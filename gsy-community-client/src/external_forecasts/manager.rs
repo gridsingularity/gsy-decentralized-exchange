@@ -1,7 +1,7 @@
-use crate::external_forecasts::demand_api::{DemandForecastApiConnection, DemandForecaster};
 use crate::external_forecasts::ForecastApiError;
+use crate::external_forecasts::demand_api::{DemandForecastApiConnection, DemandForecaster};
 use crate::external_forecasts::pv_api::{PvForecastApiConnection, PvForecastPoint};
-use crate::external_forecasts::pv_pricing::{commitment_from_point, PvCommitmentConfig};
+use crate::external_forecasts::pv_pricing::{PvCommitmentConfig, commitment_from_point};
 use chrono::{DateTime, Utc};
 use gsy_offchain_primitives::db_api_schema::market::{
     AreaTopologySchema, AssetType, MarketTopologySchema,
@@ -66,21 +66,46 @@ impl ForecastsManager {
         matches!(area_type, AssetType::PV) && !EXCLUDED_METERS.contains(&area_name)
     }
 
+    /// Thin wrapper around [`Self::fetch_area_set_forecasts`] for the market-shaped call
+    /// site (the publish path and existing tests): unpacks the market's own identity and
+    /// area list.
     pub async fn fetch_community_forecasts(
         &self,
         market: &MarketTopologySchema,
+        start_timestamp: u64,
+    ) -> Vec<ForecastSchema> {
+        self.fetch_area_set_forecasts(
+            &market.community_uuid,
+            &market.community_name,
+            &market.community_areas,
+            start_timestamp,
+        )
+        .await
+    }
+
+    /// Fetch PV + demand forecasts for an explicit `(community_uuid, areas)` pair, without
+    /// requiring a per-timeslot `MarketTopologySchema`. This is what the day-ahead ingestion
+    /// loop calls directly with deterministic ids derived straight from the ontology, since
+    /// ingestion has no per-timeslot market to unpack one from.
+    pub async fn fetch_area_set_forecasts(
+        &self,
+        community_uuid: &str,
+        community_name: &str,
+        areas: &[AreaTopologySchema],
         start_timestamp: u64,
     ) -> Vec<ForecastSchema> {
         let start_time = DateTime::<Utc>::from_timestamp(start_timestamp as i64, 0)
             .expect("valid unix timestamp");
 
         // PV production forecasts (each PV asset routed to its forecaster site by meter id).
-        let mut forecasts = self.fetch_pv_forecasts(market, start_time).await;
+        let mut forecasts = self
+            .fetch_pv_forecasts(community_uuid, areas, start_time)
+            .await;
 
         // Demand forecasts for each metered community member. The forecaster `site` is
         // derived from the meter id (LIC*/GD*/AIC*) rather than the ontology community
         // name, which is now a generic `Pilot#` label. Meters with no known site are skipped.
-        for area in market.community_areas.iter() {
+        for area in areas.iter() {
             if !Self::is_forecastable_meter(&area.name, &area.area_type) {
                 continue;
             }
@@ -94,16 +119,17 @@ impl ForecastsManager {
             {
                 Ok(response) => {
                     info!(
-                        "Fetched {} demand forecast points for meter {} (site {})",
+                        "Fetched {} demand forecast points for meter {} (site {}, community {})",
                         response.demand_forecast.len(),
                         area.name,
-                        site
+                        site,
+                        community_name
                     );
                     for point in response.demand_forecast {
                         forecasts.push(ForecastSchema {
                             area_uuid: area.area_uuid.clone(),
                             area_hash: area.area_hash.clone(),
-                            community_uuid: market.community_uuid.clone(),
+                            community_uuid: community_uuid.to_string(),
                             time_slot: point.timestamp.timestamp() as u64,
                             creation_time: Utc::now().timestamp() as u64,
                             // The demand forecaster already reports energy in kWh.
@@ -162,12 +188,13 @@ impl ForecastsManager {
     // sink the whole fetch.
     async fn fetch_pv_forecasts(
         &self,
-        market: &MarketTopologySchema,
+        community_uuid: &str,
+        areas: &[AreaTopologySchema],
         start_time: DateTime<Utc>,
     ) -> Vec<ForecastSchema> {
         let cfg = PvCommitmentConfig::from_constants();
         let mut forecasts: Vec<ForecastSchema> = vec![];
-        for area in market.community_areas.iter() {
+        for area in areas.iter() {
             if !Self::is_pv_asset(&area.name, &area.area_type) {
                 continue;
             }
@@ -187,12 +214,9 @@ impl ForecastsManager {
                         site
                     );
                     for point in &response.data.pv_forecasts {
-                        if let Some(schema) = Self::pv_forecast_schema_from_point(
-                            point,
-                            area,
-                            &market.community_uuid,
-                            &cfg,
-                        ) {
+                        if let Some(schema) =
+                            Self::pv_forecast_schema_from_point(point, area, community_uuid, &cfg)
+                        {
                             forecasts.push(schema);
                         }
                     }

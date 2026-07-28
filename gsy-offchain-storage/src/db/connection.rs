@@ -72,6 +72,11 @@ async fn preload(db: &DatabaseWrapper) -> Result<()> {
     db.orders().0.ensure_id_index().await?;
     db.trades().0.ensure_id_index().await?;
     db.forecasts().0.ensure_id_index().await?;
+    // Backs the (area_uuid, time_slot) upsert key used by `insert_forecasts`.
+    db.forecasts()
+        .0
+        .ensure_unique_index(mongodb::bson::doc! {"area_uuid": 1, "time_slot": 1})
+        .await?;
     db.measurements().0.ensure_id_index().await?;
     db.markets().0.ensure_id_index().await?;
     Ok(())

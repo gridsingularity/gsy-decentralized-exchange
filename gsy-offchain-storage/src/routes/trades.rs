@@ -1,8 +1,10 @@
 use crate::db::DbRef;
 use actix_web::web::Query;
 use actix_web::{HttpResponse, Responder, web::Json};
+use gsy_offchain_primitives::db_api_schema::orders::OrderStatus;
 use gsy_offchain_primitives::db_api_schema::trades::{TradeCanonicalSchema, TradeSchema};
 use gsy_offchain_primitives::node_to_api_schema::insert_trades::convert_gsy_node_trades_schema_to_db_schema;
+use mongodb::bson::Bson;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 
@@ -18,30 +20,25 @@ pub async fn post_trades(trades: Json<Vec<u8>>, db: DbRef) -> impl Responder {
     for trade in deserialized_trades.clone() {
         let orders = db.get_ref().orders();
         if let Err(e) = orders
-            .update_order_by_area_market_id(
-                trade.offer.offer_component.area_uuid.clone(),
-                trade.market_id.clone(),
+            .update_order_status_by_id(
+                &Bson::String(trade.offer_hash.clone()),
+                OrderStatus::Executed,
             )
             .await
         {
             tracing::error!(
-                "Failed to mark offer order Executed (area {}, market {}): {:?}",
-                trade.offer.offer_component.area_uuid,
-                trade.market_id,
+                "Failed to mark offer order Executed (offer_hash {}): {:?}",
+                trade.offer_hash,
                 e
             );
         }
         if let Err(e) = orders
-            .update_order_by_area_market_id(
-                trade.bid.bid_component.area_uuid.clone(),
-                trade.market_id.clone(),
-            )
+            .update_order_status_by_id(&Bson::String(trade.bid_hash.clone()), OrderStatus::Executed)
             .await
         {
             tracing::error!(
-                "Failed to mark bid order Executed (area {}, market {}): {:?}",
-                trade.bid.bid_component.area_uuid,
-                trade.market_id,
+                "Failed to mark bid order Executed (bid_hash {}): {:?}",
+                trade.bid_hash,
                 e
             );
         }
