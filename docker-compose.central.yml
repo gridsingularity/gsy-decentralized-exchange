@@ -1,7 +1,7 @@
 # =============================================================================
 # GSY DEX — central services (single server, Tailscale mesh)
 # =============================================================================
-# Everything EXCEPT the validator nodes: off-chain storage, the matching /
+# Everything except the validator nodes: off-chain storage, the matching /
 # market-orchestrator / execution engines, and the 3-node MongoDB replica set.
 #
 # A Tailscale sidecar (tailscale-central) joins the tailnet AND the internal
@@ -15,8 +15,7 @@
 #   API_KEY=<shared off-chain-storage key>
 #   docker compose -f docker-compose.central.yml up --build
 #
-# Storage :8080 is published on the sidecar for optional public/off-mesh access;
-# remove that ports: mapping to keep storage mesh-only.
+# Storage :8080 is published on the sidecar for optional public/off-mesh access
 # =============================================================================
 
 x-mongo-node: &mongo-node
