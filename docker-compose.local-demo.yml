@@ -1,39 +1,4 @@
-# =============================================================================
-# GSY DEX — fully-local demo stack
-# =============================================================================
-# Runs the whole exchange locally: a single dev gsy-node, off-chain storage on a
-# 3-node MongoDB replica set, the matching / market-orchestrator / execution
-# engines, and the community client. The community client connects to the REAL
-# external FEDECOM forecaster / measurement services, so this stack exercises
-# those live integrations end-to-end.
-#
-# A one-shot `gsy-bootstrap` service sudo-registers the trading user (//Alice)
-# and the exchange operator on-chain before the orchestrator / community client
-# start, so the stack comes up ready to trade (no manual registration needed).
-#
-# REQUIRES outbound internet (HTTPS) from the community-client container to the
-# FEDECOM hosts, plus valid credentials in .env/gsy-community-client.env
-# (FEDECOM_INFLUX_DB_TOKEN and the *_API_KEY fields).
-#
-# How to run (after a fresh clone, materialise the real env files first, then
-# fill in the forecaster credentials):
-#
-#   for f in .env/*.example; do cp "$f" "${f%.example}"; done
-#   # edit .env/gsy-community-client.env — add FEDECOM_INFLUX_DB_TOKEN etc.
-#   docker compose -f docker-compose.local-demo.yml build
-#   docker compose -f docker-compose.local-demo.yml up
-#
-# Endpoints once up:
-#   node RPC   ws://localhost:9944
-#   storage    http://localhost:8080/health_check
-#
-# Tear down (including mongo data volumes):
-#   docker compose -f docker-compose.local-demo.yml down -v
-#
-# NOTE: the community client addresses the node as `gsy-node` and the off-chain
-# storage as `gsy-orderbook` (both hard-coded in its source), so `gsy-offchain-
-# storage` is given the network alias `gsy-orderbook` below.
-# =============================================================================
+
 
 x-mongo-node: &mongo-node
   image: mongo:8.0
@@ -111,9 +76,9 @@ services:
     working_dir: /var/www/matching-engine
     entrypoint: ["/usr/local/bin/gsy-matching-engine", "web3", "http://gsy-offchain-storage", "8080", "ws://gsy-node", "9944"]
 
-  # One-shot: sudo-registers the trading user (//Alice) and the exchange operator
+  # Sudo-registers the trading user (//Alice) and the exchange operator
   # so the orchestrator will create markets and the community client's orders are
-  # accepted. Exits 0 when done. See deployment/bootstrap/README.md.
+  # accepted.
   gsy-bootstrap:
     container_name: gsy-bootstrap
     build:

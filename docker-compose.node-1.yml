@@ -1,24 +1,6 @@
-# =============================================================================
-# GSY DEX — validator node #1 (dedicated server, Tailscale mesh)
-# =============================================================================
-# One standalone gsy-node validator that joins a Tailscale tailnet via a sidecar
-# container and shares its network namespace, so it needs NO open/forwarded ports:
-# node<->node p2p, node<->central RPC and node->storage all ride the mesh.
-#
-#   export TS_AUTHKEY=tskey-auth-...        # a Tailscale auth key (reusable/ephemeral)
-#   OFFCHAIN_STORAGE_URL=http://<central-tailnet-ip>:8080 API_KEY=<key> \
-#     docker compose -f docker-compose.node-1.yml up --build
-#
-# First boot (leave GSY_RESERVED_NODES empty), then read this node's tailnet IP and
-# libp2p PeerId, hand them to node #2 (and get node #2's back):
-#   docker exec tailscale-node-1 tailscale ip -4          # -> GSY_PUBLIC_IP here + reserved on node #2
-#   docker logs gsy-node-1 | grep -i "Local node identity" # -> PeerId for the reserved multiaddr
-# Then set GSY_PUBLIC_IP + GSY_RESERVED_NODES on both nodes and restart.
-# Key gen for a stable PeerId: see ./.env/gsy-node-1.env.
-# =============================================================================
+
 
 services:
-  # --- Tailscale sidecar: owns the network namespace the node shares ---
   tailscale-node-1:
     image: tailscale/tailscale:latest
     container_name: tailscale-node-1
