@@ -177,7 +177,7 @@ async fn get_forecasts_succeeds() {
         .await
         .unwrap();
 
-    assert_eq!(saved.len(), 2);
+    assert_eq!(saved, 2);
 
     // Retrieve measurements from area my_uuid
     let client = reqwest::Client::new();
@@ -259,12 +259,165 @@ async fn post_forecasts_succeeds() {
     let saved = db
         .get_ref()
         .forecasts()
-        .filter_forecasts("my_uuid".to_string().try_into().ok(), None, None)
+        .filter_forecasts("my_uuid".to_string().try_into().ok(), None, None, None)
         .await
         .unwrap();
     assert_eq!(1, saved.len());
     let forecast_db = saved.into_iter().nth(0).unwrap();
     assert_eq!(forecast_db, forecast);
+}
+
+#[tokio::test]
+async fn post_forecasts_upserts_on_area_and_timeslot() {
+    let app = init_app().await;
+    let db = web::Data::new(app.db_wrapper);
+    let forecast = ForecastSchema {
+        area_uuid: "area_1".to_string(),
+        area_hash: "hash_1".to_string(),
+        community_uuid: "community_1".to_string(),
+        energy_kwh: 12.21,
+        time_slot: 1_800_000_000,
+        creation_time: 1_700_000_000,
+        confidence: 0.5,
+    };
+    let updated = ForecastSchema {
+        energy_kwh: 20.0,
+        creation_time: 1_700_003_600,
+        confidence: 0.9,
+        ..forecast.clone()
+    };
+
+    let forecasts = db.get_ref().forecasts();
+    assert_eq!(forecasts.insert_forecasts(vec![forecast]).await.unwrap(), 1);
+    assert_eq!(
+        forecasts
+            .insert_forecasts(vec![updated.clone()])
+            .await
+            .unwrap(),
+        1
+    );
+
+    let stored = forecasts
+        .filter_forecasts(Some("area_1".to_string()), None, None, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        stored.len(),
+        1,
+        "same (area_uuid, time_slot) must overwrite, not duplicate"
+    );
+    assert_eq!(stored[0], updated);
+}
+
+#[tokio::test]
+async fn post_forecasts_distinct_slots_coexist() {
+    let app = init_app().await;
+    let db = web::Data::new(app.db_wrapper);
+    let base = ForecastSchema {
+        area_uuid: "area_1".to_string(),
+        area_hash: "hash_1".to_string(),
+        community_uuid: "community_1".to_string(),
+        energy_kwh: 12.21,
+        time_slot: 1_800_000_000,
+        creation_time: 1_700_000_000,
+        confidence: 0.5,
+    };
+    let other_slot = ForecastSchema {
+        time_slot: 1_800_000_900,
+        ..base.clone()
+    };
+
+    let forecasts = db.get_ref().forecasts();
+    forecasts
+        .insert_forecasts(vec![base.clone(), other_slot.clone()])
+        .await
+        .unwrap();
+
+    let stored = forecasts
+        .filter_forecasts(Some("area_1".to_string()), None, None, None)
+        .await
+        .unwrap();
+    assert_eq!(stored.len(), 2);
+}
+
+#[tokio::test]
+async fn day_ahead_timeslot_roundtrips() {
+    // 2027-01-15T00:00:00Z, well within u32 range (year-2106 wraparound is out of scope).
+    const DAY_AHEAD_SLOT: u64 = 1_800_144_000;
+    let app = init_app().await;
+    let forecast = ForecastSchema {
+        area_uuid: "area_day_ahead".to_string(),
+        area_hash: "hash_day_ahead".to_string(),
+        community_uuid: "community_1".to_string(),
+        energy_kwh: 5.0,
+        time_slot: DAY_AHEAD_SLOT,
+        creation_time: DAY_AHEAD_SLOT - 86_400,
+        confidence: 0.8,
+    };
+
+    let client = reqwest::Client::new();
+    client
+        .post(&format!("{}/forecasts", &app.address))
+        .json(&vec![forecast.clone()])
+        .send()
+        .await
+        .unwrap();
+
+    let resp = client
+        .get(&format!(
+            "{}/forecasts?start_time={}&end_time={}",
+            &app.address,
+            DAY_AHEAD_SLOT - 1,
+            DAY_AHEAD_SLOT + 1
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(200, resp.status().as_u16());
+    let resp_json: Vec<ForecastSchema> = resp.json().await.unwrap();
+    assert_eq!(resp_json, vec![forecast]);
+}
+
+#[tokio::test]
+async fn get_forecasts_by_community_uuid() {
+    let app = init_app().await;
+    let db = web::Data::new(app.db_wrapper);
+    let community_a = ForecastSchema {
+        area_uuid: "area_a".to_string(),
+        area_hash: "hash_a".to_string(),
+        community_uuid: "community_a".to_string(),
+        energy_kwh: 1.0,
+        time_slot: 1_800_000_000,
+        creation_time: 1_700_000_000,
+        confidence: 0.5,
+    };
+    let community_b = ForecastSchema {
+        area_uuid: "area_b".to_string(),
+        area_hash: "hash_b".to_string(),
+        community_uuid: "community_b".to_string(),
+        energy_kwh: 2.0,
+        time_slot: 1_800_000_000,
+        creation_time: 1_700_000_000,
+        confidence: 0.5,
+    };
+    db.get_ref()
+        .forecasts()
+        .insert_forecasts(vec![community_a.clone(), community_b.clone()])
+        .await
+        .unwrap();
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(&format!(
+            "{}/forecasts?community_uuid=community_a",
+            &app.address
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(200, resp.status().as_u16());
+    let resp_json: Vec<ForecastSchema> = resp.json().await.unwrap();
+    assert_eq!(resp_json, vec![community_a]);
 }
 
 #[tokio::test]

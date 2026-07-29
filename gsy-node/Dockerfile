@@ -31,6 +31,7 @@ COPY ./gsy-node/modules/orderbook-worker/Cargo.toml /var/www/gsy-node/modules/or
 COPY ./gsy-node/modules/trades-settlement/Cargo.toml /var/www/gsy-node/modules/trades-settlement/
 COPY ./gsy-node/modules/remuneration/Cargo.toml /var/www/gsy-node/modules/remuneration/
 COPY ./gsy-node/modules/stripe-bridge/Cargo.toml /var/www/gsy-node/modules/stripe-bridge/
+COPY ./gsy-node/modules/validator-set/Cargo.toml /var/www/gsy-node/modules/validator-set/
 RUN cargo chef prepare --recipe-path recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
 
@@ -40,8 +41,17 @@ COPY primitives /var/www/primitives/
 COPY --from=planner /var/www/primitives/target /var/www/primitives/target
 COPY --from=planner /var/www/gsy-node/target /var/www/gsy-node/target
 WORKDIR /var/www/gsy-node/
-ENV OFFCHAIN_STORAGE_URL=http://gsy-offchain-storage:8080
-RUN cargo build --release
+# Compile-time config the orderbook-worker bakes in via option_env! (offchain HTTP calls).
+# Both are build args so a remote validator image can bake a PUBLIC storage URL + real key:
+#   docker build --build-arg OFFCHAIN_STORAGE_URL=http://storage.example:8080 --build-arg API_KEY=...
+ARG OFFCHAIN_STORAGE_URL=http://gsy-offchain-storage:8080
+ENV OFFCHAIN_STORAGE_URL=${OFFCHAIN_STORAGE_URL}
+ARG API_KEY=fedecom_user
+ENV API_KEY=${API_KEY}
+# Optional extra cargo features. Validator/poa deployments pass "--features poa" to compile
+# in the poa chain spec; the default (empty) keeps the --dev image test/local-demo use.
+ARG NODE_BUILD_FEATURES=
+RUN cargo build --release ${NODE_BUILD_FEATURES}
 
 FROM ubuntu:24.04 AS runtime
 # curl is required by the compose healthcheck (system_health RPC probe).
@@ -50,5 +60,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 WORKDIR /var/www/gsy-node/
 COPY --from=builder /var/www/gsy-node/target/release/gsy-node /var/www/gsy-node/target/release/gsy-node
 ENV OFFCHAIN_STORAGE_URL=http://gsy-offchain-storage:8080
+ENV API_KEY=fedecom_user
 EXPOSE 9944
 ENTRYPOINT ["./target/release/gsy-node", "--dev", "--rpc-external"]

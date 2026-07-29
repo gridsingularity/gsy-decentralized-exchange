@@ -68,22 +68,35 @@ impl MeasurementsManager {
         internal_topology: Vec<MarketTopologySchema>,
         seconds_since_epoch: u64,
     ) {
-        let area_uuid_to_hash: HashMap<String, String> = internal_topology
+        // `fetch_measurements` identifies a measurement's area by the matched
+        // sensor id, which is the area `name` (see `fetch_measurements`), and
+        // stores it in `ExternalMeasurement::area_uuid`. So the lookup to the
+        // area hash must be keyed by `name`, not by `area_uuid` (which is a
+        // freshly generated UUID that a measurement never carries).
+        let name_to_hash: HashMap<String, String> = internal_topology
             .iter()
             .flat_map(|topology| topology.community_areas.iter())
-            .map(|area| (area.area_uuid.clone(), area.area_hash.clone()))
+            .map(|area| (area.name.clone(), area.area_hash.clone()))
             .collect();
 
         // Fetch and forward measurements
         let measurements = self.fetch_measurements(internal_topology.clone()).await;
         let valid_measurements: Vec<MeasurementSchema> = measurements
             .into_iter()
-            .map(|measurement| {
-                self.offchain_storage_api
-                    .convert_measurement_to_internal_schema(
-                        &measurement,
-                        area_uuid_to_hash[&measurement.area_uuid].clone(),
-                    )
+            .filter_map(|measurement| {
+                // Skip (don't panic) if a measurement's area is not in the
+                // current topology; a missing key must never crash the loop.
+                let Some(area_hash) = name_to_hash.get(&measurement.area_uuid) else {
+                    info!(
+                        "Skipping measurement for area '{}' with no matching topology entry.",
+                        measurement.area_uuid
+                    );
+                    return None;
+                };
+                Some(
+                    self.offchain_storage_api
+                        .convert_measurement_to_internal_schema(&measurement, area_hash.clone()),
+                )
             })
             .filter(|measurement| {
                 self.offchain_storage_api

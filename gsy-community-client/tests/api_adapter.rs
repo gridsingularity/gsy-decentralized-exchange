@@ -1,18 +1,28 @@
-use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
-use gsy_community_client::topology::{LECCommunityAssetsResults, LECCommunityMembersResults, TopologyManager};
+use gsy_community_client::offchain_storage_connector::adapter::{
+    AreaMarketInfoAdapter, build_new_market_topology, deterministic_area_hash,
+    deterministic_area_uuid, deterministic_community_uuid, plan_residual_replacement,
+};
+use gsy_community_client::topology::{
+    ExternalAreaTopology, ExternalCommunityTopology, LECCommunityAssetsResults,
+    LECCommunityMembersResults, TopologyManager,
+};
 use gsy_community_client::types::{ExternalForecast, ExternalMeasurement};
+use gsy_offchain_primitives::db_api_schema::market::AssetType;
+use gsy_offchain_primitives::db_api_schema::orders::{
+    DbBid, DbOrderComponent, DbOrderSchema, Order, OrderStatus,
+};
 use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
 use gsy_offchain_primitives::utils::h256_to_string;
 use reqwest::Client;
-use std::collections::HashSet;
 use serde_json;
+use std::collections::HashSet;
 use subxt::utils::H256;
 
 #[cfg(test)]
 mod tests {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    use gsy_community_client::time_utils::TIMESLOT_MINUTES;
     use super::*;
+    use gsy_community_client::time_utils::TIMESLOT_MINUTES;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn test_convert_forecast_to_internal_schema() {
@@ -421,16 +431,129 @@ mod tests {
         let last_quarter = now - secs_since_last_timeslot;
         let pilot_sites = manager.fetch_topology().await.unwrap();
         let results = pilot_sites.results.bindings;
-        let sites_names: HashSet<String> = results.iter().map(|x| x.site_name.value.clone()).collect();
+        let sites_names: HashSet<String> =
+            results.iter().map(|x| x.site_name.value.clone()).collect();
         let lec_names: HashSet<String> = results.iter().map(|x| x.lec_name.value.clone()).collect();
 
-        assert_eq!(sites_names, HashSet::from([
-            "EZ_Puertollano".to_string(), "ArenaInnovationCommunity".to_string(),
-            "EZ_Barcelona_TMB".to_string(), "UrBeroaCommunity".to_string(),
-            "TownHall".to_string(), "GaramèDistrict".to_string(),
-            "LugaggiaInnovationCommunity".to_string(), "ENBRO_Community".to_string(),
-            "Brico_HQ".to_string()]));
-        assert_eq!(lec_names, HashSet::from([
-            "Pilot1".to_string(), "Pilot2".to_string(), "Pilot3".to_string()]));
+        assert_eq!(
+            sites_names,
+            HashSet::from([
+                "EZ_Puertollano".to_string(),
+                "ArenaInnovationCommunity".to_string(),
+                "EZ_Barcelona_TMB".to_string(),
+                "UrBeroaCommunity".to_string(),
+                "TownHall".to_string(),
+                "GaramèDistrict".to_string(),
+                "LugaggiaInnovationCommunity".to_string(),
+                "ENBRO_Community".to_string(),
+                "Brico_HQ".to_string()
+            ])
+        );
+        assert_eq!(
+            lec_names,
+            HashSet::from([
+                "Pilot1".to_string(),
+                "Pilot2".to_string(),
+                "Pilot3".to_string()
+            ])
+        );
+    }
+
+    fn test_topology() -> Vec<ExternalCommunityTopology> {
+        vec![ExternalCommunityTopology {
+            community_name: "TestCommunity".to_string(),
+            areas: vec![ExternalAreaTopology {
+                area_name: "TestArea".to_string(),
+                area_type: AssetType::SMART_METER,
+            }],
+        }]
+    }
+
+    #[test]
+    fn test_build_new_market_topology_area_hash_matches_across_timeslots() {
+        let community = test_topology().into_iter().next().unwrap();
+        let slot_a = build_new_market_topology(&community, 1_800_000_000);
+        let slot_b = build_new_market_topology(&community, 1_800_000_900);
+
+        assert_eq!(
+            slot_a.community_uuid, slot_b.community_uuid,
+            "community_uuid must be deterministic across timeslots"
+        );
+        assert_eq!(
+            slot_a.community_areas[0].area_hash, slot_b.community_areas[0].area_hash,
+            "area_hash must be deterministic across timeslots so a stored forecast matches the market"
+        );
+        assert_eq!(
+            slot_a.community_uuid,
+            deterministic_community_uuid("TestCommunity")
+        );
+        assert_eq!(
+            slot_a.community_areas[0].area_hash,
+            h256_to_string(deterministic_area_hash("TestCommunity", "TestArea"))
+        );
+    }
+
+    #[test]
+    fn test_build_new_market_topology_is_stable_on_repeat_calls() {
+        let community = test_topology().into_iter().next().unwrap();
+        let first = build_new_market_topology(&community, 1_800_001_800);
+        let second = build_new_market_topology(&community, 1_800_001_800);
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn test_stored_forecast_area_hash_matches_market_for_residual_replacement() {
+        let time_slot = 1_800_003_600u64;
+        let community = test_topology().into_iter().next().unwrap();
+        let market = build_new_market_topology(&community, time_slot);
+        let area = market.community_areas[0].clone();
+
+        // The ingestion loop derives the same identity independently (it never sees the
+        // `MarketTopologySchema` the publish loop built), so the stored forecast's
+        // area_hash equals the market area's.
+        let forecast = ForecastSchema {
+            area_uuid: deterministic_area_uuid("TestCommunity", "TestArea"),
+            area_hash: h256_to_string(deterministic_area_hash("TestCommunity", "TestArea")),
+            community_uuid: deterministic_community_uuid("TestCommunity"),
+            time_slot,
+            creation_time: time_slot - 3_600,
+            energy_kwh: 3.0,
+            confidence: 0.9,
+        };
+        assert_eq!(forecast.area_hash, area.area_hash);
+        let stored = vec![forecast.clone()];
+
+        // `create_input_orders` (orders.rs) stamps `OrderComponent.area_uuid` from the
+        // forecast's `area_hash`, so an open bid for this area carries `area_uuid ==
+        // forecast.area_hash`; `plan_residual_replacement` must find and replace it.
+        let trader = "trader".to_string();
+        let open_bid = DbOrderSchema {
+            _id: format!("0x{}", "11".repeat(32)),
+            status: OrderStatus::Open,
+            order: Order::Bid(DbBid {
+                buyer: trader.clone(),
+                nonce: 0,
+                bid_component: DbOrderComponent {
+                    area_uuid: stored[0].area_hash.clone(),
+                    market_id: market.market_id.clone(),
+                    time_slot,
+                    creation_time: forecast.creation_time,
+                    energy: 2.0,
+                    energy_rate: 0.1,
+                },
+            }),
+        };
+
+        let (hashes_to_delete, adjusted) = plan_residual_replacement(&[open_bid], &trader, stored);
+        assert_eq!(
+            hashes_to_delete.len(),
+            1,
+            "the matching open order must be scheduled for deletion"
+        );
+        assert_eq!(adjusted.len(), 1);
+        assert_eq!(
+            adjusted[0].energy_kwh, 2.0,
+            "residual energy from the open order replaces the raw forecast"
+        );
     }
 }

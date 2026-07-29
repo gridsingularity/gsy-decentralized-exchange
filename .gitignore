@@ -21,3 +21,8 @@
 mongodb-data
 
 .idea
+
+# Local-demo per-service env files: ignore the real ones, keep the .example templates.
+/.env/*
+!/.env/*.example
+

@@ -1,0 +1,98 @@
+# =============================================================================
+# GSY DEX — validator node #1 (dedicated server, Tailscale mesh)
+# =============================================================================
+# One standalone gsy-node validator that joins a Tailscale tailnet via a sidecar
+# container and shares its network namespace, so it needs NO open/forwarded ports:
+# node<->node p2p, node<->central RPC and node->storage all ride the mesh.
+#
+#   export TS_AUTHKEY=tskey-auth-...        # a Tailscale auth key (reusable/ephemeral)
+#   OFFCHAIN_STORAGE_URL=http://<central-tailnet-ip>:8080 API_KEY=<key> \
+#     docker compose -f docker-compose.node-1.yml up --build
+#
+# First boot (leave GSY_RESERVED_NODES empty), then read this node's tailnet IP and
+# libp2p PeerId, hand them to node #2 (and get node #2's back):
+#   docker exec tailscale-node-1 tailscale ip -4          # -> GSY_PUBLIC_IP here + reserved on node #2
+#   docker logs gsy-node-1 | grep -i "Local node identity" # -> PeerId for the reserved multiaddr
+# Then set GSY_PUBLIC_IP + GSY_RESERVED_NODES on both nodes and restart.
+# Key gen for a stable PeerId: see ./.env/gsy-node-1.env.
+# =============================================================================
+
+services:
+  # --- Tailscale sidecar: owns the network namespace the node shares ---
+  tailscale-node-1:
+    image: tailscale/tailscale:latest
+    container_name: tailscale-node-1
+    hostname: gsy-node-1
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY:?set TS_AUTHKEY to a Tailscale auth key}
+      - TS_HOSTNAME=gsy-node-1
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_USERSPACE=false
+      - TS_EXTRA_ARGS=--accept-dns=false
+    volumes:
+      - tailscale-node-1-state:/var/lib/tailscale
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "tailscale", "ip", "-4"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  gsy-node:
+    container_name: gsy-node-1
+    build:
+      context: .
+      dockerfile: ./gsy-node/Dockerfile
+      args:
+        # Compile-time (baked into the image). Point OFFCHAIN_STORAGE_URL at the central
+        # server's tailnet IP (or its public URL); the offchain worker reads it via option_env!.
+        OFFCHAIN_STORAGE_URL: ${OFFCHAIN_STORAGE_URL:-http://gsy-offchain-storage:8080}
+        API_KEY: ${API_KEY:-fedecom_user}
+        NODE_BUILD_FEATURES: "--features poa"
+    # Share the sidecar's netns -> the node gets the tailnet IP; no ports to publish.
+    network_mode: "service:tailscale-node-1"
+    depends_on:
+      tailscale-node-1:
+        condition: service_healthy
+    env_file:
+      - ./.env/gsy-node-1.env
+    volumes:
+      - gsy-node-1-data:/var/lib/gsy
+      # Persisted libp2p key -> stable PeerId. Generate node.key here first (see env file).
+      - ./.secrets/gsy-node-1:/keys
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >
+        exec /var/www/gsy-node/target/release/gsy-node
+        --chain="$${GSY_CHAIN}"
+        $${GSY_VALIDATOR}
+        --base-path=/var/lib/gsy
+        --node-key-file=/keys/node.key
+        --listen-addr=/ip4/0.0.0.0/tcp/30333
+        $${GSY_PUBLIC_IP:+--public-addr=/ip4/$${GSY_PUBLIC_IP}/tcp/30333}
+        $${GSY_RESERVED_NODES:+--reserved-nodes $${GSY_RESERVED_NODES} --reserved-only}
+        --no-mdns
+        --rpc-external
+        --rpc-methods=safe
+        --rpc-cors=all
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'curl -H ''Content-Type: application/json'' -d ''{"id":1, "jsonrpc":"2.0", "method":"system_health"}'' http://localhost:9944 | grep -q ''"result":''',
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+volumes:
+  gsy-node-1-data:
+  tailscale-node-1-state:

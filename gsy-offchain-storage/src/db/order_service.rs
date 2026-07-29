@@ -2,8 +2,8 @@ use crate::db::DatabaseWrapper;
 use crate::db::collection::{Coll, UpdateSummary, in_time_window, time_window_bounds};
 use anyhow::Result;
 use gsy_offchain_primitives::db_api_schema::orders::{DbOrderSchema, Order, OrderStatus};
-use mongodb::bson::{Bson, doc};
 use mongodb::bson;
+use mongodb::bson::{Bson, doc};
 use std::collections::HashMap;
 
 /// this struct is wrapper to `Collection<Order>` should have function to help to manage order
@@ -26,13 +26,6 @@ fn order_time_slot(order: &Order) -> u64 {
     match order {
         Order::Bid(bid) => bid.bid_component.time_slot,
         Order::Offer(offer) => offer.offer_component.time_slot,
-    }
-}
-
-fn order_area_uuid(order: &Order) -> &str {
-    match order {
-        Order::Bid(bid) => &bid.bid_component.area_uuid,
-        Order::Offer(offer) => &offer.offer_component.area_uuid,
     }
 }
 
@@ -104,53 +97,11 @@ impl OrderService {
     #[tracing::instrument(name = "Fetching order by id from database", skip(self, id))]
     pub async fn get_order_by_id(&self, id: &Bson) -> Result<Option<DbOrderSchema>> {
         self.0
-            .find_one(doc! {"_id": id}, |order| {
-                matches!(id, Bson::String(id) if &order._id == id)
-            })
-            .await
-    }
-
-    pub async fn update_order_by_area_market_id(
-        &self,
-        area_uuid: String,
-        market_id: String,
-    ) -> Result<bool> {
-        // An order is either a Bid or an Offer, so its area_uuid / market_id
-        // live under exactly one nested component path. Match both fields
-        // together within each `$or` branch.
-        let filter = doc! {"$or": [
-            {
-                "order.data.bid_component.area_uuid": &area_uuid,
-                "order.data.bid_component.market_id": &market_id,
-            },
-            {
-                "order.data.offer_component.area_uuid": &area_uuid,
-                "order.data.offer_component.market_id": &market_id,
-            }
-        ]};
-
-        let update = doc! {
-            "$set": {
-                "status": bson::to_bson(&OrderStatus::Executed)?,
-            }
-        };
-
-        self.0
-            .update_many(
-                filter,
-                update,
-                |order| {
-                    order_area_uuid(&order.order) == area_uuid
-                        && order_market_id(&order.order) == market_id
-                },
-                |order| {
-                    let modified = order.status != OrderStatus::Executed;
-                    order.status = OrderStatus::Executed;
-                    modified
-                },
+            .find_one(
+                doc! {"_id": id},
+                |order| matches!(id, Bson::String(id) if &order._id == id),
             )
-            .await?;
-        Ok(true)
+            .await
     }
 
     #[tracing::instrument(name = "Update order status by id", skip(self, id, status))]

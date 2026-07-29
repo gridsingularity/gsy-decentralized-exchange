@@ -1144,6 +1144,7 @@ dependencies = [
 name = "gsy-offchain-primitives"
 version = "0.1.0"
 dependencies = [
+ "blake2-rfc",
  "chrono",
  "hex",
  "once_cell",
@@ -2866,6 +2867,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha1_smol"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbfa15b3dddfee50a0fff136974b3e1bde555604ba463834a7eb7deb6417705d"
+
+[[package]]
 name = "sha2"
 version = "0.9.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3766,6 +3773,7 @@ checksum = "ee48d38b119b0cd71fe4141b30f5ba9c7c5d9f4e7a3a8b4a674e4b6ef789976f"
 dependencies = [
  "getrandom 0.3.4",
  "js-sys",
+ "sha1_smol",
  "wasm-bindgen",
 ]
 

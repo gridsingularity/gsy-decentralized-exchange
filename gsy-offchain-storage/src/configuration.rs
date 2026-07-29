@@ -19,6 +19,12 @@ pub struct Settings {
     pub database_auth_source: Option<String>,
     #[serde(default)]
     pub database_tls: Option<bool>,
+    #[serde(default = "default_api_key")]
+    pub api_key: String,
+}
+
+fn default_api_key() -> String {
+    "fedecom_user".to_string()
 }
 
 impl Settings {

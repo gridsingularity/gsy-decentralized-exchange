@@ -7,17 +7,20 @@ use gsy_community_client::node_connector::orders::{
     remove_orders,
 };
 use gsy_community_client::offchain_storage_connector::adapter::{
-    AreaMarketInfoAdapter, plan_residual_replacement,
+    AreaMarketInfoAdapter, deterministic_area_hash, deterministic_area_uuid,
+    deterministic_community_uuid, plan_residual_replacement,
 };
-use gsy_community_client::time_utils::{get_current_timestamp_in_secs, open_spot_market_timeslots};
+use gsy_community_client::time_utils::{
+    get_current_timestamp_in_secs, open_spot_market_timeslots, start_of_previous_day,
+};
 use gsy_community_client::topology::TopologyManager;
 use gsy_offchain_primitives::aggregation::aggregate_net_import;
 use gsy_offchain_primitives::constants::GlobalConstants;
-use gsy_offchain_primitives::db_api_schema::market::MarketTopologySchema;
+use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketTopologySchema};
 use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
 use gsy_offchain_primitives::utils::{community_id_from_uuid, h256_to_string, string_to_h256};
 use reqwest::Client;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use subxt::utils::AccountId32;
 use subxt_signer::sr25519::dev;
@@ -130,9 +133,92 @@ impl AppState {
         }
     }
 
-    async fn poll_and_forward(&self) {
-        // The client re-posts orders to every open market on this interval.
-        let interval_sec = CommunityClientConstants.ORDER_RESUBMISSION_INTERVAL_SEC.max(1);
+    /// Day-ahead forecast ingestion loop. Every `FORECAST_INGEST_INTERVAL_SEC`, asks the
+    /// forecasters for the rolling 48h window starting at yesterday's midnight and upserts
+    /// every returned point to storage. This is the *only* writer of `/forecasts`; it never
+    /// builds or publishes orders, so a forecaster outage here does not block the
+    /// publish loop from re-publishing whatever was already ingested.
+    async fn ingest_forecasts_loop(&self) {
+        let interval_sec = CommunityClientConstants.FORECAST_INGEST_INTERVAL_SEC.max(1);
+        let horizon_sec = CommunityClientConstants.FORECAST_INGEST_HORIZON_SEC;
+
+        loop {
+            let now = get_current_timestamp_in_secs();
+            let start_time = start_of_previous_day(now);
+
+            let communities = TopologyManager::new(&self.client, &self.api_adapter)
+                .fetch_all_topology()
+                .await;
+
+            for community in communities {
+                let community_uuid = deterministic_community_uuid(&community.community_name);
+                let areas: Vec<AreaTopologySchema> = community
+                    .areas
+                    .iter()
+                    .map(|area| AreaTopologySchema {
+                        area_uuid: deterministic_area_uuid(
+                            &community.community_name,
+                            &area.area_name,
+                        ),
+                        area_type: area.area_type.clone(),
+                        name: area.area_name.clone(),
+                        area_hash: h256_to_string(deterministic_area_hash(
+                            &community.community_name,
+                            &area.area_name,
+                        )),
+                    })
+                    .collect();
+
+                let forecasts = self
+                    .forecasts_manager
+                    .fetch_area_set_forecasts(
+                        &community_uuid,
+                        &community.community_name,
+                        &areas,
+                        start_time,
+                    )
+                    .await;
+
+                // Keep every future point the forecaster returns; unlike the publish loop's
+                // `validate_forecast`, do NOT also drop non-future slots here — ingestion
+                // re-runs hourly and must keep persisting today's remaining slots too.
+                let to_store: Vec<ForecastSchema> = forecasts
+                    .into_iter()
+                    .filter(|forecast| forecast.energy_kwh != 0.0)
+                    .collect();
+
+                if to_store.is_empty() {
+                    continue;
+                }
+
+                info!(
+                    "Ingesting {} forecast point(s) for community {} (window start {}, horizon {}s).",
+                    to_store.len(),
+                    community.community_name,
+                    start_time,
+                    horizon_sec
+                );
+
+                if let Err(e) = self.api_adapter.forward_forecast(to_store).await {
+                    error!(
+                        "Failed to ingest forecasts for community {}: {}",
+                        community.community_name, e
+                    );
+                }
+            }
+
+            sleep(Duration::from_secs(interval_sec)).await;
+        }
+    }
+
+    /// Order-publication loop. Every `ORDER_RESUBMISSION_INTERVAL_SEC`, reads forecasts back
+    /// from storage (never from the forecasters) for every currently open market slot and
+    /// (re)publishes bids/offers from them, so order publication survives forecaster
+    /// downtime as long as ingestion previously wrote something for that slot.
+    async fn publish_orders_loop(&self) {
+        let interval_sec = CommunityClientConstants
+            .ORDER_RESUBMISSION_INTERVAL_SEC
+            .max(1);
 
         // The account every order is signed with.
         let trader = AccountId32::from(dev::alice().public_key()).to_string();
@@ -146,6 +232,8 @@ impl AppState {
                 sleep(Duration::from_secs(interval_sec)).await;
                 continue;
             }
+            let window_start = *open_timeslots.iter().min().expect("non-empty");
+            let window_end = *open_timeslots.iter().max().expect("non-empty");
 
             let markets_per_timeslot = TopologyManager::new(&self.client, &self.api_adapter)
                 .get_for_timeslots(&open_timeslots)
@@ -153,6 +241,10 @@ impl AppState {
 
             let mut measurement_topologies: Vec<MarketTopologySchema> = Vec::new();
             let mut seen_communities: HashSet<String> = HashSet::new();
+            // Fetched once per community per tick, spanning every open timeslot in
+            // `[window_start, window_end]`, and reused across every timeslot iteration below
+            // instead of one GET per (community, timeslot).
+            let mut forecasts_by_community: HashMap<String, Vec<ForecastSchema>> = HashMap::new();
 
             for (timeslot, markets) in markets_per_timeslot {
                 let (open_time, close_time) = GlobalConstants.spot_market_window(timeslot);
@@ -187,35 +279,38 @@ impl AppState {
                         measurement_topologies.push(market.clone());
                     }
 
-                    let valid_forecasts: Vec<ForecastSchema> = self
-                        .forecasts_manager
-                        .fetch_community_forecasts(&market, timeslot)
-                        .await
-                        .into_iter()
-                        .filter(|forecast| self.api_adapter.validate_forecast(forecast, now))
+                    let community_forecasts =
+                        match forecasts_by_community.get(&market.community_uuid) {
+                            Some(cached) => cached.clone(),
+                            None => {
+                                let fetched = self
+                                    .api_adapter
+                                    .get_forecasts_for_community(
+                                        &market.community_uuid,
+                                        window_start,
+                                        window_end,
+                                    )
+                                    .await;
+                                forecasts_by_community
+                                    .insert(market.community_uuid.clone(), fetched.clone());
+                                fetched
+                            }
+                        };
+
+                    let timeslot_forecasts: Vec<ForecastSchema> = community_forecasts
+                        .iter()
+                        .filter(|forecast| {
+                            forecast.time_slot == timeslot
+                                && self.api_adapter.validate_forecast(forecast, now)
+                        })
+                        .cloned()
                         .collect();
 
-                    if valid_forecasts.is_empty() {
+                    if timeslot_forecasts.is_empty() {
                         info!(
-                            "No valid demand forecasts to forward for community {} (delivery {}).",
+                            "No valid stored forecasts to publish for community {} (delivery {}).",
                             market.community_name, timeslot
                         );
-                        continue;
-                    }
-
-                    if let Err(e) = self
-                        .api_adapter
-                        .forward_forecast(valid_forecasts.clone())
-                        .await
-                    {
-                        info!("Failed to forward forecasts: {}", e);
-                    }
-
-                    let timeslot_forecasts: Vec<ForecastSchema> = valid_forecasts
-                        .into_iter()
-                        .filter(|forecast| forecast.time_slot == timeslot)
-                        .collect();
-                    if timeslot_forecasts.is_empty() {
                         continue;
                     }
 
@@ -227,8 +322,10 @@ impl AppState {
                         ));
                     }
 
-                    let open_orders =
-                        self.api_adapter.get_orders_for_market(&market.market_id).await;
+                    let open_orders = self
+                        .api_adapter
+                        .get_orders_for_market(&market.market_id)
+                        .await;
                     let (hashes_to_delete, replacement_forecasts) =
                         plan_residual_replacement(&open_orders, &trader, timeslot_forecasts);
 
@@ -290,5 +387,14 @@ impl AppState {
 #[tokio::main]
 async fn main() {
     let app_state = AppState::new();
-    app_state.poll_and_forward().await;
+    let ingest_state = app_state.clone();
+    let publish_state = app_state.clone();
+
+    // Two independent, never-returning loops. Each runs in its own task so a panic or
+    // stall in one (e.g. the ingestion loop wedged on a downed forecaster) cannot block
+    // the other (order publication, which only depends on storage).
+    let ingest_handle = tokio::spawn(async move { ingest_state.ingest_forecasts_loop().await });
+    let publish_handle = tokio::spawn(async move { publish_state.publish_orders_loop().await });
+
+    let _ = tokio::join!(ingest_handle, publish_handle);
 }

@@ -209,13 +209,25 @@ impl TopologyManager {
             };
             asset_objects.push(ExternalAreaTopology {
                 area_name: asset.asset_name.value,
-                area_type: self.map_fedecom_asset_type_to_asset_type(
-                    asset.asset_type.value,
-                    asset_subtype,
-                ),
+                area_type: self
+                    .map_fedecom_asset_type_to_asset_type(asset.asset_type.value, asset_subtype),
             });
         }
         asset_objects
+    }
+
+    /// Fetch the external ontology topology once, timeslot-independent (no per-timeslot
+    /// market is created or looked up). Used by the day-ahead ingestion loop, which derives
+    /// its own deterministic area/community ids straight from this topology instead of
+    /// going through [`Self::get`]/[`Self::get_for_timeslots`].
+    pub async fn fetch_all_topology(&self) -> Vec<ExternalCommunityTopology> {
+        match self.fetch_topology().await {
+            Ok(topology) => self.get_all_assets_for_all_communities(topology).await,
+            Err(error) => {
+                error!("Failed to fetch external topology: {}", error);
+                vec![]
+            }
+        }
     }
 
     pub async fn get(&self, next_timeslot: u64) -> Vec<MarketTopologySchema> {

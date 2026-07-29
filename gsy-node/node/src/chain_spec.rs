@@ -30,17 +30,17 @@ pub fn local_testnet_config() -> Result<ChainSpec, String> {
 	.build())
 }
 
-#[cfg(feature = "four-node-poa")]
-pub fn four_node_poa_config() -> Result<ChainSpec, String> {
+#[cfg(feature = "poa")]
+pub fn poa_config() -> Result<ChainSpec, String> {
 	Ok(ChainSpec::builder(
 		WASM_BINARY.ok_or_else(|| "Development wasm not available".to_string())?,
 		None,
 	)
-	.with_name("Four Node PoA")
-	.with_id("four_node_poa")
+	.with_name("GSy PoA")
+	.with_id("poa")
 	.with_chain_type(ChainType::Live)
 	.with_genesis_config_preset_name(
-		gsy_node_runtime::genesis_config_presets::FOUR_NODE_POA_RUNTIME_PRESET,
+		gsy_node_runtime::genesis_config_presets::POA_RUNTIME_PRESET,
 	)
 	.build())
 }

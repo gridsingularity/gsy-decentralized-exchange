@@ -180,6 +180,51 @@ where
         }
     }
 
+    /// Replace the first document matching a filter with `replacement`, inserting it if no
+    /// document matches (upsert). In-memory: replace the first matching item in place, else
+    /// push `replacement` as a new item.
+    pub async fn replace_one_upsert(
+        &self,
+        mongo_filter: Document,
+        replacement: T,
+        mem_filter: impl Fn(&T) -> bool,
+    ) -> Result<UpdateSummary> {
+        match self {
+            Coll::Mongo(collection) => {
+                match collection
+                    .replace_one(mongo_filter, &replacement)
+                    .upsert(true)
+                    .await
+                {
+                    Ok(result) => Ok(result.into()),
+                    Err(e) => {
+                        tracing::error!("Failed to execute query: {:?}", e);
+                        Err(anyhow::Error::from(e))
+                    }
+                }
+            }
+            Coll::InMemory(store) => {
+                let mut store = store.write().unwrap();
+                match store.iter_mut().find(|item| mem_filter(item)) {
+                    Some(item) => {
+                        *item = replacement;
+                        Ok(UpdateSummary {
+                            matched_count: 1,
+                            modified_count: 1,
+                        })
+                    }
+                    None => {
+                        store.push(replacement);
+                        Ok(UpdateSummary {
+                            matched_count: 0,
+                            modified_count: 1,
+                        })
+                    }
+                }
+            }
+        }
+    }
+
     /// Update all documents matching a filter. `mem_apply` mutates a matched
     /// document and reports whether it actually changed.
     pub async fn update_many(
@@ -217,6 +262,19 @@ where
             let index: IndexModel = IndexModel::builder()
                 .keys(doc! {"_id":1})
                 .options(IndexOptions::builder().build())
+                .build();
+            collection.create_index(index).await?;
+        }
+        Ok(())
+    }
+
+    /// Create a unique index over `keys` (no-op for the in-memory backend, which enforces
+    /// uniqueness through [`Coll::replace_one_upsert`] instead).
+    pub async fn ensure_unique_index(&self, keys: Document) -> Result<()> {
+        if let Coll::Mongo(collection) = self {
+            let index: IndexModel = IndexModel::builder()
+                .keys(keys)
+                .options(IndexOptions::builder().unique(true).build())
                 .build();
             collection.create_index(index).await?;
         }
@@ -280,11 +338,19 @@ pub(crate) fn time_window_bounds(
     if let Some(end) = end_time {
         bounds.insert("$lte", end);
     }
-    if bounds.is_empty() { None } else { Some(bounds) }
+    if bounds.is_empty() {
+        None
+    } else {
+        Some(bounds)
+    }
 }
 
 /// In-memory counterpart of [`apply_time_window`].
-pub(crate) fn in_time_window(time_slot: u64, start_time: Option<u32>, end_time: Option<u32>) -> bool {
+pub(crate) fn in_time_window(
+    time_slot: u64,
+    start_time: Option<u32>,
+    end_time: Option<u32>,
+) -> bool {
     start_time.is_none_or(|start| time_slot >= start as u64)
         && end_time.is_none_or(|end| time_slot <= end as u64)
 }
