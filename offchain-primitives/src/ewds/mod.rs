@@ -139,7 +139,7 @@ pub struct EwdsClientConfig {
     pub response_fqcn: String,
     pub topic_owner: String,
     pub topic_version: String,
-    pub response_client_id: String,
+    pub consumer_client_id: String,
     pub timeout_ms: u64,
     pub poll_interval_ms: u64,
     pub topics: EwdsTopicConfig,
@@ -147,8 +147,8 @@ pub struct EwdsClientConfig {
 
 impl EwdsClientConfig {
     pub fn from_env(
-        response_client_id_env: &str,
-        response_client_id_default: &str,
+        consumer_client_id_env: &str,
+        consumer_client_id_default: &str,
         timeout_ms_default: u64,
     ) -> Self {
         Self {
@@ -161,9 +161,9 @@ impl EwdsClientConfig {
                 .unwrap_or_else(|| DEFAULT_RESPONSE_FQCN.to_string()),
             topic_owner: env_or("EWDS_TOPIC_OWNER", DEFAULT_TOPIC_OWNER),
             topic_version: env_or("EWDS_TOPIC_VERSION", DEFAULT_TOPIC_VERSION),
-            response_client_id: env_var(response_client_id_env)
+            consumer_client_id: env_var(consumer_client_id_env)
                 .or_else(|| env_var("EWDS_RESPONSE_CLIENT_ID"))
-                .unwrap_or_else(|| response_client_id_default.to_string()),
+                .unwrap_or_else(|| consumer_client_id_default.to_string()),
             timeout_ms: env_u64_or("EWDS_RESPONSE_TIMEOUT_MS", timeout_ms_default),
             poll_interval_ms: env_u64_or(
                 "EWDS_RESPONSE_POLL_INTERVAL_MS",
@@ -194,13 +194,13 @@ impl EwdsClient {
     }
 
     pub fn from_env(
-        response_client_id_env: &str,
-        response_client_id_default: &str,
+        consumer_client_id_env: &str,
+        consumer_client_id_default: &str,
         timeout_ms_default: u64,
     ) -> Self {
         Self::new(EwdsClientConfig::from_env(
-            response_client_id_env,
-            response_client_id_default,
+            consumer_client_id_env,
+            consumer_client_id_default,
             timeout_ms_default,
         ))
     }
@@ -279,7 +279,7 @@ impl EwdsClient {
             self.config.gateway_base.trim_end_matches('/')
         );
         let poll_client_id = client_id_for_suffix(
-            self.config.response_client_id.as_str(),
+            self.config.consumer_client_id.as_str(),
             pending_query.response_topic.as_str(),
         );
 
