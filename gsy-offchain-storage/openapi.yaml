@@ -274,21 +274,22 @@ paths:
   /guarantees-of-origin-measurements:
     get:
       tags: [analytics]
-      summary: Asset measurements for guarantees-of-origin reporting
+      summary: Settled trades for guarantees-of-origin reporting
       description: |
-        Returns the produced/consumed energy measurements of all individual
-        assets (smart meters, PVs, batteries, heat pumps) across all
-        communities, e.g. as input for guarantees-of-origin reporting.
-        Community-level measurements (entries posted for the community itself,
-        stored with `area_uuid` equal to `community_uuid`) are excluded. The
-        optional time bounds restrict the measurement `time_slot` window
-        (inclusive).
+        Returns the settled energy trades across all communities, shaped for
+        guarantees-of-origin reporting. Each entry carries the traded energy,
+        the buyer and seller account ids, the energy community, the delivery
+        time slot and the (earlier) trade time, and the market the energy was
+        traded in. In FEDECOM trading precedes delivery — trades are matched on
+        forecasts rather than measurements — so `energy_trade_timestamp`
+        precedes `energy_delivery_timestamp`. The optional time bounds restrict
+        the delivery `time_slot` window (inclusive).
       operationId: getGuaranteesOfOrigin
       parameters:
         - name: start_time
           in: query
           required: false
-          description: Lower bound (inclusive) for the measurement `time_slot`, in unix seconds.
+          description: Lower bound (inclusive) for the delivery `time_slot`, in unix seconds.
           schema:
             type: integer
             format: int32
@@ -296,20 +297,20 @@ paths:
         - name: end_time
           in: query
           required: false
-          description: Upper bound (inclusive) for the measurement `time_slot`, in unix seconds.
+          description: Upper bound (inclusive) for the delivery `time_slot`, in unix seconds.
           schema:
             type: integer
             format: int32
             minimum: 0
       responses:
         '200':
-          description: Matching asset measurements (possibly empty).
+          description: Matching settled trades (possibly empty).
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/AssetMeasurementSchema'
+                  $ref: '#/components/schemas/GuaranteesOfOriginSchema'
         '400':
           description: Query parameter has an invalid type (e.g. non-integer time bound).
         '500':
@@ -832,35 +833,58 @@ components:
           type: number
           format: double
           description: Measured energy (kWh).
-    AssetMeasurementSchema:
+    GuaranteesOfOriginSchema:
       type: object
       description: |
-        Measured energy profile point of an individual asset, as reported by
-        the guarantees-of-origin endpoint. This is a `MeasurementSchema` with
-        `area_uuid`/`community_uuid` renamed to `asset_id`/`community_id` and
-        without the `area_hash` field.
-      required: [asset_id, community_id, time_slot, creation_time, energy_kwh]
+        A single settled energy trade, as reported by the guarantees-of-origin
+        endpoint. In FEDECOM energy is traded ahead of delivery (matching runs
+        on forecasts), so `energy_trade_timestamp` precedes
+        `energy_delivery_timestamp`.
+      required:
+        - trade_id
+        - traded_energy_kwh
+        - buyer_id
+        - seller_id
+        - energy_community_id
+        - energy_delivery_timestamp
+        - energy_trade_timestamp
+        - market_id
+        - market_type
       properties:
-        asset_id:
+        trade_id:
           type: string
-          description: UUID of the asset the measurement belongs to.
-        community_id:
-          type: string
-          description: UUID of the community the asset belongs to.
-        time_slot:
-          type: integer
-          format: int64
-          minimum: 0
-          description: Time slot of the measurement, unix seconds.
-        creation_time:
-          type: integer
-          format: int64
-          minimum: 0
-          description: Creation time, unix seconds.
-        energy_kwh:
+          description: Unique id of the energy trade.
+        traded_energy_kwh:
           type: number
           format: double
-          description: Measured energy (kWh).
+          description: Traded energy (kWh).
+        buyer_id:
+          type: string
+          description: Account id of the buyer.
+        seller_id:
+          type: string
+          description: Account id of the seller.
+        energy_community_id:
+          type: string
+          description: |
+            UUID of the energy community the traded assets belong to. Empty when
+            the trade's market topology is not (yet) known to the store.
+        energy_delivery_timestamp:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Delivery time of the traded energy (the market `time_slot`), unix seconds.
+        energy_trade_timestamp:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Time at which the energy was traded, unix seconds. Precedes the delivery timestamp.
+        market_id:
+          type: string
+          description: Id of the market the energy was traded in.
+        market_type:
+          type: string
+          description: Market type the energy was traded in (e.g. "Spot", "Flexibility").
     ForecastSchema:
       type: object
       description: Forecasted energy profile point of an asset/area.

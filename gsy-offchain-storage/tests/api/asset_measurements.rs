@@ -1,32 +1,84 @@
 use crate::helpers::init_app;
-use gsy_offchain_primitives::db_api_schema::profiles::MeasurementSchema;
+use actix_web::web;
+use gsy_offchain_primitives::db_api_schema::market::MarketTopologySchema;
+use gsy_offchain_primitives::db_api_schema::orders::{DbBid, DbOffer, DbOrderComponent};
+use gsy_offchain_primitives::db_api_schema::trades::{TradeParameters, TradeSchema, TradeStatus};
 use serde_json::Value;
+use subxt::utils::H256;
 
+const MARKET_ID: &str = "test-market";
 const COMMUNITY_UUID: &str = "community_uuid";
 
-fn asset_measurement(area_uuid: &str, time_slot: u64, energy_kwh: f64) -> MeasurementSchema {
-    MeasurementSchema {
+fn create_test_order_component(area_uuid: &str, time_slot: u64) -> DbOrderComponent {
+    DbOrderComponent {
         area_uuid: area_uuid.to_string(),
-        area_hash: format!("{}_hash", area_uuid),
-        community_uuid: COMMUNITY_UUID.to_string(),
+        market_id: MARKET_ID.to_string(),
         time_slot,
-        creation_time: time_slot,
-        energy_kwh,
+        creation_time: 1677453190,
+        energy: 100.0,
+        energy_rate: 10.0,
     }
 }
 
-/// Community-level measurements (posted for the community itself rather than
-/// an individual asset) are stored with `area_uuid == community_uuid`.
-fn community_measurement(time_slot: u64, energy_kwh: f64) -> MeasurementSchema {
-    asset_measurement(COMMUNITY_UUID, time_slot, energy_kwh)
+/// Build a settled trade. `time_slot` is the delivery timestamp; `creation_time`
+/// (the moment the trade was struck, ahead of delivery) is derived from it.
+fn create_test_trade(
+    seller: &str,
+    buyer: &str,
+    time_slot: u64,
+    selected_energy: f64,
+) -> TradeSchema {
+    let trade_uuid = H256::random().to_string();
+    // Trading precedes delivery: struck one hour before the delivery slot.
+    let creation_time = time_slot - 3600;
+    TradeSchema {
+        _id: H256::random().to_string(),
+        status: TradeStatus::Settled,
+        seller: seller.to_string(),
+        buyer: buyer.to_string(),
+        market_id: MARKET_ID.to_string(),
+        time_slot,
+        trade_uuid: trade_uuid.clone(),
+        creation_time,
+        offer: DbOffer {
+            seller: seller.to_string(),
+            nonce: 1,
+            offer_component: create_test_order_component("offer_area", time_slot),
+        },
+        offer_hash: H256::random().to_string(),
+        bid: DbBid {
+            buyer: buyer.to_string(),
+            nonce: 1,
+            bid_component: create_test_order_component("bid_area", time_slot),
+        },
+        bid_hash: H256::random().to_string(),
+        residual_offer: None,
+        residual_bid: None,
+        parameters: TradeParameters {
+            selected_energy,
+            energy_rate: 3.0,
+            trade_uuid,
+        },
+    }
 }
 
-async fn post_measurements(address: &str, measurements: &[MeasurementSchema]) {
+fn test_market() -> MarketTopologySchema {
+    MarketTopologySchema {
+        market_id: MARKET_ID.to_string(),
+        community_uuid: COMMUNITY_UUID.to_string(),
+        community_name: "community".to_string(),
+        time_slot: 100,
+        creation_time: 100,
+        community_areas: vec![],
+    }
+}
+
+async fn post_trades(address: &str, trades: &[TradeSchema]) {
     let client = reqwest::Client::new();
     let resp = client
-        .post(&format!("{}/measurements", address))
+        .post(&format!("{}/trades-normalized", address))
         .header("Content-Type", "application/json")
-        .json(&measurements)
+        .json(&trades)
         .send()
         .await
         .unwrap();
@@ -36,7 +88,10 @@ async fn post_measurements(address: &str, measurements: &[MeasurementSchema]) {
 async fn get_guarantees_of_origin(address: &str, query: &str) -> Vec<Value> {
     let client = reqwest::Client::new();
     let resp = client
-        .get(&format!("{}/guarantees-of-origin-measurements{}", address, query))
+        .get(&format!(
+            "{}/guarantees-of-origin-measurements{}",
+            address, query
+        ))
         .header("Content-Type", "application/json")
         .send()
         .await
@@ -46,82 +101,110 @@ async fn get_guarantees_of_origin(address: &str, query: &str) -> Vec<Value> {
 }
 
 #[tokio::test]
-async fn get_guarantees_of_origin_returns_renamed_asset_entries_without_community_ones() {
+async fn get_guarantees_of_origin_reports_trade_fields() {
     let app = init_app().await;
     let address = app.address;
 
-    post_measurements(
+    let db = web::Data::new(app.db_wrapper);
+    db.get_ref()
+        .markets()
+        .insert(test_market())
+        .await
+        .expect("Failed to insert market");
+
+    let trade = create_test_trade("seller_account", "buyer_account", 4000, 5.5);
+    let trade_uuid = trade.trade_uuid.clone();
+    let creation_time = trade.creation_time;
+    post_trades(&address, &[trade]).await;
+
+    let resp_json = get_guarantees_of_origin(&address, "").await;
+
+    assert_eq!(resp_json.len(), 1);
+    let item = resp_json[0].as_object().unwrap();
+
+    // Exactly the guarantees-of-origin fields are present.
+    let expected_keys = [
+        "trade_id",
+        "traded_energy_kwh",
+        "buyer_id",
+        "seller_id",
+        "energy_community_id",
+        "energy_delivery_timestamp",
+        "energy_trade_timestamp",
+        "market_id",
+        "market_type",
+    ];
+    assert_eq!(item.len(), expected_keys.len());
+    for key in expected_keys {
+        assert!(item.contains_key(key), "missing field {key}");
+    }
+
+    assert_eq!(item["trade_id"], trade_uuid);
+    assert_eq!(item["traded_energy_kwh"], 5.5);
+    assert_eq!(item["buyer_id"], "buyer_account");
+    assert_eq!(item["seller_id"], "seller_account");
+    assert_eq!(item["energy_community_id"], COMMUNITY_UUID);
+    assert_eq!(item["energy_delivery_timestamp"], 4000);
+    assert_eq!(item["energy_trade_timestamp"], creation_time);
+    // Trading precedes delivery.
+    assert!(item["energy_trade_timestamp"].as_u64().unwrap() < 4000);
+    assert_eq!(item["market_id"], MARKET_ID);
+    assert_eq!(item["market_type"], "Spot");
+}
+
+#[tokio::test]
+async fn get_guarantees_of_origin_leaves_community_empty_for_unknown_market() {
+    let app = init_app().await;
+    let address = app.address;
+
+    // No market topology inserted, so the community id cannot be resolved.
+    post_trades(
         &address,
-        &[
-            asset_measurement("pv_uuid", 100, 5.5),
-            asset_measurement("battery_uuid", 100, -2.5),
-            community_measurement(100, 3.0),
-        ],
+        &[create_test_trade("seller_account", "buyer_account", 4000, 1.0)],
     )
     .await;
 
     let resp_json = get_guarantees_of_origin(&address, "").await;
-
-    // The community-level entry is excluded.
-    assert_eq!(resp_json.len(), 2);
-    for item in &resp_json {
-        let object = item.as_object().unwrap();
-        // Renamed fields are present, the original names and area_hash are not.
-        assert!(object.contains_key("asset_id"));
-        assert!(object.contains_key("community_id"));
-        assert!(!object.contains_key("area_uuid"));
-        assert!(!object.contains_key("community_uuid"));
-        assert!(!object.contains_key("area_hash"));
-        assert_eq!(object.len(), 5);
-        assert_eq!(item["community_id"], COMMUNITY_UUID);
-        assert_ne!(item["asset_id"], COMMUNITY_UUID);
-        assert_eq!(item["time_slot"], 100);
-        assert_eq!(item["creation_time"], 100);
-    }
-
-    let pv = resp_json
-        .iter()
-        .find(|item| item["asset_id"] == "pv_uuid")
-        .unwrap();
-    assert_eq!(pv["energy_kwh"], 5.5);
-    let battery = resp_json
-        .iter()
-        .find(|item| item["asset_id"] == "battery_uuid")
-        .unwrap();
-    assert_eq!(battery["energy_kwh"], -2.5);
+    assert_eq!(resp_json.len(), 1);
+    assert_eq!(resp_json[0]["energy_community_id"], "");
 }
 
 #[tokio::test]
-async fn get_guarantees_of_origin_filters_by_time_window() {
+async fn get_guarantees_of_origin_filters_by_delivery_time_window() {
     let app = init_app().await;
     let address = app.address;
 
-    post_measurements(
+    post_trades(
         &address,
         &[
-            asset_measurement("pv_uuid", 100, 1.0),
-            asset_measurement("pv_uuid", 200, 2.0),
-            asset_measurement("battery_uuid", 300, 3.0),
-            community_measurement(200, 6.0),
+            create_test_trade("seller_account", "buyer_account", 4000, 1.0),
+            create_test_trade("seller_account", "buyer_account", 8000, 2.0),
+            create_test_trade("seller_account", "buyer_account", 12000, 3.0),
         ],
     )
     .await;
 
     // Lower bound only (inclusive).
-    let resp_json = get_guarantees_of_origin(&address, "?start_time=200").await;
+    let resp_json = get_guarantees_of_origin(&address, "?start_time=8000").await;
     assert_eq!(resp_json.len(), 2);
-    assert!(resp_json.iter().all(|item| item["time_slot"] != 100));
+    assert!(
+        resp_json
+            .iter()
+            .all(|item| item["energy_delivery_timestamp"] != 4000)
+    );
 
     // Upper bound only (inclusive).
-    let resp_json = get_guarantees_of_origin(&address, "?end_time=200").await;
+    let resp_json = get_guarantees_of_origin(&address, "?end_time=8000").await;
     assert_eq!(resp_json.len(), 2);
-    assert!(resp_json.iter().all(|item| item["time_slot"] != 300));
+    assert!(
+        resp_json
+            .iter()
+            .all(|item| item["energy_delivery_timestamp"] != 12000)
+    );
 
-    // Both bounds: only the asset entry at time_slot 200 remains; the
-    // community-level entry in the same window is still excluded.
-    let resp_json = get_guarantees_of_origin(&address, "?start_time=150&end_time=250").await;
+    // Both bounds: only the middle delivery slot remains.
+    let resp_json = get_guarantees_of_origin(&address, "?start_time=6000&end_time=10000").await;
     assert_eq!(resp_json.len(), 1);
-    assert_eq!(resp_json[0]["asset_id"], "pv_uuid");
-    assert_eq!(resp_json[0]["time_slot"], 200);
-    assert_eq!(resp_json[0]["energy_kwh"], 2.0);
+    assert_eq!(resp_json[0]["energy_delivery_timestamp"], 8000);
+    assert_eq!(resp_json[0]["traded_energy_kwh"], 2.0);
 }
