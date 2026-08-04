@@ -1,17 +1,19 @@
 use anyhow::{anyhow, Result};
-use blake2_rfc::blake2b::blake2b;
+// use blake2_rfc::blake2b::blake2b;
 use cucumber::World;
 use ethers::prelude::*;
 use gsy_community_client::external_api::ExternalFacilityTopology;
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::profiles::ForecastSchema;
 use primitives::db_api_schema::trades::TradeSchema;
-use primitives::utils::parse_or_hash_bytes16;
-use primitives::MarketType;
+// use primitives::utils::{parse_or_hash_bytes16, create_encrypted_bytes16_from_string};
+// use primitives::MarketType;
 use reqwest::Client;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
+use primitives::ewds::get_onchain_id;
+use primitives::db_api_schema::ids::IdType;
 
 const DEFAULT_PRIVATE_KEY: &str =
     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
@@ -29,6 +31,7 @@ pub struct MyWorld {
     pub chain_id: u64,
     pub http_client: Client,
     pub users: HashMap<String, UserAccount>,
+    pub actor_ids: HashMap<String, [u8; 16]>,
     pub evm_node_url: String,
     pub offchain_storage_url: String,
     pub market_controller_address: Address,
@@ -36,6 +39,7 @@ pub struct MyWorld {
     pub trade_settlement_address: Address,
     pub actor_registry_address: Address,
     pub last_market_id: Option<[u8; 16]>,
+    pub last_market_offchain_id: Option<String>,
     pub target_delivery_time: u64,
     pub buyer_id: String,
     pub seller_id: String,
@@ -77,6 +81,17 @@ impl MyWorld {
             "charlie".to_string(),
             Self::build_user(charlie_private_key.as_str(), chain_id)?,
         );
+        let mut actor_ids = HashMap::new();
+        for user_name in users.keys(){
+            eprintln!("creating actor id for {:?}", user_name);
+            actor_ids.insert(
+                user_name.to_string(),
+                get_onchain_id(format!("area{}", user_name), IdType::ActorId)
+                    .await
+                    .expect("failed to derive actor onchain_id")
+            );
+        }
+        
 
         let market_controller_address = Self::read_address_env("MARKET_CONTROLLER_ADDRESS")?;
         let order_registry_address = Self::read_address_env("ORDER_REGISTRY_ADDRESS")?;
@@ -88,6 +103,7 @@ impl MyWorld {
             chain_id,
             http_client: Client::new(),
             users,
+            actor_ids,
             evm_node_url,
             offchain_storage_url: std::env::var("OFFCHAIN_STORAGE_URL")
                 .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string()),
@@ -96,6 +112,7 @@ impl MyWorld {
             trade_settlement_address,
             actor_registry_address,
             last_market_id: None,
+            last_market_offchain_id: None,
             target_delivery_time: 0,
             buyer_id: "areaalice".to_string(),
             seller_id: "areabob".to_string(),
@@ -145,20 +162,10 @@ impl MyWorld {
             .clone()
     }
 
-    pub fn generate_market_id(&self, market_type: MarketType, delivery_timestamp: u64) -> [u8; 16] {
-        let mut buffer = Vec::new();
-        buffer.extend_from_slice(market_type.as_str().as_bytes());
-        buffer.extend_from_slice(&delivery_timestamp.to_be_bytes());
-        blake2b(16, &[], &buffer)
-            .as_bytes()
-            .try_into()
-            .expect("hash is 16 bytes")
-    }
-
     pub fn actor_id_for_user(&self, user_name: &str) -> [u8; 16] {
-        if !self.users.contains_key(user_name) {
-            panic!("Unknown user '{}'", user_name);
+        match self.actor_ids.get(user_name) {
+            Some(id) => *id,
+            None => panic!("Actor Id not created yet '{}'", user_name),
         }
-        parse_or_hash_bytes16(format!("area{}", user_name).as_str())
     }
 }

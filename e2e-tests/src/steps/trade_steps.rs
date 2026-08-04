@@ -8,11 +8,14 @@ use primitives::db_api_schema::orders::{
 };
 use primitives::db_api_schema::profiles::MeasurementSchema;
 use primitives::db_api_schema::trades::TradeSchema;
-use primitives::utils::{parse_or_hash_bytes16, NODE_FLOAT_SCALING_FACTOR};
+use primitives::utils::{string_to_bytes16, NODE_FLOAT_SCALING_FACTOR, parse_uuid_or_hex_bytes16};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
 use tracing::info;
+use uuid::Uuid;
+use primitives::ewds::get_onchain_id;
+use primitives::db_api_schema::ids::IdType;
 
 const MATCHING_ENGINE_BLOCK_INTERVAL: u64 = 4;
 const FLOAT_EPSILON: f64 = 0.000_001;
@@ -230,7 +233,7 @@ async fn place_custom_order(
     energy_rate: f64,
     requirements: Option<DbRequirements>,
     attributes: Option<DbAttributes>,
-) -> String {
+) -> anyhow::Result<String> {
     let wallet = world.wallet_for_user(user_name);
     let signer = Arc::new(SignerMiddleware::new(
         world.provider.clone(),
@@ -245,16 +248,14 @@ async fn place_custom_order(
 
     let actor_id = world.actor_id_for_user(user_name);
     let market_id = world.last_market_id.expect("Missing market id");
-    let order_id_bytes = parse_or_hash_bytes16(
-        format!(
-            "custom:{}:{}:{}:{}:{}",
-            user_name, is_bid, creation_time, energy, energy_rate
-        )
-        .as_str(),
-    );
+    let order_id = Uuid::new_v4().to_string();
+    let onchain_order_id = get_onchain_id(
+        order_id.clone(),
+        IdType::OrderId
+    ).await?;
 
     let params: EvmOrderParamsTuple = (
-        order_id_bytes,
+        onchain_order_id,
         actor_id,
         market_id,
         world.target_delivery_time,
@@ -263,8 +264,6 @@ async fn place_custom_order(
         (energy_rate * NODE_FLOAT_SCALING_FACTOR).round() as u64,
         is_bid,
     );
-
-    let order_id = format!("0x{}", hex::encode(order_id_bytes));
 
     let place_order_call = order_registry.place_order(params);
     let pending_tx = place_order_call
@@ -287,7 +286,7 @@ async fn place_custom_order(
         upsert_order_in_offchain_storage(world, indexed_order).await;
     }
 
-    order_id
+    Ok(order_id)
 }
 
 #[when(expr = "{string} submits a bid")]
@@ -320,7 +319,7 @@ async fn submit_preferred_partner_bid(
         preferred_energy_rate: Some(preferred_rate),
     };
 
-    place_custom_order(
+    let _ = place_custom_order(
         world,
         user_name.as_str(),
         true,
@@ -368,7 +367,7 @@ async fn submit_preferred_partner_offer(
         energy_type: EnergyType::Clean,
     };
 
-    place_custom_order(
+    let _ = place_custom_order(
         world,
         user_name.as_str(),
         false,
@@ -386,7 +385,7 @@ async fn submit_preferred_partner_offer(
 async fn submit_cheaper_offer(world: &mut MyWorld, user_name: String, energy: f64, rate: f64) {
     let order_id =
         place_custom_order(world, user_name.as_str(), false, energy, rate, None, None).await;
-    world.last_charlie_offer_order_id = Some(order_id);
+    world.last_charlie_offer_order_id = Some(order_id.expect("could not place offer"));
 
     // Trigger matching after all preference/open-market orders were submitted.
     emit_until_matching_block(world, 12).await;
@@ -414,7 +413,7 @@ async fn submit_measurements(world: &mut MyWorld) {
 }
 
 #[then("the matching engine matches the bid and offer and a trade is settled on-chain")]
-async fn verify_trade_on_chain(world: &mut MyWorld) {
+async fn verify_trade_on_chain(world: &mut MyWorld) -> anyhow::Result<()>{
     let order_registry =
         OrderRegistryContract::new(world.order_registry_address, world.provider.clone());
 
@@ -422,17 +421,30 @@ async fn verify_trade_on_chain(world: &mut MyWorld) {
 
     for attempt in 0..60 {
         let trades = query_market_trades(world).await;
-
+        eprintln!("trades {:?}", trades);
         if let Some(trade) = trades
             .into_iter()
             .find(|trade| trade.market_id.to_lowercase() == expected_market_id)
         {
             info!("Found settled trade {}", trade.trade_uuid);
             world.last_trade = Some(trade.clone());
-
-            let bid_id = parse_or_hash_bytes16(trade.bid_hash.as_str());
-            let offer_id = parse_or_hash_bytes16(trade.offer_hash.as_str());
-
+            eprintln!("bid_hash from db {:?}", trade.bid_hash);
+            eprintln!("offer_hash from db {:?}", trade.offer_hash);
+            // let bid_id = string_to_bytes16(trade.bid_hash.as_str()).expect("REASON");
+            // let offer_id = string_to_bytes16(trade.offer_hash.as_str()).expect("REASON");
+            // let bid_id = get_onchain_id(
+            //     trade.bid_hash.clone(),
+            //     IdType::OrderId
+            // ).await?;
+            // let offer_id = get_onchain_id(
+            //     trade.offer_hash.clone(),
+            //     IdType::OrderId
+            // ).await?;
+            let bid_id = parse_uuid_or_hex_bytes16(trade.bid_hash.as_str()).expect("REASON");
+            let offer_id = parse_uuid_or_hex_bytes16(trade.offer_hash.as_str()).expect("REASON");
+            eprintln!("bid_id onchain {:?}", bid_id);
+            eprintln!("offer_id onchain {:?}", offer_id);
+            // todo: should we adapt the SC in order to return an error if id not present?
             let bid_status = order_registry
                 .get_status(bid_id)
                 .call()
@@ -443,7 +455,8 @@ async fn verify_trade_on_chain(world: &mut MyWorld) {
                 .call()
                 .await
                 .expect("Failed to read offer status from contract");
-
+            eprintln!("bid_status  {:?}", bid_status);
+            eprintln!("offer_status  {:?}", offer_status);
             assert_eq!(bid_status, 2u8, "Bid order is not Executed on-chain");
             assert_eq!(offer_status, 2u8, "Offer order is not Executed on-chain");
 
@@ -465,7 +478,7 @@ async fn verify_trade_on_chain(world: &mut MyWorld) {
             assert_eq!(bid.status, OrderStatus::Executed);
             assert_eq!(offer.status, OrderStatus::Executed);
 
-            return;
+            return Ok(());
         }
 
         info!(
@@ -502,8 +515,8 @@ async fn verify_partner_trade(
         }) {
             world.last_trade = Some(trade.clone());
 
-            let bid_id = parse_or_hash_bytes16(trade.bid_hash.as_str());
-            let offer_id = parse_or_hash_bytes16(trade.offer_hash.as_str());
+            let bid_id = string_to_bytes16(trade.bid_hash.as_str()).expect("REASON");
+            let offer_id = string_to_bytes16(trade.offer_hash.as_str()).expect("REASON");
 
             let bid_status = order_registry
                 .get_status(bid_id)
@@ -611,7 +624,7 @@ async fn verify_penalties_on_chain(world: &mut MyWorld) {
     let trade_settlement =
         TradeSettlementContract::new(world.trade_settlement_address, world.provider.clone());
 
-    let trade_id = parse_or_hash_bytes16(trade.trade_uuid.as_str());
+    let trade_id = string_to_bytes16(trade.trade_uuid.as_str()).expect("REASON");
 
     for attempt in 0..60 {
         let penalty = trade_settlement

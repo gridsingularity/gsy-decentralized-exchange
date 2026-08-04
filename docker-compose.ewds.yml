@@ -75,7 +75,7 @@ services:
       start_period: 10s
 
   ddhub-gateway-migrationer:
-    image: ${EWDS_GATEWAY_BACKEND_IMAGE:-aemocontainerregistry.azurecr.io/ddhub-client-gateway-backend:latest}
+    image: ewfcontainerregistry.azurecr.io/ddhub-client-gateway-backend:intelligent-canary
     container_name: ddhub-gateway-migrationer
     platform: ${EWDS_GATEWAY_PLATFORM:-linux/amd64}
     depends_on:
@@ -88,19 +88,19 @@ services:
     entrypoint: >
       sh -c '
         export VAULT_TOKEN="$$(cat /vault-creds/root_token.txt)"
-        exec ./node_modules/.bin/typeorm migrations:run
+        exec ./node_modules/.bin/typeorm migration:run -d ormconfig.js
       '
     environment:
       <<: *ddhub-gateway-env
 
   ddhub-gateway-UI:
-    image: ${EWDS_GATEWAY_FRONTEND_IMAGE:-aemocontainerregistry.azurecr.io/ddhub-client-gateway-frontend:latest}
+    image: ewfcontainerregistry.azurecr.io/ddhub-client-gateway-frontend:intelligent-canary
     platform: ${EWDS_GATEWAY_PLATFORM:-linux/amd64}
     ports:
       - "${EWDS_GATEWAY_UI_PORT:-3000}:80"
 
   ddhub-gateway-api:
-    image: ${EWDS_GATEWAY_BACKEND_IMAGE:-aemocontainerregistry.azurecr.io/ddhub-client-gateway-backend:latest}
+    image: ewfcontainerregistry.azurecr.io/ddhub-client-gateway-backend:intelligent-canary
     container_name: ddhub-gateway-api
     platform: ${EWDS_GATEWAY_PLATFORM:-linux/amd64}
     depends_on:
@@ -123,7 +123,7 @@ services:
       <<: *ddhub-gateway-env
 
   ddhub-gateway-scheduler:
-    image: ${EWDS_GATEWAY_SCHEDULER_IMAGE:-aemocontainerregistry.azurecr.io/ddhub-client-gateway-scheduler:latest}
+    image: ewfcontainerregistry.azurecr.io/ddhub-client-gateway-scheduler:intelligent-canary
     container_name: ddhub-gateway-scheduler
     platform: ${EWDS_GATEWAY_PLATFORM:-linux/amd64}
     depends_on:

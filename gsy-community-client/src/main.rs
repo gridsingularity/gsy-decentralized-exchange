@@ -12,6 +12,7 @@ use std::env;
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{error, info};
+use uuid::Uuid;
 
 #[derive(Clone)]
 struct AppState {
@@ -78,9 +79,10 @@ impl AppState {
                 continue;
             }
             let external_topology = external_topology_res.unwrap();
+            let market_id = Uuid::new_v4().to_string();
             let market = self
                 .api_adapter
-                .create_market(external_topology.community_uuid.clone(), next_timeslot)
+                .create_market(market_id, external_topology.community_uuid.clone(), next_timeslot)
                 .await
                 .unwrap();
             let facility_ids: HashSet<String> = external_topology

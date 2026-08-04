@@ -180,7 +180,7 @@ pub async fn send_settle_batch_transaction(
         );
     }
 
-    info!("Submitting {} matches to settleBatch", evm_matches.len());
+    info!("Submitting {:?} matches to settleBatch", evm_matches);
     let settle_batch_call = settle_order_batch.settle_batch(evm_matches);
     let pending_tx = settle_batch_call.send().await?;
     let tx_hash = pending_tx.tx_hash();
@@ -509,6 +509,7 @@ fn derive_trade_id(
     selected_energy: u64,
     energy_rate: u64,
 ) -> [u8; 16] {
+    // todo: get id from offchain storage
     let hash = keccak256(
         format!(
             "{}:{}:{}:{}",

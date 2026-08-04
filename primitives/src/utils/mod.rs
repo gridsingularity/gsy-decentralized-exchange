@@ -6,6 +6,7 @@ use chrono::{prelude::DateTime, Utc};
 use std::env;
 use std::str::FromStr;
 use thiserror::Error;
+use crate::MarketType;
 
 pub const NODE_FLOAT_SCALING_FACTOR: f64 = 10000.0;
 
@@ -167,4 +168,9 @@ pub fn create_encrypted_bytes16_from_string(input_string: &str) -> [u8; 16] {
         .finalize_variable(&mut hash)
         .expect("valid Blake2b output buffer");
     hash
+}
+
+pub fn generate_market_id(market_type: MarketType, delivery_timestamp: u64) -> [u8; 16] {
+    let offchain_id =  format!("{} {}", market_type.as_str(), delivery_timestamp);
+    create_encrypted_bytes16_from_string(&offchain_id)
 }

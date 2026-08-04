@@ -3,6 +3,7 @@ use crate::config::{Config, MARKET_RULES};
 use blake2_rfc::blake2b::blake2b;
 use primitives::MarketType;
 use primitives::{constants::GLOBAL_CONSTANTS, utils::timestamp_to_datetime_string};
+use primitives::utils::generate_market_id;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
 use tracing::{error, info, warn};
@@ -103,15 +104,16 @@ where
     Ok(())
 }
 
-pub fn generate_market_id(market_type: MarketType, delivery_timestamp: u64) -> [u8; 16] {
-    let mut buffer = Vec::new();
-    buffer.extend_from_slice(market_type.as_str().as_bytes());
-    buffer.extend_from_slice(&delivery_timestamp.to_be_bytes());
-    blake2b(16, &[], &buffer)
-        .as_bytes()
-        .try_into()
-        .expect("hash is 16 bytes")
-}
+// pub fn generate_market_id(market_type: MarketType, delivery_timestamp: u64) -> [u8; 16] {
+//     // todo: get market_id from offchain storage
+//     let mut buffer = Vec::new();
+//     buffer.extend_from_slice(market_type.as_str().as_bytes());
+//     buffer.extend_from_slice(&delivery_timestamp.to_be_bytes());
+//     blake2b(16, &[], &buffer)
+//         .as_bytes()
+//         .try_into()
+//         .expect("hash is 16 bytes")
+// }
 
 fn market_should_be_open(
     now: u64,

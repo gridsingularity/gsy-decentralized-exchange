@@ -4,12 +4,18 @@ use ethers::prelude::*;
 use gsy_community_client::external_api::ExternalFacilityTopology;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use gsy_community_client::time_utils::get_last_and_next_timeslot;
-use primitives::db_api_schema::profiles::ForecastSchema;
-use primitives::utils::parse_uuid_or_hex_bytes16;
+use primitives::db_api_schema::{
+    profiles::ForecastSchema,
+    // ids::IdType
+};
+// use primitives::utils::{parse_uuid_or_hex_bytes16,bytes16_to_string, generate_market_id};
 use primitives::MarketType;
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::info;
+// use uuid::Uuid;
+// use primitives::ewds::get_onchain_id_via_ewds;
+use primitives::utils::create_encrypted_bytes16_from_string;
 
 abigen!(
     MarketControllerContract,
@@ -44,9 +50,12 @@ async fn submit_market_forecasts_three_users(
             facility_name: user3.clone(),
         },
     ];
-
+    let market_offchain_id = world
+        .last_market_offchain_id
+        .clone()
+        .expect("last_market_offchain_id must be set before create_market");
     let market = adapter
-        .create_market("community1".to_string(), world.target_delivery_time)
+        .create_market(market_offchain_id, "community1".to_string(), world.target_delivery_time)
         .await
         .unwrap_or_else(|| {
             panic!(
@@ -55,10 +64,6 @@ async fn submit_market_forecasts_three_users(
             )
         });
 
-    let market_id = parse_uuid_or_hex_bytes16(market.market_id.as_str())
-        .expect("Invalid market id in topology");
-
-    world.last_market_id = Some(market_id);
     world.market_schema = Some(market.clone());
 
     let mut forecasts = Vec::new();
@@ -102,12 +107,27 @@ async fn wait_for_market_to_open(world: &mut MyWorld) {
     let (_, next_timeslot) = get_last_and_next_timeslot();
     world.target_delivery_time = next_timeslot;
 
-    let market_id = world.generate_market_id(MarketType::Spot, world.target_delivery_time);
-    world.last_market_id = Some(market_id);
+    let offchain_market_id = format!("{} {}", MarketType::Spot.as_str(), world.target_delivery_time);
+
+    let onchain_market_id = create_encrypted_bytes16_from_string(&offchain_market_id);
+
+
+    // let offchain_market_id_bytes16 = generate_market_id(
+    //     MarketType::Spot, world.target_delivery_time);
+    // let offchain_market_id = bytes16_to_string(
+    //     &offchain_market_id_bytes16).expect("failed to convert market id to string");
+    // let onchain_market_id = get_onchain_id_via_ewds(
+    //     offchain_market_id.clone(),
+    //     IdType::MarketId
+    // ).await.ok().expect("market did not open");
+    // let last_market_id_byte16 = parse_uuid_or_hex_bytes16(
+    //     &onchain_market_id).expect("Invalid market id in topology");
+    world.last_market_id = Some(onchain_market_id);
+    world.last_market_offchain_id = Some(offchain_market_id.clone());
 
     info!(
         "Waiting for MarketController to open market {:?} for timeslot {}",
-        hex::encode(market_id),
+        offchain_market_id,
         world.target_delivery_time
     );
 
@@ -116,7 +136,7 @@ async fn wait_for_market_to_open(world: &mut MyWorld) {
 
     for attempt in 0..60 {
         let is_open = market_controller
-            .is_market_open(market_id)
+            .is_market_open(onchain_market_id)
             .call()
             .await
             .expect("Failed to read market status from MarketController");
@@ -131,6 +151,6 @@ async fn wait_for_market_to_open(world: &mut MyWorld) {
 
     panic!(
         "Timeout: Spot market {:?} was not opened by orchestrator",
-        hex::encode(market_id)
+        world.last_market_offchain_id
     );
 }

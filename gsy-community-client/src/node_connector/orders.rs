@@ -1,11 +1,16 @@
 use crate::time_utils::get_current_timestamp_in_secs;
 use anyhow::{Error, Result};
 use ethers::prelude::*;
-use primitives::db_api_schema::market::MarketSchema;
-use primitives::db_api_schema::profiles::ForecastSchema;
-use primitives::utils::{parse_or_hash_bytes16, string_to_timestamp, NODE_FLOAT_SCALING_FACTOR};
+use primitives::db_api_schema::{
+    market::MarketSchema,
+    profiles::ForecastSchema,
+    ids::IdType
+};
+use primitives::ewds::get_onchain_id;
+use primitives::utils::{string_to_timestamp, NODE_FLOAT_SCALING_FACTOR};
 use std::str::FromStr;
 use tracing::{info, warn};
+use uuid::Uuid;
 
 const BID_RATE: f64 = 0.3;
 const OFFER_RATE: f64 = 0.07;
@@ -35,17 +40,19 @@ pub async fn publish_orders(
         .with_chain_id(chain_id);
     let signer_address = wallet.address();
 
-    let input_orders = create_input_orders(forecasts, market, signer_address);
+    let input_orders = create_input_orders(forecasts, market, signer_address).await?;
     if input_orders.is_empty() {
         info!("No orders to publish for this cycle");
         return Ok(());
     }
+    eprintln!("input_orders {:?}", input_orders);
 
     let client = std::sync::Arc::new(SignerMiddleware::new(provider, wallet));
     let order_registry = OrderRegistryContract::new(order_registry_address, client.clone());
 
     info!("Publishing {} orders to OrderRegistry", input_orders.len());
     for (index, input_order) in input_orders.into_iter().enumerate() {
+        eprintln!("input_order {:?}", input_order);
         let place_order_call = order_registry.place_order(input_order);
         let pending_tx = place_order_call.send().await?;
         let tx_hash = pending_tx.tx_hash();
@@ -109,66 +116,72 @@ abigen!(
     ]"#
 );
 
-fn build_order_param(
+async fn build_order_param(
     forecast: &ForecastSchema,
     facility_id: &String,
     market: &MarketSchema,
     now: u64,
-    index: usize,
     is_bid: bool,
-) -> EvmOrderParamsTuple {
+) -> Result<EvmOrderParamsTuple> {
     let rate_multiplier = if is_bid { BID_RATE } else { OFFER_RATE };
-    let order_id = parse_or_hash_bytes16(
-        format!(
-            "{}:{}:{}:{}:{}",
-            market.market_id, facility_id, market.delivery_start_time, index, is_bid
-        )
-        .as_str(),
-    );
+    let order_id = Uuid::new_v4().to_string();
+    let onchain_order_id = get_onchain_id(
+        order_id.clone(),
+        IdType::OrderId
+    ).await?;
+    let onchain_facility_id = get_onchain_id(
+        facility_id.to_string(),
+        IdType::ActorId
+    ).await?;
+    let onchain_market_id = get_onchain_id(
+        market.market_id.to_string(),
+        IdType::MarketId
+    ).await?;
     let delivery_start: u64 =
         string_to_timestamp(&market.delivery_start_time).expect("invalid delivery_start_time");
-    (
-        order_id,
-        parse_or_hash_bytes16(facility_id.as_str()),
-        parse_or_hash_bytes16(market.market_id.as_str()),
+    eprintln!("market_ids {:?} {:?}", market.market_id.to_string(), onchain_market_id);
+    eprintln!("facility_ids {:?} {:?}", facility_id, onchain_facility_id);
+    eprintln!("onchain_order_id {:?} {:?}", order_id, onchain_order_id);
+    Ok((
+        onchain_order_id,
+        onchain_facility_id,
+        onchain_market_id,
         delivery_start,
         now,
         (forecast.energy_kwh.abs() * NODE_FLOAT_SCALING_FACTOR) as u64,
         (forecast.energy_kwh.abs() * rate_multiplier * NODE_FLOAT_SCALING_FACTOR) as u64,
         is_bid,
-    )
+    ))
 }
 
-pub fn create_input_orders(
+pub async fn create_input_orders(
     forecasts: Vec<ForecastSchema>,
     market: MarketSchema,
     owner: Address,
-) -> Vec<EvmOrderParamsTuple> {
+) -> Result<Vec<EvmOrderParamsTuple>> {
     let now: u64 = get_current_timestamp_in_secs();
     let _owner = owner;
 
     let mut input_orders = Vec::new();
 
-    for (index, forecast) in forecasts.into_iter().enumerate() {
+    for forecast in forecasts.into_iter() {
         if forecast.energy_kwh > 0. {
             input_orders.push(build_order_param(
                 &forecast,
                 &forecast.facility_id,
                 &market,
                 now,
-                index,
                 true,
-            ));
+            ).await?);
         } else if forecast.energy_kwh < 0. {
             input_orders.push(build_order_param(
                 &forecast,
                 &forecast.facility_id,
                 &market,
                 now,
-                index,
                 false,
-            ));
+            ).await?);
         }
     }
-    input_orders
+    Ok(input_orders)
 }

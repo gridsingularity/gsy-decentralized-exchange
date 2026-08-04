@@ -1,23 +1,19 @@
 use crate::time_utils::get_current_timestamp_in_secs;
-use blake2_rfc::blake2b::blake2b;
 use primitives::db_api_schema::market::MarketSchema;
-use primitives::db_api_schema::profiles::{
-    FlowDirection, ForecastSchema, MeasurementPointSchema, MeasurementPointType, MeasurementSchema,
-    TimeseriesSchema,
+use primitives::db_api_schema::{
+    profiles::{
+        FlowDirection, ForecastSchema, MeasurementPointSchema, MeasurementPointType, MeasurementSchema,
+        TimeseriesSchema,
+    },
+    // ids::IdType
 };
+// use primitives::ewds::get_onchain_id_via_ewds;
 use primitives::utils::timestamp_to_string_with_padding;
 use primitives::{MarketType, MatchingAlgorithm};
 use reqwest::Client;
 use std::env;
 use tracing::info;
-
-fn generate_market_id(market_type: MarketType, delivery_timestamp: u64) -> String {
-    let mut buffer = Vec::new();
-    buffer.extend_from_slice(market_type.as_str().as_bytes());
-    buffer.extend_from_slice(&delivery_timestamp.to_be_bytes());
-    let digest = blake2b(16, &[], &buffer);
-    format!("0x{}", ethers::utils::hex::encode(digest.as_bytes()))
-}
+// use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct AreaMarketInfoAdapter {
@@ -129,12 +125,20 @@ impl AreaMarketInfoAdapter {
 
     pub async fn create_market(
         &self,
+        market_id: String,
         community_uuid: String,
         time_slot: u64,
     ) -> Option<MarketSchema> {
         let creation_time = get_current_timestamp_in_secs();
+        // let offchain_market_id = Uuid::new_v4().to_string();
+        // let onchain_market_id = get_onchain_id_via_ewds(
+        //     offchain_market_id.clone(),
+        //     IdType::MarketId
+        // ).await.ok()?; // todo: this should be done my the market orchestrator
+        // eprintln!("create market {:?}, {:?} ", offchain_market_id, onchain_market_id);
+        eprintln!("create market {:?} ", market_id);
         let market_schema = MarketSchema {
-            market_id: generate_market_id(MarketType::Spot, time_slot),
+            market_id,
             community_id: community_uuid,
             opening_time: timestamp_to_string_with_padding(creation_time),
             closing_time: timestamp_to_string_with_padding(time_slot),

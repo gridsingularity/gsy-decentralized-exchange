@@ -34,7 +34,7 @@ fn test_market() -> MarketSchema {
     }
 }
 
-fn test_forecasts(market: &MarketSchema) -> Vec<ForecastSchema> {
+fn test_forecasts() -> Vec<ForecastSchema> {
     vec![
         ForecastSchema {
             facility_id: "area-a".to_string(),
@@ -164,7 +164,7 @@ async fn test_publish_orders_calls_evm_order_registry() {
         compile_and_deploy_contract(client.clone(), source, "MockOrderRegistry").await;
 
     let market = test_market();
-    let forecasts = test_forecasts(&market);
+    let forecasts = test_forecasts();
 
     publish_orders(
         ws_endpoint.clone(),
@@ -195,7 +195,7 @@ async fn test_publish_orders_calls_evm_order_registry() {
 #[tokio::test]
 async fn test_publish_orders_returns_error_for_invalid_contract_address() {
     let market = test_market();
-    let forecasts = test_forecasts(&market);
+    let forecasts = test_forecasts();
 
     let err = publish_orders(
         "ws://127.0.0.1:8545".to_string(),
@@ -217,7 +217,7 @@ async fn test_publish_orders_returns_error_for_invalid_contract_address() {
 async fn test_publish_orders_returns_error_for_invalid_private_key() {
     let anvil = Anvil::new().spawn();
     let market = test_market();
-    let forecasts = test_forecasts(&market);
+    let forecasts = test_forecasts();
 
     let err = publish_orders(
         anvil.ws_endpoint(),
@@ -267,7 +267,7 @@ async fn test_publish_orders_returns_error_when_contract_reverts() {
     let contract_address =
         compile_and_deploy_contract(client, source, "MockOrderRegistryReverter").await;
     let market = test_market();
-    let forecasts = test_forecasts(&market);
+    let forecasts = test_forecasts();
 
     let err = publish_orders(
         ws_endpoint,

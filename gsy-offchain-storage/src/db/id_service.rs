@@ -70,6 +70,15 @@ impl IdService {
         offchain_id: String,
         id_type: String,
     ) -> Result<IdMappingSchema> {
+        let existing = self
+            .0
+            .find_one(doc! {"offchain_id": &offchain_id, "id_type": to_bson(&id_type)?})
+            .await?;
+        eprintln!(
+            "offchain_id {:?} in DB before upsert: {}",
+            offchain_id,
+            existing.is_some()
+        );
         let result = self
             .0
             .find_one_and_update(
@@ -84,6 +93,8 @@ impl IdService {
             .upsert(true)
             .return_document(ReturnDocument::After)
             .await?;
+        eprintln!("get_or_create result: {:?}", result);
+
 
         Ok(result.context("upsert returned no document")?)
     }
