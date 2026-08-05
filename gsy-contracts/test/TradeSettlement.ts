@@ -4,8 +4,10 @@ import { ethers } from "hardhat";
 import {
   bytes16Id,
   deployUpgradeableContract,
-  ORDER_TYPE_ASK,
+  ENERGY_TYPE_GREEN,
+  ENERGY_TYPE_UNSPECIFIED,
   ORDER_TYPE_BID,
+  ORDER_TYPE_ASK,
   ZERO_BYTES16,
 } from "./utils";
 
@@ -60,6 +62,8 @@ describe("TradeSettlement", function () {
       creationTime: 900,
       energy: 100,
       energyRate: 50,
+      energySourcePreference: ENERGY_TYPE_GREEN,
+      energyType: ENERGY_TYPE_UNSPECIFIED,
       isBid: ORDER_TYPE_BID,
     };
 
@@ -71,6 +75,8 @@ describe("TradeSettlement", function () {
       creationTime: 900,
       energy: 100,
       energyRate: 40,
+      energySourcePreference: ENERGY_TYPE_UNSPECIFIED,
+      energyType: ENERGY_TYPE_GREEN,
       isBid: ORDER_TYPE_ASK,
     };
 

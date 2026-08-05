@@ -10,27 +10,6 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd)]
-pub enum EnergyType {
-    Clean,
-    Battery,
-    FossilFuel,
-    Import,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd)]
-pub struct DbRequirements {
-    pub trading_partner_id: Option<String>,
-    pub energy_type: Option<EnergyType>,
-    pub preferred_energy_rate: Option<f64>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd)]
-pub struct DbAttributes {
-    pub trading_partner_id: Option<String>,
-    pub energy_type: EnergyType,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd)]
 #[serde(rename_all = "lowercase")]
 pub enum OrderEnum {
     Bid,
@@ -113,7 +92,7 @@ pub enum IntelligentOrderStatus {
     Executed,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, PartialOrd)]
 pub enum IntelligentEnergyType {
     #[serde(rename = "GREEN")]
     Green,
@@ -127,6 +106,19 @@ pub enum IntelligentEnergyType {
     Battery,
     #[serde(rename = "GREY")]
     Grey,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd)]
+pub struct DbRequirements {
+    pub trading_partner_id: Option<String>,
+    pub energy_type: Option<IntelligentEnergyType>,
+    pub preferred_energy_rate: Option<f64>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd)]
+pub struct DbAttributes {
+    pub trading_partner_id: Option<String>,
+    pub energy_type: IntelligentEnergyType,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
