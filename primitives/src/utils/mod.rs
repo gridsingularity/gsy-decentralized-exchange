@@ -5,8 +5,24 @@ use blake2::Blake2bVar;
 use chrono::{prelude::DateTime, Utc};
 use std::env;
 use std::str::FromStr;
+use thiserror::Error;
 
 pub const NODE_FLOAT_SCALING_FACTOR: f64 = 10000.0;
+
+//todo: only keep the ones that are needed
+#[derive(Error, Debug)]
+pub enum ConvertError {
+    #[error("invalid byte length")]
+    InvalidByteLength,
+    #[error("failed to parse byte to utf-8")]
+    FailedToParseByte,
+    #[error("missing encryption key")]
+    MissingKey,
+    #[error("invalid encryption key")]
+    InvalidKey,
+    #[error("invalid encryption key length")]
+    InvalidKeyLength,
+}
 
 pub fn h256_to_string(hash: H256) -> String {
     format!("0x{}", hex::encode(hash.as_bytes()))
@@ -75,6 +91,16 @@ pub fn parse_or_hash_bytes16(value: &str) -> [u8; 16] {
     hash[0..16]
         .try_into()
         .expect("blake2 hash prefix is 16 bytes")
+}
+
+pub fn create_encrypted_bytes16_from_string(input_string: &str) -> [u8; 16] {
+    let mut hash = [0u8; 16];
+    let mut hasher = Blake2bVar::new(16).expect("valid Blake2b output size");
+    hasher.update(input_string.as_bytes());
+    hasher
+        .finalize_variable(&mut hash)
+        .expect("valid Blake2b output buffer");
+    hash
 }
 
 pub fn bytes16_to_h256(value: [u8; 16]) -> H256 {

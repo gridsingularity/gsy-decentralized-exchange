@@ -22,3 +22,4 @@ tracing = "0.1"
 tracing-bunyan-formatter = "0.3.10"
 tracing-log = "0.2.0"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "2.0.19"

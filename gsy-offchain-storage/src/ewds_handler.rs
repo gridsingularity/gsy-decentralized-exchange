@@ -24,9 +24,11 @@ pub struct EwdsHandlerConfig {
     pub orders_request_topic: String,
     pub trades_request_topic: String,
     pub measurements_request_topic: String,
+    pub ids_query_request_topic: String,
     pub orders_response_topic: String,
     pub trades_response_topic: String,
     pub measurements_response_topic: String,
+    pub ids_query_response_topic: String,
     pub poll_interval_ms: u64,
     pub request_batch_size: u32,
 }
@@ -76,12 +78,16 @@ impl EwdsHandlerConfig {
                 .unwrap_or_else(|_| "tradesQuery".to_string()),
             measurements_request_topic: std::env::var("EWDS_MEASUREMENTS_REQUEST_TOPIC")
                 .unwrap_or_else(|_| "measurementsQuery".to_string()),
+            ids_query_request_topic: std::env::var("EWDS_ID_QUERY_REQUEST_TOPIC")
+                .unwrap_or_else(|_| "idsQuery".to_string()),
             orders_response_topic: std::env::var("EWDS_ORDERS_RESPONSE_TOPIC")
                 .unwrap_or_else(|_| "ordersQueryResponse".to_string()),
             trades_response_topic: std::env::var("EWDS_TRADES_RESPONSE_TOPIC")
                 .unwrap_or_else(|_| "tradesQueryResponse".to_string()),
             measurements_response_topic: std::env::var("EWDS_MEASUREMENTS_RESPONSE_TOPIC")
                 .unwrap_or_else(|_| "measurementsQueryResponse".to_string()),
+            ids_query_response_topic: std::env::var("EWDS_ID_QUERY_RESPONSE_TOPIC")
+                .unwrap_or_else(|_| "idsQueryResponse".to_string()),
             poll_interval_ms,
             request_batch_size,
         }
@@ -112,6 +118,12 @@ struct TimeRangePayload {
     #[serde(alias = "facilityId", alias = "areaUuid")]
     #[serde(default)]
     facility_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct IdsQueryPayload {
+    #[serde(alias = "offchainId")]
+    offchain_id: String,
 }
 
 pub async fn start_ewds_request_handler(db: DatabaseWrapper, config: EwdsHandlerConfig) {
@@ -159,6 +171,7 @@ async fn process_batch(
         config.orders_request_topic.as_str(),
         config.trades_request_topic.as_str(),
         config.measurements_request_topic.as_str(),
+        config.ids_query_request_topic.as_str(),
     ] {
         messages
             .extend(poll_requests_for_topic(client, config, topic_name, amount.as_str()).await?);
@@ -342,6 +355,26 @@ async fn handle_request(
                 data,
             )
             .await
+        }
+        EwdsOperation::IdsQuery => {
+            let payload = serde_json::from_value::<IdsQueryPayload>(envelope.payload.clone())
+                .map_err(|e| anyhow!("id.query payload parse error: {}", e))?;
+            let request_id = envelope.request_id;
+
+            info!(
+                "Handling EWDS ids.query request (request_id={})",
+                request_id
+            );
+
+            let data = db.id_mapping().get_or_create(payload.offchain_id).await?;
+            send_success_response(
+                client,
+                config,
+                request_id,
+                config.ids_query_response_topic.as_str(),
+                vec![data],
+            )
+                .await
         }
     }
 }

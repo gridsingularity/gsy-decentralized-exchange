@@ -1,4 +1,5 @@
 use crate::db_api_schema::orders::{DbOrderSchema, EnergyType, OrderEnum, OrderStatus};
+use crate::db_api_schema::ids::IdMappingSchema;
 use anyhow::{anyhow, Result};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
@@ -13,6 +14,8 @@ pub enum EwdsOperation {
     TradesQuery,
     #[serde(rename = "measurements.query")]
     MeasurementsQuery,
+    #[serde(rename = "ids.query")]
+    IdsQuery,
 }
 
 impl EwdsOperation {
@@ -21,6 +24,7 @@ impl EwdsOperation {
             Self::OrdersQuery => "orders.query",
             Self::TradesQuery => "trades.query",
             Self::MeasurementsQuery => "measurements.query",
+            Self::IdsQuery => "ids.query",
         }
     }
 
@@ -29,6 +33,7 @@ impl EwdsOperation {
             Self::OrdersQuery => "orders-query",
             Self::TradesQuery => "trades-query",
             Self::MeasurementsQuery => "measurements-query",
+            Self::IdsQuery => "ids-query",
         }
     }
 }
@@ -370,4 +375,32 @@ fn energy_type_to_ewds(energy_type: &EnergyType) -> &'static str {
         EnergyType::FossilFuel => "fossilFuel",
         EnergyType::Import => "import",
     }
+}
+
+pub async fn get_onchain_id_via_ewds(
+    offchain_id: String,
+) -> Result<String> {
+    let query = serde_json::json!({
+        "offchain_id": offchain_id,
+    });
+    eprintln!("get_onchain_id_via_ewds{}", query); // todo remove
+    let ids: Vec<IdMappingSchema> = query_via_ewds(EwdsQueryRequest {
+        operation: EwdsOperation::IdsQuery,
+        query_payload: query.clone(),
+        request_topic_env: "EWDS_ID_REQUEST_TOPIC",
+        request_topic_default: "idsQuery",
+        response_topic_env: "EWDS_ID_RESPONSE_TOPIC",
+        response_topic_default: "idsQueryResponse",
+        response_client_id_env: "EWDS_MARKET_ORCHESTRATOR_ID", //todo
+        response_client_id_default: "idsQueryUser", //todo
+        timeout_ms_default: 8_000,
+    }
+    )
+        .await?;
+    eprintln!("get_onchain_id_via_ewds return value: {:?}", ids);  // todo remove
+    let result = match ids.len() {
+        1 => ids.into_iter().next().unwrap().onchain_id,
+        n => anyhow::bail!("expected exactly one result, got {n}"),
+    };
+    Ok(result)
 }
