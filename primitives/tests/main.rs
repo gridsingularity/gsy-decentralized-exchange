@@ -1,33 +1,21 @@
-use primitives::types::H256;
-
-use primitives::utils::{h256_to_string, string_to_h256};
+use primitives::utils::{bytes16_to_hex, parse_uuid_or_hex_bytes16};
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_h256_to_string() {
-        let hash = H256::zero();
-        let hash_string = h256_to_string(hash);
-        assert_eq!(
-            hash_string,
-            "0x0000000000000000000000000000000000000000000000000000000000000000"
-        );
+    fn parses_uuid_as_bytes16() {
+        let value = parse_uuid_or_hex_bytes16("00112233-4455-6677-8899-aabbccddeeff").unwrap();
+
+        assert_eq!(bytes16_to_hex(value), "0x00112233445566778899aabbccddeeff");
     }
 
     #[test]
-    fn test_string_to_h256() {
-        // let hash = H256::zero();
-        let zero_hash_string = "0x0000000000000000000000000000000000000000000000000000000000000000";
-        let hash = string_to_h256(zero_hash_string.to_string());
-        assert_eq!(hash, H256::zero());
-    }
+    fn parses_bytes16_hex_without_h256_padding() {
+        let hex = "0xffeeddccbbaa99887766554433221100";
+        let value = parse_uuid_or_hex_bytes16(hex).unwrap();
 
-    #[test]
-    fn test_string_to_h256_and_reverse_works_for_random_hashes() {
-        let hash = H256::random();
-        let hash_string = h256_to_string(hash);
-        assert_eq!(hash, string_to_h256(hash_string));
+        assert_eq!(bytes16_to_hex(value), hex);
     }
 }

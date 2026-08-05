@@ -3462,7 +3462,6 @@ dependencies = [
  "chrono",
  "hex",
  "once_cell",
- "rand 0.8.7",
  "reqwest",
  "serde",
  "serde_json",

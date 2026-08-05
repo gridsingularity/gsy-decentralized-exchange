@@ -1,4 +1,3 @@
-use crate::types::{AccountId32, H256};
 use anyhow::Result;
 use blake2::digest::{Update, VariableOutput};
 use blake2::Blake2bVar;
@@ -7,39 +6,6 @@ use std::env;
 use std::str::FromStr;
 
 pub const NODE_FLOAT_SCALING_FACTOR: f64 = 10000.0;
-
-pub fn h256_to_string(hash: H256) -> String {
-    format!("0x{}", hex::encode(hash.as_bytes()))
-}
-
-pub fn string_to_h256(hex_string: String) -> H256 {
-    let hex_stripped = hex_string
-        .strip_prefix("0x")
-        .expect("H256 string must start with 0x");
-    let bytes = hex::decode(hex_stripped).expect("Invalid hex");
-    H256::from_slice(&bytes)
-}
-
-pub fn string_to_account_id(account_id_str: String) -> Option<AccountId32> {
-    AccountId32::from_str(&account_id_str).ok()
-}
-
-pub fn evm_address_to_account_id(evm_address: &str) -> Option<AccountId32> {
-    let trimmed = evm_address.trim();
-    let hex = trimmed.strip_prefix("0x").unwrap_or(trimmed);
-    if hex.len() != 40 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
-        return None;
-    }
-
-    let raw = hex::decode(hex).ok()?;
-    if raw.len() != 20 {
-        return None;
-    }
-
-    let mut padded = [0u8; 32];
-    padded[12..].copy_from_slice(&raw);
-    Some(AccountId32::from(padded))
-}
 
 pub fn bytes16_to_hex(value: [u8; 16]) -> String {
     format!("0x{}", hex::encode(value))
@@ -75,25 +41,6 @@ pub fn parse_or_hash_bytes16(value: &str) -> [u8; 16] {
     hash[0..16]
         .try_into()
         .expect("blake2 hash prefix is 16 bytes")
-}
-
-pub fn bytes16_to_h256(value: [u8; 16]) -> H256 {
-    let mut padded = [0u8; 32];
-    padded[..16].copy_from_slice(&value);
-    H256::from(padded)
-}
-
-pub fn h256_to_bytes16_hex(value: H256) -> String {
-    let mut bytes = [0u8; 16];
-    bytes.copy_from_slice(&value.as_bytes()[..16]);
-    bytes16_to_hex(bytes)
-}
-
-pub fn actor_id_to_account_id(value: &str) -> Option<AccountId32> {
-    let actor_id = parse_uuid_or_hex_bytes16(value)?;
-    let mut padded = [0u8; 32];
-    padded[..16].copy_from_slice(&actor_id);
-    Some(AccountId32::from(padded))
 }
 
 pub fn timestamp_to_datetime_string(timestamp: u64) -> String {
