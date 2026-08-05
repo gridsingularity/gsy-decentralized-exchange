@@ -15,7 +15,7 @@ tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.12", features = ["json"] }
 anyhow = "1.0"
 ethers = { version = "2.0", features = ["ws", "rustls"] }
-gsy-offchain-primitives = { path = "../offchain-primitives", version = "0" }
+primitives = { path = "../primitives", version = "0" }
 gsy-community-client = { path = "../gsy-community-client", version = "0" }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
