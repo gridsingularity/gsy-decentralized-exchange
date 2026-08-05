@@ -6,7 +6,7 @@ use gsy_community_client::external_api::ExternalFacilityTopology;
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::profiles::ForecastSchema;
 use primitives::db_api_schema::trades::TradeSchema;
-use primitives::utils::parse_or_hash_bytes16;
+use primitives::utils::create_encrypted_bytes16_from_string;
 use primitives::MarketType;
 use reqwest::Client;
 use std::collections::HashMap;
@@ -159,6 +159,6 @@ impl MyWorld {
         if !self.users.contains_key(user_name) {
             panic!("Unknown user '{}'", user_name);
         }
-        parse_or_hash_bytes16(format!("area{}", user_name).as_str())
+        create_encrypted_bytes16_from_string(format!("area{}", user_name).as_str())
     }
 }

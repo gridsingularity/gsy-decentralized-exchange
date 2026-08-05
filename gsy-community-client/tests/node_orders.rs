@@ -3,7 +3,7 @@ use gsy_community_client::node_connector::orders::create_input_orders;
 use gsy_community_client::time_utils::get_current_timestamp_in_secs;
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::profiles::ForecastSchema;
-use primitives::utils::{parse_or_hash_bytes16, NODE_FLOAT_SCALING_FACTOR};
+use primitives::utils::{create_encrypted_bytes16_from_string, NODE_FLOAT_SCALING_FACTOR};
 use primitives::{MarketType, MatchingAlgorithm};
 use std::collections::HashSet;
 use std::str::FromStr;
@@ -60,8 +60,8 @@ fn test_orders_to_evm_params_are_created_correctly() {
         bid_rate,
         bid_type,
     ) = input_orders[0];
-    assert_eq!(bid_created_by, parse_or_hash_bytes16("area1"));
-    assert_eq!(bid_market, parse_or_hash_bytes16(market.market_id.as_str()));
+    assert_eq!(bid_created_by, create_encrypted_bytes16_from_string("area1"));
+    assert_eq!(bid_market, create_encrypted_bytes16_from_string(market.market_id.as_str()));
     assert_eq!(bid_slot, 456_456);
     assert!(current_time >= bid_creation && current_time - bid_creation <= 1);
     assert_eq!(bid_energy, (12.0 * NODE_FLOAT_SCALING_FACTOR) as u64);
@@ -78,10 +78,10 @@ fn test_orders_to_evm_params_are_created_correctly() {
         offer_rate,
         offer_type,
     ) = input_orders[1];
-    assert_eq!(offer_created_by, parse_or_hash_bytes16("area2"));
+    assert_eq!(offer_created_by, create_encrypted_bytes16_from_string("area2"));
     assert_eq!(
         offer_market,
-        parse_or_hash_bytes16(market.market_id.as_str())
+        create_encrypted_bytes16_from_string(market.market_id.as_str())
     );
     assert_eq!(offer_slot, 456_456);
     assert!(current_time >= offer_creation && current_time - offer_creation <= 1);

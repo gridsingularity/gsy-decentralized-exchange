@@ -8,11 +8,18 @@ use primitives::db_api_schema::orders::{
 };
 use primitives::db_api_schema::profiles::MeasurementSchema;
 use primitives::db_api_schema::trades::TradeSchema;
-use primitives::utils::{parse_or_hash_bytes16, NODE_FLOAT_SCALING_FACTOR};
+use primitives::utils::{
+    create_encrypted_bytes16_from_string,
+    NODE_FLOAT_SCALING_FACTOR,
+    parse_uuid_or_hex_bytes16,
+    parse_or_hash_bytes16,
+    bytes16_to_hex
+};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
 use tracing::info;
+use uuid::Uuid;
 
 const MATCHING_ENGINE_BLOCK_INTERVAL: u64 = 4;
 const FLOAT_EPSILON: f64 = 0.000_001;
@@ -245,13 +252,8 @@ async fn place_custom_order(
 
     let actor_id = world.actor_id_for_user(user_name);
     let market_id = world.last_market_id.expect("Missing market id");
-    let order_id_bytes = parse_or_hash_bytes16(
-        format!(
-            "custom:{}:{}:{}:{}:{}",
-            user_name, is_bid, creation_time, energy, energy_rate
-        )
-        .as_str(),
-    );
+    let order_id = Uuid::new_v4().to_string();
+    let order_id_bytes = create_encrypted_bytes16_from_string(&order_id);
 
     let params: EvmOrderParamsTuple = (
         order_id_bytes,
@@ -264,7 +266,7 @@ async fn place_custom_order(
         is_bid,
     );
 
-    let order_id = format!("0x{}", hex::encode(order_id_bytes));
+    let order_id = bytes16_to_hex(order_id_bytes);
 
     let place_order_call = order_registry.place_order(params);
     let pending_tx = place_order_call
@@ -430,8 +432,10 @@ async fn verify_trade_on_chain(world: &mut MyWorld) {
             info!("Found settled trade {}", trade.trade_uuid);
             world.last_trade = Some(trade.clone());
 
-            let bid_id = parse_or_hash_bytes16(trade.bid_hash.as_str());
-            let offer_id = parse_or_hash_bytes16(trade.offer_hash.as_str());
+            let bid_id = parse_uuid_or_hex_bytes16(trade.bid_hash.as_str())
+                .expect("could not convert hex to bytes");
+            let offer_id = parse_uuid_or_hex_bytes16(trade.offer_hash.as_str())
+                .expect("could not convert hex to bytes");
 
             let bid_status = order_registry
                 .get_status(bid_id)
@@ -502,8 +506,10 @@ async fn verify_partner_trade(
         }) {
             world.last_trade = Some(trade.clone());
 
-            let bid_id = parse_or_hash_bytes16(trade.bid_hash.as_str());
-            let offer_id = parse_or_hash_bytes16(trade.offer_hash.as_str());
+            let bid_id = parse_uuid_or_hex_bytes16(trade.bid_hash.as_str())
+                .expect("could not convert hex to bytes");
+            let offer_id = parse_uuid_or_hex_bytes16(trade.offer_hash.as_str())
+                .expect("could not convert hex to bytes");
 
             let bid_status = order_registry
                 .get_status(bid_id)

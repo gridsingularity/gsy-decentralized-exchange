@@ -3,7 +3,7 @@ use ethers_solc::{artifacts::Severity, Project, ProjectPathsConfig};
 use gsy_community_client::node_connector::orders::publish_orders;
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::profiles::ForecastSchema;
-use primitives::utils::parse_or_hash_bytes16;
+use primitives::utils::create_encrypted_bytes16_from_string;
 use primitives::{MarketType, MatchingAlgorithm};
 use std::{fs::File, io::Write, sync::Arc};
 use tempfile::TempDir;
@@ -183,11 +183,11 @@ async fn test_publish_orders_calls_evm_order_registry() {
     );
     assert_eq!(
         mock_contract.last_created_by().call().await.unwrap(),
-        parse_or_hash_bytes16("area-b")
+        create_encrypted_bytes16_from_string("area-b")
     );
     assert_eq!(
         mock_contract.last_market_id().call().await.unwrap(),
-        parse_or_hash_bytes16("0x11111111111111111111111111111111")
+        create_encrypted_bytes16_from_string("0x11111111111111111111111111111111")
     );
     assert!(!mock_contract.last_is_bid().call().await.unwrap());
 }
