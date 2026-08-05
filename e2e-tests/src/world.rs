@@ -2,12 +2,14 @@ use anyhow::Result;
 use blake2_rfc::blake2b::blake2b;
 use cucumber::World;
 use gsy_offchain_primitives::MarketType;
+use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest::Client;
 use std::collections::HashMap;
 use subxt::{utils::H256, OnlineClient, SubstrateConfig};
 use subxt_signer::sr25519::Keypair;
 use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
 use gsy_offchain_primitives::db_api_schema::market::MarketTopologySchema;
+use gsy_offchain_primitives::utils::read_env_or;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 
 #[subxt::subxt(runtime_metadata_path = "../offchain-primitives/metadata.scale")]
@@ -108,12 +110,28 @@ pub struct CommunityMarket {
 	pub offer_forecast: ForecastSchema,
 }
 
+/// Build the raw HTTP client used for direct calls against the off-chain storage service.
+/// Every storage route but `/health_check` is behind an `x-api-key` middleware, so the key
+/// (`API_KEY` env var, default `fedecom_user`) is attached as a default header, mirroring
+/// `AreaMarketInfoAdapter`'s own client.
+fn authorized_storage_client() -> Client {
+	let api_key = read_env_or("API_KEY", "fedecom_user".to_string());
+	let mut headers = HeaderMap::new();
+	if let Ok(value) = HeaderValue::from_str(&api_key) {
+		headers.insert("x-api-key", value);
+	}
+	Client::builder()
+		.default_headers(headers)
+		.build()
+		.expect("Failed to build off-chain storage HTTP client")
+}
+
 impl MyWorld {
 	async fn new() -> Result<Self, anyhow::Error> {
 		let node_url =
 			std::env::var("GSY_NODE_URL").unwrap_or_else(|_| "ws://127.0.0.1:9944".to_string());
 		let subxt_client = OnlineClient::<SubstrateConfig>::from_insecure_url(node_url).await?;
-		let http_client = Client::new();
+		let http_client = authorized_storage_client();
 
 		let orderbook_url = std::env::var("OFFCHAIN_STORAGE_URL")
 			.unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());

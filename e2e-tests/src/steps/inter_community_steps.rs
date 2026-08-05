@@ -34,6 +34,15 @@ fn order_area_uuid(order: &DbOrderSchema) -> &str {
 	}
 }
 
+/// The `energy` carried by an aggregated inter-community order, in kWh (off-chain storage
+/// converts the node's scaled u64 back into kWh).
+fn order_energy(order: &DbOrderSchema) -> f64 {
+	match &order.order {
+		Order::Bid(bid) => bid.bid_component.energy,
+		Order::Offer(offer) => offer.offer_component.energy,
+	}
+}
+
 /// The `market_id` an aggregated inter-community order was posted into.
 fn order_market_id(order: &DbOrderSchema) -> &str {
 	match &order.order {
@@ -270,43 +279,74 @@ async fn verify_one_order_per_community(world: &mut MyWorld) {
 		.clone()
 		.expect("the inter-community market must have been created");
 	let adapter = AreaMarketInfoAdapter::new(Some(orderbook_url()));
-	let expected = world.inter_communities.len();
 
-	// Allow storage to catch up with the on-chain inserts.
+	// The aggregate each community published: the magnitude of its net energy, in kWh. Off-chain
+	// order energies are stored in kWh (the node's scaled u64 is divided by the scaling factor
+	// when the order is converted for storage), so the comparison uses `net_kwh` directly.
+	let expected_aggregates: Vec<(String, String, f64)> = world
+		.inter_communities
+		.iter()
+		.map(|community| {
+			(
+				community.name.clone(),
+				h256_to_string(community.community_id),
+				community.net_kwh.abs(),
+			)
+		})
+		.collect();
+
+	// The node truncates kWh * scaling factor into a u64 and storage divides it back, so whole
+	// kWh values round-trip exactly; the tolerance only guards against float noise.
+	let is_aggregate = |order: &DbOrderSchema, area: &str, energy_kwh: f64| {
+		order_area_uuid(order) == area && (order_energy(order) - energy_kwh).abs() < 1e-6
+	};
+
+	// Allow storage to catch up with the on-chain inserts: wait until every community's
+	// aggregate is visible, rather than for a fixed order count (see the residual note below).
 	let mut orders: Vec<DbOrderSchema> = Vec::new();
 	for _ in 0..30 {
 		orders = adapter.get_orders_for_market(&market.market_id).await;
-		if orders.len() >= expected {
+		let all_published = expected_aggregates
+			.iter()
+			.all(|(_, area, energy)| orders.iter().any(|o| is_aggregate(o, area, *energy)));
+		if all_published {
 			break;
 		}
 		tokio::time::sleep(Duration::from_secs(2)).await;
 	}
 
-	assert_eq!(
-		orders.len(),
-		expected,
-		"expected exactly one aggregated order per community in the inter-community market, got {}",
-		orders.len()
-	);
-
-	for community in &world.inter_communities {
-		let area = h256_to_string(community.community_id);
+	for (name, area, energy) in &expected_aggregates {
 		let matching: Vec<&DbOrderSchema> =
-			orders.iter().filter(|o| order_area_uuid(o) == area).collect();
+			orders.iter().filter(|o| is_aggregate(o, area, *energy)).collect();
 		assert_eq!(
 			matching.len(),
 			1,
-			"exactly one aggregated order must carry community '{}'s area_uuid",
-			community.name
+			"exactly one aggregated order must carry community '{}'s area_uuid and net energy",
+			name
 		);
 		assert_eq!(
 			order_market_id(matching[0]),
 			market.market_id,
 			"the aggregated order for '{}' must sit in the reserved inter-community market",
-			community.name
+			name
 		);
 	}
-	info!("Verified exactly one aggregated order per community in the inter-community market");
+
+	// The reserved market must hold nothing but the participating communities' orders. A
+	// strict count would be racy: the 7 kWh bid and the 6 kWh offer match only partially, and
+	// the node syncs the leftover 1 kWh residual bid back into the orderbook, so a third order
+	// legitimately appears here as soon as matching lands.
+	for order in &orders {
+		assert!(
+			expected_aggregates.iter().any(|(_, area, _)| order_area_uuid(order) == *area),
+			"only the participating communities' orders may sit in the inter-community market, found area_uuid {}",
+			order_area_uuid(order)
+		);
+	}
+	info!(
+		"Verified exactly one aggregated order per community in the inter-community market ({} orders present, residuals included)",
+		orders.len()
+	);
 }
 
 #[then("a trade is settled in the inter-community market with the reserved market id")]
