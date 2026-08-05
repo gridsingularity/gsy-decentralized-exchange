@@ -117,14 +117,14 @@ pub enum IntelligentEnergyType {
     Grey,
 }
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, PartialOrd)]
 pub struct DbRequirements {
     pub trading_partner_id: Option<String>,
     pub energy_type: Option<IntelligentEnergyType>,
     pub preferred_energy_rate: Option<f64>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, PartialOrd)]
 pub struct DbAttributes {
     pub trading_partner_id: Option<String>,
     pub energy_type: IntelligentEnergyType,

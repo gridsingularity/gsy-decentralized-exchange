@@ -46,4 +46,3 @@ describe("Upgradeable contracts", function () {
       .true;
   });
 });
-

@@ -3,19 +3,19 @@ use anyhow::{anyhow, Error, Result};
 use ethers::prelude::*;
 use ethers::utils::keccak256;
 use gsy_offchain_primitives::db_api_schema::orders::{
-    DbAttributes, DbOrderSchema, DbRequirements, IntelligentEnergyType, OrderEnum, OrderStatus,
+    DbOrderSchema, IntelligentEnergyType, OrderEnum, OrderStatus,
 };
+use gsy_offchain_primitives::ewds::dto::EwdsOrderDto;
+use gsy_offchain_primitives::ewds::{EwdsClient, EwdsOperation};
 use gsy_offchain_primitives::types::{BidOfferMatch, MatchingData, Order};
 use gsy_offchain_primitives::utils::{
     actor_id_to_account_id, bytes16_to_h256, h256_to_bytes16_hex, parse_uuid_or_hex_bytes16,
     string_to_account_id, NODE_FLOAT_SCALING_FACTOR,
 };
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::env;
 use std::str::FromStr;
-use std::time::Instant;
 use tokio::time::{sleep, Duration};
 use tracing::{error, info, warn};
 
@@ -37,88 +37,6 @@ type EvmMatchTuple = (
     U256,
     U256,
 );
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct EwdsRequestEnvelope {
-    request_id: String,
-    operation: String,
-    payload: serde_json::Value,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct EwdsSendMessageDto {
-    fqcn: String,
-    topic_name: String,
-    topic_version: String,
-    topic_owner: String,
-    transaction_id: String,
-    payload: String,
-    anonymous_recipient: Vec<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct EwdsMessageDto {
-    payload: String,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct EwdsOrderDto {
-    order_id: String,
-    market_id: String,
-    order_type: String,
-    status: String,
-    area_uuid: String,
-    #[serde(default)]
-    nonce: Option<u64>,
-    time_slot: u64,
-    creation_time: u64,
-    quantity: f64,
-    price_limit: f64,
-    created_by: String,
-    #[serde(default)]
-    requirements: Option<EwdsRequirementsDto>,
-    #[serde(default)]
-    attributes: Option<EwdsAttributesDto>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct EwdsRequirementsDto {
-    #[serde(default)]
-    trading_partner_id: Option<String>,
-    #[serde(default)]
-    energy_type: Option<IntelligentEnergyType>,
-    #[serde(default)]
-    preferred_energy_rate: Option<f64>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct EwdsAttributesDto {
-    #[serde(default)]
-    trading_partner_id: Option<String>,
-    energy_type: IntelligentEnergyType,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct EwdsOrdersQueryResponse {
-    #[serde(alias = "request_id")]
-    request_id: String,
-    success: bool,
-    data: Option<Vec<Value>>,
-    error: Option<EwdsErrorPayload>,
-}
-
-#[derive(Deserialize)]
-struct EwdsErrorPayload {
-    code: String,
-    message: String,
-}
 
 struct PreparedOrders {
     open_bids: Vec<Order>,
@@ -348,143 +266,20 @@ async fn fetch_open_orders_via_ewds(fallback_url: String) -> Result<PreparedOrde
 }
 
 async fn fetch_open_orders_via_ewds_query(fallback_url: String) -> Result<PreparedOrders, Error> {
-    let gateway_base =
-        env::var("EWDS_GATEWAY_URL").unwrap_or_else(|_| "http://ewds-gateway-api:3333".to_string());
-    let request_fqcn = env_var("EWDS_REQUEST_PUBLISH_FQCN")
-        .or_else(|| env_var("EWDS_REQUEST_FQCN"))
-        .unwrap_or_else(|| "gsy.intelligent.requests.pub".to_string());
-    let response_fqcn = env_var("EWDS_RESPONSE_SUBSCRIBE_FQCN")
-        .or_else(|| env_var("EWDS_RESPONSE_FQCN"))
-        .unwrap_or_else(|| "gsy.intelligent.responses.sub".to_string());
-    let topic_owner = env::var("EWDS_TOPIC_OWNER")
-        .unwrap_or_else(|_| "integration.apps.intelligent.auth.ewc".to_string());
-    let topic_version = env::var("EWDS_TOPIC_VERSION").unwrap_or_else(|_| "1.0.0".to_string());
-    let response_client_id = env_var("EWDS_MATCHING_ENGINE_CLIENT_ID")
-        .or_else(|| env_var("EWDS_RESPONSE_CLIENT_ID"))
-        .unwrap_or_else(|| "gsymatchingengine".to_string());
-    let request_topic =
-        env::var("EWDS_ORDERS_REQUEST_TOPIC").unwrap_or_else(|_| "ordersQuery".to_string());
-    let response_topic = env::var("EWDS_ORDERS_RESPONSE_TOPIC")
-        .unwrap_or_else(|_| "ordersQueryResponse".to_string());
-
-    let timeout_ms = env::var("EWDS_RESPONSE_TIMEOUT_MS")
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .unwrap_or(60_000);
-    let poll_interval_ms = env::var("EWDS_RESPONSE_POLL_INTERVAL_MS")
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .unwrap_or(400);
-
-    let request_id = format!(
-        "orders-query-{}-{}",
-        chrono::Utc::now().timestamp_millis(),
-        std::process::id()
-    );
-
     let query_payload = parse_query_params_from_url(&fallback_url);
-    let envelope = EwdsRequestEnvelope {
-        request_id: request_id.clone(),
-        operation: "orders.query".to_string(),
-        payload: query_payload,
-    };
-
-    let send_message_body = EwdsSendMessageDto {
-        fqcn: request_fqcn,
-        topic_name: request_topic,
-        topic_version,
-        topic_owner: topic_owner.clone(),
-        transaction_id: request_id.clone(),
-        payload: serde_json::to_string(&envelope)?,
-        anonymous_recipient: Vec::new(),
-    };
-
-    let client = reqwest::Client::new();
-    let post_url = format!("{}/api/v2/messages", gateway_base.trim_end_matches('/'));
-    info!(
-        "Publishing EWDS orders.query request (request_id={}, topic={}, response_topic={})",
-        request_id, send_message_body.topic_name, response_topic
+    info!("Publishing EWDS orders.query request");
+    let ewds_client = EwdsClient::from_env(
+        "EWDS_MATCHING_ENGINE_CLIENT_ID",
+        "gsymatchingengine",
+        60_000,
     );
-    let send_response = client
-        .post(post_url)
-        .json(&send_message_body)
-        .send()
+    let values: Vec<Value> = ewds_client
+        .query(EwdsOperation::OrdersQuery, query_payload)
         .await?;
-    let send_status = send_response.status();
-    if !send_status.is_success() {
-        let body = send_response.text().await.unwrap_or_default();
-        return Err(anyhow!(
-            "EWDS message send failed for orders.query: HTTP {}{}",
-            send_status,
-            format_response_body(&body)
-        ));
-    }
 
-    let started = Instant::now();
-    let get_url = format!("{}/api/v2/messages", gateway_base.trim_end_matches('/'));
-    let poll_client_id = client_id_for_suffix(response_client_id.as_str(), response_topic.as_str());
-    loop {
-        if started.elapsed().as_millis() as u64 > timeout_ms {
-            return Err(anyhow!(
-                "EWDS timeout waiting for orders.query response (request_id={})",
-                request_id
-            ));
-        }
-
-        let mut poll_url = reqwest::Url::parse(get_url.as_str())?;
-        {
-            let mut query = poll_url.query_pairs_mut();
-            query.append_pair("fqcn", response_fqcn.as_str());
-            query.append_pair("amount", "100");
-            query.append_pair("topicName", response_topic.as_str());
-            query.append_pair("topicOwner", topic_owner.as_str());
-            query.append_pair("clientId", poll_client_id.as_str());
-        }
-
-        let response = client.get(poll_url).send().await?;
-
-        let status = response.status();
-        if status.is_success() {
-            let messages = response
-                .json::<Vec<EwdsMessageDto>>()
-                .await
-                .unwrap_or_default();
-            for message in messages {
-                let parsed = serde_json::from_str::<EwdsOrdersQueryResponse>(&message.payload);
-                if let Ok(parsed_payload) = parsed {
-                    if parsed_payload.request_id == request_id {
-                        if !parsed_payload.success {
-                            let error_message = parsed_payload
-                                .error
-                                .map(|error| format!("{}: {}", error.code, error.message))
-                                .unwrap_or_else(|| "Unknown EWDS error".to_string());
-                            return Err(anyhow!(
-                                "EWDS orders.query returned error (request_id={}): {}",
-                                request_id,
-                                error_message
-                            ));
-                        }
-                        let orders = parsed_payload
-                            .data
-                            .and_then(parse_order_values)
-                            .unwrap_or_default();
-                        info!("Fetched {} total orders from EWDS", orders.len());
-                        return Ok(fetch_market_orders(orders));
-                    }
-                }
-            }
-        } else {
-            let body = response.text().await.unwrap_or_default();
-            return Err(anyhow!(
-                "EWDS response poll failed for orders.query (request_id={}): HTTP {}{}",
-                request_id,
-                status,
-                format_response_body(&body)
-            ));
-        }
-
-        sleep(Duration::from_millis(poll_interval_ms)).await;
-    }
+    let orders = parse_order_values(values).unwrap_or_default();
+    info!("Fetched {} total orders from EWDS", orders.len());
+    Ok(fetch_market_orders(orders))
 }
 
 fn parse_query_params_from_url(url: &str) -> serde_json::Value {
@@ -499,40 +294,6 @@ fn parse_query_params_from_url(url: &str) -> serde_json::Value {
         return serde_json::Value::Object(map);
     }
     serde_json::json!({})
-}
-
-fn format_response_body(body: &str) -> String {
-    let compact = body.split_whitespace().collect::<Vec<_>>().join(" ");
-    if compact.is_empty() {
-        return String::new();
-    }
-
-    let max_chars = 1_024;
-    let truncated = compact.chars().take(max_chars).collect::<String>();
-    if compact.chars().count() > max_chars {
-        format!(": {}...", truncated)
-    } else {
-        format!(": {}", truncated)
-    }
-}
-
-fn env_var(key: &str) -> Option<String> {
-    env::var(key)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-}
-
-fn client_id_for_suffix(base: &str, suffix: &str) -> String {
-    let mut value = String::with_capacity(base.len() + suffix.len());
-    value.extend(base.chars().filter(|ch| ch.is_ascii_alphanumeric()));
-    value.extend(suffix.chars().filter(|ch| ch.is_ascii_alphanumeric()));
-
-    if value.is_empty() {
-        "gsymatchingengine".to_string()
-    } else {
-        value
-    }
 }
 
 fn parse_order_values(values: Vec<Value>) -> Option<Vec<DbOrderSchema>> {
@@ -561,60 +322,7 @@ fn parse_order_value(value: Value) -> Result<DbOrderSchema> {
     }
 
     let dto = serde_json::from_value::<EwdsOrderDto>(value)?;
-    ewds_order_to_db(dto)
-}
-
-fn ewds_order_to_db(order: EwdsOrderDto) -> Result<DbOrderSchema> {
-    let requirements = match order.requirements {
-        Some(requirements) => Some(DbRequirements {
-            trading_partner_id: requirements.trading_partner_id,
-            energy_type: requirements.energy_type,
-            preferred_energy_rate: requirements.preferred_energy_rate,
-        }),
-        None => None,
-    };
-
-    let attributes = match order.attributes {
-        Some(attributes) => Some(DbAttributes {
-            trading_partner_id: attributes.trading_partner_id,
-            energy_type: attributes.energy_type,
-        }),
-        None => None,
-    };
-
-    Ok(DbOrderSchema {
-        order_id: order.order_id,
-        status: ewds_order_status_to_db(order.status.as_str())?,
-        order_type: ewds_order_type_to_db(order.order_type.as_str())?,
-        area_uuid: order.area_uuid,
-        market_id: order.market_id,
-        nonce: order.nonce,
-        time_slot: order.time_slot,
-        creation_time: order.creation_time,
-        energy_kWh: order.quantity,
-        energy_rate: order.price_limit,
-        created_by: order.created_by,
-        requirements,
-        attributes,
-    })
-}
-
-fn ewds_order_type_to_db(value: &str) -> Result<OrderEnum> {
-    match value.to_ascii_lowercase().as_str() {
-        "bid" => Ok(OrderEnum::Bid),
-        "offer" => Ok(OrderEnum::Offer),
-        _ => Err(anyhow!("unsupported EWDS order type '{}'", value)),
-    }
-}
-
-fn ewds_order_status_to_db(value: &str) -> Result<OrderStatus> {
-    match value.to_ascii_lowercase().as_str() {
-        "open" => Ok(OrderStatus::Open),
-        "executed" => Ok(OrderStatus::Executed),
-        "expired" => Ok(OrderStatus::Expired),
-        "deleted" => Ok(OrderStatus::Deleted),
-        _ => Err(anyhow!("unsupported EWDS order status '{}'", value)),
-    }
+    dto.try_into()
 }
 
 fn parse_bytes16_field(field_name: &str, value: &str) -> Result<[u8; 16]> {

@@ -157,6 +157,13 @@ Validator requirements:
 
 ## Service Changes Required
 
+### offchain-primitives
+
+- `EwdsClientConfig` resolves gateway, FQCN, topic, client-ID, and polling settings from the environment once when a client is created.
+- `EwdsOperation` maps each query operation to its configured request/response topic pair; callers pass only the operation and query payload.
+- `EwdsClient` separates request publishing from response polling behind its `query` method.
+- EWDS wire DTOs and database-schema conversions are isolated in `ewds::dto`.
+
 ### gsy-offchain-storage
 
 - EWDS query handlers are implemented for `orders.query`, `trades.query`, and `measurements.query`.

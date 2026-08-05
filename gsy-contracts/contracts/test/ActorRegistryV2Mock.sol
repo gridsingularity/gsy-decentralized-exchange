@@ -8,4 +8,3 @@ contract ActorRegistryV2Mock is ActorRegistry {
         return 2;
     }
 }
-

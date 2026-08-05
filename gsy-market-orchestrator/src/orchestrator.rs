@@ -1,10 +1,8 @@
 use crate::chain_connector::MarketChainClient;
 use crate::config::{Config, MARKET_RULES};
 use blake2_rfc::blake2b::blake2b;
-use gsy_offchain_primitives::{
-    constants::GLOBAL_CONSTANTS, utils::timestamp_to_datetime_string,
-};
 use gsy_offchain_primitives::MarketType;
+use gsy_offchain_primitives::{constants::GLOBAL_CONSTANTS, utils::timestamp_to_datetime_string};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
 use tracing::{error, info, warn};
@@ -70,8 +68,7 @@ where
 
     while current_delivery_secs <= look_ahead_horizon {
         for rule in MARKET_RULES.iter() {
-            let market_id = generate_market_id(
-                rule.market_type.clone(), current_delivery_secs);
+            let market_id = generate_market_id(rule.market_type.clone(), current_delivery_secs);
             let open_time = (current_delivery_secs as i64 + rule.open_offset_mins * 60) as u64;
             let close_time = (current_delivery_secs as i64 + rule.close_offset_mins * 60) as u64;
 
