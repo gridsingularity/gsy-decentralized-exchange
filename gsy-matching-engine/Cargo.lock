@@ -1472,13 +1472,12 @@ name = "gsy-matching-engine"
 version = "0.2.0"
 dependencies = [
  "anyhow",
- "chrono",
  "clap",
  "ethers",
  "ethers-solc",
  "primitives",
+ "rand 0.8.7",
  "reqwest",
- "serde",
  "serde_json",
  "tempfile",
  "tokio",
@@ -2525,7 +2524,6 @@ dependencies = [
  "chrono",
  "hex",
  "once_cell",
- "rand 0.8.7",
  "reqwest",
  "serde",
  "serde_json",

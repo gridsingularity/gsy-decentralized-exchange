@@ -23,6 +23,14 @@ contract OrderRegistry is Initializable, AccessControlUpgradeable {
     MarketController public marketController;
     ActorRegistry public actorRegistry;
 
+    uint8 public constant ENERGY_TYPE_UNSPECIFIED = 0;
+    uint8 public constant ENERGY_TYPE_GREEN = 1;
+    uint8 public constant ENERGY_TYPE_PV = 2;
+    uint8 public constant ENERGY_TYPE_HYDRO = 3;
+    uint8 public constant ENERGY_TYPE_BIOMASS = 4;
+    uint8 public constant ENERGY_TYPE_BATTERY = 5;
+    uint8 public constant ENERGY_TYPE_GREY = 6;
+
     struct OrderParams {
         bytes16 orderId;
         bytes16 createdBy;
@@ -31,6 +39,8 @@ contract OrderRegistry is Initializable, AccessControlUpgradeable {
         uint64 creationTime;
         uint64 energy;
         uint64 energyRate;
+        uint8 energySourcePreference;
+        uint8 energyType;
         bool isBid;
     }
 
@@ -46,6 +56,8 @@ contract OrderRegistry is Initializable, AccessControlUpgradeable {
         uint64 creationTime,
         uint64 energy,
         uint64 energyRate,
+        uint8 energySourcePreference,
+        uint8 energyType,
         bool isBid
     );
     event OrderCancelled(bytes16 indexed orderId);
@@ -80,7 +92,9 @@ contract OrderRegistry is Initializable, AccessControlUpgradeable {
         if (
             params.orderId == bytes16(0) ||
             params.createdBy == bytes16(0) ||
-            params.marketId == bytes16(0)
+            params.marketId == bytes16(0) ||
+            params.energySourcePreference > ENERGY_TYPE_GREY ||
+            params.energyType > ENERGY_TYPE_GREY
         ) {
             revert InvalidOrderParams();
         }
@@ -108,6 +122,8 @@ contract OrderRegistry is Initializable, AccessControlUpgradeable {
             params.creationTime,
             params.energy,
             params.energyRate,
+            params.energySourcePreference,
+            params.energyType,
             params.isBid
         );
     }

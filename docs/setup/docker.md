@@ -279,12 +279,25 @@ docker compose --env-file contracts-output/addresses.env \
 EWDS-enabled test execution:
 
 ```bash
-./scripts/contracts.sh local deploy
+docker compose --env-file .env.ewds.local \
+  -f docker-compose.ewds.yml \
+  up --build
+```
 
+After the gateway is configured, healthy, and still running, deploy local
+contracts in another shell:
+
+```bash
+./scripts/contracts.sh local deploy
+```
+
+Then run the GSY e2e stack with the EWDS and contract address env files:
+
+```bash
 docker compose --env-file .env.ewds.local \
   --env-file contracts-output/addresses.env \
   -f docker-compose.test.yml \
-  up --build --force-recreate \
+  up --build \
   --abort-on-container-exit \
   --exit-code-from e2e-tests \
   e2e-tests

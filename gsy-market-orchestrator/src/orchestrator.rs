@@ -212,7 +212,7 @@ mod tests {
                     rule.close_offset_mins,
                 ) == should_be_open
                 {
-                    return (rule.market_type.clone(), current_delivery_secs);
+                    return (rule.market_type, current_delivery_secs);
                 }
             }
             current_delivery_secs += GLOBAL_CONSTANTS.time_slot_sec;

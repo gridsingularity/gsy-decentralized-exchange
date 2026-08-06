@@ -1,10 +1,8 @@
-pub mod algorithms;
 pub mod db_api_schema;
 
 pub mod constants;
 pub mod ewds;
 pub mod log;
-pub mod types;
 pub mod utils;
 
 use serde::{Deserialize, Serialize};
@@ -47,24 +45,6 @@ impl MatchingAlgorithm {
             MatchingAlgorithm::PayAsBid => "pay_as_bid",
             MatchingAlgorithm::PayAsClear => "pay_as_clear",
             MatchingAlgorithm::AMM => "amm",
-        }
-    }
-
-    /// Runs the configured algorithm against one market order book.
-    pub fn match_orders(
-        &self,
-        matching_data: &mut types::MatchingData,
-    ) -> Result<Vec<types::BidOfferMatch>, String> {
-        use algorithms::{PayAsBid, PayAsClear};
-
-        matching_data.validate_market_slot()?;
-
-        match self {
-            MatchingAlgorithm::PayAsBid => Ok(matching_data.pay_as_bid()),
-            MatchingAlgorithm::PayAsClear => Ok(matching_data.pay_as_clear()),
-            MatchingAlgorithm::AMM => {
-                Err("Matching algorithm 'amm' is not implemented".to_string())
-            }
         }
     }
 }

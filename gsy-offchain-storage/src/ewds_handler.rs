@@ -1,10 +1,12 @@
 use crate::db::DatabaseWrapper;
 use anyhow::{anyhow, Result};
 use primitives::db_api_schema::profiles::{MeasurementPointType, MeasurementSchema};
+use primitives::ewds::dto::{
+    EwdsInboundMessage, EwdsOrderDto, EwdsRequestEnvelope, EwdsResponseEnvelope, EwdsSendMessageDto,
+};
 use primitives::ewds::{
     client_id_for_suffix, env_var, ewds_rate_limit_backoff_ms, format_response_body,
-    is_rate_limited_message, is_rate_limited_response, EwdsInboundMessage, EwdsOperation,
-    EwdsOrderDto, EwdsRequestEnvelope, EwdsResponseEnvelope, EwdsSendMessageDto,
+    is_rate_limited_message, is_rate_limited_response, EwdsOperation, EwdsTopicConfig,
 };
 use primitives::utils::timestamp_to_string_with_padding;
 use reqwest::Client;
@@ -23,12 +25,7 @@ pub struct EwdsHandlerConfig {
     pub topic_owner: String,
     pub topic_version: String,
     pub request_client_id: String,
-    pub orders_request_topic: String,
-    pub trades_request_topic: String,
-    pub measurements_request_topic: String,
-    pub orders_response_topic: String,
-    pub trades_response_topic: String,
-    pub measurements_response_topic: String,
+    pub topics: EwdsTopicConfig,
     pub poll_interval_ms: u64,
     pub request_batch_size: u32,
     pub response_send_timeout_ms: u64,
@@ -77,18 +74,7 @@ impl EwdsHandlerConfig {
             request_client_id: env_var("EWDS_REQUEST_CLIENT_ID")
                 .or_else(|| env_var("EWDS_OFFCHAIN_STORAGE_CLIENT_ID"))
                 .unwrap_or_else(|| "gsyoffchainstorage".to_string()),
-            orders_request_topic: std::env::var("EWDS_ORDERS_REQUEST_TOPIC")
-                .unwrap_or_else(|_| "ordersQuery".to_string()),
-            trades_request_topic: std::env::var("EWDS_TRADES_REQUEST_TOPIC")
-                .unwrap_or_else(|_| "tradesQuery".to_string()),
-            measurements_request_topic: std::env::var("EWDS_MEASUREMENTS_REQUEST_TOPIC")
-                .unwrap_or_else(|_| "measurementsQuery".to_string()),
-            orders_response_topic: std::env::var("EWDS_ORDERS_RESPONSE_TOPIC")
-                .unwrap_or_else(|_| "ordersQueryResponse".to_string()),
-            trades_response_topic: std::env::var("EWDS_TRADES_RESPONSE_TOPIC")
-                .unwrap_or_else(|_| "tradesQueryResponse".to_string()),
-            measurements_response_topic: std::env::var("EWDS_MEASUREMENTS_RESPONSE_TOPIC")
-                .unwrap_or_else(|_| "measurementsQueryResponse".to_string()),
+            topics: EwdsTopicConfig::from_env(),
             poll_interval_ms,
             request_batch_size,
             response_send_timeout_ms,
@@ -117,7 +103,7 @@ struct TimeRangePayload {
     #[serde(alias = "endTime")]
     #[serde(default)]
     end_time: Option<u64>,
-    #[serde(alias = "facilityId", alias = "areaUuid")]
+    #[serde(alias = "areaUuid")]
     #[serde(default)]
     facility_id: Option<String>,
 }
@@ -157,9 +143,9 @@ pub async fn start_ewds_request_handler(db: DatabaseWrapper, config: EwdsHandler
             Err(error) => {
                 warn!("EWDS batch processing failed: {}", error);
                 if is_rate_limited_message(error.to_string().as_str()) {
-                    let backoff_ms = ewds_rate_limit_backoff_ms(rate_limit_attempt);
+                    let delay_ms = ewds_rate_limit_backoff_ms(rate_limit_attempt);
                     rate_limit_attempt = rate_limit_attempt.saturating_add(1);
-                    backoff_ms
+                    delay_ms
                 } else {
                     config.poll_interval_ms
                 }
@@ -179,13 +165,9 @@ async fn process_next_topic_batch(
     next_topic_index: &mut usize,
 ) -> Result<()> {
     let amount = config.request_batch_size.to_string();
-    let topic_names = [
-        config.orders_request_topic.as_str(),
-        config.trades_request_topic.as_str(),
-        config.measurements_request_topic.as_str(),
-    ];
-    let topic_name = topic_names[*next_topic_index % topic_names.len()];
-    *next_topic_index = (*next_topic_index + 1) % topic_names.len();
+    let operation = EwdsOperation::ALL[*next_topic_index % EwdsOperation::ALL.len()];
+    *next_topic_index = (*next_topic_index + 1) % EwdsOperation::ALL.len();
+    let topic_name = config.topics.for_operation(operation).request.as_str();
     let messages =
         poll_requests_for_topic(client, config, topic_name, amount.as_str()).await?;
 
@@ -278,6 +260,12 @@ async fn handle_request(
     config: &EwdsHandlerConfig,
     envelope: EwdsRequestEnvelope,
 ) -> Result<()> {
+    let response_topic = config
+        .topics
+        .for_operation(envelope.operation)
+        .response
+        .clone();
+
     match envelope.operation {
         EwdsOperation::OrdersQuery => {
             let payload = serde_json::from_value::<OrdersQueryPayload>(envelope.payload.clone())
@@ -302,14 +290,7 @@ async fn handle_request(
                 data.len()
             );
 
-            send_success_response(
-                client,
-                config,
-                request_id,
-                config.orders_response_topic.as_str(),
-                data,
-            )
-            .await
+            send_success_response(client, config, request_id, response_topic.as_str(), data).await
         }
         EwdsOperation::TradesQuery => {
             let payload = serde_json::from_value::<TimeRangePayload>(envelope.payload.clone())
@@ -331,14 +312,7 @@ async fn handle_request(
                 data.len()
             );
 
-            send_success_response(
-                client,
-                config,
-                request_id,
-                config.trades_response_topic.as_str(),
-                data,
-            )
-            .await
+            send_success_response(client, config, request_id, response_topic.as_str(), data).await
         }
         EwdsOperation::MeasurementsQuery => {
             let payload = serde_json::from_value::<TimeRangePayload>(envelope.payload.clone())
@@ -364,14 +338,7 @@ async fn handle_request(
                 data.len()
             );
 
-            send_success_response(
-                client,
-                config,
-                request_id,
-                config.measurements_response_topic.as_str(),
-                data,
-            )
-            .await
+            send_success_response(client, config, request_id, response_topic.as_str(), data).await
         }
     }
 }
