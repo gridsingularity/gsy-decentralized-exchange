@@ -1,13 +1,13 @@
 use actix_web::web;
 use anyhow::Result;
 use gsy_ethers_listener::{GsyEthersListener, ListenerConfig};
-use gsy_offchain_primitives::log::setup_logging;
 use gsy_offchain_storage::configuration::get_configuration;
 use gsy_offchain_storage::db::{init_database, DbRef};
 use gsy_offchain_storage::evm_handler::OffchainStorageEvmHandler;
 use gsy_offchain_storage::ewds_handler::{start_ewds_request_handler, EwdsHandlerConfig};
 use gsy_offchain_storage::http_server::start_server;
 use gsy_offchain_storage::update_db::expire_orders_scheduler;
+use primitives::log::setup_logging;
 use tracing::info;
 
 #[tokio::main]

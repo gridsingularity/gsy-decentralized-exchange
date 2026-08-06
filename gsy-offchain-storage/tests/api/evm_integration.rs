@@ -5,7 +5,7 @@ use ethers::{
     utils::Anvil,
 };
 use gsy_ethers_listener::{GsyEthersListener, ListenerConfig};
-use gsy_offchain_primitives::db_api_schema::orders::{IntelligentEnergyType, OrderEnum};
+use primitives::db_api_schema::orders::{IntelligentEnergyType, OrderEnum};
 use gsy_offchain_storage::evm_handler::OffchainStorageEvmHandler;
 use std::{fs::File, io::Write, sync::Arc, time::Duration};
 use tempfile::TempDir;

@@ -1,17 +1,14 @@
 use crate::algorithms::PayAsBid;
+use crate::models::{Attributes, BidOfferMatch, MatchingData, Order, Requirements};
 use anyhow::{anyhow, Error, Result};
 use ethers::prelude::*;
 use ethers::utils::keccak256;
-use gsy_offchain_primitives::db_api_schema::orders::{
+use primitives::db_api_schema::orders::{
     DbOrderSchema, IntelligentEnergyType, OrderEnum, OrderStatus,
 };
-use gsy_offchain_primitives::ewds::dto::EwdsOrderDto;
-use gsy_offchain_primitives::ewds::{EwdsClient, EwdsOperation};
-use gsy_offchain_primitives::types::{BidOfferMatch, MatchingData, Order};
-use gsy_offchain_primitives::utils::{
-    actor_id_to_account_id, bytes16_to_h256, h256_to_bytes16_hex, parse_uuid_or_hex_bytes16,
-    string_to_account_id, NODE_FLOAT_SCALING_FACTOR,
-};
+use primitives::ewds::dto::EwdsOrderDto;
+use primitives::ewds::{EwdsClient, EwdsOperation};
+use primitives::utils::{bytes16_to_hex, parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::env;
@@ -112,7 +109,7 @@ async fn run_matching_cycle(
         return Ok(());
     }
 
-    let market_id = prepared_orders.open_bids[0].market_id;
+    let market_id = prepared_orders.open_bids[0].market_id.clone();
     let mut matching_data = MatchingData {
         bids: prepared_orders.open_bids,
         offers: prepared_orders.open_offers,
@@ -221,10 +218,9 @@ fn fetch_market_orders(body: Vec<DbOrderSchema>) -> PreparedOrders {
         .into_iter()
         .filter(|order| order.status == OrderStatus::Open)
     {
-        let order_id = db_order_schema.order_id.to_ascii_lowercase();
         match convert_db_order_to_canonical(&db_order_schema) {
             Ok(order) => {
-                by_order_id.insert(order_id, db_order_schema);
+                by_order_id.insert(order.order_id.clone(), db_order_schema);
                 match order.order_type {
                     OrderEnum::Bid => open_bids.push(order),
                     OrderEnum::Offer => open_offers.push(order),
@@ -330,19 +326,62 @@ fn parse_bytes16_field(field_name: &str, value: &str) -> Result<[u8; 16]> {
         .ok_or_else(|| anyhow!("{} must be a UUID or 0x-prefixed 16-byte hex", field_name))
 }
 
+fn normalize_bytes16_field(field_name: &str, value: &str) -> Result<String> {
+    Ok(bytes16_to_hex(parse_bytes16_field(field_name, value)?))
+}
+
+fn normalize_optional_bytes16_field(
+    field_name: &str,
+    value: Option<&str>,
+) -> Result<Option<String>> {
+    value
+        .map(|value| normalize_bytes16_field(field_name, value))
+        .transpose()
+}
+
+fn convert_requirements(
+    requirements: Option<&primitives::db_api_schema::orders::DbRequirements>,
+) -> Result<Option<Requirements>> {
+    requirements
+        .map(|requirements| -> Result<Requirements> {
+            Ok(Requirements {
+                trading_partner_id: normalize_optional_bytes16_field(
+                    "requirements.trading_partner_id",
+                    requirements.trading_partner_id.as_deref(),
+                )?,
+                energy_type: requirements.energy_type.clone(),
+                preferred_energy_rate: requirements
+                    .preferred_energy_rate
+                    .map(|rate| (rate * NODE_FLOAT_SCALING_FACTOR).round() as u64),
+            })
+        })
+        .transpose()
+}
+
+fn convert_attributes(
+    attributes: Option<&primitives::db_api_schema::orders::DbAttributes>,
+) -> Result<Option<Attributes>> {
+    attributes
+        .map(|attributes| -> Result<Attributes> {
+            Ok(Attributes {
+                trading_partner_id: normalize_optional_bytes16_field(
+                    "attributes.trading_partner_id",
+                    attributes.trading_partner_id.as_deref(),
+                )?,
+                energy_type: attributes.energy_type.clone(),
+            })
+        })
+        .transpose()
+}
+
 fn convert_db_order_to_canonical(order: &DbOrderSchema) -> Result<Order> {
-    let parse_account_or_address = |value: &str| {
-        string_to_account_id(value.to_string()).or_else(|| actor_id_to_account_id(value))
-    };
-
-    let order_id = bytes16_to_h256(parse_bytes16_field("order_id", &order.order_id)?);
-    let market_id = bytes16_to_h256(parse_bytes16_field("market_id", &order.market_id)?);
-    let area_uuid = bytes16_to_h256(parse_bytes16_field("area_uuid", &order.area_uuid)?);
-
+    let order_id = normalize_bytes16_field("order_id", &order.order_id)?;
+    let market_id = normalize_bytes16_field("market_id", &order.market_id)?;
+    let area_uuid = normalize_bytes16_field("area_uuid", &order.area_uuid)?;
+    let created_by = normalize_bytes16_field("created_by", &order.created_by)?;
     Ok(match order.order_type {
         OrderEnum::Bid => Order {
-            created_by: parse_account_or_address(order.created_by.as_str())
-                .ok_or_else(|| anyhow!("Invalid buyer actor/account: {}", order.created_by))?,
+            created_by,
             order_id,
             order_type: OrderEnum::Bid,
             status: order.status.clone(),
@@ -352,26 +391,14 @@ fn convert_db_order_to_canonical(order: &DbOrderSchema) -> Result<Order> {
             creation_time: order.creation_time,
             energy: (order.energy_kWh * NODE_FLOAT_SCALING_FACTOR).round() as u64,
             energy_rate: (order.energy_rate * NODE_FLOAT_SCALING_FACTOR).round() as u64,
-            requirements: order.requirements.as_ref().map(|r| {
-                gsy_offchain_primitives::types::Requirements {
-                    trading_partner_id: r
-                        .trading_partner_id
-                        .as_deref()
-                        .and_then(parse_account_or_address),
-                    energy_type: r.energy_type.clone(),
-                    preferred_energy_rate: r
-                        .preferred_energy_rate
-                        .map(|rate| (rate * NODE_FLOAT_SCALING_FACTOR).round() as u64),
-                }
-            }),
+            requirements: convert_requirements(order.requirements.as_ref())?,
             attributes: None,
         },
         OrderEnum::Offer => Order {
             order_id,
             order_type: order.order_type.clone(),
             status: order.status.clone(),
-            created_by: parse_account_or_address(order.created_by.as_str())
-                .ok_or_else(|| anyhow!("Invalid seller actor/account: {}", order.created_by))?,
+            created_by,
             area_uuid,
             market_id,
             time_slot: order.time_slot,
@@ -379,15 +406,7 @@ fn convert_db_order_to_canonical(order: &DbOrderSchema) -> Result<Order> {
             energy: (order.energy_kWh * NODE_FLOAT_SCALING_FACTOR).round() as u64,
             energy_rate: (order.energy_rate * NODE_FLOAT_SCALING_FACTOR).round() as u64,
             requirements: None,
-            attributes: order.attributes.as_ref().map(|a| {
-                gsy_offchain_primitives::types::Attributes {
-                    trading_partner_id: a
-                        .trading_partner_id
-                        .as_deref()
-                        .and_then(parse_account_or_address),
-                    energy_type: a.energy_type.clone(),
-                }
-            }),
+            attributes: convert_attributes(order.attributes.as_ref())?,
         },
     })
 }
@@ -443,14 +462,11 @@ fn to_evm_order_data(order: &DbOrderSchema, expected_type: OrderEnum) -> Result<
     ))
 }
 
-fn optional_order_id_to_bytes16(order: Option<&Order>) -> [u8; 16] {
+fn optional_order_id_to_bytes16(order: Option<&Order>) -> Result<[u8; 16]> {
     order
-        .map(|order| {
-            order.order_id.as_bytes()[..16]
-                .try_into()
-                .expect("order id prefix is 16 bytes")
-        })
-        .unwrap_or([0u8; 16])
+        .map(|order| parse_bytes16_field("residual_order_id", &order.order_id))
+        .transpose()
+        .map(|value| value.unwrap_or([0u8; 16]))
 }
 
 fn derive_trade_id(
@@ -476,8 +492,8 @@ fn to_evm_matches(
     matches
         .into_iter()
         .map(|item| {
-            let bid_id = h256_to_bytes16_hex(item.bid.order_id).to_ascii_lowercase();
-            let offer_id = h256_to_bytes16_hex(item.offer.order_id).to_ascii_lowercase();
+            let bid_id = item.bid.order_id.to_ascii_lowercase();
+            let offer_id = item.offer.order_id.to_ascii_lowercase();
 
             let bid_order = order_lookup
                 .get(&bid_id)
@@ -490,8 +506,8 @@ fn to_evm_matches(
                 derive_trade_id(&bid_id, &offer_id, item.selected_energy, item.energy_rate),
                 to_evm_order_data(bid_order, OrderEnum::Bid)?,
                 to_evm_order_data(offer_order, OrderEnum::Offer)?,
-                optional_order_id_to_bytes16(item.residual_bid.as_ref()),
-                optional_order_id_to_bytes16(item.residual_offer.as_ref()),
+                optional_order_id_to_bytes16(item.residual_bid.as_ref())?,
+                optional_order_id_to_bytes16(item.residual_offer.as_ref())?,
                 U256::from(item.selected_energy),
                 U256::from(item.energy_rate),
             ))

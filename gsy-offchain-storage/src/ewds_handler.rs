@@ -1,13 +1,13 @@
 use crate::db::DatabaseWrapper;
 use anyhow::{anyhow, Result};
-use gsy_offchain_primitives::db_api_schema::profiles::{MeasurementPointType, MeasurementSchema};
-use gsy_offchain_primitives::ewds::dto::{
+use primitives::db_api_schema::profiles::{MeasurementPointType, MeasurementSchema};
+use primitives::ewds::dto::{
     EwdsInboundMessage, EwdsOrderDto, EwdsRequestEnvelope, EwdsResponseEnvelope, EwdsSendMessageDto,
 };
-use gsy_offchain_primitives::ewds::{
+use primitives::ewds::{
     client_id_for_suffix, env_var, format_response_body, EwdsOperation, EwdsTopicConfig,
 };
-use gsy_offchain_primitives::utils::timestamp_to_string_with_padding;
+use primitives::utils::timestamp_to_string_with_padding;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};

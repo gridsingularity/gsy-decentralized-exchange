@@ -1,12 +1,12 @@
 use crate::db::DatabaseWrapper;
 use anyhow::Result;
 use futures::StreamExt;
-use gsy_offchain_primitives::db_api_schema::grid_topology::{
-    AssetSchema, EnergyCommunitySchema, FacilitySchema, PilotSiteSchema, SiteSchema,
-};
 use mongodb::bson::{doc, Bson};
 use mongodb::options::IndexOptions;
 use mongodb::{Collection, IndexModel};
+use primitives::db_api_schema::grid_topology::{
+    AssetSchema, EnergyCommunitySchema, FacilitySchema, PilotSiteSchema, SiteSchema,
+};
 use std::collections::HashMap;
 use std::ops::Deref;
 

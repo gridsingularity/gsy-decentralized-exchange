@@ -1,6 +1,6 @@
 use crate::db::DbRef;
 use chrono::Utc;
-use gsy_offchain_primitives::db_api_schema::orders::OrderStatus;
+use primitives::db_api_schema::orders::OrderStatus;
 use tokio_schedule::{every, Job};
 
 /// Periodically mark stale open orders as `Expired` using `time_slot` and current time

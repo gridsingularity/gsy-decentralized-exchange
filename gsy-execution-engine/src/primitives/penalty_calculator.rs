@@ -1,5 +1,5 @@
-use gsy_offchain_primitives::db_api_schema::{profiles::MeasurementSchema, trades::TradeSchema};
-use gsy_offchain_primitives::utils::{bytes16_to_hex, parse_or_hash_bytes16};
+use primitives::db_api_schema::{profiles::MeasurementSchema, trades::TradeSchema};
+use primitives::utils::{bytes16_to_hex, parse_or_hash_bytes16};
 use std::collections::HashMap;
 
 #[derive(Debug)]
@@ -93,12 +93,12 @@ pub fn compute_penalties(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gsy_offchain_primitives::db_api_schema::{
+    use primitives::db_api_schema::{
         orders::{DbOrderSchema, OrderEnum, OrderStatus},
         profiles::MeasurementSchema,
         trades::{TradeParameters, TradeSchema, TradeStatus},
     };
-    use gsy_offchain_primitives::utils::{bytes16_to_hex, parse_or_hash_bytes16};
+    use primitives::utils::{bytes16_to_hex, parse_or_hash_bytes16};
 
     fn order(order_id: &str, facility_id: &str, is_bid: bool) -> DbOrderSchema {
         let actor_id = bytes16_to_hex(parse_or_hash_bytes16(facility_id));

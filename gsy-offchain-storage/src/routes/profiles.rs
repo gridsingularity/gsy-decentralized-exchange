@@ -1,11 +1,11 @@
 use crate::db::DbRef;
 use actix_web::{web::Json, web::Query, HttpResponse, Responder};
 use anyhow::Result;
-use gsy_offchain_primitives::db_api_schema::profiles::{
+use primitives::db_api_schema::profiles::{
     FlowDirection, ForecastSchema, MeasurementPointSchema, MeasurementPointType, MeasurementSchema,
     TimeseriesSchema,
 };
-use gsy_offchain_primitives::utils::timestamp_to_string_with_padding;
+use primitives::utils::timestamp_to_string_with_padding;
 use serde::Deserialize;
 use std::collections::HashMap;
 

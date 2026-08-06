@@ -7,18 +7,9 @@
 //! ontology structs are kept alongside it for topic/schema evolution without
 //! breaking the current EVM integration path.
 
-use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, PartialOrd)]
-pub enum EnergyType {
-    Clean,
-    Battery,
-    FossilFuel,
-    Import,
-}
-
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, PartialOrd)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd)]
 #[serde(rename_all = "lowercase")]
 pub enum OrderEnum {
     Bid,
@@ -27,7 +18,7 @@ pub enum OrderEnum {
 
 pub type OrderType = OrderEnum;
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct DbOrderSchema {
     pub order_id: String,
     pub status: OrderStatus,
@@ -46,7 +37,7 @@ pub struct DbOrderSchema {
 }
 
 /// Order status.
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, PartialOrd)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd)]
 #[serde(rename_all = "lowercase")]
 pub enum OrderStatus {
     Open,
@@ -61,14 +52,14 @@ impl Default for OrderStatus {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum FlexibilityOrderType {
     FlexibilityOffer,
     FlexibilityBid,
 }
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct FlexibilityOrderSchema {
     pub order_id: String,
     pub order_type: FlexibilityOrderType,
@@ -84,13 +75,13 @@ pub struct FlexibilityOrderSchema {
     pub from_asset: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum IntelligentOrderType {
     Bid,
     Offer,
 }
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum IntelligentOrderStatus {
     Submitted,
     PartiallyFilled,
@@ -101,7 +92,7 @@ pub enum IntelligentOrderStatus {
     Executed,
 }
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, Eq, PartialOrd)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, PartialOrd)]
 pub enum IntelligentEnergyType {
     #[serde(rename = "GREEN")]
     Green,
@@ -117,20 +108,20 @@ pub enum IntelligentEnergyType {
     Grey,
 }
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, PartialOrd)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd)]
 pub struct DbRequirements {
     pub trading_partner_id: Option<String>,
     pub energy_type: Option<IntelligentEnergyType>,
     pub preferred_energy_rate: Option<f64>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, PartialOrd)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd)]
 pub struct DbAttributes {
     pub trading_partner_id: Option<String>,
     pub energy_type: IntelligentEnergyType,
 }
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct IntelligentOrderSchema {
     pub order_id: String,

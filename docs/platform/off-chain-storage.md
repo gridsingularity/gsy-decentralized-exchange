@@ -30,7 +30,7 @@ Compatibility adapters for EVM JSON callers:
 
 - `/measurements` (`GET`, `POST`) converts to/from `MeasurementPoint` + `Timeseries`
 - `/forecasts` (`GET`, `POST`) converts to/from `MeasurementPoint` + `Timeseries`
-- `/market` (`GET`, `POST`) converts market topology JSON to/from `Market`
+- `/market` (`GET`, `POST`) converts compatibility market JSON to/from `Market`
 - `/community-market` (`GET`) queries ontology market records by community and delivery window
 
 These adapters do not own separate collections. They read and write the same

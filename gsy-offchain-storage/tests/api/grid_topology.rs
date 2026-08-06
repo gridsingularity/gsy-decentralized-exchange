@@ -1,8 +1,8 @@
 use crate::helpers::{init_app, stop_app};
-use gsy_offchain_primitives::db_api_schema::grid_topology::{
+use primitives::db_api_schema::grid_topology::{
     AssetSchema, AssetType, EnergyCommunitySchema, FacilitySchema, PilotSiteSchema, SiteSchema,
 };
-use gsy_offchain_primitives::db_api_schema::tariff::TariffSchema;
+use primitives::db_api_schema::tariff::TariffSchema;
 
 fn base_asset(uuid: &str, asset_type: AssetType, asset_name: &str) -> AssetSchema {
     AssetSchema {

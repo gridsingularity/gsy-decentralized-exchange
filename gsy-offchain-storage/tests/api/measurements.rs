@@ -1,5 +1,5 @@
 use crate::helpers::{init_app, stop_app};
-use gsy_offchain_primitives::db_api_schema::profiles::{
+use primitives::db_api_schema::profiles::{
     FlowDirection, ForecastSchema, MeasurementPointSchema, MeasurementPointType, MeasurementSchema,
     TimeseriesSchema,
 };

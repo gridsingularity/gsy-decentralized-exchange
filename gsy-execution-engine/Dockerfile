@@ -1,9 +1,9 @@
 FROM rust:1.89.0-bookworm AS chef
 RUN cargo install cargo-chef --locked
 
-# First prepare dependencies of offchain-primitives
-WORKDIR /var/www/offchain-primitives
-COPY ./offchain-primitives/Cargo.lock ./offchain-primitives/Cargo.toml /var/www/offchain-primitives/
+# First prepare dependencies of primitives
+WORKDIR /var/www/primitives
+COPY ./primitives/Cargo.lock ./primitives/Cargo.toml /var/www/primitives/
 RUN cargo chef prepare --recipe-path recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
 
@@ -20,13 +20,18 @@ RUN curl -L https://foundry.paradigm.xyz | bash
 ENV PATH="/root/.foundry/bin:${PATH}"
 RUN foundryup
 
-COPY ./offchain-primitives /var/www/offchain-primitives
-COPY --from=chef /var/www/offchain-primitives/target /var/www/offchain-primitives/target
+COPY ./primitives /var/www/primitives
+COPY --from=chef /var/www/primitives/target /var/www/primitives/target
 
 COPY ./gsy-execution-engine /var/www/gsy-execution-engine
 COPY --from=chef /var/www/gsy-execution-engine/target /var/www/gsy-execution-engine/target
 
 WORKDIR /var/www/gsy-execution-engine
+RUN rm -rf \
+    target/release/.fingerprint/primitives-* \
+    target/release/build/primitives-* \
+    target/release/deps/primitives-* \
+    target/release/deps/libprimitives*
 RUN cargo build --release
 
 FROM rust:1.89.0-bookworm AS runtime

@@ -1,9 +1,9 @@
 use crate::db::DbRef;
 use actix_web::{web::Json, web::Query, HttpResponse, Responder};
-use gsy_offchain_primitives::db_api_schema::grid_topology::{
+use primitives::db_api_schema::grid_topology::{
     AssetSchema, EnergyCommunitySchema, FacilitySchema, PilotSiteSchema, SiteSchema,
 };
-use gsy_offchain_primitives::db_api_schema::tariff::TariffSchema;
+use primitives::db_api_schema::tariff::TariffSchema;
 use serde::Deserialize;
 
 #[derive(Deserialize)]

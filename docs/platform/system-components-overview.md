@@ -6,7 +6,7 @@
 |---|---|---|---|
 | `gsy-contracts` | Deployable EVM contract suite | deployment config, signer keys | contract addresses, role assignments |
 | `gsy-market-orchestrator` | Market open/close management | wall-clock time, market rules | `setMarketStatus` txs |
-| `gsy-community-client` | Publish forecasts/measurements and orders | external topology + profile streams | off-chain storage HTTP writes + `placeOrder` txs |
+| `gsy-community-client` | Publish forecasts/measurements and orders | external facility topology + profile streams | off-chain storage HTTP writes + `placeOrder` txs |
 | `gsy-matching-engine` | Build matches and settle trades | open orders + block progression | `settleBatch` txs |
 | `gsy-execution-engine` | Compute and submit penalties | settled trades + measurements | `submitPenalties` txs |
 | `gsy-ethers-listener` | Contract event subscription | WS stream from EVM node | normalized callback events |

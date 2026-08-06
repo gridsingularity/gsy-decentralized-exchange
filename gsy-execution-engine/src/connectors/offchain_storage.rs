@@ -1,11 +1,11 @@
 use anyhow::{anyhow, Result};
-use gsy_offchain_primitives::constants::GLOBAL_CONSTANTS;
-use gsy_offchain_primitives::db_api_schema::{
+use primitives::constants::GLOBAL_CONSTANTS;
+use primitives::db_api_schema::{
     profiles::{MeasurementPointSchema, MeasurementSchema, TimeseriesSchema},
     trades::TradeSchema,
 };
-use gsy_offchain_primitives::ewds::{EwdsClient, EwdsOperation};
-use gsy_offchain_primitives::utils::timestamp_to_string_with_padding;
+use primitives::ewds::{EwdsClient, EwdsOperation};
+use primitives::utils::timestamp_to_string_with_padding;
 use reqwest::Client;
 use std::collections::HashMap;
 use std::env;

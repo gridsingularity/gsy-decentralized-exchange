@@ -1,8 +1,8 @@
 use crate::chain_connector::MarketChainClient;
 use crate::config::{Config, MARKET_RULES};
 use blake2_rfc::blake2b::blake2b;
-use gsy_offchain_primitives::MarketType;
-use gsy_offchain_primitives::{constants::GLOBAL_CONSTANTS, utils::timestamp_to_datetime_string};
+use primitives::MarketType;
+use primitives::{constants::GLOBAL_CONSTANTS, utils::timestamp_to_datetime_string};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
 use tracing::{error, info, warn};

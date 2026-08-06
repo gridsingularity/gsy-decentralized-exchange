@@ -2,8 +2,7 @@
 //!
 //! `MarketSchema` is the canonical ontology-aligned market-opening document.
 
-pub use crate::{MarketType, MatchingAlgorithm, MarketTimeSeriesGranularity};
-use codec::{Decode, Encode};
+pub use crate::{MarketTimeSeriesGranularity, MarketType, MatchingAlgorithm};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -13,7 +12,7 @@ pub struct AreaTopologySchema {
     pub area_type: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct MarketSchema {
     pub market_id: String,
     pub community_id: String,
@@ -26,7 +25,7 @@ pub struct MarketSchema {
     pub created_at: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct MarketTimeSeriesSchema {
     pub community_id: String,

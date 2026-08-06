@@ -1,9 +1,9 @@
 use crate::connectors::evm_contracts::TradeSettlementContract;
 use crate::primitives::penalty_calculator::Penalty;
+use ::primitives::utils::parse_or_hash_bytes16;
 use anyhow::{anyhow, Result};
 use ethers::prelude::*;
 use ethers::utils::keccak256;
-use gsy_offchain_primitives::utils::parse_or_hash_bytes16;
 use std::{str::FromStr, sync::Arc};
 use tracing::{info, warn};
 

@@ -3,12 +3,12 @@ use cucumber::{then, when};
 use ethers::prelude::*;
 use gsy_community_client::node_connector::orders::publish_orders;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
-use gsy_offchain_primitives::db_api_schema::orders::{
+use primitives::db_api_schema::orders::{
     DbAttributes, DbOrderSchema, DbRequirements, IntelligentEnergyType, OrderStatus,
 };
-use gsy_offchain_primitives::db_api_schema::profiles::MeasurementSchema;
-use gsy_offchain_primitives::db_api_schema::trades::TradeSchema;
-use gsy_offchain_primitives::utils::{parse_or_hash_bytes16, NODE_FLOAT_SCALING_FACTOR};
+use primitives::db_api_schema::profiles::MeasurementSchema;
+use primitives::db_api_schema::trades::TradeSchema;
+use primitives::utils::{parse_or_hash_bytes16, NODE_FLOAT_SCALING_FACTOR};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;

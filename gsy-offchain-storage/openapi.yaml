@@ -4,7 +4,7 @@ info:
   version: "2.0.0"
   description: |
     REST API of the GSY DEX Off-Chain Storage service. The schemas mirror the
-    Rust types defined in `offchain-primitives/src/db_api_schema/` and are
+    Rust types defined in `primitives/src/db_api_schema/` and are
     grouped by the storage areas of D3.2:
 
       * §5.1 Grid Topology and Market Storage
@@ -986,16 +986,12 @@ components:
     FacilitySchema:
       type: object
       required:
+        - facility_id
         - facility_name
-        - address
-        - latitude
-        - longitude
-        - category
-        - number_of_occupants
+        - site_id
+        - owner_id
       properties:
+        facility_id: { type: string }
         facility_name: { type: string }
-        address: { type: string }
-        latitude: { type: number, format: double }
-        longitude: { type: number, format: double }
-        category: { type: string }
-        number_of_occupants: { type: integer, format: int32, minimum: 0 }
+        site_id: { type: string }
+        owner_id: { type: string }

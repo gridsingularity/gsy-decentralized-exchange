@@ -1,10 +1,10 @@
 use ethers::types::Address;
 use gsy_community_client::node_connector::orders::create_input_orders;
 use gsy_community_client::time_utils::get_current_timestamp_in_secs;
-use gsy_offchain_primitives::db_api_schema::market::MarketSchema;
-use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
-use gsy_offchain_primitives::utils::{parse_or_hash_bytes16, NODE_FLOAT_SCALING_FACTOR};
-use gsy_offchain_primitives::{MarketType, MatchingAlgorithm};
+use primitives::db_api_schema::market::MarketSchema;
+use primitives::db_api_schema::profiles::ForecastSchema;
+use primitives::utils::{parse_or_hash_bytes16, NODE_FLOAT_SCALING_FACTOR};
+use primitives::{MarketType, MatchingAlgorithm};
 use std::collections::HashSet;
 use std::str::FromStr;
 

@@ -6,10 +6,9 @@
 
 #![allow(non_snake_case)]
 
-use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct MeasurementMetadataSchema {
     pub facility_id: String,
     pub community_uuid: String,
@@ -18,7 +17,7 @@ pub struct MeasurementMetadataSchema {
     pub creation_time: u64,
 }
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct MeasurementSchema {
     pub facility_id: String,
     pub community_uuid: String,
@@ -27,7 +26,7 @@ pub struct MeasurementSchema {
     pub energy_kwh: f64,
 }
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct PVMeasurementSchema {
     pub metadata: MeasurementMetadataSchema,
     pub current_A: f64,
@@ -36,7 +35,7 @@ pub struct PVMeasurementSchema {
     pub energy_kWh: f64,
 }
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct BatteryMeasurementSchema {
     pub metadata: MeasurementMetadataSchema,
     pub current_A: f64,
@@ -50,7 +49,7 @@ pub struct BatteryMeasurementSchema {
     pub energy_discharge_kWh: f64,
 }
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct SmartMeterMeasurementSchema {
     pub metadata: MeasurementMetadataSchema,
     pub energy_grid_injection_kWh: f64,
@@ -71,7 +70,7 @@ pub struct SmartMeterMeasurementSchema {
     pub voltage_V_p3: f64,
 }
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct TransformerMeasurementSchema {
     pub metadata: MeasurementMetadataSchema,
     pub energy_kWh: f64,
@@ -90,7 +89,7 @@ pub struct TransformerMeasurementSchema {
     pub voltage_V_p3: f64,
 }
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ForecastSchema {
     pub facility_id: String,
     pub community_uuid: String,
@@ -101,20 +100,20 @@ pub struct ForecastSchema {
 }
 
 /// Differentiates a `MeasurementPoint` between measurements from the field and forecasts.
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum MeasurementPointType {
     Measurement,
     Forecast,
 }
 
 /// Direction of the energy flow relative to the measured asset.
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum FlowDirection {
     Import,
     Export,
 }
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct MeasurementPointSchema {
     #[serde(rename = "type")]
     pub point_type: MeasurementPointType,
@@ -130,7 +129,7 @@ pub struct MeasurementPointSchema {
     pub datasource_name: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct TimeseriesSchema {
     pub measurement_point: String,
     pub timestamp: String,

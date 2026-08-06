@@ -1,7 +1,6 @@
-use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct TariffSchema {
     pub tariff_name: String,
     pub tariff_structure: String,

@@ -9,7 +9,7 @@ path = "src/main.rs"
 name = "gsy-market-orchestrator"
 
 [dependencies]
-gsy-offchain-primitives = { default-features = false, path = "../offchain-primitives" }
+primitives = { path = "../primitives" }
 anyhow = "1"
 blake2-rfc = { version = "0.2.18", default-features = false }
 serde = { version = "1.0", features = ["derive"] }

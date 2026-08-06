@@ -1,19 +1,17 @@
-# Matching Engine client implementation in Rust. 
+# GSY Matching Engine
 
-Ensure that redis is running with ```brew services```.
+The matching engine runs against the EVM/Web3 stack and reads orders from the configured off-chain storage transport.
 
-Run
-```
-gsy-matching-engine-sdk --log-level DEBUG run --setup matching_engine --run-on-redis
-```
+Build the Docker image:
 
-Open another terminal tab. In gsy-e repo, in a virtual environment run
-```
-gsy-e run -t 60s -s 60m --setup matching_engine_setup.external_matching_engine --enable-external-connection --slot-length-realtime 2s
+```sh
+docker build -t matching_engine -f Dockerfile ..
 ```
 
-In a third tab, run
-```
-docker run --rm --name matching_engine matching_engine web2
+Run locally against the default services:
+
+```sh
+docker run --rm --name matching_engine matching_engine web3
 ```
 
+Only the EVM/Web3 command path is supported for local and integration runs.

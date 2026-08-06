@@ -1,7 +1,7 @@
 use crate::helpers::{init_app, stop_app};
 use actix_web::web;
-use gsy_offchain_primitives::db_api_schema::orders::{DbOrderSchema, OrderEnum, OrderStatus};
 use mongodb::bson::{to_bson, Bson};
+use primitives::db_api_schema::orders::{DbOrderSchema, OrderEnum, OrderStatus};
 use std::collections::HashMap;
 
 fn make_order(order_id: &str, market_id: &str, order_type: OrderEnum) -> DbOrderSchema {

@@ -1,7 +1,7 @@
 use crate::db::DbRef;
 use actix_web::{web::Json, web::Query, HttpResponse, Responder};
-use gsy_offchain_primitives::db_api_schema::market::MarketSchema;
-use gsy_offchain_primitives::db_api_schema::trades::{ClearingResultSchema, MarketRoleSchema};
+use primitives::db_api_schema::market::MarketSchema;
+use primitives::db_api_schema::trades::{ClearingResultSchema, MarketRoleSchema};
 use serde::Deserialize;
 
 #[derive(Deserialize)]

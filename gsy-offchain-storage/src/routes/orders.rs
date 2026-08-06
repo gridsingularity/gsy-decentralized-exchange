@@ -2,7 +2,7 @@ use crate::db::DbRef;
 use crate::routes::validate_start_end_time;
 use actix_web::{web::Json, web::Query, HttpResponse, Responder};
 use anyhow::{Error, Result};
-use gsy_offchain_primitives::db_api_schema::orders::{DbOrderSchema, FlexibilityOrderSchema};
+use primitives::db_api_schema::orders::{DbOrderSchema, FlexibilityOrderSchema};
 use serde::Deserialize;
 
 #[tracing::instrument(name = "Adding new orders", skip(db), fields(orders = ?orders))]

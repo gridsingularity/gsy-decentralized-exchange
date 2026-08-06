@@ -1,11 +1,9 @@
 use ethers::{prelude::*, utils::Anvil};
 use ethers_solc::{artifacts::Severity, Project, ProjectPathsConfig};
 use gsy_matching_engine::connectors::evm_connector::send_settle_batch_transaction;
-use gsy_offchain_primitives::db_api_schema::orders::{DbOrderSchema, OrderEnum, OrderStatus};
-use gsy_offchain_primitives::types::{BidOfferMatch, Order};
-use gsy_offchain_primitives::utils::{
-    actor_id_to_account_id, bytes16_to_h256, parse_or_hash_bytes16, NODE_FLOAT_SCALING_FACTOR,
-};
+use gsy_matching_engine::models::{BidOfferMatch, Order};
+use primitives::db_api_schema::orders::{DbOrderSchema, OrderEnum, OrderStatus};
+use primitives::utils::{parse_or_hash_bytes16, NODE_FLOAT_SCALING_FACTOR};
 use std::{collections::HashMap, fs::File, io::Write, sync::Arc};
 use tempfile::TempDir;
 
@@ -150,9 +148,6 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
 
     let bid_actor_id = format!("0x{}", "aa".repeat(16));
     let ask_actor_id = format!("0x{}", "bb".repeat(16));
-    let bid_account_id = actor_id_to_account_id(&bid_actor_id).unwrap();
-    let ask_account_id = actor_id_to_account_id(&ask_actor_id).unwrap();
-
     let bid_order_id = format!("0x{}", "11".repeat(16));
     let ask_order_id = format!("0x{}", "22".repeat(16));
     let market_id = format!("0x{}", "33".repeat(16));
@@ -191,31 +186,31 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
     };
 
     let bid_order = Order {
-        order_id: bytes16_to_h256(parse_or_hash_bytes16(&bid_order_id)),
+        order_id: bid_order_id.clone(),
         order_type: OrderEnum::Bid,
         status: OrderStatus::Open,
-        area_uuid: bytes16_to_h256(parse_or_hash_bytes16(&bid_area)),
-        market_id: bytes16_to_h256(parse_or_hash_bytes16(&market_id)),
+        area_uuid: bid_area.clone(),
+        market_id: market_id.clone(),
         time_slot: 1000,
         creation_time: 900,
         energy: (100.0 * NODE_FLOAT_SCALING_FACTOR) as u64,
         energy_rate: (50.0 * NODE_FLOAT_SCALING_FACTOR) as u64,
-        created_by: bid_account_id,
+        created_by: bid_actor_id.clone(),
         requirements: None,
         attributes: None,
     };
 
     let ask_order = Order {
-        order_id: bytes16_to_h256(parse_or_hash_bytes16(&ask_order_id)),
+        order_id: ask_order_id.clone(),
         order_type: OrderEnum::Offer,
         status: OrderStatus::Open,
-        area_uuid: bytes16_to_h256(parse_or_hash_bytes16(&ask_area)),
-        market_id: bytes16_to_h256(parse_or_hash_bytes16(&market_id)),
+        area_uuid: ask_area.clone(),
+        market_id: market_id.clone(),
         time_slot: 1000,
         creation_time: 900,
         energy: (80.0 * NODE_FLOAT_SCALING_FACTOR) as u64,
         energy_rate: (40.0 * NODE_FLOAT_SCALING_FACTOR) as u64,
-        created_by: ask_account_id,
+        created_by: ask_actor_id.clone(),
         requirements: None,
         attributes: None,
     };
@@ -223,7 +218,7 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
     let selected_energy = (80.0 * NODE_FLOAT_SCALING_FACTOR) as u64;
     let clearing_price = (50.0 * NODE_FLOAT_SCALING_FACTOR) as u64;
     let matches = vec![BidOfferMatch {
-        market_id: bytes16_to_h256(parse_or_hash_bytes16(&market_id)),
+        market_id: market_id.clone(),
         time_slot: 1000,
         bid: bid_order,
         offer: ask_order,

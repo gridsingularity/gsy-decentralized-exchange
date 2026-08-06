@@ -19,7 +19,7 @@ In-scope services for EWDS integration:
 
 Related participant service:
 
-- `gsy-community-client` (writes forecasts, measurements, market topology)
+- `gsy-community-client` (writes forecasts, measurements, and market records)
 
 ## Current Refactored Runtime
 
@@ -157,7 +157,7 @@ Validator requirements:
 
 ## Service Changes Required
 
-### offchain-primitives
+### primitives
 
 - `EwdsClientConfig` resolves gateway, FQCN, topic, client-ID, and polling settings from the environment once when a client is created.
 - `EwdsOperation` maps each query operation to its configured request/response topic pair; callers pass only the operation and query payload.
@@ -190,7 +190,7 @@ Validator requirements:
 
 ### gsy-community-client
 
-- Route topology, forecast, and measurement writes through ontology-aligned off-chain storage APIs.
+- Route facility-topology-derived market, forecast, and measurement writes through ontology-aligned off-chain storage APIs.
 - Keep fallback transport via direct HTTP until cutover is complete.
 
 ## Docker and Local Testing Integration

@@ -1,14 +1,10 @@
+use ::primitives::{
+    constants::GLOBAL_CONSTANTS, log::setup_logging, utils::timestamp_to_datetime_string,
+};
 use clap::Parser;
 use gsy_execution_engine::{
     services::execution_orchestrator::run_execution_cycle,
-    utils::{
-        cli::{Cli, Commands},
-    },
-};
-use gsy_offchain_primitives::{
-    constants::GLOBAL_CONSTANTS,
-    utils::timestamp_to_datetime_string,
-    log::setup_logging
+    utils::cli::{Cli, Commands},
 };
 use std::env;
 use tracing::{error, info};

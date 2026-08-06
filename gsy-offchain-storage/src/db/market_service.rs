@@ -1,10 +1,10 @@
 use crate::db::DatabaseWrapper;
 use anyhow::{bail, Result};
 use futures::StreamExt;
-use gsy_offchain_primitives::db_api_schema::market::MarketSchema;
 use mongodb::bson::doc;
 use mongodb::options::IndexOptions;
 use mongodb::{bson, Collection, IndexModel};
+use primitives::db_api_schema::market::MarketSchema;
 use std::ops::Deref;
 
 pub async fn init_markets(db: &DatabaseWrapper) -> Result<()> {

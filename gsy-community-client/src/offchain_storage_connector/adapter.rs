@@ -1,12 +1,12 @@
 use crate::time_utils::get_current_timestamp_in_secs;
 use blake2_rfc::blake2b::blake2b;
-use gsy_offchain_primitives::db_api_schema::market::MarketSchema;
-use gsy_offchain_primitives::db_api_schema::profiles::{
+use primitives::db_api_schema::market::MarketSchema;
+use primitives::db_api_schema::profiles::{
     FlowDirection, ForecastSchema, MeasurementPointSchema, MeasurementPointType, MeasurementSchema,
     TimeseriesSchema,
 };
-use gsy_offchain_primitives::utils::timestamp_to_string_with_padding;
-use gsy_offchain_primitives::{MarketType, MatchingAlgorithm};
+use primitives::utils::timestamp_to_string_with_padding;
+use primitives::{MarketType, MatchingAlgorithm};
 use reqwest::Client;
 use std::env;
 use tracing::info;
