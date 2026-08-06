@@ -1,11 +1,11 @@
-use ::primitives::constants::GLOBAL_CONSTANTS;
-use ::primitives::db_api_schema::{
+use anyhow::{anyhow, Result};
+use primitives::constants::GLOBAL_CONSTANTS;
+use primitives::db_api_schema::{
     profiles::{MeasurementPointSchema, MeasurementSchema, TimeseriesSchema},
     trades::TradeSchema,
 };
-use ::primitives::ewds::{query_via_ewds, EwdsOperation, EwdsQueryRequest};
-use ::primitives::utils::timestamp_to_string_with_padding;
-use anyhow::{anyhow, Result};
+use primitives::ewds::{EwdsClient, EwdsOperation};
+use primitives::utils::timestamp_to_string_with_padding;
 use reqwest::Client;
 use std::collections::HashMap;
 use std::env;
@@ -125,32 +125,19 @@ async fn fetch_trades_and_measurements_via_ewds(
         "startTime": start_time,
         "endTime": end_time
     });
+    let ewds_client = EwdsClient::from_env(
+        "EWDS_EXECUTION_ENGINE_CLIENT_ID",
+        "gsyexecutionengine",
+        8_000,
+    );
 
-    let trades: Vec<TradeSchema> = query_via_ewds(EwdsQueryRequest {
-        operation: EwdsOperation::TradesQuery,
-        query_payload: query.clone(),
-        request_topic_env: "EWDS_TRADES_REQUEST_TOPIC",
-        request_topic_default: "tradesQuery",
-        response_topic_env: "EWDS_TRADES_RESPONSE_TOPIC",
-        response_topic_default: "tradesQueryResponse",
-        response_client_id_env: "EWDS_EXECUTION_ENGINE_CLIENT_ID",
-        response_client_id_default: "gsyexecutionengine",
-        timeout_ms_default: 8_000,
-    })
-    .await?;
+    let trades: Vec<TradeSchema> = ewds_client
+        .query(EwdsOperation::TradesQuery, query.clone())
+        .await?;
 
-    let measurements: Vec<MeasurementSchema> = query_via_ewds(EwdsQueryRequest {
-        operation: EwdsOperation::MeasurementsQuery,
-        query_payload: query,
-        request_topic_env: "EWDS_MEASUREMENTS_REQUEST_TOPIC",
-        request_topic_default: "measurementsQuery",
-        response_topic_env: "EWDS_MEASUREMENTS_RESPONSE_TOPIC",
-        response_topic_default: "measurementsQueryResponse",
-        response_client_id_env: "EWDS_EXECUTION_ENGINE_CLIENT_ID",
-        response_client_id_default: "gsyexecutionengine",
-        timeout_ms_default: 8_000,
-    })
-    .await?;
+    let measurements: Vec<MeasurementSchema> = ewds_client
+        .query(EwdsOperation::MeasurementsQuery, query)
+        .await?;
 
     Ok((trades, measurements))
 }
