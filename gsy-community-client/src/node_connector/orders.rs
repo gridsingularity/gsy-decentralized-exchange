@@ -11,7 +11,6 @@ use primitives::utils::{
 };
 use std::str::FromStr;
 use tracing::{info, warn};
-use primitives::ewds::{get_onchain_id_via_ewds};
 use uuid::Uuid;
 
 const BID_RATE: f64 = 0.3;
@@ -55,7 +54,6 @@ pub async fn publish_orders(
     let signer_address = wallet.address();
 
     let input_orders = create_input_orders(forecasts, market, signer_address).await?;
-    eprintln!("input_orders {:?}", input_orders);
     if input_orders.is_empty() {
         info!("No orders to publish for this cycle");
         return Ok(());
@@ -141,17 +139,12 @@ async fn build_order_param(
     let rate_multiplier = if is_bid { BID_RATE } else { OFFER_RATE };
     let offchain_order_id = Uuid::new_v4().to_string();
     let onchain_order_id = create_encrypted_bytes16_from_string(&offchain_order_id);
-    let onchain_facility_id = get_onchain_id_via_ewds(
-        facility_id.to_string(),
-    ).await?;
-    let onchain_facility_id_bytes = parse_uuid_or_hex_bytes16(
-        &onchain_facility_id)
-        .expect("could not convert hex to bytes");
+    let onchain_facility_id = create_encrypted_bytes16_from_string(facility_id);
     let delivery_start: u64 =
         string_to_timestamp(&market.delivery_start_time).expect("invalid delivery_start_time");
     Ok((
         onchain_order_id,
-        onchain_facility_id_bytes,
+        onchain_facility_id,
         parse_uuid_or_hex_bytes16(market.market_id.as_str())
             .expect("could not convert hex to bytes"),
         delivery_start,

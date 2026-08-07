@@ -1,5 +1,8 @@
 use primitives::db_api_schema::{profiles::MeasurementSchema, trades::TradeSchema};
-use primitives::utils::{bytes16_to_hex, parse_or_hash_bytes16};
+use primitives::utils::{
+    bytes16_to_hex,
+    create_encrypted_bytes16_from_string
+};
 use std::collections::HashMap;
 
 #[derive(Debug)]
@@ -34,14 +37,11 @@ pub fn compute_penalties(
 ) -> Vec<Penalty> {
     let mut penalties = Vec::new();
 
-    // Measurements are keyed by facility ids in the Intelligent profile layer, while EVM trades
-    // reference actor/facility ids as bytes16 hex. Store both forms so the execution runtime can
-    // bridge the two representations.
+    // Convert human readable facility_ids in the measurements to their on-chain representation
     let mut measurement_map: HashMap<String, f64> = HashMap::new();
     for meas in measurements {
-        measurement_map.insert(meas.facility_id.clone(), meas.energy_kwh);
         measurement_map.insert(
-            bytes16_to_hex(parse_or_hash_bytes16(meas.facility_id.as_str())),
+            bytes16_to_hex(create_encrypted_bytes16_from_string(meas.facility_id.as_str())),
             meas.energy_kwh,
         );
     }
@@ -98,10 +98,15 @@ mod tests {
         profiles::MeasurementSchema,
         trades::{TradeParameters, TradeSchema, TradeStatus},
     };
-    use primitives::utils::{bytes16_to_hex, parse_or_hash_bytes16};
+    use primitives::utils::{
+        bytes16_to_hex,
+        create_encrypted_bytes16_from_string
+    };
 
     fn order(order_id: &str, facility_id: &str, is_bid: bool) -> DbOrderSchema {
-        let actor_id = bytes16_to_hex(parse_or_hash_bytes16(facility_id));
+        let actor_id = bytes16_to_hex(
+            create_encrypted_bytes16_from_string(facility_id)
+        );
         DbOrderSchema {
             order_id: order_id.to_string(),
             status: OrderStatus::Executed,
@@ -140,6 +145,8 @@ mod tests {
             bid_hash: "bid-1".to_string(),
             residual_offer: None,
             residual_bid: None,
+            residual_offer_id: None,
+            residual_bid_id: None,
             parameters: TradeParameters {
                 selected_energy_kWh: 10.0,
                 energy_rate: 1.0,
@@ -163,7 +170,7 @@ mod tests {
         assert_eq!(penalties[0].penalty_cost, 2_000);
         assert_eq!(
             penalties[0].penalized_account,
-            bytes16_to_hex(parse_or_hash_bytes16("areaalice"))
-        );
+            bytes16_to_hex(
+                create_encrypted_bytes16_from_string("areaalice")));
     }
 }

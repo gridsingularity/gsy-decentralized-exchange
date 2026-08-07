@@ -12,8 +12,7 @@ use primitives::utils::{
     create_encrypted_bytes16_from_string,
     NODE_FLOAT_SCALING_FACTOR,
     parse_uuid_or_hex_bytes16,
-    parse_or_hash_bytes16,
-    bytes16_to_hex
+    bytes16_to_hex,
 };
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -659,7 +658,7 @@ async fn verify_penalties_on_chain(world: &mut MyWorld) {
     let trade_settlement =
         TradeSettlementContract::new(world.trade_settlement_address, world.provider.clone());
 
-    let trade_id = parse_or_hash_bytes16(trade.trade_uuid.as_str());
+    let trade_id = parse_uuid_or_hex_bytes16(trade.trade_uuid.as_str()).expect("REASON");
 
     for attempt in 0..60 {
         let penalty = trade_settlement

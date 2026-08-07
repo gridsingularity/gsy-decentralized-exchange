@@ -1453,6 +1453,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid 1.24.0",
 ]
 
 [[package]]
@@ -2288,6 +2289,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid 1.24.0",
 ]
 
 [[package]]
@@ -2344,13 +2346,12 @@ name = "gsy-matching-engine"
 version = "0.2.0"
 dependencies = [
  "anyhow",
- "chrono",
  "clap",
  "ethers",
  "ethers-solc",
  "primitives",
+ "rand 0.8.7",
  "reqwest 0.11.27",
- "serde",
  "serde_json",
  "tempfile",
  "tokio",
@@ -4244,10 +4245,10 @@ dependencies = [
  "chrono",
  "hex",
  "once_cell",
- "rand 0.8.7",
  "reqwest 0.11.27",
  "serde",
  "serde_json",
+ "thiserror 2.0.19",
  "tokio",
  "tracing",
  "tracing-bunyan-formatter",

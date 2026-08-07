@@ -1,4 +1,4 @@
-use ::primitives::utils::parse_or_hash_bytes16;
+use ::primitives::utils::parse_uuid_or_hex_bytes16;
 use ethers::{prelude::*, utils::Anvil};
 use ethers_solc::{artifacts::Severity, Project, ProjectPathsConfig};
 use gsy_execution_engine::{
@@ -147,8 +147,8 @@ async fn test_submit_penalties_persists_to_trade_settlement_contract() {
     .unwrap();
 
     let mock_contract = MockTradeSettlement::new(contract_address, client.clone());
-    let expected_trade_id = parse_or_hash_bytes16(trade_uuid);
-    let expected_actor_id = parse_or_hash_bytes16(&penalized);
+    let expected_trade_id = parse_uuid_or_hex_bytes16(trade_uuid).expect("Failed to parse uuid");
+    let expected_actor_id = parse_uuid_or_hex_bytes16(&penalized).expect("Failed to parse uuid");
 
     assert_eq!(
         mock_contract

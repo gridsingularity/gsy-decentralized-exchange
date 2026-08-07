@@ -1,6 +1,5 @@
-use crate::connectors::evm_contracts::TradeSettlementContract;
 use crate::primitives::penalty_calculator::Penalty;
-use ::primitives::utils::parse_or_hash_bytes16;
+use ::primitives::utils::parse_uuid_or_hex_bytes16;
 use anyhow::{anyhow, Result};
 use ethers::prelude::*;
 use ethers::utils::keccak256;
@@ -27,9 +26,10 @@ fn to_evm_penalties(penalties: Vec<Penalty>) -> Vec<EvmPenaltyTuple> {
             }
 
             Some((
-                parse_or_hash_bytes16(&penalty.penalized_account),
-                parse_or_hash_bytes16(&penalty.market_id),
-                parse_or_hash_bytes16(&penalty.trade_uuid),
+                parse_uuid_or_hex_bytes16(&penalty.penalized_account)
+                    .expect("failed to parse uuid"),
+                parse_uuid_or_hex_bytes16(&penalty.market_id).expect("failed to parse uuid"),
+                parse_uuid_or_hex_bytes16(&penalty.trade_uuid).expect("failed to parse uuid"),
                 penalty.penalty_cost,
             ))
         })

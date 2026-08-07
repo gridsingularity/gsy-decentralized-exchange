@@ -43,21 +43,6 @@ pub fn parse_uuid_or_hex_bytes16(value: &str) -> Option<[u8; 16]> {
     decoded.try_into().ok()
 }
 
-pub fn parse_or_hash_bytes16(value: &str) -> [u8; 16] {
-    if let Some(parsed) = parse_uuid_or_hex_bytes16(value) {
-        return parsed;
-    }
-
-    let mut hash = [0u8; 32];
-    let mut hasher = Blake2bVar::new(32).expect("valid Blake2b output size");
-    hasher.update(value.as_bytes());
-    hasher
-        .finalize_variable(&mut hash)
-        .expect("valid Blake2b output buffer");
-    hash[0..16]
-        .try_into()
-        .expect("blake2 hash prefix is 16 bytes")
-}
 pub fn create_encrypted_bytes16_from_string(input_string: &str) -> [u8; 16] {
     let mut hash = [0u8; 16];
     let mut hasher = Blake2bVar::new(16).expect("valid Blake2b output size");

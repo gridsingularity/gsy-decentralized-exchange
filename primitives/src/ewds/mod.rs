@@ -6,7 +6,6 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use std::{env, fmt, time::Instant};
 use tokio::time::{sleep, Duration};
-use crate::db_api_schema::ids::IdMappingSchema;
 
 const DEFAULT_GATEWAY_URL: &str = "http://ewds-gateway-api:3333";
 const DEFAULT_REQUEST_FQCN: &str = "gsy.intelligent.requests.pub";
@@ -412,30 +411,6 @@ fn env_u64_or(key: &str, default: u64) -> u64 {
         .and_then(|value| value.parse::<u64>().ok())
         .unwrap_or(default)
 }
-
-pub async fn get_onchain_id_via_ewds(
-    offchain_id: String,
-) -> Result<String> {
-    let query_payload = serde_json::json!({
-        "offchain_id": offchain_id,
-    });
-    let ewds_client = EwdsClient::from_env(
-        "EWDS_ID_CLIENT_ID", // todo
-        "gsydex", // todo
-        60_000,
-    );
-    eprintln!("get_onchain_id_via_ewds{}", query_payload); // todo remove
-    let ids: Vec<IdMappingSchema> = ewds_client
-        .query(EwdsOperation::IdsQuery, query_payload)
-        .await?;
-    eprintln!("get_onchain_id_via_ewds return value: {:?}", ids);  // todo remove
-    let result = match ids.len() {
-        1 => ids.into_iter().next().unwrap().onchain_id,
-        n => anyhow::bail!("expected exactly one result, got {n}"),
-    };
-    Ok(result)
-}
-
 
 #[cfg(test)]
 mod tests {
