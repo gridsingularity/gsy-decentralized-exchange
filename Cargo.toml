@@ -1,0 +1,16 @@
+[workspace]
+resolver = "3"
+
+members = [
+    "primitives",
+    "gsy-community-client",
+    "gsy-execution-engine",
+    "gsy-market-orchestrator",
+    "gsy-matching-engine",
+    "gsy-offchain-storage",
+    "e2e-tests",
+]
+
+exclude = [
+    "gsy-contracts",
+]
