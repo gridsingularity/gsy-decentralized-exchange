@@ -274,22 +274,32 @@ paths:
   /guarantees-of-origin-measurements:
     get:
       tags: [analytics]
-      summary: Settled trades for guarantees-of-origin reporting
+      summary: Energy share digital certificate records
       description: |
-        Returns the settled energy trades across all communities, shaped for
-        guarantees-of-origin reporting. Each entry carries the traded energy,
-        the buyer and seller account ids, the energy community, the delivery
-        time slot and the (earlier) trade time, and the market the energy was
-        traded in. In FEDECOM trading precedes delivery — trades are matched on
-        forecasts rather than measurements — so `energy_trade_timestamp`
-        precedes `energy_delivery_timestamp`. The optional time bounds restrict
-        the delivery `time_slot` window (inclusive).
+        Returns the energy share digital certificate records of the pilot site,
+        as specified by D6.6 Annex A (*Energy Share Digital Certificate Data
+        Schema and Pilot Configuration*). Each entry is one record covering one
+        fifteen-minute interval, either a `local_origin_record` issued against
+        metered generation of a production asset, or a
+        `flexibility_activation_record` issued against a metered dispatch of a
+        storage or controllable thermal asset. The optional time bounds restrict
+        the `interval_start` window (inclusive), matching the
+        `source_slot_timestamp` received from the GSY DEX.
+
+        Records are appended and never amended; a correction is effected by
+        issuing a replacement record, the replaced record acquiring a terminal
+        status and being retained.
+
+        > **Note.** This documents the Annex A target schema. The deployed
+        > service still returns the previous settled-trade shape
+        > (`LegacyGuaranteesOfOriginSchema`); the endpoint implementation is to
+        > be migrated separately.
       operationId: getGuaranteesOfOrigin
       parameters:
         - name: start_time
           in: query
           required: false
-          description: Lower bound (inclusive) for the delivery `time_slot`, in unix seconds.
+          description: Lower bound (inclusive) for the record `interval_start`, in unix seconds.
           schema:
             type: integer
             format: int32
@@ -297,20 +307,171 @@ paths:
         - name: end_time
           in: query
           required: false
-          description: Upper bound (inclusive) for the delivery `time_slot`, in unix seconds.
+          description: Upper bound (inclusive) for the record `interval_start`, in unix seconds.
           schema:
             type: integer
             format: int32
             minimum: 0
       responses:
         '200':
-          description: Matching settled trades (possibly empty).
+          description: Matching certificate records (possibly empty).
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/GuaranteesOfOriginSchema'
+                  $ref: '#/components/schemas/CertificateRecord'
+              examples:
+                localOriginIntraCommunityRetained:
+                  summary: Local origin record, intra-community, attribute retained (Annex A.6.1)
+                  description: |
+                    Every attribute of the schema is shown populated so that the type of
+                    each is illustrated, including the conditional (C) and reserved (R)
+                    attributes. On a real record the conditions of Annex A.5 apply: the
+                    reserved attributes are not populated in the proof of concept, the two
+                    cancellation attributes are carried only where `attribute_mode` is
+                    `retired_official`, and `charge_record_reference` only where
+                    `storage_mediated_flag` is true.
+                  value:
+                    - identity:
+                        record_id: ch-aem-lic-goo-poc:2026-05:LIC01PV:000871
+                        record_type: local_origin_record
+                        schema_version: 1.0.0
+                        site_id: ch-aem-lic-goo-poc
+                        issuing_party_id: did:example:aem
+                        issuance_timestamp: '2026-09-04T09:12:44+02:00'
+                        content_hash: '0xd3a107'
+                      time_and_quantity:
+                        interval_start: '2026-05-14T12:30:00+02:00'
+                        interval_end: '2026-05-14T12:45:00+02:00'
+                        interval_duration_s: 900
+                        source_slot_timestamp: 1778754600
+                        energy_quantity: 3.85
+                        energy_unit: kWh
+                        rounding_rule: half_up_2dp
+                        loss_adjustment: 0.00
+                      production_asset:
+                        production_asset_id: LIC01PV
+                        asset_registry_reference: ch-go-registry:asset:0002871
+                        metering_point_id: CH1018601234500000000000000000001
+                        asset_class: PV
+                        rated_power:
+                          value: 27.29
+                          unit: kW
+                      location:
+                        municipality_code: '5226'
+                        grid_operator_id: AEM
+                        grid_level: 7
+                        community_id_origin: LugaggiaInnovationCommunity
+                        community_id_consumption: LugaggiaInnovationCommunity
+                        delivery_scope: intra_community
+                      measurement_provenance:
+                        measurement_id: LIC:LIC01:e_generation
+                        measuring_sensor_id: LIC01SmartMeter
+                        property_measured: measurement#active_energy
+                        flow_direction: export
+                        data_provider_id: did:example:aem-metering
+                        data_completeness: complete
+                        data_record_class: measurement
+                        source_of_record: operator_validated
+                      attribute_provenance:
+                        attribute_mode: not_marketed
+                        support_scheme_status: one_off_payment
+                        official_cancellation_reference: ch-go-registry:2026:cancellation:0004417
+                        disclosure_year_affected: 2026
+                        claim_permitted: true
+                        bundling_status: bundled
+                        storage_mediated_flag: false
+                        uniqueness_control_reference: recon:2026-05:lic:run3
+                        permitted_claim_text_id: it-CH-local-origin-01
+                      beneficiary_and_claim:
+                        owner_id: lic-member-014
+                        consumption_metering_point_id: lic-mp-014
+                        facility_id: LICHouse9
+                        claim_holder_id: lic-member-014
+                        retirement_timestamp: '2026-09-04T09:12:45+02:00'
+                        claim_period: 2026-05
+                      trade_and_delivery:
+                        trade_reference:
+                          - 3f7c1e9a-5b2d-4c81-9f0a-6d4e2b8a1c37
+                          - c81a4d6b-9e73-4f25-b0c8-27a5f1d93e60
+                        trade_hash:
+                          - '0x3c9e11a4f8b27d5e6c0193ab74df82e5b1c6a09f3d7e48521bc9fa06e37d4b81'
+                          - '0x77ab02c5d9e1483f7620ba5cd8e094172f3a6b8d05e9c71426fd83a09b5e7c12'
+                        trade_status_at_issuance: delivery_verified
+                        delivery_verification_reference: exec:2026-05-14:slot50
+                        charge_record_reference: ch-aem-lic-goo-poc:2026-05:LIC02DBATT:000318
+                      lifecycle:
+                        status: retired
+                        status_timestamp: '2026-09-04T09:12:45+02:00'
+                attributeTransferredToThirdParty:
+                  summary: Attribute transferred to a third party, no claim carried (Annex A.6.2, abbreviated)
+                  description: |
+                    The volume was generated and delivered locally but the attribute was
+                    sold, so the record is issued for traceability and carries no
+                    environmental claim. Only the attributes that differ are shown; the
+                    remainder are as in Annex A.6.1.
+                  value:
+                    - identity:
+                        record_id: ch-aem-lic-goo-poc:2026-05:LICHouse3PV:001204
+                        record_type: local_origin_record
+                      time_and_quantity:
+                        energy_quantity: 1.42
+                      production_asset:
+                        production_asset_id: LICHouse3PV
+                      location:
+                        delivery_scope: intra_community
+                      attribute_provenance:
+                        attribute_mode: sold_external
+                        claim_permitted: false
+                        permitted_claim_text_id: it-CH-local-delivery-only-01
+                      beneficiary_and_claim:
+                        owner_id: lic-member-007
+                      trade_and_delivery:
+                        trade_reference:
+                          - 3f7c1e9a-5b2d-4c81-9f0a-6d4e2b8a1c37
+                          - c81a4d6b-9e73-4f25-b0c8-27a5f1d93e60
+                        trade_status_at_issuance: delivery_verified
+                      lifecycle:
+                        status: issued
+                flexibilityActivationStorageDischarge:
+                  summary: Flexibility activation record, storage discharge (Annex A.6.3, abbreviated)
+                  description: |
+                    Attribution of the discharge to a local renewable charge is not
+                    assured, so no claim is carried and no local origin record is issued
+                    for the volume. Groups not shown are populated as in Annex A.6.1.
+                  value:
+                    - identity:
+                        record_id: ch-aem-lic-goo-poc:2026-05:LIC02DBATT:000335
+                        record_type: flexibility_activation_record
+                      time_and_quantity:
+                        interval_start: '2026-05-14T19:15:00+02:00'
+                        interval_end: '2026-05-14T19:30:00+02:00'
+                        energy_quantity: 6.10
+                        energy_unit: kWh
+                        loss_adjustment: 0.42
+                      activation_asset:
+                        asset_id: LIC02DBATT
+                        asset_class: Battery
+                      activation:
+                        activation_direction: discharge
+                        instruction_reference: dispatch:2026-05-14:slot78
+                        instruction_source: aem-control-service
+                        delivery_verified: true
+                      location:
+                        community_id_origin: LugaggiaInnovationCommunity
+                      measurement_provenance:
+                        measurement_id: LIC:LIC02:e_discharge
+                        data_completeness: complete
+                        source_of_record: operator_validated
+                      attribute_provenance:
+                        storage_mediated_flag: true
+                        claim_permitted: false
+                      trade_and_delivery:
+                        delivery_verification_reference: exec:2026-05-14:slot78
+                        charge_record_reference: ch-aem-lic-goo-poc:2026-05:LIC02DBATT:000318
+                      lifecycle:
+                        status: issued
         '400':
           description: Query parameter has an invalid type (e.g. non-integer time bound).
         '500':
@@ -833,13 +994,733 @@ components:
           type: number
           format: double
           description: Measured energy (kWh).
-    GuaranteesOfOriginSchema:
+    CertificateRecord:
+      description: |
+        One energy share digital certificate record, as specified by D6.6
+        Annex A. Two record types are defined within a single schema family; the
+        distinction reflects that guarantees of origin attach to metered
+        generation, whereas a storage or thermal asset does not generate
+        electricity and its output derives from an earlier charge.
+
+        The attributes are grouped into one nested object per section of
+        Annex A.3: `identity` (A.3.1), `time_and_quantity` (A.3.2), the asset
+        block (A.3.3, which differs by record type), `location` (A.3.4),
+        `measurement_provenance` (A.3.5), `attribute_provenance` (A.3.6),
+        `beneficiary_and_claim` (A.3.7), `trade_and_delivery` (A.3.8) and
+        `lifecycle` (A.3.9).
+
+        Obligations quoted from Annex A.3 are **M** (mandatory), **C**
+        (conditional on the stated circumstance) and **R** (reserved, defined in
+        the schema but not populated in the proof of concept). A record is not
+        issued where a mandatory attribute is absent or fails validation. A group
+        whose attributes are all conditional is itself optional; a group holding
+        at least one mandatory attribute is required.
+
+        The two record types are told apart by their asset block:
+        `production_asset` for a local origin record, `activation_asset` and
+        `activation` for a flexibility activation record. No OpenAPI
+        `discriminator` is declared because `record_type` sits within
+        `identity`, and a discriminator property must be at the root of the
+        payload.
+
+        **Validation rules applied at issuance (Annex A.5).** Attribute names
+        below are given as paths within the nested structure.
+        1. `time_and_quantity.interval_end` exceeds
+           `time_and_quantity.interval_start`, and the difference equals
+           `time_and_quantity.interval_duration_s`.
+        2. `time_and_quantity.source_slot_timestamp` corresponds to
+           `time_and_quantity.interval_start`; a timestamp that does not fall on
+           an interval boundary is rejected.
+        3. Issuance is rejected where
+           `measurement_provenance.data_record_class` is `forecast`.
+        4. Issuance is rejected where `measurement_provenance.data_completeness`
+           is `incomplete`.
+        5. Issuance is rejected where
+           `attribute_provenance.support_scheme_status` indicates feed-in tariff
+           participation, where that attribute is populated.
+        6. `attribute_provenance.claim_permitted` is false where
+           `attribute_provenance.attribute_mode` is `sold_external`, and
+           `attribute_provenance.permitted_claim_text_id` resolves to a
+           statement of local delivery carrying no environmental claim.
+        7. `attribute_provenance.official_cancellation_reference` and
+           `attribute_provenance.disclosure_year_affected` are present and
+           resolvable where `attribute_provenance.attribute_mode` is
+           `retired_official`.
+        8. For a storage asset class, `attribute_provenance.claim_permitted` is
+           false.
+        9. Where `attribute_provenance.storage_mediated_flag` is true,
+           `time_and_quantity.loss_adjustment` is present and greater than zero,
+           and `trade_and_delivery.charge_record_reference` identifies the record
+           transferred at charge.
+        10. Where `location.delivery_scope` is `intra_community`,
+            `location.community_id_origin` equals
+            `location.community_id_consumption`; where it is `inter_community`,
+            the two differ.
+        11. Where `trade_and_delivery.trade_reference` entries are present,
+            `trade_and_delivery.trade_status_at_issuance` is
+            `delivery_verified`.
+        12. `time_and_quantity.energy_quantity` derives from the measurement and
+            not from any traded quantity. A financial penalty arising from
+            deviation does not alter an issued record.
+        13. The sum of `time_and_quantity.energy_quantity` across all records for
+            a given `production_asset.production_asset_id` and settlement period
+            does not exceed the metered generation for that asset in the period,
+            less energy charged by storage in that period. Volumes transferred to
+            a storage asset owner are counted once, at issuance, and not again
+            upon discharge. The settlement cycle is a calendar month
+            (Annex A.1); the settlement period a record belongs to is derived
+            from `time_and_quantity.interval_start`.
+        14. The reconciliation under rule 13 is executed once across the records
+            of all participating communities for the settlement period, rather
+            than separately for each community.
+        15. Where the reconciliation fails, the outputs for the period are
+            withheld for the communities affected until it succeeds.
+        16. A `flexibility_activation_record` does not carry
+            `attribute_provenance.claim_permitted` as true under any
+            circumstance.
+      oneOf:
+        - $ref: '#/components/schemas/LocalOriginRecord'
+        - $ref: '#/components/schemas/FlexibilityActivationRecord'
+    LocalOriginRecord:
+      description: |
+        Record issued against metered generation in one interval, against the
+        production asset and to its owner. An environmental claim is permitted,
+        subject to applicable regulation. Applicable to production assets
+        (Annex A.1). Identified by the presence of the `production_asset` group.
+      allOf:
+        - $ref: '#/components/schemas/CertificateRecordCommon'
+        - type: object
+          required: [production_asset]
+          properties:
+            production_asset:
+              $ref: '#/components/schemas/ProductionAsset'
+    FlexibilityActivationRecord:
+      description: |
+        Record issued against metered energy dispatch in one interval against a
+        recorded instruction. No environmental claim is asserted. Applicable to
+        storage and controllable thermal assets; a storage discharge
+        additionally completes the two-step path of the local origin record
+        transferred at charge (Annex A.1). Identified by the presence of the
+        `activation_asset` and `activation` groups.
+      allOf:
+        - $ref: '#/components/schemas/CertificateRecordCommon'
+        - type: object
+          required: [activation_asset, activation]
+          properties:
+            activation_asset:
+              $ref: '#/components/schemas/ActivationAsset'
+            activation:
+              $ref: '#/components/schemas/FlexibilityActivation'
+            attribute_provenance:
+              type: object
+              description: |
+                Narrows `AttributeProvenance` for this record type: a flexibility
+                activation record never carries a claim (Annex A.5, rule 16).
+              properties:
+                claim_permitted:
+                  type: boolean
+                  enum: [false]
+                  description: |
+                    Obligation M, derived. Always false on a flexibility
+                    activation record.
+    CertificateRecordCommon:
       type: object
       description: |
-        A single settled energy trade, as reported by the guarantees-of-origin
-        endpoint. In FEDECOM energy is traded ahead of delivery (matching runs
-        on forecasts), so `energy_trade_timestamp` precedes
-        `energy_delivery_timestamp`.
+        Attribute groups common to both record types. The pilot-instance
+        parameters of Annex A.1 that every record references (`site_id`,
+        `interval_duration_s`, `energy_unit`, `rounding_rule`,
+        `grid_operator_id`, `municipality_code`) are carried on the record
+        itself, within the group they belong to.
+      required:
+        - identity
+        - time_and_quantity
+        - location
+        - measurement_provenance
+        - attribute_provenance
+        - beneficiary_and_claim
+        - lifecycle
+      properties:
+        identity:
+          $ref: '#/components/schemas/RecordIdentity'
+        time_and_quantity:
+          $ref: '#/components/schemas/RecordTimeAndQuantity'
+        location:
+          $ref: '#/components/schemas/RecordLocation'
+        measurement_provenance:
+          $ref: '#/components/schemas/MeasurementProvenance'
+        attribute_provenance:
+          $ref: '#/components/schemas/AttributeProvenance'
+        beneficiary_and_claim:
+          $ref: '#/components/schemas/BeneficiaryAndClaim'
+        trade_and_delivery:
+          allOf:
+            - $ref: '#/components/schemas/TradeAndDeliveryReference'
+          nullable: true
+          description: |
+            Annex A.3.8. Every attribute of the group is conditional, so the
+            group as a whole is absent on a record carrying no trade or delivery
+            reference.
+        lifecycle:
+          $ref: '#/components/schemas/RecordLifecycle'
+    RecordIdentity:
+      type: object
+      description: Annex A.3.1 — identity and version of the record.
+      required:
+        - record_id
+        - record_type
+        - schema_version
+        - issuing_party_id
+        - issuance_timestamp
+        - content_hash
+      properties:
+        record_id:
+          type: string
+          description: Obligation M. Unique within the scheme. Immutable.
+          example: ch-aem-lic-goo-poc:2026-05:LIC01PV:000871
+        record_type:
+          $ref: '#/components/schemas/RecordType'
+        schema_version:
+          type: string
+          pattern: '^\d+\.\d+\.\d+$'
+          description: |
+            Obligation M. Semantic version under which the record was issued.
+            The version increments upon any change to a mandatory attribute, an
+            enumeration or a validation rule; records remain valid under the
+            version in force at issuance.
+          example: 1.0.0
+        site_id:
+          type: string
+          description: |
+            Identifier of the pilot instance under which the record was issued,
+            immutable for the pilot (Annex A.1).
+          example: ch-aem-lic-goo-poc
+        issuing_party_id:
+          type: string
+          description: |
+            Obligation M. DID of the issuing party (the scheme owner, the
+            distribution system operator AEM for the pilot). Rendered as
+            `issuing_party` in the Annex A.6 worked examples.
+          example: did:example:aem
+        issuance_timestamp:
+          type: string
+          format: date-time
+          description: Obligation M. ISO 8601 with offset.
+        content_hash:
+          type: string
+          description: |
+            Obligation M. Hex digest over the canonical serialisation of the
+            mandatory attributes.
+          example: '0xd3a107'
+    RecordTimeAndQuantity:
+      type: object
+      description: Annex A.3.2 — delivery interval and energy quantity.
+      required:
+        - interval_start
+        - interval_end
+        - interval_duration_s
+        - source_slot_timestamp
+        - energy_quantity
+        - energy_unit
+        - rounding_rule
+      properties:
+        interval_start:
+          type: string
+          format: date-time
+          description: Obligation M. Inclusive. ISO 8601 with offset.
+        interval_end:
+          type: string
+          format: date-time
+          description: Obligation M. Exclusive. ISO 8601 with offset.
+        interval_duration_s:
+          type: integer
+          description: |
+            Obligation M. Length of the delivery interval in seconds; 900
+            (fifteen minutes) for the pilot (Annex A.1).
+          example: 900
+        source_slot_timestamp:
+          type: integer
+          format: int64
+          minimum: 0
+          description: |
+            Obligation M. Unix timestamp of the start of the delivery period, as
+            received from the GSY DEX (`time_slot`). Corresponds to
+            `interval_start`.
+          example: 1778754600
+        energy_quantity:
+          type: number
+          format: double
+          minimum: 0
+          exclusiveMinimum: true
+          description: |
+            Obligation M. Positive and non-zero, expressed in `energy_unit` and
+            rounded per `rounding_rule`. Derived from the measurement and not
+            from any traded quantity (Annex A.5, rule 12).
+          example: 3.85
+        energy_unit:
+          $ref: '#/components/schemas/EnergyUnit'
+        rounding_rule:
+          type: string
+          description: |
+            Obligation M. Rounding applied to `energy_quantity`, constant within
+            a settlement version; `half_up_2dp` for the pilot (Annex A.1).
+          example: half_up_2dp
+        loss_adjustment:
+          type: number
+          format: double
+          nullable: true
+          description: |
+            Obligation C. Battery loss deducted where the volume was mediated by
+            storage; applied at retirement following discharge. Present and
+            greater than zero where `attribute_provenance.storage_mediated_flag`
+            is true.
+    ProductionAsset:
+      type: object
+      description: |
+        Annex A.3.3 — the production asset a local origin record is issued
+        against.
+      required: [production_asset_id, asset_class]
+      properties:
+        production_asset_id:
+          type: string
+          description: |
+            Obligation M. Project ontology individual of the production asset,
+            for example `LIC01PV`.
+          example: LIC01PV
+        asset_registry_reference:
+          type: string
+          nullable: true
+          description: |
+            Obligation C. National registry reference. Mandatory where
+            `attribute_provenance.attribute_mode` is `retired_official`.
+        metering_point_id:
+          type: string
+          nullable: true
+          description: |
+            Obligation C. Metering point from which the volume derives. Absent
+            on records issued at community or pilot site level.
+        asset_class:
+          $ref: '#/components/schemas/AssetClass'
+        rated_power:
+          allOf:
+            - $ref: '#/components/schemas/RatedPower'
+          nullable: true
+          description: |
+            Obligation C. Rating and unit as held in the asset register. Absent
+            where the asset register does not record a rating for the asset.
+    ActivationAsset:
+      type: object
+      description: |
+        Annex A.3.3 as applied to a flexibility activation record — the storage
+        or controllable thermal asset that was dispatched.
+      required: [asset_id, asset_class]
+      properties:
+        asset_id:
+          type: string
+          description: |
+            Project ontology individual of the dispatched asset, for example
+            `LIC02DBATT`.
+          example: LIC02DBATT
+        asset_class:
+          $ref: '#/components/schemas/AssetClass'
+        metering_point_id:
+          type: string
+          nullable: true
+          description: |
+            Obligation C. Metering point from which the volume derives. Absent
+            on records issued at community or pilot site level.
+        rated_power:
+          allOf:
+            - $ref: '#/components/schemas/RatedPower'
+          nullable: true
+          description: Obligation C. Rating and unit as held in the asset register.
+    FlexibilityActivation:
+      type: object
+      description: |
+        The dispatch instruction a flexibility activation record is issued
+        against. Not listed in Annex A.3; the attributes are carried by the
+        Annex A.6.3 worked example, and Annex A.1 requires the activation to be
+        metered against a recorded instruction.
+      required: [activation_direction]
+      properties:
+        activation_direction:
+          $ref: '#/components/schemas/ActivationDirection'
+        instruction_reference:
+          type: string
+          nullable: true
+          description: |
+            Identifier of the dispatch instruction the activation was metered
+            against.
+        instruction_source:
+          type: string
+          nullable: true
+          description: Control service that issued the instruction.
+        delivery_verified:
+          type: boolean
+          description: |
+            True where the activation was verified as delivered; paired with
+            `trade_and_delivery.delivery_verification_reference`.
+    RecordLocation:
+      type: object
+      description: Annex A.3.4 — location and deliverability.
+      required: [municipality_code, grid_operator_id, grid_level, delivery_scope]
+      properties:
+        municipality_code:
+          type: string
+          description: Obligation M. Official code of the generation site.
+          example: '5226'
+        grid_operator_id:
+          type: string
+          description: Obligation M. Id of the grid operator of the energy community.
+          example: AEM
+        grid_level:
+          type: integer
+          description: Obligation M. Level of connection.
+          example: 7
+        community_id_origin:
+          type: string
+          nullable: true
+          description: |
+            Obligation C. Community in which generation occurred, as defined by
+            the project ontology. Absent where the generation asset belongs to
+            the pilot site but not to any community.
+          example: LugaggiaInnovationCommunity
+        community_id_consumption:
+          type: string
+          nullable: true
+          description: |
+            Obligation C. Community in which consumption occurred. Absent where
+            the production asset belongs to the pilot site but not to any
+            community.
+          example: LugaggiaInnovationCommunity
+        delivery_scope:
+          $ref: '#/components/schemas/DeliveryScope'
+    MeasurementProvenance:
+      type: object
+      description: Annex A.3.5 — provenance of the measurement the record derives from.
+      required:
+        - measurement_id
+        - measuring_sensor_id
+        - property_measured
+        - flow_direction
+        - data_provider_id
+        - data_completeness
+        - source_of_record
+        - data_record_class
+      properties:
+        measurement_id:
+          type: string
+          description: |
+            Obligation M. Measurement descriptor identifier in the project
+            knowledge graph.
+          example: LIC:LIC01:e_generation
+        measuring_sensor_id:
+          type: string
+          description: Obligation M. Sensor individual, for example a smart meter.
+        property_measured:
+          type: string
+          format: uri-reference
+          description: Obligation M. Ontology property, for example active energy.
+          example: measurement#active_energy
+        flow_direction:
+          $ref: '#/components/schemas/FlowDirection'
+        data_provider_id:
+          type: string
+          description: Obligation M. DID of the party supplying the measurement.
+          example: did:example:aem-metering
+        data_completeness:
+          $ref: '#/components/schemas/DataCompleteness'
+        source_of_record:
+          $ref: '#/components/schemas/SourceOfRecord'
+        data_record_class:
+          $ref: '#/components/schemas/DataRecordClass'
+    AttributeProvenance:
+      type: object
+      description: |
+        Annex A.3.6 — disposal of the environmental attribute. The attributes
+        recording the disposal of an official certificate, marked R, belong to
+        the subsequent registry conformance step and are not populated in the
+        proof of concept.
+      required:
+        - attribute_mode
+        - claim_permitted
+        - bundling_status
+        - storage_mediated_flag
+        - uniqueness_control_reference
+        - permitted_claim_text_id
+      properties:
+        attribute_mode:
+          $ref: '#/components/schemas/AttributeMode'
+        support_scheme_status:
+          allOf:
+            - $ref: '#/components/schemas/SupportSchemeStatus'
+          nullable: true
+          description: |
+            Obligation R (reserved, not populated in the proof of concept).
+            Support scheme under which the asset is remunerated. Where
+            populated, participation in the feed-in system excludes issuance,
+            so an issued record never carries `feed_in_tariff`.
+          example: one_off_payment
+        official_cancellation_reference:
+          type: string
+          nullable: true
+          description: |
+            Obligation R (reserved). Reference of the cancellation in the
+            national registry. Present where `attribute_mode` is
+            `retired_official`.
+          example: ch-go-registry:2026:cancellation:0004417
+        disclosure_year_affected:
+          type: integer
+          nullable: true
+          description: |
+            Obligation R (reserved). Disclosure year the cancellation is
+            accounted against. Present where `attribute_mode` is
+            `retired_official`.
+          example: 2026
+        claim_permitted:
+          type: boolean
+          description: |
+            Obligation M, derived. False where the attribute was transferred to
+            a third party, where the record is a flexibility activation record,
+            or where the record has not yet been retired.
+        bundling_status:
+          $ref: '#/components/schemas/BundlingStatus'
+        storage_mediated_flag:
+          type: boolean
+          description: Obligation M. True where the volume passed through storage.
+        uniqueness_control_reference:
+          type: string
+          description: |
+            Obligation M. Reconciliation run confirming the volume is
+            represented once only.
+          example: recon:2026-05:lic:run3
+        permitted_claim_text_id:
+          type: string
+          description: |
+            Obligation M. Reference to approved wording. Free text is not
+            accepted.
+          example: it-CH-local-origin-01
+    BeneficiaryAndClaim:
+      type: object
+      description: |
+        Annex A.3.7 — the holder of the record and, once retired, the claim.
+        Identifiers are pseudonymous; the mapping to identifying data remains
+        with the issuing party.
+      required: [owner_id]
+      properties:
+        owner_id:
+          type: string
+          description: |
+            Obligation M. Pseudonymous account of the current holder of the
+            record, being the producer at issuance and the storage asset owner
+            following a transfer.
+          example: lic-member-014
+        consumption_metering_point_id:
+          type: string
+          nullable: true
+          description: Obligation C. Pseudonymous.
+        facility_id:
+          type: string
+          nullable: true
+          description: |
+            Obligation C. Ontology individual, for example `LICHouse9`. Absent
+            where the record is issued at community or pilot site level.
+          example: LICHouse9
+        claim_holder_id:
+          type: string
+          nullable: true
+          description: |
+            Obligation C. Pseudonymous account of the party for whom the volume
+            is retired; present once `lifecycle.status` is `retired`.
+        retirement_timestamp:
+          type: string
+          format: date-time
+          nullable: true
+          description: Obligation C. Present once `lifecycle.status` is `retired`.
+        claim_period:
+          type: string
+          nullable: true
+          description: |
+            Obligation C. Period the claim is asserted for; present once
+            `lifecycle.status` is `retired`.
+          example: 2026-05
+    TradeAndDeliveryReference:
+      type: object
+      description: |
+        Annex A.3.8 — references to the trades the volume was sold under and to
+        the delivery reconciliation held in the GSY DEX. Every attribute is
+        conditional.
+      properties:
+        trade_reference:
+          type: array
+          nullable: true
+          items:
+            type: string
+          description: |
+            Obligation C. Trade identifiers where the volume was sold, as held
+            in the GSY DEX (`trade_uuid`). One interval may be divided among
+            buyers, so the attribute is an array.
+          example:
+            - 3f7c1e9a-5b2d-4c81-9f0a-6d4e2b8a1c37
+            - c81a4d6b-9e73-4f25-b0c8-27a5f1d93e60
+        trade_hash:
+          type: array
+          nullable: true
+          items:
+            type: string
+          description: |
+            Obligation C. Hashes corresponding to `trade_reference`, as held in
+            the GSY DEX, positionally aligned with it.
+          example:
+            - '0x3c9e11a4f8b27d5e6c0193ab74df82e5b1c6a09f3d7e48521bc9fa06e37d4b81'
+            - '0x77ab02c5d9e1483f7620ba5cd8e094172f3a6b8d05e9c71426fd83a09b5e7c12'
+        trade_status_at_issuance:
+          allOf:
+            - $ref: '#/components/schemas/TradeStatusAtIssuance'
+          nullable: true
+          description: |
+            Obligation C. Recorded state of the trade. Issuance requires
+            `delivery_verified`.
+          example: delivery_verified
+        delivery_verification_reference:
+          type: string
+          nullable: true
+          description: |
+            Obligation C. Present where the GSY DEX has reconciled delivery for
+            the interval.
+          example: exec:2026-05-14:slot50
+        charge_record_reference:
+          type: string
+          nullable: true
+          description: |
+            Obligation C. On a record retired following discharge, the
+            identifier of the record transferred to the storage asset owner at
+            charge.
+          example: ch-aem-lic-goo-poc:2026-05:LIC02DBATT:000318
+    RecordLifecycle:
+      type: object
+      description: |
+        Annex A.3.9 — lifecycle state. Records are appended and are not amended;
+        a correction is effected by issuing a replacement record, the record
+        replaced acquiring a terminal status and being retained.
+      required: [status, status_timestamp]
+      properties:
+        status:
+          $ref: '#/components/schemas/RecordStatus'
+        status_timestamp:
+          type: string
+          format: date-time
+          description: Obligation M. Time at which the current status was entered.
+    RatedPower:
+      type: object
+      description: Rating of an asset, as held in the asset register.
+      required: [value, unit]
+      properties:
+        value:
+          type: number
+          format: double
+          example: 27.29
+        unit:
+          type: string
+          example: kW
+    RecordType:
+      type: string
+      description: |
+        Record type within the certificate schema family (Annex A.1, A.4).
+        `local_origin_record` is issued against metered generation and may carry
+        an environmental claim; `flexibility_activation_record` is issued against
+        a metered dispatch and asserts none.
+      enum: [local_origin_record, flexibility_activation_record]
+    EnergyUnit:
+      type: string
+      description: |
+        Unit of `energy_quantity`. kWh at two decimal places for the pilot
+        (Annex A.1).
+      enum: [kWh]
+    AssetClass:
+      type: string
+      description: |
+        Asset class of the asset the record is issued against; the classes
+        present at the pilot site (Annex A.4). The Annex A.6.3 worked example
+        shows `storage`, which corresponds to `Battery` here.
+      enum: [PV, Battery, HeatPump, MeteringPoint]
+    FlowDirection:
+      type: string
+      description: |
+        Direction of the metered flow, import or export as recorded by the
+        measurement descriptor (Annex A.3.5, A.4).
+      enum: [import, export]
+    ActivationDirection:
+      type: string
+      description: |
+        Direction of a metered flexibility activation. Not enumerated in
+        Annex A.4; taken from the Annex A.6.3 worked example.
+      enum: [charge, discharge]
+    DeliveryScope:
+      type: string
+      description: |
+        Scope of the delivery the record covers (Annex A.4). Inter-community
+        delivery is not asserted as a community transaction.
+      enum: [intra_community, inter_community, supplier_offtake, grid_export]
+    AttributeMode:
+      type: string
+      description: |
+        Disposal of the environmental attribute (Annex A.4). The default for the
+        pilot is `not_marketed`. The Annex A.3 and A.5 text refers to this value
+        as `cancelled_official`, which corresponds to `retired_official` here.
+      enum: [not_marketed, retired_official, sold_external]
+    SupportSchemeStatus:
+      type: string
+      description: |
+        Support scheme under which the asset is remunerated (Annex A.4).
+        Reserved; feed-in tariff participation excludes issuance.
+      enum: [feed_in_tariff, one_off_payment, waiting_list, none]
+    BundlingStatus:
+      type: string
+      description: |
+        Whether the attribute travelled with the electricity (Annex A.4).
+        `unbundled` indicates that the attribute was transferred separately from
+        the electricity.
+      enum: [bundled, unbundled]
+    DataCompleteness:
+      type: string
+      description: |
+        Completeness of the underlying measurement data (Annex A.4). Terms are
+        to be aligned to the national data exchange vocabulary. Issuance is
+        rejected where the value is `incomplete`.
+      enum: [complete, substituted, incomplete]
+    SourceOfRecord:
+      type: string
+      description: |
+        Source of record of the measurement (Annex A.4). Only
+        `operator_validated` supports a claim of regulatory standing.
+      enum: [platform, operator_validated]
+    DataRecordClass:
+      type: string
+      description: |
+        Class of the underlying data record (Annex A.3.5). The GSY DEX persists
+        both measurements and forecasts; only a measurement may be certified, so
+        issuance is rejected where the value is `forecast` (Annex A.5, rule 3).
+      enum: [measurement, forecast]
+    TradeStatusAtIssuance:
+      type: string
+      description: |
+        Recorded state of the trade at issuance (Annex A.4). Issuance requires
+        `delivery_verified`.
+      enum: [settled, delivery_verified]
+    RecordStatus:
+      type: string
+      description: |
+        Lifecycle status of the record (Annex A.3.9, A.4). Potential future
+        application may include `superseded` or `void`.
+      enum: [issued, transferred, retired]
+    LegacyGuaranteesOfOriginSchema:
+      type: object
+      description: |
+        Previous response shape of `GET /guarantees-of-origin-measurements`, still
+        returned by the deployed service pending migration to
+        `CertificateRecord`. A single settled energy trade: in FEDECOM energy is
+        traded ahead of delivery (matching runs on forecasts), so
+        `energy_trade_timestamp` precedes `energy_delivery_timestamp`.
       required:
         - trade_id
         - traded_energy_kwh
