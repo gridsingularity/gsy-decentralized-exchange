@@ -80,7 +80,6 @@ operation names for readability and service routing:
 Runtime-only fields not represented in the agreed Intelligent `Order` schema:
 
 - `facilityId`
-- `nonce`
 - EVM bytes32 `orderId` / `marketId` hash format
 - EVM account address in `createdBy`
 

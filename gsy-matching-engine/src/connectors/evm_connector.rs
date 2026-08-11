@@ -4,7 +4,7 @@ use anyhow::{anyhow, Error, Result};
 use ethers::prelude::*;
 use ethers::utils::keccak256;
 use primitives::db_api_schema::orders::{
-    DbOrderSchema, IntelligentEnergyType, OrderEnum, OrderStatus,
+    DbOrderSchema, EnergyType, OrderEnum, OrderStatus,
 };
 use primitives::ewds::dto::EwdsOrderDto;
 use primitives::ewds::{EwdsClient, EwdsOperation};
@@ -216,7 +216,7 @@ fn fetch_market_orders(body: Vec<DbOrderSchema>) -> PreparedOrders {
 
     for db_order_schema in body
         .into_iter()
-        .filter(|order| order.status == OrderStatus::Open)
+        .filter(|order| order.status == OrderStatus::Submitted)
     {
         match convert_db_order_to_canonical(&db_order_schema) {
             Ok(order) => {
@@ -411,14 +411,14 @@ fn convert_db_order_to_canonical(order: &DbOrderSchema) -> Result<Order> {
     })
 }
 
-fn energy_type_to_contract(energy_type: &IntelligentEnergyType) -> u8 {
+fn energy_type_to_contract(energy_type: &EnergyType) -> u8 {
     match energy_type {
-        IntelligentEnergyType::Green => 1,
-        IntelligentEnergyType::Pv => 2,
-        IntelligentEnergyType::Hydro => 3,
-        IntelligentEnergyType::Biomass => 4,
-        IntelligentEnergyType::Battery => 5,
-        IntelligentEnergyType::Grey => 6,
+        EnergyType::Green => 1,
+        EnergyType::Pv => 2,
+        EnergyType::Hydro => 3,
+        EnergyType::Biomass => 4,
+        EnergyType::Battery => 5,
+        EnergyType::Grey => 6,
     }
 }
 

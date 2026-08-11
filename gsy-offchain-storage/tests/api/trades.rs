@@ -13,7 +13,6 @@ fn make_order(order_id: &str, order_type: OrderEnum) -> DbOrderSchema {
         energy_rate: 10.0,
         area_uuid: "0x0000000000000000000000000000000000000000000000000000000000000abc".to_string(),
         market_id: "0x0000000000000000000000000000000000000000000000000000000000000def".to_string(),
-        nonce: None,
         time_slot: 1,
         creation_time: 1_677_453_190,
         requirements: None,

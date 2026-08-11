@@ -4,7 +4,7 @@ use ethers::prelude::*;
 use gsy_community_client::node_connector::orders::publish_orders;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use primitives::db_api_schema::orders::{
-    DbAttributes, DbOrderSchema, DbRequirements, IntelligentEnergyType, OrderStatus,
+    DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderStatus,
 };
 use primitives::db_api_schema::profiles::MeasurementSchema;
 use primitives::db_api_schema::trades::TradeSchema;
@@ -236,14 +236,14 @@ async fn upsert_order_in_offchain_storage(world: &MyWorld, order: DbOrderSchema)
     );
 }
 
-fn energy_type_to_contract(energy_type: &IntelligentEnergyType) -> u8 {
+fn energy_type_to_contract(energy_type: &EnergyType) -> u8 {
     match energy_type {
-        IntelligentEnergyType::Green => 1,
-        IntelligentEnergyType::Pv => 2,
-        IntelligentEnergyType::Hydro => 3,
-        IntelligentEnergyType::Biomass => 4,
-        IntelligentEnergyType::Battery => 5,
-        IntelligentEnergyType::Grey => 6,
+        EnergyType::Green => 1,
+        EnergyType::Pv => 2,
+        EnergyType::Hydro => 3,
+        EnergyType::Biomass => 4,
+        EnergyType::Battery => 5,
+        EnergyType::Grey => 6,
     }
 }
 
@@ -407,7 +407,7 @@ async fn submit_preferred_partner_offer(
 ) {
     let attributes = DbAttributes {
         trading_partner_id: Some(actor_id_as_hex(world, &partner_name)),
-        energy_type: IntelligentEnergyType::Green,
+        energy_type: EnergyType::Green,
     };
 
     place_custom_order(

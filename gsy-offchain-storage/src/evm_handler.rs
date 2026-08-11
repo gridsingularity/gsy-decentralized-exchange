@@ -7,7 +7,7 @@ use gsy_ethers_listener::{
 };
 use primitives::db_api_schema::{
     orders::{
-        DbAttributes, DbOrderSchema, DbRequirements, IntelligentEnergyType, OrderEnum, OrderStatus,
+        DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus,
     },
     trades::{TradeParameters, TradeSchema, TradeStatus},
 };
@@ -41,11 +41,10 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
 
         let schema = DbOrderSchema {
             order_id: order_id_str,
-            status: OrderStatus::Open,
+            status: OrderStatus::Submitted,
             order_type: order_enum,
             area_uuid: created_by_str.clone(),
             market_id: market_id_str,
-            nonce: None,
             time_slot: event.time_slot,
             creation_time: event.creation_time,
             energy_kWh: energy_f64,
@@ -73,7 +72,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         match self
             .db
             .orders()
-            .update_order_status_by_id(&id_bson, OrderStatus::Deleted)
+            .update_order_status_by_id(&id_bson, OrderStatus::Cancelled)
             .await
         {
             Ok(_) => info!("Successfully marked order as deleted"),
@@ -155,14 +154,14 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
     }
 }
 
-fn energy_type_from_contract(value: u8) -> Option<IntelligentEnergyType> {
+fn energy_type_from_contract(value: u8) -> Option<EnergyType> {
     match value {
-        1 => Some(IntelligentEnergyType::Green),
-        2 => Some(IntelligentEnergyType::Pv),
-        3 => Some(IntelligentEnergyType::Hydro),
-        4 => Some(IntelligentEnergyType::Biomass),
-        5 => Some(IntelligentEnergyType::Battery),
-        6 => Some(IntelligentEnergyType::Grey),
+        1 => Some(EnergyType::Green),
+        2 => Some(EnergyType::Pv),
+        3 => Some(EnergyType::Hydro),
+        4 => Some(EnergyType::Biomass),
+        5 => Some(EnergyType::Battery),
+        6 => Some(EnergyType::Grey),
         _ => None,
     }
 }

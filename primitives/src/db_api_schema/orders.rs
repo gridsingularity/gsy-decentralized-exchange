@@ -25,8 +25,6 @@ pub struct DbOrderSchema {
     pub order_type: OrderEnum,
     pub area_uuid: String,
     pub market_id: String,
-    #[serde(default)]
-    pub nonce: Option<u64>,
     pub time_slot: u64,
     pub creation_time: u64,
     pub energy_kWh: f64,
@@ -40,15 +38,18 @@ pub struct DbOrderSchema {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd)]
 #[serde(rename_all = "lowercase")]
 pub enum OrderStatus {
-    Open,
-    Executed,
+    Submitted,
+    PartiallyFilled,
+    Filled,
+    Cancelled,
     Expired,
-    Deleted,
+    Rejected,
+    Executed,
 }
 
 impl Default for OrderStatus {
     fn default() -> Self {
-        Self::Open
+        Self::Submitted
     }
 }
 
@@ -75,25 +76,9 @@ pub struct FlexibilityOrderSchema {
     pub from_asset: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub enum IntelligentOrderType {
-    Bid,
-    Offer,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub enum IntelligentOrderStatus {
-    Submitted,
-    PartiallyFilled,
-    Filled,
-    Cancelled,
-    Expired,
-    Rejected,
-    Executed,
-}
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, PartialOrd)]
-pub enum IntelligentEnergyType {
+pub enum EnergyType {
     #[serde(rename = "GREEN")]
     Green,
     #[serde(rename = "PV")]
@@ -111,36 +96,12 @@ pub enum IntelligentEnergyType {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd)]
 pub struct DbRequirements {
     pub trading_partner_id: Option<String>,
-    pub energy_type: Option<IntelligentEnergyType>,
+    pub energy_type: Option<EnergyType>,
     pub preferred_energy_rate: Option<f64>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd)]
 pub struct DbAttributes {
     pub trading_partner_id: Option<String>,
-    pub energy_type: IntelligentEnergyType,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct IntelligentOrderSchema {
-    pub order_id: String,
-    pub market_id: String,
-    pub order_type: IntelligentOrderType,
-    pub order_status: IntelligentOrderStatus,
-    pub time_slot: String,
-    pub quantity: f64,
-    pub price_limit: f64,
-    #[serde(default)]
-    pub energy_source_preference: Option<IntelligentEnergyType>,
-    #[serde(default)]
-    pub energy_type: Option<IntelligentEnergyType>,
-    pub created_by: String,
-    pub created_at: String,
-    #[serde(default)]
-    pub updated_at: Option<String>,
-    #[serde(default)]
-    pub cancellation_reason: Option<String>,
-    #[serde(default)]
-    pub preferred_trading_partner: Option<String>,
+    pub energy_type: EnergyType,
 }

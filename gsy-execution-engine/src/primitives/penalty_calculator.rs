@@ -112,7 +112,6 @@ mod tests {
             },
             area_uuid: actor_id.clone(),
             market_id: "market-1".to_string(),
-            nonce: None,
             time_slot: 1_000,
             creation_time: 900,
             energy_kWh: 10.0,
