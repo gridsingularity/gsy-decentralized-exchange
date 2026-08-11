@@ -1,27 +1,65 @@
-FROM ubuntu:22.04
-
+FROM ubuntu:24.04 AS chef
 WORKDIR /root
 ENV PATH=$PATH:/root/.cargo/bin
-
 RUN apt-get update && \
     apt-get upgrade -y && \
-    apt-get install -y cmake curl libssl-dev git clang llvm libudev-dev protobuf-compiler && \
+    apt-get install -y cmake curl libssl-dev git clang llvm libudev-dev protobuf-compiler libclang-dev && \
     apt-get clean && \
-    curl https://sh.rustup.rs -sSf | sh -s -- -y
-RUN rustup default stable && \
-    rustup update && \
-    rustup update nightly && \
-    rustup component add rust-src && \
-    rustup target add wasm32-unknown-unknown
+    rm -rf /var/lib/apt/lists/* && \
+    curl https://sh.rustup.rs -sSf | sh -s -- -y --no-modify-path
+RUN rustup install 1.93.0
+RUN rustup default 1.93.0
+RUN rustup target add wasm32-unknown-unknown --toolchain 1.93.0
+RUN rustup component add rust-src --toolchain 1.93.0
+RUN cargo install cargo-chef
 
-ADD gsy-node /var/www/gsy-node/
-ADD primitives /var/www/primitives/
+FROM chef AS planner
+# First prepare dependencies of primitives
+WORKDIR /var/www/primitives
+COPY ./primitives/Cargo.lock ./primitives/Cargo.toml /var/www/primitives/
+RUN cargo chef prepare --recipe-path recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json
+
+# And then dependencies of the node
+WORKDIR /var/www/gsy-node
+COPY ./gsy-node/Cargo.lock ./gsy-node/Cargo.toml /var/www/gsy-node/
+COPY ./gsy-node/node/Cargo.toml /var/www/gsy-node/node/
+COPY ./gsy-node/runtime/Cargo.toml /var/www/gsy-node/runtime/
+COPY ./gsy-node/modules/gsy-collateral/Cargo.toml /var/www/gsy-node/modules/gsy-collateral/
+COPY ./gsy-node/modules/orderbook-registry/Cargo.toml /var/www/gsy-node/modules/orderbook-registry/
+COPY ./gsy-node/modules/orderbook-worker/Cargo.toml /var/www/gsy-node/modules/orderbook-worker/
+COPY ./gsy-node/modules/trades-settlement/Cargo.toml /var/www/gsy-node/modules/trades-settlement/
+COPY ./gsy-node/modules/remuneration/Cargo.toml /var/www/gsy-node/modules/remuneration/
+COPY ./gsy-node/modules/stripe-bridge/Cargo.toml /var/www/gsy-node/modules/stripe-bridge/
+COPY ./gsy-node/modules/validator-set/Cargo.toml /var/www/gsy-node/modules/validator-set/
+RUN cargo chef prepare --recipe-path recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json
+
+FROM chef AS builder
+COPY gsy-node /var/www/gsy-node/
+COPY primitives /var/www/primitives/
+COPY --from=planner /var/www/primitives/target /var/www/primitives/target
+COPY --from=planner /var/www/gsy-node/target /var/www/gsy-node/target
+WORKDIR /var/www/gsy-node/
+# Compile-time config the orderbook-worker bakes in via option_env! (offchain HTTP calls).
+# Both are build args so a remote validator image can bake a PUBLIC storage URL + real key:
+#   docker build --build-arg OFFCHAIN_STORAGE_URL=http://storage.example:8080 --build-arg API_KEY=...
+ARG OFFCHAIN_STORAGE_URL=http://gsy-offchain-storage:8080
+ENV OFFCHAIN_STORAGE_URL=${OFFCHAIN_STORAGE_URL}
+ARG API_KEY=fedecom_user
+ENV API_KEY=${API_KEY}
+# Optional extra cargo features. Validator/poa deployments pass "--features poa" to compile
+# in the poa chain spec; the default (empty) keeps the --dev image test/local-demo use.
+ARG NODE_BUILD_FEATURES=
+RUN cargo build --release ${NODE_BUILD_FEATURES}
+
+FROM ubuntu:24.04 AS runtime
+# curl is required by the compose healthcheck (system_health RPC probe).
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates openssl curl && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /var/www/gsy-node/
-
-ENV ORDERBOOK_SERVICE_URL=http://gsy-orderbook:8080
-RUN cargo build --release
-
+COPY --from=builder /var/www/gsy-node/target/release/gsy-node /var/www/gsy-node/target/release/gsy-node
+ENV OFFCHAIN_STORAGE_URL=http://gsy-offchain-storage:8080
+ENV API_KEY=fedecom_user
 EXPOSE 9944
-
 ENTRYPOINT ["./target/release/gsy-node", "--dev", "--rpc-external"]

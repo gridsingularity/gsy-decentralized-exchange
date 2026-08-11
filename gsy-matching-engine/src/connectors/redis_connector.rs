@@ -40,6 +40,7 @@ pub fn read_bids(orders: &Value) -> Vec<Bid> {
         let bid_struct = Bid {
             r#type: value_to_str(&bid["type"]),
             id: value_to_str(&bid["id"]),
+            market_id: value_to_str(&bid["market_id"]),
             energy: value_to_f32(&bid["energy"]),
             energy_rate: value_to_f32(&bid["energy_rate"]),
             original_price: value_to_f32(&bid["original_price"]),
@@ -63,6 +64,7 @@ pub fn read_offers(orders: &Value) -> Vec<Offer> {
         let offer_struct = Offer {
             r#type: value_to_str(&offer["type"]),
             id: value_to_str(&offer["id"]),
+            market_id: value_to_str(&offer["market_id"]),
             energy: value_to_f32(&offer["energy"]),
             energy_rate: value_to_f32(&offer["energy_rate"]),
             original_price: value_to_f32(&offer["original_price"]),

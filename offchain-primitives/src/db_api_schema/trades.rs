@@ -1,7 +1,7 @@
 use codec::{Encode, Decode};
 use serde::{Deserialize, Serialize};
-use subxt::ext::sp_core::H256;
-use subxt::ext::sp_runtime::traits::{BlakeTwo256, Hash};
+use subxt::utils::H256;
+use subxt::config::{Hasher, substrate::BlakeTwo256};
 use crate::db_api_schema::orders::{DbOffer, DbBid};
 
 
@@ -40,11 +40,23 @@ pub struct TradeSchema {
 
 impl TradeSchema {
     pub fn hash(&self) -> H256 {
-        BlakeTwo256::hash_of(self)
+        BlakeTwo256.hash_of(self)
     }
 
     pub fn eq(&self, other: &Self) -> bool {
         self._id == other._id
     }
 
+}
+
+/// A trade enriched with the human-readable asset names for the seller and
+/// buyer sides, resolved from the topology `area_hash` -> `name` mapping.
+/// The original `TradeSchema` fields (including the `seller`/`buyer` account
+/// ids) are flattened in at the top level and left untouched.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct TradeCanonicalSchema {
+    #[serde(flatten)]
+    pub trade: TradeSchema,
+    pub seller_name: Option<String>,
+    pub buyer_name: Option<String>,
 }

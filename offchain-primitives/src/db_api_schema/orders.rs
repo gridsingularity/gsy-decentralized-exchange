@@ -1,7 +1,7 @@
 use codec::{Encode, Decode};
 use serde::{Deserialize, Serialize};
-use subxt::ext::sp_core::H256;
-use subxt::ext::sp_runtime::traits::{BlakeTwo256, Hash};
+use subxt::utils::H256;
+use subxt::config::{substrate::BlakeTwo256, Hasher};
 
 
 #[derive(Serialize, Deserialize, Debug, Encode, Clone, PartialEq)]
@@ -13,11 +13,11 @@ pub enum Order {
 
 impl Order {
     pub fn hash(&self) -> H256 {
-        BlakeTwo256::hash_of(self)
+        BlakeTwo256.hash_of(self)
     }
 }
 /// Order component struct
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, PartialOrd)]
 pub struct DbOrderComponent {
     pub area_uuid: String,
     pub market_id: String,
@@ -60,7 +60,7 @@ impl Default for OrderStatus {
 }
 
 /// Bid order struct
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, PartialOrd)]
 pub struct DbBid {
     pub buyer: String,
     pub nonce: u32,
@@ -68,7 +68,7 @@ pub struct DbBid {
 }
 
 /// Offer (Ask) order struct
-#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq, PartialOrd)]
 pub struct DbOffer {
     pub seller: String,
     pub nonce: u32,

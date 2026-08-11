@@ -1,13 +1,9 @@
-mod primitives;
-mod services;
-mod connectors;
-mod utils;
-
 use clap::Parser;
 use tracing::{error, info};
-use utils::cli::{Cli, Commands};
-use utils::telemetry::{get_subscriber, init_subscriber};
-use services::execution_orchestrator::run_execution_cycle;
+use gsy_execution_engine::utils::cli::{Cli, Commands};
+use gsy_execution_engine::utils::telemetry::{get_subscriber, init_subscriber};
+use gsy_execution_engine::services::execution_orchestrator::run_execution_cycle;
+use gsy_offchain_primitives::{constants::GlobalConstants, utils::timestamp_to_datetime_string};
 
 #[tokio::main]
 async fn main() {
@@ -31,7 +27,10 @@ async fn main() {
 
             loop {
                 let timeslot = generate_previous_timeslot(market_duration);
-                if let Err(e) = run_execution_cycle(&offchain_url, &node_url, timeslot, penalty_rate, market_duration).await {
+                info!("Execution cycle for timeslot {} ({})",
+                    timestamp_to_datetime_string(timeslot), timeslot);
+                if let Err(e) = run_execution_cycle(
+                    &offchain_url, &node_url, timeslot, penalty_rate, market_duration).await {
                     error!("Cycle failed for {}: {:?}", timeslot, e);
                 }
                 info!("Sleeping for {}s...", polling_interval);
@@ -41,11 +40,12 @@ async fn main() {
     }
 }
 
-fn generate_previous_timeslot(market_duration: u64) -> u64 {
+fn generate_previous_timeslot(_market_duration: u64) -> u64 {
     use chrono::{Utc, Duration};
     
     let now = Utc::now();
-    let prev = now - Duration::seconds(market_duration as i64);
 
-    prev.timestamp() as u64
+    let prev = now - Duration::minutes(GlobalConstants.EXECUTION_ENGINE_OFFSET_MIN);
+
+    (prev.timestamp() as u64 / GlobalConstants.TIME_SLOT_SEC) * GlobalConstants.TIME_SLOT_SEC
 }

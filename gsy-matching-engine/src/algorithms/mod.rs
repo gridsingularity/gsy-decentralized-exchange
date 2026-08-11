@@ -1,2 +1,1 @@
-mod pay_as_bid;
-pub use pay_as_bid::PayAsBid;
+pub use gsy_offchain_primitives::algorithms::PayAsBid;
