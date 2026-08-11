@@ -60,9 +60,10 @@ accepted trade.
 orders are collected before one clearing cycle. Override it with a positive
 `MATCHING_ENGINE_BLOCK_INTERVAL` value only when both the matching engine and
 E2E runner use the same value, as they do through the Compose configuration.
-After the complete order book is indexed, the E2E harness fast-forwards the
-local Anvil chain with empty-block RPC calls rather than waiting for one
-transaction per block.
+If the current interval does not have enough capacity for the complete order
+book, the E2E harness first advances local Anvil to the next matching boundary.
+After the order book is indexed, it fast-forwards to the clearing boundary with
+empty-block RPC calls rather than waiting for one transaction per block.
 
 The contracts command starts the dedicated local Anvil container, deploys the
 upgradeable contract suite, grants service roles, and writes

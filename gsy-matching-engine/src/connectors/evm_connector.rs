@@ -8,6 +8,7 @@ use primitives::db_api_schema::orders::{
 };
 use primitives::ewds::dto::EwdsOrderDto;
 use primitives::ewds::{EwdsClient, EwdsOperation};
+use primitives::matching::matching_block_interval;
 use primitives::utils::{bytes16_to_hex, parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR};
 use primitives::MatchingAlgorithm;
 use serde_json::Value;
@@ -17,8 +18,6 @@ use std::str::FromStr;
 use tokio::time::{sleep, Duration};
 use tracing::{error, info, warn};
 
-const DEFAULT_PAY_AS_BID_BLOCK_INTERVAL: u64 = 4;
-const DEFAULT_PAY_AS_CLEAR_BLOCK_INTERVAL: u64 = 64;
 const ENERGY_TYPE_UNSPECIFIED: u8 = 0;
 
 abigen!(
@@ -52,7 +51,7 @@ pub async fn evm_subscribe(
 ) -> Result<(), Error> {
     info!("Connecting to EVM node {}", node_url);
     let provider = Provider::<Ws>::connect(node_url.as_str()).await?;
-    let matching_block_interval = matching_block_interval(&matching_algorithm);
+    let matching_block_interval = matching_block_interval();
     info!(
         "Using {}-block matching interval for {}",
         matching_block_interval, matching_algorithm
@@ -60,8 +59,8 @@ pub async fn evm_subscribe(
     let mut last_processed_block = provider.get_block_number().await?;
     // Keep track of which trigger "bucket" was already processed, so we do not
     // miss matches when multiple blocks are mined between polling iterations.
-    let mut last_processed_trigger_bucket = last_processed_block.as_u64().saturating_sub(1)
-        / matching_block_interval;
+    let mut last_processed_trigger_bucket =
+        last_processed_block.as_u64().saturating_sub(1) / matching_block_interval;
 
     loop {
         let block_number = provider.get_block_number().await?;
@@ -97,17 +96,6 @@ pub async fn evm_subscribe(
     }
 }
 
-fn matching_block_interval(matching_algorithm: &MatchingAlgorithm) -> u64 {
-    env::var("MATCHING_ENGINE_BLOCK_INTERVAL")
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(match matching_algorithm {
-            MatchingAlgorithm::PayAsClear => DEFAULT_PAY_AS_CLEAR_BLOCK_INTERVAL,
-            _ => DEFAULT_PAY_AS_BID_BLOCK_INTERVAL,
-        })
-}
-
 async fn run_matching_cycle(
     orderbook_url: &str,
     evm_node_url: &str,
@@ -135,7 +123,7 @@ async fn run_matching_cycle(
         open_offers,
         by_order_id,
     } = prepared_orders;
-    let order_books = partition_orders_by_market_slot(open_bids, open_offers);
+    let order_books = partition_orders_by_market_slot(open_bids, open_offers)?;
     info!(
         "Partitioned open orders into {} market/time-slot order books",
         order_books.len()
@@ -169,10 +157,11 @@ fn match_order_books(
 ) -> Result<Vec<BidOfferMatch>> {
     let mut bid_offer_matches = Vec::new();
     for mut matching_data in order_books {
-        if matching_data.bids.is_empty() || matching_data.offers.is_empty() {
+        if matching_data.bids().is_empty() || matching_data.offers().is_empty() {
             info!(
                 "Skipping market {} timeslot {} without an open bid/offer pair",
-                matching_data.market_id, matching_data.time_slot
+                matching_data.market_id(),
+                matching_data.time_slot()
             );
             continue;
         }
@@ -183,8 +172,8 @@ fn match_order_books(
         info!(
             "Generated {} matches for market {} timeslot {} using {}",
             matches.len(),
-            matching_data.market_id,
-            matching_data.time_slot,
+            matching_data.market_id(),
+            matching_data.time_slot(),
             matching_algorithm
         );
         bid_offer_matches.extend(matches);
@@ -193,7 +182,10 @@ fn match_order_books(
     Ok(bid_offer_matches)
 }
 
-fn partition_orders_by_market_slot(bids: Vec<Order>, offers: Vec<Order>) -> Vec<MatchingData> {
+fn partition_orders_by_market_slot(
+    bids: Vec<Order>,
+    offers: Vec<Order>,
+) -> Result<Vec<MatchingData>> {
     let mut order_books: BTreeMap<(String, u64), (Vec<Order>, Vec<Order>)> = BTreeMap::new();
 
     for bid in bids {
@@ -213,14 +205,9 @@ fn partition_orders_by_market_slot(bids: Vec<Order>, offers: Vec<Order>) -> Vec<
 
     order_books
         .into_iter()
-        .map(
-            |((market_id, time_slot), (bids, offers))| MatchingData {
-                bids,
-                offers,
-                market_id,
-                time_slot,
-            },
-        )
+        .map(|((market_id, time_slot), (bids, offers))| {
+            MatchingData::new(market_id, time_slot, bids, offers).map_err(|error| anyhow!(error))
+        })
         .collect()
 }
 
@@ -669,20 +656,21 @@ mod tests {
                 order(5, OrderEnum::Offer, 1, 200),
                 order(6, OrderEnum::Offer, 2, 100),
             ],
-        );
+        )
+        .expect("partitioned orders should be valid");
 
         assert_eq!(order_books.len(), 3);
         for order_book in order_books {
             assert!(order_book
-                .bids
+                .bids()
                 .iter()
-                .all(|order| order.market_id == order_book.market_id
-                    && order.time_slot == order_book.time_slot));
+                .all(|order| order.market_id == order_book.market_id()
+                    && order.time_slot == order_book.time_slot()));
             assert!(order_book
-                .offers
+                .offers()
                 .iter()
-                .all(|order| order.market_id == order_book.market_id
-                    && order.time_slot == order_book.time_slot));
+                .all(|order| order.market_id == order_book.market_id()
+                    && order.time_slot == order_book.time_slot()));
         }
     }
 
@@ -700,7 +688,8 @@ mod tests {
         let order_books = partition_orders_by_market_slot(
             vec![first_bid, second_bid],
             vec![first_offer, second_offer],
-        );
+        )
+        .expect("partitioned orders should be valid");
         let matches = match_order_books(order_books, &MatchingAlgorithm::PayAsClear)
             .expect("partitioned order books should match");
         let mut clearing_prices = matches
@@ -712,8 +701,7 @@ mod tests {
         assert_eq!(matches.len(), 2);
         assert_eq!(clearing_prices, vec![10, 30]);
         assert!(matches.iter().all(|item| {
-            item.bid.market_id == item.offer.market_id
-                && item.bid.time_slot == item.offer.time_slot
+            item.bid.market_id == item.offer.market_id && item.bid.time_slot == item.offer.time_slot
         }));
     }
 }

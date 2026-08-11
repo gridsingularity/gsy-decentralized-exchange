@@ -3,6 +3,7 @@ pub mod db_api_schema;
 pub mod constants;
 pub mod ewds;
 pub mod log;
+pub mod matching;
 pub mod utils;
 
 use serde::{Deserialize, Serialize};

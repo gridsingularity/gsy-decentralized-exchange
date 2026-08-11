@@ -8,18 +8,14 @@ use primitives::db_api_schema::orders::{
 };
 use primitives::db_api_schema::profiles::MeasurementSchema;
 use primitives::db_api_schema::trades::TradeSchema;
+use primitives::matching::matching_block_interval;
 use primitives::utils::{parse_or_hash_bytes16, NODE_FLOAT_SCALING_FACTOR};
-use primitives::MatchingAlgorithm;
 use std::collections::HashSet;
-use std::env;
-use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
 use tracing::info;
 
-const DEFAULT_PAY_AS_BID_BLOCK_INTERVAL: u64 = 4;
-const DEFAULT_PAY_AS_CLEAR_BLOCK_INTERVAL: u64 = 64;
 const FLOAT_EPSILON: f64 = 0.000_001;
 const ENERGY_TYPE_UNSPECIFIED: u8 = 0;
 
@@ -93,7 +89,7 @@ async fn mine_empty_blocks(world: &MyWorld, count: usize) {
 }
 
 async fn mine_until_matching_block(world: &MyWorld, max_blocks: usize) {
-    let matching_block_interval = matching_engine_block_interval();
+    let matching_block_interval = matching_block_interval();
     for _ in 0..max_blocks {
         mine_empty_blocks(world, 1).await;
         let latest_block = world
@@ -116,27 +112,15 @@ async fn mine_until_matching_block(world: &MyWorld, max_blocks: usize) {
     );
 }
 
-fn matching_engine_block_interval() -> u64 {
-    if let Some(interval) = env::var("MATCHING_ENGINE_BLOCK_INTERVAL")
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .filter(|value| *value > 0)
-    {
-        return interval;
-    }
+async fn align_to_matching_window(world: &MyWorld, required_blocks: u64) {
+    let matching_block_interval = matching_block_interval();
+    assert!(
+        required_blocks < matching_block_interval,
+        "A {}-block order submission cannot fit in a {}-block matching interval",
+        required_blocks,
+        matching_block_interval
+    );
 
-    let matching_algorithm = env::var("MATCHING_ALGORITHM")
-        .ok()
-        .and_then(|value| MatchingAlgorithm::from_str(value.as_str()).ok())
-        .unwrap_or_default();
-    match matching_algorithm {
-        MatchingAlgorithm::PayAsClear => DEFAULT_PAY_AS_CLEAR_BLOCK_INTERVAL,
-        _ => DEFAULT_PAY_AS_BID_BLOCK_INTERVAL,
-    }
-}
-
-async fn ensure_matching_window_capacity(world: &MyWorld, required_blocks: u64) {
-    let matching_block_interval = matching_engine_block_interval();
     let latest_block = world
         .provider
         .get_block_number()
@@ -145,14 +129,13 @@ async fn ensure_matching_window_capacity(world: &MyWorld, required_blocks: u64) 
         .as_u64();
     let blocks_until_trigger = matching_block_interval - (latest_block % matching_block_interval);
 
-    assert!(
-        blocks_until_trigger > required_blocks,
-        "Only {} blocks remain in the current {}-block matching interval; \
-         restart from a fresh contracts deployment or configure a larger \
-         MATCHING_ENGINE_BLOCK_INTERVAL",
-        blocks_until_trigger,
-        matching_block_interval
-    );
+    if blocks_until_trigger <= required_blocks {
+        info!(
+            "Only {} blocks remain in the current matching interval; advancing to the next boundary",
+            blocks_until_trigger
+        );
+        mine_until_matching_block(world, matching_block_interval as usize + 1).await;
+    }
 }
 
 fn approx_eq(left: f64, right: f64) -> bool {
@@ -468,10 +451,10 @@ async fn submit_cheaper_offer(world: &mut MyWorld, user_name: String, energy: f6
 #[when("the pay-as-clear order book is submitted")]
 async fn submit_pay_as_clear_order_book(world: &mut MyWorld) {
     // A uniform-price auction must observe the complete book in one interval.
-    ensure_matching_window_capacity(world, 8).await;
+    align_to_matching_window(world, 8).await;
     world.pay_as_clear_scenario = Some(place_standard_pay_as_clear_order_book(world).await);
 
-    mine_until_matching_block(world, matching_engine_block_interval() as usize + 1).await;
+    mine_until_matching_block(world, matching_block_interval() as usize + 1).await;
 }
 
 async fn place_standard_pay_as_clear_order_book(world: &MyWorld) -> PayAsClearScenario {
@@ -503,7 +486,7 @@ async fn place_standard_pay_as_clear_order_book(world: &MyWorld) -> PayAsClearSc
 #[when("a preferred bilateral pair and standard pay-as-clear order book are submitted")]
 async fn submit_combined_pay_as_clear_order_book(world: &mut MyWorld) {
     // Submit both pricing paths before reaching the same clearing boundary.
-    ensure_matching_window_capacity(world, 12).await;
+    align_to_matching_window(world, 12).await;
 
     let preferred_bid_requirements = DbRequirements {
         trading_partner_id: Some(actor_id_as_hex(world, "bob")),
@@ -543,7 +526,7 @@ async fn submit_combined_pay_as_clear_order_book(world: &mut MyWorld) {
     scenario.preferred_order_ids = Some((preferred_bid, preferred_offer));
     world.pay_as_clear_scenario = Some(scenario);
 
-    mine_until_matching_block(world, matching_engine_block_interval() as usize + 1).await;
+    mine_until_matching_block(world, matching_block_interval() as usize + 1).await;
 }
 
 #[when(expr = "measurements for facilities are submitted")]

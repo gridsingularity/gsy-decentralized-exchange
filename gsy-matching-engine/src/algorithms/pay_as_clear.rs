@@ -2,11 +2,7 @@ use super::{ClearingPoint, PayAsClear};
 use crate::models::{BidOfferMatch, MatchingData, Order};
 
 impl MatchingData {
-    fn calculate_clearing_point(
-        &self,
-        bids: &[Order],
-        offers: &[Order],
-    ) -> Option<ClearingPoint> {
+    fn calculate_clearing_point(&self, bids: &[Order], offers: &[Order]) -> Option<ClearingPoint> {
         let mut bids = bids.iter().collect::<Vec<_>>();
         let mut offers = offers.iter().collect::<Vec<_>>();
         bids.sort_by(|left, right| right.energy_rate.cmp(&left.energy_rate));
@@ -74,9 +70,9 @@ impl PayAsClear for MatchingData {
     type Output = BidOfferMatch;
 
     fn pay_as_clear(&mut self) -> Vec<Self::Output> {
-        let (bids, offers) = self.orders_for_market_slot();
-        let (mut matches, remaining_bids, remaining_offers) =
-            self.match_preferences(bids, offers);
+        let bids = self.bids().to_vec();
+        let offers = self.offers().to_vec();
+        let (mut matches, remaining_bids, remaining_offers) = self.match_preferences(bids, offers);
         matches.extend(self.match_standard_pay_as_clear(remaining_bids, remaining_offers));
         matches
     }
@@ -111,25 +107,29 @@ mod tests {
 
     #[test]
     fn uses_the_marginal_accepted_offer_price() {
-        let mut matching_data = MatchingData {
-            bids: vec![
+        let mut matching_data = MatchingData::new(
+            id(99),
+            1,
+            vec![
                 order(1, OrderEnum::Bid, 1, 3, 20),
                 order(2, OrderEnum::Bid, 2, 4, 17),
                 order(3, OrderEnum::Bid, 3, 1, 9),
             ],
-            offers: vec![
+            vec![
                 order(4, OrderEnum::Offer, 4, 3, 8),
                 order(5, OrderEnum::Offer, 5, 4, 10),
                 order(6, OrderEnum::Offer, 6, 1, 12),
             ],
-            market_id: id(99),
-            time_slot: 1,
-        };
+        )
+        .expect("orders should belong to one market slot");
 
         let matches = matching_data.pay_as_clear();
 
         assert_eq!(matches.len(), 2);
-        assert_eq!(matches.iter().map(|item| item.selected_energy).sum::<u64>(), 7);
+        assert_eq!(
+            matches.iter().map(|item| item.selected_energy).sum::<u64>(),
+            7
+        );
         assert!(matches.iter().all(|item| item.energy_rate == 10));
         assert!(matches.iter().all(|item| item.bid.order_id != id(3)));
         assert!(matches.iter().all(|item| item.offer.order_id != id(6)));
@@ -137,20 +137,21 @@ mod tests {
 
     #[test]
     fn stops_when_the_bid_curve_drops_below_the_offer_curve() {
-        let mut matching_data = MatchingData {
-            bids: vec![
+        let mut matching_data = MatchingData::new(
+            id(99),
+            1,
+            vec![
                 order(1, OrderEnum::Bid, 1, 1, 28),
                 order(2, OrderEnum::Bid, 2, 1, 23),
                 order(3, OrderEnum::Bid, 3, 1, 17),
             ],
-            offers: vec![
+            vec![
                 order(4, OrderEnum::Offer, 4, 1, 10),
                 order(5, OrderEnum::Offer, 5, 1, 15),
                 order(6, OrderEnum::Offer, 6, 1, 21),
             ],
-            market_id: id(99),
-            time_slot: 1,
-        };
+        )
+        .expect("orders should belong to one market slot");
 
         let matches = matching_data.pay_as_clear();
 
@@ -168,22 +169,23 @@ mod tests {
             energy_type: None,
             preferred_energy_rate: Some(11),
         });
-        let mut matching_data = MatchingData {
-            bids: vec![
+        let mut matching_data = MatchingData::new(
+            id(99),
+            1,
+            vec![
                 preferred_bid,
                 order(3, OrderEnum::Bid, 3, 3, 20),
                 order(4, OrderEnum::Bid, 4, 4, 17),
                 order(5, OrderEnum::Bid, 5, 1, 9),
             ],
-            offers: vec![
+            vec![
                 order(2, OrderEnum::Offer, 2, 2, 10),
                 order(6, OrderEnum::Offer, 6, 3, 8),
                 order(7, OrderEnum::Offer, 7, 4, 10),
                 order(8, OrderEnum::Offer, 8, 1, 12),
             ],
-            market_id: id(99),
-            time_slot: 1,
-        };
+        )
+        .expect("orders should belong to one market slot");
 
         let matches = matching_data.pay_as_clear();
         let preferred_match = matches
