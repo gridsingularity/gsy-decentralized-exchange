@@ -34,7 +34,7 @@ longer represent one uniform-price auction.
 `MATCHING_ALGORITHM` selects the standard-market algorithm:
 
 - `pay_as_bid` (default): each accepted standard match settles at the bid rate.
-- `pay_as_clear`: bids are sorted descending and offers ascending, then the
+- `pay_as_clear`: bids are sorted by descending energy_rate and offers by ascending energy_rate, then the
   engine walks their cumulative energy tranches until the next bid price is
   lower than the next offer price. The accepted cumulative quantity is the
   clearing volume. All accepted standard matches settle at the marginal
