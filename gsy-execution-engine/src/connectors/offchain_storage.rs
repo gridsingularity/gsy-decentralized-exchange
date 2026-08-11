@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use primitives::constants::GLOBAL_CONSTANTS;
 use primitives::db_api_schema::{
     profiles::{MeasurementPointSchema, MeasurementSchema, TimeseriesSchema},
-    trades::TradeSchema,
+    trades::DbTradeSchema,
 };
 use primitives::ewds::{EwdsClient, EwdsOperation};
 use primitives::utils::timestamp_to_string_with_padding;
@@ -19,7 +19,7 @@ pub async fn fetch_trades_and_measurements_for_timeslot(
     base_url: &str,
     timeslot: u64,
     market_duration: u64,
-) -> Result<(Vec<TradeSchema>, Vec<MeasurementSchema>)> {
+) -> Result<(Vec<DbTradeSchema>, Vec<MeasurementSchema>)> {
     let start_time = round_down_timeslot(timeslot);
     let end_time = start_time
         + (market_duration
@@ -50,7 +50,7 @@ pub async fn fetch_trades_and_measurements_for_timeslot(
             trades_resp.status()
         ));
     }
-    let trades: Vec<TradeSchema> = trades_resp.json().await?;
+    let trades: Vec<DbTradeSchema> = trades_resp.json().await?;
 
     let measurements =
         fetch_measurements_from_timeseries(&client, base_url, start_time, end_time).await?;
@@ -120,7 +120,7 @@ fn parse_timeseries_timestamp(timestamp: &str) -> Option<u64> {
 async fn fetch_trades_and_measurements_via_ewds(
     start_time: u64,
     end_time: u64,
-) -> Result<(Vec<TradeSchema>, Vec<MeasurementSchema>)> {
+) -> Result<(Vec<DbTradeSchema>, Vec<MeasurementSchema>)> {
     let query = serde_json::json!({
         "startTime": start_time,
         "endTime": end_time
@@ -131,7 +131,7 @@ async fn fetch_trades_and_measurements_via_ewds(
         8_000,
     );
 
-    let trades: Vec<TradeSchema> = ewds_client
+    let trades: Vec<DbTradeSchema> = ewds_client
         .query(EwdsOperation::TradesQuery, query.clone())
         .await?;
 

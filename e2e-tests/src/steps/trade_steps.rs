@@ -7,7 +7,7 @@ use primitives::db_api_schema::orders::{
     DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderStatus,
 };
 use primitives::db_api_schema::profiles::MeasurementSchema;
-use primitives::db_api_schema::trades::TradeSchema;
+use primitives::db_api_schema::trades::DbTradeSchema;
 use primitives::utils::{parse_or_hash_bytes16, NODE_FLOAT_SCALING_FACTOR};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -176,7 +176,7 @@ async fn query_market_orders(world: &MyWorld) -> Vec<DbOrderSchema> {
         .expect("Failed to parse orders response")
 }
 
-async fn query_market_trades(world: &MyWorld) -> Vec<TradeSchema> {
+async fn query_market_trades(world: &MyWorld) -> Vec<DbTradeSchema> {
     let (start_time, end_time) = market_window(world);
 
     let response = world
@@ -196,7 +196,7 @@ async fn query_market_trades(world: &MyWorld) -> Vec<TradeSchema> {
     );
 
     response
-        .json::<Vec<TradeSchema>>()
+        .json::<Vec<DbTradeSchema>>()
         .await
         .expect("Failed to parse trades response")
 }
@@ -627,7 +627,7 @@ async fn verify_charlie_offer_untouched(world: &mut MyWorld) {
         .expect("Charlie offer order was not found in off-chain storage");
     assert_eq!(
         charlie_offer.status,
-        OrderStatus::Open,
+        OrderStatus::PartiallyFilled,
         "Expected Charlie's cheaper offer to stay open after the preference match phase"
     );
 

@@ -1,11 +1,11 @@
 use crate::helpers::{init_app, stop_app};
 use actix_web::web;
 use primitives::db_api_schema::orders::{DbOrderSchema, OrderEnum, OrderStatus};
-use primitives::db_api_schema::trades::{TradeParameters, TradeSchema, TradeStatus};
+use primitives::db_api_schema::trades::{TradeParameters, DbTradeSchema, TradeStatus};
 
 fn make_order(order_id: &str, order_type: OrderEnum) -> DbOrderSchema {
     DbOrderSchema {
-        status: OrderStatus::Open,
+        status: OrderStatus::Submitted,
         order_id: order_id.to_string(),
         order_type,
         created_by: "0x0000000000000000000000000000000000000abc".to_string(),
@@ -20,8 +20,8 @@ fn make_order(order_id: &str, order_type: OrderEnum) -> DbOrderSchema {
     }
 }
 
-fn make_trade(trade_uuid: &str, bid: DbOrderSchema, offer: DbOrderSchema) -> TradeSchema {
-    TradeSchema {
+fn make_trade(trade_uuid: &str, bid: DbOrderSchema, offer: DbOrderSchema) -> DbTradeSchema {
+    DbTradeSchema {
         status: TradeStatus::Executed,
         trade_uuid: trade_uuid.to_string(),
         offer_hash: offer.order_id.clone(),
@@ -31,12 +31,8 @@ fn make_trade(trade_uuid: &str, bid: DbOrderSchema, offer: DbOrderSchema) -> Tra
         market_id: bid.market_id.clone(),
         time_slot: 1,
         creation_time: 1_677_453_191,
-        offer,
-        bid,
         residual_offer_id: None,
         residual_bid_id: None,
-        residual_offer: None,
-        residual_bid: None,
         parameters: TradeParameters {
             selected_energy_kWh: 14.0,
             energy_rate: 3.0,
@@ -120,7 +116,7 @@ async fn post_normalized_trade_round_trips() {
         .await
         .unwrap();
     assert_eq!(200, resp.status().as_u16());
-    let returned: Vec<TradeSchema> = resp.json().await.unwrap();
+    let returned: Vec<DbTradeSchema> = resp.json().await.unwrap();
     assert_eq!(returned.len(), 1);
     assert_eq!(returned[0].trade_uuid, "TRADE-IE-20260328-0001");
     assert_eq!(returned[0].bid_hash, trade.bid_hash);

@@ -7,7 +7,7 @@ use std::collections::HashMap;
 fn make_order(order_id: &str, market_id: &str, order_type: OrderEnum) -> DbOrderSchema {
     DbOrderSchema {
         order_id: order_id.to_string(),
-        status: OrderStatus::Open,
+        status: OrderStatus::Submitted,
         order_type,
         created_by: "0x0000000000000000000000000000000000000abc".to_string(),
         energy_kWh: 100.0,
@@ -54,7 +54,7 @@ async fn post_orders_persists_order_to_the_db() {
         .unwrap()
         .unwrap();
     assert_eq!(saved.order_type, OrderEnum::Bid);
-    assert_eq!(saved.status, OrderStatus::Open);
+    assert_eq!(saved.status, OrderStatus::Submitted);
 
     let update_result = db
         .get_ref()

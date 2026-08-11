@@ -1,6 +1,11 @@
 use super::EwdsOperation;
-use crate::db_api_schema::orders::{
-    DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus,
+use crate::db_api_schema::{
+    orders::{
+        DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus,
+    },
+    trades::{
+        TradeStatus, DbTradeSchema, TradeParameters
+    }
 };
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
@@ -219,6 +224,89 @@ fn energy_type_from_ewds(value: &str) -> Result<EnergyType> {
     }
 }
 
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct EwdsTradeDto {
+    pub trade_id: String,
+    pub market_id: String,
+    pub bid_id: String,
+    pub buyer_id: String,
+    #[serde(default)]
+    pub residual_bid_id: Option<String>,
+    pub offer_id: String,
+    pub seller_id: String,
+    #[serde(default)]
+    pub residual_offer_id: Option<String>,
+    pub trade_status: String,
+    pub trade_quantity: f64,
+    pub trade_price: f64,
+    pub timestamp: u64,
+}
+
+fn trade_status_to_ewds(status: &TradeStatus) -> &'static str {
+    match status {
+        TradeStatus::Matched => "matched",
+        TradeStatus::Executed => "executed",
+        TradeStatus::Settled => "settled",
+        TradeStatus::Rejected => "rejected",
+    }
+}
+
+fn trade_status_from_ewds(value: &str) -> Result<TradeStatus> {
+    match value.to_ascii_lowercase().as_str() {
+        "matched" => Ok(TradeStatus::Matched),
+        "executed" => Ok(TradeStatus::Executed),
+        "settled" => Ok(TradeStatus::Settled),
+        "rejected" => Ok(TradeStatus::Rejected),
+        _ => Err(anyhow!("unsupported EWDS trade status '{}'", value)),
+    }
+}
+
+impl From<DbTradeSchema> for EwdsTradeDto {
+    fn from(trade: DbTradeSchema) -> Self {
+        Self {
+            trade_id: trade.trade_uuid,
+            market_id: trade.market_id,
+            bid_id: trade.bid_hash,
+            buyer_id: trade.buyer,
+            residual_bid_id: trade.residual_bid_id,
+            offer_id: trade.offer_hash,
+            seller_id: trade.seller,
+            residual_offer_id: trade.residual_offer_id,
+            trade_status: trade_status_to_ewds(&trade.status).to_string(),
+            trade_quantity: trade.parameters.selected_energy_kWh,
+            trade_price: trade.parameters.energy_rate,
+            timestamp: trade.time_slot,
+        }
+    }
+}
+
+impl TryFrom<EwdsTradeDto> for DbTradeSchema {
+    type Error = anyhow::Error;
+
+    fn try_from(trade: EwdsTradeDto) -> Result<Self> {
+        Ok(Self {
+            trade_uuid: trade.trade_id,
+            status: trade_status_from_ewds(&trade.trade_status)?,
+            seller: trade.seller_id,
+            buyer: trade.buyer_id,
+            market_id: trade.market_id,
+            time_slot: trade.timestamp,
+            creation_time: trade.timestamp,
+            offer_hash: trade.offer_id,
+            bid_hash: trade.bid_id,
+            residual_offer_id: trade.residual_offer_id,
+            residual_bid_id: trade.residual_bid_id,
+            parameters: TradeParameters {
+                selected_energy_kWh: trade.trade_quantity,
+                energy_rate: trade.trade_price,
+            },
+        })
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -305,5 +393,108 @@ mod tests {
     #[test]
     fn unknown_energy_type_is_error() {
         assert!(energy_type_from_ewds("PLUTONIUM").is_err());
+    }
+
+    fn trade() -> DbTradeSchema {
+        DbTradeSchema {
+            trade_uuid: "trade-id".to_string(),
+            status: TradeStatus::Settled,
+            seller: "seller-id".to_string(),
+            buyer: "buyer-id".to_string(),
+            market_id: "market-id".to_string(),
+            time_slot: 10,
+            creation_time: 10, // equal to time_slot so round-trip holds
+            offer_hash: "offer-hash".to_string(),
+            bid_hash: "bid-hash".to_string(),
+            residual_offer_id: Some("res-offer".to_string()),
+            residual_bid_id: Some("res-bid".to_string()),
+            parameters: TradeParameters {
+                selected_energy_kWh: 4.5,
+                energy_rate: 12.0,
+            },
+        }
+    }
+
+    #[test]
+    fn db_to_ewds_trade_maps_fields() {
+        let dto = EwdsTradeDto::from(trade());
+
+        assert_eq!(dto.trade_id, "trade-id");
+        assert_eq!(dto.market_id, "market-id");
+        assert_eq!(dto.bid_id, "bid-hash");
+        assert_eq!(dto.buyer_id, "buyer-id");
+        assert_eq!(dto.residual_bid_id.as_deref(), Some("res-bid"));
+        assert_eq!(dto.offer_id, "offer-hash");
+        assert_eq!(dto.seller_id, "seller-id");
+        assert_eq!(dto.residual_offer_id.as_deref(), Some("res-offer"));
+        assert_eq!(dto.trade_status, "settled");
+        assert_eq!(dto.trade_quantity, 4.5);
+        assert_eq!(dto.trade_price, 12.0);
+        assert_eq!(dto.timestamp, 10);
+    }
+
+    #[test]
+    fn ewds_to_db_trade_maps_fields() {
+        let db = DbTradeSchema::try_from(EwdsTradeDto::from(trade()))
+            .expect("EWDS trade should convert to DB schema");
+
+        assert_eq!(db.trade_uuid, "trade-id");
+        assert_eq!(db.status, TradeStatus::Settled);
+        assert_eq!(db.seller, "seller-id");
+        assert_eq!(db.buyer, "buyer-id");
+        assert_eq!(db.market_id, "market-id");
+        assert_eq!(db.time_slot, 10);
+        assert_eq!(db.creation_time, 10);
+        assert_eq!(db.offer_hash, "offer-hash");
+        assert_eq!(db.bid_hash, "bid-hash");
+        assert_eq!(db.residual_offer_id.as_deref(), Some("res-offer"));
+        assert_eq!(db.residual_bid_id.as_deref(), Some("res-bid"));
+        assert_eq!(db.parameters.selected_energy_kWh, 4.5);
+        assert_eq!(db.parameters.energy_rate, 12.0);
+    }
+
+    #[test]
+    fn trade_round_trips_when_creation_time_equals_time_slot() {
+        let expected = trade();
+        let actual = DbTradeSchema::try_from(EwdsTradeDto::from(expected.clone()))
+            .expect("round trip should succeed");
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn creation_time_is_lost_when_it_differs_from_time_slot() {
+        let mut original = trade();
+        original.creation_time = 99; // differs from time_slot (10)
+
+        let actual = DbTradeSchema::try_from(EwdsTradeDto::from(original.clone())).unwrap();
+
+        assert_ne!(actual, original);
+        assert_eq!(actual.creation_time, original.time_slot); // both come from timestamp
+    }
+
+    #[test]
+    fn trade_status_round_trips() {
+        for status in [
+            TradeStatus::Matched,
+            TradeStatus::Executed,
+            TradeStatus::Settled,
+            TradeStatus::Rejected,
+        ] {
+            let s = trade_status_to_ewds(&status);
+            assert_eq!(trade_status_from_ewds(s).unwrap(), status);
+        }
+    }
+
+    #[test]
+    fn unknown_trade_status_is_error() {
+        assert!(trade_status_from_ewds("cancelled").is_err());
+    }
+
+    #[test]
+    fn trade_status_from_ewds_is_case_insensitive() {
+        assert_eq!(
+            trade_status_from_ewds("SETTLED").unwrap(),
+            TradeStatus::Settled
+        );
     }
 }

@@ -1,4 +1,4 @@
-use primitives::db_api_schema::{profiles::MeasurementSchema, trades::TradeSchema};
+use primitives::db_api_schema::{profiles::MeasurementSchema, trades::DbTradeSchema};
 use primitives::utils::{bytes16_to_hex, parse_or_hash_bytes16};
 use std::collections::HashMap;
 
@@ -20,7 +20,7 @@ pub struct Penalty {
 ///
 /// # Arguments
 ///
-/// * `trades` - A slice of TradeSchema records.
+/// * `trades` - A slice of DbTradeSchema records.
 /// * `measurements` - A slice of MeasurementSchema records.
 /// * `penalty_rate` - The penalty rate as a f64 (e.g., 0.10 for 10%).
 ///
@@ -28,7 +28,7 @@ pub struct Penalty {
 ///
 /// A vector of Penalty structs.
 pub fn compute_penalties(
-    trades: &[TradeSchema],
+    trades: &[DbTradeSchema],
     measurements: &[MeasurementSchema],
     penalty_rate: f64,
 ) -> Vec<Penalty> {
@@ -96,7 +96,7 @@ mod tests {
     use primitives::db_api_schema::{
         orders::{DbOrderSchema, OrderEnum, OrderStatus},
         profiles::MeasurementSchema,
-        trades::{TradeParameters, TradeSchema, TradeStatus},
+        trades::{TradeParameters, DbTradeSchema, TradeStatus},
     };
     use primitives::utils::{bytes16_to_hex, parse_or_hash_bytes16};
 
@@ -122,10 +122,10 @@ mod tests {
         }
     }
 
-    fn trade() -> TradeSchema {
+    fn trade() -> DbTradeSchema {
         let bid = order("bid-1", "areaalice", true);
         let offer = order("offer-1", "areabob", false);
-        TradeSchema {
+        DbTradeSchema {
             trade_uuid: "trade-1".to_string(),
             status: TradeStatus::Settled,
             seller: offer.created_by.clone(),

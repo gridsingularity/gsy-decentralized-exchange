@@ -163,7 +163,7 @@ paths:
             schema:
               type: array
               items:
-                $ref: "#/components/schemas/TradeSchema"
+                $ref: "#/components/schemas/DbTradeSchema"
       responses:
         "200":
           description: Inserted trade IDs.
@@ -189,7 +189,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/TradeSchema"
+                  $ref: "#/components/schemas/DbTradeSchema"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -742,7 +742,7 @@ components:
       type: string
       enum: [executed, settled]
 
-    TradeSchema:
+    DbTradeSchema:
       type: object
       required:
         - trade_id

@@ -5,7 +5,7 @@ use ethers::prelude::*;
 use gsy_community_client::external_api::ExternalFacilityTopology;
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::profiles::ForecastSchema;
-use primitives::db_api_schema::trades::TradeSchema;
+use primitives::db_api_schema::trades::DbTradeSchema;
 use primitives::utils::parse_or_hash_bytes16;
 use primitives::MarketType;
 use reqwest::Client;
@@ -41,7 +41,7 @@ pub struct MyWorld {
     pub seller_id: String,
     pub bid_forecast: Option<ForecastSchema>,
     pub offer_forecast: Option<ForecastSchema>,
-    pub last_trade: Option<TradeSchema>,
+    pub last_trade: Option<DbTradeSchema>,
     pub last_charlie_offer_order_id: Option<String>,
     pub market_schema: Option<MarketSchema>,
     pub facilities_topology: Vec<ExternalFacilityTopology>,

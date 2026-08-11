@@ -9,10 +9,10 @@ use primitives::db_api_schema::{
     orders::{
         DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus,
     },
-    trades::{TradeParameters, TradeSchema, TradeStatus},
+    trades::{TradeParameters, DbTradeSchema, TradeStatus},
 };
 use primitives::utils::{bytes16_to_hex, NODE_FLOAT_SCALING_FACTOR};
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 pub struct OffchainStorageEvmHandler {
     pub db: DatabaseWrapper,
@@ -96,50 +96,37 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         let bid_bson = mongodb::bson::to_bson(&bid_hash_str).unwrap();
         let offer_bson = mongodb::bson::to_bson(&offer_hash_str).unwrap();
 
-        let bid_doc = self.db.orders().get_order_by_id(&bid_bson).await?;
-        let offer_doc = self.db.orders().get_order_by_id(&offer_bson).await?;
+        let trade_schema = DbTradeSchema {
+            trade_uuid: trade_hash.clone(),
+            status: TradeStatus::Settled,
+            seller: bytes16_to_hex(event.seller_id),
+            buyer: bytes16_to_hex(event.buyer_id),
+            market_id: bytes16_to_hex(event.market_id),
+            time_slot: event.time_slot,
+            creation_time: chrono::Utc::now().timestamp() as u64,
+            offer_hash: offer_hash_str,
+            bid_hash: bid_hash_str,
+            residual_offer_id,
+            residual_bid_id,
+            parameters: TradeParameters {
+                selected_energy_kWh: energy_f64,
+                energy_rate: price_f64,
+            },
+        };
 
-        if let (Some(bid_order), Some(offer_order)) = (bid_doc, offer_doc) {
-            let residual_bid = get_optional_order(&self.db, residual_bid_id.as_ref()).await?;
-            let residual_offer = get_optional_order(&self.db, residual_offer_id.as_ref()).await?;
+        self.db.trades().insert_trades(vec![trade_schema]).await?;
 
-            let trade_schema = TradeSchema {
-                trade_uuid: trade_hash.clone(),
-                status: TradeStatus::Settled,
-                seller: bytes16_to_hex(event.seller_id),
-                buyer: bytes16_to_hex(event.buyer_id),
-                market_id: bytes16_to_hex(event.market_id),
-                time_slot: event.time_slot,
-                creation_time: chrono::Utc::now().timestamp() as u64,
-                offer: offer_order,
-                offer_hash: offer_hash_str,
-                bid: bid_order,
-                bid_hash: bid_hash_str,
-                residual_offer_id,
-                residual_bid_id,
-                residual_offer,
-                residual_bid,
-                parameters: TradeParameters {
-                    selected_energy_kWh: energy_f64,
-                    energy_rate: price_f64,
-                },
-            };
+        self.db
+            .orders()
+            .update_order_status_by_id(&bid_bson, OrderStatus::Executed)
+            .await?;
+        self.db
+            .orders()
+            .update_order_status_by_id(&offer_bson, OrderStatus::Executed)
+            .await?;
 
-            self.db.trades().insert_trades(vec![trade_schema]).await?;
+        info!("Trade persisted and orders updated.");
 
-            self.db
-                .orders()
-                .update_order_status_by_id(&bid_bson, OrderStatus::Executed)
-                .await?;
-            self.db
-                .orders()
-                .update_order_status_by_id(&offer_bson, OrderStatus::Executed)
-                .await?;
-
-            info!("Trade persisted and orders updated.");
-        } else {
-            warn!("Could not find one of the orders for the settled trade. Skipping persistence.");
-        }
 
         Ok(())
     }
@@ -195,16 +182,4 @@ fn bytes16_to_optional_hex(value: [u8; 16]) -> Option<String> {
     } else {
         Some(bytes16_to_hex(value))
     }
-}
-
-async fn get_optional_order(
-    db: &DatabaseWrapper,
-    order_id: Option<&String>,
-) -> Result<Option<DbOrderSchema>> {
-    let Some(order_id) = order_id else {
-        return Ok(None);
-    };
-
-    let order_bson = mongodb::bson::to_bson(order_id).unwrap();
-    db.orders().get_order_by_id(&order_bson).await
 }
