@@ -120,12 +120,66 @@ async fn post_and_get_pilot_site() {
 }
 
 #[tokio::test]
+async fn post_and_get_communities() {
+    let app = init_app().await;
+    let address = app.address.clone();
+    let client = reqwest::Client::new();
+
+    let communities = vec![
+        EnergyCommunitySchema {
+            community_id: "11111111-1111-4111-8111-111111111111".to_string(),
+            community_name: "Aran Islands REC".to_string(),
+            sites: vec!["Aran Islands Site 1".to_string()],
+        },
+        EnergyCommunitySchema {
+            community_id: "22222222-2222-4222-8222-222222222222".to_string(),
+            community_name: "Lugaggia Innovation Community".to_string(),
+            sites: vec!["Lugaggia Site 1".to_string()],
+        },
+    ];
+
+    for community in &communities {
+        let response = client
+            .post(&format!("{}/communities", &address))
+            .json(community)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(200, response.status().as_u16());
+    }
+
+    let response = client
+        .get(&format!("{}/communities", &address))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(200, response.status().as_u16());
+
+    let returned: Vec<EnergyCommunitySchema> = response.json().await.unwrap();
+    let mut returned_ids = returned
+        .into_iter()
+        .map(|community| community.community_id)
+        .collect::<Vec<_>>();
+    returned_ids.sort();
+
+    assert_eq!(
+        returned_ids,
+        vec![
+            "11111111-1111-4111-8111-111111111111".to_string(),
+            "22222222-2222-4222-8222-222222222222".to_string(),
+        ]
+    );
+    stop_app(app).await;
+}
+
+#[tokio::test]
 async fn post_community_site_facility() {
     let app = init_app().await;
     let address = app.address.clone();
     let client = reqwest::Client::new();
 
     let community = EnergyCommunitySchema {
+        community_id: "11111111-1111-4111-8111-111111111111".to_string(),
         community_name: "Aran Islands REC".to_string(),
         sites: vec!["Aran Islands Site 1".to_string()],
     };

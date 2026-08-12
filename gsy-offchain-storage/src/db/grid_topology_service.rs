@@ -48,6 +48,14 @@ pub async fn init_communities(db: &DatabaseWrapper) -> Result<()> {
     controller
         .create_index(
             IndexModel::builder()
+                .keys(doc! {"community_id": 1})
+                .options(IndexOptions::builder().unique(true).build())
+                .build(),
+        )
+        .await?;
+    controller
+        .create_index(
+            IndexModel::builder()
                 .keys(doc! {"community_name": 1})
                 .options(IndexOptions::builder().unique(true).build())
                 .build(),
