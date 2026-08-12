@@ -34,9 +34,9 @@ async fn test_evm_market_controller_client_updates_status() {
         contract MockMarketController {
             bytes32 public constant ORCHESTRATOR_ROLE = keccak256("ORCHESTRATOR_ROLE");
             mapping(address => mapping(bytes32 => bool)) private roles;
-            mapping(bytes32 => bool) public marketStatus;
+            mapping(bytes16 => bool) public marketStatus;
 
-            event MarketStatusUpdated(bytes32 indexed marketId, bool isOpen);
+            event MarketStatusUpdated(bytes16 indexed marketId, bool isOpen);
 
             constructor() {
                 roles[msg.sender][ORCHESTRATOR_ROLE] = true;
@@ -46,11 +46,11 @@ async fn test_evm_market_controller_client_updates_status() {
                 return roles[account][role];
             }
 
-            function isMarketOpen(bytes32 marketId) external view returns (bool) {
+            function isMarketOpen(bytes16 marketId) external view returns (bool) {
                 return marketStatus[marketId];
             }
 
-            function setMarketStatus(bytes32 marketId, bool isOpen) external {
+            function setMarketStatus(bytes16 marketId, bool isOpen) external {
                 require(roles[msg.sender][ORCHESTRATOR_ROLE], "missing orchestrator role");
                 marketStatus[marketId] = isOpen;
                 emit MarketStatusUpdated(marketId, isOpen);
