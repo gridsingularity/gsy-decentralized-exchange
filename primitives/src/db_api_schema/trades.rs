@@ -45,24 +45,28 @@ impl DbTradeSchema {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum ClearingStatus {
-    Cleared,
-    Uncleared,
-    Failed,
+    Final,
+    Partial,
+    Rejected,
+    NoBid,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ClearingResultSchema {
     pub market_id: String,
     pub clearing_status: ClearingStatus,
+    #[serde(default)]
+    pub no_bid_reason: Option<NoBidReason>,
     pub clearing_price: f64,
     pub total_supply: f64,
     pub total_demand: f64,
     pub traded_quantity: f64,
     pub num_trades: u32,
     pub tx_hash: String,
-    pub clearing_time: String,
+    pub clearing_time: u64,
 }
 
+// todo: move this to markets.rs
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct MarketRoleSchema {
     pub role_name: String,
@@ -70,22 +74,9 @@ pub struct MarketRoleSchema {
     pub assigned_to: Vec<String>,
 }
 
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub enum IntelligentClearingStatus {
-    #[serde(rename = "FINAL")]
-    Final,
-    #[serde(rename = "PARTIAL")]
-    Partial,
-    #[serde(rename = "REJECTED")]
-    Rejected,
-    #[serde(rename = "NO_BID")]
-    NoBid,
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum IntelligentNoBidReason {
+pub enum NoBidReason {
     InvalidInputs,
     StaleInput,
     HardConstraints,
@@ -96,19 +87,8 @@ pub enum IntelligentNoBidReason {
     MarketReject,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct IntelligentClearingResultSchema {
-    pub market_id: String,
-    pub clearing_status: IntelligentClearingStatus,
-    #[serde(default)]
-    pub no_bid_reason: Option<IntelligentNoBidReason>,
-    pub clearing_price: f64,
-    pub total_supply: f64,
-    pub total_demand: f64,
-    pub traded_quantity: f64,
-    pub num_trades: u32,
-    pub tx_hash: String,
-    #[serde(default)]
-    pub created_at: Option<String>,
+impl Default for NoBidReason {
+    fn default() -> Self {
+        NoBidReason::Timeout
+    }
 }

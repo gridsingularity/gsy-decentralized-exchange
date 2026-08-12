@@ -4,12 +4,14 @@ use crate::db_api_schema::{
         DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus,
     },
     trades::{
-        TradeStatus, DbTradeSchema, TradeParameters
+        TradeStatus, DbTradeSchema, TradeParameters, ClearingResultSchema, ClearingStatus,
+        NoBidReason
     }
 };
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::str::FromStr;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -306,6 +308,117 @@ impl TryFrom<EwdsTradeDto> for DbTradeSchema {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct EwdsClearingResultDto{
+    pub market_id: String,
+    pub clearing_status: String,
+    #[serde(default)]
+    pub no_bid_reason: Option<String>,
+    pub clearing_price: f64,
+    pub total_supply: f64,
+    pub total_demand: f64,
+    pub trade_quantity: f64,
+    pub num_trades: u32,
+    pub tx_hash: String,
+    pub created_at: u64,
+}
+
+
+impl ClearingStatus {
+    fn as_wire(&self) -> &'static str {
+        match self {
+            ClearingStatus::Final => "final",
+            ClearingStatus::Partial => "partial",
+            ClearingStatus::Rejected => "rejected",
+            ClearingStatus::NoBid => "no_bid",
+        }
+    }
+}
+
+impl FromStr for ClearingStatus {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self> {
+        match s.to_ascii_uppercase().as_str() {
+            "final" => Ok(ClearingStatus::Final),
+            "partial" => Ok(ClearingStatus::Partial),
+            "rejected" => Ok(ClearingStatus::Rejected),
+            "no_bid" => Ok(ClearingStatus::NoBid),
+            other => Err(anyhow!("unknown clearing status: {other}")),
+        }
+    }
+}
+
+impl NoBidReason {
+    fn as_wire(&self) -> &'static str {
+        match self {
+            NoBidReason::InvalidInputs => "invalid_inputs",
+            NoBidReason::StaleInput => "stale_input",
+            NoBidReason::HardConstraints => "hard_constraints",
+            NoBidReason::PolicyUnavailable => "policy_unavailable",
+            NoBidReason::DeadlineMissed => "deadline_missed",
+            NoBidReason::Timeout => "timeout",
+            NoBidReason::OperatorDisabled => "operator_disabled",
+            NoBidReason::MarketReject => "market_reject",
+        }
+    }
+}
+
+impl FromStr for NoBidReason {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self> {
+        match s.to_ascii_lowercase().as_str() {
+            "invalid_inputs" => Ok(NoBidReason::InvalidInputs),
+            "stale_input" => Ok(NoBidReason::StaleInput),
+            "hard_constraints" => Ok(NoBidReason::HardConstraints),
+            "policy_unavailable" => Ok(NoBidReason::PolicyUnavailable),
+            "deadline_missed" => Ok(NoBidReason::DeadlineMissed),
+            "timeout" => Ok(NoBidReason::Timeout),
+            "operator_disabled" => Ok(NoBidReason::OperatorDisabled),
+            "market_reject" => Ok(NoBidReason::MarketReject),
+            other => Err(anyhow!("unknown no_bid_reason: {other}")),
+        }
+    }
+}
+
+impl From<ClearingResultSchema> for EwdsClearingResultDto {
+    fn from(s: ClearingResultSchema) -> Self {
+        EwdsClearingResultDto {
+            market_id: s.market_id,
+            clearing_status: s.clearing_status.as_wire().to_string(),
+            no_bid_reason: s.no_bid_reason.map(|r| r.as_wire().to_string()),
+            clearing_price: s.clearing_price,
+            total_supply: s.total_supply,
+            total_demand: s.total_demand,
+            trade_quantity: s.traded_quantity,
+            num_trades: s.num_trades,
+            tx_hash: s.tx_hash,
+            created_at: s.clearing_time,
+        }
+    }
+}
+
+impl TryFrom<EwdsClearingResultDto> for ClearingResultSchema {
+    type Error = anyhow::Error;
+    fn try_from(d: EwdsClearingResultDto) -> Result<Self> {
+        Ok(ClearingResultSchema {
+            market_id: d.market_id,
+            clearing_status: ClearingStatus::from_str(&d.clearing_status)?,
+            no_bid_reason: d
+                .no_bid_reason
+                .as_deref()
+                .map(NoBidReason::from_str)
+                .transpose()?,
+            clearing_price: d.clearing_price,
+            total_supply: d.total_supply,
+            total_demand: d.total_demand,
+            traded_quantity: d.trade_quantity,
+            num_trades: d.num_trades,
+            tx_hash: d.tx_hash,
+            clearing_time: d.created_at,
+        })
+    }
+}
 
 #[cfg(test)]
 mod tests {
