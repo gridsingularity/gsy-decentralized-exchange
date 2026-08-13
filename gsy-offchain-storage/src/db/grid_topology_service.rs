@@ -1,7 +1,7 @@
 use crate::db::DatabaseWrapper;
 use anyhow::Result;
 use futures::StreamExt;
-use mongodb::bson::{doc, Bson};
+use mongodb::bson::{self, doc, Bson};
 use mongodb::options::IndexOptions;
 use mongodb::{Collection, IndexModel};
 use primitives::db_api_schema::grid_topology::{
@@ -194,6 +194,18 @@ impl EnergyCommunityService {
             .0
             .find_one(doc! {"community_name": community_name})
             .await?)
+    }
+
+    pub async fn upsert(&self, community: EnergyCommunitySchema) -> Result<EnergyCommunitySchema> {
+        let community_doc = bson::to_document(&community)?;
+        self.0
+            .update_one(
+                doc! {"community_id": community.community_id.clone()},
+                doc! {"$set": community_doc},
+            )
+            .upsert(true)
+            .await?;
+        Ok(community)
     }
 
     pub async fn get_all(&self) -> Result<Vec<EnergyCommunitySchema>> {
