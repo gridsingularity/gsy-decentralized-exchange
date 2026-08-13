@@ -1,4 +1,5 @@
 use super::EwdsOperation;
+use crate::db_api_schema::grid_topology::EnergyCommunitySchema;
 use crate::db_api_schema::orders::{
     DbAttributes, DbOrderSchema, DbRequirements, IntelligentEnergyType, OrderEnum, OrderStatus,
 };
@@ -102,6 +103,34 @@ pub struct EwdsAttributesDto {
     #[serde(default)]
     pub trading_partner_id: Option<String>,
     pub energy_type: IntelligentEnergyType,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct EwdsCommunityDto {
+    pub community_id: String,
+    pub community_name: String,
+    pub sites: Vec<String>,
+}
+
+impl From<EnergyCommunitySchema> for EwdsCommunityDto {
+    fn from(community: EnergyCommunitySchema) -> Self {
+        Self {
+            community_id: community.community_id,
+            community_name: community.community_name,
+            sites: community.sites,
+        }
+    }
+}
+
+impl From<EwdsCommunityDto> for EnergyCommunitySchema {
+    fn from(community: EwdsCommunityDto) -> Self {
+        Self {
+            community_id: community.community_id,
+            community_name: community.community_name,
+            sites: community.sites,
+        }
+    }
 }
 
 impl From<DbOrderSchema> for EwdsOrderDto {
@@ -238,5 +267,23 @@ mod tests {
             .expect("EWDS order should convert back to DB schema");
 
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn community_conversion_round_trips_through_ewds_dto() {
+        let expected = EnergyCommunitySchema {
+            community_id: "a5657b6e-b0b2-46ee-87d6-1e29470339a7".to_string(),
+            community_name: "Test community".to_string(),
+            sites: vec!["site-id".to_string()],
+        };
+
+        let dto = EwdsCommunityDto::from(expected.clone());
+        let serialized = serde_json::to_value(&dto).unwrap();
+
+        assert_eq!(
+            serialized.get("communityId").and_then(Value::as_str),
+            Some(expected.community_id.as_str())
+        );
+        assert_eq!(EnergyCommunitySchema::from(dto), expected);
     }
 }

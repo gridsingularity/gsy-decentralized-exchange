@@ -23,13 +23,19 @@ pub enum EwdsOperation {
     TradesQuery,
     #[serde(rename = "measurements.query")]
     MeasurementsQuery,
+    #[serde(rename = "community.upsert")]
+    CommunityUpsert,
+    #[serde(rename = "communities.query")]
+    CommunitiesQuery,
 }
 
 impl EwdsOperation {
-    pub const ALL: [Self; 3] = [
+    pub const ALL: [Self; 5] = [
         Self::OrdersQuery,
         Self::TradesQuery,
         Self::MeasurementsQuery,
+        Self::CommunityUpsert,
+        Self::CommunitiesQuery,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -37,6 +43,8 @@ impl EwdsOperation {
             Self::OrdersQuery => "orders.query",
             Self::TradesQuery => "trades.query",
             Self::MeasurementsQuery => "measurements.query",
+            Self::CommunityUpsert => "community.upsert",
+            Self::CommunitiesQuery => "communities.query",
         }
     }
 
@@ -45,6 +53,8 @@ impl EwdsOperation {
             Self::OrdersQuery => "orders-query",
             Self::TradesQuery => "trades-query",
             Self::MeasurementsQuery => "measurements-query",
+            Self::CommunityUpsert => "community-upsert",
+            Self::CommunitiesQuery => "communities-query",
         }
     }
 }
@@ -66,6 +76,8 @@ pub struct EwdsTopicConfig {
     orders: EwdsTopicPair,
     trades: EwdsTopicPair,
     measurements: EwdsTopicPair,
+    community_upsert: EwdsTopicPair,
+    communities: EwdsTopicPair,
 }
 
 impl Default for EwdsTopicConfig {
@@ -82,6 +94,14 @@ impl Default for EwdsTopicConfig {
             measurements: EwdsTopicPair {
                 request: "measurementsQuery".to_string(),
                 response: "measurementsQueryResponse".to_string(),
+            },
+            community_upsert: EwdsTopicPair {
+                request: "communityUpsert".to_string(),
+                response: "communityUpsertResponse".to_string(),
+            },
+            communities: EwdsTopicPair {
+                request: "communitiesQuery".to_string(),
+                response: "communitiesQueryResponse".to_string(),
             },
         }
     }
@@ -121,6 +141,26 @@ impl EwdsTopicConfig {
                     defaults.measurements.response.as_str(),
                 ),
             },
+            community_upsert: EwdsTopicPair {
+                request: env_or(
+                    "EWDS_COMMUNITY_UPSERT_TOPIC",
+                    defaults.community_upsert.request.as_str(),
+                ),
+                response: env_or(
+                    "EWDS_COMMUNITY_UPSERT_RESPONSE_TOPIC",
+                    defaults.community_upsert.response.as_str(),
+                ),
+            },
+            communities: EwdsTopicPair {
+                request: env_or(
+                    "EWDS_COMMUNITIES_REQUEST_TOPIC",
+                    defaults.communities.request.as_str(),
+                ),
+                response: env_or(
+                    "EWDS_COMMUNITIES_RESPONSE_TOPIC",
+                    defaults.communities.response.as_str(),
+                ),
+            },
         }
     }
 
@@ -129,6 +169,8 @@ impl EwdsTopicConfig {
             EwdsOperation::OrdersQuery => &self.orders,
             EwdsOperation::TradesQuery => &self.trades,
             EwdsOperation::MeasurementsQuery => &self.measurements,
+            EwdsOperation::CommunityUpsert => &self.community_upsert,
+            EwdsOperation::CommunitiesQuery => &self.communities,
         }
     }
 }
@@ -479,6 +521,39 @@ mod tests {
                 response: "measurementsQueryResponse".to_string(),
             }
         );
+        assert_eq!(
+            topics.for_operation(EwdsOperation::CommunityUpsert),
+            &EwdsTopicPair {
+                request: "communityUpsert".to_string(),
+                response: "communityUpsertResponse".to_string(),
+            }
+        );
+        assert_eq!(
+            topics.for_operation(EwdsOperation::CommunitiesQuery),
+            &EwdsTopicPair {
+                request: "communitiesQuery".to_string(),
+                response: "communitiesQueryResponse".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn community_operations_round_trip_through_the_request_envelope() {
+        for operation in [
+            EwdsOperation::CommunityUpsert,
+            EwdsOperation::CommunitiesQuery,
+        ] {
+            let envelope = EwdsRequestEnvelope {
+                request_id: "request-id".to_string(),
+                operation,
+                payload: Value::Object(Default::default()),
+            };
+
+            let serialized = serde_json::to_string(&envelope).unwrap();
+            let deserialized: EwdsRequestEnvelope = serde_json::from_str(&serialized).unwrap();
+
+            assert_eq!(deserialized.operation, operation);
+        }
     }
 
     #[test]

@@ -2,7 +2,8 @@ use crate::db::DatabaseWrapper;
 use anyhow::{anyhow, Result};
 use primitives::db_api_schema::profiles::{MeasurementPointType, MeasurementSchema};
 use primitives::ewds::dto::{
-    EwdsInboundMessage, EwdsOrderDto, EwdsRequestEnvelope, EwdsResponseEnvelope, EwdsSendMessageDto,
+    EwdsCommunityDto, EwdsInboundMessage, EwdsOrderDto, EwdsRequestEnvelope, EwdsResponseEnvelope,
+    EwdsSendMessageDto,
 };
 use primitives::ewds::{
     client_id_for_suffix, env_var, ewds_rate_limit_backoff_ms, format_response_body,
@@ -168,8 +169,7 @@ async fn process_next_topic_batch(
     let operation = EwdsOperation::ALL[*next_topic_index % EwdsOperation::ALL.len()];
     *next_topic_index = (*next_topic_index + 1) % EwdsOperation::ALL.len();
     let topic_name = config.topics.for_operation(operation).request.as_str();
-    let messages =
-        poll_requests_for_topic(client, config, topic_name, amount.as_str()).await?;
+    let messages = poll_requests_for_topic(client, config, topic_name, amount.as_str()).await?;
 
     for message in messages {
         let parsed = serde_json::from_str::<EwdsRequestEnvelope>(&message.payload);
@@ -334,6 +334,44 @@ async fn handle_request(
                 .collect::<Vec<_>>();
             info!(
                 "Publishing EWDS measurements.query response (request_id={}, orders={})",
+                request_id,
+                data.len()
+            );
+
+            send_success_response(client, config, request_id, response_topic.as_str(), data).await
+        }
+        EwdsOperation::CommunityUpsert => {
+            let community = serde_json::from_value::<EwdsCommunityDto>(envelope.payload)
+                .map_err(|e| anyhow!("community.upsert payload parse error: {}", e))?;
+            let request_id = envelope.request_id;
+
+            info!(
+                "Handling EWDS community.upsert request (request_id={}, community_id={})",
+                request_id, community.community_id
+            );
+
+            let saved = db.communities().upsert(community.into()).await?;
+            let data = vec![EwdsCommunityDto::from(saved)];
+
+            send_success_response(client, config, request_id, response_topic.as_str(), data).await
+        }
+        EwdsOperation::CommunitiesQuery => {
+            let request_id = envelope.request_id;
+
+            info!(
+                "Handling EWDS communities.query request (request_id={})",
+                request_id
+            );
+
+            let data = db
+                .communities()
+                .get_all()
+                .await?
+                .into_iter()
+                .map(EwdsCommunityDto::from)
+                .collect::<Vec<_>>();
+            info!(
+                "Publishing EWDS communities.query response (request_id={}, communities={})",
                 request_id,
                 data.len()
             );
