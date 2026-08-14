@@ -56,6 +56,7 @@ pub mod pallet {
 		Bid, BidOfferMatch, Offer, Order, OrderComponent, Trade, TradesPenalties, Validator,
 	};
 	use scale_info::prelude::vec::Vec;
+	use sp_std::collections::btree_set::BTreeSet;
 	use sp_std::vec;
 
 	use remuneration::RemunerationHandler;
@@ -96,6 +97,8 @@ pub mod pallet {
 	pub enum Event<T: Config> {
 		TradesSettled(T::Hash),
 		PenaltiesSubmitted(TradesPenalties<T::AccountId, T::Hash>, T::Hash),
+		/// A trade was evaluated by the execution engine and incurred no penalty.
+		TradeExecuted(T::Hash),
 	}
 
 	#[pallet::error]
@@ -209,15 +212,28 @@ pub mod pallet {
 
 		/// Submit penalties received from the execution engine.
 		///
-		/// This function is restricted to the execution engine operator (here enforced by require
-		/// that the origin is root). It accepts a vector of penalty records and stores each one
-		/// in the `TradesPenalties` storage map.
+		/// This function is restricted to a registered exchange operator, checked via
+		/// `gsy_collateral::Pallet::<T>::is_registered_exchange_operator`. It accepts the penalty
+		/// records for the trades that were penalized, plus the full set of trade uuids the
+		/// execution engine evaluated for the slot. Each penalty is stored in the
+		/// `TradesPenalties` storage map and emits a `PenaltiesSubmitted` event. Every evaluated
+		/// uuid that was not penalized emits a `TradeExecuted` event, so offchain consumers can
+		/// learn which trades came out clean.
+		///
+		/// # Parameters
+		/// `penalties`: The penalty records for the trades that incurred a penalty.
+		/// `evaluated_trade_uuids`: The uuids of all trades the execution engine evaluated for the
+		/// slot, penalized or not.
 		#[transactional]
 		#[pallet::call_index(1)]
-		#[pallet::weight(<T as Config>::TradeSettlementWeightInfo::submit_penalties())]
+		#[pallet::weight(<T as Config>::TradeSettlementWeightInfo::submit_penalties(
+			penalties.len() as u32,
+			evaluated_trade_uuids.len() as u32,
+		))]
 		pub fn submit_penalties(
 			origin: OriginFor<T>,
 			penalties: Vec<TradesPenalties<T::AccountId, T::Hash>>,
+			evaluated_trade_uuids: Vec<T::Hash>,
 		) -> DispatchResult {
 			let operator_account = ensure_signed(origin)?;
 			// Verify that the user is a registered operator account.
@@ -226,6 +242,9 @@ pub mod pallet {
 				gsy_collateral::Error::<T>::NotARegisteredExchangeOperator
 			);
 			log::info!("Submitting penalties {:?}...", penalties.len());
+
+			let penalized: BTreeSet<T::Hash> = penalties.iter().map(|p| p.trade_uuid).collect();
+
 			// For each penalty in the input vector, compute a unique hash and insert it.
 			for penalty in penalties.into_iter() {
 				let penalty_hash = T::Hashing::hash_of(&penalty);
@@ -237,6 +256,16 @@ pub mod pallet {
 				log::info!("Emitting penalty event...");
 				Self::deposit_event(Event::PenaltiesSubmitted(penalty, penalty_hash));
 			}
+
+			let mut emitted: BTreeSet<T::Hash> = BTreeSet::new();
+			for trade_uuid in evaluated_trade_uuids.into_iter() {
+				if penalized.contains(&trade_uuid) || !emitted.insert(trade_uuid) {
+					continue;
+				}
+				Self::deposit_event(Event::TradeExecuted(trade_uuid));
+			}
+			log::info!("Emitted {:?} TradeExecuted event(s)...", emitted.len());
+
 			log::info!("Exited penalty submission...");
 			Ok(())
 		}
