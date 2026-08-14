@@ -111,6 +111,8 @@ services:
       SPOT_MARKET_CLOSE_OFFSET_MIN: "30"
       TICK_INTERVAL_SECONDS: "5"
       LOOK_AHEAD_HOURS: "1"
+      OFFCHAIN_STORAGE_TRANSPORT: ${OFFCHAIN_STORAGE_TRANSPORT:-http}
+      OFFCHAIN_STORAGE_URL: http://gsy-offchain-storage:8080
       EWDS_MARKET_ORCHESTRATOR_CLIENT_ID: ${EWDS_MARKET_ORCHESTRATOR_CLIENT_ID:-gsymarketorchestrator}
 
   gsy-execution-engine:

@@ -5,7 +5,7 @@ use ethers::{
 };
 use gsy_market_orchestrator::{
     chain_connector::{GsyMarketOrchestratorNodeClient, MarketChainClient},
-    config::Config,
+    config::{Config, OffchainStorageTransport},
     orchestrator::generate_market_id,
 };
 use primitives::MarketType;
@@ -120,6 +120,8 @@ async fn test_evm_market_controller_client_updates_status() {
             "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string(),
         tick_interval_seconds: 1,
         look_ahead_hours: 1,
+        offchain_storage_transport: OffchainStorageTransport::Http,
+        offchain_storage_url: "http://localhost:8080".to_string(),
     };
 
     let orchestrator_client = GsyMarketOrchestratorNodeClient::new(&config).await.unwrap();

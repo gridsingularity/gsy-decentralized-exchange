@@ -1,4 +1,5 @@
 use crate::chain_connector::MarketChainClient;
+use crate::community_source::CommunityProvider;
 use crate::config::{Config, MARKET_RULES};
 use blake2_rfc::blake2b::blake2b;
 use primitives::MarketType;
@@ -7,9 +8,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
 use tracing::{error, info, warn};
 
-pub async fn run<C>(config: Config, client: C) -> anyhow::Result<()>
+pub async fn run<C, S>(config: Config, client: C, community_source: S) -> anyhow::Result<()>
 where
     C: MarketChainClient,
+    S: CommunityProvider,
 {
     info!("Configuration: {:?}", config);
 
@@ -37,17 +39,28 @@ where
 
     loop {
         info!("-- Orchestrator Tick --");
-        if let Err(e) = orchestrate_markets(&config, &client).await {
+        if let Err(e) = orchestrate_markets(&config, &client, &community_source).await {
             error!("An error occurred during orchestration tick: {:?}", e);
         }
         sleep(interval).await;
     }
 }
 
-async fn orchestrate_markets<C>(config: &Config, client: &C) -> anyhow::Result<()>
+async fn orchestrate_markets<C, S>(
+    config: &Config,
+    client: &C,
+    community_source: &S,
+) -> anyhow::Result<()>
 where
     C: MarketChainClient + ?Sized,
+    S: CommunityProvider + ?Sized,
 {
+    let communities = community_source.fetch_communities().await?;
+    if communities.is_empty() {
+        warn!("No communities found; skipping market orchestration tick");
+        return Ok(());
+    }
+
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
     orchestrate_markets_at(config, client, now).await
 }
@@ -129,6 +142,7 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use ethers::types::Address;
+    use primitives::db_api_schema::grid_topology::EnergyCommunitySchema;
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
 
@@ -183,6 +197,54 @@ mod tests {
         }
     }
 
+    #[derive(Default, Clone)]
+    struct MockCommunityProvider {
+        communities: Arc<Mutex<Vec<EnergyCommunitySchema>>>,
+        error: Arc<Mutex<Option<String>>>,
+        fetch_count: Arc<Mutex<u32>>,
+    }
+
+    impl MockCommunityProvider {
+        fn with_error(message: &str) -> Self {
+            Self {
+                error: Arc::new(Mutex::new(Some(message.to_string()))),
+                ..Self::default()
+            }
+        }
+
+        fn set_communities(&self, communities: Vec<EnergyCommunitySchema>) {
+            *self.communities.lock().expect("communities lock poisoned") = communities;
+        }
+
+        fn fetch_count(&self) -> u32 {
+            *self.fetch_count.lock().expect("fetch_count lock poisoned")
+        }
+    }
+
+    #[async_trait]
+    impl CommunityProvider for MockCommunityProvider {
+        async fn fetch_communities(&self) -> anyhow::Result<Vec<EnergyCommunitySchema>> {
+            *self.fetch_count.lock().expect("fetch_count lock poisoned") += 1;
+            if let Some(message) = self.error.lock().expect("error lock poisoned").clone() {
+                return Err(anyhow::anyhow!(message));
+            }
+
+            Ok(self
+                .communities
+                .lock()
+                .expect("communities lock poisoned")
+                .clone())
+        }
+    }
+
+    fn community() -> EnergyCommunitySchema {
+        EnergyCommunitySchema {
+            community_id: "11111111-1111-4111-8111-111111111111".to_string(),
+            community_name: "Community One".to_string(),
+            sites: vec!["site-one".to_string()],
+        }
+    }
+
     fn test_config(look_ahead_hours: u64) -> Config {
         Config {
             evm_node_url: "ws://localhost:8545".to_string(),
@@ -191,6 +253,8 @@ mod tests {
                 "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string(),
             tick_interval_seconds: 1,
             look_ahead_hours,
+            offchain_storage_transport: crate::config::OffchainStorageTransport::Http,
+            offchain_storage_url: "http://localhost:8080".to_string(),
         }
     }
 
@@ -212,7 +276,7 @@ mod tests {
                     rule.close_offset_mins,
                 ) == should_be_open
                 {
-                    return (rule.market_type, current_delivery_secs);
+                    return (rule.market_type.clone(), current_delivery_secs);
                 }
             }
             current_delivery_secs += GLOBAL_CONSTANTS.time_slot_sec;
@@ -222,6 +286,51 @@ mod tests {
             "No delivery slot found for should_be_open={} in look_ahead={}h",
             should_be_open, look_ahead_hours
         );
+    }
+
+    #[tokio::test]
+    async fn orchestration_tick_skips_when_no_communities_exist() {
+        let config = test_config(0);
+        let client = MockChainClient::default();
+        let source = MockCommunityProvider::default();
+
+        orchestrate_markets(&config, &client, &source)
+            .await
+            .expect("empty community result should not fail");
+
+        assert_eq!(source.fetch_count(), 1);
+        assert!(client.updates().is_empty());
+    }
+
+    #[tokio::test]
+    async fn orchestration_tick_propagates_community_fetch_failures() {
+        let config = test_config(0);
+        let client = MockChainClient::default();
+        let source = MockCommunityProvider::with_error("community source unavailable");
+
+        let error = orchestrate_markets(&config, &client, &source)
+            .await
+            .expect_err("community source error should propagate");
+
+        assert!(error.to_string().contains("community source unavailable"));
+        assert!(client.updates().is_empty());
+    }
+
+    #[tokio::test]
+    async fn orchestration_fetches_communities_on_every_tick() {
+        let config = test_config(0);
+        let client = MockChainClient::default();
+        let source = MockCommunityProvider::default();
+
+        orchestrate_markets(&config, &client, &source)
+            .await
+            .unwrap();
+        source.set_communities(vec![community()]);
+        orchestrate_markets(&config, &client, &source)
+            .await
+            .unwrap();
+
+        assert_eq!(source.fetch_count(), 2);
     }
 
     #[tokio::test]
