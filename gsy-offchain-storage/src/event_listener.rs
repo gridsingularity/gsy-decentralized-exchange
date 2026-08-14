@@ -1,6 +1,7 @@
 use crate::db::DbRef;
 use anyhow::{Error, Result};
 use gsy_offchain_primitives::db_api_schema::orders::OrderStatus;
+use gsy_offchain_primitives::db_api_schema::trades::TradeStatus;
 use gsy_offchain_primitives::utils::h256_to_string;
 use mongodb::bson;
 use subxt::utils::H256;
@@ -72,6 +73,34 @@ async fn mark_order_executed(db: &DbRef, order_hash: H256) {
         Ok(result) => info!("Marked order {:?} as executed: {:?}", id, result),
         Err(e) => {
             tracing::error!("Failed to mark order as executed: {:?}", e);
+        }
+    }
+}
+
+/// Mark the trade identified by its on-chain `trade_uuid` as executed.
+///
+/// The trade row itself is written separately over HTTP by `post_trades`, with no ordering
+/// guarantee relative to this event subscription, so the event can arrive first and find no
+/// matching trade yet. Warn loudly in that case instead of leaving the trade silently stuck
+/// on `Settled`.
+async fn mark_trade_executed(db: &DbRef, trade_uuid: H256) {
+    let trade_uuid = h256_to_string(trade_uuid);
+    match db
+        .get_ref()
+        .trades()
+        .update_trade_status_by_uuid(&trade_uuid, TradeStatus::Executed)
+        .await
+    {
+        Ok(result) if result.matched_count == 0 => {
+            tracing::warn!(
+                "No trade found for trade_uuid {} when marking executed; the event may have \
+                 arrived before the trade was inserted",
+                trade_uuid
+            );
+        }
+        Ok(result) => info!("Marked trade {} as executed: {:?}", trade_uuid, result),
+        Err(e) => {
+            tracing::error!("Failed to mark trade as executed: {:?}", e);
         }
     }
 }

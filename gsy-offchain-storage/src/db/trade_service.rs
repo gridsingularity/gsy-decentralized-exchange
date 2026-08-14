@@ -1,7 +1,8 @@
 use crate::db::DatabaseWrapper;
-use crate::db::collection::{Coll, apply_time_window, in_time_window};
+use crate::db::collection::{Coll, UpdateSummary, apply_time_window, in_time_window};
 use anyhow::Result;
-use gsy_offchain_primitives::db_api_schema::trades::TradeSchema;
+use gsy_offchain_primitives::db_api_schema::trades::{TradeSchema, TradeStatus};
+use mongodb::bson;
 use mongodb::bson::{Bson, doc};
 use std::collections::HashMap;
 
@@ -36,10 +37,14 @@ impl TradeService {
         market_id: Option<String>,
         start_time: Option<u32>,
         end_time: Option<u32>,
+        status: Option<TradeStatus>,
     ) -> Result<Vec<TradeSchema>> {
         let mut filter_params = doc! {};
         if let Some(market_id) = &market_id {
             filter_params.insert("market_id", market_id.clone());
+        }
+        if let Some(status) = &status {
+            filter_params.insert("status", bson::to_bson(status)?);
         }
         apply_time_window(&mut filter_params, start_time, end_time);
 
@@ -48,6 +53,7 @@ impl TradeService {
                 market_id
                     .as_ref()
                     .is_none_or(|market_id| &trade.market_id == market_id)
+                    && status.as_ref().is_none_or(|status| &trade.status == status)
                     && in_time_window(trade.time_slot, start_time, end_time)
             })
             .await
@@ -74,6 +80,33 @@ impl TradeService {
                     || trade.offer.offer_component.area_uuid == area_uuid)
                     && in_time_window(trade.time_slot, start_time, end_time)
             })
+            .await
+    }
+
+    #[tracing::instrument(
+        name = "Update trade status by trade_uuid",
+        skip(self, trade_uuid, status)
+    )]
+    pub async fn update_trade_status_by_uuid(
+        &self,
+        trade_uuid: &str,
+        status: TradeStatus,
+    ) -> Result<UpdateSummary> {
+        self.0
+            .update_one(
+                doc! {
+                    "trade_uuid": trade_uuid
+                },
+                doc! {
+                    "$set": {"status": bson::to_bson(&status).unwrap()}
+                },
+                |trade| trade.trade_uuid == trade_uuid,
+                |trade| {
+                    let modified = trade.status != status;
+                    trade.status = status.clone();
+                    modified
+                },
+            )
             .await
     }
 }

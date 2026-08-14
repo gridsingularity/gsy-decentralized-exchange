@@ -49,7 +49,9 @@ pub async fn get_guarantees_of_origin(
     let trades = match db
         .get_ref()
         .trades()
-        .filter_trades(None, query_params.start_time, query_params.end_time)
+        // Status is deliberately left unfiltered to preserve the existing behaviour; whether a
+        // penalized trade should still earn a guarantee of origin is an open question.
+        .filter_trades(None, query_params.start_time, query_params.end_time, None)
         .await
     {
         Ok(trades) => trades,

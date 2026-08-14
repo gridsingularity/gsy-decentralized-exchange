@@ -86,7 +86,9 @@ export interface DbOrderSchema {
   order: Order;
 }
 
-export type TradeStatus = 'Settled' | 'Executed';
+// 'Settled' means matched but not yet evaluated for delivery; the execution engine's verdict
+// moves a trade to 'Executed' (no penalty) or 'Penalized'.
+export type TradeStatus = 'Settled' | 'Executed' | 'Penalized';
 
 export interface TradeParameters {
   selected_energy: number;

@@ -4,6 +4,7 @@ use codec::Encode;
 use gsy_offchain_primitives::db_api_schema::orders::{
     DbBid, DbOffer, DbOrderComponent, DbOrderSchema, Order as DbOrder, OrderStatus,
 };
+use gsy_offchain_primitives::db_api_schema::trades::{TradeParameters, TradeSchema, TradeStatus};
 use gsy_offchain_primitives::node_to_api_schema::insert_order::{
     Bid as InsertBid, Offer as InsertOffer, OrderComponent as InsertOrderComponent,
 };
@@ -13,6 +14,46 @@ use gsy_offchain_primitives::node_to_api_schema::insert_trades::{
 use gsy_offchain_primitives::utils::h256_to_string;
 use mongodb::bson::Bson;
 use subxt::utils::{AccountId32, H256};
+
+fn create_test_trade_schema(trade_uuid: &str) -> TradeSchema {
+    let order_component = DbOrderComponent {
+        area_uuid: "area".to_string(),
+        market_id: "market".to_string(),
+        time_slot: 100,
+        creation_time: 1677453190,
+        energy: 100.0,
+        energy_rate: 10.0,
+    };
+    TradeSchema {
+        _id: H256::random().to_string(),
+        status: TradeStatus::Settled,
+        seller: "seller_account".to_string(),
+        buyer: "buyer_account".to_string(),
+        market_id: "market".to_string(),
+        time_slot: 100,
+        trade_uuid: trade_uuid.to_string(),
+        creation_time: 1677453190,
+        offer: DbOffer {
+            seller: "seller_account".to_string(),
+            nonce: 1,
+            offer_component: order_component.clone(),
+        },
+        offer_hash: H256::random().to_string(),
+        bid: DbBid {
+            buyer: "buyer_account".to_string(),
+            nonce: 1,
+            bid_component: order_component,
+        },
+        bid_hash: H256::random().to_string(),
+        residual_offer: None,
+        residual_bid: None,
+        parameters: TradeParameters {
+            selected_energy: 14.0,
+            energy_rate: 3.0,
+            trade_uuid: trade_uuid.to_string(),
+        },
+    }
+}
 
 #[tokio::test]
 async fn post_trade_request_writes_trades_to_the_db() {
@@ -380,4 +421,117 @@ async fn subscribe_return_a_400_when_data_is_missing() {
             error_message
         );
     }
+}
+
+#[tokio::test]
+async fn get_trades_filters_by_status() {
+    let app = init_app().await;
+    let address = app.address;
+    let db = web::Data::new(app.db_wrapper);
+
+    let mut trades = Vec::new();
+    for status in [
+        TradeStatus::Settled,
+        TradeStatus::Executed,
+        TradeStatus::Penalized,
+    ] {
+        let mut trade = create_test_trade_schema(&h256_to_string(H256::random()));
+        trade.status = status;
+        trades.push(trade);
+    }
+    let expected: Vec<(TradeStatus, String)> = trades
+        .iter()
+        .map(|t| (t.status.clone(), t.trade_uuid.clone()))
+        .collect();
+
+    db.get_ref()
+        .trades()
+        .insert_trades(trades)
+        .await
+        .expect("Failed to insert trades");
+
+    let client = reqwest::Client::new();
+
+    for (status, trade_uuid) in expected {
+        let response = client
+            .get(&format!("{}/trades?status={:?}", &address, status))
+            .send()
+            .await
+            .expect("Failed to fetch trades");
+        assert_eq!(200, response.status().as_u16());
+
+        let filtered: Vec<TradeSchema> = response.json().await.expect("Failed to decode trades");
+        assert_eq!(
+            filtered.len(),
+            1,
+            "expected exactly one {:?} trade, got {:?}",
+            status,
+            filtered.iter().map(|t| &t.status).collect::<Vec<_>>()
+        );
+        assert_eq!(filtered[0].trade_uuid, trade_uuid);
+        assert_eq!(filtered[0].status, status);
+    }
+
+    let response = client
+        .get(&format!("{}/trades", &address))
+        .send()
+        .await
+        .expect("Failed to fetch trades");
+    let unfiltered: Vec<TradeSchema> = response.json().await.expect("Failed to decode trades");
+    assert_eq!(unfiltered.len(), 3, "an absent status filter returns every trade");
+}
+
+#[tokio::test]
+async fn update_trade_status_by_uuid_promotes_settled_to_executed() {
+    let app = init_app().await;
+    let db = web::Data::new(app.db_wrapper);
+    let trade_uuid = H256::random().to_string();
+    let trade = create_test_trade_schema(&trade_uuid);
+
+    db.get_ref()
+        .trades()
+        .insert_trades(vec![trade])
+        .await
+        .expect("Failed to insert trade");
+
+    let summary = db
+        .get_ref()
+        .trades()
+        .update_trade_status_by_uuid(&trade_uuid, TradeStatus::Executed)
+        .await
+        .expect("Failed to update trade status");
+    assert_eq!(summary.matched_count, 1);
+    assert_eq!(summary.modified_count, 1);
+
+    let saved = db.get_ref().trades().get_all_trades().await.unwrap();
+    let updated = saved
+        .iter()
+        .find(|t| t.trade_uuid == trade_uuid)
+        .expect("trade not found");
+    assert_eq!(updated.status, TradeStatus::Executed);
+}
+
+#[tokio::test]
+async fn update_trade_status_by_uuid_matches_nothing_for_unknown_uuid() {
+    let app = init_app().await;
+    let db = web::Data::new(app.db_wrapper);
+    let trade = create_test_trade_schema(&H256::random().to_string());
+
+    db.get_ref()
+        .trades()
+        .insert_trades(vec![trade])
+        .await
+        .expect("Failed to insert trade");
+
+    let summary = db
+        .get_ref()
+        .trades()
+        .update_trade_status_by_uuid(&H256::random().to_string(), TradeStatus::Executed)
+        .await
+        .expect("Failed to update trade status");
+    assert_eq!(summary.matched_count, 0);
+    assert_eq!(summary.modified_count, 0);
+
+    let saved = db.get_ref().trades().get_all_trades().await.unwrap();
+    assert!(saved.iter().all(|t| t.status == TradeStatus::Settled));
 }
