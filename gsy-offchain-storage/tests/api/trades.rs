@@ -25,7 +25,7 @@ fn create_test_trade_schema(trade_uuid: &str) -> TradeSchema {
         energy_rate: 10.0,
     };
     TradeSchema {
-        _id: H256::random().to_string(),
+        _id: h256_to_string(H256::random()),
         status: TradeStatus::Settled,
         seller: "seller_account".to_string(),
         buyer: "buyer_account".to_string(),
@@ -38,13 +38,13 @@ fn create_test_trade_schema(trade_uuid: &str) -> TradeSchema {
             nonce: 1,
             offer_component: order_component.clone(),
         },
-        offer_hash: H256::random().to_string(),
+        offer_hash: h256_to_string(H256::random()),
         bid: DbBid {
             buyer: "buyer_account".to_string(),
             nonce: 1,
             bid_component: order_component,
         },
-        bid_hash: H256::random().to_string(),
+        bid_hash: h256_to_string(H256::random()),
         residual_offer: None,
         residual_bid: None,
         parameters: TradeParameters {
@@ -485,7 +485,7 @@ async fn get_trades_filters_by_status() {
 async fn update_trade_status_by_uuid_promotes_settled_to_executed() {
     let app = init_app().await;
     let db = web::Data::new(app.db_wrapper);
-    let trade_uuid = H256::random().to_string();
+    let trade_uuid = h256_to_string(H256::random());
     let trade = create_test_trade_schema(&trade_uuid);
 
     db.get_ref()
@@ -515,7 +515,7 @@ async fn update_trade_status_by_uuid_promotes_settled_to_executed() {
 async fn update_trade_status_by_uuid_matches_nothing_for_unknown_uuid() {
     let app = init_app().await;
     let db = web::Data::new(app.db_wrapper);
-    let trade = create_test_trade_schema(&H256::random().to_string());
+    let trade = create_test_trade_schema(&h256_to_string(H256::random()));
 
     db.get_ref()
         .trades()
@@ -526,7 +526,7 @@ async fn update_trade_status_by_uuid_matches_nothing_for_unknown_uuid() {
     let summary = db
         .get_ref()
         .trades()
-        .update_trade_status_by_uuid(&H256::random().to_string(), TradeStatus::Executed)
+        .update_trade_status_by_uuid(&h256_to_string(H256::random()), TradeStatus::Executed)
         .await
         .expect("Failed to update trade status");
     assert_eq!(summary.matched_count, 0);
@@ -534,4 +534,76 @@ async fn update_trade_status_by_uuid_matches_nothing_for_unknown_uuid() {
 
     let saved = db.get_ref().trades().get_all_trades().await.unwrap();
     assert!(saved.iter().all(|t| t.status == TradeStatus::Settled));
+}
+
+#[tokio::test]
+async fn update_trade_status_by_uuid_reclassifies_executed_as_penalized() {
+    let app = init_app().await;
+    let db = web::Data::new(app.db_wrapper);
+    let trade_uuid = h256_to_string(H256::random());
+    let trade = create_test_trade_schema(&trade_uuid);
+
+    db.get_ref()
+        .trades()
+        .insert_trades(vec![trade])
+        .await
+        .expect("Failed to insert trade");
+
+    db.get_ref()
+        .trades()
+        .update_trade_status_by_uuid(&trade_uuid, TradeStatus::Executed)
+        .await
+        .expect("Failed to update trade status");
+
+    let summary = db
+        .get_ref()
+        .trades()
+        .update_trade_status_by_uuid(&trade_uuid, TradeStatus::Penalized)
+        .await
+        .expect("Failed to update trade status");
+    assert_eq!(summary.matched_count, 1);
+    assert_eq!(summary.modified_count, 1);
+
+    let saved = db.get_ref().trades().get_all_trades().await.unwrap();
+    let updated = saved
+        .iter()
+        .find(|t| t.trade_uuid == trade_uuid)
+        .expect("trade not found");
+    assert_eq!(updated.status, TradeStatus::Penalized);
+}
+
+#[tokio::test]
+async fn update_trade_status_by_uuid_is_idempotent() {
+    let app = init_app().await;
+    let db = web::Data::new(app.db_wrapper);
+    let trade_uuid = h256_to_string(H256::random());
+    let trade = create_test_trade_schema(&trade_uuid);
+
+    db.get_ref()
+        .trades()
+        .insert_trades(vec![trade])
+        .await
+        .expect("Failed to insert trade");
+
+    db.get_ref()
+        .trades()
+        .update_trade_status_by_uuid(&trade_uuid, TradeStatus::Executed)
+        .await
+        .expect("Failed to update trade status");
+
+    let summary = db
+        .get_ref()
+        .trades()
+        .update_trade_status_by_uuid(&trade_uuid, TradeStatus::Executed)
+        .await
+        .expect("Failed to update trade status");
+    assert_eq!(summary.matched_count, 1);
+    assert_eq!(summary.modified_count, 0);
+
+    let saved = db.get_ref().trades().get_all_trades().await.unwrap();
+    let updated = saved
+        .iter()
+        .find(|t| t.trade_uuid == trade_uuid)
+        .expect("trade not found");
+    assert_eq!(updated.status, TradeStatus::Executed);
 }

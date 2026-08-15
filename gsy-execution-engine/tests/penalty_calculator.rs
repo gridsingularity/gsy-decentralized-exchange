@@ -1,6 +1,8 @@
 #[cfg(test)]
 mod tests {
-    use gsy_execution_engine::primitives::penalty_calculator::{compute_penalties, Penalty};
+    use gsy_execution_engine::primitives::penalty_calculator::{
+        build_measurement_map, compute_penalties, evaluated_trade_uuids, Penalty,
+    };
     use gsy_offchain_primitives::db_api_schema::orders::{DbBid, DbOffer, DbOrderComponent};
     use gsy_offchain_primitives::db_api_schema::profiles::MeasurementSchema;
     use gsy_offchain_primitives::db_api_schema::trades::{
@@ -512,5 +514,127 @@ mod tests {
         assert_eq!(by_uuid["trade-ic-2"], 750);
         let total: u64 = penalties.iter().map(|p| p.penalty_cost).sum();
         assert_eq!(total, 1000);
+    }
+
+    #[test]
+    fn build_measurement_map_keys_areas_and_community_aggregate() {
+        let measurements = vec![
+            measurement("assetA1", "CommA", 5.0),
+            measurement("assetA2", "CommA", -3.0),
+            measurement("assetA3", "CommA", 1.0),
+        ];
+
+        let map = build_measurement_map(&measurements);
+
+        assert_eq!(map["assetA1"], 5.0);
+        assert_eq!(map["assetA2"], -3.0);
+        assert_eq!(map["assetA3"], 1.0);
+        // net import = 5.0 - 3.0 + 1.0 = 3.0 (Σ consumption − Σ production).
+        let community_key = h256_to_string(community_id_from_uuid("CommA"));
+        assert_eq!(map[&community_key], 3.0);
+    }
+
+    #[test]
+    fn evaluated_trade_uuids_includes_trade_measured_on_seller_side_only() {
+        // Mirrors pv_penalty: PV (seller) is measured, the buyer's meter is not.
+        let measurements = vec![measurement("buyerA_seller", "Comm", -3.0)];
+        let trades = vec![trade(
+            "buyer_acc",
+            "seller_acc",
+            "buyerA",
+            "prod_market",
+            5.0,
+            "trade-a",
+        )];
+
+        let evaluated = evaluated_trade_uuids(&trades, &measurements);
+
+        assert_eq!(evaluated, vec!["trade-a".to_string()]);
+    }
+
+    #[test]
+    fn evaluated_trade_uuids_excludes_trades_with_no_measurement_on_either_side() {
+        // Regression test for the premature-`Executed` bug: an early polling cycle sees no
+        // measurements for a slot's trades yet, and must not report any of them as evaluated
+        // (which would let the offchain listener mark them `Executed` before they are judged).
+        let measurements = vec![measurement("unrelated_area", "Comm", 4.0)];
+        let trades = vec![trade(
+            "buyer_acc",
+            "seller_acc",
+            "buyerA",
+            "prod_market",
+            5.0,
+            "trade-a",
+        )];
+
+        let evaluated = evaluated_trade_uuids(&trades, &measurements);
+
+        assert!(evaluated.is_empty());
+
+        let evaluated_no_measurements = evaluated_trade_uuids(&trades, &[]);
+        assert!(evaluated_no_measurements.is_empty());
+    }
+
+    #[test]
+    fn evaluated_trade_uuids_includes_inter_community_trades_via_the_community_aggregate_key() {
+        let measurements = vec![
+            measurement("assetA1", "CommA", 5.0),
+            measurement("assetA2", "CommA", -3.0),
+            measurement("assetA3", "CommA", 1.0),
+        ];
+
+        let community_area = h256_to_string(community_id_from_uuid("CommA"));
+        let trades = vec![trade(
+            "buyer_acc",
+            "seller_acc",
+            &community_area,
+            "inter_community_market",
+            2.0,
+            "trade-ic-1",
+        )];
+
+        let evaluated = evaluated_trade_uuids(&trades, &measurements);
+
+        assert_eq!(evaluated, vec!["trade-ic-1".to_string()]);
+    }
+
+    #[test]
+    fn evaluated_trade_uuids_deduplicates() {
+        let measurements = vec![measurement("buyerA", "Comm", 4.0)];
+        let trades = vec![
+            trade("buyer_acc", "seller_acc", "buyerA", "market", 5.0, "trade-a"),
+            trade("buyer_acc", "seller_acc", "buyerA", "market", 5.0, "trade-a"),
+        ];
+
+        let evaluated = evaluated_trade_uuids(&trades, &measurements);
+
+        assert_eq!(evaluated, vec!["trade-a".to_string()]);
+    }
+
+    #[test]
+    fn evaluated_and_penalized_sets_partition_the_pv_waterfall_case() {
+        // Same setup as `seller_aggregate_shortfall_is_waterfalled_to_later_trade`: production
+        // (4.0) covers the earlier (2.0) trade in full and leaves the later (3.0) trade with a
+        // 1.0 shortfall. Both trades were measured (same seller area), so both must be
+        // evaluated, while only the later trade is penalized -- proving the evaluated and
+        // penalized sets partition correctly, which is what the offchain listener relies on to
+        // classify each trade exactly once.
+        let measurements = vec![measurement("buyerAgg_seller", "Comm", -4.0)];
+
+        let market_id = "prod_market";
+        let trades = vec![
+            trade_at("buyer_acc", "seller_acc", "buyerAgg", market_id, 2.0, "trade-1", 1),
+            trade_at("buyer_acc", "seller_acc", "buyerAgg", market_id, 3.0, "trade-2", 2),
+        ];
+
+        let evaluated = evaluated_trade_uuids(&trades, &measurements);
+        assert_eq!(
+            evaluated,
+            vec!["trade-1".to_string(), "trade-2".to_string()]
+        );
+
+        let penalties = compute_penalties(&trades, &measurements, PENALTY_RATE);
+        assert_eq!(penalties.len(), 1);
+        assert_eq!(penalties[0].trade_uuid, "trade-2");
     }
 }

@@ -50,18 +50,14 @@ pub struct Penalty {
 ///   apportioned pro-rata across the group's trades (largest-remainder method, so the
 ///   parts sum exactly to the aggregate). Over-consumption is a flat overage with no
 ///   natural per-trade ordering, so there is nothing to give time priority to.
-pub fn compute_penalties(
-	trades: &[TradeSchema],
-	measurements: &[MeasurementSchema],
-	penalty_rate: f64,
-) -> Vec<Penalty> {
-	let mut penalties = Vec::new();
-
-	// Create a lookup map for measurements by area_uuid
-	// TODO: temporarily use only the area_hash for identifying measurements. Should be improved
-	// by adding market_id in the measurements, and use this too for identification.
-	// Sign convention: `energy_kwh` is signed net energy; positive means consumption,
-	// negative means production.
+/// Builds the measurement lookup map keyed by area_hash, plus one aggregate entry per
+/// `(community_uuid, time_slot)` keyed by the community-id hash.
+///
+/// TODO: temporarily use only the area_hash for identifying measurements. Should be improved
+/// by adding market_id in the measurements, and use this too for identification.
+/// Sign convention: `energy_kwh` is signed net energy; positive means consumption,
+/// negative means production.
+pub fn build_measurement_map(measurements: &[MeasurementSchema]) -> HashMap<String, f64> {
 	let mut measurement_map: HashMap<String, f64> = HashMap::new();
 	for meas in measurements {
 		measurement_map.insert(meas.area_hash.clone(), meas.energy_kwh);
@@ -77,6 +73,42 @@ pub fn compute_penalties(
 			);
 		}
 	}
+	measurement_map
+}
+
+/// Returns the `trade_uuid` of every trade that was actually evaluated — i.e. at least one of
+/// its bid/offer areas (or their community aggregate) has a measurement — in input order,
+/// de-duplicated.
+///
+/// `compute_penalties` `continue`s past a group whose area is missing from the measurement
+/// map: it does not judge that side at all. A trade with no measurement on either side was
+/// never judged and must not be reported as clean, or the caller would mark it `Executed`
+/// before the engine ever saw its meter reading.
+pub fn evaluated_trade_uuids(
+	trades: &[TradeSchema],
+	measurements: &[MeasurementSchema],
+) -> Vec<String> {
+	let measurement_map = build_measurement_map(measurements);
+	let mut seen: HashSet<String> = HashSet::new();
+	let mut uuids = Vec::new();
+	for trade in trades {
+		let measured = measurement_map.contains_key(&trade.bid.bid_component.area_uuid)
+			|| measurement_map.contains_key(&trade.offer.offer_component.area_uuid);
+		if measured && seen.insert(trade.trade_uuid.clone()) {
+			uuids.push(trade.trade_uuid.clone());
+		}
+	}
+	uuids
+}
+
+pub fn compute_penalties(
+	trades: &[TradeSchema],
+	measurements: &[MeasurementSchema],
+	penalty_rate: f64,
+) -> Vec<Penalty> {
+	let mut penalties = Vec::new();
+
+	let measurement_map = build_measurement_map(measurements);
 
 	// Two independent passes, buyer then seller. This pass ordering keeps the output
 	// deterministic. Inter-community trades carry the community hash as their

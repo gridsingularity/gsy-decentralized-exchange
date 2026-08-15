@@ -15,3 +15,4 @@ Feature: GSY DEX PV production shortfall penalty waterfall
     Then two trades settle on the PV asset splitting its production into 3 and 2 kWh
     When a PV-asset production measurement of 4 kWh is submitted for the slot
     Then only the later of the two PV trades is penalized for the 1 kWh production shortfall
+    And the unpenalized PV trade is marked "Executed" and the penalized PV trade is marked "Penalized" in the offchain storage

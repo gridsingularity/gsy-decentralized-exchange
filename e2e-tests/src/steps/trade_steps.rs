@@ -102,6 +102,8 @@ async fn verify_trade_on_chain(world: &mut MyWorld) {
 			assert_eq!(trade.parameters.selected_energy, 100000);
 			let expected_rate = 30000;
 			assert_eq!(trade.parameters.energy_rate, expected_rate);
+			world.last_trade_uuid = Some(trade.trade_uuid);
+			world.last_market_id = Some(trade.market_id);
 			return;
 		}
 	}

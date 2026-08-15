@@ -13,6 +13,7 @@ Feature: GSY DEX Trade Execution
     And measurements for "charlie" and "bob" assets are submitted
     Then the matching engine matches the bid and offer and a trade is settled on-chain
     And the execution engine submits penalties for the trade
+    And the trade is marked "Penalized" in the offchain storage
 
   Scenario: Multiple community markets run in parallel and execute trades
     Given the GSY DEX services are running
