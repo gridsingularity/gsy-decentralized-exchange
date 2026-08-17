@@ -124,8 +124,9 @@ pub async fn get_trades_canonical(
     };
 
     // Build a global area_hash -> name map from every market's topology.
-    // area_hash is globally unique (randomized per market) so this is
-    // unambiguous even across markets.
+    // area_hash is `deterministic_area_hash(community_name, area_name)` and therefore
+    // market-invariant: the same asset hashes identically in every market it appears in,
+    // so collapsing all markets into one map is unambiguous.
     let mut name_by_area_hash: HashMap<String, String> = HashMap::new();
     for market in &markets {
         for area in &market.community_areas {

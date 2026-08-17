@@ -312,11 +312,6 @@ paths:
         acquiring a terminal status and being retained. See `CertificateRecord` 
         for the full list of issuance attributes that are consequently absent 
         from this API.
-
-        > **Note.** This documents the Annex A target schema. The deployed
-        > service still returns the previous settled-trade shape
-        > (`LegacyGuaranteesOfOriginSchema`); the endpoint implementation is to
-        > be migrated separately.
       operationId: getGuaranteesOfOrigin
       parameters:
         - name: start_time
@@ -1880,59 +1875,6 @@ components:
         Recorded state of the trade at issuance (Annex A.4). Issuance requires
         `delivery_verified`.
       enum: [settled, delivery_verified]
-    LegacyGuaranteesOfOriginSchema:
-      type: object
-      description: |
-        Previous response shape of `GET /guarantees-of-origin-measurements`, still
-        returned by the deployed service pending migration to
-        `CertificateRecord`. A single settled energy trade: in FEDECOM energy is
-        traded ahead of delivery (matching runs on forecasts), so
-        `energy_trade_timestamp` precedes `energy_delivery_timestamp`.
-      required:
-        - trade_id
-        - traded_energy_kwh
-        - buyer_id
-        - seller_id
-        - energy_community_id
-        - energy_delivery_timestamp
-        - energy_trade_timestamp
-        - market_id
-        - market_type
-      properties:
-        trade_id:
-          type: string
-          description: Unique id of the energy trade.
-        traded_energy_kwh:
-          type: number
-          format: double
-          description: Traded energy (kWh).
-        buyer_id:
-          type: string
-          description: Account id of the buyer.
-        seller_id:
-          type: string
-          description: Account id of the seller.
-        energy_community_id:
-          type: string
-          description: |
-            UUID of the energy community the traded assets belong to. Empty when
-            the trade's market topology is not (yet) known to the store.
-        energy_delivery_timestamp:
-          type: integer
-          format: int64
-          minimum: 0
-          description: Delivery time of the traded energy (the market `time_slot`), unix seconds.
-        energy_trade_timestamp:
-          type: integer
-          format: int64
-          minimum: 0
-          description: Time at which the energy was traded, unix seconds. Precedes the delivery timestamp.
-        market_id:
-          type: string
-          description: Id of the market the energy was traded in.
-        market_type:
-          type: string
-          description: Market type the energy was traded in (e.g. "Spot", "Flexibility").
     ForecastSchema:
       type: object
       description: Forecasted energy profile point of an asset/area.

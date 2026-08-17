@@ -19,8 +19,9 @@ use gsy_community_client::topology::{ExternalAreaTopology, ExternalCommunityTopo
 use gsy_offchain_primitives::constants::GlobalConstants;
 use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, AssetType};
 use gsy_offchain_primitives::db_api_schema::profiles::{ForecastSchema, MeasurementSchema};
-use gsy_offchain_primitives::utils::string_to_h256;
+use gsy_offchain_primitives::utils::{h256_to_string, string_to_h256};
 use gsy_offchain_primitives::MarketType;
+use serde_json::Value;
 use std::time::Duration;
 use subxt::utils::{AccountId32, H256};
 use tracing::info;
@@ -381,5 +382,90 @@ async fn verify_pv_penalty_waterfall(world: &mut MyWorld) {
 	info!(
 		"Verified waterfall penalty: later trade {:?} penalized {} (bob); earlier trade {:?} unpenalized",
 		second.trade_uuid, energy, first.trade_uuid
+	);
+}
+
+/// The certificate endpoint's end-to-end contract: a certificate is issued for the trade that
+/// survived validation and for nothing else. Exercises the whole chain on the docker stack —
+/// the negative production measurement reaching storage, the `Executed`/`Penalized` split, and
+/// the requirement that a certificate carry seller-side evidence.
+#[then("the offchain storage issues a certificate for the executed PV trade only")]
+async fn verify_pv_penalty_certificates(world: &mut MyWorld) {
+	let mut trades = world.pv_penalty_trades.clone();
+	assert_eq!(trades.len(), 2, "two PV trades must have been captured");
+	// Same waterfall order as the penalty assertion: earlier commitment is honored in full.
+	trades.sort_by(|a, b| {
+		a.creation_time
+			.cmp(&b.creation_time)
+			.then_with(|| a.trade_uuid.cmp(&b.trade_uuid))
+	});
+	let executed = h256_to_string(trades[0].trade_uuid);
+	let penalized = h256_to_string(trades[1].trade_uuid);
+	// Which of the two trades clears 3.0 and which 2.0 kWh is not pinned by the settlement
+	// (the shortfall is 1.0 kWh either way), so the expected quantity comes from the trade
+	// itself rather than a literal. `selected_energy` is scaled ×10000 on-chain.
+	let expected_energy = trades[0].selected_energy as f64 / 10000.0;
+
+	let slot = world.target_delivery_time;
+	let url = format!(
+		"{}/guarantees-of-origin-measurements?start_time={}&end_time={}",
+		orderbook_url(),
+		slot,
+		slot
+	);
+
+	// Both trade statuses have already converged by this point, so the certificate is derivable
+	// at once; poll anyway to absorb event-listener lag on a loaded stack.
+	let mut records: Vec<Value> = Vec::new();
+	for i in 0..20 {
+		let resp = world.http_client.get(&url).send().await.expect("GET certificates failed");
+		assert!(
+			resp.status().is_success(),
+			"GET /guarantees-of-origin-measurements returned {}",
+			resp.status()
+		);
+		records = resp.json().await.expect("deserialize certificates response");
+		if !records.is_empty() {
+			break;
+		}
+		info!("Waiting for the certificate to become derivable... check {}/20", i + 1);
+		tokio::time::sleep(Duration::from_secs(5)).await;
+	}
+
+	assert_eq!(
+		records.len(),
+		1,
+		"exactly one certificate for the slot: the penalized trade earns none, got {:?}",
+		records
+	);
+	let record = &records[0];
+	assert_eq!(
+		record["trade_and_delivery"]["trade_reference"][0].as_str(),
+		Some(executed.as_str()),
+		"the certificate must reference the executed trade"
+	);
+	assert_ne!(
+		record["trade_and_delivery"]["trade_reference"][0].as_str(),
+		Some(penalized.as_str()),
+		"the penalized trade must never earn a certificate"
+	);
+	assert_eq!(
+		record["time_and_quantity"]["energy_quantity"].as_f64(),
+		Some(expected_energy),
+		"the certified quantity is the traded quantity"
+	);
+	assert_eq!(record["identity"]["record_type"].as_str(), Some("local_origin_record"));
+	assert_eq!(record["production_asset"]["production_asset_id"].as_str(), Some(PV_AREA));
+	assert_eq!(record["production_asset"]["asset_class"].as_str(), Some("PV"));
+	assert_eq!(
+		record["trade_and_delivery"]["trade_status_at_issuance"].as_str(),
+		Some("delivery_verified")
+	);
+	// The PV meter nets negative, which is what `validate_measurement` had to stop rejecting.
+	assert_eq!(record["measurement_provenance"]["flow_direction"].as_str(), Some("export"));
+	assert_eq!(record["time_and_quantity"]["source_slot_timestamp"].as_u64(), Some(slot));
+	info!(
+		"Verified one certificate for executed trade {} ({} kWh); none for penalized {}",
+		executed, expected_energy, penalized
 	);
 }

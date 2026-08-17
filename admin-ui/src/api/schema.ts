@@ -126,8 +126,9 @@ export interface TradeCanonicalSchema extends TradeSchema {
 }
 
 export interface MeasurementSchema {
-  // area_uuid here carries the asset `name` (sensor id), area_hash the per-market
-  // random hash — see plan §9.4 before joining.
+  // area_uuid here carries the asset `name` (sensor id); area_hash is the deterministic
+  // hash of (community_name, area_name) and is the same in every market, so it is what
+  // joins a measurement to a trade component.
   area_uuid: string;
   area_hash: string;
   community_uuid: string;
