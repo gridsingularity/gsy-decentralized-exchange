@@ -180,19 +180,21 @@ mod tests {
                 .unwrap_or(&false))
         }
 
-        async fn update_market_status(
+        async fn update_market_statuses(
             &self,
-            market_id: [u8; 16],
+            market_ids: Vec<[u8; 16]>,
             is_open: bool,
         ) -> anyhow::Result<()> {
-            self.market_statuses
-                .lock()
-                .expect("market_statuses lock poisoned")
-                .insert(market_id, is_open);
-            self.updates
-                .lock()
-                .expect("updates lock poisoned")
-                .push((market_id, is_open));
+            for market_id in market_ids {
+                self.market_statuses
+                    .lock()
+                    .expect("market_statuses lock poisoned")
+                    .insert(market_id, is_open);
+                self.updates
+                    .lock()
+                    .expect("updates lock poisoned")
+                    .push((market_id, is_open));
+            }
             Ok(())
         }
     }

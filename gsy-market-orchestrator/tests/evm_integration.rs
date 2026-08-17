@@ -13,7 +13,7 @@ use std::{fs::File, io::Write, sync::Arc, time::Duration};
 use tempfile::TempDir;
 
 #[tokio::test]
-async fn test_evm_market_controller_client_updates_status() {
+async fn test_evm_market_controller_client_updates_status_batch() {
     let anvil = Anvil::new().spawn();
     let ws_endpoint = anvil.ws_endpoint();
     let wallet: LocalWallet = anvil.keys()[0].clone().into();
@@ -34,9 +34,9 @@ async fn test_evm_market_controller_client_updates_status() {
         contract MockMarketController {
             bytes32 public constant ORCHESTRATOR_ROLE = keccak256("ORCHESTRATOR_ROLE");
             mapping(address => mapping(bytes32 => bool)) private roles;
-            mapping(bytes32 => bool) public marketStatus;
+            mapping(bytes16 => bool) public marketStatus;
 
-            event MarketStatusUpdated(bytes32 indexed marketId, bool isOpen);
+            event MarketStatusUpdated(bytes16 indexed marketId, bool isOpen);
 
             constructor() {
                 roles[msg.sender][ORCHESTRATOR_ROLE] = true;
@@ -46,14 +46,16 @@ async fn test_evm_market_controller_client_updates_status() {
                 return roles[account][role];
             }
 
-            function isMarketOpen(bytes32 marketId) external view returns (bool) {
+            function isMarketOpen(bytes16 marketId) external view returns (bool) {
                 return marketStatus[marketId];
             }
 
-            function setMarketStatus(bytes32 marketId, bool isOpen) external {
+            function setMarketStatuses(bytes16[] calldata marketIds, bool isOpen) external {
                 require(roles[msg.sender][ORCHESTRATOR_ROLE], "missing orchestrator role");
-                marketStatus[marketId] = isOpen;
-                emit MarketStatusUpdated(marketId, isOpen);
+                for (uint256 index = 0; index < marketIds.length; index++) {
+                    marketStatus[marketIds[index]] = isOpen;
+                    emit MarketStatusUpdated(marketIds[index], isOpen);
+                }
             }
         }
     "#;
@@ -128,32 +130,41 @@ async fn test_evm_market_controller_client_updates_status() {
 
     assert!(orchestrator_client.is_operator_registered().await.unwrap());
 
-    let market_id = generate_market_id(MarketType::Spot, 1_700_000_000);
-    assert!(!orchestrator_client
-        .get_market_status(market_id)
-        .await
-        .unwrap());
+    let market_ids = vec![
+        generate_market_id(MarketType::Spot, 1_700_000_000),
+        generate_market_id(MarketType::Flex, 1_700_000_000),
+    ];
+    for market_id in &market_ids {
+        assert!(!orchestrator_client
+            .get_market_status(*market_id)
+            .await
+            .unwrap());
+    }
 
     orchestrator_client
-        .update_market_status(market_id, true)
+        .update_market_statuses(market_ids.clone(), true)
         .await
         .unwrap();
 
-    let mut market_open = false;
+    let mut markets_open = false;
     for _ in 0..20 {
-        if orchestrator_client
-            .get_market_status(market_id)
+        let first_open = orchestrator_client
+            .get_market_status(market_ids[0])
             .await
-            .unwrap()
-        {
-            market_open = true;
+            .unwrap();
+        let second_open = orchestrator_client
+            .get_market_status(market_ids[1])
+            .await
+            .unwrap();
+        if first_open && second_open {
+            markets_open = true;
             break;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
     assert!(
-        market_open,
-        "Market was not opened on-chain after setMarketStatus transaction"
+        markets_open,
+        "Markets were not opened on-chain after setMarketStatuses transaction"
     );
 }
