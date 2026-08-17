@@ -21,7 +21,6 @@ anyhow = "1"
 ethers = { version = "2.0.14", features = ["ws", "rustls"] }
 tracing = { version = "0.1", features = ["log"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-blake2-rfc = { version = "0.2.18", default-features = false }
 
 [dev-dependencies]
 httpmock = "0.8.0-alpha.1"
