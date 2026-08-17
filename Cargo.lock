@@ -1539,6 +1539,7 @@ dependencies = [
  "gsy-community-client",
  "gsy-offchain-primitives",
  "reqwest",
+ "serde_json",
  "subxt",
  "subxt-signer",
  "tokio",
