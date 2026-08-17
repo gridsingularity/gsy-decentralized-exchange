@@ -175,26 +175,30 @@ async fn post_and_get_communities() {
 #[tokio::test]
 async fn upsert_community_is_idempotent() {
     let app = init_app().await;
+    let address = app.address.clone();
+    let client = reqwest::Client::new();
     let community_id = "11111111-1111-4111-8111-111111111111";
 
-    app.db_wrapper
-        .communities()
-        .upsert(EnergyCommunitySchema {
+    for community in [
+        EnergyCommunitySchema {
             community_id: community_id.to_string(),
             community_name: "Original name".to_string(),
             sites: vec!["Original site".to_string()],
-        })
-        .await
-        .unwrap();
-    app.db_wrapper
-        .communities()
-        .upsert(EnergyCommunitySchema {
+        },
+        EnergyCommunitySchema {
             community_id: community_id.to_string(),
             community_name: "Updated name".to_string(),
             sites: vec!["Updated site".to_string()],
-        })
-        .await
-        .unwrap();
+        },
+    ] {
+        let response = client
+            .post(&format!("{}/communities", &address))
+            .json(&community)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(200, response.status().as_u16());
+    }
 
     let communities = app.db_wrapper.communities().get_all().await.unwrap();
     assert_eq!(communities.len(), 1);
