@@ -13,6 +13,7 @@ use gsy_offchain_primitives::node_to_api_schema::insert_trades::{
 };
 use gsy_offchain_primitives::utils::h256_to_string;
 use mongodb::bson::Bson;
+use std::time::{SystemTime, UNIX_EPOCH};
 use subxt::utils::{AccountId32, H256};
 
 fn create_test_trade_schema(trade_uuid: &str) -> TradeSchema {
@@ -33,6 +34,7 @@ fn create_test_trade_schema(trade_uuid: &str) -> TradeSchema {
         time_slot: 100,
         trade_uuid: trade_uuid.to_string(),
         creation_time: 1677453190,
+        status_updated_at: None,
         offer: DbOffer {
             seller: "seller_account".to_string(),
             nonce: 1,
@@ -555,6 +557,14 @@ async fn update_trade_status_by_uuid_reclassifies_executed_as_penalized() {
         .await
         .expect("Failed to update trade status");
 
+    let saved = db.get_ref().trades().get_all_trades().await.unwrap();
+    let first_status_updated_at = saved
+        .iter()
+        .find(|t| t.trade_uuid == trade_uuid)
+        .expect("trade not found")
+        .status_updated_at
+        .expect("status_updated_at should be set after promotion to Executed");
+
     let summary = db
         .get_ref()
         .trades()
@@ -570,6 +580,13 @@ async fn update_trade_status_by_uuid_reclassifies_executed_as_penalized() {
         .find(|t| t.trade_uuid == trade_uuid)
         .expect("trade not found");
     assert_eq!(updated.status, TradeStatus::Penalized);
+    let second_status_updated_at = updated
+        .status_updated_at
+        .expect("status_updated_at should be set after promotion to Penalized");
+    assert!(
+        second_status_updated_at >= first_status_updated_at,
+        "a later real transition must not move status_updated_at backwards"
+    );
 }
 
 #[tokio::test]
@@ -591,13 +608,25 @@ async fn update_trade_status_by_uuid_is_idempotent() {
         .await
         .expect("Failed to update trade status");
 
+    let saved = db.get_ref().trades().get_all_trades().await.unwrap();
+    let first_status_updated_at = saved
+        .iter()
+        .find(|t| t.trade_uuid == trade_uuid)
+        .expect("trade not found")
+        .status_updated_at
+        .expect("status_updated_at should be set after the first transition");
+
     let summary = db
         .get_ref()
         .trades()
         .update_trade_status_by_uuid(&trade_uuid, TradeStatus::Executed)
         .await
         .expect("Failed to update trade status");
-    assert_eq!(summary.matched_count, 1);
+    assert_eq!(
+        summary.matched_count, 0,
+        "a repeat update with the same status matches nothing: the filter excludes trades \
+         already in that status, so the repeat is a true no-op rather than a same-value write"
+    );
     assert_eq!(summary.modified_count, 0);
 
     let saved = db.get_ref().trades().get_all_trades().await.unwrap();
@@ -606,4 +635,73 @@ async fn update_trade_status_by_uuid_is_idempotent() {
         .find(|t| t.trade_uuid == trade_uuid)
         .expect("trade not found");
     assert_eq!(updated.status, TradeStatus::Executed);
+    assert_eq!(
+        updated.status_updated_at,
+        Some(first_status_updated_at),
+        "a repeat update with the same status must not touch status_updated_at"
+    );
+}
+
+#[tokio::test]
+async fn update_trade_status_by_uuid_bounds_status_updated_at_to_the_call() {
+    let app = init_app().await;
+    let db = web::Data::new(app.db_wrapper);
+    let trade_uuid = h256_to_string(H256::random());
+    let trade = create_test_trade_schema(&trade_uuid);
+
+    db.get_ref()
+        .trades()
+        .insert_trades(vec![trade])
+        .await
+        .expect("Failed to insert trade");
+
+    let before = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    db.get_ref()
+        .trades()
+        .update_trade_status_by_uuid(&trade_uuid, TradeStatus::Executed)
+        .await
+        .expect("Failed to update trade status");
+    let after = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let saved = db.get_ref().trades().get_all_trades().await.unwrap();
+    let status_updated_at = saved
+        .iter()
+        .find(|t| t.trade_uuid == trade_uuid)
+        .expect("trade not found")
+        .status_updated_at
+        .expect("status_updated_at should be set on a real transition");
+    assert!(
+        before <= status_updated_at && status_updated_at <= after,
+        "status_updated_at ({status_updated_at}) must fall within [{before}, {after}]"
+    );
+}
+
+#[tokio::test]
+async fn inserted_trade_has_no_status_updated_at() {
+    let app = init_app().await;
+    let db = web::Data::new(app.db_wrapper);
+    let trade_uuid = h256_to_string(H256::random());
+    let trade = create_test_trade_schema(&trade_uuid);
+
+    db.get_ref()
+        .trades()
+        .insert_trades(vec![trade])
+        .await
+        .expect("Failed to insert trade");
+
+    let saved = db.get_ref().trades().get_all_trades().await.unwrap();
+    let inserted = saved
+        .iter()
+        .find(|t| t.trade_uuid == trade_uuid)
+        .expect("trade not found");
+    assert_eq!(
+        inserted.status_updated_at, None,
+        "a trade that has never transitioned out of Settled has no status_updated_at"
+    );
 }

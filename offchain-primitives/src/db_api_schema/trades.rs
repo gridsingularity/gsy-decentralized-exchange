@@ -38,6 +38,10 @@ pub struct TradeSchema {
     pub time_slot: u64,
     pub trade_uuid: String,
     pub creation_time: u64,
+    /// Unix seconds at which `status` last changed. `None` on documents written before this
+    /// field existed, and on trades that have never left `Settled`.
+    #[serde(default)]
+    pub status_updated_at: Option<u64>,
     pub offer: DbOffer,
     pub offer_hash: String,
     pub bid: DbBid,

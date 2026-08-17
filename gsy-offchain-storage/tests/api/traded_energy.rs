@@ -43,6 +43,7 @@ fn create_test_trade(
         time_slot,
         trade_uuid: trade_uuid.clone(),
         creation_time: 1677453190,
+        status_updated_at: None,
         offer: DbOffer {
             seller: "seller".to_string(),
             nonce: 1,

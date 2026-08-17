@@ -105,6 +105,7 @@ export interface TradeSchema {
   time_slot: number; // u64 seconds
   trade_uuid: string;
   creation_time: number; // u64 seconds
+  status_updated_at: number | null; // u64 seconds, unix time of the last real status change
   offer: DbOffer;
   offer_hash: string;
   bid: DbBid;

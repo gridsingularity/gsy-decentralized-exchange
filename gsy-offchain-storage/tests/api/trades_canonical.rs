@@ -40,6 +40,7 @@ fn create_test_trade(offer_area_uuid: &str, bid_area_uuid: &str) -> TradeSchema 
         time_slot: 100,
         trade_uuid: trade_uuid.clone(),
         creation_time: 1677453190,
+        status_updated_at: None,
         offer: DbOffer {
             seller: "shared_seller_account".to_string(),
             nonce: 1,

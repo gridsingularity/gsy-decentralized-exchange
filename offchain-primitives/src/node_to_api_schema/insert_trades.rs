@@ -46,6 +46,7 @@ pub fn convert_gsy_node_trades_schema_to_db_schema(trades: Vec<u8>) -> Vec<DbTra
         deserialized.push(db_api_schema::trades::TradeSchema {
             _id: Uuid::new_v4().to_string(),
             status: TradeStatus::Settled,
+            status_updated_at: None,
             seller: trade.seller.to_string(),
             buyer: trade.buyer.to_string(),
             market_id: h256_to_string(trade.market_id),

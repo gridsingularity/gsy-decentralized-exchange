@@ -5,6 +5,7 @@ use gsy_offchain_primitives::db_api_schema::trades::{TradeSchema, TradeStatus};
 use mongodb::bson;
 use mongodb::bson::{Bson, doc};
 use std::collections::HashMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// this struct is wrapper to `Collection<Trade>` should have function to help to manage order
 pub struct TradeService(pub(crate) Coll<TradeSchema>);
@@ -92,19 +93,27 @@ impl TradeService {
         trade_uuid: &str,
         status: TradeStatus,
     ) -> Result<UpdateSummary> {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
         self.0
             .update_one(
                 doc! {
-                    "trade_uuid": trade_uuid
+                    "trade_uuid": trade_uuid,
+                    "status": {"$ne": bson::to_bson(&status)?}
                 },
                 doc! {
-                    "$set": {"status": bson::to_bson(&status).unwrap()}
+                    "$set": {
+                        "status": bson::to_bson(&status)?,
+                        "status_updated_at": bson::to_bson(&now)?,
+                    }
                 },
-                |trade| trade.trade_uuid == trade_uuid,
+                |trade| trade.trade_uuid == trade_uuid && trade.status != status,
                 |trade| {
-                    let modified = trade.status != status;
                     trade.status = status.clone();
-                    modified
+                    trade.status_updated_at = Some(now);
+                    true
                 },
             )
             .await

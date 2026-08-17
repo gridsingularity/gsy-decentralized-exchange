@@ -98,8 +98,12 @@ async fn mark_order_executed(db: &DbRef, order_hash: H256) {
 ///
 /// The uuids in these events originate from a `GET /trades` read that the execution engine
 /// performs against this very service before signing the extrinsic, so the trade row provably
-/// exists by the time the event is emitted. A `matched_count == 0` therefore indicates real data
-/// loss rather than a benign race, which is why this warns instead of retrying.
+/// exists by the time the event is emitted. `update_trade_status_by_uuid` only matches a trade
+/// that is *not already* in `status` (so a repeated status update is a no-op rather than
+/// clobbering `status_updated_at`), which means `matched_count == 0` is no longer unambiguous:
+/// it is either the benign already-in-status case from one of the two documented replay paths
+/// above, or genuine data loss. The two are no longer distinguishable here, which is why this
+/// logs at info rather than warn.
 async fn set_trade_status(db: &DbRef, trade_uuid: H256, status: TradeStatus) {
     let trade_uuid = h256_to_string(trade_uuid);
     match db
@@ -109,8 +113,8 @@ async fn set_trade_status(db: &DbRef, trade_uuid: H256, status: TradeStatus) {
         .await
     {
         Ok(result) if result.matched_count == 0 => {
-            tracing::warn!(
-                "No trade found for trade_uuid {} when marking {:?}",
+            info!(
+                "No trade updated for trade_uuid {} when marking {:?}: either already in this status or the trade is missing",
                 trade_uuid,
                 status
             );
