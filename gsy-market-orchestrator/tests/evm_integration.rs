@@ -6,9 +6,8 @@ use ethers::{
 use gsy_market_orchestrator::{
     chain_connector::{GsyMarketOrchestratorNodeClient, MarketChainClient},
     config::{Config, OffchainStorageTransport},
-    orchestrator::generate_market_id,
 };
-use primitives::MarketType;
+use primitives::{utils::generate_market_id, MarketType};
 use std::{fs::File, io::Write, sync::Arc, time::Duration};
 use tempfile::TempDir;
 
@@ -131,8 +130,16 @@ async fn test_evm_market_controller_client_updates_status_batch() {
     assert!(orchestrator_client.is_operator_registered().await.unwrap());
 
     let market_ids = vec![
-        generate_market_id(MarketType::Spot, 1_700_000_000),
-        generate_market_id(MarketType::Flex, 1_700_000_000),
+        generate_market_id(
+            "11111111-1111-4111-8111-111111111111",
+            MarketType::Spot,
+            1_700_000_000,
+        ),
+        generate_market_id(
+            "11111111-1111-4111-8111-111111111111",
+            MarketType::Flex,
+            1_700_000_000,
+        ),
     ];
     for market_id in &market_ids {
         assert!(!orchestrator_client
