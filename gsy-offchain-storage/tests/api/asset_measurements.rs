@@ -15,8 +15,12 @@ const COMMUNITY_NAME: &str = "LugaggiaInnovationCommunity";
 const SELLER_HASH: &str = "0xpv_area_hash";
 const BUYER_HASH: &str = "0xmeter_area_hash";
 /// A 15-minute boundary, as Annex A.5 rule 2 requires, and small enough to fit the `u32`
-/// bounds of the delivery-time filter.
+/// bounds of the measurement fetch.
 const SLOT: u64 = 900 * 1_976_400;
+/// When a trade gets validated, deliberately far from `SLOT`. The endpoint windows on this,
+/// not on the delivery slot, and keeping the two far apart means a filter that confused them
+/// would fail these tests rather than pass by coincidence.
+const VALIDATED: u64 = SLOT + 100_000;
 
 fn area(area_uuid: &str, name: &str, area_type: AssetType, area_hash: &str) -> AreaTopologySchema {
     AreaTopologySchema {
@@ -104,9 +108,8 @@ fn production_measurement(time_slot: u64, creation_time: u64) -> MeasurementSche
     }
 }
 
-async fn get_certificates(address: &str, query: &str) -> Vec<Value> {
-    let client = reqwest::Client::new();
-    let resp = client
+async fn get_raw(address: &str, query: &str) -> reqwest::Response {
+    reqwest::Client::new()
         .get(&format!(
             "{}/guarantees-of-origin-measurements{}",
             address, query
@@ -114,9 +117,18 @@ async fn get_certificates(address: &str, query: &str) -> Vec<Value> {
         .header("Content-Type", "application/json")
         .send()
         .await
-        .unwrap();
+        .unwrap()
+}
+
+async fn get_certificates(address: &str, query: &str) -> Vec<Value> {
+    let resp = get_raw(address, query).await;
     assert_eq!(200, resp.status().as_u16());
     resp.json().await.unwrap()
+}
+
+/// Every query needs a `start_time`; this is the "from the beginning" form.
+async fn get_all_certificates(address: &str) -> Vec<Value> {
+    get_certificates(address, "?start_time=0").await
 }
 
 fn recorded_at(record: &Value) -> u64 {
@@ -125,11 +137,15 @@ fn recorded_at(record: &Value) -> u64 {
         .unwrap()
 }
 
-fn trade_ref(record: &Value) -> String {
-    record["trade_and_delivery"]["trade_reference"][0]
-        .as_str()
-        .unwrap()
-        .to_string()
+#[tokio::test]
+async fn start_time_is_mandatory() {
+    let app = init_app().await;
+    let resp = get_raw(&app.address, "").await;
+    assert_eq!(
+        400,
+        resp.status().as_u16(),
+        "a query with no start_time is rejected rather than scanning every trade ever settled"
+    );
 }
 
 #[tokio::test]
@@ -142,8 +158,8 @@ async fn only_executed_trades_yield_certificates() {
     db.get_ref()
         .trades()
         .insert_trades(vec![
-            trade(SLOT, 3.0, TradeStatus::Executed, Some(SLOT + 60)),
-            trade(SLOT, 2.0, TradeStatus::Penalized, Some(SLOT + 60)),
+            trade(SLOT, 3.0, TradeStatus::Executed, Some(VALIDATED)),
+            trade(SLOT, 2.0, TradeStatus::Penalized, Some(VALIDATED)),
             trade(SLOT, 1.0, TradeStatus::Settled, None),
         ])
         .await
@@ -154,7 +170,7 @@ async fn only_executed_trades_yield_certificates() {
         .await
         .unwrap();
 
-    let records = get_certificates(&address, "").await;
+    let records = get_all_certificates(&address).await;
 
     assert_eq!(records.len(), 1, "only the Executed trade earns a certificate");
     assert_eq!(records[0]["time_and_quantity"]["energy_quantity"], 3.0);
@@ -165,46 +181,50 @@ async fn only_executed_trades_yield_certificates() {
     assert_eq!(records[0]["identity"]["record_type"], "local_origin_record");
 }
 
+/// The window bounds validation time. Both ends are inclusive, matching every other time
+/// window in this service.
 #[tokio::test]
-async fn delivery_time_window_bounds_interval_start_inclusively() {
+async fn the_window_bounds_validation_time_inclusively_at_both_ends() {
     let app = init_app().await;
     let address = app.address;
     let db = web::Data::new(app.db_wrapper);
     db.get_ref().markets().insert(test_market()).await.unwrap();
 
-    let earlier = SLOT;
-    let later = SLOT + 900;
+    let earlier = VALIDATED;
+    let later = VALIDATED + 3600;
     db.get_ref()
         .trades()
         .insert_trades(vec![
-            trade(earlier, 3.0, TradeStatus::Executed, Some(SLOT + 60)),
-            trade(later, 4.0, TradeStatus::Executed, Some(SLOT + 60)),
+            trade(SLOT, 3.0, TradeStatus::Executed, Some(earlier)),
+            trade(SLOT, 4.0, TradeStatus::Executed, Some(later)),
         ])
         .await
         .unwrap();
     db.get_ref()
         .measurements()
-        .insert_measurements(vec![
-            production_measurement(earlier, SLOT + 30),
-            production_measurement(later, SLOT + 30),
-        ])
+        .insert_measurements(vec![production_measurement(SLOT, SLOT + 30)])
         .await
         .unwrap();
 
-    let all = get_certificates(&address, "").await;
-    assert_eq!(all.len(), 2);
+    assert_eq!(get_all_certificates(&address).await.len(), 2);
 
-    // Both bounds are inclusive, so each single-slot window returns exactly its own slot.
+    // Lower bound inclusive: querying exactly at a validation time returns that record.
     let from_later = get_certificates(&address, &format!("?start_time={}", later)).await;
     assert_eq!(from_later.len(), 1);
-    assert_eq!(from_later[0]["time_and_quantity"]["source_slot_timestamp"], later);
+    assert_eq!(from_later[0]["time_and_quantity"]["energy_quantity"], 4.0);
 
-    let up_to_earlier = get_certificates(&address, &format!("?end_time={}", earlier)).await;
+    let after_later =
+        get_certificates(&address, &format!("?start_time={}", later + 1)).await;
+    assert!(after_later.is_empty());
+
+    // Upper bound inclusive.
+    let up_to_earlier = get_certificates(
+        &address,
+        &format!("?start_time=0&end_time={}", earlier),
+    )
+    .await;
     assert_eq!(up_to_earlier.len(), 1);
-    assert_eq!(
-        up_to_earlier[0]["time_and_quantity"]["source_slot_timestamp"],
-        earlier
-    );
+    assert_eq!(up_to_earlier[0]["time_and_quantity"]["energy_quantity"], 3.0);
 
     let both = get_certificates(
         &address,
@@ -214,8 +234,51 @@ async fn delivery_time_window_bounds_interval_start_inclusively() {
     assert_eq!(both.len(), 2);
 }
 
+/// The reason the window is on validation time rather than delivery time: a trade delivered
+/// in an early slot but validated late is still returned by a window covering its validation,
+/// where a window over delivery time would have closed over that slot long before.
 #[tokio::test]
-async fn recorded_after_is_exclusive_and_recorded_before_is_inclusive() {
+async fn a_late_validated_trade_is_returned_by_its_validation_window() {
+    let app = init_app().await;
+    let address = app.address;
+    let db = web::Data::new(app.db_wrapper);
+    db.get_ref().markets().insert(test_market()).await.unwrap();
+
+    let early_slot = SLOT;
+    let late_slot = SLOT + 1800;
+    // The earlier delivery is validated LAST — its metering arrived late.
+    db.get_ref()
+        .trades()
+        .insert_trades(vec![
+            trade(late_slot, 1.0, TradeStatus::Executed, Some(VALIDATED)),
+            trade(early_slot, 2.0, TradeStatus::Executed, Some(VALIDATED + 3600)),
+        ])
+        .await
+        .unwrap();
+    db.get_ref()
+        .measurements()
+        .insert_measurements(vec![
+            production_measurement(early_slot, SLOT + 30),
+            production_measurement(late_slot, SLOT + 30),
+        ])
+        .await
+        .unwrap();
+
+    // A consumer that has already read up to VALIDATED asks for what came after.
+    let records =
+        get_certificates(&address, &format!("?start_time={}", VALIDATED + 1)).await;
+
+    assert_eq!(records.len(), 1, "the late-validated trade is returned");
+    assert_eq!(
+        records[0]["time_and_quantity"]["source_slot_timestamp"], early_slot,
+        "even though its delivery slot is the earlier of the two"
+    );
+    assert_eq!(records[0]["time_and_quantity"]["energy_quantity"], 2.0);
+}
+
+/// Trades promoted before `status_updated_at` existed carry no value and cannot be windowed.
+#[tokio::test]
+async fn an_executed_trade_without_a_status_change_time_is_not_returned() {
     let app = init_app().await;
     let address = app.address;
     let db = web::Data::new(app.db_wrapper);
@@ -223,7 +286,7 @@ async fn recorded_after_is_exclusive_and_recorded_before_is_inclusive() {
 
     db.get_ref()
         .trades()
-        .insert_trades(vec![trade(SLOT, 3.0, TradeStatus::Executed, Some(SLOT + 60))])
+        .insert_trades(vec![trade(SLOT, 3.0, TradeStatus::Executed, None)])
         .await
         .unwrap();
     db.get_ref()
@@ -232,91 +295,18 @@ async fn recorded_after_is_exclusive_and_recorded_before_is_inclusive() {
         .await
         .unwrap();
 
-    let all = get_certificates(&address, "").await;
-    assert_eq!(all.len(), 1);
-    let checkpoint = recorded_at(&all[0]);
-
-    let after = get_certificates(&address, &format!("?recorded_after={}", checkpoint)).await;
     assert!(
-        after.is_empty(),
-        "recorded_after is exclusive, so the checkpoint record is not returned again"
+        get_all_certificates(&address).await.is_empty(),
+        "a legacy Executed trade with no status_updated_at has no window to fall in"
     );
-
-    let after_one_less =
-        get_certificates(&address, &format!("?recorded_after={}", checkpoint - 1)).await;
-    assert_eq!(after_one_less.len(), 1);
-
-    let before = get_certificates(&address, &format!("?recorded_before={}", checkpoint)).await;
-    assert_eq!(before.len(), 1, "recorded_before is inclusive");
-
-    let before_one_less =
-        get_certificates(&address, &format!("?recorded_before={}", checkpoint - 1)).await;
-    assert!(before_one_less.is_empty());
 }
 
-/// The incremental-consumption contract of §4, exercised the way a consumer actually runs:
-/// poll, let more data arrive, poll again on the checkpoint. Every certificate must be
-/// delivered exactly once — including a late arrival whose delivery slot precedes a window
-/// the consumer has already read past. Polling on `start_time`/`end_time` alone would lose
-/// that record, which is why the checkpoint keys on arrival rather than delivery.
-#[tokio::test]
-async fn polling_on_recorded_after_sees_every_certificate_exactly_once() {
-    let app = init_app().await;
-    let address = app.address;
-    let db = web::Data::new(app.db_wrapper);
-    db.get_ref().markets().insert(test_market()).await.unwrap();
-
-    let recent_slot = SLOT + 1800;
-    let late_slot = SLOT;
-
-    // Round 1: one trade, promoted early, for the later delivery slot.
-    let first = trade(recent_slot, 2.0, TradeStatus::Executed, Some(SLOT + 100));
-    let first_uuid = first.trade_uuid.clone();
-    db.get_ref().trades().insert_trades(vec![first]).await.unwrap();
-    db.get_ref()
-        .measurements()
-        .insert_measurements(vec![production_measurement(recent_slot, SLOT + 10)])
-        .await
-        .unwrap();
-
-    let mut seen: Vec<String> = Vec::new();
-    let page = get_certificates(&address, "").await;
-    assert_eq!(page.len(), 1);
-    let mut checkpoint = recorded_at(page.last().unwrap());
-    seen.push(trade_ref(&page[0]));
-
-    // Round 2: metering for an EARLIER delivery slot finally arrives and its trade is
-    // promoted now, after the consumer has already read past that delivery window.
-    let late = trade(late_slot, 3.0, TradeStatus::Executed, Some(SLOT + 300));
-    let late_uuid = late.trade_uuid.clone();
-    db.get_ref().trades().insert_trades(vec![late]).await.unwrap();
-    db.get_ref()
-        .measurements()
-        .insert_measurements(vec![production_measurement(late_slot, SLOT + 10)])
-        .await
-        .unwrap();
-
-    let page = get_certificates(&address, &format!("?recorded_after={}", checkpoint)).await;
-    assert_eq!(
-        page.len(),
-        1,
-        "the late arrival is picked up even though its delivery slot is already past"
-    );
-    assert_eq!(trade_ref(&page[0]), late_uuid);
-    assert_eq!(page[0]["time_and_quantity"]["source_slot_timestamp"], late_slot);
-    checkpoint = recorded_at(page.last().unwrap());
-    seen.push(trade_ref(&page[0]));
-
-    // Round 3: nothing new.
-    let page = get_certificates(&address, &format!("?recorded_after={}", checkpoint)).await;
-    assert!(page.is_empty(), "a caught-up consumer receives nothing");
-
-    assert_eq!(seen, vec![first_uuid, late_uuid], "each delivered exactly once");
-}
-
-/// Records come back ascending by `measurement_recorded_at`. A consumer takes the last
-/// record's value as its next checkpoint, so an unsorted response would let it skip
-/// everything ordered after the one that happened to land last.
+/// Records come back in a stable order, so adjacent or repeated queries agree.
+///
+/// The sort key leads on `measurement_recorded_at`, so the measurements carry three distinct
+/// arrival times, deliberately ordered differently from both the insertion order and the
+/// delivery-slot order. Giving them a common arrival time would make this test vacuous — every
+/// key equal, any order trivially "sorted".
 #[tokio::test]
 async fn certificates_are_returned_in_ascending_checkpoint_order() {
     let app = init_app().await;
@@ -328,36 +318,36 @@ async fn certificates_are_returned_in_ascending_checkpoint_order() {
     db.get_ref()
         .trades()
         .insert_trades(vec![
-            trade(SLOT + 900, 1.0, TradeStatus::Executed, Some(SLOT + 300)),
-            trade(SLOT, 2.0, TradeStatus::Executed, Some(SLOT + 100)),
-            trade(SLOT + 1800, 3.0, TradeStatus::Executed, Some(SLOT + 200)),
+            trade(SLOT + 900, 1.0, TradeStatus::Executed, Some(VALIDATED + 300)),
+            trade(SLOT, 2.0, TradeStatus::Executed, Some(VALIDATED + 100)),
+            trade(SLOT + 1800, 3.0, TradeStatus::Executed, Some(VALIDATED + 200)),
         ])
         .await
         .unwrap();
     db.get_ref()
         .measurements()
         .insert_measurements(vec![
-            production_measurement(SLOT, SLOT + 10),
-            production_measurement(SLOT + 900, SLOT + 10),
-            production_measurement(SLOT + 1800, SLOT + 10),
+            production_measurement(SLOT, SLOT + 100),
+            production_measurement(SLOT + 900, SLOT + 300),
+            production_measurement(SLOT + 1800, SLOT + 200),
         ])
         .await
         .unwrap();
 
-    let records = get_certificates(&address, "").await;
+    let records = get_all_certificates(&address).await;
     assert_eq!(records.len(), 3);
 
+    // Ascending arrival time, which here is neither the insertion nor the delivery order.
+    let slots: Vec<u64> = records
+        .iter()
+        .map(|r| r["time_and_quantity"]["source_slot_timestamp"].as_u64().unwrap())
+        .collect();
+    assert_eq!(slots, vec![SLOT, SLOT + 1800, SLOT + 900]);
+
     let checkpoints: Vec<u64> = records.iter().map(recorded_at).collect();
-    assert_eq!(
-        checkpoints,
-        vec![SLOT + 100, SLOT + 200, SLOT + 300],
-        "ascending by measurement_recorded_at, not by insertion order"
-    );
-    assert_eq!(
-        checkpoints.last().copied(),
-        Some(SLOT + 300),
-        "the last record carries the highest checkpoint, which is what a poller stores"
-    );
+    let mut sorted = checkpoints.clone();
+    sorted.sort_unstable();
+    assert_eq!(checkpoints, sorted, "ascending, not insertion order");
 }
 
 #[tokio::test]
@@ -367,8 +357,7 @@ async fn no_matching_trade_returns_an_empty_list() {
     let db = web::Data::new(app.db_wrapper);
     db.get_ref().markets().insert(test_market()).await.unwrap();
 
-    let records = get_certificates(&address, "").await;
-    assert!(records.is_empty());
+    assert!(get_all_certificates(&address).await.is_empty());
 }
 
 #[tokio::test]
@@ -379,7 +368,7 @@ async fn unknown_market_topology_returns_an_empty_list_not_a_partial_record() {
     // No market inserted: the seller area hash resolves to nothing.
     db.get_ref()
         .trades()
-        .insert_trades(vec![trade(SLOT, 3.0, TradeStatus::Executed, Some(SLOT + 60))])
+        .insert_trades(vec![trade(SLOT, 3.0, TradeStatus::Executed, Some(VALIDATED))])
         .await
         .unwrap();
     db.get_ref()
@@ -388,9 +377,8 @@ async fn unknown_market_topology_returns_an_empty_list_not_a_partial_record() {
         .await
         .unwrap();
 
-    let records = get_certificates(&address, "").await;
     assert!(
-        records.is_empty(),
+        get_all_certificates(&address).await.is_empty(),
         "an unresolvable trade is skipped, not emitted half-built"
     );
 }
@@ -404,13 +392,12 @@ async fn a_trade_without_a_production_measurement_yields_no_certificate() {
 
     db.get_ref()
         .trades()
-        .insert_trades(vec![trade(SLOT, 3.0, TradeStatus::Executed, Some(SLOT + 60))])
+        .insert_trades(vec![trade(SLOT, 3.0, TradeStatus::Executed, Some(VALIDATED))])
         .await
         .unwrap();
 
-    let records = get_certificates(&address, "").await;
     assert!(
-        records.is_empty(),
+        get_all_certificates(&address).await.is_empty(),
         "seller-side evidence is required: no measurement, no certificate"
     );
 }

@@ -60,6 +60,43 @@ impl TradeService {
             .await
     }
 
+    /// Fetch trades whose **status last changed** within `[start_time, end_time]` (both
+    /// inclusive, unix seconds), optionally restricted to one status.
+    ///
+    /// This windows on `status_updated_at` rather than `time_slot`: the delivery slot says
+    /// when energy flowed, whereas this says when the trade reached its verdict. `Executed`
+    /// and `Penalized` are terminal, so for those the value never moves again once set.
+    ///
+    /// Trades with no `status_updated_at` are excluded. That is every trade written before
+    /// the field existed, and every trade still sitting in `Settled` — neither has a status
+    /// change to window on.
+    #[tracing::instrument(name = "Fetching trades by status change time", skip(self))]
+    pub async fn filter_trades_by_status_change(
+        &self,
+        start_time: u64,
+        end_time: Option<u64>,
+        status: Option<TradeStatus>,
+    ) -> Result<Vec<TradeSchema>> {
+        let mut bounds = doc! {"$gte": bson::to_bson(&start_time)?};
+        if let Some(end_time) = end_time {
+            bounds.insert("$lte", bson::to_bson(&end_time)?);
+        }
+        let mut filter_params = doc! {"status_updated_at": bounds};
+        if let Some(status) = &status {
+            filter_params.insert("status", bson::to_bson(status)?);
+        }
+
+        self.0
+            .query(filter_params, |trade| {
+                status.as_ref().is_none_or(|status| &trade.status == status)
+                    && trade.status_updated_at.is_some_and(|changed_at| {
+                        changed_at >= start_time
+                            && end_time.is_none_or(|end_time| changed_at <= end_time)
+                    })
+            })
+            .await
+    }
+
     #[tracing::instrument(name = "Fetching trades by area uuid from database", skip(self))]
     pub async fn get_trades_by_area(
         &self,

@@ -293,14 +293,19 @@ paths:
         `flexibility_activation_record` issued against a metered dispatch of a
         storage or controllable thermal asset.
 
-        The records carry two independent times, and there is a query parameter
-        pair for each. `start_time`/`end_time` bound `interval_start`, the
-        delivery interval, matching the `source_slot_timestamp` received from
-        the GSY DEX. `recorded_after`/`recorded_before` bound
-        `measurement_recorded_at`, the moment the underlying measurement
-        reached this store. Because metering data arrives after the fact and by
-        a variable delay, a query on delivery time alone gives a window that is
-        still filling: **poll on `recorded_after`, report on `start_time`.**
+        `start_time`/`end_time` bound **when the trade was validated** — the
+        moment the execution engine's verdict promoted it to `Executed` — and
+        not the delivery interval the energy flowed in. The two differ, and
+        by an amount that is not fixed: metering arrives after the interval it
+        describes, so a trade delivered in one interval may only be validated
+        much later. A window over delivery time would close over slots that
+        were still awaiting a verdict and never return them once they arrived.
+        Windowing on validation time cannot lose a record that way, because a
+        record does not exist before its verdict. `Executed` is terminal, so
+        the value being filtered on never changes again once set.
+
+        A record's delivery interval remains available as `interval_start` and
+        `source_slot_timestamp`; it is simply not what the query filters on.
 
         Every response object has the same set of keys for a given
         `record_type`. An attribute that does not apply is present and `null`
@@ -316,58 +321,39 @@ paths:
       parameters:
         - name: start_time
           in: query
-          required: false
+          required: true
           description: |
-            Lower bound (inclusive) for the record `interval_start`, in unix
-            seconds. Bounds **delivery time** — when the energy flowed — not
-            when the service learned of it. See `recorded_after` for polling.
+            Lower bound (inclusive), in unix seconds, on **when the trade was
+            validated** — the moment its status changed to `Executed`.
+
+            This windows on validation time, not on delivery time. Metering
+            arrives after the interval it describes and by a delay that is not
+            fixed, so a trade for a given delivery slot may only be validated
+            minutes or days after that slot ended. A window over delivery time
+            would therefore advance past slots still awaiting their verdict and
+            never return them; a window over validation time cannot, because a
+            record only exists once the verdict is in.
+
+            `Executed` is terminal, so the value this filters on never moves
+            again once set, and a query over a closed window is reproducible.
+
+            Mandatory: without a lower bound the query would scan every trade
+            ever settled.
           schema:
             type: integer
-            format: int32
+            format: int64
             minimum: 0
         - name: end_time
           in: query
           required: false
           description: |
-            Upper bound (inclusive) for the record `interval_start`, in unix
-            seconds. Bounds delivery time, as `start_time` does.
-          schema:
-            type: integer
-            format: int32
-            minimum: 0
-        - name: recorded_after
-          in: query
-          required: false
-          description: |
-            Lower bound (**exclusive**) for
-            `measurement_provenance.measurement_recorded_at`, in unix seconds.
+            Upper bound (inclusive) on validation time, as `start_time` is.
+            Omit for "everything validated since `start_time`".
 
-            Bounds **arrival time** — when the underlying measurement was
-            written to this store — and is the parameter to poll on. Metering
-            data arrives after the interval it describes, and by an amount that
-            is not fixed: a record for a delivery interval can appear in this
-            store minutes or days after that interval ended. A consumer that
-            paginates on `start_time`/`end_time` alone therefore advances past
-            windows that are still filling and never sees the late arrivals.
-
-            To consume incrementally, keep the highest
-            `measurement_recorded_at` returned so far and pass it here on the
-            next call. The bound is exclusive so that the checkpoint record is
-            not returned twice. Late arrivals are picked up whatever delivery
-            interval they belong to, because their arrival time is always
-            greater than the checkpoint.
-          schema:
-            type: integer
-            format: int64
-            minimum: 0
-        - name: recorded_before
-          in: query
-          required: false
-          description: |
-            Upper bound (inclusive) for
-            `measurement_provenance.measurement_recorded_at`, in unix seconds.
-            Pins a query to the state of the store as at a past moment, so that
-            a settlement run can be reproduced.
+            Note that both bounds are inclusive, so a consumer stepping through
+            consecutive windows should advance `start_time` past the previous
+            `end_time` rather than reusing it, or it will receive the boundary
+            records twice.
           schema:
             type: integer
             format: int64
@@ -1644,11 +1630,14 @@ components:
             when the energy flowed. Metering data arrives after the fact and by
             a variable delay, so the two are not in the same order.
 
-            Not an attribute of Annex A.3.5. It is carried so that a consumer
-            can poll the endpoint incrementally without missing late arrivals:
-            keep the highest value seen and pass it as `recorded_after` on the
-            next call. Being stored data rather than a clock read, it is stable
-            across repeated queries for the same record.
+            Not an attribute of Annex A.3.5. It is carried as provenance: it
+            tells a consumer how stale the metering behind a record was when the
+            record became derivable. Being stored data rather than a clock read,
+            it is stable across repeated queries for the same record.
+
+            It is **not** the field this endpoint filters on — `start_time` and
+            `end_time` window on when the trade was validated. The two differ
+            whenever a trade was validated later than its metering arrived.
           example: 1778761200
     AttributeProvenance:
       type: object

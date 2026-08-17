@@ -205,10 +205,6 @@ pub fn build_local_origin_records(
             FlowDirection::Import
         };
 
-        let measurement_recorded_at = production_measurement.creation_time.max(
-            trade.status_updated_at.unwrap_or(trade.creation_time),
-        );
-
         records.push(LocalOriginRecord {
             identity: RecordIdentity {
                 record_type: RecordType::LocalOriginRecord,
@@ -257,7 +253,9 @@ pub fn build_local_origin_records(
                 data_completeness: DataCompleteness::Complete,
                 source_of_record: SourceOfRecord::Platform,
                 data_record_class: DataRecordClass::Measurement,
-                measurement_recorded_at,
+                // Provenance only: when this measurement reached the store. The endpoint
+                // windows on the trade's `status_updated_at`, not on this.
+                measurement_recorded_at: production_measurement.creation_time,
             },
             attribute_provenance: AttributeProvenance {
                 support_scheme_status: None,

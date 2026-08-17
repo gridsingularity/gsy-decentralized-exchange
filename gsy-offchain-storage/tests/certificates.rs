@@ -310,22 +310,24 @@ fn energy_quantity_rounds_half_up_to_two_decimal_places() {
     assert_eq!(records[0].time_and_quantity.energy_quantity, 1.13);
 }
 
+/// `measurement_recorded_at` is the measurement's own arrival time and nothing else — it is
+/// pure provenance, and does not blend in any trade timestamp. The endpoint windows on the
+/// trade's `status_updated_at` instead, so this field is free to say only what the spec says
+/// it says.
 #[test]
-fn measurement_recorded_at_is_max_of_measurement_and_trade_checkpoint() {
-    let measurement_later = measurement("m1", SELLER_HASH, COMMUNITY_UUID, SLOT, 5000, -3.0);
-    let t = trade("trade-1", SELLER_HASH, BUYER_HASH, SLOT, 3.0, TradeStatus::Executed, 900, Some(1200));
-    let records = build_local_origin_records(vec![t], &default_topology(), &[measurement_later]);
+fn measurement_recorded_at_is_the_measurement_creation_time() {
+    // The trade's own timestamps are set far above the measurement's on purpose: if either
+    // leaked into this field, these assertions would report them instead of 5000.
+    let m = measurement("m1", SELLER_HASH, COMMUNITY_UUID, SLOT, 5000, -3.0);
+    let t = trade("trade-1", SELLER_HASH, BUYER_HASH, SLOT, 3.0, TradeStatus::Executed, 900, Some(99_000));
+    let records = build_local_origin_records(vec![t], &default_topology(), &[m]);
     assert_eq!(records[0].measurement_provenance.measurement_recorded_at, 5000);
 
-    let measurement_earlier = measurement("m1", SELLER_HASH, COMMUNITY_UUID, SLOT, 100, -3.0);
-    let t = trade("trade-1", SELLER_HASH, BUYER_HASH, SLOT, 3.0, TradeStatus::Executed, 900, Some(9000));
-    let records = build_local_origin_records(vec![t], &default_topology(), &[measurement_earlier]);
-    assert_eq!(records[0].measurement_provenance.measurement_recorded_at, 9000);
-
-    let measurement_none_fallback = measurement("m1", SELLER_HASH, COMMUNITY_UUID, SLOT, 100, -3.0);
-    let t = trade("trade-1", SELLER_HASH, BUYER_HASH, SLOT, 3.0, TradeStatus::Executed, 7000, None);
-    let records = build_local_origin_records(vec![t], &default_topology(), &[measurement_none_fallback]);
-    assert_eq!(records[0].measurement_provenance.measurement_recorded_at, 7000);
+    // Unaffected by a trade with no status change time recorded.
+    let m = measurement("m1", SELLER_HASH, COMMUNITY_UUID, SLOT, 5000, -3.0);
+    let t = trade("trade-1", SELLER_HASH, BUYER_HASH, SLOT, 3.0, TradeStatus::Executed, 77_000, None);
+    let records = build_local_origin_records(vec![t], &default_topology(), &[m]);
+    assert_eq!(records[0].measurement_provenance.measurement_recorded_at, 5000);
 }
 
 #[test]

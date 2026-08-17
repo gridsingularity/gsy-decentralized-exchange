@@ -7,14 +7,11 @@ use serde::Deserialize;
 
 #[derive(Deserialize, Debug)]
 pub struct GuaranteesOfOriginParams {
-    /// Lower bound on the delivery interval (`interval_start`), inclusive.
-    start_time: Option<u32>,
-    /// Upper bound on the delivery interval (`interval_start`), inclusive.
-    end_time: Option<u32>,
-    /// Lower bound on `measurement_recorded_at`, **exclusive** — the checkpoint to poll on.
-    recorded_after: Option<u64>,
-    /// Upper bound on `measurement_recorded_at`, inclusive.
-    recorded_before: Option<u64>,
+    /// Lower bound (inclusive) on when the trade reached `Executed`, in unix seconds.
+    /// Mandatory: an absent bound would scan every trade ever settled.
+    start_time: u64,
+    /// Upper bound (inclusive) on when the trade reached `Executed`. Absent means "up to now".
+    end_time: Option<u64>,
 }
 
 /// Derive Annex A `local_origin_record` certificates from `Executed` trades.
@@ -23,9 +20,11 @@ pub struct GuaranteesOfOriginParams {
 /// they incurred no penalty, so the exchange can attest to the traded quantity. The unit of
 /// issuance is the trade, not the metered volume — these certify *traded* energy.
 ///
-/// `recorded_after`/`recorded_before` are applied in-process rather than in the Mongo query
-/// because `measurement_recorded_at` is a max across two collections, which no single-document
-/// predicate expresses. At pilot volume the scan is negligible, so no new index.
+/// The window bounds **when the trade was validated** (`status_updated_at`), not when the
+/// energy flowed. `Executed` is terminal, so that timestamp never moves again once set, which
+/// makes it a stable thing to window on: metering arrives after the interval it describes and
+/// by a variable delay, so a window over delivery time would advance past slots that are
+/// still awaiting their verdict.
 #[tracing::instrument(name = "Derive guarantees of origin from executed trades", skip(db))]
 pub async fn get_guarantees_of_origin(
     db: DbRef,
@@ -34,8 +33,7 @@ pub async fn get_guarantees_of_origin(
     let trades = match db
         .get_ref()
         .trades()
-        .filter_trades(
-            None,
+        .filter_trades_by_status_change(
             query_params.start_time,
             query_params.end_time,
             Some(TradeStatus::Executed),
@@ -49,6 +47,10 @@ pub async fn get_guarantees_of_origin(
         }
     };
 
+    if trades.is_empty() {
+        return HttpResponse::Ok().json(Vec::<LocalOriginRecord>::new());
+    }
+
     let markets = match db.get_ref().markets().all_markets().await {
         Ok(markets) => markets,
         Err(e) => {
@@ -57,10 +59,22 @@ pub async fn get_guarantees_of_origin(
         }
     };
 
+    // A measurement's `time_slot` is a delivery slot, so the status-change window above says
+    // nothing about which measurements are needed. Bound the fetch by the delivery slots of
+    // the trades actually selected. `u32::try_from` failing widens the bound to unbounded
+    // rather than truncating: a superset is always correct here, a truncated bound is not.
+    let (earliest_slot, latest_slot) = trades.iter().fold((u64::MAX, 0), |(min, max), trade| {
+        (min.min(trade.time_slot), max.max(trade.time_slot))
+    });
+
     let measurements = match db
         .get_ref()
         .measurements()
-        .filter_measurements(None, query_params.start_time, query_params.end_time)
+        .filter_measurements(
+            None,
+            u32::try_from(earliest_slot).ok(),
+            u32::try_from(latest_slot).ok(),
+        )
         .await
     {
         Ok(measurements) => measurements,
@@ -72,17 +86,7 @@ pub async fn get_guarantees_of_origin(
 
     let mut records = build_local_origin_records(trades, &markets, &measurements);
 
-    records.retain(|record| {
-        let recorded_at = record.measurement_provenance.measurement_recorded_at;
-        query_params
-            .recorded_after
-            .is_none_or(|after| recorded_at > after)
-            && query_params
-                .recorded_before
-                .is_none_or(|before| recorded_at <= before)
-    });
-
-    // Deterministic order so a consumer paging on `recorded_after` sees a stable sequence.
+    // Deterministic order so repeated or adjacent queries return a stable sequence.
     records.sort_by(|a, b| sort_key(a).cmp(&sort_key(b)));
 
     HttpResponse::Ok().json(records)

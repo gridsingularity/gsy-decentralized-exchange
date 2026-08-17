@@ -407,16 +407,23 @@ async fn verify_pv_penalty_certificates(world: &mut MyWorld) {
 	let expected_energy = trades[0].selected_energy as f64 / 10000.0;
 
 	let slot = world.target_delivery_time;
+	// The window bounds VALIDATION time (when the trade reached `Executed`), not the delivery
+	// slot. The offchain storage stamps that from its own wall clock as it handles the
+	// TradeExecuted event, which is necessarily within this run — so bound from an hour ago,
+	// comfortably after any earlier run's trades and comfortably before this one's.
+	let validated_after = (Utc::now() - ChronoDuration::hours(1)).timestamp() as u64;
 	let url = format!(
-		"{}/guarantees-of-origin-measurements?start_time={}&end_time={}",
+		"{}/guarantees-of-origin-measurements?start_time={}",
 		orderbook_url(),
-		slot,
-		slot
+		validated_after
 	);
 
 	// Both trade statuses have already converged by this point, so the certificate is derivable
-	// at once; poll anyway to absorb event-listener lag on a loaded stack.
-	let mut records: Vec<Value> = Vec::new();
+	// at once; poll anyway to absorb event-listener lag on a loaded stack. The window is a
+	// wall-clock one and so is not scoped to this scenario — narrow to our own delivery slot
+	// rather than asserting on the total, which other features running on the same stack could
+	// otherwise perturb.
+	let mut ours: Vec<Value> = Vec::new();
 	for i in 0..20 {
 		let resp = world.http_client.get(&url).send().await.expect("GET certificates failed");
 		assert!(
@@ -424,8 +431,12 @@ async fn verify_pv_penalty_certificates(world: &mut MyWorld) {
 			"GET /guarantees-of-origin-measurements returned {}",
 			resp.status()
 		);
-		records = resp.json().await.expect("deserialize certificates response");
-		if !records.is_empty() {
+		let records: Vec<Value> = resp.json().await.expect("deserialize certificates response");
+		ours = records
+			.into_iter()
+			.filter(|r| r["time_and_quantity"]["source_slot_timestamp"].as_u64() == Some(slot))
+			.collect();
+		if !ours.is_empty() {
 			break;
 		}
 		info!("Waiting for the certificate to become derivable... check {}/20", i + 1);
@@ -433,12 +444,12 @@ async fn verify_pv_penalty_certificates(world: &mut MyWorld) {
 	}
 
 	assert_eq!(
-		records.len(),
+		ours.len(),
 		1,
 		"exactly one certificate for the slot: the penalized trade earns none, got {:?}",
-		records
+		ours
 	);
-	let record = &records[0];
+	let record = &ours[0];
 	assert_eq!(
 		record["trade_and_delivery"]["trade_reference"][0].as_str(),
 		Some(executed.as_str()),
