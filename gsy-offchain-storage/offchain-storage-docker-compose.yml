@@ -95,7 +95,7 @@ services:
         condition: service_healthy
     entrypoint: ["bash", "/mongo-rs-init.sh"]
     volumes:
-      - ../deployment/mongodb-dev/rs-init.sh:/mongo-rs-init.sh:ro
+      - ../deployment/mongodb-dev/mongo-rs-init.sh:/mongo-rs-init.sh:ro
     restart: "no"
 
 volumes:

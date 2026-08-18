@@ -130,6 +130,27 @@ services:
         "${GSY_NODE_PORT:-9944}",
       ]
 
+  # Sudo-registers the trading user and the exchange operator so the orchestrator
+  # will create markets and the community client's orders are accepted. One-shot
+  # and idempotent (deployment/bootstrap/register.js:88-91), so re-runs are safe.
+  # There is no local gsy-node here — the validators are remote, over the tailnet —
+  # so it waits on the sidecar and relies on CONNECT_RETRIES for the node itself.
+  gsy-bootstrap:
+    container_name: gsy-bootstrap
+    build:
+      context: ./deployment/bootstrap
+      dockerfile: Dockerfile
+    network_mode: "service:tailscale-central"
+    depends_on:
+      tailscale-central:
+        condition: service_healthy
+    env_file:
+      - ./.env/gsy-bootstrap.env
+    # env_file cannot do ${...} substitution; inline environment wins over env_file.
+    environment:
+      - NODE_URL=ws://${GSY_NODE_HOST:-gsy-node}:${GSY_NODE_PORT:-9944}
+    restart: "no"
+
   gsy-market-orchestrator:
     container_name: gsy-market-orchestrator
     build:
@@ -141,6 +162,8 @@ services:
         condition: service_healthy
       gsy-offchain-storage:
         condition: service_healthy
+      gsy-bootstrap:
+        condition: service_completed_successfully
     environment:
       - RUST_LOG=info,gsy_market_orchestrator=debug
       - GSY_NODE_URL=ws://${GSY_NODE_HOST:-gsy-node}:${GSY_NODE_PORT:-9944}
@@ -174,6 +197,29 @@ services:
         "3600",
         "0.10",
       ]
+
+  gsy-community-client:
+    container_name: gsy-community-client
+    build:
+      context: .
+      dockerfile: ./gsy-community-client/Dockerfile
+    network_mode: "service:tailscale-central"
+    depends_on:
+      tailscale-central:
+        condition: service_healthy
+      gsy-offchain-storage:
+        condition: service_healthy
+      gsy-bootstrap:
+        condition: service_completed_successfully
+    # FEDECOM forecaster / InfluxDB credentials (outbound HTTPS required).
+    env_file:
+      - ./.env/gsy-community-client.env
+    # Shared netns: storage is localhost; the node is a tailnet address.
+    # env_file cannot do ${...} substitution; inline environment wins over env_file.
+    environment:
+      - GSY_NODE_URL=ws://${GSY_NODE_HOST:-gsy-node}:${GSY_NODE_PORT:-9944}
+      - OFFCHAIN_STORAGE_URL=http://localhost:8080
+      - API_KEY=${API_KEY:-fedecom_user}
 
   # --- MongoDB replica set (rs0), internal to the central docker bridge ---
   mongo-keyfile-init:

@@ -18,7 +18,9 @@ use gsy_offchain_primitives::aggregation::aggregate_net_import;
 use gsy_offchain_primitives::constants::GlobalConstants;
 use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketTopologySchema};
 use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
-use gsy_offchain_primitives::utils::{community_id_from_uuid, h256_to_string, string_to_h256};
+use gsy_offchain_primitives::utils::{
+    community_id_from_uuid, h256_to_string, read_env_or, string_to_h256,
+};
 use reqwest::Client;
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
@@ -38,7 +40,10 @@ struct AppState {
 
 impl AppState {
     fn new() -> Self {
-        let api_adapter = AreaMarketInfoAdapter::new(None);
+        let api_adapter = AreaMarketInfoAdapter::new(Some(read_env_or(
+            "OFFCHAIN_STORAGE_URL",
+            "http://gsy-orderbook:8080".to_string(),
+        )));
         AppState {
             client: Client::builder()
                 .timeout(Duration::from_secs(
@@ -52,7 +57,9 @@ impl AppState {
             api_adapter,
             measurements: MeasurementsManager::new(),
             forecasts_manager: ForecastsManager::new(),
-            gsy_node_url: "http://gsy-node:9944/".to_string(),
+            // subxt's default transport (jsonrpsee) is WebSocket-only and rejects any
+            // scheme other than ws/wss, so this must stay a `ws://` URL.
+            gsy_node_url: read_env_or("GSY_NODE_URL", "ws://gsy-node:9944".to_string()),
         }
     }
 
