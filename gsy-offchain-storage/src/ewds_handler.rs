@@ -1,5 +1,6 @@
 use crate::db::DatabaseWrapper;
 use anyhow::{anyhow, Result};
+use futures::future::join_all;
 use primitives::db_api_schema::profiles::{MeasurementPointType, MeasurementSchema};
 use primitives::ewds::dto::{
     EwdsCommunityDto, EwdsInboundMessage, EwdsOrderDto, EwdsRequestEnvelope, EwdsResponseEnvelope,
@@ -7,7 +8,8 @@ use primitives::ewds::dto::{
 };
 use primitives::ewds::{
     client_id_for_suffix, env_var, ewds_rate_limit_backoff_ms, format_response_body,
-    is_rate_limited_message, is_rate_limited_response, EwdsOperation, EwdsTopicConfig,
+    is_rate_limited_message, is_rate_limited_response, parse_gateway_delivery_summary,
+    EwdsOperation, EwdsTopicConfig,
 };
 use primitives::utils::timestamp_to_string_with_padding;
 use reqwest::Client;
@@ -120,20 +122,30 @@ pub async fn start_ewds_request_handler(db: DatabaseWrapper, config: EwdsHandler
         config.gateway_url, config.request_fqcn, config.response_fqcn
     );
 
-    let client = Client::new();
+    let workers = EwdsOperation::ALL
+        .into_iter()
+        .map(|operation| run_topic_worker(db.clone(), Client::new(), config.clone(), operation));
+    join_all(workers).await;
+}
+
+async fn run_topic_worker(
+    db: DatabaseWrapper,
+    client: Client,
+    config: EwdsHandlerConfig,
+    operation: EwdsOperation,
+) {
     let mut seen_request_ids: HashSet<String> = HashSet::new();
     let mut seen_queue: VecDeque<String> = VecDeque::new();
-    let mut next_topic_index = 0usize;
     let mut rate_limit_attempt = 0u32;
 
     loop {
-        let delay_ms = match process_next_topic_batch(
+        let delay_ms = match process_topic_batch(
             &db,
             &client,
             &config,
+            operation,
             &mut seen_request_ids,
             &mut seen_queue,
-            &mut next_topic_index,
         )
         .await
         {
@@ -142,7 +154,10 @@ pub async fn start_ewds_request_handler(db: DatabaseWrapper, config: EwdsHandler
                 config.poll_interval_ms
             }
             Err(error) => {
-                warn!("EWDS batch processing failed: {}", error);
+                warn!(
+                    "EWDS {} worker batch processing failed: {}",
+                    operation, error
+                );
                 if is_rate_limited_message(error.to_string().as_str()) {
                     let delay_ms = ewds_rate_limit_backoff_ms(rate_limit_attempt);
                     rate_limit_attempt = rate_limit_attempt.saturating_add(1);
@@ -157,17 +172,15 @@ pub async fn start_ewds_request_handler(db: DatabaseWrapper, config: EwdsHandler
     }
 }
 
-async fn process_next_topic_batch(
+async fn process_topic_batch(
     db: &DatabaseWrapper,
     client: &Client,
     config: &EwdsHandlerConfig,
+    operation: EwdsOperation,
     seen_request_ids: &mut HashSet<String>,
     seen_queue: &mut VecDeque<String>,
-    next_topic_index: &mut usize,
 ) -> Result<()> {
     let amount = config.request_batch_size.to_string();
-    let operation = EwdsOperation::ALL[*next_topic_index % EwdsOperation::ALL.len()];
-    *next_topic_index = (*next_topic_index + 1) % EwdsOperation::ALL.len();
     let topic_name = config.topics.for_operation(operation).request.as_str();
     let messages = poll_requests_for_topic(client, config, topic_name, amount.as_str()).await?;
 
@@ -489,7 +502,7 @@ async fn send_message_with_fqcn(
     };
 
     let started = Instant::now();
-    let mut rate_limit_attempt = 0u32;
+    let mut delivery_attempt = 0u32;
     loop {
         if started.elapsed() > Duration::from_millis(config.response_send_timeout_ms) {
             return Err(anyhow!(
@@ -505,18 +518,30 @@ async fn send_message_with_fqcn(
             .send()
             .await?;
         let status = response.status();
+        let response_body = response.text().await.unwrap_or_default();
         if status.is_success() {
-            return Ok(());
+            let delivery = parse_gateway_delivery_summary(response_body.as_str())?;
+            if delivery.sent > 0 {
+                return Ok(());
+            }
+
+            let delay_ms = ewds_rate_limit_backoff_ms(delivery_attempt);
+            warn!(
+                "EWDS gateway accepted response for topic '{}' but delivered it to no recipients (failed={}, total={}); retrying in {} ms",
+                request_body.topic_name, delivery.failed, delivery.total, delay_ms
+            );
+            delivery_attempt = delivery_attempt.saturating_add(1);
+            sleep(Duration::from_millis(delay_ms)).await;
+            continue;
         }
 
-        let error_body = response.text().await.unwrap_or_default();
-        if is_rate_limited_response(status, error_body.as_str()) {
-            let delay_ms = ewds_rate_limit_backoff_ms(rate_limit_attempt);
+        if is_rate_limited_response(status, response_body.as_str()) {
+            let delay_ms = ewds_rate_limit_backoff_ms(delivery_attempt);
             warn!(
                 "EWDS rate limit while publishing response for topic '{}'; retrying in {} ms",
                 request_body.topic_name, delay_ms
             );
-            rate_limit_attempt = rate_limit_attempt.saturating_add(1);
+            delivery_attempt = delivery_attempt.saturating_add(1);
             sleep(Duration::from_millis(delay_ms)).await;
             continue;
         }
@@ -526,7 +551,7 @@ async fn send_message_with_fqcn(
             request_body.fqcn,
             request_body.topic_name,
             status,
-            format_response_body(&error_body)
+            format_response_body(&response_body)
         ));
     }
 }

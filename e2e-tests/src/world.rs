@@ -29,6 +29,13 @@ pub struct PayAsClearScenario {
     pub preferred_order_ids: Option<(String, String)>,
 }
 
+#[derive(Clone, Debug)]
+pub struct CommunityMarketOrderPair {
+    pub market_id: [u8; 16],
+    pub bid_id: String,
+    pub offer_id: String,
+}
+
 #[derive(Debug, World)]
 #[world(init = Self::new)]
 pub struct MyWorld {
@@ -39,6 +46,7 @@ pub struct MyWorld {
     pub evm_node_url: String,
     pub offchain_storage_url: String,
     pub community_id: String,
+    pub secondary_community_id: String,
     pub market_controller_address: Address,
     pub order_registry_address: Address,
     pub trade_settlement_address: Address,
@@ -56,6 +64,10 @@ pub struct MyWorld {
     pub pay_as_clear_scenario: Option<PayAsClearScenario>,
     pub pay_as_clear_trades: Vec<TradeSchema>,
     pub preferred_trade: Option<TradeSchema>,
+    pub community_market_ids: Option<[[u8; 16]; 2]>,
+    pub cross_community_order_ids: Option<(String, String)>,
+    pub community_market_order_pairs: Vec<CommunityMarketOrderPair>,
+    pub community_market_trades: Vec<TradeSchema>,
 }
 
 impl MyWorld {
@@ -103,6 +115,7 @@ impl MyWorld {
             offchain_storage_url: std::env::var("OFFCHAIN_STORAGE_URL")
                 .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string()),
             community_id: "11111111-1111-4111-8111-111111111111".to_string(),
+            secondary_community_id: "22222222-2222-4222-8222-222222222222".to_string(),
             market_controller_address,
             order_registry_address,
             trade_settlement_address,
@@ -120,6 +133,10 @@ impl MyWorld {
             pay_as_clear_scenario: None,
             pay_as_clear_trades: vec![],
             preferred_trade: None,
+            community_market_ids: None,
+            cross_community_order_ids: None,
+            community_market_order_pairs: vec![],
+            community_market_trades: vec![],
         })
     }
 

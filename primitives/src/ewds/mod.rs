@@ -1,7 +1,10 @@
 pub mod dto;
 
 use anyhow::{anyhow, Result};
-use dto::{EwdsMessageDto, EwdsQueryResponse, EwdsRequestEnvelope, EwdsSendMessageDto};
+use dto::{
+    EwdsDeliverySummary, EwdsMessageDto, EwdsQueryResponse, EwdsRequestEnvelope,
+    EwdsSendMessageDto, EwdsSendMessageResponse,
+};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use std::{env, fmt, time::Instant};
@@ -14,6 +17,7 @@ const DEFAULT_RESPONSE_FQCN: &str = "gsy.intelligent.responses.sub";
 const DEFAULT_TOPIC_OWNER: &str = "integration.apps.intelligent.auth.ewc";
 const DEFAULT_TOPIC_VERSION: &str = "1.0.0";
 const DEFAULT_POLL_INTERVAL_MS: u64 = 400;
+const DEFAULT_EMPTY_RESPONSE_GRACE_MS: u64 = 10_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EwdsOperation {
@@ -185,6 +189,7 @@ pub struct EwdsClientConfig {
     pub consumer_client_id: String,
     pub timeout_ms: u64,
     pub poll_interval_ms: u64,
+    pub empty_response_grace_ms: u64,
     pub topics: EwdsTopicConfig,
 }
 
@@ -211,6 +216,10 @@ impl EwdsClientConfig {
             poll_interval_ms: env_u64_or(
                 "EWDS_RESPONSE_POLL_INTERVAL_MS",
                 DEFAULT_POLL_INTERVAL_MS,
+            ),
+            empty_response_grace_ms: env_u64_or(
+                "EWDS_EMPTY_RESPONSE_GRACE_MS",
+                DEFAULT_EMPTY_RESPONSE_GRACE_MS,
             ),
             topics: EwdsTopicConfig::from_env(),
         }
@@ -290,7 +299,7 @@ impl EwdsClient {
             "{}/api/v2/messages",
             self.config.gateway_base.trim_end_matches('/')
         );
-        let mut rate_limit_attempt = 0u32;
+        let mut delivery_attempt = 0u32;
         loop {
             if started.elapsed() > Duration::from_millis(self.config.timeout_ms) {
                 return Err(anyhow!(
@@ -307,18 +316,30 @@ impl EwdsClient {
                 .send()
                 .await?;
             let send_status = send_response.status();
+            let body = send_response.text().await.unwrap_or_default();
             if send_status.is_success() {
-                break;
+                let delivery = parse_gateway_delivery_summary(body.as_str())?;
+                if delivery.sent > 0 {
+                    break;
+                }
+
+                let delay_ms = ewds_rate_limit_backoff_ms(delivery_attempt);
+                warn!(
+                    "EWDS gateway accepted {} request but delivered it to no recipients (failed={}, total={}); retrying in {} ms",
+                    operation, delivery.failed, delivery.total, delay_ms
+                );
+                delivery_attempt = delivery_attempt.saturating_add(1);
+                sleep(Duration::from_millis(delay_ms)).await;
+                continue;
             }
 
-            let body = send_response.text().await.unwrap_or_default();
             if is_rate_limited_response(send_status, &body) {
-                let delay_ms = ewds_rate_limit_backoff_ms(rate_limit_attempt);
+                let delay_ms = ewds_rate_limit_backoff_ms(delivery_attempt);
                 warn!(
                     "EWDS rate limit while sending {} request; retrying in {} ms",
                     operation, delay_ms
                 );
-                rate_limit_attempt = rate_limit_attempt.saturating_add(1);
+                delivery_attempt = delivery_attempt.saturating_add(1);
                 sleep(Duration::from_millis(delay_ms)).await;
                 continue;
             }
@@ -352,9 +373,20 @@ impl EwdsClient {
             pending_query.response_topic.as_str(),
         );
         let mut rate_limit_attempt = 0u32;
+        let mut empty_response_seen_at = None;
 
         loop {
+            if empty_response_grace_elapsed(
+                empty_response_seen_at,
+                self.config.empty_response_grace_ms,
+            ) {
+                return Ok(Vec::new());
+            }
+
             if pending_query.started.elapsed() > Duration::from_millis(self.config.timeout_ms) {
+                if empty_response_seen_at.is_some() {
+                    return Ok(Vec::new());
+                }
                 return Err(anyhow!(
                     "EWDS timeout waiting for {} response (request_id={})",
                     pending_query.operation,
@@ -398,7 +430,13 @@ impl EwdsClient {
                                     error_message
                                 ));
                             }
-                            return Ok(parsed_payload.data.unwrap_or_default());
+                            if let Some(data) = select_response_data(
+                                parsed_payload.data.unwrap_or_default(),
+                                &mut empty_response_seen_at,
+                                self.config.empty_response_grace_ms,
+                            ) {
+                                return Ok(data);
+                            }
                         }
                     }
                 }
@@ -429,8 +467,32 @@ impl EwdsClient {
     }
 }
 
+fn empty_response_grace_elapsed(empty_response_seen_at: Option<Instant>, grace_ms: u64) -> bool {
+    empty_response_seen_at
+        .is_some_and(|seen_at| seen_at.elapsed() >= Duration::from_millis(grace_ms))
+}
+
+fn select_response_data<T>(
+    data: Vec<T>,
+    empty_response_seen_at: &mut Option<Instant>,
+    grace_ms: u64,
+) -> Option<Vec<T>> {
+    if data.is_empty() && grace_ms > 0 {
+        empty_response_seen_at.get_or_insert_with(Instant::now);
+        None
+    } else {
+        Some(data)
+    }
+}
+
 pub fn is_rate_limited_response(status: reqwest::StatusCode, body: &str) -> bool {
     status == reqwest::StatusCode::TOO_MANY_REQUESTS || is_rate_limited_message(body)
+}
+
+pub fn parse_gateway_delivery_summary(body: &str) -> Result<EwdsDeliverySummary> {
+    serde_json::from_str::<EwdsSendMessageResponse>(body)
+        .map(|response| response.recipients)
+        .map_err(|error| anyhow!("invalid EWDS gateway delivery response: {}", error))
 }
 
 pub fn is_rate_limited_message(message: &str) -> bool {
@@ -578,5 +640,46 @@ mod tests {
             reqwest::StatusCode::BAD_REQUEST,
             r#"{"reason":"Channel not found","statusCode":400}"#
         ));
+    }
+
+    #[test]
+    fn parses_gateway_recipient_delivery_summary() {
+        let summary =
+            parse_gateway_delivery_summary(r#"{"recipients":{"failed":0,"sent":8,"total":8}}"#)
+                .unwrap();
+
+        assert_eq!(summary.sent, 8);
+        assert_eq!(summary.failed, 0);
+        assert_eq!(summary.total, 8);
+    }
+
+    #[test]
+    fn identifies_gateway_response_with_no_delivered_recipients() {
+        let summary =
+            parse_gateway_delivery_summary(r#"{"recipients":{"failed":8,"sent":0,"total":8}}"#)
+                .unwrap();
+
+        assert_eq!(summary.sent, 0);
+        assert_eq!(summary.failed, summary.total);
+    }
+
+    #[test]
+    fn defers_empty_response_and_selects_later_data() {
+        let mut empty_response_seen_at = None;
+
+        assert!(
+            select_response_data::<u8>(Vec::new(), &mut empty_response_seen_at, 10_000).is_none()
+        );
+        assert!(empty_response_seen_at.is_some());
+        assert_eq!(
+            select_response_data(vec![1u8], &mut empty_response_seen_at, 10_000),
+            Some(vec![1u8])
+        );
+    }
+
+    #[test]
+    fn completes_empty_response_after_grace_period() {
+        assert!(empty_response_grace_elapsed(Some(Instant::now()), 0));
+        assert!(!empty_response_grace_elapsed(None, 0));
     }
 }

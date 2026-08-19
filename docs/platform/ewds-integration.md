@@ -101,7 +101,12 @@ Each service:
 | `gsy.intelligent.responses.pub` | Publish | `ordersQueryResponse`, `tradesQueryResponse`, `measurementsQueryResponse`, `communityUpsertResponse`, `communitiesQueryResponse` | `EWDS_RESPONSE_PUBLISH_FQCN` |
 | `gsy.intelligent.responses.sub` | Subscribe | `ordersQueryResponse`, `tradesQueryResponse`, `measurementsQueryResponse`, `communityUpsertResponse`, `communitiesQueryResponse` | `EWDS_RESPONSE_SUBSCRIBE_FQCN` |
 
-All four channels should use the `user.roles.integration.apps.intelligent.auth.ewc` role restriction for the initial service-to-service tests.
+The broad `user.roles.integration.apps.intelligent.auth.ewc` restriction can be
+used for an initial delivery smoke test. For request/reply operation, the
+request publish channel must resolve only to the authoritative GSY
+off-chain-storage responder DID. If multiple qualified responders consume the
+same request topics, they can return different snapshots for the same request
+ID. The response publish channel can resolve to all GSY request clients.
 
 ## DDHub API Surface Used by Integration
 
@@ -177,6 +182,8 @@ Validator requirements:
 
 - EWDS handlers are implemented for `orders.query`, `trades.query`,
   `measurements.query`, `community.upsert`, and `communities.query`.
+- Each operation has an independent bounded polling worker, so response retries
+  for one topic do not block request handling for unrelated topics.
 - Order payloads are emitted with Intelligent-style camelCase fields; the matching-engine consumer still accepts legacy native `DbOrderSchema` payloads during migration.
 - Keep existing REST endpoints during migration for compatibility.
 - Publish consistent response envelopes and error payloads.
@@ -242,7 +249,9 @@ Channel/topic setup notes:
 
 Validated e2e status:
 
-- The full Cucumber e2e suite passed with EWDS mode enabled: `2` features, `2` scenarios, and `20` steps passed.
+- The pay-as-bid Cucumber e2e suite passed with EWDS mode enabled: `3`
+  features, `3` scenarios, and `30` steps passed, including isolated trading
+  and penalty settlement across two community markets.
 - The validated test command is documented in `docs/setup/test.md`.
 - DDHub delivery is asynchronous; use `EWDS_RESPONSE_TIMEOUT_MS=60000` for
   deterministic e2e runs. The GSY clients and responder apply exponential

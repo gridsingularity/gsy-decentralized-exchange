@@ -190,9 +190,9 @@ EWF-hosted broker and the following local channels/topics:
 Expected passing summary:
 
 ```text
-2 features
-2 scenarios (2 passed)
-20 steps (20 passed)
+3 features
+3 scenarios (3 passed)
+30 steps (30 passed)
 ```
 
 The pay-as-clear run has this expected summary:
@@ -217,6 +217,7 @@ the asynchronous DDHub broker path:
 ```bash
 EWDS_RESPONSE_TIMEOUT_MS=60000
 EWDS_RESPONSE_POLL_INTERVAL_MS=1000
+EWDS_EMPTY_RESPONSE_GRACE_MS=10000
 EWDS_HANDLER_POLL_INTERVAL_MS=500
 EWDS_HANDLER_BATCH_SIZE=100
 EWDS_RATE_LIMIT_BACKOFF_MS=2000
@@ -237,6 +238,7 @@ Important EWDS variables for test runs:
 - `EWDS_ENABLE_HANDLER`
 - `EWDS_RESPONSE_TIMEOUT_MS`
 - `EWDS_RESPONSE_POLL_INTERVAL_MS`
+- `EWDS_EMPTY_RESPONSE_GRACE_MS`
 - `EWDS_HANDLER_POLL_INTERVAL_MS`
 - `EWDS_HANDLER_BATCH_SIZE`
 - `EWDS_RATE_LIMIT_BACKOFF_MS`
@@ -255,3 +257,6 @@ Current e2e suite validates:
 - Community upsert and orchestrator community discovery through the selected
   HTTP or EWDS transport.
 - Community-aware market ID derivation and on-chain market opening.
+- Distinct Spot market creation for multiple communities in the same delivery
+  slot, with end-to-end verification that matching, settlement, indexing, and
+  penalties remain isolated per community market.

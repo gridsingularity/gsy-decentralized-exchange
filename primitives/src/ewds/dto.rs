@@ -34,6 +34,18 @@ pub struct EwdsSendMessageDto {
     pub anonymous_recipient: Vec<String>,
 }
 
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+pub struct EwdsSendMessageResponse {
+    pub recipients: EwdsDeliverySummary,
+}
+
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+pub struct EwdsDeliverySummary {
+    pub failed: u32,
+    pub sent: u32,
+    pub total: u32,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EwdsMessageDto {

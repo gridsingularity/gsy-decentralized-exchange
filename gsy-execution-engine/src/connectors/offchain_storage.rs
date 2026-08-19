@@ -131,13 +131,10 @@ async fn fetch_trades_and_measurements_via_ewds(
         8_000,
     );
 
-    let trades: Vec<TradeSchema> = ewds_client
-        .query(EwdsOperation::TradesQuery, query.clone())
-        .await?;
-
-    let measurements: Vec<MeasurementSchema> = ewds_client
-        .query(EwdsOperation::MeasurementsQuery, query)
-        .await?;
+    let (trades, measurements): (Vec<TradeSchema>, Vec<MeasurementSchema>) = tokio::try_join!(
+        ewds_client.query(EwdsOperation::TradesQuery, query.clone()),
+        ewds_client.query(EwdsOperation::MeasurementsQuery, query),
+    )?;
 
     Ok((trades, measurements))
 }
