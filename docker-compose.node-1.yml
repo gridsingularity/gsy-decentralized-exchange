@@ -1,4 +1,35 @@
+# =============================================================================
+# GSY DEX — Host A (operator's cloud): validator #1 + archive node
+# =============================================================================
+# Both nodes share the tailscale-node-1 sidecar's network namespace, so they get
+# ONE tailnet IP between them and are distinguished by port:
+#
+#   validator #1   p2p 30333   rpc 9944
+#   archive        p2p 30334   rpc 9945
+#
+# Multiaddrs therefore differ only by port, e.g.
+#   /ip4/<host A tailnet ip>/tcp/30333/p2p/<validator PeerId>
+#   /ip4/<host A tailnet ip>/tcp/30334/p2p/<archive PeerId>
+#
+# Cache sizes are trimmed from the values in deployment/gsy-validator.service so
+# both nodes fit a 2 vCPU / 8 GB / SSD host. The large defaults exist to keep a
+# spinning disk from being touched (docs/setup/deployment.md:59-66); on SSD the
+# penalty for trimming is small. The archive is cut hardest — it is not
+# latency-critical, whereas the validator must not miss an Aura slot.
+#
+#   export TS_AUTHKEY=tskey-auth-...
+#   docker compose -f docker-compose.node-1.yml up -d --build
+# =============================================================================
 
+x-gsy-node-build: &gsy-node-build
+  context: .
+  dockerfile: ./gsy-node/Dockerfile
+  args:
+    # Compile-time (baked into the image). Point OFFCHAIN_STORAGE_URL at the central
+    # server's tailnet IP (or its public URL); the offchain worker reads it via option_env!.
+    OFFCHAIN_STORAGE_URL: ${OFFCHAIN_STORAGE_URL:-http://gsy-offchain-storage:8080}
+    API_KEY: ${API_KEY:-fedecom_user}
+    NODE_BUILD_FEATURES: "--features poa"
 
 services:
   tailscale-node-1:
@@ -25,17 +56,11 @@ services:
       retries: 12
       start_period: 20s
 
+  # --- Validator #1: pruned, authors blocks. Keeps the larger cache. ---
   gsy-node:
     container_name: gsy-node-1
-    build:
-      context: .
-      dockerfile: ./gsy-node/Dockerfile
-      args:
-        # Compile-time (baked into the image). Point OFFCHAIN_STORAGE_URL at the central
-        # server's tailnet IP (or its public URL); the offchain worker reads it via option_env!.
-        OFFCHAIN_STORAGE_URL: ${OFFCHAIN_STORAGE_URL:-http://gsy-offchain-storage:8080}
-        API_KEY: ${API_KEY:-fedecom_user}
-        NODE_BUILD_FEATURES: "--features poa"
+    image: gsy-dex-node:poa
+    build: *gsy-node-build
     # Share the sidecar's netns -> the node gets the tailnet IP; no ports to publish.
     network_mode: "service:tailscale-node-1"
     depends_on:
@@ -47,6 +72,8 @@ services:
       - gsy-node-1-data:/var/lib/gsy
       # Persisted libp2p key -> stable PeerId. Generate node.key here first (see env file).
       - ./.secrets/gsy-node-1:/keys
+      # Raw chain spec drop point; set GSY_CHAIN=/chainspec/poa.raw.json.
+      - ./deployment/chainspec:/chainspec:ro
     entrypoint:
       - /bin/sh
       - -c
@@ -56,6 +83,11 @@ services:
         $${GSY_VALIDATOR}
         --base-path=/var/lib/gsy
         --node-key-file=/keys/node.key
+        --database paritydb
+        --state-pruning 256
+        --blocks-pruning 1000
+        --db-cache 1024
+        --trie-cache-size 536870912
         --listen-addr=/ip4/0.0.0.0/tcp/30333
         $${GSY_PUBLIC_IP:+--public-addr=/ip4/$${GSY_PUBLIC_IP}/tcp/30333}
         $${GSY_RESERVED_NODES:+--reserved-nodes $${GSY_RESERVED_NODES} --reserved-only}
@@ -75,6 +107,58 @@ services:
       start_period: 30s
     restart: unless-stopped
 
+  # --- Archive: full history, NOT a validator. Never added to the validator set. ---
+  # Only source of chain history once the validators prune (--blocks-pruning 1000
+  # keeps ~4h at 15s blocks), so it must be running from genesis.
+  gsy-archive:
+    container_name: gsy-archive
+    image: gsy-dex-node:poa
+    build: *gsy-node-build
+    network_mode: "service:tailscale-node-1"
+    depends_on:
+      tailscale-node-1:
+        condition: service_healthy
+    env_file:
+      - ./.env/gsy-archive.env
+    volumes:
+      - gsy-archive-data:/var/lib/gsy
+      - ./.secrets/gsy-archive:/keys
+      - ./deployment/chainspec:/chainspec:ro
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >
+        exec /var/www/gsy-node/target/release/gsy-node
+        --chain="$${GSY_CHAIN}"
+        --name="$${GSY_NAME:-archive}"
+        --base-path=/var/lib/gsy
+        --node-key-file=/keys/node.key
+        --database paritydb
+        --state-pruning archive
+        --blocks-pruning archive
+        --db-cache 512
+        --trie-cache-size 268435456
+        --listen-addr=/ip4/0.0.0.0/tcp/30334
+        $${GSY_PUBLIC_IP:+--public-addr=/ip4/$${GSY_PUBLIC_IP}/tcp/30334}
+        $${GSY_RESERVED_NODES:+--reserved-nodes $${GSY_RESERVED_NODES} --reserved-only}
+        --no-mdns
+        --rpc-port=9945
+        --rpc-external
+        --rpc-methods=safe
+        --rpc-cors=all
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'curl -H ''Content-Type: application/json'' -d ''{"id":1, "jsonrpc":"2.0", "method":"system_health"}'' http://localhost:9945 | grep -q ''"result":''',
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
 volumes:
   gsy-node-1-data:
+  gsy-archive-data:
   tailscale-node-1-state:
