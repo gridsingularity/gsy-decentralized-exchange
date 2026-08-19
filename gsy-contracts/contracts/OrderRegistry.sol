@@ -17,19 +17,19 @@ contract OrderRegistry is Initializable, AccessControlUpgradeable {
         None,
         Open,
         Executed,
-        Cancelled
+        Cancelled,
+        Expired
     }
 
     MarketController public marketController;
     ActorRegistry public actorRegistry;
 
-    uint8 public constant ENERGY_TYPE_UNSPECIFIED = 0;
+    uint8 public constant ENERGY_TYPE_NONE = 0;
     uint8 public constant ENERGY_TYPE_GREEN = 1;
     uint8 public constant ENERGY_TYPE_PV = 2;
     uint8 public constant ENERGY_TYPE_HYDRO = 3;
     uint8 public constant ENERGY_TYPE_BIOMASS = 4;
     uint8 public constant ENERGY_TYPE_BATTERY = 5;
-    uint8 public constant ENERGY_TYPE_GREY = 6;
 
     struct OrderParams {
         bytes16 orderId;
@@ -93,8 +93,8 @@ contract OrderRegistry is Initializable, AccessControlUpgradeable {
             params.orderId == bytes16(0) ||
             params.createdBy == bytes16(0) ||
             params.marketId == bytes16(0) ||
-            params.energySourcePreference > ENERGY_TYPE_GREY ||
-            params.energyType > ENERGY_TYPE_GREY
+            params.energySourcePreference > ENERGY_TYPE_BATTERY ||
+            params.energyType > ENERGY_TYPE_BATTERY
         ) {
             revert InvalidOrderParams();
         }

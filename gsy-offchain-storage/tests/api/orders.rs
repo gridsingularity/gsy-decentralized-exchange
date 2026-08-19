@@ -1,24 +1,26 @@
 use crate::helpers::{init_app, stop_app};
 use actix_web::web;
 use mongodb::bson::{to_bson, Bson};
-use primitives::db_api_schema::orders::{DbOrderSchema, OrderEnum, OrderStatus};
+use primitives::db_api_schema::orders::{OrderEnum, OrderStatus};
+use primitives::ewds::dto::{order_status_to_ewds, order_type_to_ewds, EwdsOrderDto};
 use std::collections::HashMap;
 
-fn make_order(order_id: &str, market_id: &str, order_type: OrderEnum) -> DbOrderSchema {
-    DbOrderSchema {
+fn make_order(order_id: &str, market_id: &str, order_type: OrderEnum) -> EwdsOrderDto {
+    EwdsOrderDto {
         order_id: order_id.to_string(),
-        status: OrderStatus::Open,
-        order_type,
-        created_by: "0x0000000000000000000000000000000000000abc".to_string(),
-        energy_kWh: 100.0,
-        energy_rate: 10.0,
-        area_uuid: "0x0000000000000000000000000000000000000000000000000000000000000789".to_string(),
         market_id: market_id.to_string(),
-        nonce: None,
+        order_type: order_type_to_ewds(&order_type).to_string(),
+        order_status: order_status_to_ewds(&OrderStatus::Open).to_string(),
         time_slot: 1,
+        quantity: 100.0,
+        price_limit: 10.0,
+        energy_source_preference: None,
+        energy_type: None,
+        created_by: "0x0000000000000000000000000000000000000abc".to_string(),
         creation_time: 1_677_453_190,
-        requirements: None,
-        attributes: None,
+        updated_at: None,
+        reject_reason: None,
+        preferred_trading_partner: None,
     }
 }
 
@@ -102,7 +104,7 @@ async fn post_normalized_order_round_trips() {
         .await
         .unwrap();
     assert_eq!(200, resp.status().as_u16());
-    let returned: Vec<DbOrderSchema> = resp.json().await.unwrap();
+    let returned: Vec<EwdsOrderDto> = resp.json().await.unwrap();
     assert_eq!(returned.len(), 1);
     assert_eq!(returned[0].order_id, order.order_id);
     assert_eq!(returned[0].created_by, order.created_by);

@@ -5,7 +5,7 @@ import {
   bytes16Id,
   deployUpgradeableContract,
   ENERGY_TYPE_GREEN,
-  ENERGY_TYPE_UNSPECIFIED,
+  ENERGY_TYPE_NONE,
   ORDER_TYPE_BID,
   ORDER_TYPE_ASK,
   ZERO_BYTES16,
@@ -63,7 +63,7 @@ describe("TradeSettlement", function () {
       energy: 100,
       energyRate: 50,
       energySourcePreference: ENERGY_TYPE_GREEN,
-      energyType: ENERGY_TYPE_UNSPECIFIED,
+      energyType: ENERGY_TYPE_NONE,
       isBid: ORDER_TYPE_BID,
     };
 
@@ -75,7 +75,7 @@ describe("TradeSettlement", function () {
       creationTime: 900,
       energy: 100,
       energyRate: 40,
-      energySourcePreference: ENERGY_TYPE_UNSPECIFIED,
+      energySourcePreference: ENERGY_TYPE_NONE,
       energyType: ENERGY_TYPE_GREEN,
       isBid: ORDER_TYPE_ASK,
     };

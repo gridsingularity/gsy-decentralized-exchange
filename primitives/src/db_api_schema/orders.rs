@@ -25,8 +25,6 @@ pub struct DbOrderSchema {
     pub order_type: OrderEnum,
     pub area_uuid: String,
     pub market_id: String,
-    #[serde(default)]
-    pub nonce: Option<u64>,
     pub time_slot: u64,
     pub creation_time: u64,
     pub energy_kWh: f64,
@@ -36,14 +34,13 @@ pub struct DbOrderSchema {
     pub attributes: Option<DbAttributes>,
 }
 
-/// Order status.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd)]
 #[serde(rename_all = "lowercase")]
 pub enum OrderStatus {
     Open,
     Executed,
+    Cancelled,
     Expired,
-    Deleted,
 }
 
 impl Default for OrderStatus {
@@ -75,25 +72,8 @@ pub struct FlexibilityOrderSchema {
     pub from_asset: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub enum IntelligentOrderType {
-    Bid,
-    Offer,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub enum IntelligentOrderStatus {
-    Submitted,
-    PartiallyFilled,
-    Filled,
-    Cancelled,
-    Expired,
-    Rejected,
-    Executed,
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, PartialOrd)]
-pub enum IntelligentEnergyType {
+pub enum EnergyType {
     #[serde(rename = "GREEN")]
     Green,
     #[serde(rename = "PV")]
@@ -104,43 +84,59 @@ pub enum IntelligentEnergyType {
     Biomass,
     #[serde(rename = "BATTERY")]
     Battery,
-    #[serde(rename = "GREY")]
-    Grey,
+    #[serde(rename = "NONE")]
+    None,
+}
+
+pub fn energy_type_to_contract(energy_type: &EnergyType) -> u8 {
+    match energy_type {
+        EnergyType::None => 0,
+        EnergyType::Green => 1,
+        EnergyType::Pv => 2,
+        EnergyType::Hydro => 3,
+        EnergyType::Biomass => 4,
+        EnergyType::Battery => 5,
+    }
+}
+
+pub fn energy_type_from_contract(value: u8) -> Option<EnergyType> {
+    match value {
+        0 => Some(EnergyType::None),
+        1 => Some(EnergyType::Green),
+        2 => Some(EnergyType::Pv),
+        3 => Some(EnergyType::Hydro),
+        4 => Some(EnergyType::Biomass),
+        5 => Some(EnergyType::Battery),
+        _ => None,
+    }
+}
+
+pub fn order_energy_source_preference_to_contract(order: &DbOrderSchema) -> u8 {
+    order
+        .requirements
+        .as_ref()
+        .and_then(|requirements| requirements.energy_type.as_ref())
+        .map(energy_type_to_contract)
+        .unwrap_or(energy_type_to_contract(&EnergyType::None))
+}
+
+pub fn attribute_energy_type_to_contract(order: &DbOrderSchema) -> u8 {
+    order
+        .attributes
+        .as_ref()
+        .map(|attributes| energy_type_to_contract(&attributes.energy_type))
+        .unwrap_or(energy_type_to_contract(&EnergyType::None))
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd)]
 pub struct DbRequirements {
     pub trading_partner_id: Option<String>,
-    pub energy_type: Option<IntelligentEnergyType>,
+    pub energy_type: Option<EnergyType>,
     pub preferred_energy_rate: Option<f64>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd)]
 pub struct DbAttributes {
     pub trading_partner_id: Option<String>,
-    pub energy_type: IntelligentEnergyType,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct IntelligentOrderSchema {
-    pub order_id: String,
-    pub market_id: String,
-    pub order_type: IntelligentOrderType,
-    pub order_status: IntelligentOrderStatus,
-    pub time_slot: String,
-    pub quantity: f64,
-    pub price_limit: f64,
-    #[serde(default)]
-    pub energy_source_preference: Option<IntelligentEnergyType>,
-    #[serde(default)]
-    pub energy_type: Option<IntelligentEnergyType>,
-    pub created_by: String,
-    pub created_at: String,
-    #[serde(default)]
-    pub updated_at: Option<String>,
-    #[serde(default)]
-    pub cancellation_reason: Option<String>,
-    #[serde(default)]
-    pub preferred_trading_partner: Option<String>,
+    pub energy_type: EnergyType,
 }

@@ -1,8 +1,8 @@
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use gsy_community_client::time_utils::get_last_and_next_timeslot;
+use httpmock::prelude::*;
 use primitives::db_api_schema::profiles::{ForecastSchema, MeasurementSchema};
 use primitives::MarketType;
-use httpmock::prelude::*;
 
 #[tokio::test]
 async fn test_create_market_posts_market_schema() {
