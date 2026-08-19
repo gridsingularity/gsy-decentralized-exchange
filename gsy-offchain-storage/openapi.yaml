@@ -648,7 +648,7 @@ components:
 
     EnergyType:
       type: string
-      enum: [GREEN, PV, HYDRO, BIOMASS, BATTERY, GREY]
+      enum: [GREEN, PV, HYDRO, BIOMASS, BATTERY, NONE]
 
     DbOrderSchema:
       type: object

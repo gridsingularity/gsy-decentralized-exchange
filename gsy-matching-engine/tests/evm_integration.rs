@@ -156,7 +156,7 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
 
     let bid_db = DbOrderSchema {
         order_id: bid_order_id.clone(),
-        status: OrderStatus::Submitted,
+        status: OrderStatus::Open,
         order_type: OrderEnum::Bid,
         area_uuid: bid_area.clone(),
         market_id: market_id.clone(),
@@ -170,7 +170,7 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
     };
     let ask_db = DbOrderSchema {
         order_id: ask_order_id.clone(),
-        status: OrderStatus::Submitted,
+        status: OrderStatus::Open,
         order_type: OrderEnum::Offer,
         area_uuid: ask_area.clone(),
         market_id: market_id.clone(),
@@ -186,7 +186,7 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
     let bid_order = Order {
         order_id: bid_order_id.clone(),
         order_type: OrderEnum::Bid,
-        status: OrderStatus::Submitted,
+        status: OrderStatus::Open,
         area_uuid: bid_area.clone(),
         market_id: market_id.clone(),
         time_slot: 1000,
@@ -201,7 +201,7 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
     let ask_order = Order {
         order_id: ask_order_id.clone(),
         order_type: OrderEnum::Offer,
-        status: OrderStatus::Submitted,
+        status: OrderStatus::Open,
         area_uuid: ask_area.clone(),
         market_id: market_id.clone(),
         time_slot: 1000,

@@ -71,7 +71,7 @@ pub struct EwdsErrorPayload {
     pub message: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct EwdsOrderDto {
     pub order_id: String,
@@ -109,7 +109,7 @@ impl From<DbOrderSchema> for EwdsOrderDto {
                 .attributes
                 .as_ref()
                 .map(|a| energy_type_to_ewds(&a.energy_type).to_string())
-                .unwrap_or_else(|| "GREY".to_string())),
+                .unwrap_or_else(|| "NONE".to_string())),
             created_by: order.created_by,
             creation_time: order.creation_time,
             updated_at: Some(order.creation_time),
@@ -126,22 +126,25 @@ impl TryFrom<EwdsOrderDto> for DbOrderSchema {
     type Error = anyhow::Error;
 
     fn try_from(order: EwdsOrderDto) -> Result<Self> {
-        let requirements = match order.energy_source_preference {
-            Some(pref) => Some(DbRequirements {
+        let requirements = if order.energy_source_preference.is_some()
+            || order.preferred_trading_partner.is_some()
+        {
+            Some(DbRequirements {
                 trading_partner_id: order.preferred_trading_partner.clone(),
-                energy_type: Some(energy_type_from_ewds(&pref)?),
+                energy_type: match order.energy_source_preference {
+                    Some(ref pref) => Some(energy_type_from_ewds(pref)?),
+                    None => None,
+                },
                 preferred_energy_rate: Some(order.price_limit),
-            }),
-            None => None,
+            })
+        } else {
+            None
         };
 
-        let attributes = match order.preferred_trading_partner {
-            Some(pref) => Some(DbAttributes {
-                trading_partner_id: Some(pref),
-                energy_type: match order.energy_type {
-                    Some(ref et) => energy_type_from_ewds(et)?,
-                    None => EnergyType::Grey,
-                },
+        let attributes = match order.energy_type {
+            Some(ref et) => Some(DbAttributes {
+                trading_partner_id: None,
+                energy_type: energy_type_from_ewds(et)?,
             }),
             None => None,
         };
@@ -150,7 +153,7 @@ impl TryFrom<EwdsOrderDto> for DbOrderSchema {
             order_id: order.order_id,
             status: order_status_from_ewds(order.order_status.as_str())?,
             order_type: order_type_from_ewds(order.order_type.as_str())?,
-            area_uuid: order.created_by.clone(), // todo: we need to remove this from DbOrderSchema
+            area_uuid: order.created_by.clone(),
             market_id: order.market_id,
             time_slot: order.time_slot,
             creation_time: order.creation_time,
@@ -163,22 +166,19 @@ impl TryFrom<EwdsOrderDto> for DbOrderSchema {
     }
 }
 
-fn order_type_to_ewds(order_type: &OrderEnum) -> &'static str {
+pub fn order_type_to_ewds(order_type: &OrderEnum) -> &'static str {
     match order_type {
         OrderEnum::Bid => "bid",
         OrderEnum::Offer => "offer",
     }
 }
 
-fn order_status_to_ewds(status: &OrderStatus) -> &'static str {
+pub fn order_status_to_ewds(status: &OrderStatus) -> &'static str {
     match status {
-        OrderStatus::Submitted => "submitted",
-        OrderStatus::PartiallyFilled => "partially_filled",
-        OrderStatus::Filled => "filled",
+        OrderStatus::Open => "submitted",
+        OrderStatus::Executed => "executed",
         OrderStatus::Cancelled => "cancelled",
         OrderStatus::Expired => "expired",
-        OrderStatus::Rejected => "rejected",
-        OrderStatus::Executed => "executed",
     }
 }
 
@@ -190,38 +190,39 @@ fn order_type_from_ewds(value: &str) -> Result<OrderEnum> {
     }
 }
 
-fn order_status_from_ewds(value: &str) -> Result<OrderStatus> {
+pub fn order_status_from_ewds(value: &str) -> Result<OrderStatus> {
     match value.to_ascii_lowercase().as_str() {
-        "submitted" => Ok(OrderStatus::Submitted),
-        "partially_filled" => Ok(OrderStatus::PartiallyFilled),
-        "filled" => Ok(OrderStatus::Filled),
+        "submitted" => Ok(OrderStatus::Open),
+        "partially_filled" => Ok(OrderStatus::Open),
+        "filled" => Ok(OrderStatus::Executed),
         "cancelled" => Ok(OrderStatus::Cancelled),
         "expired" => Ok(OrderStatus::Expired),
-        "rejected" => Ok(OrderStatus::Rejected),
+        "rejected" => Ok(OrderStatus::Cancelled),
         "executed" => Ok(OrderStatus::Executed),
         _ => Err(anyhow!("unsupported EWDS order status '{}'", value)),
     }
 }
 
-fn energy_type_to_ewds(energy_type: &EnergyType) -> &'static str {
+pub fn energy_type_to_ewds(energy_type: &EnergyType) -> &'static str {
     match energy_type {
         EnergyType::Green => "GREEN",
         EnergyType::Pv => "PV",
         EnergyType::Hydro => "HYDRO",
         EnergyType::Biomass => "BIOMASS",
         EnergyType::Battery => "BATTERY",
-        EnergyType::Grey => "GREY",
+        EnergyType::None => "NONE",
+
     }
 }
 
-fn energy_type_from_ewds(value: &str) -> Result<EnergyType> {
+pub fn energy_type_from_ewds(value: &str) -> Result<EnergyType> {
     match value.to_ascii_uppercase().as_str() {
         "GREEN" => Ok(EnergyType::Green),
         "PV" => Ok(EnergyType::Pv),
         "HYDRO" => Ok(EnergyType::Hydro),
         "BIOMASS" => Ok(EnergyType::Biomass),
         "BATTERY" => Ok(EnergyType::Battery),
-        "GREY" => Ok(EnergyType::Grey),
+        "NONE" => Ok(EnergyType::None),
         _ => Err(anyhow!("unsupported EWDS energy type '{}'", value)),
     }
 }
@@ -339,7 +340,7 @@ impl ClearingStatus {
 impl FromStr for ClearingStatus {
     type Err = anyhow::Error;
     fn from_str(s: &str) -> Result<Self> {
-        match s.to_ascii_uppercase().as_str() {
+        match s.to_ascii_lowercase().as_str() {
             "final" => Ok(ClearingStatus::Final),
             "partial" => Ok(ClearingStatus::Partial),
             "rejected" => Ok(ClearingStatus::Rejected),
@@ -427,7 +428,7 @@ mod tests {
     fn order() -> DbOrderSchema {
         DbOrderSchema {
             order_id: "order-id".to_string(),
-            status: OrderStatus::Submitted,
+            status: OrderStatus::Open,
             order_type: OrderEnum::Bid,
             area_uuid: "actor-id".to_string(),
             market_id: "market-id".to_string(),
@@ -457,7 +458,7 @@ mod tests {
         assert_eq!(dto.quantity, 4.5);
         assert_eq!(dto.price_limit, 12.0);
         assert_eq!(dto.energy_source_preference.as_deref(), Some("GREEN"));
-        assert_eq!(dto.energy_type.as_deref(), Some("GREY")); // no attributes -> default
+        assert_eq!(dto.energy_type.as_deref(), Some("NONE")); // no attributes -> default
         assert_eq!(dto.preferred_trading_partner.as_deref(), Some("partner-id"));
         assert_eq!(dto.created_by, "actor-id");
     }
@@ -470,7 +471,7 @@ mod tests {
         assert_eq!(db.order_id, "order-id");
         assert_eq!(db.market_id, "market-id");
         assert_eq!(db.order_type, OrderEnum::Bid);
-        assert_eq!(db.status, OrderStatus::Submitted);
+        assert_eq!(db.status, OrderStatus::Open);
         assert_eq!(db.time_slot, 10);
         assert_eq!(db.energy_kWh, 4.5);
         assert_eq!(db.energy_rate, 12.0);
@@ -482,10 +483,10 @@ mod tests {
         assert_eq!(req.energy_type, Some(EnergyType::Green));
         assert_eq!(req.preferred_energy_rate, Some(12.0));
 
-        // attributes rebuilt from preferred_trading_partner + energy_type ("GREY")
+        // attributes rebuilt from preferred_trading_partner + energy_type ("NONE")
         let attr = db.attributes.expect("attributes present");
         assert_eq!(attr.trading_partner_id.as_deref(), Some("partner-id"));
-        assert_eq!(attr.energy_type, EnergyType::Grey);
+        assert_eq!(attr.energy_type, EnergyType::None);
     }
 
     #[test]

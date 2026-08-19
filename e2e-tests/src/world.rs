@@ -97,8 +97,8 @@ impl MyWorld {
             actor_registry_address,
             last_market_id: None,
             target_delivery_time: 0,
-            buyer_id: "areaalice".to_string(),
-            seller_id: "areabob".to_string(),
+            buyer_id: "alice".to_string(),
+            seller_id: "bob".to_string(),
             bid_forecast: None,
             offer_forecast: None,
             last_trade: None,
@@ -159,6 +159,6 @@ impl MyWorld {
         if !self.users.contains_key(user_name) {
             panic!("Unknown user '{}'", user_name);
         }
-        parse_or_hash_bytes16(format!("area{}", user_name).as_str())
+        parse_or_hash_bytes16(format!("{}", user_name).as_str())
     }
 }

@@ -1,11 +1,13 @@
 use crate::helpers::{init_app, stop_app};
 use actix_web::web;
 use primitives::db_api_schema::orders::{DbOrderSchema, OrderEnum, OrderStatus};
-use primitives::db_api_schema::trades::{TradeParameters, DbTradeSchema, TradeStatus};
+use primitives::ewds::dto::{
+    EwdsTradeDto
+};
 
 fn make_order(order_id: &str, order_type: OrderEnum) -> DbOrderSchema {
     DbOrderSchema {
-        status: OrderStatus::Submitted,
+        status: OrderStatus::Open,
         order_id: order_id.to_string(),
         order_type,
         created_by: "0x0000000000000000000000000000000000000abc".to_string(),
@@ -20,23 +22,20 @@ fn make_order(order_id: &str, order_type: OrderEnum) -> DbOrderSchema {
     }
 }
 
-fn make_trade(trade_uuid: &str, bid: DbOrderSchema, offer: DbOrderSchema) -> DbTradeSchema {
-    DbTradeSchema {
-        status: TradeStatus::Executed,
-        trade_uuid: trade_uuid.to_string(),
-        offer_hash: offer.order_id.clone(),
-        bid_hash: bid.order_id.clone(),
-        seller: offer.created_by.clone(),
-        buyer: bid.created_by.clone(),
+fn make_trade(trade_uuid: &str, bid: DbOrderSchema, offer: DbOrderSchema) -> EwdsTradeDto {
+    EwdsTradeDto {
+        trade_id: trade_uuid.to_string(),
         market_id: bid.market_id.clone(),
-        time_slot: 1,
-        creation_time: 1_677_453_191,
-        residual_offer_id: None,
+        bid_id: bid.order_id.clone(),
+        buyer_id: bid.created_by.clone(),
         residual_bid_id: None,
-        parameters: TradeParameters {
-            selected_energy_kWh: 14.0,
-            energy_rate: 3.0,
-        },
+        offer_id: offer.order_id.clone(),
+        seller_id: offer.created_by.clone(),
+        residual_offer_id: None,
+        trade_status: "executed".to_string(),
+        trade_quantity: 14.0,
+        trade_price: 3.0,
+        timestamp: 1_677_453_191
     }
 }
 
@@ -116,10 +115,10 @@ async fn post_normalized_trade_round_trips() {
         .await
         .unwrap();
     assert_eq!(200, resp.status().as_u16());
-    let returned: Vec<DbTradeSchema> = resp.json().await.unwrap();
+    let returned: Vec<EwdsTradeDto> = resp.json().await.unwrap();
     assert_eq!(returned.len(), 1);
-    assert_eq!(returned[0].trade_uuid, "TRADE-IE-20260328-0001");
-    assert_eq!(returned[0].bid_hash, trade.bid_hash);
+    assert_eq!(returned[0].trade_id, "TRADE-IE-20260328-0001");
+    assert_eq!(returned[0].bid_id, trade.bid_id);
     stop_app(app).await;
 }
 
@@ -140,5 +139,109 @@ async fn post_trades_returns_400_for_invalid_payload() {
 
         assert_eq!(400, resp.status().as_u16());
     }
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn get_trades_filters_by_time_range() {
+    let app = init_app().await;
+    let address = app.address.clone();
+    let bid = make_order(
+        "0x0000000000000000000000000000000000000000000000000000000000000b3d",
+        OrderEnum::Bid,
+    );
+    let offer = make_order(
+        "0x0000000000000000000000000000000000000000000000000000000000000a7c",
+        OrderEnum::Offer,
+    );
+    let mut trade = make_trade("TRADE-FILTER-0001", bid, offer);
+    trade.timestamp = 1_677_453_191;
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(&format!("{}/trades", &address))
+        .json(&vec![trade.clone()])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(200, resp.status().as_u16());
+
+    // Range that includes the trade timestamp
+    let resp = client
+        .get(&format!("{}/trades", &address))
+        .query(&[("start_time", "1677453190"), ("end_time", "1677453192")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(200, resp.status().as_u16());
+    let returned: Vec<EwdsTradeDto> = resp.json().await.unwrap();
+    assert_eq!(returned.len(), 1);
+    assert_eq!(returned[0].trade_id, "TRADE-FILTER-0001");
+
+    // Range that excludes the trade timestamp
+    let resp = client
+        .get(&format!("{}/trades", &address))
+        .query(&[("start_time", "1677453192"), ("end_time", "1677453200")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(200, resp.status().as_u16());
+    let returned: Vec<EwdsTradeDto> = resp.json().await.unwrap();
+    assert_eq!(returned.len(), 0);
+
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn get_trades_returns_all_when_no_params() {
+    let app = init_app().await;
+    let address = app.address.clone();
+    let bid = make_order(
+        "0x0000000000000000000000000000000000000000000000000000000000000b4d",
+        OrderEnum::Bid,
+    );
+    let offer = make_order(
+        "0x0000000000000000000000000000000000000000000000000000000000000a8c",
+        OrderEnum::Offer,
+    );
+    let trade = make_trade("TRADE-NOPARAMS-0001", bid, offer);
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(&format!("{}/trades", &address))
+        .json(&vec![trade.clone()])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(200, resp.status().as_u16());
+
+    let resp = client
+        .get(&format!("{}/trades", &address))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(200, resp.status().as_u16());
+    let returned: Vec<EwdsTradeDto> = resp.json().await.unwrap();
+    assert_eq!(returned.len(), 1);
+    assert_eq!(returned[0].trade_id, "TRADE-NOPARAMS-0001");
+
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn get_trades_returns_400_when_start_after_end() {
+    let app = init_app().await;
+    let address = app.address.clone();
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(&format!("{}/trades", &address))
+        .query(&[("start_time", "1677453200"), ("end_time", "1677453190")])
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(400, resp.status().as_u16());
+
     stop_app(app).await;
 }

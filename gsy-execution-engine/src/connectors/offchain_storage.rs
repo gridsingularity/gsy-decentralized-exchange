@@ -4,6 +4,7 @@ use primitives::db_api_schema::{
     profiles::{MeasurementPointSchema, MeasurementSchema, TimeseriesSchema},
     trades::DbTradeSchema,
 };
+use primitives::ewds::dto::EwdsTradeDto;
 use primitives::ewds::{EwdsClient, EwdsOperation};
 use primitives::utils::timestamp_to_string_with_padding;
 use reqwest::Client;
@@ -50,12 +51,16 @@ pub async fn fetch_trades_and_measurements_for_timeslot(
             trades_resp.status()
         ));
     }
-    let trades: Vec<DbTradeSchema> = trades_resp.json().await?;
+    let trades: Vec<EwdsTradeDto> = trades_resp.json().await?;
+    let trades_db: Vec<DbTradeSchema> = trades
+        .into_iter()
+        .map(|o| DbTradeSchema::try_from(o).expect("invalid EwdsTradeDto"))
+        .collect();
 
     let measurements =
         fetch_measurements_from_timeseries(&client, base_url, start_time, end_time).await?;
 
-    Ok((trades, measurements))
+    Ok((trades_db, measurements))
 }
 
 async fn fetch_measurements_from_timeseries(
@@ -131,13 +136,18 @@ async fn fetch_trades_and_measurements_via_ewds(
         8_000,
     );
 
-    let trades: Vec<DbTradeSchema> = ewds_client
+    let trades: Vec<EwdsTradeDto> = ewds_client
         .query(EwdsOperation::TradesQuery, query.clone())
         .await?;
+
+    let trades_db: Vec<DbTradeSchema> = trades
+        .into_iter()
+        .map(|o| DbTradeSchema::try_from(o).expect("invalid EwdsTradeDto"))
+        .collect();
 
     let measurements: Vec<MeasurementSchema> = ewds_client
         .query(EwdsOperation::MeasurementsQuery, query)
         .await?;
 
-    Ok((trades, measurements))
+    Ok((trades_db, measurements))
 }

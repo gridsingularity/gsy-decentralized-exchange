@@ -48,9 +48,10 @@ pub fn compute_penalties(
 
     // Iterate over each trade and compute the penalty if a measurement exists.
     for trade in trades {
-        // For consumers, we use the Bid's area and market.
-
-        if let Some(&measured_energy) = measurement_map.get(&trade.bid.area_uuid.clone()) {
+        if let Some(&measured_energy) = measurement_map
+            .get(&trade.buyer)
+            .or_else(|| measurement_map.get(&trade.seller))
+        {
             let traded_energy = trade.parameters.selected_energy_kWh;
 
             // Compute delta = measured_energy - traded_energy.
@@ -133,12 +134,10 @@ mod tests {
             market_id: "market-1".to_string(),
             time_slot: 1_000,
             creation_time: 950,
-            offer,
             offer_hash: "offer-1".to_string(),
-            bid,
             bid_hash: "bid-1".to_string(),
-            residual_offer: None,
-            residual_bid: None,
+            residual_offer_id: None,
+            residual_bid_id: None,
             parameters: TradeParameters {
                 selected_energy_kWh: 10.0,
                 energy_rate: 1.0,

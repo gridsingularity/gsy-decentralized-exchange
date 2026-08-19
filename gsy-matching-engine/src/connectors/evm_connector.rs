@@ -4,12 +4,15 @@ use anyhow::{anyhow, Error, Result};
 use ethers::prelude::*;
 use ethers::utils::keccak256;
 use primitives::db_api_schema::orders::{
-    DbOrderSchema, EnergyType, OrderEnum, OrderStatus,
+    DbOrderSchema,
+    EnergyType,
+    OrderEnum,
+    OrderStatus,
+    energy_type_to_contract
 };
 use primitives::ewds::dto::EwdsOrderDto;
 use primitives::ewds::{EwdsClient, EwdsOperation};
 use primitives::utils::{bytes16_to_hex, parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR};
-use serde_json::Value;
 use std::collections::HashMap;
 use std::env;
 use std::str::FromStr;
@@ -17,7 +20,6 @@ use tokio::time::{sleep, Duration};
 use tracing::{error, info, warn};
 
 const MATCH_PER_NR_BLOCKS: u64 = 4;
-const ENERGY_TYPE_UNSPECIFIED: u8 = 0;
 
 abigen!(
     SettleOrderBatchContract,
@@ -209,14 +211,18 @@ pub async fn send_settle_batch_transaction(
     }
 }
 
-fn fetch_market_orders(body: Vec<DbOrderSchema>) -> PreparedOrders {
+fn fetch_market_orders(body: Vec<EwdsOrderDto>) -> PreparedOrders {
     let mut open_bids: Vec<Order> = Vec::new();
     let mut open_offers: Vec<Order> = Vec::new();
+    let orders: Vec<DbOrderSchema> = body
+        .into_iter()
+        .map(|o| DbOrderSchema::try_from(o).expect("invalid EwdsOrderDto"))
+        .collect();
     let mut by_order_id: HashMap<String, DbOrderSchema> = HashMap::new();
 
-    for db_order_schema in body
+    for db_order_schema in orders
         .into_iter()
-        .filter(|order| order.status == OrderStatus::Submitted)
+        .filter(|order| order.status == OrderStatus::Open)
     {
         match convert_db_order_to_canonical(&db_order_schema) {
             Ok(order) => {
@@ -252,7 +258,7 @@ async fn fetch_open_orders_from_orderbook_service(url: String) -> Result<Prepare
     info!("Response: {:?} {}", res.version(), res.status());
     info!("Headers: {:#?}\n", res.headers());
 
-    let body = res.json::<Vec<DbOrderSchema>>().await?;
+    let body = res.json::<Vec<EwdsOrderDto>>().await?;
     info!("Fetched {} total orders from orderbook", body.len());
     Ok(fetch_market_orders(body))
 }
@@ -269,11 +275,12 @@ async fn fetch_open_orders_via_ewds_query(fallback_url: String) -> Result<Prepar
         "gsymatchingengine",
         60_000,
     );
-    let values: Vec<Value> = ewds_client
+    let orders: Vec<EwdsOrderDto> = ewds_client
         .query(EwdsOperation::OrdersQuery, query_payload)
-        .await?;
-
-    let orders = parse_order_values(values).unwrap_or_default();
+        .await?
+        .into_iter()
+        .map(serde_json::from_value)
+        .collect::<Result<Vec<_>, _>>()?;
     info!("Fetched {} total orders from EWDS", orders.len());
     Ok(fetch_market_orders(orders))
 }
@@ -290,35 +297,6 @@ fn parse_query_params_from_url(url: &str) -> serde_json::Value {
         return serde_json::Value::Object(map);
     }
     serde_json::json!({})
-}
-
-fn parse_order_values(values: Vec<Value>) -> Option<Vec<DbOrderSchema>> {
-    let original_len = values.len();
-    let orders = values
-        .into_iter()
-        .filter_map(|value| match parse_order_value(value) {
-            Ok(order) => Some(order),
-            Err(error) => {
-                warn!("Skipping EWDS order payload: {}", error);
-                None
-            }
-        })
-        .collect::<Vec<_>>();
-
-    if original_len == 0 || !orders.is_empty() {
-        Some(orders)
-    } else {
-        None
-    }
-}
-
-fn parse_order_value(value: Value) -> Result<DbOrderSchema> {
-    if let Ok(order) = serde_json::from_value::<DbOrderSchema>(value.clone()) {
-        return Ok(order);
-    }
-
-    let dto = serde_json::from_value::<EwdsOrderDto>(value)?;
-    dto.try_into()
 }
 
 fn parse_bytes16_field(field_name: &str, value: &str) -> Result<[u8; 16]> {
@@ -411,16 +389,6 @@ fn convert_db_order_to_canonical(order: &DbOrderSchema) -> Result<Order> {
     })
 }
 
-fn energy_type_to_contract(energy_type: &EnergyType) -> u8 {
-    match energy_type {
-        EnergyType::Green => 1,
-        EnergyType::Pv => 2,
-        EnergyType::Hydro => 3,
-        EnergyType::Biomass => 4,
-        EnergyType::Battery => 5,
-        EnergyType::Grey => 6,
-    }
-}
 
 fn order_energy_source_preference(order: &DbOrderSchema) -> u8 {
     order
@@ -428,7 +396,7 @@ fn order_energy_source_preference(order: &DbOrderSchema) -> u8 {
         .as_ref()
         .and_then(|requirements| requirements.energy_type.as_ref())
         .map(energy_type_to_contract)
-        .unwrap_or(ENERGY_TYPE_UNSPECIFIED)
+        .unwrap_or(energy_type_to_contract(&EnergyType::None))
 }
 
 fn order_energy_type(order: &DbOrderSchema) -> u8 {
@@ -436,7 +404,7 @@ fn order_energy_type(order: &DbOrderSchema) -> u8 {
         .attributes
         .as_ref()
         .map(|attributes| energy_type_to_contract(&attributes.energy_type))
-        .unwrap_or(ENERGY_TYPE_UNSPECIFIED)
+        .unwrap_or(energy_type_to_contract(&EnergyType::None))
 }
 
 fn to_evm_order_data(order: &DbOrderSchema, expected_type: OrderEnum) -> Result<EvmOrderDataTuple> {
@@ -494,7 +462,7 @@ fn to_evm_matches(
         .map(|item| {
             let bid_id = item.bid.order_id.to_ascii_lowercase();
             let offer_id = item.offer.order_id.to_ascii_lowercase();
-
+            // todo: remove this uneeded lookup
             let bid_order = order_lookup
                 .get(&bid_id)
                 .ok_or_else(|| anyhow!("Could not find bid order '{}' in lookup map", bid_id))?;

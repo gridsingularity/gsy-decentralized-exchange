@@ -34,22 +34,18 @@ pub struct DbOrderSchema {
     pub attributes: Option<DbAttributes>,
 }
 
-/// Order status.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd)]
 #[serde(rename_all = "lowercase")]
 pub enum OrderStatus {
-    Submitted,
-    PartiallyFilled,
-    Filled,
-    Cancelled,
-    Expired,
-    Rejected,
+    Open,
     Executed,
+    Cancelled,
+    Expired
 }
 
 impl Default for OrderStatus {
     fn default() -> Self {
-        Self::Submitted
+        Self::Open
     }
 }
 
@@ -89,8 +85,48 @@ pub enum EnergyType {
     Biomass,
     #[serde(rename = "BATTERY")]
     Battery,
-    #[serde(rename = "GREY")]
-    Grey,
+    #[serde(rename = "NONE")]
+    None,
+}
+
+pub fn energy_type_to_contract(energy_type: &EnergyType) -> u8 {
+    match energy_type {
+        EnergyType::None => 0,
+        EnergyType::Green => 1,
+        EnergyType::Pv => 2,
+        EnergyType::Hydro => 3,
+        EnergyType::Biomass => 4,
+        EnergyType::Battery => 5,
+    }
+}
+
+fn energy_type_from_contract(value: u8) -> Option<EnergyType> {
+    match value {
+        0 => Some(EnergyType::Nonw),
+        1 => Some(EnergyType::Green),
+        2 => Some(EnergyType::Pv),
+        3 => Some(EnergyType::Hydro),
+        4 => Some(EnergyType::Biomass),
+        5 => Some(EnergyType::Battery),
+    }
+}
+
+
+pub fn order_energy_source_preference_to_contract(order: &DbOrderSchema) -> u8 {
+    order
+        .requirements
+        .as_ref()
+        .and_then(|requirements| requirements.energy_type.as_ref())
+        .map(energy_type_to_contract)
+        .unwrap_or(energy_type_to_contract(&EnergyType::None))
+}
+
+pub fn attribute_energy_type_to_contract(order: &DbOrderSchema) -> u8 {
+    order
+        .attributes
+        .as_ref()
+        .map(|attributes| energy_type_to_contract(&attributes.energy_type))
+        .unwrap_or(energy_type_to_contract(&EnergyType::None))
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd)]

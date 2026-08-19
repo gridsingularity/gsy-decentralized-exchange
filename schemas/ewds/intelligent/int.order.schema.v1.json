@@ -58,15 +58,14 @@
         "null"
       ],
       "enum": [
+        "NONE",
         "GREEN",
         "PV",
         "HYDRO",
         "BIOMASS",
-        "BATTERY",
-        "GREY",
-        null
+        "BATTERY"
       ],
-      "default": null
+      "default": "NONE"
     },
     "energyType": {
       "description": "Energy type classification for this order. IRI: int:energyType.",
@@ -75,15 +74,14 @@
         "null"
       ],
       "enum": [
+        "NONE",
         "GREEN",
         "PV",
         "HYDRO",
         "BIOMASS",
-        "BATTERY",
-        "GREY",
-        null
+        "BATTERY"
       ],
-      "default": null
+      "default": "NONE"
     },
     "createdBy": {
       "description": "FK to Actor who submitted. IRI: int:createdby. UUID v4.",
