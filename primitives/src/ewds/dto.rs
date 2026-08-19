@@ -26,7 +26,7 @@ pub struct EwdsRequestEnvelope {
     pub payload: Value,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EwdsSendMessageDto {
     pub fqcn: String,

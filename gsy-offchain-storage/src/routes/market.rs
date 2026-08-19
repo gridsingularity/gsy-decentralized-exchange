@@ -114,7 +114,13 @@ pub async fn get_clearing_results(db: DbRef, params: Query<ClearingResultQuery>)
         .get_by_market(&params.market_id)
         .await
     {
-        Ok(results) => HttpResponse::Ok().json(results),
+        Ok(results) => {
+            let dtos: Vec<EwdsClearingResultDto> = results
+                .into_iter()
+                .map(EwdsClearingResultDto::from)
+                .collect();
+            HttpResponse::Ok().json(dtos)
+        }
         Err(e) => {
             tracing::error!("Failed to execute query: {:?}", e);
             HttpResponse::InternalServerError().finish()

@@ -2,8 +2,8 @@ use crate::db::DatabaseWrapper;
 use anyhow::{anyhow, Result};
 use primitives::db_api_schema::profiles::{MeasurementPointType, MeasurementSchema};
 use primitives::ewds::dto::{
-    EwdsInboundMessage, EwdsOrderDto, EwdsRequestEnvelope, EwdsResponseEnvelope,
-    EwdsSendMessageDto, EwdsTradeDto,
+    EwdsClearingResultDto, EwdsInboundMessage, EwdsOrderDto, EwdsRequestEnvelope,
+    EwdsResponseEnvelope, EwdsSendMessageDto, EwdsTradeDto,
 };
 use primitives::ewds::{
     client_id_for_suffix, env_var, format_response_body, EwdsOperation, EwdsTopicConfig,
@@ -99,6 +99,12 @@ struct TimeRangePayload {
     #[serde(alias = "areaUuid")]
     #[serde(default)]
     facility_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ClearingResultsPayload {
+    #[serde(alias = "marketId")]
+    market_id: String,
 }
 
 pub async fn start_ewds_request_handler(db: DatabaseWrapper, config: EwdsHandlerConfig) {
@@ -226,7 +232,7 @@ fn remember_request_id(
     }
 }
 
-async fn handle_request(
+pub async fn handle_request(
     db: &DatabaseWrapper,
     client: &Client,
     config: &EwdsHandlerConfig,
@@ -313,6 +319,28 @@ async fn handle_request(
                 data.len()
             );
 
+            send_success_response(client, config, request_id, response_topic.as_str(), data).await
+        }
+        EwdsOperation::ClearingResultsQuery => {
+            let payload =
+                serde_json::from_value::<ClearingResultsPayload>(envelope.payload.clone())
+                    .map_err(|e| anyhow!("clearing_results.query payload parse error: {}", e))?;
+            let request_id = envelope.request_id;
+            let results = db
+                .clearing_results()
+                .get_by_market(&payload.market_id)
+                .await
+                .map_err(|e| anyhow!("clearing_results.query DB error: {}", e))?;
+
+            let data: Vec<EwdsClearingResultDto> = results
+                .into_iter()
+                .map(EwdsClearingResultDto::from)
+                .collect();
+            info!(
+                "Publishing EWDS clearing_results.query response (request_id={}, results={})",
+                request_id,
+                data.len()
+            );
             send_success_response(client, config, request_id, response_topic.as_str(), data).await
         }
     }
