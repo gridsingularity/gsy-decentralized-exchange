@@ -457,7 +457,6 @@ fn to_evm_matches(
         .map(|item| {
             let bid_id = item.bid.order_id.to_ascii_lowercase();
             let offer_id = item.offer.order_id.to_ascii_lowercase();
-            // todo: remove this uneeded lookup
             let bid_order = order_lookup
                 .get(&bid_id)
                 .ok_or_else(|| anyhow!("Could not find bid order '{}' in lookup map", bid_id))?;

@@ -99,14 +99,15 @@ pub fn energy_type_to_contract(energy_type: &EnergyType) -> u8 {
     }
 }
 
-fn energy_type_from_contract(value: u8) -> Option<EnergyType> {
+pub fn energy_type_from_contract(value: u8) -> Option<EnergyType> {
     match value {
-        0 => Some(EnergyType::Nonw),
+        0 => Some(EnergyType::None),
         1 => Some(EnergyType::Green),
         2 => Some(EnergyType::Pv),
         3 => Some(EnergyType::Hydro),
         4 => Some(EnergyType::Biomass),
         5 => Some(EnergyType::Battery),
+        _ => None,
     }
 }
 
