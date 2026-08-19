@@ -65,6 +65,11 @@ book, the E2E harness first advances local Anvil to the next matching boundary.
 After the order book is indexed, it fast-forwards to the clearing boundary with
 empty-block RPC calls rather than waiting for one transaction per block.
 
+Before waiting for the orchestrator, the E2E runner idempotently upserts a
+canonical community using `OFFCHAIN_STORAGE_TRANSPORT`. The orchestrator then
+queries the same community collection and opens the community-aware Spot market
+whose ID is derived from community UUID, market type, and delivery slot.
+
 The contracts command starts the dedicated local Anvil container, deploys the
 upgradeable contract suite, grants service roles, and writes
 `contracts-output/addresses.env`. Keep that Anvil container running while the
@@ -179,6 +184,8 @@ EWF-hosted broker and the following local channels/topics:
 - `ordersQuery` / `ordersQueryResponse`
 - `tradesQuery` / `tradesQueryResponse`
 - `measurementsQuery` / `measurementsQueryResponse`
+- `communityUpsert` / `communityUpsertResponse`
+- `communitiesQuery` / `communitiesQueryResponse`
 
 Expected passing summary:
 
@@ -234,6 +241,7 @@ Important EWDS variables for test runs:
 - `EWDS_HANDLER_BATCH_SIZE`
 - `EWDS_RATE_LIMIT_BACKOFF_MS`
 - `EWDS_RATE_LIMIT_MAX_BACKOFF_MS`
+- `EWDS_E2E_CLIENT_ID`
 - `EWDS_GATEWAY_PLATFORM` (set `linux/amd64` on Apple Silicon when using current EWDS images)
 
 Current e2e suite validates:
@@ -244,3 +252,6 @@ Current e2e suite validates:
   and uncleared bid/offer assertions.
 - Penalty submission from execution engine.
 - EWDS request/response transport for order reads through the local Client Gateway.
+- Community upsert and orchestrator community discovery through the selected
+  HTTP or EWDS transport.
+- Community-aware market ID derivation and on-chain market opening.

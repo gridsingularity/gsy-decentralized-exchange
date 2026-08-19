@@ -14,6 +14,7 @@ This document details the GSY DEX services integration with Energy Web Digital S
 In-scope services for EWDS integration:
 
 - `gsy-offchain-storage` (off-chain storage API)
+- `gsy-market-orchestrator`
 - `gsy-matching-engine`
 - `gsy-execution-engine`
 
@@ -34,6 +35,7 @@ Related participant service:
 ### Off-chain Plane
 
 - `gsy-offchain-storage` indexes chain events and exposes REST APIs.
+- `gsy-market-orchestrator` fetches communities before each scheduling tick.
 - `gsy-matching-engine` polls `/orders`.
 - `gsy-execution-engine` polls `/trades`, `/measurement-points`, and `/timeseries`.
 - `gsy-community-client` writes to `/measurement-points`, `/timeseries`, and `/markets`.
@@ -49,6 +51,7 @@ Provider: `gsy-offchain-storage` (`gsy-offchain-storage/src/startup.rs`)
 | `/orders` | `POST` | e2e tests/internal tooling | `http://gsy-offchain-storage:8080/orders` |
 | `/trades` | `GET` | execution engine, e2e tests | `http://gsy-offchain-storage:8080/trades` |
 | `/trades` | `POST` | e2e tests/internal tooling | `http://gsy-offchain-storage:8080/trades` |
+| `/communities` | `GET/POST` | market orchestrator, pilot sites, e2e tests | `http://gsy-offchain-storage:8080/communities` |
 | `/markets` | `GET/POST` | ontology-aligned market-opening API | `http://gsy-offchain-storage:8080/markets` |
 | `/measurement-points` | `GET/POST` | ontology-aligned profile metadata API | `http://gsy-offchain-storage:8080/measurement-points` |
 | `/timeseries` | `GET/POST` | ontology-aligned value API | `http://gsy-offchain-storage:8080/timeseries` |
@@ -82,6 +85,8 @@ Each service:
 | `orders.query` over `ordersQuery` / `ordersQueryResponse` | matching engine | off-chain storage service | off-chain storage service | matching engine | `GET /orders` |
 | `trades.query` over `tradesQuery` / `tradesQueryResponse` | execution engine | off-chain storage service | off-chain storage service | execution engine | `GET /trades` |
 | `measurements.query` over `measurementsQuery` / `measurementsQueryResponse` | execution engine | off-chain storage service | off-chain storage service | execution engine | `GET /measurement-points` + `GET /timeseries` |
+| `community.upsert` over `communityUpsert` / `communityUpsertResponse` | pilot integration or e2e runner | off-chain storage service | off-chain storage service | request publisher | `POST /communities` |
+| `communities.query` over `communitiesQuery` / `communitiesQueryResponse` | market orchestrator | off-chain storage service | off-chain storage service | market orchestrator | `GET /communities` |
 | `forecasts.upsert` | community client | off-chain storage service | none | none | `POST /measurement-points` + `POST /timeseries` |
 | `measurements.upsert` | community client | off-chain storage service | none | none | `POST /measurement-points` + `POST /timeseries` |
 | `market.upsert` | community client | off-chain storage service | none | none | `POST /markets` |
@@ -91,10 +96,10 @@ Each service:
 
 | Local channel FQCN | Gateway type | Attached topics | Default env var |
 |---|---|---|---|
-| `gsy.intelligent.requests.pub` | Publish | `ordersQuery`, `tradesQuery`, `measurementsQuery` | `EWDS_REQUEST_PUBLISH_FQCN` |
-| `gsy.intelligent.requests.sub` | Subscribe | `ordersQuery`, `tradesQuery`, `measurementsQuery` | `EWDS_REQUEST_SUBSCRIBE_FQCN` |
-| `gsy.intelligent.responses.pub` | Publish | `ordersQueryResponse`, `tradesQueryResponse`, `measurementsQueryResponse` | `EWDS_RESPONSE_PUBLISH_FQCN` |
-| `gsy.intelligent.responses.sub` | Subscribe | `ordersQueryResponse`, `tradesQueryResponse`, `measurementsQueryResponse` | `EWDS_RESPONSE_SUBSCRIBE_FQCN` |
+| `gsy.intelligent.requests.pub` | Publish | `ordersQuery`, `tradesQuery`, `measurementsQuery`, `communityUpsert`, `communitiesQuery` | `EWDS_REQUEST_PUBLISH_FQCN` |
+| `gsy.intelligent.requests.sub` | Subscribe | `ordersQuery`, `tradesQuery`, `measurementsQuery`, `communityUpsert`, `communitiesQuery` | `EWDS_REQUEST_SUBSCRIBE_FQCN` |
+| `gsy.intelligent.responses.pub` | Publish | `ordersQueryResponse`, `tradesQueryResponse`, `measurementsQueryResponse`, `communityUpsertResponse`, `communitiesQueryResponse` | `EWDS_RESPONSE_PUBLISH_FQCN` |
+| `gsy.intelligent.responses.sub` | Subscribe | `ordersQueryResponse`, `tradesQueryResponse`, `measurementsQueryResponse`, `communityUpsertResponse`, `communitiesQueryResponse` | `EWDS_RESPONSE_SUBSCRIBE_FQCN` |
 
 All four channels should use the `user.roles.integration.apps.intelligent.auth.ewc` role restriction for the initial service-to-service tests.
 
@@ -133,6 +138,10 @@ For each operation, define versioned request/response topic schemas. DDHub topic
 - `tradesQueryResponse`
 - `measurementsQuery` (`operation=measurements.query`)
 - `measurementsQueryResponse`
+- `communityUpsert` (`operation=community.upsert`)
+- `communityUpsertResponse`
+- `communitiesQuery` (`operation=communities.query`)
+- `communitiesQueryResponse`
 - `forecastsQuery`
 - `forecastsQueryResponse`
 - `openMarketsQuery`
@@ -166,7 +175,8 @@ Validator requirements:
 
 ### gsy-offchain-storage
 
-- EWDS query handlers are implemented for `orders.query`, `trades.query`, and `measurements.query`.
+- EWDS handlers are implemented for `orders.query`, `trades.query`,
+  `measurements.query`, `community.upsert`, and `communities.query`.
 - Order payloads are emitted with Intelligent-style camelCase fields; the matching-engine consumer still accepts legacy native `DbOrderSchema` payloads during migration.
 - Keep existing REST endpoints during migration for compatibility.
 - Publish consistent response envelopes and error payloads.
@@ -193,6 +203,15 @@ Validator requirements:
 - Route facility-topology-derived market, forecast, and measurement writes through ontology-aligned off-chain storage APIs.
 - Keep fallback transport via direct HTTP until cutover is complete.
 
+### gsy-market-orchestrator
+
+- Fetch all communities before every scheduling tick through HTTP
+  `/communities` or EWDS `communities.query`.
+- Derive each market ID from community UUID, market type, and delivery slot.
+- Open and close the community/market-type permutations through batched contract
+  calls.
+- Runtime switch via `OFFCHAIN_STORAGE_TRANSPORT=http|ewds`.
+
 ## Docker and Local Testing Integration
 
 A local DDHub Client Gateway should be deployed against EWF-hosted EWC Digital Spine services:
@@ -213,7 +232,10 @@ Channel/topic setup notes:
 
 - Topic application/owner: `integration.apps.intelligent.auth.ewc`.
 - Local channel FQCNs: `gsy.intelligent.requests.pub`, `gsy.intelligent.requests.sub`, `gsy.intelligent.responses.pub`, `gsy.intelligent.responses.sub`.
-- Required initial topics: `ordersQuery`, `ordersQueryResponse`, `tradesQuery`, `tradesQueryResponse`, `measurementsQuery`, `measurementsQueryResponse`.
+- Required topics: `ordersQuery`, `ordersQueryResponse`, `tradesQuery`,
+  `tradesQueryResponse`, `measurementsQuery`, `measurementsQueryResponse`,
+  `communityUpsert`, `communityUpsertResponse`, `communitiesQuery`, and
+  `communitiesQueryResponse`.
 - Topic creation requires `topiccreator`; channel creation requires gateway admin access.
 - The gateway API validates send requests against a `pub` channel and receive polling against a `sub` channel. The direction-specific FQCN env vars are the default integration path.
 - Gateway smoke testing confirmed that message payloads must be JSON-encoded strings, sends must include `topicVersion`, `transactionId`, and `anonymousRecipient`, and receive polling must use `GET /api/v2/messages` with an alphanumeric `clientId` cursor.
