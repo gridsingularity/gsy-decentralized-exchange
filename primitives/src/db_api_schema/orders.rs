@@ -40,7 +40,7 @@ pub enum OrderStatus {
     Open,
     Executed,
     Cancelled,
-    Expired
+    Expired,
 }
 
 impl Default for OrderStatus {
@@ -71,7 +71,6 @@ pub struct FlexibilityOrderSchema {
     pub created_by: String,
     pub from_asset: String,
 }
-
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, PartialOrd)]
 pub enum EnergyType {
@@ -110,7 +109,6 @@ fn energy_type_from_contract(value: u8) -> Option<EnergyType> {
         5 => Some(EnergyType::Battery),
     }
 }
-
 
 pub fn order_energy_source_preference_to_contract(order: &DbOrderSchema) -> u8 {
     order

@@ -4,11 +4,7 @@ use anyhow::{anyhow, Error, Result};
 use ethers::prelude::*;
 use ethers::utils::keccak256;
 use primitives::db_api_schema::orders::{
-    DbOrderSchema,
-    EnergyType,
-    OrderEnum,
-    OrderStatus,
-    energy_type_to_contract
+    energy_type_to_contract, DbOrderSchema, EnergyType, OrderEnum, OrderStatus,
 };
 use primitives::ewds::dto::EwdsOrderDto;
 use primitives::ewds::{EwdsClient, EwdsOperation};
@@ -388,7 +384,6 @@ fn convert_db_order_to_canonical(order: &DbOrderSchema) -> Result<Order> {
         },
     })
 }
-
 
 fn order_energy_source_preference(order: &DbOrderSchema) -> u8 {
     order

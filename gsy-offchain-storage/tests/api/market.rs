@@ -1,9 +1,7 @@
 use crate::helpers::{init_app, stop_app};
 use actix_web::web;
 use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
-use primitives::db_api_schema::trades::{
-    ClearingResultSchema, MarketRoleSchema,
-};
+use primitives::db_api_schema::trades::{ClearingResultSchema, MarketRoleSchema};
 use primitives::ewds::dto::EwdsClearingResultDto;
 
 fn make_market(market_id: &str, community_id: &str, opening_time: &str) -> MarketSchema {

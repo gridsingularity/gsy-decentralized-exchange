@@ -4,16 +4,11 @@ use ethers::prelude::*;
 use gsy_community_client::node_connector::orders::publish_orders;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use primitives::db_api_schema::orders::{
-    DbAttributes,
-    DbRequirements,
-    EnergyType,
-    energy_type_to_contract,
+    energy_type_to_contract, DbAttributes, DbRequirements, EnergyType,
 };
 use primitives::db_api_schema::profiles::MeasurementSchema;
 use primitives::db_api_schema::trades::DbTradeSchema;
-use primitives::ewds::dto::{
-    EwdsOrderDto, energy_type_to_ewds, EwdsTradeDto
-};
+use primitives::ewds::dto::{energy_type_to_ewds, EwdsOrderDto, EwdsTradeDto};
 use primitives::utils::{parse_or_hash_bytes16, NODE_FLOAT_SCALING_FACTOR};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -318,20 +313,19 @@ async fn place_custom_order(
 
     if requirements.is_some() || attributes.is_some() {
         let mut indexed_order = wait_for_order_in_offchain_storage(world, order_id.as_str()).await;
-        indexed_order.energy_source_preference =
-            requirements
-                .as_ref()
-                .and_then(|r| r.energy_type.as_ref())
-                .map(|et| energy_type_to_ewds(et).to_string());
+        indexed_order.energy_source_preference = requirements
+            .as_ref()
+            .and_then(|r| r.energy_type.as_ref())
+            .map(|et| energy_type_to_ewds(et).to_string());
         indexed_order.energy_type = Some(
             attributes
                 .as_ref()
                 .map(|a| energy_type_to_ewds(&a.energy_type).to_string())
-                .unwrap_or_else(|| "NONE".to_string()));
-        indexed_order.preferred_trading_partner =
-            requirements
-                .as_ref()
-                .and_then(|r| r.trading_partner_id.clone());
+                .unwrap_or_else(|| "NONE".to_string()),
+        );
+        indexed_order.preferred_trading_partner = requirements
+            .as_ref()
+            .and_then(|r| r.trading_partner_id.clone());
         if let Some(rate) = requirements.as_ref().and_then(|r| r.preferred_energy_rate) {
             indexed_order.price_limit = rate;
         }
@@ -477,8 +471,8 @@ async fn verify_trade_on_chain(world: &mut MyWorld) {
             .find(|trade| trade.market_id.to_lowercase() == expected_market_id)
         {
             info!("Found settled trade {}", trade.trade_id);
-            world.last_trade = Some(
-                DbTradeSchema::try_from(trade.clone()).expect("valid trade DTO"));
+            world.last_trade =
+                Some(DbTradeSchema::try_from(trade.clone()).expect("valid trade DTO"));
 
             let bid_id = parse_or_hash_bytes16(trade.bid_id.as_str());
             let offer_id = parse_or_hash_bytes16(trade.offer_id.as_str());
@@ -505,11 +499,7 @@ async fn verify_trade_on_chain(world: &mut MyWorld) {
                 .expect("Bid order not found in off-chain storage DB");
             let offer = orders
                 .iter()
-                .find(|order| {
-                    order
-                        .order_id
-                        .eq_ignore_ascii_case(trade.offer_id.as_str())
-                })
+                .find(|order| order.order_id.eq_ignore_ascii_case(trade.offer_id.as_str()))
                 .expect("Offer order not found in off-chain storage DB");
 
             assert_eq!(bid.order_status, "executed");
@@ -547,10 +537,13 @@ async fn verify_partner_trade(
         if let Some(trade) = trades.into_iter().find(|trade| {
             trade.market_id.to_lowercase() == expected_market_id
                 && trade.buyer_id.eq_ignore_ascii_case(expected_buyer.as_str())
-                && trade.seller_id.eq_ignore_ascii_case(expected_seller.as_str())
+                && trade
+                    .seller_id
+                    .eq_ignore_ascii_case(expected_seller.as_str())
                 && approx_eq(trade.trade_quantity, energy)
         }) {
-            world.last_trade = Some(DbTradeSchema::try_from(trade.clone()).expect("valid trade DTO"));
+            world.last_trade =
+                Some(DbTradeSchema::try_from(trade.clone()).expect("valid trade DTO"));
 
             let bid_id = parse_or_hash_bytes16(trade.bid_id.as_str());
             let offer_id = parse_or_hash_bytes16(trade.bid_id.as_str());
@@ -610,10 +603,12 @@ async fn verify_residual_offer(world: &mut MyWorld, expected_residual_energy: f6
     let offer = orders
         .into_iter()
         .find(|order| order.order_id == trade.offer_hash)
-        .unwrap_or_else(|| panic!(
-            "No order found with order_id matching offer_hash: {}",
-            trade.offer_hash
-        ));
+        .unwrap_or_else(|| {
+            panic!(
+                "No order found with order_id matching offer_hash: {}",
+                trade.offer_hash
+            )
+        });
     let residual_energy = offer.quantity - trade.parameters.selected_energy_kWh;
     assert!(
         approx_eq(residual_energy, expected_residual_energy),
@@ -640,8 +635,7 @@ async fn verify_charlie_offer_untouched(world: &mut MyWorld) {
         })
         .expect("Charlie offer order was not found in off-chain storage");
     assert_eq!(
-        charlie_offer.order_status,
-        "submitted",
+        charlie_offer.order_status, "submitted",
         "Expected Charlie's cheaper offer to stay open after the preference match phase"
     );
 

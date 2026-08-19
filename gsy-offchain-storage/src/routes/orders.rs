@@ -69,7 +69,10 @@ pub async fn get_orders(db: DbRef, orders_parameters: Query<OrdersParameters>) -
 
     match filter_orders_from_db(db, orders_parameters).await {
         Ok(orders) => HttpResponse::Ok().json(
-            orders.into_iter().map(EwdsOrderDto::from).collect::<Vec<_>>()
+            orders
+                .into_iter()
+                .map(EwdsOrderDto::from)
+                .collect::<Vec<_>>(),
         ),
         Err(e) => {
             tracing::error!("Failed to execute query: {:?}", e);

@@ -4,7 +4,7 @@ use futures::StreamExt;
 use mongodb::bson::{doc, Bson};
 use mongodb::options::IndexOptions;
 use mongodb::{Collection, Cursor, IndexModel};
-use primitives::db_api_schema::trades::{ClearingResultSchema, MarketRoleSchema, DbTradeSchema};
+use primitives::db_api_schema::trades::{ClearingResultSchema, DbTradeSchema, MarketRoleSchema};
 use std::collections::HashMap;
 use std::ops::Deref;
 

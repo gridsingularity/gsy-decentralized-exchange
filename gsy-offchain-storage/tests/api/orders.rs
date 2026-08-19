@@ -2,8 +2,8 @@ use crate::helpers::{init_app, stop_app};
 use actix_web::web;
 use mongodb::bson::{to_bson, Bson};
 use primitives::db_api_schema::orders::{OrderEnum, OrderStatus};
+use primitives::ewds::dto::{order_status_to_ewds, order_type_to_ewds, EwdsOrderDto};
 use std::collections::HashMap;
-use primitives::ewds::dto::{EwdsOrderDto, order_type_to_ewds, order_status_to_ewds};
 
 fn make_order(order_id: &str, market_id: &str, order_type: OrderEnum) -> EwdsOrderDto {
     EwdsOrderDto {
@@ -20,7 +20,7 @@ fn make_order(order_id: &str, market_id: &str, order_type: OrderEnum) -> EwdsOrd
         creation_time: 1_677_453_190,
         updated_at: None,
         reject_reason: None,
-        preferred_trading_partner: None
+        preferred_trading_partner: None,
     }
 }
 

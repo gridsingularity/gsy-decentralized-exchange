@@ -97,7 +97,7 @@ mod tests {
     use primitives::db_api_schema::{
         orders::{DbOrderSchema, OrderEnum, OrderStatus},
         profiles::MeasurementSchema,
-        trades::{TradeParameters, DbTradeSchema, TradeStatus},
+        trades::{DbTradeSchema, TradeParameters, TradeStatus},
     };
     use primitives::utils::{bytes16_to_hex, parse_or_hash_bytes16};
 

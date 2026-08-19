@@ -7,10 +7,10 @@ use gsy_ethers_listener::{
 };
 use primitives::db_api_schema::{
     orders::{
-        DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus,
-        energy_type_from_contract
+        energy_type_from_contract, DbAttributes, DbOrderSchema, DbRequirements, EnergyType,
+        OrderEnum, OrderStatus,
     },
-    trades::{TradeParameters, DbTradeSchema, TradeStatus},
+    trades::{DbTradeSchema, TradeParameters, TradeStatus},
 };
 use primitives::utils::{bytes16_to_hex, NODE_FLOAT_SCALING_FACTOR};
 use tracing::{error, info};
@@ -127,7 +127,6 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             .await?;
 
         info!("Trade persisted and orders updated.");
-
 
         Ok(())
     }

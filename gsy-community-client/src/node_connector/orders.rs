@@ -1,12 +1,10 @@
 use crate::time_utils::get_current_timestamp_in_secs;
 use anyhow::{Error, Result};
 use ethers::prelude::*;
-use primitives::db_api_schema::orders::{energy_type_to_contract, EnergyType};
 use primitives::db_api_schema::market::MarketSchema;
+use primitives::db_api_schema::orders::{energy_type_to_contract, EnergyType};
 use primitives::db_api_schema::profiles::ForecastSchema;
-use primitives::utils::{
-    parse_or_hash_bytes16, string_to_timestamp, NODE_FLOAT_SCALING_FACTOR,
-};
+use primitives::utils::{parse_or_hash_bytes16, string_to_timestamp, NODE_FLOAT_SCALING_FACTOR};
 use std::str::FromStr;
 use tracing::{info, warn};
 

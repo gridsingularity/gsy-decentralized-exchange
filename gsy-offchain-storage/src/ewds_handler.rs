@@ -2,8 +2,8 @@ use crate::db::DatabaseWrapper;
 use anyhow::{anyhow, Result};
 use primitives::db_api_schema::profiles::{MeasurementPointType, MeasurementSchema};
 use primitives::ewds::dto::{
-    EwdsInboundMessage, EwdsOrderDto, EwdsRequestEnvelope, EwdsResponseEnvelope, EwdsSendMessageDto,
-    EwdsTradeDto
+    EwdsInboundMessage, EwdsOrderDto, EwdsRequestEnvelope, EwdsResponseEnvelope,
+    EwdsSendMessageDto, EwdsTradeDto,
 };
 use primitives::ewds::{
     client_id_for_suffix, env_var, format_response_body, EwdsOperation, EwdsTopicConfig,

@@ -1,12 +1,10 @@
 use super::EwdsOperation;
 use crate::db_api_schema::{
-    orders::{
-        DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus,
-    },
+    orders::{DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus},
     trades::{
-        TradeStatus, DbTradeSchema, TradeParameters, ClearingResultSchema, ClearingStatus,
-        NoBidReason
-    }
+        ClearingResultSchema, ClearingStatus, DbTradeSchema, NoBidReason, TradeParameters,
+        TradeStatus,
+    },
 };
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
@@ -87,7 +85,7 @@ pub struct EwdsOrderDto {
     pub creation_time: u64,
     pub updated_at: Option<u64>,
     pub reject_reason: Option<String>,
-    pub preferred_trading_partner: Option<String>
+    pub preferred_trading_partner: Option<String>,
 }
 
 impl From<DbOrderSchema> for EwdsOrderDto {
@@ -105,11 +103,13 @@ impl From<DbOrderSchema> for EwdsOrderDto {
                 .as_ref()
                 .and_then(|r| r.energy_type.as_ref())
                 .map(|et| energy_type_to_ewds(et).to_string()),
-            energy_type: Some(order
-                .attributes
-                .as_ref()
-                .map(|a| energy_type_to_ewds(&a.energy_type).to_string())
-                .unwrap_or_else(|| "NONE".to_string())),
+            energy_type: Some(
+                order
+                    .attributes
+                    .as_ref()
+                    .map(|a| energy_type_to_ewds(&a.energy_type).to_string())
+                    .unwrap_or_else(|| "NONE".to_string()),
+            ),
             created_by: order.created_by,
             creation_time: order.creation_time,
             updated_at: Some(order.creation_time),
@@ -211,7 +211,6 @@ pub fn energy_type_to_ewds(energy_type: &EnergyType) -> &'static str {
         EnergyType::Biomass => "BIOMASS",
         EnergyType::Battery => "BATTERY",
         EnergyType::None => "NONE",
-
     }
 }
 
@@ -226,7 +225,6 @@ pub fn energy_type_from_ewds(value: &str) -> Result<EnergyType> {
         _ => Err(anyhow!("unsupported EWDS energy type '{}'", value)),
     }
 }
-
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -311,7 +309,7 @@ impl TryFrom<EwdsTradeDto> for DbTradeSchema {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-pub struct EwdsClearingResultDto{
+pub struct EwdsClearingResultDto {
     pub market_id: String,
     pub clearing_status: String,
     #[serde(default)]
@@ -324,7 +322,6 @@ pub struct EwdsClearingResultDto{
     pub tx_hash: String,
     pub created_at: u64,
 }
-
 
 impl ClearingStatus {
     fn as_wire(&self) -> &'static str {

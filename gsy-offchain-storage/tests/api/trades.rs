@@ -1,9 +1,7 @@
 use crate::helpers::{init_app, stop_app};
 use actix_web::web;
 use primitives::db_api_schema::orders::{DbOrderSchema, OrderEnum, OrderStatus};
-use primitives::ewds::dto::{
-    EwdsTradeDto
-};
+use primitives::ewds::dto::EwdsTradeDto;
 
 fn make_order(order_id: &str, order_type: OrderEnum) -> DbOrderSchema {
     DbOrderSchema {
@@ -35,7 +33,7 @@ fn make_trade(trade_uuid: &str, bid: DbOrderSchema, offer: DbOrderSchema) -> Ewd
         trade_status: "executed".to_string(),
         trade_quantity: 14.0,
         trade_price: 3.0,
-        timestamp: 1_677_453_191
+        timestamp: 1_677_453_191,
     }
 }
 
