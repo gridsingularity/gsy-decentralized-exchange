@@ -1,5 +1,4 @@
 use anyhow::{anyhow, Result};
-use blake2_rfc::blake2b::blake2b;
 use cucumber::World;
 use ethers::prelude::*;
 use gsy_community_client::external_api::ExternalFacilityTopology;
@@ -7,7 +6,6 @@ use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::profiles::ForecastSchema;
 use primitives::db_api_schema::trades::TradeSchema;
 use primitives::utils::parse_or_hash_bytes16;
-use primitives::MarketType;
 use reqwest::Client;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -40,6 +38,7 @@ pub struct MyWorld {
     pub users: HashMap<String, UserAccount>,
     pub evm_node_url: String,
     pub offchain_storage_url: String,
+    pub community_id: String,
     pub market_controller_address: Address,
     pub order_registry_address: Address,
     pub trade_settlement_address: Address,
@@ -103,6 +102,7 @@ impl MyWorld {
             evm_node_url,
             offchain_storage_url: std::env::var("OFFCHAIN_STORAGE_URL")
                 .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string()),
+            community_id: "11111111-1111-4111-8111-111111111111".to_string(),
             market_controller_address,
             order_registry_address,
             trade_settlement_address,
@@ -158,16 +158,6 @@ impl MyWorld {
             .unwrap_or_else(|| panic!("Unknown user '{}'", user_name))
             .private_key
             .clone()
-    }
-
-    pub fn generate_market_id(&self, market_type: MarketType, delivery_timestamp: u64) -> [u8; 16] {
-        let mut buffer = Vec::new();
-        buffer.extend_from_slice(market_type.as_str().as_bytes());
-        buffer.extend_from_slice(&delivery_timestamp.to_be_bytes());
-        blake2b(16, &[], &buffer)
-            .as_bytes()
-            .try_into()
-            .expect("hash is 16 bytes")
     }
 
     pub fn actor_id_for_user(&self, user_name: &str) -> [u8; 16] {

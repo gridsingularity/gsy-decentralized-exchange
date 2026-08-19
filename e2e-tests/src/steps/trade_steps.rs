@@ -536,7 +536,7 @@ async fn submit_measurements(world: &mut MyWorld) {
     for facility in world.facilities_topology.iter() {
         measurements.push(MeasurementSchema {
             facility_id: facility.facility_id.clone(),
-            community_uuid: "community1".to_string(),
+            community_uuid: world.community_id.clone(),
             energy_kwh: 12.0,
             time_slot: world.target_delivery_time,
             creation_time: 1,
