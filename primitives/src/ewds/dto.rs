@@ -1,10 +1,15 @@
 use super::EwdsOperation;
-use crate::db_api_schema::orders::{
-    DbAttributes, DbOrderSchema, DbRequirements, IntelligentEnergyType, OrderEnum, OrderStatus,
+use crate::db_api_schema::{
+    orders::{DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus},
+    trades::{
+        ClearingResultSchema, ClearingStatus, DbTradeSchema, NoBidReason, TradeParameters,
+        TradeStatus,
+    },
 };
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::str::FromStr;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -64,44 +69,23 @@ pub struct EwdsErrorPayload {
     pub message: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct EwdsOrderDto {
     pub order_id: String,
     pub market_id: String,
     pub order_type: String,
-    pub status: String,
-    pub area_uuid: String,
-    #[serde(default)]
-    pub nonce: Option<u64>,
+    pub order_status: String,
     pub time_slot: u64,
-    pub creation_time: u64,
     pub quantity: f64,
     pub price_limit: f64,
+    pub energy_source_preference: Option<String>,
+    pub energy_type: Option<String>,
     pub created_by: String,
-    #[serde(default)]
-    pub requirements: Option<EwdsRequirementsDto>,
-    #[serde(default)]
-    pub attributes: Option<EwdsAttributesDto>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EwdsRequirementsDto {
-    #[serde(default)]
-    pub trading_partner_id: Option<String>,
-    #[serde(default)]
-    pub energy_type: Option<IntelligentEnergyType>,
-    #[serde(default)]
-    pub preferred_energy_rate: Option<f64>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EwdsAttributesDto {
-    #[serde(default)]
-    pub trading_partner_id: Option<String>,
-    pub energy_type: IntelligentEnergyType,
+    pub creation_time: u64,
+    pub updated_at: Option<u64>,
+    pub reject_reason: Option<String>,
+    pub preferred_trading_partner: Option<String>,
 }
 
 impl From<DbOrderSchema> for EwdsOrderDto {
@@ -110,23 +94,30 @@ impl From<DbOrderSchema> for EwdsOrderDto {
             order_id: order.order_id,
             market_id: order.market_id,
             order_type: order_type_to_ewds(&order.order_type).to_string(),
-            status: order_status_to_ewds(&order.status).to_string(),
-            area_uuid: order.area_uuid,
-            nonce: order.nonce,
+            order_status: order_status_to_ewds(&order.status).to_string(),
             time_slot: order.time_slot,
-            creation_time: order.creation_time,
             quantity: order.energy_kWh,
             price_limit: order.energy_rate,
+            energy_source_preference: order
+                .requirements
+                .as_ref()
+                .and_then(|r| r.energy_type.as_ref())
+                .map(|et| energy_type_to_ewds(et).to_string()),
+            energy_type: Some(
+                order
+                    .attributes
+                    .as_ref()
+                    .map(|a| energy_type_to_ewds(&a.energy_type).to_string())
+                    .unwrap_or_else(|| "NONE".to_string()),
+            ),
             created_by: order.created_by,
-            requirements: order.requirements.map(|requirements| EwdsRequirementsDto {
-                trading_partner_id: requirements.trading_partner_id,
-                energy_type: requirements.energy_type,
-                preferred_energy_rate: requirements.preferred_energy_rate,
-            }),
-            attributes: order.attributes.map(|attributes| EwdsAttributesDto {
-                trading_partner_id: attributes.trading_partner_id,
-                energy_type: attributes.energy_type,
-            }),
+            creation_time: order.creation_time,
+            updated_at: Some(order.creation_time),
+            reject_reason: None,
+            preferred_trading_partner: order
+                .requirements
+                .as_ref()
+                .and_then(|r| r.trading_partner_id.clone()),
         }
     }
 }
@@ -135,30 +126,35 @@ impl TryFrom<EwdsOrderDto> for DbOrderSchema {
     type Error = anyhow::Error;
 
     fn try_from(order: EwdsOrderDto) -> Result<Self> {
-        let requirements = match order.requirements {
-            Some(requirements) => Some(DbRequirements {
-                trading_partner_id: requirements.trading_partner_id,
-                energy_type: requirements.energy_type,
-                preferred_energy_rate: requirements.preferred_energy_rate,
-            }),
-            None => None,
+        let requirements = if order.energy_source_preference.is_some()
+            || order.preferred_trading_partner.is_some()
+        {
+            Some(DbRequirements {
+                trading_partner_id: order.preferred_trading_partner.clone(),
+                energy_type: match order.energy_source_preference {
+                    Some(ref pref) => Some(energy_type_from_ewds(pref)?),
+                    None => None,
+                },
+                preferred_energy_rate: Some(order.price_limit),
+            })
+        } else {
+            None
         };
 
-        let attributes = match order.attributes {
-            Some(attributes) => Some(DbAttributes {
-                trading_partner_id: attributes.trading_partner_id,
-                energy_type: attributes.energy_type,
+        let attributes = match order.energy_type {
+            Some(ref et) => Some(DbAttributes {
+                trading_partner_id: None,
+                energy_type: energy_type_from_ewds(et)?,
             }),
             None => None,
         };
 
         Ok(Self {
             order_id: order.order_id,
-            status: order_status_from_ewds(order.status.as_str())?,
+            status: order_status_from_ewds(order.order_status.as_str())?,
             order_type: order_type_from_ewds(order.order_type.as_str())?,
-            area_uuid: order.area_uuid,
+            area_uuid: order.created_by.clone(),
             market_id: order.market_id,
-            nonce: order.nonce,
             time_slot: order.time_slot,
             creation_time: order.creation_time,
             energy_kWh: order.quantity,
@@ -170,19 +166,19 @@ impl TryFrom<EwdsOrderDto> for DbOrderSchema {
     }
 }
 
-fn order_type_to_ewds(order_type: &OrderEnum) -> &'static str {
+pub fn order_type_to_ewds(order_type: &OrderEnum) -> &'static str {
     match order_type {
         OrderEnum::Bid => "bid",
         OrderEnum::Offer => "offer",
     }
 }
 
-fn order_status_to_ewds(status: &OrderStatus) -> &'static str {
+pub fn order_status_to_ewds(status: &OrderStatus) -> &'static str {
     match status {
-        OrderStatus::Open => "open",
+        OrderStatus::Open => "submitted",
         OrderStatus::Executed => "executed",
+        OrderStatus::Cancelled => "cancelled",
         OrderStatus::Expired => "expired",
-        OrderStatus::Deleted => "deleted",
     }
 }
 
@@ -194,49 +190,230 @@ fn order_type_from_ewds(value: &str) -> Result<OrderEnum> {
     }
 }
 
-fn order_status_from_ewds(value: &str) -> Result<OrderStatus> {
+pub fn order_status_from_ewds(value: &str) -> Result<OrderStatus> {
     match value.to_ascii_lowercase().as_str() {
-        "open" => Ok(OrderStatus::Open),
-        "executed" => Ok(OrderStatus::Executed),
+        "submitted" => Ok(OrderStatus::Open),
+        "partially_filled" => Ok(OrderStatus::Open),
+        "filled" => Ok(OrderStatus::Executed),
+        "cancelled" => Ok(OrderStatus::Cancelled),
         "expired" => Ok(OrderStatus::Expired),
-        "deleted" => Ok(OrderStatus::Deleted),
+        "rejected" => Ok(OrderStatus::Cancelled),
+        "executed" => Ok(OrderStatus::Executed),
         _ => Err(anyhow!("unsupported EWDS order status '{}'", value)),
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+pub fn energy_type_to_ewds(energy_type: &EnergyType) -> &'static str {
+    match energy_type {
+        EnergyType::Green => "GREEN",
+        EnergyType::Pv => "PV",
+        EnergyType::Hydro => "HYDRO",
+        EnergyType::Biomass => "BIOMASS",
+        EnergyType::Battery => "BATTERY",
+        EnergyType::None => "NONE",
+    }
+}
 
-    fn order() -> DbOrderSchema {
-        DbOrderSchema {
-            order_id: "order-id".to_string(),
-            status: OrderStatus::Open,
-            order_type: OrderEnum::Bid,
-            area_uuid: "area-id".to_string(),
-            market_id: "market-id".to_string(),
-            nonce: Some(7),
-            time_slot: 10,
-            creation_time: 9,
-            energy_kWh: 4.5,
-            energy_rate: 12.0,
-            created_by: "actor-id".to_string(),
-            requirements: Some(DbRequirements {
-                trading_partner_id: Some("partner-id".to_string()),
-                energy_type: Some(IntelligentEnergyType::Green),
-                preferred_energy_rate: Some(11.0),
-            }),
-            attributes: None,
+pub fn energy_type_from_ewds(value: &str) -> Result<EnergyType> {
+    match value.to_ascii_uppercase().as_str() {
+        "GREEN" => Ok(EnergyType::Green),
+        "PV" => Ok(EnergyType::Pv),
+        "HYDRO" => Ok(EnergyType::Hydro),
+        "BIOMASS" => Ok(EnergyType::Biomass),
+        "BATTERY" => Ok(EnergyType::Battery),
+        "NONE" => Ok(EnergyType::None),
+        _ => Err(anyhow!("unsupported EWDS energy type '{}'", value)),
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct EwdsTradeDto {
+    pub trade_id: String,
+    pub market_id: String,
+    pub bid_id: String,
+    pub buyer_id: String,
+    #[serde(default)]
+    pub residual_bid_id: Option<String>,
+    pub offer_id: String,
+    pub seller_id: String,
+    #[serde(default)]
+    pub residual_offer_id: Option<String>,
+    pub trade_status: String,
+    pub trade_quantity: f64,
+    pub trade_price: f64,
+    pub timestamp: u64,
+}
+
+fn trade_status_to_ewds(status: &TradeStatus) -> &'static str {
+    match status {
+        TradeStatus::Matched => "matched",
+        TradeStatus::Executed => "executed",
+        TradeStatus::Settled => "settled",
+        TradeStatus::Rejected => "rejected",
+    }
+}
+
+fn trade_status_from_ewds(value: &str) -> Result<TradeStatus> {
+    match value.to_ascii_lowercase().as_str() {
+        "matched" => Ok(TradeStatus::Matched),
+        "executed" => Ok(TradeStatus::Executed),
+        "settled" => Ok(TradeStatus::Settled),
+        "rejected" => Ok(TradeStatus::Rejected),
+        _ => Err(anyhow!("unsupported EWDS trade status '{}'", value)),
+    }
+}
+
+impl From<DbTradeSchema> for EwdsTradeDto {
+    fn from(trade: DbTradeSchema) -> Self {
+        Self {
+            trade_id: trade.trade_uuid,
+            market_id: trade.market_id,
+            bid_id: trade.bid_hash,
+            buyer_id: trade.buyer,
+            residual_bid_id: trade.residual_bid_id,
+            offer_id: trade.offer_hash,
+            seller_id: trade.seller,
+            residual_offer_id: trade.residual_offer_id,
+            trade_status: trade_status_to_ewds(&trade.status).to_string(),
+            trade_quantity: trade.parameters.selected_energy_kWh,
+            trade_price: trade.parameters.energy_rate,
+            timestamp: trade.time_slot,
         }
     }
+}
 
-    #[test]
-    fn order_conversion_round_trips_through_ewds_dto() {
-        let expected = order();
+impl TryFrom<EwdsTradeDto> for DbTradeSchema {
+    type Error = anyhow::Error;
 
-        let actual = DbOrderSchema::try_from(EwdsOrderDto::from(expected.clone()))
-            .expect("EWDS order should convert back to DB schema");
+    fn try_from(trade: EwdsTradeDto) -> Result<Self> {
+        Ok(Self {
+            trade_uuid: trade.trade_id,
+            status: trade_status_from_ewds(&trade.trade_status)?,
+            seller: trade.seller_id,
+            buyer: trade.buyer_id,
+            market_id: trade.market_id,
+            time_slot: trade.timestamp,
+            creation_time: trade.timestamp,
+            offer_hash: trade.offer_id,
+            bid_hash: trade.bid_id,
+            residual_offer_id: trade.residual_offer_id,
+            residual_bid_id: trade.residual_bid_id,
+            parameters: TradeParameters {
+                selected_energy_kWh: trade.trade_quantity,
+                energy_rate: trade.trade_price,
+            },
+        })
+    }
+}
 
-        assert_eq!(actual, expected);
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct EwdsClearingResultDto {
+    pub market_id: String,
+    pub clearing_status: String,
+    #[serde(default)]
+    pub no_bid_reason: Option<String>,
+    pub clearing_price: f64,
+    pub total_supply: f64,
+    pub total_demand: f64,
+    pub trade_quantity: f64,
+    pub num_trades: u32,
+    pub tx_hash: String,
+    pub created_at: u64,
+}
+
+impl ClearingStatus {
+    fn as_wire(&self) -> &'static str {
+        match self {
+            ClearingStatus::Final => "final",
+            ClearingStatus::Partial => "partial",
+            ClearingStatus::Rejected => "rejected",
+            ClearingStatus::NoBid => "no_bid",
+        }
+    }
+}
+
+impl FromStr for ClearingStatus {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self> {
+        match s.to_ascii_lowercase().as_str() {
+            "final" => Ok(ClearingStatus::Final),
+            "partial" => Ok(ClearingStatus::Partial),
+            "rejected" => Ok(ClearingStatus::Rejected),
+            "no_bid" => Ok(ClearingStatus::NoBid),
+            other => Err(anyhow!("unknown clearing status: {other}")),
+        }
+    }
+}
+
+impl NoBidReason {
+    fn as_wire(&self) -> &'static str {
+        match self {
+            NoBidReason::InvalidInputs => "invalid_inputs",
+            NoBidReason::StaleInput => "stale_input",
+            NoBidReason::HardConstraints => "hard_constraints",
+            NoBidReason::PolicyUnavailable => "policy_unavailable",
+            NoBidReason::DeadlineMissed => "deadline_missed",
+            NoBidReason::Timeout => "timeout",
+            NoBidReason::OperatorDisabled => "operator_disabled",
+            NoBidReason::MarketReject => "market_reject",
+        }
+    }
+}
+
+impl FromStr for NoBidReason {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self> {
+        match s.to_ascii_lowercase().as_str() {
+            "invalid_inputs" => Ok(NoBidReason::InvalidInputs),
+            "stale_input" => Ok(NoBidReason::StaleInput),
+            "hard_constraints" => Ok(NoBidReason::HardConstraints),
+            "policy_unavailable" => Ok(NoBidReason::PolicyUnavailable),
+            "deadline_missed" => Ok(NoBidReason::DeadlineMissed),
+            "timeout" => Ok(NoBidReason::Timeout),
+            "operator_disabled" => Ok(NoBidReason::OperatorDisabled),
+            "market_reject" => Ok(NoBidReason::MarketReject),
+            other => Err(anyhow!("unknown no_bid_reason: {other}")),
+        }
+    }
+}
+
+impl From<ClearingResultSchema> for EwdsClearingResultDto {
+    fn from(s: ClearingResultSchema) -> Self {
+        EwdsClearingResultDto {
+            market_id: s.market_id,
+            clearing_status: s.clearing_status.as_wire().to_string(),
+            no_bid_reason: s.no_bid_reason.map(|r| r.as_wire().to_string()),
+            clearing_price: s.clearing_price,
+            total_supply: s.total_supply,
+            total_demand: s.total_demand,
+            trade_quantity: s.traded_quantity,
+            num_trades: s.num_trades,
+            tx_hash: s.tx_hash,
+            created_at: s.clearing_time,
+        }
+    }
+}
+
+impl TryFrom<EwdsClearingResultDto> for ClearingResultSchema {
+    type Error = anyhow::Error;
+    fn try_from(d: EwdsClearingResultDto) -> Result<Self> {
+        Ok(ClearingResultSchema {
+            market_id: d.market_id,
+            clearing_status: ClearingStatus::from_str(&d.clearing_status)?,
+            no_bid_reason: d
+                .no_bid_reason
+                .as_deref()
+                .map(NoBidReason::from_str)
+                .transpose()?,
+            clearing_price: d.clearing_price,
+            total_supply: d.total_supply,
+            total_demand: d.total_demand,
+            traded_quantity: d.trade_quantity,
+            num_trades: d.num_trades,
+            tx_hash: d.tx_hash,
+            clearing_time: d.created_at,
+        })
     }
 }

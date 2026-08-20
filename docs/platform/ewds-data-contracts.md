@@ -50,18 +50,18 @@ operation names for readability and service routing:
 
 | Ontology property | Schema field | Current runtime source |
 |---|---|---|
-| `int:tradeId` | `tradeId` | `TradeSchema.trade_uuid` |
-| `int:bidId` | `bidId` | `TradeSchema.bid_hash` |
-| `int:offerId` | `offerId` | `TradeSchema.offer_hash` |
-| `int:residualBidId` | `residualBidId` | `TradeSchema.residual_bid.order_id` |
-| `int:residualOfferId` | `residualOfferId` | `TradeSchema.residual_offer.order_id` |
-| `int:marketId` | `marketId` | `TradeSchema.market_id` |
-| `int:tradeStatus` | `tradeStatus` | `TradeSchema.status` |
-| `int:tradeQuantity` | `tradeQuantity` | `TradeSchema.parameters.selected_energy_kWh` |
-| `int:tradePrice` | `tradePrice` | `TradeSchema.parameters.energy_rate` |
-| `int:tradedAt` | `tradedAt` | `TradeSchema.creation_time` |
-| `int:buyerId` | `buyerId` | `TradeSchema.buyer` |
-| `int:sellerId` | `sellerId` | `TradeSchema.seller` |
+| `int:tradeId` | `tradeId` | `DbTradeSchema.trade_uuid` |
+| `int:bidId` | `bidId` | `DbTradeSchema.bid_hash` |
+| `int:offerId` | `offerId` | `DbTradeSchema.offer_hash` |
+| `int:residualBidId` | `residualBidId` | `DbTradeSchema.residual_bid.order_id` |
+| `int:residualOfferId` | `residualOfferId` | `DbTradeSchema.residual_offer.order_id` |
+| `int:marketId` | `marketId` | `DbTradeSchema.market_id` |
+| `int:tradeStatus` | `tradeStatus` | `DbTradeSchema.status` |
+| `int:tradeQuantity` | `tradeQuantity` | `DbTradeSchema.parameters.selected_energy_kWh` |
+| `int:tradePrice` | `tradePrice` | `DbTradeSchema.parameters.energy_rate` |
+| `int:tradedAt` | `tradedAt` | `DbTradeSchema.creation_time` |
+| `int:buyerId` | `buyerId` | `DbTradeSchema.buyer` |
+| `int:sellerId` | `sellerId` | `DbTradeSchema.seller` |
 
 ### Order Mapping
 
@@ -80,7 +80,6 @@ operation names for readability and service routing:
 Runtime-only fields not represented in the agreed Intelligent `Order` schema:
 
 - `facilityId`
-- `nonce`
 - EVM bytes32 `orderId` / `marketId` hash format
 - EVM account address in `createdBy`
 
