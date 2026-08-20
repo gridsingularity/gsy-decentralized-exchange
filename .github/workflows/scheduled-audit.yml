@@ -40,6 +40,7 @@ jobs:
             RUSTSEC-2026-0098 # rustls-webpki via rustls stacks pulled by ethers / reqwest
             RUSTSEC-2026-0099 # rustls-webpki via rustls stacks pulled by ethers / reqwest
             RUSTSEC-2026-0104 # rustls-webpki via rustls stacks pulled by ethers / reqwest
+            RUSTSEC-2026-0258 # h2 0.3 via ethers 2.x / reqwest 0.11; no patched 0.3 release
             RUSTSEC-2026-0097 # rand warning; no direct rand::rng custom logger usage
             RUSTSEC-2024-0442 # wasmtime-jit-debug via Substrate / wasmtime runtime
             RUSTSEC-2025-0055 # tracing-subscriber via transitive logging stacks
