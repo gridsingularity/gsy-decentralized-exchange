@@ -7,15 +7,15 @@ x-gsy-ewds-env: &gsy-ewds-env
   EWDS_TOPIC_OWNER: ${EWDS_TOPIC_OWNER:-integration.apps.intelligent.auth.ewc}
   EWDS_TOPIC_VERSION: ${EWDS_TOPIC_VERSION:-1.0.0}
   EWDS_ORDERS_REQUEST_TOPIC: "ordersQueryTest"
-  EWDS_ORDERS_RESPONSE_TOPIC: "ordersQueryResponseTest"
+  EWDS_ORDERS_RESPONSE_TOPIC: "ordersQueryTestResponse"
   EWDS_TRADES_REQUEST_TOPIC: "tradesQueryTest"
-  EWDS_TRADES_RESPONSE_TOPIC: "tradesQueryResponseTest"
+  EWDS_TRADES_RESPONSE_TOPIC: "tradesQueryTestResponse"
   EWDS_CLEARING_RESULTS_REQUEST_TOPIC: "clearingResultsQueryTest"
-  EWDS_CLEARING_RESULTS_RESPONSE_TOPIC: "clearingResultsQueryResponseTest"
+  EWDS_CLEARING_RESULTS_RESPONSE_TOPIC: "clearingResultsQueryTestResponse"
   EWDS_MARKETS_REQUEST_TOPIC: "marketsQueryTest"
-  EWDS_MARKETS_RESPONSE_TOPIC: "marketsQueryResponseTest"
+  EWDS_MARKETS_RESPONSE_TOPIC: "marketsQueryTestResponse"
   EWDS_MEASUREMENTS_REQUEST_TOPIC: "measurementsQueryTest"
-  EWDS_MEASUREMENTS_RESPONSE_TOPIC: "measurementsQueryResponseTest"
+  EWDS_MEASUREMENTS_RESPONSE_TOPIC: "measurementsQueryTestResponse"
   EWDS_RESPONSE_TIMEOUT_MS: ${EWDS_RESPONSE_TIMEOUT_MS:-60000}
   EWDS_RESPONSE_POLL_INTERVAL_MS: ${EWDS_RESPONSE_POLL_INTERVAL_MS:-1000}
 

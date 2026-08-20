@@ -19,7 +19,7 @@ marketsQueryTest
 CHANNELS="
 gsy.intelligent.requests.pub
 gsy.intelligent.requests.sub
-gsy.intelligent.response.pub
+gsy.intelligent.responses.pub
 gsy.intelligent.responses.sub
 "
 
