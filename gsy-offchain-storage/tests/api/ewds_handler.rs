@@ -1,5 +1,6 @@
 use crate::helpers::{init_app, stop_app};
 use gsy_offchain_storage::ewds_handler::{handle_request, EwdsHandlerConfig};
+use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
 use primitives::ewds::dto::{EwdsRequestEnvelope, EwdsSendMessageDto};
 use primitives::ewds::{EwdsOperation, EwdsTopicConfig};
 use serde_json::json;
@@ -241,6 +242,147 @@ async fn clearing_results_query_bad_payload_errors() {
     assert!(err
         .to_string()
         .contains("clearing_results.query payload parse error"));
+    assert!(server.received_requests().await.unwrap().is_empty());
+
+    stop_app(app).await;
+}
+
+
+fn make_market(market_id: &str, community_id: &str, opening_time: &str) -> MarketSchema {
+    MarketSchema {
+        market_id: market_id.to_string(),
+        community_id: community_id.to_string(),
+        opening_time: opening_time.to_string(),
+        closing_time: "2026-03-28T09:45:00Z".to_string(),
+        delivery_start_time: "2026-03-28T10:00:00Z".to_string(),
+        delivery_end_time: "2026-03-28T10:15:00Z".to_string(),
+        market_type: MarketType::Spot,
+        matching_algorithm: MatchingAlgorithm::PayAsBid,
+        created_at: "2026-03-28T09:45:00Z".to_string(),
+    }
+}
+
+#[tokio::test]
+async fn markets_query_filters_by_community_and_serialises_camel_case() {
+    let app = init_app().await;
+    let server = mock_gateway().await;
+    let config = test_config(server.uri());
+    let client = reqwest::Client::new();
+
+    let markets = app.db_wrapper.markets();
+    markets
+        .upsert(make_market("m1", "community1", "2026-03-27T18:00:00Z"))
+        .await
+        .unwrap();
+    markets
+        .upsert(make_market("m2", "community2", "2026-03-27T19:00:00Z"))
+        .await
+        .unwrap();
+
+    let env = envelope(
+        EwdsOperation::MarketsQuery,
+        "req-markets-1",
+        json!({ "communityId": "community1" }),
+    );
+
+    handle_request(&app.db_wrapper, &client, &config, env)
+        .await
+        .unwrap();
+
+    let data = captured_data(&server).await;
+    assert_eq!(data.len(), 1);
+    assert_eq!(data[0]["marketId"], json!("m1"));
+    assert_eq!(data[0]["communityId"], json!("community1"));
+    assert_eq!(data[0]["deliveryStartTime"], json!("2026-03-28T10:00:00Z"));
+    assert_eq!(data[0]["marketType"], json!("spot"));
+    assert_eq!(data[0]["matchingAlgorithm"], json!("pay_as_bid"));
+
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn markets_query_filters_by_opening_time_window() {
+    let app = init_app().await;
+    let server = mock_gateway().await;
+    let config = test_config(server.uri());
+    let client = reqwest::Client::new();
+
+    let markets = app.db_wrapper.markets();
+    markets
+        .upsert(make_market("early", "community1", "2026-03-27T18:00:00Z"))
+        .await
+        .unwrap();
+    markets
+        .upsert(make_market("late", "community1", "2026-03-27T22:00:00Z"))
+        .await
+        .unwrap();
+
+    let env = envelope(
+        EwdsOperation::MarketsQuery,
+        "req-markets-window",
+        json!({ "startTime": "2026-03-27T20:00:00Z", "endTime": "2026-03-27T23:00:00Z" }),
+    );
+
+    handle_request(&app.db_wrapper, &client, &config, env)
+        .await
+        .unwrap();
+
+    let data = captured_data(&server).await;
+    assert_eq!(data.len(), 1);
+    assert_eq!(data[0]["marketId"], json!("late"));
+
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn markets_query_without_filters_returns_all() {
+    let app = init_app().await;
+    let server = mock_gateway().await;
+    let config = test_config(server.uri());
+    let client = reqwest::Client::new();
+
+    let markets = app.db_wrapper.markets();
+    markets
+        .upsert(make_market("m1", "community1", "2026-03-27T18:00:00Z"))
+        .await
+        .unwrap();
+    markets
+        .upsert(make_market("m2", "community2", "2026-03-27T19:00:00Z"))
+        .await
+        .unwrap();
+
+    let env = envelope(EwdsOperation::MarketsQuery, "req-markets-all", json!({}));
+
+    handle_request(&app.db_wrapper, &client, &config, env)
+        .await
+        .unwrap();
+
+    let data = captured_data(&server).await;
+    assert_eq!(data.len(), 2);
+
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn markets_query_bad_payload_errors() {
+    let app = init_app().await;
+    let server = mock_gateway().await;
+    let config = test_config(server.uri());
+    let client = reqwest::Client::new();
+
+    // market_id is a string field -> a number errors
+    let env = envelope(
+        EwdsOperation::MarketsQuery,
+        "req-markets-bad",
+        json!({ "marketId": 5 }),
+    );
+
+    let err = handle_request(&app.db_wrapper, &client, &config, env)
+        .await
+        .unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("markets.query payload parse error"));
     assert!(server.received_requests().await.unwrap().is_empty());
 
     stop_app(app).await;

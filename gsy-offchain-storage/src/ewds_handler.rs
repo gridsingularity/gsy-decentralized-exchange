@@ -2,7 +2,7 @@ use crate::db::DatabaseWrapper;
 use anyhow::{anyhow, Result};
 use primitives::db_api_schema::profiles::{MeasurementPointType, MeasurementSchema};
 use primitives::ewds::dto::{
-    EwdsClearingResultDto, EwdsInboundMessage, EwdsOrderDto, EwdsRequestEnvelope,
+    EwdsClearingResultDto, EwdsInboundMessage, EwdsMarketDto, EwdsOrderDto, EwdsRequestEnvelope,
     EwdsResponseEnvelope, EwdsSendMessageDto, EwdsTradeDto,
 };
 use primitives::ewds::{
@@ -105,6 +105,22 @@ struct TimeRangePayload {
 struct ClearingResultsPayload {
     #[serde(alias = "marketId")]
     market_id: String,
+}
+
+#[derive(Deserialize)]
+struct MarketsQueryPayload {
+    #[serde(alias = "marketId")]
+    #[serde(default)]
+    market_id: Option<String>,
+    #[serde(alias = "communityId")]
+    #[serde(default)]
+    community_id: Option<String>,
+    #[serde(alias = "startTime")]
+    #[serde(default)]
+    start_time: Option<String>,
+    #[serde(alias = "endTime")]
+    #[serde(default)]
+    end_time: Option<String>,
 }
 
 pub async fn start_ewds_request_handler(db: DatabaseWrapper, config: EwdsHandlerConfig) {
@@ -341,6 +357,37 @@ pub async fn handle_request(
                 request_id,
                 data.len()
             );
+            send_success_response(client, config, request_id, response_topic.as_str(), data).await
+        }
+        EwdsOperation::MarketsQuery => {
+            let payload = serde_json::from_value::<MarketsQueryPayload>(envelope.payload.clone())
+                .map_err(|e| anyhow!("markets.query payload parse error: {}", e))?;
+            let request_id = envelope.request_id;
+
+            info!(
+                "Handling EWDS markets.query request (request_id={})",
+                request_id
+            );
+
+            let data = db
+                .markets()
+                .filter(
+                    payload.market_id,
+                    payload.community_id,
+                    payload.start_time,
+                    payload.end_time,
+                )
+                .await
+                .map_err(|e| anyhow!("markets.query DB error: {}", e))?
+                .into_iter()
+                .map(EwdsMarketDto::from)
+                .collect::<Vec<_>>();
+            info!(
+                "Publishing EWDS markets.query response (request_id={}, markets={})",
+                request_id,
+                data.len()
+            );
+
             send_success_response(client, config, request_id, response_topic.as_str(), data).await
         }
     }
