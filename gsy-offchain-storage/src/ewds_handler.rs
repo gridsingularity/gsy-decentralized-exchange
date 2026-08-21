@@ -389,6 +389,17 @@ pub async fn handle_request(
             );
 
             send_success_response(client, config, request_id, response_topic.as_str(), data).await
+        },
+        EwdsOperation::FacilitiesQuery => {
+            let request_id = envelope.request_id;
+            let data = db.facilities().get_all().await?;
+            info!(
+                "Publishing EWDS facilities.query response (request_id={}, facilities={})",
+                request_id,
+                data.len()
+            );
+
+            send_success_response(client, config, request_id, response_topic.as_str(), data).await
         }
     }
 }

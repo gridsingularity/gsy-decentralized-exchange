@@ -3,6 +3,7 @@ use primitives::constants::GLOBAL_CONSTANTS;
 use primitives::db_api_schema::{
     profiles::{MeasurementPointSchema, MeasurementSchema, TimeseriesSchema},
     trades::DbTradeSchema,
+    grid_topology::FacilitySchema,
 };
 use primitives::ewds::dto::EwdsTradeDto;
 use primitives::ewds::{EwdsClient, EwdsOperation};
@@ -150,4 +151,44 @@ async fn fetch_trades_and_measurements_via_ewds(
         .await?;
 
     Ok((trades_db, measurements))
+}
+
+pub async fn fetch_facility_owner_mapping(
+    base_url: &str,
+) -> Result<HashMap<String, String>> {
+    let facilities: Vec<FacilitySchema> = if env::var("OFFCHAIN_STORAGE_TRANSPORT")
+        .map(|value| value.eq_ignore_ascii_case("ewds"))
+        .unwrap_or(false)
+    {
+        info!("Fetching facilities via EWDS transport");
+        let ewds_client = EwdsClient::from_env(
+            "EWDS_EXECUTION_ENGINE_CLIENT_ID",
+            "gsyexecutionengine",
+            8_000,
+        );
+
+        ewds_client
+            .query(EwdsOperation::FacilitiesQuery, serde_json::json!({}))
+            .await?
+    } else {
+        let client = Client::new();
+        let facilities_url = format!("{}/facilities", base_url);
+        info!("Fetching facilities for {}", facilities_url);
+
+        let facilities_resp = client.get(&facilities_url).send().await?;
+        if !facilities_resp.status().is_success() {
+            return Err(anyhow!(
+                "Failed to fetch facilities. HTTP {}",
+                facilities_resp.status()
+            ));
+        }
+        facilities_resp.json().await?
+    };
+
+    let mapping: HashMap<String, String> = facilities
+        .into_iter()
+        .map(|f| (f.facility_id, f.owner_id))
+        .collect();
+
+    Ok(mapping)
 }
