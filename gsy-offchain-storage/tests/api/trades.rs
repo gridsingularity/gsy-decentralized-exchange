@@ -243,3 +243,75 @@ async fn get_trades_returns_400_when_start_after_end() {
 
     stop_app(app).await;
 }
+
+#[tokio::test]
+async fn filter_trades_time_boundaries_are_inclusive_start_exclusive_end() {
+    let app = init_app().await;
+    let address = app.address.clone();
+
+    // Seed four trades at timestamps 19, 20, 29, 30 around the [20, 30) borders.
+    let slots = [19u64, 20, 29, 30];
+    let client = reqwest::Client::new();
+    for (idx, ts) in slots.iter().enumerate() {
+        let bid = make_order(
+            &format!(
+                "0x00000000000000000000000000000000000000000000000000000000d0e5b{:03}",
+                idx
+            ),
+            OrderEnum::Bid,
+        );
+        let offer = make_order(
+            &format!(
+                "0x00000000000000000000000000000000000000000000000000000000d0e5a{:03}",
+                idx
+            ),
+            OrderEnum::Offer,
+        );
+        let mut trade = make_trade(&format!("TRADE-BORDER-{:04}", idx), bid, offer);
+        trade.timestamp = *ts;
+
+        let resp = client
+            .post(&format!("{}/trades", &address))
+            .json(&vec![trade])
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(200, resp.status().as_u16());
+    }
+
+    let db = web::Data::new(app.db_wrapper.clone());
+    let trades_svc = || db.get_ref().trades();
+
+    // [20, 30): start inclusive, end exclusive -> {20, 29}.
+    let both = trades_svc().filter_trades(Some(20), Some(30)).await.unwrap();
+    let mut got: Vec<u64> = both.iter().map(|t| t.time_slot).collect();
+    got.sort_unstable();
+    assert_eq!(got, vec![20, 29]); // 20 included ($gte), 30 excluded ($lt)
+
+    // Start-only, start on a boundary value: time_slot >= 20 -> {20, 29, 30}.
+    let start_only = trades_svc().filter_trades(Some(20), None).await.unwrap();
+    let mut got: Vec<u64> = start_only.iter().map(|t| t.time_slot).collect();
+    got.sort_unstable();
+    assert_eq!(got, vec![20, 29, 30]); // 20 included, nothing below
+
+    // End-only, end on a boundary value: time_slot < 30 -> {19, 20, 29}.
+    let end_only = trades_svc().filter_trades(None, Some(30)).await.unwrap();
+    let mut got: Vec<u64> = end_only.iter().map(|t| t.time_slot).collect();
+    got.sort_unstable();
+    assert_eq!(got, vec![19, 20, 29]); // 30 excluded ($lt)
+
+    // Empty range: start == end -> nothing (20 fails $lt 20).
+    let empty = trades_svc().filter_trades(Some(20), Some(20)).await.unwrap();
+    assert!(empty.is_empty()); // [20, 20) is empty
+
+    // Single-slot range: [20, 21) -> exactly {20}.
+    let single = trades_svc().filter_trades(Some(20), Some(21)).await.unwrap();
+    assert_eq!(single.len(), 1);
+    assert_eq!(single[0].time_slot, 20);
+
+    // No bounds: returns everything seeded here.
+    let all = trades_svc().filter_trades(None, None).await.unwrap();
+    assert!(all.len() >= 4);
+
+    stop_app(app).await;
+}
