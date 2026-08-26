@@ -1,6 +1,7 @@
 use primitives::db_api_schema::{profiles::MeasurementSchema, trades::DbTradeSchema};
 use primitives::utils::{bytes16_to_hex, parse_or_hash_bytes16};
 use std::collections::HashMap;
+use tracing::warn;
 
 #[derive(Debug)]
 pub struct Penalty {
@@ -30,24 +31,30 @@ pub struct Penalty {
 pub fn compute_penalties(
     trades: &[DbTradeSchema],
     measurements: &[MeasurementSchema],
+    facility_owner_mapping: &HashMap<String, String>,
     penalty_rate: f64,
 ) -> Vec<Penalty> {
     let mut penalties = Vec::new();
 
-    // Measurements are keyed by facility ids in the Intelligent profile layer, while EVM trades
-    // reference actor/facility ids as bytes16 hex. Store both forms so the execution runtime can
-    // bridge the two representations.
     let mut measurement_map: HashMap<String, f64> = HashMap::new();
     for meas in measurements {
-        measurement_map.insert(meas.facility_id.clone(), meas.energy_kwh);
+        let Some(owner_id) = facility_owner_mapping.get(&meas.facility_id) else {
+            warn!("No owner mapping for facility_id={}", meas.facility_id);
+            continue;
+        };
+        // measurement_map.insert(owner_id.clone(), meas.energy_kwh);
         measurement_map.insert(
-            bytes16_to_hex(parse_or_hash_bytes16(meas.facility_id.as_str())),
+            bytes16_to_hex(parse_or_hash_bytes16(&owner_id.clone())),
             meas.energy_kwh,
         );
     }
-
+    eprintln!("{:?}", measurement_map.clone());
     // Iterate over each trade and compute the penalty if a measurement exists.
     for trade in trades {
+        eprintln!(
+            "trade.seller {:?}, trade.buyer {:?}",
+            &trade.seller, &trade.buyer
+        );
         if let Some(&measured_energy) = measurement_map
             .get(&trade.buyer)
             .or_else(|| measurement_map.get(&trade.seller))
@@ -101,8 +108,8 @@ mod tests {
     };
     use primitives::utils::{bytes16_to_hex, parse_or_hash_bytes16};
 
-    fn order(order_id: &str, facility_id: &str, is_bid: bool) -> DbOrderSchema {
-        let actor_id = bytes16_to_hex(parse_or_hash_bytes16(facility_id));
+    fn order(order_id: &str, actor: &str, is_bid: bool) -> DbOrderSchema {
+        let actor_id = bytes16_to_hex(parse_or_hash_bytes16(actor));
         DbOrderSchema {
             order_id: order_id.to_string(),
             status: OrderStatus::Executed,
@@ -124,8 +131,8 @@ mod tests {
     }
 
     fn trade() -> DbTradeSchema {
-        let bid = order("bid-1", "areaalice", true);
-        let offer = order("offer-1", "areabob", false);
+        let bid = order("bid-1", "alice", true);
+        let offer = order("offer-1", "bob", false);
         DbTradeSchema {
             trade_uuid: "trade-1".to_string(),
             status: TradeStatus::Settled,
@@ -155,13 +162,18 @@ mod tests {
             energy_kwh: 12.0,
         }];
 
-        let penalties = compute_penalties(&[trade()], &measurements, 0.10);
+        let facility_owner_mapping = HashMap::from([(
+            "areaalice".to_string(),
+            bytes16_to_hex(parse_or_hash_bytes16("alice")),
+        )]);
+
+        let penalties = compute_penalties(&[trade()], &measurements, &facility_owner_mapping, 0.10);
 
         assert_eq!(penalties.len(), 1);
         assert_eq!(penalties[0].penalty_cost, 2_000);
         assert_eq!(
             penalties[0].penalized_account,
-            bytes16_to_hex(parse_or_hash_bytes16("areaalice"))
+            bytes16_to_hex(parse_or_hash_bytes16("alice"))
         );
     }
 }

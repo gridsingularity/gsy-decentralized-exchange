@@ -1,4 +1,3 @@
-use crate::connectors::evm_contracts::TradeSettlementContract;
 use crate::primitives::penalty_calculator::Penalty;
 use ::primitives::utils::parse_or_hash_bytes16;
 use anyhow::{anyhow, Result};
