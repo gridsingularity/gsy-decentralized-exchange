@@ -1,7 +1,7 @@
 use crate::helpers::{init_app, stop_app};
 use actix_web::web;
 use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
-use primitives::db_api_schema::trades::{ClearingResultSchema, MarketRoleSchema};
+use primitives::db_api_schema::trades::MarketRoleSchema;
 use primitives::ewds::dto::EwdsClearingResultDto;
 
 fn make_market(market_id: &str, community_id: &str, opening_time: &str) -> MarketSchema {
@@ -140,7 +140,7 @@ async fn post_and_get_clearing_result() {
         .await
         .unwrap();
     assert_eq!(200, resp.status().as_u16());
-    let saved: Vec<ClearingResultSchema> = resp.json().await.unwrap();
+    let saved: Vec<EwdsClearingResultDto> = resp.json().await.unwrap();
     assert_eq!(saved.len(), 1);
     assert_eq!(saved[0].num_trades, 6);
     stop_app(app).await;

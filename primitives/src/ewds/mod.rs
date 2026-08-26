@@ -23,13 +23,19 @@ pub enum EwdsOperation {
     TradesQuery,
     #[serde(rename = "measurements.query")]
     MeasurementsQuery,
+    #[serde(rename = "clearing_results.query")]
+    ClearingResultsQuery,
+    #[serde(rename = "markets.query")]
+    MarketsQuery,
 }
 
 impl EwdsOperation {
-    pub const ALL: [Self; 3] = [
+    pub const ALL: [Self; 5] = [
         Self::OrdersQuery,
         Self::TradesQuery,
         Self::MeasurementsQuery,
+        Self::ClearingResultsQuery,
+        Self::MarketsQuery,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -37,6 +43,8 @@ impl EwdsOperation {
             Self::OrdersQuery => "orders.query",
             Self::TradesQuery => "trades.query",
             Self::MeasurementsQuery => "measurements.query",
+            Self::ClearingResultsQuery => "clearing_results.query",
+            Self::MarketsQuery => "markets.query",
         }
     }
 
@@ -45,6 +53,8 @@ impl EwdsOperation {
             Self::OrdersQuery => "orders-query",
             Self::TradesQuery => "trades-query",
             Self::MeasurementsQuery => "measurements-query",
+            Self::ClearingResultsQuery => "clearing_results-query",
+            Self::MarketsQuery => "markets-query",
         }
     }
 }
@@ -66,6 +76,8 @@ pub struct EwdsTopicConfig {
     orders: EwdsTopicPair,
     trades: EwdsTopicPair,
     measurements: EwdsTopicPair,
+    clearing_results: EwdsTopicPair,
+    markets: EwdsTopicPair,
 }
 
 impl Default for EwdsTopicConfig {
@@ -82,6 +94,14 @@ impl Default for EwdsTopicConfig {
             measurements: EwdsTopicPair {
                 request: "measurementsQuery".to_string(),
                 response: "measurementsQueryResponse".to_string(),
+            },
+            clearing_results: EwdsTopicPair {
+                request: "clearing_resultsQuery".to_string(),
+                response: "clearing_resultsQueryResponse".to_string(),
+            },
+            markets: EwdsTopicPair {
+                request: "marketsQuery".to_string(),
+                response: "marketsQueryResponse".to_string(),
             },
         }
     }
@@ -121,6 +141,26 @@ impl EwdsTopicConfig {
                     defaults.measurements.response.as_str(),
                 ),
             },
+            clearing_results: EwdsTopicPair {
+                request: env_or(
+                    "EWDS_CLEARING_RESULTS_REQUEST_TOPIC",
+                    defaults.clearing_results.request.as_str(),
+                ),
+                response: env_or(
+                    "EWDS_CLEARING_RESULTS_RESPONSE_TOPIC",
+                    defaults.clearing_results.response.as_str(),
+                ),
+            },
+            markets: EwdsTopicPair {
+                request: env_or(
+                    "EWDS_MARKETS_REQUEST_TOPIC",
+                    defaults.markets.request.as_str(),
+                ),
+                response: env_or(
+                    "EWDS_MARKETS_RESPONSE_TOPIC",
+                    defaults.markets.response.as_str(),
+                ),
+            },
         }
     }
 
@@ -129,6 +169,8 @@ impl EwdsTopicConfig {
             EwdsOperation::OrdersQuery => &self.orders,
             EwdsOperation::TradesQuery => &self.trades,
             EwdsOperation::MeasurementsQuery => &self.measurements,
+            EwdsOperation::ClearingResultsQuery => &self.clearing_results,
+            EwdsOperation::MarketsQuery => &self.markets,
         }
     }
 }

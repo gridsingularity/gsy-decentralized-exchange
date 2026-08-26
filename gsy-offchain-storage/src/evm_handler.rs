@@ -7,8 +7,8 @@ use gsy_ethers_listener::{
 };
 use primitives::db_api_schema::{
     orders::{
-        energy_type_from_contract, DbAttributes, DbOrderSchema, DbRequirements, EnergyType,
-        OrderEnum, OrderStatus,
+        energy_type_from_contract, DbAttributes, DbOrderSchema, DbRequirements, OrderEnum,
+        OrderStatus,
     },
     trades::{DbTradeSchema, TradeParameters, TradeStatus},
 };

@@ -1,5 +1,6 @@
 use super::EwdsOperation;
 use crate::db_api_schema::{
+    market::{MarketSchema, MarketType, MatchingAlgorithm},
     orders::{DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus},
     trades::{
         ClearingResultSchema, ClearingStatus, DbTradeSchema, NoBidReason, TradeParameters,
@@ -26,7 +27,7 @@ pub struct EwdsRequestEnvelope {
     pub payload: Value,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EwdsSendMessageDto {
     pub fqcn: String,
@@ -415,5 +416,51 @@ impl TryFrom<EwdsClearingResultDto> for ClearingResultSchema {
             tx_hash: d.tx_hash,
             clearing_time: d.created_at,
         })
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct EwdsMarketDto {
+    pub market_id: String,
+    pub community_id: String,
+    pub opening_time: String,
+    pub closing_time: String,
+    pub delivery_start_time: String,
+    pub delivery_end_time: String,
+    pub market_type: MarketType,
+    pub matching_algorithm: MatchingAlgorithm,
+    pub created_at: String,
+}
+
+impl From<MarketSchema> for EwdsMarketDto {
+    fn from(m: MarketSchema) -> Self {
+        EwdsMarketDto {
+            market_id: m.market_id,
+            community_id: m.community_id,
+            opening_time: m.opening_time,
+            closing_time: m.closing_time,
+            delivery_start_time: m.delivery_start_time,
+            delivery_end_time: m.delivery_end_time,
+            market_type: m.market_type,
+            matching_algorithm: m.matching_algorithm,
+            created_at: m.created_at,
+        }
+    }
+}
+
+impl From<EwdsMarketDto> for MarketSchema {
+    fn from(d: EwdsMarketDto) -> Self {
+        MarketSchema {
+            market_id: d.market_id,
+            community_id: d.community_id,
+            opening_time: d.opening_time,
+            closing_time: d.closing_time,
+            delivery_start_time: d.delivery_start_time,
+            delivery_end_time: d.delivery_end_time,
+            market_type: d.market_type,
+            matching_algorithm: d.matching_algorithm,
+            created_at: d.created_at,
+        }
     }
 }
