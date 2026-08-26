@@ -5,8 +5,8 @@ use ethers::{
     utils::Anvil,
 };
 use gsy_ethers_listener::{GsyEthersListener, ListenerConfig};
-use primitives::db_api_schema::orders::{IntelligentEnergyType, OrderEnum};
 use gsy_offchain_storage::evm_handler::OffchainStorageEvmHandler;
+use primitives::db_api_schema::orders::{EnergyType, OrderEnum};
 use std::{fs::File, io::Write, sync::Arc, time::Duration};
 use tempfile::TempDir;
 
@@ -150,7 +150,7 @@ async fn test_evm_order_listener_persists_to_db() {
                 order
                     .requirements
                     .and_then(|requirements| requirements.energy_type),
-                Some(IntelligentEnergyType::Green)
+                Some(EnergyType::Green)
             );
             break;
         }

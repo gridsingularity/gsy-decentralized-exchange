@@ -4,7 +4,7 @@ use ethers::prelude::*;
 use gsy_community_client::external_api::ExternalFacilityTopology;
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::profiles::ForecastSchema;
-use primitives::db_api_schema::trades::TradeSchema;
+use primitives::db_api_schema::trades::DbTradeSchema;
 use primitives::utils::parse_or_hash_bytes16;
 use reqwest::Client;
 use std::collections::HashMap;
@@ -57,17 +57,17 @@ pub struct MyWorld {
     pub seller_id: String,
     pub bid_forecast: Option<ForecastSchema>,
     pub offer_forecast: Option<ForecastSchema>,
-    pub last_trade: Option<TradeSchema>,
+    pub last_trade: Option<DbTradeSchema>,
     pub last_charlie_offer_order_id: Option<String>,
     pub market_schema: Option<MarketSchema>,
     pub facilities_topology: Vec<ExternalFacilityTopology>,
     pub pay_as_clear_scenario: Option<PayAsClearScenario>,
-    pub pay_as_clear_trades: Vec<TradeSchema>,
-    pub preferred_trade: Option<TradeSchema>,
+    pub pay_as_clear_trades: Vec<DbTradeSchema>,
+    pub preferred_trade: Option<DbTradeSchema>,
     pub community_market_ids: Option<[[u8; 16]; 2]>,
     pub cross_community_order_ids: Option<(String, String)>,
     pub community_market_order_pairs: Vec<CommunityMarketOrderPair>,
-    pub community_market_trades: Vec<TradeSchema>,
+    pub community_market_trades: Vec<DbTradeSchema>,
 }
 
 impl MyWorld {
@@ -122,8 +122,8 @@ impl MyWorld {
             actor_registry_address,
             last_market_id: None,
             target_delivery_time: 0,
-            buyer_id: "areaalice".to_string(),
-            seller_id: "areabob".to_string(),
+            buyer_id: "alice".to_string(),
+            seller_id: "bob".to_string(),
             bid_forecast: None,
             offer_forecast: None,
             last_trade: None,
@@ -181,6 +181,6 @@ impl MyWorld {
         if !self.users.contains_key(user_name) {
             panic!("Unknown user '{}'", user_name);
         }
-        parse_or_hash_bytes16(format!("area{}", user_name).as_str())
+        parse_or_hash_bytes16(format!("{}", user_name).as_str())
     }
 }

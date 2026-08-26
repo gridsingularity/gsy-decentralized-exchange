@@ -2,8 +2,9 @@ use anyhow::{anyhow, Result};
 use primitives::constants::GLOBAL_CONSTANTS;
 use primitives::db_api_schema::{
     profiles::{MeasurementPointSchema, MeasurementSchema, TimeseriesSchema},
-    trades::TradeSchema,
+    trades::DbTradeSchema,
 };
+use primitives::ewds::dto::EwdsTradeDto;
 use primitives::ewds::{EwdsClient, EwdsOperation};
 use primitives::utils::timestamp_to_string_with_padding;
 use reqwest::Client;
@@ -19,7 +20,7 @@ pub async fn fetch_trades_and_measurements_for_timeslot(
     base_url: &str,
     timeslot: u64,
     market_duration: u64,
-) -> Result<(Vec<TradeSchema>, Vec<MeasurementSchema>)> {
+) -> Result<(Vec<DbTradeSchema>, Vec<MeasurementSchema>)> {
     let start_time = round_down_timeslot(timeslot);
     let end_time = start_time
         + (market_duration
@@ -50,12 +51,16 @@ pub async fn fetch_trades_and_measurements_for_timeslot(
             trades_resp.status()
         ));
     }
-    let trades: Vec<TradeSchema> = trades_resp.json().await?;
+    let trades: Vec<EwdsTradeDto> = trades_resp.json().await?;
+    let trades_db: Vec<DbTradeSchema> = trades
+        .into_iter()
+        .map(|o| DbTradeSchema::try_from(o).expect("invalid EwdsTradeDto"))
+        .collect();
 
     let measurements =
         fetch_measurements_from_timeseries(&client, base_url, start_time, end_time).await?;
 
-    Ok((trades, measurements))
+    Ok((trades_db, measurements))
 }
 
 async fn fetch_measurements_from_timeseries(
@@ -120,7 +125,7 @@ fn parse_timeseries_timestamp(timestamp: &str) -> Option<u64> {
 async fn fetch_trades_and_measurements_via_ewds(
     start_time: u64,
     end_time: u64,
-) -> Result<(Vec<TradeSchema>, Vec<MeasurementSchema>)> {
+) -> Result<(Vec<DbTradeSchema>, Vec<MeasurementSchema>)> {
     let query = serde_json::json!({
         "startTime": start_time,
         "endTime": end_time
@@ -131,10 +136,15 @@ async fn fetch_trades_and_measurements_via_ewds(
         8_000,
     );
 
-    let (trades, measurements): (Vec<TradeSchema>, Vec<MeasurementSchema>) = tokio::try_join!(
+    let (trades, measurements): (Vec<EwdsTradeDto>, Vec<MeasurementSchema>) = tokio::try_join!(
         ewds_client.query(EwdsOperation::TradesQuery, query.clone()),
         ewds_client.query(EwdsOperation::MeasurementsQuery, query),
     )?;
 
-    Ok((trades, measurements))
+    let trades_db = trades
+        .into_iter()
+        .map(DbTradeSchema::try_from)
+        .collect::<Result<Vec<_>>>()?;
+
+    Ok((trades_db, measurements))
 }

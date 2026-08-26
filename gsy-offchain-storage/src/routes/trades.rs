@@ -4,12 +4,26 @@ use actix_web::web::Query;
 use actix_web::{web::Json, HttpResponse, Responder};
 use mongodb::bson::Bson;
 use primitives::db_api_schema::orders::OrderStatus;
-use primitives::db_api_schema::trades::TradeSchema;
+use primitives::db_api_schema::trades::DbTradeSchema;
+use primitives::ewds::dto::EwdsTradeDto;
 use serde::Deserialize;
 
 #[tracing::instrument(name = "Adding new trades", skip(db), fields(trades = ?trades))]
-pub async fn post_trades(trades: Json<Vec<TradeSchema>>, db: DbRef) -> impl Responder {
-    for trade in trades.iter() {
+pub async fn post_trades(trades: Json<Vec<EwdsTradeDto>>, db: DbRef) -> impl Responder {
+    let db_trades: Vec<DbTradeSchema> = match trades
+        .into_inner()
+        .into_iter()
+        .map(DbTradeSchema::try_from)
+        .collect::<Result<Vec<_>, _>>()
+    {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!("Failed to convert EWDS trade: {:?}", e);
+            return HttpResponse::BadRequest().finish();
+        }
+    };
+
+    for trade in db_trades.iter() {
         let bid_id = Bson::String(trade.bid_hash.clone());
         let offer_id = Bson::String(trade.offer_hash.clone());
         let _ = db
@@ -24,13 +38,13 @@ pub async fn post_trades(trades: Json<Vec<TradeSchema>>, db: DbRef) -> impl Resp
             .await;
     }
 
-    match db.get_ref().trades().insert_trades(trades.to_vec()).await {
+    match db.get_ref().trades().insert_trades(db_trades).await {
         Ok(ids) => HttpResponse::Ok().json(ids),
         Err(_) => HttpResponse::InternalServerError().finish(),
     }
 }
 
-pub async fn post_normalized_trades(trades: Json<Vec<TradeSchema>>, db: DbRef) -> impl Responder {
+pub async fn post_normalized_trades(trades: Json<Vec<EwdsTradeDto>>, db: DbRef) -> impl Responder {
     post_trades(trades, db).await
 }
 
@@ -51,7 +65,10 @@ pub async fn get_trades(db: DbRef, query_params: Query<GetTradesParams>) -> impl
         .filter_trades(query_params.start_time, query_params.end_time)
         .await
     {
-        Ok(trades) => HttpResponse::Ok().json(trades),
+        Ok(trades) => {
+            let dtos: Vec<EwdsTradeDto> = trades.into_iter().map(EwdsTradeDto::from).collect();
+            HttpResponse::Ok().json(dtos)
+        }
         Err(e) => {
             tracing::error!("Failed to execute query: {:?}", e);
             HttpResponse::InternalServerError().finish()

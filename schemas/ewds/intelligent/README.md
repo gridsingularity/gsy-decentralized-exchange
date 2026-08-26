@@ -25,6 +25,6 @@ Notes:
 - Runtime service fields from GSY DEX are mapped in `docs/platform/ewds-data-contracts.md`.
 - The agreed Intelligent schemas use UUID identifiers and ISO 8601 timestamps.
 - The active DEX EVM settlement path still uses separate runtime DTOs for
-  bytes32 hashes, nonces, area UUID hashes, and unix timeslots.
+  bytes32 hashes, area UUID hashes, and unix timeslots.
 - These schemas are versioned as `v1` and should be registered as EWDS topic
   schemas when the corresponding topics are managed with `topiccreator`.

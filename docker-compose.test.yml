@@ -209,6 +209,7 @@ services:
       mongodb:
         condition: service_started
     environment:
+      - RUST_BACKTRACE=1
       - RUST_LOG=info
       - DATABASE_HOST=mongodb
       - DATABASE_NAME=test_db

@@ -51,7 +51,7 @@ paths:
             schema:
               type: array
               items:
-                $ref: "#/components/schemas/DbOrderSchema"
+                $ref: "#/components/schemas/EwdsOrderDto"
       responses:
         "200":
           description: Inserted order IDs.
@@ -78,7 +78,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/DbOrderSchema"
+                  $ref: "#/components/schemas/EwdsOrderDto"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -163,7 +163,7 @@ paths:
             schema:
               type: array
               items:
-                $ref: "#/components/schemas/TradeSchema"
+                $ref: "#/components/schemas/EwdsTradeDto"
       responses:
         "200":
           description: Inserted trade IDs.
@@ -189,7 +189,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/TradeSchema"
+                  $ref: "#/components/schemas/EwdsTradeDto"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -266,14 +266,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ClearingResultSchema"
+              $ref: "#/components/schemas/EwdsClearingResultDto"
       responses:
         "200":
           description: Saved clearing result.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ClearingResultSchema"
+                $ref: "#/components/schemas/EwdsClearingResultDto"
         "500":
           $ref: "#/components/responses/InternalError"
     get:
@@ -292,7 +292,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/ClearingResultSchema"
+                  $ref: "#/components/schemas/EwdsClearingResultDto"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -646,39 +646,51 @@ components:
       enum: [Open, Executed, Expired, Deleted]
       default: Open
 
-    IntelligentEnergyType:
+    EnergyType:
       type: string
-      enum: [GREEN, PV, HYDRO, BIOMASS, BATTERY, GREY]
+      enum: [GREEN, PV, HYDRO, BIOMASS, BATTERY, NONE]
 
-    DbOrderSchema:
+    EwdsOrderDto:
+      description: |
+        EWDS-side order DTO. Field names are camelCase on the wire.
+        Timestamps (`timeSlot`, `creationTime`, `updatedAt`) are Unix epoch
+        integers rather than ISO 8601 strings.
       type: object
       required:
-        - order_id
-        - order_type
+        - orderId
+        - marketId
+        - orderType
+        - orderStatus
+        - timeSlot
         - quantity
-        - price_limit
-        - time_slot
-        - market_id
-        - order_status
-        - creation_time
-        - created_by
+        - priceLimit
+        - createdBy
+        - creationTime
       properties:
-        order_id: { type: string }
-        order_type: { $ref: "#/components/schemas/OrderType" }
+        orderId: { type: string }
+        marketId: { type: string }
+        orderType: { $ref: "#/components/schemas/OrderType" }
+        orderStatus: { $ref: "#/components/schemas/OrderStatus" }
+        timeSlot: { type: integer, format: int64, minimum: 0 }
         quantity: { type: number, format: double }
-        price_limit: { type: number, format: double }
-        time_slot: { type: string }
-        market_id: { type: string }
-        order_status: { $ref: "#/components/schemas/OrderStatus" }
-        creation_time: { type: string }
-        created_by: { type: string }
-        energy_source_preference:
-          $ref: "#/components/schemas/IntelligentEnergyType"
+        priceLimit: { type: number, format: double }
+        energySourcePreference:
+          $ref: "#/components/schemas/EnergyType"
           nullable: true
-        energy_type:
-          $ref: "#/components/schemas/IntelligentEnergyType"
+        energyType:
+          $ref: "#/components/schemas/EnergyType"
           nullable: true
-        area_uuid:
+        createdBy: { type: string }
+        creationTime: { type: integer, format: int64, minimum: 0 }
+        updatedAt:
+          type: integer
+          format: int64
+          minimum: 0
+          nullable: true
+        rejectReason:
+          type: string
+          nullable: true
+        preferredTradingPartner:
           type: string
           nullable: true
 
@@ -740,67 +752,86 @@ components:
 
     TradeStatus:
       type: string
-      enum: [executed, settled]
+      enum: [matched, executed, settled, rejected]
 
-    TradeSchema:
+    EwdsTradeDto:
+      description: |
+        EWDS-side trade DTO. Field names are camelCase on the wire.
+        `timestamp` is a Unix epoch integer and carries the trade time slot.
       type: object
       required:
-        - trade_id
-        - trade_quantity
-        - trade_price
-        - trade_timestamp
-        - time_slot
-        - market_id
-        - trade_status
-        - buyer
-        - seller
-        - bid_id
-        - offer_id
+        - tradeId
+        - marketId
+        - bidId
+        - buyerId
+        - offerId
+        - sellerId
+        - tradeStatus
+        - tradeQuantity
+        - tradePrice
+        - timestamp
       properties:
-        trade_id: { type: string }
-        trade_quantity: { type: number, format: double }
-        trade_price: { type: number, format: double }
-        trade_timestamp: { type: string }
-        time_slot: { type: string }
-        market_id: { type: string }
-        trade_status: { $ref: "#/components/schemas/TradeStatus" }
-        buyer: { type: string }
-        seller: { type: string }
-        bid_id: { type: string }
-        offer_id: { type: string }
-        residual_bid_id:
+        tradeId: { type: string }
+        marketId: { type: string }
+        bidId: { type: string }
+        buyerId: { type: string }
+        residualBidId:
           type: string
           nullable: true
-        residual_offer_id:
+        offerId: { type: string }
+        sellerId: { type: string }
+        residualOfferId:
           type: string
           nullable: true
+        tradeStatus: { $ref: "#/components/schemas/TradeStatus" }
+        tradeQuantity: { type: number, format: double }
+        tradePrice: { type: number, format: double }
+        timestamp: { type: integer, format: int64, minimum: 0 }
 
     ClearingStatus:
       type: string
-      enum: [cleared, uncleared, failed]
+      enum: [final, partial, rejected, no_bid]
 
-    ClearingResultSchema:
+    NoBidReason:
+      type: string
+      enum:
+        - invalid_inputs
+        - stale_input
+        - hard_constraints
+        - policy_unavailable
+        - deadline_missed
+        - timeout
+        - operator_disabled
+        - market_reject
+
+    EwdsClearingResultDto:
+      description: |
+        EWDS-side clearing-result DTO. Field names are camelCase on the wire.
+        `createdAt` is a Unix epoch integer.
       type: object
       required:
-        - market_id
-        - clearing_status
-        - clearing_price
-        - total_supply
-        - total_demand
-        - traded_quantity
-        - num_trades
-        - tx_hash
-        - clearing_time
+        - marketId
+        - clearingStatus
+        - clearingPrice
+        - totalSupply
+        - totalDemand
+        - tradeQuantity
+        - numTrades
+        - txHash
+        - createdAt
       properties:
-        market_id: { type: string }
-        clearing_status: { $ref: "#/components/schemas/ClearingStatus" }
-        clearing_price: { type: number, format: double }
-        total_supply: { type: number, format: double }
-        total_demand: { type: number, format: double }
-        traded_quantity: { type: number, format: double }
-        num_trades: { type: integer, format: int32, minimum: 0 }
-        tx_hash: { type: string }
-        clearing_time: { type: string }
+        marketId: { type: string }
+        clearingStatus: { $ref: "#/components/schemas/ClearingStatus" }
+        noBidReason:
+          $ref: "#/components/schemas/NoBidReason"
+          nullable: true
+        clearingPrice: { type: number, format: double }
+        totalSupply: { type: number, format: double }
+        totalDemand: { type: number, format: double }
+        tradeQuantity: { type: number, format: double }
+        numTrades: { type: integer, format: int32, minimum: 0 }
+        txHash: { type: string }
+        createdAt: { type: integer, format: int64, minimum: 0 }
 
     MarketRoleSchema:
       type: object

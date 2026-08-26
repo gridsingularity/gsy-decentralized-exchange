@@ -1,16 +1,16 @@
-use primitives::db_api_schema::orders::{IntelligentEnergyType, OrderEnum, OrderStatus};
+use primitives::db_api_schema::orders::{EnergyType, OrderEnum, OrderStatus};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Requirements {
     pub trading_partner_id: Option<String>,
-    pub energy_type: Option<IntelligentEnergyType>,
+    pub energy_type: Option<EnergyType>,
     pub preferred_energy_rate: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Attributes {
     pub trading_partner_id: Option<String>,
-    pub energy_type: IntelligentEnergyType,
+    pub energy_type: EnergyType,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -37,15 +37,15 @@ async fn submit_market_forecasts_three_users(
 
     let facilities = vec![
         ExternalFacilityTopology {
-            facility_id: format!("area{}", user1),
+            facility_id: user1.clone(),
             facility_name: user1.clone(),
         },
         ExternalFacilityTopology {
-            facility_id: format!("area{}", user2),
+            facility_id: user2.clone(),
             facility_name: user2.clone(),
         },
         ExternalFacilityTopology {
-            facility_id: format!("area{}", user3),
+            facility_id: user3.clone(),
             facility_name: user3.clone(),
         },
     ];

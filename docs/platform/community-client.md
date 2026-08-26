@@ -29,7 +29,6 @@ For each forecast:
 Order payload includes:
 
 - `owner`
-- `nonce`
 - `createdBy` derived from `facilityId`
 - `marketId`
 - `timeSlot`

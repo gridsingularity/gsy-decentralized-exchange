@@ -4,7 +4,7 @@ use futures::future::join_all;
 use primitives::db_api_schema::profiles::{MeasurementPointType, MeasurementSchema};
 use primitives::ewds::dto::{
     EwdsCommunityDto, EwdsInboundMessage, EwdsOrderDto, EwdsRequestEnvelope, EwdsResponseEnvelope,
-    EwdsSendMessageDto,
+    EwdsSendMessageDto, EwdsTradeDto,
 };
 use primitives::ewds::{
     client_id_for_suffix, env_var, ewds_rate_limit_backoff_ms, format_response_body,
@@ -318,9 +318,12 @@ async fn handle_request(
             let data = db
                 .trades()
                 .filter_trades(payload.start_time, payload.end_time)
-                .await?;
+                .await?
+                .into_iter()
+                .map(EwdsTradeDto::from)
+                .collect::<Vec<_>>();
             info!(
-                "Publishing EWDS trades.query response (request_id={}, orders={})",
+                "Publishing EWDS trades.query response (request_id={}, trades={})",
                 request_id,
                 data.len()
             );
