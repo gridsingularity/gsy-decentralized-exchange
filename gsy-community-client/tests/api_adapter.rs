@@ -2,7 +2,7 @@ use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAda
 use gsy_community_client::time_utils::get_last_and_next_timeslot;
 use httpmock::prelude::*;
 use primitives::db_api_schema::profiles::{ForecastSchema, MeasurementSchema};
-use primitives::MarketType;
+use primitives::{MarketType, MatchingAlgorithm};
 
 #[tokio::test]
 async fn test_create_market_posts_market_schema() {
@@ -16,7 +16,11 @@ async fn test_create_market_posts_market_schema() {
 
     let adapter = AreaMarketInfoAdapter::new(Some(server.base_url()));
     let market = adapter
-        .create_market("comm_uuid".to_string(), time_slot)
+        .create_market(
+            "comm_uuid".to_string(),
+            time_slot,
+            MatchingAlgorithm::PayAsBid,
+        )
         .await
         .unwrap();
 

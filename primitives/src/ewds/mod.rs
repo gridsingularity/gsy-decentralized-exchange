@@ -6,6 +6,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use std::{env, fmt, time::Instant};
 use tokio::time::{sleep, Duration};
+use tracing::warn;
 
 const DEFAULT_GATEWAY_URL: &str = "http://ewds-gateway-api:3333";
 const DEFAULT_REQUEST_FQCN: &str = "gsy.intelligent.requests.pub";
@@ -183,6 +184,7 @@ struct PendingQuery {
     operation: EwdsOperation,
     request_id: String,
     response_topic: String,
+    started: Instant,
 }
 
 impl EwdsClient {
@@ -219,6 +221,7 @@ impl EwdsClient {
         operation: EwdsOperation,
         query_payload: Value,
     ) -> Result<PendingQuery> {
+        let started = Instant::now();
         let request_id = format!(
             "{}-{}-{}",
             operation.request_id_prefix(),
@@ -245,15 +248,39 @@ impl EwdsClient {
             "{}/api/v2/messages",
             self.config.gateway_base.trim_end_matches('/')
         );
-        let send_response = self
-            .client
-            .post(post_url)
-            .json(&send_message_body)
-            .send()
-            .await?;
-        let send_status = send_response.status();
-        if !send_status.is_success() {
+        let mut rate_limit_attempt = 0u32;
+        loop {
+            if started.elapsed() > Duration::from_millis(self.config.timeout_ms) {
+                return Err(anyhow!(
+                    "EWDS timeout sending {} request (request_id={})",
+                    operation,
+                    request_id
+                ));
+            }
+
+            let send_response = self
+                .client
+                .post(post_url.as_str())
+                .json(&send_message_body)
+                .send()
+                .await?;
+            let send_status = send_response.status();
+            if send_status.is_success() {
+                break;
+            }
+
             let body = send_response.text().await.unwrap_or_default();
+            if is_rate_limited_response(send_status, &body) {
+                let delay_ms = ewds_rate_limit_backoff_ms(rate_limit_attempt);
+                warn!(
+                    "EWDS rate limit while sending {} request; retrying in {} ms",
+                    operation, delay_ms
+                );
+                rate_limit_attempt = rate_limit_attempt.saturating_add(1);
+                sleep(Duration::from_millis(delay_ms)).await;
+                continue;
+            }
+
             return Err(anyhow!(
                 "EWDS message send failed for {}: HTTP {}{}",
                 operation,
@@ -266,6 +293,7 @@ impl EwdsClient {
             operation,
             request_id,
             response_topic: topic_pair.response.clone(),
+            started,
         })
     }
 
@@ -273,7 +301,6 @@ impl EwdsClient {
         &self,
         pending_query: PendingQuery,
     ) -> Result<Vec<T>> {
-        let started = Instant::now();
         let get_url = format!(
             "{}/api/v2/messages",
             self.config.gateway_base.trim_end_matches('/')
@@ -282,9 +309,10 @@ impl EwdsClient {
             self.config.consumer_client_id.as_str(),
             pending_query.response_topic.as_str(),
         );
+        let mut rate_limit_attempt = 0u32;
 
         loop {
-            if started.elapsed().as_millis() as u64 > self.config.timeout_ms {
+            if pending_query.started.elapsed() > Duration::from_millis(self.config.timeout_ms) {
                 return Err(anyhow!(
                     "EWDS timeout waiting for {} response (request_id={})",
                     pending_query.operation,
@@ -307,6 +335,7 @@ impl EwdsClient {
 
             let status = response.status();
             if status.is_success() {
+                rate_limit_attempt = 0;
                 let messages = response
                     .json::<Vec<EwdsMessageDto>>()
                     .await
@@ -333,6 +362,17 @@ impl EwdsClient {
                 }
             } else {
                 let body = response.text().await.unwrap_or_default();
+                if is_rate_limited_response(status, &body) {
+                    let delay_ms = ewds_rate_limit_backoff_ms(rate_limit_attempt);
+                    warn!(
+                        "EWDS rate limit while polling {} response; retrying in {} ms",
+                        pending_query.operation, delay_ms
+                    );
+                    rate_limit_attempt = rate_limit_attempt.saturating_add(1);
+                    sleep(Duration::from_millis(delay_ms)).await;
+                    continue;
+                }
+
                 return Err(anyhow!(
                     "EWDS response poll failed for {} (request_id={}): HTTP {}{}",
                     pending_query.operation,
@@ -345,6 +385,25 @@ impl EwdsClient {
             sleep(Duration::from_millis(self.config.poll_interval_ms)).await;
         }
     }
+}
+
+pub fn is_rate_limited_response(status: reqwest::StatusCode, body: &str) -> bool {
+    status == reqwest::StatusCode::TOO_MANY_REQUESTS || is_rate_limited_message(body)
+}
+
+pub fn is_rate_limited_message(message: &str) -> bool {
+    let normalized = message.to_ascii_lowercase();
+    normalized.contains("status code 429")
+        || normalized.contains("\"statuscode\":429")
+        || normalized.contains("too many requests")
+}
+
+pub fn ewds_rate_limit_backoff_ms(attempt: u32) -> u64 {
+    let base_ms = env_u64_or("EWDS_RATE_LIMIT_BACKOFF_MS", 2_000);
+    let max_ms = env_u64_or("EWDS_RATE_LIMIT_MAX_BACKOFF_MS", 30_000).max(base_ms);
+    let multiplier = 1u64 << attempt.min(4);
+
+    base_ms.saturating_mul(multiplier).min(max_ms)
 }
 
 pub fn format_response_body(body: &str) -> String {
@@ -420,5 +479,29 @@ mod tests {
                 response: "measurementsQueryResponse".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn recognizes_client_gateway_wrapped_rate_limit() {
+        let body = r#"{
+            "err": {
+                "code": "MB::ERROR",
+                "reason": "Request failed with status code 429"
+            },
+            "statusCode": 400
+        }"#;
+
+        assert!(is_rate_limited_response(
+            reqwest::StatusCode::BAD_REQUEST,
+            body
+        ));
+    }
+
+    #[test]
+    fn does_not_treat_an_unrelated_bad_request_as_rate_limit() {
+        assert!(!is_rate_limited_response(
+            reqwest::StatusCode::BAD_REQUEST,
+            r#"{"reason":"Channel not found","statusCode":400}"#
+        ));
     }
 }

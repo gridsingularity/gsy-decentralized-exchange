@@ -22,6 +22,15 @@ pub struct UserAccount {
     pub address: Address,
 }
 
+#[derive(Clone, Debug)]
+pub struct PayAsClearScenario {
+    pub accepted_order_ids: Vec<String>,
+    pub unmatched_bid_order_id: String,
+    pub unmatched_offer_order_id: String,
+    pub expected_match_count: usize,
+    pub preferred_order_ids: Option<(String, String)>,
+}
+
 #[derive(Debug, World)]
 #[world(init = Self::new)]
 pub struct MyWorld {
@@ -45,6 +54,9 @@ pub struct MyWorld {
     pub last_charlie_offer_order_id: Option<String>,
     pub market_schema: Option<MarketSchema>,
     pub facilities_topology: Vec<ExternalFacilityTopology>,
+    pub pay_as_clear_scenario: Option<PayAsClearScenario>,
+    pub pay_as_clear_trades: Vec<TradeSchema>,
+    pub preferred_trade: Option<TradeSchema>,
 }
 
 impl MyWorld {
@@ -105,6 +117,9 @@ impl MyWorld {
             last_charlie_offer_order_id: None,
             market_schema: None,
             facilities_topology: vec![],
+            pay_as_clear_scenario: None,
+            pay_as_clear_trades: vec![],
+            preferred_trade: None,
         })
     }
 

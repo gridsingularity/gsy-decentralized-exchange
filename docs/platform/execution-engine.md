@@ -32,6 +32,14 @@ Before submitting, the engine checks on-chain `penaltyEnergyByTrade(tradeId)`:
 
 This prevents repeated submission across recurring execution cycles.
 
+## Timeslot Rollover
+
+An EWDS request can remain in flight while the configured target delivery slot
+advances. The engine retains the outgoing target slot for a bounded number of
+additional cycles so trades indexed around the boundary are not skipped. It
+stops retrying as soon as penalties for that slot are submitted or found
+on-chain.
+
 ## Contract Interaction
 
 - Role check: `hasRole(EXECUTION_ENGINE_ROLE, signer)`
@@ -45,3 +53,4 @@ This prevents repeated submission across recurring execution cycles.
   - `TRADE_SETTLEMENT_ADDRESS`
   - `EXECUTION_ENGINE_PRIVATE_KEY`
   - `EXECUTION_ENGINE_OFFSET_MIN`
+  - `EXECUTION_ENGINE_ROLLOVER_RETRY_LIMIT` (default `2`; set `0` to disable)
