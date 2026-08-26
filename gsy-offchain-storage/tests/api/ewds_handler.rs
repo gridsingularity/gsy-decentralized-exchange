@@ -1,7 +1,7 @@
 use crate::helpers::{init_app, stop_app};
 use gsy_offchain_storage::ewds_handler::{handle_request, EwdsHandlerConfig};
-use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
 use primitives::db_api_schema::grid_topology::FacilitySchema;
+use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
 use primitives::ewds::dto::{EwdsRequestEnvelope, EwdsSendMessageDto};
 use primitives::ewds::{EwdsOperation, EwdsTopicConfig};
 use serde_json::json;
@@ -248,7 +248,6 @@ async fn clearing_results_query_bad_payload_errors() {
     stop_app(app).await;
 }
 
-
 fn make_market(market_id: &str, community_id: &str, opening_time: &str) -> MarketSchema {
     MarketSchema {
         market_id: market_id.to_string(),
@@ -417,7 +416,11 @@ async fn facilities_query_returns_all() {
         .await
         .unwrap();
 
-    let env = envelope(EwdsOperation::FacilitiesQuery, "req-facilities-1", json!({}));
+    let env = envelope(
+        EwdsOperation::FacilitiesQuery,
+        "req-facilities-1",
+        json!({}),
+    );
 
     handle_request(&app.db_wrapper, &client, &config, env)
         .await

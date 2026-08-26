@@ -1,14 +1,12 @@
 use ::primitives::utils::timestamp_to_datetime_string;
 use anyhow::Result;
+use primitives::ewds::utils::fetch_facility_owner_mapping;
 use tracing::info;
 
 use crate::{
     connectors::{
         evm_connector::submit_penalties,
-        offchain_storage::{
-            fetch_trades_and_measurements_for_timeslot,
-            fetch_facility_owner_mapping
-        },
+        offchain_storage::fetch_trades_and_measurements_for_timeslot,
     },
     primitives::penalty_calculator::{compute_penalties, Penalty},
 };
@@ -35,15 +33,27 @@ pub async fn run_execution_cycle(
         measurements.len(),
         timestamp_to_datetime_string(timeslot),
     );
+
+    if trades.is_empty() || measurements.is_empty() {
+        info!(
+            "No trades or measurements for timeslot {}. Skipping execution cycle.",
+            timestamp_to_datetime_string(timeslot),
+        );
+        return Ok(());
+    }
+
     // 1.2) fetch facility_id>owner_id mapping
-    let facility_owner_mapping = fetch_facility_owner_mapping(offchain_url).await?;
+    let facility_owner_mapping =
+        fetch_facility_owner_mapping("EWDS_EXECUTION_ENGINE_CLIENT_ID", "gsyexecutionengine")
+            .await?;
 
     // 2) compute penalties
     let penalties: Vec<Penalty> = compute_penalties(
         &trades,
         &measurements,
         &facility_owner_mapping,
-        penalty_rate);
+        penalty_rate,
+    );
     info!("Computed {} penalties", penalties.len());
 
     // 3) submit penalties

@@ -1,4 +1,5 @@
 pub mod dto;
+pub mod utils;
 
 use anyhow::{anyhow, Result};
 use dto::{EwdsMessageDto, EwdsQueryResponse, EwdsRequestEnvelope, EwdsSendMessageDto};
@@ -111,7 +112,7 @@ impl Default for EwdsTopicConfig {
             facilities: EwdsTopicPair {
                 request: "facilitiesQuery".to_string(),
                 response: "facilitiesQueryResponse".to_string(),
-            }
+            },
         }
     }
 }
@@ -171,13 +172,15 @@ impl EwdsTopicConfig {
                 ),
             },
             facilities: EwdsTopicPair {
-                request: env_or("EWDS_FACILITIES_REQUEST_TOPIC",
-                    defaults.facilities.request.as_str()
+                request: env_or(
+                    "EWDS_FACILITIES_REQUEST_TOPIC",
+                    defaults.facilities.request.as_str(),
                 ),
-                response: env_or("EWDS_FACILITIES_response_TOPIC",
-                    defaults.facilities.response.as_str()
-                )
-            }
+                response: env_or(
+                    "EWDS_FACILITIES_RESPONSE_TOPIC",
+                    defaults.facilities.response.as_str(),
+                ),
+            },
         }
     }
 

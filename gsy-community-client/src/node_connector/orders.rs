@@ -4,9 +4,11 @@ use ethers::prelude::*;
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::orders::{energy_type_to_contract, EnergyType};
 use primitives::db_api_schema::profiles::ForecastSchema;
+use primitives::ewds::utils::fetch_facility_owner_mapping;
 use primitives::utils::{parse_or_hash_bytes16, string_to_timestamp, NODE_FLOAT_SCALING_FACTOR};
 use std::str::FromStr;
 use tracing::{info, warn};
+use uuid::Uuid;
 
 const BID_RATE: f64 = 0.3;
 const OFFER_RATE: f64 = 0.07;
@@ -47,7 +49,8 @@ pub async fn publish_orders(
         .with_chain_id(chain_id);
     let signer_address = wallet.address();
 
-    let input_orders = create_input_orders(forecasts, market, signer_address);
+    let input_orders = create_input_orders(forecasts, market).await?;
+
     if input_orders.is_empty() {
         info!("No orders to publish for this cycle");
         return Ok(());
@@ -125,25 +128,19 @@ abigen!(
 
 fn build_order_param(
     forecast: &ForecastSchema,
-    facility_id: &String,
+    owner_id: &String,
     market: &MarketSchema,
     now: u64,
     index: usize,
     is_bid: bool,
 ) -> EvmOrderParamsTuple {
     let rate_multiplier = if is_bid { BID_RATE } else { OFFER_RATE };
-    let order_id = parse_or_hash_bytes16(
-        format!(
-            "{}:{}:{}:{}:{}",
-            market.market_id, facility_id, market.delivery_start_time, index, is_bid
-        )
-        .as_str(),
-    );
+    let order_id = parse_or_hash_bytes16(&Uuid::new_v4().to_string());
     let delivery_start: u64 =
         string_to_timestamp(&market.delivery_start_time).expect("invalid delivery_start_time");
     (
         order_id,
-        parse_or_hash_bytes16(facility_id.as_str()),
+        parse_or_hash_bytes16(owner_id.as_str()),
         parse_or_hash_bytes16(market.market_id.as_str()),
         delivery_start,
         now,
@@ -154,22 +151,26 @@ fn build_order_param(
         is_bid,
     )
 }
-
-pub fn create_input_orders(
+//
+pub async fn create_input_orders(
     forecasts: Vec<ForecastSchema>,
     market: MarketSchema,
-    owner: Address,
-) -> Vec<EvmOrderParamsTuple> {
+) -> Result<Vec<EvmOrderParamsTuple>> {
     let now: u64 = get_current_timestamp_in_secs();
-    let _owner = owner;
 
     let mut input_orders = Vec::new();
+    let facility_owner_mapping =
+        fetch_facility_owner_mapping("EWDS_COMMUNITY_CLIENT_ID", "gsycommunityclient").await?;
 
     for (index, forecast) in forecasts.into_iter().enumerate() {
+        let Some(owner_id) = facility_owner_mapping.get(&forecast.facility_id) else {
+            warn!("No owner mapping for facility_id={}", forecast.facility_id);
+            continue;
+        };
         if forecast.energy_kwh > 0. {
             input_orders.push(build_order_param(
                 &forecast,
-                &forecast.facility_id,
+                &owner_id.clone(),
                 &market,
                 now,
                 index,
@@ -178,7 +179,7 @@ pub fn create_input_orders(
         } else if forecast.energy_kwh < 0. {
             input_orders.push(build_order_param(
                 &forecast,
-                &forecast.facility_id,
+                &owner_id.clone(),
                 &market,
                 now,
                 index,
@@ -186,5 +187,5 @@ pub fn create_input_orders(
             ));
         }
     }
-    input_orders
+    Ok(input_orders)
 }
