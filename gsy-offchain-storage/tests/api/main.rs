@@ -1,4 +1,5 @@
 mod evm_integration;
+mod ewds_handler;
 mod grid_topology;
 mod health_check;
 mod helpers;

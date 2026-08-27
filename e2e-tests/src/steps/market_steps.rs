@@ -115,6 +115,7 @@ async fn submit_market_forecasts(world: &mut MyWorld, energy: f64) {
 
 #[when("the Market Orchestrator opens the Spot market for the next delivery slot")]
 async fn wait_for_market_to_open(world: &mut MyWorld) {
+    world.community_id = unique_community_id("default");
     upsert_default_community(world).await;
 
     let (_, next_timeslot) = get_last_and_next_timeslot();
@@ -261,7 +262,7 @@ async fn wait_for_two_community_markets(world: &mut MyWorld) {
 async fn upsert_default_community(world: &MyWorld) {
     let community = EnergyCommunitySchema {
         community_id: world.community_id.clone(),
-        community_name: "E2E Community".to_string(),
+        community_name: format!("E2E Community {}", world.community_id),
         sites: vec!["E2E Site".to_string()],
     };
 

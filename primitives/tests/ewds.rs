@@ -1,14 +1,16 @@
 use primitives::db_api_schema::{
     grid_topology::EnergyCommunitySchema,
+    market::{MarketSchema, MarketType, MatchingAlgorithm},
     orders::{DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus},
     trades::{
         ClearingResultSchema, ClearingStatus, DbTradeSchema, NoBidReason, TradeParameters,
         TradeStatus,
     },
 };
+use primitives::ewds::EwdsOperation;
 use primitives::ewds::dto::{
-    energy_type_from_ewds, energy_type_to_ewds, EwdsClearingResultDto, EwdsCommunityDto,
-    EwdsOrderDto, EwdsTradeDto,
+    EwdsClearingResultDto, EwdsCommunityDto, EwdsMarketDto, EwdsOrderDto, EwdsTradeDto,
+    energy_type_from_ewds, energy_type_to_ewds,
 };
 use serde_json::Value;
 use std::str::FromStr;
@@ -316,5 +318,70 @@ mod tests {
     #[test]
     fn unknown_no_bid_reason_is_error() {
         assert!(NoBidReason::from_str("gremlins").is_err());
+    }
+
+    fn market() -> MarketSchema {
+        MarketSchema {
+            market_id: "market-id".to_string(),
+            community_id: "community-id".to_string(),
+            opening_time: "00000000001700000000".to_string(),
+            closing_time: "00000000001700001800".to_string(),
+            delivery_start_time: "00000000001700001800".to_string(),
+            delivery_end_time: "00000000001700002700".to_string(),
+            market_type: MarketType::Spot,
+            matching_algorithm: MatchingAlgorithm::PayAsBid,
+            created_at: "00000000001699999000".to_string(),
+        }
+    }
+
+    #[test]
+    fn market_db_to_ewds_maps_fields() {
+        let dto = EwdsMarketDto::from(market());
+
+        assert_eq!(dto.market_id, "market-id");
+        assert_eq!(dto.community_id, "community-id");
+        assert_eq!(dto.opening_time, "00000000001700000000");
+        assert_eq!(dto.closing_time, "00000000001700001800");
+        assert_eq!(dto.delivery_start_time, "00000000001700001800");
+        assert_eq!(dto.delivery_end_time, "00000000001700002700");
+        assert_eq!(dto.market_type, MarketType::Spot);
+        assert_eq!(dto.matching_algorithm, MatchingAlgorithm::PayAsBid);
+        assert_eq!(dto.created_at, "00000000001699999000");
+    }
+
+    #[test]
+    fn market_round_trip_preserves_schema() {
+        let src = market();
+        let back = MarketSchema::from(EwdsMarketDto::from(src.clone()));
+        assert_eq!(back, src);
+    }
+
+    #[test]
+    fn market_dto_serialises_camel_case_with_wire_enums() {
+        let json = serde_json::to_value(EwdsMarketDto::from(market())).unwrap();
+
+        assert_eq!(json["marketId"], serde_json::json!("market-id"));
+        assert_eq!(json["communityId"], serde_json::json!("community-id"));
+        assert_eq!(
+            json["openingTime"],
+            serde_json::json!("00000000001700000000")
+        );
+        assert_eq!(
+            json["deliveryStartTime"],
+            serde_json::json!("00000000001700001800")
+        );
+        assert_eq!(json["marketType"], serde_json::json!("spot"));
+        assert_eq!(json["matchingAlgorithm"], serde_json::json!("pay_as_bid"));
+        assert_eq!(json["createdAt"], serde_json::json!("00000000001699999000"));
+    }
+
+    #[test]
+    fn markets_query_operation_wire_name() {
+        assert_eq!(EwdsOperation::MarketsQuery.as_str(), "markets.query");
+        assert_eq!(
+            serde_json::to_value(EwdsOperation::MarketsQuery).unwrap(),
+            serde_json::json!("markets.query")
+        );
+        assert!(EwdsOperation::ALL.contains(&EwdsOperation::MarketsQuery));
     }
 }

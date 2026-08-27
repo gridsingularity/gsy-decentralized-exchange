@@ -1,14 +1,14 @@
 pub mod dto;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use dto::{
     EwdsDeliverySummary, EwdsMessageDto, EwdsQueryResponse, EwdsRequestEnvelope,
     EwdsSendMessageDto, EwdsSendMessageResponse,
 };
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use std::{env, fmt, time::Instant};
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 use tracing::warn;
 
 const DEFAULT_GATEWAY_URL: &str = "http://ewds-gateway-api:3333";
@@ -31,15 +31,21 @@ pub enum EwdsOperation {
     CommunityUpsert,
     #[serde(rename = "communities.query")]
     CommunitiesQuery,
+    #[serde(rename = "clearing_results.query")]
+    ClearingResultsQuery,
+    #[serde(rename = "markets.query")]
+    MarketsQuery,
 }
 
 impl EwdsOperation {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 7] = [
         Self::OrdersQuery,
         Self::TradesQuery,
         Self::MeasurementsQuery,
         Self::CommunityUpsert,
         Self::CommunitiesQuery,
+        Self::ClearingResultsQuery,
+        Self::MarketsQuery,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -49,6 +55,8 @@ impl EwdsOperation {
             Self::MeasurementsQuery => "measurements.query",
             Self::CommunityUpsert => "community.upsert",
             Self::CommunitiesQuery => "communities.query",
+            Self::ClearingResultsQuery => "clearing_results.query",
+            Self::MarketsQuery => "markets.query",
         }
     }
 
@@ -59,6 +67,8 @@ impl EwdsOperation {
             Self::MeasurementsQuery => "measurements-query",
             Self::CommunityUpsert => "community-upsert",
             Self::CommunitiesQuery => "communities-query",
+            Self::ClearingResultsQuery => "clearing_results-query",
+            Self::MarketsQuery => "markets-query",
         }
     }
 }
@@ -82,6 +92,8 @@ pub struct EwdsTopicConfig {
     measurements: EwdsTopicPair,
     community_upsert: EwdsTopicPair,
     communities: EwdsTopicPair,
+    clearing_results: EwdsTopicPair,
+    markets: EwdsTopicPair,
 }
 
 impl Default for EwdsTopicConfig {
@@ -106,6 +118,14 @@ impl Default for EwdsTopicConfig {
             communities: EwdsTopicPair {
                 request: "communitiesQuery".to_string(),
                 response: "communitiesQueryResponse".to_string(),
+            },
+            clearing_results: EwdsTopicPair {
+                request: "clearingResultsQuery".to_string(),
+                response: "clearingResultsQueryResponse".to_string(),
+            },
+            markets: EwdsTopicPair {
+                request: "marketsQuery".to_string(),
+                response: "marketsQueryResponse".to_string(),
             },
         }
     }
@@ -165,6 +185,26 @@ impl EwdsTopicConfig {
                     defaults.communities.response.as_str(),
                 ),
             },
+            clearing_results: EwdsTopicPair {
+                request: env_or(
+                    "EWDS_CLEARING_RESULTS_REQUEST_TOPIC",
+                    defaults.clearing_results.request.as_str(),
+                ),
+                response: env_or(
+                    "EWDS_CLEARING_RESULTS_RESPONSE_TOPIC",
+                    defaults.clearing_results.response.as_str(),
+                ),
+            },
+            markets: EwdsTopicPair {
+                request: env_or(
+                    "EWDS_MARKETS_REQUEST_TOPIC",
+                    defaults.markets.request.as_str(),
+                ),
+                response: env_or(
+                    "EWDS_MARKETS_RESPONSE_TOPIC",
+                    defaults.markets.response.as_str(),
+                ),
+            },
         }
     }
 
@@ -175,6 +215,8 @@ impl EwdsTopicConfig {
             EwdsOperation::MeasurementsQuery => &self.measurements,
             EwdsOperation::CommunityUpsert => &self.community_upsert,
             EwdsOperation::CommunitiesQuery => &self.communities,
+            EwdsOperation::ClearingResultsQuery => &self.clearing_results,
+            EwdsOperation::MarketsQuery => &self.markets,
         }
     }
 }

@@ -1,22 +1,22 @@
 use crate::db::DatabaseWrapper;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use futures::future::join_all;
 use primitives::db_api_schema::profiles::{MeasurementPointType, MeasurementSchema};
 use primitives::ewds::dto::{
-    EwdsCommunityDto, EwdsInboundMessage, EwdsOrderDto, EwdsRequestEnvelope, EwdsResponseEnvelope,
-    EwdsSendMessageDto, EwdsTradeDto,
+    EwdsClearingResultDto, EwdsCommunityDto, EwdsInboundMessage, EwdsMarketDto, EwdsOrderDto,
+    EwdsRequestEnvelope, EwdsResponseEnvelope, EwdsSendMessageDto, EwdsTradeDto,
 };
 use primitives::ewds::{
-    client_id_for_suffix, env_var, ewds_rate_limit_backoff_ms, format_response_body,
-    is_rate_limited_message, is_rate_limited_response, parse_gateway_delivery_summary,
-    EwdsOperation, EwdsTopicConfig,
+    EwdsOperation, EwdsTopicConfig, client_id_for_suffix, env_var, ewds_rate_limit_backoff_ms,
+    format_response_body, is_rate_limited_message, is_rate_limited_response,
+    parse_gateway_delivery_summary,
 };
 use primitives::utils::timestamp_to_string_with_padding;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 use tracing::{error, info, warn};
 
 #[derive(Clone)]
@@ -109,6 +109,28 @@ struct TimeRangePayload {
     #[serde(alias = "areaUuid")]
     #[serde(default)]
     facility_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ClearingResultsPayload {
+    #[serde(alias = "marketId")]
+    market_id: String,
+}
+
+#[derive(Deserialize)]
+struct MarketsQueryPayload {
+    #[serde(alias = "marketId")]
+    #[serde(default)]
+    market_id: Option<String>,
+    #[serde(alias = "communityId")]
+    #[serde(default)]
+    community_id: Option<String>,
+    #[serde(alias = "startTime")]
+    #[serde(default)]
+    start_time: Option<String>,
+    #[serde(alias = "endTime")]
+    #[serde(default)]
+    end_time: Option<String>,
 }
 
 pub async fn start_ewds_request_handler(db: DatabaseWrapper, config: EwdsHandlerConfig) {
@@ -267,7 +289,7 @@ fn remember_request_id(
     }
 }
 
-async fn handle_request(
+pub async fn handle_request(
     db: &DatabaseWrapper,
     client: &Client,
     config: &EwdsHandlerConfig,
@@ -388,6 +410,60 @@ async fn handle_request(
                 .collect::<Vec<_>>();
             info!(
                 "Publishing EWDS communities.query response (request_id={}, communities={})",
+                request_id,
+                data.len()
+            );
+
+            send_success_response(client, config, request_id, response_topic.as_str(), data).await
+        }
+        EwdsOperation::ClearingResultsQuery => {
+            let payload =
+                serde_json::from_value::<ClearingResultsPayload>(envelope.payload.clone())
+                    .map_err(|e| anyhow!("clearing_results.query payload parse error: {}", e))?;
+            let request_id = envelope.request_id;
+            let results = db
+                .clearing_results()
+                .get_by_market(&payload.market_id)
+                .await
+                .map_err(|e| anyhow!("clearing_results.query DB error: {}", e))?;
+
+            let data = results
+                .into_iter()
+                .map(EwdsClearingResultDto::from)
+                .collect::<Vec<_>>();
+            info!(
+                "Publishing EWDS clearing_results.query response (request_id={}, results={})",
+                request_id,
+                data.len()
+            );
+
+            send_success_response(client, config, request_id, response_topic.as_str(), data).await
+        }
+        EwdsOperation::MarketsQuery => {
+            let payload = serde_json::from_value::<MarketsQueryPayload>(envelope.payload.clone())
+                .map_err(|e| anyhow!("markets.query payload parse error: {}", e))?;
+            let request_id = envelope.request_id;
+
+            info!(
+                "Handling EWDS markets.query request (request_id={})",
+                request_id
+            );
+
+            let data = db
+                .markets()
+                .filter(
+                    payload.market_id,
+                    payload.community_id,
+                    payload.start_time,
+                    payload.end_time,
+                )
+                .await
+                .map_err(|e| anyhow!("markets.query DB error: {}", e))?
+                .into_iter()
+                .map(EwdsMarketDto::from)
+                .collect::<Vec<_>>();
+            info!(
+                "Publishing EWDS markets.query response (request_id={}, markets={})",
                 request_id,
                 data.len()
             );
