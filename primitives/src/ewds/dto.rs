@@ -100,6 +100,8 @@ pub struct EwdsOrderDto {
     pub updated_at: Option<u64>,
     pub reject_reason: Option<String>,
     pub preferred_trading_partner: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preferred_energy_rate: Option<f64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
@@ -160,6 +162,10 @@ impl From<DbOrderSchema> for EwdsOrderDto {
                 .requirements
                 .as_ref()
                 .and_then(|r| r.trading_partner_id.clone()),
+            preferred_energy_rate: order
+                .requirements
+                .as_ref()
+                .and_then(|r| r.preferred_energy_rate),
         }
     }
 }
@@ -170,6 +176,7 @@ impl TryFrom<EwdsOrderDto> for DbOrderSchema {
     fn try_from(order: EwdsOrderDto) -> Result<Self> {
         let requirements = if order.energy_source_preference.is_some()
             || order.preferred_trading_partner.is_some()
+            || order.preferred_energy_rate.is_some()
         {
             Some(DbRequirements {
                 trading_partner_id: order.preferred_trading_partner.clone(),
@@ -177,7 +184,12 @@ impl TryFrom<EwdsOrderDto> for DbOrderSchema {
                     Some(ref pref) => Some(energy_type_from_ewds(pref)?),
                     None => None,
                 },
-                preferred_energy_rate: Some(order.price_limit),
+                preferred_energy_rate: order.preferred_energy_rate.or_else(|| {
+                    order
+                        .preferred_trading_partner
+                        .as_ref()
+                        .map(|_| order.price_limit)
+                }),
             })
         } else {
             None

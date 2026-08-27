@@ -9,7 +9,7 @@ use primitives::ewds::dto::{
 use primitives::ewds::{
     EwdsOperation, EwdsTopicConfig, client_id_for_suffix, env_var, ewds_rate_limit_backoff_ms,
     format_response_body, is_rate_limited_message, is_rate_limited_response,
-    parse_gateway_delivery_summary,
+    is_transient_gateway_message, is_transient_gateway_response, parse_gateway_delivery_summary,
 };
 use primitives::utils::timestamp_to_string_with_padding;
 use reqwest::Client;
@@ -180,7 +180,9 @@ async fn run_topic_worker(
                     "EWDS {} worker batch processing failed: {}",
                     operation, error
                 );
-                if is_rate_limited_message(error.to_string().as_str()) {
+                if is_rate_limited_message(error.to_string().as_str())
+                    || is_transient_gateway_message(error.to_string().as_str())
+                {
                     let delay_ms = ewds_rate_limit_backoff_ms(rate_limit_attempt);
                     rate_limit_attempt = rate_limit_attempt.saturating_add(1);
                     delay_ms
@@ -618,6 +620,17 @@ async fn send_message_with_fqcn(
             let delay_ms = ewds_rate_limit_backoff_ms(delivery_attempt);
             warn!(
                 "EWDS rate limit while publishing response for topic '{}'; retrying in {} ms",
+                request_body.topic_name, delay_ms
+            );
+            delivery_attempt = delivery_attempt.saturating_add(1);
+            sleep(Duration::from_millis(delay_ms)).await;
+            continue;
+        }
+
+        if is_transient_gateway_response(status, response_body.as_str()) {
+            let delay_ms = ewds_rate_limit_backoff_ms(delivery_attempt);
+            warn!(
+                "EWDS transient gateway error while publishing response for topic '{}'; retrying in {} ms",
                 request_body.topic_name, delay_ms
             );
             delivery_attempt = delivery_attempt.saturating_add(1);

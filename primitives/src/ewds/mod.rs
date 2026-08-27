@@ -386,6 +386,17 @@ impl EwdsClient {
                 continue;
             }
 
+            if is_transient_gateway_response(send_status, &body) {
+                let delay_ms = ewds_rate_limit_backoff_ms(delivery_attempt);
+                warn!(
+                    "EWDS transient gateway error while sending {} request; retrying in {} ms",
+                    operation, delay_ms
+                );
+                delivery_attempt = delivery_attempt.saturating_add(1);
+                sleep(Duration::from_millis(delay_ms)).await;
+                continue;
+            }
+
             return Err(anyhow!(
                 "EWDS message send failed for {}: HTTP {}{}",
                 operation,
@@ -495,6 +506,17 @@ impl EwdsClient {
                     continue;
                 }
 
+                if is_transient_gateway_response(status, &body) {
+                    let delay_ms = ewds_rate_limit_backoff_ms(rate_limit_attempt);
+                    warn!(
+                        "EWDS transient gateway error while polling {} response; retrying in {} ms",
+                        pending_query.operation, delay_ms
+                    );
+                    rate_limit_attempt = rate_limit_attempt.saturating_add(1);
+                    sleep(Duration::from_millis(delay_ms)).await;
+                    continue;
+                }
+
                 return Err(anyhow!(
                     "EWDS response poll failed for {} (request_id={}): HTTP {}{}",
                     pending_query.operation,
@@ -531,6 +553,10 @@ pub fn is_rate_limited_response(status: reqwest::StatusCode, body: &str) -> bool
     status == reqwest::StatusCode::TOO_MANY_REQUESTS || is_rate_limited_message(body)
 }
 
+pub fn is_transient_gateway_response(status: reqwest::StatusCode, body: &str) -> bool {
+    status.is_server_error() || is_transient_gateway_message(body)
+}
+
 pub fn parse_gateway_delivery_summary(body: &str) -> Result<EwdsDeliverySummary> {
     serde_json::from_str::<EwdsSendMessageResponse>(body)
         .map(|response| response.recipients)
@@ -542,6 +568,14 @@ pub fn is_rate_limited_message(message: &str) -> bool {
     normalized.contains("status code 429")
         || normalized.contains("\"statuscode\":429")
         || normalized.contains("too many requests")
+}
+
+pub fn is_transient_gateway_message(message: &str) -> bool {
+    let normalized = message.to_ascii_lowercase();
+    normalized.contains("timeout or no response waiting for nats jetstream server")
+        || normalized.contains("cannot destructure property 'status' of 'e.response'")
+        || normalized.contains("\"statuscode\":500")
+        || normalized.contains("http 500 internal server error")
 }
 
 pub fn ewds_rate_limit_backoff_ms(attempt: u32) -> u64 {
@@ -679,6 +713,26 @@ mod tests {
     #[test]
     fn does_not_treat_an_unrelated_bad_request_as_rate_limit() {
         assert!(!is_rate_limited_response(
+            reqwest::StatusCode::BAD_REQUEST,
+            r#"{"reason":"Channel not found","statusCode":400}"#
+        ));
+    }
+
+    #[test]
+    fn recognizes_transient_gateway_failures() {
+        assert!(is_transient_gateway_response(
+            reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+            ""
+        ));
+        assert!(is_transient_gateway_response(
+            reqwest::StatusCode::BAD_REQUEST,
+            r#"{"reason":"Timeout or no response waiting for NATS JetStream server"}"#
+        ));
+    }
+
+    #[test]
+    fn does_not_treat_an_unrelated_bad_request_as_transient() {
+        assert!(!is_transient_gateway_response(
             reqwest::StatusCode::BAD_REQUEST,
             r#"{"reason":"Channel not found","statusCode":400}"#
         ));
