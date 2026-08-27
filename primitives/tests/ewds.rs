@@ -27,7 +27,7 @@ mod tests {
             time_slot: 10,
             creation_time: 9,
             energy_kWh: 4.5,
-            energy_rate: 12.0,
+            energy_rate: 20.0,
             created_by: "actor-id".to_string(),
             requirements: Some(DbRequirements {
                 trading_partner_id: Some("partner-id".to_string()),
@@ -48,7 +48,8 @@ mod tests {
         assert_eq!(dto.order_status, "submitted");
         assert_eq!(dto.time_slot, 10);
         assert_eq!(dto.quantity, 4.5);
-        assert_eq!(dto.price_limit, 12.0);
+        assert_eq!(dto.price_limit, 20.0);
+        assert_eq!(dto.preferred_energy_rate, Some(12.0));
         assert_eq!(dto.energy_source_preference.as_deref(), Some("GREEN"));
         assert_eq!(dto.energy_type.as_deref(), Some("NONE")); // no attributes -> default
         assert_eq!(dto.preferred_trading_partner.as_deref(), Some("partner-id"));
@@ -66,7 +67,7 @@ mod tests {
         assert_eq!(db.status, OrderStatus::Open);
         assert_eq!(db.time_slot, 10);
         assert_eq!(db.energy_kWh, 4.5);
-        assert_eq!(db.energy_rate, 12.0);
+        assert_eq!(db.energy_rate, 20.0);
         assert_eq!(db.created_by, "actor-id");
 
         // requirements rebuilt from energy_source_preference + preferred_trading_partner
