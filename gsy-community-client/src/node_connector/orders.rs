@@ -2,6 +2,7 @@ use crate::time_utils::get_current_timestamp_in_secs;
 use anyhow::{Error, Result};
 use ethers::prelude::*;
 use primitives::db_api_schema::market::MarketSchema;
+use primitives::db_api_schema::orders::{energy_type_to_contract, EnergyType};
 use primitives::db_api_schema::profiles::ForecastSchema;
 use primitives::utils::{
     string_to_timestamp,
@@ -9,13 +10,13 @@ use primitives::utils::{
     create_encrypted_bytes16_from_string,
     parse_uuid_or_hex_bytes16
 };
+
 use std::str::FromStr;
 use tracing::{info, warn};
 use uuid::Uuid;
 
 const BID_RATE: f64 = 0.3;
 const OFFER_RATE: f64 = 0.07;
-const ENERGY_TYPE_UNSPECIFIED: u8 = 0;
 
 pub type EvmOrderParamsTuple = (
     [u8; 16],
@@ -151,8 +152,8 @@ async fn build_order_param(
         now,
         (forecast.energy_kwh.abs() * NODE_FLOAT_SCALING_FACTOR) as u64,
         (forecast.energy_kwh.abs() * rate_multiplier * NODE_FLOAT_SCALING_FACTOR) as u64,
-        ENERGY_TYPE_UNSPECIFIED,
-        ENERGY_TYPE_UNSPECIFIED,
+        energy_type_to_contract(&EnergyType::None),
+        energy_type_to_contract(&EnergyType::None),
         is_bid,
     ))
 }

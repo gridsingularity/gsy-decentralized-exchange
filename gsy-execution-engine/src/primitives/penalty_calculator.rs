@@ -1,4 +1,4 @@
-use primitives::db_api_schema::{profiles::MeasurementSchema, trades::TradeSchema};
+use primitives::db_api_schema::{profiles::MeasurementSchema, trades::DbTradeSchema};
 use primitives::utils::{
     bytes16_to_hex,
     create_encrypted_bytes16_from_string
@@ -23,7 +23,7 @@ pub struct Penalty {
 ///
 /// # Arguments
 ///
-/// * `trades` - A slice of TradeSchema records.
+/// * `trades` - A slice of DbTradeSchema records.
 /// * `measurements` - A slice of MeasurementSchema records.
 /// * `penalty_rate` - The penalty rate as a f64 (e.g., 0.10 for 10%).
 ///
@@ -31,7 +31,7 @@ pub struct Penalty {
 ///
 /// A vector of Penalty structs.
 pub fn compute_penalties(
-    trades: &[TradeSchema],
+    trades: &[DbTradeSchema],
     measurements: &[MeasurementSchema],
     penalty_rate: f64,
 ) -> Vec<Penalty> {
@@ -48,9 +48,10 @@ pub fn compute_penalties(
 
     // Iterate over each trade and compute the penalty if a measurement exists.
     for trade in trades {
-        // For consumers, we use the Bid's area and market.
-
-        if let Some(&measured_energy) = measurement_map.get(&trade.bid.area_uuid.clone()) {
+        if let Some(&measured_energy) = measurement_map
+            .get(&trade.buyer)
+            .or_else(|| measurement_map.get(&trade.seller))
+        {
             let traded_energy = trade.parameters.selected_energy_kWh;
 
             // Compute delta = measured_energy - traded_energy.
@@ -96,7 +97,7 @@ mod tests {
     use primitives::db_api_schema::{
         orders::{DbOrderSchema, OrderEnum, OrderStatus},
         profiles::MeasurementSchema,
-        trades::{TradeParameters, TradeSchema, TradeStatus},
+        trades::{DbTradeSchema, TradeParameters, TradeStatus},
     };
     use primitives::utils::{
         bytes16_to_hex,
@@ -117,7 +118,6 @@ mod tests {
             },
             area_uuid: actor_id.clone(),
             market_id: "market-1".to_string(),
-            nonce: None,
             time_slot: 1_000,
             creation_time: 900,
             energy_kWh: 10.0,
@@ -128,10 +128,10 @@ mod tests {
         }
     }
 
-    fn trade() -> TradeSchema {
+    fn trade() -> DbTradeSchema {
         let bid = order("bid-1", "areaalice", true);
         let offer = order("offer-1", "areabob", false);
-        TradeSchema {
+        DbTradeSchema {
             trade_uuid: "trade-1".to_string(),
             status: TradeStatus::Settled,
             seller: offer.created_by.clone(),
@@ -139,12 +139,8 @@ mod tests {
             market_id: "market-1".to_string(),
             time_slot: 1_000,
             creation_time: 950,
-            offer,
             offer_hash: "offer-1".to_string(),
-            bid,
             bid_hash: "bid-1".to_string(),
-            residual_offer: None,
-            residual_bid: None,
             residual_offer_id: None,
             residual_bid_id: None,
             parameters: TradeParameters {

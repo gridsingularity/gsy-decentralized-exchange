@@ -1,9 +1,8 @@
 use crate::helpers::{init_app, stop_app};
 use actix_web::web;
 use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
-use primitives::db_api_schema::trades::{
-    ClearingResultSchema, ClearingStatus, MarketRoleSchema,
-};
+use primitives::db_api_schema::trades::MarketRoleSchema;
+use primitives::ewds::dto::EwdsClearingResultDto;
 
 fn make_market(market_id: &str, community_id: &str, opening_time: &str) -> MarketSchema {
     MarketSchema {
@@ -110,22 +109,23 @@ async fn get_market_returns_404_for_wrong_market_id() {
 async fn post_and_get_clearing_result() {
     let app = init_app().await;
     let address = app.address.clone();
-    let result = ClearingResultSchema {
+    let clearing_result = EwdsClearingResultDto {
         market_id: "DEX-SPOT-0001".to_string(),
-        clearing_status: ClearingStatus::Cleared,
+        clearing_status: "final".to_string(),
+        no_bid_reason: None,
         clearing_price: 0.213,
         total_supply: 3.75,
         total_demand: 2.10,
-        traded_quantity: 2.10,
+        trade_quantity: 2.10,
         num_trades: 6,
         tx_hash: "0xabc123def456789".to_string(),
-        clearing_time: "2026-03-28T09:45:00Z".to_string(),
+        created_at: 1_700_000_000,
     };
 
     let client = reqwest::Client::new();
     let resp = client
         .post(&format!("{}/clearing-results", &address))
-        .json(&result)
+        .json(&clearing_result)
         .send()
         .await
         .unwrap();
@@ -140,7 +140,7 @@ async fn post_and_get_clearing_result() {
         .await
         .unwrap();
     assert_eq!(200, resp.status().as_u16());
-    let saved: Vec<ClearingResultSchema> = resp.json().await.unwrap();
+    let saved: Vec<EwdsClearingResultDto> = resp.json().await.unwrap();
     assert_eq!(saved.len(), 1);
     assert_eq!(saved[0].num_trades, 6);
     stop_app(app).await;

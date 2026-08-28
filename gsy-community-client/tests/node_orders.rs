@@ -58,6 +58,8 @@ fn test_orders_to_evm_params_are_created_correctly() {
         bid_creation,
         bid_energy,
         bid_rate,
+        _bid_preferences,
+        _bid_attributes,
         bid_type,
     ) = input_orders[0];
     assert_eq!(bid_created_by, create_encrypted_bytes16_from_string("area1"));
@@ -76,6 +78,8 @@ fn test_orders_to_evm_params_are_created_correctly() {
         offer_creation,
         offer_energy,
         offer_rate,
+        _offer_preferences,
+        _offer_attributes,
         offer_type,
     ) = input_orders[1];
     assert_eq!(offer_created_by, create_encrypted_bytes16_from_string("area2"));
@@ -142,7 +146,7 @@ fn test_create_input_orders_skips_zero_energy_forecasts() {
 
     let orders = create_input_orders(forecasts, market, owner);
     assert_eq!(orders.len(), 1);
-    assert!(!orders[0].7);
+    assert!(!orders[0].9);
 }
 
 #[test]
@@ -179,9 +183,9 @@ fn test_create_input_orders_assigns_unique_order_ids_and_stable_side_mapping() {
     let orders = create_input_orders(forecasts, market, owner);
     assert_eq!(orders.len(), 3);
 
-    assert!(orders[0].7);
-    assert!(!orders[1].7);
-    assert!(orders[2].7);
+    assert!(orders[0].9);
+    assert!(!orders[1].9);
+    assert!(orders[2].9);
 
     let order_ids: HashSet<[u8; 16]> = orders.iter().map(|order| order.0).collect();
     assert_eq!(order_ids.len(), orders.len());

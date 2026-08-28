@@ -2,7 +2,7 @@ import { ethers } from "hardhat";
 
 export const ORDER_TYPE_BID = true;
 export const ORDER_TYPE_ASK = false;
-export const ENERGY_TYPE_UNSPECIFIED = 0;
+export const ENERGY_TYPE_NONE = 0;
 export const ENERGY_TYPE_GREEN = 1;
 export const ZERO_BYTES16 = "0x00000000000000000000000000000000";
 export const ERC1967_ADMIN_SLOT =

@@ -2,55 +2,47 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://intelligent-project.eu/ontology/v1.0.0/market/Trade",
   "title": "int:Trade",
-  "description": "A matched and settled energy trade between a buyer and a seller. Subclass of cim:MarketDocument.",
+  "description": "A matched and settled energy trade between a buyer and a seller. Subclass of cim:MarketDocument. Mirrors the Rust EwdsTradeDto (camelCase wire form; epoch-integer timestamp).",
   "type": "object",
   "properties": {
     "tradeId": {
-      "description": "Primary identifier. IRI: int:tradeId. UUID v4.",
-      "type": "string",
-      "format": "uuid"
+      "description": "Primary identifier. IRI: int:tradeId.",
+      "type": "string"
     },
     "marketId": {
-      "description": "FK to Market. IRI: int:marketId. UUID v4.",
-      "type": "string",
-      "format": "uuid"
+      "description": "FK to Market. IRI: int:marketId.",
+      "type": "string"
     },
     "bidId": {
-      "description": "FK to bid Order. IRI: int:bidId. UUID v4.",
-      "type": "string",
-      "format": "uuid"
+      "description": "FK to bid Order. IRI: int:bidId.",
+      "type": "string"
     },
     "buyerId": {
-      "description": "FK to buying Actor. IRI: int:buyerId. UUID v4.",
-      "type": "string",
-      "format": "uuid"
+      "description": "FK to buying Actor. IRI: int:buyerId.",
+      "type": "string"
     },
     "residualBidId": {
-      "description": "FK to residual bid Order. IRI: int:residualBidId. UUID v4. Nullable.",
+      "description": "FK to residual bid Order. IRI: int:residualBidId. Nullable.",
       "type": [
         "string",
         "null"
       ],
-      "format": "uuid",
       "default": null
     },
     "offerId": {
-      "description": "FK to offer Order. IRI: int:offerId. UUID v4.",
-      "type": "string",
-      "format": "uuid"
+      "description": "FK to offer Order. IRI: int:offerId.",
+      "type": "string"
     },
     "sellerId": {
-      "description": "FK to selling Actor. IRI: int:sellerId. UUID v4.",
-      "type": "string",
-      "format": "uuid"
+      "description": "FK to selling Actor. IRI: int:sellerId.",
+      "type": "string"
     },
     "residualOfferId": {
-      "description": "FK to residual offer Order. IRI: int:residualOfferId. UUID v4. Nullable.",
+      "description": "FK to residual offer Order. IRI: int:residualOfferId. Nullable.",
       "type": [
         "string",
         "null"
       ],
-      "format": "uuid",
       "default": null
     },
     "tradeStatus": {
@@ -72,10 +64,10 @@
       "description": "Settled trade price in EUR/kWh. IRI: int:tradePrice. Unit: EUR/kWh.",
       "type": "number"
     },
-    "tradedAt": {
-      "description": "Timestamp when the trade was created/matched. IRI: int:tradedAt. ISO 8601 with timezone.",
-      "type": "string",
-      "format": "date-time"
+    "timestamp": {
+      "description": "Trade time slot / creation timestamp. IRI: int:tradedAt. Unix epoch (seconds).",
+      "type": "integer",
+      "minimum": 0
     }
   },
   "required": [
@@ -88,7 +80,7 @@
     "tradeStatus",
     "tradeQuantity",
     "tradePrice",
-    "tradedAt"
+    "timestamp"
   ],
   "additionalProperties": false
 }

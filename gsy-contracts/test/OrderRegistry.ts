@@ -5,7 +5,7 @@ import {
   bytes16Id,
   deployUpgradeableContract,
   ENERGY_TYPE_GREEN,
-  ENERGY_TYPE_UNSPECIFIED,
+  ENERGY_TYPE_NONE,
   ORDER_TYPE_BID,
 } from "./utils";
 
@@ -43,7 +43,7 @@ describe("OrderRegistry", function () {
       energy: 100,
       energyRate: 50,
       energySourcePreference: ENERGY_TYPE_GREEN,
-      energyType: ENERGY_TYPE_UNSPECIFIED,
+      energyType: ENERGY_TYPE_NONE,
       isBid: ORDER_TYPE_BID,
     };
 

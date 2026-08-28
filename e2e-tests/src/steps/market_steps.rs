@@ -6,7 +6,9 @@ use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAda
 use gsy_community_client::time_utils::get_last_and_next_timeslot;
 use primitives::db_api_schema::profiles::ForecastSchema;
 use primitives::utils::parse_uuid_or_hex_bytes16;
-use primitives::MarketType;
+use primitives::{MarketType, MatchingAlgorithm};
+use std::env;
+use std::str::FromStr;
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::info;
@@ -32,21 +34,25 @@ async fn submit_market_forecasts_three_users(
 
     let facilities = vec![
         ExternalFacilityTopology {
-            facility_id: format!("area{}", user1),
+            facility_id: user1.clone(),
             facility_name: user1.clone(),
         },
         ExternalFacilityTopology {
-            facility_id: format!("area{}", user2),
+            facility_id: user2.clone(),
             facility_name: user2.clone(),
         },
         ExternalFacilityTopology {
-            facility_id: format!("area{}", user3),
+            facility_id: user3.clone(),
             facility_name: user3.clone(),
         },
     ];
 
     let market = adapter
-        .create_market("community1".to_string(), world.target_delivery_time)
+        .create_market(
+            "community1".to_string(),
+            world.target_delivery_time,
+            matching_algorithm_from_env(),
+        )
         .await
         .unwrap_or_else(|| {
             panic!(
@@ -83,6 +89,13 @@ async fn submit_market_forecasts_three_users(
     world.bid_forecast = Some(forecasts[0].clone());
     world.offer_forecast = Some(forecasts[1].clone());
     world.facilities_topology = facilities;
+}
+
+fn matching_algorithm_from_env() -> MatchingAlgorithm {
+    let configured_value = env::var("MATCHING_ALGORITHM")
+        .unwrap_or_else(|_| MatchingAlgorithm::default().to_string());
+    MatchingAlgorithm::from_str(configured_value.as_str())
+        .unwrap_or_else(|error| panic!("Invalid MATCHING_ALGORITHM: {}", error))
 }
 
 #[when(expr = "the community market and forecasts of {float} energy are submitted")]

@@ -2,45 +2,43 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://intelligent-project.eu/ontology/v1.0.0/market/Order",
   "title": "int:Order",
-  "description": "A single buy (Bid) or sell (Offer) order submission to a market slot. Subclass of cim:MarketFactors.",
+  "description": "A single buy (bid) or sell (offer) order submission to a market slot. Subclass of cim:MarketFactors. Mirrors the Rust EwdsOrderDto (camelCase wire form; epoch-integer timestamps).",
   "type": "object",
   "properties": {
     "orderId": {
-      "description": "Primary identifier. IRI: int:orderId. UUID v4.",
-      "type": "string",
-      "format": "uuid"
+      "description": "Primary identifier. IRI: int:orderId.",
+      "type": "string"
     },
     "marketId": {
-      "description": "FK to Market. IRI: int:marketId. UUID v4.",
-      "type": "string",
-      "format": "uuid"
+      "description": "FK to Market. IRI: int:marketId.",
+      "type": "string"
     },
     "orderType": {
       "description": "Buy or sell order. IRI: int:orderType.",
       "type": "string",
       "enum": [
-        "Bid",
-        "Offer"
+        "bid",
+        "offer"
       ]
     },
     "orderStatus": {
-      "description": "Lifecycle status of this order submission. IRI: int:orderStatus.",
+      "description": "Lifecycle status of this order submission. IRI: int:orderStatus. Producers emit 'submitted'/'executed'/'cancelled'/'expired'; consumers additionally accept 'partially_filled', 'filled' and 'rejected' inbound.",
       "type": "string",
       "enum": [
-        "Submitted",
-        "PartiallyFilled",
-        "Filled",
-        "Cancelled",
-        "Expired",
-        "Rejected",
-        "Executed"
+        "submitted",
+        "partially_filled",
+        "filled",
+        "cancelled",
+        "expired",
+        "rejected",
+        "executed"
       ],
-      "default": "Submitted"
+      "default": "submitted"
     },
     "timeSlot": {
-      "description": "Target delivery timeslot. IRI: int:timeSlot. ISO 8601 with timezone.",
-      "type": "string",
-      "format": "date-time"
+      "description": "Target delivery timeslot. IRI: int:timeSlot. Unix epoch (seconds).",
+      "type": "integer",
+      "minimum": 0
     },
     "quantity": {
       "description": "Energy quantity in kWh. IRI: int:quantity. Unit: kWh. Must be > 0.",
@@ -52,21 +50,21 @@
       "type": "number"
     },
     "energySourcePreference": {
-      "description": "Preferred energy source types. IRI: int:energySourcePreference.",
+      "description": "Preferred energy source type. IRI: int:energySourcePreference.",
       "type": [
         "string",
         "null"
       ],
       "enum": [
+        "NONE",
         "GREEN",
         "PV",
         "HYDRO",
         "BIOMASS",
         "BATTERY",
-        "GREY",
         null
       ],
-      "default": null
+      "default": "NONE"
     },
     "energyType": {
       "description": "Energy type classification for this order. IRI: int:energyType.",
@@ -75,37 +73,36 @@
         "null"
       ],
       "enum": [
+        "NONE",
         "GREEN",
         "PV",
         "HYDRO",
         "BIOMASS",
         "BATTERY",
-        "GREY",
         null
       ],
-      "default": null
+      "default": "NONE"
     },
     "createdBy": {
-      "description": "FK to Actor who submitted. IRI: int:createdby. UUID v4.",
-      "type": "string",
-      "format": "uuid"
+      "description": "FK to Actor who submitted. IRI: int:createdby.",
+      "type": "string"
     },
-    "createdAt": {
-      "description": "Order creation datetime. IRI: int:createdAt. ISO 8601 with timezone.",
-      "type": "string",
-      "format": "date-time"
+    "creationTime": {
+      "description": "Order creation datetime. IRI: int:createdAt. Unix epoch (seconds).",
+      "type": "integer",
+      "minimum": 0
     },
     "updatedAt": {
-      "description": "Order last updated datetime. IRI: int:updatedAt. ISO 8601 with timezone.",
+      "description": "Order last updated datetime. IRI: int:updatedAt. Unix epoch (seconds). Nullable.",
       "type": [
-        "string",
+        "integer",
         "null"
       ],
-      "format": "date-time",
+      "minimum": 0,
       "default": null
     },
-    "cancellationReason": {
-      "description": "Human-readable cancellation reason. IRI: int:rejectionReason. Populated when orderStatus = Cancelled.",
+    "rejectReason": {
+      "description": "Human-readable reject/cancellation reason. IRI: int:rejectionReason. Populated when orderStatus = cancelled or rejected. Nullable.",
       "type": [
         "string",
         "null"
@@ -113,7 +110,7 @@
       "default": null
     },
     "preferredTradingPartner": {
-      "description": "Preferred trading partner preferences. IRI: int:preferredTradingPartner.",
+      "description": "Preferred trading partner. IRI: int:preferredTradingPartner. Nullable.",
       "type": [
         "string",
         "null"
@@ -130,7 +127,7 @@
     "quantity",
     "priceLimit",
     "createdBy",
-    "createdAt"
+    "creationTime"
   ],
   "additionalProperties": false
 }

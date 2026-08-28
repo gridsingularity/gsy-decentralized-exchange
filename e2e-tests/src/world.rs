@@ -5,7 +5,7 @@ use ethers::prelude::*;
 use gsy_community_client::external_api::ExternalFacilityTopology;
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::profiles::ForecastSchema;
-use primitives::db_api_schema::trades::TradeSchema;
+use primitives::db_api_schema::trades::DbTradeSchema;
 use primitives::utils::create_encrypted_bytes16_from_string;
 use primitives::MarketType;
 use reqwest::Client;
@@ -20,6 +20,15 @@ const DEFAULT_PRIVATE_KEY: &str =
 pub struct UserAccount {
     pub private_key: String,
     pub address: Address,
+}
+
+#[derive(Clone, Debug)]
+pub struct PayAsClearScenario {
+    pub accepted_order_ids: Vec<String>,
+    pub unmatched_bid_order_id: String,
+    pub unmatched_offer_order_id: String,
+    pub expected_match_count: usize,
+    pub preferred_order_ids: Option<(String, String)>,
 }
 
 #[derive(Debug, World)]
@@ -41,10 +50,13 @@ pub struct MyWorld {
     pub seller_id: String,
     pub bid_forecast: Option<ForecastSchema>,
     pub offer_forecast: Option<ForecastSchema>,
-    pub last_trade: Option<TradeSchema>,
+    pub last_trade: Option<DbTradeSchema>,
     pub last_charlie_offer_order_id: Option<String>,
     pub market_schema: Option<MarketSchema>,
     pub facilities_topology: Vec<ExternalFacilityTopology>,
+    pub pay_as_clear_scenario: Option<PayAsClearScenario>,
+    pub pay_as_clear_trades: Vec<DbTradeSchema>,
+    pub preferred_trade: Option<DbTradeSchema>,
 }
 
 impl MyWorld {
@@ -97,14 +109,17 @@ impl MyWorld {
             actor_registry_address,
             last_market_id: None,
             target_delivery_time: 0,
-            buyer_id: "areaalice".to_string(),
-            seller_id: "areabob".to_string(),
+            buyer_id: "alice".to_string(),
+            seller_id: "bob".to_string(),
             bid_forecast: None,
             offer_forecast: None,
             last_trade: None,
             last_charlie_offer_order_id: None,
             market_schema: None,
             facilities_topology: vec![],
+            pay_as_clear_scenario: None,
+            pay_as_clear_trades: vec![],
+            preferred_trade: None,
         })
     }
 
@@ -159,6 +174,6 @@ impl MyWorld {
         if !self.users.contains_key(user_name) {
             panic!("Unknown user '{}'", user_name);
         }
-        create_encrypted_bytes16_from_string(format!("area{}", user_name).as_str())
+        create_encrypted_bytes16_from_string(format!("{}", user_name).as_str())
     }
 }

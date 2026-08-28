@@ -2,6 +2,7 @@ use crate::db::DbRef;
 use actix_web::{web::Json, web::Query, HttpResponse, Responder};
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::trades::{ClearingResultSchema, MarketRoleSchema};
+use primitives::ewds::dto::EwdsClearingResultDto;
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -83,14 +84,20 @@ pub async fn post_market(market: Json<MarketSchema>, db: DbRef) -> impl Responde
     }
 }
 
-pub async fn post_clearing_result(result: Json<ClearingResultSchema>, db: DbRef) -> impl Responder {
-    match db
-        .get_ref()
-        .clearing_results()
-        .insert(result.to_owned())
-        .await
-    {
-        Ok(saved) => HttpResponse::Ok().json(saved),
+pub async fn post_clearing_result(
+    result: Json<EwdsClearingResultDto>,
+    db: DbRef,
+) -> impl Responder {
+    let db_result: ClearingResultSchema = match result.into_inner().try_into() {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!("Failed to convert EWDS clearing result: {:?}", e);
+            return HttpResponse::BadRequest().finish();
+        }
+    };
+
+    match db.get_ref().clearing_results().insert(db_result).await {
+        Ok(saved) => HttpResponse::Ok().json(EwdsClearingResultDto::from(saved)),
         Err(_) => HttpResponse::InternalServerError().finish(),
     }
 }
@@ -107,7 +114,13 @@ pub async fn get_clearing_results(db: DbRef, params: Query<ClearingResultQuery>)
         .get_by_market(&params.market_id)
         .await
     {
-        Ok(results) => HttpResponse::Ok().json(results),
+        Ok(results) => {
+            let dtos: Vec<EwdsClearingResultDto> = results
+                .into_iter()
+                .map(EwdsClearingResultDto::from)
+                .collect();
+            HttpResponse::Ok().json(dtos)
+        }
         Err(e) => {
             tracing::error!("Failed to execute query: {:?}", e);
             HttpResponse::InternalServerError().finish()

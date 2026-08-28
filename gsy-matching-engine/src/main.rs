@@ -2,7 +2,9 @@ use clap::Parser;
 use gsy_matching_engine::connectors::evm_subscribe;
 use gsy_matching_engine::utils::{Cli, Commands};
 use primitives::log::setup_logging;
+use primitives::MatchingAlgorithm;
 use std::env;
+use std::str::FromStr;
 use std::{thread, time};
 use tracing::{error, info};
 
@@ -37,6 +39,10 @@ async fn main() {
                         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
                             .to_string()
                     });
+                let matching_algorithm = env::var("MATCHING_ALGORITHM")
+                    .unwrap_or_else(|_| MatchingAlgorithm::default().to_string());
+                let matching_algorithm = MatchingAlgorithm::from_str(&matching_algorithm)
+                    .unwrap_or_else(|error| panic!("Invalid MATCHING_ALGORITHM: {}", error));
 
                 if trade_settlement_address == "0x0000000000000000000000000000000000000000" {
                     info!(
@@ -44,6 +50,7 @@ async fn main() {
                     );
                 }
                 info!("Using off-chain storage URL: {}", offchain_storage_url);
+                info!("Using matching algorithm: {}", matching_algorithm);
 
                 if let Err(error) =
                     evm_subscribe(
@@ -51,6 +58,7 @@ async fn main() {
                         node_url.clone(),
                         trade_settlement_address.clone(),
                         matching_engine_private_key.clone(),
+                        matching_algorithm.clone(),
                     )
                     .await
                 {
@@ -66,6 +74,7 @@ async fn main() {
                                 node_url.clone(),
                                 trade_settlement_address.clone(),
                                 matching_engine_private_key.clone(),
+                                matching_algorithm.clone(),
                             )
                             .await
                         {
