@@ -5,6 +5,7 @@ use chrono::Utc;
 use gsy_offchain_primitives::constants::GlobalConstants;
 use gsy_offchain_primitives::db_api_schema::market::MarketTopologySchema;
 use gsy_offchain_primitives::db_api_schema::profiles::MeasurementSchema;
+use gsy_offchain_primitives::utils::read_env_or;
 use std::collections::{HashMap, HashSet};
 use std::iter::FromIterator;
 use std::time::Duration;
@@ -20,7 +21,15 @@ impl MeasurementsManager {
     pub fn new() -> Self {
         MeasurementsManager {
             external_measurements_api: MeasurementInfluxDBConnection::new(),
-            offchain_storage_api: AreaMarketInfoAdapter::new(None),
+            // Must read OFFCHAIN_STORAGE_URL like the forecast path does. Defaulting to
+            // the `gsy-orderbook` alias only resolves under docker-compose.local-demo.yml,
+            // which defines that alias; on the two-host stack every service shares the
+            // Tailscale sidecar's namespace and has no DNS name at all, so a hardcoded
+            // host there would send every measurement into a dead name.
+            offchain_storage_api: AreaMarketInfoAdapter::new(Some(read_env_or(
+                "OFFCHAIN_STORAGE_URL",
+                "http://gsy-orderbook:8080".to_string(),
+            ))),
         }
     }
 

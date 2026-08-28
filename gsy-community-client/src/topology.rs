@@ -109,23 +109,30 @@ impl TopologyManager {
         external_asset_type: String,
         external_asset_subtype: Option<String>,
     ) -> AssetType {
-        match external_asset_type.as_str() {
-            "http://w3id.org/fedecom/battery#Battery" => AssetType::BATTERY,
-            "http://w3id.org/fedecom/energyasset#Meter" => {
-                if external_asset_subtype.is_some()
-                    && external_asset_subtype
-                        .unwrap()
-                        .eq("http://w3id.org/fedecom/energyasset#GridMeter")
+        // Compared without the URI scheme. The ontology serves these as `https://`, but every
+        // arm except the heat pump was written as `http://`, so Meter and PVSystem silently
+        // fell through to AREA -- which made `is_forecastable_meter` and `is_pv_asset` always
+        // false and left the forecast path unable to produce a single point.
+        let strip_scheme = |uri: &str| -> String {
+            uri.split_once("://").map(|(_, rest)| rest).unwrap_or(uri).to_string()
+        };
+        match strip_scheme(&external_asset_type).as_str() {
+            "w3id.org/fedecom/battery#Battery" => AssetType::BATTERY,
+            "w3id.org/fedecom/energyasset#Meter" => {
+                // The assets endpoint currently omits `assetSubType` entirely, so meters
+                // resolve to SMART_METER; both types are forecastable.
+                if external_asset_subtype.map(|subtype| strip_scheme(&subtype)).as_deref()
+                    == Some("w3id.org/fedecom/energyasset#GridMeter")
                 {
                     AssetType::GRID_METER
                 } else {
                     AssetType::SMART_METER
                 }
             }
-            "http://w3id.org/fedecom/energyasset#Boiler" => AssetType::BOILER,
-            "http://w3id.org/fedecom/energyasset#EVCharger" => AssetType::EV,
-            "https://w3id.org/hpont#HeatPumpSystem" => AssetType::HEAT_PUMP,
-            "http://w3id.org/fedecom/energyasset#PVSystem" => AssetType::PV,
+            "w3id.org/fedecom/energyasset#Boiler" => AssetType::BOILER,
+            "w3id.org/fedecom/energyasset#EVCharger" => AssetType::EV,
+            "w3id.org/hpont#HeatPumpSystem" => AssetType::HEAT_PUMP,
+            "w3id.org/fedecom/energyasset#PVSystem" => AssetType::PV,
             _ => AssetType::AREA,
         }
     }

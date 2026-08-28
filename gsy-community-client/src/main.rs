@@ -393,6 +393,15 @@ impl AppState {
 
 #[tokio::main]
 async fn main() {
+    // Without this every `info!`/`error!` below is discarded: `tracing` drops events when no
+    // subscriber is installed, so the service ran completely silently and a forecaster or
+    // InfluxDB failure left no trace at all. Same idiom as the market orchestrator, so
+    // RUST_LOG drives the level.
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
+
+    info!("Starting GSY Community Client...");
     let app_state = AppState::new();
     let ingest_state = app_state.clone();
     let publish_state = app_state.clone();
