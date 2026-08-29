@@ -1,4 +1,7 @@
-FROM rustlang/rust:nightly AS chef
+FROM rustlang/rust:nightly-2026-08-20 AS chef
+# Pinned deliberately: the floating `nightly` tag moved to a build whose never-type
+# fallback change breaks the pinned `mitsuhiko/redis-rs` revision the matching engine
+# depends on, so an unpinned rebuild of the handoff kit fails partway through.
 RUN cargo install cargo-chef
 
 # First prepare dependencies of offchain-primitives

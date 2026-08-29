@@ -63,6 +63,7 @@ services:
 
   gsy-offchain-storage:
     container_name: gsy-offchain-storage
+    restart: unless-stopped
     build:
       context: .
       dockerfile: ./gsy-offchain-storage/Dockerfile
@@ -107,6 +108,7 @@ services:
 
   gsy-matching-engine:
     container_name: gsy-matching-engine
+    restart: unless-stopped
     build:
       context: .
       dockerfile: ./gsy-matching-engine/Dockerfile
@@ -153,6 +155,7 @@ services:
 
   gsy-market-orchestrator:
     container_name: gsy-market-orchestrator
+    restart: unless-stopped
     build:
       context: .
       dockerfile: ./gsy-market-orchestrator/Dockerfile
@@ -173,6 +176,7 @@ services:
 
   gsy-execution-engine:
     container_name: gsy-execution-engine
+    restart: unless-stopped
     build:
       context: .
       dockerfile: ./gsy-execution-engine/Dockerfile
@@ -200,6 +204,7 @@ services:
 
   gsy-community-client:
     container_name: gsy-community-client
+    restart: unless-stopped
     build:
       context: .
       dockerfile: ./gsy-community-client/Dockerfile

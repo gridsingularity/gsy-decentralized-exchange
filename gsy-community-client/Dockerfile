@@ -1,4 +1,4 @@
-FROM rustlang/rust:nightly AS chef
+FROM rustlang/rust:nightly-2026-08-20 AS chef
 RUN cargo install cargo-chef
 
 # First prepare dependencies of offchain-primitives (a path dependency that also

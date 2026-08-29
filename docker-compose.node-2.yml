@@ -44,6 +44,10 @@ services:
     volumes:
       - gsy-node-2-data:/var/lib/gsy
       - ./.secrets/gsy-node-2:/keys
+    # No --rpc-external: Substrate refuses it on a validator unless RPC methods
+    # are unsafe. Not needed either — every RPC client (the engines, the
+    # healthcheck) shares this container's network namespace, so the default
+    # 127.0.0.1:9944 bind is already reachable to them over loopback.
     entrypoint:
       - /bin/sh
       - -c
@@ -57,7 +61,6 @@ services:
         $${GSY_PUBLIC_IP:+--public-addr=/ip4/$${GSY_PUBLIC_IP}/tcp/30333}
         $${GSY_RESERVED_NODES:+--reserved-nodes $${GSY_RESERVED_NODES} --reserved-only}
         --no-mdns
-        --rpc-external
         --rpc-methods=safe
         --rpc-cors=all
     healthcheck:

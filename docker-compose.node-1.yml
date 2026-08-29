@@ -74,6 +74,11 @@ services:
       - ./.secrets/gsy-node-1:/keys
       # Raw chain spec drop point; set GSY_CHAIN=/chainspec/poa.raw.json.
       - ./deployment/chainspec:/chainspec:ro
+    # No --rpc-external: Substrate refuses it on a validator unless RPC methods
+    # are unsafe. Not needed either — every RPC client (the engines, the
+    # healthcheck) shares this container's network namespace, so the default
+    # 127.0.0.1:9944 bind is already reachable to them over loopback. Reach
+    # this host's chain RPC through the archive on :9945 instead.
     entrypoint:
       - /bin/sh
       - -c
@@ -92,7 +97,6 @@ services:
         $${GSY_PUBLIC_IP:+--public-addr=/ip4/$${GSY_PUBLIC_IP}/tcp/30333}
         $${GSY_RESERVED_NODES:+--reserved-nodes $${GSY_RESERVED_NODES} --reserved-only}
         --no-mdns
-        --rpc-external
         --rpc-methods=safe
         --rpc-cors=all
     healthcheck:
@@ -124,6 +128,8 @@ services:
       - gsy-archive-data:/var/lib/gsy
       - ./.secrets/gsy-archive:/keys
       - ./deployment/chainspec:/chainspec:ro
+    # Shares the sidecar's netns with the validator, so it must not take the
+    # validator's default Prometheus port (9615) — first to bind wins.
     entrypoint:
       - /bin/sh
       - -c
@@ -143,6 +149,7 @@ services:
         $${GSY_RESERVED_NODES:+--reserved-nodes $${GSY_RESERVED_NODES} --reserved-only}
         --no-mdns
         --rpc-port=9945
+        --prometheus-port=9616
         --rpc-external
         --rpc-methods=safe
         --rpc-cors=all
