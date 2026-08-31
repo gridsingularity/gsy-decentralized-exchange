@@ -43,5 +43,5 @@ jobs:
             cd /root/gsy-decentralized-exchange
             git pull --ff-only origin ${{ github.ref_name }}  # update the repo in the server before pulling the images 
             docker compose -f docker-compose.staging.yml pull
-            docker compose -f docker-compose.staging.yml up -d
+            docker compose -f docker-compose.staging.yml --env-file .env.ewds.local up -d 
             docker image prune -f

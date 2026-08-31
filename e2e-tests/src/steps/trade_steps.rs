@@ -350,8 +350,8 @@ async fn submit_bid(world: &mut MyWorld, user_name: String) {
         address_to_full_hex(world.order_registry_address),
         world.private_key_for_user(user_name.as_str()),
     )
-    .await
-    .expect("Failed to publish bid order");
+        .await
+        .expect("Failed to publish bid order");
 }
 
 #[when(
@@ -379,7 +379,7 @@ async fn submit_preferred_partner_bid(
         Some(requirements),
         None,
     )
-    .await;
+        .await;
 }
 
 #[when(expr = "{string} submits an offer")]
@@ -394,8 +394,8 @@ async fn submit_offer(world: &mut MyWorld, user_name: String) {
         address_to_full_hex(world.order_registry_address),
         world.private_key_for_user(user_name.as_str()),
     )
-    .await
-    .expect("Failed to publish offer order");
+        .await
+        .expect("Failed to publish offer order");
 
     // Matching runs on block boundaries. Fast-forward local Anvil after both
     // orders are present in the registry.
@@ -426,7 +426,7 @@ async fn submit_preferred_partner_offer(
         None,
         Some(attributes),
     )
-    .await;
+        .await;
 }
 
 #[when(
@@ -495,7 +495,7 @@ async fn submit_combined_pay_as_clear_order_book(world: &mut MyWorld) {
         Some(preferred_bid_requirements),
         None,
     )
-    .await;
+        .await;
 
     let preferred_offer_attributes = DbAttributes {
         trading_partner_id: Some(actor_id_as_hex(world, "alice")),
@@ -510,7 +510,7 @@ async fn submit_combined_pay_as_clear_order_book(world: &mut MyWorld) {
         None,
         Some(preferred_offer_attributes),
     )
-    .await;
+        .await;
 
     wait_for_order_in_offchain_storage(world, preferred_bid.as_str()).await;
     wait_for_order_in_offchain_storage(world, preferred_offer.as_str()).await;
@@ -564,22 +564,34 @@ async fn assert_trade_settled_on_chain(world: &MyWorld, trade: &DbTradeSchema) {
     assert_eq!(bid_status, 2u8, "Bid order is not Executed on-chain");
     assert_eq!(offer_status, 2u8, "Offer order is not Executed on-chain");
 
-    let orders = query_market_orders(world).await;
-    let bid = orders
-        .iter()
-        .find(|order| order.order_id.eq_ignore_ascii_case(trade.bid_hash.as_str()))
-        .expect("Bid order not found in off-chain storage DB");
-    let offer = orders
-        .iter()
-        .find(|order| {
+    for attempt in 0..40 {
+        let orders = query_market_orders(world).await;
+        let bid_executed = orders.iter().any(|order| {
+            order.order_id.eq_ignore_ascii_case(trade.bid_hash.as_str())
+                && order.status == OrderStatus::Executed
+        });
+        let offer_executed = orders.iter().any(|order| {
             order
                 .order_id
                 .eq_ignore_ascii_case(trade.offer_hash.as_str())
-        })
-        .expect("Offer order not found in off-chain storage DB");
+                && order.status == OrderStatus::Executed
+        });
 
-    assert_eq!(bid.status, OrderStatus::Executed);
-    assert_eq!(offer.status, OrderStatus::Executed);
+        if bid_executed && offer_executed {
+            return;
+        }
+
+        info!(
+            "Off-chain order statuses not synchronized yet (attempt {}/40). Retrying...",
+            attempt + 1
+        );
+        sleep(Duration::from_millis(500)).await;
+    }
+
+    panic!(
+        "Timeout: off-chain order statuses were not updated for trade {}",
+        trade.trade_uuid
+    );
 }
 
 #[then("the matching engine matches the bid and offer and a trade is settled on-chain")]
