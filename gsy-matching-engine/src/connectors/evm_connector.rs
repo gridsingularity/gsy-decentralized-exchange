@@ -106,9 +106,9 @@ async fn run_matching_cycle(
     let prepared_orders =
         fetch_open_orders_from_orderbook_service(orderbook_url.to_string()).await?;
     info!(
-        "Prepared open orders: bids={:?}, offers={:?}",
-        prepared_orders.open_bids,
-        prepared_orders.open_offers
+        "Prepared open orders: bids={}, offers={}",
+        prepared_orders.open_bids.len(),
+        prepared_orders.open_offers.len()
     );
     if prepared_orders.open_bids.is_empty() || prepared_orders.open_offers.is_empty() {
         info!("No open bid/offer pairs to match");
@@ -133,8 +133,8 @@ async fn run_matching_cycle(
     }
 
     info!(
-        "Generated {:?} total matches using {}",
-        bid_offer_matches,
+        "Generated {} total matches using {}",
+        bid_offer_matches.len(),
         matching_algorithm
     );
     send_settle_batch_transaction(
