@@ -55,8 +55,8 @@ pub struct MyWorld {
     pub market_schema: Option<MarketSchema>,
     pub facilities_topology: Vec<ExternalFacilityTopology>,
     pub pay_as_clear_scenario: Option<PayAsClearScenario>,
-    pub pay_as_clear_trades: Vec<TradeSchema>,
-    pub preferred_trade: Option<TradeSchema>,
+    pub pay_as_clear_trades: Vec<DbTradeSchema>,
+    pub preferred_trade: Option<DbTradeSchema>,
 }
 
 impl MyWorld {
