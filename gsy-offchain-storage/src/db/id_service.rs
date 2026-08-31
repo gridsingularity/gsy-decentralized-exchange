@@ -5,18 +5,29 @@ use futures::StreamExt;
 use mongodb::bson::doc;
 use mongodb::options::ReturnDocument;
 use mongodb::{Collection, IndexModel};
+use mongodb::options::IndexOptions;
 use primitives::db_api_schema::ids::IdMappingSchema;
 use primitives::utils::{bytes16_to_hex, create_encrypted_bytes16_from_string};
 use std::ops::Deref;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub async fn init_id_mapping(db: &DatabaseWrapper) -> Result<()> {
-    let controller = db.id_mapping();
+pub async fn init_ids(db: &DatabaseWrapper) -> Result<()> {
+    let controller = db.ids();
     controller
-        .create_index(IndexModel::builder().keys(doc! {"onchain_id": 1}).build())
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! {"onchain_id": 1})
+                .options(IndexOptions::builder().unique(true).build())
+                .build(),
+        )
         .await?;
     controller
-        .create_index(IndexModel::builder().keys(doc! {"offchain_id": 1}).build())
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! {"offchain_id": 1})
+                .options(IndexOptions::builder().unique(true).build())
+                .build(),
+        )
         .await?;
     Ok(())
 }

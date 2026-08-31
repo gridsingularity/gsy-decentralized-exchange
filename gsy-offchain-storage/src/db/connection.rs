@@ -14,7 +14,7 @@ use crate::db::trade_service::{
     init_clearing_results, init_market_roles, init_trades, ClearingResultService,
     MarketRoleService, TradeService,
 };
-use crate::db::id_service::{init_id_mapping, IdService};
+use crate::db::id_service::{init_ids, IdService};
 use actix_web::web;
 use anyhow::Result;
 use mongodb::options::ClientOptions;
@@ -79,7 +79,7 @@ impl DatabaseWrapper {
     }
 
     // ID Mapping
-    pub fn id_mapping(&self) -> IdService {
+    pub fn ids(&self) -> IdService {
         self.into()
     }
 }
@@ -122,6 +122,6 @@ async fn preload(db: &DatabaseWrapper) -> Result<()> {
     init_communities(db).await?;
     init_sites(db).await?;
     init_facilities(db).await?;
-    init_id_mapping(db).await?;
+    init_ids(db).await?;
     Ok(())
 }

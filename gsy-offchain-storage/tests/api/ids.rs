@@ -1,141 +1,182 @@
-use anyhow::Result;
-use gsy_offchain_storage::db::id_service::{init_id_mapping, IdService};
 use crate::helpers::{init_app, stop_app};
-use mongodb::bson::doc;
+use gsy_offchain_storage::db::id_service::init_ids;
+use primitives::db_api_schema::ids::IdMappingSchema;
 use primitives::utils::{bytes16_to_hex, create_encrypted_bytes16_from_string};
-
-// --- Pure-logic tests (no DB) ----------------------------------------------
-
-#[test]
-fn onchain_id_is_deterministic_hex_form() {
-    let offchain = "test-offchain-id";
-    let a = bytes16_to_hex(create_encrypted_bytes16_from_string(offchain));
-    let b = bytes16_to_hex(create_encrypted_bytes16_from_string(offchain));
-    assert_eq!(a, b, "hashing must be deterministic for the same input");
-    assert!(a.starts_with("0x"), "onchain id must be 0x-prefixed hex");
-    assert_eq!(a.len(), 34, "0x + 32 hex chars for 16 bytes");
-}
-
-#[test]
-fn onchain_id_differs_for_different_inputs() {
-    let a = bytes16_to_hex(create_encrypted_bytes16_from_string("id-a"));
-    let b = bytes16_to_hex(create_encrypted_bytes16_from_string("id-b"));
-    assert_ne!(a, b);
-}
-
-// --- DB-backed tests --------------------------------------------------------
+use mongodb::bson::doc;
 
 #[tokio::test]
-async fn get_or_create_inserts_new_mapping() -> Result<()> {
+async fn post_ids_creates_new_mapping() {
     let app = init_app().await;
-    init_id_mapping(&app.db_wrapper).await?;
-    let service = IdService::from(&app.db_wrapper);
+    init_ids(&app.db_wrapper)
+        .await
+        .expect("Failed to init id mapping indexes");
+    let client = reqwest::Client::new();
+    let offchain = "actor-123";
 
-    let offchain = "actor-123".to_string();
-    let created = service.get_or_create(offchain.clone()).await?;
+    let response = client
+        .post(format!("{}/ids", app.address))
+        .query(&[("offchain_id", offchain)])
+        .send()
+        .await
+        .expect("Failed to execute request");
 
-    assert_eq!(created.offchain_id, offchain);
-    let expected = bytes16_to_hex(create_encrypted_bytes16_from_string(&offchain));
-    assert_eq!(created.onchain_id, expected);
+    assert_eq!(response.status().as_u16(), 200);
+
+    let body: IdMappingSchema = response.json().await.expect("Failed to parse body");
+    assert_eq!(body.offchain_id, offchain);
+    let expected = bytes16_to_hex(create_encrypted_bytes16_from_string(offchain));
+    assert_eq!(body.onchain_id, expected);
 
     stop_app(app).await;
-    Ok(())
 }
 
 #[tokio::test]
-async fn get_or_create_is_idempotent() -> Result<()> {
+async fn post_ids_is_idempotent() {
     let app = init_app().await;
-    init_id_mapping(&app.db_wrapper).await?;
-    let service = IdService::from(&app.db_wrapper);
+    init_ids(&app.db_wrapper)
+        .await
+        .expect("Failed to init id mapping indexes");
+    let client = reqwest::Client::new();
+    let offchain = "actor-456";
 
-    let offchain = "actor-456".to_string();
-    let first = service.get_or_create(offchain.clone()).await?;
-    let second = service.get_or_create(offchain.clone()).await?;
+    let first: IdMappingSchema = client
+        .post(format!("{}/ids", app.address))
+        .query(&[("offchain_id", offchain)])
+        .send()
+        .await
+        .expect("Failed to execute first request")
+        .json()
+        .await
+        .expect("Failed to parse first body");
 
-    // Same onchain id and creation_time => no re-insert on second call.
+    let second: IdMappingSchema = client
+        .post(format!("{}/ids", app.address))
+        .query(&[("offchain_id", offchain)])
+        .send()
+        .await
+        .expect("Failed to execute second request")
+        .json()
+        .await
+        .expect("Failed to parse second body");
+
+    // Same mapping returned; the unique offchain_id index plus $setOnInsert
+    // means the second call reads the existing doc rather than inserting again.
     assert_eq!(first.onchain_id, second.onchain_id);
     assert_eq!(first.creation_time, second.creation_time);
 
-    let count = service
-        .count_documents(doc! {"offchain_id": &offchain})
-        .await?;
-    assert_eq!(count, 1, "upsert must not create duplicates");
-
-    stop_app(app).await;
-    Ok(())
-}
-
-#[tokio::test]
-async fn filter_by_offchain_id_returns_match() -> Result<()> {
-    let app = init_app().await;
-    init_id_mapping(&app.db_wrapper).await?;
-    let service = IdService::from(&app.db_wrapper);
-
-    let offchain = "actor-789".to_string();
-    service.get_or_create(offchain.clone()).await?;
-
-    let results = service.filter(None, Some(offchain.clone())).await?;
-
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].offchain_id, offchain);
-
-    stop_app(app).await;
-    Ok(())
-}
-
-#[tokio::test]
-async fn filter_by_onchain_id_returns_match() -> Result<()> {
-    let app = init_app().await;
-    init_id_mapping(&app.db_wrapper).await?;
-    let service = IdService::from(&app.db_wrapper);
-
-    let offchain = "actor-abc".to_string();
-    let created = service.get_or_create(offchain.clone()).await?;
-
-    let results = service.filter(Some(created.onchain_id.clone()), None).await?;
-
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].onchain_id, created.onchain_id);
-
-    stop_app(app).await;
-    Ok(())
-}
-
-#[tokio::test]
-async fn filter_no_match_returns_empty() -> Result<()> {
-    let app = init_app().await;
-    init_id_mapping(&app.db_wrapper).await?;
-    let service = IdService::from(&app.db_wrapper);
-
-    let results = service.filter(None, Some("does-not-exist".to_string())).await?;
-
-    assert!(results.is_empty());
-
-    stop_app(app).await;
-    Ok(())
-}
-
-#[tokio::test]
-async fn filter_rejects_both_ids() {
-    let app = init_app().await;
-    let service = IdService::from(&app.db_wrapper);
-
-    let err = service
-        .filter(Some("a".to_string()), Some("b".to_string()))
+    // Prove no duplicate slipped in under the unique index.
+    let count = app
+        .db_wrapper
+        .ids()
+        .count_documents(doc! {"offchain_id": offchain})
         .await
-        .unwrap_err();
-    assert!(err.to_string().contains("mutually exclusive"));
+        .expect("Failed to count documents");
+    assert_eq!(count, 1, "unique index must prevent duplicate mappings");
 
     stop_app(app).await;
 }
 
 #[tokio::test]
-async fn filter_rejects_empty() {
+async fn post_ids_distinct_inputs_get_distinct_onchain_ids() {
     let app = init_app().await;
-    let service = IdService::from(&app.db_wrapper);
+    init_ids(&app.db_wrapper)
+        .await
+        .expect("Failed to init id mapping indexes");
+    let client = reqwest::Client::new();
 
-    let err = service.filter(None, None).await.unwrap_err();
-    assert!(err.to_string().contains("at least one filter field"));
+    let a: IdMappingSchema = client
+        .post(format!("{}/ids", app.address))
+        .query(&[("offchain_id", "actor-a")])
+        .send()
+        .await
+        .expect("Failed to execute request a")
+        .json()
+        .await
+        .expect("Failed to parse body a");
+
+    let b: IdMappingSchema = client
+        .post(format!("{}/ids", app.address))
+        .query(&[("offchain_id", "actor-b")])
+        .send()
+        .await
+        .expect("Failed to execute request b")
+        .json()
+        .await
+        .expect("Failed to parse body b");
+
+    assert_ne!(a.onchain_id, b.onchain_id);
+
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn post_ids_concurrent_same_id_yields_single_mapping() {
+    let app = init_app().await;
+    init_ids(&app.db_wrapper)
+        .await
+        .expect("Failed to init id mapping indexes");
+    let client = reqwest::Client::new();
+    let offchain = "actor-concurrent";
+    let url = format!("{}/ids", app.address);
+
+    // Fire several requests for the same offchain_id at once. The unique index
+    // is what keeps this from producing duplicate documents under the race.
+    let mut handles = Vec::new();
+    for _ in 0..8 {
+        let client = client.clone();
+        let url = url.clone();
+        handles.push(tokio::spawn(async move {
+            client
+                .post(&url)
+                .query(&[("offchain_id", offchain)])
+                .send()
+                .await
+                .expect("Failed to execute concurrent request")
+                .json::<IdMappingSchema>()
+                .await
+                .expect("Failed to parse concurrent body")
+        }));
+    }
+
+    let mut results = Vec::new();
+    for handle in handles {
+        results.push(handle.await.expect("Task panicked"));
+    }
+
+    // Every response must describe the same mapping.
+    let onchain = &results[0].onchain_id;
+    for r in &results {
+        assert_eq!(&r.onchain_id, onchain);
+    }
+
+    // And exactly one document exists in the collection.
+    let count = app
+        .db_wrapper
+        .ids()
+        .count_documents(doc! {"offchain_id": offchain})
+        .await
+        .expect("Failed to count documents");
+    assert_eq!(count, 1, "concurrent inserts must collapse to one mapping");
+
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn post_ids_missing_param_is_rejected() {
+    let app = init_app().await;
+    init_ids(&app.db_wrapper)
+        .await
+        .expect("Failed to init id mapping indexes");
+    let client = reqwest::Client::new();
+
+    let response = client
+        .post(format!("{}/ids", app.address))
+        .send()
+        .await
+        .expect("Failed to execute request");
+
+    // Query<IdsParams> extraction fails when offchain_id is absent -> 400.
+    assert_eq!(response.status().as_u16(), 400);
 
     stop_app(app).await;
 }

@@ -382,7 +382,7 @@ pub async fn handle_request(
                 request_id
             );
 
-            let data = db.id_mapping().get_or_create(payload.offchain_id).await?;
+            let data = db.ids().get_or_create(payload.offchain_id).await?;
             send_success_response(
                 client,
                 config,
