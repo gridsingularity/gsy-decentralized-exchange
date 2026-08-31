@@ -567,22 +567,34 @@ async fn assert_trade_settled_on_chain(world: &MyWorld, trade: &DbTradeSchema) {
     assert_eq!(bid_status, 2u8, "Bid order is not Executed on-chain");
     assert_eq!(offer_status, 2u8, "Offer order is not Executed on-chain");
 
-    let orders = query_market_orders(world).await;
-    let bid = orders
-        .iter()
-        .find(|order| order.order_id.eq_ignore_ascii_case(trade.bid_hash.as_str()))
-        .expect("Bid order not found in off-chain storage DB");
-    let offer = orders
-        .iter()
-        .find(|order| {
+    for attempt in 0..40 {
+        let orders = query_market_orders(world).await;
+        let bid_executed = orders.iter().any(|order| {
+            order.order_id.eq_ignore_ascii_case(trade.bid_hash.as_str())
+                && order.status == OrderStatus::Executed
+        });
+        let offer_executed = orders.iter().any(|order| {
             order
                 .order_id
                 .eq_ignore_ascii_case(trade.offer_hash.as_str())
-        })
-        .expect("Offer order not found in off-chain storage DB");
+                && order.status == OrderStatus::Executed
+        });
 
-    assert_eq!(bid.status, OrderStatus::Executed);
-    assert_eq!(offer.status, OrderStatus::Executed);
+        if bid_executed && offer_executed {
+            return;
+        }
+
+        info!(
+            "Off-chain order statuses not synchronized yet (attempt {}/40). Retrying...",
+            attempt + 1
+        );
+        sleep(Duration::from_millis(500)).await;
+    }
+
+    panic!(
+        "Timeout: off-chain order statuses were not updated for trade {}",
+        trade.trade_uuid
+    );
 }
 
 #[then("the matching engine matches the bid and offer and a trade is settled on-chain")]
