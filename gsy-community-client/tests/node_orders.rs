@@ -3,7 +3,10 @@ use gsy_community_client::node_connector::orders::create_input_orders;
 use gsy_community_client::time_utils::get_current_timestamp_in_secs;
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::profiles::ForecastSchema;
-use primitives::utils::{create_encrypted_bytes16_from_string, NODE_FLOAT_SCALING_FACTOR};
+use primitives::utils::{
+    create_encrypted_bytes16_from_string,
+    NODE_FLOAT_SCALING_FACTOR,
+    parse_uuid_or_hex_bytes16};
 use primitives::{MarketType, MatchingAlgorithm};
 use std::collections::HashSet;
 use std::str::FromStr;
@@ -22,8 +25,8 @@ fn test_market() -> MarketSchema {
     }
 }
 
-#[test]
-fn test_orders_to_evm_params_are_created_correctly() {
+#[tokio::test]
+async fn test_orders_to_evm_params_are_created_correctly() {
     let forecasts: Vec<ForecastSchema> = vec![
         ForecastSchema {
             facility_id: "area1".to_string(),
@@ -45,7 +48,7 @@ fn test_orders_to_evm_params_are_created_correctly() {
 
     let market = test_market();
     let owner = Address::from_str("0x1000000000000000000000000000000000000001").unwrap();
-    let input_orders = create_input_orders(forecasts, market.clone(), owner);
+    let input_orders = create_input_orders(forecasts, market.clone(), owner).await.unwrap();
     assert_eq!(input_orders.len(), 2);
 
     let current_time = get_current_timestamp_in_secs();
@@ -63,7 +66,9 @@ fn test_orders_to_evm_params_are_created_correctly() {
         bid_type,
     ) = input_orders[0];
     assert_eq!(bid_created_by, create_encrypted_bytes16_from_string("area1"));
-    assert_eq!(bid_market, create_encrypted_bytes16_from_string(market.market_id.as_str()));
+    assert_eq!(
+        bid_market,
+        parse_uuid_or_hex_bytes16(market.market_id.as_str()).expect("failed to parse uuid"));
     assert_eq!(bid_slot, 456_456);
     assert!(current_time >= bid_creation && current_time - bid_creation <= 1);
     assert_eq!(bid_energy, (12.0 * NODE_FLOAT_SCALING_FACTOR) as u64);
@@ -85,7 +90,7 @@ fn test_orders_to_evm_params_are_created_correctly() {
     assert_eq!(offer_created_by, create_encrypted_bytes16_from_string("area2"));
     assert_eq!(
         offer_market,
-        create_encrypted_bytes16_from_string(market.market_id.as_str())
+        parse_uuid_or_hex_bytes16(market.market_id.as_str()).expect("failed to parse uuid")
     );
     assert_eq!(offer_slot, 456_456);
     assert!(current_time >= offer_creation && current_time - offer_creation <= 1);
@@ -94,8 +99,8 @@ fn test_orders_to_evm_params_are_created_correctly() {
     assert!(!offer_type);
 }
 
-#[test]
-fn test_create_input_orders_keeps_all_non_zero_facility_forecasts() {
+#[tokio::test]
+async fn test_create_input_orders_keeps_all_non_zero_facility_forecasts() {
     let market = test_market();
     let owner = Address::from_str("0x1000000000000000000000000000000000000001").unwrap();
     let forecasts = vec![
@@ -117,12 +122,12 @@ fn test_create_input_orders_keeps_all_non_zero_facility_forecasts() {
         },
     ];
 
-    let orders = create_input_orders(forecasts, market, owner);
+    let orders = create_input_orders(forecasts, market, owner).await.unwrap();
     assert_eq!(orders.len(), 2);
 }
 
-#[test]
-fn test_create_input_orders_skips_zero_energy_forecasts() {
+#[tokio::test]
+async fn test_create_input_orders_skips_zero_energy_forecasts() {
     let market = test_market();
     let owner = Address::from_str("0x1000000000000000000000000000000000000001").unwrap();
     let forecasts = vec![
@@ -144,13 +149,13 @@ fn test_create_input_orders_skips_zero_energy_forecasts() {
         },
     ];
 
-    let orders = create_input_orders(forecasts, market, owner);
+    let orders = create_input_orders(forecasts, market, owner).await.unwrap();
     assert_eq!(orders.len(), 1);
     assert!(!orders[0].9);
 }
 
-#[test]
-fn test_create_input_orders_assigns_unique_order_ids_and_stable_side_mapping() {
+#[tokio::test]
+async fn test_create_input_orders_assigns_unique_order_ids_and_stable_side_mapping() {
     let market = test_market();
     let owner = Address::from_str("0x1000000000000000000000000000000000000001").unwrap();
     let forecasts = vec![
@@ -180,7 +185,7 @@ fn test_create_input_orders_assigns_unique_order_ids_and_stable_side_mapping() {
         },
     ];
 
-    let orders = create_input_orders(forecasts, market, owner);
+    let orders = create_input_orders(forecasts, market, owner).await.unwrap();
     assert_eq!(orders.len(), 3);
 
     assert!(orders[0].9);

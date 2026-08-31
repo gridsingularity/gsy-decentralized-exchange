@@ -3,7 +3,7 @@ use ethers_solc::{artifacts::Severity, Project, ProjectPathsConfig};
 use gsy_community_client::node_connector::orders::publish_orders;
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::profiles::ForecastSchema;
-use primitives::utils::create_encrypted_bytes16_from_string;
+use primitives::utils::{create_encrypted_bytes16_from_string, parse_uuid_or_hex_bytes16};
 use primitives::{MarketType, MatchingAlgorithm};
 use std::{fs::File, io::Write, sync::Arc};
 use tempfile::TempDir;
@@ -172,6 +172,7 @@ async fn test_publish_orders_calls_evm_order_registry() {
         compile_and_deploy_contract(client.clone(), source, "MockOrderRegistry").await;
 
     let market = test_market();
+    eprintln!("{:?}", market);
     let forecasts = test_forecasts(&market);
 
     publish_orders(
@@ -195,7 +196,7 @@ async fn test_publish_orders_calls_evm_order_registry() {
     );
     assert_eq!(
         mock_contract.last_market_id().call().await.unwrap(),
-        create_encrypted_bytes16_from_string("0x11111111111111111111111111111111")
+        parse_uuid_or_hex_bytes16("0x11111111111111111111111111111111").expect("failed to parse uuid")
     );
     assert_eq!(
         mock_contract
