@@ -20,6 +20,7 @@ fn test_config(gateway_url: String) -> EwdsHandlerConfig {
         topics: EwdsTopicConfig::from_env(),
         poll_interval_ms: 500,
         request_batch_size: 100,
+        response_send_timeout_ms: 60_000
     }
 }
 

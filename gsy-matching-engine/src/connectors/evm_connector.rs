@@ -297,7 +297,7 @@ fn fetch_market_orders(body: Vec<EwdsOrderDto>) -> PreparedOrders {
 
     for db_order_schema in orders
         .into_iter()
-        .filter(|order| order.status == OrderStatus::Open)
+        .filter(|order| order.status == OrderStatus::Submitted)
     {
         match convert_db_order_to_canonical(&db_order_schema) {
             Ok(order) => {
@@ -594,7 +594,7 @@ mod tests {
         Order {
             order_id: id(id_value),
             order_type,
-            status: OrderStatus::Open,
+            status: OrderStatus::Submitted,
             area_uuid: id(id_value),
             market_id: id(market),
             time_slot,

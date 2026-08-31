@@ -855,7 +855,7 @@ async fn verify_pay_as_clear_unmatched_orders(world: &mut MyWorld) {
         .expect("Unmatched pay-as-clear bid was not found in off-chain storage");
     assert_eq!(
         unmatched_bid.status,
-        OrderStatus::Open,
+        OrderStatus::Submitted,
         "Bid beyond the clearing point must remain open"
     );
 
@@ -869,7 +869,7 @@ async fn verify_pay_as_clear_unmatched_orders(world: &mut MyWorld) {
         .expect("Unmatched pay-as-clear offer was not found in off-chain storage");
     assert_eq!(
         unmatched_offer.status,
-        OrderStatus::Open,
+        OrderStatus::Submitted,
         "Offer beyond the clearing point must remain open"
     );
 }
@@ -933,7 +933,7 @@ async fn verify_charlie_offer_untouched(world: &mut MyWorld) {
         .expect("Charlie offer order was not found in off-chain storage");
     assert_eq!(
         charlie_offer.status,
-        OrderStatus::Open,
+        OrderStatus::Submitted,
         "Expected Charlie's cheaper offer to stay open after the preference match phase"
     );
 

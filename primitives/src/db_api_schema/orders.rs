@@ -37,15 +37,17 @@ pub struct DbOrderSchema {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd)]
 #[serde(rename_all = "lowercase")]
 pub enum OrderStatus {
-    Open,
-    Executed,
+    Submitted,
+    PartiallyFilled,
+    Filled,
     Cancelled,
     Expired,
+    Rejected,
+    Executed,
 }
-
 impl Default for OrderStatus {
     fn default() -> Self {
-        Self::Open
+        Self::Submitted
     }
 }
 

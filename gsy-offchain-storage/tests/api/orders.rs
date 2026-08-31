@@ -10,7 +10,7 @@ fn make_order(order_id: &str, market_id: &str, order_type: OrderEnum) -> EwdsOrd
         order_id: order_id.to_string(),
         market_id: market_id.to_string(),
         order_type: order_type_to_ewds(&order_type).to_string(),
-        order_status: order_status_to_ewds(&OrderStatus::Open).to_string(),
+        order_status: order_status_to_ewds(&OrderStatus::Submitted).to_string(),
         time_slot: 1,
         quantity: 100.0,
         price_limit: 10.0,
@@ -21,6 +21,7 @@ fn make_order(order_id: &str, market_id: &str, order_type: OrderEnum) -> EwdsOrd
         updated_at: None,
         reject_reason: None,
         preferred_trading_partner: None,
+        preferred_energy_rate: None
     }
 }
 
@@ -57,7 +58,7 @@ async fn post_orders_persists_order_to_the_db() {
         .unwrap()
         .unwrap();
     assert_eq!(saved.order_type, OrderEnum::Bid);
-    assert_eq!(saved.status, OrderStatus::Open);
+    assert_eq!(saved.status, OrderStatus::Submitted);
 
     let update_result = db
         .get_ref()
