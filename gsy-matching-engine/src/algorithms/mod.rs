@@ -3,8 +3,8 @@ mod pay_as_clear;
 
 use crate::models::{BidOfferMatch, MatchingData, Order};
 use primitives::MatchingAlgorithm;
-use rand::Rng;
 use std::collections::HashMap;
+use uuid::Uuid;
 
 pub trait PayAsBid {
     type Output;
@@ -238,11 +238,7 @@ fn residual_order(order: &Order, matched_energy: u64) -> Option<Order> {
     let mut residual = order.clone();
     residual.energy -= matched_energy;
     if matched_energy > 0 {
-        residual.order_id = random_bytes16_hex();
+        residual.order_id = Uuid::new_v4().to_string();
     }
     Some(residual)
-}
-
-fn random_bytes16_hex() -> String {
-    format!("0x{:032x}", rand::thread_rng().gen::<u128>())
 }
