@@ -25,7 +25,7 @@ services:
       - SCHEDULER_INTERVAL=900
 
   mongodb:
-    image: mongo:5.0
+    image: mongo:8.3.8
     ports:
       - "27017:27017"
     volumes:
