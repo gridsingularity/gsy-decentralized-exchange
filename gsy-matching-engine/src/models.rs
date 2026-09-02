@@ -101,7 +101,7 @@ mod tests {
         Order {
             order_id: order_id.to_string(),
             order_type: OrderEnum::Bid,
-            status: OrderStatus::Open,
+            status: OrderStatus::Submitted,
             area_uuid: "area".to_string(),
             market_id: market_id.to_string(),
             time_slot,

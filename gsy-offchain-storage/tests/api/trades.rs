@@ -5,7 +5,7 @@ use primitives::ewds::dto::EwdsTradeDto;
 
 fn make_order(order_id: &str, order_type: OrderEnum) -> DbOrderSchema {
     DbOrderSchema {
-        status: OrderStatus::Open,
+        status: OrderStatus::Submitted,
         order_id: order_id.to_string(),
         order_type,
         created_by: "0x0000000000000000000000000000000000000abc".to_string(),
