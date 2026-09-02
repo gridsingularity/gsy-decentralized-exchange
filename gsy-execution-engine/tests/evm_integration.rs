@@ -6,6 +6,7 @@ use gsy_execution_engine::{
 };
 use std::{fs::File, io::Write, sync::Arc};
 use tempfile::TempDir;
+use uuid::Uuid;
 
 abigen!(
     MockTradeSettlement,
@@ -121,18 +122,18 @@ async fn test_submit_penalties_persists_to_trade_settlement_contract() {
     let contract_address = contract.address();
 
     let penalized = format!("0x{}", "aa".repeat(16));
-    let trade_uuid = "trade-uuid-123";
+    let trade_uuid = Uuid::new_v4().to_string();
     let penalties = vec![
         Penalty {
             penalized_account: penalized.clone(),
             market_id: format!("0x{}", "11".repeat(16)),
-            trade_uuid: trade_uuid.to_string(),
+            trade_uuid: trade_uuid.clone(),
             penalty_cost: 100,
         },
         Penalty {
             penalized_account: penalized.clone(),
             market_id: format!("0x{}", "11".repeat(16)),
-            trade_uuid: trade_uuid.to_string(),
+            trade_uuid: trade_uuid.clone(),
             penalty_cost: 150,
         },
     ];
@@ -147,7 +148,9 @@ async fn test_submit_penalties_persists_to_trade_settlement_contract() {
     .unwrap();
 
     let mock_contract = MockTradeSettlement::new(contract_address, client.clone());
-    let expected_trade_id = parse_uuid_or_hex_bytes16(trade_uuid).expect("Failed to parse uuid");
+    eprintln!("trade_uuid {:?}", trade_uuid);
+    eprintln!("penalized {:?}", penalized);
+    let expected_trade_id = parse_uuid_or_hex_bytes16(&trade_uuid).expect("Failed to parse uuid");
     let expected_actor_id = parse_uuid_or_hex_bytes16(&penalized).expect("Failed to parse uuid");
 
     assert_eq!(

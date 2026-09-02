@@ -1,6 +1,5 @@
 use super::PayAsBid;
 use crate::models::{BidOfferMatch, MatchingData, Order};
-use uuid::Uuid;
 
 impl MatchingData {
     fn match_standard(&self, bids: Vec<Order>, offers: Vec<Order>) -> Vec<BidOfferMatch> {
@@ -25,6 +24,7 @@ mod tests {
     use super::*;
     use crate::models::Requirements;
     use primitives::db_api_schema::orders::{OrderEnum, OrderStatus};
+    use uuid::Uuid;
 
     fn order(id: &str, order_type: OrderEnum, energy: u64, energy_rate: u64) -> Order {
         Order {
