@@ -172,7 +172,7 @@ async fn test_publish_orders_calls_evm_order_registry() {
         compile_and_deploy_contract(client.clone(), source, "MockOrderRegistry").await;
 
     let market = test_market();
-    eprintln!("{:?}", market);
+
     let forecasts = test_forecasts(&market);
 
     publish_orders(

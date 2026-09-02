@@ -1,5 +1,6 @@
 use super::PayAsBid;
 use crate::models::{BidOfferMatch, MatchingData, Order};
+use uuid::Uuid;
 
 impl MatchingData {
     fn match_standard(&self, bids: Vec<Order>, offers: Vec<Order>) -> Vec<BidOfferMatch> {
@@ -59,8 +60,7 @@ mod tests {
             .as_ref()
             .expect("bid should be partially filled")
             .order_id;
-        assert!(residual_id.starts_with("0x"));
-        assert_eq!(residual_id.len(), 34);
+        Uuid::parse_str(&residual_id).expect("not a valid uuid");
     }
 
     #[test]
