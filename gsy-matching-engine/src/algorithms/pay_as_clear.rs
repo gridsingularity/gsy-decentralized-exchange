@@ -92,7 +92,7 @@ mod tests {
         Order {
             order_id: id(id_value),
             order_type,
-            status: OrderStatus::Open,
+            status: OrderStatus::Submitted,
             area_uuid: id(area),
             market_id: id(99),
             time_slot: 1,

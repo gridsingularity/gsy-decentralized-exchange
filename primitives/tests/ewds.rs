@@ -20,7 +20,7 @@ mod tests {
     fn order() -> DbOrderSchema {
         DbOrderSchema {
             order_id: "order-id".to_string(),
-            status: OrderStatus::Open,
+            status: OrderStatus::Submitted,
             order_type: OrderEnum::Bid,
             area_uuid: "actor-id".to_string(),
             market_id: "market-id".to_string(),
@@ -64,7 +64,7 @@ mod tests {
         assert_eq!(db.order_id, "order-id");
         assert_eq!(db.market_id, "market-id");
         assert_eq!(db.order_type, OrderEnum::Bid);
-        assert_eq!(db.status, OrderStatus::Open);
+        assert_eq!(db.status, OrderStatus::Submitted);
         assert_eq!(db.time_slot, 10);
         assert_eq!(db.energy_kWh, 4.5);
         assert_eq!(db.energy_rate, 20.0);
