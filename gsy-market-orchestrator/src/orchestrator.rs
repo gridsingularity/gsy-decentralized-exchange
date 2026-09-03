@@ -1,15 +1,19 @@
 use crate::chain_connector::MarketChainClient;
+use crate::community_source::CommunityProvider;
 use crate::config::{Config, MARKET_RULES};
-use blake2_rfc::blake2b::blake2b;
-use primitives::MarketType;
-use primitives::{constants::GLOBAL_CONSTANTS, utils::timestamp_to_datetime_string};
+use primitives::db_api_schema::grid_topology::EnergyCommunitySchema;
+use primitives::{
+    constants::GLOBAL_CONSTANTS,
+    utils::{generate_market_id, timestamp_to_datetime_string},
+};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
 use tracing::{error, info, warn};
 
-pub async fn run<C>(config: Config, client: C) -> anyhow::Result<()>
+pub async fn run<C, S>(config: Config, client: C, community_source: S) -> anyhow::Result<()>
 where
     C: MarketChainClient,
+    S: CommunityProvider,
 {
     info!("Configuration: {:?}", config);
 
@@ -37,22 +41,38 @@ where
 
     loop {
         info!("-- Orchestrator Tick --");
-        if let Err(e) = orchestrate_markets(&config, &client).await {
+        if let Err(e) = orchestrate_markets(&config, &client, &community_source).await {
             error!("An error occurred during orchestration tick: {:?}", e);
         }
         sleep(interval).await;
     }
 }
 
-async fn orchestrate_markets<C>(config: &Config, client: &C) -> anyhow::Result<()>
+async fn orchestrate_markets<C, S>(
+    config: &Config,
+    client: &C,
+    community_source: &S,
+) -> anyhow::Result<()>
 where
     C: MarketChainClient + ?Sized,
+    S: CommunityProvider + ?Sized,
 {
+    let communities = community_source.fetch_communities().await?;
+    if communities.is_empty() {
+        warn!("No communities found; skipping market orchestration tick");
+        return Ok(());
+    }
+
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-    orchestrate_markets_at(config, client, now).await
+    orchestrate_markets_at(config, client, communities.as_slice(), now).await
 }
 
-async fn orchestrate_markets_at<C>(config: &Config, client: &C, now: u64) -> anyhow::Result<()>
+async fn orchestrate_markets_at<C>(
+    config: &Config,
+    client: &C,
+    communities: &[EnergyCommunitySchema],
+    now: u64,
+) -> anyhow::Result<()>
 where
     C: MarketChainClient + ?Sized,
 {
@@ -62,17 +82,19 @@ where
         (now / GLOBAL_CONSTANTS.time_slot_sec) * GLOBAL_CONSTANTS.time_slot_sec;
 
     info!(
-        "Orchestrator Check at {}. Looking ahead to {}",
-        now, look_ahead_horizon
+        "Orchestrator Check at {}. Looking ahead to {} for {} communities",
+        now,
+        look_ahead_horizon,
+        communities.len()
     );
+
+    let mut markets_to_open = Vec::new();
+    let mut markets_to_close = Vec::new();
 
     while current_delivery_secs <= look_ahead_horizon {
         for rule in MARKET_RULES.iter() {
-            let market_id = generate_market_id(rule.market_type.clone(), current_delivery_secs);
             let open_time = (current_delivery_secs as i64 + rule.open_offset_mins * 60) as u64;
             let close_time = (current_delivery_secs as i64 + rule.close_offset_mins * 60) as u64;
-
-            let on_chain_status = client.get_market_status(market_id).await?;
             let should_be_open = market_should_be_open(
                 now,
                 current_delivery_secs,
@@ -80,37 +102,48 @@ where
                 rule.close_offset_mins,
             );
 
-            if should_be_open && !on_chain_status {
-                error!(
-                    "OPENING market '{:?}' for delivery at {}. Opening time {}.",
-                    rule.market_type,
-                    timestamp_to_datetime_string(current_delivery_secs),
-                    timestamp_to_datetime_string(open_time)
+            for community in communities {
+                let market_id = generate_market_id(
+                    community.community_id.as_str(),
+                    rule.market_type.clone(),
+                    current_delivery_secs,
                 );
-                client.update_market_status(market_id, true).await?;
-            } else if !should_be_open && on_chain_status {
-                error!(
-                    "CLOSING market '{:?}' for delivery at {}. Closing time {}.",
-                    rule.market_type,
-                    timestamp_to_datetime_string(current_delivery_secs),
-                    timestamp_to_datetime_string(close_time)
-                );
-                client.update_market_status(market_id, false).await?;
+                let on_chain_status = client.get_market_status(market_id).await?;
+
+                if should_be_open && !on_chain_status {
+                    info!(
+                        "OPENING community '{}' market '{:?}' for delivery at {}. Opening time {}.",
+                        community.community_id,
+                        rule.market_type,
+                        timestamp_to_datetime_string(current_delivery_secs),
+                        timestamp_to_datetime_string(open_time)
+                    );
+                    markets_to_open.push(market_id);
+                } else if !should_be_open && on_chain_status {
+                    info!(
+                        "CLOSING community '{}' market '{:?}' for delivery at {}. Closing time {}.",
+                        community.community_id,
+                        rule.market_type,
+                        timestamp_to_datetime_string(current_delivery_secs),
+                        timestamp_to_datetime_string(close_time)
+                    );
+                    markets_to_close.push(market_id);
+                }
             }
         }
         current_delivery_secs += GLOBAL_CONSTANTS.time_slot_sec;
     }
-    Ok(())
-}
 
-pub fn generate_market_id(market_type: MarketType, delivery_timestamp: u64) -> [u8; 16] {
-    let mut buffer = Vec::new();
-    buffer.extend_from_slice(market_type.as_str().as_bytes());
-    buffer.extend_from_slice(&delivery_timestamp.to_be_bytes());
-    blake2b(16, &[], &buffer)
-        .as_bytes()
-        .try_into()
-        .expect("hash is 16 bytes")
+    if !markets_to_open.is_empty() {
+        client.update_market_statuses(markets_to_open, true).await?;
+    }
+    if !markets_to_close.is_empty() {
+        client
+            .update_market_statuses(markets_to_close, false)
+            .await?;
+    }
+
+    Ok(())
 }
 
 fn market_should_be_open(
@@ -129,13 +162,15 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use ethers::types::Address;
-    use std::collections::HashMap;
+    use primitives::MarketType;
+    use std::collections::{HashMap, HashSet};
     use std::sync::{Arc, Mutex};
 
     #[derive(Default, Clone)]
     struct MockChainClient {
         market_statuses: Arc<Mutex<HashMap<[u8; 16], bool>>>,
         updates: Arc<Mutex<Vec<([u8; 16], bool)>>>,
+        batches: Arc<Mutex<Vec<(Vec<[u8; 16]>, bool)>>>,
     }
 
     impl MockChainClient {
@@ -143,11 +178,16 @@ mod tests {
             Self {
                 market_statuses: Arc::new(Mutex::new(statuses)),
                 updates: Arc::new(Mutex::new(Vec::new())),
+                batches: Arc::new(Mutex::new(Vec::new())),
             }
         }
 
         fn updates(&self) -> Vec<([u8; 16], bool)> {
             self.updates.lock().expect("updates lock poisoned").clone()
+        }
+
+        fn batches(&self) -> Vec<(Vec<[u8; 16]>, bool)> {
+            self.batches.lock().expect("batches lock poisoned").clone()
         }
     }
 
@@ -166,21 +206,79 @@ mod tests {
                 .unwrap_or(&false))
         }
 
-        async fn update_market_status(
+        async fn update_market_statuses(
             &self,
-            market_id: [u8; 16],
+            market_ids: Vec<[u8; 16]>,
             is_open: bool,
         ) -> anyhow::Result<()> {
-            self.market_statuses
+            self.batches
                 .lock()
-                .expect("market_statuses lock poisoned")
-                .insert(market_id, is_open);
-            self.updates
-                .lock()
-                .expect("updates lock poisoned")
-                .push((market_id, is_open));
+                .expect("batches lock poisoned")
+                .push((market_ids.clone(), is_open));
+            for market_id in market_ids {
+                self.market_statuses
+                    .lock()
+                    .expect("market_statuses lock poisoned")
+                    .insert(market_id, is_open);
+                self.updates
+                    .lock()
+                    .expect("updates lock poisoned")
+                    .push((market_id, is_open));
+            }
             Ok(())
         }
+    }
+
+    #[derive(Default, Clone)]
+    struct MockCommunityProvider {
+        communities: Arc<Mutex<Vec<EnergyCommunitySchema>>>,
+        error: Arc<Mutex<Option<String>>>,
+        fetch_count: Arc<Mutex<u32>>,
+    }
+
+    impl MockCommunityProvider {
+        fn with_error(message: &str) -> Self {
+            Self {
+                error: Arc::new(Mutex::new(Some(message.to_string()))),
+                ..Self::default()
+            }
+        }
+
+        fn set_communities(&self, communities: Vec<EnergyCommunitySchema>) {
+            *self.communities.lock().expect("communities lock poisoned") = communities;
+        }
+
+        fn fetch_count(&self) -> u32 {
+            *self.fetch_count.lock().expect("fetch_count lock poisoned")
+        }
+    }
+
+    #[async_trait]
+    impl CommunityProvider for MockCommunityProvider {
+        async fn fetch_communities(&self) -> anyhow::Result<Vec<EnergyCommunitySchema>> {
+            *self.fetch_count.lock().expect("fetch_count lock poisoned") += 1;
+            if let Some(message) = self.error.lock().expect("error lock poisoned").clone() {
+                return Err(anyhow::anyhow!(message));
+            }
+
+            Ok(self
+                .communities
+                .lock()
+                .expect("communities lock poisoned")
+                .clone())
+        }
+    }
+
+    fn community_with_id(community_id: &str) -> EnergyCommunitySchema {
+        EnergyCommunitySchema {
+            community_id: community_id.to_string(),
+            community_name: "Community One".to_string(),
+            sites: vec!["site-one".to_string()],
+        }
+    }
+
+    fn community() -> EnergyCommunitySchema {
+        community_with_id("11111111-1111-4111-8111-111111111111")
     }
 
     fn test_config(look_ahead_hours: u64) -> Config {
@@ -191,6 +289,8 @@ mod tests {
                 "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string(),
             tick_interval_seconds: 1,
             look_ahead_hours,
+            offchain_storage_transport: crate::config::OffchainStorageTransport::Http,
+            offchain_storage_url: "http://localhost:8080".to_string(),
         }
     }
 
@@ -212,7 +312,7 @@ mod tests {
                     rule.close_offset_mins,
                 ) == should_be_open
                 {
-                    return (rule.market_type, current_delivery_secs);
+                    return (rule.market_type.clone(), current_delivery_secs);
                 }
             }
             current_delivery_secs += GLOBAL_CONSTANTS.time_slot_sec;
@@ -225,15 +325,65 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn orchestration_tick_skips_when_no_communities_exist() {
+        let config = test_config(0);
+        let client = MockChainClient::default();
+        let source = MockCommunityProvider::default();
+
+        orchestrate_markets(&config, &client, &source)
+            .await
+            .expect("empty community result should not fail");
+
+        assert_eq!(source.fetch_count(), 1);
+        assert!(client.updates().is_empty());
+    }
+
+    #[tokio::test]
+    async fn orchestration_tick_propagates_community_fetch_failures() {
+        let config = test_config(0);
+        let client = MockChainClient::default();
+        let source = MockCommunityProvider::with_error("community source unavailable");
+
+        let error = orchestrate_markets(&config, &client, &source)
+            .await
+            .expect_err("community source error should propagate");
+
+        assert!(error.to_string().contains("community source unavailable"));
+        assert!(client.updates().is_empty());
+    }
+
+    #[tokio::test]
+    async fn orchestration_fetches_communities_on_every_tick() {
+        let config = test_config(0);
+        let client = MockChainClient::default();
+        let source = MockCommunityProvider::default();
+
+        orchestrate_markets(&config, &client, &source)
+            .await
+            .unwrap();
+        source.set_communities(vec![community()]);
+        orchestrate_markets(&config, &client, &source)
+            .await
+            .unwrap();
+
+        assert_eq!(source.fetch_count(), 2);
+    }
+
+    #[tokio::test]
     async fn orchestrate_markets_opens_market_when_it_should_be_open() {
         let now = 1_700_000_000;
         let config = test_config(4);
         let client = MockChainClient::default();
+        let communities = vec![community()];
         let (market_type, delivery_slot) =
             find_delivery_slot_for_state(now, config.look_ahead_hours, true);
-        let expected_market_id = generate_market_id(market_type, delivery_slot);
+        let expected_market_id = generate_market_id(
+            communities[0].community_id.as_str(),
+            market_type,
+            delivery_slot,
+        );
 
-        orchestrate_markets_at(&config, &client, now)
+        orchestrate_markets_at(&config, &client, communities.as_slice(), now)
             .await
             .expect("orchestration should succeed");
 
@@ -247,15 +397,20 @@ mod tests {
     async fn orchestrate_markets_closes_market_when_it_should_be_closed() {
         let now = 1_700_000_000;
         let config = test_config(0);
+        let communities = vec![community()];
         let (market_type, delivery_slot) =
             find_delivery_slot_for_state(now, config.look_ahead_hours, false);
-        let expected_market_id = generate_market_id(market_type, delivery_slot);
+        let expected_market_id = generate_market_id(
+            communities[0].community_id.as_str(),
+            market_type,
+            delivery_slot,
+        );
 
         let mut statuses = HashMap::new();
         statuses.insert(expected_market_id, true);
         let client = MockChainClient::with_statuses(statuses);
 
-        orchestrate_markets_at(&config, &client, now)
+        orchestrate_markets_at(&config, &client, communities.as_slice(), now)
             .await
             .expect("orchestration should succeed");
 
@@ -265,15 +420,60 @@ mod tests {
         );
     }
 
-    #[test]
-    fn generate_market_id_is_deterministic() {
-        let delivery = 1_700_000_000;
+    #[tokio::test]
+    async fn orchestrates_every_community_and_market_type_in_batches() {
+        let now = 1_700_000_000;
+        let config = test_config(0);
+        let communities = vec![
+            community(),
+            community_with_id("22222222-2222-4222-8222-222222222222"),
+        ];
+        let delivery_slot = (now / GLOBAL_CONSTANTS.time_slot_sec) * GLOBAL_CONSTANTS.time_slot_sec;
+        let mut statuses = HashMap::new();
+        let mut expected_open = Vec::new();
+        let mut expected_close = Vec::new();
 
-        let first = generate_market_id(MarketType::Spot, delivery);
-        let second = generate_market_id(MarketType::Spot, delivery);
-        let different = generate_market_id(MarketType::Flex, delivery);
+        for rule in MARKET_RULES.iter() {
+            let should_be_open = market_should_be_open(
+                now,
+                delivery_slot,
+                rule.open_offset_mins,
+                rule.close_offset_mins,
+            );
+            for community in &communities {
+                let market_id = generate_market_id(
+                    community.community_id.as_str(),
+                    rule.market_type.clone(),
+                    delivery_slot,
+                );
+                statuses.insert(market_id, !should_be_open);
+                if should_be_open {
+                    expected_open.push(market_id);
+                } else {
+                    expected_close.push(market_id);
+                }
+            }
+        }
 
-        assert_eq!(first, second);
-        assert_ne!(first, different);
+        let client = MockChainClient::with_statuses(statuses);
+        orchestrate_markets_at(&config, &client, communities.as_slice(), now)
+            .await
+            .expect("orchestration should succeed");
+
+        let expected_ids = expected_open
+            .iter()
+            .chain(expected_close.iter())
+            .copied()
+            .collect::<HashSet<_>>();
+        assert_eq!(expected_ids.len(), communities.len() * MARKET_RULES.len());
+
+        let mut expected_batches = Vec::new();
+        if !expected_open.is_empty() {
+            expected_batches.push((expected_open, true));
+        }
+        if !expected_close.is_empty() {
+            expected_batches.push((expected_close, false));
+        }
+        assert_eq!(client.batches(), expected_batches);
     }
 }

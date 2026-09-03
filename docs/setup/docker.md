@@ -91,20 +91,33 @@ Channel/topic setup checklist:
 
 1. Open `http://localhost:3009`.
 2. In `Topic Management`, select the `Intelligent Integration Service` application (`integration.apps.intelligent.auth.ewc`).
-3. Confirm the required topic versions exist: `ordersQuery`, `ordersQueryResponse`, `tradesQuery`, `tradesQueryResponse`, `measurementsQuery`, and `measurementsQueryResponse`.
+3. Confirm the required topic versions exist: `ordersQuery`,
+   `ordersQueryResponse`, `tradesQuery`, `tradesQueryResponse`,
+   `measurementsQuery`, `measurementsQueryResponse`, `communityUpsert`,
+   `communityUpsertResponse`, `communitiesQuery`, and
+   `communitiesQueryResponse`.
 4. If a topic is missing, request or use the `topiccreator` role before creating the topic schema version.
 5. In `Channel Management`, create the four local messaging channels listed below.
-6. Add the `user.roles.integration.apps.intelligent.auth.ewc` role restriction to each channel so DDHub can resolve recipients.
+6. Configure recipient resolution for each channel. The request publish channel
+   must resolve only to the designated GSY off-chain-storage responder DID. The
+   response publish channel can resolve to all GSY request-client DIDs.
 7. Keep payload encryption disabled for the first smoke test; enable it later only if required.
 
 | Local channel FQCN | Gateway type | Attached topics | Used by |
 |---|---|---|---|
-| `gsy.intelligent.requests.pub` | Publish | `ordersQuery`, `tradesQuery`, `measurementsQuery` | matching/execution engines publish requests |
-| `gsy.intelligent.requests.sub` | Subscribe | `ordersQuery`, `tradesQuery`, `measurementsQuery` | off-chain storage service polls requests |
-| `gsy.intelligent.responses.pub` | Publish | `ordersQueryResponse`, `tradesQueryResponse`, `measurementsQueryResponse` | off-chain storage service publishes responses |
-| `gsy.intelligent.responses.sub` | Subscribe | `ordersQueryResponse`, `tradesQueryResponse`, `measurementsQueryResponse` | matching/execution engines poll responses |
+| `gsy.intelligent.requests.pub` | Publish | `ordersQuery`, `tradesQuery`, `measurementsQuery`, `communityUpsert`, `communitiesQuery` | matching/execution engines, market orchestrator, and E2E runner publish requests |
+| `gsy.intelligent.requests.sub` | Subscribe | `ordersQuery`, `tradesQuery`, `measurementsQuery`, `communityUpsert`, `communitiesQuery` | off-chain storage service polls requests |
+| `gsy.intelligent.responses.pub` | Publish | `ordersQueryResponse`, `tradesQueryResponse`, `measurementsQueryResponse`, `communityUpsertResponse`, `communitiesQueryResponse` | off-chain storage service publishes responses |
+| `gsy.intelligent.responses.sub` | Subscribe | `ordersQueryResponse`, `tradesQueryResponse`, `measurementsQueryResponse`, `communityUpsertResponse`, `communitiesQueryResponse` | matching/execution engines, market orchestrator, and E2E runner poll responses |
 
 DDHub Client Gateway requires unique internal channel names, so publish and subscribe records cannot reuse the same FQCN. The topic owner and topic names remain the same across channels; only the local channel FQCN changes by direction.
+
+Do not use a broad role shared by multiple off-chain-storage deployments as the
+request publish channel recipient condition. Every qualified deployment can
+then answer the same request ID, and clients can observe conflicting snapshots
+from different databases. A broad role is useful for an initial delivery smoke
+test, but request/reply operation requires one authoritative responder per
+request channel.
 
 DDHub topic names must not contain dots. Use camelCase topic names in the gateway and keep dotted names only inside the JSON payload `operation` field, for example topic `ordersQuery` with payload operation `orders.query`.
 
@@ -160,6 +173,8 @@ Useful runtime overrides:
 - `EWDS_ENABLE_HANDLER=true` (enables EWDS query responder in `gsy-offchain-storage`)
 - `EWDS_HANDLER_POLL_INTERVAL_MS` / `EWDS_HANDLER_BATCH_SIZE`
 - `EWDS_RESPONSE_TIMEOUT_MS` / `EWDS_RESPONSE_POLL_INTERVAL_MS`
+- `EWDS_EMPTY_RESPONSE_GRACE_MS` controls how long a query waits for a
+  non-empty reply after receiving an empty reply with the same request ID.
 - `EWDS_RATE_LIMIT_BACKOFF_MS` / `EWDS_RATE_LIMIT_MAX_BACKOFF_MS`
 
 ### EWDS Smoke Test

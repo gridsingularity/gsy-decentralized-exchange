@@ -1,20 +1,22 @@
 use crate::db::DatabaseWrapper;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
+use futures::future::join_all;
 use primitives::db_api_schema::profiles::{MeasurementPointType, MeasurementSchema};
 use primitives::ewds::dto::{
-    EwdsClearingResultDto, EwdsInboundMessage, EwdsMarketDto, EwdsOrderDto, EwdsRequestEnvelope,
-    EwdsResponseEnvelope, EwdsSendMessageDto, EwdsTradeDto,
+    EwdsClearingResultDto, EwdsCommunityDto, EwdsInboundMessage, EwdsMarketDto, EwdsOrderDto,
+    EwdsRequestEnvelope, EwdsResponseEnvelope, EwdsSendMessageDto, EwdsTradeDto,
 };
 use primitives::ewds::{
-    client_id_for_suffix, env_var, ewds_rate_limit_backoff_ms, format_response_body,
-    is_rate_limited_message, is_rate_limited_response, EwdsOperation, EwdsTopicConfig,
+    EwdsOperation, EwdsTopicConfig, client_id_for_suffix, env_var, ewds_rate_limit_backoff_ms,
+    format_response_body, is_rate_limited_message, is_rate_limited_response,
+    is_transient_gateway_message, is_transient_gateway_response, parse_gateway_delivery_summary,
 };
 use primitives::utils::timestamp_to_string_with_padding;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 use tracing::{error, info, warn};
 
 #[derive(Clone)]
@@ -142,20 +144,30 @@ pub async fn start_ewds_request_handler(db: DatabaseWrapper, config: EwdsHandler
         config.gateway_url, config.request_fqcn, config.response_fqcn
     );
 
-    let client = Client::new();
+    let workers = EwdsOperation::ALL
+        .into_iter()
+        .map(|operation| run_topic_worker(db.clone(), Client::new(), config.clone(), operation));
+    join_all(workers).await;
+}
+
+async fn run_topic_worker(
+    db: DatabaseWrapper,
+    client: Client,
+    config: EwdsHandlerConfig,
+    operation: EwdsOperation,
+) {
     let mut seen_request_ids: HashSet<String> = HashSet::new();
     let mut seen_queue: VecDeque<String> = VecDeque::new();
-    let mut next_topic_index = 0usize;
     let mut rate_limit_attempt = 0u32;
 
     loop {
-        let delay_ms = match process_next_topic_batch(
+        let delay_ms = match process_topic_batch(
             &db,
             &client,
             &config,
+            operation,
             &mut seen_request_ids,
             &mut seen_queue,
-            &mut next_topic_index,
         )
         .await
         {
@@ -164,8 +176,13 @@ pub async fn start_ewds_request_handler(db: DatabaseWrapper, config: EwdsHandler
                 config.poll_interval_ms
             }
             Err(error) => {
-                warn!("EWDS batch processing failed: {}", error);
-                if is_rate_limited_message(error.to_string().as_str()) {
+                warn!(
+                    "EWDS {} worker batch processing failed: {}",
+                    operation, error
+                );
+                if is_rate_limited_message(error.to_string().as_str())
+                    || is_transient_gateway_message(error.to_string().as_str())
+                {
                     let delay_ms = ewds_rate_limit_backoff_ms(rate_limit_attempt);
                     rate_limit_attempt = rate_limit_attempt.saturating_add(1);
                     delay_ms
@@ -179,20 +196,17 @@ pub async fn start_ewds_request_handler(db: DatabaseWrapper, config: EwdsHandler
     }
 }
 
-async fn process_next_topic_batch(
+async fn process_topic_batch(
     db: &DatabaseWrapper,
     client: &Client,
     config: &EwdsHandlerConfig,
+    operation: EwdsOperation,
     seen_request_ids: &mut HashSet<String>,
     seen_queue: &mut VecDeque<String>,
-    next_topic_index: &mut usize,
 ) -> Result<()> {
     let amount = config.request_batch_size.to_string();
-    let operation = EwdsOperation::ALL[*next_topic_index % EwdsOperation::ALL.len()];
-    *next_topic_index = (*next_topic_index + 1) % EwdsOperation::ALL.len();
     let topic_name = config.topics.for_operation(operation).request.as_str();
-    let messages =
-        poll_requests_for_topic(client, config, topic_name, amount.as_str()).await?;
+    let messages = poll_requests_for_topic(client, config, topic_name, amount.as_str()).await?;
 
     for message in messages {
         let parsed = serde_json::from_str::<EwdsRequestEnvelope>(&message.payload);
@@ -366,6 +380,44 @@ pub async fn handle_request(
 
             send_success_response(client, config, request_id, response_topic.as_str(), data).await
         }
+        EwdsOperation::CommunityUpsert => {
+            let community = serde_json::from_value::<EwdsCommunityDto>(envelope.payload)
+                .map_err(|e| anyhow!("community.upsert payload parse error: {}", e))?;
+            let request_id = envelope.request_id;
+
+            info!(
+                "Handling EWDS community.upsert request (request_id={}, community_id={})",
+                request_id, community.community_id
+            );
+
+            let saved = db.communities().upsert(community.into()).await?;
+            let data = vec![EwdsCommunityDto::from(saved)];
+
+            send_success_response(client, config, request_id, response_topic.as_str(), data).await
+        }
+        EwdsOperation::CommunitiesQuery => {
+            let request_id = envelope.request_id;
+
+            info!(
+                "Handling EWDS communities.query request (request_id={})",
+                request_id
+            );
+
+            let data = db
+                .communities()
+                .get_all()
+                .await?
+                .into_iter()
+                .map(EwdsCommunityDto::from)
+                .collect::<Vec<_>>();
+            info!(
+                "Publishing EWDS communities.query response (request_id={}, communities={})",
+                request_id,
+                data.len()
+            );
+
+            send_success_response(client, config, request_id, response_topic.as_str(), data).await
+        }
         EwdsOperation::ClearingResultsQuery => {
             let payload =
                 serde_json::from_value::<ClearingResultsPayload>(envelope.payload.clone())
@@ -377,15 +429,16 @@ pub async fn handle_request(
                 .await
                 .map_err(|e| anyhow!("clearing_results.query DB error: {}", e))?;
 
-            let data: Vec<EwdsClearingResultDto> = results
+            let data = results
                 .into_iter()
                 .map(EwdsClearingResultDto::from)
-                .collect();
+                .collect::<Vec<_>>();
             info!(
                 "Publishing EWDS clearing_results.query response (request_id={}, results={})",
                 request_id,
                 data.len()
             );
+
             send_success_response(client, config, request_id, response_topic.as_str(), data).await
         }
         EwdsOperation::MarketsQuery => {
@@ -530,7 +583,7 @@ async fn send_message_with_fqcn(
     };
 
     let started = Instant::now();
-    let mut rate_limit_attempt = 0u32;
+    let mut delivery_attempt = 0u32;
     loop {
         if started.elapsed() > Duration::from_millis(config.response_send_timeout_ms) {
             return Err(anyhow!(
@@ -546,18 +599,41 @@ async fn send_message_with_fqcn(
             .send()
             .await?;
         let status = response.status();
+        let response_body = response.text().await.unwrap_or_default();
         if status.is_success() {
-            return Ok(());
+            let delivery = parse_gateway_delivery_summary(response_body.as_str())?;
+            if delivery.sent > 0 {
+                return Ok(());
+            }
+
+            let delay_ms = ewds_rate_limit_backoff_ms(delivery_attempt);
+            warn!(
+                "EWDS gateway accepted response for topic '{}' but delivered it to no recipients (failed={}, total={}); retrying in {} ms",
+                request_body.topic_name, delivery.failed, delivery.total, delay_ms
+            );
+            delivery_attempt = delivery_attempt.saturating_add(1);
+            sleep(Duration::from_millis(delay_ms)).await;
+            continue;
         }
 
-        let error_body = response.text().await.unwrap_or_default();
-        if is_rate_limited_response(status, error_body.as_str()) {
-            let delay_ms = ewds_rate_limit_backoff_ms(rate_limit_attempt);
+        if is_rate_limited_response(status, response_body.as_str()) {
+            let delay_ms = ewds_rate_limit_backoff_ms(delivery_attempt);
             warn!(
                 "EWDS rate limit while publishing response for topic '{}'; retrying in {} ms",
                 request_body.topic_name, delay_ms
             );
-            rate_limit_attempt = rate_limit_attempt.saturating_add(1);
+            delivery_attempt = delivery_attempt.saturating_add(1);
+            sleep(Duration::from_millis(delay_ms)).await;
+            continue;
+        }
+
+        if is_transient_gateway_response(status, response_body.as_str()) {
+            let delay_ms = ewds_rate_limit_backoff_ms(delivery_attempt);
+            warn!(
+                "EWDS transient gateway error while publishing response for topic '{}'; retrying in {} ms",
+                request_body.topic_name, delay_ms
+            );
+            delivery_attempt = delivery_attempt.saturating_add(1);
             sleep(Duration::from_millis(delay_ms)).await;
             continue;
         }
@@ -567,7 +643,7 @@ async fn send_message_with_fqcn(
             request_body.fqcn,
             request_body.topic_name,
             status,
-            format_response_body(&error_body)
+            format_response_body(&response_body)
         ));
     }
 }

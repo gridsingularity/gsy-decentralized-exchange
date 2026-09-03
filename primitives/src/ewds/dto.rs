@@ -1,5 +1,6 @@
 use super::EwdsOperation;
 use crate::db_api_schema::{
+    grid_topology::EnergyCommunitySchema,
     market::{MarketSchema, MarketType, MatchingAlgorithm},
     orders::{DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus},
     trades::{
@@ -7,7 +8,7 @@ use crate::db_api_schema::{
         TradeStatus,
     },
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::str::FromStr;
@@ -37,6 +38,18 @@ pub struct EwdsSendMessageDto {
     pub transaction_id: String,
     pub payload: String,
     pub anonymous_recipient: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+pub struct EwdsSendMessageResponse {
+    pub recipients: EwdsDeliverySummary,
+}
+
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+pub struct EwdsDeliverySummary {
+    pub failed: u32,
+    pub sent: u32,
+    pub total: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -89,6 +102,34 @@ pub struct EwdsOrderDto {
     pub preferred_trading_partner: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preferred_energy_rate: Option<f64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct EwdsCommunityDto {
+    pub community_id: String,
+    pub community_name: String,
+    pub sites: Vec<String>,
+}
+
+impl From<EnergyCommunitySchema> for EwdsCommunityDto {
+    fn from(community: EnergyCommunitySchema) -> Self {
+        Self {
+            community_id: community.community_id,
+            community_name: community.community_name,
+            sites: community.sites,
+        }
+    }
+}
+
+impl From<EwdsCommunityDto> for EnergyCommunitySchema {
+    fn from(community: EwdsCommunityDto) -> Self {
+        Self {
+            community_id: community.community_id,
+            community_name: community.community_name,
+            sites: community.sites,
+        }
+    }
 }
 
 impl From<DbOrderSchema> for EwdsOrderDto {

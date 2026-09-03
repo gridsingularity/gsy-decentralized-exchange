@@ -1,5 +1,5 @@
 use crate::helpers::{init_app, stop_app};
-use gsy_offchain_storage::ewds_handler::{handle_request, EwdsHandlerConfig};
+use gsy_offchain_storage::ewds_handler::{EwdsHandlerConfig, handle_request};
 use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
 use primitives::ewds::dto::{EwdsRequestEnvelope, EwdsSendMessageDto};
 use primitives::ewds::{EwdsOperation, EwdsTopicConfig};
@@ -20,7 +20,7 @@ fn test_config(gateway_url: String) -> EwdsHandlerConfig {
         topics: EwdsTopicConfig::from_env(),
         poll_interval_ms: 500,
         request_batch_size: 100,
-        response_send_timeout_ms: 60_000
+        response_send_timeout_ms: 1_000,
     }
 }
 
@@ -40,7 +40,9 @@ async fn mock_gateway() -> MockServer {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/api/v2/messages"))
-        .respond_with(ResponseTemplate::new(200))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "recipients": {"failed": 0, "sent": 1, "total": 1}
+        })))
         .mount(&server)
         .await;
     server
@@ -189,9 +191,10 @@ async fn measurements_query_bad_payload_errors() {
     let err = handle_request(&app.db_wrapper, &client, &config, env)
         .await
         .unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("measurements.query payload parse error"));
+    assert!(
+        err.to_string()
+            .contains("measurements.query payload parse error")
+    );
     assert!(server.received_requests().await.unwrap().is_empty());
 
     stop_app(app).await;
@@ -240,14 +243,14 @@ async fn clearing_results_query_bad_payload_errors() {
     let err = handle_request(&app.db_wrapper, &client, &config, env)
         .await
         .unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("clearing_results.query payload parse error"));
+    assert!(
+        err.to_string()
+            .contains("clearing_results.query payload parse error")
+    );
     assert!(server.received_requests().await.unwrap().is_empty());
 
     stop_app(app).await;
 }
-
 
 fn make_market(market_id: &str, community_id: &str, opening_time: &str) -> MarketSchema {
     MarketSchema {
@@ -381,9 +384,10 @@ async fn markets_query_bad_payload_errors() {
     let err = handle_request(&app.db_wrapper, &client, &config, env)
         .await
         .unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("markets.query payload parse error"));
+    assert!(
+        err.to_string()
+            .contains("markets.query payload parse error")
+    );
     assert!(server.received_requests().await.unwrap().is_empty());
 
     stop_app(app).await;

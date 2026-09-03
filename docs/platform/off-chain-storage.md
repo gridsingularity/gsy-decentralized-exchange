@@ -22,6 +22,7 @@ Backend: MongoDB (`mongo:5.0`).
 - `/health_check`
 - `/orders` (`GET`, `POST`)
 - `/trades` (`GET`, `POST`)
+- `/communities` (`GET`, `POST`) for idempotent community query/upsert
 - `/markets` (`GET`, `POST`) for ontology-aligned market-opening records
 - `/measurement-points` (`GET`, `POST`) for ontology-aligned measurement metadata
 - `/timeseries` (`GET`, `POST`) for ontology-aligned values
@@ -35,6 +36,9 @@ Compatibility adapters for EVM JSON callers:
 
 These adapters do not own separate collections. They read and write the same
 `markets`, `measurement_points`, and `timeseries` records as the canonical API.
+
+When `EWDS_ENABLE_HANDLER=true`, the same community collection is available
+through `community.upsert` and `communities.query` request/reply operations.
 
 ## Scheduler Behavior
 
@@ -56,3 +60,6 @@ Key env variables:
 - `CONTRACT_MARKET_CONTROLLER`
 - `DATABASE_*`
 - `SCHEDULER_INTERVAL`
+- `EWDS_ENABLE_HANDLER`
+- `EWDS_COMMUNITY_UPSERT_TOPIC`
+- `EWDS_COMMUNITIES_REQUEST_TOPIC`

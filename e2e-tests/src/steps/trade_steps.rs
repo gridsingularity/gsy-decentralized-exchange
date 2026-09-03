@@ -1,27 +1,31 @@
-use crate::world::{MyWorld, PayAsClearScenario};
+use crate::world::{CommunityMarketOrderPair, MyWorld, PayAsClearScenario};
 use cucumber::{then, when};
 use ethers::prelude::*;
 use gsy_community_client::node_connector::orders::publish_orders;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use primitives::db_api_schema::orders::{
-    energy_type_to_contract, DbAttributes, DbRequirements, EnergyType,OrderStatus, DbOrderSchema
+    energy_type_to_contract, DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderStatus,
 };
 use primitives::db_api_schema::profiles::MeasurementSchema;
 use primitives::db_api_schema::trades::DbTradeSchema;
+use primitives::ewds::dto::{EwdsOrderDto, EwdsTradeDto};
 use primitives::matching::matching_block_interval;
 use primitives::utils::{
-    NODE_FLOAT_SCALING_FACTOR,
-    parse_uuid_or_hex_bytes16,
-    parse_or_hash_bytes16
+    parse_or_hash_bytes16, parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR,
 };
 use std::collections::HashSet;
-use primitives::ewds::dto::{EwdsOrderDto, EwdsTradeDto};
+use std::env;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
 use tracing::info;
 
 const FLOAT_EPSILON: f64 = 0.000_001;
+const ENERGY_TYPE_UNSPECIFIED: u8 = 0;
+const COMMUNITY_TRADE_POLL_ATTEMPTS: usize = 180;
+const COMMUNITY_MATCHING_RETRIGGER_INTERVAL: usize = 30;
+const HTTP_PENALTY_POLL_ATTEMPTS: usize = 60;
+const EWDS_PENALTY_POLL_ATTEMPTS: usize = 180;
 
 type EvmOrderParamsTuple = (
     [u8; 16],
@@ -155,10 +159,11 @@ fn actor_id_as_hex(world: &MyWorld, user_name: &str) -> String {
 }
 
 fn market_id_as_hex(world: &MyWorld) -> String {
-    format!(
-        "0x{}",
-        hex::encode(world.last_market_id.expect("Missing market id"))
-    )
+    market_id_bytes_as_hex(world.last_market_id.expect("Missing market id"))
+}
+
+fn market_id_bytes_as_hex(market_id: [u8; 16]) -> String {
+    format!("0x{}", hex::encode(market_id))
 }
 
 fn market_window(world: &MyWorld) -> (u64, u64) {
@@ -169,8 +174,11 @@ fn market_window(world: &MyWorld) -> (u64, u64) {
 }
 
 async fn query_market_orders(world: &MyWorld) -> Vec<DbOrderSchema> {
+    query_orders_for_market(world, market_id_as_hex(world).as_str()).await
+}
+
+async fn query_orders_for_market(world: &MyWorld, market_id: &str) -> Vec<DbOrderSchema> {
     let (start_time, end_time) = market_window(world);
-    let market_id = market_id_as_hex(world);
 
     let response = world
         .http_client
@@ -196,6 +204,7 @@ async fn query_market_orders(world: &MyWorld) -> Vec<DbOrderSchema> {
         .map(|dto| DbOrderSchema::try_from(dto).expect("valid order DTO"))
         .collect()
 }
+
 async fn query_market_trades(world: &MyWorld) -> Vec<DbTradeSchema> {
     let (start_time, end_time) = market_window(world);
 
@@ -223,9 +232,18 @@ async fn query_market_trades(world: &MyWorld) -> Vec<DbTradeSchema> {
         .map(|dto| DbTradeSchema::try_from(dto).expect("valid trade DTO"))
         .collect()
 }
+
 async fn wait_for_order_in_offchain_storage(world: &MyWorld, order_id: &str) -> DbOrderSchema {
+    wait_for_order_in_market(world, market_id_as_hex(world).as_str(), order_id).await
+}
+
+async fn wait_for_order_in_market(
+    world: &MyWorld,
+    market_id: &str,
+    order_id: &str,
+) -> DbOrderSchema {
     for _ in 0..40 {
-        let orders = query_market_orders(world).await;
+        let orders = query_orders_for_market(world, market_id).await;
         if let Some(order) = orders
             .into_iter()
             .find(|order| order.order_id.eq_ignore_ascii_case(order_id))
@@ -283,6 +301,29 @@ async fn place_custom_order(
     requirements: Option<DbRequirements>,
     attributes: Option<DbAttributes>,
 ) -> String {
+    place_custom_order_for_market(
+        world,
+        world.last_market_id.expect("Missing market id"),
+        user_name,
+        is_bid,
+        energy,
+        energy_rate,
+        requirements,
+        attributes,
+    )
+    .await
+}
+
+async fn place_custom_order_for_market(
+    world: &MyWorld,
+    market_id: [u8; 16],
+    user_name: &str,
+    is_bid: bool,
+    energy: f64,
+    energy_rate: f64,
+    requirements: Option<DbRequirements>,
+    attributes: Option<DbAttributes>,
+) -> String {
     let wallet = world.wallet_for_user(user_name);
     let signer = Arc::new(SignerMiddleware::new(
         world.provider.clone(),
@@ -296,11 +337,15 @@ async fn place_custom_order(
     let creation_time = now.as_secs();
 
     let actor_id = world.actor_id_for_user(user_name);
-    let market_id = world.last_market_id.expect("Missing market id");
     let order_id_bytes = parse_or_hash_bytes16(
         format!(
-            "custom:{}:{}:{}:{}:{}",
-            user_name, is_bid, creation_time, energy, energy_rate
+            "custom:{}:{}:{}:{}:{}:{}",
+            user_name,
+            is_bid,
+            creation_time,
+            energy,
+            energy_rate,
+            hex::encode(market_id)
         )
         .as_str(),
     );
@@ -335,13 +380,247 @@ async fn place_custom_order(
     );
 
     if requirements.is_some() || attributes.is_some() {
-        let mut indexed_order = wait_for_order_in_offchain_storage(world, order_id.as_str()).await;
+        let market_id = market_id_bytes_as_hex(market_id);
+        let mut indexed_order =
+            wait_for_order_in_market(world, market_id.as_str(), order_id.as_str()).await;
         indexed_order.requirements = requirements;
         indexed_order.attributes = attributes;
         upsert_order_in_offchain_storage(world, indexed_order).await;
     }
 
     order_id
+}
+
+#[when("compatible orders are submitted to different community markets")]
+async fn submit_cross_community_orders(world: &mut MyWorld) {
+    let market_ids = world
+        .community_market_ids
+        .expect("Missing community market ids");
+    align_to_matching_window(world, 2).await;
+
+    let primary_bid =
+        place_custom_order_for_market(world, market_ids[0], "alice", true, 2.0, 20.0, None, None)
+            .await;
+    let secondary_offer =
+        place_custom_order_for_market(world, market_ids[1], "charlie", false, 2.0, 5.0, None, None)
+            .await;
+
+    wait_for_order_in_market(
+        world,
+        market_id_bytes_as_hex(market_ids[0]).as_str(),
+        primary_bid.as_str(),
+    )
+    .await;
+    wait_for_order_in_market(
+        world,
+        market_id_bytes_as_hex(market_ids[1]).as_str(),
+        secondary_offer.as_str(),
+    )
+    .await;
+
+    world.cross_community_order_ids = Some((primary_bid, secondary_offer));
+    mine_until_matching_block(world, matching_block_interval() as usize + 1).await;
+}
+
+#[then("no cross-community trade is settled")]
+async fn verify_no_cross_community_trade(world: &mut MyWorld) {
+    let (bid_id, offer_id) = world
+        .cross_community_order_ids
+        .as_ref()
+        .expect("Missing cross-community order ids");
+
+    // Allow the matching engine to observe and process the trigger block.
+    sleep(Duration::from_secs(3)).await;
+
+    let cross_trade = query_market_trades(world).await.into_iter().find(|trade| {
+        trade.bid_hash.eq_ignore_ascii_case(bid_id)
+            && trade.offer_hash.eq_ignore_ascii_case(offer_id)
+    });
+    assert!(
+        cross_trade.is_none(),
+        "Matching engine settled a bid and offer from different community markets"
+    );
+
+    let order_registry =
+        OrderRegistryContract::new(world.order_registry_address, world.provider.clone());
+    for order_id in [bid_id, offer_id] {
+        let status = order_registry
+            .get_status(parse_or_hash_bytes16(order_id))
+            .call()
+            .await
+            .expect("Failed to read cross-community order status");
+        assert_eq!(
+            status, 1u8,
+            "Cross-community order {} did not remain Open",
+            order_id
+        );
+    }
+}
+
+#[when("matching counterpart orders are submitted within both community markets")]
+async fn submit_community_market_counterparts(world: &mut MyWorld) {
+    let market_ids = world
+        .community_market_ids
+        .expect("Missing community market ids");
+    let (primary_bid, secondary_offer) = world
+        .cross_community_order_ids
+        .clone()
+        .expect("Missing cross-community order ids");
+    align_to_matching_window(world, 2).await;
+
+    let primary_offer = place_custom_order_for_market(
+        world,
+        market_ids[0],
+        "charlie",
+        false,
+        2.0,
+        10.0,
+        None,
+        None,
+    )
+    .await;
+    let secondary_bid =
+        place_custom_order_for_market(world, market_ids[1], "bob", true, 2.0, 15.0, None, None)
+            .await;
+
+    wait_for_order_in_market(
+        world,
+        market_id_bytes_as_hex(market_ids[0]).as_str(),
+        primary_offer.as_str(),
+    )
+    .await;
+    wait_for_order_in_market(
+        world,
+        market_id_bytes_as_hex(market_ids[1]).as_str(),
+        secondary_bid.as_str(),
+    )
+    .await;
+
+    world.community_market_order_pairs = vec![
+        CommunityMarketOrderPair {
+            market_id: market_ids[0],
+            bid_id: primary_bid,
+            offer_id: primary_offer,
+        },
+        CommunityMarketOrderPair {
+            market_id: market_ids[1],
+            bid_id: secondary_bid,
+            offer_id: secondary_offer,
+        },
+    ];
+    mine_until_matching_block(world, matching_block_interval() as usize + 1).await;
+}
+
+#[then("each community market settles only its own bid and offer")]
+async fn verify_community_market_settlements(world: &mut MyWorld) {
+    let order_pairs = world.community_market_order_pairs.clone();
+    assert_eq!(order_pairs.len(), 2, "Missing community-market order pairs");
+
+    let scenario_order_ids = order_pairs
+        .iter()
+        .flat_map(|pair| {
+            [
+                pair.bid_id.to_ascii_lowercase(),
+                pair.offer_id.to_ascii_lowercase(),
+            ]
+        })
+        .collect::<HashSet<_>>();
+
+    for attempt in 0..COMMUNITY_TRADE_POLL_ATTEMPTS {
+        if attempt > 0 && attempt % COMMUNITY_MATCHING_RETRIGGER_INTERVAL == 0 {
+            info!(
+                "Community-market trades are still pending; advancing to another matching boundary"
+            );
+            mine_until_matching_block(world, matching_block_interval() as usize + 1).await;
+        }
+
+        let scenario_trades = query_market_trades(world)
+            .await
+            .into_iter()
+            .filter(|trade| {
+                scenario_order_ids.contains(&trade.bid_hash.to_ascii_lowercase())
+                    || scenario_order_ids.contains(&trade.offer_hash.to_ascii_lowercase())
+            })
+            .collect::<Vec<_>>();
+
+        if scenario_trades.len() < order_pairs.len() {
+            info!(
+                "Community-market trades not available yet (attempt {}/{}). Retrying...",
+                attempt + 1,
+                COMMUNITY_TRADE_POLL_ATTEMPTS
+            );
+            sleep(Duration::from_secs(2)).await;
+            continue;
+        }
+
+        assert_eq!(
+            scenario_trades.len(),
+            order_pairs.len(),
+            "Unexpected number of trades involving the multi-community orders"
+        );
+
+        for pair in &order_pairs {
+            let expected_market_id = market_id_bytes_as_hex(pair.market_id);
+            let trade = scenario_trades
+                .iter()
+                .find(|trade| {
+                    trade.bid_hash.eq_ignore_ascii_case(pair.bid_id.as_str())
+                        && trade
+                            .offer_hash
+                            .eq_ignore_ascii_case(pair.offer_id.as_str())
+                })
+                .unwrap_or_else(|| {
+                    panic!(
+                        "No same-market trade found for bid {} and offer {}",
+                        pair.bid_id, pair.offer_id
+                    )
+                });
+            assert!(
+                trade
+                    .market_id
+                    .eq_ignore_ascii_case(expected_market_id.as_str()),
+                "Trade {} was indexed under the wrong community market",
+                trade.trade_uuid
+            );
+            assert_eq!(
+                trade.time_slot, world.target_delivery_time,
+                "Trade {} was indexed under the wrong delivery slot",
+                trade.trade_uuid
+            );
+            assert_trade_settled_on_chain(world, trade).await;
+        }
+
+        world.last_trade = scenario_trades.first().cloned();
+        world.community_market_trades = scenario_trades;
+        return;
+    }
+
+    panic!("Timeout: community-market trades were not indexed in off-chain storage");
+}
+
+#[then("measurements for both community markets are submitted")]
+async fn submit_community_market_measurements(world: &mut MyWorld) {
+    let measurements = vec![
+        MeasurementSchema {
+            facility_id: "areaalice".to_string(),
+            community_uuid: world.community_id.clone(),
+            time_slot: world.target_delivery_time,
+            creation_time: 1,
+            energy_kwh: 3.0,
+        },
+        MeasurementSchema {
+            facility_id: "areabob".to_string(),
+            community_uuid: world.secondary_community_id.clone(),
+            time_slot: world.target_delivery_time,
+            creation_time: 1,
+            energy_kwh: 3.0,
+        },
+    ];
+
+    AreaMarketInfoAdapter::new(Some(world.offchain_storage_url.clone()))
+        .forward_measurement(measurements)
+        .await
+        .expect("Failed to submit multi-community measurements");
 }
 
 #[when(expr = "{string} submits a bid")]
@@ -532,7 +811,7 @@ async fn submit_measurements(world: &mut MyWorld) {
     for facility in world.facilities_topology.iter() {
         measurements.push(MeasurementSchema {
             facility_id: facility.facility_id.clone(),
-            community_uuid: "community1".to_string(),
+            community_uuid: world.community_id.clone(),
             energy_kwh: 12.0,
             time_slot: world.target_delivery_time,
             creation_time: 1,
@@ -568,7 +847,7 @@ async fn assert_trade_settled_on_chain(world: &MyWorld, trade: &DbTradeSchema) {
     assert_eq!(offer_status, 2u8, "Offer order is not Executed on-chain");
 
     for attempt in 0..40 {
-        let orders = query_market_orders(world).await;
+        let orders = query_orders_for_market(world, trade.market_id.as_str()).await;
         let bid_executed = orders.iter().any(|order| {
             order.order_id.eq_ignore_ascii_case(trade.bid_hash.as_str())
                 && order.status == OrderStatus::Executed
@@ -952,7 +1231,8 @@ async fn verify_charlie_offer_untouched(world: &mut MyWorld) {
 
 #[then("the execution engine submits penalties for the trade")]
 async fn verify_penalties_on_chain(world: &mut MyWorld) {
-    let mut trades = world.pay_as_clear_trades.clone();
+    let mut trades = world.community_market_trades.clone();
+    trades.extend(world.pay_as_clear_trades.clone());
     if let Some(preferred_trade) = world.preferred_trade.clone() {
         trades.push(preferred_trade);
     }
@@ -966,15 +1246,24 @@ async fn verify_penalties_on_chain(world: &mut MyWorld) {
     }
     let trade_settlement =
         TradeSettlementContract::new(world.trade_settlement_address, world.provider.clone());
-
     let mut recorded_trade_ids = HashSet::new();
-    for attempt in 0..60 {
+    let poll_attempts = if env::var("OFFCHAIN_STORAGE_TRANSPORT")
+        .unwrap_or_else(|_| "http".to_string())
+        .eq_ignore_ascii_case("ewds")
+    {
+        EWDS_PENALTY_POLL_ATTEMPTS
+    } else {
+        HTTP_PENALTY_POLL_ATTEMPTS
+    };
+
+    for attempt in 0..poll_attempts {
         for trade in &trades {
             if recorded_trade_ids.contains(trade.trade_uuid.as_str()) {
                 continue;
             }
 
-            let trade_id = parse_uuid_or_hex_bytes16(trade.trade_uuid.as_str()).expect("REASON");
+            let trade_id = parse_uuid_or_hex_bytes16(trade.trade_uuid.as_str())
+                .expect("Could not convert trade ID to bytes16");
             let penalty = trade_settlement
                 .penalty_energy_by_trade(trade_id)
                 .call()
@@ -995,10 +1284,11 @@ async fn verify_penalties_on_chain(world: &mut MyWorld) {
         }
 
         info!(
-            "Penalties not submitted for {} of {} trade(s) yet (attempt {}/60). Retrying...",
+            "Penalties not submitted for {} of {} trade(s) yet (attempt {}/{}). Retrying...",
             trades.len() - recorded_trade_ids.len(),
             trades.len(),
             attempt + 1,
+            poll_attempts,
         );
         sleep(Duration::from_secs(2)).await;
     }

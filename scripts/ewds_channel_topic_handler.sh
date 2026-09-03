@@ -9,11 +9,15 @@ tradesQuery
 measurementsQuery
 clearingResultsQuery
 marketsQuery
+communityUpsert
+communitiesQuery
 ordersQueryTest
 tradesQueryTest
 measurementsQueryTest
 clearingResultsQueryTest
 marketsQueryTest
+communityUpsertTest
+communitiesQueryTest
 "
 
 CHANNELS="
