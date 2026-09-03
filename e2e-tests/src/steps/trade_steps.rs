@@ -4,7 +4,8 @@ use ethers::prelude::*;
 use gsy_community_client::node_connector::orders::publish_orders;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use primitives::db_api_schema::orders::{
-    energy_type_to_contract, DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderStatus,
+    order_metadata_to_contract, DbAttributes, DbOrderSchema, DbRequirements, EnergyType,
+    OrderStatus,
 };
 use primitives::db_api_schema::profiles::MeasurementSchema;
 use primitives::db_api_schema::trades::DbTradeSchema;
@@ -38,6 +39,9 @@ type EvmOrderParamsTuple = (
     u8,
     u8,
     bool,
+    [u8; 16],
+    u64,
+    [u8; 16],
 );
 
 abigen!(
@@ -70,7 +74,10 @@ abigen!(
                         {"name": "energyRate", "type": "uint64"},
                         {"name": "energySourcePreference", "type": "uint8"},
                         {"name": "energyType", "type": "uint8"},
-                        {"name": "isBid", "type": "bool"}
+                        {"name": "isBid", "type": "bool"},
+                        {"name": "preferredTradingPartner", "type": "bytes16"},
+                        {"name": "preferredEnergyRate", "type": "uint64"},
+                        {"name": "tradingPartner", "type": "bytes16"}
                     ]
                 }
             ],
@@ -277,21 +284,6 @@ async fn upsert_order_in_offchain_storage(world: &MyWorld, order: DbOrderSchema)
     );
 }
 
-fn order_energy_source_preference(requirements: &Option<DbRequirements>) -> u8 {
-    requirements
-        .as_ref()
-        .and_then(|requirements| requirements.energy_type.as_ref())
-        .map(energy_type_to_contract)
-        .unwrap_or(energy_type_to_contract(&EnergyType::None))
-}
-
-fn order_energy_type(attributes: &Option<DbAttributes>) -> u8 {
-    attributes
-        .as_ref()
-        .map(|attributes| energy_type_to_contract(&attributes.energy_type))
-        .unwrap_or(energy_type_to_contract(&EnergyType::None))
-}
-
 async fn place_custom_order(
     world: &MyWorld,
     user_name: &str,
@@ -349,6 +341,7 @@ async fn place_custom_order_for_market(
         )
         .as_str(),
     );
+    let metadata = order_metadata_to_contract(requirements.as_ref(), attributes.as_ref());
 
     let params: EvmOrderParamsTuple = (
         order_id_bytes,
@@ -358,9 +351,12 @@ async fn place_custom_order_for_market(
         creation_time,
         (energy * NODE_FLOAT_SCALING_FACTOR).round() as u64,
         (energy_rate * NODE_FLOAT_SCALING_FACTOR).round() as u64,
-        order_energy_source_preference(&requirements),
-        order_energy_type(&attributes),
+        metadata.energy_source_preference,
+        metadata.energy_type,
         is_bid,
+        metadata.preferred_trading_partner,
+        metadata.preferred_energy_rate,
+        metadata.trading_partner,
     );
 
     let order_id = format!("0x{}", hex::encode(order_id_bytes));

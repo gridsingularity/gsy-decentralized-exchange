@@ -2,7 +2,7 @@ use crate::time_utils::get_current_timestamp_in_secs;
 use anyhow::{Error, Result};
 use ethers::prelude::*;
 use primitives::db_api_schema::market::MarketSchema;
-use primitives::db_api_schema::orders::{energy_type_to_contract, EnergyType};
+use primitives::db_api_schema::orders::order_metadata_to_contract;
 use primitives::db_api_schema::profiles::ForecastSchema;
 use primitives::utils::{parse_or_hash_bytes16, string_to_timestamp, NODE_FLOAT_SCALING_FACTOR};
 use std::str::FromStr;
@@ -22,6 +22,9 @@ pub type EvmOrderParamsTuple = (
     u8,
     u8,
     bool,
+    [u8; 16],
+    u64,
+    [u8; 16],
 );
 
 pub async fn publish_orders(
@@ -114,7 +117,10 @@ abigen!(
                         {"name": "energyRate", "type": "uint64"},
                         {"name": "energySourcePreference", "type": "uint8"},
                         {"name": "energyType", "type": "uint8"},
-                        {"name": "isBid", "type": "bool"}
+                        {"name": "isBid", "type": "bool"},
+                        {"name": "preferredTradingPartner", "type": "bytes16"},
+                        {"name": "preferredEnergyRate", "type": "uint64"},
+                        {"name": "tradingPartner", "type": "bytes16"}
                     ]
                 }
             ],
@@ -132,6 +138,7 @@ fn build_order_param(
     is_bid: bool,
 ) -> EvmOrderParamsTuple {
     let rate_multiplier = if is_bid { BID_RATE } else { OFFER_RATE };
+    let metadata = order_metadata_to_contract(None, None);
     let order_id = parse_or_hash_bytes16(
         format!(
             "{}:{}:{}:{}:{}",
@@ -149,9 +156,12 @@ fn build_order_param(
         now,
         (forecast.energy_kwh.abs() * NODE_FLOAT_SCALING_FACTOR) as u64,
         (forecast.energy_kwh.abs() * rate_multiplier * NODE_FLOAT_SCALING_FACTOR) as u64,
-        energy_type_to_contract(&EnergyType::None),
-        energy_type_to_contract(&EnergyType::None),
+        metadata.energy_source_preference,
+        metadata.energy_type,
         is_bid,
+        metadata.preferred_trading_partner,
+        metadata.preferred_energy_rate,
+        metadata.trading_partner,
     )
 }
 
