@@ -22,11 +22,10 @@ mongodb-data
 
 .idea
 
+
 # Local-demo per-service env files: ignore the real ones, keep the .example templates.
 /.env/*
 !/.env/*.example
 
-# Node libp2p keys (docker-compose.node-*.yml mount these as /keys).
-# Losing them changes a node's PeerId; committing them publishes its identity.
 /.secrets/
 
