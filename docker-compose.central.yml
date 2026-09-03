@@ -63,6 +63,7 @@ services:
 
   gsy-offchain-storage:
     container_name: gsy-offchain-storage
+    restart: unless-stopped
     build:
       context: .
       dockerfile: ./gsy-offchain-storage/Dockerfile
@@ -87,6 +88,17 @@ services:
       - NODE_URL=${GSY_NODE_HOST:-gsy-node}:${GSY_NODE_PORT:-9944}
       - SCHEDULER_INTERVAL=900
       - API_KEY=${API_KEY:-fedecom_user}
+      # Guarantees of origin pilot parameters; see .env/gsy-offchain-storage.env.example.
+      # GOO_MUNICIPALITY_CODE and GOO_GRID_LEVEL await confirmation from AEM, and
+      # GOO_DATA_PROVIDER_ID is a placeholder DID.
+      - GOO_SITE_ID=${GOO_SITE_ID:-ch-aem-goo-poc}
+      - GOO_INTERVAL_DURATION_S=${GOO_INTERVAL_DURATION_S:-900}
+      - GOO_ROUNDING_RULE=${GOO_ROUNDING_RULE:-half_up_2dp}
+      - GOO_MUNICIPALITY_CODE=${GOO_MUNICIPALITY_CODE:-5226}
+      - GOO_GRID_OPERATOR_ID=${GOO_GRID_OPERATOR_ID:-AEM}
+      - GOO_GRID_LEVEL=${GOO_GRID_LEVEL:-7}
+      - GOO_DATA_PROVIDER_ID=${GOO_DATA_PROVIDER_ID:-did:example:aem-metering}
+      - GOO_PROPERTY_MEASURED=${GOO_PROPERTY_MEASURED:-measurement#active_energy}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health_check"]
       interval: 10s
@@ -96,6 +108,7 @@ services:
 
   gsy-matching-engine:
     container_name: gsy-matching-engine
+    restart: unless-stopped
     build:
       context: .
       dockerfile: ./gsy-matching-engine/Dockerfile
@@ -119,8 +132,30 @@ services:
         "${GSY_NODE_PORT:-9944}",
       ]
 
+  # Sudo-registers the trading user and the exchange operator so the orchestrator
+  # will create markets and the community client's orders are accepted. One-shot
+  # and idempotent (deployment/bootstrap/register.js:88-91), so re-runs are safe.
+  # There is no local gsy-node here — the validators are remote, over the tailnet —
+  # so it waits on the sidecar and relies on CONNECT_RETRIES for the node itself.
+  gsy-bootstrap:
+    container_name: gsy-bootstrap
+    build:
+      context: ./deployment/bootstrap
+      dockerfile: Dockerfile
+    network_mode: "service:tailscale-central"
+    depends_on:
+      tailscale-central:
+        condition: service_healthy
+    env_file:
+      - ./.env/gsy-bootstrap.env
+    # env_file cannot do ${...} substitution; inline environment wins over env_file.
+    environment:
+      - NODE_URL=ws://${GSY_NODE_HOST:-gsy-node}:${GSY_NODE_PORT:-9944}
+    restart: "no"
+
   gsy-market-orchestrator:
     container_name: gsy-market-orchestrator
+    restart: unless-stopped
     build:
       context: .
       dockerfile: ./gsy-market-orchestrator/Dockerfile
@@ -130,6 +165,8 @@ services:
         condition: service_healthy
       gsy-offchain-storage:
         condition: service_healthy
+      gsy-bootstrap:
+        condition: service_completed_successfully
     environment:
       - RUST_LOG=info,gsy_market_orchestrator=debug
       - GSY_NODE_URL=ws://${GSY_NODE_HOST:-gsy-node}:${GSY_NODE_PORT:-9944}
@@ -139,6 +176,7 @@ services:
 
   gsy-execution-engine:
     container_name: gsy-execution-engine
+    restart: unless-stopped
     build:
       context: .
       dockerfile: ./gsy-execution-engine/Dockerfile
@@ -163,6 +201,30 @@ services:
         "3600",
         "0.10",
       ]
+
+  gsy-community-client:
+    container_name: gsy-community-client
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: ./gsy-community-client/Dockerfile
+    network_mode: "service:tailscale-central"
+    depends_on:
+      tailscale-central:
+        condition: service_healthy
+      gsy-offchain-storage:
+        condition: service_healthy
+      gsy-bootstrap:
+        condition: service_completed_successfully
+    # FEDECOM forecaster / InfluxDB credentials (outbound HTTPS required).
+    env_file:
+      - ./.env/gsy-community-client.env
+    # Shared netns: storage is localhost; the node is a tailnet address.
+    # env_file cannot do ${...} substitution; inline environment wins over env_file.
+    environment:
+      - GSY_NODE_URL=ws://${GSY_NODE_HOST:-gsy-node}:${GSY_NODE_PORT:-9944}
+      - OFFCHAIN_STORAGE_URL=http://localhost:8080
+      - API_KEY=${API_KEY:-fedecom_user}
 
   # --- MongoDB replica set (rs0), internal to the central docker bridge ---
   mongo-keyfile-init:

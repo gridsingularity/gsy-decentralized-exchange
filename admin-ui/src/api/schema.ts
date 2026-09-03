@@ -86,7 +86,9 @@ export interface DbOrderSchema {
   order: Order;
 }
 
-export type TradeStatus = 'Settled' | 'Executed';
+// 'Settled' means matched but not yet evaluated for delivery; the execution engine's verdict
+// moves a trade to 'Executed' (no penalty) or 'Penalized'.
+export type TradeStatus = 'Settled' | 'Executed' | 'Penalized';
 
 export interface TradeParameters {
   selected_energy: number;
@@ -103,6 +105,7 @@ export interface TradeSchema {
   time_slot: number; // u64 seconds
   trade_uuid: string;
   creation_time: number; // u64 seconds
+  status_updated_at: number | null; // u64 seconds, unix time of the last real status change
   offer: DbOffer;
   offer_hash: string;
   bid: DbBid;
@@ -123,8 +126,9 @@ export interface TradeCanonicalSchema extends TradeSchema {
 }
 
 export interface MeasurementSchema {
-  // area_uuid here carries the asset `name` (sensor id), area_hash the per-market
-  // random hash — see plan §9.4 before joining.
+  // area_uuid here carries the asset `name` (sensor id); area_hash is the deterministic
+  // hash of (community_name, area_name) and is the same in every market, so it is what
+  // joins a measurement to a trade component.
   area_uuid: string;
   area_hash: string;
   community_uuid: string;

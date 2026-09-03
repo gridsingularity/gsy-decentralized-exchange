@@ -5,11 +5,20 @@ use subxt::config::{Hasher, substrate::BlakeTwo256};
 use crate::db_api_schema::orders::{DbOffer, DbBid};
 
 
-/// Trade status
+/// Trade status.
+///
+/// A trade is inserted as `Settled` and stays there until the execution engine has judged it and
+/// gsy-node has reported the verdict, at which point the event listener moves it to `Executed` or
+/// `Penalized`. New variants must be appended, never inserted: the SCALE discriminants are part of
+/// the wire format.
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
 pub enum TradeStatus {
+    /// Matched and recorded on-chain, not yet evaluated for delivery.
     Settled,
+    /// Evaluated by the execution engine with no penalty incurred.
     Executed,
+    /// Evaluated by the execution engine and penalized on-chain.
+    Penalized,
 }
 
 #[derive(Serialize, Deserialize, Debug, Encode, Decode, Clone, PartialEq)]
@@ -29,6 +38,10 @@ pub struct TradeSchema {
     pub time_slot: u64,
     pub trade_uuid: String,
     pub creation_time: u64,
+    /// Unix seconds at which `status` last changed. `None` on documents written before this
+    /// field existed, and on trades that have never left `Settled`.
+    #[serde(default)]
+    pub status_updated_at: Option<u64>,
     pub offer: DbOffer,
     pub offer_hash: String,
     pub bid: DbBid,

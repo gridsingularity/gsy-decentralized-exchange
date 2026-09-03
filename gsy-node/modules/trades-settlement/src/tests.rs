@@ -217,7 +217,8 @@ fn submit_penalties_works_for_registered_operator() {
 		// Call the extrinsic from MIKE (the registered operator).
 		assert_ok!(TradesSettlement::submit_penalties(
 			RawOrigin::Signed(MIKE).into(),
-			vec!(sample_penalty.clone())
+			vec!(sample_penalty.clone()),
+			vec!(sample_penalty.trade_uuid, H256::random())
 		));
 	});
 }
@@ -238,9 +239,137 @@ fn submit_penalties_fails_for_non_operator() {
 		assert_noop!(
 			TradesSettlement::submit_penalties(
 				RawOrigin::Signed(MIKE).into(),
-				vec!(sample_penalty.clone())
+				vec!(sample_penalty.clone()),
+				vec!(sample_penalty.trade_uuid)
 			),
 			gsy_collateral::Error::<Test>::NotARegisteredExchangeOperator
 		);
+	});
+}
+
+fn trade_executed_events() -> Vec<H256> {
+	System::events()
+		.into_iter()
+		.filter_map(|record| match record.event {
+			RuntimeEvent::TradesSettlement(crate::Event::TradeExecuted(trade_uuid)) => {
+				Some(trade_uuid)
+			},
+			_ => None,
+		})
+		.collect()
+}
+
+#[test]
+fn submit_penalties_emits_trade_executed_for_unpenalized_evaluated_trades() {
+	new_test_ext().execute_with(|| {
+		System::set_block_number(1);
+
+		assert_ok!(TestOrderbookFunctions::add_exchange_operator::<Test>(MIKE));
+
+		let penalized_uuid = H256::random();
+		let unpenalized_uuid = H256::random();
+
+		let sample_penalty = TradesPenalties {
+			penalized_account: ALICE,
+			market_uuid: H256::random(),
+			penalty_energy: 1000,
+			trade_uuid: penalized_uuid,
+		};
+
+		assert_ok!(TradesSettlement::submit_penalties(
+			RawOrigin::Signed(MIKE).into(),
+			vec!(sample_penalty),
+			vec!(penalized_uuid, unpenalized_uuid)
+		));
+
+		let executed = trade_executed_events();
+		assert_eq!(executed, vec!(unpenalized_uuid));
+	});
+}
+
+#[test]
+fn submit_penalties_with_empty_penalties_still_emits_trade_executed() {
+	new_test_ext().execute_with(|| {
+		System::set_block_number(1);
+
+		assert_ok!(TestOrderbookFunctions::add_exchange_operator::<Test>(MIKE));
+
+		let evaluated_uuid = H256::random();
+
+		assert_ok!(TradesSettlement::submit_penalties(
+			RawOrigin::Signed(MIKE).into(),
+			vec!(),
+			vec!(evaluated_uuid)
+		));
+
+		assert_eq!(trade_executed_events(), vec!(evaluated_uuid));
+	});
+}
+
+#[test]
+fn submit_penalties_does_not_emit_trade_executed_for_penalized_trade() {
+	new_test_ext().execute_with(|| {
+		System::set_block_number(1);
+
+		assert_ok!(TestOrderbookFunctions::add_exchange_operator::<Test>(MIKE));
+
+		let trade_uuid = H256::random();
+		let sample_penalty = TradesPenalties {
+			penalized_account: ALICE,
+			market_uuid: H256::random(),
+			penalty_energy: 1000,
+			trade_uuid,
+		};
+
+		assert_ok!(TradesSettlement::submit_penalties(
+			RawOrigin::Signed(MIKE).into(),
+			vec!(sample_penalty),
+			vec!(trade_uuid)
+		));
+
+		assert!(trade_executed_events().is_empty());
+	});
+}
+
+#[test]
+fn submit_penalties_deduplicates_repeated_evaluated_uuids() {
+	new_test_ext().execute_with(|| {
+		System::set_block_number(1);
+
+		assert_ok!(TestOrderbookFunctions::add_exchange_operator::<Test>(MIKE));
+
+		let evaluated_uuid = H256::random();
+
+		assert_ok!(TradesSettlement::submit_penalties(
+			RawOrigin::Signed(MIKE).into(),
+			vec!(),
+			vec!(evaluated_uuid, evaluated_uuid)
+		));
+
+		assert_eq!(trade_executed_events(), vec!(evaluated_uuid));
+	});
+}
+
+#[test]
+fn submit_penalties_with_empty_evaluated_set_emits_no_trade_executed() {
+	new_test_ext().execute_with(|| {
+		System::set_block_number(1);
+
+		assert_ok!(TestOrderbookFunctions::add_exchange_operator::<Test>(MIKE));
+
+		let sample_penalty = TradesPenalties {
+			penalized_account: ALICE,
+			market_uuid: H256::random(),
+			penalty_energy: 1000,
+			trade_uuid: H256::random(),
+		};
+
+		assert_ok!(TradesSettlement::submit_penalties(
+			RawOrigin::Signed(MIKE).into(),
+			vec!(sample_penalty),
+			vec!()
+		));
+
+		assert!(trade_executed_events().is_empty());
 	});
 }

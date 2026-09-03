@@ -115,7 +115,11 @@ impl MeasurementInfluxDBConnection {
             ))
             .build()
             .expect("Failed to build InfluxDB HTTP client");
-        let response = client
+        // Every failure here returns an empty result set rather than panicking. This runs at
+        // the tail of the community client's publish loop, so a panic would take that task
+        // down permanently while the process stays alive (the ingest task keeps the
+        // container running), silently ending order publication until someone restarts it.
+        let response = match client
             .post(self.url())
             .header("Accept", "application/json")
             .header("Authorization", "Token ".to_string() + self.token.as_str())
@@ -123,8 +127,24 @@ impl MeasurementInfluxDBConnection {
             .json(&request_body)
             .send()
             .await
-            .unwrap();
-        let response_text = response.text().await.unwrap();
+        {
+            Ok(response) => response,
+            Err(e) => {
+                error!("Failed to query InfluxDB at {}: {}", self.address, e);
+                return Vec::new();
+            }
+        };
+        if !response.status().is_success() {
+            error!("InfluxDB query failed with status: {}", response.status());
+            return Vec::new();
+        }
+        let response_text = match response.text().await {
+            Ok(text) => text,
+            Err(e) => {
+                error!("Failed to read the InfluxDB response body: {}", e);
+                return Vec::new();
+            }
+        };
 
         let mut rdr = csv::ReaderBuilder::new()
             .trim(csv::Trim::All)
@@ -146,43 +166,44 @@ impl MeasurementInfluxDBConnection {
         > = HashMap::new();
         let fetched_data = self.fetch_from_db(start_time, end_time).await;
         for record in fetched_data.iter() {
-            let sensor_id_tokens = record.sensor_id.split('-');
             // TODO: For now only FLEXO sensors are integrated in InfluxDB.
-            assert_eq!(
-                sensor_id_tokens.clone().nth(0).unwrap().to_string(),
-                "FLEXO".to_string()
-            );
-            let smart_meter_id = sensor_id_tokens.clone().nth(2).unwrap().to_string();
-            let measurement_type = sensor_id_tokens.clone().nth(3).unwrap().to_string();
-            if !smart_meter_measurements.contains_key(&smart_meter_id) {
-                smart_meter_measurements.insert(smart_meter_id.clone(), HashMap::new());
-                smart_meter_measurements
-                    .get_mut(&smart_meter_id)
-                    .unwrap()
-                    .insert(
-                        record.time,
-                        InfluxMeasurementMeterData {
-                            sensor_id: smart_meter_id.clone(),
-                            time: record.time,
-                            import_Wh: 0.,
-                            export_Wh: 0.,
-                            consumption_Wh: 0.,
-                            export_pv_Wh: 0.,
-                        },
-                    );
+            // The Flux query already filters on the `FLEXO-` prefix, but an id that does not
+            // split into `FLEXO-<x>-<meter>-<type>` is skipped rather than asserted on, for
+            // the same reason `fetch_from_db` never panics.
+            let sensor_id_tokens: Vec<&str> = record.sensor_id.split('-').collect();
+            if sensor_id_tokens.len() < 4 || sensor_id_tokens[0] != "FLEXO" {
+                error!(
+                    "Skipping unrecognized InfluxDB sensor id: {}",
+                    record.sensor_id
+                );
+                continue;
             }
+            let smart_meter_id = sensor_id_tokens[2].to_string();
+            let measurement_type = sensor_id_tokens[3];
 
-            // Get nested reference for smart meter id and timestamp
-            let hashmap_reference = smart_meter_measurements
-                .get_mut(&smart_meter_id)
-                .unwrap()
-                .get_mut(&record.time)
-                .unwrap();
-            match measurement_type.as_str() {
-                "import" => hashmap_reference.import_Wh = record.value.unwrap(),
-                "export" => hashmap_reference.export_Wh = record.value.unwrap(),
-                "consumption" => hashmap_reference.consumption_Wh = record.value.unwrap(),
-                "export_pv" => hashmap_reference.export_pv_Wh = record.value.unwrap(),
+            // A null `_value` is a gap in the series, not a zero reading; skip it so it
+            // neither panics nor pulls the meter's net energy towards zero.
+            let Some(value) = record.value else {
+                continue;
+            };
+
+            let meter_data = smart_meter_measurements
+                .entry(smart_meter_id.clone())
+                .or_default()
+                .entry(record.time)
+                .or_insert_with(|| InfluxMeasurementMeterData {
+                    sensor_id: smart_meter_id.clone(),
+                    time: record.time,
+                    import_Wh: 0.,
+                    export_Wh: 0.,
+                    consumption_Wh: 0.,
+                    export_pv_Wh: 0.,
+                });
+            match measurement_type {
+                "import" => meter_data.import_Wh = value,
+                "export" => meter_data.export_Wh = value,
+                "consumption" => meter_data.consumption_Wh = value,
+                "export_pv" => meter_data.export_pv_Wh = value,
                 _ => error!("Unknown measurement type: {}", measurement_type),
             }
         }

@@ -1,5 +1,5 @@
 use crate::constants::CommunityClientConstants;
-use crate::external_forecasts::ForecastApiError;
+use crate::external_forecasts::{ForecastApiError, describe_error_response};
 use chrono::{DateTime, NaiveDateTime, SecondsFormat, Utc};
 use gsy_offchain_primitives::constants::GlobalConstants;
 use reqwest::Client as ReqwestClient;
@@ -128,16 +128,18 @@ impl PvForecastApiConnection {
             start_time: start_time.to_rfc3339_opts(SecondsFormat::Secs, false),
             api_key: self.api_key.clone(),
         };
-        let body = self
+        let response = self
             .client
             .post(&self.address)
             // NOTE: no `X-API-Key` header here — the key travels inside the JSON body above.
             .json(&request_params)
             .send()
-            .await?
-            .error_for_status()?
-            .text()
             .await?;
+        let status = response.status();
+        let body = response.text().await?;
+        if !status.is_success() {
+            return Err(ForecastApiError::Api(describe_error_response(status, &body)));
+        }
         parse_response(&body)
     }
 }

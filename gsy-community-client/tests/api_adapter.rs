@@ -11,7 +11,7 @@ use gsy_offchain_primitives::db_api_schema::market::AssetType;
 use gsy_offchain_primitives::db_api_schema::orders::{
     DbBid, DbOrderComponent, DbOrderSchema, Order, OrderStatus,
 };
-use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
+use gsy_offchain_primitives::db_api_schema::profiles::{ForecastSchema, MeasurementSchema};
 use gsy_offchain_primitives::utils::h256_to_string;
 use reqwest::Client;
 use serde_json;
@@ -116,6 +116,56 @@ mod tests {
         // Equal to now is not strictly future, so it also fails.
         assert!(!adapter.validate_forecast(&forecast_with(3.0, now), now));
         assert!(!adapter.validate_forecast(&forecast_with(-3.0, now), now));
+    }
+
+    fn measurement_with(energy_kwh: f64, time_slot: u64) -> MeasurementSchema {
+        MeasurementSchema {
+            area_uuid: "area_uuid".to_string(),
+            area_hash: h256_to_string(H256::random()),
+            community_uuid: "comm_uuid".to_string(),
+            time_slot,
+            creation_time: 0,
+            energy_kwh,
+        }
+    }
+
+    #[test]
+    fn test_validate_measurement_accepts_negative_energy_net_exporting_pv_meter() {
+        // Regression for the bug: `energy_kwh` is the meter's signed net flow, so a
+        // net-exporting PV meter (production) nets negative and must still be accepted.
+        let adapter = AreaMarketInfoAdapter::new(None);
+        let now = 1_000;
+        let measurement = measurement_with(-4.0, now - 900);
+        assert!(adapter.validate_measurement(&measurement, now));
+    }
+
+    #[test]
+    fn test_validate_measurement_accepts_positive_energy_net_importing_meter() {
+        // No regression: a net-consuming meter still validates.
+        let adapter = AreaMarketInfoAdapter::new(None);
+        let now = 1_000;
+        let measurement = measurement_with(4.0, now - 900);
+        assert!(adapter.validate_measurement(&measurement, now));
+    }
+
+    #[test]
+    fn test_validate_measurement_rejects_future_time_slot_for_both_signs() {
+        let adapter = AreaMarketInfoAdapter::new(None);
+        let now = 1_000;
+        assert!(!adapter.validate_measurement(&measurement_with(3.0, now + 900), now));
+        assert!(!adapter.validate_measurement(&measurement_with(-3.0, now + 900), now));
+    }
+
+    #[test]
+    fn test_validate_measurement_rejects_non_finite_energy() {
+        let adapter = AreaMarketInfoAdapter::new(None);
+        let now = 1_000;
+        assert!(!adapter.validate_measurement(&measurement_with(f64::NAN, now - 900), now));
+        assert!(!adapter.validate_measurement(&measurement_with(f64::INFINITY, now - 900), now));
+        assert!(!adapter.validate_measurement(
+            &measurement_with(f64::NEG_INFINITY, now - 900),
+            now
+        ));
     }
 
     #[tokio::test]

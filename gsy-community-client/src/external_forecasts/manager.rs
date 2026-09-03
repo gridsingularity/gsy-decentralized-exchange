@@ -8,6 +8,7 @@ use gsy_offchain_primitives::db_api_schema::market::{
 };
 use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
 use std::sync::Arc;
+use tokio::task::JoinSet;
 use tracing::{error, info};
 
 /// The FEDECOM forecaster `site` for a meter, selected by the meter-id prefix.
@@ -35,6 +36,12 @@ const DEMAND_FORECAST_CONFIDENCE: f64 = 0.9;
 // forecastable meter type. LIC02SM is a battery mislabelled as a SmartMeter; add further
 // mislabelled assets here as they are discovered.
 const EXCLUDED_METERS: [&str; 1] = ["LIC02SM"];
+
+// How many PV forecast requests are in flight at once. Each can burn the full
+// PV_HTTP_REQUEST_TIMEOUT_SEC, so fetching one at a time meant a hung forecaster stalled
+// ingestion for (assets x timeout) — hours for a large community, far beyond the ingest
+// interval, and the demand fetches queued behind it never ran at all.
+const PV_FETCH_CONCURRENCY: usize = 8;
 
 #[derive(Clone)]
 pub struct ForecastsManager {
@@ -193,43 +200,64 @@ impl ForecastsManager {
         start_time: DateTime<Utc>,
     ) -> Vec<ForecastSchema> {
         let cfg = PvCommitmentConfig::from_constants();
+
+        // Resolve the routable assets up front so unserved ones never reach the network.
+        let targets: Vec<(AreaTopologySchema, &'static str)> = areas
+            .iter()
+            .filter(|area| Self::is_pv_asset(&area.name, &area.area_type))
+            .filter_map(|area| forecaster_site(&area.name).map(|site| (area.clone(), site)))
+            .collect();
+
         let mut forecasts: Vec<ForecastSchema> = vec![];
-        for area in areas.iter() {
-            if !Self::is_pv_asset(&area.name, &area.area_type) {
-                continue;
+        for batch in targets.chunks(PV_FETCH_CONCURRENCY) {
+            let mut in_flight = JoinSet::new();
+            for (area, site) in batch {
+                let api = Arc::clone(&self.pv_forecast_api);
+                let area = area.clone();
+                let site = *site;
+                in_flight.spawn(async move {
+                    let result = api.fetch(&area.name, site, start_time).await;
+                    (area, site, result)
+                });
             }
-            let Some(site) = forecaster_site(&area.name) else {
-                continue;
-            };
-            match self
-                .pv_forecast_api
-                .fetch(&area.name, site, start_time)
-                .await
-            {
-                Ok(response) => {
-                    info!(
-                        "Fetched {} PV forecast points for meter {} (site {})",
-                        response.data.pv_forecasts.len(),
-                        area.name,
-                        site
-                    );
-                    for point in &response.data.pv_forecasts {
-                        if let Some(schema) =
-                            Self::pv_forecast_schema_from_point(point, area, community_uuid, &cfg)
-                        {
-                            forecasts.push(schema);
+
+            while let Some(joined) = in_flight.join_next().await {
+                let (area, site, result) = match joined {
+                    Ok(completed) => completed,
+                    Err(e) => {
+                        error!("PV forecast task failed to complete: {}", e);
+                        continue;
+                    }
+                };
+                match result {
+                    Ok(response) => {
+                        info!(
+                            "Fetched {} PV forecast points for meter {} (site {})",
+                            response.data.pv_forecasts.len(),
+                            area.name,
+                            site
+                        );
+                        for point in &response.data.pv_forecasts {
+                            if let Some(schema) = Self::pv_forecast_schema_from_point(
+                                point,
+                                &area,
+                                community_uuid,
+                                &cfg,
+                            ) {
+                                forecasts.push(schema);
+                            }
                         }
                     }
+                    Err(ForecastApiError::Http(e)) => error!(
+                        "HTTP error fetching PV forecast for meter {} (site {}): {}",
+                        area.name, site, e
+                    ),
+                    Err(ForecastApiError::Api(msg)) => error!(
+                        "API-reported error fetching PV forecast for meter {} (site {}) \
+                         (skipping — server-side issue): {}",
+                        area.name, site, msg
+                    ),
                 }
-                Err(ForecastApiError::Http(e)) => error!(
-                    "HTTP error fetching PV forecast for meter {} (site {}): {}",
-                    area.name, site, e
-                ),
-                Err(ForecastApiError::Api(msg)) => error!(
-                    "API-reported error fetching PV forecast for meter {} (site {}) \
-                     (skipping — server-side issue): {}",
-                    area.name, site, msg
-                ),
             }
         }
         forecasts

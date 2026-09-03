@@ -244,12 +244,16 @@ impl AreaMarketInfoAdapter {
         forecast.energy_kwh != 0.0 && forecast.time_slot > seconds_since_epoch
     }
 
+    /// `energy_kwh` is the meter's signed net flow (import minus export): positive is
+    /// consumption, negative is net-exporting production (e.g. a PV meter). A negative
+    /// reading is therefore valid and must reach storage; only non-finite values (`NaN`,
+    /// `inf`) are rejected, since those would poison downstream penalty arithmetic.
     pub fn validate_measurement(
         &self,
         measurement: &MeasurementSchema,
         seconds_since_epoch: u64,
     ) -> bool {
-        measurement.energy_kwh > 0.0 && measurement.time_slot <= seconds_since_epoch
+        measurement.energy_kwh.is_finite() && measurement.time_slot <= seconds_since_epoch
     }
 
     pub fn convert_forecast_to_internal_schema(

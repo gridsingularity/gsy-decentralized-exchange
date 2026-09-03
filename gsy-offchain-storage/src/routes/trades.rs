@@ -2,7 +2,9 @@ use crate::db::DbRef;
 use actix_web::web::Query;
 use actix_web::{HttpResponse, Responder, web::Json};
 use gsy_offchain_primitives::db_api_schema::orders::OrderStatus;
-use gsy_offchain_primitives::db_api_schema::trades::{TradeCanonicalSchema, TradeSchema};
+use gsy_offchain_primitives::db_api_schema::trades::{
+    TradeCanonicalSchema, TradeSchema, TradeStatus,
+};
 use gsy_offchain_primitives::node_to_api_schema::insert_trades::convert_gsy_node_trades_schema_to_db_schema;
 use mongodb::bson::Bson;
 use serde::{Deserialize, Serialize};
@@ -66,6 +68,7 @@ pub struct GetTradesParams {
     market_id: Option<String>,
     start_time: Option<u32>,
     end_time: Option<u32>,
+    status: Option<TradeStatus>,
 }
 
 #[tracing::instrument(name = "Retrieve trades", skip(db))]
@@ -77,6 +80,7 @@ pub async fn get_trades(db: DbRef, query_params: Query<GetTradesParams>) -> impl
             query_params.market_id.clone(),
             query_params.start_time,
             query_params.end_time,
+            query_params.status.clone(),
         )
         .await
     {
@@ -100,6 +104,7 @@ pub async fn get_trades_canonical(
             query_params.market_id.clone(),
             query_params.start_time,
             query_params.end_time,
+            query_params.status.clone(),
         )
         .await
     {
@@ -119,8 +124,9 @@ pub async fn get_trades_canonical(
     };
 
     // Build a global area_hash -> name map from every market's topology.
-    // area_hash is globally unique (randomized per market) so this is
-    // unambiguous even across markets.
+    // area_hash is `deterministic_area_hash(community_name, area_name)` and therefore
+    // market-invariant: the same asset hashes identically in every market it appears in,
+    // so collapsing all markets into one map is unambiguous.
     let mut name_by_area_hash: HashMap<String, String> = HashMap::new();
     for market in &markets {
         for area in &market.community_areas {

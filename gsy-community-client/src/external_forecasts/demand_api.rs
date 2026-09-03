@@ -1,5 +1,5 @@
 use crate::constants::CommunityClientConstants;
-use crate::external_forecasts::ForecastApiError;
+use crate::external_forecasts::{ForecastApiError, describe_error_response};
 use chrono::{DateTime, SecondsFormat, Utc};
 use reqwest::Client as ReqwestClient;
 use serde::{Deserialize, Serialize};
@@ -112,16 +112,21 @@ impl DemandForecastApiConnection {
             site: site.to_string(),
             start_time: start_time.to_rfc3339_opts(SecondsFormat::Secs, false),
         };
-        let raw = self
+        let response = self
             .client
             .post(&self.address)
             .header("X-API-Key", self.api_key.as_str())
             .json(&request_params)
             .send()
-            .await?
-            .error_for_status()?
-            .json::<DemandForecastApiResponse>()
             .await?;
+        let status = response.status();
+        if !status.is_success() {
+            // Read the body before giving up: it names the meter or site the forecaster
+            // rejected, which the status code alone does not.
+            let body = response.text().await.unwrap_or_default();
+            return Err(ForecastApiError::Api(describe_error_response(status, &body)));
+        }
+        let raw = response.json::<DemandForecastApiResponse>().await?;
         match raw {
             DemandForecastApiResponse::Success(r) => Ok(r),
             DemandForecastApiResponse::Error { error } => Err(ForecastApiError::Api(error)),

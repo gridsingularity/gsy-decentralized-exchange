@@ -52,6 +52,7 @@ mod tests {
             time_slot: TIME_SLOT,
             trade_uuid: trade_uuid.to_string(),
             creation_time: 0,
+            status_updated_at: None,
             offer: DbOffer {
                 seller: seller.to_string(),
                 nonce: 0,

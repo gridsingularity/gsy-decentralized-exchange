@@ -1,9 +1,11 @@
 use crate::db::DatabaseWrapper;
-use crate::db::collection::{Coll, apply_time_window, in_time_window};
+use crate::db::collection::{Coll, UpdateSummary, apply_time_window, in_time_window};
 use anyhow::Result;
-use gsy_offchain_primitives::db_api_schema::trades::TradeSchema;
+use gsy_offchain_primitives::db_api_schema::trades::{TradeSchema, TradeStatus};
+use mongodb::bson;
 use mongodb::bson::{Bson, doc};
 use std::collections::HashMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// this struct is wrapper to `Collection<Trade>` should have function to help to manage order
 pub struct TradeService(pub(crate) Coll<TradeSchema>);
@@ -36,10 +38,14 @@ impl TradeService {
         market_id: Option<String>,
         start_time: Option<u32>,
         end_time: Option<u32>,
+        status: Option<TradeStatus>,
     ) -> Result<Vec<TradeSchema>> {
         let mut filter_params = doc! {};
         if let Some(market_id) = &market_id {
             filter_params.insert("market_id", market_id.clone());
+        }
+        if let Some(status) = &status {
+            filter_params.insert("status", bson::to_bson(status)?);
         }
         apply_time_window(&mut filter_params, start_time, end_time);
 
@@ -48,7 +54,45 @@ impl TradeService {
                 market_id
                     .as_ref()
                     .is_none_or(|market_id| &trade.market_id == market_id)
+                    && status.as_ref().is_none_or(|status| &trade.status == status)
                     && in_time_window(trade.time_slot, start_time, end_time)
+            })
+            .await
+    }
+
+    /// Fetch trades whose **status last changed** within `[start_time, end_time]` (both
+    /// inclusive, unix seconds), optionally restricted to one status.
+    ///
+    /// This windows on `status_updated_at` rather than `time_slot`: the delivery slot says
+    /// when energy flowed, whereas this says when the trade reached its verdict. `Executed`
+    /// and `Penalized` are terminal, so for those the value never moves again once set.
+    ///
+    /// Trades with no `status_updated_at` are excluded. That is every trade written before
+    /// the field existed, and every trade still sitting in `Settled` — neither has a status
+    /// change to window on.
+    #[tracing::instrument(name = "Fetching trades by status change time", skip(self))]
+    pub async fn filter_trades_by_status_change(
+        &self,
+        start_time: u64,
+        end_time: Option<u64>,
+        status: Option<TradeStatus>,
+    ) -> Result<Vec<TradeSchema>> {
+        let mut bounds = doc! {"$gte": bson::to_bson(&start_time)?};
+        if let Some(end_time) = end_time {
+            bounds.insert("$lte", bson::to_bson(&end_time)?);
+        }
+        let mut filter_params = doc! {"status_updated_at": bounds};
+        if let Some(status) = &status {
+            filter_params.insert("status", bson::to_bson(status)?);
+        }
+
+        self.0
+            .query(filter_params, |trade| {
+                status.as_ref().is_none_or(|status| &trade.status == status)
+                    && trade.status_updated_at.is_some_and(|changed_at| {
+                        changed_at >= start_time
+                            && end_time.is_none_or(|end_time| changed_at <= end_time)
+                    })
             })
             .await
     }
@@ -74,6 +118,41 @@ impl TradeService {
                     || trade.offer.offer_component.area_uuid == area_uuid)
                     && in_time_window(trade.time_slot, start_time, end_time)
             })
+            .await
+    }
+
+    #[tracing::instrument(
+        name = "Update trade status by trade_uuid",
+        skip(self, trade_uuid, status)
+    )]
+    pub async fn update_trade_status_by_uuid(
+        &self,
+        trade_uuid: &str,
+        status: TradeStatus,
+    ) -> Result<UpdateSummary> {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        self.0
+            .update_one(
+                doc! {
+                    "trade_uuid": trade_uuid,
+                    "status": {"$ne": bson::to_bson(&status)?}
+                },
+                doc! {
+                    "$set": {
+                        "status": bson::to_bson(&status)?,
+                        "status_updated_at": bson::to_bson(&now)?,
+                    }
+                },
+                |trade| trade.trade_uuid == trade_uuid && trade.status != status,
+                |trade| {
+                    trade.status = status.clone();
+                    trade.status_updated_at = Some(now);
+                    true
+                },
+            )
             .await
     }
 }

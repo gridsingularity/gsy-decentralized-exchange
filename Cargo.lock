@@ -1539,6 +1539,7 @@ dependencies = [
  "gsy-community-client",
  "gsy-offchain-primitives",
  "reqwest",
+ "serde_json",
  "subxt",
  "subxt-signer",
  "tokio",
@@ -2066,6 +2067,7 @@ dependencies = [
  "once_cell",
  "parity-scale-codec",
  "serde",
+ "serde_json",
  "subxt",
  "uuid",
 ]
@@ -5835,6 +5837,7 @@ dependencies = [
  "getrandom 0.4.3",
  "js-sys",
  "serde_core",
+ "sha1_smol",
  "wasm-bindgen",
 ]
 

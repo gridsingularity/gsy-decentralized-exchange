@@ -1,6 +1,7 @@
 use crate::db::DbRef;
 use anyhow::{Error, Result};
 use gsy_offchain_primitives::db_api_schema::orders::OrderStatus;
+use gsy_offchain_primitives::db_api_schema::trades::TradeStatus;
 use gsy_offchain_primitives::utils::h256_to_string;
 use mongodb::bson;
 use subxt::utils::H256;
@@ -55,6 +56,23 @@ pub async fn init_event_listener(db: DbRef, node_url: String) -> Result<(), Erro
                 }
             }
         }
+
+        // A single batch can carry more than one penalty for the same trade_uuid (independent
+        // buyer/seller passes), so mark_trade_penalized may run twice per trade per block; the
+        // update is idempotent, so this is harmless.
+        for event in events.find::<gsy_node::trades_settlement::events::PenaltiesSubmitted>() {
+            if let Ok(penalties_submitted) = &event {
+                mark_trade_penalized(&db, penalties_submitted.0.trade_uuid).await;
+            }
+        }
+
+        // subscribe_all() yields non-finalized blocks, so a re-org can replay this event; the
+        // status update is idempotent, so replay is harmless.
+        for event in events.find::<gsy_node::trades_settlement::events::TradeExecuted>() {
+            if let Ok(trade_executed) = &event {
+                mark_trade_executed(&db, trade_executed.0).await;
+            }
+        }
     }
 
     Ok(())
@@ -74,4 +92,47 @@ async fn mark_order_executed(db: &DbRef, order_hash: H256) {
             tracing::error!("Failed to mark order as executed: {:?}", e);
         }
     }
+}
+
+/// Set the status of the trade identified by its on-chain `trade_uuid`.
+///
+/// The uuids in these events originate from a `GET /trades` read that the execution engine
+/// performs against this very service before signing the extrinsic, so the trade row provably
+/// exists by the time the event is emitted. `update_trade_status_by_uuid` only matches a trade
+/// that is *not already* in `status` (so a repeated status update is a no-op rather than
+/// clobbering `status_updated_at`), which means `matched_count == 0` is no longer unambiguous:
+/// it is either the benign already-in-status case from one of the two documented replay paths
+/// above, or genuine data loss. The two are no longer distinguishable here, which is why this
+/// logs at info rather than warn.
+async fn set_trade_status(db: &DbRef, trade_uuid: H256, status: TradeStatus) {
+    let trade_uuid = h256_to_string(trade_uuid);
+    match db
+        .get_ref()
+        .trades()
+        .update_trade_status_by_uuid(&trade_uuid, status.clone())
+        .await
+    {
+        Ok(result) if result.matched_count == 0 => {
+            info!(
+                "No trade updated for trade_uuid {} when marking {:?}: either already in this status or the trade is missing",
+                trade_uuid,
+                status
+            );
+        }
+        Ok(result) => info!("Marked trade {} as {:?}: {:?}", trade_uuid, status, result),
+        Err(e) => {
+            tracing::error!("Failed to mark trade as {:?}: {:?}", status, e);
+        }
+    }
+}
+
+/// Mark the trade identified by its on-chain `trade_uuid` as executed (evaluated, no penalty).
+async fn mark_trade_executed(db: &DbRef, trade_uuid: H256) {
+    set_trade_status(db, trade_uuid, TradeStatus::Executed).await;
+}
+
+/// Mark the trade identified by its on-chain `trade_uuid` as penalized (evaluated, penalty
+/// submitted on-chain).
+async fn mark_trade_penalized(db: &DbRef, trade_uuid: H256) {
+    set_trade_status(db, trade_uuid, TradeStatus::Penalized).await;
 }

@@ -22,6 +22,9 @@ pub struct MyWorld {
 	pub http_client: Client,
 	pub users: HashMap<String, Keypair>,
 	pub last_market_id: Option<subxt::utils::H256>,
+	/// The `trade_uuid` of the trade captured by `verify_trade_on_chain`, used to look the trade
+	/// up in offchain storage when asserting its final status.
+	pub last_trade_uuid: Option<H256>,
 	pub target_delivery_time: u64,
 	pub buyer_id: String,
 	pub seller_id: String,
@@ -145,7 +148,8 @@ impl MyWorld {
 		users.insert("charlie".to_string(), subxt_signer::sr25519::dev::charlie());
 
 		Ok(Self {
-			subxt_client, http_client, users, last_market_id: None, target_delivery_time: 0,
+			subxt_client, http_client, users, last_market_id: None, last_trade_uuid: None,
+			target_delivery_time: 0,
 			buyer_id: "areaAlice".to_string(), seller_id: "areaBob".to_string(),
 			buyer_hash: None, seller_hash: None,
 			bid_forecast: None, offer_forecast: None, topology_schema: None,
