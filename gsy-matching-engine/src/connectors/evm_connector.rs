@@ -11,14 +11,12 @@ use primitives::ewds::{EwdsClient, EwdsOperation};
 use primitives::matching::matching_block_interval;
 use primitives::utils::{bytes16_to_hex, parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR};
 use primitives::MatchingAlgorithm;
-use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 use std::env;
 use std::str::FromStr;
 use tokio::time::{sleep, Duration};
 use tracing::{error, info, warn};
-
-const MATCH_PER_NR_BLOCKS: u64 = 4;
+use uuid::Uuid;
 
 abigen!(
     SettleOrderBatchContract,
@@ -511,20 +509,9 @@ fn optional_order_id_to_bytes16(order: Option<&Order>) -> Result<[u8; 16]> {
         .map(|value| value.unwrap_or([0u8; 16]))
 }
 
-fn derive_trade_id(
-    bid_id: &str,
-    offer_id: &str,
-    selected_energy: u64,
-    energy_rate: u64,
-) -> [u8; 16] {
-    let hash = keccak256(
-        format!(
-            "{}:{}:{}:{}",
-            bid_id, offer_id, selected_energy, energy_rate
-        )
-        .as_bytes(),
-    );
-    hash[..16].try_into().expect("hash prefix is 16 bytes")
+fn derive_trade_id() -> [u8; 16] {
+    let uuid = Uuid::new_v4().to_string();
+    parse_uuid_or_hex_bytes16(&uuid).expect("Error converting uuid to bytes")
 }
 
 fn to_evm_matches(
@@ -570,7 +557,7 @@ fn to_evm_matches(
             }
 
             Ok((
-                derive_trade_id(&bid_id, &offer_id, item.selected_energy, item.energy_rate),
+                derive_trade_id(),
                 to_evm_order_data(bid_order, OrderEnum::Bid)?,
                 to_evm_order_data(offer_order, OrderEnum::Offer)?,
                 optional_order_id_to_bytes16(item.residual_bid.as_ref())?,

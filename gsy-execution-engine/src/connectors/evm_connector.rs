@@ -1,6 +1,5 @@
-use crate::connectors::evm_contracts::TradeSettlementContract;
 use crate::primitives::penalty_calculator::Penalty;
-use ::primitives::utils::parse_or_hash_bytes16;
+use ::primitives::utils::parse_uuid_or_hex_bytes16;
 use anyhow::{anyhow, Result};
 use ethers::prelude::*;
 use ethers::utils::keccak256;
@@ -25,11 +24,35 @@ fn to_evm_penalties(penalties: Vec<Penalty>) -> Vec<EvmPenaltyTuple> {
                 );
                 return None;
             }
+            let Some(penalized_account) = parse_uuid_or_hex_bytes16(&penalty.penalized_account)
+            else {
+                warn!(
+                      "Skipping penalty for trade '{}': penalized_account '{}' is not a UUID",
+                      penalty.trade_uuid, penalty.penalized_account
+                  );
+                return None;
+            };
+
+            let Some(market_id) = parse_uuid_or_hex_bytes16(&penalty.market_id) else {
+                warn!(
+                      "Skipping penalty for trade '{}': market_id '{}' is not a UUID",
+                      penalty.trade_uuid, penalty.market_id
+                  );
+                return None;
+            };
+
+            let Some(trade_uuid) = parse_uuid_or_hex_bytes16(&penalty.trade_uuid) else {
+                warn!(
+                      "Skipping penalty for trade '{}': trade_uuid is not a UUID",
+                      penalty.trade_uuid
+                  );
+                return None;
+            };
 
             Some((
-                parse_or_hash_bytes16(&penalty.penalized_account),
-                parse_or_hash_bytes16(&penalty.market_id),
-                parse_or_hash_bytes16(&penalty.trade_uuid),
+                penalized_account,
+                market_id,
+                trade_uuid,
                 penalty.penalty_cost,
             ))
         })

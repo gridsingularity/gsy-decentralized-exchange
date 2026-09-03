@@ -23,6 +23,8 @@ pub enum EwdsOperation {
     TradesQuery,
     #[serde(rename = "measurements.query")]
     MeasurementsQuery,
+    #[serde(rename = "ids.query")]
+    IdsQuery,
     #[serde(rename = "clearing_results.query")]
     ClearingResultsQuery,
     #[serde(rename = "markets.query")]
@@ -30,12 +32,13 @@ pub enum EwdsOperation {
 }
 
 impl EwdsOperation {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::OrdersQuery,
         Self::TradesQuery,
         Self::MeasurementsQuery,
         Self::ClearingResultsQuery,
         Self::MarketsQuery,
+        Self::IdsQuery,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -43,6 +46,7 @@ impl EwdsOperation {
             Self::OrdersQuery => "orders.query",
             Self::TradesQuery => "trades.query",
             Self::MeasurementsQuery => "measurements.query",
+            Self::IdsQuery => "ids.query",
             Self::ClearingResultsQuery => "clearing_results.query",
             Self::MarketsQuery => "markets.query",
         }
@@ -53,6 +57,7 @@ impl EwdsOperation {
             Self::OrdersQuery => "orders-query",
             Self::TradesQuery => "trades-query",
             Self::MeasurementsQuery => "measurements-query",
+            Self::IdsQuery => "ids-query",
             Self::ClearingResultsQuery => "clearing_results-query",
             Self::MarketsQuery => "markets-query",
         }
@@ -76,6 +81,7 @@ pub struct EwdsTopicConfig {
     orders: EwdsTopicPair,
     trades: EwdsTopicPair,
     measurements: EwdsTopicPair,
+    ids: EwdsTopicPair,
     clearing_results: EwdsTopicPair,
     markets: EwdsTopicPair,
 }
@@ -94,6 +100,10 @@ impl Default for EwdsTopicConfig {
             measurements: EwdsTopicPair {
                 request: "measurementsQuery".to_string(),
                 response: "measurementsQueryResponse".to_string(),
+            },
+            ids: EwdsTopicPair {
+                request: "idsQuery".to_string(),
+                response: "idsQueryResponse".to_string(),
             },
             clearing_results: EwdsTopicPair {
                 request: "clearing_resultsQuery".to_string(),
@@ -141,6 +151,16 @@ impl EwdsTopicConfig {
                     defaults.measurements.response.as_str(),
                 ),
             },
+            ids: EwdsTopicPair {
+                request: env_or(
+                    "EWDS_IDS_REQUEST_TOPIC",
+                    defaults.ids.request.as_str(),
+                ),
+                response: env_or(
+                    "EWDS_IDS_RESPONSE_TOPIC",
+                    defaults.ids.response.as_str(),
+                )
+            },
             clearing_results: EwdsTopicPair {
                 request: env_or(
                     "EWDS_CLEARING_RESULTS_REQUEST_TOPIC",
@@ -169,6 +189,7 @@ impl EwdsTopicConfig {
             EwdsOperation::OrdersQuery => &self.orders,
             EwdsOperation::TradesQuery => &self.trades,
             EwdsOperation::MeasurementsQuery => &self.measurements,
+            EwdsOperation::IdsQuery => &self.ids,
             EwdsOperation::ClearingResultsQuery => &self.clearing_results,
             EwdsOperation::MarketsQuery => &self.markets,
         }

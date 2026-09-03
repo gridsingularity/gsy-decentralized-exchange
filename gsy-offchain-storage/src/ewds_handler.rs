@@ -110,6 +110,12 @@ struct TimeRangePayload {
 }
 
 #[derive(Deserialize)]
+struct IdsQueryPayload {
+    #[serde(alias = "offchainId")]
+    offchain_id: String,
+}
+
+#[derive(Deserialize)]
 struct ClearingResultsPayload {
     #[serde(alias = "marketId")]
     market_id: String,
@@ -365,6 +371,26 @@ pub async fn handle_request(
             );
 
             send_success_response(client, config, request_id, response_topic.as_str(), data).await
+        }
+        EwdsOperation::IdsQuery => {
+            let payload = serde_json::from_value::<IdsQueryPayload>(envelope.payload.clone())
+                .map_err(|e| anyhow!("id.query payload parse error: {}", e))?;
+            let request_id = envelope.request_id;
+
+            info!(
+                "Handling EWDS ids.query request (request_id={})",
+                request_id
+            );
+
+            let data = db.ids().get_or_create(payload.offchain_id).await?;
+            send_success_response(
+                client,
+                config,
+                request_id,
+                response_topic.as_str(),
+                vec![data],
+            )
+                .await
         }
         EwdsOperation::ClearingResultsQuery => {
             let payload =
