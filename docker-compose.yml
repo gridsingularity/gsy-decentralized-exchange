@@ -134,7 +134,7 @@ services:
       EWDS_EXECUTION_ENGINE_CLIENT_ID: ${EWDS_EXECUTION_ENGINE_CLIENT_ID:-gsyexecutionengine}
 
   mongodb:
-    image: mongo:5.0
+    image: mongo:8.3.8
     ports:
       - "27017:27017"
     volumes:

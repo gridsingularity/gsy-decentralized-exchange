@@ -29,7 +29,7 @@ mod tests {
         Order {
             order_id: id.to_string(),
             order_type,
-            status: OrderStatus::Open,
+            status: OrderStatus::Submitted,
             area_uuid: format!("area-{id}"),
             market_id: "0x00000000000000000000000000000001".to_string(),
             time_slot: 1_000,

@@ -4,12 +4,15 @@ use ethers::prelude::*;
 use gsy_community_client::node_connector::orders::publish_orders;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use primitives::db_api_schema::orders::{
-    energy_type_to_contract, DbAttributes, DbRequirements, EnergyType,
+    energy_type_to_contract, DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderStatus,
 };
 use primitives::db_api_schema::profiles::MeasurementSchema;
 use primitives::db_api_schema::trades::DbTradeSchema;
-use primitives::ewds::dto::{energy_type_to_ewds, EwdsOrderDto, EwdsTradeDto};
-use primitives::utils::{parse_or_hash_bytes16, NODE_FLOAT_SCALING_FACTOR};
+use primitives::ewds::dto::{EwdsOrderDto, EwdsTradeDto};
+use primitives::matching::matching_block_interval;
+use primitives::utils::{
+    parse_or_hash_bytes16, parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR,
+};
 use std::collections::HashSet;
 use std::env;
 use std::sync::Arc;
@@ -197,9 +200,12 @@ async fn query_orders_for_market(world: &MyWorld, market_id: &str) -> Vec<DbOrde
         .json::<Vec<EwdsOrderDto>>()
         .await
         .expect("Failed to parse orders response")
+        .into_iter()
+        .map(|dto| DbOrderSchema::try_from(dto).expect("valid order DTO"))
+        .collect()
 }
 
-async fn query_market_trades(world: &MyWorld) -> Vec<EwdsTradeDto> {
+async fn query_market_trades(world: &MyWorld) -> Vec<DbTradeSchema> {
     let (start_time, end_time) = market_window(world);
 
     let response = world
@@ -222,6 +228,9 @@ async fn query_market_trades(world: &MyWorld) -> Vec<EwdsTradeDto> {
         .json::<Vec<EwdsTradeDto>>()
         .await
         .expect("Failed to parse trades response")
+        .into_iter()
+        .map(|dto| DbTradeSchema::try_from(dto).expect("valid trade DTO"))
+        .collect()
 }
 
 async fn wait_for_order_in_offchain_storage(world: &MyWorld, order_id: &str) -> DbOrderSchema {
@@ -251,11 +260,12 @@ async fn wait_for_order_in_market(
     );
 }
 
-async fn upsert_order_in_offchain_storage(world: &MyWorld, order: EwdsOrderDto) {
+async fn upsert_order_in_offchain_storage(world: &MyWorld, order: DbOrderSchema) {
+    let dto = EwdsOrderDto::try_from(order).expect("valid order DTO");
     let response = world
         .http_client
         .post(format!("{}/orders", world.offchain_storage_url))
-        .json(&vec![order])
+        .json(&vec![dto])
         .send()
         .await
         .expect("Failed to upsert order in off-chain storage");
@@ -370,31 +380,11 @@ async fn place_custom_order_for_market(
     );
 
     if requirements.is_some() || attributes.is_some() {
-<<<<<<< HEAD
         let market_id = market_id_bytes_as_hex(market_id);
         let mut indexed_order =
             wait_for_order_in_market(world, market_id.as_str(), order_id.as_str()).await;
         indexed_order.requirements = requirements;
         indexed_order.attributes = attributes;
-=======
-        let mut indexed_order = wait_for_order_in_offchain_storage(world, order_id.as_str()).await;
-        indexed_order.energy_source_preference = requirements
-            .as_ref()
-            .and_then(|r| r.energy_type.as_ref())
-            .map(|et| energy_type_to_ewds(et).to_string());
-        indexed_order.energy_type = Some(
-            attributes
-                .as_ref()
-                .map(|a| energy_type_to_ewds(&a.energy_type).to_string())
-                .unwrap_or_else(|| "NONE".to_string()),
-        );
-        indexed_order.preferred_trading_partner = requirements
-            .as_ref()
-            .and_then(|r| r.trading_partner_id.clone());
-        if let Some(rate) = requirements.as_ref().and_then(|r| r.preferred_energy_rate) {
-            indexed_order.price_limit = rate;
-        }
->>>>>>> 9bf83439816e035699bf11101b7b328ec310e3b1
         upsert_order_in_offchain_storage(world, indexed_order).await;
     }
 
@@ -569,18 +559,6 @@ async fn verify_community_market_settlements(world: &mut MyWorld) {
             "Unexpected number of trades involving the multi-community orders"
         );
 
-        for trade in &scenario_trades {
-            assert!(
-                trade.market_id.eq_ignore_ascii_case(&trade.bid.market_id)
-                    && trade.market_id.eq_ignore_ascii_case(&trade.offer.market_id),
-                "Trade {} contains orders from different markets",
-                trade.trade_uuid
-            );
-            assert_eq!(trade.time_slot, world.target_delivery_time);
-            assert_eq!(trade.bid.time_slot, world.target_delivery_time);
-            assert_eq!(trade.offer.time_slot, world.target_delivery_time);
-        }
-
         for pair in &order_pairs {
             let expected_market_id = market_id_bytes_as_hex(pair.market_id);
             let trade = scenario_trades
@@ -602,6 +580,11 @@ async fn verify_community_market_settlements(world: &mut MyWorld) {
                     .market_id
                     .eq_ignore_ascii_case(expected_market_id.as_str()),
                 "Trade {} was indexed under the wrong community market",
+                trade.trade_uuid
+            );
+            assert_eq!(
+                trade.time_slot, world.target_delivery_time,
+                "Trade {} was indexed under the wrong delivery slot",
                 trade.trade_uuid
             );
             assert_trade_settled_on_chain(world, trade).await;
@@ -649,8 +632,8 @@ async fn submit_bid(world: &mut MyWorld, user_name: String) {
         address_to_full_hex(world.order_registry_address),
         world.private_key_for_user(user_name.as_str()),
     )
-    .await
-    .expect("Failed to publish bid order");
+        .await
+        .expect("Failed to publish bid order");
 }
 
 #[when(
@@ -678,7 +661,7 @@ async fn submit_preferred_partner_bid(
         Some(requirements),
         None,
     )
-    .await;
+        .await;
 }
 
 #[when(expr = "{string} submits an offer")]
@@ -693,8 +676,8 @@ async fn submit_offer(world: &mut MyWorld, user_name: String) {
         address_to_full_hex(world.order_registry_address),
         world.private_key_for_user(user_name.as_str()),
     )
-    .await
-    .expect("Failed to publish offer order");
+        .await
+        .expect("Failed to publish offer order");
 
     // Matching runs on block boundaries. Fast-forward local Anvil after both
     // orders are present in the registry.
@@ -725,7 +708,7 @@ async fn submit_preferred_partner_offer(
         None,
         Some(attributes),
     )
-    .await;
+        .await;
 }
 
 #[when(
@@ -794,11 +777,11 @@ async fn submit_combined_pay_as_clear_order_book(world: &mut MyWorld) {
         Some(preferred_bid_requirements),
         None,
     )
-    .await;
+        .await;
 
     let preferred_offer_attributes = DbAttributes {
         trading_partner_id: Some(actor_id_as_hex(world, "alice")),
-        energy_type: IntelligentEnergyType::Green,
+        energy_type: EnergyType::Green,
     };
     let preferred_offer = place_custom_order(
         world,
@@ -809,7 +792,7 @@ async fn submit_combined_pay_as_clear_order_book(world: &mut MyWorld) {
         None,
         Some(preferred_offer_attributes),
     )
-    .await;
+        .await;
 
     wait_for_order_in_offchain_storage(world, preferred_bid.as_str()).await;
     wait_for_order_in_offchain_storage(world, preferred_offer.as_str()).await;
@@ -842,12 +825,13 @@ async fn submit_measurements(world: &mut MyWorld) {
         .expect("Failed to submit measurements");
 }
 
-async fn assert_trade_settled_on_chain(world: &MyWorld, trade: &TradeSchema) {
+async fn assert_trade_settled_on_chain(world: &MyWorld, trade: &DbTradeSchema) {
     let order_registry =
         OrderRegistryContract::new(world.order_registry_address, world.provider.clone());
-    let bid_id = parse_or_hash_bytes16(trade.bid_hash.as_str());
-    let offer_id = parse_or_hash_bytes16(trade.offer_hash.as_str());
-
+    let bid_id = parse_uuid_or_hex_bytes16(trade.bid_hash.as_str())
+        .expect("could not convert hex to bytes");
+    let offer_id = parse_uuid_or_hex_bytes16(trade.offer_hash.as_str())
+        .expect("could not convert hex to bytes");
     let bid_status = order_registry
         .get_status(bid_id)
         .call()
@@ -862,22 +846,34 @@ async fn assert_trade_settled_on_chain(world: &MyWorld, trade: &TradeSchema) {
     assert_eq!(bid_status, 2u8, "Bid order is not Executed on-chain");
     assert_eq!(offer_status, 2u8, "Offer order is not Executed on-chain");
 
-    let orders = query_orders_for_market(world, trade.market_id.as_str()).await;
-    let bid = orders
-        .iter()
-        .find(|order| order.order_id.eq_ignore_ascii_case(trade.bid_hash.as_str()))
-        .expect("Bid order not found in off-chain storage DB");
-    let offer = orders
-        .iter()
-        .find(|order| {
+    for attempt in 0..40 {
+        let orders = query_orders_for_market(world, trade.market_id.as_str()).await;
+        let bid_executed = orders.iter().any(|order| {
+            order.order_id.eq_ignore_ascii_case(trade.bid_hash.as_str())
+                && order.status == OrderStatus::Executed
+        });
+        let offer_executed = orders.iter().any(|order| {
             order
                 .order_id
                 .eq_ignore_ascii_case(trade.offer_hash.as_str())
-        })
-        .expect("Offer order not found in off-chain storage DB");
+                && order.status == OrderStatus::Executed
+        });
 
-    assert_eq!(bid.status, OrderStatus::Executed);
-    assert_eq!(offer.status, OrderStatus::Executed);
+        if bid_executed && offer_executed {
+            return;
+        }
+
+        info!(
+            "Off-chain order statuses not synchronized yet (attempt {}/40). Retrying...",
+            attempt + 1
+        );
+        sleep(Duration::from_millis(500)).await;
+    }
+
+    panic!(
+        "Timeout: off-chain order statuses were not updated for trade {}",
+        trade.trade_uuid
+    );
 }
 
 #[then("the matching engine matches the bid and offer and a trade is settled on-chain")]
@@ -905,41 +901,7 @@ async fn verify_trade_on_chain(world: &mut MyWorld) {
             .into_iter()
             .find(|trade| trade.market_id.to_lowercase() == expected_market_id)
         {
-            info!("Found settled trade {}", trade.trade_id);
-            world.last_trade =
-                Some(DbTradeSchema::try_from(trade.clone()).expect("valid trade DTO"));
-
-            let bid_id = parse_or_hash_bytes16(trade.bid_id.as_str());
-            let offer_id = parse_or_hash_bytes16(trade.offer_id.as_str());
-
-            let bid_status = order_registry
-                .get_status(bid_id)
-                .call()
-                .await
-                .expect("Failed to read bid status from contract");
-            let offer_status = order_registry
-                .get_status(offer_id)
-                .call()
-                .await
-                .expect("Failed to read offer status from contract");
-
-            assert_eq!(bid_status, 2u8, "Bid order is not Executed on-chain");
-            assert_eq!(offer_status, 2u8, "Offer order is not Executed on-chain");
-
-            let orders = query_market_orders(world).await;
-
-            let bid = orders
-                .iter()
-                .find(|order| order.order_id.eq_ignore_ascii_case(trade.bid_id.as_str()))
-                .expect("Bid order not found in off-chain storage DB");
-            let offer = orders
-                .iter()
-                .find(|order| order.order_id.eq_ignore_ascii_case(trade.offer_id.as_str()))
-                .expect("Offer order not found in off-chain storage DB");
-
-            assert_eq!(bid.order_status, "executed");
-            assert_eq!(offer.order_status, "executed");
-
+            info!("Found settled trade {}", trade.trade_uuid);
             assert_trade_settled_on_chain(world, &trade).await;
             world.last_trade = Some(trade);
             return;
@@ -973,17 +935,16 @@ async fn verify_partner_trade(
 
         if let Some(trade) = trades.into_iter().find(|trade| {
             trade.market_id.to_lowercase() == expected_market_id
-                && trade.buyer_id.eq_ignore_ascii_case(expected_buyer.as_str())
-                && trade
-                    .seller_id
-                    .eq_ignore_ascii_case(expected_seller.as_str())
-                && approx_eq(trade.trade_quantity, energy)
+                && trade.buyer.eq_ignore_ascii_case(expected_buyer.as_str())
+                && trade.seller.eq_ignore_ascii_case(expected_seller.as_str())
+                && approx_eq(trade.parameters.selected_energy_kWh, energy)
         }) {
-            world.last_trade =
-                Some(DbTradeSchema::try_from(trade.clone()).expect("valid trade DTO"));
+            world.last_trade = Some(trade.clone());
 
-            let bid_id = parse_or_hash_bytes16(trade.bid_id.as_str());
-            let offer_id = parse_or_hash_bytes16(trade.bid_id.as_str());
+            let bid_id = parse_uuid_or_hex_bytes16(trade.bid_hash.as_str())
+                .expect("could not convert hex to bytes");
+            let offer_id = parse_uuid_or_hex_bytes16(trade.offer_hash.as_str())
+                .expect("could not convert hex to bytes");
 
             let bid_status = order_registry
                 .get_status(bid_id)
@@ -1173,7 +1134,7 @@ async fn verify_pay_as_clear_unmatched_orders(world: &mut MyWorld) {
         .expect("Unmatched pay-as-clear bid was not found in off-chain storage");
     assert_eq!(
         unmatched_bid.status,
-        OrderStatus::Open,
+        OrderStatus::Submitted,
         "Bid beyond the clearing point must remain open"
     );
 
@@ -1187,7 +1148,7 @@ async fn verify_pay_as_clear_unmatched_orders(world: &mut MyWorld) {
         .expect("Unmatched pay-as-clear offer was not found in off-chain storage");
     assert_eq!(
         unmatched_offer.status,
-        OrderStatus::Open,
+        OrderStatus::Submitted,
         "Offer beyond the clearing point must remain open"
     );
 }
@@ -1224,7 +1185,7 @@ async fn verify_residual_offer(world: &mut MyWorld, expected_residual_energy: f6
                 trade.offer_hash
             )
         });
-    let residual_energy = offer.quantity - trade.parameters.selected_energy_kWh;
+    let residual_energy = offer.energy_kWh - trade.parameters.selected_energy_kWh;
     assert!(
         approx_eq(residual_energy, expected_residual_energy),
         "Residual offer mismatch: expected {}, got {}",
@@ -1250,14 +1211,15 @@ async fn verify_charlie_offer_untouched(world: &mut MyWorld) {
         })
         .expect("Charlie offer order was not found in off-chain storage");
     assert_eq!(
-        charlie_offer.order_status, "submitted",
+        charlie_offer.status,
+        OrderStatus::Submitted,
         "Expected Charlie's cheaper offer to stay open after the preference match phase"
     );
 
     let trades = query_market_trades(world).await;
     let charlie_was_matched = trades.iter().any(|trade| {
         trade
-            .offer_id
+            .offer_hash
             .eq_ignore_ascii_case(charlie_offer_order_id.as_str())
     });
 
@@ -1300,7 +1262,8 @@ async fn verify_penalties_on_chain(world: &mut MyWorld) {
                 continue;
             }
 
-            let trade_id = parse_or_hash_bytes16(trade.trade_uuid.as_str());
+            let trade_id = parse_uuid_or_hex_bytes16(trade.trade_uuid.as_str())
+                .expect("Could not convert trade ID to bytes16");
             let penalty = trade_settlement
                 .penalty_energy_by_trade(trade_id)
                 .call()

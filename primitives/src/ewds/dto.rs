@@ -229,10 +229,13 @@ pub fn order_type_to_ewds(order_type: &OrderEnum) -> &'static str {
 
 pub fn order_status_to_ewds(status: &OrderStatus) -> &'static str {
     match status {
-        OrderStatus::Open => "submitted",
+        OrderStatus::Submitted => "submitted",
+        OrderStatus::PartiallyFilled => "partially_filled",
+        OrderStatus::Filled => "filled",
         OrderStatus::Executed => "executed",
         OrderStatus::Cancelled => "cancelled",
         OrderStatus::Expired => "expired",
+        OrderStatus::Rejected => "rejected",
     }
 }
 
@@ -246,12 +249,12 @@ fn order_type_from_ewds(value: &str) -> Result<OrderEnum> {
 
 pub fn order_status_from_ewds(value: &str) -> Result<OrderStatus> {
     match value.to_ascii_lowercase().as_str() {
-        "submitted" => Ok(OrderStatus::Open),
-        "partially_filled" => Ok(OrderStatus::Open),
-        "filled" => Ok(OrderStatus::Executed),
+        "submitted" => Ok(OrderStatus::Submitted),
+        "partially_filled" => Ok(OrderStatus::PartiallyFilled),
+        "filled" => Ok(OrderStatus::Filled),
         "cancelled" => Ok(OrderStatus::Cancelled),
         "expired" => Ok(OrderStatus::Expired),
-        "rejected" => Ok(OrderStatus::Cancelled),
+        "rejected" => Ok(OrderStatus::Rejected),
         "executed" => Ok(OrderStatus::Executed),
         _ => Err(anyhow!("unsupported EWDS order status '{}'", value)),
     }
