@@ -134,6 +134,17 @@ impl From<EwdsCommunityDto> for EnergyCommunitySchema {
 
 impl From<DbOrderSchema> for EwdsOrderDto {
     fn from(order: DbOrderSchema) -> Self {
+        let preferred_trading_partner = match &order.order_type {
+            OrderEnum::Bid => order
+                .requirements
+                .as_ref()
+                .and_then(|requirements| requirements.trading_partner_id.clone()),
+            OrderEnum::Offer => order
+                .attributes
+                .as_ref()
+                .and_then(|attributes| attributes.trading_partner_id.clone()),
+        };
+
         Self {
             order_id: order.order_id,
             market_id: order.market_id,
@@ -147,21 +158,15 @@ impl From<DbOrderSchema> for EwdsOrderDto {
                 .as_ref()
                 .and_then(|r| r.energy_type.as_ref())
                 .map(|et| energy_type_to_ewds(et).to_string()),
-            energy_type: Some(
-                order
-                    .attributes
-                    .as_ref()
-                    .map(|a| energy_type_to_ewds(&a.energy_type).to_string())
-                    .unwrap_or_else(|| "NONE".to_string()),
-            ),
+            energy_type: order
+                .attributes
+                .as_ref()
+                .map(|a| energy_type_to_ewds(&a.energy_type).to_string()),
             created_by: order.created_by,
             creation_time: order.creation_time,
             updated_at: Some(order.creation_time),
             reject_reason: None,
-            preferred_trading_partner: order
-                .requirements
-                .as_ref()
-                .and_then(|r| r.trading_partner_id.clone()),
+            preferred_trading_partner,
             preferred_energy_rate: order
                 .requirements
                 .as_ref()
@@ -174,12 +179,18 @@ impl TryFrom<EwdsOrderDto> for DbOrderSchema {
     type Error = anyhow::Error;
 
     fn try_from(order: EwdsOrderDto) -> Result<Self> {
+        let order_type = order_type_from_ewds(order.order_type.as_str())?;
+        let is_bid = matches!(&order_type, OrderEnum::Bid);
         let requirements = if order.energy_source_preference.is_some()
-            || order.preferred_trading_partner.is_some()
             || order.preferred_energy_rate.is_some()
+            || (is_bid && order.preferred_trading_partner.is_some())
         {
             Some(DbRequirements {
-                trading_partner_id: order.preferred_trading_partner.clone(),
+                trading_partner_id: if is_bid {
+                    order.preferred_trading_partner.clone()
+                } else {
+                    None
+                },
                 energy_type: match order.energy_source_preference {
                     Some(ref pref) => Some(energy_type_from_ewds(pref)?),
                     None => None,
@@ -195,18 +206,28 @@ impl TryFrom<EwdsOrderDto> for DbOrderSchema {
             None
         };
 
-        let attributes = match order.energy_type {
-            Some(ref et) => Some(DbAttributes {
-                trading_partner_id: None,
-                energy_type: energy_type_from_ewds(et)?,
-            }),
-            None => None,
+        let attributes = if order.energy_type.is_some()
+            || (!is_bid && order.preferred_trading_partner.is_some())
+        {
+            Some(DbAttributes {
+                trading_partner_id: if is_bid {
+                    None
+                } else {
+                    order.preferred_trading_partner.clone()
+                },
+                energy_type: match order.energy_type {
+                    Some(ref energy_type) => energy_type_from_ewds(energy_type)?,
+                    None => EnergyType::None,
+                },
+            })
+        } else {
+            None
         };
 
         Ok(Self {
             order_id: order.order_id,
             status: order_status_from_ewds(order.order_status.as_str())?,
-            order_type: order_type_from_ewds(order.order_type.as_str())?,
+            order_type,
             area_uuid: order.created_by.clone(),
             market_id: order.market_id,
             time_slot: order.time_slot,
