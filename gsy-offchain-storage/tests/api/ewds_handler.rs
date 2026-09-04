@@ -388,3 +388,96 @@ async fn markets_query_bad_payload_errors() {
 
     stop_app(app).await;
 }
+
+// --- IdsQuery -------------------------------------------------------
+
+#[tokio::test]
+async fn ids_query_success() {
+    let app = init_app().await;
+    let server = mock_gateway().await;
+    let config = test_config(server.uri());
+    let client = reqwest::Client::new();
+
+    let env = envelope(
+        EwdsOperation::IdsQuery,
+        "req-ids-1",
+        json!({ "offchainId": "offchain-abc" }),
+    );
+
+    handle_request(&app.db_wrapper, &client, &config, env)
+        .await
+        .unwrap();
+
+    let data = captured_data(&server).await;
+    // get_or_create returns exactly one mapping, sent as vec![data]
+    assert_eq!(data.len(), 1);
+
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn ids_query_get_or_create_is_idempotent() {
+    let app = init_app().await;
+    let server = mock_gateway().await;
+    let config = test_config(server.uri());
+    let client = reqwest::Client::new();
+
+    // First request creates the mapping.
+    handle_request(
+        &app.db_wrapper,
+        &client,
+        &config,
+        envelope(
+            EwdsOperation::IdsQuery,
+            "req-ids-create",
+            json!({ "offchainId": "offchain-idem" }),
+        ),
+    )
+        .await
+        .unwrap();
+    let first = captured_data(&server).await;
+    assert_eq!(first.len(), 1);
+    let first_onchain = first[0]["onchainId"].clone();
+
+    // A fresh server, so received_requests() counts only the second call.
+    let server2 = mock_gateway().await;
+    let config2 = test_config(server2.uri());
+
+    // Second request for the same offchain id returns the same mapping.
+    handle_request(
+        &app.db_wrapper,
+        &client,
+        &config2,
+        envelope(
+            EwdsOperation::IdsQuery,
+            "req-ids-again",
+            json!({ "offchainId": "offchain-idem" }),
+        ),
+    )
+        .await
+        .unwrap();
+    let second = captured_data(&server2).await;
+    assert_eq!(second.len(), 1);
+    assert_eq!(second[0]["onchainId"], first_onchain);
+
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn ids_query_bad_payload_errors() {
+    let app = init_app().await;
+    let server = mock_gateway().await;
+    let config = test_config(server.uri());
+    let client = reqwest::Client::new();
+
+    // offchain_id is required -> missing field errors
+    let env = envelope(EwdsOperation::IdsQuery, "req-ids-bad", json!({}));
+
+    let err = handle_request(&app.db_wrapper, &client, &config, env)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("id.query payload parse error"));
+    assert!(server.received_requests().await.unwrap().is_empty());
+
+    stop_app(app).await;
+}
