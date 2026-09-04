@@ -51,6 +51,27 @@ pub enum ClearingStatus {
     NoBid,
 }
 
+impl ClearingStatus {
+    pub fn to_evm(&self) -> u8 {
+        match self {
+            ClearingStatus::Final => 1,
+            ClearingStatus::Partial => 2,
+            ClearingStatus::Rejected => 3,
+            ClearingStatus::NoBid => 4,
+        }
+    }
+
+    pub fn from_evm(value: u8) -> Option<Self> {
+        match value {
+            1 => Some(ClearingStatus::Final),
+            2 => Some(ClearingStatus::Partial),
+            3 => Some(ClearingStatus::Rejected),
+            4 => Some(ClearingStatus::NoBid),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct ClearingResultSchema {
     pub market_id: String,

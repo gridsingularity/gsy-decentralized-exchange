@@ -4,8 +4,9 @@ use anyhow::{anyhow, Error, Result};
 use ethers::prelude::*;
 use ethers::utils::keccak256;
 use primitives::db_api_schema::orders::{
-    energy_type_to_contract, DbOrderSchema, EnergyType, OrderEnum, OrderStatus,
+    energy_type_to_contract, DbOrderSchema, EnergyType, OrderEnum, OrderStatus
 };
+use primitives::db_api_schema::trades::ClearingStatus;
 use primitives::ewds::dto::EwdsOrderDto;
 use primitives::ewds::{EwdsClient, EwdsOperation};
 use primitives::matching::matching_block_interval;
@@ -35,12 +36,30 @@ type EvmMatchTuple = (
     U256,
     U256,
 );
+type EvmClearingResultTuple = ([u8; 16], u8, U256, U256, U256, U256, u32);
+type EvmMarketMatchesTuple = (Vec<EvmMatchTuple>, EvmClearingResultTuple);
 
 struct PreparedOrders {
     open_bids: Vec<Order>,
     open_offers: Vec<Order>,
     by_order_id: HashMap<String, DbOrderSchema>,
 }
+
+struct ClearingResult{
+    market_id: String,
+    clearing_status: ClearingStatus,
+    clearing_price: u64,
+    total_supply: u64,
+    total_demand: u64,
+    traded_quantity: u64,
+    num_trades: u32,
+}
+
+struct MarketMatches{
+    bid_offer_matches: Vec<BidOfferMatch>,
+    clearing_result: ClearingResult
+}
+
 
 pub async fn evm_subscribe(
     orderbook_url: String,
@@ -154,8 +173,8 @@ async fn run_matching_cycle(
 fn match_order_books(
     order_books: Vec<MatchingData>,
     matching_algorithm: &MatchingAlgorithm,
-) -> Result<Vec<BidOfferMatch>> {
-    let mut bid_offer_matches = Vec::new();
+) -> Result<Vec<MarketMatches>> {
+    let mut market_matches = Vec::new();
     for mut matching_data in order_books {
         if matching_data.bids().is_empty() || matching_data.offers().is_empty() {
             info!(
@@ -165,21 +184,59 @@ fn match_order_books(
             );
             continue;
         }
-
+        let original_bids_len: i32 = matching_data.bids().len();
+        let original_offers_len: i32 = matching_data.offers().len();
         let matches = matching_algorithm
             .match_orders(&mut matching_data)
             .map_err(|error| anyhow!(error))?;
-        info!(
-            "Generated {} matches for market {} timeslot {} using {}",
-            matches.len(),
-            matching_data.market_id(),
-            matching_data.time_slot(),
-            matching_algorithm
+        if matches.is_empty() {
+            continue;
+        }
+
+        let clearing_result = compute_clearing_result(
+            &matches,
+            original_bids_len,
+            original_offers_len
         );
-        bid_offer_matches.extend(matches);
+        market_matches.push(MarketMatches {
+            bid_offer_matches: matches,
+            clearing_result,
+        });
+    }
+    Ok(market_matches)
+}
+
+fn compute_clearing_status(number_of_matches: i32, original_bids_len: i32, original_offers_len: i32) -> ClearingStatus{
+    if number_of_matches == 0 {
+        // todo: check if the others are not 0
+        return ClearingStatus::Rejected;
     }
 
-    Ok(bid_offer_matches)
+    if original_bids_len + original_offers_len == number_of_matches * 2 {
+        let clearing_status = ClearingStatus::Final;
+    }
+}
+/// * FINAL: no remaining bids or offers after clearing
+// * PARTIAL: some bids and offers were matched, others were still not matched
+// * REJECTED: no bid and no offer were matched, obviously due to unmatched prices
+// * NO_BID: there is neither a bid nor an offer in the order book
+
+fn compute_clearing_result(
+    matches: Vec<BidOfferMatch>,
+
+) -> ClearingResult{
+    if let Some(first) = vec.first() {
+        let market_id = first.market_id;
+    }
+
+
+
+
+    ClearingResult {
+        market_id,
+
+
+    }
 }
 
 fn partition_orders_by_market_slot(
@@ -215,7 +272,7 @@ pub async fn send_settle_batch_transaction(
     evm_node_url: &str,
     settle_order_batch_address: &str,
     matching_engine_private_key: &str,
-    matches: Vec<BidOfferMatch>,
+    matches: Vec<MarketMatches>,
     order_lookup: HashMap<String, DbOrderSchema>,
 ) -> Result<()> {
     if matches.is_empty() {
@@ -527,56 +584,83 @@ fn derive_trade_id(
     hash[..16].try_into().expect("hash prefix is 16 bytes")
 }
 
-fn to_evm_matches(
-    matches: Vec<BidOfferMatch>,
+fn to_evm_clearing_result(clearing_result: &ClearingResult) -> EvmClearingResultTuple {
+    (
+        parse_bytes16_field(clearing_result.market_id),
+        clearing_result.clearing_status.to_evm(),
+        U256::from(clearing_result.clearing_price),
+        U256::from(clearing_result.total_supply),
+        U256::from(clearing_result.total_demand),
+        U256::from(clearing_result.traded_quantity),
+        clearing_result.num_trades,
+        clearing_result.clearing_time,
+    )
+}
+
+fn to_evm_match(
+    item: &BidOfferMatch,
     order_lookup: &HashMap<String, DbOrderSchema>,
-) -> Result<Vec<EvmMatchTuple>> {
+) -> Result<EvmMatchTuple> {
+    if item.bid.market_id != item.offer.market_id
+        || item.bid.time_slot != item.offer.time_slot
+        || item.market_id != item.bid.market_id
+        || item.time_slot != item.bid.time_slot
+    {
+        return Err(anyhow!(
+            "Refusing cross-market/time-slot match between bid {}/{} and offer {}/{}",
+            item.bid.market_id,
+            item.bid.time_slot,
+            item.offer.market_id,
+            item.offer.time_slot
+        ));
+    }
+
+    let bid_id = item.bid.order_id.to_ascii_lowercase();
+    let offer_id = item.offer.order_id.to_ascii_lowercase();
+    let bid_order = order_lookup
+        .get(&bid_id)
+        .ok_or_else(|| anyhow!("Could not find bid order '{}' in lookup map", bid_id))?;
+    let offer_order = order_lookup
+        .get(&offer_id)
+        .ok_or_else(|| anyhow!("Could not find offer order '{}' in lookup map", offer_id))?;
+    let bid_market_id = parse_bytes16_field("bid.market_id", &bid_order.market_id)?;
+    let offer_market_id = parse_bytes16_field("offer.market_id", &offer_order.market_id)?;
+    if bid_market_id != offer_market_id || bid_order.time_slot != offer_order.time_slot {
+        return Err(anyhow!(
+            "Refusing DB orders from different market/time-slot boundaries: bid {}/{} and offer {}/{}",
+            bid_order.market_id,
+            bid_order.time_slot,
+            offer_order.market_id,
+            offer_order.time_slot
+        ));
+    }
+
+    Ok((
+        derive_trade_id(&bid_id, &offer_id, item.selected_energy, item.energy_rate),
+        to_evm_order_data(bid_order, OrderEnum::Bid)?,
+        to_evm_order_data(offer_order, OrderEnum::Offer)?,
+        optional_order_id_to_bytes16(item.residual_bid.as_ref())?,
+        optional_order_id_to_bytes16(item.residual_offer.as_ref())?,
+        U256::from(item.selected_energy),
+        U256::from(item.energy_rate),
+    ))
+}
+
+fn to_evm_matches(
+    matches: Vec<MarketMatches>,
+    order_lookup: &HashMap<String, DbOrderSchema>,
+) -> Result<Vec<EvmMarketMatchesTuple>> {
     matches
         .into_iter()
-        .map(|item| {
-            if item.bid.market_id != item.offer.market_id
-                || item.bid.time_slot != item.offer.time_slot
-                || item.market_id != item.bid.market_id
-                || item.time_slot != item.bid.time_slot
-            {
-                return Err(anyhow!(
-                    "Refusing cross-market/time-slot match between bid {}/{} and offer {}/{}",
-                    item.bid.market_id,
-                    item.bid.time_slot,
-                    item.offer.market_id,
-                    item.offer.time_slot
-                ));
-            }
-
-            let bid_id = item.bid.order_id.to_ascii_lowercase();
-            let offer_id = item.offer.order_id.to_ascii_lowercase();
-            let bid_order = order_lookup
-                .get(&bid_id)
-                .ok_or_else(|| anyhow!("Could not find bid order '{}' in lookup map", bid_id))?;
-            let offer_order = order_lookup.get(&offer_id).ok_or_else(|| {
-                anyhow!("Could not find offer order '{}' in lookup map", offer_id)
-            })?;
-            let bid_market_id = parse_bytes16_field("bid.market_id", &bid_order.market_id)?;
-            let offer_market_id =
-                parse_bytes16_field("offer.market_id", &offer_order.market_id)?;
-            if bid_market_id != offer_market_id || bid_order.time_slot != offer_order.time_slot {
-                return Err(anyhow!(
-                    "Refusing DB orders from different market/time-slot boundaries: bid {}/{} and offer {}/{}",
-                    bid_order.market_id,
-                    bid_order.time_slot,
-                    offer_order.market_id,
-                    offer_order.time_slot
-                ));
-            }
-
+        .map(|market| {
+            let bid_offer_matches = market
+                .bid_offer_matches
+                .iter()
+                .map(|item| to_evm_match(item, order_lookup))
+                .collect::<Result<Vec<_>>>()?;
             Ok((
-                derive_trade_id(&bid_id, &offer_id, item.selected_energy, item.energy_rate),
-                to_evm_order_data(bid_order, OrderEnum::Bid)?,
-                to_evm_order_data(offer_order, OrderEnum::Offer)?,
-                optional_order_id_to_bytes16(item.residual_bid.as_ref())?,
-                optional_order_id_to_bytes16(item.residual_offer.as_ref())?,
-                U256::from(item.selected_energy),
-                U256::from(item.energy_rate),
+                bid_offer_matches,
+                to_evm_clearing_result(&market.clearing_result),
             ))
         })
         .collect()

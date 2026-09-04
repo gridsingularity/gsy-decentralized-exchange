@@ -64,3 +64,4 @@ pub fn string_to_timestamp(timestamp_string: &str) -> Result<u64> {
     let ts: u64 = timestamp_string.parse()?;
     Ok(ts)
 }
+

@@ -43,6 +43,7 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
     error PriceMismatch();
     error EnergyMismatch();
     error InvalidPenalty();
+    error TradedQuantityMismatch();
 
     constructor() {
         _disableInitializers();
@@ -83,6 +84,28 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
         uint64 penaltyEnergy;
     }
 
+    struct ClearingResult {
+        bytes16 marketId;
+        uint8 clearingStatus;
+        uint256 clearingPrice;
+        uint256 totalSupply;
+        uint256 totalDemand;
+        uint256 tradedQuantity;
+        uint32 numTrades;
+        uint64 clearingTime;
+    }
+
+    event MarketClearing(
+        bytes16 indexed marketId,
+        uint8 clearingStatus,
+        uint256 clearingPrice,
+        uint256 totalSupply,
+        uint256 totalDemand,
+        uint256 tradedQuantity,
+        uint32 numTrades,
+        uint64 clearingTime
+    );
+
     mapping(bytes16 => uint256) public penaltyEnergyByTrade;
     mapping(bytes16 => uint256) public penaltyEnergyByActor;
 
@@ -90,11 +113,36 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
      * @notice Settle a batch of matched trades.
      * @dev Only callable by the Matching Engine (Operator).
      */
+
     function settleBatch(
-        Match[] calldata matches
+        Match[] calldata matches,
+        ClearingResult calldata clearingResult
     ) external onlyRole(OPERATOR_ROLE) {
+        if (_sumSelectedEnergy(matches) != clearingResult.tradedQuantity) {
+            revert TradedQuantityMismatch();
+        }
+
         for (uint256 i = 0; i < matches.length; i++) {
             _settleTrade(matches[i]);
+        }
+
+        emit MarketClearing(
+            clearingResult.marketId,
+            clearingResult.clearingStatus,
+            clearingResult.clearingPrice,
+            clearingResult.totalSupply,
+            clearingResult.totalDemand,
+            clearingResult.tradedQuantity,
+            clearingResult.numTrades,
+            clearingResult.clearingTime
+        );
+    }
+
+    function _sumSelectedEnergy(
+        Match[] calldata matches
+    ) internal pure returns (uint256 total) {
+        for (uint256 i = 0; i < matches.length; i++) {
+            total += matches[i].selectedEnergy;
         }
     }
 
