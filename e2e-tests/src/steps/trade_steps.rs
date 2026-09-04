@@ -587,14 +587,14 @@ async fn verify_community_market_settlements(world: &mut MyWorld) {
 async fn submit_community_market_measurements(world: &mut MyWorld) {
     let measurements = vec![
         MeasurementSchema {
-            facility_id: "areaalice".to_string(),
+            facility_id: "alice".to_string(),
             community_uuid: world.community_id.clone(),
             time_slot: world.target_delivery_time,
             creation_time: 1,
             energy_kwh: 3.0,
         },
         MeasurementSchema {
-            facility_id: "areabob".to_string(),
+            facility_id: "bob".to_string(),
             community_uuid: world.secondary_community_id.clone(),
             time_slot: world.target_delivery_time,
             creation_time: 1,
