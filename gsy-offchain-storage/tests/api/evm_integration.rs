@@ -13,7 +13,7 @@ use tempfile::TempDir;
 abigen!(
     MockEmitter,
     r#"[
-        event OrderPlaced(bytes16 indexed orderId, bytes16 indexed createdBy, bytes16 indexed marketId, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, uint8 energySourcePreference, uint8 energyType, bool isBid)
+        event OrderPlaced(bytes16 indexed orderId, bytes16 indexed createdBy, bytes16 indexed marketId, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, uint8 energySourcePreference, uint8 energyType, bool isBid, bytes16 preferredTradingPartner, uint64 preferredEnergyRate, bytes16 tradingPartner)
         function emitOrderPlaced(bytes16 orderId, bytes16 createdBy, uint64 energy, uint64 rate) external
     ]"#
 );
@@ -41,10 +41,24 @@ async fn test_evm_order_listener_persists_to_db() {
         // SPDX-License-Identifier: MIT
         pragma solidity ^0.8.0;
         contract MockEmitter {
-            event OrderPlaced(bytes16 indexed orderId, bytes16 indexed createdBy, bytes16 indexed marketId, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, uint8 energySourcePreference, uint8 energyType, bool isBid);
+            event OrderPlaced(bytes16 indexed orderId, bytes16 indexed createdBy, bytes16 indexed marketId, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, uint8 energySourcePreference, uint8 energyType, bool isBid, bytes16 preferredTradingPartner, uint64 preferredEnergyRate, bytes16 tradingPartner);
             function emitOrderPlaced(bytes16 orderId, bytes16 createdBy, uint64 energy, uint64 rate) external {
-                // emit with hardcoded filler data for non-indexed fields not critical for this test
-                emit OrderPlaced(orderId, createdBy, bytes16(0), 1000, 1234567890, energy, rate, 1, 0, true);
+                // Emit representative order metadata so indexing is verified end-to-end.
+                emit OrderPlaced(
+                    orderId,
+                    createdBy,
+                    bytes16(0),
+                    1000,
+                    1234567890,
+                    energy,
+                    rate,
+                    1,
+                    2,
+                    true,
+                    hex"11111111111111111111111111111111",
+                    110000,
+                    hex"22222222222222222222222222222222"
+                );
             }
         }
     "#;
@@ -149,8 +163,29 @@ async fn test_evm_order_listener_persists_to_db() {
             assert_eq!(
                 order
                     .requirements
-                    .and_then(|requirements| requirements.energy_type),
+                    .as_ref()
+                    .and_then(|requirements| requirements.energy_type.clone()),
                 Some(EnergyType::Green)
+            );
+            assert_eq!(
+                order
+                    .requirements
+                    .as_ref()
+                    .and_then(|requirements| requirements.trading_partner_id.as_deref()),
+                Some("0x11111111111111111111111111111111")
+            );
+            assert_eq!(
+                order
+                    .requirements
+                    .as_ref()
+                    .and_then(|requirements| requirements.preferred_energy_rate),
+                Some(11.0)
+            );
+            let attributes = order.attributes.as_ref().expect("attributes missing");
+            assert_eq!(attributes.energy_type, EnergyType::Pv);
+            assert_eq!(
+                attributes.trading_partner_id.as_deref(),
+                Some("0x22222222222222222222222222222222")
             );
             break;
         }
