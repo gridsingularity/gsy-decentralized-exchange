@@ -17,6 +17,9 @@ Backend: MongoDB (`mongo:5.0`).
 2. `OffchainStorageEvmHandler` maps event payloads into DB schemas.
 3. `gsy-offchain-storage` updates order/trade records and exposes them via REST APIs.
 
+`OrderPlaced` contains the optional bid requirements and offer attributes, so
+the indexed order is complete without a follow-up `/orders` write.
+
 ## HTTP API Surface
 
 - `/health_check`
