@@ -22,7 +22,6 @@ use tokio::time::sleep;
 use tracing::info;
 
 const FLOAT_EPSILON: f64 = 0.000_001;
-const ENERGY_TYPE_UNSPECIFIED: u8 = 0;
 const COMMUNITY_TRADE_POLL_ATTEMPTS: usize = 180;
 const COMMUNITY_MATCHING_RETRIGGER_INTERVAL: usize = 30;
 const HTTP_PENALTY_POLL_ATTEMPTS: usize = 60;
@@ -267,23 +266,6 @@ async fn wait_for_order_in_market(
     );
 }
 
-async fn upsert_order_in_offchain_storage(world: &MyWorld, order: DbOrderSchema) {
-    let dto = EwdsOrderDto::try_from(order).expect("valid order DTO");
-    let response = world
-        .http_client
-        .post(format!("{}/orders", world.offchain_storage_url))
-        .json(&vec![dto])
-        .send()
-        .await
-        .expect("Failed to upsert order in off-chain storage");
-
-    assert!(
-        response.status().is_success(),
-        "Order upsert failed with status {}",
-        response.status()
-    );
-}
-
 async fn place_custom_order(
     world: &MyWorld,
     user_name: &str,
@@ -377,11 +359,18 @@ async fn place_custom_order_for_market(
 
     if requirements.is_some() || attributes.is_some() {
         let market_id = market_id_bytes_as_hex(market_id);
-        let mut indexed_order =
+        let indexed_order =
             wait_for_order_in_market(world, market_id.as_str(), order_id.as_str()).await;
-        indexed_order.requirements = requirements;
-        indexed_order.attributes = attributes;
-        upsert_order_in_offchain_storage(world, indexed_order).await;
+        assert_eq!(
+            indexed_order.requirements.as_ref(),
+            requirements.as_ref(),
+            "Listener-indexed requirements differ from the submitted on-chain requirements"
+        );
+        assert_eq!(
+            indexed_order.attributes.as_ref(),
+            attributes.as_ref(),
+            "Listener-indexed attributes differ from the submitted on-chain attributes"
+        );
     }
 
     order_id
