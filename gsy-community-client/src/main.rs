@@ -1,3 +1,4 @@
+use gsy_community_client::asset_did::{AssetDidClient, build_sync_payload};
 use gsy_community_client::constants::CommunityClientConstants;
 use gsy_community_client::external_forecasts::manager::ForecastsManager;
 use gsy_community_client::external_measurements::manager::MeasurementsManager;
@@ -7,8 +8,8 @@ use gsy_community_client::node_connector::orders::{
     remove_orders,
 };
 use gsy_community_client::offchain_storage_connector::adapter::{
-    AreaMarketInfoAdapter, deterministic_area_hash, deterministic_area_uuid,
-    deterministic_community_uuid, plan_residual_replacement,
+    AreaMarketInfoAdapter, deterministic_areas, deterministic_community_uuid,
+    plan_residual_replacement,
 };
 use gsy_community_client::time_utils::{
     get_current_timestamp_in_secs, open_spot_market_timeslots, start_of_previous_day,
@@ -35,6 +36,7 @@ struct AppState {
     api_adapter: AreaMarketInfoAdapter,
     measurements: MeasurementsManager,
     forecasts_manager: ForecastsManager,
+    asset_did_client: AssetDidClient,
     gsy_node_url: String,
 }
 
@@ -57,6 +59,9 @@ impl AppState {
             api_adapter,
             measurements: MeasurementsManager::new(),
             forecasts_manager: ForecastsManager::new(),
+            // Reads `IDENTITY_SERVER_URL` and the shared `API_KEY` itself; both have
+            // defaults, so this never fails to construct.
+            asset_did_client: AssetDidClient::new(None, None),
             // subxt's default transport (jsonrpsee) is WebSocket-only and rejects any
             // scheme other than ws/wss, so this must stay a `ws://` URL.
             gsy_node_url: read_env_or("GSY_NODE_URL", "ws://gsy-node:9944".to_string()),
@@ -159,22 +164,10 @@ impl AppState {
 
             for community in communities {
                 let community_uuid = deterministic_community_uuid(&community.community_name);
-                let areas: Vec<AreaTopologySchema> = community
-                    .areas
-                    .iter()
-                    .map(|area| AreaTopologySchema {
-                        area_uuid: deterministic_area_uuid(
-                            &community.community_name,
-                            &area.area_name,
-                        ),
-                        area_type: area.area_type.clone(),
-                        name: area.area_name.clone(),
-                        area_hash: h256_to_string(deterministic_area_hash(
-                            &community.community_name,
-                            &area.area_name,
-                        )),
-                    })
-                    .collect();
+                // Same derivation the market topology uses (`build_new_market_topology`),
+                // so an ingested forecast's `area_uuid`/`area_hash` always join to the
+                // market area for the same `(community_name, asset_name)` pair.
+                let areas: Vec<AreaTopologySchema> = deterministic_areas(&community);
 
                 let forecasts = self
                     .forecasts_manager
@@ -211,6 +204,84 @@ impl AppState {
                         "Failed to ingest forecasts for community {}: {}",
                         community.community_name, e
                     );
+                }
+            }
+
+            sleep(Duration::from_secs(interval_sec)).await;
+        }
+    }
+
+    /// Asset-DID sync loop. Every `ASSET_DID_SYNC_INTERVAL_SEC`, re-reads the ontology and
+    /// pushes every community and asset subject to the identity server, which derives a
+    /// `did:ethr` per subject from its master seed and upserts one record each. The sync is
+    /// idempotent: a tick that finds no ontology change creates nothing and returns
+    /// byte-identical DIDs.
+    ///
+    /// Deliberately a separate loop rather than a step inside `ingest_forecasts_loop` (plan
+    /// §2.4): identities are a side channel, and an identity server that is down, slow, or
+    /// 500ing must not delay a single forecast or order. Nothing in here propagates an error
+    /// or panics — every failure is logged and the loop waits for the next tick.
+    async fn sync_asset_dids_loop(&self) {
+        let interval_sec = CommunityClientConstants.ASSET_DID_SYNC_INTERVAL_SEC.max(1);
+
+        loop {
+            // `fetch_all_topology` swallows its own request failures and returns an empty
+            // vec — but not every failure: `get_all_assets_for_all_communities`
+            // (`topology.rs:192`) still `unwrap()`s the per-community asset query, so a
+            // single bad ontology response panics the caller. Running it as a child task
+            // turns that pre-existing panic into a `JoinError` this loop can log and retry
+            // on the next tick, instead of killing the sync permanently.
+            let fetch_state = self.clone();
+            let fetched = tokio::spawn(async move {
+                TopologyManager::new(&fetch_state.client, &fetch_state.api_adapter)
+                    .fetch_all_topology()
+                    .await
+            })
+            .await;
+
+            let communities = match fetched {
+                Ok(communities) => communities,
+                Err(error) => {
+                    error!(
+                        "Asset DID sync: fetching the external topology panicked ({}); \
+                         retrying at the next tick.",
+                        error
+                    );
+                    sleep(Duration::from_secs(interval_sec)).await;
+                    continue;
+                }
+            };
+
+            let payload = build_sync_payload(&communities);
+
+            if payload.is_empty() {
+                // Either the ontology is unreachable or it returned nothing. Do not post:
+                // the server rejects an empty payload, and an empty payload could never be
+                // meant as "retire everything" anyway.
+                info!("Asset DID sync: no communities or assets to sync; skipping this tick.");
+            } else {
+                match self.asset_did_client.sync(&payload).await {
+                    Ok(response) => {
+                        info!(
+                            "Asset DID sync: {} subject(s) sent ({} communities, {} assets); \
+                             created {}, updated {}, retired {}.",
+                            payload.subject_count(),
+                            payload.communities.len(),
+                            payload.assets.len(),
+                            response.created,
+                            response.updated,
+                            response.retired,
+                        );
+                    }
+                    Err(error) => {
+                        // Logged and dropped on purpose: the forecast and order loops run in
+                        // their own tasks and neither reads anything this loop writes.
+                        error!(
+                            "Asset DID sync of {} subject(s) failed: {:#}",
+                            payload.subject_count(),
+                            error
+                        );
+                    }
                 }
             }
 
@@ -405,12 +476,17 @@ async fn main() {
     let app_state = AppState::new();
     let ingest_state = app_state.clone();
     let publish_state = app_state.clone();
+    let asset_did_state = app_state.clone();
 
-    // Two independent, never-returning loops. Each runs in its own task so a panic or
-    // stall in one (e.g. the ingestion loop wedged on a downed forecaster) cannot block
-    // the other (order publication, which only depends on storage).
+    // Three independent, never-returning loops. Each runs in its own task so a panic or
+    // stall in one (e.g. the ingestion loop wedged on a downed forecaster, or the DID sync
+    // waiting on an unreachable identity server) cannot block the others. Nothing is shared
+    // between them but the HTTP clients, so an identity server outage is invisible to
+    // forecast ingestion and order publication.
     let ingest_handle = tokio::spawn(async move { ingest_state.ingest_forecasts_loop().await });
     let publish_handle = tokio::spawn(async move { publish_state.publish_orders_loop().await });
+    let asset_did_handle =
+        tokio::spawn(async move { asset_did_state.sync_asset_dids_loop().await });
 
-    let _ = tokio::join!(ingest_handle, publish_handle);
+    let _ = tokio::join!(ingest_handle, publish_handle, asset_did_handle);
 }

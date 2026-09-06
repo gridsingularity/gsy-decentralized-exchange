@@ -56,6 +56,13 @@ pub struct Constants {
     pub PV_HTTP_REQUEST_TIMEOUT_SEC: u64,
     /// TCP connect timeout (in seconds) applied to every external HTTP call.
     pub HTTP_CONNECT_TIMEOUT_SEC: u64,
+    /// Base URL of the `gsy-ewf-identity-server`, the service that mints and stores a
+    /// `did:ethr` per ontology asset and per community.
+    pub IDENTITY_SERVER_URL: String,
+    /// How often, in seconds, the asset-DID sync loop re-reads the ontology and pushes the
+    /// full subject set to the identity server. The sync is idempotent, so a tick that
+    /// changes nothing costs one request and creates no records.
+    pub ASSET_DID_SYNC_INTERVAL_SEC: u64,
 }
 
 impl Constants {
@@ -111,6 +118,11 @@ impl Constants {
             HTTP_REQUEST_TIMEOUT_SEC: read_env_or("HTTP_REQUEST_TIMEOUT_SEC", 60u64),
             PV_HTTP_REQUEST_TIMEOUT_SEC: read_env_or("PV_HTTP_REQUEST_TIMEOUT_SEC", 150u64),
             HTTP_CONNECT_TIMEOUT_SEC: read_env_or("HTTP_CONNECT_TIMEOUT_SEC", 10u64),
+            IDENTITY_SERVER_URL: read_env_or(
+                "IDENTITY_SERVER_URL",
+                "http://gsy-ewf-identity-server:3000".to_string(),
+            ),
+            ASSET_DID_SYNC_INTERVAL_SEC: read_env_or("ASSET_DID_SYNC_INTERVAL_SEC", 3600u64),
         }
     }
 }

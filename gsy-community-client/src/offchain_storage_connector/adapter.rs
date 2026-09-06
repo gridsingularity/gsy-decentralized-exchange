@@ -87,6 +87,31 @@ pub fn deterministic_area_hash(community_name: &str, area_name: &str) -> H256 {
     )
 }
 
+/// Derive the deterministic `AreaTopologySchema` list for a community's assets.
+///
+/// This is the single definition of the `ExternalCommunityTopology -> Vec<AreaTopologySchema>`
+/// mapping. It used to be written out twice — once here inside
+/// [`build_new_market_topology`] and once inlined in `main.rs::ingest_forecasts_loop` — and
+/// both copies had to agree exactly: a forecast is joined to its market area by
+/// `area_uuid`/`area_hash`, so the smallest divergence between the two derivations silently
+/// orphans every ingested forecast. Keeping one pure function called from both paths makes
+/// that class of drift impossible.
+pub fn deterministic_areas(community: &ExternalCommunityTopology) -> Vec<AreaTopologySchema> {
+    community
+        .areas
+        .iter()
+        .map(|area| AreaTopologySchema {
+            area_uuid: deterministic_area_uuid(&community.community_name, &area.area_name),
+            area_type: area.area_type.clone(),
+            name: area.area_name.clone(),
+            area_hash: h256_to_string(deterministic_area_hash(
+                &community.community_name,
+                &area.area_name,
+            )),
+        })
+        .collect()
+}
+
 /// Build the `MarketTopologySchema` for a community/timeslot with fully deterministic
 /// identity (community_uuid, market_id, per-area area_uuid/area_hash). Kept as a pure
 /// function so the decoupled ingestion and publication loops derive identical ids and so
@@ -105,23 +130,7 @@ pub fn build_new_market_topology(
         )),
         time_slot: time_slot as u32,
         creation_time: get_current_timestamp_in_secs() as u32,
-        community_areas: community_topology
-            .areas
-            .clone()
-            .into_iter()
-            .map(|area| AreaTopologySchema {
-                area_uuid: deterministic_area_uuid(
-                    &community_topology.community_name,
-                    &area.area_name,
-                ),
-                area_type: area.area_type.clone(),
-                name: area.area_name.clone(),
-                area_hash: h256_to_string(deterministic_area_hash(
-                    &community_topology.community_name,
-                    &area.area_name,
-                )),
-            })
-            .collect(),
+        community_areas: deterministic_areas(community_topology),
     }
 }
 

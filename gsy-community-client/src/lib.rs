@@ -15,3 +15,5 @@ pub mod external_measurements;
 pub mod inter_community;
 
 pub mod types;
+
+pub mod asset_did;
