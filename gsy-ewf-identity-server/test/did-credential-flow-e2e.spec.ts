@@ -16,6 +16,10 @@ import { PreparedTransactionDto } from '../src/did/dto/prepared-transaction.dto'
 // ApiKeyGuard fails closed: AppModule refuses to boot without a configured API key
 // (plan §2.6). These e2e specs build the whole AppModule, so give them one.
 process.env.API_KEY = process.env.API_KEY || 'test_api_key';
+// AssetKeyService likewise refuses to start without a valid master seed.
+// Obviously-fake fixed test seed - never a real one.
+process.env.ASSET_DID_MASTER_SEED =
+  process.env.ASSET_DID_MASTER_SEED || '01'.repeat(32);
 
 const ERC1056_ABI = [
   "function identityOwner(address identity) view returns (address)",
