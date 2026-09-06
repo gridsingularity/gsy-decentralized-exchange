@@ -16,6 +16,14 @@ export default () => ({
   substrate: {
     wsUrl: process.env.SUBSTRATE_WS_URL,
   },
+
+  identity: {
+    // Machine-to-machine API key (ApiKeyGuard). API_KEY is deliberately shared with
+    // gsy-offchain-storage for now (gsy-offchain-storage/src/configuration.rs:22-23);
+    // IDENTITY_API_KEY is read first so the keys can be split later without a code change.
+    // Empty/unset => ApiKeyGuard throws at construction and the service refuses to start.
+    apiKey: process.env.IDENTITY_API_KEY ?? process.env.API_KEY ?? '',
+  },
   
   jwt: {
     secret: process.env.JWT_SECRET || 'supersecret',

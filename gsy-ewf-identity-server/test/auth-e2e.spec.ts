@@ -11,6 +11,10 @@ import { v4 as uuidv4 } from 'uuid';
 import { Wallet } from 'ethers';
 import { UserInfoDto } from '../src/auth/dto/user-info.dto';
 
+// ApiKeyGuard fails closed: AppModule refuses to boot without a configured API key
+// (plan §2.6). These e2e specs build the whole AppModule, so give them one.
+process.env.API_KEY = process.env.API_KEY || 'test_api_key';
+
 describe('Authorization (e2e)', () => {
   let app: INestApplication;
   let jwtService: JwtService;

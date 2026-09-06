@@ -13,6 +13,10 @@ import { formatSubstrateSigningMessage } from '../src/credentials/utils/substrat
 import { v4 as uuidv4 } from 'uuid';
 import { PreparedTransactionDto } from '../src/did/dto/prepared-transaction.dto';
 
+// ApiKeyGuard fails closed: AppModule refuses to boot without a configured API key
+// (plan §2.6). These e2e specs build the whole AppModule, so give them one.
+process.env.API_KEY = process.env.API_KEY || 'test_api_key';
+
 const ERC1056_ABI = [
   "function identityOwner(address identity) view returns (address)",
 ];
@@ -153,6 +157,8 @@ describe('DID and Credential Flow (e2e)', () => {
         try {
             prepareTxResponse = await request(app.getHttpServer())
             .post('/did')
+            // POST /did is behind ApiKeyGuard (plan §0.5 bug A / §2.6).
+            .set('x-api-key', process.env.API_KEY)
             .send({
                 address: testAddress.toLowerCase(),
                 metadata: { name: 'E2E User TX Test', description: 'Preparing TX' }

@@ -2,13 +2,14 @@ import {
   Controller, Get, Post, Param, Body,
   UseGuards, Req, HttpCode, HttpStatus
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiBody } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiBody, ApiHeader } from '@nestjs/swagger';
 import { DIDService } from './did.service';
 import { DIDRequest } from './dto/did-request.dto';
 import { DIDUpdateRequest } from './dto/did-update-request.dto';
 import { PreparedTransactionDto } from './dto/prepared-transaction.dto'; 
 import { DIDAuthGuard } from '../auth/guards/did-auth.guard';
 import { DIDOwnerGuard } from '../auth/guards/did-owner.guard';
+import { ApiKeyGuard } from '../auth/guards/api-key.guard';
 
 @ApiTags('DID Management')
 @Controller('did')
@@ -16,10 +17,13 @@ export class DIDController {
   constructor(private readonly didService: DIDService) {}
 
   @Post()
+  @UseGuards(ApiKeyGuard)
   @HttpCode(HttpStatus.OK) 
+  @ApiHeader({ name: 'x-api-key', required: true, description: 'Machine-to-machine API key (same value as the off-chain storage API_KEY)' })
   @ApiOperation({ summary: 'Create local DID record and prepare initial attribute transaction' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Transaction prepared for setting initial DID attribute.', type: PreparedTransactionDto })
   @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Invalid input or DID record already exists locally' })
+  @ApiResponse({ status: HttpStatus.UNAUTHORIZED, description: 'invalid or missing x-api-key' })
   async createDID(@Body() didRequest: DIDRequest, @Req() req): Promise<PreparedTransactionDto> {
     return this.didService.createDID(didRequest, req);
   }

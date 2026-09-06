@@ -7,6 +7,10 @@ import { AppModule } from '../src/app.module';
 import { User } from '../src/database/schemas/user.schema';
 import { Model } from 'mongoose';
 
+// ApiKeyGuard fails closed: AppModule refuses to boot without a configured API key
+// (plan §2.6). These e2e specs build the whole AppModule, so give them one.
+process.env.API_KEY = process.env.API_KEY || 'test_api_key';
+
 describe('Auth Validation (e2e)', () => {
   let app: INestApplication;
   let jwtService: JwtService;
