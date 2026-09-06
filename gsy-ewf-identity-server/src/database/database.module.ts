@@ -4,7 +4,8 @@ import {
   User, UserSchema,
   AuditLog, AuditLogSchema,
   Challenge, ChallengeSchema,
-  Credential, CredentialSchema
+  Credential, CredentialSchema,
+  AssetDID, AssetDIDSchema
 } from './schemas';
 
 @Module({
@@ -14,6 +15,7 @@ import {
       { name: User.name, schema: UserSchema },
       { name: Challenge.name, schema: ChallengeSchema },
       { name: Credential.name, schema: CredentialSchema },
+      { name: AssetDID.name, schema: AssetDIDSchema },
     ]),
   ],
   exports: [MongooseModule],

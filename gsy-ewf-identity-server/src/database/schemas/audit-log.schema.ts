@@ -10,6 +10,13 @@ export enum AuditAction {
   CREDENTIAL_ISSUED = 'CREDENTIAL_ISSUED',
   CREDENTIAL_VERIFIED = 'CREDENTIAL_VERIFIED',
   CREDENTIAL_REVOKED = 'CREDENTIAL_REVOKED',
+  // Asset / community DID lifecycle (plan §4.2). ASSET_DID_REGISTERED (phase 3) and
+  // ASSET_CREDENTIAL_ISSUED (phase 4) are declared here deliberately although nothing
+  // emits them yet, so this enum is not reopened by a later phase.
+  ASSET_DID_CREATED = 'ASSET_DID_CREATED',
+  ASSET_DID_RETIRED = 'ASSET_DID_RETIRED',
+  ASSET_DID_REGISTERED = 'ASSET_DID_REGISTERED',
+  ASSET_CREDENTIAL_ISSUED = 'ASSET_CREDENTIAL_ISSUED',
 }
 
 @Schema({ timestamps: true })
