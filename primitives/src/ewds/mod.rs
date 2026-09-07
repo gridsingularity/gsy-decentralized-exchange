@@ -31,6 +31,8 @@ pub enum EwdsOperation {
     CommunityUpsert,
     #[serde(rename = "communities.query")]
     CommunitiesQuery,
+    #[serde(rename = "ids.query")]
+    IdsQuery,
     #[serde(rename = "clearing_results.query")]
     ClearingResultsQuery,
     #[serde(rename = "markets.query")]
@@ -38,7 +40,7 @@ pub enum EwdsOperation {
 }
 
 impl EwdsOperation {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::OrdersQuery,
         Self::TradesQuery,
         Self::MeasurementsQuery,
@@ -46,6 +48,7 @@ impl EwdsOperation {
         Self::CommunitiesQuery,
         Self::ClearingResultsQuery,
         Self::MarketsQuery,
+        Self::IdsQuery,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -55,6 +58,7 @@ impl EwdsOperation {
             Self::MeasurementsQuery => "measurements.query",
             Self::CommunityUpsert => "community.upsert",
             Self::CommunitiesQuery => "communities.query",
+            Self::IdsQuery => "ids.query",
             Self::ClearingResultsQuery => "clearing_results.query",
             Self::MarketsQuery => "markets.query",
         }
@@ -67,6 +71,7 @@ impl EwdsOperation {
             Self::MeasurementsQuery => "measurements-query",
             Self::CommunityUpsert => "community-upsert",
             Self::CommunitiesQuery => "communities-query",
+            Self::IdsQuery => "ids-query",
             Self::ClearingResultsQuery => "clearing_results-query",
             Self::MarketsQuery => "markets-query",
         }
@@ -92,6 +97,7 @@ pub struct EwdsTopicConfig {
     measurements: EwdsTopicPair,
     community_upsert: EwdsTopicPair,
     communities: EwdsTopicPair,
+    ids: EwdsTopicPair,
     clearing_results: EwdsTopicPair,
     markets: EwdsTopicPair,
 }
@@ -118,6 +124,10 @@ impl Default for EwdsTopicConfig {
             communities: EwdsTopicPair {
                 request: "communitiesQuery".to_string(),
                 response: "communitiesQueryResponse".to_string(),
+            },
+            ids: EwdsTopicPair {
+                request: "idsQuery".to_string(),
+                response: "idsQueryResponse".to_string(),
             },
             clearing_results: EwdsTopicPair {
                 request: "clearingResultsQuery".to_string(),
@@ -185,6 +195,16 @@ impl EwdsTopicConfig {
                     defaults.communities.response.as_str(),
                 ),
             },
+            ids: EwdsTopicPair {
+                request: env_or(
+                    "EWDS_IDS_REQUEST_TOPIC",
+                    defaults.ids.request.as_str(),
+                ),
+                response: env_or(
+                    "EWDS_IDS_RESPONSE_TOPIC",
+                    defaults.ids.response.as_str(),
+                ),
+            },
             clearing_results: EwdsTopicPair {
                 request: env_or(
                     "EWDS_CLEARING_RESULTS_REQUEST_TOPIC",
@@ -215,6 +235,7 @@ impl EwdsTopicConfig {
             EwdsOperation::MeasurementsQuery => &self.measurements,
             EwdsOperation::CommunityUpsert => &self.community_upsert,
             EwdsOperation::CommunitiesQuery => &self.communities,
+            EwdsOperation::IdsQuery => &self.ids,
             EwdsOperation::ClearingResultsQuery => &self.clearing_results,
             EwdsOperation::MarketsQuery => &self.markets,
         }

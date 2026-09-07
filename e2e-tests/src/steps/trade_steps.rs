@@ -11,7 +11,8 @@ use primitives::db_api_schema::trades::DbTradeSchema;
 use primitives::ewds::dto::{EwdsOrderDto, EwdsTradeDto};
 use primitives::matching::matching_block_interval;
 use primitives::utils::{
-    parse_or_hash_bytes16, parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR,
+    bytes16_to_hex, create_encrypted_bytes16_from_string, parse_uuid_or_hex_bytes16,
+    NODE_FLOAT_SCALING_FACTOR,
 };
 use std::collections::HashSet;
 use std::env;
@@ -19,6 +20,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
 use tracing::info;
+use uuid::Uuid;
 
 const FLOAT_EPSILON: f64 = 0.000_001;
 const ENERGY_TYPE_UNSPECIFIED: u8 = 0;
@@ -337,18 +339,8 @@ async fn place_custom_order_for_market(
     let creation_time = now.as_secs();
 
     let actor_id = world.actor_id_for_user(user_name);
-    let order_id_bytes = parse_or_hash_bytes16(
-        format!(
-            "custom:{}:{}:{}:{}:{}:{}",
-            user_name,
-            is_bid,
-            creation_time,
-            energy,
-            energy_rate,
-            hex::encode(market_id)
-        )
-        .as_str(),
-    );
+    let order_id = Uuid::new_v4().to_string();
+    let order_id_bytes = create_encrypted_bytes16_from_string(&order_id);
 
     let params: EvmOrderParamsTuple = (
         order_id_bytes,
@@ -363,7 +355,7 @@ async fn place_custom_order_for_market(
         is_bid,
     );
 
-    let order_id = format!("0x{}", hex::encode(order_id_bytes));
+    let order_id = bytes16_to_hex(order_id_bytes);
 
     let place_order_call = order_registry.place_order(params);
     let pending_tx = place_order_call
@@ -445,7 +437,10 @@ async fn verify_no_cross_community_trade(world: &mut MyWorld) {
         OrderRegistryContract::new(world.order_registry_address, world.provider.clone());
     for order_id in [bid_id, offer_id] {
         let status = order_registry
-            .get_status(parse_or_hash_bytes16(order_id))
+            .get_status(
+                parse_uuid_or_hex_bytes16(order_id)
+                    .expect("Custom order ID is not a UUID or bytes16 hex value"),
+            )
             .call()
             .await
             .expect("Failed to read cross-community order status");
@@ -602,14 +597,14 @@ async fn verify_community_market_settlements(world: &mut MyWorld) {
 async fn submit_community_market_measurements(world: &mut MyWorld) {
     let measurements = vec![
         MeasurementSchema {
-            facility_id: "areaalice".to_string(),
+            facility_id: "alice".to_string(),
             community_uuid: world.community_id.clone(),
             time_slot: world.target_delivery_time,
             creation_time: 1,
             energy_kwh: 3.0,
         },
         MeasurementSchema {
-            facility_id: "areabob".to_string(),
+            facility_id: "bob".to_string(),
             community_uuid: world.secondary_community_id.clone(),
             time_slot: world.target_delivery_time,
             creation_time: 1,
