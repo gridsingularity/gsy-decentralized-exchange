@@ -24,6 +24,7 @@ mod tests {
     use super::*;
     use crate::models::Requirements;
     use primitives::db_api_schema::orders::{OrderEnum, OrderStatus};
+    use uuid::Uuid;
 
     fn order(id: &str, order_type: OrderEnum, energy: u64, energy_rate: u64) -> Order {
         Order {
@@ -59,8 +60,7 @@ mod tests {
             .as_ref()
             .expect("bid should be partially filled")
             .order_id;
-        assert!(residual_id.starts_with("0x"));
-        assert_eq!(residual_id.len(), 34);
+        Uuid::parse_str(&residual_id).expect("not a valid uuid");
     }
 
     #[test]

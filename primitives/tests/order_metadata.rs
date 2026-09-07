@@ -2,7 +2,9 @@ use primitives::db_api_schema::orders::{
     order_metadata_from_contract, order_metadata_to_contract, ContractOrderMetadata, DbAttributes,
     DbRequirements, EnergyType,
 };
-use primitives::utils::{parse_or_hash_bytes16, NODE_FLOAT_SCALING_FACTOR};
+use primitives::utils::{
+    create_encrypted_bytes16_from_string, parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR,
+};
 
 const PREFERRED_PARTNER: &str = "0x00112233445566778899aabbccddeeff";
 const TRADING_PARTNER: &str = "0xffeeddccbbaa99887766554433221100";
@@ -25,7 +27,7 @@ fn converts_complete_order_metadata_to_and_from_contract_values() {
     assert_eq!(encoded.energy_type, 2);
     assert_eq!(
         encoded.preferred_trading_partner,
-        parse_or_hash_bytes16(PREFERRED_PARTNER)
+        parse_uuid_or_hex_bytes16(PREFERRED_PARTNER).expect("Invalid on-chain actor ID")
     );
     assert_eq!(
         encoded.preferred_energy_rate,
@@ -33,13 +35,31 @@ fn converts_complete_order_metadata_to_and_from_contract_values() {
     );
     assert_eq!(
         encoded.trading_partner,
-        parse_or_hash_bytes16(TRADING_PARTNER)
+        parse_uuid_or_hex_bytes16(TRADING_PARTNER).expect("Invalid on-chain actor ID")
     );
 
     assert_eq!(
         order_metadata_from_contract(encoded),
         (Some(requirements), Some(attributes))
     );
+}
+
+#[test]
+fn partner_names_use_the_same_conversion_as_actor_ids() {
+    let requirements = DbRequirements {
+        trading_partner_id: Some("alice".to_string()),
+        energy_type: None,
+        preferred_energy_rate: None,
+    };
+    let attributes = DbAttributes {
+        trading_partner_id: Some("bob".to_string()),
+        energy_type: EnergyType::None,
+    };
+
+    let encoded = order_metadata_to_contract(Some(&requirements), Some(&attributes));
+
+    assert_eq!(encoded.preferred_trading_partner, create_encrypted_bytes16_from_string("alice"));
+    assert_eq!(encoded.trading_partner, create_encrypted_bytes16_from_string("bob"));
 }
 
 #[test]

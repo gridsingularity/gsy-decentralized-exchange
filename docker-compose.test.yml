@@ -165,7 +165,7 @@ services:
         condition: service_started
     environment:
       <<: *gsy-ewds-env
-      RUST_BACKTRACE: "1"
+      RUST_BACKTRACE: full
       EVM_NODE_URL: ${EVM_NODE_URL:-ws://anvil:8545}
       OFFCHAIN_STORAGE_TRANSPORT: ${OFFCHAIN_STORAGE_TRANSPORT:-http}
       OFFCHAIN_STORAGE_URL: ${EWDS_OFFCHAIN_STORAGE_URL:-http://gsy-offchain-storage:8080}

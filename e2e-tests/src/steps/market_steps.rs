@@ -8,7 +8,9 @@ use primitives::db_api_schema::grid_topology::EnergyCommunitySchema;
 use primitives::db_api_schema::profiles::ForecastSchema;
 use primitives::ewds::dto::EwdsCommunityDto;
 use primitives::ewds::{EwdsClient, EwdsOperation};
-use primitives::utils::{generate_market_id, parse_or_hash_bytes16, parse_uuid_or_hex_bytes16};
+use primitives::utils::{
+    create_encrypted_bytes16_from_string, generate_market_id, parse_uuid_or_hex_bytes16,
+};
 use primitives::{MarketType, MatchingAlgorithm};
 use std::env;
 use std::str::FromStr;
@@ -192,7 +194,8 @@ fn unique_community_id(label: &str) -> String {
         .duration_since(UNIX_EPOCH)
         .expect("System clock before UNIX_EPOCH")
         .as_nanos();
-    let mut bytes = parse_or_hash_bytes16(format!("e2e-community:{label}:{nonce}").as_str());
+    let mut bytes =
+        create_encrypted_bytes16_from_string(format!("e2e-community:{label}:{nonce}").as_str());
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
     let encoded = hex::encode(bytes);

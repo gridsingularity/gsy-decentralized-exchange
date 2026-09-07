@@ -9,7 +9,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::utils::{bytes16_to_hex, parse_or_hash_bytes16, NODE_FLOAT_SCALING_FACTOR};
+use crate::utils::{
+    bytes16_to_hex, create_encrypted_bytes16_from_string, parse_uuid_or_hex_bytes16,
+    NODE_FLOAT_SCALING_FACTOR,
+};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd)]
 #[serde(rename_all = "lowercase")]
@@ -155,7 +158,10 @@ pub fn order_metadata_to_contract(
             .unwrap_or_default(),
         preferred_trading_partner: requirements
             .and_then(|value| value.trading_partner_id.as_deref())
-            .map(parse_or_hash_bytes16)
+            .map(|id| {
+                parse_uuid_or_hex_bytes16(id)
+                    .unwrap_or_else(|| create_encrypted_bytes16_from_string(id))
+            })
             .unwrap_or_default(),
         preferred_energy_rate: requirements
             .and_then(|value| value.preferred_energy_rate)
@@ -163,7 +169,10 @@ pub fn order_metadata_to_contract(
             .unwrap_or_default(),
         trading_partner: attributes
             .and_then(|value| value.trading_partner_id.as_deref())
-            .map(parse_or_hash_bytes16)
+            .map(|id| {
+                parse_uuid_or_hex_bytes16(id)
+                    .unwrap_or_else(|| create_encrypted_bytes16_from_string(id))
+            })
             .unwrap_or_default(),
     }
 }
