@@ -4,7 +4,7 @@ use anyhow::{anyhow, Error, Result};
 use ethers::prelude::*;
 use ethers::utils::keccak256;
 use primitives::db_api_schema::orders::{
-    energy_type_to_contract, DbOrderSchema, EnergyType, OrderEnum, OrderStatus,
+    order_metadata_to_contract, DbOrderSchema, OrderEnum, OrderStatus,
 };
 use primitives::ewds::dto::EwdsOrderDto;
 use primitives::ewds::{EwdsClient, EwdsOperation};
@@ -23,7 +23,20 @@ abigen!(
     "src/connectors/abi/settle_order_batch.json"
 );
 
-type EvmOrderDataTuple = ([u8; 16], [u8; 16], [u8; 16], u64, u64, u64, u64, u8, u8);
+type EvmOrderDataTuple = (
+    [u8; 16],
+    [u8; 16],
+    [u8; 16],
+    u64,
+    u64,
+    u64,
+    u64,
+    u8,
+    u8,
+    [u8; 16],
+    u64,
+    [u8; 16],
+);
 type EvmMatchTuple = (
     [u8; 16],
     EvmOrderDataTuple,
@@ -462,23 +475,6 @@ fn convert_db_order_to_canonical(order: &DbOrderSchema) -> Result<Order> {
     })
 }
 
-fn order_energy_source_preference(order: &DbOrderSchema) -> u8 {
-    order
-        .requirements
-        .as_ref()
-        .and_then(|requirements| requirements.energy_type.as_ref())
-        .map(energy_type_to_contract)
-        .unwrap_or(energy_type_to_contract(&EnergyType::None))
-}
-
-fn order_energy_type(order: &DbOrderSchema) -> u8 {
-    order
-        .attributes
-        .as_ref()
-        .map(|attributes| energy_type_to_contract(&attributes.energy_type))
-        .unwrap_or(energy_type_to_contract(&EnergyType::None))
-}
-
 fn to_evm_order_data(order: &DbOrderSchema, expected_type: OrderEnum) -> Result<EvmOrderDataTuple> {
     if order.order_type != expected_type {
         return Err(anyhow!(
@@ -489,6 +485,9 @@ fn to_evm_order_data(order: &DbOrderSchema, expected_type: OrderEnum) -> Result<
         ));
     }
 
+    let metadata =
+        order_metadata_to_contract(order.requirements.as_ref(), order.attributes.as_ref());
+
     Ok((
         parse_bytes16_field("order_id", order.order_id.as_str())?,
         parse_bytes16_field("created_by", order.created_by.as_str())?,
@@ -497,8 +496,11 @@ fn to_evm_order_data(order: &DbOrderSchema, expected_type: OrderEnum) -> Result<
         order.creation_time,
         (order.energy_kWh * NODE_FLOAT_SCALING_FACTOR).round() as u64,
         (order.energy_rate * NODE_FLOAT_SCALING_FACTOR).round() as u64,
-        order_energy_source_preference(order),
-        order_energy_type(order),
+        metadata.energy_source_preference,
+        metadata.energy_type,
+        metadata.preferred_trading_partner,
+        metadata.preferred_energy_rate,
+        metadata.trading_partner,
     ))
 }
 

@@ -1,3 +1,4 @@
+use crate::MarketType;
 use anyhow::Result;
 use blake2::digest::{Update, VariableOutput};
 use blake2::Blake2bVar;
@@ -53,6 +54,22 @@ pub fn create_encrypted_bytes16_from_string(input_string: &str) -> [u8; 16] {
     hash
 }
 
+pub fn generate_market_id(
+    community_id: &str,
+    market_type: MarketType,
+    delivery_timestamp: u64,
+) -> [u8; 16] {
+    let mut market_id = [0u8; 16];
+    let mut hasher = Blake2bVar::new(market_id.len()).expect("valid market ID output size");
+    hasher.update(community_id.as_bytes());
+    hasher.update(market_type.as_str().as_bytes());
+    hasher.update(&delivery_timestamp.to_be_bytes());
+    hasher
+        .finalize_variable(&mut market_id)
+        .expect("valid market ID output buffer");
+    market_id
+}
+
 pub fn timestamp_to_datetime_string(timestamp: u64) -> String {
     let datetime = DateTime::<Utc>::from_timestamp(timestamp as i64, 0).unwrap();
     // Formats the combined date and time with the specified format string.
@@ -73,4 +90,42 @@ pub fn timestamp_to_string_with_padding(timestamp: u64) -> String {
 pub fn string_to_timestamp(timestamp_string: &str) -> Result<u64> {
     let ts: u64 = timestamp_string.parse()?;
     Ok(ts)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::generate_market_id;
+    use crate::MarketType;
+
+    const COMMUNITY_ID: &str = "11111111-1111-4111-8111-111111111111";
+
+    #[test]
+    fn market_id_is_deterministic_for_the_same_seed() {
+        let first = generate_market_id(COMMUNITY_ID, MarketType::Spot, 1_700_000_000);
+        let second = generate_market_id(COMMUNITY_ID, MarketType::Spot, 1_700_000_000);
+
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn market_id_changes_for_each_seed_component() {
+        let market_id = generate_market_id(COMMUNITY_ID, MarketType::Spot, 1_700_000_000);
+
+        assert_ne!(
+            market_id,
+            generate_market_id(
+                "22222222-2222-4222-8222-222222222222",
+                MarketType::Spot,
+                1_700_000_000,
+            )
+        );
+        assert_ne!(
+            market_id,
+            generate_market_id(COMMUNITY_ID, MarketType::Flex, 1_700_000_000)
+        );
+        assert_ne!(
+            market_id,
+            generate_market_id(COMMUNITY_ID, MarketType::Spot, 1_700_000_001)
+        );
+    }
 }

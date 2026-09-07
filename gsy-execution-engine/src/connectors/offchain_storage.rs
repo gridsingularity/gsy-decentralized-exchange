@@ -136,18 +136,15 @@ async fn fetch_trades_and_measurements_via_ewds(
         8_000,
     );
 
-    let trades: Vec<EwdsTradeDto> = ewds_client
-        .query(EwdsOperation::TradesQuery, query.clone())
-        .await?;
+    let (trades, measurements): (Vec<EwdsTradeDto>, Vec<MeasurementSchema>) = tokio::try_join!(
+        ewds_client.query(EwdsOperation::TradesQuery, query.clone()),
+        ewds_client.query(EwdsOperation::MeasurementsQuery, query),
+    )?;
 
-    let trades_db: Vec<DbTradeSchema> = trades
+    let trades_db = trades
         .into_iter()
-        .map(|o| DbTradeSchema::try_from(o).expect("invalid EwdsTradeDto"))
-        .collect();
-
-    let measurements: Vec<MeasurementSchema> = ewds_client
-        .query(EwdsOperation::MeasurementsQuery, query)
-        .await?;
+        .map(DbTradeSchema::try_from)
+        .collect::<Result<Vec<_>>>()?;
 
     Ok((trades_db, measurements))
 }
