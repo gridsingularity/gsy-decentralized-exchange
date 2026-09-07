@@ -32,10 +32,6 @@ Changes that are cosmetic in nature and do not add anything substantial to the s
 
 * If things are still unclear: Ask any question about how to use the GSY DEX in the [Grid Singularity Community Slack](https://gsycommunity.slack.com/join/shared_invite/zt-dpfxe2gk-hKFccsrr68g982odCJlrIg#/).
 
-#### **No AI**
-
-Do not contribute anything using generative AI tools.
-
 #### **License**
 
 By contributing to the GSY DEX, you agree that your contributions will be licensed under the [GPLv3 License](https://github.com/gridsingularity/gsy-dex/blob/master/LICENSE).
