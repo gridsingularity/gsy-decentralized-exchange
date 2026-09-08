@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use blake2_rfc::blake2b::blake2b;
 use cucumber::World;
 use ethers::prelude::*;
-use gsy_community_client::external_api::ExternalFacilityTopology;
+use primitives::db_api_schema::grid_topology::FacilitySchema;
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::profiles::ForecastSchema;
 use primitives::db_api_schema::trades::DbTradeSchema;
@@ -44,7 +44,7 @@ pub struct MyWorld {
     pub last_trade: Option<DbTradeSchema>,
     pub last_charlie_offer_order_id: Option<String>,
     pub market_schema: Option<MarketSchema>,
-    pub facilities_topology: Vec<ExternalFacilityTopology>,
+    pub facilities_topology: Vec<FacilitySchema>,
 }
 
 impl MyWorld {

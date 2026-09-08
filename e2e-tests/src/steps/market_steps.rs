@@ -1,9 +1,9 @@
 use crate::world::MyWorld;
 use cucumber::when;
 use ethers::prelude::*;
-use gsy_community_client::external_api::ExternalFacilityTopology;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use gsy_community_client::time_utils::get_last_and_next_timeslot;
+use primitives::db_api_schema::grid_topology::FacilitySchema;
 use primitives::db_api_schema::profiles::ForecastSchema;
 use primitives::utils::parse_uuid_or_hex_bytes16;
 use primitives::MarketType;
@@ -31,17 +31,23 @@ async fn submit_market_forecasts_three_users(
     let adapter = AreaMarketInfoAdapter::new(Some(world.offchain_storage_url.clone()));
 
     let facilities = vec![
-        ExternalFacilityTopology {
-            facility_id: user1.clone(),
-            facility_name: user1.clone(),
+        FacilitySchema {
+            facility_id: format!("area{}", user1.clone()),
+            facility_name: format!("area{}", user1.clone()),
+            site_id: "12345".to_string(),
+            owner_id: user1.clone(),
         },
-        ExternalFacilityTopology {
-            facility_id: user2.clone(),
-            facility_name: user2.clone(),
+        FacilitySchema {
+            facility_id: format!("area{}", user2.clone()),
+            facility_name: format!("area{}", user2.clone()),
+            site_id: "12345".to_string(),
+            owner_id: user2.clone(),
         },
-        ExternalFacilityTopology {
-            facility_id: user3.clone(),
-            facility_name: user3.clone(),
+        FacilitySchema {
+            facility_id: format!("area{}", user3.clone()),
+            facility_name: format!("area{}", user3.clone()),
+            site_id: "12345".to_string(),
+            owner_id: user3.clone(),
         },
     ];
 
@@ -64,6 +70,15 @@ async fn submit_market_forecasts_three_users(
     let mut forecasts = Vec::new();
     for (index, facility) in facilities.iter().enumerate() {
         let energy_value = if index == 0 { energy } else { -energy };
+        let _ = adapter
+            .forward_facilities(facility.clone())
+            .await
+            .unwrap_or_else(|e| {
+                panic!(
+                    "facility creation failed (error={e}, facility={:?})",
+                    facility.clone()
+                )
+            });
         forecasts.push(ForecastSchema {
             facility_id: facility.facility_id.clone(),
             community_uuid: "community1".to_string(),

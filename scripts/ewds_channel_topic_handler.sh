@@ -9,11 +9,13 @@ tradesQuery
 measurementsQuery
 clearingResultsQuery
 marketsQuery
+facilitiesQuery
 ordersQueryTest
 tradesQueryTest
 measurementsQueryTest
 clearingResultsQueryTest
 marketsQueryTest
+facilitiesQueryTest
 "
 
 CHANNELS="

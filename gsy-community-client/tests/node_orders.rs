@@ -1,4 +1,3 @@
-use ethers::types::Address;
 use gsy_community_client::node_connector::orders::create_input_orders;
 use gsy_community_client::time_utils::get_current_timestamp_in_secs;
 use primitives::db_api_schema::market::MarketSchema;
@@ -6,7 +5,28 @@ use primitives::db_api_schema::profiles::ForecastSchema;
 use primitives::utils::{parse_or_hash_bytes16, NODE_FLOAT_SCALING_FACTOR};
 use primitives::{MarketType, MatchingAlgorithm};
 use std::collections::HashSet;
-use std::str::FromStr;
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
+
+/// Stands up a mock `/facilities` endpoint mapping each facility_id to an owner_id
+/// and points `create_input_orders`' fetch at it via `OFFCHAIN_STORAGE_URL`.
+/// Keep the returned `MockServer` bound for the lifetime of the test (a bare
+/// `let _ =` would drop it immediately and shut the server down).
+async fn setup_facilities_mock() -> MockServer {
+    let facilities = serde_json::json!([
+        { "facility_id": "area1", "owner_id": "area1", "facility_name": "Area1", "site_id": "1" },
+        { "facility_id": "area2", "owner_id": "area2", "facility_name": "Area2", "site_id": "1" }
+    ]);
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/facilities"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(facilities))
+        .mount(&server)
+        .await;
+    std::env::set_var("OFFCHAIN_STORAGE_URL", server.uri());
+    std::env::remove_var("OFFCHAIN_STORAGE_TRANSPORT"); // force HTTP branch
+    server
+}
 
 fn test_market() -> MarketSchema {
     MarketSchema {
@@ -22,8 +42,11 @@ fn test_market() -> MarketSchema {
     }
 }
 
-#[test]
-fn test_orders_to_evm_params_are_created_correctly() {
+#[tokio::test]
+#[serial_test::serial]
+async fn test_orders_to_evm_params_are_created_correctly() {
+    let _facilities_server = setup_facilities_mock().await;
+
     let forecasts: Vec<ForecastSchema> = vec![
         ForecastSchema {
             facility_id: "area1".to_string(),
@@ -44,8 +67,9 @@ fn test_orders_to_evm_params_are_created_correctly() {
     ];
 
     let market = test_market();
-    let owner = Address::from_str("0x1000000000000000000000000000000000000001").unwrap();
-    let input_orders = create_input_orders(forecasts, market.clone(), owner);
+    let input_orders = create_input_orders(forecasts, market.clone())
+        .await
+        .expect("create_input_orders failed");
     assert_eq!(input_orders.len(), 2);
 
     let current_time = get_current_timestamp_in_secs();
@@ -64,6 +88,7 @@ fn test_orders_to_evm_params_are_created_correctly() {
     ) = input_orders[0];
     assert_eq!(bid_created_by, parse_or_hash_bytes16("area1"));
     assert_eq!(bid_market, parse_or_hash_bytes16(market.market_id.as_str()));
+    // delivery_start_time from market drives the slot now, not forecast.time_slot
     assert_eq!(bid_slot, 456_456);
     assert!(current_time >= bid_creation && current_time - bid_creation <= 1);
     assert_eq!(bid_energy, (12.0 * NODE_FLOAT_SCALING_FACTOR) as u64);
@@ -94,10 +119,12 @@ fn test_orders_to_evm_params_are_created_correctly() {
     assert!(!offer_type);
 }
 
-#[test]
-fn test_create_input_orders_keeps_all_non_zero_facility_forecasts() {
+#[tokio::test]
+#[serial_test::serial]
+async fn test_create_input_orders_skips_if_facility_does_not_exist() {
+    let _facilities_server = setup_facilities_mock().await;
+
     let market = test_market();
-    let owner = Address::from_str("0x1000000000000000000000000000000000000001").unwrap();
     let forecasts = vec![
         ForecastSchema {
             facility_id: "area1".to_string(),
@@ -117,14 +144,18 @@ fn test_create_input_orders_keeps_all_non_zero_facility_forecasts() {
         },
     ];
 
-    let orders = create_input_orders(forecasts, market, owner);
-    assert_eq!(orders.len(), 2);
+    let orders = create_input_orders(forecasts, market)
+        .await
+        .expect("create_input_orders failed");
+    assert_eq!(orders.len(), 1);
 }
 
-#[test]
-fn test_create_input_orders_skips_zero_energy_forecasts() {
+#[tokio::test]
+#[serial_test::serial]
+async fn test_create_input_orders_skips_zero_energy_forecasts() {
+    let _facilities_server = setup_facilities_mock().await;
+
     let market = test_market();
-    let owner = Address::from_str("0x1000000000000000000000000000000000000001").unwrap();
     let forecasts = vec![
         ForecastSchema {
             facility_id: "area1".to_string(),
@@ -144,15 +175,19 @@ fn test_create_input_orders_skips_zero_energy_forecasts() {
         },
     ];
 
-    let orders = create_input_orders(forecasts, market, owner);
+    let orders = create_input_orders(forecasts, market)
+        .await
+        .expect("create_input_orders failed");
     assert_eq!(orders.len(), 1);
     assert!(!orders[0].9);
 }
 
-#[test]
-fn test_create_input_orders_assigns_unique_order_ids_and_stable_side_mapping() {
+#[tokio::test]
+#[serial_test::serial]
+async fn test_create_input_orders_assigns_unique_order_ids_and_stable_side_mapping() {
+    let _facilities_server = setup_facilities_mock().await;
+
     let market = test_market();
-    let owner = Address::from_str("0x1000000000000000000000000000000000000001").unwrap();
     let forecasts = vec![
         ForecastSchema {
             facility_id: "area1".to_string(),
@@ -180,7 +215,9 @@ fn test_create_input_orders_assigns_unique_order_ids_and_stable_side_mapping() {
         },
     ];
 
-    let orders = create_input_orders(forecasts, market, owner);
+    let orders = create_input_orders(forecasts, market)
+        .await
+        .expect("create_input_orders failed");
     assert_eq!(orders.len(), 3);
 
     assert!(orders[0].9);

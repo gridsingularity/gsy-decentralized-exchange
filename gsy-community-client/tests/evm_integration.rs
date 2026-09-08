@@ -7,6 +7,8 @@ use primitives::utils::parse_or_hash_bytes16;
 use primitives::{MarketType, MatchingAlgorithm};
 use std::{fs::File, io::Write, sync::Arc};
 use tempfile::TempDir;
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 abigen!(
     MockOrderRegistry,
@@ -21,6 +23,22 @@ abigen!(
 );
 
 const TEST_PRIVATE_KEY: &str = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+
+async fn setup_facilities_mock() -> MockServer {
+    let facilities = serde_json::json!([
+        { "facility_id": "area-a", "owner_id": "area-a", "facility_name": "AreaA", "site_id": "1"},
+        { "facility_id": "area-b", "owner_id": "area-b", "facility_name": "AreaA", "site_id": "1" }
+    ]);
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/facilities"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(facilities))
+        .mount(&server)
+        .await;
+    std::env::set_var("OFFCHAIN_STORAGE_URL", server.uri());
+    std::env::remove_var("OFFCHAIN_STORAGE_TRANSPORT"); // force HTTP branch
+    server
+}
 
 fn test_market() -> MarketSchema {
     MarketSchema {
@@ -123,7 +141,9 @@ async fn compile_and_deploy_contract(
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_publish_orders_calls_evm_order_registry() {
+    let _facilities_server = setup_facilities_mock().await;
     let anvil = Anvil::new().spawn();
     let ws_endpoint = anvil.ws_endpoint();
     let wallet: LocalWallet = anvil.keys()[0].clone().into();
@@ -250,7 +270,10 @@ async fn test_publish_orders_returns_error_for_invalid_private_key() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_publish_orders_returns_error_when_contract_reverts() {
+    let _facilities_server = setup_facilities_mock().await;
+
     let anvil = Anvil::new().spawn();
     let ws_endpoint = anvil.ws_endpoint();
     let wallet: LocalWallet = anvil.keys()[0].clone().into();

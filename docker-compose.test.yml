@@ -16,6 +16,8 @@ x-gsy-ewds-env: &gsy-ewds-env
   EWDS_MARKETS_RESPONSE_TOPIC: "marketsQueryTestResponse"
   EWDS_MEASUREMENTS_REQUEST_TOPIC: "measurementsQueryTest"
   EWDS_MEASUREMENTS_RESPONSE_TOPIC: "measurementsQueryTestResponse"
+  EWDS_FACILITIES_REQUEST_TOPIC: "facilitiesQueryTest"
+  EWDS_FACILITIES_RESPONSE_TOPIC: "facilitiesQueryTestResponse"
   EWDS_RESPONSE_TIMEOUT_MS: ${EWDS_RESPONSE_TIMEOUT_MS:-60000}
   EWDS_RESPONSE_POLL_INTERVAL_MS: ${EWDS_RESPONSE_POLL_INTERVAL_MS:-1000}
 
@@ -90,6 +92,7 @@ services:
       EVM_NODE_URL: ${EVM_NODE_URL:-ws://anvil:8545}
       ORDER_REGISTRY_ADDRESS: ${ORDER_REGISTRY_ADDRESS:-0x5FC8d32690cc91D4c39d9d3abcBD16989F875707}
       COMMUNITY_CLIENT_PRIVATE_KEY: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+      EWDS_COMMUNITY_CLIENT_ID: ${EWDS_COMMUNITY_CLIENT_ID:-gsycommunityclient}
 
   gsy-market-orchestrator:
     container_name: gsy-market-orchestrator
@@ -160,6 +163,7 @@ services:
       - BOB_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
       - CHARLIE_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
       - ACTOR_REGISTRAR_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+      - MONGO_URL=mongodb://gsy:gsy@mongodb:27017/?retryWrites=true&w=majority
     networks:
       - default
 

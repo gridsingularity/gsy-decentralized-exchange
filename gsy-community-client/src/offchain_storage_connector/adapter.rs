@@ -1,5 +1,6 @@
 use crate::time_utils::get_current_timestamp_in_secs;
 use blake2_rfc::blake2b::blake2b;
+use primitives::db_api_schema::grid_topology::FacilitySchema;
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::profiles::{
     FlowDirection, ForecastSchema, MeasurementPointSchema, MeasurementPointType, MeasurementSchema,
@@ -25,6 +26,7 @@ pub struct AreaMarketInfoAdapter {
     internal_markets_url: String,
     internal_measurement_points_url: String,
     internal_timeseries_url: String,
+    internal_facilities_url: String,
 }
 
 impl AreaMarketInfoAdapter {
@@ -38,7 +40,8 @@ impl AreaMarketInfoAdapter {
             client: Client::new(),
             internal_markets_url: base_url.clone() + "/markets",
             internal_measurement_points_url: base_url.clone() + "/measurement-points",
-            internal_timeseries_url: base_url + "/timeseries",
+            internal_timeseries_url: base_url.clone() + "/timeseries",
+            internal_facilities_url: base_url.clone() + "/facilities",
         }
     }
 
@@ -164,6 +167,21 @@ impl AreaMarketInfoAdapter {
                 None
             }
         }
+    }
+    pub async fn forward_facilities(&self, facilities: FacilitySchema) -> anyhow::Result<()> {
+        let resp = self
+            .client
+            .post(&self.internal_facilities_url)
+            .json(&facilities)
+            .send()
+            .await?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!("forward_facilities failed ({status}): {body}");
+        }
+        Ok(())
     }
 }
 
