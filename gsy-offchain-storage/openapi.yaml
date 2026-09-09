@@ -997,8 +997,9 @@ components:
 
     EnergyCommunitySchema:
       type: object
-      required: [community_name, sites]
+      required: [community_id, community_name, sites]
       properties:
+        community_id: { type: string, format: uuid }
         community_name: { type: string }
         sites:
           type: array

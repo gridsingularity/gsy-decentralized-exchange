@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://intelligent-project.eu/ontology/v1.0.0/community/Community",
+  "title": "int:Community",
+  "description": "An energy community used to scope GSY DEX markets.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "communityId": {
+      "description": "Primary community identifier. IRI: int:communityId. UUID v4.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "communityName": {
+      "description": "Human-readable community name. IRI: int:communityName.",
+      "type": "string",
+      "minLength": 1
+    },
+    "sites": {
+      "description": "Identifiers of sites assigned to the community.",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    }
+  },
+  "required": ["communityId", "communityName", "sites"]
+}
