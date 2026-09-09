@@ -1,27 +1,12 @@
+pub mod endpoint_calls;
 use anyhow::Result;
 use blake2::digest::{Update, VariableOutput};
 use blake2::Blake2bVar;
 use chrono::{prelude::DateTime, Utc};
 use std::env;
 use std::str::FromStr;
-use thiserror::Error;
 
 pub const NODE_FLOAT_SCALING_FACTOR: f64 = 10000.0;
-
-//todo: only keep the ones that are needed
-#[derive(Error, Debug)]
-pub enum ConvertError {
-    #[error("invalid byte length")]
-    InvalidByteLength,
-    #[error("failed to parse byte to utf-8")]
-    FailedToParseByte,
-    #[error("missing encryption key")]
-    MissingKey,
-    #[error("invalid encryption key")]
-    InvalidKey,
-    #[error("invalid encryption key length")]
-    InvalidKeyLength,
-}
 
 pub fn bytes16_to_hex(value: [u8; 16]) -> String {
     format!("0x{}", hex::encode(value))

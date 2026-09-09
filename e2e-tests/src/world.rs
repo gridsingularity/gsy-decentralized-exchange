@@ -6,7 +6,8 @@ use gsy_community_client::external_api::ExternalFacilityTopology;
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::profiles::ForecastSchema;
 use primitives::db_api_schema::trades::DbTradeSchema;
-use primitives::utils::create_encrypted_bytes16_from_string;
+use primitives::utils::parse_uuid_or_hex_bytes16;
+use primitives::utils::endpoint_calls::fetch_onchain_id;
 use primitives::MarketType;
 use reqwest::Client;
 use std::collections::HashMap;
@@ -170,10 +171,17 @@ impl MyWorld {
             .expect("hash is 16 bytes")
     }
 
-    pub fn actor_id_for_user(&self, user_name: &str) -> [u8; 16] {
+    pub async fn actor_id_for_user(&self, user_name: &str) -> [u8; 16] {
         if !self.users.contains_key(user_name) {
             panic!("Unknown user '{}'", user_name);
         }
-        create_encrypted_bytes16_from_string(format!("{}", user_name).as_str())
+        let onchain_id = fetch_onchain_id(
+            "E2E_TESTS_CLIENT_ID",
+            "e2e_tests",
+            user_name,
+        )
+            .await
+            .expect("failed to fetch onchain id");
+        parse_uuid_or_hex_bytes16(&onchain_id).expect("failed to parse uuid")
     }
 }

@@ -19,19 +19,44 @@ Backend: MongoDB (`mongo:5.0`).
 
 ## HTTP API Surface
 
-- `/health_check`
+### Health
+- `/health_check` (`GET`)
+
+### Order Book Storage (D3.2 section 5.4)
+- `/orders-normalized` (`POST`)
 - `/orders` (`GET`, `POST`)
+- `/flexibility-orders` (`GET`, `POST`)
+- `/tariffs` (`GET`, `POST`)
+
+### Trades Storage (D3.2 section 5.3)
+- `/trades-normalized` (`POST`)
 - `/trades` (`GET`, `POST`)
+- `/market` (`GET`) compatibility adapter for EVM JSON callers
 - `/markets` (`GET`, `POST`) for ontology-aligned market-opening records
+- `/clearing-results` (`GET`, `POST`)
+- `/market-roles` (`GET`, `POST`)
+
+### Measurements Storage (D3.2 section 5.2)
+- `/measurements` (`GET`, `POST`)
+- `/forecasts` (`GET`, `POST`)
 - `/measurement-points` (`GET`, `POST`) for ontology-aligned measurement metadata
 - `/timeseries` (`GET`, `POST`) for ontology-aligned values
+
+### Grid Topology and Market Storage (D3.2 section 5.1)
+- `/assets` (`GET`, `POST`)
+- `/pilot-sites` (`GET`, `POST`)
+- `/communities` (`GET`, `POST`)
+- `/sites` (`GET`, `POST`)
+- `/facilities` (`GET`, `POST`)
+
+### ID Mapping
+- `/ids` (`POST`) — get-or-create offchain↔onchain ID mappings
 
 Compatibility adapters for EVM JSON callers:
 
 - `/measurements` (`GET`, `POST`) converts to/from `MeasurementPoint` + `Timeseries`
 - `/forecasts` (`GET`, `POST`) converts to/from `MeasurementPoint` + `Timeseries`
-- `/market` (`GET`, `POST`) converts compatibility market JSON to/from `Market`
-- `/community-market` (`GET`) queries ontology market records by community and delivery window
+- `/market` (`GET`) converts compatibility market JSON to/from `Market`
 
 These adapters do not own separate collections. They read and write the same
 `markets`, `measurement_points`, and `timeseries` records as the canonical API.
