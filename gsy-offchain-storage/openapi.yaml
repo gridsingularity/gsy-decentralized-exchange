@@ -236,6 +236,64 @@ paths:
           description: Malformed JSON body (does not deserialize to an array of TradeSchema).
         '500':
           description: Database insertion failed. Empty response body.
+  /trades-canonical:
+    get:
+      tags: [trades]
+      summary: List or filter stored trades with resolved asset names
+      description: >
+        Returns the same filtered trades as `GET /trades`, but each trade is additionally
+        enriched with the human-readable asset names of the seller and the buyer. The names are
+        resolved by building an `area_hash` -> `name` map from the `community_areas` of every
+        stored market topology, and looking up each trade component's `area_uuid` (which holds
+        the asset's `area_hash`) in that map. `area_hash` is market-invariant, so collapsing all
+        markets into a single map is unambiguous. A hash with no matching area resolves to
+        `null`. All parameters are optional and behave exactly as on `GET /trades`.
+      operationId: getTradesCanonical
+      parameters:
+        - name: market_id
+          in: query
+          required: false
+          description: Only return trades belonging to this market id.
+          schema:
+            type: string
+        - name: start_time
+          in: query
+          required: false
+          description: Lower bound (inclusive) for the trade `time_slot`, in unix seconds.
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+        - name: end_time
+          in: query
+          required: false
+          description: Upper bound (inclusive) for the trade `time_slot`, in unix seconds.
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+        - name: status
+          in: query
+          required: false
+          description: >
+            Only return trades in this lifecycle status. Use `Settled` to list trades still
+            pending execution, and `Executed`/`Penalized` for trades the execution engine has
+            already judged.
+          schema:
+            $ref: '#/components/schemas/TradeStatus'
+      responses:
+        '200':
+          description: Matching trades, with seller and buyer asset names resolved where possible.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TradeCanonicalSchema'
+        '400':
+          description: Query parameter has an invalid type (e.g. non-integer time bound).
+        '500':
+          description: Database query failed. Empty response body.
   /traded-energy:
     get:
       tags: [analytics]
@@ -854,6 +912,28 @@ paths:
           description: Missing required `community_name` parameter or invalid parameter type.
         '500':
           description: Database query failed. Empty response body.
+  /communities:
+    get:
+      tags: [markets]
+      summary: List the communities that have stored markets
+      description: >
+        Aggregates every stored market topology by `community_name` and returns one summary per
+        distinct community, giving the number of markets stored for it and the earliest and
+        latest market `time_slot` seen. `community_uuid` is taken from the community's most
+        recent market (the one with the highest `time_slot`), since the uuid can change across
+        markets.
+      operationId: getCommunities
+      responses:
+        '200':
+          description: One summary per distinct community, sorted by community name (possibly empty).
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CommunitySummary'
+        '500':
+          description: Database query failed. Empty response body.
 components:
   schemas:
     ScaleEncodedBytes:
@@ -1065,6 +1145,30 @@ components:
           description: Remaining bid after partial matching, if any.
         parameters:
           $ref: '#/components/schemas/TradeParameters'
+    TradeCanonicalSchema:
+      type: object
+      description: >
+        A `TradeSchema` with the two resolved asset-name fields flattened in alongside it: the
+        trade document's own fields appear at the top level of the object, next to `seller_name`
+        and `buyer_name`.
+      allOf:
+        - $ref: '#/components/schemas/TradeSchema'
+        - type: object
+          properties:
+            seller_name:
+              type: string
+              nullable: true
+              description: >
+                Human-readable name of the seller asset, resolved from the topology
+                `area_hash` -> `name` mapping. `null` when the area hash cannot be resolved
+                to a name.
+            buyer_name:
+              type: string
+              nullable: true
+              description: >
+                Human-readable name of the buyer asset, resolved from the topology
+                `area_hash` -> `name` mapping. `null` when the area hash cannot be resolved
+                to a name.
     TimeSeriesPoint:
       type: object
       description: Single point of a time-series.
@@ -1936,3 +2040,29 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AreaTopologySchema'
+    CommunitySummary:
+      type: object
+      description: Summary of the markets stored for a single community.
+      required: [community_name, community_uuid, market_count, earliest_slot, latest_slot]
+      properties:
+        community_name:
+          type: string
+          description: Name of the community the markets are grouped by.
+        community_uuid:
+          type: string
+          description: Community uuid taken from the community's most recent market.
+        market_count:
+          type: integer
+          format: int32
+          minimum: 0
+          description: Number of market topologies stored for this community.
+        earliest_slot:
+          type: integer
+          format: int32
+          minimum: 0
+          description: Earliest market `time_slot` seen for this community, unix seconds.
+        latest_slot:
+          type: integer
+          format: int32
+          minimum: 0
+          description: Latest market `time_slot` seen for this community, unix seconds.
