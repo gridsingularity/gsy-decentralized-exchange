@@ -8,15 +8,14 @@ use primitives::db_api_schema::grid_topology::EnergyCommunitySchema;
 use primitives::db_api_schema::profiles::ForecastSchema;
 use primitives::ewds::dto::EwdsCommunityDto;
 use primitives::ewds::{EwdsClient, EwdsOperation};
-use primitives::utils::{
-    create_encrypted_bytes16_from_string, generate_market_id, parse_uuid_or_hex_bytes16,
-};
+use primitives::utils::{generate_market_id, parse_uuid_or_hex_bytes16};
 use primitives::{MarketType, MatchingAlgorithm};
 use std::env;
 use std::str::FromStr;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 use tokio::time::sleep;
 use tracing::info;
+use uuid::Uuid;
 
 abigen!(
     MarketControllerContract,
@@ -117,7 +116,7 @@ async fn submit_market_forecasts(world: &mut MyWorld, energy: f64) {
 
 #[when("the Market Orchestrator opens the Spot market for the next delivery slot")]
 async fn wait_for_market_to_open(world: &mut MyWorld) {
-    world.community_id = unique_community_id("default");
+    world.community_id = unique_community_id();
     upsert_default_community(world).await;
 
     let (_, next_timeslot) = get_last_and_next_timeslot();
@@ -162,8 +161,8 @@ async fn wait_for_market_to_open(world: &mut MyWorld) {
 
 #[when("two communities are submitted to off-chain storage")]
 async fn submit_two_communities(world: &mut MyWorld) {
-    world.community_id = unique_community_id("primary");
-    world.secondary_community_id = unique_community_id("secondary");
+    world.community_id = unique_community_id();
+    world.secondary_community_id = unique_community_id();
 
     let communities = [
         EnergyCommunitySchema {
@@ -189,25 +188,8 @@ async fn submit_two_communities(world: &mut MyWorld) {
     world.target_delivery_time = next_timeslot;
 }
 
-fn unique_community_id(label: &str) -> String {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("System clock before UNIX_EPOCH")
-        .as_nanos();
-    let mut bytes =
-        create_encrypted_bytes16_from_string(format!("e2e-community:{label}:{nonce}").as_str());
-    bytes[6] = (bytes[6] & 0x0f) | 0x40;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    let encoded = hex::encode(bytes);
-
-    format!(
-        "{}-{}-{}-{}-{}",
-        &encoded[0..8],
-        &encoded[8..12],
-        &encoded[12..16],
-        &encoded[16..20],
-        &encoded[20..32]
-    )
+fn unique_community_id() -> String {
+    Uuid::new_v4().to_string()
 }
 
 #[then("the Market Orchestrator opens a distinct Spot market for each community")]
