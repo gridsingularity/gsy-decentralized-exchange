@@ -58,6 +58,12 @@ export class AssetDIDDto {
   @ApiPropertyOptional()
   registeredAt?: Date;
 
+  @ApiProperty({
+    description: 'True once a FedecomAssetCredential has been issued for this subject.',
+    example: false,
+  })
+  hasAssetCredential: boolean;
+
   @ApiProperty({ example: false })
   retired: boolean;
 
@@ -84,6 +90,7 @@ export class AssetDIDDto {
     dto.registeredOnChain = doc.registeredOnChain ?? false;
     dto.registrationTxHash = doc.registrationTxHash;
     dto.registeredAt = doc.registeredAt;
+    dto.hasAssetCredential = doc.hasAssetCredential ?? false;
     dto.retired = doc.retired ?? false;
     dto.lastSeenAt = doc.lastSeenAt;
     dto.metadata = doc.metadata;

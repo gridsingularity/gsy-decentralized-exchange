@@ -10,6 +10,8 @@ import { Model } from 'mongoose';
 import { Request } from 'express';
 import { AssetDID, AssetDIDSubjectType, AuditAction } from '../database/schemas';
 import { AuditService } from '../audit/audit.service';
+import { CredentialsService } from '../credentials/credentials.service';
+import { CredentialIssuanceResponse } from '../credentials/dto/credential-issuance.dto';
 import { AssetKeyService } from './asset-key.service';
 import {
   AssetSyncItem,
@@ -69,6 +71,7 @@ export class AssetDIDService {
     @InjectModel(AssetDID.name) private readonly assetDidModel: Model<AssetDID>,
     private readonly assetKeyService: AssetKeyService,
     private readonly auditService: AuditService,
+    private readonly credentialsService: CredentialsService,
   ) {}
 
   /**
@@ -140,6 +143,7 @@ export class AssetDIDService {
               communityUuid: subject.communityUuid,
               ...AssetDIDService.assetOnlyFields(subject),
               registeredOnChain: false,
+              hasAssetCredential: false,
               retired: false,
               lastSeenAt: now,
             },
@@ -228,6 +232,58 @@ export class AssetDIDService {
     // Retired records are returned deliberately: their DIDs must stay resolvable for
     // certificates already issued against them (plan §2.2). `retired` is on the DTO.
     return AssetDIDDto.fromDocument(doc);
+  }
+
+  /**
+   * Issue a `FedecomAssetCredential` for one known subject and record that it has one.
+   *
+   * Orchestration lives here rather than in the controller so the lookup, the issuance and
+   * the flag are one unit with one owner - the controller stays a thin delegation layer
+   * like every other route on it.
+   *
+   * ORDER MATTERS: issue first, flag second. The reverse would leave `hasAssetCredential`
+   * true with no credential behind it after a failed signature or a failed insert, which is
+   * the one inconsistency an operator cannot detect from this collection. This way a crash
+   * between the two leaves a real, verifiable credential and a stale `false` - visible, and
+   * fixed by re-issuing.
+   *
+   * NOT IDEMPOTENT, deliberately: each call mints a new credential id. Credentials expire
+   * (1 year) and can be revoked, so re-issuing for a subject that already has one is a
+   * legitimate operation, and silently returning a stale or revoked credential instead
+   * would be worse than issuing a fresh one.
+   *
+   * A RETIRED subject can still be issued a credential: retirement means "absent from the
+   * ontology now", not "never existed", and its DID stays resolvable for exactly that
+   * reason (plan §2.2). The `retired` flag is on the read model if a caller wants to refuse.
+   */
+  async issueCredential(subjectUuid: string, request?: Request): Promise<CredentialIssuanceResponse> {
+    const doc = await this.assetDidModel.findOne({ subjectUuid }).lean().exec();
+
+    if (!doc) {
+      throw new NotFoundException(`No DID record for subject ${subjectUuid}`);
+    }
+
+    const issued = await this.credentialsService.issueAssetCredential(
+      doc.did,
+      {
+        subjectUuid: doc.subjectUuid,
+        communityName: doc.communityName,
+        communityUuid: doc.communityUuid,
+        // Undefined for a community subject; `issueAssetCredential` omits absent claims
+        // rather than signing an undefined (see `canonicalize`).
+        assetName: doc.assetName,
+        assetType: doc.assetType,
+      },
+      request,
+    );
+
+    await this.assetDidModel
+      .updateOne({ subjectUuid }, { $set: { hasAssetCredential: true } })
+      .exec();
+
+    this.logger.log(`asset credential issued for ${subjectUuid} (${doc.did}): ${issued.id}`);
+
+    return issued;
   }
 
   /** Filtered list. An absent filter field is simply not part of the query. */

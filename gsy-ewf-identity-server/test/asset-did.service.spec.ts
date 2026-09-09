@@ -6,6 +6,7 @@ import { v5 as uuidv5 } from 'uuid';
 import { AssetDIDService } from '../src/assets/asset-did.service';
 import { AssetKeyService } from '../src/assets/asset-key.service';
 import { AuditService } from '../src/audit/audit.service';
+import { CredentialsService } from '../src/credentials/credentials.service';
 import { AssetDID, AssetDIDSubjectType, AuditAction } from '../src/database/schemas';
 import { AssetSyncRequest } from '../src/assets/dto/asset-sync-request.dto';
 
@@ -72,6 +73,13 @@ function createModelMock(store: StoredDoc[]) {
       };
       return chain;
     }),
+    updateOne: jest.fn((filter: Record<string, any>, update: Record<string, any>) => ({
+      exec: jest.fn(async () => {
+        const target = store.find((doc) => matchesQuery(doc, filter));
+        if (target) Object.assign(target, update.$set);
+        return { acknowledged: true, modifiedCount: target ? 1 : 0 };
+      }),
+    })),
     bulkWrite: jest.fn(async (operations: any[]) => {
       for (const operation of operations) {
         if (operation.insertOne) {
@@ -121,6 +129,7 @@ describe('AssetDIDService', () => {
   let model: any;
   let store: StoredDoc[];
   let mockAuditService: { log: jest.Mock };
+  let mockCredentialsService: { issueAssetCredential: jest.Mock };
 
   const PILOT1 = 'Pilot1';
   const PILOT2 = 'Pilot2';
@@ -146,6 +155,12 @@ describe('AssetDIDService', () => {
     store = [];
     model = createModelMock(store);
     mockAuditService = { log: jest.fn().mockResolvedValue(true) };
+    mockCredentialsService = {
+      issueAssetCredential: jest.fn().mockResolvedValue({
+        id: 'urn:uuid:issued-asset-credential',
+        credential: { proof: { jws: '0xsig' } },
+      }),
+    };
 
     const mockConfigService = {
       get: jest.fn((key: string) => {
@@ -162,6 +177,7 @@ describe('AssetDIDService', () => {
         { provide: getModelToken(AssetDID.name), useValue: model },
         { provide: ConfigService, useValue: mockConfigService },
         { provide: AuditService, useValue: mockAuditService },
+        { provide: CredentialsService, useValue: mockCredentialsService },
       ],
     }).compile();
 
@@ -589,6 +605,94 @@ describe('AssetDIDService', () => {
     it('throws NotFound for a subject no sync has ever mentioned', async () => {
       await expect(service.findBySubjectUuid(areaUuid(PILOT1, 'NOPE'))).rejects.toThrow(
         NotFoundException,
+      );
+    });
+  });
+
+  describe('issueCredential (phase 4)', () => {
+    it('issues for a known asset with the record\'s DID and its ontology claims', async () => {
+      await service.syncSubjects({ assets: [asset(PILOT1, 'LIC08SM')] } as AssetSyncRequest);
+      const stored = store[0];
+
+      const result = await service.issueCredential(areaUuid(PILOT1, 'LIC08SM'));
+
+      expect(mockCredentialsService.issueAssetCredential).toHaveBeenCalledWith(
+        stored.did,
+        {
+          subjectUuid: areaUuid(PILOT1, 'LIC08SM'),
+          communityName: PILOT1,
+          communityUuid: communityUuid(PILOT1),
+          assetName: 'LIC08SM',
+          assetType: 'SMART_METER',
+        },
+        undefined,
+      );
+      expect(result.id).toBe('urn:uuid:issued-asset-credential');
+    });
+
+    it('sets hasAssetCredential on the record', async () => {
+      await service.syncSubjects({ assets: [asset(PILOT1, 'LIC08SM')] } as AssetSyncRequest);
+      expect(store[0].hasAssetCredential).toBe(false);
+
+      await service.issueCredential(areaUuid(PILOT1, 'LIC08SM'));
+
+      expect(store[0].hasAssetCredential).toBe(true);
+      // NOT the human flag. `User.hasVerifiedCredential` means a principal proved
+      // possession of two keys; this means the issuer attested about a machine subject
+      // that signed nothing (plan §2.7).
+      expect(store[0]).not.toHaveProperty('hasVerifiedCredential');
+    });
+
+    it('leaves the flag false when issuance fails, never the other way round', async () => {
+      await service.syncSubjects({ assets: [asset(PILOT1, 'LIC08SM')] } as AssetSyncRequest);
+      mockCredentialsService.issueAssetCredential.mockRejectedValueOnce(new Error('signing failed'));
+
+      await expect(service.issueCredential(areaUuid(PILOT1, 'LIC08SM'))).rejects.toThrow(
+        'signing failed',
+      );
+
+      // A true flag with no credential behind it is the one inconsistency an operator
+      // cannot spot from this collection; a false flag with a credential is recoverable.
+      expect(store[0].hasAssetCredential).toBe(false);
+    });
+
+    it('omits the asset-only claims for a community subject', async () => {
+      await service.syncSubjects({ communities: [community(PILOT1)] } as AssetSyncRequest);
+
+      await service.issueCredential(communityUuid(PILOT1));
+
+      const claims = mockCredentialsService.issueAssetCredential.mock.calls[0][1];
+      expect(claims.assetName).toBeUndefined();
+      expect(claims.assetType).toBeUndefined();
+      expect(claims.communityUuid).toBe(communityUuid(PILOT1));
+    });
+
+    it('throws NotFound for a subject no sync has ever mentioned', async () => {
+      await expect(service.issueCredential(areaUuid(PILOT1, 'NOPE'))).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(mockCredentialsService.issueAssetCredential).not.toHaveBeenCalled();
+    });
+
+    it('issues for a retired subject: retirement does not invalidate its identity', async () => {
+      await service.syncSubjects({
+        assets: [asset(PILOT1, 'LIC08SM'), asset(PILOT1, 'LIC09SM')],
+      } as AssetSyncRequest);
+      await service.syncSubjects({ assets: [asset(PILOT1, 'LIC08SM')] } as AssetSyncRequest);
+
+      await expect(service.issueCredential(areaUuid(PILOT1, 'LIC09SM'))).resolves.toBeDefined();
+    });
+
+    it('passes the request through so the audit trail records the caller', async () => {
+      await service.syncSubjects({ assets: [asset(PILOT1, 'LIC08SM')] } as AssetSyncRequest);
+      const req = { ip: '127.0.0.1' } as any;
+
+      await service.issueCredential(areaUuid(PILOT1, 'LIC08SM'), req);
+
+      expect(mockCredentialsService.issueAssetCredential).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(Object),
+        req,
       );
     });
   });

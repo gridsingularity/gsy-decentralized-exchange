@@ -6,6 +6,7 @@ import { Model } from 'mongoose';
 import { v5 as uuidv5 } from 'uuid';
 import { AppModule } from '../src/app.module';
 import { AssetDID, AssetDIDSubjectType, AuditLog } from '../src/database/schemas';
+import { Credential } from '../src/database/schemas/credential.schema';
 
 // ApiKeyGuard fails closed: AppModule refuses to boot without a configured API key
 // (plan §2.6). These e2e specs build the whole AppModule, so give them one.
@@ -49,6 +50,7 @@ describe('Asset DID sync and lookup (e2e)', () => {
   let app: INestApplication;
   let assetDidModel: Model<AssetDID>;
   let auditLogModel: Model<AuditLog>;
+  let credentialModel: Model<Credential>;
   let apiKey: string;
 
   jest.setTimeout(180000);
@@ -73,6 +75,7 @@ describe('Asset DID sync and lookup (e2e)', () => {
 
     assetDidModel = app.get<Model<AssetDID>>(getModelToken(AssetDID.name));
     auditLogModel = app.get<Model<AuditLog>>(getModelToken(AuditLog.name));
+    credentialModel = app.get<Model<Credential>>(getModelToken(Credential.name));
     apiKey = process.env.API_KEY;
 
     await cleanup();
@@ -91,7 +94,9 @@ describe('Asset DID sync and lookup (e2e)', () => {
     const docs = await assetDidModel.find({ subjectUuid: { $in: allSubjectUuids } }).lean().exec();
     await assetDidModel.deleteMany({ subjectUuid: { $in: allSubjectUuids } }).exec();
     if (docs.length > 0) {
-      await auditLogModel.deleteMany({ did: { $in: docs.map((d) => d.did) } }).exec();
+      const dids = docs.map((d) => d.did);
+      await auditLogModel.deleteMany({ did: { $in: dids } }).exec();
+      await credentialModel.deleteMany({ did: { $in: dids } }).exec();
     }
   }
 
@@ -279,6 +284,156 @@ describe('Asset DID sync and lookup (e2e)', () => {
       expect(resolved.body.id).toBe(did);
       expect(resolved.body.verificationMethod[0].id).toBe(`${did}#controller`);
       expect(resolved.body.verificationMethod[0]).toHaveProperty('blockchainAccountId');
+    });
+  });
+
+  describe('POST /asset-dids/:subjectUuid/credential (phase 4)', () => {
+    const subjectUuid = assetItems[0].subjectUuid;
+
+    const issueFor = (uuid: string) =>
+      request(app.getHttpServer())
+        .post(`/asset-dids/${uuid}/credential`)
+        .set('x-api-key', apiKey);
+
+    const verify = (credential: object) =>
+      request(app.getHttpServer()).post('/credentials/verify').send({ credential });
+
+    beforeEach(async () => {
+      await post(syncPayload).expect(200);
+    });
+
+    /** Plan §3 phase 4, acceptance criterion 3. */
+    it('issues a FedecomAssetCredential that /credentials/verify accepts', async () => {
+      const issued = await issueFor(subjectUuid).expect(201);
+
+      const record = await assetDidModel.findOne({ subjectUuid }).lean().exec();
+      expect(issued.body.credential.type).toEqual([
+        'VerifiableCredential',
+        'FedecomAssetCredential',
+      ]);
+      expect(issued.body.credential.credentialSubject).toEqual({
+        id: record.did,
+        subjectUuid,
+        assetName: assetItems[0].assetName,
+        assetType: assetItems[0].assetType,
+        communityName: TEST_COMMUNITY,
+        communityUuid: communityItem.communityUuid,
+      });
+
+      const verified = await verify(issued.body.credential).expect(200);
+      expect(verified.body.valid).toBe(true);
+      expect(verified.body.did).toBe(record.did);
+    });
+
+    /**
+     * Plan §3 phase 4, acceptance criterion 2, end to end: the issuer signature has to
+     * cover the claims, not just the subject DID. Criterion 3 above passes even against a
+     * claim-stripping canonicaliser; this does not.
+     */
+    it('rejects the same credential once a nested claim is edited', async () => {
+      const issued = await issueFor(subjectUuid).expect(201);
+
+      const tampered = JSON.parse(JSON.stringify(issued.body.credential));
+      tampered.credentialSubject.assetName = 'NOT_THE_SIGNED_ASSET';
+
+      const verified = await verify(tampered).expect(200);
+      expect(verified.body.valid).toBe(false);
+      expect(verified.body.details.status).toBe('invalid');
+    });
+
+    // Its own subject, because `hasAssetCredential` is sticky by design: a re-sync must
+    // not clear it, so a test that asserts the false->true transition cannot share a
+    // subject with the tests above.
+    it('sets hasAssetCredential on the record, and not on any user', async () => {
+      const ownSubject = assetItems[1].subjectUuid;
+
+      const before = await assetDidModel.findOne({ subjectUuid: ownSubject }).lean().exec();
+      expect(before.hasAssetCredential).toBe(false);
+
+      await issueFor(ownSubject).expect(201);
+
+      const after = await assetDidModel.findOne({ subjectUuid: ownSubject }).lean().exec();
+      expect(after.hasAssetCredential).toBe(true);
+
+      // Visible on the read model too, so an operator can find subjects still missing one.
+      const listed = await request(app.getHttpServer())
+        .get(`/asset-dids/${ownSubject}`)
+        .set('x-api-key', apiKey)
+        .expect(200);
+      expect(listed.body.hasAssetCredential).toBe(true);
+    });
+
+    // Likewise its own subject, so the audit query matches exactly one entry.
+    it('records an ASSET_CREDENTIAL_ISSUED audit entry', async () => {
+      const ownSubject = assetItems[2].subjectUuid;
+      const record = await assetDidModel.findOne({ subjectUuid: ownSubject }).lean().exec();
+
+      const issued = await issueFor(ownSubject).expect(201);
+
+      const entries = await auditLogModel
+        .find({ did: record.did, action: 'ASSET_CREDENTIAL_ISSUED' })
+        .lean()
+        .exec();
+
+      expect(entries).toHaveLength(1);
+      expect(entries[0].metadata.credentialId).toBe(issued.body.id);
+      expect(entries[0].metadata.subjectUuid).toBe(ownSubject);
+    });
+
+    it('404s for a subject no sync has ever mentioned', async () => {
+      await issueFor(areaUuidOf(TEST_COMMUNITY, 'NEVER_SYNCED')).expect(404);
+    });
+
+    it('401s without an x-api-key header', async () => {
+      await request(app.getHttpServer())
+        .post(`/asset-dids/${subjectUuid}/credential`)
+        .expect(401);
+    });
+
+    /** Plan §3 phase 4, acceptance criterion 4: the machine revocation path. */
+    describe('DELETE /credentials/:id', () => {
+      it('lets an x-api-key caller revoke an asset credential', async () => {
+        const issued = await issueFor(subjectUuid).expect(201);
+
+        const revoked = await request(app.getHttpServer())
+          .delete(`/credentials/${encodeURIComponent(issued.body.id)}`)
+          .set('x-api-key', apiKey)
+          .expect(200);
+        expect(revoked.body.success).toBe(true);
+
+        // And the revocation is what /credentials/verify now reports.
+        const verified = await verify(issued.body.credential).expect(200);
+        expect(verified.body.valid).toBe(false);
+        expect(verified.body.details.status).toBe('revoked');
+      });
+
+      it('401s with neither an api key nor a bearer token', async () => {
+        const issued = await issueFor(subjectUuid).expect(201);
+
+        await request(app.getHttpServer())
+          .delete(`/credentials/${encodeURIComponent(issued.body.id)}`)
+          .expect(401);
+      });
+
+      it('401s with a wrong api key, without falling through to the JWT path', async () => {
+        const issued = await issueFor(subjectUuid).expect(201);
+
+        const response = await request(app.getHttpServer())
+          .delete(`/credentials/${encodeURIComponent(issued.body.id)}`)
+          .set('x-api-key', 'definitely-not-the-key')
+          .expect(401);
+
+        expect(response.body.message).toBe('invalid or missing x-api-key');
+      });
+
+      it('401s with a bogus bearer token', async () => {
+        const issued = await issueFor(subjectUuid).expect(201);
+
+        await request(app.getHttpServer())
+          .delete(`/credentials/${encodeURIComponent(issued.body.id)}`)
+          .set('Authorization', 'Bearer not-a-real-token')
+          .expect(401);
+      });
     });
   });
 

@@ -13,6 +13,23 @@ import { AuditAction } from '../database/schemas';
 import { CredentialIssuanceResponse } from './dto/credential-issuance.dto';
 import { CredentialVerificationResponse } from './dto/credential-verification.dto';
 import { verifySubstrateSignature, formatSubstrateSigningMessage } from './utils/substrate-verification';
+import { canonicalize } from '../common/canonical-json';
+
+/**
+ * The claims a `FedecomAssetCredential` asserts about an ontology subject (plan §2.7).
+ *
+ * `subjectUuid` is the canonical join key (`deterministic_area_uuid` / community uuid);
+ * everything else is human-reconciliation context. `assetName`/`assetType` are absent on a
+ * community subject, and absent means ABSENT: an `undefined` value would be rejected by
+ * `canonicalize()` rather than silently dropped from the signed bytes.
+ */
+export interface AssetCredentialClaims {
+  subjectUuid: string;
+  communityName: string;
+  communityUuid: string;
+  assetName?: string;
+  assetType?: string;
+}
 
 @Injectable()
 export class CredentialsService {
@@ -124,8 +141,12 @@ export class CredentialsService {
         },
       };
 
-      // Sign the credential
-      const credentialString = JSON.stringify(credential);
+      // Sign the credential.
+      // MUST be `canonicalize()` and never a bare `JSON.stringify`: `verifyCredential`
+      // re-derives these exact bytes from a credential whose key order has been through
+      // Mongo and HTTP, so the two sides only agree if both go through the one
+      // canonicaliser (plan §0.5 bug B, §2.7).
+      const credentialString = canonicalize(credential);
       
       // Create a wallet from private key
       const wallet = new ethers.Wallet(this.issuerKeys.privateKey);
@@ -186,6 +207,127 @@ export class CredentialsService {
         throw error;
       }
       throw new Error(`Failed to issue credential: ${error.message}`);
+    }
+  }
+
+  /**
+   * Issue a `FedecomAssetCredential`: the platform issuer attesting ABOUT an asset or a
+   * community, not with it (plan §2.7).
+   *
+   * Three things `issueCredential` requires are deliberately absent, and none of them is
+   * an oversight:
+   *
+   * 1. NO `isDIDRegistered` GATE. Phase 1 writes nothing on-chain; a `did:ethr` resolves to
+   *    a valid default DID document with zero registry transactions (plan §2.3), so
+   *    requiring registration would gate credentials on an optional, unscheduled phase.
+   * 2. NO HOLDER (DID) SIGNATURE. The server holds the asset key, so it *could* sign the
+   *    challenge it just issued - and that would prove nothing whatsoever. A self-issued,
+   *    self-signed challenge is not evidence, and fabricating one would make the credential
+   *    look better attested than it is. The issuer signature is the only real evidence here
+   *    and it is the only one claimed.
+   * 3. NO SUBSTRATE SIGNATURE. An asset has no Substrate account; every order today is
+   *    signed by `dev::alice()`, so there is nothing meaningful to bind to.
+   *
+   * `gsyDexAddress` is left UNSET on the stored record (the schema does not require it)
+   * rather than filled with a placeholder: an asset has no such address, and inventing one
+   * would put a false linkage in the collection that `verifyCredential` reads back.
+   *
+   * The trust statement is therefore exactly: "the holder of the issuer key asserts that
+   * DID X is the ontology subject with this uuid, name and type". Nothing more.
+   */
+  async issueAssetCredential(
+    assetDid: string,
+    claims: AssetCredentialClaims,
+    req?: any,
+  ): Promise<CredentialIssuanceResponse> {
+    try {
+      if (!assetDid || !assetDid.startsWith('did:ethr:')) {
+        throw new BadRequestException('assetDid must be a did:ethr DID');
+      }
+      if (!claims?.subjectUuid || !claims?.communityName || !claims?.communityUuid) {
+        throw new BadRequestException(
+          'asset credential claims require subjectUuid, communityName and communityUuid',
+        );
+      }
+
+      const id = `urn:uuid:${uuidv4()}`;
+      const issuanceDate = new Date().toISOString();
+      const expirationDate = new Date();
+      expirationDate.setFullYear(expirationDate.getFullYear() + 1); // 1 year validity
+
+      // Optional claims are OMITTED when absent, never set to undefined: `canonicalize`
+      // rejects undefined precisely so a claim cannot vanish from the signed bytes.
+      const credentialSubject: Record<string, any> = {
+        id: assetDid,
+        subjectUuid: claims.subjectUuid,
+        communityName: claims.communityName,
+        communityUuid: claims.communityUuid,
+      };
+      if (claims.assetName !== undefined) credentialSubject.assetName = claims.assetName;
+      if (claims.assetType !== undefined) credentialSubject.assetType = claims.assetType;
+
+      const credential = {
+        '@context': [
+          'https://www.w3.org/2018/credentials/v1',
+        ],
+        id,
+        type: ['VerifiableCredential', 'FedecomAssetCredential'],
+        issuer: this.issuerDid,
+        issuanceDate,
+        expirationDate: expirationDate.toISOString(),
+        credentialSubject,
+      };
+
+      // Same canonicaliser as every other signature in this service (plan §2.7).
+      const credentialString = canonicalize(credential);
+
+      const wallet = new ethers.Wallet(this.issuerKeys.privateKey);
+      const signature = await wallet.signMessage(credentialString);
+
+      const credentialWithProof = {
+        ...credential,
+        proof: {
+          type: 'EcdsaSecp256k1Signature2019',
+          created: issuanceDate,
+          verificationMethod: `${this.issuerDid}#controller`,
+          proofPurpose: 'assertionMethod',
+          jws: signature,
+        },
+      };
+
+      // No `gsyDexAddress`, and no `users` write: an asset is not an authenticated
+      // principal and must never acquire a `User` record (plan §2.5).
+      const credentialRecord = new this.credentialModel({
+        id,
+        did: assetDid,
+        credentialSubject,
+        credential: credentialWithProof,
+        status: CredentialStatus.ACTIVE,
+        expirationDate,
+      });
+      await credentialRecord.save();
+
+      await this.auditService.log(
+        AuditAction.ASSET_CREDENTIAL_ISSUED,
+        assetDid,
+        req,
+        {
+          credentialId: id,
+          subjectUuid: claims.subjectUuid,
+          communityUuid: claims.communityUuid,
+        },
+      );
+
+      return {
+        id,
+        credential: credentialWithProof,
+      };
+    } catch (error) {
+      this.logger.error(`Failed to issue asset credential: ${error.message}`);
+      if (error instanceof BadRequestException || error instanceof UnauthorizedException) {
+        throw error;
+      }
+      throw new Error(`Failed to issue asset credential: ${error.message}`);
     }
   }
 
@@ -258,11 +400,14 @@ export class CredentialsService {
         this.logger.error(`Failed to stringify credentialWithoutProof: ${e.message}`);
       }
 
-      const credentialString = JSON.stringify(credentialWithoutProof, Object.keys(credentialWithoutProof).sort());
+      // Same canonicaliser as the issue path, deliberately. The array-replacer form that
+      // used to be here applied the top-level key list at every nesting level and so
+      // deleted every nested claim before verification (plan §0.5 bug B, defect 2).
+      const credentialString = canonicalize(credentialWithoutProof);
       const issuerAddress = credential.issuer.split(':')[2];
       const signatureToVerify = proof.jws;
 
-      this.logger.log(`Verifying Message String (Sorted): >>>${credentialString}<<<`);
+      this.logger.log(`Verifying Message String (canonical): >>>${credentialString}<<<`);
       this.logger.log(`Verifying Signature (JWS): ${signatureToVerify}`);
       this.logger.log(`Expected Issuer Addr: ${issuerAddress}`);
 

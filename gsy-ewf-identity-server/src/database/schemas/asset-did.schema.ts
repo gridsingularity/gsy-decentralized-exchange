@@ -100,6 +100,22 @@ export class AssetDID extends Document {
   registeredAt?: Date;
 
   /**
+   * True once a `FedecomAssetCredential` has been issued for this subject (phase 4).
+   *
+   * DELIBERATELY NOT `User.hasVerifiedCredential` (plan §2.7). That flag means "a human
+   * principal proved possession of both an Ethereum key and a Substrate account"; this one
+   * means "the platform issuer attested about a machine subject that signed nothing". They
+   * are different claims with different evidence behind them, and collapsing them would let
+   * an asset credential be read as a verified human account.
+   *
+   * A flag, not a count: the credential collection is the record of what was issued, and
+   * `GET /credentials/did/:did` is how you enumerate it. This exists so a sync or an
+   * operator can see, in one query over this collection, which subjects still need one.
+   */
+  @Prop({ default: false })
+  hasAssetCredential: boolean;
+
+  /**
    * Records are NEVER deleted. A subject absent from a sync is retired, because a retired
    * DID must stay resolvable: guarantee-of-origin certificates already issued against it
    * have to stay verifiable (plan §2.2).

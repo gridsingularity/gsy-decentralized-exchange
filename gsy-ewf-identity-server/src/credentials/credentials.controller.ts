@@ -3,7 +3,7 @@ import {
     UseGuards, Req, HttpCode, HttpStatus, ForbiddenException,
     NotFoundException
   } from '@nestjs/common';
-  import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+  import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiHeader } from '@nestjs/swagger';
   import { CredentialsService } from './credentials.service';
   import { 
     CredentialIssuanceRequest, 
@@ -15,6 +15,7 @@ import {
   } from './dto/credential-verification.dto';
   import { DIDAuthGuard } from '../auth/guards/did-auth.guard';
   import { DIDOwnerGuard } from '../auth/guards/did-owner.guard';
+  import { ApiKeyOrJwtGuard, MACHINE_AUTH_KIND } from '../auth/guards/api-key-or-jwt.guard';
 
   @ApiTags('Credentials')
   @Controller('credentials')
@@ -54,13 +55,22 @@ import {
     }
   
     @Delete(':id')
-    @UseGuards(DIDAuthGuard)
+    @UseGuards(ApiKeyOrJwtGuard)
     @ApiBearerAuth()
+    @ApiHeader({
+      name: 'x-api-key',
+      required: false,
+      description:
+        'Machine-to-machine API key. Send this OR a bearer token. A machine caller may ' +
+        'revoke any credential, including asset credentials, which no JWT principal can ' +
+        'own; a JWT caller may revoke only its own.',
+    })
     @HttpCode(HttpStatus.OK)
     @ApiOperation({ summary: 'Revoke a credential' })
     @ApiResponse({ status: HttpStatus.OK, description: 'Credential revoked successfully' })
     @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Credential not found' })
     @ApiResponse({ status: HttpStatus.UNAUTHORIZED, description: 'Unauthorized' })
+    @ApiResponse({ status: HttpStatus.FORBIDDEN, description: 'JWT caller does not own the credential' })
     async revokeCredential(
       @Param('id') id: string,
       @Req() req,
@@ -71,9 +81,19 @@ import {
         throw new NotFoundException('Credential not found');
       }
 
-      // Check if the authenticated user owns this credential
-      if (credential.did !== req.user.did) {
-        throw new ForbiddenException('You do not have permission to revoke this credential');
+      // Ownership applies to the JWT path only. A machine caller holds the shared API key
+      // and has no DID to compare against - and an asset credential's `did` is the ASSET's,
+      // which no principal can ever authenticate as, so requiring a match would make asset
+      // credentials unrevocable (plan §2.7).
+      //
+      // The polarity is deliberate: anything that is not positively identified as the
+      // machine path takes the ownership check, so a missing `authKind` (a misconfigured or
+      // stubbed guard) fails closed on `req.user` being undefined rather than skipping the
+      // check.
+      if (req.authKind !== MACHINE_AUTH_KIND) {
+        if (credential.did !== req.user?.did) {
+          throw new ForbiddenException('You do not have permission to revoke this credential');
+        }
       }
 
       const success = await this.credentialsService.revokeCredential(id, req);

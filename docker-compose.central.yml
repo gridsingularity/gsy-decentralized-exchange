@@ -12,8 +12,13 @@
 #   export TS_AUTHKEY=tskey-auth-...
 #   GSY_NODE_HOST=<node-1 tailnet ip>    # e.g. 100.x.y.z (no scheme)
 #   GSY_NODE_PORT=9944
-#   API_KEY=<shared off-chain-storage key>
+#   API_KEY=<shared off-chain-storage key>        # also authenticates the identity server
+#   ASSET_DID_MASTER_SEED=<openssl rand -hex 32>  # or set it in .env/gsy-ewf-identity-server.env
 #   docker compose -f docker-compose.central.yml up --build
+#
+# ASSET_DID_MASTER_SEED is a SECRET and is the source of truth for every asset DID:
+# back it up out of band, and never let two environments share one. See
+# .env/gsy-ewf-identity-server.env.example.
 #
 # Storage :8080 is published on the sidecar for optional public/off-mesh access
 # =============================================================================
@@ -202,6 +207,49 @@ services:
         "0.10",
       ]
 
+  # EWF DID / verifiable-credential service. Mints one did:ethr per ontology asset
+  # and per community from ASSET_DID_MASTER_SEED; gsy-community-client pushes the
+  # subject set to it on POST /asset-dids/sync.
+  #
+  # NOTE the build context differs from every other service here: this image's
+  # Dockerfile does `COPY package.json ./`, so it must be built from its own
+  # directory, not from the repo root.
+  #
+  # Port 3000 is deliberately NOT published on the sidecar: this service holds the
+  # asset master seed and the credential issuer key, and its only caller
+  # (gsy-community-client) shares the same network namespace.
+  gsy-ewf-identity-server:
+    container_name: gsy-ewf-identity-server
+    restart: unless-stopped
+    build:
+      context: ./gsy-ewf-identity-server
+      dockerfile: Dockerfile
+    network_mode: "service:tailscale-central"
+    depends_on:
+      tailscale-central:
+        condition: service_healthy
+      mongo-init:
+        condition: service_completed_successfully
+    # Secrets: ASSET_DID_MASTER_SEED, ISSUER_PRIVATE_KEY/ISSUER_PUBLIC_KEY, JWT_SECRET.
+    # EWC_RPC_URL must be reachable at boot — did.service.ts:32-60 calls getNetwork()
+    # and identityOwner() in onModuleInit, so the service will not start without it.
+    env_file:
+      - ./.env/gsy-ewf-identity-server.env
+    # env_file cannot do ${...} substitution; inline environment wins over env_file.
+    # Uses the existing rs0 replica set with its own database — no fourth mongo.
+    environment:
+      - MONGODB_URI=mongodb://gsy:gsy@mongo1:27017,mongo2:27017,mongo3:27017/identitydb?authSource=admin&replicaSet=rs0
+      - API_KEY=${API_KEY:-fedecom_user}
+    # node:18-alpine has no curl (unlike the Rust images above), so this uses
+    # busybox wget. /api-json is the Swagger document: unauthenticated, and served
+    # only once Nest has finished booting.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:3000/api-json"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
   gsy-community-client:
     container_name: gsy-community-client
     restart: unless-stopped
@@ -224,6 +272,11 @@ services:
     environment:
       - GSY_NODE_URL=ws://${GSY_NODE_HOST:-gsy-node}:${GSY_NODE_PORT:-9944}
       - OFFCHAIN_STORAGE_URL=http://localhost:8080
+      # Shared netns again: the identity server is localhost:3000. Not a depends_on —
+      # an unavailable identity server must not delay or stall forecast ingestion or
+      # order publication; the sync loop logs and retries on the next tick.
+      - IDENTITY_SERVER_URL=http://localhost:3000
+      # One key for the off-chain storage AND the identity server (deliberate, plan §2.6).
       - API_KEY=${API_KEY:-fedecom_user}
 
   # --- MongoDB replica set (rs0), internal to the central docker bridge ---

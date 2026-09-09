@@ -16,6 +16,7 @@ import { ApiKeyGuard } from '../auth/guards/api-key.guard';
 import { AssetSyncRequest } from './dto/asset-sync-request.dto';
 import { AssetSyncResponse } from './dto/asset-sync-response.dto';
 import { AssetDIDDto, AssetDIDListQuery } from './dto/asset-did.dto';
+import { CredentialIssuanceResponse } from '../credentials/dto/credential-issuance.dto';
 
 /**
  * Machine-facing surface for asset and community DIDs.
@@ -82,5 +83,24 @@ export class AssetDIDController {
   @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Subject never seen by a sync' })
   async findBySubjectUuid(@Param('subjectUuid') subjectUuid: string): Promise<AssetDIDDto> {
     return this.assetDidService.findBySubjectUuid(subjectUuid);
+  }
+
+  @Post(':subjectUuid/credential')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Issue a FedecomAssetCredential for one subject',
+    description:
+      'The platform issuer attests ABOUT the subject: there is no holder signature and no ' +
+      'on-chain registration requirement, because an asset has no Substrate account and ' +
+      'cannot sign, and a did:ethr resolves with zero registry transactions (plan §2.7). ' +
+      'Each call mints a new credential; verify or revoke it through /credentials.',
+  })
+  @ApiResponse({ status: HttpStatus.CREATED, type: CredentialIssuanceResponse })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Subject never seen by a sync' })
+  async issueCredential(
+    @Param('subjectUuid') subjectUuid: string,
+    @Req() req,
+  ): Promise<CredentialIssuanceResponse> {
+    return this.assetDidService.issueCredential(subjectUuid, req);
   }
 }

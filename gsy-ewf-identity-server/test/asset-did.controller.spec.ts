@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { INestApplication, NotFoundException, ValidationPipe } from '@nestjs/common';
 import request from 'supertest';
 import { v5 as uuidv5 } from 'uuid';
 import { AssetDIDController } from '../src/assets/asset-did.controller';
@@ -17,6 +17,7 @@ const mockAssetDIDService = {
   syncSubjects: jest.fn(),
   findBySubjectUuid: jest.fn(),
   list: jest.fn(),
+  issueCredential: jest.fn(),
 };
 
 const mockApiKeyGuard = { canActivate: jest.fn(() => true) };
@@ -246,6 +247,56 @@ describe('AssetDIDController', () => {
     });
   });
 
+  describe('POST /asset-dids/:subjectUuid/credential', () => {
+    const issued = {
+      id: 'urn:uuid:11111111-2222-4333-8444-555555555555',
+      credential: {
+        type: ['VerifiableCredential', 'FedecomAssetCredential'],
+        credentialSubject: { id: 'did:ethr:0xabc', subjectUuid: assetItem.subjectUuid },
+      },
+    };
+
+    it('delegates to issueCredential with the path param and the request', async () => {
+      mockAssetDIDService.issueCredential.mockResolvedValue(issued);
+      const req = { ip: '127.0.0.1' };
+
+      const result = await controller.issueCredential(assetItem.subjectUuid, req);
+
+      expect(mockAssetDIDService.issueCredential).toHaveBeenCalledWith(assetItem.subjectUuid, req);
+      expect(result).toBe(issued);
+    });
+
+    it('returns 201 for a known subject', async () => {
+      mockAssetDIDService.issueCredential.mockResolvedValue(issued);
+
+      const response = await request(app.getHttpServer())
+        .post(`/asset-dids/${assetItem.subjectUuid}/credential`)
+        .expect(201);
+
+      expect(response.body.credential.type).toContain('FedecomAssetCredential');
+    });
+
+    it('propagates 404 for an unknown subject', async () => {
+      mockAssetDIDService.issueCredential.mockRejectedValue(
+        new NotFoundException('No DID record for subject'),
+      );
+
+      await request(app.getHttpServer())
+        .post(`/asset-dids/${assetItem.subjectUuid}/credential`)
+        .expect(404);
+    });
+
+    it('does not collide with the GET single-record route', async () => {
+      mockAssetDIDService.issueCredential.mockResolvedValue(issued);
+
+      await request(app.getHttpServer())
+        .post(`/asset-dids/${assetItem.subjectUuid}/credential`)
+        .expect(201);
+
+      expect(mockAssetDIDService.findBySubjectUuid).not.toHaveBeenCalled();
+    });
+  });
+
   describe('GET /asset-dids', () => {
     it('delegates to list with the parsed query filter', async () => {
       mockAssetDIDService.list.mockResolvedValue([]);
@@ -308,13 +359,14 @@ describe('AssetDIDController', () => {
   });
 
   describe('phase scoping', () => {
-    it('exposes only the three phase-1 routes', () => {
+    it('exposes the three phase-1 routes plus the phase-4 credential route, and nothing else', () => {
       const handlers = Object.getOwnPropertyNames(AssetDIDController.prototype).filter(
         (name) => name !== 'constructor',
       );
 
-      // register / register-batch (phase 3) and credential (phase 4) are deliberately absent.
-      expect(handlers.sort()).toEqual(['findBySubjectUuid', 'list', 'sync']);
+      // register / register-batch (phase 3) are deliberately still absent; `issueCredential`
+      // is phase 4 (plan §2.7), added by unit 6b.
+      expect(handlers.sort()).toEqual(['findBySubjectUuid', 'issueCredential', 'list', 'sync']);
     });
   });
 });

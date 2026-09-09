@@ -10,7 +10,13 @@ import { Credential } from '../src/database/schemas/credential.schema';
 import { AppModule } from '../src/app.module';
 import { ConfigService } from '@nestjs/config';
 import { formatSubstrateSigningMessage } from '../src/credentials/utils/substrate-verification';
-import { v4 as uuidv4 } from 'uuid';
+import {
+  cryptoWaitReady,
+  encodeAddress,
+  sr25519PairFromSeed,
+  sr25519Sign,
+} from '@polkadot/util-crypto';
+import { stringToU8a, u8aToHex } from '@polkadot/util';
 import { PreparedTransactionDto } from '../src/did/dto/prepared-transaction.dto';
 
 // ApiKeyGuard fails closed: AppModule refuses to boot without a configured API key
@@ -69,7 +75,20 @@ describe('DID and Credential Flow (e2e)', () => {
   let testDid: string;
   let testToken: string;
 
-  const gsyDexAddress = '5G9VQ59Hj4Kcq8QgQKM3D1ZxY71zKxgEqj4MBSTS9LM2FPTN';
+  /**
+   * A REAL sr25519 keypair, not a placeholder address.
+   *
+   * The credential issuance route verifies the Substrate signature for real
+   * (`credentials.service.ts:85-101`), so the only way to exercise the actual issuance
+   * path is to hold the key for the address being linked. This used to be a hardcoded
+   * address with a fabricated signature, which always 401'd and sent the test down a
+   * hand-signing workaround that bypassed the service entirely (plan §2.7).
+   *
+   * Obviously-fake fixed seed - deterministic so a failure is reproducible.
+   */
+  const substrateSeed = new Uint8Array(32).fill(7);
+  let substratePair: { publicKey: Uint8Array; secretKey: Uint8Array };
+  let gsyDexAddress: string;
 
   let savedCredentialId: string;
   let didSuccessfullyRegistered = false;
@@ -102,6 +121,11 @@ describe('DID and Credential Flow (e2e)', () => {
     didRegistry = new ethers.Contract(didRegistryAddress, ERC1056_ABI, provider);
     issuerWallet = new ethers.Wallet(issuerPrivateKey, provider);
     issuerAddress = await issuerWallet.getAddress();
+
+    await cryptoWaitReady();
+    substratePair = sr25519PairFromSeed(substrateSeed);
+    // 42 = the generic substrate prefix, which is what GSY DEX addresses use.
+    gsyDexAddress = encodeAddress(substratePair.publicKey, 42);
 
     const randomWallet = ethers.Wallet.createRandom();
     testWallet = new ethers.Wallet(randomWallet.privateKey, provider);
@@ -228,7 +252,7 @@ describe('DID and Credential Flow (e2e)', () => {
   });
 
   describe('Credential Issuance Flow', () => {
-    it('should issue a credential or use direct DB insertion on mock failure', async () => {
+    it('should issue a credential through the real issuance path', async () => {
         expect(didSuccessfullyRegistered).toBe(true);
         expect(testToken).toBeDefined();
 
@@ -236,48 +260,33 @@ describe('DID and Credential Flow (e2e)', () => {
 
         const challenge = `Link GSY DEX address ${gsyDexAddress} to DID ${testDid} at ${new Date().toISOString()}`;
         const didSignature = await testWallet.signMessage(challenge);
+        // Signed exactly as the service will re-derive it, with the <Bytes> wrapper a
+        // browser wallet applies.
         const substrateMessage = formatSubstrateSigningMessage(challenge);
-        const mockSubstrateSignature = '0x' + Buffer.from(substrateMessage).toString('hex').slice(0, 64);
+        const substrateSignature = u8aToHex(
+            sr25519Sign(stringToU8a(substrateMessage), substratePair),
+        );
 
         let issueResponse;
         try {
             issueResponse = await request(app.getHttpServer())
                 .post('/credentials/issue')
                 .set('Authorization', `Bearer ${testToken}`)
-                .send({ did: testDid, gsyDexAddress, challenge, didSignature, substrateSignature: mockSubstrateSignature });
+                .send({ did: testDid, gsyDexAddress, challenge, didSignature, substrateSignature });
 
-            if (issueResponse.status === 201) {
-                savedCredentialId = issueResponse.body.id;
-            } else if (issueResponse.status === 401 && issueResponse.body.message === 'Invalid Substrate signature') {
-                console.warn('Credential issuance API failed due to mock Substrate signature. Creating credential directly in DB...');
-                const credentialId = `urn:uuid:${uuidv4()}`;
-                const now = new Date();
-                const expiration = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-                const credentialPayload = {
-                   '@context': ['https://www.w3.org/2018/credentials/v1'],
-                   id: credentialId,
-                   type: ['VerifiableCredential', 'GSYDexAddressCredential'],
-                   issuer: `did:ethr:${issuerAddress.toLowerCase()}`,
-                   issuanceDate: now.toISOString(),
-                   expirationDate: expiration.toISOString(),
-                   credentialSubject: { id: testDid, accountLink: { gsyDexAddress, chain: 'GSYDex' } }
-                };
-                const payloadToSign = JSON.stringify(credentialPayload, Object.keys(credentialPayload).sort());
-                const jws = await issuerWallet.signMessage(payloadToSign);
-                try {
-                   const recoveredAddressInTest = ethers.verifyMessage(payloadToSign, jws);
-                   expect(recoveredAddressInTest.toLowerCase()).toEqual(issuerAddress.toLowerCase());
-               } catch (manualVerifyError: any) { throw manualVerifyError; }
-                const credentialDataWithProof = {
-                   ...credentialPayload,
-                   proof: { type: 'EcdsaSecp256k1Signature2019', created: now.toISOString(), verificationMethod: `did:ethr:${issuerAddress.toLowerCase()}#controller`, proofPurpose: 'assertionMethod', jws: jws }
-                };
-                const credential = new credentialModel({ id: credentialId, did: testDid, gsyDexAddress, credentialSubject: credentialPayload.credentialSubject, credential: credentialDataWithProof, status: 'active', expirationDate: expiration });
-                await credential.save();
-                savedCredentialId = credentialId;
-            } else {
-                throw new Error(`Unexpected API response during credential issuance: ${issueResponse.status} - Body: ${JSON.stringify(issueResponse.body)}`);
-            }
+            // NO FALLBACK. There used to be a branch here that caught the 401 from a
+            // fabricated Substrate signature, hand-signed a credential with
+            // `JSON.stringify(payload, Object.keys(payload).sort())` and inserted it
+            // straight into Mongo. That hid plan §0.5 bug (B) twice over: it never
+            // exercised the service's issuance path, and it asserted over a payload whose
+            // nested claims the sorted replacer had already stripped. Both ends now share
+            // `canonicalize()`, so the real route is the only route.
+            expect(issueResponse.status).toBe(201);
+            savedCredentialId = issueResponse.body.id;
+            expect(savedCredentialId).toBeDefined();
+            expect(issueResponse.body.credential.credentialSubject.accountLink.gsyDexAddress)
+                .toEqual(gsyDexAddress);
+            expect(issueResponse.body.credential.proof.jws).toBeDefined();
         } catch (error: any) {
             console.error('Credential Issuance Error:', error);
             if (issueResponse) {

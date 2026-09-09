@@ -120,6 +120,41 @@ services:
         condition: service_healthy
     entrypoint: ["/usr/local/bin/gsy-execution-engine", "web3", "http://gsy-offchain-storage", "8080", "ws://gsy-node", "9944", "30", "3600", "0.10"]
 
+  # EWF DID / verifiable-credential service. Mints one did:ethr per ontology asset
+  # and per community from ASSET_DID_MASTER_SEED; gsy-community-client pushes the
+  # subject set to it on POST /asset-dids/sync.
+  #
+  # NOTE the build context differs from every other service here: this image's
+  # Dockerfile does `COPY package.json ./`, so it must be built from its own
+  # directory, not from the repo root.
+  gsy-ewf-identity-server:
+    container_name: gsy-ewf-identity-server
+    build:
+      context: ./gsy-ewf-identity-server
+      dockerfile: Dockerfile
+    depends_on:
+      mongo-init:
+        condition: service_completed_successfully
+    # Secrets: ASSET_DID_MASTER_SEED, ISSUER_PRIVATE_KEY/ISSUER_PUBLIC_KEY, JWT_SECRET.
+    # EWC_RPC_URL must be reachable at boot — did.service.ts:32-60 calls getNetwork()
+    # and identityOwner() in onModuleInit, so the service will not start without it.
+    env_file:
+      - ./.env/gsy-ewf-identity-server.env
+    # Inline wins over env_file. Uses the existing rs0 replica set with its own
+    # database (identitydb) — no separate mongo container.
+    environment:
+      - MONGODB_URI=mongodb://gsy:gsy@mongo1:27017,mongo2:27017,mongo3:27017/identitydb?authSource=admin&replicaSet=rs0
+      - API_KEY=fedecom_user
+    # node:18-alpine has no curl (unlike the Rust images above), so this uses
+    # busybox wget. /api-json is the Swagger document: unauthenticated, and served
+    # only once Nest has finished booting.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:3000/api-json"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
   gsy-community-client:
     container_name: gsy-community-client
     build:
@@ -127,6 +162,12 @@ services:
       dockerfile: ./gsy-community-client/Dockerfile
     env_file:
       - ./.env/gsy-community-client.env
+    # Plain bridge networking here (no Tailscale namespace), so services address each
+    # other by name. This is also the Rust-side default (constants.rs), set explicitly
+    # so the file documents itself. Deliberately not a depends_on: an unavailable
+    # identity server must not delay or stall forecast ingestion or order publication.
+    environment:
+      - IDENTITY_SERVER_URL=http://gsy-ewf-identity-server:3000
     depends_on:
       gsy-node:
         condition: service_healthy
