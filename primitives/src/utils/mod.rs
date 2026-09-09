@@ -1,10 +1,10 @@
+pub mod endpoint_calls;
 use anyhow::Result;
 use blake2::digest::{Update, VariableOutput};
 use blake2::Blake2bVar;
 use chrono::{prelude::DateTime, Utc};
 use std::env;
 use std::str::FromStr;
-use thiserror::Error;
 
 pub const NODE_FLOAT_SCALING_FACTOR: f64 = 10000.0;
 
