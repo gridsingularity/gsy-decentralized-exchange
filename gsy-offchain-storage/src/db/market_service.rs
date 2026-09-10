@@ -1,49 +1,21 @@
 use crate::db::DatabaseWrapper;
-use gsy_offchain_primitives::db_api_schema::market::MarketTopologySchema;
-use anyhow::{bail, Result};
-use futures::StreamExt;
+use crate::db::collection::{Coll, apply_time_window, in_time_window};
+use anyhow::{Result, bail};
+use gsy_offchain_primitives::db_api_schema::market::{CommunitySummary, MarketTopologySchema};
 use mongodb::bson::doc;
-use mongodb::options::IndexOptions;
-use mongodb::{Collection, IndexModel};
-use std::ops::Deref;
+use std::collections::HashMap;
 
-
-/// this function will call after connected to database
-pub async fn init_markets(db: &DatabaseWrapper) -> Result<()> {
-    // create index in this block
-
-    let controller = db.markets();
-    let index: IndexModel = IndexModel::builder()
-        .keys(doc! {"_id":1})
-        .options(IndexOptions::builder().build())
-        .build();
-    controller.create_index(index).await?;
-    Ok(())
-}
-
-#[repr(transparent)]
-pub struct MarketService(pub Collection<MarketTopologySchema>);
+pub struct MarketService(pub(crate) Coll<MarketTopologySchema>);
 
 impl MarketService {
-    #[tracing::instrument(
-        name = "Fetching market information from database", skip(self))]
-    pub async fn filter(
-        &self,
-        market_id: String) -> Result<Vec<MarketTopologySchema>> {
-        let mut cursor = self.0.find(
-            doc! {"market_id": market_id.clone()}).await.unwrap();
-
-        let mut result: Vec<MarketTopologySchema> = Vec::new();
-        while let Some(doc) = cursor.next().await {
-            match doc {
-                Ok(document) => {
-                    result.push(document);
-                }
-                _ => {
-                    break;
-                }
-            }
-        }
+    #[tracing::instrument(name = "Fetching market information from database", skip(self))]
+    pub async fn filter(&self, market_id: String) -> Result<Vec<MarketTopologySchema>> {
+        let result = self
+            .0
+            .query(doc! {"market_id": market_id.clone()}, |market| {
+                market.market_id == market_id
+            })
+            .await?;
         if result.len() > 1 {
             bail!("Found more than one market information for {}", market_id);
         }
@@ -51,39 +23,89 @@ impl MarketService {
     }
 
     #[tracing::instrument(
-        name = "Fetching market information from database for a community", skip(self))]
+        name = "Fetching market information from database for a community",
+        skip(self)
+    )]
     pub async fn get_community_market(
         &self,
-        community_uuid: String, start_time: Option<u32>, end_time: Option<u32>) -> Result<Vec<MarketTopologySchema>> {
-
+        community_name: String,
+        start_time: Option<u32>,
+        end_time: Option<u32>,
+    ) -> Result<Vec<MarketTopologySchema>> {
         let mut filter_params = doc! {};
-        filter_params.insert("community_uuid", community_uuid.clone());
-        if start_time.is_some() {
-            filter_params.insert("time_slot", doc! {"$gte": start_time.unwrap()} ); }
-        if end_time.is_some() {
-            if start_time.is_some() {
-                filter_params.insert(
-                    "time_slot",
-                    doc! {"$gte": start_time.unwrap(), "$lte": end_time.unwrap()});
-            }
-            else {
-                filter_params.insert("time_slot", doc! {"$lte": end_time.unwrap()});
+        filter_params.insert("community_name", community_name.clone());
+        apply_time_window(&mut filter_params, start_time, end_time);
+
+        self.0
+            .query(filter_params, |market| {
+                market.community_name == community_name
+                    && in_time_window(market.time_slot as u64, start_time, end_time)
+            })
+            .await
+    }
+
+    #[tracing::instrument(
+        name = "Fetching all markets within a delivery time window",
+        skip(self)
+    )]
+    pub async fn get_markets_in_time_range(
+        &self,
+        start_time: u32,
+        end_time: u32,
+    ) -> Result<Vec<MarketTopologySchema>> {
+        self.0
+            .query(
+                doc! {"time_slot": {"$gte": start_time, "$lte": end_time}},
+                |market| market.time_slot >= start_time && market.time_slot <= end_time,
+            )
+            .await
+    }
+
+    #[tracing::instrument(name = "Fetching all markets from database", skip(self))]
+    pub async fn all_markets(&self) -> Result<Vec<MarketTopologySchema>> {
+        self.0.all().await
+    }
+
+    #[tracing::instrument(name = "Listing communities from database", skip(self))]
+    pub async fn list_communities(&self) -> Result<Vec<CommunitySummary>> {
+        let markets = self.all_markets().await?;
+
+        let mut groups: HashMap<String, CommunitySummary> = HashMap::new();
+        // Track the time_slot of the market that currently supplies each
+        // group's community_uuid, so we can keep the latest one.
+        let mut uuid_slot: HashMap<String, u32> = HashMap::new();
+
+        for market in markets {
+            match groups.get_mut(&market.community_name) {
+                Some(summary) => {
+                    summary.market_count += 1;
+                    summary.earliest_slot = summary.earliest_slot.min(market.time_slot);
+                    summary.latest_slot = summary.latest_slot.max(market.time_slot);
+                    let current_uuid_slot = uuid_slot.get(&market.community_name).copied().unwrap_or(0);
+                    if market.time_slot >= current_uuid_slot {
+                        summary.community_uuid = market.community_uuid.clone();
+                        uuid_slot.insert(market.community_name.clone(), market.time_slot);
+                    }
+                }
+                None => {
+                    uuid_slot.insert(market.community_name.clone(), market.time_slot);
+                    groups.insert(
+                        market.community_name.clone(),
+                        CommunitySummary {
+                            community_name: market.community_name,
+                            community_uuid: market.community_uuid,
+                            market_count: 1,
+                            earliest_slot: market.time_slot,
+                            latest_slot: market.time_slot,
+                        },
+                    );
+                }
             }
         }
 
-        let mut cursor = self.0.find(filter_params).await.unwrap();
-        let mut result: Vec<MarketTopologySchema> = Vec::new();
-        while let Some(doc) = cursor.next().await {
-            match doc {
-                Ok(document) => {
-                    result.push(document);
-                }
-                _ => {
-                    break;
-                }
-            }
-        }
-        Ok(result)
+        let mut communities: Vec<CommunitySummary> = groups.into_values().collect();
+        communities.sort_by(|a, b| a.community_name.cmp(&b.community_name));
+        Ok(communities)
     }
 
     #[tracing::instrument(
@@ -94,21 +116,31 @@ impl MarketService {
         )
     )]
     pub async fn insert(&self, market: MarketTopologySchema) -> Result<MarketTopologySchema> {
-        self.check_if_market_exists(market.market_id.clone()).await?;
-        match self.0.insert_one(market.clone()).await {
-            Ok(_db_result) => Ok(market),
-            Err(e) => {
-                tracing::error!("Failed to execute query: {:?}", e);
-                Err(anyhow::Error::from(e))
-            }
+        if self
+            .check_if_market_exists(market.market_id.clone())
+            .await?
+        {
+            bail!(
+                "Market with id {} already exists; refusing to insert a duplicate",
+                market.market_id
+            );
         }
+        self.0.insert_one(market.clone()).await?;
+        Ok(market)
     }
 
+    /// Returns whether a market with `market_id` already exists. Uses a bounded
+    /// `find_one` probe (not an unbounded drain) and reports existence from
+    /// whether a document was actually matched.
     async fn check_if_market_exists(&self, market_id: String) -> Result<bool> {
-        match self.0.find(
-            doc! {"market_id": market_id.clone()}).limit(1).await
+        match self
+            .0
+            .find_one(doc! {"market_id": market_id.clone()}, |market| {
+                market.market_id == market_id
+            })
+            .await
         {
-            Ok(_) => Ok(true),
+            Ok(existing) => Ok(existing.is_some()),
             Err(_) => {
                 bail!("Failed find market with id: {:?}", market_id);
             }
@@ -118,14 +150,6 @@ impl MarketService {
 
 impl From<&DatabaseWrapper> for MarketService {
     fn from(db: &DatabaseWrapper) -> Self {
-        MarketService(db.collection("market"))
-    }
-}
-
-impl Deref for MarketService {
-    type Target = Collection<MarketTopologySchema>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
+        MarketService(db.coll("market", |store| store.markets.clone()))
     }
 }

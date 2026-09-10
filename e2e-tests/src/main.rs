@@ -15,5 +15,11 @@ async fn main() {
     println!("Waiting for services to start...");
     sleep(std::time::Duration::from_secs(30)).await;
 
-    world::MyWorld::run("features").await;
+    // All tests sign as //Alice, so they must run one at a time. The default runner runs scenarios 
+    // in parallel, which makes the trade scenarios submit Alice-signed sudo txs with identical 
+    // nonces, causing the "Priority is too low" / "Transaction is outdated" errors.
+    world::MyWorld::cucumber()
+        .max_concurrent_scenarios(1)
+        .run("features")
+        .await;
 }

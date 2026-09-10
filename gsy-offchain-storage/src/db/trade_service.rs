@@ -1,47 +1,19 @@
 use crate::db::DatabaseWrapper;
-use gsy_offchain_primitives::db_api_schema::trades::TradeSchema;
+use crate::db::collection::{Coll, UpdateSummary, apply_time_window, in_time_window};
 use anyhow::Result;
-use futures::StreamExt;
-use mongodb::bson::{doc, Bson};
-use mongodb::options::IndexOptions;
-use mongodb::{Collection, Cursor, IndexModel};
+use gsy_offchain_primitives::db_api_schema::trades::{TradeSchema, TradeStatus};
+use mongodb::bson;
+use mongodb::bson::{Bson, doc};
 use std::collections::HashMap;
-use std::ops::Deref;
-
-
-/// this function will call after connected to database
-pub async fn init_trades(db: &DatabaseWrapper) -> Result<()> {
-    // create index in this block
-
-    let controller = db.trades();
-    let index: IndexModel = IndexModel::builder()
-        .keys(doc! {"_id":1})
-        .options(IndexOptions::builder().build())
-        .build();
-    controller.create_index(index).await?;
-    Ok(())
-}
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// this struct is wrapper to `Collection<Trade>` should have function to help to manage order
-#[repr(transparent)]
-pub struct TradeService(pub Collection<TradeSchema>);
+pub struct TradeService(pub(crate) Coll<TradeSchema>);
 
 impl TradeService {
     #[tracing::instrument(name = "Fetching trades from database", skip(self))]
     pub async fn get_all_trades(&self) -> Result<Vec<TradeSchema>> {
-        let mut cursor = self.0.find(doc! {}).await.unwrap();
-        let mut result: Vec<TradeSchema> = Vec::new();
-        while let Some(doc) = cursor.next().await {
-            match doc {
-                Ok(document) => {
-                    result.push(document);
-                }
-                _ => {
-                    break;
-                }
-            }
-        }
-        Ok(result)
+        self.0.all().await
     }
 
     #[tracing::instrument(
@@ -51,74 +23,142 @@ impl TradeService {
             trade_schema = ?trade_schema
         )
     )]
-    pub async fn insert_trades(&self, trade_schema: Vec<TradeSchema>) -> Result<HashMap<usize, Bson>> {
-        match self.0.insert_many(trade_schema).await {
-            Ok(db_result) => Ok(db_result.inserted_ids),
-            Err(e) => {
-                tracing::error!("Failed to execute query: {:?}", e);
-                Err(anyhow::Error::from(e))
-            }
-        }
+    pub async fn insert_trades(
+        &self,
+        trade_schema: Vec<TradeSchema>,
+    ) -> Result<HashMap<usize, Bson>> {
+        self.0
+            .insert_many(trade_schema, |trade| Bson::String(trade._id.clone()))
+            .await
     }
 
-    async fn create_vector_from_cursor(&self, mut cursor: Cursor<TradeSchema>) -> Result<Vec<TradeSchema>> {
-        let mut result: Vec<TradeSchema> = Vec::new();
-        while let Some(doc) = cursor.next().await {
-            match doc {
-                Ok(document) => {
-                    result.push(document);
-                }
-                _ => {
-                    break;
-                }
-            }
+    #[tracing::instrument(name = "Fetching trades by market id from database", skip(self))]
+    pub async fn filter_trades(
+        &self,
+        market_id: Option<String>,
+        start_time: Option<u32>,
+        end_time: Option<u32>,
+        status: Option<TradeStatus>,
+    ) -> Result<Vec<TradeSchema>> {
+        let mut filter_params = doc! {};
+        if let Some(market_id) = &market_id {
+            filter_params.insert("market_id", market_id.clone());
         }
-        Ok(result)
+        if let Some(status) = &status {
+            filter_params.insert("status", bson::to_bson(status)?);
+        }
+        apply_time_window(&mut filter_params, start_time, end_time);
+
+        self.0
+            .query(filter_params, |trade| {
+                market_id
+                    .as_ref()
+                    .is_none_or(|market_id| &trade.market_id == market_id)
+                    && status.as_ref().is_none_or(|status| &trade.status == status)
+                    && in_time_window(trade.time_slot, start_time, end_time)
+            })
+            .await
+    }
+
+    /// Fetch trades whose **status last changed** within `[start_time, end_time]` (both
+    /// inclusive, unix seconds), optionally restricted to one status.
+    ///
+    /// This windows on `status_updated_at` rather than `time_slot`: the delivery slot says
+    /// when energy flowed, whereas this says when the trade reached its verdict. `Executed`
+    /// and `Penalized` are terminal, so for those the value never moves again once set.
+    ///
+    /// Trades with no `status_updated_at` are excluded. That is every trade written before
+    /// the field existed, and every trade still sitting in `Settled` — neither has a status
+    /// change to window on.
+    #[tracing::instrument(name = "Fetching trades by status change time", skip(self))]
+    pub async fn filter_trades_by_status_change(
+        &self,
+        start_time: u64,
+        end_time: Option<u64>,
+        status: Option<TradeStatus>,
+    ) -> Result<Vec<TradeSchema>> {
+        let mut bounds = doc! {"$gte": bson::to_bson(&start_time)?};
+        if let Some(end_time) = end_time {
+            bounds.insert("$lte", bson::to_bson(&end_time)?);
+        }
+        let mut filter_params = doc! {"status_updated_at": bounds};
+        if let Some(status) = &status {
+            filter_params.insert("status", bson::to_bson(status)?);
+        }
+
+        self.0
+            .query(filter_params, |trade| {
+                status.as_ref().is_none_or(|status| &trade.status == status)
+                    && trade.status_updated_at.is_some_and(|changed_at| {
+                        changed_at >= start_time
+                            && end_time.is_none_or(|end_time| changed_at <= end_time)
+                    })
+            })
+            .await
+    }
+
+    #[tracing::instrument(name = "Fetching trades by area uuid from database", skip(self))]
+    pub async fn get_trades_by_area(
+        &self,
+        area_uuid: String,
+        start_time: Option<u32>,
+        end_time: Option<u32>,
+    ) -> Result<Vec<TradeSchema>> {
+        // The area participates in a trade on either the bid or the offer side,
+        // so match its area_uuid under both nested component paths with `$or`.
+        let mut filter_params = doc! {"$or": [
+            { "bid.bid_component.area_uuid": &area_uuid },
+            { "offer.offer_component.area_uuid": &area_uuid }
+        ]};
+        apply_time_window(&mut filter_params, start_time, end_time);
+
+        self.0
+            .query(filter_params, |trade| {
+                (trade.bid.bid_component.area_uuid == area_uuid
+                    || trade.offer.offer_component.area_uuid == area_uuid)
+                    && in_time_window(trade.time_slot, start_time, end_time)
+            })
+            .await
     }
 
     #[tracing::instrument(
-        name = "Fetching trades by market id from database", skip(self))]
-    pub async fn filter_trades(
-            &self,
-            // market_id: Option<String>,
-            start_time: Option<u32>,
-            end_time: Option<u32>) -> Result<Vec<TradeSchema>> {
-        let mut filter_params = doc! {};
-        // if market_id.is_some() { filter_params.insert("market_id", market_id.unwrap()); }
-        if start_time.is_some() { filter_params.insert("time_slot", doc! {"$gte": start_time.unwrap()} ); }
-        if end_time.is_some() {
-            if start_time.is_some() {
-                filter_params.insert("time_slot",
-                                     doc! {"$gte": start_time.unwrap(), "$lte": end_time.unwrap()});
-            }
-            else {
-                filter_params.insert("time_slot", doc! {"$lte": end_time.unwrap()});
-            }
-        }
-
-        
-        match self.0.find(filter_params).await {
-            Ok(cursor) => {
-                self.create_vector_from_cursor(cursor).await
-            },
-            Err(e) => {
-                tracing::error!("Failed to execute query: {:?}", e);
-                Err(anyhow::Error::from(e))
-            }
-        }
+        name = "Update trade status by trade_uuid",
+        skip(self, trade_uuid, status)
+    )]
+    pub async fn update_trade_status_by_uuid(
+        &self,
+        trade_uuid: &str,
+        status: TradeStatus,
+    ) -> Result<UpdateSummary> {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        self.0
+            .update_one(
+                doc! {
+                    "trade_uuid": trade_uuid,
+                    "status": {"$ne": bson::to_bson(&status)?}
+                },
+                doc! {
+                    "$set": {
+                        "status": bson::to_bson(&status)?,
+                        "status_updated_at": bson::to_bson(&now)?,
+                    }
+                },
+                |trade| trade.trade_uuid == trade_uuid && trade.status != status,
+                |trade| {
+                    trade.status = status.clone();
+                    trade.status_updated_at = Some(now);
+                    true
+                },
+            )
+            .await
     }
 }
 
 impl From<&DatabaseWrapper> for TradeService {
     fn from(db: &DatabaseWrapper) -> Self {
-        TradeService(db.collection("trades"))
-    }
-}
-
-impl Deref for TradeService {
-    type Target = Collection<TradeSchema>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
+        TradeService(db.coll("trades", |store| store.trades.clone()))
     }
 }

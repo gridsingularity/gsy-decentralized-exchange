@@ -1,3 +1,4 @@
+use blake2_rfc::blake2b::blake2b;
 use subxt::utils::{AccountId32, H256};
 use std::str::FromStr;
 use chrono::{Utc, prelude::DateTime};
@@ -14,6 +15,15 @@ pub fn string_to_h256(hex_string: String) -> H256 {
     let hex_stripped = &hex_string[2..];
     let bytes = hex::decode(hex_stripped).expect("Invalid hex");
     H256::from_slice(&bytes)
+}
+
+pub fn community_id_from_uuid(community_uuid: &str) -> H256 {
+    H256(
+        blake2b(32, &[], community_uuid.as_bytes())
+            .as_bytes()
+            .try_into()
+            .expect("hash is 32 bytes"),
+    )
 }
 
 pub fn string_to_account_id(account_id_str: String) -> Option<AccountId32> {

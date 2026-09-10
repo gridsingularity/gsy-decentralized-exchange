@@ -1,3 +1,4 @@
+pub mod aggregation;
 pub mod algorithms;
 pub mod db_api_schema;
 

@@ -1,6 +1,7 @@
 mod chain_connector;
 mod config;
 mod orchestrator;
+mod storage_connector;
 
 use anyhow::Result;
 use tracing::info;
@@ -14,6 +15,7 @@ async fn main() -> Result<()> {
 	info!("Starting GSY Market Orchestrator...");
 	let config = config::get_config()?;
 	let client = chain_connector::GsyMarketOrchestratorNodeClient::new(&config).await?;
+	let storage = storage_connector::OffchainStorageConnector::new(&config);
 
-	orchestrator::run(config, client).await
+	orchestrator::run(config, client, storage).await
 }

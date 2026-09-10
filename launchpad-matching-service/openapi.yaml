@@ -1,0 +1,428 @@
+openapi: 3.0.3
+info:
+  title: GSY Matching Service API
+  description: API for matching energy orders and retrieving market statistics.
+  version: 1.0.0
+tags:
+  - name: Auth
+    description: Authentication endpoints
+  - name: Endpoints
+    description: All service endpoints
+servers:
+  - url: https://localhost
+    description: Local server
+
+paths:
+  /health-check:
+    get:
+      tags:
+        - Endpoints
+      summary: Health check
+      description: Returns 200 OK if the service is running.
+      responses:
+        '200':
+          description: Service is healthy
+
+  /token:
+    post:
+      tags:
+        - Auth
+      summary: Obtain a JWT access token
+      description: >
+        Authenticates with username and password and returns a Bearer token
+        for use with all protected endpoints. Tokens are signed with HS256
+        and expire after 24 hours.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenRequest'
+      responses:
+        '200':
+          description: Authentication successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '401':
+          description: Invalid username or password
+        '500':
+          description: Internal server error (database unavailable or token encoding failure)
+
+  /match:
+    post:
+      tags:
+        - Endpoints
+      summary: Process orders for matching
+      description: Processes a list of bid and offer orders using the Pay-As-Bid algorithm and returns the matches found.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrdersToMatch'
+      responses:
+        '200':
+          description: Successful matching result
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/DbBidOfferMatch'
+        '401':
+          description: Missing, invalid, or expired Bearer token
+
+  /matches:
+    get:
+      tags:
+        - Endpoints
+      summary: Filter matches
+      description: Retrieves matches based on user ID, optional market ID, and time range.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: user_id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: market_id
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: start_time
+          in: query
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: end_time
+          in: query
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: List of filtered matches
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DbBidOfferMatch'
+        '401':
+          description: Missing, invalid, or expired Bearer token
+
+  /statistics:
+    get:
+      tags:
+        - Endpoints
+      summary: Get market statistics
+      description: Returns market statistics and energy/trade rate timeseries for a user and period.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: user_id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: market_id
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: start_time
+          in: query
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: end_time
+          in: query
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: resolution
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/Resolution'
+      responses:
+        '200':
+          description: Market statistics response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MarketStatisticsResponse'
+        '401':
+          description: Missing, invalid, or expired Bearer token
+
+  /markets:
+    get:
+      tags:
+        - Endpoints
+      summary: Get unique market IDs
+      description: Returns all unique market IDs for a specific user.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: user_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of unique market IDs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+        '401':
+          description: Missing, invalid, or expired Bearer token
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    TokenRequest:
+      type: object
+      required:
+        - username
+        - password
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+
+    TokenResponse:
+      type: object
+      required:
+        - access_token
+        - token_type
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          example: bearer
+
+    OrdersToMatch:
+      type: object
+      required:
+        - user_id
+        - orders
+      properties:
+        user_id:
+          type: string
+        orders:
+          type: array
+          items:
+            $ref: '#/components/schemas/DbOrderSchema'
+
+    DbOrderSchema:
+      type: object
+      required:
+        - _id
+        - status
+        - order
+      properties:
+        _id:
+          type: string
+        status:
+          $ref: '#/components/schemas/OrderStatus'
+        order:
+          $ref: '#/components/schemas/Order'
+
+    OrderStatus:
+      type: string
+      enum: [Open, Executed, Expired, Deleted]
+
+    Order:
+      type: object
+      required:
+        - type
+        - data
+      properties:
+        type:
+          type: string
+          enum: [Bid, Offer]
+        data:
+          oneOf:
+            - $ref: '#/components/schemas/DbBid'
+            - $ref: '#/components/schemas/DbOffer'
+
+    DbBid:
+      type: object
+      required:
+        - buyer
+        - nonce
+        - bid_component
+      properties:
+        buyer:
+          type: string
+        nonce:
+          type: integer
+          format: int32
+        bid_component:
+          $ref: '#/components/schemas/DbOrderComponent'
+
+    DbOffer:
+      type: object
+      required:
+        - seller
+        - nonce
+        - offer_component
+      properties:
+        seller:
+          type: string
+        nonce:
+          type: integer
+          format: int32
+        offer_component:
+          $ref: '#/components/schemas/DbOrderComponent'
+
+    DbOrderComponent:
+      type: object
+      required:
+        - area_uuid
+        - market_id
+        - time_slot
+        - creation_time
+        - energy
+        - energy_rate
+      properties:
+        area_uuid:
+          type: string
+        market_id:
+          type: string
+        time_slot:
+          type: integer
+          format: int64
+        creation_time:
+          type: integer
+          format: int64
+        energy:
+          type: number
+          format: double
+        energy_rate:
+          type: number
+          format: double
+
+    DbBidOfferMatch:
+      type: object
+      required:
+        - user_id
+        - market_id
+        - time_slot
+        - bid
+        - offer
+        - selected_energy
+        - energy_rate
+      properties:
+        user_id:
+          type: string
+        market_id:
+          type: string
+        time_slot:
+          type: integer
+          format: int64
+        bid:
+          $ref: '#/components/schemas/DbBid'
+        offer:
+          $ref: '#/components/schemas/DbOffer'
+        residual_bid:
+          nullable: true
+          anyOf:
+            - $ref: '#/components/schemas/DbBid'
+        residual_offer:
+          nullable: true
+          anyOf:
+            - $ref: '#/components/schemas/DbOffer'
+        selected_energy:
+          type: number
+          format: double
+        energy_rate:
+          type: number
+          format: double
+
+    Resolution:
+      type: string
+      enum: [no_aggregation, day, month]
+
+    MarketStatisticsResponse:
+      type: object
+      required:
+        - average_trade_rate_timeseries
+        - energy_timeseries
+        - total_matches
+        - success_rate
+      properties:
+        average_trade_rate_timeseries:
+          type: array
+          items:
+            $ref: '#/components/schemas/TimeSeriesPoint'
+        energy_timeseries:
+          type: array
+          items:
+            $ref: '#/components/schemas/EnergyTimeSeriesPoint'
+        total_matches:
+          type: integer
+          format: int64
+        success_rate:
+          type: number
+          format: double
+
+    TimeSeriesPoint:
+      type: object
+      required:
+        - time_slot
+        - average_energy_rate
+      properties:
+        time_slot:
+          type: integer
+          format: int64
+        average_energy_rate:
+          type: number
+          format: double
+
+    EnergyTimeSeriesPoint:
+      type: object
+      required:
+        - time_slot
+        - matched_energy_kWh
+        - unmatched_energy_kWh
+      properties:
+        time_slot:
+          type: integer
+          format: int64
+        matched_energy_kWh:
+          type: number
+          format: double
+        unmatched_energy_kWh:
+          type: number
+          format: double

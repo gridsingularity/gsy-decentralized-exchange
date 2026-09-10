@@ -7,3 +7,7 @@ database_name:
 database_url_scheme:
 node_url:
 scheduler_interval:
+database_replica_set:
+database_options:
+database_auth_source:
+database_tls:

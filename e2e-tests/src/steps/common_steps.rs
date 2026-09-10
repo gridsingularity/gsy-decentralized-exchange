@@ -1,6 +1,49 @@
 use crate::world::{gsy_node, MyWorld};
 use cucumber::given;
+use std::time::Duration;
+use subxt::tx::Payload;
 use subxt::utils::AccountId32;
+use subxt_signer::sr25519::Keypair;
+
+const MAX_SUBMIT_ATTEMPTS: usize = 6;
+
+fn is_transient_submit_error(error: &subxt::Error) -> bool {
+	let msg = format!("{error:?}").to_lowercase();
+	msg.contains("transaction is outdated")
+		|| msg.contains("priority is too low")
+		|| msg.contains("stale")
+		|| msg.contains("future")
+		|| msg.contains("already imported")
+		|| msg.contains("temporarily banned")
+}
+
+async fn submit_and_finalize<C: Payload>(
+	world: &MyWorld,
+	call: &C,
+	signer: &Keypair,
+	label: &str,
+) {
+	let mut attempt = 1;
+	let progress = loop {
+		match world.subxt_client.tx().sign_and_submit_then_watch_default(call, signer).await {
+			Ok(progress) => break progress,
+			Err(error) if attempt < MAX_SUBMIT_ATTEMPTS && is_transient_submit_error(&error) => {
+				println!(
+					"Transient error submitting {} (attempt {}/{}): {:?}; retrying...",
+					label, attempt, MAX_SUBMIT_ATTEMPTS, error
+				);
+				attempt += 1;
+				tokio::time::sleep(Duration::from_secs(3)).await;
+			},
+			Err(error) => panic!("Failed to submit {} tx: {:?}", label, error),
+		}
+	};
+
+	progress
+		.wait_for_finalized_success()
+		.await
+		.unwrap_or_else(|error| panic!("{} extrinsic failed: {:?}", label, error));
+}
 
 #[given("the GSY DEX services are running")]
 async fn services_are_running(world: &mut MyWorld) {
@@ -26,23 +69,27 @@ async fn services_are_running(world: &mut MyWorld) {
 }
 
 #[given(
-	regex = r#"users "([^"]*)", "([^"]*)", and "([^"]*)" the matching engine operator are registered and have collateral"#
+	regex = r#"users "([^"]*)" and "([^"]*)" are registered and have collateral, with "[^"]*" as the matching engine operator"#
 )]
 async fn users_are_registered(
 	world: &mut MyWorld,
-	alice_name: String,
-	bob_name: String,
-	charlie_name: String,
+	seller_name: String,
+	buyer_name: String,
 ) {
 	let sudo_signer = subxt_signer::sr25519::dev::alice();
 	let user_keys = [
-		world.users.get(&alice_name).unwrap(),
-		world.users.get(&bob_name).unwrap(),
-		world.users.get(&charlie_name).unwrap(),
+		world.users.get(&seller_name).unwrap(),
+		world.users.get(&buyer_name).unwrap(),
 	];
 
 	for keypair in user_keys.iter() {
 		let account_id: AccountId32 = keypair.public_key().into();
+
+		// Do not try to reregister the same users to avoid the "Priority is too low" error. 
+		if is_user_registered(world, &account_id).await {
+			println!("User already registered, skipping: {:?}", account_id);
+			continue;
+		}
 		println!("Registering user: {:?}", account_id);
 
 		let register_user_call =
@@ -53,46 +100,56 @@ async fn users_are_registered(
 			);
 
 		let sudo_tx = gsy_node::tx().sudo().sudo(register_user_call);
-
-		world
-			.subxt_client
-			.tx()
-			.sign_and_submit_then_watch_default(&sudo_tx, &sudo_signer)
-			.await
-			.expect("Failed to submit register_user tx")
-			.wait_for_finalized_success()
-			.await
-			.expect("register_user extrinsic failed");
+		submit_and_finalize(world, &sudo_tx, &sudo_signer, "register_user").await;
 
 		let deposit_tx = gsy_node::tx().gsy_collateral().deposit_collateral(500000000000000);
-		world
-			.subxt_client
-			.tx()
-			.sign_and_submit_then_watch_default(&deposit_tx, *keypair)
-			.await
-			.expect("Failed to submit deposit_collateral tx")
-			.wait_for_finalized_success()
-			.await
-			.expect("deposit_collateral extrinsic failed");
+		submit_and_finalize(world, &deposit_tx, *keypair, "deposit_collateral").await;
 	}
 
-	let alice_account_id: AccountId32 = world.users.get(&alice_name).unwrap().public_key().into();
-	println!("Registering market orchestrator/matching engine operator: {:?}", alice_account_id);
+	// The matching engine and market orchestrator settle/operate signed by the
+	// sudo/root account (dev::alice), so that account must be the exchange operator.
+	let operator_account_id: AccountId32 = sudo_signer.public_key().into();
+	if is_operator_registered(world, &operator_account_id).await {
+		println!("Exchange operator already registered, skipping: {:?}", operator_account_id);
+		return;
+	}
+	println!("Registering market orchestrator/matching engine operator: {:?}", operator_account_id);
 
 	let register_me_call = gsy_node::runtime_types::gsy_node_runtime::RuntimeCall::GsyCollateral(
 		gsy_node::runtime_types::gsy_collateral::pallet::Call::register_exchange_operator {
-			operator_account: alice_account_id,
+			operator_account: operator_account_id,
 		},
 	);
 
 	let sudo_tx_me = gsy_node::tx().sudo().sudo(register_me_call);
+	submit_and_finalize(world, &sudo_tx_me, &sudo_signer, "register_exchange_operator").await;
+}
+
+async fn is_user_registered(world: &MyWorld, account_id: &AccountId32) -> bool {
+	let storage_address = gsy_node::storage().gsy_collateral().registered_user(account_id.clone());
 	world
 		.subxt_client
-		.tx()
-		.sign_and_submit_then_watch_default(&sudo_tx_me, &sudo_signer)
+		.storage()
+		.at_latest()
 		.await
-		.expect("Failed to submit register_exchange_operator tx")
-		.wait_for_finalized_success()
+		.expect("Failed to read latest storage")
+		.fetch(&storage_address)
 		.await
-		.expect("register_exchange_operator extrinsic failed");
+		.expect("Failed to fetch RegisteredUser storage")
+		.is_some()
+}
+
+async fn is_operator_registered(world: &MyWorld, account_id: &AccountId32) -> bool {
+	let storage_address =
+		gsy_node::storage().gsy_collateral().registered_exchange_operator(account_id.clone());
+	world
+		.subxt_client
+		.storage()
+		.at_latest()
+		.await
+		.expect("Failed to read latest storage")
+		.fetch(&storage_address)
+		.await
+		.expect("Failed to fetch RegisteredExchangeOperator storage")
+		.is_some()
 }

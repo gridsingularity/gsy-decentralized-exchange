@@ -1,0 +1,2068 @@
+openapi: 3.0.3
+info:
+  title: GSY DEX Off-Chain Storage API
+  version: 0.1.0
+  description: |
+    HTTP API of the GSY DEX off-chain storage service (actix-web), which persists
+    orders, trades, market topologies, measurements and forecasts to MongoDB
+    (or an in-memory backend for tests) and exposes read endpoints for them.
+
+    **Authentication is not yet implemented.** All endpoints are currently
+    unauthenticated; JWT-based authentication is planned to be added globally
+    at a later stage.
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+tags:
+  - name: system
+    description: Service health and diagnostics
+  - name: orders
+    description: Bid and offer order storage
+  - name: trades
+    description: Trade storage
+  - name: markets
+    description: Market topology storage
+  - name: profiles
+    description: Asset measurement and forecast profiles
+  - name: analytics
+    description: Aggregated time-series derived from stored data
+paths:
+  /health_check:
+    get:
+      tags: [system]
+      summary: Health check
+      description: Returns 200 with an empty body when the service is up.
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Service is up. Empty response body.
+  /orders:
+    post:
+      tags: [orders]
+      summary: Insert SCALE-encoded orders from the gsy-node
+      description: |
+        Accepts a JSON array of unsigned bytes (integers 0-255) that is the
+        SCALE encoding of a `Vec<Order>` as produced by the gsy-node runtime.
+        The service decodes the bytes and converts each order to the
+        `DbOrderSchema` document format before insertion. For submitting
+        already-normalized JSON documents use `POST /orders-normalized`.
+      operationId: postOrders
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScaleEncodedBytes'
+      responses:
+        '200':
+          description: Orders inserted. Map of array index to inserted document id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InsertedIdsMap'
+        '400':
+          description: Malformed JSON body (not an array of integers 0-255).
+        '500':
+          description: Database insertion failed. Empty response body.
+    get:
+      tags: [orders]
+      summary: List or filter stored orders
+      description: |
+        Returns all stored orders when no query parameter is provided,
+        otherwise filters by market id and/or an inclusive `time_slot` window.
+      operationId: getOrders
+      parameters:
+        - name: market_id
+          in: query
+          required: false
+          description: Only return orders belonging to this market id.
+          schema:
+            type: string
+        - name: start_time
+          in: query
+          required: false
+          description: Lower bound (inclusive) for the order `time_slot`, in unix seconds.
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+        - name: end_time
+          in: query
+          required: false
+          description: Upper bound (inclusive) for the order `time_slot`, in unix seconds.
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+      responses:
+        '200':
+          description: Matching orders.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DbOrderSchema'
+        '400':
+          description: Query parameter has an invalid type (e.g. non-integer time bound).
+        '500':
+          description: Database query failed. Empty response body.
+  /orders-normalized:
+    post:
+      tags: [orders]
+      summary: Insert normalized order documents
+      description: Inserts a JSON array of `DbOrderSchema` documents as-is.
+      operationId: postNormalizedOrders
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/DbOrderSchema'
+      responses:
+        '200':
+          description: Orders inserted. Map of array index to inserted document id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InsertedIdsMap'
+        '400':
+          description: Malformed JSON body (does not deserialize to an array of DbOrderSchema).
+        '500':
+          description: Database insertion failed. Empty response body.
+  /trades:
+    post:
+      tags: [trades]
+      summary: Insert SCALE-encoded trades from the gsy-node
+      description: |
+        Accepts a JSON array of unsigned bytes (integers 0-255) that is the
+        SCALE encoding of a `Vec<Trade>` as produced by the gsy-node runtime.
+        The service decodes the bytes, converts each trade to the
+        `TradeSchema` document format, marks the matched bid/offer orders of
+        each trade as executed, and inserts the trades. For submitting
+        already-normalized JSON documents use `POST /trades-normalized`.
+      operationId: postTrades
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScaleEncodedBytes'
+      responses:
+        '200':
+          description: Trades inserted. Map of array index to inserted document id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InsertedIdsMap'
+        '400':
+          description: Malformed JSON body (not an array of integers 0-255).
+        '500':
+          description: Database insertion failed. Empty response body.
+    get:
+      tags: [trades]
+      summary: List or filter stored trades
+      description: Filters trades by market id, execution status and/or an inclusive `time_slot` window; all parameters are optional.
+      operationId: getTrades
+      parameters:
+        - name: market_id
+          in: query
+          required: false
+          description: Only return trades belonging to this market id.
+          schema:
+            type: string
+        - name: start_time
+          in: query
+          required: false
+          description: Lower bound (inclusive) for the trade `time_slot`, in unix seconds.
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+        - name: end_time
+          in: query
+          required: false
+          description: Upper bound (inclusive) for the trade `time_slot`, in unix seconds.
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+        - name: status
+          in: query
+          required: false
+          description: >
+            Only return trades in this lifecycle status. Use `Settled` to list trades still
+            pending execution, and `Executed`/`Penalized` for trades the execution engine has
+            already judged.
+          schema:
+            $ref: '#/components/schemas/TradeStatus'
+      responses:
+        '200':
+          description: Matching trades.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TradeSchema'
+        '400':
+          description: Query parameter has an invalid type (e.g. non-integer time bound).
+        '500':
+          description: Database query failed. Empty response body.
+  /trades-normalized:
+    post:
+      tags: [trades]
+      summary: Insert normalized trade documents
+      description: Inserts a JSON array of `TradeSchema` documents as-is.
+      operationId: postNormalizedTrades
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/TradeSchema'
+      responses:
+        '200':
+          description: Trades inserted. Map of array index to inserted document id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InsertedIdsMap'
+        '400':
+          description: Malformed JSON body (does not deserialize to an array of TradeSchema).
+        '500':
+          description: Database insertion failed. Empty response body.
+  /trades-canonical:
+    get:
+      tags: [trades]
+      summary: List or filter stored trades with resolved asset names
+      description: >
+        Returns the same filtered trades as `GET /trades`, but each trade is additionally
+        enriched with the human-readable asset names of the seller and the buyer. The names are
+        resolved by building an `area_hash` -> `name` map from the `community_areas` of every
+        stored market topology, and looking up each trade component's `area_uuid` (which holds
+        the asset's `area_hash`) in that map. `area_hash` is market-invariant, so collapsing all
+        markets into a single map is unambiguous. A hash with no matching area resolves to
+        `null`. All parameters are optional and behave exactly as on `GET /trades`.
+      operationId: getTradesCanonical
+      parameters:
+        - name: market_id
+          in: query
+          required: false
+          description: Only return trades belonging to this market id.
+          schema:
+            type: string
+        - name: start_time
+          in: query
+          required: false
+          description: Lower bound (inclusive) for the trade `time_slot`, in unix seconds.
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+        - name: end_time
+          in: query
+          required: false
+          description: Upper bound (inclusive) for the trade `time_slot`, in unix seconds.
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+        - name: status
+          in: query
+          required: false
+          description: >
+            Only return trades in this lifecycle status. Use `Settled` to list trades still
+            pending execution, and `Executed`/`Penalized` for trades the execution engine has
+            already judged.
+          schema:
+            $ref: '#/components/schemas/TradeStatus'
+      responses:
+        '200':
+          description: Matching trades, with seller and buyer asset names resolved where possible.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TradeCanonicalSchema'
+        '400':
+          description: Query parameter has an invalid type (e.g. non-integer time bound).
+        '500':
+          description: Database query failed. Empty response body.
+  /traded-energy:
+    get:
+      tags: [analytics]
+      summary: Traded energy time-series for an area
+      description: |
+        Aggregates the `selected_energy` of all trades in which the given area
+        participates (on the bid or the offer side) per `time_slot`, and returns
+        the resulting time-series sorted ascending by timestamp. The optional
+        time bounds restrict the trade `time_slot` window (inclusive).
+      operationId: getTradedEnergy
+      parameters:
+        - name: id
+          in: query
+          required: true
+          description: Area UUID whose traded energy is aggregated.
+          schema:
+            type: string
+        - name: start_time
+          in: query
+          required: false
+          description: Lower bound (inclusive) for the trade `time_slot`, in unix seconds.
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+        - name: end_time
+          in: query
+          required: false
+          description: Upper bound (inclusive) for the trade `time_slot`, in unix seconds.
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+      responses:
+        '200':
+          description: Aggregated traded energy per time slot (empty series when no trades match).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TradedEnergyResponse'
+        '400':
+          description: Missing required `id` parameter or invalid parameter type.
+        '500':
+          description: Database query failed. Empty response body.
+  /guarantees-of-origin-measurements:
+    get:
+      tags: [analytics]
+      summary: Energy share digital certificate records
+      description: |
+        Returns the energy share digital certificate records of the pilot site,
+        as specified by D6.6 Annex A (*Energy Share Digital Certificate Data
+        Schema and Pilot Configuration*). Each entry is one record covering one
+        fifteen-minute interval, either a `local_origin_record` issued against
+        metered generation of a production asset, or a
+        `flexibility_activation_record` issued against a metered dispatch of a
+        storage or controllable thermal asset.
+
+        `start_time`/`end_time` bound **when the trade was validated** — the
+        moment the execution engine's verdict promoted it to `Executed` — and
+        not the delivery interval the energy flowed in. The two differ, and
+        by an amount that is not fixed: metering arrives after the interval it
+        describes, so a trade delivered in one interval may only be validated
+        much later. A window over delivery time would close over slots that
+        were still awaiting a verdict and never return them once they arrived.
+        Windowing on validation time cannot lose a record that way, because a
+        record does not exist before its verdict. `Executed` is terminal, so
+        the value being filtered on never changes again once set.
+
+        A record's delivery interval remains available as `interval_start` and
+        `source_slot_timestamp`; it is simply not what the query filters on.
+
+        Every response object has the same set of keys for a given
+        `record_type`. An attribute that does not apply is present and `null`
+        rather than omitted; array attributes are present and empty. See
+        `CertificateRecord`.
+
+        Under the scheme, records are appended and never amended; a correction
+        is effected by issuing a replacement record, the replaced record
+        acquiring a terminal status and being retained. See `CertificateRecord` 
+        for the full list of issuance attributes that are consequently absent 
+        from this API.
+      operationId: getGuaranteesOfOrigin
+      parameters:
+        - name: start_time
+          in: query
+          required: true
+          description: |
+            Lower bound (inclusive), in unix seconds, on **when the trade was
+            validated** — the moment its status changed to `Executed`.
+
+            This windows on validation time, not on delivery time. Metering
+            arrives after the interval it describes and by a delay that is not
+            fixed, so a trade for a given delivery slot may only be validated
+            minutes or days after that slot ended. A window over delivery time
+            would therefore advance past slots still awaiting their verdict and
+            never return them; a window over validation time cannot, because a
+            record only exists once the verdict is in.
+
+            `Executed` is terminal, so the value this filters on never moves
+            again once set, and a query over a closed window is reproducible.
+
+            Mandatory: without a lower bound the query would scan every trade
+            ever settled.
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+        - name: end_time
+          in: query
+          required: false
+          description: |
+            Upper bound (inclusive) on validation time, as `start_time` is.
+            Omit for "everything validated since `start_time`".
+
+            Note that both bounds are inclusive, so a consumer stepping through
+            consecutive windows should advance `start_time` past the previous
+            `end_time` rather than reusing it, or it will receive the boundary
+            records twice.
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+      responses:
+        '200':
+          description: Matching certificate records (possibly empty).
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CertificateRecord'
+              examples:
+                localOriginIntraCommunityRetained:
+                  summary: Local origin record, intra-community, attribute retained (Annex A.6.1)
+                  description: |
+                    Every attribute of the schema is shown populated so that the type of
+                    each is illustrated, including the conditional (C) and reserved (R)
+                    attributes. On a real record the conditions of Annex A.5 apply and
+                    several of these would be `null` instead: `support_scheme_status` is
+                    reserved and not populated in the proof of concept, and
+                    `loss_adjustment` carries a value only where
+                    `storage_mediated_flag` is true. The keys are present either way — see
+                    the fixed-shape note on `CertificateRecord`.
+
+                    The issuance, disposal and retirement attributes of Annex A.6.1 are
+                    absent throughout, as described on `CertificateRecord`: this service
+                    does not issue records, and so neither disposes of the environmental
+                    attribute nor retires it.
+                  value:
+                    - identity:
+                        record_type: local_origin_record
+                        site_id: ch-aem-lic-goo-poc
+                      time_and_quantity:
+                        interval_start: '2026-05-14T12:30:00+02:00'
+                        interval_end: '2026-05-14T12:45:00+02:00'
+                        interval_duration_s: 900
+                        source_slot_timestamp: 1778754600
+                        energy_quantity: 3.85
+                        energy_unit: kWh
+                        rounding_rule: half_up_2dp
+                        loss_adjustment: 0.00
+                      production_asset:
+                        production_asset_id: LIC01PV
+                        asset_registry_reference: ch-go-registry:asset:0002871
+                        metering_point_id: CH1018601234500000000000000000001
+                        asset_class: PV
+                        rated_power:
+                          value: 27.29
+                          unit: kW
+                      consumption_asset:
+                        consumption_asset_id: LIC01PV
+                        asset_registry_reference: ch-go-registry:asset:0002871
+                        metering_point_id: CH1018601234500000000000000000001
+                        asset_class: MeteringPoint
+                      location:
+                        municipality_code: '5226'
+                        grid_operator_id: AEM
+                        grid_level: 7
+                        community_id_origin: LugaggiaInnovationCommunity
+                        community_id_consumption: LugaggiaInnovationCommunity
+                        delivery_scope: intra_community
+                      measurement_provenance:
+                        measurement_id: LIC:LIC01:e_generation
+                        measuring_sensor_id: LIC01SmartMeter
+                        property_measured: measurement#active_energy
+                        flow_direction: export
+                        data_provider_id: did:example:aem-metering
+                        data_completeness: complete
+                        data_record_class: measurement
+                        source_of_record: operator_validated
+                        measurement_recorded_at: 1778761200
+                      attribute_provenance:
+                        support_scheme_status: one_off_payment
+                        storage_mediated_flag: false
+                      beneficiary_and_claim:
+                        owner_id: lic-member-014
+                        consumption_metering_point_id: lic-mp-014
+                        facility_id: LICHouse9
+                      trade_and_delivery:
+                        trade_reference:
+                          - 3f7c1e9a-5b2d-4c81-9f0a-6d4e2b8a1c37
+                          - c81a4d6b-9e73-4f25-b0c8-27a5f1d93e60
+                        trade_hash:
+                          - '0x3c9e11a4f8b27d5e6c0193ab74df82e5b1c6a09f3d7e48521bc9fa06e37d4b81'
+                          - '0x77ab02c5d9e1483f7620ba5cd8e094172f3a6b8d05e9c71426fd83a09b5e7c12'
+                        trade_status_at_issuance: delivery_verified
+                        delivery_verification_reference: exec:2026-05-14:slot50
+                attributeTransferredToThirdParty:
+                  summary: Attribute transferred to a third party, no claim carried (Annex A.6.2)
+                  description: |
+                    The volume was generated and delivered locally but the attribute was
+                    sold, so the record is issued for traceability and carries no
+                    environmental claim.
+
+                    Shown in full rather than abbreviated, because the shape is fixed: the
+                    attributes that do not apply to this record are present and `null`, and
+                    that is what a consumer receives. Contrast `support_scheme_status` and
+                    `loss_adjustment` here, both null, with Annex A.6.1 above.
+
+                    Note that the disposal itself is **not** visible in this API: the sale
+                    is recorded by the issuing party through `attribute_mode`,
+                    `claim_permitted` and `permitted_claim_text_id`, none of which is
+                    carried here. This payload is therefore identical in shape and, apart
+                    from the measurement it derives from, indistinguishable from Annex
+                    A.6.1 above. The distinction is drawn by the issuing party, on the
+                    record it issues from this data.
+                  value:
+                    - identity:
+                        record_type: local_origin_record
+                        site_id: ch-aem-lic-goo-poc
+                      time_and_quantity:
+                        interval_start: '2026-05-14T13:00:00+02:00'
+                        interval_end: '2026-05-14T13:15:00+02:00'
+                        interval_duration_s: 900
+                        source_slot_timestamp: 1778756400
+                        energy_quantity: 1.42
+                        energy_unit: kWh
+                        rounding_rule: half_up_2dp
+                        loss_adjustment: null
+                      production_asset:
+                        production_asset_id: LICHouse3PV
+                        asset_registry_reference: null
+                        metering_point_id: CH1018601234500000000000000000019
+                        asset_class: PV
+                        rated_power:
+                          value: 9.80
+                          unit: kW
+                      consumption_asset:
+                        consumption_asset_id: LICHouse4Load
+                        asset_registry_reference: null
+                        metering_point_id: CH1018601234500000000000000000024
+                        asset_class: MeteringPoint
+                      location:
+                        municipality_code: '5226'
+                        grid_operator_id: AEM
+                        grid_level: 7
+                        community_id_origin: LugaggiaInnovationCommunity
+                        community_id_consumption: LugaggiaInnovationCommunity
+                        delivery_scope: intra_community
+                      measurement_provenance:
+                        measurement_id: LIC:LICHouse3:e_generation
+                        measuring_sensor_id: LICHouse3SmartMeter
+                        property_measured: measurement#active_energy
+                        flow_direction: export
+                        data_provider_id: did:example:aem-metering
+                        data_completeness: complete
+                        data_record_class: measurement
+                        source_of_record: operator_validated
+                        measurement_recorded_at: 1778763000
+                      attribute_provenance:
+                        support_scheme_status: null
+                        storage_mediated_flag: false
+                      beneficiary_and_claim:
+                        owner_id: lic-member-007
+                        consumption_metering_point_id: lic-mp-007
+                        facility_id: LICHouse3
+                      trade_and_delivery:
+                        trade_reference:
+                          - 3f7c1e9a-5b2d-4c81-9f0a-6d4e2b8a1c37
+                          - c81a4d6b-9e73-4f25-b0c8-27a5f1d93e60
+                        trade_hash:
+                          - '0x3c9e11a4f8b27d5e6c0193ab74df82e5b1c6a09f3d7e48521bc9fa06e37d4b81'
+                          - '0x77ab02c5d9e1483f7620ba5cd8e094172f3a6b8d05e9c71426fd83a09b5e7c12'
+                        trade_status_at_issuance: delivery_verified
+                        delivery_verification_reference: exec:2026-05-14:slot52
+                flexibilityActivationStorageDischarge:
+                  summary: Flexibility activation record, storage discharge (Annex A.6.3)
+                  description: |
+                    Attribution of the discharge to a local renewable charge is not
+                    assured, so no claim is carried and no local origin record is issued
+                    for the volume.
+
+                    This is the other shape the endpoint returns: the asset block is
+                    `activation_asset` and `activation` in place of `production_asset` and
+                    `consumption_asset`. Every other group is the same set of keys as a
+                    local origin record. `loss_adjustment` carries a value here because
+                    `storage_mediated_flag` is true (Annex A.5, rule 9); the
+                    `charge_record_reference` that rule also calls for is not carried by
+                    this API, being the GP engine's to establish.
+                  value:
+                    - identity:
+                        record_type: flexibility_activation_record
+                        site_id: ch-aem-lic-goo-poc
+                      time_and_quantity:
+                        interval_start: '2026-05-14T19:15:00+02:00'
+                        interval_end: '2026-05-14T19:30:00+02:00'
+                        interval_duration_s: 900
+                        source_slot_timestamp: 1778778900
+                        energy_quantity: 6.10
+                        energy_unit: kWh
+                        rounding_rule: half_up_2dp
+                        loss_adjustment: 0.42
+                      activation_asset:
+                        asset_id: LIC02DBATT
+                        asset_class: Battery
+                        metering_point_id: CH1018601234500000000000000000007
+                        rated_power:
+                          value: 10.00
+                          unit: kW
+                      activation:
+                        activation_direction: discharge
+                        instruction_reference: dispatch:2026-05-14:slot78
+                        instruction_source: aem-control-service
+                        delivery_verified: true
+                      location:
+                        municipality_code: '5226'
+                        grid_operator_id: AEM
+                        grid_level: 7
+                        community_id_origin: LugaggiaInnovationCommunity
+                        community_id_consumption: LugaggiaInnovationCommunity
+                        delivery_scope: intra_community
+                      measurement_provenance:
+                        measurement_id: LIC:LIC02:e_discharge
+                        measuring_sensor_id: LIC02SmartMeter
+                        property_measured: measurement#active_energy
+                        flow_direction: export
+                        data_provider_id: did:example:aem-metering
+                        data_completeness: complete
+                        data_record_class: measurement
+                        source_of_record: operator_validated
+                        measurement_recorded_at: 1778785200
+                      attribute_provenance:
+                        support_scheme_status: null
+                        storage_mediated_flag: true
+                      beneficiary_and_claim:
+                        owner_id: lic-member-022
+                        consumption_metering_point_id: null
+                        facility_id: LICHouse2
+                      trade_and_delivery:
+                        trade_reference: []
+                        trade_hash: []
+                        trade_status_at_issuance: null
+                        delivery_verification_reference: exec:2026-05-14:slot78
+        '400':
+          description: Query parameter has an invalid type (e.g. non-integer time bound).
+        '500':
+          description: Database query failed. Empty response body.
+  /measurements:
+    post:
+      tags: [profiles]
+      summary: Insert asset measurements
+      description: Inserts a JSON array of `MeasurementSchema` documents.
+      operationId: postMeasurements
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/MeasurementSchema'
+      responses:
+        '200':
+          description: Measurements inserted. Map of array index to inserted document id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InsertedIdsMap'
+        '400':
+          description: Malformed JSON body (does not deserialize to an array of MeasurementSchema).
+        '500':
+          description: Database insertion failed. Empty response body.
+    get:
+      tags: [profiles]
+      summary: List or filter asset measurements
+      description: Filters measurements by area UUID and/or an inclusive `time_slot` window; all parameters are optional.
+      operationId: getMeasurements
+      parameters:
+        - name: area_uuid
+          in: query
+          required: false
+          description: Only return measurements for this area UUID.
+          schema:
+            type: string
+        - name: start_time
+          in: query
+          required: false
+          description: Lower bound (inclusive) for the measurement `time_slot`, in unix seconds.
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+        - name: end_time
+          in: query
+          required: false
+          description: Upper bound (inclusive) for the measurement `time_slot`, in unix seconds.
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+      responses:
+        '200':
+          description: Matching measurements.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MeasurementSchema'
+        '400':
+          description: Query parameter has an invalid type (e.g. non-integer time bound).
+        '500':
+          description: Database query failed. Empty response body.
+  /forecasts:
+    post:
+      tags: [profiles]
+      summary: Insert asset forecasts
+      description: Inserts a JSON array of `ForecastSchema` documents.
+      operationId: postForecasts
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/ForecastSchema'
+      responses:
+        '200':
+          description: Forecasts inserted. Map of array index to inserted document id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InsertedIdsMap'
+        '400':
+          description: Malformed JSON body (does not deserialize to an array of ForecastSchema).
+        '500':
+          description: Database insertion failed. Empty response body.
+    get:
+      tags: [profiles]
+      summary: List or filter asset forecasts
+      description: Filters forecasts by area UUID and/or an inclusive `time_slot` window; all parameters are optional.
+      operationId: getForecasts
+      parameters:
+        - name: area_uuid
+          in: query
+          required: false
+          description: Only return forecasts for this area UUID.
+          schema:
+            type: string
+        - name: start_time
+          in: query
+          required: false
+          description: Lower bound (inclusive) for the forecast `time_slot`, in unix seconds.
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+        - name: end_time
+          in: query
+          required: false
+          description: Upper bound (inclusive) for the forecast `time_slot`, in unix seconds.
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+      responses:
+        '200':
+          description: Matching forecasts.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ForecastSchema'
+        '400':
+          description: Query parameter has an invalid type (e.g. non-integer time bound).
+        '500':
+          description: Database query failed. Empty response body.
+  /market:
+    post:
+      tags: [markets]
+      summary: Insert a market topology
+      description: Inserts a single `MarketTopologySchema` document and echoes it back on success.
+      operationId: postMarket
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MarketTopologySchema'
+      responses:
+        '200':
+          description: Market inserted. The stored market topology is returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MarketTopologySchema'
+        '400':
+          description: Malformed JSON body (does not deserialize to MarketTopologySchema).
+        '500':
+          description: Database insertion failed. Empty response body.
+    get:
+      tags: [markets]
+      summary: Get a market topology by market id
+      description: |
+        Returns the single market topology matching the given market id.
+        Responds 404 when no market matches and 500 when more than one market
+        matches (data inconsistency) or the database query fails.
+      operationId: getMarket
+      parameters:
+        - name: market_id
+          in: query
+          required: true
+          description: Market id (H256 hash serialized as string).
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The matching market topology.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MarketTopologySchema'
+        '400':
+          description: Missing required `market_id` parameter.
+        '404':
+          description: No market found for the given market id. Empty response body.
+        '500':
+          description: Database query failed or multiple markets share the id. Empty response body.
+  /markets:
+    get:
+      tags: [markets]
+      summary: List market topologies in a time window
+      description: Returns all market topologies whose `time_slot` lies within the given inclusive window. Both bounds are required.
+      operationId: getMarketsInWindow
+      parameters:
+        - name: start_time
+          in: query
+          required: true
+          description: Lower bound (inclusive) for the market `time_slot`, in unix seconds.
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+        - name: end_time
+          in: query
+          required: true
+          description: Upper bound (inclusive) for the market `time_slot`, in unix seconds.
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+      responses:
+        '200':
+          description: Market topologies in the window (possibly empty).
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MarketTopologySchema'
+        '400':
+          description: Missing or invalid `start_time`/`end_time` parameter.
+        '500':
+          description: Database query failed. Empty response body.
+  /community-market:
+    get:
+      tags: [markets]
+      summary: List market topologies of a community
+      description: Returns the market topologies for a community name, optionally restricted to an inclusive `time_slot` window.
+      operationId: getMarketFromCommunity
+      parameters:
+        - name: community_name
+          in: query
+          required: true
+          description: Name of the community whose markets are returned.
+          schema:
+            type: string
+        - name: start_time
+          in: query
+          required: false
+          description: Lower bound (inclusive) for the market `time_slot`, in unix seconds.
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+        - name: end_time
+          in: query
+          required: false
+          description: Upper bound (inclusive) for the market `time_slot`, in unix seconds.
+          schema:
+            type: integer
+            format: int32
+            minimum: 0
+      responses:
+        '200':
+          description: Matching market topologies (possibly empty).
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MarketTopologySchema'
+        '400':
+          description: Missing required `community_name` parameter or invalid parameter type.
+        '500':
+          description: Database query failed. Empty response body.
+  /communities:
+    get:
+      tags: [markets]
+      summary: List the communities that have stored markets
+      description: >
+        Aggregates every stored market topology by `community_name` and returns one summary per
+        distinct community, giving the number of markets stored for it and the earliest and
+        latest market `time_slot` seen. `community_uuid` is taken from the community's most
+        recent market (the one with the highest `time_slot`), since the uuid can change across
+        markets.
+      operationId: getCommunities
+      responses:
+        '200':
+          description: One summary per distinct community, sorted by community name (possibly empty).
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CommunitySummary'
+        '500':
+          description: Database query failed. Empty response body.
+components:
+  schemas:
+    ScaleEncodedBytes:
+      type: array
+      description: |
+        SCALE-encoded payload produced by the gsy-node, transported as a JSON
+        array of unsigned bytes (integers in the range 0-255). The service
+        decodes this byte array with the parity-scale-codec before converting
+        the decoded items to their database document schemas.
+      items:
+        type: integer
+        minimum: 0
+        maximum: 255
+      example: [8, 0, 1, 42, 255]
+    InsertedIdsMap:
+      type: object
+      description: |
+        Map from the zero-based index of each inserted document (JSON object
+        keys, so the indices are strings) to the id it was stored under.
+        For orders and trades the id is the document `_id` string. For
+        measurements and forecasts stored in MongoDB the id is a generated
+        ObjectId, which serializes in extended JSON form (`{"$oid": "..."}`),
+        while the in-memory test backend reports the `area_uuid` string.
+      additionalProperties:
+        description: Inserted document id (string or MongoDB extended-JSON ObjectId).
+      example:
+        '0': '0x6a3f...c9'
+        '1': '0x91bd...04'
+    OrderStatus:
+      type: string
+      description: Lifecycle status of an order.
+      enum: [Open, Executed, Expired, Deleted]
+    DbOrderComponent:
+      type: object
+      description: Common component of bid and offer orders.
+      required: [area_uuid, market_id, time_slot, creation_time, energy, energy_rate]
+      properties:
+        area_uuid:
+          type: string
+          description: UUID of the area the order belongs to.
+        market_id:
+          type: string
+          description: Market id (H256 hash serialized as string).
+        time_slot:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Market time slot, unix seconds.
+        creation_time:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Order creation time, unix seconds.
+        energy:
+          type: number
+          format: double
+          description: Energy amount of the order (kWh).
+        energy_rate:
+          type: number
+          format: double
+          description: Energy rate of the order.
+    DbBid:
+      type: object
+      description: Bid order.
+      required: [buyer, nonce, bid_component]
+      properties:
+        buyer:
+          type: string
+          description: Account/address of the buyer.
+        nonce:
+          type: integer
+          format: int32
+          minimum: 0
+        bid_component:
+          $ref: '#/components/schemas/DbOrderComponent'
+    DbOffer:
+      type: object
+      description: Offer (ask) order.
+      required: [seller, nonce, offer_component]
+      properties:
+        seller:
+          type: string
+          description: Account/address of the seller.
+        nonce:
+          type: integer
+          format: int32
+          minimum: 0
+        offer_component:
+          $ref: '#/components/schemas/DbOrderComponent'
+    Order:
+      description: |
+        A bid or an offer, serialized with an internal tag: the `type` field is
+        `"Bid"` or `"Offer"` and the `data` field holds the corresponding
+        payload.
+      oneOf:
+        - type: object
+          required: [type, data]
+          properties:
+            type:
+              type: string
+              enum: [Bid]
+            data:
+              $ref: '#/components/schemas/DbBid'
+        - type: object
+          required: [type, data]
+          properties:
+            type:
+              type: string
+              enum: [Offer]
+            data:
+              $ref: '#/components/schemas/DbOffer'
+    DbOrderSchema:
+      type: object
+      description: Order document as stored in the database.
+      required: [_id, status, order]
+      properties:
+        _id:
+          type: string
+          description: BlakeTwo256 hash of the order, serialized as string.
+        status:
+          $ref: '#/components/schemas/OrderStatus'
+        order:
+          $ref: '#/components/schemas/Order'
+    TradeStatus:
+      type: string
+      description: >
+        Lifecycle status of a trade. A trade is recorded as `Settled` when it is matched and
+        settled on-chain, and remains so until the execution engine has evaluated delivery for
+        its time slot. Once gsy-node reports the verdict, the trade becomes `Executed` (evaluated,
+        no penalty) or `Penalized` (evaluated, penalty submitted on-chain). `Settled` therefore
+        means "pending execution", not "complete".
+      enum: [Settled, Executed, Penalized]
+    TradeParameters:
+      type: object
+      description: Matched parameters of a trade.
+      required: [selected_energy, energy_rate, trade_uuid]
+      properties:
+        selected_energy:
+          type: number
+          format: double
+          description: Energy amount matched in the trade (kWh).
+        energy_rate:
+          type: number
+          format: double
+          description: Clearing energy rate of the trade.
+        trade_uuid:
+          type: string
+    TradeSchema:
+      type: object
+      description: Trade document as stored in the database.
+      required:
+        - _id
+        - status
+        - seller
+        - buyer
+        - market_id
+        - time_slot
+        - trade_uuid
+        - creation_time
+        - offer
+        - offer_hash
+        - bid
+        - bid_hash
+        - parameters
+      properties:
+        _id:
+          type: string
+          description: Trade document id.
+        status:
+          $ref: '#/components/schemas/TradeStatus'
+        seller:
+          type: string
+          description: Account/address of the seller.
+        buyer:
+          type: string
+          description: Account/address of the buyer.
+        market_id:
+          type: string
+          description: Market id (H256 hash serialized as string).
+        time_slot:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Market time slot, unix seconds.
+        trade_uuid:
+          type: string
+        creation_time:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Trade creation time, unix seconds.
+        offer:
+          $ref: '#/components/schemas/DbOffer'
+        offer_hash:
+          type: string
+        bid:
+          $ref: '#/components/schemas/DbBid'
+        bid_hash:
+          type: string
+        residual_offer:
+          allOf:
+            - $ref: '#/components/schemas/DbOffer'
+          nullable: true
+          description: Remaining offer after partial matching, if any.
+        residual_bid:
+          allOf:
+            - $ref: '#/components/schemas/DbBid'
+          nullable: true
+          description: Remaining bid after partial matching, if any.
+        parameters:
+          $ref: '#/components/schemas/TradeParameters'
+    TradeCanonicalSchema:
+      type: object
+      description: >
+        A `TradeSchema` with the two resolved asset-name fields flattened in alongside it: the
+        trade document's own fields appear at the top level of the object, next to `seller_name`
+        and `buyer_name`.
+      allOf:
+        - $ref: '#/components/schemas/TradeSchema'
+        - type: object
+          properties:
+            seller_name:
+              type: string
+              nullable: true
+              description: >
+                Human-readable name of the seller asset, resolved from the topology
+                `area_hash` -> `name` mapping. `null` when the area hash cannot be resolved
+                to a name.
+            buyer_name:
+              type: string
+              nullable: true
+              description: >
+                Human-readable name of the buyer asset, resolved from the topology
+                `area_hash` -> `name` mapping. `null` when the area hash cannot be resolved
+                to a name.
+    TimeSeriesPoint:
+      type: object
+      description: Single point of a time-series.
+      required: [timestamp, value]
+      properties:
+        timestamp:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Time slot, unix seconds.
+        value:
+          type: number
+          format: double
+          description: Aggregated traded energy in the time slot (kWh).
+    TradedEnergyResponse:
+      type: object
+      description: Traded energy time-series of an area, sorted ascending by timestamp.
+      required: [id, traded_energy]
+      properties:
+        id:
+          type: string
+          description: Area UUID the series was computed for (echo of the `id` query parameter).
+        traded_energy:
+          type: array
+          items:
+            $ref: '#/components/schemas/TimeSeriesPoint'
+    MeasurementSchema:
+      type: object
+      description: Measured energy profile point of an asset/area.
+      required: [area_uuid, area_hash, community_uuid, time_slot, creation_time, energy_kwh]
+      properties:
+        area_uuid:
+          type: string
+        area_hash:
+          type: string
+        community_uuid:
+          type: string
+        time_slot:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Time slot of the measurement, unix seconds.
+        creation_time:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Creation time, unix seconds.
+        energy_kwh:
+          type: number
+          format: double
+          description: Measured energy (kWh).
+    CertificateRecord:
+      description: |
+        One energy share digital certificate record, as specified by D6.6
+        Annex A. Two record types are defined within a single schema family; the
+        distinction reflects that guarantees of origin attach to metered
+        generation, whereas a storage or thermal asset does not generate
+        electricity and its output derives from an earlier charge.
+
+        The attributes are grouped into one nested object per section of
+        Annex A.3: `identity` (A.3.1), `time_and_quantity` (A.3.2), the asset
+        block (A.3.3, which differs by record type), `location` (A.3.4),
+        `measurement_provenance` (A.3.5), `attribute_provenance` (A.3.6),
+        `beneficiary_and_claim` (A.3.7) and `trade_and_delivery` (A.3.8).
+
+        **Issuance attributes are not carried by this API.** This service
+        derives records on read from stored measurements. It does not issue
+        them, does not run the uniqueness reconciliation the scheme requires,
+        and does not retire what it has not issued. Attributes that record an
+        issuance event, a decision of the scheme about the disposal of the
+        environmental attribute, or a retirement are therefore assigned by the
+        issuing party and are absent here:
+
+        - from `identity` (A.3.1): `record_id`, `issuing_party_id`,
+          `issuance_timestamp`, `content_hash` and `schema_version` — all
+          presuppose an issuance event and an issuance register;
+        - the whole `lifecycle` group (A.3.9);
+        - from `attribute_provenance` (A.3.6): `attribute_mode`,
+          `claim_permitted`, `bundling_status`,
+          `official_cancellation_reference`, `disclosure_year_affected`,
+          `uniqueness_control_reference` and `permitted_claim_text_id` — how
+          the attribute was disposed of, whether it was cancelled in the
+          national registry, the reconciliation run establishing uniqueness
+          (Annex A.5, rules 13-15) and the approved wording a claim may use;
+        - from `beneficiary_and_claim` (A.3.7): `claim_holder_id`,
+          `retirement_timestamp` and `claim_period` — the retirement of a
+          record, which this service never performs;
+        - from `trade_and_delivery` (A.3.8): `charge_record_reference`, which
+          attributes a storage discharge to the charge it came from — a linkage
+          established by the GP engine, not observed here.
+
+        What remains is what the GSY DEX genuinely holds: the measurement, the
+        asset, the location, the community and the trade linkage.
+
+        Obligations quoted from Annex A.3 are **M** (mandatory), **C**
+        (conditional on the stated circumstance) and **R** (reserved, defined in
+        the schema but not populated in the proof of concept). A record is not
+        issued where a mandatory attribute is absent or fails validation.
+
+        **The payload has a fixed shape.** Every attribute of the schema is
+        listed in `required` and is always present, including the conditional
+        and reserved ones; an attribute that does not apply to a record is
+        `null`, and an array attribute that has no members is `[]`. No key is
+        ever omitted, so a consumer can rely on one shape and needs to
+        distinguish only null from a value, not absent from null. An obligation
+        of C or R therefore says when an attribute carries a value, not whether
+        its key is there.
+
+        The one axis along which the shape varies is `identity.record_type`: a
+        local origin record carries `production_asset` and `consumption_asset`,
+        a flexibility activation record carries `activation_asset` and
+        `activation`, and neither carries the other's block. The two are
+        alternatives of the `oneOf` below, and each alternative is itself of
+        fixed shape.
+
+        No OpenAPI `discriminator` is declared for that choice because
+        `record_type` sits within `identity`, and a discriminator property must
+        be at the root of the payload; the asset block distinguishes the two
+        unambiguously in any case.
+
+        **Validation rules applied at issuance (Annex A.5).** Attribute names
+        below are given as paths within the nested structure. The rules are
+        reproduced in full because they define the scheme, but rules 6, 7, 8
+        and 16 constrain attributes the issuing party assigns and which this
+        API does not carry; they are the issuer's to apply and cannot be
+        checked against this payload. Rule 9 is checkable only in part, its
+        `charge_record_reference` clause being established by the GP engine
+        rather than carried here.
+        1. `time_and_quantity.interval_end` exceeds
+           `time_and_quantity.interval_start`, and the difference equals
+           `time_and_quantity.interval_duration_s`.
+        2. `time_and_quantity.source_slot_timestamp` corresponds to
+           `time_and_quantity.interval_start`; a timestamp that does not fall on
+           an interval boundary is rejected.
+        3. Issuance is rejected where
+           `measurement_provenance.data_record_class` is `forecast`.
+        4. Issuance is rejected where `measurement_provenance.data_completeness`
+           is `incomplete`.
+        5. Issuance is rejected where
+           `attribute_provenance.support_scheme_status` indicates feed-in tariff
+           participation, where that attribute is populated.
+        6. `attribute_provenance.claim_permitted` is false where
+           `attribute_provenance.attribute_mode` is `sold_external`, and
+           `attribute_provenance.permitted_claim_text_id` resolves to a
+           statement of local delivery carrying no environmental claim.
+        7. `attribute_provenance.official_cancellation_reference` and
+           `attribute_provenance.disclosure_year_affected` are present and
+           resolvable where `attribute_provenance.attribute_mode` is
+           `retired_official`.
+        8. For a storage asset class, `attribute_provenance.claim_permitted` is
+           false.
+        9. Where `attribute_provenance.storage_mediated_flag` is true,
+           `time_and_quantity.loss_adjustment` is present and greater than zero,
+           and `trade_and_delivery.charge_record_reference` identifies the record
+           transferred at charge.
+        10. Where `location.delivery_scope` is `intra_community`,
+            `location.community_id_origin` equals
+            `location.community_id_consumption`; where it is `inter_community`,
+            the two differ.
+        11. Where `trade_and_delivery.trade_reference` entries are present,
+            `trade_and_delivery.trade_status_at_issuance` is
+            `delivery_verified`.
+        12. `time_and_quantity.energy_quantity` derives from the measurement and
+            not from any traded quantity. A financial penalty arising from
+            deviation does not alter an issued record.
+        13. The sum of `time_and_quantity.energy_quantity` across all records for
+            a given `production_asset.production_asset_id` and settlement period
+            does not exceed the metered generation for that asset in the period,
+            less energy charged by storage in that period. Volumes transferred to
+            a storage asset owner are counted once, at issuance, and not again
+            upon discharge. The settlement cycle is a calendar month
+            (Annex A.1); the settlement period a record belongs to is derived
+            from `time_and_quantity.interval_start`.
+        14. The reconciliation under rule 13 is executed once across the records
+            of all participating communities for the settlement period, rather
+            than separately for each community.
+        15. Where the reconciliation fails, the outputs for the period are
+            withheld for the communities affected until it succeeds.
+        16. A `flexibility_activation_record` does not carry
+            `attribute_provenance.claim_permitted` as true under any
+            circumstance.
+      oneOf:
+        - $ref: '#/components/schemas/LocalOriginRecord'
+        - $ref: '#/components/schemas/FlexibilityActivationRecord'
+    LocalOriginRecord:
+      description: |
+        Record issued against metered generation in one interval, against the
+        production asset and to its owner. An environmental claim is permitted,
+        subject to applicable regulation. Applicable to production assets
+        (Annex A.1). Identified by the presence of the `production_asset` group.
+      allOf:
+        - $ref: '#/components/schemas/CertificateRecordCommon'
+        - type: object
+          required: [production_asset, consumption_asset]
+          properties:
+            production_asset:
+              $ref: '#/components/schemas/ProductionAsset'
+            consumption_asset:
+              $ref: '#/components/schemas/ConsumptionAsset'
+    FlexibilityActivationRecord:
+      description: |
+        Record issued against metered energy dispatch in one interval against a
+        recorded instruction. No environmental claim is asserted. Applicable to
+        storage and controllable thermal assets; a storage discharge
+        additionally completes the two-step path of the local origin record
+        transferred at charge (Annex A.1). Identified by the presence of the
+        `activation_asset` and `activation` groups.
+      allOf:
+        - $ref: '#/components/schemas/CertificateRecordCommon'
+        - type: object
+          required: [activation_asset, activation]
+          properties:
+            activation_asset:
+              $ref: '#/components/schemas/ActivationAsset'
+            activation:
+              $ref: '#/components/schemas/FlexibilityActivation'
+    CertificateRecordCommon:
+      type: object
+      description: |
+        Attribute groups common to both record types. The pilot-instance
+        parameters of Annex A.1 that every record references (`site_id`,
+        `interval_duration_s`, `energy_unit`, `rounding_rule`,
+        `grid_operator_id`, `municipality_code`) are carried on the record
+        itself, within the group they belong to.
+      required:
+        - identity
+        - time_and_quantity
+        - location
+        - measurement_provenance
+        - attribute_provenance
+        - beneficiary_and_claim
+        - trade_and_delivery
+      properties:
+        identity:
+          $ref: '#/components/schemas/RecordIdentity'
+        time_and_quantity:
+          $ref: '#/components/schemas/RecordTimeAndQuantity'
+        location:
+          $ref: '#/components/schemas/RecordLocation'
+        measurement_provenance:
+          $ref: '#/components/schemas/MeasurementProvenance'
+        attribute_provenance:
+          $ref: '#/components/schemas/AttributeProvenance'
+        beneficiary_and_claim:
+          $ref: '#/components/schemas/BeneficiaryAndClaim'
+        trade_and_delivery:
+          $ref: '#/components/schemas/TradeAndDeliveryReference'
+    RecordIdentity:
+      type: object
+      description: |
+        Annex A.3.1 — identity of the record, restricted to the attributes this
+        service can establish.
+
+        `record_id`, `issuing_party_id`, `issuance_timestamp`, `content_hash`
+        and `schema_version` are defined by Annex A.3.1 but are deliberately
+        **not** carried by this API. All five are issuance attributes: they
+        presuppose an issuance event, an issuing party identity and an issuance
+        register, none of which exist here. This service derives records on read
+        from stored measurements and does not issue them, so it cannot establish
+        an immutable record identifier, name the issuing party, state when
+        issuance occurred, seal the content of a record it did not issue, or
+        state the schema version a record was issued under. The issuing party
+        assigns all five when it issues a record from this data.
+      required:
+        - record_type
+        - site_id
+      properties:
+        record_type:
+          $ref: '#/components/schemas/RecordType'
+        site_id:
+          type: string
+          description: |
+            Identifier of the pilot instance under which the record was issued,
+            immutable for the pilot (Annex A.1).
+          example: ch-aem-lic-goo-poc
+    RecordTimeAndQuantity:
+      type: object
+      description: Annex A.3.2 — delivery interval and energy quantity.
+      required:
+        - interval_start
+        - interval_end
+        - interval_duration_s
+        - source_slot_timestamp
+        - energy_quantity
+        - energy_unit
+        - rounding_rule
+        - loss_adjustment
+      properties:
+        interval_start:
+          type: string
+          format: date-time
+          description: Obligation M. Inclusive. ISO 8601 with offset.
+        interval_end:
+          type: string
+          format: date-time
+          description: Obligation M. Exclusive. ISO 8601 with offset.
+        interval_duration_s:
+          type: integer
+          description: |
+            Obligation M. Length of the delivery interval in seconds; 900
+            (fifteen minutes) for the pilot (Annex A.1).
+          example: 900
+        source_slot_timestamp:
+          type: integer
+          format: int64
+          minimum: 0
+          description: |
+            Obligation M. Unix timestamp of the start of the delivery period, as
+            received from the GSY DEX (`time_slot`). Corresponds to
+            `interval_start`.
+          example: 1778754600
+        energy_quantity:
+          type: number
+          format: double
+          minimum: 0
+          exclusiveMinimum: true
+          description: |
+            Obligation M. Positive and non-zero, expressed in `energy_unit` and
+            rounded per `rounding_rule`. Derived from the measurement and not
+            from any traded quantity (Annex A.5, rule 12).
+          example: 3.85
+        energy_unit:
+          $ref: '#/components/schemas/EnergyUnit'
+        rounding_rule:
+          type: string
+          description: |
+            Obligation M. Rounding applied to `energy_quantity`, constant within
+            a settlement version; `half_up_2dp` for the pilot (Annex A.1).
+          example: half_up_2dp
+        loss_adjustment:
+          type: number
+          format: double
+          nullable: true
+          description: |
+            Obligation C. Battery loss deducted where the volume was mediated by
+            storage; applied at retirement following discharge. Present and
+            greater than zero where `attribute_provenance.storage_mediated_flag`
+            is true.
+    ProductionAsset:
+      type: object
+      description: |
+        Annex A.3.3 — the production asset a local origin record is issued
+        against.
+      required:
+        [
+          production_asset_id,
+          asset_registry_reference,
+          metering_point_id,
+          asset_class,
+          rated_power,
+        ]
+      properties:
+        production_asset_id:
+          type: string
+          description: |
+            Obligation M. Project ontology individual of the production asset,
+            for example `LIC01PV`.
+          example: LIC01PV
+        asset_registry_reference:
+          type: string
+          nullable: true
+          description: |
+            Obligation C. National registry reference. Mandatory where the
+            issuing party's attribute mode is `retired_official`.
+        metering_point_id:
+          type: string
+          nullable: true
+          description: |
+            Obligation C. Metering point from which the volume derives. Absent
+            on records issued at community or pilot site level.
+        asset_class:
+          $ref: '#/components/schemas/AssetClass'
+        rated_power:
+          allOf:
+            - $ref: '#/components/schemas/RatedPower'
+          nullable: true
+          description: |
+            Obligation C. Rating and unit as held in the asset register. Absent
+            where the asset register does not record a rating for the asset.
+    ConsumptionAsset:
+      type: object
+      description: |
+        The consumption asset which consumes the energy from the production asset.
+      required:
+        [
+          consumption_asset_id,
+          asset_registry_reference,
+          metering_point_id,
+          asset_class,
+        ]
+      properties:
+        consumption_asset_id:
+          type: string
+          description: |
+            Obligation M. Project ontology individual of the consumption asset,
+            for example `LIC01SM`.
+          example: LIC01SM
+        asset_registry_reference:
+          type: string
+          nullable: true
+          description: |
+            Obligation C. National registry reference. Mandatory where the
+            issuing party's attribute mode is `retired_official`.
+        metering_point_id:
+          type: string
+          nullable: true
+          description: |
+            Obligation C. Metering point from which the volume derives. Absent
+            on records issued at community or pilot site level.
+        asset_class:
+          $ref: '#/components/schemas/AssetClass'
+    ActivationAsset:
+      type: object
+      description: |
+        Annex A.3.3 as applied to a flexibility activation record — the storage
+        or controllable thermal asset that was dispatched.
+      required: [asset_id, asset_class, metering_point_id, rated_power]
+      properties:
+        asset_id:
+          type: string
+          description: |
+            Project ontology individual of the dispatched asset, for example
+            `LIC02DBATT`.
+          example: LIC02DBATT
+        asset_class:
+          $ref: '#/components/schemas/AssetClass'
+        metering_point_id:
+          type: string
+          nullable: true
+          description: |
+            Obligation C. Metering point from which the volume derives. Absent
+            on records issued at community or pilot site level.
+        rated_power:
+          allOf:
+            - $ref: '#/components/schemas/RatedPower'
+          nullable: true
+          description: Obligation C. Rating and unit as held in the asset register.
+    FlexibilityActivation:
+      type: object
+      description: |
+        The dispatch instruction a flexibility activation record is issued
+        against. Not listed in Annex A.3; the attributes are carried by the
+        Annex A.6.3 worked example, and Annex A.1 requires the activation to be
+        metered against a recorded instruction.
+      required:
+        [
+          activation_direction,
+          instruction_reference,
+          instruction_source,
+          delivery_verified,
+        ]
+      properties:
+        activation_direction:
+          $ref: '#/components/schemas/ActivationDirection'
+        instruction_reference:
+          type: string
+          nullable: true
+          description: |
+            Identifier of the dispatch instruction the activation was metered
+            against.
+        instruction_source:
+          type: string
+          nullable: true
+          description: Control service that issued the instruction.
+        delivery_verified:
+          type: boolean
+          nullable: true
+          description: |
+            True where the activation was verified as delivered; paired with
+            `trade_and_delivery.delivery_verification_reference`. Null where the
+            activation has not been reconciled.
+    RecordLocation:
+      type: object
+      description: Annex A.3.4 — location and deliverability.
+      required:
+        [
+          municipality_code,
+          grid_operator_id,
+          grid_level,
+          community_id_origin,
+          community_id_consumption,
+          delivery_scope,
+        ]
+      properties:
+        municipality_code:
+          type: string
+          description: Obligation M. Official code of the generation site.
+          example: '5226'
+        grid_operator_id:
+          type: string
+          description: Obligation M. Id of the grid operator of the energy community.
+          example: AEM
+        grid_level:
+          type: integer
+          description: Obligation M. Level of connection.
+          example: 7
+        community_id_origin:
+          type: string
+          nullable: true
+          description: |
+            Obligation C. Community in which generation occurred, as defined by
+            the project ontology. Absent where the generation asset belongs to
+            the pilot site but not to any community.
+          example: LugaggiaInnovationCommunity
+        community_id_consumption:
+          type: string
+          nullable: true
+          description: |
+            Obligation C. Community in which consumption occurred. Absent where
+            the production asset belongs to the pilot site but not to any
+            community.
+          example: LugaggiaInnovationCommunity
+        delivery_scope:
+          $ref: '#/components/schemas/DeliveryScope'
+    MeasurementProvenance:
+      type: object
+      description: Annex A.3.5 — provenance of the measurement the record derives from.
+      required:
+        - measurement_id
+        - measuring_sensor_id
+        - property_measured
+        - flow_direction
+        - data_provider_id
+        - data_completeness
+        - source_of_record
+        - data_record_class
+        - measurement_recorded_at
+      properties:
+        measurement_id:
+          type: string
+          description: |
+            Obligation M. Measurement descriptor identifier in the project
+            knowledge graph.
+          example: LIC:LIC01:e_generation
+        measuring_sensor_id:
+          type: string
+          description: Obligation M. Sensor individual, for example a smart meter.
+        property_measured:
+          type: string
+          format: uri-reference
+          description: Obligation M. Ontology property, for example active energy.
+          example: measurement#active_energy
+        flow_direction:
+          $ref: '#/components/schemas/FlowDirection'
+        data_provider_id:
+          type: string
+          description: Obligation M. DID of the party supplying the measurement.
+          example: did:example:aem-metering
+        data_completeness:
+          $ref: '#/components/schemas/DataCompleteness'
+        source_of_record:
+          $ref: '#/components/schemas/SourceOfRecord'
+        data_record_class:
+          $ref: '#/components/schemas/DataRecordClass'
+        measurement_recorded_at:
+          type: integer
+          format: int64
+          minimum: 0
+          description: |
+            Unix timestamp of the moment the measurement this record derives
+            from was written to the off-chain store (`creation_time` of the
+            stored measurement), as distinct from `interval_start`, which is
+            when the energy flowed. Metering data arrives after the fact and by
+            a variable delay, so the two are not in the same order.
+
+            Not an attribute of Annex A.3.5. It is carried as provenance: it
+            tells a consumer how stale the metering behind a record was when the
+            record became derivable. Being stored data rather than a clock read,
+            it is stable across repeated queries for the same record.
+
+            It is **not** the field this endpoint filters on — `start_time` and
+            `end_time` window on when the trade was validated. The two differ
+            whenever a trade was validated later than its metering arrived.
+          example: 1778761200
+    AttributeProvenance:
+      type: object
+      description: |
+        Annex A.3.6 — disposal of the environmental attribute, restricted to
+        what this service observes. Only two attributes remain: whether the
+        volume passed through storage, which follows from the asset the
+        measurement came from, and the support scheme the asset is remunerated
+        under, which is reserved and not populated in the proof of concept.
+
+        `attribute_mode`, `claim_permitted`, `bundling_status`,
+        `official_cancellation_reference`, `disclosure_year_affected`,
+        `uniqueness_control_reference` and `permitted_claim_text_id` are defined
+        by Annex A.3.6 but are **not** carried by this API. The first three
+        state how the environmental attribute was disposed of — whether it was
+        marketed, whether a claim may be asserted, and whether it travelled with
+        the electricity. The next two record the cancellation of an official
+        certificate in the national registry, which follows a disposal this
+        service does not make. `uniqueness_control_reference` identifies the
+        reconciliation run of Annex A.5, rules 13-15, executed across the
+        records of all participating communities for a settlement period; no
+        such reconciliation runs here, and a value invented for it would assert
+        a control that had not been performed. `permitted_claim_text_id`
+        references an approved-wording register held by the scheme. All seven
+        are decisions or controls of the issuing party, which assigns them when
+        it issues a record from this data.
+      required:
+        - support_scheme_status
+        - storage_mediated_flag
+      properties:
+        support_scheme_status:
+          allOf:
+            - $ref: '#/components/schemas/SupportSchemeStatus'
+          nullable: true
+          description: |
+            Obligation R (reserved, not populated in the proof of concept).
+            Support scheme under which the asset is remunerated. Where
+            populated, participation in the feed-in system excludes issuance,
+            so an issued record never carries `feed_in_tariff`.
+          example: one_off_payment
+        storage_mediated_flag:
+          type: boolean
+          description: Obligation M. True where the volume passed through storage.
+    BeneficiaryAndClaim:
+      type: object
+      description: |
+        Annex A.3.7 — the holder of the record. Identifiers are pseudonymous;
+        the mapping to identifying data remains with the issuing party.
+
+        The claim half of the group — `claim_holder_id`, `retirement_timestamp`
+        and `claim_period` — is defined by Annex A.3.7 but is **not** carried by
+        this API. All three come into existence when a record is retired for a
+        beneficiary. This service does not issue records and therefore never
+        retires them, so all three would be permanently null; the issuing party
+        assigns them when it retires a record derived from this data.
+      required:
+        [
+          owner_id,
+          consumption_metering_point_id,
+          facility_id,
+        ]
+      properties:
+        owner_id:
+          type: string
+          description: |
+            Obligation M. Pseudonymous account of the current holder of the
+            record, being the producer at issuance and the storage asset owner
+            following a transfer.
+          example: lic-member-014
+        consumption_metering_point_id:
+          type: string
+          nullable: true
+          description: Obligation C. Pseudonymous.
+        facility_id:
+          type: string
+          nullable: true
+          description: |
+            Obligation C. Ontology individual, for example `LICHouse9`. Absent
+            where the record is issued at community or pilot site level.
+          example: LICHouse9
+    TradeAndDeliveryReference:
+      type: object
+      description: |
+        Annex A.3.8 — references to the trades the volume was sold under and to
+        the delivery reconciliation held in the GSY DEX. Every attribute is
+        conditional; the group itself is always present, with the arrays empty
+        and the scalars null where the volume was not traded.
+
+        `charge_record_reference` is defined by Annex A.3.8 but is **not**
+        carried by this API. It links the two steps of a storage-mediated
+        volume, naming the local origin record whose attribute was transferred
+        at charge (Annex A.5, rules 9 and 10). That linkage is established by
+        the GP engine, which decides which charge a discharge is attributed to;
+        the offchain storage sees the two measurements but not the attribution
+        between them.
+      required:
+        [
+          trade_reference,
+          trade_hash,
+          trade_status_at_issuance,
+          delivery_verification_reference,
+        ]
+      properties:
+        trade_reference:
+          type: array
+          nullable: false
+          items:
+            type: string
+          description: |
+            Obligation C. Trade identifiers where the volume was sold, as held
+            in the GSY DEX (`trade_uuid`). One interval may be divided among
+            buyers, so the attribute is an array. Empty where the volume was not
+            traded.
+          example:
+            - 3f7c1e9a-5b2d-4c81-9f0a-6d4e2b8a1c37
+            - c81a4d6b-9e73-4f25-b0c8-27a5f1d93e60
+        trade_hash:
+          type: array
+          nullable: false
+          items:
+            type: string
+          description: |
+            Obligation C. Hashes corresponding to `trade_reference`, as held in
+            the GSY DEX, positionally aligned with it. Empty where
+            `trade_reference` is empty.
+          example:
+            - '0x3c9e11a4f8b27d5e6c0193ab74df82e5b1c6a09f3d7e48521bc9fa06e37d4b81'
+            - '0x77ab02c5d9e1483f7620ba5cd8e094172f3a6b8d05e9c71426fd83a09b5e7c12'
+        trade_status_at_issuance:
+          allOf:
+            - $ref: '#/components/schemas/TradeStatusAtIssuance'
+          nullable: true
+          description: |
+            Obligation C. Recorded state of the trade. Issuance requires
+            `delivery_verified`. Null where the volume was not traded.
+          example: delivery_verified
+        delivery_verification_reference:
+          type: string
+          nullable: true
+          description: |
+            Obligation C. Present where the GSY DEX has reconciled delivery for
+            the interval, null otherwise.
+          example: exec:2026-05-14:slot50
+    RatedPower:
+      type: object
+      description: Rating of an asset, as held in the asset register.
+      required: [value, unit]
+      properties:
+        value:
+          type: number
+          format: double
+          example: 27.29
+        unit:
+          type: string
+          example: kW
+    RecordType:
+      type: string
+      description: |
+        Record type within the certificate schema family (Annex A.1, A.4).
+        `local_origin_record` is issued against metered generation and may carry
+        an environmental claim; `flexibility_activation_record` is issued against
+        a metered dispatch and asserts none.
+      enum: [local_origin_record, flexibility_activation_record]
+    EnergyUnit:
+      type: string
+      description: |
+        Unit of `energy_quantity`. kWh at two decimal places for the pilot
+        (Annex A.1).
+      enum: [kWh]
+    AssetClass:
+      type: string
+      description: |
+        Asset class of the asset the record is issued against; the classes
+        present at the pilot site (Annex A.4). The Annex A.6.3 worked example
+        shows `storage`, which corresponds to `Battery` here.
+      enum: [PV, Battery, HeatPump, MeteringPoint]
+    FlowDirection:
+      type: string
+      description: |
+        Direction of the metered flow, import or export as recorded by the
+        measurement descriptor (Annex A.3.5, A.4).
+      enum: [import, export]
+    ActivationDirection:
+      type: string
+      description: |
+        Direction of a metered flexibility activation. Not enumerated in
+        Annex A.4; taken from the Annex A.6.3 worked example.
+      enum: [charge, discharge]
+    DeliveryScope:
+      type: string
+      description: |
+        Scope of the delivery the record covers (Annex A.4). Inter-community
+        delivery is not asserted as a community transaction.
+      enum: [intra_community, inter_community, supplier_offtake, grid_export]
+    SupportSchemeStatus:
+      type: string
+      description: |
+        Support scheme under which the asset is remunerated (Annex A.4).
+        Reserved; feed-in tariff participation excludes issuance.
+      enum: [feed_in_tariff, one_off_payment, waiting_list, none]
+    DataCompleteness:
+      type: string
+      description: |
+        Completeness of the underlying measurement data (Annex A.4). Terms are
+        to be aligned to the national data exchange vocabulary. Issuance is
+        rejected where the value is `incomplete`.
+      enum: [complete, substituted, incomplete]
+    SourceOfRecord:
+      type: string
+      description: |
+        Source of record of the measurement (Annex A.4). Only
+        `operator_validated` supports a claim of regulatory standing.
+      enum: [platform, operator_validated]
+    DataRecordClass:
+      type: string
+      description: |
+        Class of the underlying data record (Annex A.3.5). The GSY DEX persists
+        both measurements and forecasts; only a measurement may be certified, so
+        issuance is rejected where the value is `forecast` (Annex A.5, rule 3).
+      enum: [measurement, forecast]
+    TradeStatusAtIssuance:
+      type: string
+      description: |
+        Recorded state of the trade at issuance (Annex A.4). Issuance requires
+        `delivery_verified`.
+      enum: [settled, delivery_verified]
+    ForecastSchema:
+      type: object
+      description: Forecasted energy profile point of an asset/area.
+      required: [area_uuid, area_hash, community_uuid, time_slot, creation_time, energy_kwh, confidence]
+      properties:
+        area_uuid:
+          type: string
+        area_hash:
+          type: string
+        community_uuid:
+          type: string
+        time_slot:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Time slot of the forecast, unix seconds.
+        creation_time:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Creation time, unix seconds.
+        energy_kwh:
+          type: number
+          format: double
+          description: Forecasted energy (kWh).
+        confidence:
+          type: number
+          format: double
+          description: Confidence level of the forecast.
+    AssetType:
+      type: string
+      description: Type of an asset or area.
+      enum: [BATTERY, SMART_METER, PV, GRID_METER, EV, HEAT_PUMP, BOILER, AREA]
+    AreaTopologySchema:
+      type: object
+      description: Area entry of a market topology.
+      required: [area_uuid, name, area_type, area_hash]
+      properties:
+        area_uuid:
+          type: string
+        name:
+          type: string
+        area_type:
+          $ref: '#/components/schemas/AssetType'
+        area_hash:
+          type: string
+    MarketTopologySchema:
+      type: object
+      description: Market topology document as stored in the database.
+      required: [market_id, community_uuid, community_name, time_slot, creation_time, community_areas]
+      properties:
+        market_id:
+          type: string
+          description: Market id (H256 hash serialized as string).
+        community_uuid:
+          type: string
+        community_name:
+          type: string
+        time_slot:
+          type: integer
+          format: int32
+          minimum: 0
+          description: Market time slot, unix seconds.
+        creation_time:
+          type: integer
+          format: int32
+          minimum: 0
+          description: Creation time, unix seconds.
+        community_areas:
+          type: array
+          items:
+            $ref: '#/components/schemas/AreaTopologySchema'
+    CommunitySummary:
+      type: object
+      description: Summary of the markets stored for a single community.
+      required: [community_name, community_uuid, market_count, earliest_slot, latest_slot]
+      properties:
+        community_name:
+          type: string
+          description: Name of the community the markets are grouped by.
+        community_uuid:
+          type: string
+          description: Community uuid taken from the community's most recent market.
+        market_count:
+          type: integer
+          format: int32
+          minimum: 0
+          description: Number of market topologies stored for this community.
+        earliest_slot:
+          type: integer
+          format: int32
+          minimum: 0
+          description: Earliest market `time_slot` seen for this community, unix seconds.
+        latest_slot:
+          type: integer
+          format: int32
+          minimum: 0
+          description: Latest market `time_slot` seen for this community, unix seconds.

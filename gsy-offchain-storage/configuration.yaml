@@ -7,3 +7,16 @@ database_name: "orderbook"
 database_url_scheme: "mongodb"
 node_url: "localhost:9944"
 scheduler_interval: 1000
+# Optional replica-set / connection tuning fields. Leave unset for dev so the
+# emitted URI stays single-host and byte-identical to before. For a production
+# replica set, set database_host to a comma-separated seed list and uncomment
+# the fields below, e.g.:
+#   database_host: "m0:27017,m1:27017,m2:27017"
+#   database_replica_set: "rs0"
+#   database_auth_source: "admin"
+#   database_tls: true
+#   database_options: "journal=true&wtimeoutMS=10000&readConcernLevel=majority&readPreference=primary&retryReads=true"
+# database_replica_set:
+# database_options:
+# database_auth_source:
+# database_tls:

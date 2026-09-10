@@ -1,0 +1,342 @@
+# =============================================================================
+# GSY DEX — central services (single server, Tailscale mesh)
+# =============================================================================
+# Everything except the validator nodes: off-chain storage, the matching /
+# market-orchestrator / execution engines, and the 3-node MongoDB replica set.
+#
+# A Tailscale sidecar (tailscale-central) joins the tailnet AND the internal
+# docker bridge. Storage + the three engines share its network namespace, so they
+# reach the port-less validators over the mesh while still reaching mongo on the
+# bridge. Because they share one namespace, they talk to storage via localhost.
+#
+#   export TS_AUTHKEY=tskey-auth-...
+#   GSY_NODE_HOST=<node-1 tailnet ip>    # e.g. 100.x.y.z (no scheme)
+#   GSY_NODE_PORT=9944
+#   API_KEY=<shared off-chain-storage key>        # also authenticates the identity server
+#   ASSET_DID_MASTER_SEED=<openssl rand -hex 32>  # or set it in .env/gsy-ewf-identity-server.env
+#   docker compose -f docker-compose.central.yml up --build
+#
+# ASSET_DID_MASTER_SEED is a SECRET and is the source of truth for every asset DID:
+# back it up out of band, and never let two environments share one. See
+# .env/gsy-ewf-identity-server.env.example.
+#
+# Storage :8080 is published on the sidecar for optional public/off-mesh access
+# =============================================================================
+
+x-mongo-node: &mongo-node
+  image: mongo:8.0
+  command: ["mongod", "--replSet", "rs0", "--keyFile", "/keyfile/mongo-keyfile", "--bind_ip_all"]
+  restart: unless-stopped
+  depends_on:
+    mongo-keyfile-init:
+      condition: service_completed_successfully
+  healthcheck:
+    test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+    interval: 10s
+    timeout: 5s
+    retries: 10
+    start_period: 20s
+
+services:
+  # --- Tailscale sidecar: on the docker bridge (for mongo) + the tailnet (for the
+  #     remote validators). Storage + the engines share its network namespace. ---
+  tailscale-central:
+    image: tailscale/tailscale:latest
+    container_name: tailscale-central
+    hostname: gsy-central
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY:?set TS_AUTHKEY to a Tailscale auth key}
+      - TS_HOSTNAME=gsy-central
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_USERSPACE=false
+      - TS_EXTRA_ARGS=--accept-dns=false
+    volumes:
+      - tailscale-central-state:/var/lib/tailscale
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "8080:8080" # off-chain storage, published for optional public access (remove for mesh-only)
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "tailscale", "ip", "-4"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  gsy-offchain-storage:
+    container_name: gsy-offchain-storage
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: ./gsy-offchain-storage/Dockerfile
+    network_mode: "service:tailscale-central"
+    depends_on:
+      tailscale-central:
+        condition: service_healthy
+      mongo-init:
+        condition: service_completed_successfully
+    environment:
+      - RUST_LOG=info
+      - APPLICATION_HOST=0.0.0.0
+      - APPLICATION_PORT=8080
+      - DATABASE_NAME=orderbook
+      - DATABASE_HOST=mongo1:27017,mongo2:27017,mongo3:27017
+      - DATABASE_REPLICA_SET=rs0
+      - DATABASE_AUTH_SOURCE=admin
+      - DATABASE_URL_SCHEME=mongodb
+      - DATABASE_USERNAME=gsy
+      - DATABASE_PASSWORD=gsy
+      # event_listener dials ws://<this>; give it a validator's tailnet address (no scheme).
+      - NODE_URL=${GSY_NODE_HOST:-gsy-node}:${GSY_NODE_PORT:-9944}
+      - SCHEDULER_INTERVAL=900
+      - API_KEY=${API_KEY:-fedecom_user}
+      # Guarantees of origin pilot parameters; see .env/gsy-offchain-storage.env.example.
+      # GOO_MUNICIPALITY_CODE and GOO_GRID_LEVEL await confirmation from AEM, and
+      # GOO_DATA_PROVIDER_ID is a placeholder DID.
+      - GOO_SITE_ID=${GOO_SITE_ID:-ch-aem-goo-poc}
+      - GOO_INTERVAL_DURATION_S=${GOO_INTERVAL_DURATION_S:-900}
+      - GOO_ROUNDING_RULE=${GOO_ROUNDING_RULE:-half_up_2dp}
+      - GOO_MUNICIPALITY_CODE=${GOO_MUNICIPALITY_CODE:-5226}
+      - GOO_GRID_OPERATOR_ID=${GOO_GRID_OPERATOR_ID:-AEM}
+      - GOO_GRID_LEVEL=${GOO_GRID_LEVEL:-7}
+      - GOO_DATA_PROVIDER_ID=${GOO_DATA_PROVIDER_ID:-did:example:aem-metering}
+      - GOO_PROPERTY_MEASURED=${GOO_PROPERTY_MEASURED:-measurement#active_energy}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health_check"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  gsy-matching-engine:
+    container_name: gsy-matching-engine
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: ./gsy-matching-engine/Dockerfile
+    network_mode: "service:tailscale-central"
+    depends_on:
+      tailscale-central:
+        condition: service_healthy
+      gsy-offchain-storage:
+        condition: service_healthy
+    working_dir: /var/www/matching-engine
+    environment:
+      - API_KEY=${API_KEY:-fedecom_user}
+    # Shared netns: storage is localhost; the node is a tailnet address.
+    entrypoint:
+      [
+        "/usr/local/bin/gsy-matching-engine",
+        "web3",
+        "http://localhost",
+        "8080",
+        "ws://${GSY_NODE_HOST:-gsy-node}",
+        "${GSY_NODE_PORT:-9944}",
+      ]
+
+  # Sudo-registers the trading user and the exchange operator so the orchestrator
+  # will create markets and the community client's orders are accepted. One-shot
+  # and idempotent (deployment/bootstrap/register.js:88-91), so re-runs are safe.
+  # There is no local gsy-node here — the validators are remote, over the tailnet —
+  # so it waits on the sidecar and relies on CONNECT_RETRIES for the node itself.
+  gsy-bootstrap:
+    container_name: gsy-bootstrap
+    build:
+      context: ./deployment/bootstrap
+      dockerfile: Dockerfile
+    network_mode: "service:tailscale-central"
+    depends_on:
+      tailscale-central:
+        condition: service_healthy
+    env_file:
+      - ./.env/gsy-bootstrap.env
+    # env_file cannot do ${...} substitution; inline environment wins over env_file.
+    environment:
+      - NODE_URL=ws://${GSY_NODE_HOST:-gsy-node}:${GSY_NODE_PORT:-9944}
+    restart: "no"
+
+  gsy-market-orchestrator:
+    container_name: gsy-market-orchestrator
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: ./gsy-market-orchestrator/Dockerfile
+    network_mode: "service:tailscale-central"
+    depends_on:
+      tailscale-central:
+        condition: service_healthy
+      gsy-offchain-storage:
+        condition: service_healthy
+      gsy-bootstrap:
+        condition: service_completed_successfully
+    environment:
+      - RUST_LOG=info,gsy_market_orchestrator=debug
+      - GSY_NODE_URL=ws://${GSY_NODE_HOST:-gsy-node}:${GSY_NODE_PORT:-9944}
+      - ORCHESTRATOR_SIGNER_SURI=//Alice
+      - OFFCHAIN_STORAGE_URL=http://localhost:8080
+      - API_KEY=${API_KEY:-fedecom_user}
+
+  gsy-execution-engine:
+    container_name: gsy-execution-engine
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: ./gsy-execution-engine/Dockerfile
+    network_mode: "service:tailscale-central"
+    depends_on:
+      tailscale-central:
+        condition: service_healthy
+      gsy-offchain-storage:
+        condition: service_healthy
+    working_dir: /var/www/execution-engine
+    environment:
+      - API_KEY=${API_KEY:-fedecom_user}
+    entrypoint:
+      [
+        "/usr/local/bin/gsy-execution-engine",
+        "web3",
+        "http://localhost",
+        "8080",
+        "ws://${GSY_NODE_HOST:-gsy-node}",
+        "${GSY_NODE_PORT:-9944}",
+        "30",
+        "3600",
+        "0.10",
+      ]
+
+  # EWF DID / verifiable-credential service. Mints one did:ethr per ontology asset
+  # and per community from ASSET_DID_MASTER_SEED; gsy-community-client pushes the
+  # subject set to it on POST /asset-dids/sync.
+  #
+  # NOTE the build context differs from every other service here: this image's
+  # Dockerfile does `COPY package.json ./`, so it must be built from its own
+  # directory, not from the repo root.
+  #
+  # Port 3000 is deliberately NOT published on the sidecar: this service holds the
+  # asset master seed and the credential issuer key, and its only caller
+  # (gsy-community-client) shares the same network namespace.
+  gsy-ewf-identity-server:
+    container_name: gsy-ewf-identity-server
+    restart: unless-stopped
+    build:
+      context: ./gsy-ewf-identity-server
+      dockerfile: Dockerfile
+    network_mode: "service:tailscale-central"
+    depends_on:
+      tailscale-central:
+        condition: service_healthy
+      mongo-init:
+        condition: service_completed_successfully
+    # Secrets: ASSET_DID_MASTER_SEED, ISSUER_PRIVATE_KEY/ISSUER_PUBLIC_KEY, JWT_SECRET.
+    # EWC_RPC_URL must be reachable at boot — did.service.ts:32-60 calls getNetwork()
+    # and identityOwner() in onModuleInit, so the service will not start without it.
+    env_file:
+      - ./.env/gsy-ewf-identity-server.env
+    # env_file cannot do ${...} substitution; inline environment wins over env_file.
+    # Uses the existing rs0 replica set with its own database — no fourth mongo.
+    environment:
+      - MONGODB_URI=mongodb://gsy:gsy@mongo1:27017,mongo2:27017,mongo3:27017/identitydb?authSource=admin&replicaSet=rs0
+      - API_KEY=${API_KEY:-fedecom_user}
+    # node:18-alpine has no curl (unlike the Rust images above), so this uses
+    # busybox wget. /api-json is the Swagger document: unauthenticated, and served
+    # only once Nest has finished booting.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:3000/api-json"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  gsy-community-client:
+    container_name: gsy-community-client
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: ./gsy-community-client/Dockerfile
+    network_mode: "service:tailscale-central"
+    depends_on:
+      tailscale-central:
+        condition: service_healthy
+      gsy-offchain-storage:
+        condition: service_healthy
+      gsy-bootstrap:
+        condition: service_completed_successfully
+    # FEDECOM forecaster / InfluxDB credentials (outbound HTTPS required).
+    env_file:
+      - ./.env/gsy-community-client.env
+    # Shared netns: storage is localhost; the node is a tailnet address.
+    # env_file cannot do ${...} substitution; inline environment wins over env_file.
+    environment:
+      - GSY_NODE_URL=ws://${GSY_NODE_HOST:-gsy-node}:${GSY_NODE_PORT:-9944}
+      - OFFCHAIN_STORAGE_URL=http://localhost:8080
+      # Shared netns again: the identity server is localhost:3000. Not a depends_on —
+      # an unavailable identity server must not delay or stall forecast ingestion or
+      # order publication; the sync loop logs and retries on the next tick.
+      - IDENTITY_SERVER_URL=http://localhost:3000
+      # One key for the off-chain storage AND the identity server (deliberate, plan §2.6).
+      - API_KEY=${API_KEY:-fedecom_user}
+
+  # --- MongoDB replica set (rs0), internal to the central docker bridge ---
+  mongo-keyfile-init:
+    image: mongo:8.0
+    entrypoint:
+      - bash
+      - -c
+      - |
+        set -e
+        if [ ! -s /keyfile/mongo-keyfile ]; then
+          head -c 756 /dev/urandom | base64 > /keyfile/mongo-keyfile
+        fi
+        chmod 400 /keyfile/mongo-keyfile
+        chown 999:999 /keyfile/mongo-keyfile
+    volumes:
+      - mongo-keyfile:/keyfile
+    restart: "no"
+
+  mongo1:
+    <<: *mongo-node
+    container_name: mongo1
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=gsy
+      - MONGO_INITDB_ROOT_PASSWORD=gsy
+    volumes:
+      - mongo1-data:/data/db
+      - mongo-keyfile:/keyfile:ro
+
+  mongo2:
+    <<: *mongo-node
+    container_name: mongo2
+    volumes:
+      - mongo2-data:/data/db
+      - mongo-keyfile:/keyfile:ro
+
+  mongo3:
+    <<: *mongo-node
+    container_name: mongo3
+    volumes:
+      - mongo3-data:/data/db
+      - mongo-keyfile:/keyfile:ro
+
+  mongo-init:
+    image: mongo:8.0
+    depends_on:
+      mongo1:
+        condition: service_healthy
+      mongo2:
+        condition: service_healthy
+      mongo3:
+        condition: service_healthy
+    entrypoint: ["bash", "/mongo-rs-init.sh"]
+    volumes:
+      - ./deployment/mongodb-dev/mongo-rs-init.sh:/mongo-rs-init.sh:ro
+    restart: "no"
+
+volumes:
+  mongo-keyfile:
+  mongo1-data:
+  mongo2-data:
+  mongo3-data:
+  tailscale-central-state:

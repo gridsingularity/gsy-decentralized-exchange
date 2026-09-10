@@ -57,6 +57,7 @@ impl system::Config for Test {
 	type SystemWeightInfo = ();
 	type SS58Prefix = SS58Prefix;
 	type OnSetCode = ();
+	type ExtensionsWeightInfo = ();
 }
 
 pub const ALICE: AccountId = AccountId::new(*b"01234567890123456789012345678901");
@@ -93,6 +94,7 @@ impl pallet_balances::Config for Test {
 	type MaxFreezes = ();
 	type RuntimeHoldReason = ();
 	type RuntimeFreezeReason = ();
+	type DoneSlashHandler = ();
 }
 
 parameter_types! {
