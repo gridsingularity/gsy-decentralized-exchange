@@ -43,6 +43,7 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
     error PriceMismatch();
     error EnergyMismatch();
     error InvalidPenalty();
+    error TradedQuantityMismatch();
 
     constructor() {
         _disableInitializers();
@@ -83,6 +84,30 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
         uint64 penaltyEnergy;
     }
 
+    struct ClearingResult {
+        bytes16 marketId;
+        uint8 clearingStatus;
+        uint256 clearingPrice;
+        uint256 totalSupply;
+        uint256 totalDemand;
+        uint256 tradedQuantity;
+        uint32 numTrades;
+    }
+
+    event MarketClearing(
+        bytes16 indexed marketId,
+        uint8 clearingStatus,
+        uint256 clearingPrice,
+        uint256 totalSupply,
+        uint256 totalDemand,
+        uint256 tradedQuantity,
+        uint32 numTrades
+    );
+    struct MarketSettlement {
+        Match[] matches;
+        ClearingResult clearingResult;
+    }
+
     mapping(bytes16 => uint256) public penaltyEnergyByTrade;
     mapping(bytes16 => uint256) public penaltyEnergyByActor;
 
@@ -91,10 +116,36 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
      * @dev Only callable by the Matching Engine (Operator).
      */
     function settleBatch(
-        Match[] calldata matches
+        MarketSettlement[] calldata settlements
     ) external onlyRole(OPERATOR_ROLE) {
+        for (uint256 m = 0; m < settlements.length; m++) {
+            MarketSettlement calldata settlement = settlements[m];
+
+            if (_sumSelectedEnergy(settlement.matches) != settlement.clearingResult.tradedQuantity) {
+                revert TradedQuantityMismatch();
+            }
+
+            for (uint256 i = 0; i < settlement.matches.length; i++) {
+                _settleTrade(settlement.matches[i]);
+            }
+
+            emit MarketClearing(
+                settlement.clearingResult.marketId,
+                settlement.clearingResult.clearingStatus,
+                settlement.clearingResult.clearingPrice,
+                settlement.clearingResult.totalSupply,
+                settlement.clearingResult.totalDemand,
+                settlement.clearingResult.tradedQuantity,
+                settlement.clearingResult.numTrades
+            );
+        }
+    }
+
+    function _sumSelectedEnergy(
+        Match[] calldata matches
+    ) internal pure returns (uint256 total) {
         for (uint256 i = 0; i < matches.length; i++) {
-            _settleTrade(matches[i]);
+            total += matches[i].selectedEnergy;
         }
     }
 
