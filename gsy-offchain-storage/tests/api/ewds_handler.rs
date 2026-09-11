@@ -20,7 +20,7 @@ fn test_config(gateway_url: String) -> EwdsHandlerConfig {
         topics: EwdsTopicConfig::from_env(),
         poll_interval_ms: 500,
         request_batch_size: 100,
-        response_send_timeout_ms: 60_000
+        response_send_timeout_ms: 60_000,
     }
 }
 
@@ -247,7 +247,6 @@ async fn clearing_results_query_bad_payload_errors() {
 
     stop_app(app).await;
 }
-
 
 fn make_market(market_id: &str, community_id: &str, opening_time: &str) -> MarketSchema {
     MarketSchema {

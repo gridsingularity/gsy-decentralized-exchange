@@ -92,8 +92,8 @@ async fn submit_market_forecasts_three_users(
 }
 
 fn matching_algorithm_from_env() -> MatchingAlgorithm {
-    let configured_value = env::var("MATCHING_ALGORITHM")
-        .unwrap_or_else(|_| MatchingAlgorithm::default().to_string());
+    let configured_value =
+        env::var("MATCHING_ALGORITHM").unwrap_or_else(|_| MatchingAlgorithm::default().to_string());
     MatchingAlgorithm::from_str(configured_value.as_str())
         .unwrap_or_else(|error| panic!("Invalid MATCHING_ALGORITHM: {}", error))
 }
