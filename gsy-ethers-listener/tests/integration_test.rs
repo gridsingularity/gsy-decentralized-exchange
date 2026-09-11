@@ -7,7 +7,7 @@ use ethers::{
 };
 use gsy_ethers_listener::{
     GsyEthersListener, GsyEventHandler, ListenerConfig, MarketStatusUpdatedFilter,
-    OrderCancelledFilter, OrderPlacedFilter, TradeSettledFilter,
+    OrderCancelledFilter, OrderPlacedFilter, TradeSettledFilter, MarketClearingFilter
 };
 use std::fs::File;
 use std::io::Write;
@@ -33,6 +33,13 @@ impl GsyEventHandler for MockHandler {
         Ok(())
     }
     async fn handle_market_status(&self, _: MarketStatusUpdatedFilter) -> Result<()> {
+        Ok(())
+    }
+    async fn handle_market_clearing(
+        &self,
+        _: MarketClearingFilter,
+        _: LogMeta,
+    ) -> Result<()> {
         Ok(())
     }
 }
