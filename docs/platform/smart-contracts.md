@@ -135,6 +135,18 @@ Purpose:
 
 `TradeSettlement` does not move funds. Billing and payment are handled by external services.
 
+### Shared Order Parameters
+
+`OrderRegistry.OrderParams` is the single Solidity order definition used by
+`placeOrder`, `getOrder`, and both orders in `TradeSettlement.Match`. It includes
+`isBid`, `preferredTradingPartner`, `preferredEnergyRate`, and `tradingPartner`
+alongside the identity, energy, and timing fields. There is no separate
+`TradeSettlement.OrderData` definition.
+
+Settlement verifies these fields against the stored orders and requires
+`isBid=true` for the bid and `isBid=false` for the offer. Preferred-partner
+selection and negotiated pricing remain matching-engine responsibilities.
+
 ## Role Assignment at Bootstrap
 
 Deployment script assigns:
