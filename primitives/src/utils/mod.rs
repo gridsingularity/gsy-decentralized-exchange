@@ -1,3 +1,4 @@
+pub mod endpoint_calls;
 use anyhow::Result;
 use blake2::digest::{Update, VariableOutput};
 use blake2::Blake2bVar;
