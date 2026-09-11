@@ -4,19 +4,21 @@ use ethers::prelude::*;
 use gsy_community_client::node_connector::orders::publish_orders;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use primitives::db_api_schema::orders::{
-    energy_type_to_contract, DbAttributes, DbRequirements, EnergyType,OrderStatus, DbOrderSchema
+    energy_type_to_contract, DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderStatus,
 };
 use primitives::db_api_schema::profiles::MeasurementSchema;
 use primitives::db_api_schema::trades::DbTradeSchema;
+use primitives::ewds::dto::{EwdsOrderDto, EwdsTradeDto};
 use primitives::matching::matching_block_interval;
+use primitives::utils::endpoint_calls::fetch_clearing_results;
 use primitives::utils::{
+    parse_or_hash_bytes16, NODE_FLOAT_SCALING_FACTOR,
     create_encrypted_bytes16_from_string,
     NODE_FLOAT_SCALING_FACTOR,
     parse_uuid_or_hex_bytes16,
     bytes16_to_hex,
 };
 use std::collections::HashSet;
-use primitives::ewds::dto::{EwdsOrderDto, EwdsTradeDto};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
@@ -350,8 +352,8 @@ async fn submit_bid(world: &mut MyWorld, user_name: String) {
         address_to_full_hex(world.order_registry_address),
         world.private_key_for_user(user_name.as_str()),
     )
-        .await
-        .expect("Failed to publish bid order");
+    .await
+    .expect("Failed to publish bid order");
 }
 
 #[when(
@@ -379,7 +381,7 @@ async fn submit_preferred_partner_bid(
         Some(requirements),
         None,
     )
-        .await;
+    .await;
 }
 
 #[when(expr = "{string} submits an offer")]
@@ -394,8 +396,8 @@ async fn submit_offer(world: &mut MyWorld, user_name: String) {
         address_to_full_hex(world.order_registry_address),
         world.private_key_for_user(user_name.as_str()),
     )
-        .await
-        .expect("Failed to publish offer order");
+    .await
+    .expect("Failed to publish offer order");
 
     // Matching runs on block boundaries. Fast-forward local Anvil after both
     // orders are present in the registry.
@@ -426,7 +428,7 @@ async fn submit_preferred_partner_offer(
         None,
         Some(attributes),
     )
-        .await;
+    .await;
 }
 
 #[when(
@@ -495,7 +497,7 @@ async fn submit_combined_pay_as_clear_order_book(world: &mut MyWorld) {
         Some(preferred_bid_requirements),
         None,
     )
-        .await;
+    .await;
 
     let preferred_offer_attributes = DbAttributes {
         trading_partner_id: Some(actor_id_as_hex(world, "alice")),
@@ -510,7 +512,7 @@ async fn submit_combined_pay_as_clear_order_book(world: &mut MyWorld) {
         None,
         Some(preferred_offer_attributes),
     )
-        .await;
+    .await;
 
     wait_for_order_in_offchain_storage(world, preferred_bid.as_str()).await;
     wait_for_order_in_offchain_storage(world, preferred_offer.as_str()).await;
@@ -546,8 +548,8 @@ async fn submit_measurements(world: &mut MyWorld) {
 async fn assert_trade_settled_on_chain(world: &MyWorld, trade: &DbTradeSchema) {
     let order_registry =
         OrderRegistryContract::new(world.order_registry_address, world.provider.clone());
-    let bid_id = parse_uuid_or_hex_bytes16(trade.bid_hash.as_str())
-        .expect("could not convert hex to bytes");
+    let bid_id =
+        parse_uuid_or_hex_bytes16(trade.bid_hash.as_str()).expect("could not convert hex to bytes");
     let offer_id = parse_uuid_or_hex_bytes16(trade.offer_hash.as_str())
         .expect("could not convert hex to bytes");
     let bid_status = order_registry
@@ -1008,4 +1010,36 @@ async fn verify_penalties_on_chain(world: &mut MyWorld) {
         recorded_trade_ids.len(),
         trades.len()
     );
+}
+
+#[then("corresponding clearing results are written to the DB")]
+async fn verify_clearing_results(world: &mut MyWorld) {
+    let clearing_results = fetch_clearing_results(
+        "E2E_TESTS_CLIENT_ID",
+        "e2e_tests",
+        &market_id_as_hex(world).to_lowercase(),
+    )
+    .await
+    .expect("failed to fetch clearing results");
+
+    eprintln!("{:?}", clearing_results);
+
+    assert_eq!(
+        clearing_results.len(),
+        1,
+        "expected exactly 1 clearing result, got {}",
+        clearing_results.len()
+    );
+
+    let result = &clearing_results[0];
+    assert_eq!(result.market_id, market_id_as_hex(world).to_lowercase());
+    assert_eq!(result.clearing_status, "final");
+    assert_eq!(result.no_bid_reason, None);
+    assert_eq!(result.clearing_price, 3.0);
+    assert_eq!(result.total_supply, 10.0);
+    assert_eq!(result.total_demand, 10.0);
+    assert_eq!(result.trade_quantity, 10.0);
+    assert_eq!(result.num_trades, 1);
+    assert!(!result.tx_hash.is_empty(), "tx_hash should not be empty");
+    assert!(result.created_at > 0, "created_at should be set");
 }

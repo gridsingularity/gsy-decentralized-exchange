@@ -248,7 +248,6 @@ async fn clearing_results_query_bad_payload_errors() {
     stop_app(app).await;
 }
 
-
 fn make_market(market_id: &str, community_id: &str, opening_time: &str) -> MarketSchema {
     MarketSchema {
         market_id: market_id.to_string(),

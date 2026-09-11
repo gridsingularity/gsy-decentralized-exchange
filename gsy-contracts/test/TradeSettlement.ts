@@ -12,9 +12,12 @@ import {
 } from "./utils";
 
 describe("TradeSettlement", function () {
+  // Clearing status enum values (adjust if your contract defines them differently)
+  const CLEARING_STATUS_FINAL = 0;
+
   async function deploySettlementFixture() {
     const [admin, buyer, seller, operator, executionEngine] =
-      await ethers.getSigners();
+        await ethers.getSigners();
 
     const controller = await deployUpgradeableContract("MarketController", [
       admin.address,
@@ -37,8 +40,8 @@ describe("TradeSettlement", function () {
 
     const SETTLEMENT_ROLE_REGISTRY = await registry.SETTLEMENT_ROLE();
     await registry.grantRole(
-      SETTLEMENT_ROLE_REGISTRY,
-      await settlement.getAddress(),
+        SETTLEMENT_ROLE_REGISTRY,
+        await settlement.getAddress(),
     );
 
     const OPERATOR_ROLE = await settlement.OPERATOR_ROLE();
@@ -80,6 +83,19 @@ describe("TradeSettlement", function () {
       isBid: ORDER_TYPE_ASK,
     };
 
+    // Helper to build a ClearingResult, defaulting tradedQuantity to the
+    // sum of the provided matches' selectedEnergy.
+    const makeClearingResult = (overrides = {}) => ({
+      marketId,
+      clearingStatus: CLEARING_STATUS_FINAL,
+      clearingPrice: 45,
+      totalSupply: 100,
+      totalDemand: 100,
+      tradedQuantity: 100,
+      numTrades: 1,
+      ...overrides,
+    });
+
     return {
       settlement,
       registry,
@@ -92,6 +108,7 @@ describe("TradeSettlement", function () {
       buyerActorId,
       sellerActorId,
       marketId,
+      makeClearingResult,
     };
   }
 
@@ -107,8 +124,8 @@ describe("TradeSettlement", function () {
       buyerActorId,
       sellerActorId,
       marketId,
-    } =
-      await loadFixture(deploySettlementFixture);
+      makeClearingResult,
+    } = await loadFixture(deploySettlementFixture);
 
     await registry.connect(buyer).placeOrder(bid);
     await registry.connect(seller).placeOrder(offer);
@@ -123,24 +140,106 @@ describe("TradeSettlement", function () {
       clearingPrice: 45,
     };
 
-    await expect(settlement.connect(operator).settleBatch([matchData]))
-      .to.emit(settlement, "TradeSettled")
-      .withArgs(
-        matchData.tradeId,
-        bid.orderId,
-        offer.orderId,
-        buyerActorId,
-        sellerActorId,
-        marketId,
-        bid.timeSlot,
-        ZERO_BYTES16,
-        ZERO_BYTES16,
-        matchData.selectedEnergy,
-        matchData.clearingPrice,
-      );
+    const settlementBatch = {
+      matches: [matchData],
+      clearingResult: makeClearingResult(),
+    };
+
+    await expect(settlement.connect(operator).settleBatch([settlementBatch]))
+        .to.emit(settlement, "TradeSettled")
+        .withArgs(
+            matchData.tradeId,
+            bid.orderId,
+            offer.orderId,
+            buyerActorId,
+            sellerActorId,
+            marketId,
+            bid.timeSlot,
+            ZERO_BYTES16,
+            ZERO_BYTES16,
+            matchData.selectedEnergy,
+            matchData.clearingPrice,
+        );
 
     expect(await registry.getStatus(bid.orderId)).to.equal(2); // Executed
     expect(await registry.getStatus(offer.orderId)).to.equal(2); // Executed
+  });
+
+  it("Should emit a MarketClearing event", async function () {
+    const {
+      settlement,
+      registry,
+      buyer,
+      seller,
+      operator,
+      bid,
+      offer,
+      marketId,
+      makeClearingResult,
+    } = await loadFixture(deploySettlementFixture);
+
+    await registry.connect(buyer).placeOrder(bid);
+    await registry.connect(seller).placeOrder(offer);
+
+    const matchData = {
+      tradeId: bytes16Id("trade-1"),
+      bid,
+      offer,
+      residualBidId: ZERO_BYTES16,
+      residualOfferId: ZERO_BYTES16,
+      selectedEnergy: 100,
+      clearingPrice: 45,
+    };
+
+    const clearingResult = makeClearingResult();
+    const settlementBatch = { matches: [matchData], clearingResult };
+
+    await expect(settlement.connect(operator).settleBatch([settlementBatch]))
+        .to.emit(settlement, "MarketClearing")
+        .withArgs(
+            clearingResult.marketId,
+            clearingResult.clearingStatus,
+            clearingResult.clearingPrice,
+            clearingResult.totalSupply,
+            clearingResult.totalDemand,
+            clearingResult.tradedQuantity,
+            clearingResult.numTrades,
+        );
+  });
+
+  it("Should revert when tradedQuantity does not match summed selectedEnergy", async function () {
+    const {
+      settlement,
+      registry,
+      buyer,
+      seller,
+      operator,
+      bid,
+      offer,
+      makeClearingResult,
+    } = await loadFixture(deploySettlementFixture);
+
+    await registry.connect(buyer).placeOrder(bid);
+    await registry.connect(seller).placeOrder(offer);
+
+    const matchData = {
+      tradeId: bytes16Id("trade-1"),
+      bid,
+      offer,
+      residualBidId: ZERO_BYTES16,
+      residualOfferId: ZERO_BYTES16,
+      selectedEnergy: 100,
+      clearingPrice: 45,
+    };
+
+    const settlementBatch = {
+      matches: [matchData],
+      clearingResult: makeClearingResult({ tradedQuantity: 99 }),
+    };
+
+    await expect(
+        settlement.connect(operator).settleBatch([settlementBatch]),
+    ).to.be.revertedWithCustomError(settlement, "TradedQuantityMismatch");
   });
 
   it("Should emit residual order ids for partially filled orders", async function () {
@@ -155,6 +254,7 @@ describe("TradeSettlement", function () {
       buyerActorId,
       sellerActorId,
       marketId,
+      makeClearingResult,
     } = await loadFixture(deploySettlementFixture);
 
     const partialOffer = { ...offer, energy: 150 };
@@ -173,27 +273,31 @@ describe("TradeSettlement", function () {
       clearingPrice: 45,
     };
 
-    await expect(settlement.connect(operator).settleBatch([matchData]))
-      .to.emit(settlement, "TradeSettled")
-      .withArgs(
-        matchData.tradeId,
-        bid.orderId,
-        partialOffer.orderId,
-        buyerActorId,
-        sellerActorId,
-        marketId,
-        bid.timeSlot,
-        ZERO_BYTES16,
-        residualOfferId,
-        matchData.selectedEnergy,
-        matchData.clearingPrice,
-      );
+    const settlementBatch = {
+      matches: [matchData],
+      clearingResult: makeClearingResult(),
+    };
+
+    await expect(settlement.connect(operator).settleBatch([settlementBatch]))
+        .to.emit(settlement, "TradeSettled")
+        .withArgs(
+            matchData.tradeId,
+            bid.orderId,
+            partialOffer.orderId,
+            buyerActorId,
+            sellerActorId,
+            marketId,
+            bid.timeSlot,
+            ZERO_BYTES16,
+            residualOfferId,
+            matchData.selectedEnergy,
+            matchData.clearingPrice,
+        );
   });
 
   it("Should submit penalties from the execution engine", async function () {
-    const { settlement, buyerActorId, executionEngine, marketId } = await loadFixture(
-      deploySettlementFixture,
-    );
+    const { settlement, buyerActorId, executionEngine, marketId } =
+        await loadFixture(deploySettlementFixture);
 
     const tradeId1 = bytes16Id("trade-1");
     const tradeId2 = bytes16Id("trade-2");
@@ -214,10 +318,10 @@ describe("TradeSettlement", function () {
     ];
 
     await expect(settlement.connect(executionEngine).submitPenalties(penalties))
-      .to.emit(settlement, "PenaltyRecorded")
-      .withArgs(buyerActorId, marketId, tradeId1, 30)
-      .and.to.emit(settlement, "PenaltiesSubmitted")
-      .withArgs(2);
+        .to.emit(settlement, "PenaltyRecorded")
+        .withArgs(buyerActorId, marketId, tradeId1, 30)
+        .and.to.emit(settlement, "PenaltiesSubmitted")
+        .withArgs(2);
 
     expect(await settlement.penaltyEnergyByTrade(tradeId1)).to.equal(30);
     expect(await settlement.penaltyEnergyByTrade(tradeId2)).to.equal(70);
@@ -226,7 +330,7 @@ describe("TradeSettlement", function () {
 
   it("Should fail penalties submission from unauthorized account", async function () {
     const { settlement, buyerActorId, operator, marketId } = await loadFixture(
-      deploySettlementFixture,
+        deploySettlementFixture,
     );
 
     const penalties = [
@@ -239,16 +343,16 @@ describe("TradeSettlement", function () {
     ];
 
     await expect(
-      settlement.connect(operator).submitPenalties(penalties),
+        settlement.connect(operator).submitPenalties(penalties),
     ).to.be.revertedWithCustomError(
-      settlement,
-      "AccessControlUnauthorizedAccount",
+        settlement,
+        "AccessControlUnauthorizedAccount",
     );
   });
 
   it("Should fail penalties submission with invalid payload", async function () {
     const { settlement, executionEngine, marketId } = await loadFixture(
-      deploySettlementFixture,
+        deploySettlementFixture,
     );
 
     const penalties = [
@@ -261,14 +365,13 @@ describe("TradeSettlement", function () {
     ];
 
     await expect(
-      settlement.connect(executionEngine).submitPenalties(penalties),
+        settlement.connect(executionEngine).submitPenalties(penalties),
     ).to.be.revertedWithCustomError(settlement, "InvalidPenalty");
   });
 
   it("Should fail if orders are not open", async function () {
-    const { settlement, operator, bid, offer } = await loadFixture(
-      deploySettlementFixture,
-    );
+    const { settlement, operator, bid, offer, makeClearingResult } =
+        await loadFixture(deploySettlementFixture);
 
     const matchData = {
       tradeId: bytes16Id("trade-1"),
@@ -280,14 +383,19 @@ describe("TradeSettlement", function () {
       clearingPrice: 45,
     };
 
+    const settlementBatch = {
+      matches: [matchData],
+      clearingResult: makeClearingResult(),
+    };
+
     await expect(
-      settlement.connect(operator).settleBatch([matchData]),
+        settlement.connect(operator).settleBatch([settlementBatch]),
     ).to.be.revertedWithCustomError(settlement, "OrderNotOpen");
   });
 
   it("Should fail if match order details do not match stored orders", async function () {
-    const { settlement, registry, buyer, seller, operator, bid, offer } =
-      await loadFixture(deploySettlementFixture);
+    const { settlement, registry, buyer, seller, operator, bid, offer, makeClearingResult } =
+        await loadFixture(deploySettlementFixture);
 
     await registry.connect(buyer).placeOrder(bid);
     await registry.connect(seller).placeOrder(offer);
@@ -303,14 +411,19 @@ describe("TradeSettlement", function () {
       clearingPrice: 45,
     };
 
+    const settlementBatch = {
+      matches: [matchData],
+      clearingResult: makeClearingResult(),
+    };
+
     await expect(
-      settlement.connect(operator).settleBatch([matchData]),
+        settlement.connect(operator).settleBatch([settlementBatch]),
     ).to.be.revertedWithCustomError(settlement, "InvalidOrderParams");
   });
 
   it("Should fail on price mismatch (Offer > Bid)", async function () {
-    const { settlement, registry, buyer, seller, operator, bid, offer } =
-      await loadFixture(deploySettlementFixture);
+    const { settlement, registry, buyer, seller, operator, bid, offer, makeClearingResult } =
+        await loadFixture(deploySettlementFixture);
 
     const highOffer = { ...offer, energyRate: 60 };
     await registry.connect(buyer).placeOrder(bid);
@@ -326,8 +439,13 @@ describe("TradeSettlement", function () {
       clearingPrice: 55,
     };
 
+    const settlementBatch = {
+      matches: [matchData],
+      clearingResult: makeClearingResult({ clearingPrice: 55 }),
+    };
+
     await expect(
-      settlement.connect(operator).settleBatch([matchData]),
+        settlement.connect(operator).settleBatch([settlementBatch]),
     ).to.be.revertedWithCustomError(settlement, "PriceMismatch");
   });
 });

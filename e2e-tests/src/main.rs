@@ -18,8 +18,8 @@ async fn main() {
     println!("Waiting for services to start...");
     sleep(std::time::Duration::from_secs(30)).await;
 
-    let matching_algorithm = env::var("MATCHING_ALGORITHM")
-        .unwrap_or_else(|_| MatchingAlgorithm::default().to_string());
+    let matching_algorithm =
+        env::var("MATCHING_ALGORITHM").unwrap_or_else(|_| MatchingAlgorithm::default().to_string());
     let matching_algorithm = MatchingAlgorithm::from_str(&matching_algorithm)
         .unwrap_or_else(|error| panic!("Invalid MATCHING_ALGORITHM: {}", error));
     let feature_path = env::var("E2E_FEATURE_PATH")
