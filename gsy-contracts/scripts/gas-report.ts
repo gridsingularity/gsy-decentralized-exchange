@@ -49,23 +49,6 @@ function parseSettleBatchSizes(): number[] {
   return [...new Set(sizes)].sort((left, right) => left - right);
 }
 
-function settlementOrderData(order: any) {
-  return {
-    orderId: order.orderId,
-    createdBy: order.createdBy,
-    marketId: order.marketId,
-    timeSlot: order.timeSlot,
-    creationTime: order.creationTime,
-    energy: order.energy,
-    energyRate: order.energyRate,
-    energySourcePreference: order.energySourcePreference,
-    energyType: order.energyType,
-    preferredTradingPartner: order.preferredTradingPartner,
-    preferredEnergyRate: order.preferredEnergyRate,
-    tradingPartner: order.tradingPartner,
-  };
-}
-
 function buildMatch(
   tradeId: string,
   bid: any,
@@ -74,8 +57,8 @@ function buildMatch(
 ) {
   return {
     tradeId,
-    bid: settlementOrderData(bid),
-    offer: settlementOrderData(offer),
+    bid,
+    offer,
     residualBidId: ethers.ZeroHash.slice(0, 34),
     residualOfferId,
     selectedEnergy: 100_000,

@@ -54,25 +54,10 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
         registry = OrderRegistry(_registry);
     }
 
-    struct OrderData {
-        bytes16 orderId;
-        bytes16 createdBy;
-        bytes16 marketId;
-        uint64 timeSlot;
-        uint64 creationTime;
-        uint64 energy;
-        uint64 energyRate;
-        uint8 energySourcePreference;
-        uint8 energyType;
-        bytes16 preferredTradingPartner;
-        uint64 preferredEnergyRate;
-        bytes16 tradingPartner;
-    }
-
     struct Match {
         bytes16 tradeId;
-        OrderData bid;
-        OrderData offer;
+        OrderRegistry.OrderParams bid;
+        OrderRegistry.OrderParams offer;
         bytes16 residualBidId;
         bytes16 residualOfferId;
         uint256 selectedEnergy;
@@ -194,7 +179,7 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
     }
 
     function _validateOrderData(
-        OrderData calldata provided,
+        OrderRegistry.OrderParams calldata provided,
         OrderRegistry.OrderParams memory stored,
         bool expectedBid
     ) internal pure {
@@ -211,6 +196,7 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
             stored.preferredTradingPartner != provided.preferredTradingPartner ||
             stored.preferredEnergyRate != provided.preferredEnergyRate ||
             stored.tradingPartner != provided.tradingPartner ||
+            stored.isBid != provided.isBid ||
             stored.isBid != expectedBid
         ) {
             revert InvalidOrderParams();
