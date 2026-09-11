@@ -2,7 +2,9 @@ use ethers::{prelude::*, utils::Anvil};
 use ethers_solc::{artifacts::Severity, Project, ProjectPathsConfig};
 use gsy_matching_engine::connectors::evm_connector::send_settle_batch_transaction;
 use gsy_matching_engine::models::{BidOfferMatch, Order};
-use primitives::db_api_schema::orders::{DbOrderSchema, OrderEnum, OrderStatus};
+use primitives::db_api_schema::orders::{
+    DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus,
+};
 use primitives::utils::{parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR};
 use std::{collections::HashMap, fs::File, io::Write, sync::Arc};
 use tempfile::TempDir;
@@ -15,6 +17,9 @@ abigen!(
         function lastClearingPrice() external view returns (uint256)
         function lastBidCreatedBy() external view returns (bytes16)
         function lastOfferCreatedBy() external view returns (bytes16)
+        function lastBidPreferredTradingPartner() external view returns (bytes16)
+        function lastBidPreferredEnergyRate() external view returns (uint64)
+        function lastOfferTradingPartner() external view returns (bytes16)
     ]"#
 );
 
@@ -51,6 +56,10 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
                 uint64 energyRate;
                 uint8 energySourcePreference;
                 uint8 energyType;
+                bool isBid;
+                bytes16 preferredTradingPartner;
+                uint64 preferredEnergyRate;
+                bytes16 tradingPartner;
             }
 
             struct Match {
@@ -68,6 +77,9 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
             uint256 public lastClearingPrice;
             bytes16 public lastBidCreatedBy;
             bytes16 public lastOfferCreatedBy;
+            bytes16 public lastBidPreferredTradingPartner;
+            uint64 public lastBidPreferredEnergyRate;
+            bytes16 public lastOfferTradingPartner;
 
             constructor() {
                 roles[msg.sender][OPERATOR_ROLE] = true;
@@ -82,10 +94,15 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
                 settledCount += matches.length;
                 if (matches.length > 0) {
                     Match calldata first = matches[0];
+                    require(first.bid.isBid, "bid must have isBid=true");
+                    require(!first.offer.isBid, "offer must have isBid=false");
                     lastSelectedEnergy = first.selectedEnergy;
                     lastClearingPrice = first.clearingPrice;
                     lastBidCreatedBy = first.bid.createdBy;
                     lastOfferCreatedBy = first.offer.createdBy;
+                    lastBidPreferredTradingPartner = first.bid.preferredTradingPartner;
+                    lastBidPreferredEnergyRate = first.bid.preferredEnergyRate;
+                    lastOfferTradingPartner = first.offer.tradingPartner;
                 }
             }
         }
@@ -165,7 +182,11 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
         energy_kWh: 100.0,
         energy_rate: 50.0,
         created_by: bid_actor_id.clone(),
-        requirements: None,
+        requirements: Some(DbRequirements {
+            trading_partner_id: Some(ask_actor_id.clone()),
+            energy_type: Some(EnergyType::Green),
+            preferred_energy_rate: Some(45.0),
+        }),
         attributes: None,
     };
     let ask_db = DbOrderSchema {
@@ -180,7 +201,10 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
         energy_rate: 40.0,
         created_by: ask_actor_id.clone(),
         requirements: None,
-        attributes: None,
+        attributes: Some(DbAttributes {
+            trading_partner_id: Some(bid_actor_id.clone()),
+            energy_type: EnergyType::Pv,
+        }),
     };
 
     let bid_order = Order {
@@ -261,5 +285,29 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
     assert_eq!(
         mock_contract.last_offer_created_by().call().await.unwrap(),
         parse_uuid_or_hex_bytes16(&ask_actor_id).expect("Failed to parse uuid")
+    );
+    assert_eq!(
+        mock_contract
+            .last_bid_preferred_trading_partner()
+            .call()
+            .await
+            .unwrap(),
+        parse_uuid_or_hex_bytes16(&ask_actor_id).expect("Invalid on-chain actor ID")
+    );
+    assert_eq!(
+        mock_contract
+            .last_bid_preferred_energy_rate()
+            .call()
+            .await
+            .unwrap(),
+        (45.0 * NODE_FLOAT_SCALING_FACTOR) as u64
+    );
+    assert_eq!(
+        mock_contract
+            .last_offer_trading_partner()
+            .call()
+            .await
+            .unwrap(),
+        parse_uuid_or_hex_bytes16(&bid_actor_id).expect("Invalid on-chain actor ID")
     );
 }

@@ -110,11 +110,20 @@
       "default": null
     },
     "preferredTradingPartner": {
-      "description": "Preferred trading partner. IRI: int:preferredTradingPartner. Nullable.",
+      "description": "Preferred counterparty: a bid requirement or offer attribute depending on orderType. IRI: int:preferredTradingPartner. Nullable.",
       "type": [
         "string",
         "null"
       ],
+      "default": null
+    },
+    "preferredEnergyRate": {
+      "description": "Preferred bilateral energy rate in EUR/kWh. IRI: int:preferredEnergyRate. Nullable.",
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0,
       "default": null
     }
   },

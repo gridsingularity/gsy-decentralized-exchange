@@ -2,7 +2,10 @@ use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAda
 use gsy_community_client::time_utils::get_last_and_next_timeslot;
 use httpmock::prelude::*;
 use primitives::db_api_schema::profiles::{ForecastSchema, MeasurementSchema};
+use primitives::utils::{bytes16_to_hex, generate_market_id};
 use primitives::{MarketType, MatchingAlgorithm};
+
+const COMMUNITY_ID: &str = "11111111-1111-4111-8111-111111111111";
 
 #[tokio::test]
 async fn test_create_market_posts_market_schema() {
@@ -17,7 +20,7 @@ async fn test_create_market_posts_market_schema() {
     let adapter = AreaMarketInfoAdapter::new(Some(server.base_url()));
     let market = adapter
         .create_market(
-            "comm_uuid".to_string(),
+            COMMUNITY_ID.to_string(),
             time_slot,
             MatchingAlgorithm::PayAsBid,
         )
@@ -25,7 +28,15 @@ async fn test_create_market_posts_market_schema() {
         .unwrap();
 
     assert_eq!(market.market_type, MarketType::Spot);
-    assert_eq!(market.community_id, "comm_uuid");
+    assert_eq!(market.community_id, COMMUNITY_ID);
+    assert_eq!(
+        market.market_id,
+        bytes16_to_hex(generate_market_id(
+            COMMUNITY_ID,
+            MarketType::Spot,
+            time_slot,
+        ))
+    );
     assert_eq!(market.delivery_start_time, format!("{time_slot:020}"));
     mock_request.assert();
 }

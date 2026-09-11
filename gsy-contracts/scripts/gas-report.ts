@@ -49,18 +49,6 @@ function parseSettleBatchSizes(): number[] {
   return [...new Set(sizes)].sort((left, right) => left - right);
 }
 
-function settlementOrderData(order: any) {
-  return {
-    orderId: order.orderId,
-    createdBy: order.createdBy,
-    marketId: order.marketId,
-    timeSlot: order.timeSlot,
-    creationTime: order.creationTime,
-    energy: order.energy,
-    energyRate: order.energyRate,
-  };
-}
-
 function buildMatch(
   tradeId: string,
   bid: any,
@@ -69,8 +57,8 @@ function buildMatch(
 ) {
   return {
     tradeId,
-    bid: settlementOrderData(bid),
-    offer: settlementOrderData(offer),
+    bid,
+    offer,
     residualBidId: ethers.ZeroHash.slice(0, 34),
     residualOfferId,
     selectedEnergy: 100_000,
@@ -546,7 +534,12 @@ async function main() {
     creationTime: now,
     energy: 100_000,
     energyRate: 15_000,
+    energySourcePreference: 0,
+    energyType: 0,
     isBid: true,
+    preferredTradingPartner: ethers.ZeroHash.slice(0, 34),
+    preferredEnergyRate: 0,
+    tradingPartner: ethers.ZeroHash.slice(0, 34),
   };
   const offerOrder = {
     orderId: offerId,
@@ -556,7 +549,12 @@ async function main() {
     creationTime: now + 1,
     energy: 150_000,
     energyRate: 10_000,
+    energySourcePreference: 0,
+    energyType: 0,
     isBid: false,
+    preferredTradingPartner: ethers.ZeroHash.slice(0, 34),
+    preferredEnergyRate: 0,
+    tradingPartner: ethers.ZeroHash.slice(0, 34),
   };
   const cancelOrder = {
     ...bidOrder,

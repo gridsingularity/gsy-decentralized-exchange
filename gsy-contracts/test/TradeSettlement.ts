@@ -65,6 +65,9 @@ describe("TradeSettlement", function () {
       energySourcePreference: ENERGY_TYPE_GREEN,
       energyType: ENERGY_TYPE_NONE,
       isBid: ORDER_TYPE_BID,
+      preferredTradingPartner: sellerActorId,
+      preferredEnergyRate: 45,
+      tradingPartner: ZERO_BYTES16,
     };
 
     const offer = {
@@ -78,6 +81,9 @@ describe("TradeSettlement", function () {
       energySourcePreference: ENERGY_TYPE_NONE,
       energyType: ENERGY_TYPE_GREEN,
       isBid: ORDER_TYPE_ASK,
+      preferredTradingPartner: ZERO_BYTES16,
+      preferredEnergyRate: 0,
+      tradingPartner: buyerActorId,
     };
 
     return {
@@ -307,6 +313,46 @@ describe("TradeSettlement", function () {
       settlement.connect(operator).settleBatch([matchData]),
     ).to.be.revertedWithCustomError(settlement, "InvalidOrderParams");
   });
+
+  for (const side of ["bid", "offer"] as const) {
+    for (const field of [
+      "isBid",
+      "preferredTradingPartner",
+      "preferredEnergyRate",
+      "tradingPartner",
+    ] as const) {
+      it(`Should reject a changed ${field} on the ${side}`, async function () {
+        const { settlement, registry, buyer, seller, operator, bid, offer } =
+          await loadFixture(deploySettlementFixture);
+
+        await registry.connect(buyer).placeOrder(bid);
+        await registry.connect(seller).placeOrder(offer);
+
+        const order = side === "bid" ? bid : offer;
+        const changedValue = field === "isBid"
+          ? !order.isBid
+          : field === "preferredEnergyRate"
+            ? order.preferredEnergyRate + 1
+            : bytes16Id("different-partner");
+        const matchData = {
+          tradeId: bytes16Id("trade-tampered"),
+          bid,
+          offer,
+          [side]: { ...order, [field]: changedValue },
+          residualBidId: ZERO_BYTES16,
+          residualOfferId: ZERO_BYTES16,
+          selectedEnergy: 100,
+          clearingPrice: 45,
+        };
+
+        await expect(
+          settlement.connect(operator).settleBatch([matchData]),
+        ).to.be.revertedWithCustomError(settlement, "InvalidOrderParams");
+        expect(await registry.getStatus(bid.orderId)).to.equal(1); // Open
+        expect(await registry.getStatus(offer.orderId)).to.equal(1); // Open
+      });
+    }
+  }
 
   it("Should fail on price mismatch (Offer > Bid)", async function () {
     const { settlement, registry, buyer, seller, operator, bid, offer } =

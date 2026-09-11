@@ -15,7 +15,8 @@ schemas under `schemas/v1.0.0/market`:
 Additional local message contracts wrap these entities for the current
 request/reply topics:
 
-- query request/reply envelopes for orders, trades, and measurements
+- query request/reply envelopes for orders, trades, measurements, and communities
+- an upsert request/reply envelope for communities
 - upsert request envelopes for forecasts, measurements, and markets
 
 Notes:

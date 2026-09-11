@@ -34,8 +34,25 @@ contract MarketController is Initializable, AccessControlUpgradeable {
         bytes16 marketId,
         bool isOpen
     ) external onlyRole(ORCHESTRATOR_ROLE) {
-        marketStatus[marketId] = isOpen;
-        emit MarketStatusUpdated(marketId, isOpen);
+        _setMarketStatus(marketId, isOpen);
+    }
+
+    /**
+     * @notice Open or close multiple market slots in one transaction.
+     * @param marketIds Intelligent market UUIDs encoded as bytes16.
+     * @param isOpen True to open, false to close.
+     */
+    function setMarketStatuses(
+        bytes16[] calldata marketIds,
+        bool isOpen
+    ) external onlyRole(ORCHESTRATOR_ROLE) {
+        uint256 marketCount = marketIds.length;
+        for (uint256 index = 0; index < marketCount; ) {
+            _setMarketStatus(marketIds[index], isOpen);
+            unchecked {
+                ++index;
+            }
+        }
     }
 
     /**
@@ -43,5 +60,10 @@ contract MarketController is Initializable, AccessControlUpgradeable {
      */
     function isMarketOpen(bytes16 marketId) external view returns (bool) {
         return marketStatus[marketId];
+    }
+
+    function _setMarketStatus(bytes16 marketId, bool isOpen) private {
+        marketStatus[marketId] = isOpen;
+        emit MarketStatusUpdated(marketId, isOpen);
     }
 }

@@ -4,7 +4,7 @@ use anyhow::{anyhow, Error, Result};
 use ethers::prelude::*;
 use ethers::utils::keccak256;
 use primitives::db_api_schema::orders::{
-    energy_type_to_contract, DbOrderSchema, EnergyType, OrderEnum, OrderStatus,
+    order_metadata_to_contract, DbOrderSchema, OrderEnum, OrderStatus,
 };
 use primitives::ewds::dto::EwdsOrderDto;
 use primitives::ewds::{EwdsClient, EwdsOperation};
@@ -21,17 +21,6 @@ use uuid::Uuid;
 abigen!(
     SettleOrderBatchContract,
     "src/connectors/abi/settle_order_batch.json"
-);
-
-type EvmOrderDataTuple = ([u8; 16], [u8; 16], [u8; 16], u64, u64, u64, u64, u8, u8);
-type EvmMatchTuple = (
-    [u8; 16],
-    EvmOrderDataTuple,
-    EvmOrderDataTuple,
-    [u8; 16],
-    [u8; 16],
-    U256,
-    U256,
 );
 
 struct PreparedOrders {
@@ -462,24 +451,7 @@ fn convert_db_order_to_canonical(order: &DbOrderSchema) -> Result<Order> {
     })
 }
 
-fn order_energy_source_preference(order: &DbOrderSchema) -> u8 {
-    order
-        .requirements
-        .as_ref()
-        .and_then(|requirements| requirements.energy_type.as_ref())
-        .map(energy_type_to_contract)
-        .unwrap_or(energy_type_to_contract(&EnergyType::None))
-}
-
-fn order_energy_type(order: &DbOrderSchema) -> u8 {
-    order
-        .attributes
-        .as_ref()
-        .map(|attributes| energy_type_to_contract(&attributes.energy_type))
-        .unwrap_or(energy_type_to_contract(&EnergyType::None))
-}
-
-fn to_evm_order_data(order: &DbOrderSchema, expected_type: OrderEnum) -> Result<EvmOrderDataTuple> {
+fn to_evm_order_data(order: &DbOrderSchema, expected_type: OrderEnum) -> Result<OrderParams> {
     if order.order_type != expected_type {
         return Err(anyhow!(
             "Order {} type mismatch. Expected {:?}, got {:?}",
@@ -489,17 +461,24 @@ fn to_evm_order_data(order: &DbOrderSchema, expected_type: OrderEnum) -> Result<
         ));
     }
 
-    Ok((
-        parse_bytes16_field("order_id", order.order_id.as_str())?,
-        parse_bytes16_field("created_by", order.created_by.as_str())?,
-        parse_bytes16_field("market_id", order.market_id.as_str())?,
-        order.time_slot,
-        order.creation_time,
-        (order.energy_kWh * NODE_FLOAT_SCALING_FACTOR).round() as u64,
-        (order.energy_rate * NODE_FLOAT_SCALING_FACTOR).round() as u64,
-        order_energy_source_preference(order),
-        order_energy_type(order),
-    ))
+    let metadata =
+        order_metadata_to_contract(order.requirements.as_ref(), order.attributes.as_ref());
+
+    Ok(OrderParams {
+        order_id: parse_bytes16_field("order_id", order.order_id.as_str())?,
+        created_by: parse_bytes16_field("created_by", order.created_by.as_str())?,
+        market_id: parse_bytes16_field("market_id", order.market_id.as_str())?,
+        time_slot: order.time_slot,
+        creation_time: order.creation_time,
+        energy: (order.energy_kWh * NODE_FLOAT_SCALING_FACTOR).round() as u64,
+        energy_rate: (order.energy_rate * NODE_FLOAT_SCALING_FACTOR).round() as u64,
+        energy_source_preference: metadata.energy_source_preference,
+        energy_type: metadata.energy_type,
+        is_bid: order.order_type == OrderEnum::Bid,
+        preferred_trading_partner: metadata.preferred_trading_partner,
+        preferred_energy_rate: metadata.preferred_energy_rate,
+        trading_partner: metadata.trading_partner,
+    })
 }
 
 fn optional_order_id_to_bytes16(order: Option<&Order>) -> Result<[u8; 16]> {
@@ -517,7 +496,7 @@ fn derive_trade_id() -> [u8; 16] {
 fn to_evm_matches(
     matches: Vec<BidOfferMatch>,
     order_lookup: &HashMap<String, DbOrderSchema>,
-) -> Result<Vec<EvmMatchTuple>> {
+) -> Result<Vec<Match>> {
     matches
         .into_iter()
         .map(|item| {
@@ -556,15 +535,15 @@ fn to_evm_matches(
                 ));
             }
 
-            Ok((
-                derive_trade_id(),
-                to_evm_order_data(bid_order, OrderEnum::Bid)?,
-                to_evm_order_data(offer_order, OrderEnum::Offer)?,
-                optional_order_id_to_bytes16(item.residual_bid.as_ref())?,
-                optional_order_id_to_bytes16(item.residual_offer.as_ref())?,
-                U256::from(item.selected_energy),
-                U256::from(item.energy_rate),
-            ))
+            Ok(Match {
+                trade_id: derive_trade_id(),
+                bid: to_evm_order_data(bid_order, OrderEnum::Bid)?,
+                offer: to_evm_order_data(offer_order, OrderEnum::Offer)?,
+                residual_bid_id: optional_order_id_to_bytes16(item.residual_bid.as_ref())?,
+                residual_offer_id: optional_order_id_to_bytes16(item.residual_offer.as_ref())?,
+                selected_energy: U256::from(item.selected_energy),
+                clearing_price: U256::from(item.energy_rate),
+            })
         })
         .collect()
 }
