@@ -17,6 +17,7 @@ use std::env;
 use std::str::FromStr;
 use tokio::time::{sleep, Duration};
 use tracing::{error, info, warn};
+use uuid::Uuid;
 
 abigen!(
     SettleOrderBatchContract,
@@ -580,20 +581,9 @@ fn optional_order_id_to_bytes16(order: Option<&Order>) -> Result<[u8; 16]> {
         .map(|value| value.unwrap_or([0u8; 16]))
 }
 
-fn derive_trade_id(
-    bid_id: &str,
-    offer_id: &str,
-    selected_energy: u64,
-    energy_rate: u64,
-) -> [u8; 16] {
-    let hash = keccak256(
-        format!(
-            "{}:{}:{}:{}",
-            bid_id, offer_id, selected_energy, energy_rate
-        )
-        .as_bytes(),
-    );
-    hash[..16].try_into().expect("hash prefix is 16 bytes")
+fn derive_trade_id() -> [u8; 16] {
+    let uuid = Uuid::new_v4().to_string();
+    parse_uuid_or_hex_bytes16(&uuid).expect("Error converting uuid to bytes")
 }
 
 fn to_evm_clearing_result(clearing_result: &ClearingResult) -> Result<EvmClearingResultTuple> {

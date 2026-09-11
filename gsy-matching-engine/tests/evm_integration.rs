@@ -7,7 +7,7 @@ use gsy_matching_engine::connectors::evm_connector::ClearingResult;
 use primitives::db_api_schema::trades::ClearingStatus;
 use gsy_matching_engine::models::{BidOfferMatch, Order};
 use primitives::db_api_schema::orders::{DbOrderSchema, OrderEnum, OrderStatus};
-use primitives::utils::{parse_or_hash_bytes16, NODE_FLOAT_SCALING_FACTOR};
+use primitives::utils::{parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR};
 use std::{collections::HashMap, fs::File, io::Write, sync::Arc};
 use tempfile::TempDir;
 
@@ -308,11 +308,11 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
     );
     assert_eq!(
         mock_contract.last_bid_created_by().call().await.unwrap(),
-        parse_or_hash_bytes16(&bid_actor_id)
+        parse_uuid_or_hex_bytes16(&bid_actor_id).expect("Failed to parse uuid")
     );
     assert_eq!(
         mock_contract.last_offer_created_by().call().await.unwrap(),
-        parse_or_hash_bytes16(&ask_actor_id)
+        parse_uuid_or_hex_bytes16(&ask_actor_id).expect("Failed to parse uuid")
     );
     assert_eq!(
         mock_contract.last_traded_quantity().call().await.unwrap(),
