@@ -56,6 +56,7 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
                 uint64 energyRate;
                 uint8 energySourcePreference;
                 uint8 energyType;
+                bool isBid;
                 bytes16 preferredTradingPartner;
                 uint64 preferredEnergyRate;
                 bytes16 tradingPartner;
@@ -93,6 +94,8 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
                 settledCount += matches.length;
                 if (matches.length > 0) {
                     Match calldata first = matches[0];
+                    require(first.bid.isBid, "bid must have isBid=true");
+                    require(!first.offer.isBid, "offer must have isBid=false");
                     lastSelectedEnergy = first.selectedEnergy;
                     lastClearingPrice = first.clearingPrice;
                     lastBidCreatedBy = first.bid.createdBy;

@@ -17,6 +17,7 @@
             {
                 "name": "matches",
                 "type": "tuple[]",
+                "internalType": "struct TradeSettlement.Match[]",
                 "components": [
                     {
                         "name": "tradeId",
@@ -25,6 +26,7 @@
                     {
                         "name": "bid",
                         "type": "tuple",
+                        "internalType": "struct OrderRegistry.OrderParams",
                         "components": [
                             {"name": "orderId", "type": "bytes16"},
                             {"name": "createdBy", "type": "bytes16"},
@@ -35,6 +37,7 @@
                             {"name": "energyRate", "type": "uint64"},
                             {"name": "energySourcePreference", "type": "uint8"},
                             {"name": "energyType", "type": "uint8"},
+                            {"name": "isBid", "type": "bool"},
                             {"name": "preferredTradingPartner", "type": "bytes16"},
                             {"name": "preferredEnergyRate", "type": "uint64"},
                             {"name": "tradingPartner", "type": "bytes16"}
@@ -43,6 +46,7 @@
                     {
                         "name": "offer",
                         "type": "tuple",
+                        "internalType": "struct OrderRegistry.OrderParams",
                         "components": [
                             {"name": "orderId", "type": "bytes16"},
                             {"name": "createdBy", "type": "bytes16"},
@@ -53,6 +57,7 @@
                             {"name": "energyRate", "type": "uint64"},
                             {"name": "energySourcePreference", "type": "uint8"},
                             {"name": "energyType", "type": "uint8"},
+                            {"name": "isBid", "type": "bool"},
                             {"name": "preferredTradingPartner", "type": "bytes16"},
                             {"name": "preferredEnergyRate", "type": "uint64"},
                             {"name": "tradingPartner", "type": "bytes16"}
