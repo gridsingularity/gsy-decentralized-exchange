@@ -4,8 +4,7 @@
 //! response parser (`pv_api::parse_response`), the percentile-based commitment /
 //! confidence mapping (`ForecastsManager::pv_forecast_schema_from_point` +
 //! `pv_pricing`), forecast validation/forwarding (`AreaMarketInfoAdapter`), order
-//! creation/pricing (`publish_orders`, which computes the confidence-lifted offer
-//! rate floor internally), and the inter-community net aggregation
+//! creation/pricing (`publish_orders`), and the inter-community net aggregation
 //! (`aggregate_net_import` + `create_inter_community_order`). Inputs are constructed
 //! programmatically (no live FEDECOM endpoints), mirroring the other e2e scenarios.
 
@@ -17,7 +16,7 @@ use gsy_community_client::constants::CommunityClientConstants;
 use gsy_community_client::external_forecasts::manager::ForecastsManager;
 use gsy_community_client::external_forecasts::pv_api::{parse_response, pv_avg_watts_to_kwh};
 use gsy_community_client::external_forecasts::pv_pricing::{
-	commitment_from_point, effective_offer_min_rate, PvCommitmentConfig,
+	commitment_from_point, PvCommitmentConfig,
 };
 use gsy_community_client::inter_community::{eligible_inter_community, inter_community_market_id};
 use gsy_community_client::node_connector::orders::{create_inter_community_order, publish_orders};
@@ -160,10 +159,11 @@ async fn create_pv_demand_topology(world: &mut MyWorld) {
 async fn ingest_pv_forecast(world: &mut MyWorld) {
 	let market = world.pv_market.clone().expect("topology created first");
 	let pv_area = area_by_name(&market.community_areas, PV_AREA).clone();
-	let cfg = PvCommitmentConfig::from_constants();
+	let cfg = PvCommitmentConfig::for_offers();
 
-	// A wide p5..p95 band (2.0..4.0 kWh around a 3.0 kWh point) => low confidence, which
-	// lifts the offer rate floor later.
+	// A wide p5..p95 band (2.0..4.0 kWh around a 3.0 kWh point) => low confidence. The band
+	// is symmetric about the point forecast, so the s = -1 half-band commitment lands
+	// exactly on q5.
 	let body = pv_response_body(world.target_delivery_time, 12000.0, 8000.0, 16000.0);
 	let response = parse_response(&body).expect("PV response must parse");
 	let points = &response.data.pv_forecasts;
@@ -178,8 +178,9 @@ async fn ingest_pv_forecast(world: &mut MyWorld) {
 	)
 	.expect("daytime PV point yields a forecast");
 
-	// Negative energy marks a production offer; magnitude equals the q5-based (risk
-	// aversion 1.0) commitment: q5 = 8000 W => 2.0 kWh over the 15-min slot.
+	// Negative energy marks a production offer; magnitude equals the offer-side
+	// (OFFER_RISK_FACTOR = -1) commitment F - (q95 - q5) / 2, which for this symmetric band
+	// is q5 = 8000 W => 2.0 kWh over the 15-min slot.
 	let expected_commitment = commitment_from_point(&points[0], &cfg);
 	assert!(day.energy_kwh < 0.0, "PV production forecast must be negative energy");
 	assert!(
@@ -325,24 +326,20 @@ async fn publish_pv_and_demand(world: &mut MyWorld) {
 	let demand = world.demand_bid_forecast.clone().expect("demand forecast built");
 	let seller = world.users.get("bob").unwrap().clone();
 	let buyer = world.users.get("charlie").unwrap().clone();
-	let slot = world.target_delivery_time;
-
 	// FLOW 4: the PV forecast (negative energy) becomes an Offer signed by bob; the demand
-	// forecast (positive energy) becomes a Bid signed by charlie. open_time == close_time
-	// fully progresses the offer rate ramp so it resolves deterministically to the
-	// confidence-lifted floor `effective_offer_min_rate`; the bid uses the flat bid rate.
-	publish_orders(node_url(), vec![pv], market.clone(), BID_RATE, slot, slot, &seller)
+	// forecast (positive energy) becomes a Bid signed by charlie. Offers price at the flat
+	// OFFER_RATE, bids at the flat BID_RATE — no confidence dependence on either side.
+	publish_orders(node_url(), vec![pv], market.clone(), BID_RATE, OFFER_RATE, &seller)
 		.await
 		.expect("Failed to publish PV production offer");
-	publish_orders(node_url(), vec![demand], market, BID_RATE, slot, slot, &buyer)
+	publish_orders(node_url(), vec![demand], market, BID_RATE, OFFER_RATE, &buyer)
 		.await
 		.expect("Failed to publish demand bid");
 	info!("Published PV offer (bob) and demand bid (charlie)");
 }
 
 #[then(
-	"the PV forecast is stored as an offer with a confidence-lifted rate floor and the demand \
-	 forecast as a flat-rate bid"
+	"the PV forecast is stored as a flat-rate offer and the demand forecast as a flat-rate bid"
 )]
 async fn verify_offer_and_bid(world: &mut MyWorld) {
 	let market = world.pv_market.clone().expect("topology created first");
@@ -388,24 +385,16 @@ async fn verify_offer_and_bid(world: &mut MyWorld) {
 		})
 		.expect("PV forecast must be stored as an Offer with the committed energy");
 	// energy_rate is the TOTAL price (energy * per-kWh rate), so the per-kWh rate is the
-	// quotient. It must equal the confidence-lifted floor and sit strictly above the flat
-	// MIN_ORDER_RATE (proving the low-confidence offer's floor was raised).
+	// quotient. It must equal the flat OFFER_RATE the caller passed in, regardless of the
+	// forecast's confidence.
 	let offer_per_kwh = offer.offer_component.energy_rate / offer.offer_component.energy;
-	let expected_floor = effective_offer_min_rate(
-		CommunityClientConstants.MIN_ORDER_RATE,
-		CommunityClientConstants.MAX_ORDER_RATE,
-		world.pv_offer_confidence,
-		CommunityClientConstants.PV_PRICE_CONFIDENCE_WEIGHT,
-	);
 	assert!(
-		expected_floor > CommunityClientConstants.MIN_ORDER_RATE + 1e-9,
-		"a low-confidence PV offer must lift the floor above MIN_ORDER_RATE"
-	);
-	assert!(
-		(offer_per_kwh - expected_floor).abs() < 1e-3,
-		"offer per-kWh rate {} must equal the confidence-lifted floor {}",
+		(offer_per_kwh - OFFER_RATE).abs() < 1e-3,
+		"offer per-kWh rate {} must equal the flat offer rate {} (confidence {} must not \
+		 affect price)",
 		offer_per_kwh,
-		expected_floor
+		OFFER_RATE,
+		world.pv_offer_confidence
 	);
 
 	// The demand forecast produced a Bid at the flat bid rate.
@@ -429,7 +418,7 @@ async fn verify_offer_and_bid(world: &mut MyWorld) {
 		BID_RATE
 	);
 	info!(
-		"Verified PV Offer (energy {}, rate {}/kWh floor) and demand Bid (energy {}, rate {}/kWh)",
+		"Verified PV Offer (energy {}, rate {}/kWh) and demand Bid (energy {}, rate {}/kWh)",
 		offer.offer_component.energy, offer_per_kwh, bid.bid_component.energy, bid_per_kwh
 	);
 }
@@ -499,7 +488,7 @@ fn inter_community_specs() -> Vec<(&'static str, f64, f64, f64, f64)> {
 async fn build_inter_community_pv_demand(world: &mut MyWorld) {
 	world.target_delivery_time = next_delivery_slot();
 	let adapter = AreaMarketInfoAdapter::new(Some(orderbook_url()));
-	let cfg = PvCommitmentConfig::from_constants();
+	let cfg = PvCommitmentConfig::for_offers();
 
 	// Create a PV + SMART_METER topology per eligible community.
 	let topologies: Vec<ExternalCommunityTopology> = inter_community_specs()

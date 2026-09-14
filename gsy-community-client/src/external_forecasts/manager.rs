@@ -1,7 +1,9 @@
 use crate::external_forecasts::ForecastApiError;
-use crate::external_forecasts::demand_api::{DemandForecastApiConnection, DemandForecaster};
+use crate::external_forecasts::demand_api::{
+    DemandForecastApiConnection, DemandForecastPoint, DemandForecaster,
+};
 use crate::external_forecasts::pv_api::{PvForecastApiConnection, PvForecastPoint};
-use crate::external_forecasts::pv_pricing::{PvCommitmentConfig, commitment_from_point};
+use crate::external_forecasts::pv_pricing::{PvCommitmentConfig, commitment, commitment_from_point};
 use chrono::{DateTime, Utc};
 use gsy_offchain_primitives::db_api_schema::market::{
     AreaTopologySchema, AssetType, MarketTopologySchema,
@@ -28,9 +30,6 @@ fn forecaster_site(meter_name: &str) -> Option<&'static str> {
         None
     }
 }
-
-// The API reports p5 / p95 quantiles alongside each forecast, i.e. a 90% confidence interval.
-const DEMAND_FORECAST_CONFIDENCE: f64 = 0.9;
 
 // Meters that must never be forecast even though the ontology classifies them as a
 // forecastable meter type. LIC02SM is a battery mislabelled as a SmartMeter; add further
@@ -112,6 +111,7 @@ impl ForecastsManager {
         // Demand forecasts for each metered community member. The forecaster `site` is
         // derived from the meter id (LIC*/GD*/AIC*) rather than the ontology community
         // name, which is now a generic `Pilot#` label. Meters with no known site are skipped.
+        let demand_cfg = PvCommitmentConfig::for_demand();
         for area in areas.iter() {
             if !Self::is_forecastable_meter(&area.name, &area.area_type) {
                 continue;
@@ -132,17 +132,15 @@ impl ForecastsManager {
                         site,
                         community_name
                     );
-                    for point in response.demand_forecast {
-                        forecasts.push(ForecastSchema {
-                            area_uuid: area.area_uuid.clone(),
-                            area_hash: area.area_hash.clone(),
-                            community_uuid: community_uuid.to_string(),
-                            time_slot: point.timestamp.timestamp() as u64,
-                            creation_time: Utc::now().timestamp() as u64,
-                            // The demand forecaster already reports energy in kWh.
-                            energy_kwh: point.forecast,
-                            confidence: DEMAND_FORECAST_CONFIDENCE,
-                        });
+                    for point in &response.demand_forecast {
+                        if let Some(schema) = Self::demand_forecast_schema_from_point(
+                            point,
+                            area,
+                            community_uuid,
+                            &demand_cfg,
+                        ) {
+                            forecasts.push(schema);
+                        }
                     }
                 }
                 Err(ForecastApiError::Http(e)) => error!(
@@ -159,6 +157,38 @@ impl ForecastsManager {
         forecasts
     }
 
+    // Build a demand `ForecastSchema` for one forecast point. Returns `None` for slots that
+    // commit zero energy (no forecast consumption → post no order), mirroring the PV night
+    // slot behaviour. Factored out as a pure function so the point → schema mapping
+    // (consumption sign, per-slot confidence, unix time_slot) is unit-testable offline
+    // without a live demand endpoint.
+    pub fn demand_forecast_schema_from_point(
+        point: &DemandForecastPoint,
+        area: &AreaTopologySchema,
+        community_uuid: &str,
+        cfg: &PvCommitmentConfig,
+    ) -> Option<ForecastSchema> {
+        // The demand forecaster already reports energy (and its p5/p95 quantiles) in kWh.
+        let committed = commitment(point.forecast, point.p5, point.p95, cfg);
+        // No forecast consumption in this slot: post no order.
+        if committed.energy_kwh == 0.0 {
+            return None;
+        }
+        Some(ForecastSchema {
+            area_uuid: area.area_uuid.clone(),
+            area_hash: area.area_hash.clone(),
+            community_uuid: community_uuid.to_string(),
+            time_slot: point.timestamp.timestamp() as u64,
+            creation_time: Utc::now().timestamp() as u64,
+            // Positive energy marks a consumption bid (see node_connector/orders.rs); the
+            // magnitude is the risk-adjusted committed quantity from pv_pricing, which for
+            // a buyer leans on the upper (q95) tail.
+            energy_kwh: committed.energy_kwh,
+            // The real per-slot confidence derived from the p5..p95 band.
+            confidence: committed.confidence,
+        })
+    }
+
     // Build a PV `ForecastSchema` for one forecast point. Returns `None` for night slots
     // (zero committed energy → post no order). Factored out as a pure function so the
     // point → schema mapping (production sign, per-slot confidence, unix time_slot) is
@@ -169,9 +199,9 @@ impl ForecastsManager {
         community_uuid: &str,
         cfg: &PvCommitmentConfig,
     ) -> Option<ForecastSchema> {
-        let commitment = commitment_from_point(point, cfg);
+        let committed = commitment_from_point(point, cfg);
         // Night slots commit zero energy: post no order.
-        if commitment.energy_kwh == 0.0 {
+        if committed.energy_kwh == 0.0 {
             return None;
         }
         Some(ForecastSchema {
@@ -181,10 +211,11 @@ impl ForecastsManager {
             time_slot: point.timestamp_utc().timestamp() as u64,
             creation_time: Utc::now().timestamp() as u64,
             // Negative energy marks a production offer (see node_connector/orders.rs); the
-            // magnitude is the confidence-adjusted committed quantity from pv_pricing.
-            energy_kwh: -commitment.energy_kwh,
+            // magnitude is the risk-adjusted committed quantity from pv_pricing, which for
+            // a seller leans on the lower (q5) tail.
+            energy_kwh: -committed.energy_kwh,
             // The real per-slot confidence, not the fixed demand constant.
-            confidence: commitment.confidence,
+            confidence: committed.confidence,
         })
     }
 
@@ -199,7 +230,7 @@ impl ForecastsManager {
         areas: &[AreaTopologySchema],
         start_time: DateTime<Utc>,
     ) -> Vec<ForecastSchema> {
-        let cfg = PvCommitmentConfig::from_constants();
+        let cfg = PvCommitmentConfig::for_offers();
 
         // Resolve the routable assets up front so unserved ones never reach the network.
         let targets: Vec<(AreaTopologySchema, &'static str)> = areas

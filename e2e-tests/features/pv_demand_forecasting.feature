@@ -13,7 +13,7 @@ Feature: GSY DEX PV and Demand Forecasting
     And the PV and demand forecasts are validated and forwarded to offchain storage
     And the Market Orchestrator opens the PV-and-demand Spot market
     And the PV production offer and the demand bid are published
-    Then the PV forecast is stored as an offer with a confidence-lifted rate floor and the demand forecast as a flat-rate bid
+    Then the PV forecast is stored as a flat-rate offer and the demand forecast as a flat-rate bid
     And a trade settles between the PV offer and the demand bid on-chain
 
   Scenario: Two communities net to a bid and an offer with PV production included in the net

@@ -191,16 +191,14 @@ async fn submit_parallel_orders(world: &mut MyWorld) {
 	let seller = world.users.get("bob").unwrap().clone();
 
 	for community in world.community_markets.clone() {
-		// open_time == close_time fully progresses the offer rate ramp so it resolves to the
-		// (confidence-1.0) floor MIN_ORDER_RATE, preserving the old flat offer rate.
-		let slot = community.topology.time_slot as u64;
+		// Bids price at the flat 0.3, offers at 0.07 (the MIN_ORDER_RATE default the offer
+		// ramp reaches at market close).
 		publish_orders(
 			node_url.clone(),
 			vec![community.bid_forecast.clone()],
 			community.topology.clone(),
 			0.3,
-			slot,
-			slot,
+			0.07,
 			&buyer,
 		)
 		.await
@@ -211,8 +209,7 @@ async fn submit_parallel_orders(world: &mut MyWorld) {
 			vec![community.offer_forecast.clone()],
 			community.topology.clone(),
 			0.3,
-			slot,
-			slot,
+			0.07,
 			&seller,
 		)
 		.await

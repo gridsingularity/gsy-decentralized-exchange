@@ -426,8 +426,7 @@ impl AppState {
                         replacement_forecasts,
                         market.clone(),
                         bid_rate,
-                        open_time,
-                        close_time,
+                        offer_rate,
                         &dev::alice(),
                     )
                     .await

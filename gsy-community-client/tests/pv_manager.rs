@@ -8,11 +8,13 @@ use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, AssetTy
 mod tests {
     use super::*;
 
-    /// Config identical to the v1 defaults, held explicitly so the mapping assertions do
-    /// not depend on env state.
+    /// Config identical to the shipped offer-side defaults, held explicitly so the
+    /// mapping assertions do not depend on env state. `side_sign` is `+1.0`, the
+    /// offer-side value set by `PvCommitmentConfig::for_offers`.
     fn default_cfg() -> PvCommitmentConfig {
         PvCommitmentConfig {
-            risk_aversion: 1.0,
+            risk_factor: -1.0,
+            side_sign: 1.0,
             spread_norm: 1.0,
             min_confidence: 0.1,
             min_forecast_kwh: 0.05,
@@ -82,7 +84,8 @@ mod tests {
             ForecastsManager::pv_forecast_schema_from_point(&p, &pv_area(), "community-uuid", &default_cfg())
                 .expect("daytime slot should produce an offer");
 
-        // risk_aversion = 1.0 commits q5 = 2.0 kWh, emitted as a negative production offer.
+        // s = -1 commits F - (q95 - q5) / 2 = 3.0 - 1.0 = 2.0 kWh (== q5 for this
+        // symmetric band), emitted as a negative production offer.
         assert!((schema.energy_kwh - (-2.0)).abs() < 1e-9);
         // relative_spread = (4.0 - 2.0) / 3.0 = 0.6667 => confidence = 1 - 0.6667 = 0.3333.
         assert!((schema.confidence - (1.0 / 3.0)).abs() < 1e-9);
@@ -108,6 +111,40 @@ mod tests {
             .and_utc()
             .timestamp() as u64;
         assert_eq!(schema.time_slot, expected);
+    }
+
+    #[test]
+    fn wide_band_offer_clamps_to_zero_and_skips_the_slot() {
+        // 4000 W => 1.0 kWh point forecast, p5 800 W => 0.2 kWh, p95 12000 W => 3.0 kWh.
+        // half_band = 1.4 kWh > F, so s = -1 drives the commitment below zero: it clamps
+        // to 0 and the slot yields no offer even though q5 > 0.
+        let p = point(4000.0, vec![800.0], vec![12000.0]);
+        assert!(
+            ForecastsManager::pv_forecast_schema_from_point(
+                &p,
+                &pv_area(),
+                "community-uuid",
+                &default_cfg(),
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn optimistic_risk_factor_still_maps_to_negative_production_energy() {
+        // The PV path is sign-fixed: whatever `s` is configured, an offer carries
+        // NEGATIVE energy. On the offer side (side_sign = +1) the optimistic s = +1
+        // commits toward q95: 3.0 + 1.0 = 4.0 kWh.
+        let p = point(12000.0, vec![8000.0], vec![16000.0]);
+        let cfg = PvCommitmentConfig {
+            risk_factor: 1.0,
+            ..default_cfg()
+        };
+        let schema =
+            ForecastsManager::pv_forecast_schema_from_point(&p, &pv_area(), "community-uuid", &cfg)
+                .unwrap();
+        assert!((schema.energy_kwh - (-4.0)).abs() < 1e-9);
+        assert!(schema.energy_kwh < 0.0);
     }
 
     #[test]

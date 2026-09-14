@@ -31,6 +31,9 @@ const PV_AREA: &str = "PvPenaltyCommunity_pv";
 const METER_A: &str = "PvPenaltyCommunity_meter_a";
 const METER_B: &str = "PvPenaltyCommunity_meter_b";
 const BID_RATE: f64 = 0.3;
+/// Flat offer rate handed to `publish_orders`, matching the MIN_ORDER_RATE default
+/// that the offer ramp reaches at market close.
+const OFFER_RATE: f64 = 0.07;
 /// Demand forecaster fixed confidence (see manager.rs `DEMAND_FORECAST_CONFIDENCE`).
 const DEMAND_FORECAST_CONFIDENCE: f64 = 0.9;
 
@@ -128,11 +131,11 @@ async fn create_pv_penalty_topology(world: &mut MyWorld) {
 async fn build_pv_penalty_forecasts(world: &mut MyWorld) {
 	let market = world.pv_penalty_market.clone().expect("topology created first");
 	let pv_area = area_by_name(&market.community_areas, PV_AREA).clone();
-	let cfg = PvCommitmentConfig::from_constants();
+	let cfg = PvCommitmentConfig::for_offers();
 
-	// A degenerate p5 == p95 == pv_forecast band (all 20000 W) yields the maximum confidence, so
-	// the offer rate stays at the low floor and undercuts the bids for a deterministic match. The
-	// q5-based commitment is pv_avg_watts_to_kwh(20000) = 5.0 kWh.
+	// A degenerate p5 == p95 == pv_forecast band (all 20000 W) yields the maximum confidence and
+	// a zero-width band, so the s = -1 commitment is just the point forecast:
+	// pv_avg_watts_to_kwh(20000) = 5.0 kWh.
 	let body = pv_response_body(world.target_delivery_time, 20000.0, 20000.0, 20000.0);
 	let response = parse_response(&body).expect("PV response must parse");
 	let day = ForecastsManager::pv_forecast_schema_from_point(
@@ -215,15 +218,13 @@ async fn publish_pv_penalty_orders(world: &mut MyWorld) {
 	assert_eq!(bids.len(), 2, "two demand bids must have been built");
 	let seller = world.users.get("bob").unwrap().clone();
 	let buyer = world.users.get("charlie").unwrap().clone();
-	let slot = world.target_delivery_time;
-
 	// The single PV offer (negative energy) is signed by bob; both demand bids (positive energy)
 	// are signed by charlie in ONE call so the account nonce is handled in a single batch.
-	// open_time == close_time fully progresses the offer rate ramp to the confidence-lifted floor.
-	publish_orders(node_url(), vec![offer], market.clone(), BID_RATE, slot, slot, &seller)
+	// Offers price at the flat OFFER_RATE, bids at BID_RATE.
+	publish_orders(node_url(), vec![offer], market.clone(), BID_RATE, OFFER_RATE, &seller)
 		.await
 		.expect("Failed to publish PV production offer");
-	publish_orders(node_url(), bids, market, BID_RATE, slot, slot, &buyer)
+	publish_orders(node_url(), bids, market, BID_RATE, OFFER_RATE, &buyer)
 		.await
 		.expect("Failed to publish demand bids");
 	info!("Published one PV offer (bob) and two demand bids (charlie)");
