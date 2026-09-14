@@ -16,5 +16,3 @@ RUN foundryup
 
 WORKDIR /app
 COPY . .
-
-CMD ["cargo", "test", "--test", "integration_test"]
