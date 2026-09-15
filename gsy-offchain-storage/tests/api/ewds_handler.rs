@@ -411,6 +411,10 @@ async fn ids_query_success() {
     let data = captured_data(&server).await;
     // get_or_create returns exactly one mapping, sent as vec![data]
     assert_eq!(data.len(), 1);
+    assert_eq!(
+        data[0]["onchain_id"],
+        json!(bytes16_to_hex(create_encrypted_bytes16_from_string("offchain-abc")))
+    );
 
     stop_app(app).await;
 }
@@ -437,7 +441,11 @@ async fn ids_query_get_or_create_is_idempotent() {
         .unwrap();
     let first = captured_data(&server).await;
     assert_eq!(first.len(), 1);
-    let first_onchain = first[0]["onchainId"].clone();
+    assert!(
+        !first[0]["onchain_id"].is_null(),
+        "expected an onchain_id in the first response"
+    );
+    let first_onchain = first[0]["onchain_id"].clone();
 
     // A fresh server, so received_requests() counts only the second call.
     let server2 = mock_gateway().await;
@@ -458,7 +466,7 @@ async fn ids_query_get_or_create_is_idempotent() {
         .unwrap();
     let second = captured_data(&server2).await;
     assert_eq!(second.len(), 1);
-    assert_eq!(second[0]["onchainId"], first_onchain);
+    assert_eq!(second[0]["onchain_id"], first_onchain);
 
     stop_app(app).await;
 }
