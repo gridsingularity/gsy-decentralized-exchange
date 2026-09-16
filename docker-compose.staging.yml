@@ -64,6 +64,8 @@ services:
     environment:
       - MONGO_INITDB_ROOT_USERNAME=gsy
       - MONGO_INITDB_ROOT_PASSWORD=gsy
+      # Workaround for MongoDB 8.x crashing on Linux kernel >= 6.19 (SERVER-121912)
+      - GLIBC_TUNABLES=glibc.pthread.rseq=1
 
 volumes:
   contracts-data:
