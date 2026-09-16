@@ -1,3 +1,4 @@
+use crate::MarketType;
 use anyhow::Result;
 use blake2::digest::{Update, VariableOutput};
 use blake2::Blake2bVar;
@@ -51,6 +52,22 @@ pub fn create_encrypted_bytes16_from_string(input_string: &str) -> [u8; 16] {
         .finalize_variable(&mut hash)
         .expect("valid Blake2b output buffer");
     hash
+}
+
+pub fn generate_market_id(
+    community_id: &str,
+    market_type: MarketType,
+    delivery_timestamp: u64,
+) -> [u8; 16] {
+    let mut market_id = [0u8; 16];
+    let mut hasher = Blake2bVar::new(market_id.len()).expect("valid market ID output size");
+    hasher.update(community_id.as_bytes());
+    hasher.update(market_type.as_str().as_bytes());
+    hasher.update(&delivery_timestamp.to_be_bytes());
+    hasher
+        .finalize_variable(&mut market_id)
+        .expect("valid market ID output buffer");
+    market_id
 }
 
 pub fn timestamp_to_datetime_string(timestamp: u64) -> String {

@@ -21,7 +21,7 @@ fn make_order(order_id: &str, market_id: &str, order_type: OrderEnum) -> EwdsOrd
         updated_at: None,
         reject_reason: None,
         preferred_trading_partner: None,
-        preferred_energy_rate: None
+        preferred_energy_rate: None,
     }
 }
 
