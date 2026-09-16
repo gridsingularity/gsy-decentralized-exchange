@@ -230,7 +230,7 @@ services:
     build:
       context: .
       dockerfile: gsy-market-orchestrator/Dockerfile
-    entrypoint: ["cargo", "test", "--test", "evm_integration"]
+    entrypoint: ["cargo", "test", "--tests"]
     working_dir: /var/www/gsy-market-orchestrator
     environment:
       - RUST_LOG=info

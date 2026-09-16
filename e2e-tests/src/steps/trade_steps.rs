@@ -12,10 +12,8 @@ use primitives::db_api_schema::trades::DbTradeSchema;
 use primitives::ewds::dto::{EwdsOrderDto, EwdsTradeDto};
 use primitives::matching::matching_block_interval;
 use primitives::utils::{
-    create_encrypted_bytes16_from_string,
+    bytes16_to_hex, create_encrypted_bytes16_from_string, parse_uuid_or_hex_bytes16,
     NODE_FLOAT_SCALING_FACTOR,
-    parse_uuid_or_hex_bytes16,
-    bytes16_to_hex,
 };
 use std::collections::HashSet;
 use std::env;
@@ -169,11 +167,7 @@ fn actor_id_as_hex(world: &MyWorld, user_name: &str) -> String {
 }
 
 fn market_id_as_hex(world: &MyWorld) -> String {
-    market_id_bytes_as_hex(world.last_market_id.expect("Missing market id"))
-}
-
-fn market_id_bytes_as_hex(market_id: [u8; 16]) -> String {
-    format!("0x{}", hex::encode(market_id))
+    bytes16_to_hex(world.last_market_id.expect("Missing market id"))
 }
 
 fn market_window(world: &MyWorld) -> (u64, u64) {
@@ -352,7 +346,7 @@ async fn place_custom_order_for_market(
     );
 
     if requirements.is_some() || attributes.is_some() {
-        let market_id = market_id_bytes_as_hex(market_id);
+        let market_id = bytes16_to_hex(market_id);
         let indexed_order =
             wait_for_order_in_market(world, market_id.as_str(), order_id.as_str()).await;
         assert_eq!(
@@ -386,13 +380,13 @@ async fn submit_cross_community_orders(world: &mut MyWorld) {
 
     wait_for_order_in_market(
         world,
-        market_id_bytes_as_hex(market_ids[0]).as_str(),
+        bytes16_to_hex(market_ids[0]).as_str(),
         primary_bid.as_str(),
     )
     .await;
     wait_for_order_in_market(
         world,
-        market_id_bytes_as_hex(market_ids[1]).as_str(),
+        bytes16_to_hex(market_ids[1]).as_str(),
         secondary_offer.as_str(),
     )
     .await;
@@ -424,7 +418,10 @@ async fn verify_no_cross_community_trade(world: &mut MyWorld) {
         OrderRegistryContract::new(world.order_registry_address, world.provider.clone());
     for order_id in [bid_id, offer_id] {
         let status = order_registry
-            .get_status(parse_uuid_or_hex_bytes16(order_id).expect("Invalid on-chain order ID"))
+            .get_status(
+                parse_uuid_or_hex_bytes16(order_id)
+                    .expect("Custom order ID is not a UUID or bytes16 hex value"),
+            )
             .call()
             .await
             .expect("Failed to read cross-community order status");
@@ -464,13 +461,13 @@ async fn submit_community_market_counterparts(world: &mut MyWorld) {
 
     wait_for_order_in_market(
         world,
-        market_id_bytes_as_hex(market_ids[0]).as_str(),
+        bytes16_to_hex(market_ids[0]).as_str(),
         primary_offer.as_str(),
     )
     .await;
     wait_for_order_in_market(
         world,
-        market_id_bytes_as_hex(market_ids[1]).as_str(),
+        bytes16_to_hex(market_ids[1]).as_str(),
         secondary_bid.as_str(),
     )
     .await;
@@ -539,7 +536,7 @@ async fn verify_community_market_settlements(world: &mut MyWorld) {
         );
 
         for pair in &order_pairs {
-            let expected_market_id = market_id_bytes_as_hex(pair.market_id);
+            let expected_market_id = bytes16_to_hex(pair.market_id);
             let trade = scenario_trades
                 .iter()
                 .find(|trade| {
