@@ -5,9 +5,9 @@
 This page translates the Intelligent ontology schemas into concrete JSON data
 contracts for GSY DEX inter-service communication over EWDS.
 
-Source input: Energy Web Intelligent schemas under
-`schemas/v1.0.0/market`, including `Market`, `MarketTimeSeries`, `Order`,
-`Trade`, and `ClearingResult`.
+Source input: Energy Web Intelligent schemas and the agreed ontology workbook,
+including `Community`, `Market`, `MarketTimeSeries`, `Order`, `Trade`, and
+`ClearingResult`.
 
 ## Schema Package Location
 
@@ -18,6 +18,7 @@ Schema files are versioned in:
 Primary files:
 
 - `int.order.schema.v1.json`
+- `int.community.schema.v1.json`
 - `int.trade.schema.v1.json`
 - `int.clearing-result.schema.v1.json`
 - `int.measurement.schema.v1.json`
@@ -33,6 +34,10 @@ Primary files:
 - `int.forecasts.upsert.request.v1.json`
 - `int.measurements.upsert.request.v1.json`
 - `int.market.upsert.request.v1.json`
+- `int.community.upsert.request.v1.json`
+- `int.community.upsert.response.v1.json`
+- `int.communities.query.request.v1.json`
+- `int.communities.query.response.v1.json`
 
 DDHub topic names use camelCase because the Client Gateway UI rejects dots in
 topic names. The schema file names and payload `operation` values keep dotted
@@ -46,6 +51,19 @@ operation names for readability and service routing:
 | `tradesQueryResponse` | response envelope | `int.trades.query.response.v1.json` |
 | `measurementsQuery` | `measurements.query` | `int.measurements.query.request.v1.json` |
 | `measurementsQueryResponse` | response envelope | `int.measurements.query.response.v1.json` |
+| `communityUpsert` | `community.upsert` | `int.community.upsert.request.v1.json` |
+| `communityUpsertResponse` | response envelope | `int.community.upsert.response.v1.json` |
+| `communitiesQuery` | `communities.query` | `int.communities.query.request.v1.json` |
+| `communitiesQueryResponse` | response envelope | `int.communities.query.response.v1.json` |
+
+### Community Mapping
+
+| Ontology property | Schema field | Current runtime source |
+|---|---|---|
+| `int:communityId` | `communityId` | `EnergyCommunitySchema.community_id` |
+| `int:communityName` | `communityName` | `EnergyCommunitySchema.community_name` |
+| site membership | `sites` | `EnergyCommunitySchema.sites` |
+
 ### Trade Mapping
 
 | Ontology property | Schema field | Current runtime source |

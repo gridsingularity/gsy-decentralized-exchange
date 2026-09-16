@@ -11,7 +11,7 @@ abigen!(
     r#"[
         function hasRole(bytes32 role, address account) external view returns (bool)
         function isMarketOpen(bytes16 marketId) external view returns (bool)
-        function setMarketStatus(bytes16 marketId, bool isOpen) external
+        function setMarketStatuses(bytes16[] marketIds, bool isOpen) external
     ]"#
 );
 
@@ -21,7 +21,11 @@ type WsSignerMiddleware = SignerMiddleware<Provider<Ws>, LocalWallet>;
 pub trait MarketChainClient: Send + Sync {
     async fn is_operator_registered(&self) -> Result<bool>;
     async fn get_market_status(&self, market_id: [u8; 16]) -> Result<bool>;
-    async fn update_market_status(&self, market_id: [u8; 16], is_open: bool) -> Result<()>;
+    async fn update_market_statuses(&self, market_ids: Vec<[u8; 16]>, is_open: bool) -> Result<()>;
+
+    async fn update_market_status(&self, market_id: [u8; 16], is_open: bool) -> Result<()> {
+        self.update_market_statuses(vec![market_id], is_open).await
+    }
 }
 
 #[derive(Clone)]
@@ -84,9 +88,16 @@ impl MarketChainClient for GsyMarketOrchestratorNodeClient {
         Ok(status)
     }
 
-    async fn update_market_status(&self, market_id: [u8; 16], is_open: bool) -> Result<()> {
-        let set_market_status_call = self.market_controller.set_market_status(market_id, is_open);
-        let pending_tx = set_market_status_call.send().await?;
+    async fn update_market_statuses(&self, market_ids: Vec<[u8; 16]>, is_open: bool) -> Result<()> {
+        if market_ids.is_empty() {
+            return Ok(());
+        }
+
+        let market_count = market_ids.len();
+        let set_market_statuses_call = self
+            .market_controller
+            .set_market_statuses(market_ids, is_open);
+        let pending_tx = set_market_statuses_call.send().await?;
 
         let tx_hash = pending_tx.tx_hash();
         let receipt = pending_tx.await?;
@@ -99,19 +110,19 @@ impl MarketChainClient for GsyMarketOrchestratorNodeClient {
                     .unwrap_or_default();
                 if status != 1 {
                     return Err(anyhow!(
-                        "Market status transaction {:?} reverted with status {:?}",
+                        "Market status batch transaction {:?} reverted with status {:?}",
                         tx_hash,
                         receipt.status
                     ));
                 }
                 info!(
-                    "Successfully finalized market status update tx {:?} (is_open={})",
-                    tx_hash, is_open
+                    "Successfully finalized market status batch tx {:?} (markets={}, is_open={})",
+                    tx_hash, market_count, is_open
                 );
                 Ok(())
             }
             None => Err(anyhow!(
-                "Market status transaction {:?} dropped without receipt",
+                "Market status batch transaction {:?} dropped without receipt",
                 tx_hash
             )),
         }

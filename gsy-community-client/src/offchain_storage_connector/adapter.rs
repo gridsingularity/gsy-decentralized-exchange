@@ -1,23 +1,14 @@
 use crate::time_utils::get_current_timestamp_in_secs;
-use blake2_rfc::blake2b::blake2b;
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::profiles::{
     FlowDirection, ForecastSchema, MeasurementPointSchema, MeasurementPointType, MeasurementSchema,
     TimeseriesSchema,
 };
-use primitives::utils::timestamp_to_string_with_padding;
+use primitives::utils::{bytes16_to_hex, generate_market_id, timestamp_to_string_with_padding};
 use primitives::{MarketType, MatchingAlgorithm};
 use reqwest::Client;
 use std::env;
 use tracing::info;
-
-fn generate_market_id(market_type: MarketType, delivery_timestamp: u64) -> String {
-    let mut buffer = Vec::new();
-    buffer.extend_from_slice(market_type.as_str().as_bytes());
-    buffer.extend_from_slice(&delivery_timestamp.to_be_bytes());
-    let digest = blake2b(16, &[], &buffer);
-    format!("0x{}", ethers::utils::hex::encode(digest.as_bytes()))
-}
 
 #[derive(Clone)]
 pub struct AreaMarketInfoAdapter {
@@ -135,7 +126,11 @@ impl AreaMarketInfoAdapter {
     ) -> Option<MarketSchema> {
         let creation_time = get_current_timestamp_in_secs();
         let market_schema = MarketSchema {
-            market_id: generate_market_id(MarketType::Spot, time_slot),
+            market_id: bytes16_to_hex(generate_market_id(
+                community_uuid.as_str(),
+                MarketType::Spot,
+                time_slot,
+            )),
             community_id: community_uuid,
             opening_time: timestamp_to_string_with_padding(creation_time),
             closing_time: timestamp_to_string_with_padding(time_slot),

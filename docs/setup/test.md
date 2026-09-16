@@ -65,6 +65,11 @@ book, the E2E harness first advances local Anvil to the next matching boundary.
 After the order book is indexed, it fast-forwards to the clearing boundary with
 empty-block RPC calls rather than waiting for one transaction per block.
 
+Before waiting for the orchestrator, the E2E runner idempotently upserts a
+canonical community using `OFFCHAIN_STORAGE_TRANSPORT`. The orchestrator then
+queries the same community collection and opens the community-aware Spot market
+whose ID is derived from community UUID, market type, and delivery slot.
+
 The contracts command starts the dedicated local Anvil container, deploys the
 upgradeable contract suite, grants service roles, and writes
 `contracts-output/addresses.env`. Keep that Anvil container running while the
@@ -179,13 +184,15 @@ EWF-hosted broker and the following local channels/topics:
 - `ordersQuery` / `ordersQueryResponse`
 - `tradesQuery` / `tradesQueryResponse`
 - `measurementsQuery` / `measurementsQueryResponse`
+- `communityUpsert` / `communityUpsertResponse`
+- `communitiesQuery` / `communitiesQueryResponse`
 
 Expected passing summary:
 
 ```text
-2 features
-2 scenarios (2 passed)
-20 steps (20 passed)
+3 features
+3 scenarios (3 passed)
+30 steps (30 passed)
 ```
 
 The pay-as-clear run has this expected summary:
@@ -210,6 +217,7 @@ the asynchronous DDHub broker path:
 ```bash
 EWDS_RESPONSE_TIMEOUT_MS=60000
 EWDS_RESPONSE_POLL_INTERVAL_MS=1000
+EWDS_EMPTY_RESPONSE_GRACE_MS=10000
 EWDS_HANDLER_POLL_INTERVAL_MS=500
 EWDS_HANDLER_BATCH_SIZE=100
 EWDS_RATE_LIMIT_BACKOFF_MS=2000
@@ -230,10 +238,12 @@ Important EWDS variables for test runs:
 - `EWDS_ENABLE_HANDLER`
 - `EWDS_RESPONSE_TIMEOUT_MS`
 - `EWDS_RESPONSE_POLL_INTERVAL_MS`
+- `EWDS_EMPTY_RESPONSE_GRACE_MS`
 - `EWDS_HANDLER_POLL_INTERVAL_MS`
 - `EWDS_HANDLER_BATCH_SIZE`
 - `EWDS_RATE_LIMIT_BACKOFF_MS`
 - `EWDS_RATE_LIMIT_MAX_BACKOFF_MS`
+- `EWDS_E2E_CLIENT_ID`
 - `EWDS_GATEWAY_PLATFORM` (set `linux/amd64` on Apple Silicon when using current EWDS images)
 
 Current e2e suite validates:
@@ -244,3 +254,9 @@ Current e2e suite validates:
   and uncleared bid/offer assertions.
 - Penalty submission from execution engine.
 - EWDS request/response transport for order reads through the local Client Gateway.
+- Community upsert and orchestrator community discovery through the selected
+  HTTP or EWDS transport.
+- Community-aware market ID derivation and on-chain market opening.
+- Distinct Spot market creation for multiple communities in the same delivery
+  slot, with end-to-end verification that matching, settlement, indexing, and
+  penalties remain isolated per community market.

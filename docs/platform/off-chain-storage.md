@@ -32,6 +32,7 @@ Backend: MongoDB (`mongo:5.0`).
 - `/trades-normalized` (`POST`)
 - `/trades` (`GET`, `POST`)
 - `/market` (`GET`) compatibility adapter for EVM JSON callers
+- `/communities` (`GET`, `POST`) for idempotent community query/upsert
 - `/markets` (`GET`, `POST`) for ontology-aligned market-opening records
 - `/clearing-results` (`GET`, `POST`)
 - `/market-roles` (`GET`, `POST`)
@@ -61,6 +62,9 @@ Compatibility adapters for EVM JSON callers:
 These adapters do not own separate collections. They read and write the same
 `markets`, `measurement_points`, and `timeseries` records as the canonical API.
 
+When `EWDS_ENABLE_HANDLER=true`, the same community collection is available
+through `community.upsert` and `communities.query` request/reply operations.
+
 ## Scheduler Behavior
 
 `expire_orders_scheduler` periodically marks stale open orders as `Expired` using `time_slot` and current time.
@@ -81,3 +85,6 @@ Key env variables:
 - `CONTRACT_MARKET_CONTROLLER`
 - `DATABASE_*`
 - `SCHEDULER_INTERVAL`
+- `EWDS_ENABLE_HANDLER`
+- `EWDS_COMMUNITY_UPSERT_TOPIC`
+- `EWDS_COMMUNITIES_REQUEST_TOPIC`
