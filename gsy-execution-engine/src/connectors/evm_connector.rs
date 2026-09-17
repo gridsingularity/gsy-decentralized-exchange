@@ -1,5 +1,5 @@
 use crate::primitives::penalty_calculator::Penalty;
-use ::primitives::utils::parse_or_hash_bytes16;
+use ::primitives::utils::parse_uuid_or_hex_bytes16;
 use anyhow::{anyhow, Result};
 use ethers::prelude::*;
 use ethers::utils::keccak256;
@@ -24,11 +24,35 @@ fn to_evm_penalties(penalties: Vec<Penalty>) -> Vec<EvmPenaltyTuple> {
                 );
                 return None;
             }
+            let Some(penalized_account) = parse_uuid_or_hex_bytes16(&penalty.penalized_account)
+            else {
+                warn!(
+                      "Skipping penalty for trade '{}': penalized_account '{}' is not a UUID",
+                      penalty.trade_uuid, penalty.penalized_account
+                  );
+                return None;
+            };
+
+            let Some(market_id) = parse_uuid_or_hex_bytes16(&penalty.market_id) else {
+                warn!(
+                      "Skipping penalty for trade '{}': market_id '{}' is not a UUID",
+                      penalty.trade_uuid, penalty.market_id
+                  );
+                return None;
+            };
+
+            let Some(trade_uuid) = parse_uuid_or_hex_bytes16(&penalty.trade_uuid) else {
+                warn!(
+                      "Skipping penalty for trade '{}': trade_uuid is not a UUID",
+                      penalty.trade_uuid
+                  );
+                return None;
+            };
 
             Some((
-                parse_or_hash_bytes16(&penalty.penalized_account),
-                parse_or_hash_bytes16(&penalty.market_id),
-                parse_or_hash_bytes16(&penalty.trade_uuid),
+                penalized_account,
+                market_id,
+                trade_uuid,
                 penalty.penalty_cost,
             ))
         })
@@ -40,10 +64,10 @@ pub async fn submit_penalties(
     submit_penalties_contract_address: &str,
     execution_engine_private_key: &str,
     penalties: Vec<Penalty>,
-) -> Result<()> {
+) -> Result<usize> {
     if penalties.is_empty() {
         info!("No penalties to submit.");
-        return Ok(());
+        return Ok(0);
     }
 
     let submit_penalties_contract_address = Address::from_str(submit_penalties_contract_address)
@@ -58,7 +82,7 @@ pub async fn submit_penalties(
     let evm_penalties = to_evm_penalties(penalties);
     if evm_penalties.is_empty() {
         info!("No valid penalties to submit after validation.");
-        return Ok(());
+        return Ok(0);
     }
 
     let provider = Provider::<Ws>::connect(evm_node_url).await?;
@@ -104,9 +128,10 @@ pub async fn submit_penalties(
             "All computed penalties were already recorded on-chain (skipped {}).",
             skipped_existing
         );
-        return Ok(());
+        return Ok(skipped_existing);
     }
 
+    let processed_penalties = penalties_to_submit.len() + skipped_existing;
     info!(
         "Submitting {} penalties to EVM (skipped {} already recorded)",
         penalties_to_submit.len(),
@@ -132,7 +157,7 @@ pub async fn submit_penalties(
                 ));
             }
             info!("Penalty submission successful. tx={:?}", tx_hash);
-            Ok(())
+            Ok(processed_penalties)
         }
         None => Err(anyhow!(
             "Penalty submission transaction {:?} dropped without receipt",

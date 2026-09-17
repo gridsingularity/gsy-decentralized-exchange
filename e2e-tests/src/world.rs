@@ -1,17 +1,17 @@
 use anyhow::{anyhow, Result};
-use blake2_rfc::blake2b::blake2b;
 use cucumber::World;
 use ethers::prelude::*;
 use primitives::db_api_schema::grid_topology::FacilitySchema;
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::profiles::ForecastSchema;
 use primitives::db_api_schema::trades::DbTradeSchema;
-use primitives::utils::parse_or_hash_bytes16;
-use primitives::MarketType;
+use primitives::utils::parse_uuid_or_hex_bytes16;
+use primitives::utils::endpoint_calls::fetch_onchain_id;
 use reqwest::Client;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
+use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 
 const DEFAULT_PRIVATE_KEY: &str =
     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
@@ -20,6 +20,22 @@ const DEFAULT_PRIVATE_KEY: &str =
 pub struct UserAccount {
     pub private_key: String,
     pub address: Address,
+}
+
+#[derive(Clone, Debug)]
+pub struct PayAsClearScenario {
+    pub accepted_order_ids: Vec<String>,
+    pub unmatched_bid_order_id: String,
+    pub unmatched_offer_order_id: String,
+    pub expected_match_count: usize,
+    pub preferred_order_ids: Option<(String, String)>,
+}
+
+#[derive(Clone, Debug)]
+pub struct CommunityMarketOrderPair {
+    pub market_id: [u8; 16],
+    pub bid_id: String,
+    pub offer_id: String,
 }
 
 #[derive(Debug, World)]
@@ -31,6 +47,8 @@ pub struct MyWorld {
     pub users: HashMap<String, UserAccount>,
     pub evm_node_url: String,
     pub offchain_storage_url: String,
+    pub community_id: String,
+    pub secondary_community_id: String,
     pub market_controller_address: Address,
     pub order_registry_address: Address,
     pub trade_settlement_address: Address,
@@ -45,6 +63,13 @@ pub struct MyWorld {
     pub last_charlie_offer_order_id: Option<String>,
     pub market_schema: Option<MarketSchema>,
     pub facilities_topology: Vec<FacilitySchema>,
+    pub pay_as_clear_scenario: Option<PayAsClearScenario>,
+    pub pay_as_clear_trades: Vec<DbTradeSchema>,
+    pub preferred_trade: Option<DbTradeSchema>,
+    pub community_market_ids: Option<[[u8; 16]; 2]>,
+    pub cross_community_order_ids: Option<(String, String)>,
+    pub community_market_order_pairs: Vec<CommunityMarketOrderPair>,
+    pub community_market_trades: Vec<DbTradeSchema>,
 }
 
 impl MyWorld {
@@ -91,6 +116,8 @@ impl MyWorld {
             evm_node_url,
             offchain_storage_url: std::env::var("OFFCHAIN_STORAGE_URL")
                 .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string()),
+            community_id: "11111111-1111-4111-8111-111111111111".to_string(),
+            secondary_community_id: "22222222-2222-4222-8222-222222222222".to_string(),
             market_controller_address,
             order_registry_address,
             trade_settlement_address,
@@ -105,6 +132,13 @@ impl MyWorld {
             last_charlie_offer_order_id: None,
             market_schema: None,
             facilities_topology: vec![],
+            pay_as_clear_scenario: None,
+            pay_as_clear_trades: vec![],
+            preferred_trade: None,
+            community_market_ids: None,
+            cross_community_order_ids: None,
+            community_market_order_pairs: vec![],
+            community_market_trades: vec![],
         })
     }
 
@@ -145,20 +179,33 @@ impl MyWorld {
             .clone()
     }
 
-    pub fn generate_market_id(&self, market_type: MarketType, delivery_timestamp: u64) -> [u8; 16] {
-        let mut buffer = Vec::new();
-        buffer.extend_from_slice(market_type.as_str().as_bytes());
-        buffer.extend_from_slice(&delivery_timestamp.to_be_bytes());
-        blake2b(16, &[], &buffer)
-            .as_bytes()
-            .try_into()
-            .expect("hash is 16 bytes")
-    }
-
-    pub fn actor_id_for_user(&self, user_name: &str) -> [u8; 16] {
+    pub async fn actor_id_for_user(&self, user_name: &str) -> [u8; 16] {
         if !self.users.contains_key(user_name) {
             panic!("Unknown user '{}'", user_name);
         }
-        parse_or_hash_bytes16(format!("{}", user_name).as_str())
+        let onchain_id = fetch_onchain_id(
+            "E2E_TESTS_CLIENT_ID",
+            "e2e_tests",
+            user_name,
+        )
+            .await
+            .expect("failed to fetch onchain id");
+        parse_uuid_or_hex_bytes16(&onchain_id).expect("failed to parse uuid")
     }
+
+    pub async fn create_facilities(&self, facilities: Vec<FacilitySchema>) {
+        let adapter = AreaMarketInfoAdapter::new(Some(self.offchain_storage_url.clone()));
+        for facility in facilities.iter() {
+            let _ = adapter
+                .forward_facilities(facility.clone())
+                .await
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "facility creation failed (error={e}, facility={:?})",
+                        facility.clone()
+                    )
+                });
+        }
+    }
+
 }

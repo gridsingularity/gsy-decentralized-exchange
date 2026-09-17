@@ -23,8 +23,8 @@ pub async fn run_execution_cycle(
     timeslot: u64,
     penalty_rate: f64,
     market_duration: u64,
-) -> Result<()> {
-    // 1.1) fetch trades/measurements
+) -> Result<usize> {
+    // 1) fetch trades/measurements
     let (trades, measurements) =
         fetch_trades_and_measurements_for_timeslot(offchain_url, timeslot, market_duration).await?;
     info!(
@@ -39,7 +39,7 @@ pub async fn run_execution_cycle(
             "No trades or measurements for timeslot {}. Skipping execution cycle.",
             timestamp_to_datetime_string(timeslot),
         );
-        return Ok(());
+        return Ok(0);
     }
 
     // 1.2) fetch facility_id>owner_id mapping
@@ -57,12 +57,12 @@ pub async fn run_execution_cycle(
     info!("Computed {} penalties", penalties.len());
 
     // 3) submit penalties
-    submit_penalties(
+    let processed_penalties = submit_penalties(
         evm_node_url,
         trade_settlement_address,
         execution_engine_private_key,
         penalties,
     )
     .await?;
-    Ok(())
+    Ok(processed_penalties)
 }

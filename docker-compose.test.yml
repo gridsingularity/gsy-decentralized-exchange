@@ -18,8 +18,17 @@ x-gsy-ewds-env: &gsy-ewds-env
   EWDS_MEASUREMENTS_RESPONSE_TOPIC: "measurementsQueryTestResponse"
   EWDS_FACILITIES_REQUEST_TOPIC: "facilitiesQueryTest"
   EWDS_FACILITIES_RESPONSE_TOPIC: "facilitiesQueryTestResponse"
+  EWDS_IDS_REQUEST_TOPIC: "idsQueryTest"
+  EWDS_IDS_RESPONSE_TOPIC: "idsQueryTestResponse"
+  EWDS_COMMUNITY_UPSERT_TOPIC: "communityUpsertTest"
+  EWDS_COMMUNITY_UPSERT_RESPONSE_TOPIC: "communityUpsertTestResponse"
+  EWDS_COMMUNITIES_REQUEST_TOPIC: "communitiesQueryTest"
+  EWDS_COMMUNITIES_RESPONSE_TOPIC: "communitiesQueryTestResponse"
   EWDS_RESPONSE_TIMEOUT_MS: ${EWDS_RESPONSE_TIMEOUT_MS:-60000}
   EWDS_RESPONSE_POLL_INTERVAL_MS: ${EWDS_RESPONSE_POLL_INTERVAL_MS:-1000}
+  EWDS_EMPTY_RESPONSE_GRACE_MS: ${EWDS_EMPTY_RESPONSE_GRACE_MS:-10000}
+  EWDS_RATE_LIMIT_BACKOFF_MS: ${EWDS_RATE_LIMIT_BACKOFF_MS:-2000}
+  EWDS_RATE_LIMIT_MAX_BACKOFF_MS: ${EWDS_RATE_LIMIT_MAX_BACKOFF_MS:-30000}
 
 services:
 
@@ -75,6 +84,8 @@ services:
       OFFCHAIN_STORAGE_URL: "http://gsy-offchain-storage:8080"
       TRADE_SETTLEMENT_ADDRESS: ${TRADE_SETTLEMENT_ADDRESS:-0xa513E6E4b8f2a923D98304ec87F64353C4D5C853}
       MATCHING_ENGINE_PRIVATE_KEY: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+      MATCHING_ALGORITHM: ${MATCHING_ALGORITHM:-pay_as_bid}
+      MATCHING_ENGINE_BLOCK_INTERVAL: ${MATCHING_ENGINE_BLOCK_INTERVAL:-}
       EWDS_MATCHING_ENGINE_CLIENT_ID: ${EWDS_MATCHING_ENGINE_CLIENT_ID:-gsymatchingengine}
 
   gsy-community-client:
@@ -93,6 +104,7 @@ services:
       ORDER_REGISTRY_ADDRESS: ${ORDER_REGISTRY_ADDRESS:-0x5FC8d32690cc91D4c39d9d3abcBD16989F875707}
       COMMUNITY_CLIENT_PRIVATE_KEY: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
       EWDS_COMMUNITY_CLIENT_ID: ${EWDS_COMMUNITY_CLIENT_ID:-gsycommunityclient}
+      MATCHING_ALGORITHM: ${MATCHING_ALGORITHM:-pay_as_bid}
 
   gsy-market-orchestrator:
     container_name: gsy-market-orchestrator
@@ -100,14 +112,18 @@ services:
       context: .
       dockerfile: ./gsy-market-orchestrator/Dockerfile
     environment:
-      - RUST_LOG=info,gsy_market_orchestrator=debug
-      - EVM_NODE_URL=${EVM_NODE_URL:-ws://anvil:8545}
-      - MARKET_CONTROLLER_ADDRESS=${MARKET_CONTROLLER_ADDRESS:-0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9}
-      - ORCHESTRATOR_SIGNER_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
-      - SPOT_MARKET_OPEN_OFFSET_MIN=-30
-      - SPOT_MARKET_CLOSE_OFFSET_MIN=30
-      - TICK_INTERVAL_SECONDS=5
-      - LOOK_AHEAD_HOURS=1
+      <<: *gsy-ewds-env
+      RUST_LOG: info,gsy_market_orchestrator=debug
+      EVM_NODE_URL: ${EVM_NODE_URL:-ws://anvil:8545}
+      MARKET_CONTROLLER_ADDRESS: ${MARKET_CONTROLLER_ADDRESS:-0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9}
+      ORCHESTRATOR_SIGNER_PRIVATE_KEY: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+      SPOT_MARKET_OPEN_OFFSET_MIN: "-30"
+      SPOT_MARKET_CLOSE_OFFSET_MIN: "30"
+      TICK_INTERVAL_SECONDS: "5"
+      LOOK_AHEAD_HOURS: "1"
+      OFFCHAIN_STORAGE_TRANSPORT: ${OFFCHAIN_STORAGE_TRANSPORT:-http}
+      OFFCHAIN_STORAGE_URL: http://gsy-offchain-storage:8080
+      EWDS_MARKET_ORCHESTRATOR_CLIENT_ID: ${EWDS_MARKET_ORCHESTRATOR_CLIENT_ID:-gsymarketorchestrator}
 
   gsy-execution-engine:
     container_name: gsy-execution-engine
@@ -124,12 +140,13 @@ services:
       OFFCHAIN_STORAGE_TRANSPORT: ${OFFCHAIN_STORAGE_TRANSPORT:-http}
       OFFCHAIN_STORAGE_URL: "http://gsy-offchain-storage:8080"
       EXECUTION_ENGINE_OFFSET_MIN: "-15"
+      EXECUTION_ENGINE_ROLLOVER_RETRY_LIMIT: ${EXECUTION_ENGINE_ROLLOVER_RETRY_LIMIT:-2}
       TRADE_SETTLEMENT_ADDRESS: ${TRADE_SETTLEMENT_ADDRESS:-0xa513E6E4b8f2a923D98304ec87F64353C4D5C853}
       EXECUTION_ENGINE_PRIVATE_KEY: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
       EWDS_EXECUTION_ENGINE_CLIENT_ID: ${EWDS_EXECUTION_ENGINE_CLIENT_ID:-gsyexecutionengine}
 
   mongodb:
-    image: mongo:5.0
+    image: mongo:8.3.8
     container_name: mongodb
     ports:
       - "27017:27017"
@@ -152,18 +169,23 @@ services:
       gsy-market-orchestrator:
         condition: service_started
     environment:
-      - RUST_BACKTRACE=full
-      - EVM_NODE_URL=${EVM_NODE_URL:-ws://anvil:8545}
-      - OFFCHAIN_STORAGE_URL=${EWDS_OFFCHAIN_STORAGE_URL:-http://gsy-offchain-storage:8080}
-      - MARKET_CONTROLLER_ADDRESS=${MARKET_CONTROLLER_ADDRESS:-0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9}
-      - ORDER_REGISTRY_ADDRESS=${ORDER_REGISTRY_ADDRESS:-0x5FC8d32690cc91D4c39d9d3abcBD16989F875707}
-      - TRADE_SETTLEMENT_ADDRESS=${TRADE_SETTLEMENT_ADDRESS:-0xa513E6E4b8f2a923D98304ec87F64353C4D5C853}
-      - ACTOR_REGISTRY_ADDRESS=${ACTOR_REGISTRY_ADDRESS:-0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512}
-      - ALICE_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
-      - BOB_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
-      - CHARLIE_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
-      - ACTOR_REGISTRAR_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
-      - MONGO_URL=mongodb://gsy:gsy@mongodb:27017/?retryWrites=true&w=majority
+      <<: *gsy-ewds-env
+      RUST_BACKTRACE: full
+      EVM_NODE_URL: ${EVM_NODE_URL:-ws://anvil:8545}
+      OFFCHAIN_STORAGE_TRANSPORT: ${OFFCHAIN_STORAGE_TRANSPORT:-http}
+      OFFCHAIN_STORAGE_URL: ${EWDS_OFFCHAIN_STORAGE_URL:-http://gsy-offchain-storage:8080}
+      MARKET_CONTROLLER_ADDRESS: ${MARKET_CONTROLLER_ADDRESS:-0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9}
+      ORDER_REGISTRY_ADDRESS: ${ORDER_REGISTRY_ADDRESS:-0x5FC8d32690cc91D4c39d9d3abcBD16989F875707}
+      TRADE_SETTLEMENT_ADDRESS: ${TRADE_SETTLEMENT_ADDRESS:-0xa513E6E4b8f2a923D98304ec87F64353C4D5C853}
+      ACTOR_REGISTRY_ADDRESS: ${ACTOR_REGISTRY_ADDRESS:-0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512}
+      ALICE_PRIVATE_KEY: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+      BOB_PRIVATE_KEY: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+      CHARLIE_PRIVATE_KEY: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+      ACTOR_REGISTRAR_PRIVATE_KEY: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+      MATCHING_ALGORITHM: ${MATCHING_ALGORITHM:-pay_as_bid}
+      MATCHING_ENGINE_BLOCK_INTERVAL: ${MATCHING_ENGINE_BLOCK_INTERVAL:-}
+      EWDS_E2E_CLIENT_ID: ${EWDS_E2E_CLIENT_ID:-gsye2e}
+      MONGO_URL: mongodb://gsy:gsy@mongodb:27017/?retryWrites=true&w=majority
     networks:
       - default
 
@@ -214,7 +236,7 @@ services:
     build:
       context: .
       dockerfile: gsy-market-orchestrator/Dockerfile
-    entrypoint: ["cargo", "test", "--test", "evm_integration"]
+    entrypoint: ["cargo", "test", "--tests"]
     working_dir: /var/www/gsy-market-orchestrator
     environment:
       - RUST_LOG=info

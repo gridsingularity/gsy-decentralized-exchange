@@ -4,3 +4,4 @@ pub mod orders;
 pub mod profiles;
 pub mod tariff;
 pub mod trades;
+pub mod ids;

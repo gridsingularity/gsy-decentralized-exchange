@@ -1,4 +1,5 @@
 use primitives::db_api_schema::{
+    grid_topology::EnergyCommunitySchema,
     market::{MarketSchema, MarketType, MatchingAlgorithm},
     orders::{DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus},
     trades::{
@@ -6,28 +7,47 @@ use primitives::db_api_schema::{
         TradeStatus,
     },
 };
-use primitives::ewds::dto::{
-    energy_type_from_ewds, energy_type_to_ewds, EwdsClearingResultDto, EwdsMarketDto, EwdsOrderDto,
-    EwdsTradeDto,
-};
 use primitives::ewds::EwdsOperation;
+use primitives::ewds::dto::{
+    EwdsClearingResultDto, EwdsCommunityDto, EwdsMarketDto, EwdsOrderDto, EwdsTradeDto,
+    energy_type_from_ewds, energy_type_to_ewds,
+};
+use serde_json::Value;
 use std::str::FromStr;
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[test]
+    fn community_conversion_round_trips_through_ewds_dto() {
+        let expected = EnergyCommunitySchema {
+            community_id: "a5657b6e-b0b2-46ee-87d6-1e29470339a7".to_string(),
+            community_name: "Test community".to_string(),
+            sites: vec!["site-id".to_string()],
+        };
+
+        let dto = EwdsCommunityDto::from(expected.clone());
+        let serialized = serde_json::to_value(&dto).unwrap();
+
+        assert_eq!(
+            serialized.get("communityId").and_then(Value::as_str),
+            Some(expected.community_id.as_str())
+        );
+        assert_eq!(EnergyCommunitySchema::from(dto), expected);
+    }
+
     fn order() -> DbOrderSchema {
         DbOrderSchema {
             order_id: "order-id".to_string(),
-            status: OrderStatus::Open,
+            status: OrderStatus::Submitted,
             order_type: OrderEnum::Bid,
             area_uuid: "actor-id".to_string(),
             market_id: "market-id".to_string(),
             time_slot: 10,
             creation_time: 9,
             energy_kWh: 4.5,
-            energy_rate: 12.0,
+            energy_rate: 20.0,
             created_by: "actor-id".to_string(),
             requirements: Some(DbRequirements {
                 trading_partner_id: Some("partner-id".to_string()),
@@ -48,7 +68,8 @@ mod tests {
         assert_eq!(dto.order_status, "submitted");
         assert_eq!(dto.time_slot, 10);
         assert_eq!(dto.quantity, 4.5);
-        assert_eq!(dto.price_limit, 12.0);
+        assert_eq!(dto.price_limit, 20.0);
+        assert_eq!(dto.preferred_energy_rate, Some(12.0));
         assert_eq!(dto.energy_source_preference.as_deref(), Some("GREEN"));
         assert_eq!(dto.energy_type.as_deref(), Some("NONE")); // no attributes -> default
         assert_eq!(dto.preferred_trading_partner.as_deref(), Some("partner-id"));
@@ -63,10 +84,10 @@ mod tests {
         assert_eq!(db.order_id, "order-id");
         assert_eq!(db.market_id, "market-id");
         assert_eq!(db.order_type, OrderEnum::Bid);
-        assert_eq!(db.status, OrderStatus::Open);
+        assert_eq!(db.status, OrderStatus::Submitted);
         assert_eq!(db.time_slot, 10);
         assert_eq!(db.energy_kWh, 4.5);
-        assert_eq!(db.energy_rate, 12.0);
+        assert_eq!(db.energy_rate, 20.0);
         assert_eq!(db.created_by, "actor-id");
 
         // requirements rebuilt from energy_source_preference + preferred_trading_partner

@@ -3,7 +3,7 @@ use ethers_solc::{artifacts::Severity, Project, ProjectPathsConfig};
 use gsy_matching_engine::connectors::evm_connector::send_settle_batch_transaction;
 use gsy_matching_engine::models::{BidOfferMatch, Order};
 use primitives::db_api_schema::orders::{DbOrderSchema, OrderEnum, OrderStatus};
-use primitives::utils::{parse_or_hash_bytes16, NODE_FLOAT_SCALING_FACTOR};
+use primitives::utils::{parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR};
 use std::{collections::HashMap, fs::File, io::Write, sync::Arc};
 use tempfile::TempDir;
 
@@ -156,7 +156,7 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
 
     let bid_db = DbOrderSchema {
         order_id: bid_order_id.clone(),
-        status: OrderStatus::Open,
+        status: OrderStatus::Submitted,
         order_type: OrderEnum::Bid,
         area_uuid: bid_area.clone(),
         market_id: market_id.clone(),
@@ -170,7 +170,7 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
     };
     let ask_db = DbOrderSchema {
         order_id: ask_order_id.clone(),
-        status: OrderStatus::Open,
+        status: OrderStatus::Submitted,
         order_type: OrderEnum::Offer,
         area_uuid: ask_area.clone(),
         market_id: market_id.clone(),
@@ -186,7 +186,7 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
     let bid_order = Order {
         order_id: bid_order_id.clone(),
         order_type: OrderEnum::Bid,
-        status: OrderStatus::Open,
+        status: OrderStatus::Submitted,
         area_uuid: bid_area.clone(),
         market_id: market_id.clone(),
         time_slot: 1000,
@@ -201,7 +201,7 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
     let ask_order = Order {
         order_id: ask_order_id.clone(),
         order_type: OrderEnum::Offer,
-        status: OrderStatus::Open,
+        status: OrderStatus::Submitted,
         area_uuid: ask_area.clone(),
         market_id: market_id.clone(),
         time_slot: 1000,
@@ -256,10 +256,10 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
     );
     assert_eq!(
         mock_contract.last_bid_created_by().call().await.unwrap(),
-        parse_or_hash_bytes16(&bid_actor_id)
+        parse_uuid_or_hex_bytes16(&bid_actor_id).expect("Failed to parse uuid")
     );
     assert_eq!(
         mock_contract.last_offer_created_by().call().await.unwrap(),
-        parse_or_hash_bytes16(&ask_actor_id)
+        parse_uuid_or_hex_bytes16(&ask_actor_id).expect("Failed to parse uuid")
     );
 }

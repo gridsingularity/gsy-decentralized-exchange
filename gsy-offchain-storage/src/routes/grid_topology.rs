@@ -70,7 +70,7 @@ pub async fn post_community(community: Json<EnergyCommunitySchema>, db: DbRef) -
     match db
         .get_ref()
         .communities()
-        .insert(community.to_owned())
+        .upsert(community.to_owned())
         .await
     {
         Ok(saved) => HttpResponse::Ok().json(saved),

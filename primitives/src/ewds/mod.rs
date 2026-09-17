@@ -1,12 +1,16 @@
 pub mod dto;
 pub mod utils;
 
-use anyhow::{anyhow, Result};
-use dto::{EwdsMessageDto, EwdsQueryResponse, EwdsRequestEnvelope, EwdsSendMessageDto};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use anyhow::{Result, anyhow};
+use dto::{
+    EwdsDeliverySummary, EwdsMessageDto, EwdsQueryResponse, EwdsRequestEnvelope,
+    EwdsSendMessageDto, EwdsSendMessageResponse,
+};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use std::{env, fmt, time::Instant};
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
+use tracing::warn;
 
 const DEFAULT_GATEWAY_URL: &str = "http://ewds-gateway-api:3333";
 const DEFAULT_REQUEST_FQCN: &str = "gsy.intelligent.requests.pub";
@@ -14,6 +18,7 @@ const DEFAULT_RESPONSE_FQCN: &str = "gsy.intelligent.responses.sub";
 const DEFAULT_TOPIC_OWNER: &str = "integration.apps.intelligent.auth.ewc";
 const DEFAULT_TOPIC_VERSION: &str = "1.0.0";
 const DEFAULT_POLL_INTERVAL_MS: u64 = 400;
+const DEFAULT_EMPTY_RESPONSE_GRACE_MS: u64 = 10_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EwdsOperation {
@@ -23,6 +28,12 @@ pub enum EwdsOperation {
     TradesQuery,
     #[serde(rename = "measurements.query")]
     MeasurementsQuery,
+    #[serde(rename = "community.upsert")]
+    CommunityUpsert,
+    #[serde(rename = "communities.query")]
+    CommunitiesQuery,
+    #[serde(rename = "ids.query")]
+    IdsQuery,
     #[serde(rename = "clearing_results.query")]
     ClearingResultsQuery,
     #[serde(rename = "markets.query")]
@@ -32,13 +43,16 @@ pub enum EwdsOperation {
 }
 
 impl EwdsOperation {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 9] = [
         Self::OrdersQuery,
         Self::TradesQuery,
         Self::MeasurementsQuery,
+        Self::CommunityUpsert,
+        Self::CommunitiesQuery,
         Self::ClearingResultsQuery,
         Self::MarketsQuery,
         Self::FacilitiesQuery,
+        Self::IdsQuery,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -46,6 +60,9 @@ impl EwdsOperation {
             Self::OrdersQuery => "orders.query",
             Self::TradesQuery => "trades.query",
             Self::MeasurementsQuery => "measurements.query",
+            Self::CommunityUpsert => "community.upsert",
+            Self::CommunitiesQuery => "communities.query",
+            Self::IdsQuery => "ids.query",
             Self::ClearingResultsQuery => "clearing_results.query",
             Self::MarketsQuery => "markets.query",
             Self::FacilitiesQuery => "facilities.query",
@@ -57,6 +74,9 @@ impl EwdsOperation {
             Self::OrdersQuery => "orders-query",
             Self::TradesQuery => "trades-query",
             Self::MeasurementsQuery => "measurements-query",
+            Self::CommunityUpsert => "community-upsert",
+            Self::CommunitiesQuery => "communities-query",
+            Self::IdsQuery => "ids-query",
             Self::ClearingResultsQuery => "clearing_results-query",
             Self::MarketsQuery => "markets-query",
             Self::FacilitiesQuery => "facilities-query",
@@ -81,6 +101,9 @@ pub struct EwdsTopicConfig {
     orders: EwdsTopicPair,
     trades: EwdsTopicPair,
     measurements: EwdsTopicPair,
+    community_upsert: EwdsTopicPair,
+    communities: EwdsTopicPair,
+    ids: EwdsTopicPair,
     clearing_results: EwdsTopicPair,
     markets: EwdsTopicPair,
     facilities: EwdsTopicPair,
@@ -101,9 +124,21 @@ impl Default for EwdsTopicConfig {
                 request: "measurementsQuery".to_string(),
                 response: "measurementsQueryResponse".to_string(),
             },
+            community_upsert: EwdsTopicPair {
+                request: "communityUpsert".to_string(),
+                response: "communityUpsertResponse".to_string(),
+            },
+            communities: EwdsTopicPair {
+                request: "communitiesQuery".to_string(),
+                response: "communitiesQueryResponse".to_string(),
+            },
+            ids: EwdsTopicPair {
+                request: "idsQuery".to_string(),
+                response: "idsQueryResponse".to_string(),
+            },
             clearing_results: EwdsTopicPair {
-                request: "clearing_resultsQuery".to_string(),
-                response: "clearing_resultsQueryResponse".to_string(),
+                request: "clearingResultsQuery".to_string(),
+                response: "clearingResultsQueryResponse".to_string(),
             },
             markets: EwdsTopicPair {
                 request: "marketsQuery".to_string(),
@@ -151,6 +186,36 @@ impl EwdsTopicConfig {
                     defaults.measurements.response.as_str(),
                 ),
             },
+            community_upsert: EwdsTopicPair {
+                request: env_or(
+                    "EWDS_COMMUNITY_UPSERT_TOPIC",
+                    defaults.community_upsert.request.as_str(),
+                ),
+                response: env_or(
+                    "EWDS_COMMUNITY_UPSERT_RESPONSE_TOPIC",
+                    defaults.community_upsert.response.as_str(),
+                ),
+            },
+            communities: EwdsTopicPair {
+                request: env_or(
+                    "EWDS_COMMUNITIES_REQUEST_TOPIC",
+                    defaults.communities.request.as_str(),
+                ),
+                response: env_or(
+                    "EWDS_COMMUNITIES_RESPONSE_TOPIC",
+                    defaults.communities.response.as_str(),
+                ),
+            },
+            ids: EwdsTopicPair {
+                request: env_or(
+                    "EWDS_IDS_REQUEST_TOPIC",
+                    defaults.ids.request.as_str(),
+                ),
+                response: env_or(
+                    "EWDS_IDS_RESPONSE_TOPIC",
+                    defaults.ids.response.as_str(),
+                ),
+            },
             clearing_results: EwdsTopicPair {
                 request: env_or(
                     "EWDS_CLEARING_RESULTS_REQUEST_TOPIC",
@@ -189,6 +254,9 @@ impl EwdsTopicConfig {
             EwdsOperation::OrdersQuery => &self.orders,
             EwdsOperation::TradesQuery => &self.trades,
             EwdsOperation::MeasurementsQuery => &self.measurements,
+            EwdsOperation::CommunityUpsert => &self.community_upsert,
+            EwdsOperation::CommunitiesQuery => &self.communities,
+            EwdsOperation::IdsQuery => &self.ids,
             EwdsOperation::ClearingResultsQuery => &self.clearing_results,
             EwdsOperation::MarketsQuery => &self.markets,
             EwdsOperation::FacilitiesQuery => &self.facilities,
@@ -206,6 +274,7 @@ pub struct EwdsClientConfig {
     pub consumer_client_id: String,
     pub timeout_ms: u64,
     pub poll_interval_ms: u64,
+    pub empty_response_grace_ms: u64,
     pub topics: EwdsTopicConfig,
 }
 
@@ -233,6 +302,10 @@ impl EwdsClientConfig {
                 "EWDS_RESPONSE_POLL_INTERVAL_MS",
                 DEFAULT_POLL_INTERVAL_MS,
             ),
+            empty_response_grace_ms: env_u64_or(
+                "EWDS_EMPTY_RESPONSE_GRACE_MS",
+                DEFAULT_EMPTY_RESPONSE_GRACE_MS,
+            ),
             topics: EwdsTopicConfig::from_env(),
         }
     }
@@ -247,6 +320,7 @@ struct PendingQuery {
     operation: EwdsOperation,
     request_id: String,
     response_topic: String,
+    started: Instant,
 }
 
 impl EwdsClient {
@@ -283,6 +357,7 @@ impl EwdsClient {
         operation: EwdsOperation,
         query_payload: Value,
     ) -> Result<PendingQuery> {
+        let started = Instant::now();
         let request_id = format!(
             "{}-{}-{}",
             operation.request_id_prefix(),
@@ -309,15 +384,62 @@ impl EwdsClient {
             "{}/api/v2/messages",
             self.config.gateway_base.trim_end_matches('/')
         );
-        let send_response = self
-            .client
-            .post(post_url)
-            .json(&send_message_body)
-            .send()
-            .await?;
-        let send_status = send_response.status();
-        if !send_status.is_success() {
+        let mut delivery_attempt = 0u32;
+        loop {
+            if started.elapsed() > Duration::from_millis(self.config.timeout_ms) {
+                return Err(anyhow!(
+                    "EWDS timeout sending {} request (request_id={})",
+                    operation,
+                    request_id
+                ));
+            }
+
+            let send_response = self
+                .client
+                .post(post_url.as_str())
+                .json(&send_message_body)
+                .send()
+                .await?;
+            let send_status = send_response.status();
             let body = send_response.text().await.unwrap_or_default();
+            if send_status.is_success() {
+                let delivery = parse_gateway_delivery_summary(body.as_str())?;
+                if delivery.sent > 0 {
+                    break;
+                }
+
+                let delay_ms = ewds_rate_limit_backoff_ms(delivery_attempt);
+                warn!(
+                    "EWDS gateway accepted {} request but delivered it to no recipients (failed={}, total={}); retrying in {} ms",
+                    operation, delivery.failed, delivery.total, delay_ms
+                );
+                delivery_attempt = delivery_attempt.saturating_add(1);
+                sleep(Duration::from_millis(delay_ms)).await;
+                continue;
+            }
+
+            if is_rate_limited_response(send_status, &body) {
+                let delay_ms = ewds_rate_limit_backoff_ms(delivery_attempt);
+                warn!(
+                    "EWDS rate limit while sending {} request; retrying in {} ms",
+                    operation, delay_ms
+                );
+                delivery_attempt = delivery_attempt.saturating_add(1);
+                sleep(Duration::from_millis(delay_ms)).await;
+                continue;
+            }
+
+            if is_transient_gateway_response(send_status, &body) {
+                let delay_ms = ewds_rate_limit_backoff_ms(delivery_attempt);
+                warn!(
+                    "EWDS transient gateway error while sending {} request; retrying in {} ms",
+                    operation, delay_ms
+                );
+                delivery_attempt = delivery_attempt.saturating_add(1);
+                sleep(Duration::from_millis(delay_ms)).await;
+                continue;
+            }
+
             return Err(anyhow!(
                 "EWDS message send failed for {}: HTTP {}{}",
                 operation,
@@ -330,6 +452,7 @@ impl EwdsClient {
             operation,
             request_id,
             response_topic: topic_pair.response.clone(),
+            started,
         })
     }
 
@@ -337,7 +460,6 @@ impl EwdsClient {
         &self,
         pending_query: PendingQuery,
     ) -> Result<Vec<T>> {
-        let started = Instant::now();
         let get_url = format!(
             "{}/api/v2/messages",
             self.config.gateway_base.trim_end_matches('/')
@@ -346,9 +468,21 @@ impl EwdsClient {
             self.config.consumer_client_id.as_str(),
             pending_query.response_topic.as_str(),
         );
+        let mut rate_limit_attempt = 0u32;
+        let mut empty_response_seen_at = None;
 
         loop {
-            if started.elapsed().as_millis() as u64 > self.config.timeout_ms {
+            if empty_response_grace_elapsed(
+                empty_response_seen_at,
+                self.config.empty_response_grace_ms,
+            ) {
+                return Ok(Vec::new());
+            }
+
+            if pending_query.started.elapsed() > Duration::from_millis(self.config.timeout_ms) {
+                if empty_response_seen_at.is_some() {
+                    return Ok(Vec::new());
+                }
                 return Err(anyhow!(
                     "EWDS timeout waiting for {} response (request_id={})",
                     pending_query.operation,
@@ -371,6 +505,7 @@ impl EwdsClient {
 
             let status = response.status();
             if status.is_success() {
+                rate_limit_attempt = 0;
                 let messages = response
                     .json::<Vec<EwdsMessageDto>>()
                     .await
@@ -391,12 +526,40 @@ impl EwdsClient {
                                     error_message
                                 ));
                             }
-                            return Ok(parsed_payload.data.unwrap_or_default());
+                            if let Some(data) = select_response_data(
+                                parsed_payload.data.unwrap_or_default(),
+                                &mut empty_response_seen_at,
+                                self.config.empty_response_grace_ms,
+                            ) {
+                                return Ok(data);
+                            }
                         }
                     }
                 }
             } else {
                 let body = response.text().await.unwrap_or_default();
+                if is_rate_limited_response(status, &body) {
+                    let delay_ms = ewds_rate_limit_backoff_ms(rate_limit_attempt);
+                    warn!(
+                        "EWDS rate limit while polling {} response; retrying in {} ms",
+                        pending_query.operation, delay_ms
+                    );
+                    rate_limit_attempt = rate_limit_attempt.saturating_add(1);
+                    sleep(Duration::from_millis(delay_ms)).await;
+                    continue;
+                }
+
+                if is_transient_gateway_response(status, &body) {
+                    let delay_ms = ewds_rate_limit_backoff_ms(rate_limit_attempt);
+                    warn!(
+                        "EWDS transient gateway error while polling {} response; retrying in {} ms",
+                        pending_query.operation, delay_ms
+                    );
+                    rate_limit_attempt = rate_limit_attempt.saturating_add(1);
+                    sleep(Duration::from_millis(delay_ms)).await;
+                    continue;
+                }
+
                 return Err(anyhow!(
                     "EWDS response poll failed for {} (request_id={}): HTTP {}{}",
                     pending_query.operation,
@@ -409,6 +572,61 @@ impl EwdsClient {
             sleep(Duration::from_millis(self.config.poll_interval_ms)).await;
         }
     }
+}
+
+fn empty_response_grace_elapsed(empty_response_seen_at: Option<Instant>, grace_ms: u64) -> bool {
+    empty_response_seen_at
+        .is_some_and(|seen_at| seen_at.elapsed() >= Duration::from_millis(grace_ms))
+}
+
+fn select_response_data<T>(
+    data: Vec<T>,
+    empty_response_seen_at: &mut Option<Instant>,
+    grace_ms: u64,
+) -> Option<Vec<T>> {
+    if data.is_empty() && grace_ms > 0 {
+        empty_response_seen_at.get_or_insert_with(Instant::now);
+        None
+    } else {
+        Some(data)
+    }
+}
+
+pub fn is_rate_limited_response(status: reqwest::StatusCode, body: &str) -> bool {
+    status == reqwest::StatusCode::TOO_MANY_REQUESTS || is_rate_limited_message(body)
+}
+
+pub fn is_transient_gateway_response(status: reqwest::StatusCode, body: &str) -> bool {
+    status.is_server_error() || is_transient_gateway_message(body)
+}
+
+pub fn parse_gateway_delivery_summary(body: &str) -> Result<EwdsDeliverySummary> {
+    serde_json::from_str::<EwdsSendMessageResponse>(body)
+        .map(|response| response.recipients)
+        .map_err(|error| anyhow!("invalid EWDS gateway delivery response: {}", error))
+}
+
+pub fn is_rate_limited_message(message: &str) -> bool {
+    let normalized = message.to_ascii_lowercase();
+    normalized.contains("status code 429")
+        || normalized.contains("\"statuscode\":429")
+        || normalized.contains("too many requests")
+}
+
+pub fn is_transient_gateway_message(message: &str) -> bool {
+    let normalized = message.to_ascii_lowercase();
+    normalized.contains("timeout or no response waiting for nats jetstream server")
+        || normalized.contains("cannot destructure property 'status' of 'e.response'")
+        || normalized.contains("\"statuscode\":500")
+        || normalized.contains("http 500 internal server error")
+}
+
+pub fn ewds_rate_limit_backoff_ms(attempt: u32) -> u64 {
+    let base_ms = env_u64_or("EWDS_RATE_LIMIT_BACKOFF_MS", 2_000);
+    let max_ms = env_u64_or("EWDS_RATE_LIMIT_MAX_BACKOFF_MS", 30_000).max(base_ms);
+    let multiplier = 1u64 << attempt.min(4);
+
+    base_ms.saturating_mul(multiplier).min(max_ms)
 }
 
 pub fn format_response_body(body: &str) -> String {
@@ -484,5 +702,123 @@ mod tests {
                 response: "measurementsQueryResponse".to_string(),
             }
         );
+        assert_eq!(
+            topics.for_operation(EwdsOperation::CommunityUpsert),
+            &EwdsTopicPair {
+                request: "communityUpsert".to_string(),
+                response: "communityUpsertResponse".to_string(),
+            }
+        );
+        assert_eq!(
+            topics.for_operation(EwdsOperation::CommunitiesQuery),
+            &EwdsTopicPair {
+                request: "communitiesQuery".to_string(),
+                response: "communitiesQueryResponse".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn community_operations_round_trip_through_the_request_envelope() {
+        for operation in [
+            EwdsOperation::CommunityUpsert,
+            EwdsOperation::CommunitiesQuery,
+        ] {
+            let envelope = EwdsRequestEnvelope {
+                request_id: "request-id".to_string(),
+                operation,
+                payload: Value::Object(Default::default()),
+            };
+
+            let serialized = serde_json::to_string(&envelope).unwrap();
+            let deserialized: EwdsRequestEnvelope = serde_json::from_str(&serialized).unwrap();
+
+            assert_eq!(deserialized.operation, operation);
+        }
+    }
+
+    #[test]
+    fn recognizes_client_gateway_wrapped_rate_limit() {
+        let body = r#"{
+            "err": {
+                "code": "MB::ERROR",
+                "reason": "Request failed with status code 429"
+            },
+            "statusCode": 400
+        }"#;
+
+        assert!(is_rate_limited_response(
+            reqwest::StatusCode::BAD_REQUEST,
+            body
+        ));
+    }
+
+    #[test]
+    fn does_not_treat_an_unrelated_bad_request_as_rate_limit() {
+        assert!(!is_rate_limited_response(
+            reqwest::StatusCode::BAD_REQUEST,
+            r#"{"reason":"Channel not found","statusCode":400}"#
+        ));
+    }
+
+    #[test]
+    fn recognizes_transient_gateway_failures() {
+        assert!(is_transient_gateway_response(
+            reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+            ""
+        ));
+        assert!(is_transient_gateway_response(
+            reqwest::StatusCode::BAD_REQUEST,
+            r#"{"reason":"Timeout or no response waiting for NATS JetStream server"}"#
+        ));
+    }
+
+    #[test]
+    fn does_not_treat_an_unrelated_bad_request_as_transient() {
+        assert!(!is_transient_gateway_response(
+            reqwest::StatusCode::BAD_REQUEST,
+            r#"{"reason":"Channel not found","statusCode":400}"#
+        ));
+    }
+
+    #[test]
+    fn parses_gateway_recipient_delivery_summary() {
+        let summary =
+            parse_gateway_delivery_summary(r#"{"recipients":{"failed":0,"sent":8,"total":8}}"#)
+                .unwrap();
+
+        assert_eq!(summary.sent, 8);
+        assert_eq!(summary.failed, 0);
+        assert_eq!(summary.total, 8);
+    }
+
+    #[test]
+    fn identifies_gateway_response_with_no_delivered_recipients() {
+        let summary =
+            parse_gateway_delivery_summary(r#"{"recipients":{"failed":8,"sent":0,"total":8}}"#)
+                .unwrap();
+
+        assert_eq!(summary.sent, 0);
+        assert_eq!(summary.failed, summary.total);
+    }
+
+    #[test]
+    fn defers_empty_response_and_selects_later_data() {
+        let mut empty_response_seen_at = None;
+
+        assert!(
+            select_response_data::<u8>(Vec::new(), &mut empty_response_seen_at, 10_000).is_none()
+        );
+        assert!(empty_response_seen_at.is_some());
+        assert_eq!(
+            select_response_data(vec![1u8], &mut empty_response_seen_at, 10_000),
+            Some(vec![1u8])
+        );
+    }
+
+    #[test]
+    fn completes_empty_response_after_grace_period() {
+        assert!(empty_response_grace_elapsed(Some(Instant::now()), 0));
+        assert!(!empty_response_grace_elapsed(None, 0));
     }
 }

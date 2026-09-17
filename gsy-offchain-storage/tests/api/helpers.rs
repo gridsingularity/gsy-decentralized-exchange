@@ -23,6 +23,8 @@ static TRACING: Lazy<()> = Lazy::new(|| {
 });
 
 pub async fn init_app() -> TestApp {
+    Lazy::force(&TRACING);
+
     let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind to random port");
     let port = listener.local_addr().unwrap().port();
     let address = format!("http://127.0.0.1:{}", port);

@@ -5,7 +5,11 @@ use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::orders::{energy_type_to_contract, EnergyType};
 use primitives::db_api_schema::profiles::ForecastSchema;
 use primitives::ewds::utils::fetch_facility_owner_mapping;
-use primitives::utils::{parse_or_hash_bytes16, string_to_timestamp, NODE_FLOAT_SCALING_FACTOR};
+use primitives::utils::{
+    create_encrypted_bytes16_from_string, parse_uuid_or_hex_bytes16, string_to_timestamp,
+    NODE_FLOAT_SCALING_FACTOR,
+};
+
 use std::str::FromStr;
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -126,22 +130,24 @@ abigen!(
     ]"#
 );
 
-fn build_order_param(
+async fn build_order_param(
     forecast: &ForecastSchema,
     owner_id: &String,
     market: &MarketSchema,
     now: u64,
-    index: usize,
     is_bid: bool,
-) -> EvmOrderParamsTuple {
+) -> Result<EvmOrderParamsTuple>  {
     let rate_multiplier = if is_bid { BID_RATE } else { OFFER_RATE };
-    let order_id = parse_or_hash_bytes16(&Uuid::new_v4().to_string());
+    let offchain_order_id = Uuid::new_v4().to_string();
+    let onchain_order_id = create_encrypted_bytes16_from_string(&offchain_order_id);
+    let onchain_owner_id = create_encrypted_bytes16_from_string(owner_id);
     let delivery_start: u64 =
         string_to_timestamp(&market.delivery_start_time).expect("invalid delivery_start_time");
-    (
-        order_id,
-        parse_or_hash_bytes16(owner_id.as_str()),
-        parse_or_hash_bytes16(market.market_id.as_str()),
+    Ok((
+        onchain_order_id,
+        onchain_owner_id,
+        parse_uuid_or_hex_bytes16(market.market_id.as_str())
+            .expect("could not convert hex to bytes"),
         delivery_start,
         now,
         (forecast.energy_kwh.abs() * NODE_FLOAT_SCALING_FACTOR) as u64,
@@ -149,9 +155,9 @@ fn build_order_param(
         energy_type_to_contract(&EnergyType::None),
         energy_type_to_contract(&EnergyType::None),
         is_bid,
-    )
+    ))
 }
-//
+
 pub async fn create_input_orders(
     forecasts: Vec<ForecastSchema>,
     market: MarketSchema,
@@ -162,7 +168,7 @@ pub async fn create_input_orders(
     let facility_owner_mapping =
         fetch_facility_owner_mapping("EWDS_COMMUNITY_CLIENT_ID", "gsycommunityclient").await?;
 
-    for (index, forecast) in forecasts.into_iter().enumerate() {
+    for forecast in forecasts.into_iter() {
         let Some(owner_id) = facility_owner_mapping.get(&forecast.facility_id) else {
             warn!("No owner mapping for facility_id={}", forecast.facility_id);
             continue;
@@ -173,18 +179,16 @@ pub async fn create_input_orders(
                 &owner_id.clone(),
                 &market,
                 now,
-                index,
                 true,
-            ));
+            ).await?);
         } else if forecast.energy_kwh < 0. {
             input_orders.push(build_order_param(
                 &forecast,
                 &owner_id.clone(),
                 &market,
                 now,
-                index,
                 false,
-            ));
+            ).await?);
         }
     }
     Ok(input_orders)

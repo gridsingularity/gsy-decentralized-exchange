@@ -108,14 +108,14 @@ impl OrderService {
             (Some(start), Some(end)) => {
                 filter_params.insert(
                     "time_slot",
-                    doc! {"$gte": time_slot_bson(start)?, "$lte": time_slot_bson(end)?},
+                    doc! {"$gte": time_slot_bson(start)?, "$lt": time_slot_bson(end)?},
                 );
             }
             (Some(start), None) => {
                 filter_params.insert("time_slot", doc! {"$gte": time_slot_bson(start)?});
             }
             (None, Some(end)) => {
-                filter_params.insert("time_slot", doc! {"$lte": time_slot_bson(end)?});
+                filter_params.insert("time_slot", doc! {"$lt": time_slot_bson(end)?});
             }
             (None, None) => {}
         }
@@ -240,7 +240,7 @@ impl OrderService {
             .update_many(
                 doc! {
                     "time_slot": {"$lt": time_slot_bson(now_time_slot)?},
-                    "status": bson::to_bson(&OrderStatus::Open)?,
+                    "status": bson::to_bson(&OrderStatus::Submitted)?,
                 },
                 doc! {"$set": {"status": bson::to_bson(&status)?}},
             )

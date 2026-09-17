@@ -1,5 +1,6 @@
 use super::EwdsOperation;
 use crate::db_api_schema::{
+    grid_topology::EnergyCommunitySchema,
     market::{MarketSchema, MarketType, MatchingAlgorithm},
     orders::{DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus},
     trades::{
@@ -7,7 +8,7 @@ use crate::db_api_schema::{
         TradeStatus,
     },
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::str::FromStr;
@@ -37,6 +38,18 @@ pub struct EwdsSendMessageDto {
     pub transaction_id: String,
     pub payload: String,
     pub anonymous_recipient: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+pub struct EwdsSendMessageResponse {
+    pub recipients: EwdsDeliverySummary,
+}
+
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+pub struct EwdsDeliverySummary {
+    pub failed: u32,
+    pub sent: u32,
+    pub total: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -87,6 +100,36 @@ pub struct EwdsOrderDto {
     pub updated_at: Option<u64>,
     pub reject_reason: Option<String>,
     pub preferred_trading_partner: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preferred_energy_rate: Option<f64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct EwdsCommunityDto {
+    pub community_id: String,
+    pub community_name: String,
+    pub sites: Vec<String>,
+}
+
+impl From<EnergyCommunitySchema> for EwdsCommunityDto {
+    fn from(community: EnergyCommunitySchema) -> Self {
+        Self {
+            community_id: community.community_id,
+            community_name: community.community_name,
+            sites: community.sites,
+        }
+    }
+}
+
+impl From<EwdsCommunityDto> for EnergyCommunitySchema {
+    fn from(community: EwdsCommunityDto) -> Self {
+        Self {
+            community_id: community.community_id,
+            community_name: community.community_name,
+            sites: community.sites,
+        }
+    }
 }
 
 impl From<DbOrderSchema> for EwdsOrderDto {
@@ -119,6 +162,10 @@ impl From<DbOrderSchema> for EwdsOrderDto {
                 .requirements
                 .as_ref()
                 .and_then(|r| r.trading_partner_id.clone()),
+            preferred_energy_rate: order
+                .requirements
+                .as_ref()
+                .and_then(|r| r.preferred_energy_rate),
         }
     }
 }
@@ -129,6 +176,7 @@ impl TryFrom<EwdsOrderDto> for DbOrderSchema {
     fn try_from(order: EwdsOrderDto) -> Result<Self> {
         let requirements = if order.energy_source_preference.is_some()
             || order.preferred_trading_partner.is_some()
+            || order.preferred_energy_rate.is_some()
         {
             Some(DbRequirements {
                 trading_partner_id: order.preferred_trading_partner.clone(),
@@ -136,7 +184,12 @@ impl TryFrom<EwdsOrderDto> for DbOrderSchema {
                     Some(ref pref) => Some(energy_type_from_ewds(pref)?),
                     None => None,
                 },
-                preferred_energy_rate: Some(order.price_limit),
+                preferred_energy_rate: order.preferred_energy_rate.or_else(|| {
+                    order
+                        .preferred_trading_partner
+                        .as_ref()
+                        .map(|_| order.price_limit)
+                }),
             })
         } else {
             None
@@ -176,10 +229,13 @@ pub fn order_type_to_ewds(order_type: &OrderEnum) -> &'static str {
 
 pub fn order_status_to_ewds(status: &OrderStatus) -> &'static str {
     match status {
-        OrderStatus::Open => "submitted",
+        OrderStatus::Submitted => "submitted",
+        OrderStatus::PartiallyFilled => "partially_filled",
+        OrderStatus::Filled => "filled",
         OrderStatus::Executed => "executed",
         OrderStatus::Cancelled => "cancelled",
         OrderStatus::Expired => "expired",
+        OrderStatus::Rejected => "rejected",
     }
 }
 
@@ -193,12 +249,12 @@ fn order_type_from_ewds(value: &str) -> Result<OrderEnum> {
 
 pub fn order_status_from_ewds(value: &str) -> Result<OrderStatus> {
     match value.to_ascii_lowercase().as_str() {
-        "submitted" => Ok(OrderStatus::Open),
-        "partially_filled" => Ok(OrderStatus::Open),
-        "filled" => Ok(OrderStatus::Executed),
+        "submitted" => Ok(OrderStatus::Submitted),
+        "partially_filled" => Ok(OrderStatus::PartiallyFilled),
+        "filled" => Ok(OrderStatus::Filled),
         "cancelled" => Ok(OrderStatus::Cancelled),
         "expired" => Ok(OrderStatus::Expired),
-        "rejected" => Ok(OrderStatus::Cancelled),
+        "rejected" => Ok(OrderStatus::Rejected),
         "executed" => Ok(OrderStatus::Executed),
         _ => Err(anyhow!("unsupported EWDS order status '{}'", value)),
     }
