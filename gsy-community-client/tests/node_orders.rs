@@ -87,6 +87,9 @@ async fn test_orders_to_evm_params_are_created_correctly() {
         _bid_preferences,
         _bid_attributes,
         bid_type,
+        bid_preferred_partner,
+        bid_preferred_rate,
+        bid_trading_partner,
     ) = input_orders[0];
     assert_eq!(bid_created_by, create_encrypted_bytes16_from_string("area1"));
     assert_eq!(bid_market, parse_uuid_or_hex_bytes16(market.market_id.as_str()).expect("failed to parse market id"));
@@ -96,6 +99,9 @@ async fn test_orders_to_evm_params_are_created_correctly() {
     assert_eq!(bid_energy, (12.0 * NODE_FLOAT_SCALING_FACTOR) as u64);
     assert_eq!(bid_rate, (12.0 * 0.3 * NODE_FLOAT_SCALING_FACTOR) as u64);
     assert!(bid_type);
+    assert_eq!(bid_preferred_partner, [0; 16]);
+    assert_eq!(bid_preferred_rate, 0);
+    assert_eq!(bid_trading_partner, [0; 16]);
 
     let (
         _offer_order_id,
@@ -108,6 +114,9 @@ async fn test_orders_to_evm_params_are_created_correctly() {
         _offer_preferences,
         _offer_attributes,
         offer_type,
+        offer_preferred_partner,
+        offer_preferred_rate,
+        offer_trading_partner,
     ) = input_orders[1];
     assert_eq!(offer_created_by, create_encrypted_bytes16_from_string("area2"));
     assert_eq!(
@@ -119,6 +128,9 @@ async fn test_orders_to_evm_params_are_created_correctly() {
     assert_eq!(offer_energy, (1.0 * NODE_FLOAT_SCALING_FACTOR) as u64);
     assert_eq!(offer_rate, (1.0 * 0.07 * NODE_FLOAT_SCALING_FACTOR) as u64);
     assert!(!offer_type);
+    assert_eq!(offer_preferred_partner, [0; 16]);
+    assert_eq!(offer_preferred_rate, 0);
+    assert_eq!(offer_trading_partner, [0; 16]);
 }
 
 #[tokio::test]

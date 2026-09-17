@@ -4,12 +4,14 @@ use ethers::prelude::*;
 use gsy_community_client::node_connector::orders::publish_orders;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use primitives::db_api_schema::orders::{
-    energy_type_to_contract, DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderStatus,
+    order_metadata_to_contract, DbAttributes, DbOrderSchema, DbRequirements, EnergyType,
+    OrderStatus,
 };
 use primitives::db_api_schema::profiles::MeasurementSchema;
 use primitives::db_api_schema::trades::DbTradeSchema;
 use primitives::ewds::dto::{EwdsOrderDto, EwdsTradeDto};
 use primitives::matching::matching_block_interval;
+use primitives::utils::endpoint_calls::resolve_order_partner_ids;
 use primitives::utils::{
     bytes16_to_hex, create_encrypted_bytes16_from_string, parse_uuid_or_hex_bytes16,
     NODE_FLOAT_SCALING_FACTOR,
@@ -23,7 +25,6 @@ use tracing::info;
 use uuid::Uuid;
 use primitives::db_api_schema::grid_topology::FacilitySchema;
 const FLOAT_EPSILON: f64 = 0.000_001;
-const ENERGY_TYPE_UNSPECIFIED: u8 = 0;
 const COMMUNITY_TRADE_POLL_ATTEMPTS: usize = 180;
 const COMMUNITY_MATCHING_RETRIGGER_INTERVAL: usize = 30;
 const HTTP_PENALTY_POLL_ATTEMPTS: usize = 60;
@@ -40,6 +41,9 @@ type EvmOrderParamsTuple = (
     u8,
     u8,
     bool,
+    [u8; 16],
+    u64,
+    [u8; 16],
 );
 
 abigen!(
@@ -72,7 +76,10 @@ abigen!(
                         {"name": "energyRate", "type": "uint64"},
                         {"name": "energySourcePreference", "type": "uint8"},
                         {"name": "energyType", "type": "uint8"},
-                        {"name": "isBid", "type": "bool"}
+                        {"name": "isBid", "type": "bool"},
+                        {"name": "preferredTradingPartner", "type": "bytes16"},
+                        {"name": "preferredEnergyRate", "type": "uint64"},
+                        {"name": "tradingPartner", "type": "bytes16"}
                     ]
                 }
             ],
@@ -258,38 +265,6 @@ async fn wait_for_order_in_market(
     );
 }
 
-async fn upsert_order_in_offchain_storage(world: &MyWorld, order: DbOrderSchema) {
-    let dto = EwdsOrderDto::try_from(order).expect("valid order DTO");
-    let response = world
-        .http_client
-        .post(format!("{}/orders", world.offchain_storage_url))
-        .json(&vec![dto])
-        .send()
-        .await
-        .expect("Failed to upsert order in off-chain storage");
-
-    assert!(
-        response.status().is_success(),
-        "Order upsert failed with status {}",
-        response.status()
-    );
-}
-
-fn order_energy_source_preference(requirements: &Option<DbRequirements>) -> u8 {
-    requirements
-        .as_ref()
-        .and_then(|requirements| requirements.energy_type.as_ref())
-        .map(energy_type_to_contract)
-        .unwrap_or(energy_type_to_contract(&EnergyType::None))
-}
-
-fn order_energy_type(attributes: &Option<DbAttributes>) -> u8 {
-    attributes
-        .as_ref()
-        .map(|attributes| energy_type_to_contract(&attributes.energy_type))
-        .unwrap_or(energy_type_to_contract(&EnergyType::None))
-}
-
 async fn place_custom_order(
     world: &MyWorld,
     user_name: &str,
@@ -337,6 +312,21 @@ async fn place_custom_order_for_market(
     let actor_id = world.actor_id_for_user(user_name).await;
     let order_id = Uuid::new_v4().to_string();
     let order_id_bytes = create_encrypted_bytes16_from_string(&order_id);
+    let mut resolved_requirements = requirements.clone();
+    let mut resolved_attributes = attributes.clone();
+    resolve_order_partner_ids(
+        &mut resolved_requirements,
+        &mut resolved_attributes,
+        "EWDS_E2E_CLIENT_ID",
+        "gsye2e",
+    )
+    .await
+    .expect("Failed to resolve order partner IDs");
+    let metadata = order_metadata_to_contract(
+        resolved_requirements.as_ref(),
+        resolved_attributes.as_ref(),
+    )
+    .expect("Invalid resolved order metadata");
 
     let params: EvmOrderParamsTuple = (
         order_id_bytes,
@@ -346,9 +336,12 @@ async fn place_custom_order_for_market(
         creation_time,
         (energy * NODE_FLOAT_SCALING_FACTOR).round() as u64,
         (energy_rate * NODE_FLOAT_SCALING_FACTOR).round() as u64,
-        order_energy_source_preference(&requirements),
-        order_energy_type(&attributes),
+        metadata.energy_source_preference,
+        metadata.energy_type,
         is_bid,
+        metadata.preferred_trading_partner,
+        metadata.preferred_energy_rate,
+        metadata.trading_partner,
     );
 
     let order_id = bytes16_to_hex(order_id_bytes);
@@ -369,11 +362,18 @@ async fn place_custom_order_for_market(
 
     if requirements.is_some() || attributes.is_some() {
         let market_id = bytes16_to_hex(market_id);
-        let mut indexed_order =
+        let indexed_order =
             wait_for_order_in_market(world, market_id.as_str(), order_id.as_str()).await;
-        indexed_order.requirements = requirements;
-        indexed_order.attributes = attributes;
-        upsert_order_in_offchain_storage(world, indexed_order).await;
+        assert_eq!(
+            indexed_order.requirements.as_ref(),
+            requirements.as_ref(),
+            "Listener-indexed requirements differ from the submitted on-chain requirements"
+        );
+        assert_eq!(
+            indexed_order.attributes.as_ref(),
+            attributes.as_ref(),
+            "Listener-indexed attributes differ from the submitted on-chain attributes"
+        );
     }
 
     order_id
@@ -655,7 +655,7 @@ async fn submit_preferred_partner_bid(
     partner_name: String,
 ) {
     let requirements = DbRequirements {
-        trading_partner_id: Some(actor_id_as_hex(world, &partner_name).await),
+        trading_partner_id: Some(partner_name.clone()),
         energy_type: None,
         preferred_energy_rate: Some(preferred_rate),
     };
@@ -703,7 +703,7 @@ async fn submit_preferred_partner_offer(
     partner_name: String,
 ) {
     let attributes = DbAttributes {
-        trading_partner_id: Some(actor_id_as_hex(world, &partner_name).await),
+        trading_partner_id: Some(partner_name.clone()),
         energy_type: EnergyType::Green,
     };
 
@@ -772,7 +772,7 @@ async fn submit_combined_pay_as_clear_order_book(world: &mut MyWorld) {
     align_to_matching_window(world, 12).await;
 
     let preferred_bid_requirements = DbRequirements {
-        trading_partner_id: Some(actor_id_as_hex(world, "bob").await),
+        trading_partner_id: Some("bob".to_string()),
         energy_type: None,
         preferred_energy_rate: Some(11.0),
     };
@@ -788,7 +788,7 @@ async fn submit_combined_pay_as_clear_order_book(world: &mut MyWorld) {
         .await;
 
     let preferred_offer_attributes = DbAttributes {
-        trading_partner_id: Some(actor_id_as_hex(world, "alice").await),
+        trading_partner_id: Some("alice".to_string()),
         energy_type: EnergyType::Green,
     };
     let preferred_offer = place_custom_order(

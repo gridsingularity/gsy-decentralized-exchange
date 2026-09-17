@@ -98,7 +98,9 @@ Each service:
 > Note: the `*.query` operations above are implemented in the current responder
 > (`EwdsOperation` variants `OrdersQuery`, `TradesQuery`, `MeasurementsQuery`,
 > `ClearingResultsQuery`, `MarketsQuery`, `IdsQuery`). The `*.upsert` operations
-> remain future work — writes still go over the REST compatibility path.
+> for forecasts, measurements and markets remain future work; those writes still
+> go over the REST compatibility path. `community.upsert` is already supported
+> over EWDS.
 
 | Local channel FQCN | Gateway type | Attached topics | Default env var |
 |---|---|---|---|
