@@ -163,8 +163,8 @@ fn address_to_full_hex(address: Address) -> String {
     format!("0x{}", hex::encode(address.as_bytes()))
 }
 
-fn actor_id_as_hex(world: &MyWorld, user_name: &str) -> String {
-    format!("0x{}", hex::encode(world.actor_id_for_user(user_name)))
+async fn actor_id_as_hex(world: &MyWorld, user_name: &str) -> String {
+    format!("0x{}", hex::encode(world.actor_id_for_user(user_name).await))
 }
 
 fn market_id_as_hex(world: &MyWorld) -> String {
@@ -309,7 +309,7 @@ async fn place_custom_order_for_market(
         .expect("System clock before UNIX_EPOCH");
     let creation_time = now.as_secs();
 
-    let actor_id = world.actor_id_for_user(user_name);
+    let actor_id = world.actor_id_for_user(user_name).await;
     let order_id = Uuid::new_v4().to_string();
     let order_id_bytes = create_encrypted_bytes16_from_string(&order_id);
     let mut resolved_requirements = requirements.clone();
@@ -918,8 +918,8 @@ async fn verify_partner_trade(
     let order_registry =
         OrderRegistryContract::new(world.order_registry_address, world.provider.clone());
     let expected_market_id = market_id_as_hex(world).to_lowercase();
-    let expected_buyer = actor_id_as_hex(world, &buyer_name);
-    let expected_seller = actor_id_as_hex(world, &seller_name);
+    let expected_buyer = actor_id_as_hex(world, &buyer_name).await;
+    let expected_seller = actor_id_as_hex(world, &seller_name).await;
 
     for attempt in 0..60 {
         let trades = query_market_trades(world).await;
