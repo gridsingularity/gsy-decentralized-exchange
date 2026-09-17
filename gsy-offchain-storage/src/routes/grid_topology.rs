@@ -108,7 +108,14 @@ pub async fn get_sites(db: DbRef) -> impl Responder {
 pub async fn post_facility(facility: Json<FacilitySchema>, db: DbRef) -> impl Responder {
     match db.get_ref().facilities().insert(facility.to_owned()).await {
         Ok(saved) => HttpResponse::Ok().json(saved),
-        Err(_) => HttpResponse::InternalServerError().finish(),
+        Err(e) => {
+            if e.to_string().contains("E11000") || format!("{e:#}").contains("E11000") {
+                HttpResponse::Conflict().body("facility already exists")
+            } else {
+                tracing::error!("insert failed: {e:#}");
+                HttpResponse::InternalServerError().finish()
+            }
+        }
     }
 }
 

@@ -7,6 +7,8 @@ use std::collections::HashSet;
 use std::env;
 use std::str::FromStr;
 use std::sync::Arc;
+use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
+use primitives::db_api_schema::grid_topology::FacilitySchema;
 
 abigen!(
     MarketControllerContract,

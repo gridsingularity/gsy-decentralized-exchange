@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use cucumber::World;
 use ethers::prelude::*;
-use gsy_community_client::external_api::ExternalFacilityTopology;
+use primitives::db_api_schema::grid_topology::FacilitySchema;
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::profiles::ForecastSchema;
 use primitives::db_api_schema::trades::DbTradeSchema;
@@ -11,6 +11,7 @@ use reqwest::Client;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
+use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 
 const DEFAULT_PRIVATE_KEY: &str =
     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
@@ -61,7 +62,7 @@ pub struct MyWorld {
     pub last_trade: Option<DbTradeSchema>,
     pub last_charlie_offer_order_id: Option<String>,
     pub market_schema: Option<MarketSchema>,
-    pub facilities_topology: Vec<ExternalFacilityTopology>,
+    pub facilities_topology: Vec<FacilitySchema>,
     pub pay_as_clear_scenario: Option<PayAsClearScenario>,
     pub pay_as_clear_trades: Vec<DbTradeSchema>,
     pub preferred_trade: Option<DbTradeSchema>,
@@ -191,4 +192,20 @@ impl MyWorld {
             .expect("failed to fetch onchain id");
         parse_uuid_or_hex_bytes16(&onchain_id).expect("failed to parse uuid")
     }
+
+    pub async fn create_facilities(&self, facilities: Vec<FacilitySchema>) {
+        let adapter = AreaMarketInfoAdapter::new(Some(self.offchain_storage_url.clone()));
+        for facility in facilities.iter() {
+            let _ = adapter
+                .forward_facilities(facility.clone())
+                .await
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "facility creation failed (error={e}, facility={:?})",
+                        facility.clone()
+                    )
+                });
+        }
+    }
+
 }

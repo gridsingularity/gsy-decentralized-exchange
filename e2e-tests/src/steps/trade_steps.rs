@@ -23,7 +23,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
 use tracing::info;
 use uuid::Uuid;
-
+use primitives::db_api_schema::grid_topology::FacilitySchema;
 const FLOAT_EPSILON: f64 = 0.000_001;
 const COMMUNITY_TRADE_POLL_ATTEMPTS: usize = 180;
 const COMMUNITY_MATCHING_RETRIGGER_INTERVAL: usize = 30;
@@ -607,6 +607,23 @@ async fn submit_community_market_measurements(world: &mut MyWorld) {
             energy_kwh: 3.0,
         },
     ];
+
+    let facilities = vec![
+        FacilitySchema {
+            facility_id: "alice".to_string(),
+            facility_name: "alice".to_string(),
+            site_id: "12345".to_string(),
+            owner_id: "alice".to_string(),
+        },
+        FacilitySchema {
+            facility_id: "bob".to_string(),
+            facility_name: "bob".to_string(),
+            site_id: "12346".to_string(),
+            owner_id: "bob".to_string(),
+        },
+
+    ];
+    world.create_facilities(facilities).await;
 
     AreaMarketInfoAdapter::new(Some(world.offchain_storage_url.clone()))
         .forward_measurement(measurements)
