@@ -150,7 +150,7 @@ async fn users_are_registered(
 
     for user_name in users {
         let wallet = world.wallet_for_user(user_name);
-        let actor_id = world.actor_id_for_user(user_name);
+        let actor_id = world.actor_id_for_user(user_name).await;
         if seen.insert(actor_id) {
             let register_call = actor_registry.register_actor(actor_id, wallet.address());
             let register_receipt = register_call

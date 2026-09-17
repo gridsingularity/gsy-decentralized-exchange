@@ -2,7 +2,7 @@
 
 ## Context
 
-This document details the GSY DEX services integration with Energy Web Digital Spine (EWDS). The document describes :
+This document details the GSY DEX services integration with Energy Web Digital Spine (EWDS). The document describes:
 
 1. The current off-chain service communication model.
 2. The target EWDS-based communication model.
@@ -53,12 +53,13 @@ Provider: `gsy-offchain-storage` (`gsy-offchain-storage/src/startup.rs`)
 | `/trades` | `POST` | e2e tests/internal tooling | `http://gsy-offchain-storage:8080/trades` |
 | `/communities` | `GET/POST` | market orchestrator, pilot sites, e2e tests | `http://gsy-offchain-storage:8080/communities` |
 | `/markets` | `GET/POST` | ontology-aligned market-opening API | `http://gsy-offchain-storage:8080/markets` |
+| `/clearing-results` | `GET/POST` | clearing-result API | `http://gsy-offchain-storage:8080/clearing-results` |
+| `/ids` | `POST` | offchain↔onchain ID mapping API | `http://gsy-offchain-storage:8080/ids` |
 | `/measurement-points` | `GET/POST` | ontology-aligned profile metadata API | `http://gsy-offchain-storage:8080/measurement-points` |
 | `/timeseries` | `GET/POST` | ontology-aligned value API | `http://gsy-offchain-storage:8080/timeseries` |
 | `/measurements` | `GET/POST` | EVM JSON compatibility adapter | converts to/from `MeasurementPoint` + `Timeseries` |
 | `/forecasts` | `GET/POST` | EVM JSON compatibility adapter | converts to/from `MeasurementPoint` + `Timeseries` |
-| `/market` | `GET/POST` | EVM JSON compatibility adapter | converts to/from `Market` |
-| `/community-market` | `GET` | EVM JSON compatibility adapter | queries `Market` by community/delivery window |
+| `/market` | `GET` | EVM JSON compatibility adapter | converts to/from `Market` |
 
 ## Target EWDS Communication Model
 
@@ -85,21 +86,26 @@ Each service:
 | `orders.query` over `ordersQuery` / `ordersQueryResponse` | matching engine | off-chain storage service | off-chain storage service | matching engine | `GET /orders` |
 | `trades.query` over `tradesQuery` / `tradesQueryResponse` | execution engine | off-chain storage service | off-chain storage service | execution engine | `GET /trades` |
 | `measurements.query` over `measurementsQuery` / `measurementsQueryResponse` | execution engine | off-chain storage service | off-chain storage service | execution engine | `GET /measurement-points` + `GET /timeseries` |
+| `clearing_results.query` over `clearingResultsQuery` / `clearingResultsQueryResponse` | matching/execution engine | off-chain storage service | off-chain storage service | requester | `GET /clearing-results` |
+| `markets.query` over `marketsQuery` / `marketsQueryResponse` | community client | off-chain storage service | off-chain storage service | community client | `GET /markets` |
+| `ids.query` over `idsQuery` / `idsQueryResponse` | requester service | off-chain storage service | off-chain storage service | requester | `POST /ids` (get-or-create) |
 | `community.upsert` over `communityUpsert` / `communityUpsertResponse` | pilot integration or e2e runner | off-chain storage service | off-chain storage service | request publisher | `POST /communities` |
 | `communities.query` over `communitiesQuery` / `communitiesQueryResponse` | market orchestrator | off-chain storage service | off-chain storage service | market orchestrator | `GET /communities` |
 | `forecasts.upsert` | community client | off-chain storage service | none | none | `POST /measurement-points` + `POST /timeseries` |
 | `measurements.upsert` | community client | off-chain storage service | none | none | `POST /measurement-points` + `POST /timeseries` |
 | `market.upsert` | community client | off-chain storage service | none | none | `POST /markets` |
-| `community-market.query` | community client | off-chain storage service | off-chain storage service | community client | `GET /markets` |
 
-### Local Channel Layout
+> Note: the `*.query` operations above are implemented in the current responder
+> (`EwdsOperation` variants `OrdersQuery`, `TradesQuery`, `MeasurementsQuery`,
+> `ClearingResultsQuery`, `MarketsQuery`, `IdsQuery`). The `*.upsert` operations
+> remain future work — writes still go over the REST compatibility path.
 
 | Local channel FQCN | Gateway type | Attached topics | Default env var |
 |---|---|---|---|
-| `gsy.intelligent.requests.pub` | Publish | `ordersQuery`, `tradesQuery`, `measurementsQuery`, `communityUpsert`, `communitiesQuery` | `EWDS_REQUEST_PUBLISH_FQCN` |
-| `gsy.intelligent.requests.sub` | Subscribe | `ordersQuery`, `tradesQuery`, `measurementsQuery`, `communityUpsert`, `communitiesQuery` | `EWDS_REQUEST_SUBSCRIBE_FQCN` |
-| `gsy.intelligent.responses.pub` | Publish | `ordersQueryResponse`, `tradesQueryResponse`, `measurementsQueryResponse`, `communityUpsertResponse`, `communitiesQueryResponse` | `EWDS_RESPONSE_PUBLISH_FQCN` |
-| `gsy.intelligent.responses.sub` | Subscribe | `ordersQueryResponse`, `tradesQueryResponse`, `measurementsQueryResponse`, `communityUpsertResponse`, `communitiesQueryResponse` | `EWDS_RESPONSE_SUBSCRIBE_FQCN` |
+| `gsy.intelligent.requests.pub` | Publish | `ordersQuery`, `tradesQuery`, `measurementsQuery`, `clearingResultsQuery`, `marketsQuery`, `idsQuery`, `communityUpsert`, `communitiesQuery` | `EWDS_REQUEST_PUBLISH_FQCN` |
+| `gsy.intelligent.requests.sub` | Subscribe | `ordersQuery`, `tradesQuery`, `measurementsQuery`, `clearingResultsQuery`, `marketsQuery`, `idsQuery`, `communityUpsert`, `communitiesQuery` | `EWDS_REQUEST_SUBSCRIBE_FQCN` |
+| `gsy.intelligent.responses.pub` | Publish | `ordersQueryResponse`, `tradesQueryResponse`, `measurementsQueryResponse`, `clearingResultsQueryResponse`, `marketsQueryResponse`, `idsQueryResponse`, `communityUpsertResponse`, `communitiesQueryResponse` | `EWDS_RESPONSE_PUBLISH_FQCN` |
+| `gsy.intelligent.responses.sub` | Subscribe | `ordersQueryResponse`, `tradesQueryResponse`, `measurementsQueryResponse`, `clearingResultsQueryResponse`, `marketsQueryResponse`, `idsQueryResponse`, `communityUpsertResponse`, `communitiesQueryResponse` | `EWDS_RESPONSE_SUBSCRIBE_FQCN` |
 
 The broad `user.roles.integration.apps.intelligent.auth.ewc` restriction can be
 used for an initial delivery smoke test. For request/reply operation, the
@@ -107,6 +113,17 @@ request publish channel must resolve only to the authoritative GSY
 off-chain-storage responder DID. If multiple qualified responders consume the
 same request topics, they can return different snapshots for the same request
 ID. The response publish channel can resolve to all GSY request clients.
+
+### Query Payload Fields
+
+Each `*.query` request payload accepts both snake_case and camelCase keys (via serde aliases):
+
+| Operation | Fields (all optional unless noted) |
+|---|---|
+| `orders.query` | `market_id`/`marketId`, `start_time`/`startTime`, `end_time`/`endTime` |
+| `trades.query` | `start_time`/`startTime`, `end_time`/`endTime`, `facility_id`/`areaUuid` |
+| `measurements.query` | `start_time`/`startTime`, `end_time`/`endTime`, `facility_id`/`areaUuid` (filters after fetch) |
+| `ids.query` | `offchain_id`/`offchainId` (required) |
 
 ## DDHub API Surface Used by Integration
 
@@ -259,6 +276,7 @@ Validated e2e status:
   `EWDS_RATE_LIMIT_BACKOFF_MS` and `EWDS_RATE_LIMIT_MAX_BACKOFF_MS`.
 
 Gateway smoke-test example:
+
 
 ```bash
 docker compose --env-file .env.ewds.local -f docker-compose.ewds.yml up --build
