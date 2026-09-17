@@ -4,7 +4,8 @@ use ethers::prelude::*;
 use gsy_community_client::node_connector::orders::publish_orders;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use primitives::db_api_schema::orders::{
-    energy_type_to_contract, DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderStatus,
+    order_metadata_to_contract, DbAttributes, DbOrderSchema, DbRequirements, EnergyType,
+    OrderStatus,
 };
 use primitives::db_api_schema::profiles::MeasurementSchema;
 use primitives::db_api_schema::trades::DbTradeSchema;
@@ -23,7 +24,6 @@ use tracing::info;
 use uuid::Uuid;
 
 const FLOAT_EPSILON: f64 = 0.000_001;
-const ENERGY_TYPE_UNSPECIFIED: u8 = 0;
 const COMMUNITY_TRADE_POLL_ATTEMPTS: usize = 180;
 const COMMUNITY_MATCHING_RETRIGGER_INTERVAL: usize = 30;
 const HTTP_PENALTY_POLL_ATTEMPTS: usize = 60;
@@ -40,6 +40,9 @@ type EvmOrderParamsTuple = (
     u8,
     u8,
     bool,
+    [u8; 16],
+    u64,
+    [u8; 16],
 );
 
 abigen!(
@@ -72,7 +75,10 @@ abigen!(
                         {"name": "energyRate", "type": "uint64"},
                         {"name": "energySourcePreference", "type": "uint8"},
                         {"name": "energyType", "type": "uint8"},
-                        {"name": "isBid", "type": "bool"}
+                        {"name": "isBid", "type": "bool"},
+                        {"name": "preferredTradingPartner", "type": "bytes16"},
+                        {"name": "preferredEnergyRate", "type": "uint64"},
+                        {"name": "tradingPartner", "type": "bytes16"}
                     ]
                 }
             ],
@@ -85,6 +91,7 @@ abigen!(
     TradeSettlementContract,
     r#"[
         function penaltyEnergyByTrade(bytes16 tradeId) external view returns (uint256)
+        event TradeSettled(bytes16 indexed tradeId, bytes16 indexed bidId, bytes16 indexed offerId, bytes16 buyerId, bytes16 sellerId, bytes16 marketId, uint64 timeSlot, bytes16 residualBidId, bytes16 residualOfferId, uint256 energy, uint256 price)
     ]"#
 );
 
@@ -258,38 +265,6 @@ async fn wait_for_order_in_market(
     );
 }
 
-async fn upsert_order_in_offchain_storage(world: &MyWorld, order: DbOrderSchema) {
-    let dto = EwdsOrderDto::try_from(order).expect("valid order DTO");
-    let response = world
-        .http_client
-        .post(format!("{}/orders", world.offchain_storage_url))
-        .json(&vec![dto])
-        .send()
-        .await
-        .expect("Failed to upsert order in off-chain storage");
-
-    assert!(
-        response.status().is_success(),
-        "Order upsert failed with status {}",
-        response.status()
-    );
-}
-
-fn order_energy_source_preference(requirements: &Option<DbRequirements>) -> u8 {
-    requirements
-        .as_ref()
-        .and_then(|requirements| requirements.energy_type.as_ref())
-        .map(energy_type_to_contract)
-        .unwrap_or(energy_type_to_contract(&EnergyType::None))
-}
-
-fn order_energy_type(attributes: &Option<DbAttributes>) -> u8 {
-    attributes
-        .as_ref()
-        .map(|attributes| energy_type_to_contract(&attributes.energy_type))
-        .unwrap_or(energy_type_to_contract(&EnergyType::None))
-}
-
 async fn place_custom_order(
     world: &MyWorld,
     user_name: &str,
@@ -337,6 +312,7 @@ async fn place_custom_order_for_market(
     let actor_id = world.actor_id_for_user(user_name).await;
     let order_id = Uuid::new_v4().to_string();
     let order_id_bytes = create_encrypted_bytes16_from_string(&order_id);
+    let metadata = order_metadata_to_contract(requirements.as_ref(), attributes.as_ref());
 
     let params: EvmOrderParamsTuple = (
         order_id_bytes,
@@ -346,9 +322,12 @@ async fn place_custom_order_for_market(
         creation_time,
         (energy * NODE_FLOAT_SCALING_FACTOR).round() as u64,
         (energy_rate * NODE_FLOAT_SCALING_FACTOR).round() as u64,
-        order_energy_source_preference(&requirements),
-        order_energy_type(&attributes),
+        metadata.energy_source_preference,
+        metadata.energy_type,
         is_bid,
+        metadata.preferred_trading_partner,
+        metadata.preferred_energy_rate,
+        metadata.trading_partner,
     );
 
     let order_id = bytes16_to_hex(order_id_bytes);
@@ -369,11 +348,18 @@ async fn place_custom_order_for_market(
 
     if requirements.is_some() || attributes.is_some() {
         let market_id = bytes16_to_hex(market_id);
-        let mut indexed_order =
+        let indexed_order =
             wait_for_order_in_market(world, market_id.as_str(), order_id.as_str()).await;
-        indexed_order.requirements = requirements;
-        indexed_order.attributes = attributes;
-        upsert_order_in_offchain_storage(world, indexed_order).await;
+        assert_eq!(
+            indexed_order.requirements.as_ref(),
+            requirements.as_ref(),
+            "Listener-indexed requirements differ from the submitted on-chain requirements"
+        );
+        assert_eq!(
+            indexed_order.attributes.as_ref(),
+            attributes.as_ref(),
+            "Listener-indexed attributes differ from the submitted on-chain attributes"
+        );
     }
 
     order_id
@@ -720,6 +706,11 @@ async fn submit_pay_as_clear_order_book(world: &mut MyWorld) {
     align_to_matching_window(world, 8).await;
     world.pay_as_clear_scenario = Some(place_standard_pay_as_clear_order_book(world).await);
 
+    mine_until_matching_block(world, matching_block_interval() as usize + 1).await;
+}
+
+#[when("the next matching cycle is triggered")]
+async fn trigger_matching_cycle(world: &mut MyWorld) {
     mine_until_matching_block(world, matching_block_interval() as usize + 1).await;
 }
 
@@ -1159,30 +1150,62 @@ async fn verify_trade_price(world: &mut MyWorld, expected_price: f64) {
     );
 }
 
-#[then(expr = "Bob's residual offer of {float} energy is available for the next matching phase")]
-async fn verify_residual_offer(world: &mut MyWorld, expected_residual_energy: f64) {
+#[then(expr = "the preferred trade records a residual {word} of {float} energy")]
+async fn verify_preferred_residual(
+    world: &mut MyWorld,
+    residual_side: String,
+    expected_residual_energy: f64,
+) {
+    assert!(matches!(residual_side.as_str(), "bid" | "offer"));
     let trade = world
         .last_trade
         .as_ref()
         .expect("No trade was recorded in the previous step");
 
+    let trade_id = parse_uuid_or_hex_bytes16(&trade.trade_uuid).expect("Invalid trade ID");
+    // Indexed bytes16 values are right-padded to a 32-byte event topic.
+    let mut topic = [0u8; 32];
+    topic[..16].copy_from_slice(&trade_id);
+    let settlement =
+        TradeSettlementContract::new(world.trade_settlement_address, world.provider.clone());
+    let events = settlement
+        .event::<TradeSettledFilter>()
+        .from_block(0u64)
+        .topic1(H256::from(topic))
+        .query()
+        .await
+        .expect("Failed to query preferred settlement event");
+    assert_eq!(events.len(), 1, "Expected one settlement event for the trade");
+    let event = &events[0];
+    assert_eq!(event.bid_id, parse_uuid_or_hex_bytes16(&trade.bid_hash).unwrap());
+    assert_eq!(event.offer_id, parse_uuid_or_hex_bytes16(&trade.offer_hash).unwrap());
+
     let orders = query_market_orders(world).await;
-    let offer = orders
-        .into_iter()
-        .find(|order| order.order_id == trade.offer_hash)
-        .unwrap_or_else(|| {
-            panic!(
-                "No order found with order_id matching offer_hash: {}",
-                trade.offer_hash
-            )
-        });
-    let residual_energy = offer.energy_kWh - trade.parameters.selected_energy_kWh;
-    assert!(
-        approx_eq(residual_energy, expected_residual_energy),
-        "Residual offer mismatch: expected {}, got {}",
-        expected_residual_energy,
-        residual_energy
-    );
+    for (side, order_id, indexed_residual, emitted_residual) in [
+        ("bid", &trade.bid_hash, &trade.residual_bid_id, event.residual_bid_id),
+        ("offer", &trade.offer_hash, &trade.residual_offer_id, event.residual_offer_id),
+    ] {
+        let order = orders.iter()
+            .find(|order| order.order_id.eq_ignore_ascii_case(order_id))
+            .unwrap_or_else(|| panic!("Missing original {side} order {order_id}"));
+        let expected_energy = if side == residual_side { expected_residual_energy } else { 0.0 };
+        assert!(
+            approx_eq(order.energy_kWh - trade.parameters.selected_energy_kWh, expected_energy),
+            "Unexpected remaining energy for {side}"
+        );
+        if side == residual_side {
+            let indexed_id = indexed_residual.as_ref()
+                .unwrap_or_else(|| panic!("Missing indexed residual {side} ID"));
+            let indexed_id = parse_uuid_or_hex_bytes16(indexed_id).expect("Invalid residual ID");
+            assert_ne!(emitted_residual, [0u8; 16], "Missing on-chain residual {side} ID");
+            assert_eq!(indexed_id, emitted_residual, "Residual {side} ID differs from event");
+            assert_ne!(indexed_id, event.bid_id, "Residual must have a new ID");
+            assert_ne!(indexed_id, event.offer_id, "Residual must have a new ID");
+        } else {
+            assert!(indexed_residual.is_none(), "Fully filled {side} has an indexed residual");
+            assert_eq!(emitted_residual, [0u8; 16], "Fully filled {side} has an on-chain residual");
+        }
+    }
 }
 
 #[then(expr = "Charlie's cheaper offer remains untouched in this phase")]

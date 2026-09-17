@@ -7,8 +7,7 @@ use gsy_ethers_listener::{
 };
 use primitives::db_api_schema::{
     orders::{
-        energy_type_from_contract, DbAttributes, DbOrderSchema, DbRequirements, OrderEnum,
-        OrderStatus,
+        order_metadata_from_contract, ContractOrderMetadata, DbOrderSchema, OrderEnum, OrderStatus,
     },
     trades::{DbTradeSchema, TradeParameters, TradeStatus},
 };
@@ -39,6 +38,13 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         } else {
             OrderEnum::Offer
         };
+        let (requirements, attributes) = order_metadata_from_contract(ContractOrderMetadata {
+            energy_source_preference: event.energy_source_preference,
+            energy_type: event.energy_type,
+            preferred_trading_partner: event.preferred_trading_partner,
+            preferred_energy_rate: event.preferred_energy_rate,
+            trading_partner: event.trading_partner,
+        });
 
         let schema = DbOrderSchema {
             order_id: order_id_str,
@@ -51,8 +57,8 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             energy_kWh: energy_f64,
             energy_rate: rate_f64,
             created_by: created_by_str,
-            requirements: requirements_from_event(&event),
-            attributes: attributes_from_event(&event),
+            requirements,
+            attributes,
         };
 
         match self.db.orders().insert_orders(vec![schema]).await {
@@ -139,29 +145,6 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         );
         Ok(())
     }
-}
-
-fn requirements_from_event(event: &OrderPlacedFilter) -> Option<DbRequirements> {
-    if !event.is_bid {
-        return None;
-    }
-
-    energy_type_from_contract(event.energy_source_preference).map(|energy_type| DbRequirements {
-        trading_partner_id: None,
-        energy_type: Some(energy_type),
-        preferred_energy_rate: None,
-    })
-}
-
-fn attributes_from_event(event: &OrderPlacedFilter) -> Option<DbAttributes> {
-    if event.is_bid {
-        return None;
-    }
-
-    energy_type_from_contract(event.energy_type).map(|energy_type| DbAttributes {
-        trading_partner_id: None,
-        energy_type,
-    })
 }
 
 fn bytes16_to_optional_hex(value: [u8; 16]) -> Option<String> {
