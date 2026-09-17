@@ -641,7 +641,7 @@ fn to_evm_match(
     }
 
     Ok((
-        derive_trade_id(&bid_id, &offer_id, item.selected_energy, item.energy_rate),
+        derive_trade_id(),
         to_evm_order_data(bid_order, OrderEnum::Bid)?,
         to_evm_order_data(offer_order, OrderEnum::Offer)?,
         optional_order_id_to_bytes16(item.residual_bid.as_ref())?,
