@@ -3,6 +3,7 @@ use gsy_offchain_storage::ewds_handler::{EwdsHandlerConfig, handle_request};
 use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
 use primitives::ewds::dto::{EwdsRequestEnvelope, EwdsSendMessageDto};
 use primitives::ewds::{EwdsOperation, EwdsTopicConfig};
+use primitives::utils::{bytes16_to_hex, create_encrypted_bytes16_from_string};
 use serde_json::json;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
