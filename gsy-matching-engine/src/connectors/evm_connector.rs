@@ -9,6 +9,7 @@ use primitives::db_api_schema::orders::{
 use primitives::ewds::dto::EwdsOrderDto;
 use primitives::ewds::{EwdsClient, EwdsOperation};
 use primitives::matching::matching_block_interval;
+use primitives::utils::endpoint_calls::resolve_order_partner_ids;
 use primitives::utils::{bytes16_to_hex, parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR};
 use primitives::MatchingAlgorithm;
 use std::collections::{BTreeMap, HashMap};
@@ -297,7 +298,7 @@ pub async fn send_settle_batch_transaction(
     }
 }
 
-fn fetch_market_orders(body: Vec<EwdsOrderDto>) -> PreparedOrders {
+async fn fetch_market_orders(body: Vec<EwdsOrderDto>) -> Result<PreparedOrders> {
     let mut open_bids: Vec<Order> = Vec::new();
     let mut open_offers: Vec<Order> = Vec::new();
     let orders: Vec<DbOrderSchema> = body
@@ -306,10 +307,17 @@ fn fetch_market_orders(body: Vec<EwdsOrderDto>) -> PreparedOrders {
         .collect();
     let mut by_order_id: HashMap<String, DbOrderSchema> = HashMap::new();
 
-    for db_order_schema in orders
+    for mut db_order_schema in orders
         .into_iter()
         .filter(|order| order.status == OrderStatus::Submitted)
     {
+        resolve_order_partner_ids(
+            &mut db_order_schema.requirements,
+            &mut db_order_schema.attributes,
+            "EWDS_MATCHING_ENGINE_CLIENT_ID",
+            "gsymatchingengine",
+        )
+        .await?;
         match convert_db_order_to_canonical(&db_order_schema) {
             Ok(order) => {
                 by_order_id.insert(order.order_id.clone(), db_order_schema);
@@ -324,11 +332,11 @@ fn fetch_market_orders(body: Vec<EwdsOrderDto>) -> PreparedOrders {
         }
     }
 
-    PreparedOrders {
+    Ok(PreparedOrders {
         open_bids,
         open_offers,
         by_order_id,
-    }
+    })
 }
 
 async fn fetch_open_orders_from_orderbook_service(url: String) -> Result<PreparedOrders, Error> {
@@ -346,7 +354,7 @@ async fn fetch_open_orders_from_orderbook_service(url: String) -> Result<Prepare
 
     let body = res.json::<Vec<EwdsOrderDto>>().await?;
     info!("Fetched {} total orders from orderbook", body.len());
-    Ok(fetch_market_orders(body))
+    fetch_market_orders(body).await
 }
 
 async fn fetch_open_orders_via_ewds(fallback_url: String) -> Result<PreparedOrders, Error> {
@@ -368,7 +376,7 @@ async fn fetch_open_orders_via_ewds_query(fallback_url: String) -> Result<Prepar
         .map(serde_json::from_value)
         .collect::<Result<Vec<_>, _>>()?;
     info!("Fetched {} total orders from EWDS", orders.len());
-    Ok(fetch_market_orders(orders))
+    fetch_market_orders(orders).await
 }
 
 fn parse_query_params_from_url(url: &str) -> serde_json::Value {
@@ -486,7 +494,7 @@ fn to_evm_order_data(order: &DbOrderSchema, expected_type: OrderEnum) -> Result<
     }
 
     let metadata =
-        order_metadata_to_contract(order.requirements.as_ref(), order.attributes.as_ref());
+        order_metadata_to_contract(order.requirements.as_ref(), order.attributes.as_ref())?;
 
     Ok((
         parse_bytes16_field("order_id", order.order_id.as_str())?,

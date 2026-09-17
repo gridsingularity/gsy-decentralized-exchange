@@ -11,6 +11,7 @@ use primitives::db_api_schema::profiles::MeasurementSchema;
 use primitives::db_api_schema::trades::DbTradeSchema;
 use primitives::ewds::dto::{EwdsOrderDto, EwdsTradeDto};
 use primitives::matching::matching_block_interval;
+use primitives::utils::endpoint_calls::resolve_order_partner_ids;
 use primitives::utils::{
     create_encrypted_bytes16_from_string,
     NODE_FLOAT_SCALING_FACTOR,
@@ -317,7 +318,21 @@ async fn place_custom_order_for_market(
     let actor_id = world.actor_id_for_user(user_name);
     let order_id = Uuid::new_v4().to_string();
     let order_id_bytes = create_encrypted_bytes16_from_string(&order_id);
-    let metadata = order_metadata_to_contract(requirements.as_ref(), attributes.as_ref());
+    let mut resolved_requirements = requirements.clone();
+    let mut resolved_attributes = attributes.clone();
+    resolve_order_partner_ids(
+        &mut resolved_requirements,
+        &mut resolved_attributes,
+        "EWDS_E2E_CLIENT_ID",
+        "gsye2e",
+    )
+    .await
+    .expect("Failed to resolve order partner IDs");
+    let metadata = order_metadata_to_contract(
+        resolved_requirements.as_ref(),
+        resolved_attributes.as_ref(),
+    )
+    .expect("Invalid resolved order metadata");
 
     let params: EvmOrderParamsTuple = (
         order_id_bytes,
@@ -626,7 +641,7 @@ async fn submit_preferred_partner_bid(
     partner_name: String,
 ) {
     let requirements = DbRequirements {
-        trading_partner_id: Some(actor_id_as_hex(world, &partner_name)),
+        trading_partner_id: Some(partner_name.clone()),
         energy_type: None,
         preferred_energy_rate: Some(preferred_rate),
     };
@@ -674,7 +689,7 @@ async fn submit_preferred_partner_offer(
     partner_name: String,
 ) {
     let attributes = DbAttributes {
-        trading_partner_id: Some(actor_id_as_hex(world, &partner_name)),
+        trading_partner_id: Some(partner_name.clone()),
         energy_type: EnergyType::Green,
     };
 
@@ -743,7 +758,7 @@ async fn submit_combined_pay_as_clear_order_book(world: &mut MyWorld) {
     align_to_matching_window(world, 12).await;
 
     let preferred_bid_requirements = DbRequirements {
-        trading_partner_id: Some(actor_id_as_hex(world, "bob")),
+        trading_partner_id: Some("bob".to_string()),
         energy_type: None,
         preferred_energy_rate: Some(11.0),
     };
@@ -759,7 +774,7 @@ async fn submit_combined_pay_as_clear_order_book(world: &mut MyWorld) {
         .await;
 
     let preferred_offer_attributes = DbAttributes {
-        trading_partner_id: Some(actor_id_as_hex(world, "alice")),
+        trading_partner_id: Some("alice".to_string()),
         energy_type: EnergyType::Green,
     };
     let preferred_offer = place_custom_order(

@@ -4,8 +4,9 @@ use ethers::{
     solc::{Project, ProjectPathsConfig},
     utils::Anvil,
 };
-use gsy_ethers_listener::{GsyEthersListener, ListenerConfig};
+use gsy_ethers_listener::{GsyEthersListener, GsyEventHandler, ListenerConfig, OrderPlacedFilter};
 use gsy_offchain_storage::evm_handler::OffchainStorageEvmHandler;
+use primitives::db_api_schema::ids::IdMappingSchema;
 use primitives::db_api_schema::orders::{EnergyType, OrderEnum};
 use std::{fs::File, io::Write, sync::Arc, time::Duration};
 use tempfile::TempDir;
@@ -19,9 +20,53 @@ abigen!(
 );
 
 #[tokio::test]
+async fn test_order_listener_rejects_unknown_partner_mapping() {
+    let app = init_app().await;
+    let handler = OffchainStorageEvmHandler {
+        db: app.db_wrapper.clone(),
+    };
+    let event = OrderPlacedFilter {
+        order_id: [0xaa; 16],
+        created_by: [0xbb; 16],
+        market_id: [0xcc; 16],
+        time_slot: 1000,
+        creation_time: 900,
+        energy: 10000,
+        energy_rate: 5000,
+        energy_source_preference: 0,
+        energy_type: 0,
+        is_bid: true,
+        preferred_trading_partner: [0x11; 16],
+        preferred_energy_rate: 4000,
+        trading_partner: [0; 16],
+    };
+    let error = handler.handle_order_placed(event).await.unwrap_err();
+    assert!(error.to_string().contains("No facility ID mapping"));
+    assert!(app.db_wrapper.orders().get_all_orders().await.unwrap().is_empty());
+    crate::helpers::stop_app(app).await;
+}
+
+#[tokio::test]
 async fn test_evm_order_listener_persists_to_db() {
     let app = init_app().await;
     let db = app.db_wrapper.clone();
+    // Register external facility IDs independently of their on-chain representation.
+    for (offchain_id, onchain_id) in [
+        (
+            "00112233-4455-6677-8899-aabbccddeeff",
+            "0x11111111111111111111111111111111",
+        ),
+        ("facility-bob", "0x22222222222222222222222222222222"),
+    ] {
+        db.ids()
+            .insert_one(IdMappingSchema {
+                offchain_id: offchain_id.to_string(),
+                onchain_id: onchain_id.to_string(),
+                creation_time: 1,
+            })
+            .await
+            .unwrap();
+    }
 
     let anvil = Anvil::new().spawn();
     let ws_endpoint = anvil.ws_endpoint();
@@ -172,7 +217,7 @@ async fn test_evm_order_listener_persists_to_db() {
                     .requirements
                     .as_ref()
                     .and_then(|requirements| requirements.trading_partner_id.as_deref()),
-                Some("0x11111111111111111111111111111111")
+                Some("00112233-4455-6677-8899-aabbccddeeff")
             );
             assert_eq!(
                 order
@@ -185,7 +230,7 @@ async fn test_evm_order_listener_persists_to_db() {
             assert_eq!(attributes.energy_type, EnergyType::Pv);
             assert_eq!(
                 attributes.trading_partner_id.as_deref(),
-                Some("0x22222222222222222222222222222222")
+                Some("facility-bob")
             );
             break;
         }

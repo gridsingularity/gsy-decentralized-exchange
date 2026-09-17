@@ -1,7 +1,7 @@
 use crate::db::DatabaseWrapper;
 use anyhow::Context;
 use anyhow::{bail, Result};
-use futures::StreamExt;
+use futures::TryStreamExt;
 use mongodb::bson::doc;
 use mongodb::options::ReturnDocument;
 use mongodb::{Collection, IndexModel};
@@ -55,16 +55,7 @@ impl IdService {
         if filter_params.is_empty() {
             bail!("at least one filter field must be provided");
         }
-        let mut cursor = self.0.find(filter_params).await?;
-        let mut result = Vec::new();
-        while let Some(doc) = cursor.next().await {
-            if let Ok(document) = doc {
-                result.push(document);
-            } else {
-                break;
-            }
-        }
-        Ok(result)
+        Ok(self.0.find(filter_params).await?.try_collect().await?)
     }
 
     #[tracing::instrument(

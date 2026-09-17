@@ -144,7 +144,7 @@ async fn build_order_param(
     is_bid: bool,
 ) -> Result<EvmOrderParamsTuple>  {
     let rate_multiplier = if is_bid { BID_RATE } else { OFFER_RATE };
-    let metadata = order_metadata_to_contract(None, None);
+    let metadata = order_metadata_to_contract(None, None)?;
     let offchain_order_id = Uuid::new_v4().to_string();
     let onchain_order_id = create_encrypted_bytes16_from_string(&offchain_order_id);
     let onchain_facility_id = create_encrypted_bytes16_from_string(facility_id);
