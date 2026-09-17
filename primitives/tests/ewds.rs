@@ -1,4 +1,5 @@
 use primitives::db_api_schema::{
+    grid_topology::EnergyCommunitySchema,
     market::{MarketSchema, MarketType, MatchingAlgorithm},
     orders::{DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus},
     trades::{
@@ -6,16 +7,35 @@ use primitives::db_api_schema::{
         TradeStatus,
     },
 };
-use primitives::ewds::dto::{
-    energy_type_from_ewds, energy_type_to_ewds, EwdsClearingResultDto, EwdsMarketDto, EwdsOrderDto,
-    EwdsTradeDto,
-};
 use primitives::ewds::EwdsOperation;
+use primitives::ewds::dto::{
+    EwdsClearingResultDto, EwdsCommunityDto, EwdsMarketDto, EwdsOrderDto, EwdsTradeDto,
+    energy_type_from_ewds, energy_type_to_ewds,
+};
+use serde_json::Value;
 use std::str::FromStr;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn community_conversion_round_trips_through_ewds_dto() {
+        let expected = EnergyCommunitySchema {
+            community_id: "a5657b6e-b0b2-46ee-87d6-1e29470339a7".to_string(),
+            community_name: "Test community".to_string(),
+            sites: vec!["site-id".to_string()],
+        };
+
+        let dto = EwdsCommunityDto::from(expected.clone());
+        let serialized = serde_json::to_value(&dto).unwrap();
+
+        assert_eq!(
+            serialized.get("communityId").and_then(Value::as_str),
+            Some(expected.community_id.as_str())
+        );
+        assert_eq!(EnergyCommunitySchema::from(dto), expected);
+    }
 
     fn order() -> DbOrderSchema {
         DbOrderSchema {
