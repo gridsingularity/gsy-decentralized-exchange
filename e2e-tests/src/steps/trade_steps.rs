@@ -12,7 +12,6 @@ use primitives::ewds::dto::{EwdsOrderDto, EwdsTradeDto};
 use primitives::matching::matching_block_interval;
 use primitives::utils::endpoint_calls::fetch_clearing_results;
 use primitives::utils::{
-    parse_or_hash_bytes16, NODE_FLOAT_SCALING_FACTOR,
     create_encrypted_bytes16_from_string,
     NODE_FLOAT_SCALING_FACTOR,
     parse_uuid_or_hex_bytes16,

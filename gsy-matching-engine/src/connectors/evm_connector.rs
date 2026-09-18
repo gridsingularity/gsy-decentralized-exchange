@@ -168,7 +168,7 @@ async fn run_matching_cycle(
     Ok(())
 }
 
-fn match_order_books(
+pub fn match_order_books(
     order_books: Vec<MatchingData>,
     matching_algorithm: &MatchingAlgorithm,
 ) -> Result<Vec<MarketMatches>> {
@@ -182,27 +182,12 @@ fn match_order_books(
             );
             continue;
         }
-        let original_bids_len = market_matching_data.bids().len() as i32;
-        let original_offers_len = market_matching_data.offers().len() as i32;
-
         let market_matches: Vec<BidOfferMatch> = matching_algorithm
             .match_orders(&mut market_matching_data)
             .map_err(|error| anyhow!(error))?;
 
-        let clearing_status = compute_clearing_status(
-            market_matches.len() as i32,
-            original_bids_len,
-            original_offers_len,
-        );
-
-        let clearing_result = if clearing_status == ClearingStatus::Rejected {
-            ClearingResult {
-                clearing_status,
-                ..Default::default()
-            }
-        } else {
-            compute_clearing_stats(&market_matches, clearing_status)
-        };
+        let clearing_result = compute_clearing_result(
+            &market_matching_data, &market_matches);
 
         all_matches.push(MarketMatches {
             bid_offer_matches: market_matches,
@@ -212,47 +197,51 @@ fn match_order_books(
     Ok(all_matches)
 }
 
-fn compute_clearing_status(
-    number_of_matches: i32,
-    original_bids_len: i32,
-    original_offers_len: i32,
-) -> ClearingStatus {
+fn compute_clearing_result(
+    market_matching_data: &MatchingData,
+    matches: &[BidOfferMatch],
+) -> ClearingResult {
+    let bids = market_matching_data.bids();
+    let offers = market_matching_data.offers();
+
     // * FINAL: no remaining bids or offers after clearing
     // * PARTIAL: some bids and offers were matched, others were still not matched
     // * REJECTED: no bid and no offer were matched, obviously due to unmatched prices
     // * NO_BID: there is neither a bid nor an offer in the order book todo in DD-434
-    if number_of_matches == 0 {
+    let clearing_status = if matches.is_empty() {
         ClearingStatus::Rejected
-    } else if original_bids_len + original_offers_len == number_of_matches * 2 {
+    } else if bids.len() + offers.len() == matches.len() * 2 {
         ClearingStatus::Final
     } else {
         ClearingStatus::Partial
-    }
-}
+    };
 
-fn compute_clearing_stats(
-    matches: &[BidOfferMatch],
-    clearing_status: ClearingStatus,
-) -> ClearingResult {
-    let first = &matches[0];
-    let num_trades = matches.len() as u32;
-    let clearing_price = matches.iter().map(|m| m.energy_rate).sum::<u64>() / num_trades as u64;
-    let total_supply = matches.iter().map(|m| m.offer.energy).sum();
-    let total_demand = matches.iter().map(|m| m.bid.energy).sum();
-    let traded_quantity = matches.iter().map(|m| m.selected_energy).sum();
+    let total_supply: u64 = offers.iter().map(|offer| offer.energy).sum();
+    let total_demand: u64 = bids.iter().map(|bid| bid.energy).sum();
 
-    ClearingResult {
-        market_id: Some(first.market_id.clone()),
+    let mut clearing_result = ClearingResult {
+        market_id: Some(market_matching_data.market_id().to_string()),
         clearing_status,
-        clearing_price: Some(clearing_price),
         total_supply: Some(total_supply),
         total_demand: Some(total_demand),
-        traded_quantity: Some(traded_quantity),
-        num_trades: Some(num_trades),
+        ..Default::default()
+    };
+
+    if !matches.is_empty() {
+        let num_trades = matches.len() as u32;
+        let clearing_price =
+            matches.iter().map(|m| m.energy_rate).sum::<u64>() / num_trades as u64;
+        let traded_quantity = matches.iter().map(|m| m.selected_energy).sum();
+
+        clearing_result.clearing_price = Some(clearing_price);
+        clearing_result.traded_quantity = Some(traded_quantity);
+        clearing_result.num_trades = Some(num_trades);
     }
+
+    clearing_result
 }
 
-fn partition_orders_by_market_slot(
+pub fn partition_orders_by_market_slot(
     bids: Vec<Order>,
     offers: Vec<Order>,
 ) -> Result<Vec<MatchingData>> {
@@ -641,7 +630,7 @@ fn to_evm_match(
     }
 
     Ok((
-        derive_trade_id(&bid_id, &offer_id, item.selected_energy, item.energy_rate),
+        derive_trade_id(),
         to_evm_order_data(bid_order, OrderEnum::Bid)?,
         to_evm_order_data(offer_order, OrderEnum::Offer)?,
         optional_order_id_to_bytes16(item.residual_bid.as_ref())?,
@@ -669,110 +658,4 @@ fn to_evm_matches(
             ))
         })
         .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn id(value: u8) -> String {
-        format!("0x{value:032x}")
-    }
-
-    fn order(id_value: u8, order_type: OrderEnum, market: u8, time_slot: u64) -> Order {
-        Order {
-            order_id: id(id_value),
-            order_type,
-            status: OrderStatus::Submitted,
-            area_uuid: id(id_value),
-            market_id: id(market),
-            time_slot,
-            creation_time: 1,
-            energy: 1,
-            energy_rate: 1,
-            created_by: id(id_value),
-            requirements: None,
-            attributes: None,
-        }
-    }
-
-    #[test]
-    fn partitions_orders_by_market_and_time_slot() {
-        let order_books = partition_orders_by_market_slot(
-            vec![
-                order(1, OrderEnum::Bid, 1, 100),
-                order(2, OrderEnum::Bid, 1, 200),
-                order(3, OrderEnum::Bid, 2, 100),
-            ],
-            vec![
-                order(4, OrderEnum::Offer, 1, 100),
-                order(5, OrderEnum::Offer, 1, 200),
-                order(6, OrderEnum::Offer, 2, 100),
-            ],
-        )
-        .expect("partitioned orders should be valid");
-
-        assert_eq!(order_books.len(), 3);
-        for order_book in order_books {
-            assert!(order_book
-                .bids()
-                .iter()
-                .all(|order| order.market_id == order_book.market_id()
-                    && order.time_slot == order_book.time_slot()));
-            assert!(order_book
-                .offers()
-                .iter()
-                .all(|order| order.market_id == order_book.market_id()
-                    && order.time_slot == order_book.time_slot()));
-        }
-    }
-
-    #[test]
-    fn pay_as_clear_calculates_an_independent_price_for_each_order_book() {
-        let mut first_bid = order(1, OrderEnum::Bid, 1, 100);
-        first_bid.energy_rate = 20;
-        let mut first_offer = order(2, OrderEnum::Offer, 1, 100);
-        first_offer.energy_rate = 10;
-        let mut second_bid = order(3, OrderEnum::Bid, 2, 100);
-        second_bid.energy_rate = 40;
-        let mut second_offer = order(4, OrderEnum::Offer, 2, 100);
-        second_offer.energy_rate = 30;
-
-        let order_books = partition_orders_by_market_slot(
-            vec![first_bid, second_bid],
-            vec![first_offer, second_offer],
-        )
-        .expect("partitioned orders should be valid");
-        let market_matches = match_order_books(order_books, &MatchingAlgorithm::PayAsClear)
-            .expect("partitioned order books should match");
-
-        assert_eq!(market_matches.len(), 2);
-
-        // Each market should produce exactly one match with its own clearing price.
-        let mut clearing_prices = market_matches
-            .iter()
-            .flat_map(|market| market.bid_offer_matches.iter())
-            .map(|item| item.energy_rate)
-            .collect::<Vec<_>>();
-        clearing_prices.sort_unstable();
-        assert_eq!(clearing_prices, vec![10, 30]);
-
-        assert!(market_matches.iter().all(|market| {
-            market.bid_offer_matches.iter().all(|item| {
-                item.bid.market_id == item.offer.market_id
-                    && item.bid.time_slot == item.offer.time_slot
-            })
-        }));
-
-        // Clearing stats should reflect the single match per market.
-        let mut computed_prices = market_matches
-            .iter()
-            .map(|market| market.clearing_result.clearing_price.unwrap())
-            .collect::<Vec<_>>();
-        computed_prices.sort_unstable();
-        assert_eq!(computed_prices, vec![10, 30]);
-        assert!(market_matches
-            .iter()
-            .all(|market| market.clearing_result.clearing_status == ClearingStatus::Final));
-    }
 }

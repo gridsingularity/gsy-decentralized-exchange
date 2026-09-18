@@ -320,6 +320,6 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
     );
     assert_eq!(
         mock_contract.last_market_id().call().await.unwrap(),
-        parse_or_hash_bytes16(&market_id)
+        parse_uuid_or_hex_bytes16(&market_id).expect("Failed to parse uuid")
     );
 }
