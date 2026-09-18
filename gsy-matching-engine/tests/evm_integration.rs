@@ -1,6 +1,10 @@
 use ethers::{prelude::*, utils::Anvil};
 use ethers_solc::{artifacts::Severity, Project, ProjectPathsConfig};
-use gsy_matching_engine::connectors::evm_connector::send_settle_batch_transaction;
+use gsy_matching_engine::connectors::evm_connector::{
+    send_settle_batch_transaction, MarketMatches,
+};
+use gsy_matching_engine::connectors::evm_connector::ClearingResult;
+use primitives::db_api_schema::trades::ClearingStatus;
 use gsy_matching_engine::models::{BidOfferMatch, Order};
 use primitives::db_api_schema::orders::{
     DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus,
@@ -17,11 +21,14 @@ abigen!(
         function lastClearingPrice() external view returns (uint256)
         function lastBidCreatedBy() external view returns (bytes16)
         function lastOfferCreatedBy() external view returns (bytes16)
+        function lastTradedQuantity() external view returns (uint256)
+        function lastMarketId() external view returns (bytes16)
         function lastBidPreferredTradingPartner() external view returns (bytes16)
         function lastBidPreferredEnergyRate() external view returns (uint64)
         function lastOfferTradingPartner() external view returns (bytes16)
     ]"#
 );
+
 
 #[tokio::test]
 async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
@@ -71,11 +78,28 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
                 uint256 clearingPrice;
             }
 
+            struct ClearingResult {
+                bytes16 marketId;
+                uint8 clearingStatus;
+                uint256 clearingPrice;
+                uint256 totalSupply;
+                uint256 totalDemand;
+                uint256 tradedQuantity;
+                uint32 numTrades;
+            }
+
+            struct MarketSettlement {
+                Match[] matches;
+                ClearingResult clearingResult;
+            }
+
             uint256 public settledCount;
             uint256 public lastSelectedEnergy;
             uint256 public lastClearingPrice;
             bytes16 public lastBidCreatedBy;
             bytes16 public lastOfferCreatedBy;
+            uint256 public lastTradedQuantity;
+            bytes16 public lastMarketId;
             bytes16 public lastBidPreferredTradingPartner;
             uint64 public lastBidPreferredEnergyRate;
             bytes16 public lastOfferTradingPartner;
@@ -88,18 +112,33 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
                 return roles[account][role];
             }
 
-            function settleBatch(Match[] calldata matches) external {
+            function _sumSelectedEnergy(Match[] calldata matches) internal pure returns (uint256 total) {
+                for (uint256 i = 0; i < matches.length; i++) {
+                    total += matches[i].selectedEnergy;
+                }
+            }
+
+            function settleBatch(MarketSettlement[] calldata settlements) external {
                 require(roles[msg.sender][OPERATOR_ROLE], "missing operator role");
-                settledCount += matches.length;
-                if (matches.length > 0) {
-                    Match calldata first = matches[0];
-                    lastSelectedEnergy = first.selectedEnergy;
-                    lastClearingPrice = first.clearingPrice;
-                    lastBidCreatedBy = first.bid.createdBy;
-                    lastOfferCreatedBy = first.offer.createdBy;
-                    lastBidPreferredTradingPartner = first.bid.preferredTradingPartner;
-                    lastBidPreferredEnergyRate = first.bid.preferredEnergyRate;
-                    lastOfferTradingPartner = first.offer.tradingPartner;
+                for (uint256 m = 0; m < settlements.length; m++) {
+                    MarketSettlement calldata settlement = settlements[m];
+                    require(
+                        _sumSelectedEnergy(settlement.matches) == settlement.clearingResult.tradedQuantity,
+                        "traded quantity mismatch"
+                    );
+                    settledCount += settlement.matches.length;
+                    if (settlement.matches.length > 0) {
+                        Match calldata first = settlement.matches[0];
+                        lastSelectedEnergy = first.selectedEnergy;
+                        lastClearingPrice = first.clearingPrice;
+                        lastBidCreatedBy = first.bid.createdBy;
+                        lastOfferCreatedBy = first.offer.createdBy;
+                        lastBidPreferredTradingPartner = first.bid.preferredTradingPartner;
+                        lastBidPreferredEnergyRate = first.bid.preferredEnergyRate;
+                        lastOfferTradingPartner = first.offer.tradingPartner;
+                    }
+                    lastTradedQuantity = settlement.clearingResult.tradedQuantity;
+                    lastMarketId = settlement.clearingResult.marketId;
                 }
             }
         }
@@ -236,7 +275,8 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
 
     let selected_energy = (80.0 * NODE_FLOAT_SCALING_FACTOR) as u64;
     let clearing_price = (50.0 * NODE_FLOAT_SCALING_FACTOR) as u64;
-    let matches = vec![BidOfferMatch {
+
+    let bid_offer_matches = vec![BidOfferMatch {
         market_id: market_id.clone(),
         time_slot: 1000,
         bid: bid_order,
@@ -247,6 +287,18 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
         energy_rate: clearing_price,
     }];
 
+    let clearing_result = ClearingResult {
+        market_id: Some(market_id.clone()),
+        clearing_status: ClearingStatus::Final,
+        clearing_price: Some(clearing_price),
+        total_supply: Some((80.0 * NODE_FLOAT_SCALING_FACTOR) as u64),
+        total_demand: Some((100.0 * NODE_FLOAT_SCALING_FACTOR) as u64),
+        traded_quantity: Some(selected_energy),
+        num_trades: Some(1),
+    };
+
+    let market_matches = vec![MarketMatches { bid_offer_matches, clearing_result }];
+
     let mut lookup = HashMap::new();
     lookup.insert(bid_order_id, bid_db);
     lookup.insert(ask_order_id, ask_db);
@@ -255,11 +307,11 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
         &ws_endpoint,
         &format!("{:?}", contract_address),
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
-        matches,
+        market_matches,
         lookup,
     )
-    .await
-    .unwrap();
+        .await
+        .unwrap();
 
     let mock_contract = MockTradeSettlement::new(contract_address, client.clone());
 
@@ -282,6 +334,15 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
     assert_eq!(
         mock_contract.last_offer_created_by().call().await.unwrap(),
         parse_uuid_or_hex_bytes16(&ask_actor_id).expect("Failed to parse uuid")
+    );
+    assert_eq!(
+        mock_contract.last_traded_quantity().call().await.unwrap(),
+        U256::from(selected_energy)
+    );
+    assert_eq!(
+        mock_contract.last_market_id().call().await.unwrap(),
+        parse_uuid_or_hex_bytes16(&market_id).expect("Failed to parse market id")
+
     );
     assert_eq!(
         mock_contract
