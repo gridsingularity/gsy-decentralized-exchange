@@ -58,6 +58,11 @@ function settlementOrderData(order: any) {
     creationTime: order.creationTime,
     energy: order.energy,
     energyRate: order.energyRate,
+    energySourcePreference: order.energySourcePreference,
+    energyType: order.energyType,
+    preferredTradingPartner: order.preferredTradingPartner,
+    preferredEnergyRate: order.preferredEnergyRate,
+    tradingPartner: order.tradingPartner,
   };
 }
 
@@ -546,7 +551,12 @@ async function main() {
     creationTime: now,
     energy: 100_000,
     energyRate: 15_000,
+    energySourcePreference: 0,
+    energyType: 0,
     isBid: true,
+    preferredTradingPartner: ethers.ZeroHash.slice(0, 34),
+    preferredEnergyRate: 0,
+    tradingPartner: ethers.ZeroHash.slice(0, 34),
   };
   const offerOrder = {
     orderId: offerId,
@@ -556,7 +566,12 @@ async function main() {
     creationTime: now + 1,
     energy: 150_000,
     energyRate: 10_000,
+    energySourcePreference: 0,
+    energyType: 0,
     isBid: false,
+    preferredTradingPartner: ethers.ZeroHash.slice(0, 34),
+    preferredEnergyRate: 0,
+    tradingPartner: ethers.ZeroHash.slice(0, 34),
   };
   const cancelOrder = {
     ...bidOrder,

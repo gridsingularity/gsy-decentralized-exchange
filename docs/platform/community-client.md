@@ -36,6 +36,11 @@ Order payload includes:
 - scaled `energy`
 - scaled `energyRate`
 
+The EVM order tuple also supports optional bid requirements
+(`energySourcePreference`, `preferredTradingPartner`, `preferredEnergyRate`)
+and offer attributes (`energyType`, `tradingPartner`). Missing optional values
+are encoded with zero-value sentinels.
+
 ## Configuration
 
 - `EVM_NODE_URL`

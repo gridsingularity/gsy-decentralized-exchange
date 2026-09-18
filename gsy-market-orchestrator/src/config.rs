@@ -4,6 +4,14 @@ use primitives::constants::GLOBAL_CONSTANTS;
 use primitives::MarketType;
 use serde::Deserialize;
 
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum OffchainStorageTransport {
+    #[default]
+    Http,
+    Ewds,
+}
+
 #[derive(Deserialize, Debug, Clone)]
 pub struct Config {
     #[serde(default = "default_evm_node_url")]
@@ -16,6 +24,10 @@ pub struct Config {
     pub tick_interval_seconds: u64,
     #[serde(default = "default_look_ahead")]
     pub look_ahead_hours: u64,
+    #[serde(default)]
+    pub offchain_storage_transport: OffchainStorageTransport,
+    #[serde(default = "default_offchain_storage_url")]
+    pub offchain_storage_url: String,
 }
 
 fn default_evm_node_url() -> String {
@@ -36,6 +48,10 @@ fn default_tick_interval() -> u64 {
 fn default_look_ahead() -> u64 {
     24
 } // 24 hours
+
+fn default_offchain_storage_url() -> String {
+    "http://gsy-offchain-storage:8080".to_string()
+}
 
 pub fn get_config() -> anyhow::Result<Config> {
     Ok(envy::from_env::<Config>()?)
