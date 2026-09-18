@@ -1,4 +1,4 @@
-FROM rust:1.89.0-bookworm
+FROM rust:1.95-bookworm
 
 RUN apt-get update && apt-get install -y \
     libssl-dev \

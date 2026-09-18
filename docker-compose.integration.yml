@@ -46,7 +46,7 @@ services:
       context: .
       dockerfile: gsy-offchain-storage/Dockerfile
       target: builder
-    entrypoint: ["cargo", "test"]
+    entrypoint: ["cargo", "test", "--release"]
     working_dir: /var/www/gsy-offchain-storage
     depends_on:
       mongodb:
@@ -69,7 +69,7 @@ services:
     build:
       context: .
       dockerfile: gsy-market-orchestrator/Dockerfile
-    entrypoint: ["cargo", "test"]
+    entrypoint: ["cargo", "test", "--release"]
     working_dir: /var/www/gsy-market-orchestrator
     environment:
       - RUST_LOG=info
@@ -80,7 +80,7 @@ services:
       context: .
       dockerfile: gsy-matching-engine/Dockerfile
       target: builder
-    command: cargo test
+    command: cargo test --release
     working_dir: /var/www/gsy-matching-engine
     environment:
       - RUST_LOG=info
@@ -91,7 +91,7 @@ services:
       context: .
       dockerfile: gsy-execution-engine/Dockerfile
       target: builder
-    command: cargo test
+    command: cargo test --release
     working_dir: /var/www/gsy-execution-engine
     environment:
       - RUST_LOG=info
@@ -102,7 +102,7 @@ services:
       context: .
       dockerfile: gsy-community-client/Dockerfile
       target: builder
-    command: cargo test
+    command: cargo test --release
     working_dir: /var/www/gsy-community-client
     environment:
       - RUST_LOG=info

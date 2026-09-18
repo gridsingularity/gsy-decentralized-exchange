@@ -1,4 +1,4 @@
-FROM rust:1.89.0-bookworm AS chef
+FROM rust:1.95-bookworm AS chef
 RUN cargo install cargo-chef --locked
 
 # First prepare dependencies of primitives

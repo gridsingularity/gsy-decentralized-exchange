@@ -1,4 +1,4 @@
-FROM rust:1.95 AS chef
+FROM rust:1.95-bookworm AS chef
 RUN cargo install cargo-chef --locked
 
 WORKDIR /var/www
@@ -43,7 +43,7 @@ RUN rm -rf \
     target/release/deps/libgsy_*
 RUN cargo build --release
 
-FROM rust:1.95
+FROM rust:1.95-bookworm
 
 WORKDIR /app
 COPY --from=builder /var/www/gsy-offchain-storage/target/release/gsy-offchain-storage .

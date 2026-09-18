@@ -1,4 +1,4 @@
-FROM rust:1.89.0-bookworm AS chef
+FROM rust:1.95-bookworm AS chef
 RUN cargo install cargo-chef --locked
 
 # First prepare dependencies of primitives
@@ -34,7 +34,7 @@ RUN rm -rf \
     target/release/deps/libprimitives*
 RUN cargo build --release
 
-FROM rust:1.89.0-bookworm AS runtime
+FROM rust:1.95-bookworm AS runtime
 WORKDIR /var/www/gsy-execution-engine
 COPY --from=builder /var/www/gsy-execution-engine/target/release/gsy-execution-engine /usr/local/bin
 ENTRYPOINT ["/usr/local/bin/gsy-execution-engine", "web3", "http://gsy-offchain-storage", "8080", "ws://anvil", "8545", "30", "3600", "0.10"]

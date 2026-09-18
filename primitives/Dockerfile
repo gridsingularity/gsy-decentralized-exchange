@@ -1,7 +1,5 @@
-# gsy-primitives-integration-test/Dockerfile
-# (or place at ./primitives/Dockerfile — adjust build context accordingly)
-
-FROM lukemathwalker/cargo-chef:latest-rust-1 AS chef
+FROM rust:1.95-bookworm AS chef
+RUN cargo install cargo-chef --locked
 WORKDIR /var/www/gsy-decentralized-exchange
 
 # ---- Planner: compute the dependency recipe from the full workspace ----
