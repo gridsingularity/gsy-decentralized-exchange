@@ -201,23 +201,29 @@ fn compute_clearing_result(
     market_matching_data: &MatchingData,
     matches: &[BidOfferMatch],
 ) -> ClearingResult {
-    let bids = market_matching_data.bids();
-    let offers = market_matching_data.offers();
+    let total_supply: u64 = market_matching_data
+        .offers()
+        .iter()
+        .map(|offer| offer.energy)
+        .sum();
+    let total_demand: u64 = market_matching_data
+        .bids()
+        .iter()
+        .map(|bid| bid.energy)
+        .sum();
+    let traded_quantity: u64 = matches.iter().map(|m| m.selected_energy).sum();
 
-    // * FINAL: no remaining bids or offers after clearing
+    // * FINAL: the whole bid energy or the whole offer energy was matched
     // * PARTIAL: some bids and offers were matched, others were still not matched
     // * REJECTED: no bid and no offer were matched, obviously due to unmatched prices
     // * NO_BID: there is neither a bid nor an offer in the order book todo in DD-434
     let clearing_status = if matches.is_empty() {
         ClearingStatus::Rejected
-    } else if bids.len() + offers.len() == matches.len() * 2 {
+    } else if traded_quantity == total_demand || traded_quantity == total_supply {
         ClearingStatus::Final
     } else {
         ClearingStatus::Partial
     };
-
-    let total_supply: u64 = offers.iter().map(|offer| offer.energy).sum();
-    let total_demand: u64 = bids.iter().map(|bid| bid.energy).sum();
 
     let mut clearing_result = ClearingResult {
         market_id: Some(market_matching_data.market_id().to_string()),
@@ -231,7 +237,6 @@ fn compute_clearing_result(
         let num_trades = matches.len() as u32;
         let clearing_price =
             matches.iter().map(|m| m.energy_rate).sum::<u64>() / num_trades as u64;
-        let traded_quantity = matches.iter().map(|m| m.selected_energy).sum();
 
         clearing_result.clearing_price = Some(clearing_price);
         clearing_result.traded_quantity = Some(traded_quantity);

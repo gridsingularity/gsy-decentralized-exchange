@@ -157,3 +157,87 @@ fn rejected_clearing_still_reports_total_supply_and_demand() {
     assert_eq!(clearing_result.total_demand, Some(5));
     assert_eq!(clearing_result.num_trades, None);
 }
+
+#[test]
+fn clearing_is_final_when_the_whole_bid_energy_is_matched() {
+    let mut bid = order(1, OrderEnum::Bid, 1, 100);
+    bid.energy = 5;
+    bid.energy_rate = 20;
+    let mut first_offer = order(2, OrderEnum::Offer, 1, 100);
+    first_offer.energy = 3;
+    first_offer.energy_rate = 10;
+    // Only partially consumed, so offer energy is left over after clearing.
+    let mut second_offer = order(3, OrderEnum::Offer, 1, 100);
+    second_offer.energy = 4;
+    second_offer.energy_rate = 10;
+
+    let order_books = partition_orders_by_market_slot(vec![bid], vec![first_offer, second_offer])
+        .expect("partitioned orders should be valid");
+    let market_matches = match_order_books(order_books, &MatchingAlgorithm::PayAsClear)
+        .expect("partitioned order books should match");
+
+    assert_eq!(market_matches.len(), 1);
+    let clearing_result = &market_matches[0].clearing_result;
+    assert_eq!(clearing_result.total_demand, Some(5));
+    assert_eq!(clearing_result.total_supply, Some(7));
+    assert_eq!(clearing_result.traded_quantity, Some(5));
+    assert_eq!(clearing_result.clearing_status, ClearingStatus::Final);
+}
+
+#[test]
+fn clearing_is_final_when_the_whole_offer_energy_is_matched() {
+    let mut first_bid = order(1, OrderEnum::Bid, 1, 100);
+    first_bid.energy = 3;
+    first_bid.energy_rate = 20;
+    // Only partially consumed, so bid energy is left over after clearing.
+    let mut second_bid = order(2, OrderEnum::Bid, 1, 100);
+    second_bid.energy = 4;
+    second_bid.energy_rate = 20;
+    let mut offer = order(3, OrderEnum::Offer, 1, 100);
+    offer.energy = 5;
+    offer.energy_rate = 10;
+
+    let order_books = partition_orders_by_market_slot(vec![first_bid, second_bid], vec![offer])
+        .expect("partitioned orders should be valid");
+    let market_matches = match_order_books(order_books, &MatchingAlgorithm::PayAsClear)
+        .expect("partitioned order books should match");
+
+    assert_eq!(market_matches.len(), 1);
+    let clearing_result = &market_matches[0].clearing_result;
+    assert_eq!(clearing_result.total_demand, Some(7));
+    assert_eq!(clearing_result.total_supply, Some(5));
+    assert_eq!(clearing_result.traded_quantity, Some(5));
+    assert_eq!(clearing_result.clearing_status, ClearingStatus::Final);
+}
+
+#[test]
+fn clearing_is_partial_when_energy_is_left_on_both_sides() {
+    let mut first_bid = order(1, OrderEnum::Bid, 1, 100);
+    first_bid.energy = 5;
+    first_bid.energy_rate = 20;
+    // Priced below every offer, so this bid never matches.
+    let mut second_bid = order(2, OrderEnum::Bid, 1, 100);
+    second_bid.energy = 7;
+    second_bid.energy_rate = 1;
+    let mut first_offer = order(3, OrderEnum::Offer, 1, 100);
+    first_offer.energy = 3;
+    first_offer.energy_rate = 10;
+    let mut second_offer = order(4, OrderEnum::Offer, 1, 100);
+    second_offer.energy = 4;
+    second_offer.energy_rate = 10;
+
+    let order_books = partition_orders_by_market_slot(
+        vec![first_bid, second_bid],
+        vec![first_offer, second_offer],
+    )
+    .expect("partitioned orders should be valid");
+    let market_matches = match_order_books(order_books, &MatchingAlgorithm::PayAsClear)
+        .expect("partitioned order books should match");
+
+    assert_eq!(market_matches.len(), 1);
+    let clearing_result = &market_matches[0].clearing_result;
+    assert_eq!(clearing_result.total_demand, Some(12));
+    assert_eq!(clearing_result.total_supply, Some(7));
+    assert_eq!(clearing_result.traded_quantity, Some(5));
+    assert_eq!(clearing_result.clearing_status, ClearingStatus::Partial);
+}
