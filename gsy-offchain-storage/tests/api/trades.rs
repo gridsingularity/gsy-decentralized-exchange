@@ -33,7 +33,7 @@ fn make_trade(trade_uuid: &str, bid: DbOrderSchema, offer: DbOrderSchema) -> Ewd
         trade_status: "executed".to_string(),
         trade_quantity: 14.0,
         trade_price: 3.0,
-        timestamp: 1_677_453_191,
+        timestamp: "2026-01-01T00:00:02Z".to_string(),
     }
 }
 
@@ -153,7 +153,7 @@ async fn get_trades_filters_by_time_range() {
         OrderEnum::Offer,
     );
     let mut trade = make_trade("TRADE-FILTER-0001", bid, offer);
-    trade.timestamp = 1_677_453_191;
+    trade.timestamp = "2026-01-01T00:00:03Z".to_string();
 
     let client = reqwest::Client::new();
     let resp = client

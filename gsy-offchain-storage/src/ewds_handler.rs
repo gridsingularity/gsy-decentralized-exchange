@@ -4,20 +4,27 @@ use futures::future::join_all;
 use primitives::db_api_schema::profiles::{MeasurementPointType, MeasurementSchema};
 use primitives::ewds::dto::{
     EwdsClearingResultDto, EwdsCommunityDto, EwdsInboundMessage, EwdsMarketDto, EwdsOrderDto,
-    EwdsRequestEnvelope, EwdsResponseEnvelope, EwdsSendMessageDto, EwdsTradeDto,
+    EwdsRequestEnvelope, EwdsResponseEnvelope, EwdsSendMessageDto, EwdsTradeDto, EwdsMeasurementDto
 };
 use primitives::ewds::{
     EwdsOperation, EwdsTopicConfig, client_id_for_suffix, env_var, ewds_rate_limit_backoff_ms,
     format_response_body, is_rate_limited_message, is_rate_limited_response,
     is_transient_gateway_message, is_transient_gateway_response, parse_gateway_delivery_summary,
 };
-use primitives::utils::timestamp_to_string_with_padding;
+use primitives::utils::{rfc3339_to_epoch, timestamp_to_string_with_padding};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;
 use tokio::time::{Duration, sleep};
 use tracing::{error, info, warn};
+
+fn opt_rfc3339_to_epoch(value: Option<String>) -> Result<Option<u64>> {
+    match value {
+        Some(v) => Ok(Some(rfc3339_to_epoch(&v)?)),
+        None => Ok(None),
+    }
+}
 
 #[derive(Clone)]
 pub struct EwdsHandlerConfig {
@@ -92,20 +99,20 @@ struct OrdersQueryPayload {
     market_id: Option<String>,
     #[serde(alias = "startTime")]
     #[serde(default)]
-    start_time: Option<u64>,
+    start_time: Option<String>,
     #[serde(alias = "endTime")]
     #[serde(default)]
-    end_time: Option<u64>,
+    end_time: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct TimeRangePayload {
     #[serde(alias = "startTime")]
     #[serde(default)]
-    start_time: Option<u64>,
+    start_time: Option<String>,
     #[serde(alias = "endTime")]
     #[serde(default)]
-    end_time: Option<u64>,
+    end_time: Option<String>,
     #[serde(alias = "areaUuid")]
     #[serde(default)]
     facility_id: Option<String>,
@@ -322,7 +329,11 @@ pub async fn handle_request(
 
             let data = db
                 .orders()
-                .filter_orders(payload.market_id, payload.start_time, payload.end_time)
+                .filter_orders(
+                    payload.market_id,
+                    opt_rfc3339_to_epoch(payload.start_time)?,
+                    opt_rfc3339_to_epoch(payload.end_time)?,
+                )
                 .await?
                 .into_iter()
                 .map(EwdsOrderDto::from)
@@ -347,7 +358,10 @@ pub async fn handle_request(
 
             let data = db
                 .trades()
-                .filter_trades(payload.start_time, payload.end_time)
+                .filter_trades(
+                    opt_rfc3339_to_epoch(payload.start_time)?,
+                    opt_rfc3339_to_epoch(payload.end_time)?,
+                )
                 .await?
                 .into_iter()
                 .map(EwdsTradeDto::from)
@@ -370,16 +384,21 @@ pub async fn handle_request(
                 request_id
             );
 
-            let data = fetch_measurements_from_timeseries(db, payload.start_time, payload.end_time)
+            let data = fetch_measurements_from_timeseries(
+                db,
+                opt_rfc3339_to_epoch(payload.start_time)?,
+                opt_rfc3339_to_epoch(payload.end_time)?,
+            )
                 .await?
                 .into_iter()
                 .filter(|measurement| match payload.facility_id.as_ref() {
                     Some(facility_id) => measurement.facility_id == *facility_id,
                     None => true,
                 })
+                .map(EwdsMeasurementDto::from)
                 .collect::<Vec<_>>();
             info!(
-                "Publishing EWDS measurements.query response (request_id={}, orders={})",
+                "Publishing EWDS measurements.query response (request_id={}, measurements={})",
                 request_id,
                 data.len()
             );

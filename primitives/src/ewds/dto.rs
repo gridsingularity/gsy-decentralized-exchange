@@ -7,7 +7,9 @@ use crate::db_api_schema::{
         ClearingResultSchema, ClearingStatus, DbTradeSchema, NoBidReason, TradeParameters,
         TradeStatus,
     },
+    profiles::{MeasurementSchema}
 };
+use crate::utils::{epoch_to_rfc3339, rfc3339_to_epoch};
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -90,14 +92,14 @@ pub struct EwdsOrderDto {
     pub market_id: String,
     pub order_type: String,
     pub order_status: String,
-    pub time_slot: u64,
+    pub time_slot: String,
     pub quantity: f64,
     pub price_limit: f64,
     pub energy_source_preference: Option<String>,
     pub energy_type: Option<String>,
     pub created_by: String,
-    pub creation_time: u64,
-    pub updated_at: Option<u64>,
+    pub creation_time: String,
+    pub updated_at: Option<String>,
     pub reject_reason: Option<String>,
     pub preferred_trading_partner: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -150,7 +152,7 @@ impl From<DbOrderSchema> for EwdsOrderDto {
             market_id: order.market_id,
             order_type: order_type_to_ewds(&order.order_type).to_string(),
             order_status: order_status_to_ewds(&order.status).to_string(),
-            time_slot: order.time_slot,
+            time_slot: epoch_to_rfc3339(order.time_slot),
             quantity: order.energy_kWh,
             price_limit: order.energy_rate,
             energy_source_preference: order
@@ -163,8 +165,8 @@ impl From<DbOrderSchema> for EwdsOrderDto {
                 .as_ref()
                 .map(|a| energy_type_to_ewds(&a.energy_type).to_string()),
             created_by: order.created_by,
-            creation_time: order.creation_time,
-            updated_at: Some(order.creation_time),
+            creation_time: epoch_to_rfc3339(order.creation_time),
+            updated_at: Some(epoch_to_rfc3339(order.creation_time)),
             reject_reason: None,
             preferred_trading_partner,
             preferred_energy_rate: order
@@ -230,8 +232,8 @@ impl TryFrom<EwdsOrderDto> for DbOrderSchema {
             order_type,
             area_uuid: order.created_by.clone(),
             market_id: order.market_id,
-            time_slot: order.time_slot,
-            creation_time: order.creation_time,
+            time_slot: rfc3339_to_epoch(&order.time_slot)?,
+            creation_time: rfc3339_to_epoch(&order.creation_time)?,
             energy_kWh: order.quantity,
             energy_rate: order.price_limit,
             created_by: order.created_by,
@@ -320,7 +322,7 @@ pub struct EwdsTradeDto {
     pub trade_status: String,
     pub trade_quantity: f64,
     pub trade_price: f64,
-    pub timestamp: u64,
+    pub timestamp: String,
 }
 
 fn trade_status_to_ewds(status: &TradeStatus) -> &'static str {
@@ -356,7 +358,7 @@ impl From<DbTradeSchema> for EwdsTradeDto {
             trade_status: trade_status_to_ewds(&trade.status).to_string(),
             trade_quantity: trade.parameters.selected_energy_kWh,
             trade_price: trade.parameters.energy_rate,
-            timestamp: trade.time_slot,
+            timestamp: epoch_to_rfc3339(trade.time_slot),
         }
     }
 }
@@ -365,14 +367,15 @@ impl TryFrom<EwdsTradeDto> for DbTradeSchema {
     type Error = anyhow::Error;
 
     fn try_from(trade: EwdsTradeDto) -> Result<Self> {
+        let timestamp = rfc3339_to_epoch(&trade.timestamp)?;
         Ok(Self {
             trade_uuid: trade.trade_id,
             status: trade_status_from_ewds(&trade.trade_status)?,
             seller: trade.seller_id,
             buyer: trade.buyer_id,
             market_id: trade.market_id,
-            time_slot: trade.timestamp,
-            creation_time: trade.timestamp,
+            time_slot: timestamp,
+            creation_time: timestamp,
             offer_hash: trade.offer_id,
             bid_hash: trade.bid_id,
             residual_offer_id: trade.residual_offer_id,
@@ -398,7 +401,7 @@ pub struct EwdsClearingResultDto {
     pub trade_quantity: f64,
     pub num_trades: u32,
     pub tx_hash: String,
-    pub created_at: u64,
+    pub created_at: String,
 }
 
 impl ClearingStatus {
@@ -469,7 +472,7 @@ impl From<ClearingResultSchema> for EwdsClearingResultDto {
             trade_quantity: s.traded_quantity,
             num_trades: s.num_trades,
             tx_hash: s.tx_hash,
-            created_at: s.clearing_time,
+            created_at: epoch_to_rfc3339(s.clearing_time),
         }
     }
 }
@@ -491,7 +494,7 @@ impl TryFrom<EwdsClearingResultDto> for ClearingResultSchema {
             traded_quantity: d.trade_quantity,
             num_trades: d.num_trades,
             tx_hash: d.tx_hash,
-            clearing_time: d.created_at,
+            clearing_time: rfc3339_to_epoch(&d.created_at)?,
         })
     }
 }
@@ -538,6 +541,27 @@ impl From<EwdsMarketDto> for MarketSchema {
             market_type: d.market_type,
             matching_algorithm: d.matching_algorithm,
             created_at: d.created_at,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct EwdsMeasurementDto {
+    pub facility_id: String,
+    pub community_uuid: String,
+    pub time_slot: String,
+    pub creation_time: String,
+    pub energy_kwh: f64,
+}
+
+impl From<MeasurementSchema> for EwdsMeasurementDto {
+    fn from(schema: MeasurementSchema) -> Self {
+        Self {
+            facility_id: schema.facility_id,
+            community_uuid: schema.community_uuid,
+            time_slot: epoch_to_rfc3339(schema.time_slot),
+            creation_time: epoch_to_rfc3339(schema.creation_time),
+            energy_kwh: schema.energy_kwh,
         }
     }
 }
