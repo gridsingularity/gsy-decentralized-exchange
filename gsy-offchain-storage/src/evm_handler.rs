@@ -174,6 +174,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         &self,
         event: MarketClearingFilter,
         meta: LogMeta,
+        block_timestamp: u64,
     ) -> Result<()> {
         info!(
             "Processing EVM MarketClearing: {:?}",
@@ -193,7 +194,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             traded_quantity: scaled_u256_to_f64(event.traded_quantity),
             num_trades: event.num_trades,
             tx_hash: format!("{:?}", meta.transaction_hash),
-            clearing_time: chrono::Utc::now().timestamp() as u64,
+            clearing_time: block_timestamp,
         };
 
         self.db.clearing_results().insert(clearing_result).await?;

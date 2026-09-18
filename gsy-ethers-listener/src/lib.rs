@@ -38,6 +38,7 @@ pub trait GsyEventHandler: Send + Sync + 'static {
         &self,
         event: MarketClearingFilter,
         meta: LogMeta,
+        block_timestamp: u64,
     ) -> Result<()>;
 }
 
@@ -91,6 +92,9 @@ impl<H: GsyEventHandler> GsyEthersListener<H> {
         let mut stream_trade_settled = trade_settled_filter.subscribe().await?;
         let mut stream_market_status = market_status_filter.subscribe().await?;
         let mut stream_market_clearing = market_clearing_filter.subscribe_with_meta().await?;
+
+        // All events of one transaction share a block, so remember the last resolved timestamp.
+        let mut last_block_timestamp: Option<(H256, u64)> = None;
 
         info!("GSy Ethers Listener started. Waiting for events...");
 
@@ -148,8 +152,21 @@ impl<H: GsyEventHandler> GsyEthersListener<H> {
                     match log {
                         Some(Ok((event, meta))) => {
                             info!("Detected MarketClearing: {:?}", hex::encode(event.market_id));
-                            if let Err(e) = self.handler.handle_market_clearing(event, meta).await {
-                                error!("Error handling MarketClearing: {:?}", e);
+                            let block_timestamp = match last_block_timestamp {
+                                Some((block_hash, timestamp)) if block_hash == meta.block_hash => {
+                                    Ok(timestamp)
+                                }
+                                _ => fetch_block_timestamp(&client, meta.block_hash).await,
+                            };
+                            match block_timestamp {
+                                Ok(block_timestamp) => {
+                                    last_block_timestamp = Some((meta.block_hash, block_timestamp));
+                                    if let Err(e) = self.handler.handle_market_clearing(
+                                        event, meta, block_timestamp).await {
+                                        error!("Error handling MarketClearing: {:?}", e);
+                                    }
+                                }
+                                Err(e) => error!("Error handling MarketClearing: {:?}", e),
                             }
                         },
                         Some(Err(e)) => return Err(anyhow!("MarketClearing stream error: {:?}", e)),
@@ -159,4 +176,12 @@ impl<H: GsyEventHandler> GsyEthersListener<H> {
             }
         }
     }
+}
+
+async fn fetch_block_timestamp(client: &Provider<Ws>, block_hash: H256) -> Result<u64> {
+    let block = client
+        .get_block(block_hash)
+        .await?
+        .ok_or_else(|| anyhow!("Block {:?} not found", block_hash))?;
+    Ok(block.timestamp.as_u64())
 }
