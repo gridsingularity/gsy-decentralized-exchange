@@ -15,8 +15,8 @@ services:
       context: .
       dockerfile: primitives/Dockerfile
       target: builder
-    command: cargo test -p primitives
-    working_dir: /var/www/gsy-decentralized-exchange
+    command: cargo test
+    working_dir: /var/www/primitives
     environment:
       - RUST_LOG=info
       - RUST_BACKTRACE=1
