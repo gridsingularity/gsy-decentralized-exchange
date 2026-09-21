@@ -7,11 +7,11 @@
 //! ontology structs are kept alongside it for topic/schema evolution without
 //! breaking the current EVM integration path.
 
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::utils::{
-    bytes16_to_hex, create_encrypted_bytes16_from_string, parse_uuid_or_hex_bytes16,
-    NODE_FLOAT_SCALING_FACTOR,
+    bytes16_to_hex, parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR,
 };
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd)]
@@ -144,11 +144,12 @@ pub struct ContractOrderMetadata {
     pub trading_partner: [u8; 16],
 }
 
+/// Encode metadata whose partner IDs have already been resolved by the ID service.
 pub fn order_metadata_to_contract(
     requirements: Option<&DbRequirements>,
     attributes: Option<&DbAttributes>,
-) -> ContractOrderMetadata {
-    ContractOrderMetadata {
+) -> Result<ContractOrderMetadata> {
+    Ok(ContractOrderMetadata {
         energy_source_preference: requirements
             .and_then(|value| value.energy_type.as_ref())
             .map(energy_type_to_contract)
@@ -158,10 +159,8 @@ pub fn order_metadata_to_contract(
             .unwrap_or_default(),
         preferred_trading_partner: requirements
             .and_then(|value| value.trading_partner_id.as_deref())
-            .map(|id| {
-                parse_uuid_or_hex_bytes16(id)
-                    .unwrap_or_else(|| create_encrypted_bytes16_from_string(id))
-            })
+            .map(resolved_partner_id)
+            .transpose()?
             .unwrap_or_default(),
         preferred_energy_rate: requirements
             .and_then(|value| value.preferred_energy_rate)
@@ -169,14 +168,21 @@ pub fn order_metadata_to_contract(
             .unwrap_or_default(),
         trading_partner: attributes
             .and_then(|value| value.trading_partner_id.as_deref())
-            .map(|id| {
-                parse_uuid_or_hex_bytes16(id)
-                    .unwrap_or_else(|| create_encrypted_bytes16_from_string(id))
-            })
+            .map(resolved_partner_id)
+            .transpose()?
             .unwrap_or_default(),
-    }
+    })
 }
 
+fn resolved_partner_id(id: &str) -> Result<[u8; 16]> {
+    id.strip_prefix("0x")
+        .filter(|value| value.len() == 32)
+        .and_then(parse_uuid_or_hex_bytes16)
+        .filter(|value| *value != [0; 16])
+        .ok_or_else(|| anyhow!("Partner ID must be resolved through the ID service before encoding"))
+}
+
+/// Decode the wire representation; the indexer resolves partner IDs via its ID mapping.
 pub fn order_metadata_from_contract(
     metadata: ContractOrderMetadata,
 ) -> (Option<DbRequirements>, Option<DbAttributes>) {
