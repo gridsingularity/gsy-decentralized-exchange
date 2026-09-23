@@ -60,6 +60,18 @@ impl MatchingData {
             offer_energy -= accepted_energy;
         }
 
+        // The loop can stop before advancing both cursors. Include later positive
+        // quantities so simultaneous exhaustion and empty trailing orders are handled.
+        let demand_remaining = bid_energy > 0
+            || bids.iter().skip(bid_index + 1).any(|bid| bid.energy > 0);
+        let supply_remaining = offer_energy > 0
+            || offers.iter().skip(offer_index + 1).any(|offer| offer.energy > 0);
+        let pricing = match (demand_remaining, supply_remaining) {
+            (true, false) => PayAsClearPricing::MinBid,
+            (false, true) => PayAsClearPricing::MaxOffer,
+            _ => pricing,
+        };
+
         marginal_rates.map(|(max_offer, min_bid)| ClearingPoint {
             traded_energy,
             clearing_price: match pricing {

@@ -156,3 +156,155 @@ fn standard_pricing_policy_does_not_change_preference_prices() {
             .all(|item| item.energy_rate == expected_standard_price));
     }
 }
+
+#[test]
+fn supply_exhaustion_uses_minimum_accepted_bid_under_every_policy() {
+    for policy in POLICIES {
+        // Exercise both an exact order boundary and a partially filled last bid.
+        for marginal_bid_energy in [4, 5] {
+            let matches = book(
+                vec![
+                    order("bid-high", OrderEnum::Bid, 3, 20),
+                    order("bid-marginal", OrderEnum::Bid, marginal_bid_energy, 17),
+                    order("bid-unmatched", OrderEnum::Bid, 1, 5),
+                ],
+                vec![
+                    order("offer-low", OrderEnum::Offer, 3, 8),
+                    order("offer-marginal", OrderEnum::Offer, 4, 10),
+                    order("offer-empty", OrderEnum::Offer, 0, 30),
+                ],
+            )
+            .pay_as_clear_with_pricing(policy);
+
+            assert_eq!(matches.len(), 2);
+            assert_eq!(
+                matches.iter().map(|item| item.selected_energy).sum::<u64>(),
+                7
+            );
+            assert!(matches.iter().all(|item| item.energy_rate == 17));
+            assert!(matches
+                .iter()
+                .all(|item| item.bid.order_id != "bid-unmatched"));
+            assert_eq!(
+                matches[1].residual_bid.as_ref().map(|order| order.energy),
+                if marginal_bid_energy == 5 {
+                    Some(1)
+                } else {
+                    None
+                }
+            );
+            assert!(matches.iter().all(|item| item.residual_offer.is_none()));
+        }
+    }
+}
+
+#[test]
+fn demand_exhaustion_uses_maximum_accepted_offer_under_every_policy() {
+    for policy in POLICIES {
+        for marginal_offer_energy in [4, 5] {
+            let matches = book(
+                vec![
+                    order("bid-high", OrderEnum::Bid, 3, 20),
+                    order("bid-marginal", OrderEnum::Bid, 4, 17),
+                    order("bid-empty", OrderEnum::Bid, 0, 5),
+                ],
+                vec![
+                    order("offer-low", OrderEnum::Offer, 3, 8),
+                    order(
+                        "offer-marginal",
+                        OrderEnum::Offer,
+                        marginal_offer_energy,
+                        10,
+                    ),
+                    order("offer-unmatched", OrderEnum::Offer, 1, 30),
+                ],
+            )
+            .pay_as_clear_with_pricing(policy);
+
+            assert_eq!(matches.len(), 2);
+            assert_eq!(
+                matches.iter().map(|item| item.selected_energy).sum::<u64>(),
+                7
+            );
+            assert!(matches.iter().all(|item| item.energy_rate == 10));
+            assert!(matches
+                .iter()
+                .all(|item| item.offer.order_id != "offer-unmatched"));
+            assert_eq!(
+                matches[1].residual_offer.as_ref().map(|order| order.energy),
+                if marginal_offer_energy == 5 {
+                    Some(1)
+                } else {
+                    None
+                }
+            );
+            assert!(matches.iter().all(|item| item.residual_bid.is_none()));
+        }
+    }
+}
+
+#[test]
+fn scarcity_detects_remaining_energy_within_the_last_order() {
+    for policy in POLICIES {
+        for (bid_energy, offer_energy, expected_price) in [(2, 1, 17), (1, 2, 10)] {
+            let matches = book(
+                vec![order("bid", OrderEnum::Bid, bid_energy, 17)],
+                vec![order("offer", OrderEnum::Offer, offer_energy, 10)],
+            )
+            .pay_as_clear_with_pricing(policy);
+            assert_eq!(matches.len(), 1);
+            assert_eq!(matches[0].selected_energy, 1);
+            assert_eq!(matches[0].energy_rate, expected_price);
+        }
+    }
+}
+
+#[test]
+fn simultaneous_exhaustion_uses_configured_policy_despite_empty_orders() {
+    for (policy, expected_price) in POLICIES.into_iter().zip([10, 17, 13]) {
+        let matches = book(
+            vec![
+                order("bid-empty-high", OrderEnum::Bid, 0, 30),
+                order("bid-high", OrderEnum::Bid, 3, 20),
+                order("bid-marginal", OrderEnum::Bid, 4, 17),
+                order("bid-empty-low", OrderEnum::Bid, 0, 5),
+            ],
+            vec![
+                order("offer-empty-low", OrderEnum::Offer, 0, 0),
+                order("offer-low", OrderEnum::Offer, 3, 8),
+                order("offer-marginal", OrderEnum::Offer, 4, 10),
+                order("offer-empty-high", OrderEnum::Offer, 0, 30),
+            ],
+        )
+        .pay_as_clear_with_pricing(policy);
+        assert_eq!(matches.len(), 2);
+        assert_eq!(
+            matches.iter().map(|item| item.selected_energy).sum::<u64>(),
+            7
+        );
+        assert!(matches
+            .iter()
+            .all(|item| item.energy_rate == expected_price));
+    }
+}
+
+#[test]
+fn crossing_with_unequal_total_energy_is_not_scarcity() {
+    for (policy, expected_price) in POLICIES.into_iter().zip([10, 17, 13]) {
+        for (unmatched_bid_energy, unmatched_offer_energy) in [(100, 1), (1, 100)] {
+            let original = crossing_book();
+            let mut bids = original.bids().to_vec();
+            let mut offers = original.offers().to_vec();
+            bids[0].energy = unmatched_bid_energy;
+            offers[0].energy = unmatched_offer_energy;
+            let matches = book(bids, offers).pay_as_clear_with_pricing(policy);
+            assert_eq!(
+                matches.iter().map(|item| item.selected_energy).sum::<u64>(),
+                7
+            );
+            assert!(matches
+                .iter()
+                .all(|item| item.energy_rate == expected_price));
+        }
+    }
+}
