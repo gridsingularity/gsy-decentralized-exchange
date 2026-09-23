@@ -1,8 +1,21 @@
 use super::{ClearingPoint, PayAsClear};
 use crate::models::{BidOfferMatch, MatchingData, Order};
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PayAsClearPricing {
+    #[default]
+    MaxOffer,
+    MinBid,
+    Midpoint,
+}
+
 impl MatchingData {
-    fn calculate_clearing_point(&self, bids: &[Order], offers: &[Order]) -> Option<ClearingPoint> {
+    fn calculate_clearing_point(
+        &self,
+        bids: &[Order],
+        offers: &[Order],
+        pricing: PayAsClearPricing,
+    ) -> Option<ClearingPoint> {
         let mut bids = bids.iter().collect::<Vec<_>>();
         let mut offers = offers.iter().collect::<Vec<_>>();
         bids.sort_by(|left, right| right.energy_rate.cmp(&left.energy_rate));
@@ -13,7 +26,7 @@ impl MatchingData {
         let mut bid_energy = bids.first().map(|bid| bid.energy).unwrap_or_default();
         let mut offer_energy = offers.first().map(|offer| offer.energy).unwrap_or_default();
         let mut traded_energy = 0u64;
-        let mut clearing_price = None;
+        let mut marginal_rates = None;
 
         while bid_index < bids.len() && offer_index < offers.len() {
             if bid_energy == 0 {
@@ -42,14 +55,19 @@ impl MatchingData {
 
             let accepted_energy = bid_energy.min(offer_energy);
             traded_energy += accepted_energy;
-            clearing_price = Some(offer.energy_rate);
+            marginal_rates = Some((offer.energy_rate, bid.energy_rate));
             bid_energy -= accepted_energy;
             offer_energy -= accepted_energy;
         }
 
-        clearing_price.map(|clearing_price| ClearingPoint {
+        marginal_rates.map(|(max_offer, min_bid)| ClearingPoint {
             traded_energy,
-            clearing_price,
+            clearing_price: match pricing {
+                PayAsClearPricing::MaxOffer => max_offer,
+                PayAsClearPricing::MinBid => min_bid,
+                // Round down in fixed-point units without overflowing the sum.
+                PayAsClearPricing::Midpoint => max_offer + (min_bid - max_offer) / 2,
+            },
         })
     }
 
@@ -57,12 +75,22 @@ impl MatchingData {
         &self,
         bids: Vec<Order>,
         offers: Vec<Order>,
+        pricing: PayAsClearPricing,
     ) -> Vec<BidOfferMatch> {
-        let Some(clearing_point) = self.calculate_clearing_point(&bids, &offers) else {
+        let Some(clearing_point) = self.calculate_clearing_point(&bids, &offers, pricing) else {
             return Vec::new();
         };
 
         self.match_standard_at_clearing_point(bids, offers, Some(clearing_point))
+    }
+
+    /// Select standard-market pricing without changing the preceding preference phase.
+    pub fn pay_as_clear_with_pricing(&mut self, pricing: PayAsClearPricing) -> Vec<BidOfferMatch> {
+        let bids = self.bids().to_vec();
+        let offers = self.offers().to_vec();
+        let (mut matches, remaining_bids, remaining_offers) = self.match_preferences(bids, offers);
+        matches.extend(self.match_standard_pay_as_clear(remaining_bids, remaining_offers, pricing));
+        matches
     }
 }
 
@@ -70,11 +98,7 @@ impl PayAsClear for MatchingData {
     type Output = BidOfferMatch;
 
     fn pay_as_clear(&mut self) -> Vec<Self::Output> {
-        let bids = self.bids().to_vec();
-        let offers = self.offers().to_vec();
-        let (mut matches, remaining_bids, remaining_offers) = self.match_preferences(bids, offers);
-        matches.extend(self.match_standard_pay_as_clear(remaining_bids, remaining_offers));
-        matches
+        self.pay_as_clear_with_pricing(PayAsClearPricing::default())
     }
 }
 

@@ -1,6 +1,8 @@
 mod pay_as_bid;
 mod pay_as_clear;
 
+pub use pay_as_clear::PayAsClearPricing;
+
 use crate::models::{BidOfferMatch, MatchingData, Order};
 use primitives::MatchingAlgorithm;
 use std::collections::HashMap;
