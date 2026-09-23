@@ -1,7 +1,7 @@
 use crate::chain_connector::MarketChainClient;
-use crate::community_source::CommunityProvider;
 use crate::config::{Config, MARKET_RULES};
 use primitives::db_api_schema::grid_topology::EnergyCommunitySchema;
+use primitives::offchain_storage::CommunityProvider;
 use primitives::{
     constants::GLOBAL_CONSTANTS,
     utils::{generate_market_id, timestamp_to_datetime_string},

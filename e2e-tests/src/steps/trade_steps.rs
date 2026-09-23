@@ -11,7 +11,7 @@ use primitives::db_api_schema::profiles::MeasurementSchema;
 use primitives::db_api_schema::trades::DbTradeSchema;
 use primitives::ewds::dto::{EwdsOrderDto, EwdsTradeDto};
 use primitives::matching::matching_block_interval;
-use primitives::utils::endpoint_calls::resolve_order_partner_ids;
+use primitives::offchain_storage::{resolve_order_partner_ids, OffchainStorageClient};
 use primitives::utils::{
     bytes16_to_hex, create_encrypted_bytes16_from_string, parse_uuid_or_hex_bytes16,
     NODE_FLOAT_SCALING_FACTOR,
@@ -314,11 +314,11 @@ async fn place_custom_order_for_market(
     let order_id_bytes = create_encrypted_bytes16_from_string(&order_id);
     let mut resolved_requirements = requirements.clone();
     let mut resolved_attributes = attributes.clone();
+    let id_mapping_source = OffchainStorageClient::from_env("EWDS_E2E_CLIENT_ID", "gsye2e");
     resolve_order_partner_ids(
         &mut resolved_requirements,
         &mut resolved_attributes,
-        "EWDS_E2E_CLIENT_ID",
-        "gsye2e",
+        &id_mapping_source,
     )
     .await
     .expect("Failed to resolve order partner IDs");

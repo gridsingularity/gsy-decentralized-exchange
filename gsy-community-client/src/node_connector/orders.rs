@@ -4,7 +4,7 @@ use ethers::prelude::*;
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::orders::order_metadata_to_contract;
 use primitives::db_api_schema::profiles::ForecastSchema;
-use primitives::utils::endpoint_calls::fetch_facility_owner_mapping;
+use primitives::offchain_storage::{FacilityOwnerProvider, OffchainStorageClient};
 use primitives::utils::{
     create_encrypted_bytes16_from_string, parse_uuid_or_hex_bytes16, string_to_timestamp,
     NODE_FLOAT_SCALING_FACTOR,
@@ -176,7 +176,9 @@ pub async fn create_input_orders(
 
     let mut input_orders = Vec::new();
     let facility_owner_mapping =
-        fetch_facility_owner_mapping("EWDS_COMMUNITY_CLIENT_ID", "gsycommunityclient").await?;
+        OffchainStorageClient::from_env("EWDS_COMMUNITY_CLIENT_ID", "gsycommunityclient")
+            .fetch_facility_owner_mapping()
+            .await?;
 
     for forecast in forecasts.into_iter() {
         let Some(owner_id) = facility_owner_mapping.get(&forecast.facility_id) else {

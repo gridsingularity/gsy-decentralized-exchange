@@ -1,7 +1,7 @@
 use primitives::db_api_schema::orders::{
     order_metadata_to_contract, DbAttributes, DbRequirements, EnergyType,
 };
-use primitives::utils::endpoint_calls::resolve_order_partner_ids;
+use primitives::offchain_storage::{resolve_order_partner_ids, OffchainStorageClient};
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
 use wiremock::matchers::{method, path};
@@ -71,6 +71,8 @@ async fn resolves_partner_facility_ids_over_http_and_ewds() {
     std::env::set_var("EWDS_RESPONSE_TIMEOUT_MS", "1000");
     for transport in ["http", "ewds"] {
         std::env::set_var("OFFCHAIN_STORAGE_TRANSPORT", transport);
+        let id_mapping_source =
+            OffchainStorageClient::from_env("TEST_IDS_CLIENT_ID", "testids");
         let mut requirements = Some(DbRequirements {
             trading_partner_id: Some(FACILITY_UUID.to_string()),
             energy_type: Some(EnergyType::Green),
@@ -80,14 +82,9 @@ async fn resolves_partner_facility_ids_over_http_and_ewds() {
             trading_partner_id: Some(HEX_FACILITY_ID.to_string()),
             energy_type: EnergyType::Pv,
         });
-        resolve_order_partner_ids(
-            &mut requirements,
-            &mut attributes,
-            "TEST_IDS_CLIENT_ID",
-            "testids",
-        )
-        .await
-        .unwrap();
+        resolve_order_partner_ids(&mut requirements, &mut attributes, &id_mapping_source)
+            .await
+            .unwrap();
         let encoded =
             order_metadata_to_contract(requirements.as_ref(), attributes.as_ref()).unwrap();
         assert_eq!(encoded.preferred_trading_partner, [0x11; 16]);
@@ -97,19 +94,16 @@ async fn resolves_partner_facility_ids_over_http_and_ewds() {
         assert_eq!(encoded.energy_type, 2);
 
         let count = server.received_requests().await.unwrap().len();
-        resolve_order_partner_ids(&mut None, &mut None, "TEST_IDS_CLIENT_ID", "testids")
+        resolve_order_partner_ids(&mut None, &mut None, &id_mapping_source)
             .await
             .unwrap();
         assert_eq!(server.received_requests().await.unwrap().len(), count);
 
         requirements.as_mut().unwrap().trading_partner_id = Some("invalid-mapping".to_string());
-        assert!(resolve_order_partner_ids(
-            &mut requirements,
-            &mut None,
-            "TEST_IDS_CLIENT_ID",
-            "testids"
-        )
-        .await
-        .is_err());
+        assert!(
+            resolve_order_partner_ids(&mut requirements, &mut None, &id_mapping_source)
+                .await
+                .is_err()
+        );
     }
 }

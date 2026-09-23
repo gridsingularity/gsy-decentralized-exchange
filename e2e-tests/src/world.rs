@@ -5,8 +5,8 @@ use primitives::db_api_schema::grid_topology::FacilitySchema;
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::profiles::ForecastSchema;
 use primitives::db_api_schema::trades::DbTradeSchema;
+use primitives::offchain_storage::{IdMappingProvider, OffchainStorageClient};
 use primitives::utils::parse_uuid_or_hex_bytes16;
-use primitives::utils::endpoint_calls::fetch_onchain_id;
 use reqwest::Client;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -183,11 +183,8 @@ impl MyWorld {
         if !self.users.contains_key(user_name) {
             panic!("Unknown user '{}'", user_name);
         }
-        let onchain_id = fetch_onchain_id(
-            "E2E_TESTS_CLIENT_ID",
-            "e2e_tests",
-            user_name,
-        )
+        let onchain_id = OffchainStorageClient::from_env("E2E_TESTS_CLIENT_ID", "e2e_tests")
+            .fetch_onchain_id(user_name)
             .await
             .expect("failed to fetch onchain id");
         parse_uuid_or_hex_bytes16(&onchain_id).expect("failed to parse uuid")

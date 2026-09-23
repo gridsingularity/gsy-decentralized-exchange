@@ -1,6 +1,6 @@
 use ::primitives::utils::timestamp_to_datetime_string;
 use anyhow::Result;
-use primitives::utils::endpoint_calls::fetch_facility_owner_mapping;
+use primitives::offchain_storage::{FacilityOwnerProvider, OffchainStorageClient};
 use tracing::info;
 
 use crate::{
@@ -44,7 +44,8 @@ pub async fn run_execution_cycle(
 
     // 1.2) fetch facility_id>owner_id mapping
     let facility_owner_mapping =
-        fetch_facility_owner_mapping("EWDS_EXECUTION_ENGINE_CLIENT_ID", "gsyexecutionengine")
+        OffchainStorageClient::from_env("EWDS_EXECUTION_ENGINE_CLIENT_ID", "gsyexecutionengine")
+            .fetch_facility_owner_mapping()
             .await?;
 
     // 2) compute penalties

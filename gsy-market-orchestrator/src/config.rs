@@ -1,16 +1,9 @@
 use ethers::types::Address;
 use once_cell::sync::Lazy;
 use primitives::constants::GLOBAL_CONSTANTS;
+pub use primitives::offchain_storage::OffchainStorageTransport;
 use primitives::MarketType;
 use serde::Deserialize;
-
-#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum OffchainStorageTransport {
-    #[default]
-    Http,
-    Ewds,
-}
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct Config {
