@@ -17,6 +17,14 @@ use uuid::Uuid;
 
 const RESIDUAL_ENERGY_TOLERANCE_KWH: f64 = 1e-9;
 
+/// How many forecast/measurement points go into a single POST to the off-chain storage.
+/// A full day-ahead ingest for one community is ~8k points (~2.4 MB of JSON), which the
+/// storage service rejects with HTTP 413 because actix caps a JSON payload at 2 MiB. At
+/// ~300 bytes per point this chunk size keeps every request around 300 KB, far below that
+/// limit. Storage upserts each point individually on (area_uuid, time_slot), so splitting
+/// one body across several requests is safe and idempotent.
+pub const FORWARD_CHUNK_SIZE: usize = 1000;
+
 /// Build a reqwest client that sends the `x-api-key` header the off-chain storage now
 /// requires, on every request. The key comes from the `API_KEY` env var (default
 /// `fedecom_user`) and must match the storage service's configured key.
@@ -223,29 +231,48 @@ impl AreaMarketInfoAdapter {
             })
     }
 
-    // Function to forward the forecast data to internal API
+    // Forward the forecast data to the internal API, in batches of at most
+    // FORWARD_CHUNK_SIZE points per POST so a large ingest is not rejected wholesale with
+    // HTTP 413. Every response status is checked: a non-2xx (or a transport failure) is
+    // returned as an error and the remaining chunks are not sent, so a failed ingest can
+    // never be mistaken for a successful one by the caller. An empty input sends nothing.
     pub async fn forward_forecast(
         &self,
         forecasts: Vec<ForecastSchema>,
     ) -> Result<(), reqwest::Error> {
-        self.client
-            .post(&self.internal_forecast_url)
-            .json(&forecasts)
-            .send()
-            .await?;
+        if forecasts.is_empty() {
+            return Ok(());
+        }
+        for chunk in forecasts.chunks(FORWARD_CHUNK_SIZE) {
+            self.client
+                .post(&self.internal_forecast_url)
+                .json(chunk)
+                .send()
+                .await?
+                .error_for_status()?;
+        }
         Ok(())
     }
 
-    // Function to forward the measurement data to internal API
+    // Forward the measurement data to the internal API. Same chunking and status checking
+    // as [`Self::forward_forecast`]: at most FORWARD_CHUNK_SIZE points per POST, every
+    // response status checked, the first failure returned and the rest not sent, and no
+    // request at all for an empty input.
     pub async fn forward_measurement(
         &self,
         measurements: Vec<MeasurementSchema>,
     ) -> Result<(), reqwest::Error> {
-        self.client
-            .post(&self.internal_measurements_url)
-            .json(&measurements)
-            .send()
-            .await?;
+        if measurements.is_empty() {
+            return Ok(());
+        }
+        for chunk in measurements.chunks(FORWARD_CHUNK_SIZE) {
+            self.client
+                .post(&self.internal_measurements_url)
+                .json(chunk)
+                .send()
+                .await?
+                .error_for_status()?;
+        }
         Ok(())
     }
 

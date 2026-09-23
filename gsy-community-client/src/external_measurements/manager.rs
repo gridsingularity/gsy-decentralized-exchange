@@ -9,7 +9,7 @@ use gsy_offchain_primitives::utils::read_env_or;
 use std::collections::{HashMap, HashSet};
 use std::iter::FromIterator;
 use std::time::Duration;
-use tracing::info;
+use tracing::{error, info};
 
 #[derive(Clone)]
 pub struct MeasurementsManager {
@@ -118,7 +118,7 @@ impl MeasurementsManager {
                 .forward_measurement(valid_measurements)
                 .await
             {
-                info!("Failed to forward measurements: {}", e);
+                error!("Failed to forward measurements: {}", e);
             }
         } else {
             info!("No valid measurements to forward.");

@@ -7,7 +7,7 @@ happen, then exits.
 ## What it does
 
 Connects to `gsy-node` and, signing with the dev **sudo** key (`//Alice`),
-submits two root-only extrinsics via `sudo.sudo(...)`:
+submits two root-only extrinsics via `sudo.sudo(...)`, then funds the traders:
 
 1. `gsyCollateral.registerUser(<account>)` for each account in
    `REGISTER_USER_SURIS` — required because `orderbook_registry.insert_orders`
@@ -16,10 +16,18 @@ submits two root-only extrinsics via `sudo.sudo(...)`:
 2. `gsyCollateral.registerExchangeOperator(<operator>)` — required because the
    market orchestrator refuses to create markets until its signer account is a
    registered exchange operator.
+3. `gsyCollateral.depositCollateral(<amount>)` for each account in
+   `REGISTER_USER_SURIS` — required because `orderbook_worker.add_order` rejects
+   orders with `InsufficientCollateral` while the signer's vault is empty. This
+   one is **not** a sudo call: the extrinsic is `ensure_signed` and only accepted
+   from a registered user, so each account signs its own deposit, after step 1
+   has put its registration in a block.
 
 It is **idempotent**: it checks the `registeredUser` / `registeredExchangeOperator`
 storage first and tolerates `AlreadyRegistered`, so re-running (or running
-against a chain that already has state) is a no-op.
+against a chain that already has state) is a no-op. The deposit reads the vault
+and only tops it **up to** `COLLATERAL_DEPOSIT`, so a re-run never deposits
+twice — a vault already at (or above) the target is skipped.
 
 ## Configuration (`.env/gsy-bootstrap.env`)
 
@@ -29,6 +37,7 @@ against a chain that already has state) is a no-op.
 | `SUDO_SURI` | `//Alice` | Dev sudo key that signs the wrapping `sudo` calls. |
 | `REGISTER_USER_SURIS` | `//Alice` | Comma-separated SURIs to register as trading users. |
 | `OPERATOR_SURI` | value of `SUDO_SURI` | Account to register as the exchange operator (the orchestrator's signer). |
+| `COLLATERAL_DEPOSIT` | `500000000000000` | Collateral (Planck) each trading user's vault is topped up to; `0` disables the deposit step. |
 | `CONNECT_RETRIES` | `60` | Node connection attempts (2s apart) before giving up. |
 
 ## In the compose graph

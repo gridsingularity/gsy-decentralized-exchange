@@ -1,5 +1,5 @@
 use gsy_community_client::offchain_storage_connector::adapter::{
-    AreaMarketInfoAdapter, build_new_market_topology, deterministic_area_hash,
+    AreaMarketInfoAdapter, FORWARD_CHUNK_SIZE, build_new_market_topology, deterministic_area_hash,
     deterministic_area_uuid, deterministic_community_uuid, plan_residual_replacement,
 };
 use gsy_community_client::topology::{
@@ -16,7 +16,10 @@ use gsy_offchain_primitives::utils::h256_to_string;
 use reqwest::Client;
 use serde_json;
 use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
 use subxt::utils::H256;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
 
 #[cfg(test)]
 mod tests {
@@ -605,5 +608,187 @@ mod tests {
             adjusted[0].energy_kwh, 2.0,
             "residual energy from the open order replaces the raw forecast"
         );
+    }
+
+    /// A one-shot HTTP/1.1 stub the adapter can be pointed at. There is no HTTP mocking
+    /// crate in this workspace, so the forwarding tests bring their own minimal server: it
+    /// answers every request with the same, configurable status line and records the raw
+    /// request bodies it received, which is all the assertions below need.
+    struct StubServer {
+        /// Base URL to hand to [`AreaMarketInfoAdapter::new`].
+        url: String,
+        bodies: Arc<Mutex<Vec<Vec<u8>>>>,
+    }
+
+    impl StubServer {
+        fn bodies(&self) -> Vec<Vec<u8>> {
+            self.bodies.lock().unwrap().clone()
+        }
+
+        fn request_count(&self) -> usize {
+            self.bodies.lock().unwrap().len()
+        }
+    }
+
+    fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+        haystack
+            .windows(needle.len())
+            .position(|window| window == needle)
+    }
+
+    /// Read one full HTTP request off `stream` and return its body. The bodies here are
+    /// hundreds of kilobytes, so the headers are parsed for `Content-Length` and the body
+    /// is then read in a loop until exactly that many bytes have arrived.
+    async fn read_request_body(stream: &mut TcpStream) -> Option<Vec<u8>> {
+        let mut buffer: Vec<u8> = Vec::new();
+        let mut chunk = [0u8; 8192];
+
+        let header_end = loop {
+            if let Some(position) = find_subsequence(&buffer, b"\r\n\r\n") {
+                break position + 4;
+            }
+            let read = stream.read(&mut chunk).await.ok()?;
+            if read == 0 {
+                return None;
+            }
+            buffer.extend_from_slice(&chunk[..read]);
+        };
+
+        let headers = String::from_utf8_lossy(&buffer[..header_end]).to_ascii_lowercase();
+        // Defensive: reqwest does not use it today, but an `Expect: 100-continue` would
+        // otherwise deadlock the read below, since the client waits for the interim reply.
+        if headers.contains("expect: 100-continue") {
+            stream
+                .write_all(b"HTTP/1.1 100 Continue\r\n\r\n")
+                .await
+                .ok()?;
+        }
+        let content_length: usize = headers
+            .lines()
+            .find_map(|line| line.strip_prefix("content-length:"))
+            .and_then(|value| value.trim().parse().ok())
+            .unwrap_or(0);
+
+        while buffer.len() < header_end + content_length {
+            let read = stream.read(&mut chunk).await.ok()?;
+            if read == 0 {
+                return None;
+            }
+            buffer.extend_from_slice(&chunk[..read]);
+        }
+        Some(buffer[header_end..header_end + content_length].to_vec())
+    }
+
+    /// Start the stub on an ephemeral loopback port. `status_line` is the full HTTP status
+    /// line to answer with, e.g. `"HTTP/1.1 413 Payload Too Large"`.
+    async fn start_stub_server(status_line: &'static str) -> StubServer {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let bodies: Arc<Mutex<Vec<Vec<u8>>>> = Arc::new(Mutex::new(Vec::new()));
+        let recorded = Arc::clone(&bodies);
+
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                if let Some(body) = read_request_body(&mut stream).await {
+                    recorded.lock().unwrap().push(body);
+                }
+                let response =
+                    format!("{status_line}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                let _ = stream.write_all(response.as_bytes()).await;
+                let _ = stream.flush().await;
+                let _ = stream.shutdown().await;
+            }
+        });
+
+        StubServer {
+            url: format!("http://{address}"),
+            bodies,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_forward_forecast_splits_large_payload_into_chunks() {
+        // A real day-ahead ingest is thousands of points in one body, which the storage
+        // service rejects with 413; the adapter must split it into bounded requests.
+        let total = 2 * FORWARD_CHUNK_SIZE + 1;
+        let server = start_stub_server("HTTP/1.1 200 OK").await;
+        let adapter = AreaMarketInfoAdapter::new(Some(server.url.clone()));
+        let forecasts: Vec<ForecastSchema> = (0..total)
+            .map(|index| forecast_with(1.5, 1_800_000_000 + index as u64))
+            .collect();
+
+        adapter
+            .forward_forecast(forecasts)
+            .await
+            .expect("forwarding against a 200 server must succeed");
+
+        let bodies = server.bodies();
+        assert_eq!(bodies.len(), 3, "2001 points must be sent as 3 requests");
+        let mut forwarded = 0usize;
+        for body in &bodies {
+            let chunk: Vec<ForecastSchema> =
+                serde_json::from_slice(body).expect("each body is a JSON array of forecasts");
+            assert!(
+                chunk.len() <= FORWARD_CHUNK_SIZE,
+                "no request may exceed FORWARD_CHUNK_SIZE points, got {}",
+                chunk.len()
+            );
+            forwarded += chunk.len();
+        }
+        assert_eq!(
+            forwarded, total,
+            "every point must be forwarded exactly once"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_forward_forecast_returns_error_on_rejected_payload() {
+        // Regression: the status used to be ignored, so a 413 was logged as a successful
+        // ingest and the forecasts were silently lost.
+        let server = start_stub_server("HTTP/1.1 413 Payload Too Large").await;
+        let adapter = AreaMarketInfoAdapter::new(Some(server.url.clone()));
+        let forecasts: Vec<ForecastSchema> = (0..(FORWARD_CHUNK_SIZE + 5))
+            .map(|index| forecast_with(1.5, 1_800_000_000 + index as u64))
+            .collect();
+
+        let result = adapter.forward_forecast(forecasts).await;
+
+        assert!(result.is_err(), "a 413 response must surface as an error");
+        assert_eq!(
+            server.request_count(),
+            1,
+            "forwarding must stop at the first failing chunk"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_forward_forecast_sends_nothing_for_empty_input() {
+        let server = start_stub_server("HTTP/1.1 200 OK").await;
+        let adapter = AreaMarketInfoAdapter::new(Some(server.url.clone()));
+
+        adapter
+            .forward_forecast(vec![])
+            .await
+            .expect("an empty forecast list is a no-op, not a failure");
+
+        assert_eq!(
+            server.request_count(),
+            0,
+            "an empty forecast list must not hit the network"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_forward_measurement_returns_error_on_rejected_payload() {
+        let server = start_stub_server("HTTP/1.1 413 Payload Too Large").await;
+        let adapter = AreaMarketInfoAdapter::new(Some(server.url.clone()));
+        let measurements: Vec<MeasurementSchema> = (0..10)
+            .map(|index| measurement_with(1.5, 1_800_000_000 + index as u64))
+            .collect();
+
+        let result = adapter.forward_measurement(measurements).await;
+
+        assert!(result.is_err(), "a 413 response must surface as an error");
+        assert_eq!(server.request_count(), 1);
     }
 }

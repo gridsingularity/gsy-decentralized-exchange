@@ -1,3 +1,4 @@
+use crate::constants::CommunityClientConstants;
 use crate::external_forecasts::ForecastApiError;
 use crate::external_forecasts::demand_api::{
     DemandForecastApiConnection, DemandForecastPoint, DemandForecaster,
@@ -35,12 +36,6 @@ fn forecaster_site(meter_name: &str) -> Option<&'static str> {
 // forecastable meter type. LIC02SM is a battery mislabelled as a SmartMeter; add further
 // mislabelled assets here as they are discovered.
 const EXCLUDED_METERS: [&str; 1] = ["LIC02SM"];
-
-// How many PV forecast requests are in flight at once. Each can burn the full
-// PV_HTTP_REQUEST_TIMEOUT_SEC, so fetching one at a time meant a hung forecaster stalled
-// ingestion for (assets x timeout) — hours for a large community, far beyond the ingest
-// interval, and the demand fetches queued behind it never ran at all.
-const PV_FETCH_CONCURRENCY: usize = 8;
 
 #[derive(Clone)]
 pub struct ForecastsManager {
@@ -224,6 +219,20 @@ impl ForecastsManager {
     // path: the meter id is the area name and the site is the community name, both taken from
     // the ontology-driven topology. One failing PV meter is logged and skipped so it does not
     // sink the whole fetch.
+    //
+    // Requests are issued in batches of `PV_FETCH_CONCURRENCY`, which defaults to 1 (fully
+    // sequential). The forecaster serialises badly under concurrent load: measured per-request
+    // latency is ~13s with 1 request in flight, ~63s each with 2, and ~305s each with 8 — well
+    // past PV_HTTP_REQUEST_TIMEOUT_SEC, so every request in a wide batch times out. Worse, a
+    // request we time out on is not cancelled server-side and keeps consuming the forecaster,
+    // so the timeouts compound into the next batch. Sequential fetching of ~32 PV assets takes
+    // ~7 min in total against ~21 min for 8-wide batches, so concurrency 1 is both the fastest
+    // and the only setting that fits inside the timeout.
+    //
+    // The trade-off: with concurrency 1 a fully hung forecaster can stall PV ingestion for up
+    // to (number of PV assets x PV_HTTP_REQUEST_TIMEOUT_SEC), since each asset must burn its
+    // own timeout before the next one starts. Raise PV_FETCH_CONCURRENCY only if the
+    // forecaster's behaviour under load improves.
     async fn fetch_pv_forecasts(
         &self,
         community_uuid: &str,
@@ -240,7 +249,9 @@ impl ForecastsManager {
             .collect();
 
         let mut forecasts: Vec<ForecastSchema> = vec![];
-        for batch in targets.chunks(PV_FETCH_CONCURRENCY) {
+        // `chunks(0)` panics, so a misconfigured 0 falls back to sequential fetching.
+        let concurrency = CommunityClientConstants.PV_FETCH_CONCURRENCY.max(1);
+        for batch in targets.chunks(concurrency) {
             let mut in_flight = JoinSet::new();
             for (area, site) in batch {
                 let api = Arc::clone(&self.pv_forecast_api);

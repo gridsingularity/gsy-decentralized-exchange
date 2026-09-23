@@ -60,9 +60,15 @@ pub struct Constants {
     /// forecaster's observed ~30s response latency so valid slow responses are not cut off.
     pub HTTP_REQUEST_TIMEOUT_SEC: u64,
     /// Overall request timeout (in seconds) applied to the PV forecaster HTTP call only.
-    /// The PV forecaster can take up to ~2 minutes to respond, far longer than the demand
-    /// forecaster, so it gets a dedicated, larger timeout.
+    /// A single, uncontended PV request answers in ~13s, but the forecaster slows down
+    /// sharply as soon as requests overlap, so it gets a dedicated, much larger timeout
+    /// than the demand forecaster.
     pub PV_HTTP_REQUEST_TIMEOUT_SEC: u64,
+    /// How many PV forecast requests the client keeps in flight at once. The forecaster
+    /// serialises badly under load, so the default is 1 (fully sequential); see
+    /// `external_forecasts::manager::ForecastsManager::fetch_pv_forecasts` for the
+    /// measurements behind that choice. Values below 1 are clamped to 1.
+    pub PV_FETCH_CONCURRENCY: usize,
     /// TCP connect timeout (in seconds) applied to every external HTTP call.
     pub HTTP_CONNECT_TIMEOUT_SEC: u64,
     /// Base URL of the `gsy-ewf-identity-server`, the service that mints and stores a
@@ -126,6 +132,7 @@ impl Constants {
             PV_MIN_FORECAST_KWH: read_env_or("PV_MIN_FORECAST_KWH", 0.05),
             HTTP_REQUEST_TIMEOUT_SEC: read_env_or("HTTP_REQUEST_TIMEOUT_SEC", 60u64),
             PV_HTTP_REQUEST_TIMEOUT_SEC: read_env_or("PV_HTTP_REQUEST_TIMEOUT_SEC", 150u64),
+            PV_FETCH_CONCURRENCY: read_env_or("PV_FETCH_CONCURRENCY", 1usize),
             HTTP_CONNECT_TIMEOUT_SEC: read_env_or("HTTP_CONNECT_TIMEOUT_SEC", 10u64),
             IDENTITY_SERVER_URL: read_env_or(
                 "IDENTITY_SERVER_URL",
