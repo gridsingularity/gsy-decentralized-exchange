@@ -4,7 +4,7 @@ use ethers::prelude::*;
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::orders::order_metadata_to_contract;
 use primitives::db_api_schema::profiles::ForecastSchema;
-use primitives::ewds::utils::fetch_facility_owner_mapping;
+use primitives::utils::endpoint_calls::fetch_facility_owner_mapping;
 use primitives::utils::{
     create_encrypted_bytes16_from_string, parse_uuid_or_hex_bytes16, string_to_timestamp,
     NODE_FLOAT_SCALING_FACTOR,

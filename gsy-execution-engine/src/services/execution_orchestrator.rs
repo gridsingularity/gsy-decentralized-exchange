@@ -1,6 +1,6 @@
 use ::primitives::utils::timestamp_to_datetime_string;
 use anyhow::Result;
-use primitives::ewds::utils::fetch_facility_owner_mapping;
+use primitives::utils::endpoint_calls::fetch_facility_owner_mapping;
 use tracing::info;
 
 use crate::{

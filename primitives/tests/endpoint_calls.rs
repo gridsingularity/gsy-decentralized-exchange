@@ -1,9 +1,10 @@
 use primitives::db_api_schema::grid_topology::FacilitySchema;
-use primitives::ewds::utils::fetch_facility_owner_mapping;
+use primitives::utils::endpoint_calls::fetch_facility_owner_mapping;
+use serde_json::{json, Value};
 use std::env;
 use std::sync::Mutex;
 use wiremock::matchers::{method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
+use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
 // Env vars are process-global; serialize tests that mutate them.
 static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -99,4 +100,66 @@ async fn errors_on_non_success_status() {
     assert!(err.to_string().contains("Failed to fetch facilities"));
 
     env::remove_var("OFFCHAIN_STORAGE_URL");
+}
+
+#[tokio::test]
+async fn fetches_mapping_over_ewds() {
+    let _guard = ENV_LOCK.lock().unwrap();
+
+    let server = MockServer::start().await;
+    let facilities = vec![
+        base_facility("AIS1-House-1", "owner 1"),
+        base_facility("AIS1-House-2", "owner 2"),
+    ];
+
+    let pending = std::sync::Arc::new(Mutex::new(Value::Null));
+    let sent = pending.clone();
+    Mock::given(method("POST"))
+        .and(path("/api/v2/messages"))
+        .respond_with(move |request: &Request| {
+            let body: Value = serde_json::from_slice(&request.body).unwrap();
+            let envelope: Value = serde_json::from_str(body["payload"].as_str().unwrap()).unwrap();
+            assert_eq!(envelope["operation"], "facilities.query");
+            *sent.lock().unwrap() = json!({
+                "requestId": envelope["requestId"],
+                "success": true,
+                "data": facilities,
+            });
+            ResponseTemplate::new(200).set_body_json(json!({
+                "recipients": {"sent": 1, "failed": 0, "total": 1}
+            }))
+        })
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v2/messages"))
+        .respond_with(move |_: &Request| {
+            ResponseTemplate::new(200).set_body_json(json!([
+                {"payload": pending.lock().unwrap().to_string()}
+            ]))
+        })
+        .mount(&server)
+        .await;
+
+    env::set_var("OFFCHAIN_STORAGE_TRANSPORT", "ewds");
+    env::set_var("EWDS_GATEWAY_URL", server.uri());
+    env::set_var("EWDS_RESPONSE_TIMEOUT_MS", "1000");
+
+    let mapping = fetch_facility_owner_mapping("EWDS_TEST_CLIENT_ID", "testfacilities")
+        .await
+        .unwrap();
+
+    assert_eq!(mapping.len(), 2);
+    assert_eq!(
+        mapping.get("AIS1-House-1").map(String::as_str),
+        Some("owner 1")
+    );
+    assert_eq!(
+        mapping.get("AIS1-House-2").map(String::as_str),
+        Some("owner 2")
+    );
+
+    env::remove_var("OFFCHAIN_STORAGE_TRANSPORT");
+    env::remove_var("EWDS_GATEWAY_URL");
+    env::remove_var("EWDS_RESPONSE_TIMEOUT_MS");
 }
