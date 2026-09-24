@@ -1,8 +1,3 @@
-//! Shared client for reading data from off-chain storage, over either its direct
-//! HTTP API or the EWDS gateway. Each capability (communities, facility/owner
-//! mapping, offchain->onchain ID resolution) is exposed as a small trait so
-//! callers can depend on just the capability they need and swap in a mock in
-//! tests instead of standing up a `wiremock` server.
 use crate::db_api_schema::grid_topology::{EnergyCommunitySchema, FacilitySchema};
 use crate::db_api_schema::ids::IdMappingSchema;
 use crate::db_api_schema::orders::{DbAttributes, DbRequirements};
@@ -44,16 +39,6 @@ impl OffchainStorageTransport {
 #[async_trait]
 pub trait CommunityProvider: Send + Sync {
     async fn fetch_communities(&self) -> Result<Vec<EnergyCommunitySchema>>;
-}
-
-#[async_trait]
-pub trait FacilityOwnerProvider: Send + Sync {
-    async fn fetch_facility_owner_mapping(&self) -> Result<HashMap<String, String>>;
-}
-
-#[async_trait]
-pub trait IdMappingProvider: Send + Sync {
-    async fn fetch_onchain_id(&self, offchain_id: &str) -> Result<String>;
 }
 
 /// Reads communities, facility/owner mappings and offchain->onchain ID
@@ -109,19 +94,7 @@ impl OffchainStorageClient {
             path
         )
     }
-}
 
-#[async_trait]
-impl CommunityProvider for OffchainStorageClient {
-    async fn fetch_communities(&self) -> Result<Vec<EnergyCommunitySchema>> {
-        match self.transport {
-            OffchainStorageTransport::Http => self.fetch_communities_via_http().await,
-            OffchainStorageTransport::Ewds => self.fetch_communities_via_ewds().await,
-        }
-    }
-}
-
-impl OffchainStorageClient {
     async fn fetch_communities_via_http(&self) -> Result<Vec<EnergyCommunitySchema>> {
         let url = self.endpoint_url("communities");
         let response = self.http_client.get(&url).send().await?;
@@ -153,11 +126,8 @@ impl OffchainStorageClient {
             .map(EnergyCommunitySchema::from)
             .collect())
     }
-}
 
-#[async_trait]
-impl FacilityOwnerProvider for OffchainStorageClient {
-    async fn fetch_facility_owner_mapping(&self) -> Result<HashMap<String, String>> {
+    pub async fn fetch_facility_owner_mapping(&self) -> Result<HashMap<String, String>> {
         let facilities: Vec<FacilitySchema> = match self.transport {
             OffchainStorageTransport::Ewds => {
                 info!("Fetching facilities via EWDS transport");
@@ -187,11 +157,8 @@ impl FacilityOwnerProvider for OffchainStorageClient {
         info!("returning mapping {:?}", mapping.clone());
         Ok(mapping)
     }
-}
 
-#[async_trait]
-impl IdMappingProvider for OffchainStorageClient {
-    async fn fetch_onchain_id(&self, offchain_id: &str) -> Result<String> {
+    pub async fn fetch_onchain_id(&self, offchain_id: &str) -> Result<String> {
         let mapping: IdMappingSchema = match self.transport {
             OffchainStorageTransport::Ewds => {
                 info!("Fetching onchain_id via EWDS transport");
@@ -236,12 +203,22 @@ impl IdMappingProvider for OffchainStorageClient {
     }
 }
 
+#[async_trait]
+impl CommunityProvider for OffchainStorageClient {
+    async fn fetch_communities(&self) -> Result<Vec<EnergyCommunitySchema>> {
+        match self.transport {
+            OffchainStorageTransport::Http => self.fetch_communities_via_http().await,
+            OffchainStorageTransport::Ewds => self.fetch_communities_via_ewds().await,
+        }
+    }
+}
+
 /// Resolve off-chain facility IDs before converting metadata or matching actor IDs.
 /// Input identifiers are always off-chain IDs, including UUID and hex-shaped strings.
-pub async fn resolve_order_partner_ids<P: IdMappingProvider + ?Sized>(
+pub async fn resolve_order_partner_ids(
     requirements: &mut Option<DbRequirements>,
     attributes: &mut Option<DbAttributes>,
-    id_mapping_source: &P,
+    id_mapping_source: &OffchainStorageClient,
 ) -> Result<()> {
     for partner in [
         requirements

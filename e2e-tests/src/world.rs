@@ -5,7 +5,7 @@ use primitives::db_api_schema::grid_topology::FacilitySchema;
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::profiles::ForecastSchema;
 use primitives::db_api_schema::trades::DbTradeSchema;
-use primitives::offchain_storage::{IdMappingProvider, OffchainStorageClient};
+use primitives::offchain_storage::OffchainStorageClient;
 use primitives::utils::parse_uuid_or_hex_bytes16;
 use reqwest::Client;
 use std::collections::HashMap;

@@ -2405,7 +2405,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio_schedule",
- "tracing",
  "tracing-actix-web",
  "uuid 1.26.0",
  "wiremock",

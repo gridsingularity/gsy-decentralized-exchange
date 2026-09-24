@@ -2,8 +2,7 @@ use primitives::db_api_schema::grid_topology::{EnergyCommunitySchema, FacilitySc
 use primitives::db_api_schema::ids::IdMappingSchema;
 use primitives::ewds::dto::EwdsCommunityDto;
 use primitives::offchain_storage::{
-    CommunityProvider, FacilityOwnerProvider, IdMappingProvider, OffchainStorageClient,
-    OffchainStorageTransport,
+    CommunityProvider, OffchainStorageClient, OffchainStorageTransport,
 };
 use serde_json::{json, Value};
 use std::env;

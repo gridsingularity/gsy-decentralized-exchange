@@ -1,6 +1,6 @@
 use ::primitives::utils::timestamp_to_datetime_string;
 use anyhow::Result;
-use primitives::offchain_storage::{FacilityOwnerProvider, OffchainStorageClient};
+use primitives::offchain_storage::OffchainStorageClient;
 use tracing::info;
 
 use crate::{
