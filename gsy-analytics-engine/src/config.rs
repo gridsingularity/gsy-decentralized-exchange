@@ -4,7 +4,6 @@ use primitives::MarketTimeSeriesGranularity;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fmt;
-use std::str::FromStr;
 
 /// Raw environment variables, deserialized by `envy`. Validated into [`Config`].
 #[derive(Deserialize, Debug)]
@@ -33,13 +32,9 @@ struct RawConfig {
     analytics_enabled_kpis: String,
     #[serde(default = "default_granularities")]
     analytics_granularities: String,
-    #[serde(default = "default_ec4_formula")]
-    analytics_ec4_formula: String,
     // Kept as strings so that empty values (e.g. `${VAR:-}` in compose) mean "unset".
     analytics_grid_tariff_eur_per_kwh: Option<String>,
     analytics_grid_tariff_overrides: Option<String>,
-    #[serde(default = "default_ec4_target_pct")]
-    analytics_ec4_target_pct: f64,
 }
 
 fn default_database_url_scheme() -> String {
@@ -70,16 +65,10 @@ fn default_settlement_delay_minutes() -> u64 {
     15
 }
 fn default_enabled_kpis() -> String {
-    "EC-4".to_string()
+    "procurement_cost_per_kwh".to_string()
 }
 fn default_granularities() -> String {
     "15min".to_string()
-}
-fn default_ec4_formula() -> String {
-    "blended".to_string()
-}
-fn default_ec4_target_pct() -> f64 {
-    5.0
 }
 
 /// Database password, hidden from `Debug` output.
@@ -111,32 +100,6 @@ impl DatabaseConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Ec4Formula {
-    /// (P2P cost + residual grid energy × tariff) / member net demand.
-    Blended,
-    /// P2P cost / member net demand.
-    Literal,
-    /// P2P cost / P2P energy bought.
-    P2pPrice,
-}
-
-impl FromStr for Ec4Formula {
-    type Err = anyhow::Error;
-
-    fn from_str(value: &str) -> Result<Self> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "blended" => Ok(Ec4Formula::Blended),
-            "literal" => Ok(Ec4Formula::Literal),
-            "p2p_price" => Ok(Ec4Formula::P2pPrice),
-            other => Err(anyhow!(
-                "Unsupported EC-4 formula '{}'. Expected blended, literal, or p2p_price",
-                other
-            )),
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct TariffConfig {
     /// Global flat utility tariff in EUR/kWh.
@@ -163,9 +126,7 @@ pub struct Config {
     pub backfill_from: Option<i64>,
     pub enabled_kpis: Vec<String>,
     pub granularities: Vec<MarketTimeSeriesGranularity>,
-    pub ec4_formula: Ec4Formula,
     pub tariffs: TariffConfig,
-    pub ec4_target_pct: f64,
 }
 
 impl Config {
@@ -204,7 +165,6 @@ impl Config {
                 .transpose()?,
             enabled_kpis: parse_list(&raw.analytics_enabled_kpis),
             granularities: parse_granularities(&raw.analytics_granularities)?,
-            ec4_formula: raw.analytics_ec4_formula.parse()?,
             tariffs: TariffConfig {
                 default_eur_per_kwh: non_empty(raw.analytics_grid_tariff_eur_per_kwh)
                     .map(|value| parse_tariff(&value))
@@ -215,7 +175,6 @@ impl Config {
                     .transpose()?
                     .unwrap_or_default(),
             },
-            ec4_target_pct: raw.analytics_ec4_target_pct,
         })
     }
 }

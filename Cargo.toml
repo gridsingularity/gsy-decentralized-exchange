@@ -3,6 +3,7 @@ resolver = "3"
 
 members = [
     "primitives",
+    "gsy-analytics-engine",
     "gsy-community-client",
     "gsy-execution-engine",
     "gsy-market-orchestrator",

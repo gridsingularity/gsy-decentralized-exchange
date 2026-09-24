@@ -1,4 +1,4 @@
-use gsy_analytics_engine::config::{Config, Ec4Formula};
+use gsy_analytics_engine::config::Config;
 use primitives::MarketTimeSeriesGranularity;
 
 fn config_from(vars: &[(&str, &str)]) -> anyhow::Result<Config> {
@@ -23,16 +23,17 @@ fn defaults_are_applied_when_no_env_is_set() {
     assert_eq!(config.lookback_hours, 48);
     assert_eq!(config.settlement_delay_minutes, 15);
     assert_eq!(config.backfill_from, None);
-    assert_eq!(config.enabled_kpis, vec!["EC-4".to_string()]);
+    assert_eq!(
+        config.enabled_kpis,
+        vec!["procurement_cost_per_kwh".to_string()]
+    );
     assert_eq!(
         config.granularities,
         vec![MarketTimeSeriesGranularity::FifteenMinutes]
     );
-    assert_eq!(config.ec4_formula, Ec4Formula::Blended);
     assert_eq!(config.tariffs.default_eur_per_kwh, None);
     assert!(config.tariffs.overrides.is_empty());
     assert!(config.tariffs.is_empty());
-    assert_eq!(config.ec4_target_pct, 5.0);
 }
 
 #[test]
@@ -42,9 +43,10 @@ fn env_values_override_defaults() {
         ("DATABASE_NAME", "custom_db"),
         ("ANALYTICS_INTERVAL_SECONDS", "60"),
         ("ANALYTICS_LOOKBACK_HOURS", "6"),
-        ("ANALYTICS_ENABLED_KPIS", " EC-4 , EC-5 ,"),
-        ("ANALYTICS_EC4_FORMULA", "p2p_price"),
-        ("ANALYTICS_EC4_TARGET_PCT", "7.5"),
+        (
+            "ANALYTICS_ENABLED_KPIS",
+            " procurement_cost_per_kwh , other_kpi ,",
+        ),
     ])
     .unwrap();
 
@@ -52,9 +54,10 @@ fn env_values_override_defaults() {
     assert_eq!(config.database.name, "custom_db");
     assert_eq!(config.interval_seconds, 60);
     assert_eq!(config.lookback_hours, 6);
-    assert_eq!(config.enabled_kpis, vec!["EC-4", "EC-5"]);
-    assert_eq!(config.ec4_formula, Ec4Formula::P2pPrice);
-    assert_eq!(config.ec4_target_pct, 7.5);
+    assert_eq!(
+        config.enabled_kpis,
+        vec!["procurement_cost_per_kwh", "other_kpi"]
+    );
 }
 
 #[test]
@@ -100,24 +103,6 @@ fn password_is_redacted_in_debug_output() {
 
     assert!(!debug.contains("super-secret"));
     assert!(debug.contains("***"));
-}
-
-#[test]
-fn formulas_are_parsed_case_insensitively() {
-    for (value, expected) in [
-        ("blended", Ec4Formula::Blended),
-        ("LITERAL", Ec4Formula::Literal),
-        ("P2p_Price", Ec4Formula::P2pPrice),
-    ] {
-        let config = config_from(&[("ANALYTICS_EC4_FORMULA", value)]).unwrap();
-        assert_eq!(config.ec4_formula, expected);
-    }
-}
-
-#[test]
-fn unknown_formula_is_rejected() {
-    let error = config_from(&[("ANALYTICS_EC4_FORMULA", "average")]).unwrap_err();
-    assert!(error.to_string().contains("Unsupported EC-4 formula"));
 }
 
 #[test]

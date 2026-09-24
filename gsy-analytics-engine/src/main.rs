@@ -13,7 +13,7 @@ async fn main() -> Result<()> {
     if config.tariffs.is_empty() {
         warn!(
             "No grid tariff configured (ANALYTICS_GRID_TARIFF_EUR_PER_KWH / \
-             ANALYTICS_GRID_TARIFF_OVERRIDES). Blended EC-4 values and baselines will be null"
+             ANALYTICS_GRID_TARIFF_OVERRIDES). Procurement cost per kWh values and baselines will be null"
         );
     }
 

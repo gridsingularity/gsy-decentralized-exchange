@@ -2292,6 +2292,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "gsy-analytics-engine"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "envy",
+ "mongodb",
+ "primitives",
+ "serde",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "gsy-community-client"
 version = "0.1.0"
 dependencies = [
