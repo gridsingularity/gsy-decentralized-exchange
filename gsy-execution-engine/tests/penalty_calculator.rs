@@ -63,8 +63,7 @@ fn compute_penalties_matches_facility_measurements_to_evm_actor_ids() {
 
     // The mapping holds plain owner ids; compute_penalties converts them to
     // the on-chain representation, mirroring the community client's orders.
-    let facility_owner_mapping =
-        HashMap::from([("areaalice".to_string(), "alice".to_string())]);
+    let facility_owner_mapping = HashMap::from([("areaalice".to_string(), "alice".to_string())]);
 
     let penalties = compute_penalties(&[trade()], &measurements, &facility_owner_mapping, 0.10);
 

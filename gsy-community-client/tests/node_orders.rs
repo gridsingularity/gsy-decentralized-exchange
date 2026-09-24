@@ -91,8 +91,14 @@ async fn test_orders_to_evm_params_are_created_correctly() {
         bid_preferred_rate,
         bid_trading_partner,
     ) = input_orders[0];
-    assert_eq!(bid_created_by, create_encrypted_bytes16_from_string("area1"));
-    assert_eq!(bid_market, parse_uuid_or_hex_bytes16(market.market_id.as_str()).expect("failed to parse market id"));
+    assert_eq!(
+        bid_created_by,
+        create_encrypted_bytes16_from_string("area1")
+    );
+    assert_eq!(
+        bid_market,
+        parse_uuid_or_hex_bytes16(market.market_id.as_str()).expect("failed to parse market id")
+    );
     // delivery_start_time from market drives the slot now, not forecast.time_slot
     assert_eq!(bid_slot, 456_456);
     assert!(current_time >= bid_creation && current_time - bid_creation <= 1);
@@ -118,7 +124,10 @@ async fn test_orders_to_evm_params_are_created_correctly() {
         offer_preferred_rate,
         offer_trading_partner,
     ) = input_orders[1];
-    assert_eq!(offer_created_by, create_encrypted_bytes16_from_string("area2"));
+    assert_eq!(
+        offer_created_by,
+        create_encrypted_bytes16_from_string("area2")
+    );
     assert_eq!(
         offer_market,
         parse_uuid_or_hex_bytes16(market.market_id.as_str()).expect("failed to parse market id")

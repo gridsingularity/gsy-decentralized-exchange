@@ -1,14 +1,14 @@
 pub mod dto;
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use dto::{
     EwdsDeliverySummary, EwdsMessageDto, EwdsQueryResponse, EwdsRequestEnvelope,
     EwdsSendMessageDto, EwdsSendMessageResponse,
 };
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use std::{env, fmt, time::Instant};
-use tokio::time::{Duration, sleep};
+use tokio::time::{sleep, Duration};
 use tracing::warn;
 
 const DEFAULT_GATEWAY_URL: &str = "http://ewds-gateway-api:3333";
@@ -206,14 +206,8 @@ impl EwdsTopicConfig {
                 ),
             },
             ids: EwdsTopicPair {
-                request: env_or(
-                    "EWDS_IDS_REQUEST_TOPIC",
-                    defaults.ids.request.as_str(),
-                ),
-                response: env_or(
-                    "EWDS_IDS_RESPONSE_TOPIC",
-                    defaults.ids.response.as_str(),
-                ),
+                request: env_or("EWDS_IDS_REQUEST_TOPIC", defaults.ids.request.as_str()),
+                response: env_or("EWDS_IDS_RESPONSE_TOPIC", defaults.ids.response.as_str()),
             },
             clearing_results: EwdsTopicPair {
                 request: env_or(

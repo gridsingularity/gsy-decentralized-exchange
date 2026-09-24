@@ -2,13 +2,13 @@ use crate::world::MyWorld;
 use cucumber::given;
 use ethers::prelude::*;
 use ethers::utils::keccak256;
+use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
+use primitives::db_api_schema::grid_topology::FacilitySchema;
 use primitives::MatchingAlgorithm;
 use std::collections::HashSet;
 use std::env;
 use std::str::FromStr;
 use std::sync::Arc;
-use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
-use primitives::db_api_schema::grid_topology::FacilitySchema;
 
 abigen!(
     MarketControllerContract,
@@ -97,16 +97,15 @@ async fn services_are_running(world: &mut MyWorld) {
 async fn matching_engine_uses_algorithm(_world: &mut MyWorld, expected_algorithm: String) {
     let expected = MatchingAlgorithm::from_str(expected_algorithm.as_str())
         .unwrap_or_else(|error| panic!("Invalid matching algorithm in feature: {}", error));
-    let configured_value = env::var("MATCHING_ALGORITHM")
-        .unwrap_or_else(|_| MatchingAlgorithm::default().to_string());
+    let configured_value =
+        env::var("MATCHING_ALGORITHM").unwrap_or_else(|_| MatchingAlgorithm::default().to_string());
     let configured = MatchingAlgorithm::from_str(configured_value.as_str())
         .unwrap_or_else(|error| panic!("Invalid MATCHING_ALGORITHM: {}", error));
 
     assert_eq!(
         configured, expected,
         "This feature requires MATCHING_ALGORITHM={} but the E2E stack is configured for {}",
-        expected,
-        configured
+        expected, configured
     );
 }
 

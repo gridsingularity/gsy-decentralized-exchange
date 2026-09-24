@@ -1,5 +1,5 @@
 use crate::db::DatabaseWrapper;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use futures::future::join_all;
 use primitives::db_api_schema::profiles::{MeasurementPointType, MeasurementSchema};
 use primitives::ewds::dto::{
@@ -7,16 +7,16 @@ use primitives::ewds::dto::{
     EwdsRequestEnvelope, EwdsResponseEnvelope, EwdsSendMessageDto, EwdsTradeDto,
 };
 use primitives::ewds::{
-    EwdsOperation, EwdsTopicConfig, client_id_for_suffix, env_var, ewds_rate_limit_backoff_ms,
-    format_response_body, is_rate_limited_message, is_rate_limited_response,
-    is_transient_gateway_message, is_transient_gateway_response, parse_gateway_delivery_summary,
+    client_id_for_suffix, env_var, ewds_rate_limit_backoff_ms, format_response_body,
+    is_rate_limited_message, is_rate_limited_response, is_transient_gateway_message,
+    is_transient_gateway_response, parse_gateway_delivery_summary, EwdsOperation, EwdsTopicConfig,
 };
 use primitives::utils::timestamp_to_string_with_padding;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;
-use tokio::time::{Duration, sleep};
+use tokio::time::{sleep, Duration};
 use tracing::{error, info, warn};
 
 #[derive(Clone)]

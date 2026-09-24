@@ -1,8 +1,5 @@
 use primitives::db_api_schema::{profiles::MeasurementSchema, trades::DbTradeSchema};
-use primitives::utils::{
-    bytes16_to_hex,
-    create_encrypted_bytes16_from_string,
-};
+use primitives::utils::{bytes16_to_hex, create_encrypted_bytes16_from_string};
 use std::collections::HashMap;
 use tracing::warn;
 

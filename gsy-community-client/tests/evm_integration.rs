@@ -228,7 +228,8 @@ async fn test_publish_orders_calls_evm_order_registry() {
     );
     assert_eq!(
         mock_contract.last_market_id().call().await.unwrap(),
-        parse_uuid_or_hex_bytes16("0x11111111111111111111111111111111").expect("failed to parse uuid")
+        parse_uuid_or_hex_bytes16("0x11111111111111111111111111111111")
+            .expect("failed to parse uuid")
     );
     assert_eq!(
         mock_contract

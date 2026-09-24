@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use cucumber::World;
 use ethers::prelude::*;
+use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use primitives::db_api_schema::grid_topology::FacilitySchema;
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::profiles::ForecastSchema;
@@ -11,7 +12,6 @@ use reqwest::Client;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
-use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 
 const DEFAULT_PRIVATE_KEY: &str =
     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
@@ -204,5 +204,4 @@ impl MyWorld {
                 });
         }
     }
-
 }

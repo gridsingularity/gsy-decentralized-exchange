@@ -71,8 +71,7 @@ async fn resolves_partner_facility_ids_over_http_and_ewds() {
     std::env::set_var("EWDS_RESPONSE_TIMEOUT_MS", "1000");
     for transport in ["http", "ewds"] {
         std::env::set_var("OFFCHAIN_STORAGE_TRANSPORT", transport);
-        let id_mapping_source =
-            OffchainStorageClient::from_env("TEST_IDS_CLIENT_ID", "testids");
+        let id_mapping_source = OffchainStorageClient::from_env("TEST_IDS_CLIENT_ID", "testids");
         let mut requirements = Some(DbRequirements {
             trading_partner_id: Some(FACILITY_UUID.to_string()),
             energy_type: Some(EnergyType::Green),

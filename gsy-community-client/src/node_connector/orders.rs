@@ -142,7 +142,7 @@ async fn build_order_param(
     market: &MarketSchema,
     now: u64,
     is_bid: bool,
-) -> Result<EvmOrderParamsTuple>  {
+) -> Result<EvmOrderParamsTuple> {
     let rate_multiplier = if is_bid { BID_RATE } else { OFFER_RATE };
     let metadata = order_metadata_to_contract(None, None)?;
     let offchain_order_id = Uuid::new_v4().to_string();
@@ -186,21 +186,11 @@ pub async fn create_input_orders(
             continue;
         };
         if forecast.energy_kwh > 0. {
-            input_orders.push(build_order_param(
-                &forecast,
-                &owner_id.clone(),
-                &market,
-                now,
-                true,
-            ).await?);
+            input_orders
+                .push(build_order_param(&forecast, &owner_id.clone(), &market, now, true).await?);
         } else if forecast.energy_kwh < 0. {
-            input_orders.push(build_order_param(
-                &forecast,
-                &owner_id.clone(),
-                &market,
-                now,
-                false,
-            ).await?);
+            input_orders
+                .push(build_order_param(&forecast, &owner_id.clone(), &market, now, false).await?);
         }
     }
     Ok(input_orders)

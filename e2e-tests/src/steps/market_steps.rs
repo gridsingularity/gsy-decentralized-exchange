@@ -3,7 +3,7 @@ use cucumber::{then, when};
 use ethers::prelude::*;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use gsy_community_client::time_utils::get_last_and_next_timeslot;
-use primitives::db_api_schema::grid_topology::{FacilitySchema, EnergyCommunitySchema};
+use primitives::db_api_schema::grid_topology::{EnergyCommunitySchema, FacilitySchema};
 use primitives::db_api_schema::profiles::ForecastSchema;
 use primitives::ewds::dto::EwdsCommunityDto;
 use primitives::ewds::{EwdsClient, EwdsOperation};
@@ -15,7 +15,6 @@ use std::time::Duration;
 use tokio::time::sleep;
 use tracing::info;
 use uuid::Uuid;
-
 
 abigen!(
     MarketControllerContract,
