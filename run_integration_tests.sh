@@ -1,8 +1,19 @@
 #!/usr/bin/env bash
-# run-integration-tests.sh
+# run_integration_tests.sh
 set -uo pipefail   # no -e
 
 COMPOSE_FILE="docker-compose.integration.yml"
+BASE_IMAGE="ghcr.io/gridsingularity/gsy-rust-base:latest"
+
+# Every Rust service builds FROM the base image: use a local copy if present,
+# otherwise pull it (CI), otherwise build it locally (no GHCR access).
+if ! docker image inspect "$BASE_IMAGE" >/dev/null 2>&1; then
+  echo "==> $BASE_IMAGE not found locally, trying to pull"
+  if ! docker pull "$BASE_IMAGE"; then
+    echo "==> Pull failed, building $BASE_IMAGE from Dockerfile.base"
+    docker build -f Dockerfile.base -t "$BASE_IMAGE" . || exit 1
+  fi
+fi
 
 SERVICES=(
   gsy-listener-test
