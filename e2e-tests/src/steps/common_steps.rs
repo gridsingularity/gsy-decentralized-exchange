@@ -2,8 +2,6 @@ use crate::world::MyWorld;
 use cucumber::given;
 use ethers::prelude::*;
 use ethers::utils::keccak256;
-use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
-use primitives::db_api_schema::grid_topology::FacilitySchema;
 use primitives::MatchingAlgorithm;
 use std::collections::HashSet;
 use std::env;

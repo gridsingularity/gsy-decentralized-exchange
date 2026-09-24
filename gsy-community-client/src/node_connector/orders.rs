@@ -54,7 +54,6 @@ pub async fn publish_orders(
         .parse::<LocalWallet>()
         .map_err(|e| anyhow::anyhow!("Invalid community client private key: {}", e))?
         .with_chain_id(chain_id);
-    let signer_address = wallet.address();
 
     let input_orders = create_input_orders(forecasts, market).await?;
 

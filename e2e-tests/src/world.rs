@@ -19,7 +19,6 @@ const DEFAULT_PRIVATE_KEY: &str =
 #[derive(Clone, Debug)]
 pub struct UserAccount {
     pub private_key: String,
-    pub address: Address,
 }
 
 #[derive(Clone, Debug)]
@@ -55,8 +54,6 @@ pub struct MyWorld {
     pub actor_registry_address: Address,
     pub last_market_id: Option<[u8; 16]>,
     pub target_delivery_time: u64,
-    pub buyer_id: String,
-    pub seller_id: String,
     pub bid_forecast: Option<ForecastSchema>,
     pub offer_forecast: Option<ForecastSchema>,
     pub last_trade: Option<DbTradeSchema>,
@@ -92,15 +89,15 @@ impl MyWorld {
         let mut users = HashMap::new();
         users.insert(
             "alice".to_string(),
-            Self::build_user(alice_private_key.as_str(), chain_id)?,
+            Self::build_user(alice_private_key.as_str())?,
         );
         users.insert(
             "bob".to_string(),
-            Self::build_user(bob_private_key.as_str(), chain_id)?,
+            Self::build_user(bob_private_key.as_str())?,
         );
         users.insert(
             "charlie".to_string(),
-            Self::build_user(charlie_private_key.as_str(), chain_id)?,
+            Self::build_user(charlie_private_key.as_str())?,
         );
 
         let market_controller_address = Self::read_address_env("MARKET_CONTROLLER_ADDRESS")?;
@@ -124,8 +121,6 @@ impl MyWorld {
             actor_registry_address,
             last_market_id: None,
             target_delivery_time: 0,
-            buyer_id: "alice".to_string(),
-            seller_id: "bob".to_string(),
             bid_forecast: None,
             offer_forecast: None,
             last_trade: None,
@@ -142,15 +137,13 @@ impl MyWorld {
         })
     }
 
-    fn build_user(private_key: &str, chain_id: u64) -> Result<UserAccount> {
-        let wallet = private_key
+    fn build_user(private_key: &str) -> Result<UserAccount> {
+        private_key
             .parse::<LocalWallet>()
-            .map_err(|e| anyhow!("Invalid user private key: {}", e))?
-            .with_chain_id(chain_id);
+            .map_err(|e| anyhow!("Invalid user private key: {}", e))?;
 
         Ok(UserAccount {
             private_key: private_key.to_string(),
-            address: wallet.address(),
         })
     }
 

@@ -4,7 +4,6 @@ mod world;
 use anyhow::Result;
 use cucumber::World as _;
 use mongodb::options::ClientOptions;
-use mongodb::Database;
 use primitives::MatchingAlgorithm;
 use std::env;
 use std::str::FromStr;
