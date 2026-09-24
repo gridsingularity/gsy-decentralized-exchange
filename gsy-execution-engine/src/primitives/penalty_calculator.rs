@@ -1,6 +1,7 @@
 use primitives::db_api_schema::{profiles::MeasurementSchema, trades::DbTradeSchema};
 use primitives::utils::{bytes16_to_hex, create_encrypted_bytes16_from_string};
 use std::collections::HashMap;
+use tracing::warn;
 
 #[derive(Debug)]
 pub struct Penalty {
@@ -30,21 +31,24 @@ pub struct Penalty {
 pub fn compute_penalties(
     trades: &[DbTradeSchema],
     measurements: &[MeasurementSchema],
+    facility_owner_mapping: &HashMap<String, String>,
     penalty_rate: f64,
 ) -> Vec<Penalty> {
     let mut penalties = Vec::new();
 
-    // Convert human readable facility_ids in the measurements to their on-chain representation
+    // Map each measurement's facility_id to its owner_id and convert that to the
+    // on-chain representation used by the trade's buyer/seller fields.
     let mut measurement_map: HashMap<String, f64> = HashMap::new();
     for meas in measurements {
+        let Some(owner_id) = facility_owner_mapping.get(&meas.facility_id) else {
+            warn!("No owner mapping for facility_id={}", meas.facility_id);
+            continue;
+        };
         measurement_map.insert(
-            bytes16_to_hex(create_encrypted_bytes16_from_string(
-                meas.facility_id.as_str(),
-            )),
+            bytes16_to_hex(create_encrypted_bytes16_from_string(&owner_id.clone())),
             meas.energy_kwh,
         );
     }
-
     // Iterate over each trade and compute the penalty if a measurement exists.
     for trade in trades {
         if let Some(&measured_energy) = measurement_map
