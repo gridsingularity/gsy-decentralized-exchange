@@ -1,0 +1,22 @@
+[package]
+name = "gsy-analytics-engine"
+version = "0.1.0"
+authors = ["Grid Singularity <info@gridsingularity.com>"]
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+path = "src/main.rs"
+name = "gsy-analytics-engine"
+
+[dependencies]
+primitives = { path = "../primitives" }
+anyhow = "1"
+chrono = { version = "0.4.37", features = ["serde"] }
+envy = "0.4"
+mongodb = "3.3.0"
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "signal"] }
+tracing = { version = "0.1", features = ["log"] }
