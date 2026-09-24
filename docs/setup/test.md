@@ -34,10 +34,15 @@ which contains the build toolchain and all third-party dependencies
 precompiled (see `Dockerfile.base`). Before running any test, the script makes
 sure this image is available:
 
-1. If the image exists locally, it is used as is.
+1. If the image exists locally for the machine's architecture, it is used as is.
 2. Otherwise the script pulls it from GHCR (this is what happens in CI).
-3. If the pull fails, e.g. locally without GHCR access, the script builds it
-   from `Dockerfile.base`. The first build takes a while.
+3. If the pull fails, e.g. locally without GHCR access, or returns an image
+   for a different architecture, the script builds it from `Dockerfile.base`.
+   The first build takes a while.
+
+The published image is `linux/amd64` only, for the GitHub runners. On Apple
+Silicon Macs the script therefore always builds a native arm64 base image
+locally the first time.
 
 The script does not check whether a local copy is up to date. After changing
 `Cargo.toml`, `Cargo.lock` or `Dockerfile.base`, rebuild it so the service

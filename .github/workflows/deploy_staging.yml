@@ -5,6 +5,8 @@ on:
     branches: [GSYDEXv2]
 
 jobs:
+  # CI and staging runners are amd64. Macs build their own base image locally
+  # (see run_integration_tests.sh).
   base-image:
     runs-on: ubuntu-latest
     permissions:
@@ -29,6 +31,7 @@ jobs:
         with:
           context: .
           file: Dockerfile.base
+          platforms: linux/amd64
           push: true
           tags: |
             ghcr.io/gridsingularity/gsy-rust-base:latest

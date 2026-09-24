@@ -6,11 +6,19 @@ COMPOSE_FILE="docker-compose.integration.yml"
 BASE_IMAGE="ghcr.io/gridsingularity/gsy-rust-base:latest"
 
 # Every Rust service builds FROM the base image: use a local copy if present,
-# otherwise pull it (CI), otherwise build it locally (no GHCR access).
-if ! docker image inspect "$BASE_IMAGE" >/dev/null 2>&1; then
-  echo "==> $BASE_IMAGE not found locally, trying to pull"
-  if ! docker pull "$BASE_IMAGE"; then
-    echo "==> Pull failed, building $BASE_IMAGE from Dockerfile.base"
+# otherwise pull it (CI), otherwise build it locally (no GHCR access). The
+# image must match the host architecture, e.g. an arm64 image built on a Mac
+# cannot run on an amd64 CI runner.
+HOST_ARCH="$(docker version --format '{{.Server.Arch}}')"
+base_image_arch() {
+  docker image inspect --format '{{.Architecture}}' "$BASE_IMAGE" 2>/dev/null
+}
+
+if [ "$(base_image_arch)" != "$HOST_ARCH" ]; then
+  echo "==> No $HOST_ARCH $BASE_IMAGE found locally, trying to pull"
+  docker pull "$BASE_IMAGE"
+  if [ "$(base_image_arch)" != "$HOST_ARCH" ]; then
+    echo "==> Pull failed or returned a non-$HOST_ARCH image, building $BASE_IMAGE from Dockerfile.base"
     docker build -f Dockerfile.base -t "$BASE_IMAGE" . || exit 1
   fi
 fi
