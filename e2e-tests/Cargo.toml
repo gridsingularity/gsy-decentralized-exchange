@@ -11,14 +11,14 @@ path = "src/main.rs"
 
 [dependencies]
 cucumber = "0.20"
-tokio = { version = "1", features = ["full"] }
-reqwest = { version = "0.12", features = ["json"] }
-anyhow = "1.0"
-ethers = { version = "2.0", features = ["ws", "rustls"] }
-primitives = { path = "../primitives" }
-gsy-community-client = { path = "../gsy-community-client" }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-hex = "0.4"
-serde_json = "1"
-uuid = { version = "1.12.1", features = ["v4"] }
+tokio = { workspace = true, features = ["full"] }
+reqwest = { workspace = true }
+anyhow = { workspace = true }
+ethers = { workspace = true, features = ["ws", "rustls"] }
+primitives = { workspace = true }
+gsy-community-client = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+hex = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
