@@ -37,6 +37,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.base
+    pull_policy: build
     scale: 0
 
   gsy-offchain-storage:

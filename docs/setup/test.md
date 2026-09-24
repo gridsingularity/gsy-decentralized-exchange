@@ -35,14 +35,16 @@ precompiled (see `Dockerfile.base`). Before running any test, the script makes
 sure this image is available:
 
 1. If the image exists locally for the machine's architecture, it is used as is.
-2. Otherwise the script pulls it from GHCR (this is what happens in CI).
-3. If the pull fails, e.g. locally without GHCR access, or returns an image
-   for a different architecture, the script builds it from `Dockerfile.base`.
+2. Otherwise the script checks the image's architecture in GHCR (reading only
+   its manifest) and pulls it if it matches. This is what happens in CI.
+3. If GHCR has no image for this architecture or is not reachable (e.g.
+   locally without GHCR access), the script builds it from `Dockerfile.base`.
    The first build takes a while.
 
 The published image is `linux/amd64` only, for the GitHub runners. On Apple
-Silicon Macs the script therefore always builds a native arm64 base image
-locally the first time.
+Silicon Macs the script therefore never pulls it and builds a native arm64
+base image locally the first time. An e2e run (see below) also produces this
+local image, so the integration tests can reuse it.
 
 The script does not check whether a local copy is up to date. After changing
 `Cargo.toml`, `Cargo.lock` or `Dockerfile.base`, rebuild it so the service
@@ -114,8 +116,15 @@ docker compose --env-file contracts-output/addresses.env \
 ```
 
 `docker-compose.e2e-test.yml` builds the base image itself from
-`Dockerfile.base` (through the `gsy-rust-base` service), so no GHCR access is
-needed for e2e runs.
+`Dockerfile.base` (through the `gsy-rust-base` service) for the local
+machine's architecture. It is never pulled from GHCR, even without `--build`
+(`pull_policy: build`), so no GHCR access is needed for e2e runs.
+
+The base image is rebuilt on every `up`, but Docker's build cache makes this
+take seconds unless `Cargo.toml`, `Cargo.lock` or `Dockerfile.base` changed.
+Only then are the precompiled dependencies rebuilt. Clearing the build cache
+(e.g. `docker builder prune` or `docker system prune -a`) makes the next run
+compile everything again.
 
 The default `MATCHING_ALGORITHM=pay_as_bid` run executes the features under
 `e2e-tests/features/pay_as_bid`. To run the two-sided pay-as-clear scenarios,
