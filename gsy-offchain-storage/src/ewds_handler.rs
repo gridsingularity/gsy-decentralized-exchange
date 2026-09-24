@@ -3,8 +3,8 @@ use anyhow::{anyhow, Result};
 use futures::future::join_all;
 use primitives::db_api_schema::profiles::{MeasurementPointType, MeasurementSchema};
 use primitives::ewds::dto::{
-    EwdsClearingResultDto, EwdsCommunityDto, EwdsInboundMessage, EwdsMarketDto, EwdsOrderDto,
-    EwdsRequestEnvelope, EwdsResponseEnvelope, EwdsSendMessageDto, EwdsTradeDto,
+    EwdsClearingResultDto, EwdsCommunityDto, EwdsErrorPayload, EwdsInboundMessage, EwdsMarketDto,
+    EwdsOrderDto, EwdsRequestEnvelope, EwdsResponseEnvelope, EwdsSendMessageDto, EwdsTradeDto,
 };
 use primitives::ewds::{
     client_id_for_suffix, env_var, ewds_rate_limit_backoff_ms, format_response_body,
@@ -109,6 +109,49 @@ struct TimeRangePayload {
     #[serde(alias = "areaUuid")]
     #[serde(default)]
     facility_id: Option<String>,
+}
+
+/// Maximum span of a `trades.query` range. The whole result is published as a
+/// single EWDS message, so the range is capped to keep that message small.
+pub const MAX_TRADES_QUERY_RANGE_SECS: u64 = 86_400;
+pub const TIME_RANGE_TOO_LARGE: &str = "TIME_RANGE_TOO_LARGE";
+pub const INVALID_TIME_RANGE: &str = "INVALID_TIME_RANGE";
+
+/// Validates a `trades.query` range (`endTime` is exclusive), returning the
+/// bounds or the error to publish back to the requester.
+pub fn validate_trades_query_range(
+    start_time: Option<u64>,
+    end_time: Option<u64>,
+) -> std::result::Result<(u64, u64), EwdsErrorPayload> {
+    let (start, end) = match (start_time, end_time) {
+        (Some(start), Some(end)) => (start, end),
+        _ => {
+            return Err(EwdsErrorPayload {
+                code: INVALID_TIME_RANGE.to_string(),
+                message: "trades.query requires both startTime and endTime".to_string(),
+            })
+        }
+    };
+    if end < start {
+        return Err(EwdsErrorPayload {
+            code: INVALID_TIME_RANGE.to_string(),
+            message: format!(
+                "trades.query endTime ({}) must not be before startTime ({})",
+                end, start
+            ),
+        });
+    }
+    if end - start > MAX_TRADES_QUERY_RANGE_SECS {
+        return Err(EwdsErrorPayload {
+            code: TIME_RANGE_TOO_LARGE.to_string(),
+            message: format!(
+                "trades.query range {}s exceeds maximum of {}s (1 day)",
+                end - start,
+                MAX_TRADES_QUERY_RANGE_SECS
+            ),
+        });
+    }
+    Ok((start, end))
 }
 
 #[derive(Deserialize)]
@@ -345,9 +388,28 @@ pub async fn handle_request(
                 request_id
             );
 
+            let (start_time, end_time) =
+                match validate_trades_query_range(payload.start_time, payload.end_time) {
+                    Ok(range) => range,
+                    Err(error) => {
+                        warn!(
+                            "Rejecting EWDS trades.query request (request_id={}): {}: {}",
+                            request_id, error.code, error.message
+                        );
+                        return send_error_response(
+                            client,
+                            config,
+                            request_id,
+                            response_topic.as_str(),
+                            error,
+                        )
+                        .await;
+                    }
+                };
+
             let data = db
                 .trades()
-                .filter_trades(payload.start_time, payload.end_time)
+                .filter_trades(Some(start_time), Some(end_time))
                 .await?
                 .into_iter()
                 .map(EwdsTradeDto::from)
@@ -567,6 +629,30 @@ async fn send_success_response<T: Serialize>(
         success: true,
         data,
         error: None,
+    };
+
+    send_message(
+        client,
+        config,
+        request_id,
+        topic_name.to_string(),
+        serde_json::to_string(&payload)?,
+    )
+    .await
+}
+
+async fn send_error_response(
+    client: &Client,
+    config: &EwdsHandlerConfig,
+    request_id: String,
+    topic_name: &str,
+    error: EwdsErrorPayload,
+) -> Result<()> {
+    let payload = EwdsResponseEnvelope::<serde_json::Value> {
+        request_id: request_id.clone(),
+        success: false,
+        data: Vec::new(),
+        error: Some(error),
     };
 
     send_message(

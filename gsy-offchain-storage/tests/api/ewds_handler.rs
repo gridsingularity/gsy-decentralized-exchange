@@ -1,8 +1,12 @@
 use crate::helpers::{init_app, stop_app};
-use gsy_offchain_storage::ewds_handler::{handle_request, EwdsHandlerConfig};
+use gsy_offchain_storage::ewds_handler::{
+    handle_request, validate_trades_query_range, EwdsHandlerConfig, INVALID_TIME_RANGE,
+    MAX_TRADES_QUERY_RANGE_SECS, TIME_RANGE_TOO_LARGE,
+};
 use primitives::db_api_schema::grid_topology::FacilitySchema;
 use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
-use primitives::ewds::dto::{EwdsRequestEnvelope, EwdsSendMessageDto};
+use primitives::db_api_schema::trades::DbTradeSchema;
+use primitives::ewds::dto::{EwdsRequestEnvelope, EwdsSendMessageDto, EwdsTradeDto};
 use primitives::ewds::{EwdsOperation, EwdsTopicConfig};
 use primitives::utils::{bytes16_to_hex, create_encrypted_bytes16_from_string};
 use serde_json::json;
@@ -50,12 +54,17 @@ async fn mock_gateway() -> MockServer {
     server
 }
 
-/// Parse the single captured POST body into the response envelope's data array.
-async fn captured_data(server: &MockServer) -> Vec<serde_json::Value> {
+/// Parse the single captured POST body into the response envelope.
+async fn captured_envelope(server: &MockServer) -> serde_json::Value {
     let requests = server.received_requests().await.unwrap();
     assert_eq!(requests.len(), 1, "expected exactly one gateway POST");
     let send_dto: EwdsSendMessageDto = serde_json::from_slice(&requests[0].body).unwrap();
-    let envelope: serde_json::Value = serde_json::from_str(&send_dto.payload).unwrap();
+    serde_json::from_str(&send_dto.payload).unwrap()
+}
+
+/// Parse the single captured POST body into the response envelope's data array.
+async fn captured_data(server: &MockServer) -> Vec<serde_json::Value> {
+    let envelope = captured_envelope(server).await;
     assert_eq!(envelope["success"], json!(true));
     envelope["data"].as_array().unwrap().clone()
 }
@@ -111,25 +120,143 @@ async fn orders_query_bad_payload_errors() {
 
 // --- TradesQuery ----------------------------------------------------
 
-#[tokio::test]
-async fn trades_query_success() {
+fn make_trade(trade_id: &str, timestamp: u64) -> DbTradeSchema {
+    DbTradeSchema::try_from(EwdsTradeDto {
+        trade_id: trade_id.to_string(),
+        market_id: "m1".to_string(),
+        bid_id: format!("{}-bid", trade_id),
+        buyer_id: "Load1".to_string(),
+        residual_bid_id: None,
+        offer_id: format!("{}-offer", trade_id),
+        seller_id: "PV1".to_string(),
+        residual_offer_id: None,
+        trade_status: "settled".to_string(),
+        trade_quantity: 1.5,
+        trade_price: 0.12,
+        timestamp,
+    })
+    .unwrap()
+}
+
+/// Run a trades.query with the given payload against a DB holding one trade
+/// at the start of the day and one at the next day, returning the response.
+async fn run_trades_query(request_id: &str, payload: serde_json::Value) -> serde_json::Value {
     let app = init_app().await;
     let server = mock_gateway().await;
     let config = test_config(server.uri());
     let client = reqwest::Client::new();
 
-    let env = envelope(
-        EwdsOperation::TradesQuery,
-        "req-trades-1",
-        json!({ "startTime": 0, "endTime": 9_999_999_999u64 }),
-    );
+    app.db_wrapper
+        .trades()
+        .insert_trades(vec![
+            make_trade("trade-day-start", 0),
+            make_trade("trade-next-day", MAX_TRADES_QUERY_RANGE_SECS),
+        ])
+        .await
+        .unwrap();
 
+    let env = envelope(EwdsOperation::TradesQuery, request_id, payload);
     handle_request(&app.db_wrapper, &client, &config, env)
         .await
         .unwrap();
-    let _data = captured_data(&server).await;
+    let response = captured_envelope(&server).await;
 
     stop_app(app).await;
+    response
+}
+
+fn assert_trades_query_rejected(response: &serde_json::Value, request_id: &str, code: &str) {
+    assert_eq!(response["requestId"], json!(request_id));
+    assert_eq!(response["success"], json!(false));
+    assert_eq!(response["data"], json!([]));
+    assert_eq!(response["error"]["code"], json!(code));
+    assert!(response["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("trades.query"));
+}
+
+#[tokio::test]
+async fn trades_query_success() {
+    // Exactly one day is the largest allowed range; endTime is exclusive.
+    let response = run_trades_query(
+        "req-trades-1",
+        json!({ "startTime": 0, "endTime": MAX_TRADES_QUERY_RANGE_SECS }),
+    )
+    .await;
+
+    assert_eq!(response["success"], json!(true));
+    let ids: Vec<&str> = response["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|trade| trade["tradeId"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, vec!["trade-day-start"]);
+}
+
+#[tokio::test]
+async fn trades_query_range_over_one_day_publishes_error() {
+    let response = run_trades_query(
+        "req-trades-too-large",
+        json!({ "startTime": 0, "endTime": MAX_TRADES_QUERY_RANGE_SECS + 1 }),
+    )
+    .await;
+
+    assert_trades_query_rejected(&response, "req-trades-too-large", TIME_RANGE_TOO_LARGE);
+}
+
+#[tokio::test]
+async fn trades_query_missing_start_time_publishes_error() {
+    let response = run_trades_query("req-trades-no-start", json!({ "endTime": 3_600 })).await;
+
+    assert_trades_query_rejected(&response, "req-trades-no-start", INVALID_TIME_RANGE);
+}
+
+#[tokio::test]
+async fn trades_query_inverted_range_publishes_error() {
+    let response = run_trades_query(
+        "req-trades-inverted",
+        json!({ "startTime": 3_600, "endTime": 0 }),
+    )
+    .await;
+
+    assert_trades_query_rejected(&response, "req-trades-inverted", INVALID_TIME_RANGE);
+}
+
+#[test]
+fn validate_trades_query_range_boundaries() {
+    let day = MAX_TRADES_QUERY_RANGE_SECS;
+    assert_eq!(
+        validate_trades_query_range(Some(0), Some(0)).unwrap(),
+        (0, 0)
+    );
+    assert_eq!(
+        validate_trades_query_range(Some(10), Some(10 + day - 1)).unwrap(),
+        (10, 10 + day - 1)
+    );
+    assert_eq!(
+        validate_trades_query_range(Some(10), Some(10 + day)).unwrap(),
+        (10, 10 + day)
+    );
+
+    let too_large = validate_trades_query_range(Some(10), Some(10 + day + 1)).unwrap_err();
+    assert_eq!(too_large.code, TIME_RANGE_TOO_LARGE);
+    assert!(too_large.message.contains("86401s"));
+
+    for (start, end) in [
+        (Some(11), Some(10)),
+        (None, Some(10)),
+        (Some(10), None),
+        (None, None),
+    ] {
+        let error = validate_trades_query_range(start, end).unwrap_err();
+        assert_eq!(
+            error.code, INVALID_TIME_RANGE,
+            "start={:?} end={:?}",
+            start, end
+        );
+    }
 }
 
 #[tokio::test]
