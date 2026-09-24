@@ -3,6 +3,7 @@ use cucumber::{then, when};
 use ethers::prelude::*;
 use gsy_community_client::node_connector::orders::publish_orders;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
+use primitives::db_api_schema::grid_topology::FacilitySchema;
 use primitives::db_api_schema::orders::{
     order_metadata_to_contract, DbAttributes, DbOrderSchema, DbRequirements, EnergyType,
     OrderStatus,
@@ -11,7 +12,7 @@ use primitives::db_api_schema::profiles::MeasurementSchema;
 use primitives::db_api_schema::trades::DbTradeSchema;
 use primitives::ewds::dto::{EwdsOrderDto, EwdsTradeDto};
 use primitives::matching::matching_block_interval;
-use primitives::utils::endpoint_calls::resolve_order_partner_ids;
+use primitives::offchain_storage::{resolve_order_partner_ids, OffchainStorageClient};
 use primitives::utils::{
     bytes16_to_hex, create_encrypted_bytes16_from_string, parse_uuid_or_hex_bytes16,
     NODE_FLOAT_SCALING_FACTOR,
@@ -23,7 +24,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
 use tracing::info;
 use uuid::Uuid;
-
 const FLOAT_EPSILON: f64 = 0.000_001;
 const COMMUNITY_TRADE_POLL_ATTEMPTS: usize = 180;
 const COMMUNITY_MATCHING_RETRIGGER_INTERVAL: usize = 30;
@@ -164,7 +164,10 @@ fn address_to_full_hex(address: Address) -> String {
 }
 
 async fn actor_id_as_hex(world: &MyWorld, user_name: &str) -> String {
-    format!("0x{}", hex::encode(world.actor_id_for_user(user_name).await))
+    format!(
+        "0x{}",
+        hex::encode(world.actor_id_for_user(user_name).await)
+    )
 }
 
 fn market_id_as_hex(world: &MyWorld) -> String {
@@ -314,19 +317,17 @@ async fn place_custom_order_for_market(
     let order_id_bytes = create_encrypted_bytes16_from_string(&order_id);
     let mut resolved_requirements = requirements.clone();
     let mut resolved_attributes = attributes.clone();
+    let id_mapping_source = OffchainStorageClient::from_env("EWDS_E2E_CLIENT_ID", "gsye2e");
     resolve_order_partner_ids(
         &mut resolved_requirements,
         &mut resolved_attributes,
-        "EWDS_E2E_CLIENT_ID",
-        "gsye2e",
+        &id_mapping_source,
     )
     .await
     .expect("Failed to resolve order partner IDs");
-    let metadata = order_metadata_to_contract(
-        resolved_requirements.as_ref(),
-        resolved_attributes.as_ref(),
-    )
-    .expect("Invalid resolved order metadata");
+    let metadata =
+        order_metadata_to_contract(resolved_requirements.as_ref(), resolved_attributes.as_ref())
+            .expect("Invalid resolved order metadata");
 
     let params: EvmOrderParamsTuple = (
         order_id_bytes,
@@ -608,6 +609,22 @@ async fn submit_community_market_measurements(world: &mut MyWorld) {
         },
     ];
 
+    let facilities = vec![
+        FacilitySchema {
+            facility_id: "alice".to_string(),
+            facility_name: "alice".to_string(),
+            site_id: "12345".to_string(),
+            owner_id: "alice".to_string(),
+        },
+        FacilitySchema {
+            facility_id: "bob".to_string(),
+            facility_name: "bob".to_string(),
+            site_id: "12346".to_string(),
+            owner_id: "bob".to_string(),
+        },
+    ];
+    world.create_facilities(facilities).await;
+
     AreaMarketInfoAdapter::new(Some(world.offchain_storage_url.clone()))
         .forward_measurement(measurements)
         .await
@@ -623,8 +640,8 @@ async fn submit_bid(world: &mut MyWorld, user_name: String) {
         address_to_full_hex(world.order_registry_address),
         world.private_key_for_user(user_name.as_str()),
     )
-        .await
-        .expect("Failed to publish bid order");
+    .await
+    .expect("Failed to publish bid order");
 }
 
 #[when(
@@ -652,7 +669,7 @@ async fn submit_preferred_partner_bid(
         Some(requirements),
         None,
     )
-        .await;
+    .await;
 }
 
 #[when(expr = "{string} submits an offer")]
@@ -667,8 +684,8 @@ async fn submit_offer(world: &mut MyWorld, user_name: String) {
         address_to_full_hex(world.order_registry_address),
         world.private_key_for_user(user_name.as_str()),
     )
-        .await
-        .expect("Failed to publish offer order");
+    .await
+    .expect("Failed to publish offer order");
 
     // Matching runs on block boundaries. Fast-forward local Anvil after both
     // orders are present in the registry.
@@ -699,7 +716,7 @@ async fn submit_preferred_partner_offer(
         None,
         Some(attributes),
     )
-        .await;
+    .await;
 }
 
 #[when(
@@ -768,7 +785,7 @@ async fn submit_combined_pay_as_clear_order_book(world: &mut MyWorld) {
         Some(preferred_bid_requirements),
         None,
     )
-        .await;
+    .await;
 
     let preferred_offer_attributes = DbAttributes {
         trading_partner_id: Some("alice".to_string()),
@@ -783,7 +800,7 @@ async fn submit_combined_pay_as_clear_order_book(world: &mut MyWorld) {
         None,
         Some(preferred_offer_attributes),
     )
-        .await;
+    .await;
 
     wait_for_order_in_offchain_storage(world, preferred_bid.as_str()).await;
     wait_for_order_in_offchain_storage(world, preferred_offer.as_str()).await;
@@ -819,8 +836,8 @@ async fn submit_measurements(world: &mut MyWorld) {
 async fn assert_trade_settled_on_chain(world: &MyWorld, trade: &DbTradeSchema) {
     let order_registry =
         OrderRegistryContract::new(world.order_registry_address, world.provider.clone());
-    let bid_id = parse_uuid_or_hex_bytes16(trade.bid_hash.as_str())
-        .expect("could not convert hex to bytes");
+    let bid_id =
+        parse_uuid_or_hex_bytes16(trade.bid_hash.as_str()).expect("could not convert hex to bytes");
     let offer_id = parse_uuid_or_hex_bytes16(trade.offer_hash.as_str())
         .expect("could not convert hex to bytes");
     let bid_status = order_registry

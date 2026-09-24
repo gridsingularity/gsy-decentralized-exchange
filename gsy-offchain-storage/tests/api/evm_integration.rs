@@ -42,7 +42,13 @@ async fn test_order_listener_rejects_unknown_partner_mapping() {
     };
     let error = handler.handle_order_placed(event).await.unwrap_err();
     assert!(error.to_string().contains("No facility ID mapping"));
-    assert!(app.db_wrapper.orders().get_all_orders().await.unwrap().is_empty());
+    assert!(app
+        .db_wrapper
+        .orders()
+        .get_all_orders()
+        .await
+        .unwrap()
+        .is_empty());
     crate::helpers::stop_app(app).await;
 }
 

@@ -2,6 +2,7 @@ use crate::db::grid_topology_service::{
     init_assets, init_communities, init_facilities, init_pilot_sites, init_sites, AssetService,
     EnergyCommunityService, FacilityService, PilotSiteService, SiteService,
 };
+use crate::db::id_service::{init_ids, IdService};
 use crate::db::market_service::{init_markets, MarketService};
 use crate::db::measurements_service::{
     init_measurement_points, init_timeseries, MeasurementPointService, TimeseriesService,
@@ -14,7 +15,6 @@ use crate::db::trade_service::{
     init_clearing_results, init_market_roles, init_trades, ClearingResultService,
     MarketRoleService, TradeService,
 };
-use crate::db::id_service::{init_ids, IdService};
 use actix_web::web;
 use anyhow::Result;
 use mongodb::options::ClientOptions;

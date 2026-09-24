@@ -1,5 +1,6 @@
 use crate::helpers::{init_app, stop_app};
-use gsy_offchain_storage::ewds_handler::{EwdsHandlerConfig, handle_request};
+use gsy_offchain_storage::ewds_handler::{handle_request, EwdsHandlerConfig};
+use primitives::db_api_schema::grid_topology::FacilitySchema;
 use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
 use primitives::ewds::dto::{EwdsRequestEnvelope, EwdsSendMessageDto};
 use primitives::ewds::{EwdsOperation, EwdsTopicConfig};
@@ -192,10 +193,9 @@ async fn measurements_query_bad_payload_errors() {
     let err = handle_request(&app.db_wrapper, &client, &config, env)
         .await
         .unwrap_err();
-    assert!(
-        err.to_string()
-            .contains("measurements.query payload parse error")
-    );
+    assert!(err
+        .to_string()
+        .contains("measurements.query payload parse error"));
     assert!(server.received_requests().await.unwrap().is_empty());
 
     stop_app(app).await;
@@ -244,10 +244,9 @@ async fn clearing_results_query_bad_payload_errors() {
     let err = handle_request(&app.db_wrapper, &client, &config, env)
         .await
         .unwrap_err();
-    assert!(
-        err.to_string()
-            .contains("clearing_results.query payload parse error")
-    );
+    assert!(err
+        .to_string()
+        .contains("clearing_results.query payload parse error"));
     assert!(server.received_requests().await.unwrap().is_empty());
 
     stop_app(app).await;
@@ -385,11 +384,84 @@ async fn markets_query_bad_payload_errors() {
     let err = handle_request(&app.db_wrapper, &client, &config, env)
         .await
         .unwrap_err();
-    assert!(
-        err.to_string()
-            .contains("markets.query payload parse error")
-    );
+    assert!(err
+        .to_string()
+        .contains("markets.query payload parse error"));
     assert!(server.received_requests().await.unwrap().is_empty());
+
+    stop_app(app).await;
+}
+
+// --- FacilitiesQuery ------------------------------------------------
+
+fn make_facility(facility_id: &str, facility_name: &str) -> FacilitySchema {
+    FacilitySchema {
+        facility_id: facility_id.to_string(),
+        facility_name: facility_name.to_string(),
+        site_id: "site-1".to_string(),
+        owner_id: "owner-1".to_string(),
+    }
+}
+
+#[tokio::test]
+async fn facilities_query_returns_all() {
+    let app = init_app().await;
+    let server = mock_gateway().await;
+    let config = test_config(server.uri());
+    let client = reqwest::Client::new();
+
+    let facilities = app.db_wrapper.facilities();
+    facilities
+        .insert(make_facility("f1", "facility-1"))
+        .await
+        .unwrap();
+    facilities
+        .insert(make_facility("f2", "facility-2"))
+        .await
+        .unwrap();
+
+    let env = envelope(
+        EwdsOperation::FacilitiesQuery,
+        "req-facilities-1",
+        json!({}),
+    );
+
+    handle_request(&app.db_wrapper, &client, &config, env)
+        .await
+        .unwrap();
+
+    let data = captured_data(&server).await;
+    assert_eq!(data.len(), 2);
+
+    let ids: Vec<&str> = data
+        .iter()
+        .map(|f| f["facility_id"].as_str().unwrap())
+        .collect();
+    assert!(ids.contains(&"f1"));
+    assert!(ids.contains(&"f2"));
+
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn facilities_query_empty_returns_empty() {
+    let app = init_app().await;
+    let server = mock_gateway().await;
+    let config = test_config(server.uri());
+    let client = reqwest::Client::new();
+
+    let env = envelope(
+        EwdsOperation::FacilitiesQuery,
+        "req-facilities-empty",
+        json!({}),
+    );
+
+    handle_request(&app.db_wrapper, &client, &config, env)
+        .await
+        .unwrap();
+
+    let data = captured_data(&server).await;
+    assert!(data.is_empty());
 
     stop_app(app).await;
 }
@@ -418,7 +490,9 @@ async fn ids_query_success() {
     assert_eq!(data.len(), 1);
     assert_eq!(
         data[0]["onchain_id"],
-        json!(bytes16_to_hex(create_encrypted_bytes16_from_string("offchain-abc")))
+        json!(bytes16_to_hex(create_encrypted_bytes16_from_string(
+            "offchain-abc"
+        )))
     );
 
     stop_app(app).await;
@@ -442,8 +516,8 @@ async fn ids_query_get_or_create_is_idempotent() {
             json!({ "offchainId": "offchain-idem" }),
         ),
     )
-        .await
-        .unwrap();
+    .await
+    .unwrap();
     let first = captured_data(&server).await;
     assert_eq!(first.len(), 1);
     assert!(
@@ -467,8 +541,8 @@ async fn ids_query_get_or_create_is_idempotent() {
             json!({ "offchainId": "offchain-idem" }),
         ),
     )
-        .await
-        .unwrap();
+    .await
+    .unwrap();
     let second = captured_data(&server2).await;
     assert_eq!(second.len(), 1);
     assert_eq!(second[0]["onchain_id"], first_onchain);

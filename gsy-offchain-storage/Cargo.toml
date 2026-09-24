@@ -32,9 +32,9 @@ hex = { workspace = true }
 async-trait = { workspace = true }
 uuid = { workspace = true }
 tracing = { workspace = true }
-wiremock = "0.6.5"
 
 [dev-dependencies]
+wiremock = "0.6.5"
 once_cell = { workspace = true }
 uuid = { workspace = true }
 ethers = { workspace = true, features = ["ws", "abigen", "rustls", "solc"] }

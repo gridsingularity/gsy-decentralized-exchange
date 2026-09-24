@@ -9,6 +9,7 @@ path = "src/lib.rs"
 
 [dependencies]
 anyhow = { workspace = true }
+async-trait = { workspace = true }
 blake2 = "0.10"
 chrono = { workspace = true }
 hex = { workspace = true }
@@ -22,3 +23,6 @@ tracing-bunyan-formatter = "0.3.10"
 tracing-log = "0.2.0"
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 thiserror = "2.0.19"
+
+[dev-dependencies]
+wiremock = "0.6.5"

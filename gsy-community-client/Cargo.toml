@@ -21,9 +21,12 @@ anyhow = { workspace = true }
 ethers = { workspace = true, features = ["ws", "rustls"] }
 tracing = { workspace = true, features = ["log"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+blake2-rfc = { version = "0.2.18", default-features = false }
 uuid = { workspace = true }
+serial_test = "3"
 
 [dev-dependencies]
+wiremock = "0.6.5"
 httpmock = "0.8.0-alpha.1"
 tracing-subscriber = { workspace = true }
 ethers-solc = { workspace = true }

@@ -2,9 +2,7 @@ use primitives::db_api_schema::orders::{
     order_metadata_from_contract, order_metadata_to_contract, ContractOrderMetadata, DbAttributes,
     DbRequirements, EnergyType,
 };
-use primitives::utils::{
-    parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR,
-};
+use primitives::utils::{parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR};
 
 const PREFERRED_PARTNER: &str = "0x00112233445566778899aabbccddeeff";
 const TRADING_PARTNER: &str = "0xffeeddccbbaa99887766554433221100";
@@ -46,7 +44,12 @@ fn converts_complete_order_metadata_to_and_from_contract_values() {
 
 #[test]
 fn rejects_unresolved_or_invalid_partner_ids() {
-    for id in ["alice", "00112233-4455-6677-8899-aabbccddeeff", "0x1234", "0x00000000000000000000000000000000"] {
+    for id in [
+        "alice",
+        "00112233-4455-6677-8899-aabbccddeeff",
+        "0x1234",
+        "0x00000000000000000000000000000000",
+    ] {
         let requirements = DbRequirements {
             trading_partner_id: Some(id.to_string()),
             energy_type: None,
