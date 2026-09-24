@@ -1,4 +1,5 @@
 use clap::Parser;
+use gsy_matching_engine::algorithms::PayAsClearPricing;
 use gsy_matching_engine::connectors::evm_subscribe;
 use gsy_matching_engine::utils::{Cli, Commands};
 use primitives::log::setup_logging;
@@ -43,6 +44,17 @@ async fn main() {
                     .unwrap_or_else(|_| MatchingAlgorithm::default().to_string());
                 let matching_algorithm = MatchingAlgorithm::from_str(&matching_algorithm)
                     .unwrap_or_else(|error| panic!("Invalid MATCHING_ALGORITHM: {}", error));
+                let pay_as_clear_pricing = if matches!(matching_algorithm, MatchingAlgorithm::PayAsClear) {
+                    let value = match env::var("PAY_AS_CLEAR_PRICING") {
+                        Ok(value) => value,
+                        Err(env::VarError::NotPresent) => PayAsClearPricing::default().to_string(),
+                        Err(error) => panic!("Invalid PAY_AS_CLEAR_PRICING: {}", error),
+                    };
+                    value.parse::<PayAsClearPricing>()
+                        .unwrap_or_else(|error| panic!("Invalid PAY_AS_CLEAR_PRICING: {}", error))
+                } else {
+                    PayAsClearPricing::default()
+                };
 
                 if trade_settlement_address == "0x0000000000000000000000000000000000000000" {
                     info!(
@@ -51,6 +63,9 @@ async fn main() {
                 }
                 info!("Using off-chain storage URL: {}", offchain_storage_url);
                 info!("Using matching algorithm: {}", matching_algorithm);
+                if matches!(matching_algorithm, MatchingAlgorithm::PayAsClear) {
+                    info!("Using pay-as-clear pricing: {}", pay_as_clear_pricing);
+                }
 
                 if let Err(error) =
                     evm_subscribe(
@@ -59,6 +74,7 @@ async fn main() {
                         trade_settlement_address.clone(),
                         matching_engine_private_key.clone(),
                         matching_algorithm.clone(),
+                        pay_as_clear_pricing,
                     )
                     .await
                 {
@@ -75,6 +91,7 @@ async fn main() {
                                 trade_settlement_address.clone(),
                                 matching_engine_private_key.clone(),
                                 matching_algorithm.clone(),
+                                pay_as_clear_pricing,
                             )
                             .await
                         {

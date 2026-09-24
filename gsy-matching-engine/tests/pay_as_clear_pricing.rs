@@ -1,6 +1,7 @@
-use gsy_matching_engine::algorithms::{PayAsClear, PayAsClearPricing};
+use gsy_matching_engine::algorithms::{MatchOrders, PayAsClear, PayAsClearPricing};
 use gsy_matching_engine::models::{MatchingData, Order, Requirements};
 use primitives::db_api_schema::orders::{OrderEnum, OrderStatus};
+use primitives::MatchingAlgorithm;
 
 const POLICIES: [PayAsClearPricing; 3] = [
     PayAsClearPricing::MaxOffer,
@@ -61,6 +62,26 @@ fn policies_change_price_without_changing_accepted_volume_or_pairs() {
             assert!(item.offer.energy_rate <= item.energy_rate);
             assert!(item.energy_rate <= item.bid.energy_rate);
         }
+    }
+}
+
+#[test]
+fn algorithm_dispatch_uses_pricing_only_for_pay_as_clear() {
+    for (policy, expected_price) in POLICIES.into_iter().zip([10, 17, 13]) {
+        let matches = MatchingAlgorithm::PayAsClear
+            .match_orders_with_pricing(&mut crossing_book(), policy)
+            .unwrap();
+        assert!(matches
+            .iter()
+            .all(|item| item.energy_rate == expected_price));
+        assert_eq!(
+            MatchingAlgorithm::PayAsBid
+                .match_orders_with_pricing(&mut crossing_book(), policy)
+                .unwrap(),
+            MatchingAlgorithm::PayAsBid
+                .match_orders(&mut crossing_book())
+                .unwrap()
+        );
     }
 }
 

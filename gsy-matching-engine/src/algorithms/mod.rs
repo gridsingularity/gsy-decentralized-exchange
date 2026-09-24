@@ -21,14 +21,26 @@ pub trait PayAsClear {
 }
 
 pub trait MatchOrders {
-    fn match_orders(&self, matching_data: &mut MatchingData) -> Result<Vec<BidOfferMatch>, String>;
+    fn match_orders(&self, matching_data: &mut MatchingData) -> Result<Vec<BidOfferMatch>, String> {
+        self.match_orders_with_pricing(matching_data, PayAsClearPricing::default())
+    }
+
+    fn match_orders_with_pricing(
+        &self,
+        matching_data: &mut MatchingData,
+        pricing: PayAsClearPricing,
+    ) -> Result<Vec<BidOfferMatch>, String>;
 }
 
 impl MatchOrders for MatchingAlgorithm {
-    fn match_orders(&self, matching_data: &mut MatchingData) -> Result<Vec<BidOfferMatch>, String> {
+    fn match_orders_with_pricing(
+        &self,
+        matching_data: &mut MatchingData,
+        pricing: PayAsClearPricing,
+    ) -> Result<Vec<BidOfferMatch>, String> {
         match self {
             MatchingAlgorithm::PayAsBid => Ok(matching_data.pay_as_bid()),
-            MatchingAlgorithm::PayAsClear => Ok(matching_data.pay_as_clear()),
+            MatchingAlgorithm::PayAsClear => Ok(matching_data.pay_as_clear_with_pricing(pricing)),
             MatchingAlgorithm::AMM => {
                 Err("Matching algorithm 'amm' is not implemented".to_string())
             }

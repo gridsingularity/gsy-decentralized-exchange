@@ -1,5 +1,6 @@
 use super::{ClearingPoint, PayAsClear};
 use crate::models::{BidOfferMatch, MatchingData, Order};
+use std::{fmt, str::FromStr};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum PayAsClearPricing {
@@ -7,6 +8,32 @@ pub enum PayAsClearPricing {
     MaxOffer,
     MinBid,
     Midpoint,
+}
+
+impl fmt::Display for PayAsClearPricing {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::MaxOffer => "max_offer",
+            Self::MinBid => "min_bid",
+            Self::Midpoint => "midpoint",
+        })
+    }
+}
+
+impl FromStr for PayAsClearPricing {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "max_offer" => Ok(Self::MaxOffer),
+            "min_bid" => Ok(Self::MinBid),
+            "midpoint" => Ok(Self::Midpoint),
+            _ => Err(format!(
+                "Unsupported pay-as-clear pricing '{}'. Expected max_offer, min_bid, or midpoint",
+                value
+            )),
+        }
+    }
 }
 
 impl MatchingData {
