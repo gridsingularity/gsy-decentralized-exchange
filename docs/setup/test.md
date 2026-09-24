@@ -88,9 +88,10 @@ The suite runs on every pull request in GitHub Actions via
 ```
 
 The GHCR login lets the script pull the published base image instead of
-building it. The image is published by `.github/workflows/build-base-image.yml`
-whenever `Dockerfile.base`, `Cargo.toml`, `Cargo.lock` or any crate's
-`Cargo.toml` changes on `GSYDEXv2`. Docker and Compose are preinstalled on
+building it. The image is published by the `base-image` job in
+`.github/workflows/deploy_staging.yml` on every push to `GSYDEXv2` (e.g. a
+merged PR). The staging service builds wait for that job, so they always use
+the freshly published base image. Docker and Compose are preinstalled on
 `ubuntu-latest`. The script's per-test pass/fail list with runtimes appears in
 the run's summary panel.
 

@@ -8,7 +8,7 @@
 # target means `cargo build --release --bin <service>` in a service Dockerfile
 # finds matching artifacts and only compiles the workspace crates themselves.
 #
-# Rebuild whenever Cargo.toml / Cargo.lock change (see build-base-image.yml).
+# Published on every push to GSYDEXv2 by the base-image job in deploy_staging.yml.
 
 FROM rust:1.95-bookworm AS toolchain
 
