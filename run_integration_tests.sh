@@ -15,10 +15,16 @@ base_image_arch() {
 }
 
 if [ "$(base_image_arch)" != "$HOST_ARCH" ]; then
-  echo "==> No $HOST_ARCH $BASE_IMAGE found locally, trying to pull"
-  docker pull "$BASE_IMAGE"
+  echo "==> No $HOST_ARCH $BASE_IMAGE found locally, checking GHCR"
+  # Only reads the manifest, so a wrong-architecture image is never downloaded.
+  if docker buildx imagetools inspect --format '{{json .Image}}' "$BASE_IMAGE" 2>/dev/null \
+      | grep -Eq "\"architecture\": *\"$HOST_ARCH\""; then
+    docker pull --platform "linux/$HOST_ARCH" "$BASE_IMAGE"
+  else
+    echo "==> GHCR has no $HOST_ARCH $BASE_IMAGE (or is not reachable)"
+  fi
   if [ "$(base_image_arch)" != "$HOST_ARCH" ]; then
-    echo "==> Pull failed or returned a non-$HOST_ARCH image, building $BASE_IMAGE from Dockerfile.base"
+    echo "==> Building $BASE_IMAGE from Dockerfile.base"
     docker build -f Dockerfile.base -t "$BASE_IMAGE" . || exit 1
   fi
 fi
