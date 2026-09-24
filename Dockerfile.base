@@ -1,0 +1,58 @@
+# Shared base image for every Rust service Dockerfile in this workspace.
+# Contains the build toolchain (apt packages, solc via svm, Foundry, cargo-chef)
+# and all third-party workspace dependencies precompiled in release mode.
+#
+# Dependencies are cooked once per binary and once per test suite, because
+# cargo compiles a dependency separately for every distinct feature set and
+# each service enables different features (e.g. tokio, ethers). Cooking per
+# target means `cargo build --release --bin <service>` in a service Dockerfile
+# finds matching artifacts and only compiles the workspace crates themselves.
+#
+# Rebuild whenever Cargo.toml / Cargo.lock change (see build-base-image.yml).
+
+FROM rust:1.95-bookworm AS toolchain
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libssl-dev \
+    pkg-config \
+    git \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN cargo install cargo-chef --locked
+
+RUN cargo install svm-rs --version 0.5.25 --locked \
+    && svm install 0.8.20 \
+    && ln -s /root/.svm/0.8.20/solc-0.8.20 /usr/local/bin/solc
+
+RUN curl -L https://foundry.paradigm.xyz | bash
+ENV PATH="/root/.foundry/bin:${PATH}"
+RUN for i in 1 2 3 4 5; do foundryup && break || { echo "foundryup attempt $i failed, retrying..."; sleep $((i * 5)); }; done
+
+WORKDIR /var/www
+
+FROM toolchain AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM toolchain
+COPY --from=planner /var/www/recipe.json recipe.json
+
+RUN for bin in \
+        gsy-community-client \
+        gsy-execution-engine \
+        gsy-market-orchestrator \
+        gsy-matching-engine \
+        gsy-offchain-storage \
+        trade_executor; \
+    do cargo chef cook --release --recipe-path recipe.json --bin "$bin" || exit 1; done
+
+RUN for pkg in \
+        primitives \
+        gsy-ethers-listener \
+        gsy-community-client \
+        gsy-execution-engine \
+        gsy-market-orchestrator \
+        gsy-matching-engine \
+        gsy-offchain-storage; \
+    do cargo chef cook --release --tests --recipe-path recipe.json -p "$pkg" || exit 1; done
