@@ -20,7 +20,7 @@ chrono = { workspace = true }
 config = "0.15.18"
 dotenv = "0.15.0"
 futures = "0.3.30"
-mongodb = "3.3.0"
+mongodb = { workspace = true }
 serde = { workspace = true }
 tokio_schedule = "0.3.2"
 serde_json = { workspace = true }
@@ -34,7 +34,7 @@ uuid = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
-wiremock = "0.6.5"
+wiremock = { workspace = true }
 once_cell = { workspace = true }
 uuid = { workspace = true }
 ethers = { workspace = true, features = ["ws", "abigen", "rustls", "solc"] }

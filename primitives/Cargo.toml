@@ -25,4 +25,4 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 thiserror = "2.0.19"
 
 [dev-dependencies]
-wiremock = "0.6.5"
+wiremock = { workspace = true }
