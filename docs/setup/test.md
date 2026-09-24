@@ -9,25 +9,51 @@ each test with its runtime — passed and failed separately. It exits non-zero
 if any test failed, so CI marks the job red.
 
 ```bash
-./run-integration-tests.sh
+./run_integration_tests.sh
 ```
 
 Services executed (in order):
 
 - `gsy-listener-test`
-- `gsy-primitives-integration-test`
 - `gsy-offchain-storage-integration-test` (starts `mongodb`)
 - `gsy-market-orchestrator-integration-test`
 - `gsy-matching-engine-integration-test`
 - `gsy-execution-engine-integration-test`
 - `gsy-community-client-integration-test`
+- `gsy-primitives-integration-test`
 - `gsy-contracts-tests`
 
 The script tears down containers and volumes on exit (`docker compose down -v`),
 including on failure. When run under GitHub Actions it also appends the
 results to the run's step summary.
 
+### Base image
+
+Every Rust test image builds `FROM ghcr.io/gridsingularity/gsy-rust-base:latest`,
+which contains the build toolchain and all third-party dependencies
+precompiled (see `Dockerfile.base`). Before running any test, the script makes
+sure this image is available:
+
+1. If the image exists locally, it is used as is.
+2. Otherwise the script pulls it from GHCR (this is what happens in CI).
+3. If the pull fails, e.g. locally without GHCR access, the script builds it
+   from `Dockerfile.base`. The first build takes a while.
+
+The script does not check whether a local copy is up to date. After changing
+`Cargo.toml`, `Cargo.lock` or `Dockerfile.base`, rebuild it so the service
+builds can reuse the precompiled dependencies again:
+
+```bash
+docker build -f Dockerfile.base -t ghcr.io/gridsingularity/gsy-rust-base:latest .
+```
+
+A stale base image never breaks a build: dependencies missing from it are
+compiled during the service build, which is only slower.
+
 ### Running a single test
+
+Running a service directly skips the script's base image check, so the base
+image must already exist locally or be pullable (see above).
 
 Target one service directly instead of the whole suite:
 
@@ -46,16 +72,27 @@ docker compose -p integration -f docker-compose.integration.yml run --rm --build
 
 ### CI
 
-The suite runs in GitHub Actions via `.github/workflows/integration.yml`:
+The suite runs on every pull request in GitHub Actions via
+`.github/workflows/integration_tests.yml`:
 
 ```yaml
+- name: Log in to GHCR
+  uses: docker/login-action@v4
+  with:
+    registry: ghcr.io
+    username: ${{ github.actor }}
+    password: ${{ secrets.GITHUB_TOKEN }}
+
 - name: Run integration tests
-  run: ./run-integration-tests.sh
+  run: ./run_integration_tests.sh
 ```
 
-Docker and Compose are preinstalled on `ubuntu-latest`; no setup action is
-needed. The script's per-test pass/fail list with runtimes appears in the run's
-summary panel.
+The GHCR login lets the script pull the published base image instead of
+building it. The image is published by `.github/workflows/build-base-image.yml`
+whenever `Dockerfile.base`, `Cargo.toml`, `Cargo.lock` or any crate's
+`Cargo.toml` changes on `GSYDEXv2`. Docker and Compose are preinstalled on
+`ubuntu-latest`. The script's per-test pass/fail list with runtimes appears in
+the run's summary panel.
 
 ## End-to-End Cucumber Tests
 
@@ -63,12 +100,16 @@ summary panel.
 ./scripts/contracts.sh local deploy
 
 docker compose --env-file contracts-output/addresses.env \
-  -f docker-compose.test.yml \
+  -f docker-compose.e2e-test.yml \
   up --build --force-recreate \
   --abort-on-container-exit \
   --exit-code-from e2e-tests \
   e2e-tests
 ```
+
+`docker-compose.e2e-test.yml` builds the base image itself from
+`Dockerfile.base` (through the `gsy-rust-base` service), so no GHCR access is
+needed for e2e runs.
 
 The default `MATCHING_ALGORITHM=pay_as_bid` run executes the features under
 `e2e-tests/features/pay_as_bid`. To run the two-sided pay-as-clear scenarios,
@@ -78,7 +119,7 @@ Compose:
 ```bash
 MATCHING_ALGORITHM=pay_as_clear \
 docker compose --env-file contracts-output/addresses.env \
-  -f docker-compose.test.yml \
+  -f docker-compose.e2e-test.yml \
   up --build --force-recreate \
   --abort-on-container-exit \
   --exit-code-from e2e-tests \
@@ -151,7 +192,7 @@ e2e compose stack executes.
 ```bash
 docker compose --env-file .env.ewds.local \
   --env-file contracts-output/addresses.env \
-  -f docker-compose.test.yml \
+  -f docker-compose.e2e-test.yml \
   up --build \
   --abort-on-container-exit \
   --exit-code-from e2e-tests \
@@ -176,11 +217,11 @@ containers when a clean e2e service run is needed:
 
 ```bash
 docker compose --env-file .env.ewds.local \
-  -f docker-compose.test.yml \
+  -f docker-compose.e2e-test.yml \
   stop e2e-tests gsy-offchain-storage gsy-matching-engine gsy-execution-engine gsy-community-client gsy-market-orchestrator mongodb
 
 docker compose --env-file .env.ewds.local \
-  -f docker-compose.test.yml \
+  -f docker-compose.e2e-test.yml \
   rm -f e2e-tests gsy-offchain-storage gsy-matching-engine gsy-execution-engine gsy-community-client gsy-market-orchestrator mongodb
 ```
 
@@ -191,7 +232,7 @@ Final validated EWDS e2e command:
 
 docker compose --env-file .env.ewds.local \
   --env-file contracts-output/addresses.env \
-  -f docker-compose.test.yml \
+  -f docker-compose.e2e-test.yml \
   up --build --force-recreate \
   --abort-on-container-exit \
   --exit-code-from e2e-tests \
@@ -206,7 +247,7 @@ default aggregation interval for both the matching engine and the E2E runner:
 MATCHING_ALGORITHM=pay_as_clear \
 docker compose --env-file .env.ewds.local \
   --env-file contracts-output/addresses.env \
-  -f docker-compose.test.yml \
+  -f docker-compose.e2e-test.yml \
   up --build --force-recreate \
   --abort-on-container-exit \
   --exit-code-from e2e-tests \
