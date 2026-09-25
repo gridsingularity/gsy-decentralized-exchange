@@ -92,6 +92,7 @@ abigen!(
     TradeSettlementContract,
     r#"[
         function penaltyEnergyByTrade(bytes16 tradeId) external view returns (uint256)
+        event TradeSettled(bytes16 indexed tradeId, bytes16 indexed bidId, bytes16 indexed offerId, bytes16 buyerId, bytes16 sellerId, bytes16 marketId, uint64 timeSlot, bytes16 residualBidId, bytes16 residualOfferId, uint256 energy, uint256 price)
     ]"#
 );
 
@@ -740,6 +741,11 @@ async fn submit_pay_as_clear_order_book(world: &mut MyWorld) {
     mine_until_matching_block(world, matching_block_interval() as usize + 1).await;
 }
 
+#[when("the next matching cycle is triggered")]
+async fn trigger_matching_cycle(world: &mut MyWorld) {
+    mine_until_matching_block(world, matching_block_interval() as usize + 1).await;
+}
+
 async fn place_standard_pay_as_clear_order_book(world: &MyWorld) -> PayAsClearScenario {
     let first_offer = place_custom_order(world, "charlie", false, 3.0, 8.0, None, None).await;
     let second_offer = place_custom_order(world, "charlie", false, 4.0, 10.0, None, None).await;
@@ -1176,30 +1182,62 @@ async fn verify_trade_price(world: &mut MyWorld, expected_price: f64) {
     );
 }
 
-#[then(expr = "Bob's residual offer of {float} energy is available for the next matching phase")]
-async fn verify_residual_offer(world: &mut MyWorld, expected_residual_energy: f64) {
+#[then(expr = "the preferred trade records a residual {word} of {float} energy")]
+async fn verify_preferred_residual(
+    world: &mut MyWorld,
+    residual_side: String,
+    expected_residual_energy: f64,
+) {
+    assert!(matches!(residual_side.as_str(), "bid" | "offer"));
     let trade = world
         .last_trade
         .as_ref()
         .expect("No trade was recorded in the previous step");
 
+    let trade_id = parse_uuid_or_hex_bytes16(&trade.trade_uuid).expect("Invalid trade ID");
+    // Indexed bytes16 values are right-padded to a 32-byte event topic.
+    let mut topic = [0u8; 32];
+    topic[..16].copy_from_slice(&trade_id);
+    let settlement =
+        TradeSettlementContract::new(world.trade_settlement_address, world.provider.clone());
+    let events = settlement
+        .event::<TradeSettledFilter>()
+        .from_block(0u64)
+        .topic1(H256::from(topic))
+        .query()
+        .await
+        .expect("Failed to query preferred settlement event");
+    assert_eq!(events.len(), 1, "Expected one settlement event for the trade");
+    let event = &events[0];
+    assert_eq!(event.bid_id, parse_uuid_or_hex_bytes16(&trade.bid_hash).unwrap());
+    assert_eq!(event.offer_id, parse_uuid_or_hex_bytes16(&trade.offer_hash).unwrap());
+
     let orders = query_market_orders(world).await;
-    let offer = orders
-        .into_iter()
-        .find(|order| order.order_id == trade.offer_hash)
-        .unwrap_or_else(|| {
-            panic!(
-                "No order found with order_id matching offer_hash: {}",
-                trade.offer_hash
-            )
-        });
-    let residual_energy = offer.energy_kWh - trade.parameters.selected_energy_kWh;
-    assert!(
-        approx_eq(residual_energy, expected_residual_energy),
-        "Residual offer mismatch: expected {}, got {}",
-        expected_residual_energy,
-        residual_energy
-    );
+    for (side, order_id, indexed_residual, emitted_residual) in [
+        ("bid", &trade.bid_hash, &trade.residual_bid_id, event.residual_bid_id),
+        ("offer", &trade.offer_hash, &trade.residual_offer_id, event.residual_offer_id),
+    ] {
+        let order = orders.iter()
+            .find(|order| order.order_id.eq_ignore_ascii_case(order_id))
+            .unwrap_or_else(|| panic!("Missing original {side} order {order_id}"));
+        let expected_energy = if side == residual_side { expected_residual_energy } else { 0.0 };
+        assert!(
+            approx_eq(order.energy_kWh - trade.parameters.selected_energy_kWh, expected_energy),
+            "Unexpected remaining energy for {side}"
+        );
+        if side == residual_side {
+            let indexed_id = indexed_residual.as_ref()
+                .unwrap_or_else(|| panic!("Missing indexed residual {side} ID"));
+            let indexed_id = parse_uuid_or_hex_bytes16(indexed_id).expect("Invalid residual ID");
+            assert_ne!(emitted_residual, [0u8; 16], "Missing on-chain residual {side} ID");
+            assert_eq!(indexed_id, emitted_residual, "Residual {side} ID differs from event");
+            assert_ne!(indexed_id, event.bid_id, "Residual must have a new ID");
+            assert_ne!(indexed_id, event.offer_id, "Residual must have a new ID");
+        } else {
+            assert!(indexed_residual.is_none(), "Fully filled {side} has an indexed residual");
+            assert_eq!(emitted_residual, [0u8; 16], "Fully filled {side} has an on-chain residual");
+        }
+    }
 }
 
 #[then(expr = "Charlie's cheaper offer remains untouched in this phase")]

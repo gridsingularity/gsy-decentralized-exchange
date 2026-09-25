@@ -100,8 +100,8 @@ impl MatchingData {
                     time_slot: offer.time_slot,
                     bid: bid.clone(),
                     offer: offer.clone(),
-                    residual_bid: None,
-                    residual_offer: None,
+                    residual_bid: residual_order(bid, bid_amount_used + selected_energy),
+                    residual_offer: residual_order(offer, offer_amount_used + selected_energy),
                     selected_energy,
                     energy_rate: preferred_rate,
                 });
