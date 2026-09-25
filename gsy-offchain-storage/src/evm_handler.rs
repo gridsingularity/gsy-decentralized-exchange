@@ -1,5 +1,5 @@
 use crate::db::DatabaseWrapper;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use gsy_ethers_listener::{
     GsyEventHandler, MarketStatusUpdatedFilter, OrderCancelledFilter, OrderPlacedFilter,
@@ -38,13 +38,34 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         } else {
             OrderEnum::Offer
         };
-        let (requirements, attributes) = order_metadata_from_contract(ContractOrderMetadata {
-            energy_source_preference: event.energy_source_preference,
-            energy_type: event.energy_type,
-            preferred_trading_partner: event.preferred_trading_partner,
-            preferred_energy_rate: event.preferred_energy_rate,
-            trading_partner: event.trading_partner,
-        });
+        let (mut requirements, mut attributes) =
+            order_metadata_from_contract(ContractOrderMetadata {
+                energy_source_preference: event.energy_source_preference,
+                energy_type: event.energy_type,
+                preferred_trading_partner: event.preferred_trading_partner,
+                preferred_energy_rate: event.preferred_energy_rate,
+                trading_partner: event.trading_partner,
+            });
+        for partner in [
+            requirements
+                .as_mut()
+                .and_then(|value| value.trading_partner_id.as_mut()),
+            attributes
+                .as_mut()
+                .and_then(|value| value.trading_partner_id.as_mut()),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            *partner = self
+                .db
+                .ids()
+                .filter(Some(partner.clone()), None)
+                .await?
+                .pop()
+                .with_context(|| format!("No facility ID mapping for on-chain ID {}", partner))?
+                .offchain_id;
+        }
 
         let schema = DbOrderSchema {
             order_id: order_id_str,

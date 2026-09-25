@@ -322,6 +322,15 @@ checksum = "7d902e3d592a523def97af8f317b08ce16b7ab854c1985a0c671e6f15cebc236"
 
 [[package]]
 name = "arrayvec"
+version = "0.4.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cd9fd44efafa8690358b7408d253adf110036b88f55672a933f01d616ad9b1b9"
+dependencies = [
+ "nodrop",
+]
+
+[[package]]
+name = "arrayvec"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
@@ -496,6 +505,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "46502ad458c9a52b69d4d4d32775c788b7a1b85e8bc9d482d92250fc0e3f8efe"
 dependencies = [
  "digest 0.10.7",
+]
+
+[[package]]
+name = "blake2-rfc"
+version = "0.2.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d6d530bdd2d52966a6d03b7a964add7ae1a288d25214066fd4b600f0f796400"
+dependencies = [
+ "arrayvec 0.4.12",
+ "constant_time_eq",
 ]
 
 [[package]]
@@ -1446,6 +1465,7 @@ dependencies = [
  "ethers",
  "gsy-community-client",
  "hex",
+ "mongodb",
  "primitives",
  "reqwest 0.12.28",
  "serde_json",
@@ -1735,7 +1755,7 @@ version = "2.0.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "82d80cc6ad30b14a48ab786523af33b37f28a8623fc06afd55324816ef18fb1f"
 dependencies = [
- "arrayvec",
+ "arrayvec 0.7.8",
  "bytes",
  "cargo_metadata",
  "chrono",
@@ -2276,6 +2296,7 @@ name = "gsy-community-client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "blake2-rfc",
  "ethers",
  "ethers-solc",
  "httpmock",
@@ -2283,11 +2304,13 @@ dependencies = [
  "reqwest 0.11.27",
  "serde",
  "serde_json",
+ "serial_test",
  "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",
  "uuid 1.26.0",
+ "wiremock",
 ]
 
 [[package]]
@@ -2795,7 +2818,7 @@ dependencies = [
  "http 1.4.2",
  "hyper 1.11.0",
  "hyper-util",
- "rustls 0.23.42",
+ "rustls 0.23.45",
  "tokio",
  "tokio-rustls 0.26.4",
  "tower-service",
@@ -3591,7 +3614,7 @@ dependencies = [
  "percent-encoding",
  "rand 0.9.5",
  "rustc_version_runtime",
- "rustls 0.23.42",
+ "rustls 0.23.45",
  "serde",
  "serde_bytes",
  "serde_with",
@@ -3656,6 +3679,12 @@ name = "new_debug_unreachable"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
+
+[[package]]
+name = "nodrop"
+version = "0.1.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72ef4a56884ca558e5ddb05a1d1e7e1bfd9a68d9ed024c21704cc98872dae1bb"
 
 [[package]]
 name = "nom"
@@ -3775,7 +3804,7 @@ version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "786393f80485445794f6043fd3138854dd109cc6c4bd1a6383db304c9ce9b9ce"
 dependencies = [
- "arrayvec",
+ "arrayvec 0.7.8",
  "auto_impl",
  "bytes",
  "ethereum-types",
@@ -3859,7 +3888,7 @@ version = "3.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "799781ae679d79a948e13d4824a40970bfa500058d245760dd857301059810fa"
 dependencies = [
- "arrayvec",
+ "arrayvec 0.7.8",
  "bitvec",
  "byte-slice-cast",
  "const_format",
@@ -4237,6 +4266,7 @@ name = "primitives"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "blake2",
  "chrono",
  "hex",
@@ -4250,6 +4280,7 @@ dependencies = [
  "tracing-bunyan-formatter",
  "tracing-log 0.2.0",
  "tracing-subscriber",
+ "wiremock",
 ]
 
 [[package]]
@@ -4714,15 +4745,15 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.42"
+version = "0.23.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c54fcab019b409d04215d3a17cb438fd7fbf192ee61461f20f4fe18704bc138"
+checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
 dependencies = [
  "log",
  "once_cell",
  "ring 0.17.14",
  "rustls-pki-types",
- "rustls-webpki 0.103.13",
+ "rustls-webpki 0.103.15",
  "subtle",
  "zeroize",
 ]
@@ -4757,9 +4788,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.13"
+version = "0.103.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61c429a8649f110dddef65e2a5ad240f747e85f7758a6bccc7e5777bd33f756e"
+checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
 dependencies = [
  "ring 0.17.14",
  "rustls-pki-types",
@@ -5045,6 +5076,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "84d57bc0c8b9a17920c178daa6bb924850d54a9c97ab45194bb8c17ad66bb660"
 dependencies = [
  "darling",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "serial_test"
+version = "3.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "699f4197115b8a7e7ff19c9a315a4bd6fffec26cc4626ef45ecaea389e081c6d"
+dependencies = [
+ "futures-executor",
+ "futures-util",
+ "log",
+ "once_cell",
+ "parking_lot",
+ "serial_test_derive",
+]
+
+[[package]]
+name = "serial_test_derive"
+version = "3.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "94e153fc76e1c6a068703d6d29c508a0b15c061c4b7e43da59cc097bc342673c"
+dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -5732,7 +5788,7 @@ version = "0.26.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1729aa945f29d91ba541258c8df89027d5792d85a8841fb65e8bf0f4ede4ef61"
 dependencies = [
- "rustls 0.23.42",
+ "rustls 0.23.45",
  "tokio",
 ]
 

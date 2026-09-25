@@ -2,9 +2,7 @@ use primitives::db_api_schema::orders::{
     order_metadata_from_contract, order_metadata_to_contract, ContractOrderMetadata, DbAttributes,
     DbRequirements, EnergyType,
 };
-use primitives::utils::{
-    create_encrypted_bytes16_from_string, parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR,
-};
+use primitives::utils::{parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR};
 
 const PREFERRED_PARTNER: &str = "0x00112233445566778899aabbccddeeff";
 const TRADING_PARTNER: &str = "0xffeeddccbbaa99887766554433221100";
@@ -21,7 +19,7 @@ fn converts_complete_order_metadata_to_and_from_contract_values() {
         energy_type: EnergyType::Pv,
     };
 
-    let encoded = order_metadata_to_contract(Some(&requirements), Some(&attributes));
+    let encoded = order_metadata_to_contract(Some(&requirements), Some(&attributes)).unwrap();
 
     assert_eq!(encoded.energy_source_preference, 1);
     assert_eq!(encoded.energy_type, 2);
@@ -45,26 +43,30 @@ fn converts_complete_order_metadata_to_and_from_contract_values() {
 }
 
 #[test]
-fn partner_names_use_the_same_conversion_as_actor_ids() {
-    let requirements = DbRequirements {
-        trading_partner_id: Some("alice".to_string()),
-        energy_type: None,
-        preferred_energy_rate: None,
-    };
-    let attributes = DbAttributes {
-        trading_partner_id: Some("bob".to_string()),
-        energy_type: EnergyType::None,
-    };
-
-    let encoded = order_metadata_to_contract(Some(&requirements), Some(&attributes));
-
-    assert_eq!(encoded.preferred_trading_partner, create_encrypted_bytes16_from_string("alice"));
-    assert_eq!(encoded.trading_partner, create_encrypted_bytes16_from_string("bob"));
+fn rejects_unresolved_or_invalid_partner_ids() {
+    for id in [
+        "alice",
+        "00112233-4455-6677-8899-aabbccddeeff",
+        "0x1234",
+        "0x00000000000000000000000000000000",
+    ] {
+        let requirements = DbRequirements {
+            trading_partner_id: Some(id.to_string()),
+            energy_type: None,
+            preferred_energy_rate: None,
+        };
+        let attributes = DbAttributes {
+            trading_partner_id: Some(id.to_string()),
+            energy_type: EnergyType::None,
+        };
+        assert!(order_metadata_to_contract(Some(&requirements), None).is_err());
+        assert!(order_metadata_to_contract(None, Some(&attributes)).is_err());
+    }
 }
 
 #[test]
 fn converts_absent_order_metadata_to_and_from_zero_values() {
-    let encoded = order_metadata_to_contract(None, None);
+    let encoded = order_metadata_to_contract(None, None).unwrap();
 
     assert_eq!(
         encoded,

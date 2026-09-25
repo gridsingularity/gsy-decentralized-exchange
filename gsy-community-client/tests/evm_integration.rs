@@ -7,6 +7,8 @@ use primitives::utils::{create_encrypted_bytes16_from_string, parse_uuid_or_hex_
 use primitives::{MarketType, MatchingAlgorithm};
 use std::{fs::File, io::Write, sync::Arc};
 use tempfile::TempDir;
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 abigen!(
     MockOrderRegistry,
@@ -25,6 +27,22 @@ abigen!(
 
 const TEST_PRIVATE_KEY: &str = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
+async fn setup_facilities_mock() -> MockServer {
+    let facilities = serde_json::json!([
+        { "facility_id": "area-a", "owner_id": "area-a", "facility_name": "AreaA", "site_id": "1"},
+        { "facility_id": "area-b", "owner_id": "area-b", "facility_name": "AreaA", "site_id": "1" }
+    ]);
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/facilities"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(facilities))
+        .mount(&server)
+        .await;
+    std::env::set_var("OFFCHAIN_STORAGE_URL", server.uri());
+    std::env::remove_var("OFFCHAIN_STORAGE_TRANSPORT"); // force HTTP branch
+    server
+}
+
 fn test_market() -> MarketSchema {
     MarketSchema {
         market_id: format!("0x{}", "11".repeat(16)),
@@ -39,7 +57,7 @@ fn test_market() -> MarketSchema {
     }
 }
 
-fn test_forecasts(market: &MarketSchema) -> Vec<ForecastSchema> {
+fn test_forecasts() -> Vec<ForecastSchema> {
     vec![
         ForecastSchema {
             facility_id: "area-a".to_string(),
@@ -126,7 +144,9 @@ async fn compile_and_deploy_contract(
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_publish_orders_calls_evm_order_registry() {
+    let _facilities_server = setup_facilities_mock().await;
     let anvil = Anvil::new().spawn();
     let ws_endpoint = anvil.ws_endpoint();
     let wallet: LocalWallet = anvil.keys()[0].clone().into();
@@ -185,7 +205,7 @@ async fn test_publish_orders_calls_evm_order_registry() {
 
     let market = test_market();
 
-    let forecasts = test_forecasts(&market);
+    let forecasts = test_forecasts();
 
     publish_orders(
         ws_endpoint.clone(),
@@ -208,7 +228,8 @@ async fn test_publish_orders_calls_evm_order_registry() {
     );
     assert_eq!(
         mock_contract.last_market_id().call().await.unwrap(),
-        parse_uuid_or_hex_bytes16("0x11111111111111111111111111111111").expect("failed to parse uuid")
+        parse_uuid_or_hex_bytes16("0x11111111111111111111111111111111")
+            .expect("failed to parse uuid")
     );
     assert_eq!(
         mock_contract
@@ -245,7 +266,7 @@ async fn test_publish_orders_calls_evm_order_registry() {
 #[tokio::test]
 async fn test_publish_orders_returns_error_for_invalid_contract_address() {
     let market = test_market();
-    let forecasts = test_forecasts(&market);
+    let forecasts = test_forecasts();
 
     let err = publish_orders(
         "ws://127.0.0.1:8545".to_string(),
@@ -267,7 +288,7 @@ async fn test_publish_orders_returns_error_for_invalid_contract_address() {
 async fn test_publish_orders_returns_error_for_invalid_private_key() {
     let anvil = Anvil::new().spawn();
     let market = test_market();
-    let forecasts = test_forecasts(&market);
+    let forecasts = test_forecasts();
 
     let err = publish_orders(
         anvil.ws_endpoint(),
@@ -283,7 +304,10 @@ async fn test_publish_orders_returns_error_for_invalid_private_key() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_publish_orders_returns_error_when_contract_reverts() {
+    let _facilities_server = setup_facilities_mock().await;
+
     let anvil = Anvil::new().spawn();
     let ws_endpoint = anvil.ws_endpoint();
     let wallet: LocalWallet = anvil.keys()[0].clone().into();
@@ -322,7 +346,7 @@ async fn test_publish_orders_returns_error_when_contract_reverts() {
     let contract_address =
         compile_and_deploy_contract(client, source, "MockOrderRegistryReverter").await;
     let market = test_market();
-    let forecasts = test_forecasts(&market);
+    let forecasts = test_forecasts();
 
     let err = publish_orders(
         ws_endpoint,

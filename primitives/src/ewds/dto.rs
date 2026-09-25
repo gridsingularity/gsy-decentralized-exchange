@@ -8,7 +8,7 @@ use crate::db_api_schema::{
         TradeStatus,
     },
 };
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::str::FromStr;

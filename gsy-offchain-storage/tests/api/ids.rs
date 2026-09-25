@@ -1,8 +1,36 @@
 use crate::helpers::{init_app, stop_app};
 use gsy_offchain_storage::db::id_service::init_ids;
+use mongodb::bson::doc;
 use primitives::db_api_schema::ids::IdMappingSchema;
 use primitives::utils::{bytes16_to_hex, create_encrypted_bytes16_from_string};
-use mongodb::bson::doc;
+
+#[tokio::test]
+async fn filter_by_onchain_id_returns_original_facility_id() {
+    let app = init_app().await;
+    let facility_id = "00112233-4455-6677-8899-aabbccddeeff";
+    let mapping = app
+        .db_wrapper
+        .ids()
+        .get_or_create(facility_id.to_string())
+        .await
+        .unwrap();
+    let recovered = app
+        .db_wrapper
+        .ids()
+        .filter(Some(mapping.onchain_id), None)
+        .await
+        .unwrap();
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].offchain_id, facility_id);
+    assert!(app
+        .db_wrapper
+        .ids()
+        .filter(Some("0xffffffffffffffffffffffffffffffff".to_string()), None)
+        .await
+        .unwrap()
+        .is_empty());
+    stop_app(app).await;
+}
 
 #[tokio::test]
 async fn post_ids_creates_new_mapping() {

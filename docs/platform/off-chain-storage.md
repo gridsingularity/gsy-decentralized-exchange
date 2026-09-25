@@ -22,20 +22,45 @@ the indexed order is complete without a follow-up `/orders` write.
 
 ## HTTP API Surface
 
-- `/health_check`
+### Health
+- `/health_check` (`GET`)
+
+### Order Book Storage (D3.2 section 5.4)
+- `/orders-normalized` (`POST`)
 - `/orders` (`GET`, `POST`)
+- `/flexibility-orders` (`GET`, `POST`)
+- `/tariffs` (`GET`, `POST`)
+
+### Trades Storage (D3.2 section 5.3)
+- `/trades-normalized` (`POST`)
 - `/trades` (`GET`, `POST`)
+- `/market` (`GET`) compatibility adapter for EVM JSON callers
 - `/communities` (`GET`, `POST`) for idempotent community query/upsert
 - `/markets` (`GET`, `POST`) for ontology-aligned market-opening records
+- `/clearing-results` (`GET`, `POST`)
+- `/market-roles` (`GET`, `POST`)
+
+### Measurements Storage (D3.2 section 5.2)
+- `/measurements` (`GET`, `POST`)
+- `/forecasts` (`GET`, `POST`)
 - `/measurement-points` (`GET`, `POST`) for ontology-aligned measurement metadata
 - `/timeseries` (`GET`, `POST`) for ontology-aligned values
+
+### Grid Topology and Market Storage (D3.2 section 5.1)
+- `/assets` (`GET`, `POST`)
+- `/pilot-sites` (`GET`, `POST`)
+- `/communities` (`GET`, `POST`)
+- `/sites` (`GET`, `POST`)
+- `/facilities` (`GET`, `POST`)
+
+### ID Mapping
+- `/ids` (`POST`) — get-or-create offchain↔onchain ID mappings
 
 Compatibility adapters for EVM JSON callers:
 
 - `/measurements` (`GET`, `POST`) converts to/from `MeasurementPoint` + `Timeseries`
 - `/forecasts` (`GET`, `POST`) converts to/from `MeasurementPoint` + `Timeseries`
-- `/market` (`GET`, `POST`) converts compatibility market JSON to/from `Market`
-- `/community-market` (`GET`) queries ontology market records by community and delivery window
+- `/market` (`GET`) converts compatibility market JSON to/from `Market`
 
 These adapters do not own separate collections. They read and write the same
 `markets`, `measurement_points`, and `timeseries` records as the canonical API.
@@ -50,6 +75,17 @@ through `community.upsert` and `communities.query` request/reply operations.
 ## Data Model Notes
 
 - Order IDs and market IDs are stored as hex strings (`0x...`).
+- Order requirements/attributes store original off-chain partner facility IDs.
+  Callers resolve these through `POST /ids` or EWDS `ids.query` before contract
+  submission. The event indexer uses the ID mapping collection to recover the
+  facility IDs; the matcher resolves them back before comparing on-chain actors.
+  UUID-shaped facility IDs are mapping inputs, not already-encoded on-chain IDs.
+  Missing reverse mappings cause an indexing error rather than fabricating an ID.
+  The listener logs handler errors without replaying failed events, so mappings
+  must exist before order submission; restoring them requires explicit reindexing.
+  Existing records with on-chain partner IDs must be migrated using the mapping
+  collection (or reindexed after mappings are restored); they must not be used
+  as off-chain inputs to create new mappings.
 - Settlement events transition order statuses to `Executed`.
 - Trade records include both order payload snapshots and selected settlement parameters.
 
