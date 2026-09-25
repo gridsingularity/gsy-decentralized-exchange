@@ -67,7 +67,6 @@ describe("TradeSettlement", function () {
       isBid: ORDER_TYPE_BID,
       preferredTradingPartner: sellerActorId,
       preferredEnergyRate: 45,
-      tradingPartner: ZERO_BYTES16,
     };
 
     const offer = {
@@ -83,7 +82,6 @@ describe("TradeSettlement", function () {
       isBid: ORDER_TYPE_ASK,
       preferredTradingPartner: ZERO_BYTES16,
       preferredEnergyRate: 0,
-      tradingPartner: buyerActorId,
     };
 
     return {

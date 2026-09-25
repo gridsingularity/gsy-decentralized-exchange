@@ -9,7 +9,6 @@ pub struct Requirements {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Attributes {
-    pub trading_partner_id: Option<String>,
     pub energy_type: EnergyType,
 }
 

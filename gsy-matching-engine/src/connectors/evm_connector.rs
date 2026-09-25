@@ -36,7 +36,6 @@ type EvmOrderDataTuple = (
     u8,
     [u8; 16],
     u64,
-    [u8; 16],
 );
 type EvmMatchTuple = (
     [u8; 16],
@@ -313,12 +312,7 @@ async fn fetch_market_orders(body: Vec<EwdsOrderDto>) -> Result<PreparedOrders> 
         .into_iter()
         .filter(|order| order.status == OrderStatus::Submitted)
     {
-        resolve_order_partner_ids(
-            &mut db_order_schema.requirements,
-            &mut db_order_schema.attributes,
-            &id_mapping_source,
-        )
-        .await?;
+        resolve_order_partner_ids(&mut db_order_schema.requirements, &id_mapping_source).await?;
         match convert_db_order_to_canonical(&db_order_schema) {
             Ok(order) => {
                 by_order_id.insert(order.order_id.clone(), db_order_schema);
@@ -437,10 +431,6 @@ fn convert_attributes(
     attributes
         .map(|attributes| -> Result<Attributes> {
             Ok(Attributes {
-                trading_partner_id: normalize_optional_bytes16_field(
-                    "attributes.trading_partner_id",
-                    attributes.trading_partner_id.as_deref(),
-                )?,
                 energy_type: attributes.energy_type.clone(),
             })
         })
@@ -509,7 +499,6 @@ fn to_evm_order_data(order: &DbOrderSchema, expected_type: OrderEnum) -> Result<
         metadata.energy_type,
         metadata.preferred_trading_partner,
         metadata.preferred_energy_rate,
-        metadata.trading_partner,
     ))
 }
 
