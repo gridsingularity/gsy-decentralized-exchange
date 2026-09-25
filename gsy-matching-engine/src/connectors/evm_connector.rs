@@ -25,31 +25,8 @@ abigen!(
     "src/connectors/abi/settle_order_batch.json"
 );
 
-type EvmOrderDataTuple = (
-    [u8; 16],
-    [u8; 16],
-    [u8; 16],
-    u64,
-    u64,
-    u64,
-    u64,
-    u8,
-    u8,
-    [u8; 16],
-    u64,
-    [u8; 16],
-);
-type EvmMatchTuple = (
-    [u8; 16],
-    EvmOrderDataTuple,
-    EvmOrderDataTuple,
-    [u8; 16],
-    [u8; 16],
-    U256,
-    U256,
-);
-type EvmClearingResultTuple = ([u8; 16], u8, U256, U256, U256, U256, u32);
-type EvmMarketMatchesTuple = (Vec<EvmMatchTuple>, EvmClearingResultTuple);
+// The contract's ClearingResult struct collides with the local ClearingResult model.
+use settle_order_batch_contract::ClearingResult as EvmClearingResult;
 
 struct PreparedOrders {
     open_bids: Vec<Order>,
@@ -550,7 +527,7 @@ fn convert_db_order_to_canonical(order: &DbOrderSchema) -> Result<Order> {
     })
 }
 
-fn to_evm_order_data(order: &DbOrderSchema, expected_type: OrderEnum) -> Result<EvmOrderDataTuple> {
+fn to_evm_order_data(order: &DbOrderSchema, expected_type: OrderEnum) -> Result<OrderParams> {
     if order.order_type != expected_type {
         return Err(anyhow!(
             "Order {} type mismatch. Expected {:?}, got {:?}",
@@ -563,20 +540,21 @@ fn to_evm_order_data(order: &DbOrderSchema, expected_type: OrderEnum) -> Result<
     let metadata =
         order_metadata_to_contract(order.requirements.as_ref(), order.attributes.as_ref())?;
 
-    Ok((
-        parse_bytes16_field("order_id", order.order_id.as_str())?,
-        parse_bytes16_field("created_by", order.created_by.as_str())?,
-        parse_bytes16_field("market_id", order.market_id.as_str())?,
-        order.time_slot,
-        order.creation_time,
-        (order.energy_kWh * NODE_FLOAT_SCALING_FACTOR).round() as u64,
-        (order.energy_rate * NODE_FLOAT_SCALING_FACTOR).round() as u64,
-        metadata.energy_source_preference,
-        metadata.energy_type,
-        metadata.preferred_trading_partner,
-        metadata.preferred_energy_rate,
-        metadata.trading_partner,
-    ))
+    Ok(OrderParams {
+        order_id: parse_bytes16_field("order_id", order.order_id.as_str())?,
+        created_by: parse_bytes16_field("created_by", order.created_by.as_str())?,
+        market_id: parse_bytes16_field("market_id", order.market_id.as_str())?,
+        time_slot: order.time_slot,
+        creation_time: order.creation_time,
+        energy: (order.energy_kWh * NODE_FLOAT_SCALING_FACTOR).round() as u64,
+        energy_rate: (order.energy_rate * NODE_FLOAT_SCALING_FACTOR).round() as u64,
+        energy_source_preference: metadata.energy_source_preference,
+        energy_type: metadata.energy_type,
+        is_bid: order.order_type == OrderEnum::Bid,
+        preferred_trading_partner: metadata.preferred_trading_partner,
+        preferred_energy_rate: metadata.preferred_energy_rate,
+        trading_partner: metadata.trading_partner,
+    })
 }
 
 fn optional_order_id_to_bytes16(order: Option<&Order>) -> Result<[u8; 16]> {
@@ -591,26 +569,26 @@ fn derive_trade_id() -> [u8; 16] {
     parse_uuid_or_hex_bytes16(&uuid).expect("Error converting uuid to bytes")
 }
 
-fn to_evm_clearing_result(clearing_result: &ClearingResult) -> Result<EvmClearingResultTuple> {
+fn to_evm_clearing_result(clearing_result: &ClearingResult) -> Result<EvmClearingResult> {
     let market_id = match clearing_result.market_id.as_deref() {
         Some(market_id) => parse_bytes16_field("clearing_result.market_id", market_id)?,
         None => [0u8; 16],
     };
-    Ok((
+    Ok(EvmClearingResult {
         market_id,
-        clearing_result.clearing_status.to_evm(),
-        U256::from(clearing_result.clearing_price.unwrap_or_default()),
-        U256::from(clearing_result.total_supply.unwrap_or_default()),
-        U256::from(clearing_result.total_demand.unwrap_or_default()),
-        U256::from(clearing_result.traded_quantity.unwrap_or_default()),
-        clearing_result.num_trades.unwrap_or_default(),
-    ))
+        clearing_status: clearing_result.clearing_status.to_evm(),
+        clearing_price: U256::from(clearing_result.clearing_price.unwrap_or_default()),
+        total_supply: U256::from(clearing_result.total_supply.unwrap_or_default()),
+        total_demand: U256::from(clearing_result.total_demand.unwrap_or_default()),
+        traded_quantity: U256::from(clearing_result.traded_quantity.unwrap_or_default()),
+        num_trades: clearing_result.num_trades.unwrap_or_default(),
+    })
 }
 
 fn to_evm_match(
     item: &BidOfferMatch,
     order_lookup: &HashMap<String, DbOrderSchema>,
-) -> Result<EvmMatchTuple> {
+) -> Result<Match> {
     if item.bid.market_id != item.offer.market_id
         || item.bid.time_slot != item.offer.time_slot
         || item.market_id != item.bid.market_id
@@ -645,21 +623,21 @@ fn to_evm_match(
         ));
     }
 
-    Ok((
-        derive_trade_id(),
-        to_evm_order_data(bid_order, OrderEnum::Bid)?,
-        to_evm_order_data(offer_order, OrderEnum::Offer)?,
-        optional_order_id_to_bytes16(item.residual_bid.as_ref())?,
-        optional_order_id_to_bytes16(item.residual_offer.as_ref())?,
-        U256::from(item.selected_energy),
-        U256::from(item.energy_rate),
-    ))
+    Ok(Match {
+        trade_id: derive_trade_id(),
+        bid: to_evm_order_data(bid_order, OrderEnum::Bid)?,
+        offer: to_evm_order_data(offer_order, OrderEnum::Offer)?,
+        residual_bid_id: optional_order_id_to_bytes16(item.residual_bid.as_ref())?,
+        residual_offer_id: optional_order_id_to_bytes16(item.residual_offer.as_ref())?,
+        selected_energy: U256::from(item.selected_energy),
+        clearing_price: U256::from(item.energy_rate),
+    })
 }
 
 fn to_evm_matches(
     matches: Vec<MarketMatches>,
     order_lookup: &HashMap<String, DbOrderSchema>,
-) -> Result<Vec<EvmMarketMatchesTuple>> {
+) -> Result<Vec<MarketSettlement>> {
     matches
         .into_iter()
         .map(|market| {
@@ -668,10 +646,10 @@ fn to_evm_matches(
                 .iter()
                 .map(|item| to_evm_match(item, order_lookup))
                 .collect::<Result<Vec<_>>>()?;
-            Ok((
-                bid_offer_matches,
-                to_evm_clearing_result(&market.clearing_result)?,
-            ))
+            Ok(MarketSettlement {
+                matches: bid_offer_matches,
+                clearing_result: to_evm_clearing_result(&market.clearing_result)?,
+            })
         })
         .collect()
 }

@@ -4,10 +4,21 @@
         "name": "hasRole",
         "stateMutability": "view",
         "inputs": [
-            {"name": "role", "type": "bytes32"},
-            {"name": "account", "type": "address"}
+            {
+                "name": "role",
+                "type": "bytes32"
+            },
+            {
+                "name": "account",
+                "type": "address"
+            }
         ],
-        "outputs": [{"name": "", "type": "bool"}]
+        "outputs": [
+            {
+                "name": "",
+                "type": "bool"
+            }
+        ]
     },
     {
         "type": "function",
@@ -17,65 +28,186 @@
             {
                 "name": "settlements",
                 "type": "tuple[]",
+                "internalType": "struct TradeSettlement.MarketSettlement[]",
                 "components": [
                     {
                         "name": "matches",
                         "type": "tuple[]",
+                        "internalType": "struct TradeSettlement.Match[]",
                         "components": [
-                            {"name": "tradeId", "type": "bytes16"},
+                            {
+                                "name": "tradeId",
+                                "type": "bytes16"
+                            },
                             {
                                 "name": "bid",
                                 "type": "tuple",
+                                "internalType": "struct OrderRegistry.OrderParams",
                                 "components": [
-                                    {"name": "orderId", "type": "bytes16"},
-                                    {"name": "createdBy", "type": "bytes16"},
-                                    {"name": "marketId", "type": "bytes16"},
-                                    {"name": "timeSlot", "type": "uint64"},
-                                    {"name": "creationTime", "type": "uint64"},
-                                    {"name": "energy", "type": "uint64"},
-                                    {"name": "energyRate", "type": "uint64"},
-                                    {"name": "energySourcePreference", "type": "uint8"},
-                                    {"name": "energyType", "type": "uint8"},
-                                    {"name": "preferredTradingPartner", "type": "bytes16"},
-                                    {"name": "preferredEnergyRate", "type": "uint64"},
-                                    {"name": "tradingPartner", "type": "bytes16"}
+                                    {
+                                        "name": "orderId",
+                                        "type": "bytes16"
+                                    },
+                                    {
+                                        "name": "createdBy",
+                                        "type": "bytes16"
+                                    },
+                                    {
+                                        "name": "marketId",
+                                        "type": "bytes16"
+                                    },
+                                    {
+                                        "name": "timeSlot",
+                                        "type": "uint64"
+                                    },
+                                    {
+                                        "name": "creationTime",
+                                        "type": "uint64"
+                                    },
+                                    {
+                                        "name": "energy",
+                                        "type": "uint64"
+                                    },
+                                    {
+                                        "name": "energyRate",
+                                        "type": "uint64"
+                                    },
+                                    {
+                                        "name": "energySourcePreference",
+                                        "type": "uint8"
+                                    },
+                                    {
+                                        "name": "energyType",
+                                        "type": "uint8"
+                                    },
+                                    {
+                                        "name": "isBid",
+                                        "type": "bool"
+                                    },
+                                    {
+                                        "name": "preferredTradingPartner",
+                                        "type": "bytes16"
+                                    },
+                                    {
+                                        "name": "preferredEnergyRate",
+                                        "type": "uint64"
+                                    },
+                                    {
+                                        "name": "tradingPartner",
+                                        "type": "bytes16"
+                                    }
                                 ]
                             },
                             {
                                 "name": "offer",
                                 "type": "tuple",
+                                "internalType": "struct OrderRegistry.OrderParams",
                                 "components": [
-                                    {"name": "orderId", "type": "bytes16"},
-                                    {"name": "createdBy", "type": "bytes16"},
-                                    {"name": "marketId", "type": "bytes16"},
-                                    {"name": "timeSlot", "type": "uint64"},
-                                    {"name": "creationTime", "type": "uint64"},
-                                    {"name": "energy", "type": "uint64"},
-                                    {"name": "energyRate", "type": "uint64"},
-                                    {"name": "energySourcePreference", "type": "uint8"},
-                                    {"name": "energyType", "type": "uint8"},
-                                    {"name": "preferredTradingPartner", "type": "bytes16"},
-                                    {"name": "preferredEnergyRate", "type": "uint64"},
-                                    {"name": "tradingPartner", "type": "bytes16"}
+                                    {
+                                        "name": "orderId",
+                                        "type": "bytes16"
+                                    },
+                                    {
+                                        "name": "createdBy",
+                                        "type": "bytes16"
+                                    },
+                                    {
+                                        "name": "marketId",
+                                        "type": "bytes16"
+                                    },
+                                    {
+                                        "name": "timeSlot",
+                                        "type": "uint64"
+                                    },
+                                    {
+                                        "name": "creationTime",
+                                        "type": "uint64"
+                                    },
+                                    {
+                                        "name": "energy",
+                                        "type": "uint64"
+                                    },
+                                    {
+                                        "name": "energyRate",
+                                        "type": "uint64"
+                                    },
+                                    {
+                                        "name": "energySourcePreference",
+                                        "type": "uint8"
+                                    },
+                                    {
+                                        "name": "energyType",
+                                        "type": "uint8"
+                                    },
+                                    {
+                                        "name": "isBid",
+                                        "type": "bool"
+                                    },
+                                    {
+                                        "name": "preferredTradingPartner",
+                                        "type": "bytes16"
+                                    },
+                                    {
+                                        "name": "preferredEnergyRate",
+                                        "type": "uint64"
+                                    },
+                                    {
+                                        "name": "tradingPartner",
+                                        "type": "bytes16"
+                                    }
                                 ]
                             },
-                            {"name": "residualBidId", "type": "bytes16"},
-                            {"name": "residualOfferId", "type": "bytes16"},
-                            {"name": "selectedEnergy", "type": "uint256"},
-                            {"name": "clearingPrice", "type": "uint256"}
+                            {
+                                "name": "residualBidId",
+                                "type": "bytes16"
+                            },
+                            {
+                                "name": "residualOfferId",
+                                "type": "bytes16"
+                            },
+                            {
+                                "name": "selectedEnergy",
+                                "type": "uint256"
+                            },
+                            {
+                                "name": "clearingPrice",
+                                "type": "uint256"
+                            }
                         ]
                     },
                     {
                         "name": "clearingResult",
                         "type": "tuple",
+                        "internalType": "struct TradeSettlement.ClearingResult",
                         "components": [
-                            {"name": "marketId", "type": "bytes16"},
-                            {"name": "clearingStatus", "type": "uint8"},
-                            {"name": "clearingPrice", "type": "uint256"},
-                            {"name": "totalSupply", "type": "uint256"},
-                            {"name": "totalDemand", "type": "uint256"},
-                            {"name": "tradedQuantity", "type": "uint256"},
-                            {"name": "numTrades", "type": "uint32"}
+                            {
+                                "name": "marketId",
+                                "type": "bytes16"
+                            },
+                            {
+                                "name": "clearingStatus",
+                                "type": "uint8"
+                            },
+                            {
+                                "name": "clearingPrice",
+                                "type": "uint256"
+                            },
+                            {
+                                "name": "totalSupply",
+                                "type": "uint256"
+                            },
+                            {
+                                "name": "totalDemand",
+                                "type": "uint256"
+                            },
+                            {
+                                "name": "tradedQuantity",
+                                "type": "uint256"
+                            },
+                            {
+                                "name": "numTrades",
+                                "type": "uint32"
+                            }
                         ]
                     }
                 ]
