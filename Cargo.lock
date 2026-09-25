@@ -2298,11 +2298,13 @@ dependencies = [
  "anyhow",
  "chrono",
  "envy",
+ "futures",
  "mongodb",
  "primitives",
  "serde",
  "tokio",
  "tracing",
+ "uuid 1.26.0",
 ]
 
 [[package]]

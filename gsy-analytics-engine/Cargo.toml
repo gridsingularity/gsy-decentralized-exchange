@@ -21,3 +21,6 @@ mongodb = "3.3.0"
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "signal"] }
 tracing = { version = "0.1", features = ["log"] }
+
+[dev-dependencies]
+uuid = { version = "1.12.1", features = ["v4"] }

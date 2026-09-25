@@ -1,7 +1,9 @@
 use anyhow::Result;
-use gsy_analytics_engine::{config::Config, db, kpi};
+use chrono::Utc;
+use gsy_analytics_engine::engine::Engine;
+use gsy_analytics_engine::{config::Config, db, kpi, scheduler};
 use primitives::log::setup_logging;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -25,15 +27,33 @@ async fn main() -> Result<()> {
         );
     }
 
-    tokio::select! {
-        _databases = db::connect(&config) => {}
+    let databases = tokio::select! {
+        databases = db::connect(&config) => databases,
         _ = shutdown_signal() => {
             info!("Shutdown requested before MongoDB connection was established");
             return Ok(());
         }
+    };
+
+    let engine = Engine::new(config, kpis, databases);
+    engine.ensure_indexes().await?;
+
+    if let Some(from) = engine.config().backfill_from {
+        info!("Backfilling KPIs from {}", from);
+        tokio::select! {
+            result = engine.run_backfill(from, Utc::now().timestamp()) => {
+                if let Err(error) = result {
+                    error!("KPI backfill failed: {:#}", error);
+                }
+            }
+            _ = shutdown_signal() => {
+                info!("Shutting down GSY Analytics Engine during backfill");
+                return Ok(());
+            }
+        }
     }
 
-    shutdown_signal().await;
+    scheduler::run(&engine, shutdown_signal()).await;
     info!("Shutting down GSY Analytics Engine");
     Ok(())
 }
