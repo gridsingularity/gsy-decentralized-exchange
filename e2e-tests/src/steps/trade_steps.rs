@@ -43,7 +43,6 @@ type EvmOrderParamsTuple = (
     bool,
     [u8; 16],
     u64,
-    [u8; 16],
 );
 
 abigen!(
@@ -78,8 +77,7 @@ abigen!(
                         {"name": "energyType", "type": "uint8"},
                         {"name": "isBid", "type": "bool"},
                         {"name": "preferredTradingPartner", "type": "bytes16"},
-                        {"name": "preferredEnergyRate", "type": "uint64"},
-                        {"name": "tradingPartner", "type": "bytes16"}
+                        {"name": "preferredEnergyRate", "type": "uint64"}
                     ]
                 }
             ],
@@ -316,18 +314,12 @@ async fn place_custom_order_for_market(
     let order_id = Uuid::new_v4().to_string();
     let order_id_bytes = create_encrypted_bytes16_from_string(&order_id);
     let mut resolved_requirements = requirements.clone();
-    let mut resolved_attributes = attributes.clone();
     let id_mapping_source = OffchainStorageClient::from_env("EWDS_E2E_CLIENT_ID", "gsye2e");
-    resolve_order_partner_ids(
-        &mut resolved_requirements,
-        &mut resolved_attributes,
-        &id_mapping_source,
-    )
-    .await
-    .expect("Failed to resolve order partner IDs");
-    let metadata =
-        order_metadata_to_contract(resolved_requirements.as_ref(), resolved_attributes.as_ref())
-            .expect("Invalid resolved order metadata");
+    resolve_order_partner_ids(&mut resolved_requirements, &id_mapping_source)
+        .await
+        .expect("Failed to resolve order partner IDs");
+    let metadata = order_metadata_to_contract(resolved_requirements.as_ref(), attributes.as_ref())
+        .expect("Invalid resolved order metadata");
 
     let params: EvmOrderParamsTuple = (
         order_id_bytes,
@@ -342,7 +334,6 @@ async fn place_custom_order_for_market(
         is_bid,
         metadata.preferred_trading_partner,
         metadata.preferred_energy_rate,
-        metadata.trading_partner,
     );
 
     let order_id = bytes16_to_hex(order_id_bytes);
@@ -692,18 +683,9 @@ async fn submit_offer(world: &mut MyWorld, user_name: String) {
     mine_until_matching_block(world, 12).await;
 }
 
-#[when(
-    expr = "{string} submits an offer for {float} energy at a rate of {float} for the preferred partner {string}"
-)]
-async fn submit_preferred_partner_offer(
-    world: &mut MyWorld,
-    user_name: String,
-    energy: f64,
-    energy_rate: f64,
-    partner_name: String,
-) {
+#[when(expr = "{string} submits an offer for {float} energy at a rate of {float}")]
+async fn submit_green_offer(world: &mut MyWorld, user_name: String, energy: f64, energy_rate: f64) {
     let attributes = DbAttributes {
-        trading_partner_id: Some(partner_name.clone()),
         energy_type: EnergyType::Green,
     };
 
@@ -788,7 +770,6 @@ async fn submit_combined_pay_as_clear_order_book(world: &mut MyWorld) {
     .await;
 
     let preferred_offer_attributes = DbAttributes {
-        trading_partner_id: Some("alice".to_string()),
         energy_type: EnergyType::Green,
     };
     let preferred_offer = place_custom_order(

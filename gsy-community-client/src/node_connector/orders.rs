@@ -30,7 +30,6 @@ pub type EvmOrderParamsTuple = (
     bool,
     [u8; 16],
     u64,
-    [u8; 16],
 );
 
 pub async fn publish_orders(
@@ -125,8 +124,7 @@ abigen!(
                         {"name": "energyType", "type": "uint8"},
                         {"name": "isBid", "type": "bool"},
                         {"name": "preferredTradingPartner", "type": "bytes16"},
-                        {"name": "preferredEnergyRate", "type": "uint64"},
-                        {"name": "tradingPartner", "type": "bytes16"}
+                        {"name": "preferredEnergyRate", "type": "uint64"}
                     ]
                 }
             ],
@@ -163,7 +161,6 @@ async fn build_order_param(
         is_bid,
         metadata.preferred_trading_partner,
         metadata.preferred_energy_rate,
-        metadata.trading_partner,
     ))
 }
 

@@ -36,8 +36,7 @@
                             {"name": "energySourcePreference", "type": "uint8"},
                             {"name": "energyType", "type": "uint8"},
                             {"name": "preferredTradingPartner", "type": "bytes16"},
-                            {"name": "preferredEnergyRate", "type": "uint64"},
-                            {"name": "tradingPartner", "type": "bytes16"}
+                            {"name": "preferredEnergyRate", "type": "uint64"}
                         ]
                     },
                     {
@@ -54,8 +53,7 @@
                             {"name": "energySourcePreference", "type": "uint8"},
                             {"name": "energyType", "type": "uint8"},
                             {"name": "preferredTradingPartner", "type": "bytes16"},
-                            {"name": "preferredEnergyRate", "type": "uint64"},
-                            {"name": "tradingPartner", "type": "bytes16"}
+                            {"name": "preferredEnergyRate", "type": "uint64"}
                         ]
                     },
                     {"name": "residualBidId", "type": "bytes16"},
