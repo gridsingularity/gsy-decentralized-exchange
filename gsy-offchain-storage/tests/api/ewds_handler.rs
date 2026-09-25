@@ -97,7 +97,7 @@ async fn orders_query_bad_payload_errors() {
     let env = envelope(
         EwdsOperation::OrdersQuery,
         "req-orders-bad",
-        json!({ "startTime": "not-a-number" }),
+        json!({ "startTime": 0 }),
     );
 
     let err = handle_request(&app.db_wrapper, &client, &config, env)
@@ -121,7 +121,7 @@ async fn trades_query_success() {
     let env = envelope(
         EwdsOperation::TradesQuery,
         "req-trades-1",
-        json!({ "startTime": 0, "endTime": 9_999_999_999u64 }),
+        json!({ "startTime": "1970-01-01T00:00:00Z", "endTime": "2286-11-20T17:46:39Z" }),
     );
 
     handle_request(&app.db_wrapper, &client, &config, env)
@@ -142,7 +142,7 @@ async fn trades_query_bad_payload_errors() {
     let env = envelope(
         EwdsOperation::TradesQuery,
         "req-trades-bad",
-        json!({ "endTime": "nope" }),
+        json!({ "endTime": 9_999_999_999u64 }),
     );
 
     let err = handle_request(&app.db_wrapper, &client, &config, env)
@@ -166,7 +166,7 @@ async fn measurements_query_success() {
     let env = envelope(
         EwdsOperation::MeasurementsQuery,
         "req-meas-1",
-        json!({ "startTime": 0, "endTime": 9_999_999_999u64, "areaUuid": "facility-1" }),
+        json!({ "startTime": "1970-01-01T00:00:00Z", "endTime": "2286-11-20T17:46:39Z", "areaUuid": "facility-1" }),
     );
 
     handle_request(&app.db_wrapper, &client, &config, env)
@@ -187,7 +187,7 @@ async fn measurements_query_bad_payload_errors() {
     let env = envelope(
         EwdsOperation::MeasurementsQuery,
         "req-meas-bad",
-        json!({ "startTime": "x" }),
+        json!({ "startTime": 0 }),
     );
 
     let err = handle_request(&app.db_wrapper, &client, &config, env)

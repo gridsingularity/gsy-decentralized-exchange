@@ -168,7 +168,7 @@ async fn get_trades_filters_by_time_range() {
     // Range that includes the trade timestamp
     let resp = client
         .get(&format!("{}/trades", &address))
-        .query(&[("start_time", "1677453190"), ("end_time", "1677453192")])
+        .query(&[("start_time", "1767225602"), ("end_time", "1767225604")])
         .send()
         .await
         .unwrap();
@@ -180,7 +180,7 @@ async fn get_trades_filters_by_time_range() {
     // Range that excludes the trade timestamp
     let resp = client
         .get(&format!("{}/trades", &address))
-        .query(&[("start_time", "1677453192"), ("end_time", "1677453200")])
+        .query(&[("start_time", "1767225604"), ("end_time", "1767225610")])
         .send()
         .await
         .unwrap();
