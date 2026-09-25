@@ -1,3 +1,5 @@
+pub mod readers;
+
 use crate::config::Config;
 use anyhow::Result;
 use mongodb::bson::doc;
