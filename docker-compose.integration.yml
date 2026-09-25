@@ -64,6 +64,25 @@ services:
       - SCHEDULER_INTERVAL=900
       - EVM_NODE_URL=ws://localhost:8545
 
+  gsy-analytics-engine-integration-test:
+    container_name: gsy-analytics-engine-integration-test
+    build:
+      context: .
+      dockerfile: gsy-analytics-engine/Dockerfile
+      target: builder
+    entrypoint: ["cargo", "test", "--release", "--locked"]
+    working_dir: /var/www/gsy-analytics-engine
+    depends_on:
+      mongodb:
+        condition: service_started
+    environment:
+      - RUST_BACKTRACE=1
+      - RUST_LOG=info
+      - DATABASE_HOST=mongodb
+      - DATABASE_USERNAME=gsy
+      - DATABASE_PASSWORD=gsy
+      - DATABASE_URL_SCHEME=mongodb
+
   gsy-market-orchestrator-integration-test:
     container_name: gsy-market-orchestrator-integration-test
     build:

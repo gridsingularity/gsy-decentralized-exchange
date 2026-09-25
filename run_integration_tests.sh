@@ -7,6 +7,7 @@ COMPOSE_FILE="docker-compose.integration.yml"
 SERVICES=(
   gsy-listener-test
   gsy-offchain-storage-integration-test
+  gsy-analytics-engine-integration-test
   gsy-market-orchestrator-integration-test
   gsy-matching-engine-integration-test
   gsy-execution-engine-integration-test
