@@ -1,5 +1,5 @@
 use anyhow::Result;
-use gsy_analytics_engine::{config::Config, db};
+use gsy_analytics_engine::{config::Config, db, kpi};
 use primitives::log::setup_logging;
 use tracing::{info, warn};
 
@@ -10,6 +10,14 @@ async fn main() -> Result<()> {
     info!("Starting GSY Analytics Engine...");
     let config = Config::from_env()?;
     info!("Loaded config: {:?}", config);
+    let kpis = kpi::build_registry(&config)?;
+    info!(
+        "Enabled KPIs: {}",
+        kpis.iter()
+            .map(|kpi| kpi.id())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
     if config.tariffs.is_empty() {
         warn!(
             "No grid tariff configured (ANALYTICS_GRID_TARIFF_EUR_PER_KWH / \
