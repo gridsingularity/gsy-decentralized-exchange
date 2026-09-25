@@ -49,6 +49,9 @@ function parseSettleBatchSizes(): number[] {
   return [...new Set(sizes)].sort((left, right) => left - right);
 }
 
+// Matches primitives::db_api_schema::trades::ClearingStatus::Final.to_evm().
+const CLEARING_STATUS_FINAL = 1;
+
 function buildMatch(
   tradeId: string,
   bid: any,
@@ -657,11 +660,25 @@ async function main() {
       throw new Error(`Missing settleBatch matches for batch size ${batchSize}`);
     }
 
+    // One market settlement; the clearing result must account for every match.
+    const clearingResult = {
+      marketId,
+      clearingStatus: CLEARING_STATUS_FINAL,
+      clearingPrice: 12_000,
+      totalSupply: 0,
+      totalDemand: 0,
+      tradedQuantity: matches.reduce(
+        (total, match) => total + BigInt(match.selectedEnergy),
+        0n,
+      ),
+      numTrades: matches.length,
+    };
+
     await recordTx(
       "Mutating calls",
       `settleBatch(Match[${batchSize}])`,
       "TradeSettlement",
-      tradeSettlementContract.settleBatch(matches),
+      tradeSettlementContract.settleBatch([{ matches, clearingResult }]),
       "Batch-size benchmark row. Prerequisite order placement gas is reported separately.",
     );
   }

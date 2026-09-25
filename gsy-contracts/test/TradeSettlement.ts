@@ -435,7 +435,7 @@ describe("TradeSettlement", function () {
       "tradingPartner",
     ] as const) {
       it(`Should reject a changed ${field} on the ${side}`, async function () {
-        const { settlement, registry, buyer, seller, operator, bid, offer } =
+        const { settlement, registry, buyer, seller, operator, bid, offer, makeClearingResult } =
           await loadFixture(deploySettlementFixture);
 
         await registry.connect(buyer).placeOrder(bid);
@@ -458,8 +458,13 @@ describe("TradeSettlement", function () {
           clearingPrice: 45,
         };
 
+        const settlementBatch = {
+          matches: [matchData],
+          clearingResult: makeClearingResult(),
+        };
+
         await expect(
-          settlement.connect(operator).settleBatch([matchData]),
+          settlement.connect(operator).settleBatch([settlementBatch]),
         ).to.be.revertedWithCustomError(settlement, "InvalidOrderParams");
         expect(await registry.getStatus(bid.orderId)).to.equal(1); // Open
         expect(await registry.getStatus(offer.orderId)).to.equal(1); // Open
