@@ -9,7 +9,7 @@ use primitives::db_api_schema::orders::{
 use primitives::ewds::dto::EwdsOrderDto;
 use primitives::ewds::{EwdsClient, EwdsOperation};
 use primitives::matching::matching_block_interval;
-use primitives::utils::endpoint_calls::resolve_order_partner_ids;
+use primitives::offchain_storage::{resolve_order_partner_ids, OffchainStorageClient};
 use primitives::utils::{bytes16_to_hex, parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR};
 use primitives::MatchingAlgorithm;
 use std::collections::{BTreeMap, HashMap};
@@ -286,6 +286,8 @@ async fn fetch_market_orders(body: Vec<EwdsOrderDto>) -> Result<PreparedOrders> 
         .map(|o| DbOrderSchema::try_from(o).expect("invalid EwdsOrderDto"))
         .collect();
     let mut by_order_id: HashMap<String, DbOrderSchema> = HashMap::new();
+    let id_mapping_source =
+        OffchainStorageClient::from_env("EWDS_MATCHING_ENGINE_CLIENT_ID", "gsymatchingengine");
 
     for mut db_order_schema in orders
         .into_iter()
@@ -294,8 +296,7 @@ async fn fetch_market_orders(body: Vec<EwdsOrderDto>) -> Result<PreparedOrders> 
         resolve_order_partner_ids(
             &mut db_order_schema.requirements,
             &mut db_order_schema.attributes,
-            "EWDS_MATCHING_ENGINE_CLIENT_ID",
-            "gsymatchingengine",
+            &id_mapping_source,
         )
         .await?;
         match convert_db_order_to_canonical(&db_order_schema) {

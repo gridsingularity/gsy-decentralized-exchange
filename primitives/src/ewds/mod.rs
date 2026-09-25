@@ -1,14 +1,14 @@
 pub mod dto;
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use dto::{
     EwdsDeliverySummary, EwdsMessageDto, EwdsQueryResponse, EwdsRequestEnvelope,
     EwdsSendMessageDto, EwdsSendMessageResponse,
 };
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use std::{env, fmt, time::Instant};
-use tokio::time::{Duration, sleep};
+use tokio::time::{sleep, Duration};
 use tracing::warn;
 
 const DEFAULT_GATEWAY_URL: &str = "http://ewds-gateway-api:3333";
@@ -37,10 +37,12 @@ pub enum EwdsOperation {
     ClearingResultsQuery,
     #[serde(rename = "markets.query")]
     MarketsQuery,
+    #[serde(rename = "facilities.query")]
+    FacilitiesQuery,
 }
 
 impl EwdsOperation {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::OrdersQuery,
         Self::TradesQuery,
         Self::MeasurementsQuery,
@@ -48,6 +50,7 @@ impl EwdsOperation {
         Self::CommunitiesQuery,
         Self::ClearingResultsQuery,
         Self::MarketsQuery,
+        Self::FacilitiesQuery,
         Self::IdsQuery,
     ];
 
@@ -61,6 +64,7 @@ impl EwdsOperation {
             Self::IdsQuery => "ids.query",
             Self::ClearingResultsQuery => "clearing_results.query",
             Self::MarketsQuery => "markets.query",
+            Self::FacilitiesQuery => "facilities.query",
         }
     }
 
@@ -74,6 +78,7 @@ impl EwdsOperation {
             Self::IdsQuery => "ids-query",
             Self::ClearingResultsQuery => "clearing_results-query",
             Self::MarketsQuery => "markets-query",
+            Self::FacilitiesQuery => "facilities-query",
         }
     }
 }
@@ -100,6 +105,7 @@ pub struct EwdsTopicConfig {
     ids: EwdsTopicPair,
     clearing_results: EwdsTopicPair,
     markets: EwdsTopicPair,
+    facilities: EwdsTopicPair,
 }
 
 impl Default for EwdsTopicConfig {
@@ -136,6 +142,10 @@ impl Default for EwdsTopicConfig {
             markets: EwdsTopicPair {
                 request: "marketsQuery".to_string(),
                 response: "marketsQueryResponse".to_string(),
+            },
+            facilities: EwdsTopicPair {
+                request: "facilitiesQuery".to_string(),
+                response: "facilitiesQueryResponse".to_string(),
             },
         }
     }
@@ -196,14 +206,8 @@ impl EwdsTopicConfig {
                 ),
             },
             ids: EwdsTopicPair {
-                request: env_or(
-                    "EWDS_IDS_REQUEST_TOPIC",
-                    defaults.ids.request.as_str(),
-                ),
-                response: env_or(
-                    "EWDS_IDS_RESPONSE_TOPIC",
-                    defaults.ids.response.as_str(),
-                ),
+                request: env_or("EWDS_IDS_REQUEST_TOPIC", defaults.ids.request.as_str()),
+                response: env_or("EWDS_IDS_RESPONSE_TOPIC", defaults.ids.response.as_str()),
             },
             clearing_results: EwdsTopicPair {
                 request: env_or(
@@ -225,6 +229,16 @@ impl EwdsTopicConfig {
                     defaults.markets.response.as_str(),
                 ),
             },
+            facilities: EwdsTopicPair {
+                request: env_or(
+                    "EWDS_FACILITIES_REQUEST_TOPIC",
+                    defaults.facilities.request.as_str(),
+                ),
+                response: env_or(
+                    "EWDS_FACILITIES_RESPONSE_TOPIC",
+                    defaults.facilities.response.as_str(),
+                ),
+            },
         }
     }
 
@@ -238,6 +252,7 @@ impl EwdsTopicConfig {
             EwdsOperation::IdsQuery => &self.ids,
             EwdsOperation::ClearingResultsQuery => &self.clearing_results,
             EwdsOperation::MarketsQuery => &self.markets,
+            EwdsOperation::FacilitiesQuery => &self.facilities,
         }
     }
 }

@@ -1,12 +1,13 @@
 use anyhow::{anyhow, Result};
 use cucumber::World;
 use ethers::prelude::*;
-use gsy_community_client::external_api::ExternalFacilityTopology;
+use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
+use primitives::db_api_schema::grid_topology::FacilitySchema;
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::profiles::ForecastSchema;
 use primitives::db_api_schema::trades::DbTradeSchema;
+use primitives::offchain_storage::OffchainStorageClient;
 use primitives::utils::parse_uuid_or_hex_bytes16;
-use primitives::utils::endpoint_calls::fetch_onchain_id;
 use reqwest::Client;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -18,7 +19,6 @@ const DEFAULT_PRIVATE_KEY: &str =
 #[derive(Clone, Debug)]
 pub struct UserAccount {
     pub private_key: String,
-    pub address: Address,
 }
 
 #[derive(Clone, Debug)]
@@ -53,14 +53,12 @@ pub struct MyWorld {
     pub actor_registry_address: Address,
     pub last_market_id: Option<[u8; 16]>,
     pub target_delivery_time: u64,
-    pub buyer_id: String,
-    pub seller_id: String,
     pub bid_forecast: Option<ForecastSchema>,
     pub offer_forecast: Option<ForecastSchema>,
     pub last_trade: Option<DbTradeSchema>,
     pub last_charlie_offer_order_id: Option<String>,
     pub market_schema: Option<MarketSchema>,
-    pub facilities_topology: Vec<ExternalFacilityTopology>,
+    pub facilities_topology: Vec<FacilitySchema>,
     pub pay_as_clear_scenario: Option<PayAsClearScenario>,
     pub pay_as_clear_trades: Vec<DbTradeSchema>,
     pub preferred_trade: Option<DbTradeSchema>,
@@ -90,15 +88,15 @@ impl MyWorld {
         let mut users = HashMap::new();
         users.insert(
             "alice".to_string(),
-            Self::build_user(alice_private_key.as_str(), chain_id)?,
+            Self::build_user(alice_private_key.as_str())?,
         );
         users.insert(
             "bob".to_string(),
-            Self::build_user(bob_private_key.as_str(), chain_id)?,
+            Self::build_user(bob_private_key.as_str())?,
         );
         users.insert(
             "charlie".to_string(),
-            Self::build_user(charlie_private_key.as_str(), chain_id)?,
+            Self::build_user(charlie_private_key.as_str())?,
         );
 
         let market_controller_address = Self::read_address_env("MARKET_CONTROLLER_ADDRESS")?;
@@ -122,8 +120,6 @@ impl MyWorld {
             actor_registry_address,
             last_market_id: None,
             target_delivery_time: 0,
-            buyer_id: "alice".to_string(),
-            seller_id: "bob".to_string(),
             bid_forecast: None,
             offer_forecast: None,
             last_trade: None,
@@ -140,15 +136,13 @@ impl MyWorld {
         })
     }
 
-    fn build_user(private_key: &str, chain_id: u64) -> Result<UserAccount> {
-        let wallet = private_key
+    fn build_user(private_key: &str) -> Result<UserAccount> {
+        private_key
             .parse::<LocalWallet>()
-            .map_err(|e| anyhow!("Invalid user private key: {}", e))?
-            .with_chain_id(chain_id);
+            .map_err(|e| anyhow!("Invalid user private key: {}", e))?;
 
         Ok(UserAccount {
             private_key: private_key.to_string(),
-            address: wallet.address(),
         })
     }
 
@@ -181,13 +175,25 @@ impl MyWorld {
         if !self.users.contains_key(user_name) {
             panic!("Unknown user '{}'", user_name);
         }
-        let onchain_id = fetch_onchain_id(
-            "E2E_TESTS_CLIENT_ID",
-            "e2e_tests",
-            user_name,
-        )
+        let onchain_id = OffchainStorageClient::from_env("E2E_TESTS_CLIENT_ID", "e2e_tests")
+            .fetch_onchain_id(user_name)
             .await
             .expect("failed to fetch onchain id");
         parse_uuid_or_hex_bytes16(&onchain_id).expect("failed to parse uuid")
+    }
+
+    pub async fn create_facilities(&self, facilities: Vec<FacilitySchema>) {
+        let adapter = AreaMarketInfoAdapter::new(Some(self.offchain_storage_url.clone()));
+        for facility in facilities.iter() {
+            let _ = adapter
+                .forward_facilities(facility.clone())
+                .await
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "facility creation failed (error={e}, facility={:?})",
+                        facility.clone()
+                    )
+                });
+        }
     }
 }

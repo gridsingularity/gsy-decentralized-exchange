@@ -87,6 +87,14 @@ pub async fn init_facilities(db: &DatabaseWrapper) -> Result<()> {
                 .build(),
         )
         .await?;
+    controller
+        .create_index(
+            IndexModel::builder()
+                .keys(doc! {"facility_id": 1})
+                .options(IndexOptions::builder().unique(true).build())
+                .build(),
+        )
+        .await?;
     Ok(())
 }
 
