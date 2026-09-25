@@ -2,6 +2,7 @@ use crate::helpers::{init_app, stop_app};
 use actix_web::web;
 use primitives::db_api_schema::orders::{DbOrderSchema, OrderEnum, OrderStatus};
 use primitives::ewds::dto::EwdsTradeDto;
+use primitives::utils::epoch_to_rfc3339;
 
 fn make_order(order_id: &str, order_type: OrderEnum) -> DbOrderSchema {
     DbOrderSchema {
@@ -268,7 +269,7 @@ async fn filter_trades_time_boundaries_are_inclusive_start_exclusive_end() {
             OrderEnum::Offer,
         );
         let mut trade = make_trade(&format!("TRADE-BORDER-{:04}", idx), bid, offer);
-        trade.timestamp = *ts;
+        trade.timestamp = epoch_to_rfc3339(*ts);
 
         let resp = client
             .post(&format!("{}/trades", &address))

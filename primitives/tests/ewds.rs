@@ -12,6 +12,7 @@ use primitives::ewds::dto::{
     EwdsMarketDto, EwdsOrderDto, EwdsTradeDto,
 };
 use primitives::ewds::EwdsOperation;
+use primitives::utils::epoch_to_rfc3339;
 use serde_json::Value;
 use std::str::FromStr;
 
@@ -66,7 +67,7 @@ mod tests {
         assert_eq!(dto.market_id, "market-id");
         assert_eq!(dto.order_type, "bid");
         assert_eq!(dto.order_status, "submitted");
-        assert_eq!(dto.time_slot, 10);
+        assert_eq!(dto.time_slot, epoch_to_rfc3339(10));
         assert_eq!(dto.quantity, 4.5);
         assert_eq!(dto.price_limit, 20.0);
         assert_eq!(dto.preferred_energy_rate, Some(12.0));
@@ -174,7 +175,7 @@ mod tests {
         assert_eq!(dto.trade_status, "settled");
         assert_eq!(dto.trade_quantity, 4.5);
         assert_eq!(dto.trade_price, 12.0);
-        assert_eq!(dto.timestamp, 10);
+        assert_eq!(dto.timestamp, epoch_to_rfc3339(10));
     }
 
     #[test]
@@ -246,7 +247,7 @@ mod tests {
         assert_eq!(dto.trade_quantity, 75.0); // traded_quantity -> trade_quantity
         assert_eq!(dto.num_trades, 3);
         assert_eq!(dto.tx_hash, "0xabc");
-        assert_eq!(dto.created_at, 42); // clearing_time -> created_at
+        assert_eq!(dto.created_at, epoch_to_rfc3339(42)); // clearing_time -> created_at
     }
 
     #[test]

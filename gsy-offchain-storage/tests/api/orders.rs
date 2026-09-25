@@ -3,6 +3,7 @@ use actix_web::web;
 use mongodb::bson::{to_bson, Bson};
 use primitives::db_api_schema::orders::{OrderEnum, OrderStatus};
 use primitives::ewds::dto::{order_status_to_ewds, order_type_to_ewds, EwdsOrderDto};
+use primitives::utils::epoch_to_rfc3339;
 use std::collections::HashMap;
 
 fn make_order(order_id: &str, market_id: &str, order_type: OrderEnum) -> EwdsOrderDto {
@@ -159,7 +160,7 @@ async fn filter_orders_by_market_and_time_range() {
             market,
             OrderEnum::Bid,
         );
-        order.time_slot = *ts;
+        order.time_slot = epoch_to_rfc3339(*ts);
         orders.push(order);
     }
 
@@ -235,7 +236,7 @@ async fn filter_orders_time_boundaries_are_inclusive_start_exclusive_end() {
             market,
             OrderEnum::Bid,
         );
-        order.time_slot = *ts;
+        order.time_slot = epoch_to_rfc3339(*ts);
         orders.push(order);
     }
 
