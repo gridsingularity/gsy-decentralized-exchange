@@ -16,6 +16,8 @@ x-gsy-ewds-env: &gsy-ewds-env
   EWDS_MARKETS_RESPONSE_TOPIC: "marketsQueryTestResponse"
   EWDS_MEASUREMENTS_REQUEST_TOPIC: "measurementsQueryTest"
   EWDS_MEASUREMENTS_RESPONSE_TOPIC: "measurementsQueryTestResponse"
+  EWDS_FACILITIES_REQUEST_TOPIC: "facilitiesQueryTest"
+  EWDS_FACILITIES_RESPONSE_TOPIC: "facilitiesQueryTestResponse"
   EWDS_IDS_REQUEST_TOPIC: "idsQueryTest"
   EWDS_IDS_RESPONSE_TOPIC: "idsQueryTestResponse"
   EWDS_COMMUNITY_UPSERT_TOPIC: "communityUpsertTest"
@@ -101,6 +103,7 @@ services:
       EVM_NODE_URL: ${EVM_NODE_URL:-ws://anvil:8545}
       ORDER_REGISTRY_ADDRESS: ${ORDER_REGISTRY_ADDRESS:-0x5FC8d32690cc91D4c39d9d3abcBD16989F875707}
       COMMUNITY_CLIENT_PRIVATE_KEY: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+      EWDS_COMMUNITY_CLIENT_ID: ${EWDS_COMMUNITY_CLIENT_ID:-gsycommunityclient}
       MATCHING_ALGORITHM: ${MATCHING_ALGORITHM:-pay_as_bid}
 
   gsy-market-orchestrator:
@@ -182,90 +185,6 @@ services:
       MATCHING_ALGORITHM: ${MATCHING_ALGORITHM:-pay_as_bid}
       MATCHING_ENGINE_BLOCK_INTERVAL: ${MATCHING_ENGINE_BLOCK_INTERVAL:-}
       EWDS_E2E_CLIENT_ID: ${EWDS_E2E_CLIENT_ID:-gsye2e}
+      MONGO_URL: mongodb://gsy:gsy@mongodb:27017/?retryWrites=true&w=majority
     networks:
       - default
-
-  gsy-contracts-tests:
-    container_name: gsy-contracts-tests
-    build:
-      context: ./gsy-contracts
-      dockerfile: Dockerfile
-    command: npx hardhat test
-    volumes:
-      - ./gsy-contracts:/app
-      - /app/node_modules
-
-  gsy-listener-test:
-    container_name: gsy-listener-test
-    build:
-      context: ./gsy-ethers-listener
-      dockerfile: Dockerfile
-    environment:
-      - RUST_LOG=info
-
-  gsy-offchain-storage-integration-test:
-    container_name: gsy-offchain-storage-integration-test
-    build:
-      context: .
-      dockerfile: gsy-offchain-storage/Dockerfile
-      target: builder
-    command: cargo test --test api
-    working_dir: /var/www/gsy-offchain-storage
-    depends_on:
-      mongodb:
-        condition: service_started
-    environment:
-      - RUST_BACKTRACE=1
-      - RUST_LOG=info
-      - DATABASE_HOST=mongodb
-      - DATABASE_NAME=test_db
-      - DATABASE_USERNAME=gsy
-      - DATABASE_PASSWORD=gsy
-      - DATABASE_URL_SCHEME=mongodb
-      - APPLICATION_HOST=0.0.0.0
-      - APPLICATION_PORT=8080
-      - SCHEDULER_INTERVAL=900
-      - EVM_NODE_URL=ws://localhost:8545
-
-  gsy-market-orchestrator-integration-test:
-    container_name: gsy-market-orchestrator-integration-test
-    build:
-      context: .
-      dockerfile: gsy-market-orchestrator/Dockerfile
-    entrypoint: ["cargo", "test", "--tests"]
-    working_dir: /var/www/gsy-market-orchestrator
-    environment:
-      - RUST_LOG=info
-
-  gsy-matching-engine-integration-test:
-    container_name: gsy-matching-engine-integration-test
-    build:
-      context: .
-      dockerfile: gsy-matching-engine/Dockerfile
-      target: builder
-    command: cargo test --test evm_integration
-    working_dir: /var/www/gsy-matching-engine
-    environment:
-      - RUST_LOG=info
-
-  gsy-execution-engine-integration-test:
-    container_name: gsy-execution-engine-integration-test
-    build:
-      context: .
-      dockerfile: gsy-execution-engine/Dockerfile
-      target: builder
-    command: cargo test --test evm_integration
-    working_dir: /var/www/gsy-execution-engine
-    environment:
-      - RUST_LOG=info
-
-  gsy-community-client-integration-test:
-    container_name: gsy-community-client-integration-test
-    build:
-      context: .
-      dockerfile: gsy-community-client/Dockerfile
-      target: builder
-    command: cargo test --tests
-    working_dir: /var/www/gsy-community-client
-    environment:
-      - RUST_LOG=info

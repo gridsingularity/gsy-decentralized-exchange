@@ -3,9 +3,9 @@ use anyhow::Context;
 use anyhow::{bail, Result};
 use futures::TryStreamExt;
 use mongodb::bson::doc;
+use mongodb::options::IndexOptions;
 use mongodb::options::ReturnDocument;
 use mongodb::{Collection, IndexModel};
-use mongodb::options::IndexOptions;
 use primitives::db_api_schema::ids::IdMappingSchema;
 use primitives::utils::{bytes16_to_hex, create_encrypted_bytes16_from_string};
 use std::ops::Deref;
@@ -63,10 +63,7 @@ impl IdService {
         skip(self),
         fields(offchain_id = %offchain_id)
     )]
-    pub async fn get_or_create(
-        &self,
-        offchain_id: String,
-    ) -> Result<IdMappingSchema> {
+    pub async fn get_or_create(&self, offchain_id: String) -> Result<IdMappingSchema> {
         let result = self
             .0
             .find_one_and_update(
