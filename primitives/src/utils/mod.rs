@@ -1,8 +1,8 @@
 use crate::MarketType;
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use blake2::digest::{Update, VariableOutput};
 use blake2::Blake2bVar;
-use chrono::{prelude::DateTime, Utc};
+use chrono::{prelude::DateTime, Utc, TimeZone};
 use std::env;
 use std::str::FromStr;
 
@@ -74,4 +74,18 @@ pub fn timestamp_to_string_with_padding(timestamp: u64) -> String {
 pub fn string_to_timestamp(timestamp_string: &str) -> Result<u64> {
     let ts: u64 = timestamp_string.parse()?;
     Ok(ts)
+}
+
+/// Format epoch seconds as an ISO 8601 / RFC 3339 string with timezone (UTC, `Z`).
+pub fn epoch_to_rfc3339(epoch_secs: u64) -> String {
+    Utc.timestamp_opt(epoch_secs as i64, 0)
+        .single()
+        .map(|dt| dt.to_rfc3339())
+        .unwrap_or_default()
+}
+
+pub fn rfc3339_to_epoch(value: &str) -> Result<u64> {
+    let parsed = DateTime::parse_from_rfc3339(value)
+        .map_err(|e| anyhow!("invalid ISO 8601 timestamp '{}': {}", value, e))?;
+    Ok(parsed.timestamp() as u64)
 }
