@@ -35,6 +35,10 @@ struct RawConfig {
     // Kept as strings so that empty values (e.g. `${VAR:-}` in compose) mean "unset".
     analytics_grid_tariff_eur_per_kwh: Option<String>,
     analytics_grid_tariff_overrides: Option<String>,
+    #[serde(default = "default_api_host")]
+    analytics_api_host: String,
+    #[serde(default = "default_api_port")]
+    analytics_api_port: u16,
 }
 
 fn default_database_url_scheme() -> String {
@@ -66,6 +70,12 @@ fn default_settlement_delay_minutes() -> u64 {
 }
 fn default_enabled_kpis() -> String {
     "procurement_cost_per_kwh".to_string()
+}
+fn default_api_host() -> String {
+    "0.0.0.0".to_string()
+}
+fn default_api_port() -> u16 {
+    8081
 }
 fn default_granularities() -> String {
     "15min".to_string()
@@ -127,9 +137,16 @@ pub struct Config {
     pub enabled_kpis: Vec<String>,
     pub granularities: Vec<MarketTimeSeriesGranularity>,
     pub tariffs: TariffConfig,
+    pub api_host: String,
+    pub api_port: u16,
 }
 
 impl Config {
+    /// `host:port` the HTTP API binds to.
+    pub fn api_address(&self) -> String {
+        format!("{}:{}", self.api_host, self.api_port)
+    }
+
     pub fn from_env() -> Result<Self> {
         Self::from_vars(std::env::vars())
     }
@@ -175,6 +192,8 @@ impl Config {
                     .transpose()?
                     .unwrap_or_default(),
             },
+            api_host: raw.analytics_api_host,
+            api_port: raw.analytics_api_port,
         })
     }
 }

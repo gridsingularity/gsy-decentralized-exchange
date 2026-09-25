@@ -180,3 +180,21 @@ fn backfill_accepts_unix_seconds_and_rfc3339() {
 fn zero_interval_is_rejected() {
     assert!(config_from(&[("ANALYTICS_INTERVAL_SECONDS", "0")]).is_err());
 }
+
+#[test]
+fn api_address_defaults_and_overrides() {
+    let config = config_from(&[]).unwrap();
+    assert_eq!(config.api_host, "0.0.0.0");
+    assert_eq!(config.api_port, 8081);
+    assert_eq!(config.api_address(), "0.0.0.0:8081");
+
+    let config = config_from(&[
+        ("ANALYTICS_API_HOST", "127.0.0.1"),
+        ("ANALYTICS_API_PORT", "9000"),
+    ])
+    .unwrap();
+    assert_eq!(config.api_address(), "127.0.0.1:9000");
+
+    assert!(config_from(&[("ANALYTICS_API_PORT", "70000")]).is_err());
+    assert!(config_from(&[("ANALYTICS_API_PORT", "http")]).is_err());
+}

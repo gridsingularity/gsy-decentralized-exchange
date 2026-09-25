@@ -47,6 +47,11 @@ impl Engine {
         &self.config
     }
 
+    /// The `kpi_results` collection, shared with the HTTP API.
+    pub fn results_collection(&self) -> Collection<Document> {
+        self.results.clone()
+    }
+
     pub async fn ensure_indexes(&self) -> Result<()> {
         ensure_indexes(&self.results).await
     }

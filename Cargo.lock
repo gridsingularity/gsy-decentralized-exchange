@@ -2295,15 +2295,18 @@ dependencies = [
 name = "gsy-analytics-engine"
 version = "0.1.0"
 dependencies = [
+ "actix-web",
  "anyhow",
  "chrono",
  "envy",
  "futures",
  "mongodb",
  "primitives",
+ "reqwest 0.11.27",
  "serde",
  "tokio",
  "tracing",
+ "tracing-actix-web",
  "uuid 1.26.0",
 ]
 

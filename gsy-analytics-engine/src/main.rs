@@ -1,8 +1,9 @@
 use anyhow::Result;
 use chrono::Utc;
 use gsy_analytics_engine::engine::Engine;
-use gsy_analytics_engine::{config::Config, db, kpi, scheduler};
+use gsy_analytics_engine::{api, config::Config, db, kpi, scheduler};
 use primitives::log::setup_logging;
+use std::net::TcpListener;
 use tracing::{error, info, warn};
 
 #[tokio::main]
@@ -38,6 +39,12 @@ async fn main() -> Result<()> {
     let engine = Engine::new(config, kpis, databases);
     engine.ensure_indexes().await?;
 
+    let listener = TcpListener::bind(engine.config().api_address())?;
+    info!("HTTP API listening on {}", listener.local_addr()?);
+    let server = api::run_http_server(listener, engine.results_collection())?;
+    let server_handle = server.handle();
+    let server_task = tokio::spawn(server);
+
     if let Some(from) = engine.config().backfill_from {
         info!("Backfilling KPIs from {}", from);
         tokio::select! {
@@ -48,6 +55,7 @@ async fn main() -> Result<()> {
             }
             _ = shutdown_signal() => {
                 info!("Shutting down GSY Analytics Engine during backfill");
+                server_handle.stop(true).await;
                 return Ok(());
             }
         }
@@ -55,6 +63,10 @@ async fn main() -> Result<()> {
 
     scheduler::run(&engine, shutdown_signal()).await;
     info!("Shutting down GSY Analytics Engine");
+    server_handle.stop(true).await;
+    if let Err(error) = server_task.await? {
+        error!("HTTP API stopped with an error: {}", error);
+    }
     Ok(())
 }
 
