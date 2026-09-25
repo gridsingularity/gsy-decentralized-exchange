@@ -13,21 +13,21 @@ name = "gsy_community_client"
 path = "src/lib.rs"
 
 [dependencies]
-primitives = { path = "../primitives" }
-reqwest = { version = "0.11", features = ["json"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1"
-anyhow = "1"
-ethers = { version = "2.0.14", features = ["ws", "rustls"] }
-tracing = { version = "0.1", features = ["log"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+primitives = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+ethers = { workspace = true, features = ["ws", "rustls"] }
+tracing = { workspace = true, features = ["log"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 blake2-rfc = { version = "0.2.18", default-features = false }
-uuid = { version = "1.12.1", features = ["v4"] }
+uuid = { workspace = true }
 serial_test = "3"
 
 [dev-dependencies]
-wiremock = "0.6.5"
+wiremock = { workspace = true }
 httpmock = "0.8.0-alpha.1"
-tracing-subscriber = "0.3.19"
-ethers-solc = "2.0.14"
-tempfile = "3"
+tracing-subscriber = { workspace = true }
+ethers-solc = { workspace = true }
+tempfile = { workspace = true }

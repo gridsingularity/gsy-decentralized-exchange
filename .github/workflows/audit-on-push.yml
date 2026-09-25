@@ -3,23 +3,63 @@ name: Security audit
 permissions:
   contents: read
 
+# No `paths:` filter on purpose: a path-filtered workflow reports no status at all
+# when it does not run, which leaves required checks pending. Instead the job always
+# runs and skips the audit steps (reporting success) when no Cargo files changed.
 on:
   push:
-    paths:
-      - ".github/workflows/audit-on-push.yml"
-      - "**/Cargo.toml"
-      - "**/Cargo.lock"
 
 jobs:
   security_audit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Check for Cargo manifest / lockfile changes
+        id: changes
+        shell: bash
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+
+          # New branches have an all-zero "before" SHA; compare against main instead.
+          base="$BEFORE_SHA"
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ] \
+              || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            base="$(git merge-base origin/main HEAD 2>/dev/null || true)"
+          fi
+
+          if [ -z "$base" ]; then
+            echo "No base commit to compare against, auditing."
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          changed_files="$(git diff --name-only "$base" HEAD -- \
+            '.github/workflows/audit-on-push.yml' \
+            ':(glob)**/Cargo.toml' \
+            ':(glob)**/Cargo.lock')"
+
+          if [ -n "$changed_files" ]; then
+            echo "Cargo files changed since ${base}:"
+            echo "$changed_files"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice title=Security audit skipped::No Cargo.toml or Cargo.lock changes since ${base}."
+            echo "### Security audit skipped :white_check_mark:" >> "$GITHUB_STEP_SUMMARY"
+            echo "No \`Cargo.toml\` or \`Cargo.lock\` changes since \`${base}\`." >> "$GITHUB_STEP_SUMMARY"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Install cargo-audit
+        if: steps.changes.outputs.changed == 'true'
         run: cargo install cargo-audit --locked
 
       - name: Audit Rust lockfiles
+        if: steps.changes.outputs.changed == 'true'
         shell: bash
         run: |
           set -euo pipefail

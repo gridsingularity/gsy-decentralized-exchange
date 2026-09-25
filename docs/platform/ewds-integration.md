@@ -243,7 +243,7 @@ Validator requirements:
 A local DDHub Client Gateway should be deployed against EWF-hosted EWC Digital Spine services:
 
 - Gateway-only stack: `docker-compose.ewds.yml`
-- GSY DEX EWDS mode: `docker-compose.yml` or `docker-compose.test.yml` with `.env.ewds.local`
+- GSY DEX EWDS mode: `docker-compose.yml` or `docker-compose.e2e-test.yml` with `.env.ewds.local`
 - Gateway namespace validator: `APPLICATION_NAMESPACE_REGULAR_EXPRESSION=\w+\.apps\..*\.(iam|auth)\.ewc` for both API and scheduler, as required by EWF for Intelligent `.auth.ewc` application namespaces.
 
 Operational startup order:

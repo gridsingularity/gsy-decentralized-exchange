@@ -43,7 +43,7 @@ Run e2e tests against the same deployed local chain:
 
 ```bash
 docker compose --env-file contracts-output/addresses.env \
-  -f docker-compose.test.yml \
+  -f docker-compose.e2e-test.yml \
   up --build --force-recreate \
   --abort-on-container-exit \
   --exit-code-from e2e-tests \

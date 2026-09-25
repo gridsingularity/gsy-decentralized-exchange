@@ -2,6 +2,7 @@ name: Security audit
 
 permissions:
   contents: read
+  actions: read
 
 on:
   schedule:
@@ -13,11 +14,57 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Check for Cargo manifest / lockfile changes
+        id: changes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Manual run, auditing unconditionally."
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          last_sha="$(gh run list \
+            --repo "${{ github.repository }}" \
+            --workflow scheduled-audit.yml \
+            --branch "${{ github.ref_name }}" \
+            --status success \
+            --limit 1 \
+            --json headSha \
+            --jq '.[0].headSha // empty' || true)"
+
+          if [ -z "$last_sha" ] || ! git cat-file -e "${last_sha}^{commit}" 2>/dev/null; then
+            echo "No previous successful run found, auditing."
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          changed_files="$(git diff --name-only "$last_sha" HEAD -- ':(glob)**/Cargo.toml' ':(glob)**/Cargo.lock')"
+
+          if [ -n "$changed_files" ]; then
+            echo "Cargo files changed since ${last_sha}:"
+            echo "$changed_files"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice title=Security audit skipped::No Cargo.toml or Cargo.lock changes since ${last_sha}."
+            echo "### Security audit skipped :white_check_mark:" >> "$GITHUB_STEP_SUMMARY"
+            echo "No \`Cargo.toml\` or \`Cargo.lock\` changes since \`${last_sha}\`." >> "$GITHUB_STEP_SUMMARY"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Install cargo-audit
+        if: steps.changes.outputs.changed == 'true'
         run: cargo install cargo-audit --locked
 
       - name: Audit Rust lockfiles
+        if: steps.changes.outputs.changed == 'true'
         shell: bash
         run: |
           set -euo pipefail
