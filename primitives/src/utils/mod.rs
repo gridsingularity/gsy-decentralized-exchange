@@ -1,5 +1,3 @@
-pub mod endpoint_calls;
-
 use crate::MarketType;
 use anyhow::Result;
 use blake2::digest::{Update, VariableOutput};

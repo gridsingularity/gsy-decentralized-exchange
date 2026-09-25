@@ -3,6 +3,7 @@ use cucumber::{then, when};
 use ethers::prelude::*;
 use gsy_community_client::node_connector::orders::publish_orders;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
+use primitives::db_api_schema::grid_topology::FacilitySchema;
 use primitives::db_api_schema::orders::{
     order_metadata_to_contract, DbAttributes, DbOrderSchema, DbRequirements, EnergyType,
     OrderStatus,
@@ -11,7 +12,7 @@ use primitives::db_api_schema::profiles::MeasurementSchema;
 use primitives::db_api_schema::trades::DbTradeSchema;
 use primitives::ewds::dto::{EwdsOrderDto, EwdsTradeDto};
 use primitives::matching::matching_block_interval;
-use primitives::utils::endpoint_calls::{fetch_clearing_results, resolve_order_partner_ids};
+use primitives::offchain_storage::{resolve_order_partner_ids, OffchainStorageClient};
 use primitives::utils::{
     bytes16_to_hex,
     create_encrypted_bytes16_from_string,
@@ -25,7 +26,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
 use tracing::info;
 use uuid::Uuid;
-
 const FLOAT_EPSILON: f64 = 0.000_001;
 const COMMUNITY_TRADE_POLL_ATTEMPTS: usize = 180;
 const COMMUNITY_MATCHING_RETRIGGER_INTERVAL: usize = 30;
@@ -166,7 +166,10 @@ fn address_to_full_hex(address: Address) -> String {
 }
 
 async fn actor_id_as_hex(world: &MyWorld, user_name: &str) -> String {
-    format!("0x{}", hex::encode(world.actor_id_for_user(user_name).await))
+    format!(
+        "0x{}",
+        hex::encode(world.actor_id_for_user(user_name).await)
+    )
 }
 
 fn market_id_as_hex(world: &MyWorld) -> String {
@@ -316,19 +319,17 @@ async fn place_custom_order_for_market(
     let order_id_bytes = create_encrypted_bytes16_from_string(&order_id);
     let mut resolved_requirements = requirements.clone();
     let mut resolved_attributes = attributes.clone();
+    let id_mapping_source = OffchainStorageClient::from_env("EWDS_E2E_CLIENT_ID", "gsye2e");
     resolve_order_partner_ids(
         &mut resolved_requirements,
         &mut resolved_attributes,
-        "EWDS_E2E_CLIENT_ID",
-        "gsye2e",
+        &id_mapping_source,
     )
     .await
     .expect("Failed to resolve order partner IDs");
-    let metadata = order_metadata_to_contract(
-        resolved_requirements.as_ref(),
-        resolved_attributes.as_ref(),
-    )
-    .expect("Invalid resolved order metadata");
+    let metadata =
+        order_metadata_to_contract(resolved_requirements.as_ref(), resolved_attributes.as_ref())
+            .expect("Invalid resolved order metadata");
 
     let params: EvmOrderParamsTuple = (
         order_id_bytes,
@@ -609,6 +610,22 @@ async fn submit_community_market_measurements(world: &mut MyWorld) {
             energy_kwh: 3.0,
         },
     ];
+
+    let facilities = vec![
+        FacilitySchema {
+            facility_id: "alice".to_string(),
+            facility_name: "alice".to_string(),
+            site_id: "12345".to_string(),
+            owner_id: "alice".to_string(),
+        },
+        FacilitySchema {
+            facility_id: "bob".to_string(),
+            facility_name: "bob".to_string(),
+            site_id: "12346".to_string(),
+            owner_id: "bob".to_string(),
+        },
+    ];
+    world.create_facilities(facilities).await;
 
     AreaMarketInfoAdapter::new(Some(world.offchain_storage_url.clone()))
         .forward_measurement(measurements)
@@ -1295,13 +1312,10 @@ async fn verify_penalties_on_chain(world: &mut MyWorld) {
 
 #[then("corresponding clearing results are written to the DB")]
 async fn verify_clearing_results(world: &mut MyWorld) {
-    let clearing_results = fetch_clearing_results(
-        "E2E_TESTS_CLIENT_ID",
-        "e2e_tests",
-        &market_id_as_hex(world).to_lowercase(),
-    )
-    .await
-    .expect("failed to fetch clearing results");
+    let clearing_results = OffchainStorageClient::from_env("E2E_TESTS_CLIENT_ID", "e2e_tests")
+        .fetch_clearing_results(&market_id_as_hex(world).to_lowercase())
+        .await
+        .expect("failed to fetch clearing results");
 
     eprintln!("{:?}", clearing_results);
 

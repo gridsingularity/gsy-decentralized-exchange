@@ -44,13 +44,14 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         } else {
             OrderEnum::Offer
         };
-        let (mut requirements, mut attributes) = order_metadata_from_contract(ContractOrderMetadata {
-            energy_source_preference: event.energy_source_preference,
-            energy_type: event.energy_type,
-            preferred_trading_partner: event.preferred_trading_partner,
-            preferred_energy_rate: event.preferred_energy_rate,
-            trading_partner: event.trading_partner,
-        });
+        let (mut requirements, mut attributes) =
+            order_metadata_from_contract(ContractOrderMetadata {
+                energy_source_preference: event.energy_source_preference,
+                energy_type: event.energy_type,
+                preferred_trading_partner: event.preferred_trading_partner,
+                preferred_energy_rate: event.preferred_energy_rate,
+                trading_partner: event.trading_partner,
+            });
         for partner in [
             requirements
                 .as_mut()
@@ -62,7 +63,9 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         .into_iter()
         .flatten()
         {
-            *partner = self.db.ids()
+            *partner = self
+                .db
+                .ids()
                 .filter(Some(partner.clone()), None)
                 .await?
                 .pop()

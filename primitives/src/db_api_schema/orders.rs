@@ -10,9 +10,7 @@
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::utils::{
-    bytes16_to_hex, parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR,
-};
+use crate::utils::{bytes16_to_hex, parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd)]
 #[serde(rename_all = "lowercase")]
@@ -179,7 +177,9 @@ fn resolved_partner_id(id: &str) -> Result<[u8; 16]> {
         .filter(|value| value.len() == 32)
         .and_then(parse_uuid_or_hex_bytes16)
         .filter(|value| *value != [0; 16])
-        .ok_or_else(|| anyhow!("Partner ID must be resolved through the ID service before encoding"))
+        .ok_or_else(|| {
+            anyhow!("Partner ID must be resolved through the ID service before encoding")
+        })
 }
 
 /// Decode the wire representation; the indexer resolves partner IDs via its ID mapping.
