@@ -1,6 +1,8 @@
 mod pay_as_bid;
 mod pay_as_clear;
 
+pub use pay_as_clear::PayAsClearPricing;
+
 use crate::models::{BidOfferMatch, MatchingData, Order};
 use primitives::MatchingAlgorithm;
 use std::collections::HashMap;
@@ -19,14 +21,26 @@ pub trait PayAsClear {
 }
 
 pub trait MatchOrders {
-    fn match_orders(&self, matching_data: &mut MatchingData) -> Result<Vec<BidOfferMatch>, String>;
+    fn match_orders(&self, matching_data: &mut MatchingData) -> Result<Vec<BidOfferMatch>, String> {
+        self.match_orders_with_pricing(matching_data, PayAsClearPricing::default())
+    }
+
+    fn match_orders_with_pricing(
+        &self,
+        matching_data: &mut MatchingData,
+        pricing: PayAsClearPricing,
+    ) -> Result<Vec<BidOfferMatch>, String>;
 }
 
 impl MatchOrders for MatchingAlgorithm {
-    fn match_orders(&self, matching_data: &mut MatchingData) -> Result<Vec<BidOfferMatch>, String> {
+    fn match_orders_with_pricing(
+        &self,
+        matching_data: &mut MatchingData,
+        pricing: PayAsClearPricing,
+    ) -> Result<Vec<BidOfferMatch>, String> {
         match self {
             MatchingAlgorithm::PayAsBid => Ok(matching_data.pay_as_bid()),
-            MatchingAlgorithm::PayAsClear => Ok(matching_data.pay_as_clear()),
+            MatchingAlgorithm::PayAsClear => Ok(matching_data.pay_as_clear_with_pricing(pricing)),
             MatchingAlgorithm::AMM => {
                 Err("Matching algorithm 'amm' is not implemented".to_string())
             }
@@ -100,8 +114,8 @@ impl MatchingData {
                     time_slot: offer.time_slot,
                     bid: bid.clone(),
                     offer: offer.clone(),
-                    residual_bid: None,
-                    residual_offer: None,
+                    residual_bid: residual_order(bid, bid_amount_used + selected_energy),
+                    residual_offer: residual_order(offer, offer_amount_used + selected_energy),
                     selected_energy,
                     energy_rate: preferred_rate,
                 });

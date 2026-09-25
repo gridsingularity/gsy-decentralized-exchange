@@ -1,55 +1,91 @@
 use super::{ClearingPoint, PayAsClear};
 use crate::models::{BidOfferMatch, MatchingData, Order};
+use std::{fmt, str::FromStr};
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PayAsClearPricing {
+    #[default]
+    MaxOffer,
+    MinBid,
+    Midpoint,
+}
+
+impl PayAsClearPricing {
+    fn clearing_price(self, max_offer: u64, min_bid: u64) -> u64 {
+        match self {
+            Self::MaxOffer => max_offer,
+            Self::MinBid => min_bid,
+            // Round down in fixed-point units without overflowing the sum.
+            Self::Midpoint => max_offer + (min_bid - max_offer) / 2,
+        }
+    }
+}
+
+impl fmt::Display for PayAsClearPricing {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::MaxOffer => "max_offer",
+            Self::MinBid => "min_bid",
+            Self::Midpoint => "midpoint",
+        })
+    }
+}
+
+impl FromStr for PayAsClearPricing {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "max_offer" => Ok(Self::MaxOffer),
+            "min_bid" => Ok(Self::MinBid),
+            "midpoint" => Ok(Self::Midpoint),
+            _ => Err(format!(
+                "Unsupported pay-as-clear pricing '{}'. Expected max_offer, min_bid, or midpoint",
+                value
+            )),
+        }
+    }
+}
+
+struct ClearingVolume {
+    traded_energy: u64,
+    max_accepted_offer: u64,
+    min_accepted_bid: u64,
+    demand_remaining: bool,
+    supply_remaining: bool,
+}
+
+impl ClearingVolume {
+    fn pricing_with_scarcity_override(&self, configured: PayAsClearPricing) -> PayAsClearPricing {
+        match (self.demand_remaining, self.supply_remaining) {
+            (true, false) => PayAsClearPricing::MinBid,
+            (false, true) => PayAsClearPricing::MaxOffer,
+            // A price crossing or simultaneous exhaustion keeps the configured policy.
+            _ => configured,
+        }
+    }
+}
 
 impl MatchingData {
-    fn calculate_clearing_point(&self, bids: &[Order], offers: &[Order]) -> Option<ClearingPoint> {
+    /// Calculate standard-market volume and price; trade allocation happens afterwards.
+    fn calculate_clearing_point(
+        &self,
+        bids: &[Order],
+        offers: &[Order],
+        pricing: PayAsClearPricing,
+    ) -> Option<ClearingPoint> {
         let mut bids = bids.iter().collect::<Vec<_>>();
         let mut offers = offers.iter().collect::<Vec<_>>();
         bids.sort_by(|left, right| right.energy_rate.cmp(&left.energy_rate));
         offers.sort_by(|left, right| left.energy_rate.cmp(&right.energy_rate));
 
-        let mut bid_index = 0;
-        let mut offer_index = 0;
-        let mut bid_energy = bids.first().map(|bid| bid.energy).unwrap_or_default();
-        let mut offer_energy = offers.first().map(|offer| offer.energy).unwrap_or_default();
-        let mut traded_energy = 0u64;
-        let mut clearing_price = None;
+        let volume = walk_sorted_curves(&bids, &offers)?;
+        let effective_pricing = volume.pricing_with_scarcity_override(pricing);
 
-        while bid_index < bids.len() && offer_index < offers.len() {
-            if bid_energy == 0 {
-                bid_index += 1;
-                bid_energy = bids
-                    .get(bid_index)
-                    .map(|bid| bid.energy)
-                    .unwrap_or_default();
-                continue;
-            }
-
-            if offer_energy == 0 {
-                offer_index += 1;
-                offer_energy = offers
-                    .get(offer_index)
-                    .map(|offer| offer.energy)
-                    .unwrap_or_default();
-                continue;
-            }
-
-            let bid = bids[bid_index];
-            let offer = offers[offer_index];
-            if bid.energy_rate < offer.energy_rate {
-                break;
-            }
-
-            let accepted_energy = bid_energy.min(offer_energy);
-            traded_energy += accepted_energy;
-            clearing_price = Some(offer.energy_rate);
-            bid_energy -= accepted_energy;
-            offer_energy -= accepted_energy;
-        }
-
-        clearing_price.map(|clearing_price| ClearingPoint {
-            traded_energy,
-            clearing_price,
+        Some(ClearingPoint {
+            traded_energy: volume.traded_energy,
+            clearing_price: effective_pricing
+                .clearing_price(volume.max_accepted_offer, volume.min_accepted_bid),
         })
     }
 
@@ -57,12 +93,22 @@ impl MatchingData {
         &self,
         bids: Vec<Order>,
         offers: Vec<Order>,
+        pricing: PayAsClearPricing,
     ) -> Vec<BidOfferMatch> {
-        let Some(clearing_point) = self.calculate_clearing_point(&bids, &offers) else {
+        let Some(clearing_point) = self.calculate_clearing_point(&bids, &offers, pricing) else {
             return Vec::new();
         };
 
         self.match_standard_at_clearing_point(bids, offers, Some(clearing_point))
+    }
+
+    /// Select standard-market pricing without changing the preceding preference phase.
+    pub fn pay_as_clear_with_pricing(&mut self, pricing: PayAsClearPricing) -> Vec<BidOfferMatch> {
+        let bids = self.bids().to_vec();
+        let offers = self.offers().to_vec();
+        let (mut matches, remaining_bids, remaining_offers) = self.match_preferences(bids, offers);
+        matches.extend(self.match_standard_pay_as_clear(remaining_bids, remaining_offers, pricing));
+        matches
     }
 }
 
@@ -70,12 +116,66 @@ impl PayAsClear for MatchingData {
     type Output = BidOfferMatch;
 
     fn pay_as_clear(&mut self) -> Vec<Self::Output> {
-        let bids = self.bids().to_vec();
-        let offers = self.offers().to_vec();
-        let (mut matches, remaining_bids, remaining_offers) = self.match_preferences(bids, offers);
-        matches.extend(self.match_standard_pay_as_clear(remaining_bids, remaining_offers));
-        matches
+        self.pay_as_clear_with_pricing(PayAsClearPricing::default())
     }
+}
+
+/// Walk descending bids and ascending offers until prices cross or one side ends.
+fn walk_sorted_curves(bids: &[&Order], offers: &[&Order]) -> Option<ClearingVolume> {
+    let mut bid_index = 0;
+    let mut offer_index = 0;
+    let mut bid_energy = bids.first().map(|bid| bid.energy).unwrap_or_default();
+    let mut offer_energy = offers.first().map(|offer| offer.energy).unwrap_or_default();
+    let mut traded_energy = 0u64;
+    let mut marginal_rates = None;
+
+    while bid_index < bids.len() && offer_index < offers.len() {
+        if bid_energy == 0 {
+            bid_index += 1;
+            bid_energy = bids
+                .get(bid_index)
+                .map(|bid| bid.energy)
+                .unwrap_or_default();
+            continue;
+        }
+
+        if offer_energy == 0 {
+            offer_index += 1;
+            offer_energy = offers
+                .get(offer_index)
+                .map(|offer| offer.energy)
+                .unwrap_or_default();
+            continue;
+        }
+
+        let bid = bids[bid_index];
+        let offer = offers[offer_index];
+        if bid.energy_rate < offer.energy_rate {
+            break;
+        }
+
+        let accepted_energy = bid_energy.min(offer_energy);
+        traded_energy += accepted_energy;
+        marginal_rates = Some((offer.energy_rate, bid.energy_rate));
+        bid_energy -= accepted_energy;
+        offer_energy -= accepted_energy;
+    }
+
+    let (max_accepted_offer, min_accepted_bid) = marginal_rates?;
+    // The loop can stop before advancing both cursors. Include later positive
+    // quantities so simultaneous exhaustion and empty trailing orders are handled.
+    let demand_remaining =
+        bid_energy > 0 || bids.iter().skip(bid_index + 1).any(|bid| bid.energy > 0);
+    let supply_remaining =
+        offer_energy > 0 || offers.iter().skip(offer_index + 1).any(|offer| offer.energy > 0);
+
+    Some(ClearingVolume {
+        traded_energy,
+        max_accepted_offer,
+        min_accepted_bid,
+        demand_remaining,
+        supply_remaining,
+    })
 }
 
 #[cfg(test)]
