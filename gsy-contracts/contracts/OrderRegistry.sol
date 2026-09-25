@@ -42,6 +42,9 @@ contract OrderRegistry is Initializable, AccessControlUpgradeable {
         uint8 energySourcePreference;
         uint8 energyType;
         bool isBid;
+        bytes16 preferredTradingPartner;
+        uint64 preferredEnergyRate;
+        bytes16 tradingPartner;
     }
 
     // Intelligent Order UUID (bytes16) => Status
@@ -58,7 +61,10 @@ contract OrderRegistry is Initializable, AccessControlUpgradeable {
         uint64 energyRate,
         uint8 energySourcePreference,
         uint8 energyType,
-        bool isBid
+        bool isBid,
+        bytes16 preferredTradingPartner,
+        uint64 preferredEnergyRate,
+        bytes16 tradingPartner
     );
     event OrderCancelled(bytes16 indexed orderId);
     event OrderStatusUpdated(bytes16 indexed orderId, OrderStatus status);
@@ -124,7 +130,10 @@ contract OrderRegistry is Initializable, AccessControlUpgradeable {
             params.energyRate,
             params.energySourcePreference,
             params.energyType,
-            params.isBid
+            params.isBid,
+            params.preferredTradingPartner,
+            params.preferredEnergyRate,
+            params.tradingPartner
         );
     }
 

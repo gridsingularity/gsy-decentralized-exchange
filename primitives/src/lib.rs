@@ -4,6 +4,7 @@ pub mod constants;
 pub mod ewds;
 pub mod log;
 pub mod matching;
+pub mod offchain_storage;
 pub mod utils;
 
 use serde::{Deserialize, Serialize};

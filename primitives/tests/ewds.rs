@@ -1,17 +1,17 @@
 use primitives::db_api_schema::{
     grid_topology::EnergyCommunitySchema,
     market::{MarketSchema, MarketType, MatchingAlgorithm},
-    orders::{DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus},
+    orders::{DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus},
     trades::{
         ClearingResultSchema, ClearingStatus, DbTradeSchema, NoBidReason, TradeParameters,
         TradeStatus,
     },
 };
-use primitives::ewds::EwdsOperation;
 use primitives::ewds::dto::{
-    EwdsClearingResultDto, EwdsCommunityDto, EwdsMarketDto, EwdsOrderDto, EwdsTradeDto,
-    energy_type_from_ewds, energy_type_to_ewds,
+    energy_type_from_ewds, energy_type_to_ewds, EwdsClearingResultDto, EwdsCommunityDto,
+    EwdsMarketDto, EwdsOrderDto, EwdsTradeDto,
 };
+use primitives::ewds::EwdsOperation;
 use serde_json::Value;
 use std::str::FromStr;
 
@@ -71,7 +71,7 @@ mod tests {
         assert_eq!(dto.price_limit, 20.0);
         assert_eq!(dto.preferred_energy_rate, Some(12.0));
         assert_eq!(dto.energy_source_preference.as_deref(), Some("GREEN"));
-        assert_eq!(dto.energy_type.as_deref(), Some("NONE")); // no attributes -> default
+        assert_eq!(dto.energy_type, None);
         assert_eq!(dto.preferred_trading_partner.as_deref(), Some("partner-id"));
         assert_eq!(dto.created_by, "actor-id");
     }
@@ -96,11 +96,27 @@ mod tests {
         assert_eq!(req.energy_type, Some(EnergyType::Green));
         assert_eq!(req.preferred_energy_rate, Some(12.0));
 
-        // attributes rebuilt from energy_type ("NONE"); TryFrom always sets
-        // trading_partner_id: None on attributes, and source energy_type is None.
-        let attr = db.attributes.expect("attributes present");
-        assert_eq!(attr.trading_partner_id.as_deref(), None);
-        assert_eq!(attr.energy_type, EnergyType::None);
+        assert_eq!(db.attributes, None);
+    }
+
+    #[test]
+    fn offer_metadata_round_trips_through_ewds_dto() {
+        let mut expected = order();
+        expected.order_type = OrderEnum::Offer;
+        expected.requirements = None;
+        expected.attributes = Some(DbAttributes {
+            trading_partner_id: Some("partner-id".to_string()),
+            energy_type: EnergyType::Pv,
+        });
+
+        let dto = EwdsOrderDto::from(expected.clone());
+        assert_eq!(dto.preferred_trading_partner.as_deref(), Some("partner-id"));
+        assert_eq!(dto.energy_type.as_deref(), Some("PV"));
+        assert_eq!(dto.energy_source_preference, None);
+        assert_eq!(dto.preferred_energy_rate, None);
+
+        let actual = DbOrderSchema::try_from(dto).expect("EWDS offer should convert to DB schema");
+        assert_eq!(actual, expected);
     }
 
     #[test]

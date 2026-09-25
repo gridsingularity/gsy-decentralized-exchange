@@ -7,6 +7,7 @@ import {
   ENERGY_TYPE_GREEN,
   ENERGY_TYPE_NONE,
   ORDER_TYPE_BID,
+  ZERO_BYTES16,
 } from "./utils";
 
 describe("OrderRegistry", function () {
@@ -45,6 +46,9 @@ describe("OrderRegistry", function () {
       energySourcePreference: ENERGY_TYPE_GREEN,
       energyType: ENERGY_TYPE_NONE,
       isBid: ORDER_TYPE_BID,
+      preferredTradingPartner: bytes16Id("actor:preferred-partner"),
+      preferredEnergyRate: 45,
+      tradingPartner: ZERO_BYTES16,
     };
 
     return {
@@ -76,9 +80,20 @@ describe("OrderRegistry", function () {
         baseOrder.energySourcePreference,
         baseOrder.energyType,
         baseOrder.isBid,
+        baseOrder.preferredTradingPartner,
+        baseOrder.preferredEnergyRate,
+        baseOrder.tradingPartner,
       );
 
     expect(await registry.getStatus(baseOrder.orderId)).to.equal(1); // Open
+    const storedOrder = await registry.getOrder(baseOrder.orderId);
+    expect(storedOrder.preferredTradingPartner).to.equal(
+      baseOrder.preferredTradingPartner,
+    );
+    expect(storedOrder.preferredEnergyRate).to.equal(
+      baseOrder.preferredEnergyRate,
+    );
+    expect(storedOrder.tradingPartner).to.equal(baseOrder.tradingPartner);
   });
 
   it("Should revert if market is closed", async function () {

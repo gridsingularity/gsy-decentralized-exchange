@@ -2,13 +2,12 @@ use crate::time_utils::get_current_timestamp_in_secs;
 use anyhow::{Error, Result};
 use ethers::prelude::*;
 use primitives::db_api_schema::market::MarketSchema;
-use primitives::db_api_schema::orders::{energy_type_to_contract, EnergyType};
+use primitives::db_api_schema::orders::order_metadata_to_contract;
 use primitives::db_api_schema::profiles::ForecastSchema;
+use primitives::offchain_storage::OffchainStorageClient;
 use primitives::utils::{
-    string_to_timestamp,
+    create_encrypted_bytes16_from_string, parse_uuid_or_hex_bytes16, string_to_timestamp,
     NODE_FLOAT_SCALING_FACTOR,
-    create_encrypted_bytes16_from_string,
-    parse_uuid_or_hex_bytes16
 };
 
 use std::str::FromStr;
@@ -29,6 +28,9 @@ pub type EvmOrderParamsTuple = (
     u8,
     u8,
     bool,
+    [u8; 16],
+    u64,
+    [u8; 16],
 );
 
 pub async fn publish_orders(
@@ -52,9 +54,9 @@ pub async fn publish_orders(
         .parse::<LocalWallet>()
         .map_err(|e| anyhow::anyhow!("Invalid community client private key: {}", e))?
         .with_chain_id(chain_id);
-    let signer_address = wallet.address();
 
-    let input_orders = create_input_orders(forecasts, market, signer_address).await?;
+    let input_orders = create_input_orders(forecasts, market).await?;
+
     if input_orders.is_empty() {
         info!("No orders to publish for this cycle");
         return Ok(());
@@ -121,7 +123,10 @@ abigen!(
                         {"name": "energyRate", "type": "uint64"},
                         {"name": "energySourcePreference", "type": "uint8"},
                         {"name": "energyType", "type": "uint8"},
-                        {"name": "isBid", "type": "bool"}
+                        {"name": "isBid", "type": "bool"},
+                        {"name": "preferredTradingPartner", "type": "bytes16"},
+                        {"name": "preferredEnergyRate", "type": "uint64"},
+                        {"name": "tradingPartner", "type": "bytes16"}
                     ]
                 }
             ],
@@ -132,59 +137,59 @@ abigen!(
 
 async fn build_order_param(
     forecast: &ForecastSchema,
-    facility_id: &String,
+    owner_id: &String,
     market: &MarketSchema,
     now: u64,
     is_bid: bool,
-) -> Result<EvmOrderParamsTuple>  {
+) -> Result<EvmOrderParamsTuple> {
     let rate_multiplier = if is_bid { BID_RATE } else { OFFER_RATE };
+    let metadata = order_metadata_to_contract(None, None)?;
     let offchain_order_id = Uuid::new_v4().to_string();
     let onchain_order_id = create_encrypted_bytes16_from_string(&offchain_order_id);
-    let onchain_facility_id = create_encrypted_bytes16_from_string(facility_id);
+    let onchain_owner_id = create_encrypted_bytes16_from_string(owner_id);
     let delivery_start: u64 =
         string_to_timestamp(&market.delivery_start_time).expect("invalid delivery_start_time");
     Ok((
         onchain_order_id,
-        onchain_facility_id,
+        onchain_owner_id,
         parse_uuid_or_hex_bytes16(market.market_id.as_str())
             .expect("could not convert hex to bytes"),
         delivery_start,
         now,
         (forecast.energy_kwh.abs() * NODE_FLOAT_SCALING_FACTOR) as u64,
         (forecast.energy_kwh.abs() * rate_multiplier * NODE_FLOAT_SCALING_FACTOR) as u64,
-        energy_type_to_contract(&EnergyType::None),
-        energy_type_to_contract(&EnergyType::None),
+        metadata.energy_source_preference,
+        metadata.energy_type,
         is_bid,
+        metadata.preferred_trading_partner,
+        metadata.preferred_energy_rate,
+        metadata.trading_partner,
     ))
 }
 
 pub async fn create_input_orders(
     forecasts: Vec<ForecastSchema>,
     market: MarketSchema,
-    owner: Address,
 ) -> Result<Vec<EvmOrderParamsTuple>> {
     let now: u64 = get_current_timestamp_in_secs();
-    let _owner = owner;
 
     let mut input_orders = Vec::new();
+    let facility_owner_mapping =
+        OffchainStorageClient::from_env("EWDS_COMMUNITY_CLIENT_ID", "gsycommunityclient")
+            .fetch_facility_owner_mapping()
+            .await?;
 
     for forecast in forecasts.into_iter() {
+        let Some(owner_id) = facility_owner_mapping.get(&forecast.facility_id) else {
+            warn!("No owner mapping for facility_id={}", forecast.facility_id);
+            continue;
+        };
         if forecast.energy_kwh > 0. {
-            input_orders.push(build_order_param(
-                &forecast,
-                &forecast.facility_id,
-                &market,
-                now,
-                true,
-            ).await?);
+            input_orders
+                .push(build_order_param(&forecast, &owner_id.clone(), &market, now, true).await?);
         } else if forecast.energy_kwh < 0. {
-            input_orders.push(build_order_param(
-                &forecast,
-                &forecast.facility_id,
-                &market,
-                now,
-                false,
-            ).await?);
+            input_orders
+                .push(build_order_param(&forecast, &owner_id.clone(), &market, now, false).await?);
         }
     }
     Ok(input_orders)
