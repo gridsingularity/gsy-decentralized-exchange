@@ -1,7 +1,7 @@
 use crate::db_api_schema::grid_topology::{EnergyCommunitySchema, FacilitySchema};
 use crate::db_api_schema::ids::IdMappingSchema;
 use crate::db_api_schema::orders::{DbAttributes, DbRequirements};
-use crate::ewds::dto::EwdsCommunityDto;
+use crate::ewds::dto::{EwdsClearingResultDto, EwdsCommunityDto};
 use crate::ewds::{format_response_body, EwdsClient, EwdsOperation};
 use crate::utils::{bytes16_to_hex, parse_uuid_or_hex_bytes16};
 use anyhow::{anyhow, Context, Result};
@@ -200,6 +200,39 @@ impl OffchainStorageClient {
             .filter(|bytes| *bytes != [0; 16])
             .ok_or_else(|| anyhow!("Invalid on-chain ID returned for facility {}", offchain_id))?;
         Ok(bytes16_to_hex(bytes))
+    }
+
+    pub async fn fetch_clearing_results(
+        &self,
+        market_id: &str,
+    ) -> Result<Vec<EwdsClearingResultDto>> {
+        match self.transport {
+            OffchainStorageTransport::Ewds => {
+                info!("Fetching clearing_results via EWDS transport");
+                self.ewds_client()
+                    .query(
+                        EwdsOperation::ClearingResultsQuery,
+                        serde_json::json!({"market_id": market_id}),
+                    )
+                    .await
+            }
+            OffchainStorageTransport::Http => {
+                let url = self.endpoint_url("clearing-results");
+                let response = self
+                    .http_client
+                    .get(&url)
+                    .query(&[("market_id", market_id)])
+                    .send()
+                    .await?;
+                if !response.status().is_success() {
+                    return Err(anyhow!(
+                        "Failed to fetch clearing_results. HTTP {}",
+                        response.status()
+                    ));
+                }
+                Ok(response.json().await?)
+            }
+        }
     }
 }
 

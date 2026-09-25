@@ -49,22 +49,8 @@ function parseSettleBatchSizes(): number[] {
   return [...new Set(sizes)].sort((left, right) => left - right);
 }
 
-function settlementOrderData(order: any) {
-  return {
-    orderId: order.orderId,
-    createdBy: order.createdBy,
-    marketId: order.marketId,
-    timeSlot: order.timeSlot,
-    creationTime: order.creationTime,
-    energy: order.energy,
-    energyRate: order.energyRate,
-    energySourcePreference: order.energySourcePreference,
-    energyType: order.energyType,
-    preferredTradingPartner: order.preferredTradingPartner,
-    preferredEnergyRate: order.preferredEnergyRate,
-    tradingPartner: order.tradingPartner,
-  };
-}
+// Matches primitives::db_api_schema::trades::ClearingStatus::Final.to_evm().
+const CLEARING_STATUS_FINAL = 1;
 
 function buildMatch(
   tradeId: string,
@@ -74,8 +60,8 @@ function buildMatch(
 ) {
   return {
     tradeId,
-    bid: settlementOrderData(bid),
-    offer: settlementOrderData(offer),
+    bid,
+    offer,
     residualBidId: ethers.ZeroHash.slice(0, 34),
     residualOfferId,
     selectedEnergy: 100_000,
@@ -674,11 +660,25 @@ async function main() {
       throw new Error(`Missing settleBatch matches for batch size ${batchSize}`);
     }
 
+    // One market settlement; the clearing result must account for every match.
+    const clearingResult = {
+      marketId,
+      clearingStatus: CLEARING_STATUS_FINAL,
+      clearingPrice: 12_000,
+      totalSupply: 0,
+      totalDemand: 0,
+      tradedQuantity: matches.reduce(
+        (total, match) => total + BigInt(match.selectedEnergy),
+        0n,
+      ),
+      numTrades: matches.length,
+    };
+
     await recordTx(
       "Mutating calls",
       `settleBatch(Match[${batchSize}])`,
       "TradeSettlement",
-      tradeSettlementContract.settleBatch(matches),
+      tradeSettlementContract.settleBatch([{ matches, clearingResult }]),
       "Batch-size benchmark row. Prerequisite order placement gas is reported separately.",
     );
   }

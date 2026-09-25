@@ -14,8 +14,10 @@ use primitives::ewds::dto::{EwdsOrderDto, EwdsTradeDto};
 use primitives::matching::matching_block_interval;
 use primitives::offchain_storage::{resolve_order_partner_ids, OffchainStorageClient};
 use primitives::utils::{
-    bytes16_to_hex, create_encrypted_bytes16_from_string, parse_uuid_or_hex_bytes16,
+    bytes16_to_hex,
+    create_encrypted_bytes16_from_string,
     NODE_FLOAT_SCALING_FACTOR,
+    parse_uuid_or_hex_bytes16,
 };
 use std::collections::HashSet;
 use std::env;
@@ -1306,4 +1308,33 @@ async fn verify_penalties_on_chain(world: &mut MyWorld) {
         recorded_trade_ids.len(),
         trades.len()
     );
+}
+
+#[then("corresponding clearing results are written to the DB")]
+async fn verify_clearing_results(world: &mut MyWorld) {
+    let clearing_results = OffchainStorageClient::from_env("E2E_TESTS_CLIENT_ID", "e2e_tests")
+        .fetch_clearing_results(&market_id_as_hex(world).to_lowercase())
+        .await
+        .expect("failed to fetch clearing results");
+
+    eprintln!("{:?}", clearing_results);
+
+    assert_eq!(
+        clearing_results.len(),
+        1,
+        "expected exactly 1 clearing result, got {}",
+        clearing_results.len()
+    );
+
+    let result = &clearing_results[0];
+    assert_eq!(result.market_id, market_id_as_hex(world).to_lowercase());
+    assert_eq!(result.clearing_status, "final");
+    assert_eq!(result.no_bid_reason, None);
+    assert_eq!(result.clearing_price, 3.0);
+    assert_eq!(result.total_supply, 10.0);
+    assert_eq!(result.total_demand, 10.0);
+    assert_eq!(result.trade_quantity, 10.0);
+    assert_eq!(result.num_trades, 1);
+    assert!(!result.tx_hash.is_empty(), "tx_hash should not be empty");
+    assert!(result.created_at > 0, "created_at should be set");
 }
