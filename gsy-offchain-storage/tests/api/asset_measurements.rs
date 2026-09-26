@@ -105,6 +105,7 @@ fn production_measurement(time_slot: u64, creation_time: u64) -> MeasurementSche
         time_slot,
         creation_time,
         energy_kwh: -4.0,
+        metering_point: None,
     }
 }
 

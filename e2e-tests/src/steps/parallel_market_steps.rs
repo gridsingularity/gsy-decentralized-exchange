@@ -237,6 +237,7 @@ async fn submit_parallel_measurements(world: &mut MyWorld) {
 				energy_kwh: 12.0,
 				time_slot: world.target_delivery_time,
 				creation_time: 1,
+				metering_point: None,
 			},
 			MeasurementSchema {
 				area_uuid: community.seller_area.clone(),
@@ -245,6 +246,7 @@ async fn submit_parallel_measurements(world: &mut MyWorld) {
 				energy_kwh: -8.0,
 				time_slot: world.target_delivery_time,
 				creation_time: 1,
+				metering_point: None,
 			},
 		];
 		adapter.forward_measurement(measurements).await.unwrap();

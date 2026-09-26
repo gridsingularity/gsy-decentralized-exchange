@@ -309,6 +309,7 @@ async fn submit_pv_penalty_measurement(world: &mut MyWorld) {
 		energy_kwh: -4.0,
 		time_slot: world.target_delivery_time,
 		creation_time: 1,
+		metering_point: None,
 	};
 	adapter.forward_measurement(vec![measurement]).await.expect("forwarding measurement failed");
 	info!("Submitted PV-area production measurement of 4.0 kWh (net -4.0)");

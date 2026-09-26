@@ -13,6 +13,7 @@ async fn get_measurements_succeeds() {
         energy_kwh: 12.21,
         time_slot: 1232123213,
         creation_time: 1232123213,
+        metering_point: None,
     };
     let measurement2 = MeasurementSchema {
         area_uuid: "my_uuid1".to_string(),
@@ -21,6 +22,7 @@ async fn get_measurements_succeeds() {
         energy_kwh: 13.21,
         time_slot: 1232123215,
         creation_time: 1232123215,
+        metering_point: None,
     };
 
     let measurement_vec = vec![measurement1, measurement2];
@@ -92,6 +94,7 @@ async fn post_measurements_succeeds() {
         energy_kwh: 12.21,
         time_slot: 1232123213,
         creation_time: 1232123213,
+        metering_point: None,
     };
 
     let body = vec![measurement.clone()];

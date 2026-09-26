@@ -320,6 +320,7 @@ impl AreaMarketInfoAdapter {
             time_slot: measurement.time_slot,
             creation_time: measurement.creation_time,
             energy_kwh: measurement.energy_kwh,
+            metering_point: None,
         }
     }
 

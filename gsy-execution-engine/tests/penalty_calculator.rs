@@ -22,6 +22,7 @@ mod tests {
             time_slot: TIME_SLOT,
             creation_time: 0,
             energy_kwh,
+            metering_point: None,
         }
     }
 

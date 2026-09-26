@@ -50,6 +50,7 @@ async fn submit_measurements(world: &mut MyWorld, _user1: String, _user2: String
 			energy_kwh: 12.0,
 			time_slot: world.target_delivery_time,
 			creation_time: 1,
+			metering_point: None,
 		},
 		MeasurementSchema {
 			area_uuid: world.seller_id.clone(),
@@ -58,6 +59,7 @@ async fn submit_measurements(world: &mut MyWorld, _user1: String, _user2: String
 			energy_kwh: -8.0,
 			time_slot: world.target_delivery_time,
 			creation_time: 1,
+			metering_point: None,
 		},
 	];
 	adapter.forward_measurement(measurements).await.unwrap();

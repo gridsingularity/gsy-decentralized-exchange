@@ -59,6 +59,7 @@ fn measurement(area_uuid: &str, area_hash: &str, community_uuid: &str, time_slot
         time_slot,
         creation_time,
         energy_kwh,
+        metering_point: None,
     }
 }
 

@@ -1220,6 +1220,50 @@ components:
           type: number
           format: double
           description: Measured energy (kWh).
+        metering_point:
+          allOf:
+            - $ref: '#/components/schemas/MeteringPointMeasurement'
+          nullable: true
+          description: |
+            Absent on a per-area measurement. Set on a metering point's row, which
+            covers one building or the site-level assets of a site. The row's
+            `energy_kwh` is then the building's summed net grid exchange (import
+            minus export, kWh) when `completeness` is `complete`, and `0` (not to be
+            used) when it is `incomplete` or `missing`.
+    MeteringPointMeasurement:
+      type: object
+      description: |
+        The metering point a measurement row stands for, and how complete its
+        data is for the time slot.
+      required: [name, member_area_hashes, completeness, missing_meters]
+      properties:
+        name:
+          type: string
+          description: Building `participantName`, or the `siteName` of an unmetered site point.
+        member_area_hashes:
+          type: array
+          items:
+            type: string
+          description: Area hash of every member asset of the metering point.
+        completeness:
+          $ref: '#/components/schemas/MeasurementCompleteness'
+        missing_meters:
+          type: array
+          items:
+            type: string
+          description: |
+            Expected meters without both an `import` and an `export` reading for
+            the time slot. Empty when `completeness` is `complete`.
+    MeasurementCompleteness:
+      type: string
+      description: |
+        Completeness of a metering point's measurement for the time slot:
+        `complete` when every expected meter reported both import and export,
+        `incomplete` when some did not (they are listed in `missing_meters`), and
+        `missing` when none did or the point has no meters (an unmetered site
+        point). Unless the value is `complete`, the row's `energy_kwh` is `0` and
+        must not be used.
+      enum: [complete, incomplete, missing]
     CertificateRecord:
       description: |
         One energy share digital certificate record, as specified by D6.6
