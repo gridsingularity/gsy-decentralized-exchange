@@ -28,7 +28,7 @@ const ASSETS_PILOT3: &str = include_str!("fixtures/assets_pilot3.json");
 const SLOT_SEC: u64 = 900;
 /// 2026-09-26T00:00:00Z.
 const DAY_START: u64 = 1_790_380_800;
-const GRACE_SEC: u64 = 165_600;
+const GRACE_SEC: u64 = 79_200;
 
 fn raw(lecs: &[&str]) -> RawOntology {
     let assets = |lec: &str, json: &str| -> (String, LECCommunityAssetsResults) {

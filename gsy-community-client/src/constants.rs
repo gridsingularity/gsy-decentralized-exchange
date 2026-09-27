@@ -99,11 +99,13 @@ pub struct Constants {
     /// How far back, in seconds, each measurement tick reads InfluxDB. Every ended slot in
     /// that window is re-evaluated, so data that lands late is still picked up. Must exceed
     /// `MEASUREMENT_MISSING_AFTER_SEC`, or a slot leaves the window before it can be posted
-    /// as missing.
+    /// as missing (default 26 h).
     pub MEASUREMENT_LOOKBACK_SEC: u64,
     /// Age of a slot, in seconds, after which a metering point that still lacks a meter
     /// reading is posted as incomplete or missing. Until then no row is posted for it,
-    /// since FLEXO data lands in batches, sometimes more than a day late.
+    /// since FLEXO data lands in daily batches (worst seen 17.6 h after slot start). The
+    /// default (22 h) must stay about 2 h below the execution engine's offset of 24 h
+    /// (`EXECUTION_ENGINE_OFFSET_MIN`), so the missing rows are posted before the slot is judged.
     pub MEASUREMENT_MISSING_AFTER_SEC: u64,
     /// Asset-to-building overrides for the metering points, `ASSET=BUILDING,...`, in place
     /// of the asset's ontology location. The building must be in the asset's own site.
@@ -174,8 +176,8 @@ impl Constants {
                 DEFAULT_INTER_COMMUNITY_ELIGIBLE_COMMUNITIES.to_string(),
             ),
             MEASUREMENT_INGEST_INTERVAL_SEC: read_env_or("MEASUREMENT_INGEST_INTERVAL_SEC", 900u64),
-            MEASUREMENT_LOOKBACK_SEC: read_env_or("MEASUREMENT_LOOKBACK_SEC", 180_000u64),
-            MEASUREMENT_MISSING_AFTER_SEC: read_env_or("MEASUREMENT_MISSING_AFTER_SEC", 165_600u64),
+            MEASUREMENT_LOOKBACK_SEC: read_env_or("MEASUREMENT_LOOKBACK_SEC", 93_600u64),
+            MEASUREMENT_MISSING_AFTER_SEC: read_env_or("MEASUREMENT_MISSING_AFTER_SEC", 79_200u64),
             METERING_POINT_OVERRIDES: read_env_or("METERING_POINT_OVERRIDES", "".to_string()),
         }
     }

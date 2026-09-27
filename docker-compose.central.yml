@@ -195,9 +195,11 @@ services:
     environment:
       - API_KEY=${API_KEY:-fedecom_user}
       # Minutes into the PAST the engine judges (it evaluates `now - EXECUTION_ENGINE_OFFSET_MIN`).
-      # 1440 = 24 h back, so real (late-arriving) metering exists for the slot. Negative values look
-      # into the future; only docker-compose.test.yml uses that, because e2e posts measurements
-      # for a future slot up front.
+      # 1440 = 24 h back: FLEXO metering lands in daily batches (worst seen 17.6 h after slot
+      # start). The community client's MEASUREMENT_MISSING_AFTER_SEC (22 h) must stay about 2 h
+      # below this, so missing measurements are posted before the slot is judged. Negative
+      # values look into the future; only docker-compose.test.yml uses that, because e2e posts
+      # measurements for a future slot up front.
       - EXECUTION_ENGINE_OFFSET_MIN=${EXECUTION_ENGINE_OFFSET_MIN:-1440}
     entrypoint:
       [

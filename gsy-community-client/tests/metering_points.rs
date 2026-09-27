@@ -25,7 +25,7 @@ const ASSETS_PILOT3: &str = include_str!("fixtures/assets_pilot3.json");
 const SLOT_SEC: u64 = 900;
 /// 2026-09-26T00:00:00Z.
 const DAY_START: u64 = 1_790_380_800;
-const GRACE_SEC: u64 = 165_600;
+const GRACE_SEC: u64 = 79_200;
 
 const LUGAGGIA: &str = "LugaggiaInnovationCommunity";
 const GARAME: &str = "GaramèDistrict";
@@ -533,10 +533,10 @@ fn ended_slots_on_a_slot_boundary_includes_both_ends_of_the_window() {
             DAY_START + 9 * 3600 + 2700,
         ]
     );
-    // A 50 h look-back lists every one of its 200 slots, data or not.
-    let slots = ended_slots(now, 180_000, SLOT_SEC);
-    assert_eq!(slots.len(), 200);
-    assert_eq!(slots.first(), Some(&(now - 180_000)));
+    // A 26 h look-back lists every one of its 104 slots, data or not.
+    let slots = ended_slots(now, 93_600, SLOT_SEC);
+    assert_eq!(slots.len(), 104);
+    assert_eq!(slots.first(), Some(&(now - 93_600)));
     assert_eq!(slots.last(), Some(&(now - SLOT_SEC)));
     assert!(slots.windows(2).all(|pair| pair[1] == pair[0] + SLOT_SEC));
 }
