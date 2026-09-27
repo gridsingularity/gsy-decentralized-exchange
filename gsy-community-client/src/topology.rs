@@ -1,9 +1,10 @@
 use crate::constants::CommunityClientConstants;
 use crate::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
+use crate::sites::SiteIndex;
 use gsy_offchain_primitives::db_api_schema::market::{AssetType, MarketTopologySchema};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use tracing::error;
 
 #[derive(Deserialize, Serialize)]
@@ -84,6 +85,29 @@ pub struct _LECCommunityAssetResults {
 #[derive(Deserialize, Debug, Clone)]
 pub struct LECCommunityAssetsResults {
     pub results: _LECCommunityAssetResults,
+}
+
+/// The raw ontology responses: the buildings (`get_lecs_buildings`), and the assets
+/// (`get_assets`) per LEC name.
+#[derive(Debug, Clone)]
+pub struct RawOntology {
+    pub buildings: LECCommunityMembersResults,
+    pub assets: Vec<(String, LECCommunityAssetsResults)>,
+}
+
+impl RawOntology {
+    /// The LECs named by the buildings whose assets are absent (their query failed), in
+    /// the order the buildings name them.
+    pub fn missing_lecs(&self) -> Vec<String> {
+        let mut missing: Vec<String> = Vec::new();
+        for building in &self.buildings.results.bindings {
+            let lec = &building.lec_name.value;
+            if !self.assets.iter().any(|(fetched, _)| fetched == lec) && !missing.contains(lec) {
+                missing.push(lec.clone());
+            }
+        }
+        missing
+    }
 }
 
 #[derive(Clone)]
@@ -173,45 +197,83 @@ impl TopologyManager {
         response.json::<LECCommunityAssetsResults>().await
     }
 
-    async fn get_all_assets_for_all_communities(
-        &self,
-        buildings: LECCommunityMembersResults,
-    ) -> Vec<ExternalCommunityTopology> {
-        let mut communities: Vec<ExternalCommunityTopology> = Vec::new();
-        let mut community_uuids: HashSet<String> = HashSet::new();
+    /// Fetch the raw ontology: the buildings, then the assets of every LEC they name. A LEC
+    /// whose asset query fails is logged and left out; the others are still returned. Only
+    /// a failing buildings query is an error.
+    pub async fn fetch_raw_ontology(&self) -> Result<RawOntology, reqwest::Error> {
+        let buildings = self.fetch_topology().await?;
 
-        for building in buildings.results.bindings {
-            if !community_uuids.contains(&building.lec_name.value) {
-                community_uuids.insert(building.lec_name.value.clone());
-                communities.push(ExternalCommunityTopology {
-                    community_name: building.lec_name.value,
-                    areas: vec![],
-                });
+        let mut lecs: Vec<String> = Vec::new();
+        let mut seen_lecs: HashSet<&str> = HashSet::new();
+        for building in &buildings.results.bindings {
+            if seen_lecs.insert(building.lec_name.value.as_str()) {
+                lecs.push(building.lec_name.value.clone());
             }
         }
 
-        let mut external_topologies: Vec<ExternalCommunityTopology> = vec![];
-        for community in communities {
-            // One failing community is logged and left out of this result instead of
-            // panicking the caller; the others are still returned.
-            let assets = match self.fetch_assets(community.community_name.clone()).await {
-                Ok(assets) => assets,
+        let mut assets = Vec::with_capacity(lecs.len());
+        for lec in lecs {
+            match self.fetch_assets(lec.clone()).await {
+                Ok(lec_assets) => assets.push((lec, lec_assets)),
                 Err(error) => {
-                    error!(
-                        "Failed to fetch the assets of community {}: {}",
-                        community.community_name, error
-                    );
-                    continue;
+                    error!("Failed to fetch the assets of community {}: {}", lec, error);
                 }
-            };
-            let asset_objects = self.map_assets_to_topology(assets);
-            external_topologies.push(ExternalCommunityTopology {
-                areas: asset_objects,
-                community_name: community.community_name.clone(),
-            });
+            }
         }
 
-        external_topologies
+        Ok(RawOntology { buildings, assets })
+    }
+
+    /// One community per ontology site (`community_name` = the `siteName`), sorted by name.
+    /// An asset belongs to its site as resolved by [`SiteIndex`]; an asset without a site is
+    /// logged and left out. This is the grouping markets, forecasts and orders use.
+    pub fn communities_by_site(&self, raw: &RawOntology) -> Vec<ExternalCommunityTopology> {
+        let index = SiteIndex::new(&raw.buildings);
+        let mut bindings_per_site: BTreeMap<String, Vec<ExternalCommunityAsset>> = BTreeMap::new();
+        for (lec, lec_assets) in &raw.assets {
+            for asset in &lec_assets.results.bindings {
+                match index.site_of_asset(lec, asset) {
+                    Some(site) => bindings_per_site
+                        .entry(site.to_string())
+                        .or_default()
+                        .push(asset.clone()),
+                    None => error!(
+                        "{}: asset {} has location {}, which is neither a building nor a site \
+                         of {}; it is left out of every market",
+                        lec, asset.asset_name.value, asset.location.value, lec
+                    ),
+                }
+            }
+        }
+        bindings_per_site
+            .into_iter()
+            .map(|(site, bindings)| ExternalCommunityTopology {
+                areas: self.map_assets_to_topology(LECCommunityAssetsResults {
+                    results: _LECCommunityAssetResults { bindings },
+                }),
+                community_name: site,
+            })
+            .collect()
+    }
+
+    /// One community per ontology LEC (`Pilot1`, ...), in the order the buildings name
+    /// them. Asset DIDs are keyed on these communities.
+    pub fn communities_by_lec(&self, raw: &RawOntology) -> Vec<ExternalCommunityTopology> {
+        let mut communities: Vec<ExternalCommunityTopology> = Vec::new();
+        for (lec, lec_assets) in &raw.assets {
+            let areas = self.map_assets_to_topology(lec_assets.clone());
+            match communities
+                .iter_mut()
+                .find(|community| &community.community_name == lec)
+            {
+                Some(community) => community.areas.extend(areas),
+                None => communities.push(ExternalCommunityTopology {
+                    community_name: lec.clone(),
+                    areas,
+                }),
+            }
+        }
+        communities
     }
 
     /// Map a parsed `LECCommunityAssetsResults` response into the internal topology
@@ -238,13 +300,25 @@ impl TopologyManager {
         asset_objects
     }
 
-    /// Fetch the external ontology topology once, timeslot-independent (no per-timeslot
-    /// market is created or looked up). Used by the day-ahead ingestion loop, which derives
-    /// its own deterministic area/community ids straight from this topology instead of
-    /// going through [`Self::get`]/[`Self::get_for_timeslots`].
+    /// Fetch the external ontology topology once, one community per site,
+    /// timeslot-independent (no per-timeslot market is created or looked up). Used by the
+    /// day-ahead ingestion loop, which derives its own deterministic area/community ids
+    /// straight from this topology instead of going through
+    /// [`Self::get`]/[`Self::get_for_timeslots`].
     pub async fn fetch_all_topology(&self) -> Vec<ExternalCommunityTopology> {
-        match self.fetch_topology().await {
-            Ok(topology) => self.get_all_assets_for_all_communities(topology).await,
+        match self.fetch_raw_ontology().await {
+            Ok(raw) => self.communities_by_site(&raw),
+            Err(error) => {
+                error!("Failed to fetch external topology: {}", error);
+                vec![]
+            }
+        }
+    }
+
+    /// Like [`Self::fetch_all_topology`], but one community per ontology LEC.
+    pub async fn fetch_all_topology_by_lec(&self) -> Vec<ExternalCommunityTopology> {
+        match self.fetch_raw_ontology().await {
+            Ok(raw) => self.communities_by_lec(&raw),
             Err(error) => {
                 error!("Failed to fetch external topology: {}", error);
                 vec![]
@@ -254,15 +328,12 @@ impl TopologyManager {
 
     pub async fn get(&self, next_timeslot: u64) -> Vec<MarketTopologySchema> {
         // Fetch topology
-        let external_topology_res = self.fetch_topology().await;
-        match external_topology_res {
-            Ok(topology) => {
-                let all_assets = self.get_all_assets_for_all_communities(topology).await;
-                let retval = self
-                    .api_adapter
+        match self.fetch_raw_ontology().await {
+            Ok(raw) => {
+                let all_assets = self.communities_by_site(&raw);
+                self.api_adapter
                     .get_or_create_market_topology(all_assets, next_timeslot)
-                    .await;
-                retval
+                    .await
             }
             Err(error) => {
                 error!("Failed to fetch external topology: {}", error);
@@ -271,16 +342,15 @@ impl TopologyManager {
         }
     }
 
-    /// Fetch the external topology once and recreate the per-community markets for every
+    /// Fetch the external topology once and recreate the per-site markets for every
     /// requested delivery timeslot, returning the markets paired with their timeslot.
     pub async fn get_for_timeslots(
         &self,
         timeslots: &[u64],
     ) -> Vec<(u64, Vec<MarketTopologySchema>)> {
-        let external_topology_res = self.fetch_topology().await;
-        match external_topology_res {
-            Ok(topology) => {
-                let all_assets = self.get_all_assets_for_all_communities(topology).await;
+        match self.fetch_raw_ontology().await {
+            Ok(raw) => {
+                let all_assets = self.communities_by_site(&raw);
                 let mut markets_per_timeslot = Vec::with_capacity(timeslots.len());
                 for &timeslot in timeslots {
                     let markets = self

@@ -12,6 +12,7 @@ use crate::external_measurements::influxdb_api::InfluxMeasurementMeterData;
 use crate::offchain_storage_connector::adapter::{
     deterministic_area_hash, deterministic_area_uuid, deterministic_community_uuid,
 };
+use crate::sites::{SiteIndex, location_fragment};
 use crate::topology::{
     ExternalCommunityAsset, LECCommunityAssetsResults, LECCommunityMembersResults,
 };
@@ -81,16 +82,17 @@ pub enum MeteringPointNote {
     },
     /// A SmartMeter in `EXCLUDED_METERS`: no point uses its readings.
     ExcludedMeter { community: String, asset: String },
-    /// An asset whose `location` is neither a building nor a site of its community: it is
-    /// in no point.
+    /// An asset whose `location` is neither a building nor a site of its LEC (`community`):
+    /// it has no site, so it is in no market and no point.
     UnknownLocation {
         community: String,
         asset: String,
         location: String,
     },
-    /// An override whose target is not a building of the asset's community: ignored.
+    /// An override whose target is not a building of the asset's own site: ignored, since
+    /// the asset's market follows its ontology location.
     InvalidOverride { asset: String, target: String },
-    /// An override for an asset that none of the communities has: ignored.
+    /// An override for an asset that none of the LECs has: ignored.
     UnknownOverrideAsset { asset: String, target: String },
     /// A building without any expected meter: its rows are always `Missing`.
     NoExpectedMeters { community: String, building: String },
@@ -127,17 +129,16 @@ impl fmt::Display for MeteringPointNote {
             } => write!(
                 f,
                 "{community}: {asset} has location {location}, which is neither a building nor \
-                 a site of the community; it is in no metering point"
+                 a site of {community}; it is in no market and no metering point"
             ),
             Self::InvalidOverride { asset, target } => write!(
                 f,
                 "Ignoring metering point override {asset}={target}: {target} is not a building \
-                 of the community of {asset}"
+                 of the site of {asset}"
             ),
             Self::UnknownOverrideAsset { asset, target } => write!(
                 f,
-                "Ignoring metering point override {asset}={target}: no community has an asset \
-                 {asset}"
+                "Ignoring metering point override {asset}={target}: no LEC has an asset {asset}"
             ),
             Self::NoExpectedMeters {
                 community,
@@ -173,73 +174,73 @@ pub struct MeteringPointSet {
     pub known_meter_tokens: BTreeSet<String>,
 }
 
-/// Build the metering points of every community in `assets` (the `get_assets` response per
-/// LEC name), whose buildings and sites are read from `buildings` (the `get_lecs_buildings`
-/// response). `overrides` maps an asset name to the building it belongs to, in place of its
-/// ontology `location`.
+/// Build the metering points of every site of the LECs in `assets` (the `get_assets`
+/// response per LEC name), whose buildings and sites are read from `buildings` (the
+/// `get_lecs_buildings` response). Each site is a community of its own, resolved by
+/// [`SiteIndex`] exactly as the markets resolve it, so every id and member hash is the one
+/// the asset's market uses. `overrides` maps an asset name to the building it belongs to,
+/// in place of its ontology `location`; the building must be in the asset's own site.
 ///
-/// A community gets points only if at least one of its buildings expects a meter. It then
-/// gets one point per building, and one unmetered point per site with assets of its own.
-/// The result does not depend on the order of the inputs.
+/// A site gets points only if at least one of its buildings expects a meter. It then gets
+/// one point per building, and one unmetered point if it has assets of its own. The result
+/// does not depend on the order of the inputs.
 pub fn build_metering_points(
     buildings: &LECCommunityMembersResults,
     assets: &[(String, LECCommunityAssetsResults)],
     overrides: &HashMap<String, String>,
 ) -> MeteringPointSet {
-    let mut buildings_per_community: HashMap<&str, BTreeSet<&str>> = HashMap::new();
-    let mut sites_per_community: HashMap<&str, BTreeSet<&str>> = HashMap::new();
-    for row in &buildings.results.bindings {
-        let community = row.lec_name.value.as_str();
-        buildings_per_community
-            .entry(community)
+    let index = SiteIndex::new(buildings);
+
+    let mut assets_per_lec: BTreeMap<&str, Vec<&ExternalCommunityAsset>> = BTreeMap::new();
+    for (lec, lec_assets) in assets {
+        assets_per_lec
+            .entry(lec.as_str())
             .or_default()
-            .insert(row.participant_name.value.as_str());
-        sites_per_community
-            .entry(community)
-            .or_default()
-            .insert(row.site_name.value.as_str());
+            .extend(lec_assets.results.bindings.iter());
     }
 
-    let mut assets_per_community: BTreeMap<&str, Vec<&ExternalCommunityAsset>> = BTreeMap::new();
-    for (community, community_assets) in assets {
-        assets_per_community
-            .entry(community.as_str())
-            .or_default()
-            .extend(community_assets.results.bindings.iter());
-    }
-
-    let no_names = BTreeSet::new();
+    let mut sites: BTreeMap<&str, SiteAssets> = BTreeMap::new();
+    let mut seen_lec_sites: BTreeSet<(&str, &str)> = BTreeSet::new();
     let mut points = Vec::new();
     let mut notes = BTreeSet::new();
     let mut known_meter_tokens = BTreeSet::new();
     let mut overridden_assets = BTreeSet::new();
 
-    for (&community, community_assets) in &assets_per_community {
-        let community_buildings = buildings_per_community.get(community).unwrap_or(&no_names);
-        let community_sites = sites_per_community.get(community).unwrap_or(&no_names);
-
-        let mut building_members: BTreeMap<&str, Vec<&ExternalCommunityAsset>> = BTreeMap::new();
-        let mut building_meters: BTreeMap<&str, BTreeSet<String>> = BTreeMap::new();
-        let mut site_members: BTreeMap<&str, BTreeSet<String>> = BTreeMap::new();
-
-        for &asset in community_assets {
+    for (&lec, lec_assets) in &assets_per_lec {
+        for &asset in lec_assets {
             let asset_name = asset.asset_name.value.as_str();
             let mut token = meter_token(asset);
             if let Some(token) = token {
                 known_meter_tokens.insert(token.to_string());
             }
+            let mut location = location_fragment(&asset.location.value);
+            let site = index.site_of_location(lec, location);
             if token.is_some() && EXCLUDED_METERS.contains(&asset_name) {
                 notes.insert(MeteringPointNote::ExcludedMeter {
-                    community: community.to_string(),
+                    community: site.unwrap_or(lec).to_string(),
                     asset: asset_name.to_string(),
                 });
                 token = None;
             }
+            let Some(site) = site else {
+                if let Some(target) = overrides.get(asset_name) {
+                    overridden_assets.insert(asset_name);
+                    notes.insert(MeteringPointNote::InvalidOverride {
+                        asset: asset_name.to_string(),
+                        target: target.clone(),
+                    });
+                }
+                notes.insert(MeteringPointNote::UnknownLocation {
+                    community: lec.to_string(),
+                    asset: asset_name.to_string(),
+                    location: asset.location.value.clone(),
+                });
+                continue;
+            };
 
-            let mut location = location_fragment(&asset.location.value);
             if let Some(target) = overrides.get(asset_name) {
                 overridden_assets.insert(asset_name);
-                if community_buildings.contains(target.as_str()) {
+                if index.building_site(lec, target) == Some(site) {
                     location = target.as_str();
                 } else {
                     notes.insert(MeteringPointNote::InvalidOverride {
@@ -249,49 +250,59 @@ pub fn build_metering_points(
                 }
             }
 
-            if community_buildings.contains(location) {
-                building_members.entry(location).or_default().push(asset);
+            let site_assets = sites.entry(site).or_default();
+            if seen_lec_sites.insert((lec, site)) {
+                site_assets
+                    .buildings
+                    .extend(index.buildings_of_site(lec, site));
+            }
+            if index.building_site(lec, location).is_some() {
+                site_assets
+                    .building_members
+                    .entry(location)
+                    .or_default()
+                    .push(asset);
                 if let Some(token) = token {
-                    building_meters
+                    site_assets
+                        .building_meters
                         .entry(location)
                         .or_default()
                         .insert(token.to_string());
                 }
-            } else if community_sites.contains(location) {
-                site_members
-                    .entry(location)
-                    .or_default()
+            } else {
+                site_assets
+                    .site_members
                     .insert(asset_name.to_string());
                 if let Some(token) = token {
                     notes.insert(MeteringPointNote::SiteLevelMeter {
-                        community: community.to_string(),
+                        community: site.to_string(),
                         asset: asset_name.to_string(),
                         token: token.to_string(),
-                        site: location.to_string(),
+                        site: site.to_string(),
                     });
                 }
-            } else {
-                notes.insert(MeteringPointNote::UnknownLocation {
-                    community: community.to_string(),
-                    asset: asset_name.to_string(),
-                    location: asset.location.value.clone(),
-                });
             }
         }
+    }
 
-        if building_meters.is_empty() {
+    for (site, mut site_assets) in sites {
+        if site_assets.building_meters.is_empty() {
             continue;
         }
 
-        for &building in community_buildings {
-            let members = building_members
+        for &building in &site_assets.buildings {
+            let members = site_assets
+                .building_members
                 .get(building)
                 .map(Vec::as_slice)
                 .unwrap_or_default();
-            let meters = building_meters.remove(building).unwrap_or_default();
+            let meters = site_assets
+                .building_meters
+                .remove(building)
+                .unwrap_or_default();
             if meters.is_empty() {
                 notes.insert(MeteringPointNote::NoExpectedMeters {
-                    community: community.to_string(),
+                    community: site.to_string(),
                     building: building.to_string(),
                 });
             }
@@ -299,7 +310,7 @@ pub fn build_metering_points(
                 let asset_name = asset.asset_name.value.as_str();
                 if name_prefix(asset_name).is_some_and(|prefix| !meters.contains(prefix)) {
                     notes.insert(MeteringPointNote::MemberWithoutOwnMeter {
-                        community: community.to_string(),
+                        community: site.to_string(),
                         building: building.to_string(),
                         asset: asset_name.to_string(),
                     });
@@ -310,7 +321,7 @@ pub fn build_metering_points(
                 .map(|asset| asset.asset_name.value.clone())
                 .collect();
             points.push(metering_point(
-                community,
+                site,
                 building,
                 MeteringPointKind::Building,
                 member_names,
@@ -318,12 +329,12 @@ pub fn build_metering_points(
             ));
         }
 
-        for (site, members) in site_members {
+        if !site_assets.site_members.is_empty() {
             points.push(metering_point(
-                community,
+                site,
                 site,
                 MeteringPointKind::UnmeteredSite,
-                members,
+                site_assets.site_members,
                 BTreeSet::new(),
             ));
         }
@@ -344,6 +355,18 @@ pub fn build_metering_points(
         notes: notes.into_iter().collect(),
         known_meter_tokens,
     }
+}
+
+/// The assets of one site, grouped by where they are measured.
+#[derive(Default)]
+struct SiteAssets<'a> {
+    /// Every building of the site, whether or not it has assets (of every LEC naming the
+    /// site, so a site name shared by two LECs is one community, as in the markets).
+    buildings: BTreeSet<&'a str>,
+    building_members: BTreeMap<&'a str, Vec<&'a ExternalCommunityAsset>>,
+    building_meters: BTreeMap<&'a str, BTreeSet<String>>,
+    /// Assets located at the site itself.
+    site_members: BTreeSet<String>,
 }
 
 /// Parse an override table `ASSET=BUILDING,ASSET=BUILDING`. Whitespace around entries and
@@ -511,14 +534,6 @@ fn metering_point(
 /// the ontology serves `https://` URIs, older data used `http://`.
 fn strip_scheme(uri: &str) -> &str {
     uri.split_once("://").map_or(uri, |(_, rest)| rest)
-}
-
-/// The `#fragment` of a `location` URI (a building or site name), or the whole value if it
-/// has none.
-fn location_fragment(location: &str) -> &str {
-    location
-        .rsplit_once('#')
-        .map_or(location, |(_, fragment)| fragment)
 }
 
 fn is_meter(asset: &ExternalCommunityAsset) -> bool {

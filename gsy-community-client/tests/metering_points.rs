@@ -27,6 +27,10 @@ const SLOT_SEC: u64 = 900;
 const DAY_START: u64 = 1_790_380_800;
 const GRACE_SEC: u64 = 165_600;
 
+const LUGAGGIA: &str = "LugaggiaInnovationCommunity";
+const GARAME: &str = "GaramèDistrict";
+const ARENA: &str = "ArenaInnovationCommunity";
+
 fn buildings() -> LECCommunityMembersResults {
     serde_json::from_str(LECS_BUILDINGS).expect("lecs_buildings.json parses")
 }
@@ -82,7 +86,7 @@ fn notes_where(
 
 fn site_level_meter(asset: &str, site: &str) -> MeteringPointNote {
     MeteringPointNote::SiteLevelMeter {
-        community: "Pilot2".to_string(),
+        community: site.to_string(),
         asset: asset.to_string(),
         token: asset.trim_end_matches("SM").to_string(),
         site: site.to_string(),
@@ -91,7 +95,7 @@ fn site_level_meter(asset: &str, site: &str) -> MeteringPointNote {
 
 fn member_without_own_meter(building: &str, asset: &str) -> MeteringPointNote {
     MeteringPointNote::MemberWithoutOwnMeter {
-        community: "Pilot2".to_string(),
+        community: ARENA.to_string(),
         building: building.to_string(),
         asset: asset.to_string(),
     }
@@ -103,11 +107,6 @@ fn member_without_own_meter(building: &str, asset: &str) -> MeteringPointNote {
 fn pilot2_has_a_point_per_building_and_two_unmetered_site_points() {
     let set = live_set(&HashMap::new());
 
-    assert!(
-        set.points
-            .iter()
-            .all(|point| point.community_name == "Pilot2")
-    );
     let pilot2_buildings: BTreeSet<String> = buildings()
         .results
         .bindings
@@ -152,11 +151,45 @@ fn pilot2_has_a_point_per_building_and_two_unmetered_site_points() {
             "AIC_transformer",
         ])
     );
-    assert!(
+    assert!(set.points.iter().all(|point| point.name != GARAME));
+}
+
+#[test]
+fn every_point_belongs_to_its_site() {
+    let set = live_set(&HashMap::new());
+
+    let site_of_building: HashMap<String, String> = buildings()
+        .results
+        .bindings
+        .iter()
+        .map(|row| {
+            (
+                row.participant_name.value.clone(),
+                row.site_name.value.clone(),
+            )
+        })
+        .collect();
+    for point in &set.points {
+        let site = match point.kind {
+            MeteringPointKind::Building => site_of_building[&point.name].as_str(),
+            MeteringPointKind::UnmeteredSite => point.name.as_str(),
+        };
+        assert_eq!(point.community_name, site, "{}", point.name);
+    }
+
+    let count = |site: &str, kind: MeteringPointKind| {
         set.points
             .iter()
-            .all(|point| point.name != "GaramèDistrict")
-    );
+            .filter(|point| point.community_name == site && point.kind == kind)
+            .count()
+    };
+    assert_eq!(count(LUGAGGIA, MeteringPointKind::Building), 19);
+    assert_eq!(count(LUGAGGIA, MeteringPointKind::UnmeteredSite), 1);
+    assert_eq!(count(GARAME, MeteringPointKind::Building), 7);
+    assert_eq!(count(GARAME, MeteringPointKind::UnmeteredSite), 0);
+    assert_eq!(count(ARENA, MeteringPointKind::Building), 14);
+    assert_eq!(count(ARENA, MeteringPointKind::UnmeteredSite), 1);
+    assert_eq!(set.points.len(), 42);
 }
 
 #[test]
@@ -210,8 +243,8 @@ fn without_overrides_aic44_is_split_between_the_site_and_aic_commercial_3() {
             MeteringPointNote::SiteLevelMeter { .. }
         )),
         vec![
-            site_level_meter("AIC44SM", "ArenaInnovationCommunity"),
-            site_level_meter("AIC49SM", "ArenaInnovationCommunity"),
+            site_level_meter("AIC44SM", ARENA),
+            site_level_meter("AIC49SM", ARENA),
         ]
     );
     assert_eq!(
@@ -220,7 +253,7 @@ fn without_overrides_aic44_is_split_between_the_site_and_aic_commercial_3() {
             MeteringPointNote::ExcludedMeter { .. }
         )),
         vec![MeteringPointNote::ExcludedMeter {
-            community: "Pilot2".to_string(),
+            community: LUGAGGIA.to_string(),
             asset: "LIC02SM".to_string(),
         }]
     );
@@ -259,7 +292,7 @@ fn override_moves_aic44sm_into_aic_commercial_3() {
             note,
             MeteringPointNote::SiteLevelMeter { .. }
         )),
-        vec![site_level_meter("AIC49SM", "ArenaInnovationCommunity")]
+        vec![site_level_meter("AIC49SM", ARENA)]
     );
     assert!(
         notes_where(&set, |note| matches!(
@@ -272,11 +305,12 @@ fn override_moves_aic44sm_into_aic_commercial_3() {
 }
 
 #[test]
-fn override_to_anything_but_a_building_of_the_community_is_ignored() {
-    // A site of the same community, a building of another community, and an asset that
-    // does not exist.
+fn override_to_anything_but_a_building_of_the_own_site_is_ignored() {
+    // The asset's own site, a building of another site of the same LEC, a building of
+    // another LEC, and an asset that does not exist.
     let overrides = parse_overrides(
-        "AIC44SM=ArenaInnovationCommunity, AIC44EV=UrBeroaMainStation, NOSUCHASSET=AICHouse1",
+        "AIC44SM=ArenaInnovationCommunity, LIC01PV=AICCommercial1, \
+         AIC44EV=UrBeroaMainStation, NOSUCHASSET=AICHouse1",
     )
     .unwrap();
     let set = live_set(&overrides);
@@ -286,6 +320,10 @@ fn override_to_anything_but_a_building_of_the_community_is_ignored() {
         MeteringPointNote::InvalidOverride {
             asset: "AIC44SM".to_string(),
             target: "ArenaInnovationCommunity".to_string(),
+        },
+        MeteringPointNote::InvalidOverride {
+            asset: "LIC01PV".to_string(),
+            target: "AICCommercial1".to_string(),
         },
         MeteringPointNote::InvalidOverride {
             asset: "AIC44EV".to_string(),
@@ -333,25 +371,41 @@ fn ids_are_the_ones_markets_derive() {
     let set = live_set(&HashMap::new());
 
     for point in &set.points {
-        assert_eq!(point.community_uuid, deterministic_community_uuid("Pilot2"));
-        assert_eq!(
-            point.area_uuid,
-            deterministic_area_uuid("Pilot2", &point.name)
-        );
-        assert_eq!(point.area_hash, hash("Pilot2", &point.name));
+        let site = point.community_name.as_str();
+        assert_eq!(point.community_uuid, deterministic_community_uuid(site));
+        assert_eq!(point.area_uuid, deterministic_area_uuid(site, &point.name));
+        assert_eq!(point.area_hash, hash(site, &point.name));
         let mut member_hashes: Vec<String> = point
             .members
             .iter()
-            .map(|asset| hash("Pilot2", asset))
+            .map(|asset| hash(site, asset))
             .collect();
         member_hashes.sort();
         assert_eq!(point.member_area_hashes, member_hashes);
     }
+
+    let commercial = point(&set, "LICCommercial1");
+    assert_eq!(commercial.community_name, LUGAGGIA);
+    assert_eq!(
+        commercial.community_uuid,
+        deterministic_community_uuid(LUGAGGIA)
+    );
+    assert_eq!(
+        commercial.area_uuid,
+        deterministic_area_uuid(LUGAGGIA, "LICCommercial1")
+    );
     assert!(
-        point(&set, "LICCommercial1")
+        commercial
+            .member_area_hashes
+            .contains(&hash(LUGAGGIA, "LIC01PV"))
+    );
+    assert!(
+        !commercial
             .member_area_hashes
             .contains(&hash("Pilot2", "LIC01PV"))
     );
+    assert_eq!(point(&set, "GDHouse1").community_name, GARAME);
+    assert_eq!(point(&set, ARENA).area_hash, hash(ARENA, ARENA));
 }
 
 #[test]
@@ -389,14 +443,19 @@ fn notes_render_the_names_they_are_about() {
     let set = live_set(&HashMap::new());
     for note in &set.notes {
         let text = note.to_string();
-        let asset = match note {
-            MeteringPointNote::SiteLevelMeter { asset, .. }
-            | MeteringPointNote::ExcludedMeter { asset, .. }
-            | MeteringPointNote::MemberWithoutOwnMeter { asset, .. } => asset,
+        let (community, asset) = match note {
+            MeteringPointNote::SiteLevelMeter {
+                community, asset, ..
+            }
+            | MeteringPointNote::ExcludedMeter { community, asset }
+            | MeteringPointNote::MemberWithoutOwnMeter {
+                community, asset, ..
+            } => (community, asset),
             other => panic!("unexpected note {other:?}"),
         };
         assert!(text.contains(asset.as_str()), "{text}");
-        assert!(text.starts_with("Pilot2: "), "{text}");
+        assert!(text.starts_with(&format!("{community}: ")), "{text}");
+        assert!([LUGAGGIA, ARENA].contains(&community.as_str()), "{text}");
     }
 }
 

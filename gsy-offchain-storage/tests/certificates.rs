@@ -2,11 +2,14 @@ use std::collections::HashSet;
 
 use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, AssetType, MarketTopologySchema};
 use gsy_offchain_primitives::db_api_schema::orders::{DbBid, DbOffer, DbOrderComponent};
-use gsy_offchain_primitives::db_api_schema::profiles::MeasurementSchema;
+use gsy_offchain_primitives::db_api_schema::profiles::{
+    MeasurementCompleteness, MeasurementSchema, MeteringPointMeasurement,
+};
 use gsy_offchain_primitives::db_api_schema::trades::{TradeParameters, TradeSchema, TradeStatus};
 use gsy_offchain_primitives::utils::{community_id_from_uuid, h256_to_string};
 use gsy_offchain_storage::certificates::builder::{
-    build_local_origin_records, delivery_verification_reference, interval_bounds_utc, round_half_up_2dp,
+    build_local_origin_records, build_local_origin_records_with_allocation,
+    delivery_verification_reference, interval_bounds_utc, round_half_up_2dp,
 };
 use gsy_offchain_storage::certificates::schema::*;
 
@@ -516,4 +519,273 @@ fn every_enum_serialises_to_the_spec_spelling() {
     assert_eq!(serde_json::to_value(DataRecordClass::Forecast).unwrap(), "forecast");
     assert_eq!(serde_json::to_value(TradeStatusAtIssuance::Settled).unwrap(), "settled");
     assert_eq!(serde_json::to_value(TradeStatusAtIssuance::DeliveryVerified).unwrap(), "delivery_verified");
+}
+
+const BUILDING: &str = "LICHouse9";
+const BUILDING_UUID: &str = "lic-house9-point-uuid";
+const BUILDING_HASH: &str = "0xlic_house9_point_hash";
+
+/// One metering point's row for `SLOT`: `energy_kwh` is the building's net grid exchange,
+/// negative when it exports.
+fn metering_point_row(
+    member_area_hashes: &[&str],
+    completeness: MeasurementCompleteness,
+    energy_kwh: f64,
+    creation_time: u64,
+) -> MeasurementSchema {
+    let missing_meters = match completeness {
+        MeasurementCompleteness::Complete => vec![],
+        _ => vec!["LIC01SM".to_string()],
+    };
+    let mut row = measurement(
+        BUILDING_UUID,
+        BUILDING_HASH,
+        COMMUNITY_UUID,
+        SLOT,
+        creation_time,
+        energy_kwh,
+    );
+    row.metering_point = Some(MeteringPointMeasurement {
+        name: BUILDING.to_string(),
+        member_area_hashes: member_area_hashes
+            .iter()
+            .map(|hash| hash.to_string())
+            .collect(),
+        completeness,
+        missing_meters,
+    });
+    row
+}
+
+/// A complete row for a building whose only member is the seller, so every default
+/// trade is an external sale.
+fn exporting_building(energy_kwh: f64) -> MeasurementSchema {
+    metering_point_row(
+        &[SELLER_HASH],
+        MeasurementCompleteness::Complete,
+        energy_kwh,
+        4000,
+    )
+}
+
+fn external_sale(trade_uuid: &str, selected_energy: f64, creation_time: u64) -> TradeSchema {
+    trade(
+        trade_uuid,
+        SELLER_HASH,
+        BUYER_HASH,
+        SLOT,
+        selected_energy,
+        TradeStatus::Executed,
+        creation_time,
+        Some(1200),
+    )
+}
+
+fn trade_references(records: &[LocalOriginRecord]) -> Vec<&str> {
+    records
+        .iter()
+        .map(|record| record.trade_and_delivery.trade_reference[0].as_str())
+        .collect()
+}
+
+#[test]
+fn a_sale_covered_by_the_building_net_export_yields_a_record_naming_the_building() {
+    let records = build_local_origin_records(
+        vec![default_trade("trade-1")],
+        &default_topology(),
+        &[exporting_building(-4.0)],
+    );
+
+    assert_eq!(records.len(), 1);
+    let record = &records[0];
+    assert_eq!(record.production_asset.production_asset_id, SELLER_NAME);
+    assert_eq!(
+        record.production_asset.metering_point_id.as_deref(),
+        Some(BUILDING)
+    );
+    assert_eq!(
+        record.beneficiary_and_claim.facility_id.as_deref(),
+        Some(BUILDING)
+    );
+    assert_eq!(record.measurement_provenance.measuring_sensor_id, BUILDING);
+    assert_eq!(
+        record.measurement_provenance.measurement_id,
+        format!("{}:{}:e_generation", COMMUNITY_NAME, BUILDING_UUID)
+    );
+    assert_eq!(record.measurement_provenance.measurement_recorded_at, 4000);
+    assert_eq!(
+        record.measurement_provenance.flow_direction,
+        FlowDirection::Export
+    );
+    assert_eq!(record.time_and_quantity.energy_quantity, 3.0);
+}
+
+#[test]
+fn a_net_importing_building_yields_no_record() {
+    for energy_kwh in [2.0, 0.0] {
+        let records = build_local_origin_records(
+            vec![default_trade("trade-1")],
+            &default_topology(),
+            &[exporting_building(energy_kwh)],
+        );
+        assert!(
+            records.is_empty(),
+            "net exchange {energy_kwh} kWh is not an export"
+        );
+    }
+}
+
+#[test]
+fn net_export_is_allocated_in_strict_time_priority() {
+    // Supplied latest-first: the allocation orders by creation time, not input order.
+    let two = vec![
+        external_sale("trade-b", 1.0, 200),
+        external_sale("trade-a", 1.0, 100),
+    ];
+    let records = build_local_origin_records(
+        two.clone(),
+        &default_topology(),
+        &[exporting_building(-1.5)],
+    );
+    assert_eq!(trade_references(&records), vec!["trade-a"]);
+
+    // 0.4 would fit in the 0.5 left after trade-a, but trade-b did not fit before it.
+    let mut three = two;
+    three.push(external_sale("trade-c", 0.4, 300));
+    let records =
+        build_local_origin_records(three, &default_topology(), &[exporting_building(-1.5)]);
+    assert_eq!(trade_references(&records), vec!["trade-a"]);
+}
+
+#[test]
+fn equal_creation_times_are_ordered_by_trade_uuid() {
+    let trades = vec![
+        external_sale("trade-b", 1.0, 100),
+        external_sale("trade-a", 1.0, 100),
+    ];
+    let records =
+        build_local_origin_records(trades, &default_topology(), &[exporting_building(-1.5)]);
+    assert_eq!(trade_references(&records), vec!["trade-a"]);
+}
+
+#[test]
+fn a_sale_filling_the_net_export_exactly_is_allocated() {
+    let trades = vec![
+        external_sale("trade-a", 1.0, 100),
+        external_sale("trade-b", 0.5, 200),
+    ];
+    let records =
+        build_local_origin_records(trades, &default_topology(), &[exporting_building(-1.5)]);
+    assert_eq!(trade_references(&records), vec!["trade-a", "trade-b"]);
+}
+
+#[test]
+fn a_buyer_in_the_same_metering_point_yields_no_record() {
+    let row = metering_point_row(
+        &[SELLER_HASH, BUYER_HASH],
+        MeasurementCompleteness::Complete,
+        -4.0,
+        4000,
+    );
+    let records =
+        build_local_origin_records(vec![default_trade("trade-1")], &default_topology(), &[row]);
+    assert!(records.is_empty());
+}
+
+#[test]
+fn an_incomplete_or_missing_metering_point_row_yields_no_record() {
+    for completeness in [
+        MeasurementCompleteness::Incomplete,
+        MeasurementCompleteness::Missing,
+    ] {
+        let row = metering_point_row(&[SELLER_HASH], completeness.clone(), 0.0, 4000);
+        let records =
+            build_local_origin_records(vec![default_trade("trade-1")], &default_topology(), &[row]);
+        assert!(records.is_empty(), "{completeness:?} is not evidence");
+    }
+}
+
+#[test]
+fn allocation_does_not_depend_on_which_trades_are_selected() {
+    let earlier = external_sale("trade-a", 1.0, 100);
+    let later = external_sale("trade-b", 1.0, 200);
+    let slot_executed = vec![earlier.clone(), later.clone()];
+    let measurements = [exporting_building(-1.5)];
+    let topology = default_topology();
+
+    let both = build_local_origin_records_with_allocation(
+        slot_executed.clone(),
+        &slot_executed,
+        &topology,
+        &measurements,
+    );
+    let only_earlier = build_local_origin_records_with_allocation(
+        vec![earlier],
+        &slot_executed,
+        &topology,
+        &measurements,
+    );
+    let only_later = build_local_origin_records_with_allocation(
+        vec![later.clone()],
+        &slot_executed,
+        &topology,
+        &measurements,
+    );
+
+    assert_eq!(trade_references(&both), vec!["trade-a"]);
+    assert_eq!(only_earlier, both);
+    assert!(only_later.is_empty());
+
+    // Without the earlier trade in `slot_executed` the later one alone would fit.
+    let alone = build_local_origin_records(vec![later], &topology, &measurements);
+    assert_eq!(trade_references(&alone), vec!["trade-b"]);
+}
+
+#[test]
+fn a_non_pv_external_sale_consumes_net_export_without_a_record() {
+    let battery_hash = "0xbattery_area_hash";
+    let mut topology = default_topology();
+    topology[0].community_areas.push(area(
+        "battery-uuid-1",
+        "LIC01BAT",
+        AssetType::BATTERY,
+        battery_hash,
+    ));
+    let battery_sale = trade(
+        "trade-a",
+        battery_hash,
+        BUYER_HASH,
+        SLOT,
+        1.0,
+        TradeStatus::Executed,
+        100,
+        Some(1200),
+    );
+    let pv_sale = external_sale("trade-b", 1.0, 200);
+    let row = metering_point_row(
+        &[SELLER_HASH, battery_hash],
+        MeasurementCompleteness::Complete,
+        -1.5,
+        4000,
+    );
+
+    let records = build_local_origin_records(vec![battery_sale, pv_sale], &topology, &[row]);
+    assert!(records.is_empty());
+}
+
+#[test]
+fn a_per_area_measurement_takes_precedence_over_the_metering_point_row() {
+    let records = build_local_origin_records(
+        vec![default_trade("trade-1")],
+        &default_topology(),
+        &[default_production_measurement(), exporting_building(2.0)],
+    );
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(
+        records[0].measurement_provenance.measuring_sensor_id,
+        "FLEXO-LIC-LIC01PV-1"
+    );
+    assert!(records[0].production_asset.metering_point_id.is_none());
+    assert!(records[0].beneficiary_and_claim.facility_id.is_none());
 }

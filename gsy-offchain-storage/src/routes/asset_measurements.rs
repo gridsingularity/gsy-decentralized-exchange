@@ -1,4 +1,4 @@
-use crate::certificates::builder::build_local_origin_records;
+use crate::certificates::builder::build_local_origin_records_with_allocation;
 use crate::certificates::schema::LocalOriginRecord;
 use crate::db::DbRef;
 use actix_web::{HttpResponse, Responder, web::Query};
@@ -19,6 +19,10 @@ pub struct GuaranteesOfOriginParams {
 /// Only `Executed` trades qualify: the execution engine compared them against metering and
 /// they incurred no penalty, so the exchange can attest to the traded quantity. The unit of
 /// issuance is the trade, not the metered volume — these certify *traded* energy.
+///
+/// Where the seller has no per-area measurement, its building's metering-point row is the
+/// evidence, and a record is issued only for PV sold out of the building within its net
+/// export for the slot, in time priority.
 ///
 /// The window bounds **when the trade was validated** (`status_updated_at`), not when the
 /// energy flowed. `Executed` is terminal, so that timestamp never moves again once set, which
@@ -84,7 +88,29 @@ pub async fn get_guarantees_of_origin(
         }
     };
 
-    let mut records = build_local_origin_records(trades, &markets, &measurements);
+    // A metering point's net export is allocated over every `Executed` trade of the slot,
+    // not just those the window selected, so a trade's certificate does not depend on the
+    // window it is queried with.
+    let slot_executed = match db
+        .get_ref()
+        .trades()
+        .filter_trades(
+            None,
+            u32::try_from(earliest_slot).ok(),
+            u32::try_from(latest_slot).ok(),
+            Some(TradeStatus::Executed),
+        )
+        .await
+    {
+        Ok(slot_executed) => slot_executed,
+        Err(e) => {
+            tracing::error!("Failed to fetch executed trades of the selected slots: {:?}", e);
+            return HttpResponse::InternalServerError().finish();
+        }
+    };
+
+    let mut records =
+        build_local_origin_records_with_allocation(trades, &slot_executed, &markets, &measurements);
 
     // Deterministic order so repeated or adjacent queries return a stable sequence.
     records.sort_by(|a, b| sort_key(a).cmp(&sort_key(b)));

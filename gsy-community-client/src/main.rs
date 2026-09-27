@@ -1,8 +1,13 @@
 use gsy_community_client::asset_did::{AssetDidClient, build_sync_payload};
 use gsy_community_client::constants::CommunityClientConstants;
 use gsy_community_client::external_forecasts::manager::ForecastsManager;
-use gsy_community_client::external_measurements::manager::MeasurementsManager;
-use gsy_community_client::inter_community::eligible_inter_community;
+use gsy_community_client::external_measurements::manager::{
+    MeasurementsManager, describe_metering_points,
+};
+use gsy_community_client::external_measurements::metering_points::{
+    MeteringPointSet, build_metering_points, parse_overrides,
+};
+use gsy_community_client::inter_community::{demand_coverage, eligible_inter_community};
 use gsy_community_client::node_connector::orders::{
     calculate_order_rate, create_inter_community_order, publish_input_orders, publish_orders,
     remove_orders,
@@ -23,12 +28,13 @@ use gsy_offchain_primitives::utils::{
     community_id_from_uuid, h256_to_string, read_env_or, string_to_h256,
 };
 use reqwest::Client;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use subxt::utils::AccountId32;
 use subxt_signer::sr25519::dev;
 use tokio::time::sleep;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 #[derive(Clone)]
 struct AppState {
@@ -38,6 +44,9 @@ struct AppState {
     forecasts_manager: ForecastsManager,
     asset_did_client: AssetDidClient,
     gsy_node_url: String,
+    /// The latest metering points, written by the measurement loop and read by the publish
+    /// loop for the inter-community demand guard. `None` until the first set is built.
+    metering_points: Arc<RwLock<Option<MeteringPointSet>>>,
 }
 
 impl AppState {
@@ -65,6 +74,16 @@ impl AppState {
             // subxt's default transport (jsonrpsee) is WebSocket-only and rejects any
             // scheme other than ws/wss, so this must stay a `ws://` URL.
             gsy_node_url: read_env_or("GSY_NODE_URL", "ws://gsy-node:9944".to_string()),
+            metering_points: Arc::new(RwLock::new(None)),
+        }
+    }
+
+    /// A copy of the latest metering point set, if any. The lock is released on return, so
+    /// callers never hold it across an `.await`.
+    fn metering_point_set(&self) -> Option<MeteringPointSet> {
+        match self.metering_points.read() {
+            Ok(set) => set.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
         }
     }
 
@@ -225,16 +244,21 @@ impl AppState {
         let interval_sec = CommunityClientConstants.ASSET_DID_SYNC_INTERVAL_SEC.max(1);
 
         loop {
-            // `fetch_all_topology` logs its own request failures instead of returning them:
-            // an unreachable ontology gives an empty vec, and a community whose asset query
-            // fails is left out (the identity server only retires subjects within the
-            // communities a payload carries, so that retires nothing). Running it as a child
-            // task still turns any panic in it into a `JoinError` this loop can log and retry
-            // on the next tick, instead of killing the sync permanently.
+            // DIDs stay keyed on the ontology LEC (`Pilot1`, ...), not on the per-site
+            // communities the markets use: switching would re-issue every community and
+            // asset DID and leave the old ones un-retired, since the identity server only
+            // retires subjects within the communities a payload carries. So the subject ids
+            // stay `deterministic_area_uuid(<LEC>, <asset>)` and differ from market area ids.
+            //
+            // `fetch_all_topology_by_lec` logs its own request failures instead of returning
+            // them: an unreachable ontology gives an empty vec, and a LEC whose asset query
+            // fails is left out (which, for the same reason, retires nothing). Running it as a
+            // child task still turns any panic in it into a `JoinError` this loop can log and
+            // retry on the next tick, instead of killing the sync permanently.
             let fetch_state = self.clone();
             let fetched = tokio::spawn(async move {
                 TopologyManager::new(&fetch_state.client, &fetch_state.api_adapter)
-                    .fetch_all_topology()
+                    .fetch_all_topology_by_lec()
                     .await
             })
             .await;
@@ -289,6 +313,158 @@ impl AppState {
         }
     }
 
+    /// Measurement loop. Every `MEASUREMENT_INGEST_INTERVAL_SEC`, rebuilds the metering
+    /// points from the ontology, shares them with the publish loop, reads InfluxDB over the
+    /// look-back window and forwards one row per point and ended slot to storage. Runs in
+    /// its own task, so a slow InfluxDB or storage never delays order publication. Nothing
+    /// in here propagates an error or panics: every failure is logged and the loop waits for
+    /// the next tick.
+    async fn ingest_measurements_loop(&self) {
+        let interval_sec = CommunityClientConstants
+            .MEASUREMENT_INGEST_INTERVAL_SEC
+            .max(1);
+        let overrides = match parse_overrides(&CommunityClientConstants.METERING_POINT_OVERRIDES)
+        {
+            Ok(overrides) => overrides,
+            Err(error) => {
+                error!("Ignoring METERING_POINT_OVERRIDES: {}", error);
+                HashMap::new()
+            }
+        };
+        if !overrides.is_empty() {
+            info!("Metering point overrides: {:?}", overrides);
+        }
+
+        let mut current_set: Option<MeteringPointSet> = None;
+        let mut last_unmapped: Option<BTreeSet<String>> = None;
+
+        loop {
+            // Fetched in a child task, as in `sync_asset_dids_loop`, so a panic in it is a
+            // `JoinError` logged here rather than the end of the loop.
+            let fetch_state = self.clone();
+            let fetch_overrides = overrides.clone();
+            let built = tokio::spawn(async move {
+                let raw = TopologyManager::new(&fetch_state.client, &fetch_state.api_adapter)
+                    .fetch_raw_ontology()
+                    .await
+                    .map_err(|error| error.to_string())?;
+                let set = build_metering_points(&raw.buildings, &raw.assets, &fetch_overrides);
+                Ok::<_, String>((set, raw.missing_lecs()))
+            })
+            .await;
+
+            let fetched_set = match built {
+                Ok(Ok((set, missing_lecs))) if missing_lecs.is_empty() => Some(set),
+                Ok(Ok((set, missing_lecs))) => {
+                    // A LEC's assets failed to load: its sites would lose every point.
+                    // Keep the last complete set; with none yet, use what loaded.
+                    error!(
+                        "Measurements: the assets of {} failed to load; {}",
+                        missing_lecs.join(", "),
+                        if current_set.is_some() {
+                            "reusing the last metering points"
+                        } else {
+                            "using the metering points of the other LECs"
+                        }
+                    );
+                    current_set.is_none().then_some(set)
+                }
+                Ok(Err(error)) => {
+                    error!("Measurements: fetching the ontology failed: {}", error);
+                    None
+                }
+                Err(error) => {
+                    error!("Measurements: fetching the ontology panicked: {}", error);
+                    None
+                }
+            };
+
+            if let Some(set) = fetched_set {
+                if current_set.as_ref() != Some(&set) {
+                    for note in &set.notes {
+                        info!("Metering points: {}", note);
+                    }
+                    for line in describe_metering_points(&set) {
+                        info!("Metering points of {}", line);
+                    }
+                    match self.metering_points.write() {
+                        Ok(mut shared) => *shared = Some(set.clone()),
+                        Err(poisoned) => *poisoned.into_inner() = Some(set.clone()),
+                    }
+                    current_set = Some(set);
+                }
+            } else if current_set.is_some() {
+                info!("Measurements: reusing the last metering points.");
+            }
+
+            let Some(set) = current_set.clone() else {
+                info!("Measurements: no metering points built yet; skipping this tick.");
+                sleep(Duration::from_secs(interval_sec)).await;
+                continue;
+            };
+
+            let manager = self.measurements.clone();
+            let now = get_current_timestamp_in_secs();
+            let report = match tokio::spawn(async move { manager.ingest(&set, now).await }).await
+            {
+                Ok(report) => report,
+                Err(error) => {
+                    error!("Measurements: the ingest panicked: {}", error);
+                    sleep(Duration::from_secs(interval_sec)).await;
+                    continue;
+                }
+            };
+
+            if report.no_readings {
+                error!(
+                    "Measurements: InfluxDB returned no readings for the last {}s; nothing \
+                     forwarded this tick.",
+                    CommunityClientConstants.MEASUREMENT_LOOKBACK_SEC
+                );
+            } else {
+                for (community, counts) in &report.summary.counts {
+                    info!(
+                        "Measurements of {}: {} complete, {} incomplete, {} missing row(s) \
+                         forwarded.",
+                        community, counts.complete, counts.incomplete, counts.missing
+                    );
+                }
+                for row in &report.summary.incomplete {
+                    warn!(
+                        "Measurements: {} ({}) is incomplete for slot {}; missing meter(s) {}.",
+                        row.point,
+                        row.community,
+                        row.time_slot,
+                        row.missing_meters.join(", ")
+                    );
+                }
+            }
+            if last_unmapped.as_ref() != Some(&report.unmapped_tokens) {
+                if !report.unmapped_tokens.is_empty() {
+                    info!(
+                        "Measurements: InfluxDB meter(s) without a SmartMeter in the ontology, \
+                         ignored: {}",
+                        report
+                            .unmapped_tokens
+                            .iter()
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
+                }
+                last_unmapped = Some(report.unmapped_tokens.clone());
+            }
+            if let Some(error) = &report.forward_error {
+                error!(
+                    "Measurements: forwarding {} row(s) failed: {}",
+                    report.forwarded, error
+                );
+            }
+
+            sleep(Duration::from_secs(interval_sec)).await;
+        }
+    }
+
     /// Order-publication loop. Every `ORDER_RESUBMISSION_INTERVAL_SEC`, reads forecasts back
     /// from storage (never from the forecasters) for every currently open market slot and
     /// (re)publishes bids/offers from them, so order publication survives forecaster
@@ -300,6 +476,9 @@ impl AppState {
 
         // The account every order is signed with.
         let trader = AccountId32::from(dev::alice().public_key()).to_string();
+        // Communities not on the inter-community list that have already been reported as
+        // ready for it, so the readiness line is logged once per run.
+        let mut reported_ready: HashSet<String> = HashSet::new();
 
         loop {
             let now = get_current_timestamp_in_secs();
@@ -317,8 +496,14 @@ impl AppState {
                 .get_for_timeslots(&open_timeslots)
                 .await;
 
-            let mut measurement_topologies: Vec<MarketTopologySchema> = Vec::new();
-            let mut seen_communities: HashSet<String> = HashSet::new();
+            // The inter-community demand guard needs each community's expected SmartMeters;
+            // until the measurement loop has built them, no inter-community order is sent.
+            let metering_points = self.metering_point_set();
+            if metering_points.is_none() {
+                info!(
+                    "No metering points built yet; publishing no inter-community orders this tick."
+                );
+            }
             // Fetched once per community per tick, spanning every open timeslot in
             // `[window_start, window_end]`, and reused across every timeslot iteration below
             // instead of one GET per (community, timeslot).
@@ -353,10 +538,6 @@ impl AppState {
                     Vec::new();
 
                 for market in markets {
-                    if seen_communities.insert(market.community_name.clone()) {
-                        measurement_topologies.push(market.clone());
-                    }
-
                     let community_forecasts =
                         match forecasts_by_community.get(&market.community_uuid) {
                             Some(cached) => cached.clone(),
@@ -392,12 +573,40 @@ impl AppState {
                         continue;
                     }
 
-                    if eligible_inter_community(&market.community_name) {
-                        inter_community_forecasts.push((
-                            market.community_name.clone(),
-                            market.community_uuid.clone(),
-                            timeslot_forecasts.clone(),
-                        ));
+                    // A community's net order only means something if its whole demand is
+                    // forecast: an eligible community joins the inter-community market for
+                    // the slot only with a demand forecast for every expected SmartMeter.
+                    if let Some(set) = &metering_points {
+                        let coverage =
+                            demand_coverage(set, &market.community_name, &timeslot_forecasts);
+                        if eligible_inter_community(&market.community_name) {
+                            if coverage.is_full() {
+                                inter_community_forecasts.push((
+                                    market.community_name.clone(),
+                                    market.community_uuid.clone(),
+                                    timeslot_forecasts.clone(),
+                                ));
+                            } else {
+                                info!(
+                                    "Community {} stays out of the inter-community market for \
+                                     delivery {}: {} of its {} expected SmartMeter(s) have no \
+                                     demand forecast.",
+                                    market.community_name,
+                                    timeslot,
+                                    coverage.missing.len(),
+                                    coverage.expected
+                                );
+                            }
+                        } else if coverage.is_full()
+                            && reported_ready.insert(market.community_name.clone())
+                        {
+                            info!(
+                                "Community {} has demand forecasts for all {} expected \
+                                 SmartMeter(s) (delivery {}); it can be added to \
+                                 INTER_COMMUNITY_ELIGIBLE_COMMUNITIES.",
+                                market.community_name, coverage.expected, timeslot
+                            );
+                        }
                     }
 
                     let open_orders = self
@@ -452,10 +661,6 @@ impl AppState {
                 }
             }
 
-            self.measurements
-                .fetch_and_forward(measurement_topologies, now)
-                .await;
-
             sleep(Duration::from_secs(interval_sec)).await;
         }
     }
@@ -476,16 +681,24 @@ async fn main() {
     let ingest_state = app_state.clone();
     let publish_state = app_state.clone();
     let asset_did_state = app_state.clone();
+    let measurement_state = app_state.clone();
 
-    // Three independent, never-returning loops. Each runs in its own task so a panic or
+    // Four independent, never-returning loops. Each runs in its own task so a panic or
     // stall in one (e.g. the ingestion loop wedged on a downed forecaster, or the DID sync
-    // waiting on an unreachable identity server) cannot block the others. Nothing is shared
-    // between them but the HTTP clients, so an identity server outage is invisible to
-    // forecast ingestion and order publication.
+    // waiting on an unreachable identity server) cannot block the others. They share only
+    // the HTTP clients and the latest metering points, which the measurement loop writes
+    // and the publish loop reads for its inter-community demand guard.
     let ingest_handle = tokio::spawn(async move { ingest_state.ingest_forecasts_loop().await });
     let publish_handle = tokio::spawn(async move { publish_state.publish_orders_loop().await });
     let asset_did_handle =
         tokio::spawn(async move { asset_did_state.sync_asset_dids_loop().await });
+    let measurement_handle =
+        tokio::spawn(async move { measurement_state.ingest_measurements_loop().await });
 
-    let _ = tokio::join!(ingest_handle, publish_handle, asset_did_handle);
+    let _ = tokio::join!(
+        ingest_handle,
+        publish_handle,
+        asset_did_handle,
+        measurement_handle
+    );
 }

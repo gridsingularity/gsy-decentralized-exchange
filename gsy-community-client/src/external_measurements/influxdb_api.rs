@@ -92,7 +92,7 @@ impl MeasurementInfluxDBConnection {
           |> range(start: {}, stop: {})
           |> filter(fn: (r) => r["_measurement"] == "active_energy")
           |> filter(fn: (r) => r["sensor_id"] =~ /^FLEXO-.*/)
-          |> filter(fn: (r) => not r["sensor_id"] =~ /^FLEXO-AIC-49.*/)
+          |> filter(fn: (r) => not r["sensor_id"] =~ /^FLEXO-AIC-AIC49-/)
           |> filter(fn: (r) => r["sensor_id"] =~ /-(import|export)$/)
         "#,
             start_time
@@ -116,10 +116,9 @@ impl MeasurementInfluxDBConnection {
             ))
             .build()
             .expect("Failed to build InfluxDB HTTP client");
-        // Every failure here returns an empty result set rather than panicking. This runs at
-        // the tail of the community client's publish loop, so a panic would take that task
-        // down permanently while the process stays alive (the ingest task keeps the
-        // container running), silently ending order publication until someone restarts it.
+        // Every failure here returns an empty result set rather than panicking, so an InfluxDB
+        // outage can never end the community client's measurement loop. The loop treats an
+        // empty result as a failed read and forwards nothing for that tick.
         let response = match client
             .post(self.url())
             .header("Accept", "application/json")

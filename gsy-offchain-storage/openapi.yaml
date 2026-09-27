@@ -365,6 +365,28 @@ paths:
         A record's delivery interval remains available as `interval_start` and
         `source_slot_timestamp`; it is simply not what the query filters on.
 
+        A `local_origin_record` needs a measurement of the seller for the
+        trade's interval. That is the seller asset's own measurement when there
+        is one; otherwise it is the measurement of the metering point (the
+        building) the asset belongs to, and then:
+
+        - `measurement_provenance.measuring_sensor_id`,
+          `production_asset.metering_point_id` and
+          `beneficiary_and_claim.facility_id` name the building, for example
+          `LICHouse9`;
+        - the quantity measured is the building's net grid exchange for the
+          interval, all of its meters summed, and only a complete measurement
+          (every expected meter reported) counts as evidence;
+        - a record is issued only for PV energy sold to a buyer outside the
+          building and within the building's net export for the interval.
+          The building's `Executed` sales to buyers outside it take that export
+          in time priority, oldest trade first; the first sale that does not
+          fit, and every later one, gets no record. Nothing is issued in an
+          interval where the building imports on balance, nor for a trade
+          between two assets of the same building. The allocation runs over
+          every `Executed` trade of the interval, so it does not depend on the
+          query window.
+
         Every response object has the same set of keys for a given
         `record_type`. An attribute that does not apply is present and `null`
         rather than omitted; array attributes are present and empty. See
@@ -1599,7 +1621,9 @@ components:
           nullable: true
           description: |
             Obligation C. Metering point from which the volume derives. Absent
-            on records issued at community or pilot site level.
+            on records issued at community or pilot site level. When the
+            evidence is a metering point's measurement, the building, for
+            example `LICHouse9`.
         asset_class:
           $ref: '#/components/schemas/AssetClass'
         rated_power:
@@ -1766,7 +1790,10 @@ components:
           example: LIC:LIC01:e_generation
         measuring_sensor_id:
           type: string
-          description: Obligation M. Sensor individual, for example a smart meter.
+          description: |
+            Obligation M. Sensor individual, for example a smart meter. When the
+            evidence is a metering point's measurement, the building, for
+            example `LICHouse9`, whose net grid exchange was measured.
         property_measured:
           type: string
           format: uri-reference
@@ -1881,7 +1908,8 @@ components:
           nullable: true
           description: |
             Obligation C. Ontology individual, for example `LICHouse9`. Absent
-            where the record is issued at community or pilot site level.
+            where the record is issued at community or pilot site level. Set to
+            the building when the evidence is a metering point's measurement.
           example: LICHouse9
     TradeAndDeliveryReference:
       type: object

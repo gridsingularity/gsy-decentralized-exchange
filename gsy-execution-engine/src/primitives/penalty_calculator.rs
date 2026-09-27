@@ -1,20 +1,198 @@
-use gsy_offchain_primitives::aggregation::aggregate_net_import;
-use gsy_offchain_primitives::db_api_schema::{profiles::MeasurementSchema, trades::TradeSchema};
+use gsy_offchain_primitives::db_api_schema::{
+	profiles::{MeasurementCompleteness, MeasurementSchema},
+	trades::TradeSchema,
+};
 use gsy_offchain_primitives::utils::{community_id_from_uuid, h256_to_string};
-use std::collections::{HashMap, HashSet};
+use std::collections::{hash_map::Entry, HashMap, HashSet};
+use tracing::warn;
 
-#[derive(Debug)]
+/// A metering-point deviation at or below this (kWh) counts as no deviation.
+const METERING_POINT_TOLERANCE_KWH: f64 = 1e-9;
+
+/// Why a penalty was issued. Informational only: it is not submitted on-chain.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PenaltyReason {
+	/// The measured energy deviated from the traded energy.
+	Deviation,
+	/// The side's measurement is incomplete or missing, so it is penalized on its full energy.
+	/// `source` is the metering point's name, or the community uuid of an inter-community side.
+	MissingMeasurement { source: String },
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Penalty {
 	pub penalized_account: String,
 	pub market_id: String,
 	pub trade_uuid: String,
 	pub penalty_cost: u64,
+	pub reason: PenaltyReason,
+}
+
+/// A value in the measurement map built by `build_measurement_map`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MeasuredEnergy {
+	/// Signed net energy in kWh; positive means consumption, negative production.
+	Energy(f64),
+	/// A community aggregate that cannot be used, because at least one of the community's
+	/// metering-point rows for the slot is incomplete or missing.
+	Unreliable { community_uuid: String },
+}
+
+/// Which side of a trade is being judged.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Side {
+	Bid,
+	Offer,
+}
+
+/// Builds the measurement lookup map keyed by `(area_hash, time_slot)`, plus one aggregate entry
+/// per `(community_uuid, time_slot)` keyed by `(community-id hash, time_slot)`.
+///
+/// Only plain per-area rows (`metering_point: None`) get a per-area entry; metering-point rows
+/// are looked up through `metering_point_index` instead. A community aggregate sums the per-area
+/// rows and the `Complete` metering-point rows of the community and slot; it is `Unreliable` if
+/// any metering-point row of that community and slot is `Incomplete` or `Missing`. A `Missing`
+/// row with no `missing_meters` is an unmetered point (it expects no meter, so it can never be
+/// measured) and is skipped by the aggregate; its members are still judged through
+/// `metering_point_index`.
+///
+/// TODO: temporarily use only the area_hash for identifying measurements. Should be improved
+/// by adding market_id in the measurements, and use this too for identification.
+/// Sign convention: `energy_kwh` is signed net energy; positive means consumption,
+/// negative means production.
+pub fn build_measurement_map(
+	measurements: &[MeasurementSchema],
+) -> HashMap<(String, u64), MeasuredEnergy> {
+	let mut measurement_map: HashMap<(String, u64), MeasuredEnergy> = HashMap::new();
+	for meas in measurements.iter().filter(|meas| meas.metering_point.is_none()) {
+		let key = (meas.area_hash.clone(), meas.time_slot);
+		measurement_map.insert(key, MeasuredEnergy::Energy(meas.energy_kwh));
+	}
+	// `None` marks a community slot with an incomplete or missing metering-point row.
+	let mut community_aggregates: HashMap<(&str, u64), Option<f64>> = HashMap::new();
+	for meas in measurements.iter().filter(|meas| !is_unmetered_point(meas)) {
+		let aggregate = community_aggregates
+			.entry((meas.community_uuid.as_str(), meas.time_slot))
+			.or_insert(Some(0.0));
+		let contribution = match &meas.metering_point {
+			None => Some(meas.energy_kwh),
+			Some(point) => match point.completeness {
+				MeasurementCompleteness::Complete => Some(meas.energy_kwh),
+				MeasurementCompleteness::Incomplete | MeasurementCompleteness::Missing => None,
+			},
+		};
+		*aggregate = match (*aggregate, contribution) {
+			(Some(sum), Some(energy)) => Some(sum + energy),
+			_ => None,
+		};
+	}
+	for ((community_uuid, time_slot), aggregate) in community_aggregates {
+		let value = match aggregate {
+			Some(energy) => MeasuredEnergy::Energy(energy),
+			None => MeasuredEnergy::Unreliable { community_uuid: community_uuid.to_string() },
+		};
+		measurement_map
+			.insert((h256_to_string(community_id_from_uuid(community_uuid)), time_slot), value);
+	}
+	measurement_map
+}
+
+/// Whether `meas` is the row of a metering point that expects no meter: `Missing` with no
+/// `missing_meters`.
+fn is_unmetered_point(meas: &MeasurementSchema) -> bool {
+	meas.metering_point.as_ref().is_some_and(|point| {
+		point.completeness == MeasurementCompleteness::Missing && point.missing_meters.is_empty()
+	})
+}
+
+/// Indexes the metering-point rows by `(member area hash, time_slot)`. If two rows claim the same
+/// member and slot, the first one is kept and a warning is logged.
+pub fn metering_point_index(
+	measurements: &[MeasurementSchema],
+) -> HashMap<(String, u64), &MeasurementSchema> {
+	metering_point_rows(measurements)
+		.into_iter()
+		.map(|(key, row)| (key, &measurements[row]))
+		.collect()
+}
+
+/// Same as `metering_point_index`, with row indices into `measurements` as values.
+fn metering_point_rows(measurements: &[MeasurementSchema]) -> HashMap<(String, u64), usize> {
+	let mut index: HashMap<(String, u64), usize> = HashMap::new();
+	for (row, meas) in measurements.iter().enumerate() {
+		let Some(point) = &meas.metering_point else {
+			continue;
+		};
+		for member in &point.member_area_hashes {
+			match index.entry((member.clone(), meas.time_slot)) {
+				Entry::Vacant(vacant) => {
+					vacant.insert(row);
+				},
+				Entry::Occupied(occupied) if *occupied.get() != row => {
+					let kept = measurements[*occupied.get()]
+						.metering_point
+						.as_ref()
+						.map_or("", |kept| kept.name.as_str());
+					warn!(
+						"Area {} is a member of metering points {} and {} for slot {}; \
+						 judging it at {}",
+						member, kept, point.name, meas.time_slot, kept
+					);
+				},
+				Entry::Occupied(_) => {},
+			}
+		}
+	}
+	index
+}
+
+/// Returns the `trade_uuid` of every trade that was actually evaluated, in input order,
+/// de-duplicated. A trade is evaluated if one of its sides is covered by a metering-point row
+/// (any completeness) or has a per-area or community entry for its `(area, time_slot)` (a number
+/// or `Unreliable`).
+///
+/// `compute_penalties` skips a side with no row at all: it does not judge that side. A trade
+/// with no row on either side was never judged and must not be reported as clean, or the
+/// caller would mark it `Executed` before the engine ever saw its meter reading.
+pub fn evaluated_trade_uuids(
+	trades: &[TradeSchema],
+	measurements: &[MeasurementSchema],
+) -> Vec<String> {
+	let measurement_map = build_measurement_map(measurements);
+	let point_rows = metering_point_rows(measurements);
+	let judged = |key: &(String, u64)| {
+		point_rows.contains_key(key) || measurement_map.contains_key(key)
+	};
+	let mut seen: HashSet<String> = HashSet::new();
+	let mut uuids = Vec::new();
+	for trade in trades {
+		let measured = judged(&bid_key(trade)) || judged(&offer_key(trade));
+		if measured && seen.insert(trade.trade_uuid.clone()) {
+			uuids.push(trade.trade_uuid.clone());
+		}
+	}
+	uuids
 }
 
 /// Computes penalties for each trade based on the measured energy.
 ///
-/// Each trade is validated with TWO independent checks, one per side, each against
-/// that side's own meter and both compared to the trade's `selected_energy`:
+/// Each trade side is looked up with its own `(area_uuid, time_slot)`. Sides whose area is a
+/// member of a metering-point row for their slot are judged at that point (metering-point pass,
+/// below); all other sides go through the per-area buyer and seller passes. One trade can have
+/// a side in each, and a trade whose sides sit at two metering points is judged at both.
+///
+/// **Metering-point pass**, per `(metering point, slot)`, in first-seen order:
+///
+/// * `Complete` row: `committed = Σ bought − Σ sold` over the member sides and
+///   `deviation = measured − committed`. A non-positive deviation is not penalized. Otherwise
+///   the member offers are charged first with the time-priority waterfall (their production
+///   budget is `max(0, sold − deviation)`), and the rest of the deviation beyond the sold
+///   energy is apportioned pro-rata over the member bids (not charged if there are none). A
+///   trade with both sides at the point nets out.
+/// * `Incomplete` or `Missing` row: every member side is penalized on its full energy.
+///
+/// **Per-area passes.** Each side is checked against that side's own meter and compared to the
+/// trade's `selected_energy`:
 ///
 /// * **Buyer check (over-consumption):** look up the bid area's measurement
 ///   (`trade.bid.bid_component.area_uuid`). Measurements store net energy with
@@ -33,7 +211,8 @@ pub struct Penalty {
 ///
 /// Community-level (inter-community) trades key both lookups on the community-id
 /// hash, which is inserted into the same `measurement_map`, so they inherit the
-/// aggregate net-import behavior.
+/// aggregate net-import behavior. If the aggregate is `Unreliable`, the side is penalized
+/// on its full energy; with no aggregate at all it stays unjudged.
 ///
 /// Aggregate behavior: because residual trading routinely splits one order into several
 /// trades within the same time slot, all traded energy for a given `(area, side, time
@@ -50,85 +229,47 @@ pub struct Penalty {
 ///   apportioned pro-rata across the group's trades (largest-remainder method, so the
 ///   parts sum exactly to the aggregate). Over-consumption is a flat overage with no
 ///   natural per-trade ordering, so there is nothing to give time priority to.
-/// Builds the measurement lookup map keyed by area_hash, plus one aggregate entry per
-/// `(community_uuid, time_slot)` keyed by the community-id hash.
 ///
-/// TODO: temporarily use only the area_hash for identifying measurements. Should be improved
-/// by adding market_id in the measurements, and use this too for identification.
-/// Sign convention: `energy_kwh` is signed net energy; positive means consumption,
-/// negative means production.
-pub fn build_measurement_map(measurements: &[MeasurementSchema]) -> HashMap<String, f64> {
-	let mut measurement_map: HashMap<String, f64> = HashMap::new();
-	for meas in measurements {
-		measurement_map.insert(meas.area_hash.clone(), meas.energy_kwh);
-	}
-	let mut seen_communities: HashSet<(&str, u64)> = HashSet::new();
-	for meas in measurements {
-		if seen_communities.insert((meas.community_uuid.as_str(), meas.time_slot)) {
-			let community_net_import =
-				aggregate_net_import(measurements, &meas.community_uuid, meas.time_slot);
-			measurement_map.insert(
-				h256_to_string(community_id_from_uuid(&meas.community_uuid)),
-				community_net_import,
-			);
-		}
-	}
-	measurement_map
-}
-
-/// Returns the `trade_uuid` of every trade that was actually evaluated — i.e. at least one of
-/// its bid/offer areas (or their community aggregate) has a measurement — in input order,
-/// de-duplicated.
-///
-/// `compute_penalties` `continue`s past a group whose area is missing from the measurement
-/// map: it does not judge that side at all. A trade with no measurement on either side was
-/// never judged and must not be reported as clean, or the caller would mark it `Executed`
-/// before the engine ever saw its meter reading.
-pub fn evaluated_trade_uuids(
-	trades: &[TradeSchema],
-	measurements: &[MeasurementSchema],
-) -> Vec<String> {
-	let measurement_map = build_measurement_map(measurements);
-	let mut seen: HashSet<String> = HashSet::new();
-	let mut uuids = Vec::new();
-	for trade in trades {
-		let measured = measurement_map.contains_key(&trade.bid.bid_component.area_uuid)
-			|| measurement_map.contains_key(&trade.offer.offer_component.area_uuid);
-		if measured && seen.insert(trade.trade_uuid.clone()) {
-			uuids.push(trade.trade_uuid.clone());
-		}
-	}
-	uuids
-}
-
+/// Output order: metering-point pass, then buyer pass, then seller pass.
 pub fn compute_penalties(
 	trades: &[TradeSchema],
 	measurements: &[MeasurementSchema],
 	penalty_rate: f64,
 ) -> Vec<Penalty> {
-	let mut penalties = Vec::new();
-
 	let measurement_map = build_measurement_map(measurements);
+	let point_rows = metering_point_rows(measurements);
 
-	// Two independent passes, buyer then seller. This pass ordering keeps the output
-	// deterministic. Inter-community trades carry the community hash as their
-	// `area_uuid`, so they group under the community-hash key and compare against the
-	// community net-import aggregate entry — a different key space from per-asset
-	// trades, so there is no double counting; multiple inter-community trades for the
-	// same community/slot correctly aggregate together too.
+	let mut penalties = metering_point_penalties(trades, measurements, &point_rows, penalty_rate);
+
+	// Two independent passes over the sides not at a metering point, buyer then seller. This
+	// pass ordering keeps the output deterministic. Inter-community trades carry the community
+	// hash as their `area_uuid`, so they group under the community-hash key and compare against
+	// the community net-import aggregate entry — a different key space from per-asset trades,
+	// so there is no double counting; multiple inter-community trades for the same
+	// community/slot correctly aggregate together too.
 
 	// Buyer pass (over-consumption): judged by the bid area's meter.
 	let buyer_groups = group_trades(trades, |trade| {
-		(
-			trade.bid.bid_component.area_uuid.clone(),
-			trade.bid.bid_component.time_slot,
-		)
+		let key = bid_key(trade);
+		(!point_rows.contains_key(&key)).then_some(key)
 	});
 	for (key, indices) in &buyer_groups {
-		let area_uuid = &key.0;
-		let Some(&measured) = measurement_map.get(area_uuid) else {
+		let measured = match measurement_map.get(key) {
 			// No measurement for this area -> no penalty (matches previous behavior).
-			continue;
+			None => continue,
+			Some(MeasuredEnergy::Unreliable { community_uuid }) => {
+				for &i in indices {
+					push_full_energy_penalty(
+						&mut penalties,
+						&trades[i],
+						Side::Bid,
+						community_uuid,
+						penalty_rate,
+					);
+				}
+				continue;
+			},
+			Some(MeasuredEnergy::Energy(measured)) => *measured,
 		};
 		let total_bought: f64 = indices
 			.iter()
@@ -151,12 +292,7 @@ pub fn compute_penalties(
 				continue;
 			}
 			let trade = &trades[i];
-			penalties.push(Penalty {
-				penalized_account: trade.buyer.clone(),
-				market_id: trade.offer.offer_component.market_id.clone(),
-				trade_uuid: trade.trade_uuid.clone(),
-				penalty_cost,
-			});
+			penalties.push(side_penalty(trade, Side::Bid, penalty_cost, PenaltyReason::Deviation));
 		}
 	}
 
@@ -164,67 +300,231 @@ pub fn compute_penalties(
 	// Production is stored as negative net energy, so the measured production
 	// magnitude is `(-measured).max(0.0)`.
 	let seller_groups = group_trades(trades, |trade| {
-		(
-			trade.offer.offer_component.area_uuid.clone(),
-			trade.offer.offer_component.time_slot,
-		)
+		let key = offer_key(trade);
+		(!point_rows.contains_key(&key)).then_some(key)
 	});
 	for (key, indices) in &seller_groups {
-		let area_uuid = &key.0;
-		let Some(&measured) = measurement_map.get(area_uuid) else {
-			continue;
+		let measured = match measurement_map.get(key) {
+			None => continue,
+			Some(MeasuredEnergy::Unreliable { community_uuid }) => {
+				for &i in indices {
+					push_full_energy_penalty(
+						&mut penalties,
+						&trades[i],
+						Side::Offer,
+						community_uuid,
+						penalty_rate,
+					);
+				}
+				continue;
+			},
+			Some(MeasuredEnergy::Energy(measured)) => *measured,
 		};
 		let measured_production = (-measured).max(0.0);
-
-		// Waterfall / time-priority fill: honor the earliest commitments first, ordering
-		// the group's trades by `(creation_time asc, trade_uuid asc)`. Production covers
-		// the earliest trades in full; once it is exhausted, the remaining (later) trades
-		// absorb the shortfall and are penalized on their uncovered energy.
-		let mut ordered: Vec<usize> = indices.clone();
-		ordered.sort_by(|&a, &b| {
-			trades[a]
-				.creation_time
-				.cmp(&trades[b].creation_time)
-				.then_with(|| trades[a].trade_uuid.cmp(&trades[b].trade_uuid))
-		});
-
-		let mut remaining_budget = measured_production;
-		for &i in &ordered {
-			let trade = &trades[i];
-			let selected_energy = trade.parameters.selected_energy;
-			let covered = remaining_budget.min(selected_energy);
-			let uncovered = selected_energy - covered;
-			remaining_budget -= covered;
-			if uncovered <= 0.0 {
-				continue;
-			}
-			let penalty_cost = (uncovered * penalty_rate * 10_000.0).round() as u64;
-			if penalty_cost == 0 {
-				continue;
-			}
-			penalties.push(Penalty {
-				penalized_account: trade.seller.clone(),
-				market_id: trade.market_id.clone(),
-				trade_uuid: trade.trade_uuid.clone(),
-				penalty_cost,
-			});
-		}
+		push_waterfall_penalties(
+			&mut penalties,
+			trades,
+			indices,
+			measured_production,
+			penalty_rate,
+		);
 	}
 
 	penalties
 }
 
-/// Groups trade indices by a key derived from each trade, preserving first-seen group
-/// order and input order within each group. Does not rely on `HashMap` iteration order,
-/// so the returned order is fully deterministic.
+/// The metering-point pass of `compute_penalties`.
+fn metering_point_penalties(
+	trades: &[TradeSchema],
+	measurements: &[MeasurementSchema],
+	point_rows: &HashMap<(String, u64), usize>,
+	penalty_rate: f64,
+) -> Vec<Penalty> {
+	// Member sides grouped by metering-point row, in first-seen order.
+	let mut order: Vec<usize> = Vec::new();
+	let mut groups: HashMap<usize, Vec<(usize, Side)>> = HashMap::new();
+	for (i, trade) in trades.iter().enumerate() {
+		for (side, key) in [(Side::Bid, bid_key(trade)), (Side::Offer, offer_key(trade))] {
+			if let Some(&row) = point_rows.get(&key) {
+				groups
+					.entry(row)
+					.or_insert_with(|| {
+						order.push(row);
+						Vec::new()
+					})
+					.push((i, side));
+			}
+		}
+	}
+
+	let mut penalties = Vec::new();
+	for row in order {
+		let meas = &measurements[row];
+		let Some(point) = &meas.metering_point else {
+			continue;
+		};
+		let sides = &groups[&row];
+		match point.completeness {
+			MeasurementCompleteness::Complete => {
+				let of_side = |wanted: Side| -> Vec<usize> {
+					sides.iter().filter(|(_, side)| *side == wanted).map(|&(i, _)| i).collect()
+				};
+				let bids = of_side(Side::Bid);
+				let offers = of_side(Side::Offer);
+				let bought: f64 = bids.iter().map(|&i| trades[i].parameters.selected_energy).sum();
+				let sold: f64 = offers.iter().map(|&i| trades[i].parameters.selected_energy).sum();
+				let deviation = meas.energy_kwh - (bought - sold);
+				if deviation <= METERING_POINT_TOLERANCE_KWH {
+					continue;
+				}
+				// Under-delivery first: the offers keep a production budget of what was sold
+				// minus the deviation, filled in time priority.
+				let production_budget = (sold - deviation).max(0.0);
+				push_waterfall_penalties(
+					&mut penalties,
+					trades,
+					&offers,
+					production_budget,
+					penalty_rate,
+				);
+				// Any deviation beyond the sold energy is over-consumption by the member bids.
+				let remainder = (deviation - sold).max(0.0);
+				if remainder <= METERING_POINT_TOLERANCE_KWH || bids.is_empty() {
+					continue;
+				}
+				let weights: Vec<f64> =
+					bids.iter().map(|&i| trades[i].parameters.selected_energy).collect();
+				let parts = apportion(energy_cost(remainder, penalty_rate), &weights);
+				for (&i, &penalty_cost) in bids.iter().zip(parts.iter()) {
+					if penalty_cost == 0 {
+						continue;
+					}
+					penalties.push(side_penalty(
+						&trades[i],
+						Side::Bid,
+						penalty_cost,
+						PenaltyReason::Deviation,
+					));
+				}
+			},
+			MeasurementCompleteness::Incomplete | MeasurementCompleteness::Missing => {
+				for &(i, side) in sides {
+					push_full_energy_penalty(
+						&mut penalties,
+						&trades[i],
+						side,
+						&point.name,
+						penalty_rate,
+					);
+				}
+			},
+		}
+	}
+	penalties
+}
+
+/// Waterfall / time-priority fill of offer sides: `production` covers the trades in
+/// `(creation_time, trade_uuid)` order; once it is exhausted, the remaining (later) trades
+/// absorb the shortfall and their sellers are penalized on their uncovered energy.
+fn push_waterfall_penalties(
+	penalties: &mut Vec<Penalty>,
+	trades: &[TradeSchema],
+	indices: &[usize],
+	production: f64,
+	penalty_rate: f64,
+) {
+	let mut ordered: Vec<usize> = indices.to_vec();
+	ordered.sort_by(|&a, &b| {
+		trades[a]
+			.creation_time
+			.cmp(&trades[b].creation_time)
+			.then_with(|| trades[a].trade_uuid.cmp(&trades[b].trade_uuid))
+	});
+
+	let mut remaining_budget = production;
+	for &i in &ordered {
+		let trade = &trades[i];
+		let selected_energy = trade.parameters.selected_energy;
+		let covered = remaining_budget.min(selected_energy);
+		let uncovered = selected_energy - covered;
+		remaining_budget -= covered;
+		if uncovered <= 0.0 {
+			continue;
+		}
+		let penalty_cost = energy_cost(uncovered, penalty_rate);
+		if penalty_cost == 0 {
+			continue;
+		}
+		penalties.push(side_penalty(trade, Side::Offer, penalty_cost, PenaltyReason::Deviation));
+	}
+}
+
+/// Penalizes one side on its full `selected_energy` because its measurement from `source` is
+/// incomplete or missing.
+fn push_full_energy_penalty(
+	penalties: &mut Vec<Penalty>,
+	trade: &TradeSchema,
+	side: Side,
+	source: &str,
+	penalty_rate: f64,
+) {
+	let penalty_cost = energy_cost(trade.parameters.selected_energy, penalty_rate);
+	if penalty_cost == 0 {
+		return;
+	}
+	penalties.push(side_penalty(
+		trade,
+		side,
+		penalty_cost,
+		PenaltyReason::MissingMeasurement { source: source.to_string() },
+	));
+}
+
+/// A buyer penalty is booked on the offer's market, a seller penalty on the trade's market.
+fn side_penalty(
+	trade: &TradeSchema,
+	side: Side,
+	penalty_cost: u64,
+	reason: PenaltyReason,
+) -> Penalty {
+	let (penalized_account, market_id) = match side {
+		Side::Bid => (&trade.buyer, &trade.offer.offer_component.market_id),
+		Side::Offer => (&trade.seller, &trade.market_id),
+	};
+	Penalty {
+		penalized_account: penalized_account.clone(),
+		market_id: market_id.clone(),
+		trade_uuid: trade.trade_uuid.clone(),
+		penalty_cost,
+		reason,
+	}
+}
+
+fn energy_cost(energy_kwh: f64, penalty_rate: f64) -> u64 {
+	(energy_kwh * penalty_rate * 10_000.0).round() as u64
+}
+
+fn bid_key(trade: &TradeSchema) -> (String, u64) {
+	(trade.bid.bid_component.area_uuid.clone(), trade.bid.bid_component.time_slot)
+}
+
+fn offer_key(trade: &TradeSchema) -> (String, u64) {
+	(trade.offer.offer_component.area_uuid.clone(), trade.offer.offer_component.time_slot)
+}
+
+/// Groups trade indices by a key derived from each trade (trades with no key are skipped),
+/// preserving first-seen group order and input order within each group. Does not rely on
+/// `HashMap` iteration order, so the returned order is fully deterministic.
 fn group_trades<F>(trades: &[TradeSchema], key_of: F) -> Vec<((String, u64), Vec<usize>)>
 where
-	F: Fn(&TradeSchema) -> (String, u64),
+	F: Fn(&TradeSchema) -> Option<(String, u64)>,
 {
 	let mut order: Vec<(String, u64)> = Vec::new();
 	let mut groups: HashMap<(String, u64), Vec<usize>> = HashMap::new();
 	for (i, trade) in trades.iter().enumerate() {
-		let key = key_of(trade);
+		let Some(key) = key_of(trade) else {
+			continue;
+		};
 		if !groups.contains_key(&key) {
 			order.push(key.clone());
 		}

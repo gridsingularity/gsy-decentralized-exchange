@@ -1,9 +1,14 @@
 #[cfg(test)]
 mod tests {
 
-    use gsy_execution_engine::primitives::penalty_calculator::compute_penalties;
+    use gsy_execution_engine::primitives::penalty_calculator::{
+        compute_penalties, evaluated_trade_uuids, PenaltyReason,
+    };
+    use gsy_execution_engine::services::execution_orchestrator::retain_settled;
     use gsy_offchain_primitives::db_api_schema::orders::{DbBid, DbOffer, DbOrderComponent};
-    use gsy_offchain_primitives::db_api_schema::profiles::MeasurementSchema;
+    use gsy_offchain_primitives::db_api_schema::profiles::{
+        MeasurementCompleteness, MeasurementSchema, MeteringPointMeasurement,
+    };
     use gsy_offchain_primitives::db_api_schema::trades::{
         TradeParameters, TradeSchema, TradeStatus,
     };
@@ -151,5 +156,71 @@ mod tests {
         assert_eq!(spot.penalized_account, "spot_buyer");
         assert_eq!(spot.market_id, spot_market_id);
         assert_eq!(spot.penalty_cost, 1000);
+    }
+
+    #[test]
+    fn retain_settled_submits_first_verdicts_while_judged_trades_keep_their_budget() {
+        // Two 2 kWh sales from one building's PV; the earlier one was already judged
+        // (`Executed`) in a previous cycle. The building exported 3 kWh, so the offers keep
+        // 3 kWh in time priority: the earlier trade is covered, the later one is short 1 kWh.
+        let mut earlier =
+            trade("out_buyer", "pv_seller", "outside_load", "house_pv", "spot", 2.0, "t-earlier");
+        earlier.creation_time = 1;
+        earlier.status = TradeStatus::Executed;
+        let mut later =
+            trade("out_buyer", "pv_seller", "outside_load", "house_pv", "spot", 2.0, "t-later");
+        later.creation_time = 2;
+        // A settled trade with no measurement at all stays unjudged.
+        let unmeasured =
+            trade("x_buyer", "x_seller", "x_load", "x_pv", "spot", 1.0, "t-unmeasured");
+        let trades = vec![earlier, later, unmeasured];
+        let measurements = vec![MeasurementSchema {
+            area_uuid: "house_uuid".to_string(),
+            area_hash: "house_hash".to_string(),
+            community_uuid: "Site".to_string(),
+            time_slot: TIME_SLOT,
+            creation_time: 0,
+            energy_kwh: -3.0,
+            metering_point: Some(MeteringPointMeasurement {
+                name: "House".to_string(),
+                member_area_hashes: vec!["house_pv".to_string()],
+                completeness: MeasurementCompleteness::Complete,
+                missing_meters: Vec::new(),
+            }),
+        }];
+
+        let penalties = compute_penalties(&trades, &measurements, PENALTY_RATE);
+        let evaluated = evaluated_trade_uuids(&trades, &measurements);
+        let (penalties, evaluated) = retain_settled(&trades, penalties, evaluated);
+
+        assert_eq!(penalties.len(), 1);
+        assert_eq!(penalties[0].trade_uuid, "t-later");
+        assert_eq!(penalties[0].penalized_account, "pv_seller");
+        assert_eq!(penalties[0].penalty_cost, 1000);
+        assert_eq!(penalties[0].reason, PenaltyReason::Deviation);
+        assert_eq!(evaluated, vec!["t-later".to_string()]);
+
+        // Judging the later trade alone would have found no shortfall (sold 2, exported 3).
+        assert!(compute_penalties(&trades[1..2], &measurements, PENALTY_RATE).is_empty());
+    }
+
+    #[test]
+    fn retain_settled_drops_verdicts_of_already_judged_trades() {
+        let mut executed = trade("b", "s", "b_area", "s_area", "spot", 1.0, "t-executed");
+        executed.status = TradeStatus::Executed;
+        let mut penalized = trade("b", "s", "b_area", "s_area", "spot", 1.0, "t-penalized");
+        penalized.status = TradeStatus::Penalized;
+        let settled = trade("b", "s", "b_area", "s_area", "spot", 1.0, "t-settled");
+        let trades = vec![executed, penalized, settled];
+        let measurements = vec![measurement("b_area", "Comm", 5.0)];
+
+        let penalties = compute_penalties(&trades, &measurements, PENALTY_RATE);
+        assert_eq!(penalties.len(), 3);
+        let evaluated = evaluated_trade_uuids(&trades, &measurements);
+        let (penalties, evaluated) = retain_settled(&trades, penalties, evaluated);
+
+        let uuids: Vec<&str> = penalties.iter().map(|p| p.trade_uuid.as_str()).collect();
+        assert_eq!(uuids, vec!["t-settled"]);
+        assert_eq!(evaluated, vec!["t-settled".to_string()]);
     }
 }
