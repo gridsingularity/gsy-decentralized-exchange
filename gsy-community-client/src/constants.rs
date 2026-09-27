@@ -6,6 +6,12 @@ use once_cell::sync::Lazy;
 /// Reserved community name identifying the single inter-community market per timeslot.
 pub const INTER_COMMUNITY_MARKET_NAME: &str = "INTER_COMMUNITY";
 
+/// Meters that must never be forecast even though the ontology classifies them as a
+/// forecastable meter type. LIC02SM is a battery mislabelled as a SmartMeter; add further
+/// mislabelled assets here as they are discovered. A metering point never counts them as
+/// one of its meters either.
+pub const EXCLUDED_METERS: [&str; 1] = ["LIC02SM"];
+
 pub struct Constants {
     pub FEDECOM_ONTOLOGY_URL: String,
     pub FEDECOM_ONTOLOGY_ASSETS_URL: String,

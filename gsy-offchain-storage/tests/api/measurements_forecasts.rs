@@ -1,6 +1,8 @@
 use crate::helpers::init_app;
 use actix_web::web;
-use gsy_offchain_primitives::db_api_schema::profiles::{ForecastSchema, MeasurementSchema};
+use gsy_offchain_primitives::db_api_schema::profiles::{
+    ForecastSchema, MeasurementCompleteness, MeasurementSchema, MeteringPointMeasurement,
+};
 
 #[tokio::test]
 async fn get_measurements_succeeds() {
@@ -34,7 +36,7 @@ async fn get_measurements_succeeds() {
         .await
         .unwrap();
 
-    assert_eq!(saved.len(), 2);
+    assert_eq!(saved, 2);
 
     // Retrieve measurements from area my_uuid
     let client = reqwest::Client::new();
@@ -146,6 +148,306 @@ async fn post_measurements_fails_with_incorrect_json() {
             error_message
         );
     }
+}
+
+/// A per-area measurement of one slot; tests derive variants of it with `..`.
+fn area_measurement() -> MeasurementSchema {
+    MeasurementSchema {
+        area_uuid: "area_1".to_string(),
+        area_hash: "hash_1".to_string(),
+        community_uuid: "community_1".to_string(),
+        energy_kwh: 1.5,
+        time_slot: 1_800_000_000,
+        creation_time: 1_800_003_600,
+        metering_point: None,
+    }
+}
+
+/// A building's metering point row for the slot of [`area_measurement`].
+fn metering_point_measurement(
+    completeness: MeasurementCompleteness,
+    energy_kwh: f64,
+    missing_meters: &[&str],
+    creation_time: u64,
+) -> MeasurementSchema {
+    MeasurementSchema {
+        area_uuid: "mp_uuid".to_string(),
+        area_hash: "mp_hash".to_string(),
+        community_uuid: "community_1".to_string(),
+        energy_kwh,
+        time_slot: 1_800_000_000,
+        creation_time,
+        metering_point: Some(MeteringPointMeasurement {
+            name: "AICHouse11".to_string(),
+            member_area_hashes: vec!["0xaaa".to_string(), "0xbbb".to_string()],
+            completeness,
+            missing_meters: missing_meters
+                .iter()
+                .map(|meter| meter.to_string())
+                .collect(),
+        }),
+    }
+}
+
+/// `POST /measurements` over HTTP, returning the count in the response body.
+async fn post_measurements_over_http(address: &str, body: &[MeasurementSchema]) -> usize {
+    let resp = reqwest::Client::new()
+        .post(&format!("{}/measurements", address))
+        .json(body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(200, resp.status().as_u16());
+    resp.json().await.unwrap()
+}
+
+#[tokio::test]
+async fn post_measurements_upserts_on_area_hash_and_timeslot() {
+    let app = init_app().await;
+    let db = web::Data::new(app.db_wrapper);
+    let measurement = area_measurement();
+    let updated = MeasurementSchema {
+        energy_kwh: 2.5,
+        creation_time: measurement.creation_time + 900,
+        ..measurement.clone()
+    };
+
+    let measurements = db.get_ref().measurements();
+    assert_eq!(
+        measurements
+            .insert_measurements(vec![measurement])
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        measurements
+            .insert_measurements(vec![updated.clone()])
+            .await
+            .unwrap(),
+        1
+    );
+
+    let stored = measurements
+        .filter_measurements(None, None, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        stored,
+        vec![updated],
+        "same (area_hash, time_slot) must overwrite, not duplicate"
+    );
+}
+
+#[tokio::test]
+async fn unchanged_measurement_repost_keeps_the_first_creation_time() {
+    let app = init_app().await;
+    let db = web::Data::new(app.db_wrapper);
+    let first = area_measurement();
+    let repost = MeasurementSchema {
+        creation_time: first.creation_time + 900,
+        ..first.clone()
+    };
+
+    let measurements = db.get_ref().measurements();
+    assert_eq!(
+        measurements
+            .insert_measurements(vec![first.clone()])
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        measurements
+            .insert_measurements(vec![repost])
+            .await
+            .unwrap(),
+        0,
+        "a re-post equal apart from creation_time must not be written"
+    );
+
+    let stored = measurements
+        .filter_measurements(None, None, None)
+        .await
+        .unwrap();
+    assert_eq!(stored, vec![first]);
+}
+
+#[tokio::test]
+async fn metering_point_row_is_replaced_when_late_data_completes_it() {
+    let app = init_app().await;
+    let db = web::Data::new(app.db_wrapper);
+    let missing = metering_point_measurement(
+        MeasurementCompleteness::Missing,
+        0.0,
+        &["AIC34", "AIC35"],
+        1_800_003_600,
+    );
+    let complete =
+        metering_point_measurement(MeasurementCompleteness::Complete, -1.25, &[], 1_800_090_000);
+
+    let measurements = db.get_ref().measurements();
+    assert_eq!(
+        measurements
+            .insert_measurements(vec![missing])
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        measurements
+            .insert_measurements(vec![complete.clone()])
+            .await
+            .unwrap(),
+        1
+    );
+
+    let stored = measurements
+        .filter_measurements(None, None, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        stored,
+        vec![complete],
+        "the complete row replaces the missing one, creation_time included"
+    );
+}
+
+#[tokio::test]
+async fn metering_point_change_with_equal_energy_is_written() {
+    let app = init_app().await;
+    let db = web::Data::new(app.db_wrapper);
+    // Missing and incomplete rows both carry energy 0.0, so only `metering_point` differs.
+    let missing = metering_point_measurement(
+        MeasurementCompleteness::Missing,
+        0.0,
+        &["AIC34", "AIC35"],
+        1_800_003_600,
+    );
+    let incomplete = metering_point_measurement(
+        MeasurementCompleteness::Incomplete,
+        0.0,
+        &["AIC35"],
+        1_800_007_200,
+    );
+    let incomplete_repost = MeasurementSchema {
+        creation_time: 1_800_010_800,
+        ..incomplete.clone()
+    };
+
+    let measurements = db.get_ref().measurements();
+    assert_eq!(
+        measurements
+            .insert_measurements(vec![missing])
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        measurements
+            .insert_measurements(vec![incomplete.clone()])
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        measurements
+            .insert_measurements(vec![incomplete_repost])
+            .await
+            .unwrap(),
+        0
+    );
+
+    let stored = measurements
+        .filter_measurements(None, None, None)
+        .await
+        .unwrap();
+    assert_eq!(stored, vec![incomplete]);
+}
+
+#[tokio::test]
+async fn measurements_differing_in_area_hash_or_timeslot_are_stored_separately() {
+    let app = init_app().await;
+    let db = web::Data::new(app.db_wrapper);
+    let base = area_measurement();
+    let other_slot = MeasurementSchema {
+        time_slot: base.time_slot + 900,
+        ..base.clone()
+    };
+    let other_area = MeasurementSchema {
+        area_uuid: "area_2".to_string(),
+        area_hash: "hash_2".to_string(),
+        ..base.clone()
+    };
+
+    let measurements = db.get_ref().measurements();
+    assert_eq!(
+        measurements
+            .insert_measurements(vec![base.clone(), other_slot.clone(), other_area.clone()])
+            .await
+            .unwrap(),
+        3
+    );
+
+    let stored = measurements
+        .filter_measurements(None, None, None)
+        .await
+        .unwrap();
+    assert_eq!(stored, vec![base, other_slot, other_area]);
+}
+
+#[tokio::test]
+async fn later_measurement_of_a_key_wins_within_one_batch() {
+    let app = init_app().await;
+    let db = web::Data::new(app.db_wrapper);
+    let first = area_measurement();
+    let later = MeasurementSchema {
+        energy_kwh: 2.5,
+        creation_time: first.creation_time + 1,
+        ..first.clone()
+    };
+
+    let measurements = db.get_ref().measurements();
+    assert_eq!(
+        measurements
+            .insert_measurements(vec![first, later.clone()])
+            .await
+            .unwrap(),
+        2
+    );
+
+    let stored = measurements
+        .filter_measurements(None, None, None)
+        .await
+        .unwrap();
+    assert_eq!(stored, vec![later]);
+}
+
+#[tokio::test]
+async fn post_measurements_returns_the_number_of_rows_written() {
+    let app = init_app().await;
+    let first_slot = area_measurement();
+    let second_slot = MeasurementSchema {
+        time_slot: first_slot.time_slot + 900,
+        ..first_slot.clone()
+    };
+    let body = vec![first_slot, second_slot];
+
+    assert_eq!(post_measurements_over_http(&app.address, &body).await, 2);
+    assert_eq!(
+        post_measurements_over_http(&app.address, &body).await,
+        0,
+        "posting the same rows again must not write anything"
+    );
+
+    let db = web::Data::new(app.db_wrapper);
+    let stored = db
+        .get_ref()
+        .measurements()
+        .filter_measurements(None, None, None)
+        .await
+        .unwrap();
+    assert_eq!(stored, body);
 }
 
 #[tokio::test]

@@ -1,4 +1,4 @@
-use crate::constants::CommunityClientConstants;
+use crate::constants::{CommunityClientConstants, EXCLUDED_METERS};
 use crate::external_forecasts::ForecastApiError;
 use crate::external_forecasts::demand_api::{
     DemandForecastApiConnection, DemandForecastPoint, DemandForecaster,
@@ -31,11 +31,6 @@ fn forecaster_site(meter_name: &str) -> Option<&'static str> {
         None
     }
 }
-
-// Meters that must never be forecast even though the ontology classifies them as a
-// forecastable meter type. LIC02SM is a battery mislabelled as a SmartMeter; add further
-// mislabelled assets here as they are discovered.
-const EXCLUDED_METERS: [&str; 1] = ["LIC02SM"];
 
 #[derive(Clone)]
 pub struct ForecastsManager {

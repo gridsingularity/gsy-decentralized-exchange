@@ -141,16 +141,19 @@ impl TopologyManager {
         let params = GetBuildingsPostParameters {
             params: HashMap::new(),
         };
+        // Status checked before decoding, so a 5xx is reported as such rather than as
+        // "error decoding response body".
         let response = self
             .client
             .post(&self.topology_url)
             .json(&params)
             .send()
-            .await?;
+            .await?
+            .error_for_status()?;
         response.json::<LECCommunityMembersResults>().await
     }
 
-    async fn fetch_assets(
+    pub async fn fetch_assets(
         &self,
         community_name: String,
     ) -> Result<LECCommunityAssetsResults, reqwest::Error> {
@@ -165,7 +168,8 @@ impl TopologyManager {
             .post(&self.assets_url)
             .json(&post_parameters)
             .send()
-            .await?;
+            .await?
+            .error_for_status()?;
         response.json::<LECCommunityAssetsResults>().await
     }
 
@@ -188,8 +192,19 @@ impl TopologyManager {
 
         let mut external_topologies: Vec<ExternalCommunityTopology> = vec![];
         for community in communities {
-            let assets = self.fetch_assets(community.community_name.clone()).await;
-            let asset_objects = self.map_assets_to_topology(assets.unwrap());
+            // One failing community is logged and left out of this result instead of
+            // panicking the caller; the others are still returned.
+            let assets = match self.fetch_assets(community.community_name.clone()).await {
+                Ok(assets) => assets,
+                Err(error) => {
+                    error!(
+                        "Failed to fetch the assets of community {}: {}",
+                        community.community_name, error
+                    );
+                    continue;
+                }
+            };
+            let asset_objects = self.map_assets_to_topology(assets);
             external_topologies.push(ExternalCommunityTopology {
                 areas: asset_objects,
                 community_name: community.community_name.clone(),

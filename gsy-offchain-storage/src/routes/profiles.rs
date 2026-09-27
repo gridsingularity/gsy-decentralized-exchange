@@ -23,7 +23,7 @@ pub async fn post_measurements(
         .insert_measurements(measurements.to_vec())
         .await
     {
-        Ok(ids) => HttpResponse::Ok().json(ids),
+        Ok(written_count) => HttpResponse::Ok().json(written_count),
         Err(_) => HttpResponse::InternalServerError().finish(),
     }
 }

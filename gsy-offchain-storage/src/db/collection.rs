@@ -280,7 +280,57 @@ where
         }
         Ok(())
     }
+
+    /// Delete duplicate documents, i.e. documents sharing the values of all `keys`, keeping of
+    /// each group the one with the greatest `keep_newest_by`, and return the number of documents
+    /// deleted. Run it before [`Coll::ensure_unique_index`] over the same `keys`, which cannot be
+    /// built while duplicates exist. No-op returning 0 for the in-memory backend, which starts
+    /// empty on every run and so holds no rows written before the unique key existed.
+    pub async fn remove_duplicates(&self, keys: &[&str], keep_newest_by: &str) -> Result<u64> {
+        let Coll::Mongo(collection) = self else {
+            return Ok(0);
+        };
+        let mut group_key = Document::new();
+        for key in keys {
+            group_key.insert(*key, format!("${}", key));
+        }
+        let pipeline = [
+            doc! {"$sort": {keep_newest_by: -1}},
+            doc! {"$group": {
+                "_id": group_key,
+                "keep": {"$first": "$_id"},
+                "ids": {"$push": "$_id"},
+                "count": {"$sum": 1},
+            }},
+            doc! {"$match": {"count": {"$gt": 1}}},
+        ];
+        let mut groups = collection.aggregate(pipeline).allow_disk_use(true).await?;
+        let mut duplicate_ids: Vec<Bson> = Vec::new();
+        while let Some(group) = groups.next().await {
+            let group = group?;
+            let keep = group.get("keep");
+            duplicate_ids.extend(
+                group
+                    .get_array("ids")?
+                    .iter()
+                    .filter(|id| Some(*id) != keep)
+                    .cloned(),
+            );
+        }
+        // Batched so that a large clean-up stays below MongoDB's 16 MB command size limit.
+        let mut deleted = 0;
+        for batch in duplicate_ids.chunks(REMOVE_DUPLICATES_BATCH_SIZE) {
+            deleted += collection
+                .delete_many(doc! {"_id": {"$in": batch.to_vec()}})
+                .await?
+                .deleted_count;
+        }
+        Ok(deleted)
+    }
 }
+
+/// Maximum number of `_id`s deleted per `delete_many` by [`Coll::remove_duplicates`].
+const REMOVE_DUPLICATES_BATCH_SIZE: usize = 10_000;
 
 /// Collect a cursor into a vector. NOTE: preserves the historical behavior of
 /// returning the partial result accumulated so far on the first cursor error.

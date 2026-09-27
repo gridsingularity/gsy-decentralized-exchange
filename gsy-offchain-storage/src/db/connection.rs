@@ -78,6 +78,37 @@ async fn preload(db: &DatabaseWrapper) -> Result<()> {
         .ensure_unique_index(mongodb::bson::doc! {"area_uuid": 1, "time_slot": 1})
         .await?;
     db.measurements().0.ensure_id_index().await?;
+    // Backs the (area_hash, time_slot) upsert key used by `insert_measurements`. Rows stored
+    // before that upsert existed may repeat a key, which would fail the index build, so they are
+    // removed first, keeping the newest `creation_time` of each key. Neither step may stop the
+    // service: a failure is logged and start-up continues, if need be without the index.
+    match db
+        .measurements()
+        .0
+        .remove_duplicates(&["area_hash", "time_slot"], "creation_time")
+        .await
+    {
+        Ok(0) => tracing::info!("Found no duplicate (area_hash, time_slot) measurements"),
+        Ok(removed) => tracing::warn!(
+            "Removed {} duplicate (area_hash, time_slot) measurements, keeping the newest creation_time of each",
+            removed
+        ),
+        Err(e) => tracing::error!(
+            "Failed to remove duplicate (area_hash, time_slot) measurements: {:?}. Continuing; while duplicates remain the unique index on them cannot be built, and upserts still work but scan the collection",
+            e
+        ),
+    }
+    if let Err(e) = db
+        .measurements()
+        .0
+        .ensure_unique_index(mongodb::bson::doc! {"area_hash": 1, "time_slot": 1})
+        .await
+    {
+        tracing::error!(
+            "Failed to create the unique (area_hash, time_slot) index on measurements: {:?}. Continuing without it; upserts still work but scan the collection",
+            e
+        );
+    }
     db.markets().0.ensure_id_index().await?;
     Ok(())
 }

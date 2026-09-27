@@ -225,11 +225,11 @@ impl AppState {
         let interval_sec = CommunityClientConstants.ASSET_DID_SYNC_INTERVAL_SEC.max(1);
 
         loop {
-            // `fetch_all_topology` swallows its own request failures and returns an empty
-            // vec — but not every failure: `get_all_assets_for_all_communities`
-            // (`topology.rs:192`) still `unwrap()`s the per-community asset query, so a
-            // single bad ontology response panics the caller. Running it as a child task
-            // turns that pre-existing panic into a `JoinError` this loop can log and retry
+            // `fetch_all_topology` logs its own request failures instead of returning them:
+            // an unreachable ontology gives an empty vec, and a community whose asset query
+            // fails is left out (the identity server only retires subjects within the
+            // communities a payload carries, so that retires nothing). Running it as a child
+            // task still turns any panic in it into a `JoinError` this loop can log and retry
             // on the next tick, instead of killing the sync permanently.
             let fetch_state = self.clone();
             let fetched = tokio::spawn(async move {

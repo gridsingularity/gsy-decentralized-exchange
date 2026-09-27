@@ -58,12 +58,15 @@ impl MeasurementsManager {
                 if topology_member_ids.contains(&sensor_id) {
                     // This sensor is part of the community. Create external measurements.
                     for (timestamp, record) in timestamp_hashmap.clone().into_iter() {
+                        let Some(energy_kwh) = record.net_energy_kWh() else {
+                            continue;
+                        };
                         external_measurements.push(ExternalMeasurement {
                             community_uuid: topology.community_uuid.clone(),
                             area_uuid: sensor_id.clone(),
                             time_slot: timestamp.timestamp() as u64,
                             creation_time: Utc::now().timestamp() as u64,
-                            energy_kwh: record.net_energy_kWh(),
+                            energy_kwh,
                         })
                     }
                 }
