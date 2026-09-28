@@ -56,15 +56,22 @@ pub mod pallet {
 		Bid, BidOfferMatch, Offer, Order, OrderComponent, Trade, TradesPenalties, Validator,
 	};
 	use scale_info::prelude::vec::Vec;
+	use sp_std::collections::btree_set::BTreeSet;
 	use sp_std::vec;
+
+	use remuneration::RemunerationHandler;
+	type BalanceOf<T> = <T as pallet_balances::Config>::Balance;
 
 	#[pallet::config]
 	pub trait Config:
-		frame_system::Config
+		frame_system::Config<Hash = gsy_primitives::v0::Hash>
 		+ orderbook_registry::Config
 		+ orderbook_worker::Config
 		+ gsy_collateral::Config
+		+ remuneration::Config
 	{
+
+		#[allow(deprecated)]
 		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
 
 		type TradeSettlementWeightInfo: TradeSettlementWeightInfo;
@@ -72,6 +79,8 @@ pub mod pallet {
 		/// The length of the market slot in seconds.
 		#[pallet::constant]
 		type MarketSlotDuration: Get<u64>;
+
+		type Remuneration: RemunerationHandler<Self::AccountId, BalanceOf<Self>>;
 	}
 
 	#[pallet::pallet]
@@ -88,6 +97,8 @@ pub mod pallet {
 	pub enum Event<T: Config> {
 		TradesSettled(T::Hash),
 		PenaltiesSubmitted(TradesPenalties<T::AccountId, T::Hash>, T::Hash),
+		/// A trade was evaluated by the execution engine and incurred no penalty.
+		TradeExecuted(T::Hash),
 	}
 
 	#[pallet::error]
@@ -108,6 +119,15 @@ pub mod pallet {
 		BidEnergyLessThanSelectedEnergy,
 		/// Ensure that the energy subtraction in the validation is correct.
 		UnableToSubtractEnergy,
+		// SUPSI errors definition
+		/// Ensure that the provided amount is valid and within acceptable bounds.
+		InvalidAmount,
+		/// Prevent any overflow during calculations or updates.
+		Overflow,
+		/// Ensure that a custodian has been defined in the remuneration pallet.
+		NoCustodian,
+		/// Ensure the caller is the designated custodian.
+		NotCustodian,
 	}
 
 	#[pallet::call]
@@ -128,17 +148,20 @@ pub mod pallet {
 
 			let valid_matches: Vec<_> = proposed_matches
 				.into_iter()
-				.filter(|bid_offer_match| <Self as Validator>::validate(bid_offer_match))
+				.filter(<Self as Validator>::validate)
 				.collect();
 
-			if valid_matches.len() > 0 {
+			if !valid_matches.is_empty() {
 				for valid_match in valid_matches.clone() {
 					// Check residual orders and add them to storage.
 					if let Some(residual_bid) = valid_match.residual_bid {
-						// Add residual bid in the orderbook registry.
+						// Add residual bid in the orderbook registry. The registry is keyed by the
+						// hash of the bare order (see `orderbook_worker::insert_orders`), which is
+						// also what `clear_order` uses to look the order up when it is later
+						// matched, so the residual must be registered the same way.
 						<orderbook_registry::Pallet<T>>::insert_orders(
 							RawOrigin::Signed(residual_bid.buyer.clone()).into(),
-							vec![T::Hashing::hash_of(&Order::Bid(residual_bid.clone()))],
+							vec![T::Hashing::hash_of(&residual_bid)],
 						)?;
 						// Add residual in the orderbook worker.
 						<orderbook_worker::Pallet<T>>::add_order(
@@ -147,10 +170,11 @@ pub mod pallet {
 						)?;
 					}
 					if let Some(residual_offer) = valid_match.residual_offer {
-						// Add residual in the orderbook registry.
+						// Add residual in the orderbook registry, keyed by the bare-order hash to
+						// match how `orderbook_worker::insert_orders` and `clear_order` hash orders.
 						<orderbook_registry::Pallet<T>>::insert_orders(
 							RawOrigin::Signed(residual_offer.seller.clone()).into(),
-							vec![T::Hashing::hash_of(&Order::Offer(residual_offer.clone()))],
+							vec![T::Hashing::hash_of(&residual_offer)],
 						)?;
 						// Add residual in the orderbook worker.
 						<orderbook_worker::Pallet<T>>::add_order(
@@ -188,15 +212,28 @@ pub mod pallet {
 
 		/// Submit penalties received from the execution engine.
 		///
-		/// This function is restricted to the execution engine operator (here enforced by require
-		/// that the origin is root). It accepts a vector of penalty records and stores each one
-		/// in the `TradesPenalties` storage map.
+		/// This function is restricted to a registered exchange operator, checked via
+		/// `gsy_collateral::Pallet::<T>::is_registered_exchange_operator`. It accepts the penalty
+		/// records for the trades that were penalized, plus the full set of trade uuids the
+		/// execution engine evaluated for the slot. Each penalty is stored in the
+		/// `TradesPenalties` storage map and emits a `PenaltiesSubmitted` event. Every evaluated
+		/// uuid that was not penalized emits a `TradeExecuted` event, so offchain consumers can
+		/// learn which trades came out clean.
+		///
+		/// # Parameters
+		/// `penalties`: The penalty records for the trades that incurred a penalty.
+		/// `evaluated_trade_uuids`: The uuids of all trades the execution engine evaluated for the
+		/// slot, penalized or not.
 		#[transactional]
 		#[pallet::call_index(1)]
-		#[pallet::weight(<T as Config>::TradeSettlementWeightInfo::submit_penalties())]
+		#[pallet::weight(<T as Config>::TradeSettlementWeightInfo::submit_penalties(
+			penalties.len() as u32,
+			evaluated_trade_uuids.len() as u32,
+		))]
 		pub fn submit_penalties(
 			origin: OriginFor<T>,
 			penalties: Vec<TradesPenalties<T::AccountId, T::Hash>>,
+			evaluated_trade_uuids: Vec<T::Hash>,
 		) -> DispatchResult {
 			let operator_account = ensure_signed(origin)?;
 			// Verify that the user is a registered operator account.
@@ -205,6 +242,9 @@ pub mod pallet {
 				gsy_collateral::Error::<T>::NotARegisteredExchangeOperator
 			);
 			log::info!("Submitting penalties {:?}...", penalties.len());
+
+			let penalized: BTreeSet<T::Hash> = penalties.iter().map(|p| p.trade_uuid).collect();
+
 			// For each penalty in the input vector, compute a unique hash and insert it.
 			for penalty in penalties.into_iter() {
 				let penalty_hash = T::Hashing::hash_of(&penalty);
@@ -216,6 +256,16 @@ pub mod pallet {
 				log::info!("Emitting penalty event...");
 				Self::deposit_event(Event::PenaltiesSubmitted(penalty, penalty_hash));
 			}
+
+			let mut emitted: BTreeSet<T::Hash> = BTreeSet::new();
+			for trade_uuid in evaluated_trade_uuids.into_iter() {
+				if penalized.contains(&trade_uuid) || !emitted.insert(trade_uuid) {
+					continue;
+				}
+				Self::deposit_event(Event::TradeExecuted(trade_uuid));
+			}
+			log::info!("Emitted {:?} TradeExecuted event(s)...", emitted.len());
+
 			log::info!("Exited penalty submission...");
 			Ok(())
 		}
@@ -235,24 +285,28 @@ pub mod pallet {
 			) || !Self::validate_energy_rate(
 				bid_offer_match.bid.bid_component.energy_rate,
 				bid_offer_match.offer.offer_component.energy_rate,
+			) || !Self::validate_market_ids(
+				bid_offer_match.market_id,
+				bid_offer_match.bid.bid_component.market_id,
+				bid_offer_match.offer.offer_component.market_id,
 			) || !Self::validate_time_slots(
 				bid_offer_match
 					.bid
 					.bid_component
 					.time_slot
-					.checked_div(T::MarketSlotDuration::get())
+					.checked_div(<T as Config>::MarketSlotDuration::get())
 					.unwrap_or(0),
 				bid_offer_match
 					.offer
 					.offer_component
 					.time_slot
-					.checked_div(T::MarketSlotDuration::get())
+					.checked_div(<T as Config>::MarketSlotDuration::get())
 					.unwrap_or(0),
 				// T::TimeProvider::now()
 				// 	.as_secs()
 				// 	.checked_div(T::MarketSlotDuration::get())
 				// 	.unwrap_or(0),
-				bid_offer_match.time_slot.checked_div(T::MarketSlotDuration::get()).unwrap_or(0),
+				bid_offer_match.time_slot.checked_div(<T as Config>::MarketSlotDuration::get()).unwrap_or(0),
 			) {
 				return false;
 			}
@@ -308,15 +362,23 @@ pub mod pallet {
 			bid_energy_rate >= offer_energy_rate
 		}
 
+		fn validate_market_ids(
+			match_market_id: gsy_primitives::v0::Hash,
+			bid_market_id: gsy_primitives::v0::Hash,
+			offer_market_id: gsy_primitives::v0::Hash,
+		) -> bool {
+			bid_market_id == offer_market_id && bid_market_id == match_market_id
+		}
+
 		fn validate_residual_bid(
 			residual_bid: &Bid<Self::AccountId>,
 			bid: &Bid<Self::AccountId>,
 			selected_energy: u64,
 		) -> bool {
 			residual_bid.eq(&Bid {
-				nonce: bid.nonce.clone().checked_add(1).unwrap(),
+				nonce: bid.nonce.checked_add(1).unwrap(),
 				bid_component: OrderComponent {
-					energy: (bid.bid_component.energy.checked_sub(selected_energy).unwrap()).into(),
+					energy: (bid.bid_component.energy.checked_sub(selected_energy).unwrap()),
 					..bid.bid_component.clone()
 				},
 				..bid.clone()
@@ -329,10 +391,9 @@ pub mod pallet {
 			selected_energy: u64,
 		) -> bool {
 			residual_offer.eq(&Offer {
-				nonce: offer.nonce.clone().checked_add(1).unwrap(),
+				nonce: offer.nonce.checked_add(1).unwrap(),
 				offer_component: OrderComponent {
-					energy: (offer.offer_component.energy.checked_sub(selected_energy).unwrap())
-						.into(),
+					energy: (offer.offer_component.energy.checked_sub(selected_energy).unwrap()),
 					..offer.offer_component.clone()
 				},
 				..offer.clone()

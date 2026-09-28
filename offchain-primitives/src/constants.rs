@@ -1,3 +1,5 @@
+#![allow(non_snake_case,non_upper_case_globals)]
+
 use crate::utils::read_env_or;
 use once_cell::sync::Lazy;
 
@@ -24,6 +26,14 @@ impl Constants {
             SETTLEMENT_MARKET_OPEN_OFFSET_MIN: read_env_or("SETTLEMENT_MARKET_OPEN_OFFSET_MIN", -60),
             SETTLEMENT_MARKET_CLOSE_OFFSET_MIN: read_env_or("SETTLEMENT_MARKET_CLOSE_OFFSET_MIN", -30),
         }
+    }
+
+    /// Compute the [open, close] timestamps during which the spot market for a given delivery
+    /// time_slot accepts orders.
+    pub fn spot_market_window(&self, time_slot: u64) -> (u64, u64) {
+        let open = (time_slot as i64 + self.SPOT_MARKET_OPEN_OFFSET_MIN * 60) as u64;
+        let close = (time_slot as i64 + self.SPOT_MARKET_CLOSE_OFFSET_MIN * 60) as u64;
+        (open, close)
     }
 }
 

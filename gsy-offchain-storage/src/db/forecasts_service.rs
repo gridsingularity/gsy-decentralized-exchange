@@ -1,64 +1,45 @@
 use crate::db::DatabaseWrapper;
-use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
+use crate::db::collection::{Coll, apply_time_window, in_time_window};
 use anyhow::Result;
-use futures::StreamExt;
-use mongodb::bson::{doc, Bson};
-use mongodb::options::IndexOptions;
-use mongodb::{Collection, IndexModel};
-use std::collections::HashMap;
-use std::ops::Deref;
+use gsy_offchain_primitives::db_api_schema::profiles::ForecastSchema;
+use mongodb::bson::doc;
 
-
-/// this function will call after connected to database
-pub async fn init_forecasts(db: &DatabaseWrapper) -> Result<()> {
-    // create index in this block
-
-    let controller = db.forecasts();
-    let index: IndexModel = IndexModel::builder()
-        .keys(doc! {"_id":1})
-        .options(IndexOptions::builder().build())
-        .build();
-    controller.create_index(index).await?;
-    Ok(())
-}
-
-#[repr(transparent)]
-pub struct ForecastsService(pub Collection<ForecastSchema>);
+pub struct ForecastsService(pub(crate) Coll<ForecastSchema>);
 
 impl ForecastsService {
     #[tracing::instrument(name = "Fetching forecasts from database for one area", skip(self))]
     pub async fn filter_forecasts(
-            &self,
-            area_uuid: Option<String>,
-            start_time: Option<u32>,
-            end_time: Option<u32>) -> Result<Vec<ForecastSchema>> {
+        &self,
+        area_uuid: Option<String>,
+        community_uuid: Option<String>,
+        start_time: Option<u32>,
+        end_time: Option<u32>,
+    ) -> Result<Vec<ForecastSchema>> {
         let mut filter_params = doc! {};
-        if area_uuid.is_some() { filter_params.insert("area_uuid", area_uuid.unwrap()); }
-        if start_time.is_some() { filter_params.insert("time_slot", doc! {"$gte": start_time.unwrap()} ); } 
-        if end_time.is_some() {
-            if start_time.is_some() {
-                filter_params.insert("time_slot", 
-                                     doc! {"$gte": start_time.unwrap(), "$lte": end_time.unwrap()});
-            }
-            else {
-                filter_params.insert("time_slot", doc! {"$lte": end_time.unwrap()});
-            }
+        if let Some(area_uuid) = &area_uuid {
+            filter_params.insert("area_uuid", area_uuid.clone());
         }
-        let mut cursor = self.0.find(filter_params).await.unwrap();
-        let mut result: Vec<ForecastSchema> = Vec::new();
-        while let Some(doc) = cursor.next().await {
-            match doc {
-                Ok(document) => {
-                    result.push(document);
-                }
-                _ => {
-                    break;
-                }
-            }
+        if let Some(community_uuid) = &community_uuid {
+            filter_params.insert("community_uuid", community_uuid.clone());
         }
-        Ok(result)
+        apply_time_window(&mut filter_params, start_time, end_time);
+
+        self.0
+            .query(filter_params, |forecast| {
+                area_uuid
+                    .as_ref()
+                    .is_none_or(|area_uuid| &forecast.area_uuid == area_uuid)
+                    && community_uuid
+                        .as_ref()
+                        .is_none_or(|community_uuid| &forecast.community_uuid == community_uuid)
+                    && in_time_window(forecast.time_slot, start_time, end_time)
+            })
+            .await
     }
 
+    /// Upsert every forecast keyed on `(area_uuid, time_slot)`: a forecast for an area/slot
+    /// already stored is overwritten in place, otherwise it is inserted. This makes the
+    /// hourly re-ingest of a rolling day-ahead window idempotent instead of duplicating rows.
     #[tracing::instrument(
         name = "Saving forecasts to database",
         skip(self, forecasts),
@@ -66,27 +47,28 @@ impl ForecastsService {
         forecasts = ?forecasts
         )
     )]
-    pub async fn insert_forecasts(&self, forecasts: Vec<ForecastSchema>) -> Result<HashMap<usize, Bson>> {
-        match self.0.insert_many(forecasts).await {
-            Ok(db_result) => Ok(db_result.inserted_ids),
-            Err(e) => {
-                tracing::error!("Failed to execute query: {:?}", e);
-                Err(anyhow::Error::from(e))
-            }
+    pub async fn insert_forecasts(&self, forecasts: Vec<ForecastSchema>) -> Result<usize> {
+        let mut upserted = 0usize;
+        for forecast in forecasts {
+            let mongo_filter = doc! {
+                "area_uuid": &forecast.area_uuid,
+                "time_slot": forecast.time_slot as i64,
+            };
+            let area_uuid = forecast.area_uuid.clone();
+            let time_slot = forecast.time_slot;
+            self.0
+                .replace_one_upsert(mongo_filter, forecast, |existing| {
+                    existing.area_uuid == area_uuid && existing.time_slot == time_slot
+                })
+                .await?;
+            upserted += 1;
         }
+        Ok(upserted)
     }
 }
 
 impl From<&DatabaseWrapper> for ForecastsService {
     fn from(db: &DatabaseWrapper) -> Self {
-        ForecastsService(db.collection("forecasts"))
-    }
-}
-
-impl Deref for ForecastsService {
-    type Target = Collection<ForecastSchema>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
+        ForecastsService(db.coll("forecasts", |store| store.forecasts.clone()))
     }
 }

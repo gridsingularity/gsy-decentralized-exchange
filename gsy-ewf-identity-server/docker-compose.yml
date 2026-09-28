@@ -1,0 +1,32 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gsy-ewf-identity-server
+    ports:
+      - '3000:3000'
+    depends_on:
+      - mongodb
+    env_file:
+      - .env
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  mongodb:
+    image: mongo:6
+    container_name: identity-mongodb
+    volumes:
+      - mongo-data:/data/db
+    ports:
+      - '27017:27017'
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  mongo-data:

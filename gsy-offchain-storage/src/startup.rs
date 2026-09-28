@@ -1,16 +1,42 @@
-use std::net::TcpListener;
-use actix_web::{web, App, HttpServer};
-use actix_web::dev::Server;
 use crate::db::DatabaseWrapper;
-use crate::routes::{health_check, get_orders, post_orders, post_trades, get_trades, post_measurements, get_measurements, post_forecasts, get_forecasts, post_market, get_market, get_market_from_community, post_normalized_orders, post_normalized_trades};
+use crate::routes::{
+    get_communities, get_forecasts, get_guarantees_of_origin, get_market,
+    get_market_from_community, get_markets_in_window, get_measurements, get_orders,
+    get_traded_energy, get_trades, get_trades_canonical, health_check, post_forecasts, post_market,
+    post_measurements, post_normalized_orders, post_normalized_trades, post_orders, post_trades,
+};
+use actix_web::dev::{Server, Service};
+use actix_web::{App, HttpServer, web};
+use std::net::TcpListener;
 use tracing_actix_web::TracingLogger;
 
-
-pub fn run(listener: TcpListener, db_connection_wrapper: DatabaseWrapper) -> Result<Server, std::io::Error> {
+pub fn run(
+    listener: TcpListener,
+    db_connection_wrapper: DatabaseWrapper,
+    api_key: String,
+) -> Result<Server, std::io::Error> {
     let db_connection_wrapper = web::Data::new(db_connection_wrapper);
     let server = HttpServer::new(move || {
+        let api_key = api_key.clone();
         App::new()
             .wrap(TracingLogger::default())
+            .wrap_fn(move |req, srv| {
+                let allowed = api_key.is_empty()
+                    || req.path() == "/health_check"
+                    || req.headers().get("x-api-key").and_then(|v| v.to_str().ok())
+                        == Some(api_key.as_str());
+
+                let fut = allowed.then(|| srv.call(req));
+
+                async move {
+                    match fut {
+                        Some(fut) => fut.await,
+                        None => Err(actix_web::error::ErrorUnauthorized(
+                            "invalid or missing x-api-key",
+                        )),
+                    }
+                }
+            })
             .route("/health_check", web::get().to(health_check))
             .route("/orders-normalized", web::post().to(post_normalized_orders))
             .route("/orders", web::post().to(post_orders))
@@ -18,13 +44,24 @@ pub fn run(listener: TcpListener, db_connection_wrapper: DatabaseWrapper) -> Res
             .route("/trades-normalized", web::post().to(post_normalized_trades))
             .route("/trades", web::post().to(post_trades))
             .route("/trades", web::get().to(get_trades))
+            .route("/trades-canonical", web::get().to(get_trades_canonical))
+            .route("/traded-energy", web::get().to(get_traded_energy))
+            .route(
+                "/guarantees-of-origin-measurements",
+                web::get().to(get_guarantees_of_origin),
+            )
             .route("/measurements", web::post().to(post_measurements))
             .route("/measurements", web::get().to(get_measurements))
             .route("/forecasts", web::post().to(post_forecasts))
             .route("/forecasts", web::get().to(get_forecasts))
             .route("/market", web::post().to(post_market))
             .route("/market", web::get().to(get_market))
-            .route("/community-market", web::get().to(get_market_from_community))
+            .route("/markets", web::get().to(get_markets_in_window))
+            .route(
+                "/community-market",
+                web::get().to(get_market_from_community),
+            )
+            .route("/communities", web::get().to(get_communities))
             .app_data(db_connection_wrapper.clone())
     })
     .listen(listener)?

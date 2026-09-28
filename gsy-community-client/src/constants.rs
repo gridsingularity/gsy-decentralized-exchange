@@ -1,0 +1,186 @@
+#![allow(non_snake_case, non_upper_case_globals)]
+
+use gsy_offchain_primitives::utils::read_env_or;
+use once_cell::sync::Lazy;
+
+/// Reserved community name identifying the single inter-community market per timeslot.
+pub const INTER_COMMUNITY_MARKET_NAME: &str = "INTER_COMMUNITY";
+
+/// Meters that must never be forecast even though the ontology classifies them as a
+/// forecastable meter type. LIC02SM is a battery mislabelled as a SmartMeter; add further
+/// mislabelled assets here as they are discovered. A metering point never counts them as
+/// one of its meters either.
+pub const EXCLUDED_METERS: [&str; 1] = ["LIC02SM"];
+
+/// Default of `INTER_COMMUNITY_ELIGIBLE_COMMUNITIES`. Arena is left out until its demand is
+/// forecast: without bids its net would be its PV alone.
+pub const DEFAULT_INTER_COMMUNITY_ELIGIBLE_COMMUNITIES: &str =
+    "LugaggiaInnovationCommunity,GaramèDistrict";
+
+pub struct Constants {
+    pub FEDECOM_ONTOLOGY_URL: String,
+    pub FEDECOM_ONTOLOGY_ASSETS_URL: String,
+    pub FEDECOM_INFLUX_DB_URL: String,
+    pub FEDECOM_INFLUX_DB_ORG: String,
+    pub FEDECOM_INFLUX_DB_TOKEN: String,
+    pub FEDECOM_DEMAND_FORECAST_URL: String,
+    pub FEDECOM_DEMAND_FORECAST_API_KEY: String,
+    pub FEDECOM_PV_FORECAST_URL: String,
+    pub FEDECOM_PV_FORECAST_API_KEY: String,
+    /// Endpoint of the temporary AIC demand forecaster.
+    pub FEDECOM_AIC_FORECAST_URL: String,
+    pub FEDECOM_AIC_FORECAST_API_KEY: String,
+    /// How often, in seconds, bids and offers are resubmitted within a market slot.
+    pub ORDER_RESUBMISSION_INTERVAL_SEC: u64,
+    /// How often, in seconds, the day-ahead ingestion loop re-asks the forecasters and
+    /// upserts the result to storage.
+    pub FORECAST_INGEST_INTERVAL_SEC: u64,
+    /// Coverage window, in seconds, the day-ahead ingestion loop expects the forecasters
+    /// to return from `start_time` (48h). Only used for logging/metrics; never sent to the
+    /// forecaster, which returns its own fixed forward window regardless.
+    pub FORECAST_INGEST_HORIZON_SEC: u64,
+    /// Lower bound of the order price range, in currency units per kWh.
+    pub MIN_ORDER_RATE: f64,
+    /// Upper bound of the order price range, in currency units per kWh.
+    pub MAX_ORDER_RATE: f64,
+    /// Risk appetite for offer-energy commitment, in [-1.0, +1.0]. The committed energy
+    /// is `max(0, F + side_sign * s * (q95 - q5) / 2)`, where `side_sign` is fixed per
+    /// market side by the client. On the uniform scale shared with `BID_RISK_FACTOR`:
+    /// -1.0 (default) is maximally conservative, 0.0 is the point forecast and +1.0 is
+    /// maximally optimistic. Which tail of the band counts as conservative differs per
+    /// side and is handled internally: a conservative offer commits approximately p5.
+    pub OFFER_RISK_FACTOR: f64,
+    /// Risk appetite for bid-energy commitment, in [-1.0, +1.0]; the same formula and the
+    /// same uniform scale as `OFFER_RISK_FACTOR`: -1.0 (default) is maximally
+    /// conservative, 0.0 is the point forecast and +1.0 is maximally optimistic. Kept
+    /// separate from the offer side because the two sides face different forecast
+    /// uncertainty and should stay tunable independently. Which tail of the band counts
+    /// as conservative differs per side and is handled internally: a conservative bid
+    /// commits approximately p95, since a buyer is only penalised for consuming more than
+    /// it bought.
+    pub BID_RISK_FACTOR: f64,
+    /// Normalizer for the relative p5..p95 spread when deriving the confidence scalar.
+    pub PV_SPREAD_NORM: f64,
+    /// Lower clamp for the per-slot confidence scalar.
+    pub PV_MIN_CONFIDENCE: f64,
+    /// Floor (kWh) for the denominator of the relative spread; avoids divide-by-zero
+    /// at night / near-zero output.
+    pub PV_MIN_FORECAST_KWH: f64,
+    /// Overall request timeout (in seconds) applied to every external HTTP call.
+    /// Keeps a slow/hung endpoint from blocking indefinitely. Set above the demand
+    /// forecaster's observed ~30s response latency so valid slow responses are not cut off.
+    pub HTTP_REQUEST_TIMEOUT_SEC: u64,
+    /// Overall request timeout (in seconds) applied to the PV forecaster HTTP call only.
+    /// A single, uncontended PV request answers in ~13s, but the forecaster slows down
+    /// sharply as soon as requests overlap, so it gets a dedicated, much larger timeout
+    /// than the demand forecaster.
+    pub PV_HTTP_REQUEST_TIMEOUT_SEC: u64,
+    /// How many PV forecast requests the client keeps in flight at once. The forecaster
+    /// serialises badly under load, so the default is 1 (fully sequential); see
+    /// `external_forecasts::manager::ForecastsManager::fetch_pv_forecasts` for the
+    /// measurements behind that choice. Values below 1 are clamped to 1.
+    pub PV_FETCH_CONCURRENCY: usize,
+    /// TCP connect timeout (in seconds) applied to every external HTTP call.
+    pub HTTP_CONNECT_TIMEOUT_SEC: u64,
+    /// Base URL of the `gsy-ewf-identity-server`, the service that mints and stores a
+    /// `did:ethr` per ontology asset and per community.
+    pub IDENTITY_SERVER_URL: String,
+    /// How often, in seconds, the asset-DID sync loop re-reads the ontology and pushes the
+    /// full subject set to the identity server. The sync is idempotent, so a tick that
+    /// changes nothing costs one request and creates no records.
+    pub ASSET_DID_SYNC_INTERVAL_SEC: u64,
+    /// Comma-separated names of the communities (sites) that publish their aggregated net
+    /// order into the inter-community market, parsed by
+    /// `inter_community::parse_community_list`.
+    pub INTER_COMMUNITY_ELIGIBLE_COMMUNITIES: String,
+    /// How often, in seconds, the measurement loop reads InfluxDB and forwards the
+    /// metering point measurements to storage.
+    pub MEASUREMENT_INGEST_INTERVAL_SEC: u64,
+    /// How far back, in seconds, each measurement tick reads InfluxDB. Every ended slot in
+    /// that window is re-evaluated, so data that lands late is still picked up. Must exceed
+    /// `MEASUREMENT_MISSING_AFTER_SEC`, or a slot leaves the window before it can be posted
+    /// as missing (default 26 h).
+    pub MEASUREMENT_LOOKBACK_SEC: u64,
+    /// Age of a slot, in seconds, after which a metering point that still lacks a meter
+    /// reading is posted as incomplete or missing. Until then no row is posted for it,
+    /// since FLEXO data lands in daily batches (worst seen 17.6 h after slot start). The
+    /// default (22 h) must stay about 2 h below the execution engine's offset of 24 h
+    /// (`EXECUTION_ENGINE_OFFSET_MIN`), so the missing rows are posted before the slot is judged.
+    pub MEASUREMENT_MISSING_AFTER_SEC: u64,
+    /// Asset-to-building overrides for the metering points, `ASSET=BUILDING,...`, in place
+    /// of the asset's ontology location. The building must be in the asset's own site.
+    pub METERING_POINT_OVERRIDES: String,
+}
+
+impl Constants {
+    fn new() -> Self {
+        Self {
+            FEDECOM_ONTOLOGY_URL: read_env_or(
+                "FEDECOM_ONTOLOGY_URL",
+                "https://fedecom.tekniker.es/services/queries/get_lecs_buildings".to_string(),
+            ),
+            FEDECOM_ONTOLOGY_ASSETS_URL: read_env_or(
+                "FEDECOM_ONTOLOGY_ASSETS_URL",
+                "https://fedecom.tekniker.es/services/queries/get_assets".to_string(),
+            ),
+            FEDECOM_INFLUX_DB_URL: read_env_or(
+                "FEDECOM_INFLUX_DB_URL",
+                "https://fedecom.imp.bg.ac.rs/influxdb/api/v2/query".to_string(),
+            ),
+            FEDECOM_INFLUX_DB_ORG: read_env_or("FEDECOM_INFLUX_DB_ORG", "fedecom".to_string()),
+            // Token is mandatory
+            FEDECOM_INFLUX_DB_TOKEN: read_env_or("FEDECOM_INFLUX_DB_TOKEN", "".to_string()),
+            FEDECOM_DEMAND_FORECAST_URL: read_env_or(
+                "FEDECOM_DEMAND_FORECAST_URL",
+                "https://fedecom.imp.bg.ac.rs/demand_forecaster/forecast/gd_lic".to_string(),
+            ),
+            FEDECOM_DEMAND_FORECAST_API_KEY: read_env_or(
+                "FEDECOM_DEMAND_FORECAST_API_KEY",
+                "fedecom_user".to_string(),
+            ),
+            FEDECOM_PV_FORECAST_URL: read_env_or(
+                "FEDECOM_PV_FORECAST_URL",
+                "https://fedecom.imp.bg.ac.rs/pv_forecaster_aic/forecast/pv_aic".to_string(),
+            ),
+            FEDECOM_PV_FORECAST_API_KEY: read_env_or(
+                "FEDECOM_PV_FORECAST_API_KEY",
+                "fedecom_user".to_string(),
+            ),
+            // TODO(B3): finalize AIC endpoint URL pending Eleni. Defaults to empty until then.
+            FEDECOM_AIC_FORECAST_URL: read_env_or("FEDECOM_AIC_FORECAST_URL", "".to_string()),
+            FEDECOM_AIC_FORECAST_API_KEY: read_env_or(
+                "FEDECOM_AIC_FORECAST_API_KEY",
+                "fedecom_user".to_string(),
+            ),
+            ORDER_RESUBMISSION_INTERVAL_SEC: read_env_or("ORDER_RESUBMISSION_INTERVAL_SEC", 300),
+            FORECAST_INGEST_INTERVAL_SEC: read_env_or("FORECAST_INGEST_INTERVAL_SEC", 3600),
+            FORECAST_INGEST_HORIZON_SEC: read_env_or("FORECAST_INGEST_HORIZON_SEC", 172_800),
+            MIN_ORDER_RATE: read_env_or("MIN_ORDER_RATE", 0.07),
+            MAX_ORDER_RATE: read_env_or("MAX_ORDER_RATE", 0.30),
+            OFFER_RISK_FACTOR: read_env_or("OFFER_RISK_FACTOR", -1.0),
+            BID_RISK_FACTOR: read_env_or("BID_RISK_FACTOR", -1.0),
+            PV_SPREAD_NORM: read_env_or("PV_SPREAD_NORM", 1.0),
+            PV_MIN_CONFIDENCE: read_env_or("PV_MIN_CONFIDENCE", 0.1),
+            PV_MIN_FORECAST_KWH: read_env_or("PV_MIN_FORECAST_KWH", 0.05),
+            HTTP_REQUEST_TIMEOUT_SEC: read_env_or("HTTP_REQUEST_TIMEOUT_SEC", 60u64),
+            PV_HTTP_REQUEST_TIMEOUT_SEC: read_env_or("PV_HTTP_REQUEST_TIMEOUT_SEC", 150u64),
+            PV_FETCH_CONCURRENCY: read_env_or("PV_FETCH_CONCURRENCY", 1usize),
+            HTTP_CONNECT_TIMEOUT_SEC: read_env_or("HTTP_CONNECT_TIMEOUT_SEC", 10u64),
+            IDENTITY_SERVER_URL: read_env_or(
+                "IDENTITY_SERVER_URL",
+                "http://gsy-ewf-identity-server:3000".to_string(),
+            ),
+            ASSET_DID_SYNC_INTERVAL_SEC: read_env_or("ASSET_DID_SYNC_INTERVAL_SEC", 3600u64),
+            INTER_COMMUNITY_ELIGIBLE_COMMUNITIES: read_env_or(
+                "INTER_COMMUNITY_ELIGIBLE_COMMUNITIES",
+                DEFAULT_INTER_COMMUNITY_ELIGIBLE_COMMUNITIES.to_string(),
+            ),
+            MEASUREMENT_INGEST_INTERVAL_SEC: read_env_or("MEASUREMENT_INGEST_INTERVAL_SEC", 900u64),
+            MEASUREMENT_LOOKBACK_SEC: read_env_or("MEASUREMENT_LOOKBACK_SEC", 93_600u64),
+            MEASUREMENT_MISSING_AFTER_SEC: read_env_or("MEASUREMENT_MISSING_AFTER_SEC", 79_200u64),
+            METERING_POINT_OVERRIDES: read_env_or("METERING_POINT_OVERRIDES", "".to_string()),
+        }
+    }
+}
+
+pub static CommunityClientConstants: Lazy<Constants> = Lazy::new(Constants::new);

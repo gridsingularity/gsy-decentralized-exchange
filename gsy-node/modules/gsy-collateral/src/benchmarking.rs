@@ -10,9 +10,9 @@ use frame_support::traits::Currency;
 use frame_system::{EventRecord, RawOrigin};
 use gsy_primitives::{Vault, VaultWithStatus};
 
-fn assert_last_event<T: Config>(generic_event: <T as Config>::RuntimeEvent) {
+fn assert_last_event<T>(generic_event: <T as pallet::Config>::RuntimeEvent) where T: Config {
 	let events = frame_system::Pallet::<T>::events();
-	let system_event: <T as frame_system::Config>::RuntimeEvent = generic_event.into();
+	let system_event = generic_event.into();
 	let EventRecord { event, .. } = &events[events.len() - 1];
 	assert_eq!(event, &system_event);
 }
