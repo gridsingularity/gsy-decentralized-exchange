@@ -46,19 +46,19 @@ struct InfluxRequestParams {
 pub struct InfluxMeasurementMeterData {
     pub sensor_id: String,
     pub time: DateTime<Utc>,
-    pub import_Wh: f64,
-    pub export_Wh: f64,
-    pub consumption_Wh: f64,
-    pub export_pv_Wh: f64,
+    /// Energy imported from the grid in the slot, in Wh; `None` if the `import` series has
+    /// no point for the slot (a gap, not a zero reading).
+    pub import_Wh: Option<f64>,
+    /// Energy exported to the grid in the slot, in Wh; `None` if the `export` series has
+    /// no point for the slot (a gap, not a zero reading).
+    pub export_Wh: Option<f64>,
 }
 
 impl InfluxMeasurementMeterData {
-    pub fn net_energy_kWh(&self) -> f64 {
-        (self.import_Wh - self.export_Wh) / 1000.0
-    }
-
-    pub fn export_pv_kWh(&self) -> f64 {
-        self.export_pv_Wh / 1000.0
+    /// Net grid exchange in kWh, import minus export (positive = net import). `None` unless
+    /// both `import` and `export` are present for the slot.
+    pub fn net_energy_kWh(&self) -> Option<f64> {
+        Some((self.import_Wh? - self.export_Wh?) / 1000.0)
     }
 }
 
@@ -92,7 +92,8 @@ impl MeasurementInfluxDBConnection {
           |> range(start: {}, stop: {})
           |> filter(fn: (r) => r["_measurement"] == "active_energy")
           |> filter(fn: (r) => r["sensor_id"] =~ /^FLEXO-.*/)
-          |> filter(fn: (r) => not r["sensor_id"] =~ /^FLEXO-AIC-49.*/)
+          |> filter(fn: (r) => not r["sensor_id"] =~ /^FLEXO-AIC-AIC49-/)
+          |> filter(fn: (r) => r["sensor_id"] =~ /-(import|export)$/)
         "#,
             start_time
                 .to_rfc3339_opts(SecondsFormat::Secs, true)
@@ -115,10 +116,9 @@ impl MeasurementInfluxDBConnection {
             ))
             .build()
             .expect("Failed to build InfluxDB HTTP client");
-        // Every failure here returns an empty result set rather than panicking. This runs at
-        // the tail of the community client's publish loop, so a panic would take that task
-        // down permanently while the process stays alive (the ingest task keeps the
-        // container running), silently ending order publication until someone restarts it.
+        // Every failure here returns an empty result set rather than panicking, so an InfluxDB
+        // outage can never end the community client's measurement loop. The loop treats an
+        // empty result as a failed read and forwards nothing for that tick.
         let response = match client
             .post(self.url())
             .header("Accept", "application/json")
@@ -194,16 +194,12 @@ impl MeasurementInfluxDBConnection {
                 .or_insert_with(|| InfluxMeasurementMeterData {
                     sensor_id: smart_meter_id.clone(),
                     time: record.time,
-                    import_Wh: 0.,
-                    export_Wh: 0.,
-                    consumption_Wh: 0.,
-                    export_pv_Wh: 0.,
+                    import_Wh: None,
+                    export_Wh: None,
                 });
             match measurement_type {
-                "import" => meter_data.import_Wh = value,
-                "export" => meter_data.export_Wh = value,
-                "consumption" => meter_data.consumption_Wh = value,
-                "export_pv" => meter_data.export_pv_Wh = value,
+                "import" => meter_data.import_Wh = Some(value),
+                "export" => meter_data.export_Wh = Some(value),
                 _ => error!("Unknown measurement type: {}", measurement_type),
             }
         }

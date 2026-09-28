@@ -365,6 +365,28 @@ paths:
         A record's delivery interval remains available as `interval_start` and
         `source_slot_timestamp`; it is simply not what the query filters on.
 
+        A `local_origin_record` needs a measurement of the seller for the
+        trade's interval. That is the seller asset's own measurement when there
+        is one; otherwise it is the measurement of the metering point (the
+        building) the asset belongs to, and then:
+
+        - `measurement_provenance.measuring_sensor_id`,
+          `production_asset.metering_point_id` and
+          `beneficiary_and_claim.facility_id` name the building, for example
+          `LICHouse9`;
+        - the quantity measured is the building's net grid exchange for the
+          interval, all of its meters summed, and only a complete measurement
+          (every expected meter reported) counts as evidence;
+        - a record is issued only for PV energy sold to a buyer outside the
+          building and within the building's net export for the interval.
+          The building's `Executed` sales to buyers outside it take that export
+          in time priority, oldest trade first; the first sale that does not
+          fit, and every later one, gets no record. Nothing is issued in an
+          interval where the building imports on balance, nor for a trade
+          between two assets of the same building. The allocation runs over
+          every `Executed` trade of the interval, so it does not depend on the
+          query window.
+
         Every response object has the same set of keys for a given
         `record_type`. An attribute that does not apply is present and `null`
         rather than omitted; array attributes are present and empty. See
@@ -654,8 +676,16 @@ paths:
   /measurements:
     post:
       tags: [profiles]
-      summary: Insert asset measurements
-      description: Inserts a JSON array of `MeasurementSchema` documents.
+      summary: Insert or update asset measurements
+      description: |
+        Upserts a JSON array of `MeasurementSchema` documents keyed on
+        `(area_hash, time_slot)`: a measurement whose key is already stored
+        replaces the stored one, otherwise it is inserted, so re-posting a
+        window of measurements does not duplicate rows. A measurement equal to
+        the stored one apart from `creation_time` is left untouched, so the
+        stored `creation_time` keeps recording when the value was stored. The
+        array is processed in order; of two measurements with the same key
+        the later one wins.
       operationId: postMeasurements
       requestBody:
         required: true
@@ -667,11 +697,16 @@ paths:
                 $ref: '#/components/schemas/MeasurementSchema'
       responses:
         '200':
-          description: Measurements inserted. Map of array index to inserted document id.
+          description: |
+            Number of measurements written (inserted or changed). A measurement
+            identical to the stored one apart from `creation_time` is left
+            untouched and not counted.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/InsertedIdsMap'
+                type: integer
+                minimum: 0
+              example: 2
         '400':
           description: Malformed JSON body (does not deserialize to an array of MeasurementSchema).
         '500':
@@ -720,8 +755,12 @@ paths:
   /forecasts:
     post:
       tags: [profiles]
-      summary: Insert asset forecasts
-      description: Inserts a JSON array of `ForecastSchema` documents.
+      summary: Insert or update asset forecasts
+      description: |
+        Upserts a JSON array of `ForecastSchema` documents keyed on
+        `(area_uuid, time_slot)`: a forecast whose key is already stored
+        replaces the stored one, otherwise it is inserted, so re-ingesting a
+        rolling forecast window does not duplicate rows.
       operationId: postForecasts
       requestBody:
         required: true
@@ -733,11 +772,13 @@ paths:
                 $ref: '#/components/schemas/ForecastSchema'
       responses:
         '200':
-          description: Forecasts inserted. Map of array index to inserted document id.
+          description: Number of forecasts upserted (inserted or replaced), i.e. every forecast of the array.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/InsertedIdsMap'
+                type: integer
+                minimum: 0
+              example: 96
         '400':
           description: Malformed JSON body (does not deserialize to an array of ForecastSchema).
         '500':
@@ -951,14 +992,12 @@ components:
     InsertedIdsMap:
       type: object
       description: |
-        Map from the zero-based index of each inserted document (JSON object
-        keys, so the indices are strings) to the id it was stored under.
-        For orders and trades the id is the document `_id` string. For
-        measurements and forecasts stored in MongoDB the id is a generated
-        ObjectId, which serializes in extended JSON form (`{"$oid": "..."}`),
-        while the in-memory test backend reports the `area_uuid` string.
+        Map from the zero-based index of each inserted order or trade (JSON
+        object keys, so the indices are strings) to the id it was stored
+        under, the document `_id` string.
       additionalProperties:
-        description: Inserted document id (string or MongoDB extended-JSON ObjectId).
+        type: string
+        description: Inserted document `_id`.
       example:
         '0': '0x6a3f...c9'
         '1': '0x91bd...04'
@@ -1220,6 +1259,50 @@ components:
           type: number
           format: double
           description: Measured energy (kWh).
+        metering_point:
+          allOf:
+            - $ref: '#/components/schemas/MeteringPointMeasurement'
+          nullable: true
+          description: |
+            Absent on a per-area measurement. Set on a metering point's row, which
+            covers one building or the site-level assets of a site. The row's
+            `energy_kwh` is then the building's summed net grid exchange (import
+            minus export, kWh) when `completeness` is `complete`, and `0` (not to be
+            used) when it is `incomplete` or `missing`.
+    MeteringPointMeasurement:
+      type: object
+      description: |
+        The metering point a measurement row stands for, and how complete its
+        data is for the time slot.
+      required: [name, member_area_hashes, completeness, missing_meters]
+      properties:
+        name:
+          type: string
+          description: Building `participantName`, or the `siteName` of an unmetered site point.
+        member_area_hashes:
+          type: array
+          items:
+            type: string
+          description: Area hash of every member asset of the metering point.
+        completeness:
+          $ref: '#/components/schemas/MeasurementCompleteness'
+        missing_meters:
+          type: array
+          items:
+            type: string
+          description: |
+            Expected meters without both an `import` and an `export` reading for
+            the time slot. Empty when `completeness` is `complete`.
+    MeasurementCompleteness:
+      type: string
+      description: |
+        Completeness of a metering point's measurement for the time slot:
+        `complete` when every expected meter reported both import and export,
+        `incomplete` when some did not (they are listed in `missing_meters`), and
+        `missing` when none did or the point has no meters (an unmetered site
+        point). Unless the value is `complete`, the row's `energy_kwh` is `0` and
+        must not be used.
+      enum: [complete, incomplete, missing]
     CertificateRecord:
       description: |
         One energy share digital certificate record, as specified by D6.6
@@ -1538,7 +1621,9 @@ components:
           nullable: true
           description: |
             Obligation C. Metering point from which the volume derives. Absent
-            on records issued at community or pilot site level.
+            on records issued at community or pilot site level. When the
+            evidence is a metering point's measurement, the building, for
+            example `LICHouse9`.
         asset_class:
           $ref: '#/components/schemas/AssetClass'
         rated_power:
@@ -1705,7 +1790,10 @@ components:
           example: LIC:LIC01:e_generation
         measuring_sensor_id:
           type: string
-          description: Obligation M. Sensor individual, for example a smart meter.
+          description: |
+            Obligation M. Sensor individual, for example a smart meter. When the
+            evidence is a metering point's measurement, the building, for
+            example `LICHouse9`, whose net grid exchange was measured.
         property_measured:
           type: string
           format: uri-reference
@@ -1820,7 +1908,8 @@ components:
           nullable: true
           description: |
             Obligation C. Ontology individual, for example `LICHouse9`. Absent
-            where the record is issued at community or pilot site level.
+            where the record is issued at community or pilot site level. Set to
+            the building when the evidence is a metering point's measurement.
           example: LICHouse9
     TradeAndDeliveryReference:
       type: object

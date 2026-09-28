@@ -1,10 +1,13 @@
 #[cfg(test)]
 mod tests {
     use gsy_execution_engine::primitives::penalty_calculator::{
-        build_measurement_map, compute_penalties, evaluated_trade_uuids, Penalty,
+        build_measurement_map, compute_penalties, evaluated_trade_uuids, metering_point_index,
+        MeasuredEnergy, Penalty, PenaltyReason,
     };
     use gsy_offchain_primitives::db_api_schema::orders::{DbBid, DbOffer, DbOrderComponent};
-    use gsy_offchain_primitives::db_api_schema::profiles::MeasurementSchema;
+    use gsy_offchain_primitives::db_api_schema::profiles::{
+        MeasurementCompleteness, MeasurementSchema, MeteringPointMeasurement,
+    };
     use gsy_offchain_primitives::db_api_schema::trades::{
         TradeParameters, TradeSchema, TradeStatus,
     };
@@ -22,6 +25,7 @@ mod tests {
             time_slot: TIME_SLOT,
             creation_time: 0,
             energy_kwh,
+            metering_point: None,
         }
     }
 
@@ -120,6 +124,7 @@ mod tests {
                         market_id: trade.offer.offer_component.market_id.clone(),
                         trade_uuid: trade.trade_uuid.clone(),
                         penalty_cost,
+                        reason: PenaltyReason::Deviation,
                     });
                 } else if delta < 0.0 {
                     let raw_penalty = (-delta) * penalty_rate;
@@ -129,6 +134,7 @@ mod tests {
                         market_id: trade.market_id.clone(),
                         trade_uuid: trade.trade_uuid.clone(),
                         penalty_cost,
+                        reason: PenaltyReason::Deviation,
                     });
                 }
             }
@@ -527,12 +533,14 @@ mod tests {
 
         let map = build_measurement_map(&measurements);
 
-        assert_eq!(map["assetA1"], 5.0);
-        assert_eq!(map["assetA2"], -3.0);
-        assert_eq!(map["assetA3"], 1.0);
+        let key = |hash: &str| (hash.to_string(), TIME_SLOT);
+        assert_eq!(map[&key("assetA1")], MeasuredEnergy::Energy(5.0));
+        assert_eq!(map[&key("assetA2")], MeasuredEnergy::Energy(-3.0));
+        assert_eq!(map[&key("assetA3")], MeasuredEnergy::Energy(1.0));
         // net import = 5.0 - 3.0 + 1.0 = 3.0 (Σ consumption − Σ production).
-        let community_key = h256_to_string(community_id_from_uuid("CommA"));
-        assert_eq!(map[&community_key], 3.0);
+        let community_key = key(&h256_to_string(community_id_from_uuid("CommA")));
+        assert_eq!(map[&community_key], MeasuredEnergy::Energy(3.0));
+        assert_eq!(map.len(), 4);
     }
 
     #[test]
@@ -637,5 +645,532 @@ mod tests {
         let penalties = compute_penalties(&trades, &measurements, PENALTY_RATE);
         assert_eq!(penalties.len(), 1);
         assert_eq!(penalties[0].trade_uuid, "trade-2");
+    }
+
+    // --- Per-slot keys, metering points and unreliable community aggregates ---
+
+    const NEXT_SLOT: u64 = TIME_SLOT + 900;
+    const SPOT_MARKET: &str = "spot_market";
+
+    fn measurement_at(
+        area_hash: &str,
+        community_uuid: &str,
+        energy_kwh: f64,
+        time_slot: u64,
+    ) -> MeasurementSchema {
+        MeasurementSchema {
+            time_slot,
+            ..measurement(area_hash, community_uuid, energy_kwh)
+        }
+    }
+
+    /// A metering point's row. Incomplete and missing rows carry 0.0, as storage posts them.
+    fn point_row(
+        name: &str,
+        community_uuid: &str,
+        members: &[&str],
+        completeness: MeasurementCompleteness,
+        energy_kwh: f64,
+        time_slot: u64,
+    ) -> MeasurementSchema {
+        let missing_meters = match completeness {
+            MeasurementCompleteness::Complete => Vec::new(),
+            _ => vec![format!("{}_meter", name)],
+        };
+        MeasurementSchema {
+            area_uuid: format!("{}_uuid", name),
+            area_hash: format!("{}_hash", name),
+            community_uuid: community_uuid.to_string(),
+            time_slot,
+            creation_time: 0,
+            energy_kwh,
+            metering_point: Some(MeteringPointMeasurement {
+                name: name.to_string(),
+                member_area_hashes: members.iter().map(|m| m.to_string()).collect(),
+                completeness,
+                missing_meters,
+            }),
+        }
+    }
+
+    fn complete_point(
+        name: &str,
+        members: &[&str],
+        energy_kwh: f64,
+        time_slot: u64,
+    ) -> MeasurementSchema {
+        point_row(name, "Site", members, MeasurementCompleteness::Complete, energy_kwh, time_slot)
+    }
+
+    /// A trade between `bid_area` and `offer_area` in `time_slot`. The buyer account is
+    /// `{uuid}-buyer` and the seller account `{uuid}-seller`.
+    fn side_trade(
+        uuid: &str,
+        bid_area: &str,
+        offer_area: &str,
+        selected_energy: f64,
+        time_slot: u64,
+        creation_time: u64,
+    ) -> TradeSchema {
+        let mut trade = trade_at(
+            &format!("{}-buyer", uuid),
+            &format!("{}-seller", uuid),
+            bid_area,
+            SPOT_MARKET,
+            selected_energy,
+            uuid,
+            creation_time,
+        );
+        trade.time_slot = time_slot;
+        trade.bid.bid_component.time_slot = time_slot;
+        trade.offer.offer_component.area_uuid = offer_area.to_string();
+        trade.offer.offer_component.time_slot = time_slot;
+        trade
+    }
+
+    fn buyer_penalty(uuid: &str, penalty_cost: u64, reason: PenaltyReason) -> Penalty {
+        Penalty {
+            penalized_account: format!("{}-buyer", uuid),
+            market_id: SPOT_MARKET.to_string(),
+            trade_uuid: uuid.to_string(),
+            penalty_cost,
+            reason,
+        }
+    }
+
+    fn seller_penalty(uuid: &str, penalty_cost: u64, reason: PenaltyReason) -> Penalty {
+        Penalty {
+            penalized_account: format!("{}-seller", uuid),
+            market_id: SPOT_MARKET.to_string(),
+            trade_uuid: uuid.to_string(),
+            penalty_cost,
+            reason,
+        }
+    }
+
+    fn missing(source: &str) -> PenaltyReason {
+        PenaltyReason::MissingMeasurement {
+            source: source.to_string(),
+        }
+    }
+
+    /// A 3 kWh purchase by the building's load from outside and a 2 kWh sale by the building's
+    /// PV to outside: committed net import 3 - 2 = 1 kWh.
+    fn d1_trades(suffix: &str, time_slot: u64) -> Vec<TradeSchema> {
+        let bid_uuid = format!("bid-trade{}", suffix);
+        let offer_uuid = format!("offer-trade{}", suffix);
+        vec![
+            side_trade(&bid_uuid, "house_load", "outside_pv", 3.0, time_slot, 0),
+            side_trade(&offer_uuid, "outside_load", "house_pv", 2.0, time_slot, 0),
+        ]
+    }
+
+    const HOUSE: &[&str] = &["house_load", "house_pv"];
+
+    #[test]
+    fn complete_point_d1_vectors() {
+        let trades = d1_trades("", TIME_SLOT);
+        let cases = vec![
+            // deviation 0 -> clean.
+            (1.0, vec![]),
+            // deviation 1 -> the offer keeps 1 of its 2 kWh.
+            (2.0, vec![seller_penalty("offer-trade", 1000, PenaltyReason::Deviation)]),
+            // deviation 3 -> the offer is charged its full 2 kWh, the other 1 kWh goes to the bid.
+            (
+                4.0,
+                vec![
+                    seller_penalty("offer-trade", 2000, PenaltyReason::Deviation),
+                    buyer_penalty("bid-trade", 1000, PenaltyReason::Deviation),
+                ],
+            ),
+            // deviation -2 (under-consumption / over-production) -> clean.
+            (-1.0, vec![]),
+        ];
+        for (measured, expected) in cases {
+            let measurements = vec![complete_point("House", HOUSE, measured, TIME_SLOT)];
+            let penalties = compute_penalties(&trades, &measurements, PENALTY_RATE);
+            assert_eq!(penalties, expected, "measured {}", measured);
+            assert_eq!(
+                evaluated_trade_uuids(&trades, &measurements),
+                vec!["bid-trade".to_string(), "offer-trade".to_string()]
+            );
+        }
+    }
+
+    #[test]
+    fn complete_point_waterfall_charges_the_later_offer_first() {
+        // Two 2 kWh sales, the later one listed first. Measured net export 3: deviation
+        // -3 - (-4) = 1, so the offers keep 3 kWh in time priority.
+        let trades = vec![
+            side_trade("late", "outside_load", "house_pv", 2.0, TIME_SLOT, 2),
+            side_trade("early", "outside_load", "house_pv", 2.0, TIME_SLOT, 1),
+        ];
+        let measurements = vec![complete_point("House", HOUSE, -3.0, TIME_SLOT)];
+
+        let penalties = compute_penalties(&trades, &measurements, PENALTY_RATE);
+
+        assert_eq!(penalties, vec![seller_penalty("late", 1000, PenaltyReason::Deviation)]);
+    }
+
+    #[test]
+    fn complete_point_remainder_without_member_bids_is_not_charged() {
+        // Sold 4, measured net import 1: deviation 5. The offers are charged their full 4 kWh;
+        // the remaining 1 kWh has no member bid to go to.
+        let trades = vec![
+            side_trade("early", "outside_load", "house_pv", 2.0, TIME_SLOT, 1),
+            side_trade("late", "outside_load", "house_pv", 2.0, TIME_SLOT, 2),
+        ];
+        let measurements = vec![complete_point("House", HOUSE, 1.0, TIME_SLOT)];
+
+        let penalties = compute_penalties(&trades, &measurements, PENALTY_RATE);
+
+        assert_eq!(
+            penalties,
+            vec![
+                seller_penalty("early", 2000, PenaltyReason::Deviation),
+                seller_penalty("late", 2000, PenaltyReason::Deviation),
+            ]
+        );
+    }
+
+    #[test]
+    fn complete_point_self_consumption_nets_out() {
+        // The building's PV sells 2 kWh to its own load: bought and sold net to zero.
+        let trades = vec![side_trade("self", "house_load", "house_pv", 2.0, TIME_SLOT, 0)];
+
+        let clean = vec![complete_point("House", HOUSE, 0.0, TIME_SLOT)];
+        assert!(compute_penalties(&trades, &clean, PENALTY_RATE).is_empty());
+        assert_eq!(evaluated_trade_uuids(&trades, &clean), vec!["self".to_string()]);
+
+        // The building imports 1 kWh more: the offer side is charged first.
+        let importing = vec![complete_point("House", HOUSE, 1.0, TIME_SLOT)];
+        assert_eq!(
+            compute_penalties(&trades, &importing, PENALTY_RATE),
+            vec![seller_penalty("self", 1000, PenaltyReason::Deviation)]
+        );
+    }
+
+    #[test]
+    fn consecutive_slots_at_a_point_are_judged_independently() {
+        // Same trades in both slots; the building's net is 1 in the first slot (clean) and 4 in
+        // the second.
+        let mut trades = d1_trades("-1", TIME_SLOT);
+        trades.extend(d1_trades("-2", NEXT_SLOT));
+        let measurements = vec![
+            complete_point("House", HOUSE, 1.0, TIME_SLOT),
+            complete_point("House", HOUSE, 4.0, NEXT_SLOT),
+        ];
+
+        let penalties = compute_penalties(&trades, &measurements, PENALTY_RATE);
+
+        assert_eq!(
+            penalties,
+            vec![
+                seller_penalty("offer-trade-2", 2000, PenaltyReason::Deviation),
+                buyer_penalty("bid-trade-2", 1000, PenaltyReason::Deviation),
+            ]
+        );
+    }
+
+    #[test]
+    fn per_area_measurement_only_judges_its_own_slot() {
+        // Regression for the area-only key, where the last row won for every slot.
+        let trade_next_slot = vec![side_trade("next", "buyerZ", "sellerZ", 5.0, NEXT_SLOT, 0)];
+        let only_first_slot = vec![measurement_at("buyerZ", "Comm", 8.0, TIME_SLOT)];
+        assert!(compute_penalties(&trade_next_slot, &only_first_slot, PENALTY_RATE).is_empty());
+        assert!(evaluated_trade_uuids(&trade_next_slot, &only_first_slot).is_empty());
+
+        // Both slots measured: 8 kWh (excess 3) in the first, exactly 5 kWh in the second.
+        let trades = vec![
+            side_trade("first", "buyerZ", "sellerZ", 5.0, TIME_SLOT, 0),
+            side_trade("next", "buyerZ", "sellerZ", 5.0, NEXT_SLOT, 0),
+        ];
+        let measurements = vec![
+            measurement_at("buyerZ", "Comm", 8.0, TIME_SLOT),
+            measurement_at("buyerZ", "Comm", 5.0, NEXT_SLOT),
+        ];
+        assert_eq!(
+            compute_penalties(&trades, &measurements, PENALTY_RATE),
+            vec![buyer_penalty("first", 3000, PenaltyReason::Deviation)]
+        );
+    }
+
+    #[test]
+    fn incomplete_or_missing_point_penalizes_every_member_side_on_full_energy() {
+        let trades = d1_trades("", TIME_SLOT);
+        let not_complete = [MeasurementCompleteness::Incomplete, MeasurementCompleteness::Missing];
+        for completeness in not_complete {
+            let measurements =
+                vec![point_row("House", "Site", HOUSE, completeness.clone(), 0.0, TIME_SLOT)];
+
+            let penalties = compute_penalties(&trades, &measurements, PENALTY_RATE);
+
+            assert_eq!(
+                penalties,
+                vec![
+                    buyer_penalty("bid-trade", 3000, missing("House")),
+                    seller_penalty("offer-trade", 2000, missing("House")),
+                ],
+                "{:?}",
+                completeness
+            );
+            assert_eq!(
+                evaluated_trade_uuids(&trades, &measurements),
+                vec!["bid-trade".to_string(), "offer-trade".to_string()]
+            );
+        }
+    }
+
+    #[test]
+    fn cross_point_trade_is_judged_at_each_side_point() {
+        // The bid is at HouseA (complete), the offer at HouseB (missing).
+        let trades = vec![side_trade("cross", "houseA_load", "houseB_pv", 3.0, TIME_SLOT, 0)];
+        let house_b = point_row(
+            "HouseB",
+            "Site",
+            &["houseB_pv"],
+            MeasurementCompleteness::Missing,
+            0.0,
+            TIME_SLOT,
+        );
+
+        // HouseA consumed exactly what it bought: only the seller is penalized.
+        let measurements = vec![
+            complete_point("HouseA", &["houseA_load"], 3.0, TIME_SLOT),
+            house_b.clone(),
+        ];
+        assert_eq!(
+            compute_penalties(&trades, &measurements, PENALTY_RATE),
+            vec![seller_penalty("cross", 3000, missing("HouseB"))]
+        );
+
+        // HouseA consumed 1 kWh more: the trade gets a buyer and a seller penalty.
+        let measurements = vec![
+            complete_point("HouseA", &["houseA_load"], 4.0, TIME_SLOT),
+            house_b,
+        ];
+        assert_eq!(
+            compute_penalties(&trades, &measurements, PENALTY_RATE),
+            vec![
+                buyer_penalty("cross", 1000, PenaltyReason::Deviation),
+                seller_penalty("cross", 3000, missing("HouseB")),
+            ]
+        );
+    }
+
+    #[test]
+    fn inter_community_side_uses_the_aggregate_only_when_every_point_is_complete() {
+        let comm_a = h256_to_string(community_id_from_uuid("CommA"));
+        let comm_b = h256_to_string(community_id_from_uuid("CommB"));
+        let trades = vec![side_trade("ic", &comm_a, &comm_b, 2.0, TIME_SLOT, 0)];
+        let house_a2 = |completeness: MeasurementCompleteness, energy_kwh: f64| {
+            point_row("HouseA2", "CommA", &["a2_load"], completeness, energy_kwh, TIME_SLOT)
+        };
+        let house_a1 = point_row(
+            "HouseA1",
+            "CommA",
+            &["a1_load"],
+            MeasurementCompleteness::Complete,
+            2.0,
+            TIME_SLOT,
+        );
+
+        // All complete: CommA's net import is 2 + 1 = 3 against 2 bought -> excess 1.
+        let measurements = vec![house_a1.clone(), house_a2(MeasurementCompleteness::Complete, 1.0)];
+        assert_eq!(
+            compute_penalties(&trades, &measurements, PENALTY_RATE),
+            vec![buyer_penalty("ic", 1000, PenaltyReason::Deviation)]
+        );
+        assert_eq!(evaluated_trade_uuids(&trades, &measurements), vec!["ic".to_string()]);
+
+        // One point incomplete or missing: the buyer side is penalized on its full energy.
+        let not_complete = [MeasurementCompleteness::Incomplete, MeasurementCompleteness::Missing];
+        for completeness in not_complete {
+            let measurements = vec![house_a1.clone(), house_a2(completeness, 0.0)];
+            // A building with a data gap lists its meters, so it is not an unmetered point.
+            assert!(!measurements[1].metering_point.as_ref().unwrap().missing_meters.is_empty());
+            assert_eq!(
+                build_measurement_map(&measurements)[&(comm_a.clone(), TIME_SLOT)],
+                MeasuredEnergy::Unreliable {
+                    community_uuid: "CommA".to_string()
+                }
+            );
+            assert_eq!(
+                compute_penalties(&trades, &measurements, PENALTY_RATE),
+                vec![buyer_penalty("ic", 2000, missing("CommA"))]
+            );
+            assert_eq!(evaluated_trade_uuids(&trades, &measurements), vec!["ic".to_string()]);
+        }
+
+        // No rows for either community: unjudged.
+        let measurements = vec![point_row(
+            "HouseC",
+            "CommC",
+            &["c_load"],
+            MeasurementCompleteness::Missing,
+            0.0,
+            TIME_SLOT,
+        )];
+        assert!(compute_penalties(&trades, &measurements, PENALTY_RATE).is_empty());
+        assert!(evaluated_trade_uuids(&trades, &measurements).is_empty());
+    }
+
+    /// The row of a metering point that expects no meter (the community client's site-level
+    /// point): always `Missing`, with no `missing_meters`.
+    fn unmetered_point(
+        name: &str,
+        community_uuid: &str,
+        members: &[&str],
+        time_slot: u64,
+    ) -> MeasurementSchema {
+        let mut row = point_row(
+            name,
+            community_uuid,
+            members,
+            MeasurementCompleteness::Missing,
+            0.0,
+            time_slot,
+        );
+        row.metering_point.as_mut().unwrap().missing_meters.clear();
+        row
+    }
+
+    #[test]
+    fn unmetered_point_does_not_make_the_community_aggregate_unreliable() {
+        let comm_a = h256_to_string(community_id_from_uuid("CommA"));
+        let comm_b = h256_to_string(community_id_from_uuid("CommB"));
+        let trades = vec![side_trade("ic", &comm_a, &comm_b, 2.0, TIME_SLOT, 0)];
+        let measurements = vec![
+            complete_point_in("HouseA1", "CommA", &["a1_load"], 2.0),
+            complete_point_in("HouseA2", "CommA", &["a2_load"], 1.0),
+            unmetered_point("CommASite", "CommA", &["a_site_batt"], TIME_SLOT),
+        ];
+
+        // The aggregate is the sum of the building rows only.
+        let map = build_measurement_map(&measurements);
+        assert_eq!(map[&(comm_a.clone(), TIME_SLOT)], MeasuredEnergy::Energy(3.0));
+
+        // CommA's net import is 3 against 2 bought -> excess 1, not the full 2 kWh.
+        assert_eq!(
+            compute_penalties(&trades, &measurements, PENALTY_RATE),
+            vec![buyer_penalty("ic", 1000, PenaltyReason::Deviation)]
+        );
+        assert_eq!(evaluated_trade_uuids(&trades, &measurements), vec!["ic".to_string()]);
+
+        // A community with only an unmetered point has no aggregate at all.
+        let only_unmetered =
+            vec![unmetered_point("CommASite", "CommA", &["a_site_batt"], TIME_SLOT)];
+        assert!(!build_measurement_map(&only_unmetered).contains_key(&(comm_a, TIME_SLOT)));
+    }
+
+    #[test]
+    fn member_of_an_unmetered_point_is_penalized_on_full_energy() {
+        let trades = vec![side_trade("site", "a1_load", "a_site_batt", 2.0, TIME_SLOT, 0)];
+        let measurements = vec![
+            complete_point_in("HouseA1", "CommA", &["a1_load"], 2.0),
+            unmetered_point("CommASite", "CommA", &["a_site_batt"], TIME_SLOT),
+        ];
+
+        assert_eq!(
+            compute_penalties(&trades, &measurements, PENALTY_RATE),
+            vec![seller_penalty("site", 2000, missing("CommASite"))]
+        );
+        assert_eq!(evaluated_trade_uuids(&trades, &measurements), vec!["site".to_string()]);
+    }
+
+    /// A complete metering point's row in `community_uuid`, in `TIME_SLOT`.
+    fn complete_point_in(
+        name: &str,
+        community_uuid: &str,
+        members: &[&str],
+        energy_kwh: f64,
+    ) -> MeasurementSchema {
+        point_row(
+            name,
+            community_uuid,
+            members,
+            MeasurementCompleteness::Complete,
+            energy_kwh,
+            TIME_SLOT,
+        )
+    }
+
+    #[test]
+    fn build_measurement_map_keeps_point_rows_out_of_the_per_area_entries() {
+        use MeasurementCompleteness::{Complete, Incomplete};
+        let measurements = vec![
+            measurement("assetA1", "CommA", 5.0),
+            point_row("HouseA", "CommA", &["a_load"], Complete, 2.0, TIME_SLOT),
+            point_row("HouseB", "CommB", &["b_load"], Incomplete, 0.0, TIME_SLOT),
+        ];
+
+        let map = build_measurement_map(&measurements);
+
+        let key = |hash: &str| (hash.to_string(), TIME_SLOT);
+        assert_eq!(map[&key("assetA1")], MeasuredEnergy::Energy(5.0));
+        assert!(!map.contains_key(&key("HouseA_hash")));
+        assert!(!map.contains_key(&key("HouseB_hash")));
+        assert_eq!(
+            map[&key(&h256_to_string(community_id_from_uuid("CommA")))],
+            MeasuredEnergy::Energy(7.0)
+        );
+        assert_eq!(
+            map[&key(&h256_to_string(community_id_from_uuid("CommB")))],
+            MeasuredEnergy::Unreliable {
+                community_uuid: "CommB".to_string()
+            }
+        );
+        assert_eq!(map.len(), 3);
+    }
+
+    #[test]
+    fn metering_point_index_keeps_the_first_row_claiming_a_member() {
+        let measurements = vec![
+            complete_point("First", &["shared", "first_only"], 1.0, TIME_SLOT),
+            complete_point("Second", &["shared"], 2.0, TIME_SLOT),
+            complete_point("First", &["shared"], 3.0, NEXT_SLOT),
+            measurement("plain_area", "Comm", 1.0),
+        ];
+
+        let index = metering_point_index(&measurements);
+
+        let name = |hash: &str, slot: u64| {
+            index[&(hash.to_string(), slot)]
+                .metering_point
+                .as_ref()
+                .unwrap()
+                .name
+                .clone()
+        };
+        assert_eq!(name("shared", TIME_SLOT), "First");
+        assert_eq!(name("first_only", TIME_SLOT), "First");
+        assert_eq!(index[&("shared".to_string(), NEXT_SLOT)].energy_kwh, 3.0);
+        assert_eq!(index.len(), 3);
+    }
+
+    #[test]
+    fn evaluated_trade_uuids_covers_points_of_any_completeness() {
+        let trades = vec![
+            side_trade("at-complete", "c_load", "outside_pv", 1.0, TIME_SLOT, 0),
+            side_trade("at-incomplete", "outside_load", "i_pv", 1.0, TIME_SLOT, 0),
+            side_trade("at-missing", "m_load", "outside_pv", 1.0, TIME_SLOT, 0),
+            side_trade("no-row", "other_load", "other_pv", 1.0, TIME_SLOT, 0),
+            // A member area, but in a slot the point has no row for.
+            side_trade("other-slot", "c_load", "outside_pv", 1.0, NEXT_SLOT, 0),
+        ];
+        let measurements = vec![
+            complete_point("C", &["c_load"], 1.0, TIME_SLOT),
+            point_row("I", "Site", &["i_pv"], MeasurementCompleteness::Incomplete, 0.0, TIME_SLOT),
+            point_row("M", "Site", &["m_load"], MeasurementCompleteness::Missing, 0.0, TIME_SLOT),
+        ];
+
+        assert_eq!(
+            evaluated_trade_uuids(&trades, &measurements),
+            vec![
+                "at-complete".to_string(),
+                "at-incomplete".to_string(),
+                "at-missing".to_string(),
+            ]
+        );
     }
 }

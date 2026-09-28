@@ -8,7 +8,9 @@ async fn read_fedecom_ontology_data(world: &mut MyWorld) {
     let topology_manager = TopologyManager::new(
         &world.http_client.clone(), &world.community_client_api);
     let topology = topology_manager.get(world.target_delivery_time).await;
-    assert_eq!(topology.len(), 3);
+    // Markets are per ontology site (9 sites across Pilot1–3), not per LEC.
+    assert_eq!(topology.len(), 9);
+    assert!(topology.iter().all(|market| !market.community_name.starts_with("Pilot")));
     let market = topology.first().unwrap().clone();
     world.target_delivery_time = market.time_slot as u64;
     world.community_uuid = Some(market.community_name.clone());

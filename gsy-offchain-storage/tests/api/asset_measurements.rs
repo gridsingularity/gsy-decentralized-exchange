@@ -4,7 +4,9 @@ use gsy_offchain_primitives::db_api_schema::market::{
     AreaTopologySchema, AssetType, MarketTopologySchema,
 };
 use gsy_offchain_primitives::db_api_schema::orders::{DbBid, DbOffer, DbOrderComponent};
-use gsy_offchain_primitives::db_api_schema::profiles::MeasurementSchema;
+use gsy_offchain_primitives::db_api_schema::profiles::{
+    MeasurementCompleteness, MeasurementSchema, MeteringPointMeasurement,
+};
 use gsy_offchain_primitives::db_api_schema::trades::{TradeParameters, TradeSchema, TradeStatus};
 use serde_json::Value;
 use subxt::utils::H256;
@@ -105,6 +107,7 @@ fn production_measurement(time_slot: u64, creation_time: u64) -> MeasurementSche
         time_slot,
         creation_time,
         energy_kwh: -4.0,
+        metering_point: None,
     }
 }
 
@@ -399,5 +402,71 @@ async fn a_trade_without_a_production_measurement_yields_no_certificate() {
     assert!(
         get_all_certificates(&address).await.is_empty(),
         "seller-side evidence is required: no measurement, no certificate"
+    );
+}
+
+/// The complete row of the building the PV area belongs to, exporting `net_export_kwh`.
+fn building_measurement(time_slot: u64, net_export_kwh: f64) -> MeasurementSchema {
+    MeasurementSchema {
+        area_uuid: "lic-house3-point-uuid".to_string(),
+        area_hash: "0xlic_house3_point_hash".to_string(),
+        community_uuid: COMMUNITY_UUID.to_string(),
+        time_slot,
+        creation_time: time_slot + 60,
+        energy_kwh: -net_export_kwh,
+        metering_point: Some(MeteringPointMeasurement {
+            name: "LICHouse3".to_string(),
+            member_area_hashes: vec![SELLER_HASH.to_string()],
+            completeness: MeasurementCompleteness::Complete,
+            missing_meters: vec![],
+        }),
+    }
+}
+
+/// The net export is allocated over every `Executed` trade of the slot, not over those the
+/// window happens to select, so each trade's verdict is the same whatever the window.
+#[tokio::test]
+async fn net_export_allocation_does_not_depend_on_the_query_window() {
+    let app = init_app().await;
+    let address = app.address;
+    let db = web::Data::new(app.db_wrapper);
+    db.get_ref().markets().insert(test_market()).await.unwrap();
+
+    // Created first but validated last, so neither window below selects both.
+    let mut earlier_created = trade(SLOT, 1.0, TradeStatus::Executed, Some(VALIDATED + 3600));
+    earlier_created.creation_time = SLOT - 7200;
+    let later_created = trade(SLOT, 1.0, TradeStatus::Executed, Some(VALIDATED));
+    let earlier_uuid = earlier_created.trade_uuid.clone();
+    db.get_ref()
+        .trades()
+        .insert_trades(vec![earlier_created, later_created])
+        .await
+        .unwrap();
+    db.get_ref()
+        .measurements()
+        .insert_measurements(vec![building_measurement(SLOT, 1.5)])
+        .await
+        .unwrap();
+
+    let only_later_created =
+        get_certificates(&address, &format!("?start_time=0&end_time={}", VALIDATED)).await;
+    assert!(
+        only_later_created.is_empty(),
+        "the earlier-created sale takes the net export even when not selected"
+    );
+
+    let only_earlier_created =
+        get_certificates(&address, &format!("?start_time={}", VALIDATED + 3600)).await;
+    assert_eq!(only_earlier_created.len(), 1);
+    let record = &only_earlier_created[0];
+    assert_eq!(
+        record["trade_and_delivery"]["trade_reference"][0],
+        earlier_uuid.as_str()
+    );
+    assert_eq!(record["production_asset"]["metering_point_id"], "LICHouse3");
+    assert_eq!(record["beneficiary_and_claim"]["facility_id"], "LICHouse3");
+    assert_eq!(
+        record["measurement_provenance"]["measuring_sensor_id"],
+        "LICHouse3"
     );
 }

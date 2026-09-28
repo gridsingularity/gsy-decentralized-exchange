@@ -17,3 +17,5 @@ pub mod inter_community;
 pub mod types;
 
 pub mod asset_did;
+
+pub mod sites;

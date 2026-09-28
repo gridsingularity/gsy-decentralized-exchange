@@ -99,8 +99,9 @@ impl PvForecastApiConnection {
     pub fn new() -> Self {
         PvForecastApiConnection {
             client: ReqwestClient::builder()
-                // The PV forecaster can take up to ~2 minutes to respond, so it uses its own
-                // larger request timeout instead of the shared HTTP_REQUEST_TIMEOUT_SEC.
+                // An uncontended PV request answers in ~13s, but the forecaster degrades
+                // sharply once requests overlap (see manager.rs::fetch_pv_forecasts), so it
+                // uses its own larger timeout instead of the shared HTTP_REQUEST_TIMEOUT_SEC.
                 .timeout(std::time::Duration::from_secs(
                     CommunityClientConstants.PV_HTTP_REQUEST_TIMEOUT_SEC,
                 ))

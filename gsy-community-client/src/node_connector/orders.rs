@@ -1,5 +1,3 @@
-use crate::constants::CommunityClientConstants;
-use crate::external_forecasts::pv_pricing::effective_offer_min_rate;
 use crate::node_connector::orders::gsy_node::runtime_types::gsy_primitives::orders::{
     InputBid, InputOffer, InputOrder, OrderComponent,
 };
@@ -52,11 +50,10 @@ pub async fn publish_orders(
     forecasts: Vec<ForecastSchema>,
     market: MarketTopologySchema,
     bid_rate: f64,
-    open_time: u64,
-    close_time: u64,
+    offer_rate: f64,
     signer: &Keypair,
 ) -> Result<(), Error> {
-    let input_orders = create_input_orders(forecasts, market, bid_rate, open_time, close_time, signer);
+    let input_orders = create_input_orders(forecasts, market, bid_rate, offer_rate, signer);
     publish_input_orders(url, input_orders, signer).await
 }
 
@@ -210,12 +207,15 @@ pub fn create_inter_community_order(
 }
 
 /// Turn forecasts into signed input orders.
+///
+/// `bid_rate` and `offer_rate` are the two ends of the same time ramp, precomputed once
+/// per market slot by the caller (see [`calculate_order_rate`]): bids ramp
+/// `MIN_ORDER_RATE -> MAX_ORDER_RATE` and offers `MAX_ORDER_RATE -> MIN_ORDER_RATE`.
 pub fn create_input_orders(
     forecasts: Vec<ForecastSchema>,
     market: MarketTopologySchema,
     bid_rate: f64,
-    open_time: u64,
-    close_time: u64,
+    offer_rate: f64,
     signer: &Keypair,
 ) -> Vec<InputOrder<AccountId32>> {
     let now: u64 = get_current_timestamp_in_secs();
@@ -241,23 +241,6 @@ pub fn create_input_orders(
                 signer,
             ));
         } else if forecast.energy_kwh < 0. {
-            // Per-forecast offer rate: ramp MAX_ORDER_RATE -> effective floor, where the
-            // floor is lifted for low-confidence forecasts. confidence == 1.0 reproduces
-            // the pre-change ramp (MAX -> MIN_ORDER_RATE).
-            let effective_min = effective_offer_min_rate(
-                CommunityClientConstants.MIN_ORDER_RATE,
-                CommunityClientConstants.MAX_ORDER_RATE,
-                forecast.confidence,
-                CommunityClientConstants.PV_PRICE_CONFIDENCE_WEIGHT,
-            );
-            let offer_rate = calculate_order_rate(
-                effective_min,
-                CommunityClientConstants.MAX_ORDER_RATE,
-                now,
-                open_time,
-                close_time,
-                false,
-            );
             input_orders.push(_create_offer_object(
                 forecast,
                 area_info.unwrap().clone(),

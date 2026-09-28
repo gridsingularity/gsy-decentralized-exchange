@@ -262,6 +262,7 @@ async fn submit_inter_community_measurements(world: &mut MyWorld) {
 				energy_kwh: forecast.energy_kwh,
 				time_slot: world.target_delivery_time,
 				creation_time: 1,
+				metering_point: None,
 			})
 			.collect();
 		adapter

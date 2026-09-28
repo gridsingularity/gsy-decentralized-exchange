@@ -1,4 +1,4 @@
-use gsy_community_client::node_connector::orders::create_input_orders;
+use gsy_community_client::node_connector::orders::{calculate_order_rate, create_input_orders};
 use gsy_community_client::node_connector::orders::gsy_node::runtime_types::gsy_primitives::orders::InputOrder;
 use gsy_community_client::time_utils::get_current_timestamp_in_secs;
 use gsy_offchain_primitives::db_api_schema::market::{AreaTopologySchema, MarketTopologySchema};
@@ -67,16 +67,15 @@ mod tests {
         };
 
         let bid_rate = 0.3;
-        // open_time == close_time makes the offer ramp fully progressed, so the offer
-        // rate equals its (confidence-modulated) floor deterministically, independent of
-        // wall-clock `now`. Bids still use the flat `bid_rate`.
-        let (open_time, close_time) = (0u64, 0u64);
+        // Both rates are now precomputed once per market slot by the caller and passed
+        // in flat: bids use `bid_rate`, offers `offer_rate`, with no per-forecast
+        // recomputation and no dependence on the forecast's confidence.
+        let offer_rate = 0.07;
         let input_orders = create_input_orders(
             forecasts,
             market.clone(),
             bid_rate,
-            open_time,
-            close_time,
+            offer_rate,
             &dev::alice(),
         );
         assert_eq!(input_orders.len(), 2);
@@ -111,28 +110,24 @@ mod tests {
                     );
                     assert!((current_time - offer.offer_component.creation_time) < 1);
                     assert_eq!(offer.offer_component.time_slot, 456456);
-                    // CHANGED PIN: was 700 (flat MIN_ORDER_RATE 0.07). The offer forecast
-                    // carries confidence 0.1, so its rate floor is now lifted:
-                    //   effective_min = 0.07 + (1 - 0.1) * 0.5 * (0.30 - 0.07) = 0.1735.
-                    // With the ramp fully progressed (open_time == close_time) the offer
-                    // rate equals that floor, so the total-price energy_rate is
-                    //   1.0 kWh * 0.1735 * 10000 = 1734.9999.. -> 1734 after u64 truncation.
-                    assert_eq!(offer.offer_component.energy_rate, 1734);
-                    // Energy (committed quantity) is unchanged by the rate lever.
+                    // The offer forecast carries confidence 0.1, which no longer affects
+                    // price: the total-price energy_rate is just
+                    //   1.0 kWh * offer_rate (0.07) * 10000 = 700.
+                    assert_eq!(offer.offer_component.energy_rate, 700);
                     assert_eq!(offer.offer_component.energy, 10000);
                 }
             }
         }
     }
 
-    /// A full-confidence (1.0) PV offer must reproduce the pre-change offer rate: its
-    /// floor stays at MIN_ORDER_RATE (0.07), so with the ramp fully progressed the
-    /// total-price energy_rate is 1.0 * 0.07 * 10000 = 700. A co-submitted bid must be
-    /// completely unaffected by the offer-only rate lever.
+    /// Two PV offers with wildly different confidences must price identically: the
+    /// offer rate is the caller's slot-level ramp value and nothing else. A co-submitted
+    /// bid keeps using `bid_rate`.
     #[test]
-    fn test_full_confidence_offer_reproduces_pre_change_rate() {
+    fn test_offer_rate_is_independent_of_forecast_confidence() {
         let area_hash_bid = h256_to_string(H256::random());
-        let area_hash_offer = h256_to_string(H256::random());
+        let area_hash_offer_hi = h256_to_string(H256::random());
+        let area_hash_offer_lo = h256_to_string(H256::random());
         let forecasts: Vec<ForecastSchema> = vec![
             ForecastSchema {
                 area_uuid: "bid_area".to_string(),
@@ -144,13 +139,22 @@ mod tests {
                 confidence: 0.9,
             },
             ForecastSchema {
-                area_uuid: "offer_area".to_string(),
-                area_hash: area_hash_offer.clone(),
+                area_uuid: "offer_area_hi".to_string(),
+                area_hash: area_hash_offer_hi.clone(),
                 creation_time: 234234,
                 time_slot: 456456,
                 energy_kwh: -1.,
                 community_uuid: "community1".to_string(),
                 confidence: 1.0,
+            },
+            ForecastSchema {
+                area_uuid: "offer_area_lo".to_string(),
+                area_hash: area_hash_offer_lo.clone(),
+                creation_time: 234234,
+                time_slot: 456456,
+                energy_kwh: -1.,
+                community_uuid: "community1".to_string(),
+                confidence: 0.05,
             },
         ];
 
@@ -168,33 +172,70 @@ mod tests {
                     name: "Bid Area".to_string(),
                 },
                 AreaTopologySchema {
-                    area_uuid: "offer_area".to_string(),
+                    area_uuid: "offer_area_hi".to_string(),
                     area_type: AssetType::PV,
-                    area_hash: area_hash_offer.clone(),
-                    name: "Offer Area".to_string(),
+                    area_hash: area_hash_offer_hi.clone(),
+                    name: "Offer Area Hi".to_string(),
+                },
+                AreaTopologySchema {
+                    area_uuid: "offer_area_lo".to_string(),
+                    area_type: AssetType::PV,
+                    area_hash: area_hash_offer_lo.clone(),
+                    name: "Offer Area Lo".to_string(),
                 },
             ],
         };
 
         let bid_rate = 0.3;
-        // Fully-progressed ramp so the offer rate equals its floor deterministically.
+        let offer_rate = 0.07;
         let input_orders =
-            create_input_orders(forecasts, market.clone(), bid_rate, 0, 0, &dev::alice());
-        assert_eq!(input_orders.len(), 2);
+            create_input_orders(forecasts, market.clone(), bid_rate, offer_rate, &dev::alice());
+        assert_eq!(input_orders.len(), 3);
 
+        let mut offer_rates = Vec::new();
         for order in input_orders {
             match order {
                 InputOrder::Bid(bid) => {
-                    // Bid is untouched by the offer rate lever: 12 * 0.3 * 10000 = 36000.
+                    // Bids are untouched: 12 * 0.3 * 10000 = 36000.
                     assert_eq!(bid.bid_component.energy_rate, 36000);
                     assert_eq!(bid.bid_component.energy, 120000);
                 }
                 InputOrder::Offer(offer) => {
-                    // confidence 1.0 -> floor at MIN_ORDER_RATE -> 1.0 * 0.07 * 10000 = 700.
-                    assert_eq!(offer.offer_component.energy_rate, 700);
                     assert_eq!(offer.offer_component.energy, 10000);
+                    offer_rates.push(offer.offer_component.energy_rate);
                 }
             }
         }
+        // Both offers: 1.0 kWh * 0.07 * 10000 = 700, regardless of confidence.
+        assert_eq!(offer_rates, vec![700, 700]);
+    }
+
+    /// The offer ramp is the plain default range run backwards: MAX_ORDER_RATE at market
+    /// open down to MIN_ORDER_RATE at close, symmetric with the bid ramp. This is what
+    /// `main.rs` precomputes and hands to `create_input_orders` as `offer_rate`.
+    #[test]
+    fn test_offer_ramp_runs_from_max_down_to_min() {
+        const MIN: f64 = 0.07;
+        const MAX: f64 = 0.30;
+        let (open, close) = (1_000u64, 2_000u64);
+
+        let at_open = calculate_order_rate(MIN, MAX, open, open, close, false);
+        let midway = calculate_order_rate(MIN, MAX, 1_500, open, close, false);
+        let at_close = calculate_order_rate(MIN, MAX, close, open, close, false);
+
+        assert!((at_open - MAX).abs() < 1e-9, "offer opens at MAX, got {at_open}");
+        assert!(
+            (midway - (MIN + MAX) / 2.0).abs() < 1e-9,
+            "offer midpoint should be the band midpoint, got {midway}"
+        );
+        assert!((at_close - MIN).abs() < 1e-9, "offer closes at MIN, got {at_close}");
+
+        // Mirror image of the bid ramp over the same window.
+        assert!(
+            (calculate_order_rate(MIN, MAX, open, open, close, true) - MIN).abs() < 1e-9
+        );
+        assert!(
+            (calculate_order_rate(MIN, MAX, close, open, close, true) - MAX).abs() < 1e-9
+        );
     }
 }

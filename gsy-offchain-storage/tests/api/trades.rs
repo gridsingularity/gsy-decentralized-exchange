@@ -12,7 +12,9 @@ use gsy_offchain_primitives::node_to_api_schema::insert_trades::{
     Trade, TradeParameters as InsertTradeParameters,
 };
 use gsy_offchain_primitives::utils::h256_to_string;
+use gsy_offchain_storage::db::{Coll, TradeService};
 use mongodb::bson::Bson;
+use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use subxt::utils::{AccountId32, H256};
 
@@ -704,4 +706,221 @@ async fn inserted_trade_has_no_status_updated_at() {
         inserted.status_updated_at, None,
         "a trade that has never transitioned out of Settled has no status_updated_at"
     );
+}
+
+/// A trade in the node's wire format, as the orderbook worker posts it to `POST /trades`.
+fn node_trade(account: &AccountId32) -> Trade<AccountId32, H256> {
+    let market_id = H256::random();
+    let component = |area_uuid: H256| InsertOrderComponent {
+        energy: 100,
+        energy_rate: 10,
+        area_uuid,
+        market_id,
+        time_slot: 1,
+        creation_time: 1677453190,
+    };
+    let trade_uuid = H256::random();
+    Trade {
+        seller: account.clone(),
+        buyer: account.clone(),
+        market_id,
+        time_slot: 123456123,
+        trade_uuid,
+        creation_time: 123456123,
+        offer: InsertOffer {
+            seller: account.clone(),
+            nonce: 1,
+            offer_component: component(H256::random()),
+        },
+        offer_hash: H256::random(),
+        bid: InsertBid {
+            buyer: account.clone(),
+            nonce: 1,
+            bid_component: component(H256::random()),
+        },
+        bid_hash: H256::random(),
+        residual_offer: None,
+        residual_bid: None,
+        parameters: InsertTradeParameters {
+            selected_energy: 14,
+            energy_rate: 3,
+            trade_uuid,
+        },
+    }
+}
+
+async fn post_node_trades(address: &str, trades: &Vec<Trade<AccountId32, H256>>) -> u16 {
+    reqwest::Client::new()
+        .post(&format!("{}/trades", address))
+        .header("Content-Type", "application/json")
+        .json(&Vec::<Trade<AccountId32, H256>>::encode(trades))
+        .send()
+        .await
+        .unwrap()
+        .status()
+        .as_u16()
+}
+
+/// A trade service over an in-memory store seeded as given, so that duplicates stored before
+/// `insert_trades` keyed on `trade_uuid` can be set up.
+fn seeded_trade_service(trades: Vec<TradeSchema>) -> TradeService {
+    TradeService(Coll::InMemory(Arc::new(RwLock::new(trades))))
+}
+
+#[tokio::test]
+async fn reposting_a_trade_answers_200_and_keeps_one_record_with_its_status() {
+    let app = init_app().await;
+    let address = app.address;
+    let db = web::Data::new(app.db_wrapper);
+    let account: AccountId32 = crate::orders::create_test_accountid();
+    let trade = node_trade(&account);
+    let trade_uuid = h256_to_string(trade.trade_uuid);
+    let body = vec![trade];
+
+    assert_eq!(post_node_trades(&address, &body).await, 200);
+    assert_eq!(
+        post_node_trades(&address, &body).await,
+        200,
+        "a re-post must succeed, so the worker clears the trade from its queue"
+    );
+    let saved = db.get_ref().trades().get_all_trades().await.unwrap();
+    assert_eq!(saved.len(), 1, "a re-post must not store the trade again");
+    let stored_id = saved[0]._id.clone();
+
+    db.get_ref()
+        .trades()
+        .update_trade_status_by_uuid(&trade_uuid, TradeStatus::Penalized)
+        .await
+        .unwrap();
+    let judged = db.get_ref().trades().get_all_trades().await.unwrap();
+
+    assert_eq!(post_node_trades(&address, &body).await, 200);
+    let saved = db.get_ref().trades().get_all_trades().await.unwrap();
+    assert_eq!(
+        saved, judged,
+        "a re-post after the verdict must leave the stored record, status included, untouched"
+    );
+    assert_eq!(saved[0].status, TradeStatus::Penalized);
+    assert_eq!(saved[0]._id, stored_id);
+}
+
+#[tokio::test]
+async fn insert_trades_stores_one_record_per_trade_uuid() {
+    let app = init_app().await;
+    let db = web::Data::new(app.db_wrapper);
+    let trade_uuid = h256_to_string(H256::random());
+    let first = create_test_trade_schema(&trade_uuid);
+    let other = create_test_trade_schema(&h256_to_string(H256::random()));
+    // Same trade, another random `_id`, as a second post carries it.
+    let mut again = create_test_trade_schema(&trade_uuid);
+    again.status = TradeStatus::Executed;
+
+    let inserted = db
+        .get_ref()
+        .trades()
+        .insert_trades(vec![first.clone(), again.clone(), other.clone()])
+        .await
+        .unwrap();
+    assert_eq!(
+        inserted,
+        [
+            (0, Bson::String(first._id.clone())),
+            (2, Bson::String(other._id.clone()))
+        ]
+        .into_iter()
+        .collect(),
+        "only newly stored trades are reported"
+    );
+
+    let inserted = db
+        .get_ref()
+        .trades()
+        .insert_trades(vec![again])
+        .await
+        .unwrap();
+    assert!(inserted.is_empty());
+
+    let mut saved = db.get_ref().trades().get_all_trades().await.unwrap();
+    saved.sort_by(|a, b| a._id.cmp(&b._id));
+    let mut expected = vec![first, other];
+    expected.sort_by(|a, b| a._id.cmp(&b._id));
+    assert_eq!(
+        saved, expected,
+        "the first stored copy wins, status included"
+    );
+}
+
+#[tokio::test]
+async fn remove_duplicate_trades_keeps_a_judged_copy_else_the_oldest() {
+    let with = |trade_uuid: &str,
+                id: &str,
+                status: TradeStatus,
+                creation_time: u64,
+                status_updated_at: Option<u64>| {
+        let mut trade = create_test_trade_schema(trade_uuid);
+        trade._id = id.to_string();
+        trade.status = status;
+        trade.creation_time = creation_time;
+        trade.status_updated_at = status_updated_at;
+        trade
+    };
+    let executed = with("judged", "c", TradeStatus::Executed, 100, Some(500));
+    let first_verdict = with("two_verdicts", "z", TradeStatus::Penalized, 100, Some(400));
+    let oldest_settled = with("settled", "y", TradeStatus::Settled, 90, None);
+    let smallest_id = with("same_age", "a", TradeStatus::Settled, 100, None);
+    let single = with("single", "s", TradeStatus::Settled, 100, None);
+    let service = seeded_trade_service(vec![
+        with("judged", "a", TradeStatus::Settled, 90, None),
+        executed.clone(),
+        with("judged", "b", TradeStatus::Settled, 100, None),
+        with("two_verdicts", "a", TradeStatus::Executed, 100, Some(600)),
+        first_verdict.clone(),
+        with("settled", "b", TradeStatus::Settled, 100, None),
+        oldest_settled.clone(),
+        with("same_age", "b", TradeStatus::Settled, 100, None),
+        smallest_id.clone(),
+        single.clone(),
+    ]);
+
+    assert_eq!(service.remove_duplicate_trades().await.unwrap(), 5);
+    assert_eq!(
+        service.get_all_trades().await.unwrap(),
+        vec![executed, first_verdict, oldest_settled, smallest_id, single]
+    );
+    assert_eq!(
+        service.remove_duplicate_trades().await.unwrap(),
+        0,
+        "a second run finds nothing to remove"
+    );
+}
+
+#[tokio::test]
+async fn update_trade_status_by_uuid_updates_every_copy() {
+    let trade_uuid = h256_to_string(H256::random());
+    let other = create_test_trade_schema(&h256_to_string(H256::random()));
+    let service = seeded_trade_service(vec![
+        create_test_trade_schema(&trade_uuid),
+        other.clone(),
+        create_test_trade_schema(&trade_uuid),
+    ]);
+
+    let summary = service
+        .update_trade_status_by_uuid(&trade_uuid, TradeStatus::Executed)
+        .await
+        .unwrap();
+    assert_eq!(summary.matched_count, 2);
+    assert_eq!(summary.modified_count, 2);
+
+    let saved = service.get_all_trades().await.unwrap();
+    let copies: Vec<&TradeSchema> = saved
+        .iter()
+        .filter(|t| t.trade_uuid == trade_uuid)
+        .collect();
+    assert_eq!(copies.len(), 2);
+    assert!(
+        copies
+            .iter()
+            .all(|t| t.status == TradeStatus::Executed && t.status_updated_at.is_some())
+    );
+    assert!(saved.contains(&other), "other trades are left alone");
 }

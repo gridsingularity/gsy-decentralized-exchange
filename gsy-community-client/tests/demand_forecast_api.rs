@@ -132,6 +132,12 @@ mod tests {
         assert_eq!(first.community_uuid, "community-uuid");
         assert_eq!(first.time_slot, start_timestamp);
         assert!(first.energy_kwh > 0.);
-        assert_eq!(first.confidence, 0.9);
+        // Confidence is now derived per slot from the p5..p95 band, not the removed
+        // fixed 0.9 constant.
+        assert!(
+            first.confidence > 0.0 && first.confidence <= 1.0,
+            "confidence {} out of range",
+            first.confidence
+        );
     }
 }

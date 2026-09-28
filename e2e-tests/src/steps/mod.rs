@@ -9,3 +9,4 @@ pub mod inter_community_steps;
 pub mod pv_forecasting_steps;
 pub mod penalty_steps;
 pub mod trade_status_steps;
+pub mod metering_point_steps;

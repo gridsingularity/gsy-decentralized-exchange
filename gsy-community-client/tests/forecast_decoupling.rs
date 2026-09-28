@@ -67,8 +67,7 @@ async fn orders_are_reconstructed_from_forecasts_without_any_forecaster_call() {
         },
     ];
 
-    let input_orders =
-        create_input_orders(forecasts, market, 0.2, now, now + 900, &dev::alice());
+    let input_orders = create_input_orders(forecasts, market, 0.2, 0.1, &dev::alice());
 
     assert_eq!(input_orders.len(), 2);
     let bids = input_orders

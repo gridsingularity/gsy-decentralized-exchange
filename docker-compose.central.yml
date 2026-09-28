@@ -13,12 +13,12 @@
 #   GSY_NODE_HOST=<node-1 tailnet ip>    # e.g. 100.x.y.z (no scheme)
 #   GSY_NODE_PORT=9944
 #   API_KEY=<shared off-chain-storage key>        # also authenticates the identity server
-#   ASSET_DID_MASTER_SEED=<openssl rand -hex 32>  # or set it in .env/gsy-ewf-identity-server.env
+#   IDENTITY_SERVER_URL=http://<host-a-tailnet-ip>:3000
 #   docker compose -f docker-compose.central.yml up --build
 #
-# ASSET_DID_MASTER_SEED is a SECRET and is the source of truth for every asset DID:
-# back it up out of band, and never let two environments share one. See
-# .env/gsy-ewf-identity-server.env.example.
+# The EWF identity server is NOT part of this stack: it holds ASSET_DID_MASTER_SEED
+# and the credential issuer key, so it is hosted by the operator on Host A and the
+# community client reaches it over the tailnet (IDENTITY_SERVER_URL).
 #
 # Storage :8080 is published on the sidecar for optional public/off-mesh access
 # =============================================================================
@@ -194,6 +194,13 @@ services:
     working_dir: /var/www/execution-engine
     environment:
       - API_KEY=${API_KEY:-fedecom_user}
+      # Minutes into the PAST the engine judges (it evaluates `now - EXECUTION_ENGINE_OFFSET_MIN`).
+      # 1440 = 24 h back: FLEXO metering lands in daily batches (worst seen 17.6 h after slot
+      # start). The community client's MEASUREMENT_MISSING_AFTER_SEC (22 h) must stay about 2 h
+      # below this, so missing measurements are posted before the slot is judged. Negative
+      # values look into the future; only docker-compose.test.yml uses that, because e2e posts
+      # measurements for a future slot up front.
+      - EXECUTION_ENGINE_OFFSET_MIN=${EXECUTION_ENGINE_OFFSET_MIN:-1440}
     entrypoint:
       [
         "/usr/local/bin/gsy-execution-engine",
@@ -206,49 +213,6 @@ services:
         "3600",
         "0.10",
       ]
-
-  # EWF DID / verifiable-credential service. Mints one did:ethr per ontology asset
-  # and per community from ASSET_DID_MASTER_SEED; gsy-community-client pushes the
-  # subject set to it on POST /asset-dids/sync.
-  #
-  # NOTE the build context differs from every other service here: this image's
-  # Dockerfile does `COPY package.json ./`, so it must be built from its own
-  # directory, not from the repo root.
-  #
-  # Port 3000 is deliberately NOT published on the sidecar: this service holds the
-  # asset master seed and the credential issuer key, and its only caller
-  # (gsy-community-client) shares the same network namespace.
-  gsy-ewf-identity-server:
-    container_name: gsy-ewf-identity-server
-    restart: unless-stopped
-    build:
-      context: ./gsy-ewf-identity-server
-      dockerfile: Dockerfile
-    network_mode: "service:tailscale-central"
-    depends_on:
-      tailscale-central:
-        condition: service_healthy
-      mongo-init:
-        condition: service_completed_successfully
-    # Secrets: ASSET_DID_MASTER_SEED, ISSUER_PRIVATE_KEY/ISSUER_PUBLIC_KEY, JWT_SECRET.
-    # EWC_RPC_URL must be reachable at boot — did.service.ts:32-60 calls getNetwork()
-    # and identityOwner() in onModuleInit, so the service will not start without it.
-    env_file:
-      - ./.env/gsy-ewf-identity-server.env
-    # env_file cannot do ${...} substitution; inline environment wins over env_file.
-    # Uses the existing rs0 replica set with its own database — no fourth mongo.
-    environment:
-      - MONGODB_URI=mongodb://gsy:gsy@mongo1:27017,mongo2:27017,mongo3:27017/identitydb?authSource=admin&replicaSet=rs0
-      - API_KEY=${API_KEY:-fedecom_user}
-    # node:18-alpine has no curl (unlike the Rust images above), so this uses
-    # busybox wget. /api-json is the Swagger document: unauthenticated, and served
-    # only once Nest has finished booting.
-    healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:3000/api-json"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
 
   gsy-community-client:
     container_name: gsy-community-client
@@ -272,10 +236,11 @@ services:
     environment:
       - GSY_NODE_URL=ws://${GSY_NODE_HOST:-gsy-node}:${GSY_NODE_PORT:-9944}
       - OFFCHAIN_STORAGE_URL=http://localhost:8080
-      # Shared netns again: the identity server is localhost:3000. Not a depends_on —
-      # an unavailable identity server must not delay or stall forecast ingestion or
+      # Operator-hosted on Host A, reached over the tailnet. Required: the Rust default
+      # (gsy-ewf-identity-server:3000) does not resolve here. Not a depends_on — an
+      # unavailable identity server must not delay or stall forecast ingestion or
       # order publication; the sync loop logs and retries on the next tick.
-      - IDENTITY_SERVER_URL=http://localhost:3000
+      - IDENTITY_SERVER_URL=${IDENTITY_SERVER_URL:?set IDENTITY_SERVER_URL to the operator-hosted identity server, e.g. http://<host-a-tailnet-ip>:3000}
       # One key for the off-chain storage AND the identity server (deliberate, plan §2.6).
       - API_KEY=${API_KEY:-fedecom_user}
 

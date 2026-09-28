@@ -13,11 +13,10 @@ async fn submit_bid(world: &mut MyWorld, user_name: String) {
 	let node_url =
 		std::env::var("GSY_NODE_URL").unwrap_or_else(|_| "ws://127.0.0.1:9944".to_string());
 
-	// open_time == close_time makes the offer rate ramp fully progressed, so it resolves to
-	// the (confidence-1.0) floor MIN_ORDER_RATE, reproducing the old flat offer rate.
+	// Bids price at the flat 0.3, offers at 0.07 (the MIN_ORDER_RATE default the offer ramp
+	// reaches at market close).
 	publish_orders(node_url, vec![world.bid_forecast.clone().unwrap()],
-				   world.topology_schema.clone().unwrap(), 0.3,
-				   world.target_delivery_time, world.target_delivery_time, &user)
+				   world.topology_schema.clone().unwrap(), 0.3, 0.07, &user)
 		.await
 		.expect("Failed to publish bid");
 	println!("Submitted bid for {}", user_name);
@@ -31,8 +30,7 @@ async fn submit_offer(world: &mut MyWorld, user_name: String) {
 		std::env::var("GSY_NODE_URL").unwrap_or_else(|_| "ws://127.0.0.1:9944".to_string());
 
 	publish_orders(node_url, vec![world.offer_forecast.clone().unwrap()],
-				   world.topology_schema.clone().unwrap(), 0.3,
-				   world.target_delivery_time, world.target_delivery_time, &user)
+				   world.topology_schema.clone().unwrap(), 0.3, 0.07, &user)
 		.await
 		.expect("Failed to publish offer");
 	println!("Submitted offer for {}", user_name);
@@ -52,6 +50,7 @@ async fn submit_measurements(world: &mut MyWorld, _user1: String, _user2: String
 			energy_kwh: 12.0,
 			time_slot: world.target_delivery_time,
 			creation_time: 1,
+			metering_point: None,
 		},
 		MeasurementSchema {
 			area_uuid: world.seller_id.clone(),
@@ -60,6 +59,7 @@ async fn submit_measurements(world: &mut MyWorld, _user1: String, _user2: String
 			energy_kwh: -8.0,
 			time_slot: world.target_delivery_time,
 			creation_time: 1,
+			metering_point: None,
 		},
 	];
 	adapter.forward_measurement(measurements).await.unwrap();

@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// this struct is wrapper to `Collection<Trade>` should have function to help to manage order
-pub struct TradeService(pub(crate) Coll<TradeSchema>);
+pub struct TradeService(pub Coll<TradeSchema>);
 
 impl TradeService {
     #[tracing::instrument(name = "Fetching trades from database", skip(self))]
@@ -23,12 +23,67 @@ impl TradeService {
             trade_schema = ?trade_schema
         )
     )]
+    /// Store each trade unless one with its `trade_uuid` is already stored, and return the
+    /// `_id`s of the newly stored ones by their index in `trade_schema`.
+    ///
+    /// The orderbook worker re-posts a trade whose earlier post it could not clear from its queue,
+    /// and every post carries a fresh random `_id`. Keying on `trade_uuid` keeps one record per
+    /// trade. A re-post leaves the stored record as it is, status included, so it cannot reset a
+    /// verdict back to `Settled`; and it still succeeds, so the worker clears the trade.
     pub async fn insert_trades(
         &self,
         trade_schema: Vec<TradeSchema>,
     ) -> Result<HashMap<usize, Bson>> {
+        let mut inserted_ids = HashMap::new();
+        for (index, trade) in trade_schema.into_iter().enumerate() {
+            let trade_uuid = trade.trade_uuid.clone();
+            let id = Bson::String(trade._id.clone());
+            let inserted = self
+                .0
+                .insert_if_absent(doc! {"trade_uuid": &trade_uuid}, trade, |stored| {
+                    stored.trade_uuid == trade_uuid
+                })
+                .await?;
+            if inserted {
+                inserted_ids.insert(index, id);
+            }
+        }
+        Ok(inserted_ids)
+    }
+
+    /// Delete all but one record of every `trade_uuid` stored more than once, and return the
+    /// number of records deleted. Of each group the kept record is, in order of preference:
+    /// one with a verdict (`Executed`/`Penalized`) over one still `Settled`; then the oldest,
+    /// by `creation_time` and then by `status_updated_at` (the earliest verdict; a missing one
+    /// sorts first); then the smallest `_id`. Copies of one trade share `creation_time`, as it is
+    /// set on-chain, and `_id` is a random uuid, so between two `Settled` copies (identical apart
+    /// from `_id`) the last rule just makes the choice deterministic.
+    pub async fn remove_duplicate_trades(&self) -> Result<u64> {
+        let settled = bson::to_bson(&TradeStatus::Settled)?;
         self.0
-            .insert_many(trade_schema, |trade| Bson::String(trade._id.clone()))
+            .remove_duplicates_by(
+                &["trade_uuid"],
+                vec![
+                    doc! {"$addFields": {
+                        "_unjudged": {"$cond": [{"$eq": ["$status", settled]}, 1, 0]},
+                    }},
+                    doc! {"$sort": {
+                        "_unjudged": 1,
+                        "creation_time": 1,
+                        "status_updated_at": 1,
+                        "_id": 1,
+                    }},
+                ],
+                |trade| trade.trade_uuid.clone(),
+                |a, b| {
+                    let unjudged = |trade: &TradeSchema| trade.status == TradeStatus::Settled;
+                    unjudged(a)
+                        .cmp(&unjudged(b))
+                        .then(a.creation_time.cmp(&b.creation_time))
+                        .then(a.status_updated_at.cmp(&b.status_updated_at))
+                        .then(a._id.cmp(&b._id))
+                },
+            )
             .await
     }
 
@@ -121,6 +176,9 @@ impl TradeService {
             .await
     }
 
+    /// Set the status of every record of `trade_uuid` not already in `status`. There is one
+    /// record per trade once the start-up dedupe has run, but all copies are updated, so a trade
+    /// stored twice cannot keep a copy behind in `Settled` that would be judged again.
     #[tracing::instrument(
         name = "Update trade status by trade_uuid",
         skip(self, trade_uuid, status)
@@ -135,7 +193,7 @@ impl TradeService {
             .unwrap()
             .as_secs();
         self.0
-            .update_one(
+            .update_many(
                 doc! {
                     "trade_uuid": trade_uuid,
                     "status": {"$ne": bson::to_bson(&status)?}
