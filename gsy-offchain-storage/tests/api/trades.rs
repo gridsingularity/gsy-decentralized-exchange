@@ -288,19 +288,19 @@ async fn filter_trades_time_boundaries_are_inclusive_start_exclusive_end() {
         .filter_trades(Some(20), Some(30))
         .await
         .unwrap();
-    let mut got: Vec<u64> = both.iter().map(|t| t.time_slot).collect();
+    let mut got: Vec<u64> = both.iter().map(|t| t.creation_time).collect();
     got.sort_unstable();
     assert_eq!(got, vec![20, 29]); // 20 included ($gte), 30 excluded ($lt)
 
-    // Start-only, start on a boundary value: time_slot >= 20 -> {20, 29, 30}.
+    // Start-only, start on a boundary value: creation_time >= 20 -> {20, 29, 30}.
     let start_only = trades_svc().filter_trades(Some(20), None).await.unwrap();
-    let mut got: Vec<u64> = start_only.iter().map(|t| t.time_slot).collect();
+    let mut got: Vec<u64> = start_only.iter().map(|t| t.creation_time).collect();
     got.sort_unstable();
     assert_eq!(got, vec![20, 29, 30]); // 20 included, nothing below
 
-    // End-only, end on a boundary value: time_slot < 30 -> {19, 20, 29}.
+    // End-only, end on a boundary value: creation_time < 30 -> {19, 20, 29}.
     let end_only = trades_svc().filter_trades(None, Some(30)).await.unwrap();
-    let mut got: Vec<u64> = end_only.iter().map(|t| t.time_slot).collect();
+    let mut got: Vec<u64> = end_only.iter().map(|t| t.creation_time).collect();
     got.sort_unstable();
     assert_eq!(got, vec![19, 20, 29]); // 30 excluded ($lt)
 
@@ -317,7 +317,7 @@ async fn filter_trades_time_boundaries_are_inclusive_start_exclusive_end() {
         .await
         .unwrap();
     assert_eq!(single.len(), 1);
-    assert_eq!(single[0].time_slot, 20);
+    assert_eq!(single[0].creation_time, 20);
 
     // No bounds: returns everything seeded here.
     let all = trades_svc().filter_trades(None, None).await.unwrap();

@@ -574,10 +574,13 @@ async fn verify_community_market_settlements(world: &mut MyWorld) {
                 "Trade {} was indexed under the wrong community market",
                 trade.trade_uuid
             );
-            assert_eq!(
-                trade.time_slot, world.target_delivery_time,
-                "Trade {} was indexed under the wrong delivery slot",
-                trade.trade_uuid
+            let creation_window = world.target_delivery_time..=world.target_delivery_time + 60 * 60;
+            assert!(
+                creation_window.contains(&trade.creation_time),
+                "Trade {} was created at {}, outside of the expected window {:?}",
+                trade.trade_uuid,
+                trade.creation_time,
+                creation_window
             );
             assert_trade_settled_on_chain(world, trade).await;
         }

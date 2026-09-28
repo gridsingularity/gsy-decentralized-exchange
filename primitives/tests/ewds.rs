@@ -86,7 +86,6 @@ mod tests {
         assert_eq!(db.market_id, "market-id");
         assert_eq!(db.order_type, OrderEnum::Bid);
         assert_eq!(db.status, OrderStatus::Submitted);
-        assert_eq!(db.time_slot, 10);
         assert_eq!(db.energy_kWh, 4.5);
         assert_eq!(db.energy_rate, 20.0);
         assert_eq!(db.created_by, "actor-id");
@@ -147,8 +146,7 @@ mod tests {
             seller: "seller-id".to_string(),
             buyer: "buyer-id".to_string(),
             market_id: "market-id".to_string(),
-            time_slot: 10,
-            creation_time: 10, // equal to time_slot so round-trip holds
+            creation_time: 10,
             offer_hash: "offer-hash".to_string(),
             bid_hash: "bid-hash".to_string(),
             residual_offer_id: Some("res-offer".to_string()),
@@ -188,7 +186,6 @@ mod tests {
         assert_eq!(db.seller, "seller-id");
         assert_eq!(db.buyer, "buyer-id");
         assert_eq!(db.market_id, "market-id");
-        assert_eq!(db.time_slot, 10);
         assert_eq!(db.creation_time, 10);
         assert_eq!(db.offer_hash, "offer-hash");
         assert_eq!(db.bid_hash, "bid-hash");
@@ -199,22 +196,11 @@ mod tests {
     }
 
     #[test]
-    fn trade_round_trips_when_creation_time_equals_time_slot() {
+    fn trade_round_trips() {
         let expected = trade();
         let actual = DbTradeSchema::try_from(EwdsTradeDto::from(expected.clone()))
             .expect("round trip should succeed");
         assert_eq!(actual, expected);
-    }
-
-    #[test]
-    fn creation_time_is_lost_when_it_differs_from_time_slot() {
-        let mut original = trade();
-        original.creation_time = 99; // differs from time_slot (10)
-
-        let actual = DbTradeSchema::try_from(EwdsTradeDto::from(original.clone())).unwrap();
-
-        assert_ne!(actual, original);
-        assert_eq!(actual.creation_time, original.time_slot); // both come from timestamp
     }
 
     // ---- ClearingResultDto tests ----

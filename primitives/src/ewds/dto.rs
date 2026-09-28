@@ -359,7 +359,7 @@ impl From<DbTradeSchema> for EwdsTradeDto {
             trade_status: trade_status_to_ewds(&trade.status).to_string(),
             trade_quantity: trade.parameters.selected_energy_kWh,
             trade_price: trade.parameters.energy_rate,
-            timestamp: epoch_to_rfc3339(trade.time_slot),
+            timestamp: epoch_to_rfc3339(trade.creation_time),
         }
     }
 }
@@ -368,15 +368,13 @@ impl TryFrom<EwdsTradeDto> for DbTradeSchema {
     type Error = anyhow::Error;
 
     fn try_from(trade: EwdsTradeDto) -> Result<Self> {
-        let timestamp = rfc3339_to_epoch(&trade.timestamp)?;
         Ok(Self {
             trade_uuid: trade.trade_id,
             status: trade_status_from_ewds(&trade.trade_status)?,
             seller: trade.seller_id,
             buyer: trade.buyer_id,
             market_id: trade.market_id,
-            time_slot: timestamp,
-            creation_time: timestamp,
+            creation_time: rfc3339_to_epoch(&trade.timestamp)?,
             offer_hash: trade.offer_id,
             bid_hash: trade.bid_id,
             residual_offer_id: trade.residual_offer_id,
