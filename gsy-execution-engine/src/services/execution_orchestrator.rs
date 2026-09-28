@@ -6,7 +6,9 @@ use gsy_offchain_primitives::utils::timestamp_to_datetime_string;
 
 use crate::{
     primitives::{
-        penalty_calculator::{compute_penalties, evaluated_trade_uuids, Penalty, PenaltyReason},
+        penalty_calculator::{
+            compute_penalties, dedupe_trades, evaluated_trade_uuids, Penalty, PenaltyReason,
+        },
     },
     connectors::{
         offchain_storage::fetch_trades_and_measurements_for_timeslot,
@@ -17,15 +19,23 @@ use crate::{
 /// Keeps only the penalties and evaluated uuids of trades whose status is still `Settled`, so
 /// the first verdict on a trade is final. Penalties must be computed over every fetched trade
 /// beforehand, because already-judged trades still consume the waterfall budget.
+///
+/// A trade stored twice (same `trade_uuid`) counts as judged if any of its copies has a verdict,
+/// so a copy left behind in `Settled` does not get the trade judged again.
 pub fn retain_settled(
     trades: &[TradeSchema],
     penalties: Vec<Penalty>,
     evaluated: Vec<String>,
 ) -> (Vec<Penalty>, Vec<String>) {
+    let judged: HashSet<&str> = trades
+        .iter()
+        .filter(|trade| trade.status != TradeStatus::Settled)
+        .map(|trade| trade.trade_uuid.as_str())
+        .collect();
     let settled: HashSet<&str> = trades
         .iter()
-        .filter(|trade| trade.status == TradeStatus::Settled)
         .map(|trade| trade.trade_uuid.as_str())
+        .filter(|uuid| !judged.contains(uuid))
         .collect();
     let penalties = penalties
         .into_iter()
@@ -84,6 +94,15 @@ pub async fn run_execution_cycle(
         measurements.len(),
         timestamp_to_datetime_string(timeslot),
     );
+    // Storage may hold a trade twice (same trade_uuid); judge and count each trade once.
+    let fetched = trades.len();
+    let trades = dedupe_trades(&trades);
+    if trades.len() < fetched {
+        warn!(
+            "Dropped {} duplicate trade record(s) (same trade_uuid) before judging",
+            fetched - trades.len()
+        );
+    }
 
     // 2) compute penalties and the evaluated trade set over every fetched trade, then keep
     // only the trades that have not been judged yet

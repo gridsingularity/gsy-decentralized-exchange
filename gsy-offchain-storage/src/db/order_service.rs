@@ -85,12 +85,16 @@ impl OrderService {
         orders_schema = ?orders_schema
         )
     )]
+    /// Store a batch of orders, idempotently: an order whose `_id` (its hash) is already stored
+    /// is skipped and keeps its stored status, and the rest of the batch is still stored. Returns
+    /// the `_id`s of the newly stored orders, keyed by their index in the batch. The orderbook
+    /// worker re-posts orders whose removal from its queue failed, and needs a 200 for them.
     pub async fn insert_orders(
         &self,
         orders_schema: Vec<DbOrderSchema>,
     ) -> Result<HashMap<usize, Bson>> {
         self.0
-            .insert_many(orders_schema, |order| Bson::String(order._id.clone()))
+            .insert_many_skip_duplicates(orders_schema, |order| Bson::String(order._id.clone()))
             .await
     }
 

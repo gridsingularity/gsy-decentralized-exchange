@@ -65,6 +65,8 @@ pub struct MyWorld {
 	pub metering_point_orders: Vec<MeteringPointOrder>,
 	/// The settled trades of that market, keyed by the name of their bid (buyer) area.
 	pub metering_point_trades: HashMap<String, CapturedTrade>,
+	/// Bid rate for publishing that market's bids, if a scenario overrides the default.
+	pub metering_point_bid_rate: Option<f64>,
 }
 
 /// An order forecast of the metering-point scenarios, with the user that signs it and the name
@@ -179,7 +181,7 @@ impl MyWorld {
 			pv_penalty_market: None, pv_penalty_offer: None,
 			pv_penalty_bids: Vec::new(), pv_penalty_trades: Vec::new(),
 			metering_point_market: None, metering_point_orders: Vec::new(),
-			metering_point_trades: HashMap::new(),
+			metering_point_trades: HashMap::new(), metering_point_bid_rate: None,
 		})
 	}
 

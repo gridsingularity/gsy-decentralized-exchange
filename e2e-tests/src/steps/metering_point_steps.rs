@@ -16,6 +16,10 @@
 //! identified by their bid (buyer) area, never by the order in which they settle. An expected
 //! trade's `seller_area` may list several areas, meaning it is sold by one of them; the trades
 //! listing the same areas must each be sold by a different one.
+//!
+//! A bid cleared by several offers has all its trades bought by one area; the "settles these
+//! trades, one per seller area" step identifies those by their offer (seller) area instead, and
+//! its `buyer_area` cell may list candidates the same way.
 
 use crate::world::{gsy_node, CapturedTrade, MeteringPointOrder, MyWorld};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
@@ -341,6 +345,14 @@ async fn wait_for_metering_point_market_open(world: &mut MyWorld) {
 	panic!("Timeout: the orchestrator did not open the metering-point market {:?}", market_id);
 }
 
+/// Overrides `BID_RATE` for the scenario's bids. `publish_orders` prices an order at its energy
+/// times the rate, and a remainder keeps its parent's price, so a small bid must be priced high
+/// enough to clear what is left of a larger offer.
+#[when(expr = "the metering-point bids are priced at {float} per kWh")]
+async fn price_metering_point_bids(world: &mut MyWorld, bid_rate: f64) {
+	world.metering_point_bid_rate = Some(bid_rate);
+}
+
 #[when("the metering-point offers and bids are published")]
 async fn publish_metering_point_orders(world: &mut MyWorld) {
 	let market = market(world);
@@ -363,15 +375,76 @@ async fn publish_metering_point_orders(world: &mut MyWorld) {
 			.collect();
 		let signer = world.users.get(&user).unwrap().clone();
 		let count = forecasts.len();
-		publish_orders(node_url(), forecasts, market.clone(), BID_RATE, OFFER_RATE, &signer)
+		let bid_rate = world.metering_point_bid_rate.unwrap_or(BID_RATE);
+		publish_orders(node_url(), forecasts, market.clone(), bid_rate, OFFER_RATE, &signer)
 			.await
 			.unwrap_or_else(|e| panic!("Failed to publish the orders of {}: {:?}", user, e));
 		info!("Published {} order(s) signed by {}", count, user);
 	}
 }
 
+/// The side of a trade that identifies it in a "settles these trades" table: each expected trade
+/// has a distinct area on that side, and the other side's cell may list several candidates.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TradeKeySide {
+	/// Trades keyed by their bid (buyer) area; the `seller_area` cell may list candidates.
+	Buyer,
+	/// Trades keyed by their offer (seller) area; the `buyer_area` cell may list candidates. Used
+	/// when one bid is cleared by several offers, so that all its trades share a buyer area.
+	Seller,
+}
+
+impl TradeKeySide {
+	/// The table column holding the key area, and the one holding the candidate areas.
+	fn columns(self) -> (&'static str, &'static str) {
+		match self {
+			TradeKeySide::Buyer => ("buyer_area", "seller_area"),
+			TradeKeySide::Seller => ("seller_area", "buyer_area"),
+		}
+	}
+
+	/// The role names of the key side and of the other side, for messages.
+	fn roles(self) -> (&'static str, &'static str) {
+		match self {
+			TradeKeySide::Buyer => ("buyer", "seller"),
+			TradeKeySide::Seller => ("seller", "buyer"),
+		}
+	}
+
+	/// "bought"/"sold" for the key side, and for the other side, for messages.
+	fn verbs(self) -> (&'static str, &'static str) {
+		match self {
+			TradeKeySide::Buyer => ("bought", "sold"),
+			TradeKeySide::Seller => ("sold", "bought"),
+		}
+	}
+}
+
 #[then("the metering-point market settles these trades:")]
 async fn capture_metering_point_trades(world: &mut MyWorld, step: &Step) {
+	world.metering_point_trades = capture_trades_keyed_by(world, step, TradeKeySide::Buyer).await;
+}
+
+/// For a bid cleared by several offers (a chain of bid remainders), whose trades all share one
+/// buyer area. The trades are keyed by seller area, so `metering_point_trades` (keyed by buyer
+/// area, used by the verdict steps) is left empty.
+#[then("the metering-point market settles these trades, one per seller area:")]
+async fn capture_metering_point_trades_by_seller(world: &mut MyWorld, step: &Step) {
+	capture_trades_keyed_by(world, step, TradeKeySide::Seller).await;
+	world.metering_point_trades = HashMap::new();
+}
+
+/// Wait up to `SETTLEMENT_BLOCKS` finalized blocks for every trade of the step's table to settle
+/// in the metering-point market, checking each against its row, and return them keyed by the
+/// name of their `key_side` area.
+async fn capture_trades_keyed_by(
+	world: &MyWorld,
+	step: &Step,
+	key_side: TradeKeySide,
+) -> HashMap<String, CapturedTrade> {
+	let (key_column, other_column) = key_side.columns();
+	let (key_role, other_role) = key_side.roles();
+	let (key_verb, other_verb) = key_side.verbs();
 	let market = market(world);
 	let market_id = world.generate_market_id(&market.community_name, MarketType::Spot);
 	let area_names: HashMap<H256, String> = market
@@ -385,30 +458,33 @@ async fn capture_metering_point_trades(world: &mut MyWorld, step: &Step) {
 		.map(|order| (order.area_name.clone(), order.user.clone()))
 		.collect();
 
-	// Expected trades keyed by buyer area: (candidate seller areas, scaled energy). A single
-	// candidate may sell several trades; a trade with several candidates is sold by one of them.
+	// Expected trades keyed by key area: (candidate other-side areas, scaled energy). A single
+	// candidate may take part in several trades; a trade with several candidates has one of them.
 	let mut expected: HashMap<String, (Vec<String>, u64)> = HashMap::new();
 	for row in table_rows(step) {
-		let buyer_area = cell(&row, "buyer_area").to_string();
-		let mut seller_areas = split_list(cell(&row, "seller_area"));
+		let key_area = cell(&row, key_column).to_string();
+		let mut other_areas = split_list(cell(&row, other_column));
 		assert!(
-			!seller_areas.is_empty(),
-			"the trade bought by \"{}\" needs a seller area",
-			buyer_area
+			!other_areas.is_empty(),
+			"the trade {} by \"{}\" needs a {} area",
+			key_verb,
+			key_area,
+			other_role
 		);
-		seller_areas.sort();
+		other_areas.sort();
 		let energy = scaled_energy(parse_kwh(cell(&row, "energy_kwh"), "trade energy"));
 		assert!(
-			expected.insert(buyer_area.clone(), (seller_areas, energy)).is_none(),
-			"the expected trades must have distinct buyer areas, \"{}\" is repeated",
-			buyer_area
+			expected.insert(key_area.clone(), (other_areas, energy)).is_none(),
+			"the expected trades must have distinct {} areas, \"{}\" is repeated",
+			key_role,
+			key_area
 		);
 	}
 
 	let mut captured: HashMap<String, CapturedTrade> = HashMap::new();
-	// For the trades with several candidate sellers: the buyer area each such seller sold to, per
-	// candidate list, so that the trades sharing a list are each sold by a different area of it.
-	let mut sold_from_candidates: HashMap<Vec<String>, HashMap<String, String>> = HashMap::new();
+	// For the trades with several candidates on the other side: the key area each such candidate
+	// traded with, per candidate list, so that the trades sharing a list each have a different one.
+	let mut used_candidates: HashMap<Vec<String>, HashMap<String, String>> = HashMap::new();
 	let mut block_sub = world
 		.subxt_client
 		.blocks()
@@ -443,15 +519,19 @@ async fn capture_metering_point_trades(world: &mut MyWorld, step: &Step) {
 			};
 			let buyer_area = area_name(&trade.bid.bid_component.area_uuid);
 			let seller_area = area_name(&trade.offer.offer_component.area_uuid);
-			if let Some(existing) = captured.get(&buyer_area) {
+			let (key_area, other_area) = match key_side {
+				TradeKeySide::Buyer => (buyer_area.clone(), seller_area.clone()),
+				TradeKeySide::Seller => (seller_area.clone(), buyer_area.clone()),
+			};
+			if let Some(existing) = captured.get(&key_area) {
 				assert_eq!(
 					existing.trade_uuid, trade.trade_uuid,
-					"expected one trade bought by \"{}\", but a second one settled: {:?} and {:?}",
-					buyer_area, existing.trade_uuid, trade.trade_uuid
+					"expected one trade {} by \"{}\", but a second one settled: {:?} and {:?}",
+					key_verb, key_area, existing.trade_uuid, trade.trade_uuid
 				);
 				continue;
 			}
-			let Some((expected_sellers, expected_energy)) = expected.get(&buyer_area) else {
+			let Some((expected_others, expected_energy)) = expected.get(&key_area) else {
 				panic!(
 					"unexpected trade {:?} in the metering-point market: bought by \"{}\", sold by \
 					 \"{}\", {} kWh",
@@ -462,27 +542,36 @@ async fn capture_metering_point_trades(world: &mut MyWorld, step: &Step) {
 				);
 			};
 			assert!(
-				expected_sellers.contains(&seller_area),
-				"the trade bought by \"{}\" must be sold by one of {:?}, got \"{}\"",
-				buyer_area,
-				expected_sellers,
-				seller_area
+				expected_others.contains(&other_area),
+				"the trade {} by \"{}\" must be {} by one of {:?}, got \"{}\"",
+				key_verb,
+				key_area,
+				other_verb,
+				expected_others,
+				other_area
 			);
-			if expected_sellers.len() > 1 {
-				let sold = sold_from_candidates.entry(expected_sellers.clone()).or_default();
-				if let Some(other_buyer) = sold.insert(seller_area.clone(), buyer_area.clone()) {
+			if expected_others.len() > 1 {
+				let used = used_candidates.entry(expected_others.clone()).or_default();
+				if let Some(other_key) = used.insert(other_area.clone(), key_area.clone()) {
 					panic!(
-						"\"{}\" sold both the trade bought by \"{}\" and the one bought by \"{}\", \
-						 but each of {:?} must sell a different trade",
-						seller_area, other_buyer, buyer_area, expected_sellers
+						"\"{}\" {} both the trade {} by \"{}\" and the one {} by \"{}\", but each of \
+						 {:?} must take part in a different trade",
+						other_area,
+						other_verb,
+						key_verb,
+						other_key,
+						key_verb,
+						key_area,
+						expected_others
 					);
 				}
 			}
 			assert_eq!(
 				trade.parameters.selected_energy,
 				*expected_energy,
-				"the trade bought by \"{}\" must clear {} kWh (scaled ×10000)",
-				buyer_area,
+				"the trade {} by \"{}\" must clear {} kWh (scaled ×10000)",
+				key_verb,
+				key_area,
 				*expected_energy as f64 / ENERGY_SCALE
 			);
 			let signer_of = |area: &str| {
@@ -495,15 +584,17 @@ async fn capture_metering_point_trades(world: &mut MyWorld, step: &Step) {
 			assert_eq!(
 				trade.seller,
 				account_of(world, seller_user),
-				"the trade bought by \"{}\" must be sold by {}",
-				buyer_area,
+				"the trade {} by \"{}\" must be sold by {}",
+				key_verb,
+				key_area,
 				seller_user
 			);
 			assert_eq!(
 				trade.buyer,
 				account_of(world, buyer_user),
-				"the trade bought by \"{}\" must be bought by {}",
-				buyer_area,
+				"the trade {} by \"{}\" must be bought by {}",
+				key_verb,
+				key_area,
 				buyer_user
 			);
 			info!(
@@ -514,7 +605,7 @@ async fn capture_metering_point_trades(world: &mut MyWorld, step: &Step) {
 				buyer_area
 			);
 			captured.insert(
-				buyer_area,
+				key_area,
 				CapturedTrade {
 					trade_uuid: trade.trade_uuid,
 					selected_energy: trade.parameters.selected_energy,
@@ -525,15 +616,16 @@ async fn capture_metering_point_trades(world: &mut MyWorld, step: &Step) {
 	}
 
 	let mut missing: Vec<&String> =
-		expected.keys().filter(|buyer| !captured.contains_key(*buyer)).collect();
+		expected.keys().filter(|key| !captured.contains_key(*key)).collect();
 	missing.sort();
 	assert!(
 		missing.is_empty(),
-		"Timeout: no trade bought by {:?} settled in the metering-point market (captured {:?})",
+		"Timeout: no trade {} by {:?} settled in the metering-point market (captured {:?})",
+		key_verb,
 		missing,
 		captured.keys().collect::<Vec<_>>()
 	);
-	world.metering_point_trades = captured;
+	captured
 }
 
 #[when("these metering-point measurements are submitted for the slot:")]

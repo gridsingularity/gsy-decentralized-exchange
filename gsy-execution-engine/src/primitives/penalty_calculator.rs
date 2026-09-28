@@ -1,6 +1,6 @@
 use gsy_offchain_primitives::db_api_schema::{
 	profiles::{MeasurementCompleteness, MeasurementSchema},
-	trades::TradeSchema,
+	trades::{TradeSchema, TradeStatus},
 };
 use gsy_offchain_primitives::utils::{community_id_from_uuid, h256_to_string};
 use std::collections::{hash_map::Entry, HashMap, HashSet};
@@ -146,6 +146,33 @@ fn metering_point_rows(measurements: &[MeasurementSchema]) -> HashMap<(String, u
 	index
 }
 
+/// Returns one record per `trade_uuid`, in first-seen order.
+///
+/// Storage can hold a trade twice: a re-post by the orderbook worker used to add a second record
+/// with the same `trade_uuid` and a new `_id`. Counting both copies would double the trade's
+/// energy in every sum of `compute_penalties`. The copies differ only in `_id` and status, so the
+/// first copy seen is kept, replaced by the first copy with a verdict (`Executed`/`Penalized`)
+/// while the kept one is still `Settled`: a trade counts as judged if any copy is.
+pub fn dedupe_trades(trades: &[TradeSchema]) -> Vec<TradeSchema> {
+	let mut position: HashMap<&str, usize> = HashMap::new();
+	let mut unique: Vec<TradeSchema> = Vec::new();
+	for trade in trades {
+		match position.entry(trade.trade_uuid.as_str()) {
+			Entry::Vacant(entry) => {
+				entry.insert(unique.len());
+				unique.push(trade.clone());
+			},
+			Entry::Occupied(entry) => {
+				let kept = &mut unique[*entry.get()];
+				if kept.status == TradeStatus::Settled && trade.status != TradeStatus::Settled {
+					*kept = trade.clone();
+				}
+			},
+		}
+	}
+	unique
+}
+
 /// Returns the `trade_uuid` of every trade that was actually evaluated, in input order,
 /// de-duplicated. A trade is evaluated if one of its sides is covered by a metering-point row
 /// (any completeness) or has a per-area or community entry for its `(area, time_slot)` (a number
@@ -230,12 +257,16 @@ pub fn evaluated_trade_uuids(
 ///   parts sum exactly to the aggregate). Over-consumption is a flat overage with no
 ///   natural per-trade ordering, so there is nothing to give time priority to.
 ///
+/// Trades are first de-duplicated by `trade_uuid` (`dedupe_trades`), so a trade stored twice
+/// counts once in every sum and yields at most one penalty per side.
+///
 /// Output order: metering-point pass, then buyer pass, then seller pass.
 pub fn compute_penalties(
 	trades: &[TradeSchema],
 	measurements: &[MeasurementSchema],
 	penalty_rate: f64,
 ) -> Vec<Penalty> {
+	let trades = &dedupe_trades(trades);
 	let measurement_map = build_measurement_map(measurements);
 	let point_rows = metering_point_rows(measurements);
 

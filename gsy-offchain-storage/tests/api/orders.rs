@@ -260,3 +260,197 @@ async fn subscribe_return_a_400_when_data_is_missing() {
         );
     }
 }
+
+/// A node bid with `nonce`, in the SCALE form the orderbook worker posts to `/orders`.
+fn node_bid_schema(nonce: u32, market_id: H256) -> OrderSchema<AccountId32, H256> {
+    OrderSchema {
+        _id: H256::random(),
+        status: OrderStatus::Open,
+        order: Order::Bid(Bid {
+            buyer: create_test_accountid(),
+            nonce,
+            bid_component: OrderComponent {
+                energy: 10_000,
+                energy_rate: 3_000,
+                area_uuid: H256::repeat_byte(7),
+                market_id,
+                time_slot: 1_800_000_000,
+                creation_time: 1_799_990_000,
+            },
+        }),
+    }
+}
+
+/// The storage `_id` of a node order: the BlakeTwo256 hash of the node bid.
+fn stored_id(order: &OrderSchema<AccountId32, H256>) -> String {
+    match &order.order {
+        Order::Bid(bid) => h256_to_string(BlakeTwo256.hash_of(bid)),
+        Order::Offer(offer) => h256_to_string(BlakeTwo256.hash_of(offer)),
+    }
+}
+
+/// POST `orders` to `/orders` as the orderbook worker does; returns the status code and the
+/// reported `_id`s of the newly stored orders.
+async fn post_node_orders(
+    address: &str,
+    orders: &[OrderSchema<AccountId32, H256>],
+) -> (u16, HashMap<usize, Bson>) {
+    let body = Vec::<OrderSchema<AccountId32, H256>>::encode(&orders.to_vec());
+    let resp = reqwest::Client::new()
+        .post(format!("{}/orders", address))
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .expect("Failed to execute request.");
+    let status = resp.status().as_u16();
+    let ids = if status == 200 {
+        resp.json::<HashMap<usize, Bson>>().await.unwrap()
+    } else {
+        HashMap::new()
+    };
+    (status, ids)
+}
+
+/// How many stored documents have `_id` `id`.
+async fn count_with_id(
+    db: &web::Data<gsy_offchain_storage::db::DatabaseWrapper>,
+    id: &str,
+) -> usize {
+    db.get_ref()
+        .orders()
+        .get_all_orders()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|order| order._id == id)
+        .count()
+}
+
+#[tokio::test]
+async fn reposting_an_order_batch_answers_200_and_keeps_the_stored_status() {
+    let app = init_app().await;
+    let address = app.address.clone();
+    let db = web::Data::new(app.db_wrapper);
+    let market_id = H256::random();
+    let batch = vec![node_bid_schema(1, market_id), node_bid_schema(2, market_id)];
+    let ids: Vec<String> = batch.iter().map(stored_id).collect();
+
+    let (status, inserted) = post_node_orders(&address, &batch).await;
+    assert_eq!(status, 200);
+    assert_eq!(inserted.len(), 2);
+
+    // The first order settles before the worker re-posts the batch.
+    db.get_ref()
+        .orders()
+        .update_order_status_by_id(&Bson::String(ids[0].clone()), OrderStatus::Executed)
+        .await
+        .unwrap();
+
+    let (status, inserted) = post_node_orders(&address, &batch).await;
+    assert_eq!(status, 200, "a re-posted batch must answer 200");
+    assert!(
+        inserted.is_empty(),
+        "nothing new was stored: {:?}",
+        inserted
+    );
+    for id in &ids {
+        assert_eq!(count_with_id(&db, id).await, 1);
+    }
+    assert_eq!(status_of(&db, &ids[0]).await, OrderStatus::Executed);
+    assert_eq!(status_of(&db, &ids[1]).await, OrderStatus::Open);
+}
+
+#[tokio::test]
+async fn an_order_batch_with_a_stored_order_stores_the_rest() {
+    let app = init_app().await;
+    let address = app.address.clone();
+    let db = web::Data::new(app.db_wrapper);
+    let market_id = H256::random();
+    let stored = node_bid_schema(1, market_id);
+    let (status, _) = post_node_orders(&address, std::slice::from_ref(&stored)).await;
+    assert_eq!(status, 200);
+    db.get_ref()
+        .orders()
+        .update_order_status_by_id(&Bson::String(stored_id(&stored)), OrderStatus::Executed)
+        .await
+        .unwrap();
+
+    // The stored order first, then two new ones, one of them twice in the same batch.
+    let first_new = node_bid_schema(2, market_id);
+    let second_new = node_bid_schema(3, market_id);
+    let batch = vec![
+        stored.clone(),
+        first_new.clone(),
+        second_new.clone(),
+        first_new.clone(),
+    ];
+    let (status, inserted) = post_node_orders(&address, &batch).await;
+
+    assert_eq!(status, 200);
+    let mut inserted: Vec<(usize, String)> = inserted
+        .into_iter()
+        .map(|(index, id)| (index, id.as_str().unwrap().to_string()))
+        .collect();
+    inserted.sort();
+    assert_eq!(
+        inserted,
+        vec![(1, stored_id(&first_new)), (2, stored_id(&second_new))]
+    );
+    for order in [&stored, &first_new, &second_new] {
+        assert_eq!(count_with_id(&db, &stored_id(order)).await, 1);
+    }
+    assert_eq!(
+        status_of(&db, &stored_id(&stored)).await,
+        OrderStatus::Executed
+    );
+    assert_eq!(
+        status_of(&db, &stored_id(&first_new)).await,
+        OrderStatus::Open
+    );
+    assert_eq!(
+        status_of(&db, &stored_id(&second_new)).await,
+        OrderStatus::Open
+    );
+}
+
+#[tokio::test]
+async fn reposting_normalized_orders_answers_200_and_keeps_the_stored_status() {
+    let app = init_app().await;
+    let address = app.address.clone();
+    let db = web::Data::new(app.db_wrapper);
+    let client = reqwest::Client::new();
+    let post = |orders: Vec<DbOrderSchema>| {
+        let request = client
+            .post(format!("{}/orders-normalized", address))
+            .json(&orders);
+        async move { request.send().await.expect("Failed to execute request.") }
+    };
+
+    let resp = post(vec![db_bid_order("normalized_a", "market_n", 100)]).await;
+    assert_eq!(resp.status().as_u16(), 200);
+    db.get_ref()
+        .orders()
+        .update_order_status_by_id(
+            &Bson::String("normalized_a".to_string()),
+            OrderStatus::Executed,
+        )
+        .await
+        .unwrap();
+
+    let resp = post(vec![
+        db_bid_order("normalized_a", "market_n", 100),
+        db_offer_order("normalized_b", "market_n", 100),
+    ])
+    .await;
+    assert_eq!(resp.status().as_u16(), 200);
+    let inserted = resp.json::<HashMap<usize, Bson>>().await.unwrap();
+    assert_eq!(inserted.len(), 1);
+    assert_eq!(
+        inserted.get(&1).and_then(Bson::as_str),
+        Some("normalized_b")
+    );
+    assert_eq!(count_with_id(&db, "normalized_a").await, 1);
+    assert_eq!(status_of(&db, "normalized_a").await, OrderStatus::Executed);
+    assert_eq!(status_of(&db, "normalized_b").await, OrderStatus::Open);
+}

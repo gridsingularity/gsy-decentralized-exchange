@@ -71,6 +71,32 @@ async fn preload(db: &DatabaseWrapper) -> Result<()> {
     // put initialize here
     db.orders().0.ensure_id_index().await?;
     db.trades().0.ensure_id_index().await?;
+    // Backs the trade_uuid key used by `insert_trades`. Trades re-posted before that key existed
+    // were stored once per post, which would fail the index build, so the copies are removed
+    // first, keeping a judged copy over a `Settled` one (see `remove_duplicate_trades`). As for
+    // the measurements below, neither step may stop the service.
+    match db.trades().remove_duplicate_trades().await {
+        Ok(0) => tracing::info!("Found no duplicate trade_uuid trades"),
+        Ok(removed) => tracing::warn!(
+            "Removed {} duplicate trade_uuid trades, keeping a judged copy over a Settled one, else the oldest",
+            removed
+        ),
+        Err(e) => tracing::error!(
+            "Failed to remove duplicate trade_uuid trades: {:?}. Continuing; while duplicates remain the unique index on trade_uuid cannot be built, and inserts still skip stored trades but scan the collection",
+            e
+        ),
+    }
+    if let Err(e) = db
+        .trades()
+        .0
+        .ensure_unique_index(mongodb::bson::doc! {"trade_uuid": 1})
+        .await
+    {
+        tracing::error!(
+            "Failed to create the unique trade_uuid index on trades: {:?}. Continuing without it; inserts still skip stored trades but scan the collection",
+            e
+        );
+    }
     db.forecasts().0.ensure_id_index().await?;
     // Backs the (area_uuid, time_slot) upsert key used by `insert_forecasts`.
     db.forecasts()

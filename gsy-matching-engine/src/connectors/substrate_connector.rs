@@ -4,8 +4,15 @@ use gsy_offchain_primitives::algorithms::PayAsBid;
 use gsy_offchain_primitives::db_api_schema::orders::{
 	DbOrderComponent, DbOrderSchema, Order as DbOrder, OrderStatus,
 };
+use crate::connectors::registry_filter::{
+	filter_registered_open, match_order_hashes, DroppedOrderLog, FilteredOrders, RegistryStatus,
+	StoredOrder,
+};
+use gsy_offchain_primitives::types::gsy_node::runtime_types::gsy_primitives::orders::{
+	OrderReference as NodeOrderReference, OrderStatus as NodeOrderStatus,
+};
 use gsy_offchain_primitives::types::{
-	gsy_node, Bid, BidOfferMatch, MatchingData, Offer, Order, OrderComponent, NodeBidOfferMatch
+	gsy_node, Bid, BidOfferMatch, MatchingData, NodeBidOfferMatch, Offer, Order, OrderComponent,
 };
 use gsy_offchain_primitives::utils::{
 	read_env_or, string_to_account_id, string_to_h256, NODE_FLOAT_SCALING_FACTOR,
@@ -14,11 +21,13 @@ use reqwest::header::{HeaderMap, HeaderValue};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::{thread, time};
+use subxt::backend::legacy::LegacyRpcMethods;
+use subxt::backend::rpc::RpcClient;
 use subxt::config::DefaultExtrinsicParamsBuilder;
-use subxt::{utils::AccountId32, OnlineClient, SubstrateConfig};
 use subxt::utils::H256;
+use subxt::{utils::AccountId32, OnlineClient, SubstrateConfig};
 use subxt_signer::sr25519::dev;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 const MATCH_PER_NR_BLOCKS: u64 = 4;
 
@@ -33,6 +42,8 @@ pub async fn substrate_subscribe(orderbook_url: String, node_url: String) -> Res
 
 	let orderbook_url = Arc::new(Mutex::new(orderbook_url));
 	let node_url = Arc::new(Mutex::new(node_url.clone()));
+	// Orders dropped by the registry filter that were already logged (once per order).
+	let dropped_order_log = Arc::new(Mutex::new(DroppedOrderLog::new()));
 
 	while let Some(Ok(block)) = gsy_blocks_events.next().await {
 		info!("Block {:?} finalized: {:?}", block.number(), block.hash());
@@ -47,16 +58,52 @@ pub async fn substrate_subscribe(orderbook_url: String, node_url: String) -> Res
 
 			let matches_clone_one = Arc::clone(&matches);
 			let matches_clone_two = Arc::clone(&matches_clone_one);
+			let registry_api = api.clone();
+			let dropped_order_log = Arc::clone(&dropped_order_log);
 
 			if let Err(error) = tokio::task::spawn(async move {
 				let orderbook_url_clone = orderbook_url_clone.lock().unwrap().to_string();
 
 				info!("Fetching orders from {}", orderbook_url_clone.clone());
 
-				let (open_bid, open_offer) =
-					fetch_open_orders_from_orderbook_service(orderbook_url_clone)
-						.await
-						.unwrap_or_else(|e| panic!("Failed to fetch the open orders: {:?}", e));
+				let open_orders = fetch_open_orders_from_orderbook_service(orderbook_url_clone)
+					.await
+					.unwrap_or_else(|e| panic!("Failed to fetch the open orders: {:?}", e));
+
+				let has_bid = open_orders.iter().any(|order| matches!(order.order, Order::Bid(_)));
+				let has_offer =
+					open_orders.iter().any(|order| matches!(order.order, Order::Offer(_)));
+				if !(has_bid && has_offer) {
+					info!("No open orders to match");
+					return;
+				}
+
+				// Match only orders the registry holds `Open`. If the registry cannot be read,
+				// skip the whole cycle rather than match unverified orders; the next cycle
+				// retries.
+				let FilteredOrders { bids: open_bid, offers: open_offer, dropped } =
+					match filter_orders_by_registry(&registry_api, open_orders).await {
+						Ok(filtered) => filtered,
+						Err(e) => {
+							error!(
+								"Failed to read the order registry, skipping this matching cycle: {:?}",
+								e
+							);
+							return;
+						},
+					};
+				for order in dropped_order_log.lock().unwrap().newly_dropped(&dropped) {
+					warn!(
+						"Not matching order {:?} (storage _id {}) of {}: registry status {}",
+						order.hash,
+						order.id,
+						order.owner,
+						match order.status {
+							Some(status) => format!("{:?}", status),
+							None => "missing (not registered)".to_string(),
+						}
+					);
+				}
 
 				if open_bid.len() > 0 && open_offer.len() > 0 {
 					info!("Open Bid - {:?}", open_bid);
@@ -103,7 +150,7 @@ pub async fn substrate_subscribe(orderbook_url: String, node_url: String) -> Res
 						}
 					}
 				} else {
-					info!("No open orders to match");
+					info!("No registered open orders to match");
 				}
 			})
 			.await
@@ -145,38 +192,63 @@ fn authorized_storage_client() -> reqwest::Client {
 		.expect("Failed to build off-chain storage HTTP client")
 }
 
-async fn fetch_open_orders_from_orderbook_service(
-	url: String,
-) -> Result<(Vec<Bid>, Vec<Offer>), Error> {
+/// Fetch the `Open` orders from the off-chain storage, converted to node units, each with its
+/// storage `_id`.
+async fn fetch_open_orders_from_orderbook_service(url: String) -> Result<Vec<StoredOrder>, Error> {
 	let res = authorized_storage_client().get(url).send().await?;
 	info!("Response: {:?} {}", res.version(), res.status());
 	info!("Headers: {:#?}\n", res.headers());
 
 	let body = res.json::<Vec<DbOrderSchema>>().await?;
 
-	let open_canonical_orders: Vec<Order> = body
+	Ok(body
 		.into_iter()
 		.filter(|order| order.status == OrderStatus::Open)
 		.filter_map(|db_order_schema| match convert_db_order_to_canonical(db_order_schema.order) {
-			Ok(order) => Some(order),
+			Ok(order) => Some(StoredOrder { id: db_order_schema._id, order }),
 			Err(e) => {
 				error!("Failed to convert DB order to canonical: {:?}", e);
 				None
 			},
 		})
+		.collect())
+}
+
+/// Look every order up in `OrderbookRegistry.OrdersRegistry` at the latest finalized block and
+/// keep those whose entry exists and is `Open` (see [`filter_registered_open`]). One storage read
+/// per order, issued concurrently. Any failed read fails the whole call.
+async fn filter_orders_by_registry(
+	api: &OnlineClient<SubstrateConfig>,
+	orders: Vec<StoredOrder>,
+) -> Result<FilteredOrders, Error> {
+	let storage = api.storage().at_latest().await?;
+	let keys: Vec<(AccountId32, H256)> =
+		orders.iter().map(|order| (order.owner().clone(), order.hash())).collect();
+	let statuses = futures::future::try_join_all(keys.iter().map(|(owner, hash)| {
+		let address = gsy_node::storage()
+			.orderbook_registry()
+			.orders_registry(NodeOrderReference { user_id: owner.clone(), hash: *hash });
+		let storage = storage.clone();
+		// `fetch`, never `fetch_or_default`: the map is a `ValueQuery` defaulting to `Open`, so
+		// only `fetch` tells a missing entry (`None`) apart from an `Open` one.
+		async move { storage.fetch(&address).await }
+	}))
+	.await?;
+	// Keyed by the raw account bytes: `AccountId32` does not implement `Hash`.
+	let statuses: HashMap<([u8; 32], H256), Option<RegistryStatus>> = keys
+		.into_iter()
+		.map(|(owner, hash)| (owner.0, hash))
+		.zip(statuses.into_iter().map(|status| {
+			status.map(|status| match status {
+				NodeOrderStatus::Open => RegistryStatus::Open,
+				NodeOrderStatus::Executed(_) => RegistryStatus::Executed,
+				NodeOrderStatus::Deleted => RegistryStatus::Deleted,
+			})
+		}))
 		.collect();
-
-	let mut open_bids: Vec<Bid> = Vec::new();
-	let mut open_offers: Vec<Offer> = Vec::new();
-
-	for order in open_canonical_orders {
-		match order {
-			Order::Bid(bid) => open_bids.push(bid),
-			Order::Offer(offer) => open_offers.push(offer),
-		}
-	}
-
-	Ok((open_bids, open_offers))
+	Ok(filter_registered_open(orders, |owner, hash| {
+		statuses.get(&(owner.0, *hash)).copied().flatten()
+	}))
 }
 
 fn convert_db_order_to_canonical(order: DbOrder) -> Result<Order> {
@@ -235,24 +307,41 @@ async fn send_settle_trades_extrinsic(
 	Ok(())
 }
 
+/// The operator account's next nonce at the best block, counting its transactions still in the
+/// pool (`system_accountNextIndex`), so a pending settlement is not given the same nonce again.
+async fn operator_next_nonce(
+	rpc: &LegacyRpcMethods<SubstrateConfig>,
+	operator_account: &AccountId32,
+) -> Result<u64, Error> {
+	Ok(rpc.system_account_next_index(operator_account).await?)
+}
+
 async fn settle_matched_orders(
 	node_url: Arc<Mutex<String>>,
 	market_matches: Vec<Vec<BidOfferMatch>>,
 ) {
 	let node_url = node_url.lock().unwrap().to_string();
 
-	let api = match OnlineClient::<SubstrateConfig>::from_insecure_url(node_url).await {
+	let rpc_client = match RpcClient::from_insecure_url(node_url).await {
+		Ok(rpc_client) => rpc_client,
+		Err(e) => {
+			error!("Failed to connect to the node for settlement: {:?}", e);
+			return;
+		},
+	};
+	let api = match OnlineClient::<SubstrateConfig>::from_rpc_client(rpc_client.clone()).await {
 		Ok(api) => api,
 		Err(e) => {
 			error!("Failed to connect to the node for settlement: {:?}", e);
 			return;
 		},
 	};
+	let rpc = LegacyRpcMethods::<SubstrateConfig>::new(rpc_client);
 
 	let signer = dev::alice();
 	let operator_account = AccountId32(signer.public_key().0);
 
-	let mut nonce = match api.tx().account_nonce(&operator_account).await {
+	let mut nonce = match operator_next_nonce(&rpc, &operator_account).await {
 		Ok(nonce) => nonce,
 		Err(e) => {
 			error!("Failed to fetch the operator account nonce: {:?}", e);
@@ -266,6 +355,7 @@ async fn settle_matched_orders(
 		}
 		let market_id = matches[0].market_id;
 		info!("Settling {} match(es) for market {:?}", matches.len(), market_id);
+		let order_hashes = match_order_hashes(&matches);
 
 		let transcode_bid_offer_matches: Vec<NodeBidOfferMatch<AccountId32, H256>> = matches
 			.into_iter()
@@ -278,11 +368,23 @@ async fn settle_matched_orders(
 		{
 			Ok(()) => {
 				info!("Settling trades successful for market {:?}", market_id);
+				nonce += 1;
 			},
 			Err(e) => {
-				error!("Settling trades failed for market {:?} with error: {:?}", market_id, e);
+				error!(
+					"Settling trades failed for market {:?} with error: {:?}; (bid hash, offer hash) of the proposal's matches: {:?}",
+					market_id, e, order_hashes
+				);
+				// A failed send may or may not have used the nonce (rejected from the pool vs.
+				// included and failed), so read it again rather than guess.
+				nonce = match operator_next_nonce(&rpc, &operator_account).await {
+					Ok(nonce) => nonce,
+					Err(e) => {
+						error!("Failed to re-read the operator account nonce: {:?}", e);
+						return;
+					},
+				};
 			},
 		}
-		nonce += 1;
 	}
 }

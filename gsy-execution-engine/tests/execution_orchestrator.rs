@@ -2,7 +2,7 @@
 mod tests {
 
     use gsy_execution_engine::primitives::penalty_calculator::{
-        compute_penalties, evaluated_trade_uuids, PenaltyReason,
+        compute_penalties, dedupe_trades, evaluated_trade_uuids, PenaltyReason,
     };
     use gsy_execution_engine::services::execution_orchestrator::retain_settled;
     use gsy_offchain_primitives::db_api_schema::orders::{DbBid, DbOffer, DbOrderComponent};
@@ -222,5 +222,81 @@ mod tests {
         let uuids: Vec<&str> = penalties.iter().map(|p| p.trade_uuid.as_str()).collect();
         assert_eq!(uuids, vec!["t-settled"]);
         assert_eq!(evaluated, vec!["t-settled".to_string()]);
+    }
+
+    /// A copy of `original` as a re-post stored it: same trade, another storage `_id`.
+    fn stored_again(original: &TradeSchema, status: TradeStatus) -> TradeSchema {
+        TradeSchema {
+            _id: format!("{}-copy", original._id),
+            status,
+            ..original.clone()
+        }
+    }
+
+    #[test]
+    fn duplicated_trade_is_counted_once_and_judged_once() {
+        // A 2 kWh sale from a building that exported 3 kWh, stored twice. Counted twice it
+        // would be 4 kWh sold against 3 exported: a false 1 kWh under-delivery on one copy.
+        let sale = trade("out_buyer", "pv_seller", "outside_load", "house_pv", "spot", 2.0, "t-sale");
+        // A 3 kWh purchase by a load that consumed 5 kWh, stored twice. Counted twice it would
+        // cover the whole consumption and hide the 2 kWh over-consumption.
+        let purchase = trade("load_buyer", "x_seller", "load", "x_pv", "spot", 3.0, "t-purchase");
+        let trades = vec![
+            sale.clone(),
+            purchase.clone(),
+            stored_again(&sale, TradeStatus::Settled),
+            stored_again(&purchase, TradeStatus::Settled),
+        ];
+        let measurements = vec![
+            MeasurementSchema {
+                area_uuid: "house_uuid".to_string(),
+                area_hash: "house_hash".to_string(),
+                community_uuid: "Site".to_string(),
+                time_slot: TIME_SLOT,
+                creation_time: 0,
+                energy_kwh: -3.0,
+                metering_point: Some(MeteringPointMeasurement {
+                    name: "House".to_string(),
+                    member_area_hashes: vec!["house_pv".to_string()],
+                    completeness: MeasurementCompleteness::Complete,
+                    missing_meters: Vec::new(),
+                }),
+            },
+            measurement("load", "Comm", 5.0),
+        ];
+
+        let deduped = dedupe_trades(&trades);
+        assert_eq!(deduped, vec![sale, purchase]);
+
+        let penalties = compute_penalties(&trades, &measurements, PENALTY_RATE);
+        let evaluated = evaluated_trade_uuids(&trades, &measurements);
+        let (penalties, evaluated) = retain_settled(&trades, penalties, evaluated);
+
+        assert_eq!(penalties.len(), 1, "one penalty, for the over-consumption: {:?}", penalties);
+        assert_eq!(penalties[0].trade_uuid, "t-purchase");
+        assert_eq!(penalties[0].penalized_account, "load_buyer");
+        assert_eq!(penalties[0].penalty_cost, 2000);
+        assert_eq!(evaluated, vec!["t-sale".to_string(), "t-purchase".to_string()]);
+    }
+
+    #[test]
+    fn trade_with_one_judged_copy_is_not_judged_again() {
+        // The Settled copy comes first, as a re-post stored before the verdict can.
+        for verdict in [TradeStatus::Executed, TradeStatus::Penalized] {
+            let unjudged = trade("b", "s", "b_area", "s_area", "spot", 1.0, "t-judged");
+            let judged = stored_again(&unjudged, verdict.clone());
+            let trades = vec![unjudged, judged.clone()];
+            let measurements = vec![measurement("b_area", "Comm", 5.0)];
+
+            assert_eq!(dedupe_trades(&trades), vec![judged]);
+
+            let penalties = compute_penalties(&trades, &measurements, PENALTY_RATE);
+            assert_eq!(penalties.len(), 1, "the trade is still counted once");
+            let evaluated = evaluated_trade_uuids(&trades, &measurements);
+            let (penalties, evaluated) = retain_settled(&trades, penalties, evaluated);
+
+            assert!(penalties.is_empty(), "{:?} copy: no second verdict", verdict);
+            assert!(evaluated.is_empty(), "{:?} copy: no second verdict", verdict);
+        }
     }
 }
