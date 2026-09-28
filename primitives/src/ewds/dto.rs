@@ -1,4 +1,4 @@
-use super::EwdsOperation;
+use super::{EwdsEventType, EwdsOperation};
 use crate::db_api_schema::{
     grid_topology::EnergyCommunitySchema,
     market::{MarketSchema, MarketType, MatchingAlgorithm},
@@ -65,6 +65,15 @@ pub struct EwdsResponseEnvelope<T> {
     pub success: bool,
     pub data: Vec<T>,
     pub error: Option<EwdsErrorPayload>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EwdsEventEnvelope<T> {
+    pub event_id: String,
+    pub event_type: EwdsEventType,
+    pub occurred_at: u64,
+    pub data: T,
 }
 
 #[derive(Debug, Deserialize)]
@@ -383,6 +392,13 @@ impl TryFrom<EwdsTradeDto> for DbTradeSchema {
             },
         })
     }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct EwdsMarketStatusDto {
+    pub market_id: String,
+    pub is_open: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]

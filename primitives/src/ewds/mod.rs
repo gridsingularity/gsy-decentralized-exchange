@@ -89,6 +89,42 @@ impl fmt::Display for EwdsOperation {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EwdsEventType {
+    #[serde(rename = "order.created")]
+    OrderCreated,
+    #[serde(rename = "trade.created")]
+    TradeCreated,
+    #[serde(rename = "clearing_result.created")]
+    ClearingResultCreated,
+    #[serde(rename = "market_status.updated")]
+    MarketStatusUpdated,
+}
+
+impl EwdsEventType {
+    pub const ALL: [Self; 4] = [
+        Self::OrderCreated,
+        Self::TradeCreated,
+        Self::ClearingResultCreated,
+        Self::MarketStatusUpdated,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::OrderCreated => "order.created",
+            Self::TradeCreated => "trade.created",
+            Self::ClearingResultCreated => "clearing_result.created",
+            Self::MarketStatusUpdated => "market_status.updated",
+        }
+    }
+}
+
+impl fmt::Display for EwdsEventType {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EwdsTopicPair {
     pub request: String,
@@ -709,6 +745,27 @@ mod tests {
                 response: "communitiesQueryResponse".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn event_types_serialize_to_their_wire_names() {
+        for (event_type, wire_name) in EwdsEventType::ALL.into_iter().zip([
+            "order.created",
+            "trade.created",
+            "clearing_result.created",
+            "market_status.updated",
+        ]) {
+            assert_eq!(event_type.as_str(), wire_name);
+            assert_eq!(event_type.to_string(), wire_name);
+            assert_eq!(
+                serde_json::to_value(event_type).unwrap(),
+                serde_json::json!(wire_name)
+            );
+            assert_eq!(
+                serde_json::from_value::<EwdsEventType>(serde_json::json!(wire_name)).unwrap(),
+                event_type
+            );
+        }
     }
 
     #[test]

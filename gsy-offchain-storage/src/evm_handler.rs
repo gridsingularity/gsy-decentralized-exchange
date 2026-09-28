@@ -1,4 +1,5 @@
 use crate::db::DatabaseWrapper;
+use crate::ewds_event_handler::EwdsEventPublisher;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use ethers::contract::LogMeta;
@@ -13,6 +14,7 @@ use primitives::db_api_schema::{
     },
     trades::{ClearingResultSchema, ClearingStatus, DbTradeSchema, TradeParameters, TradeStatus},
 };
+use primitives::ewds::dto::EwdsMarketStatusDto;
 use primitives::utils::{bytes16_to_hex, NODE_FLOAT_SCALING_FACTOR};
 use tracing::{error, info};
 
@@ -22,6 +24,7 @@ fn scaled_u256_to_f64(value: U256) -> f64 {
 
 pub struct OffchainStorageEvmHandler {
     pub db: DatabaseWrapper,
+    pub event_publisher: Option<EwdsEventPublisher>,
 }
 
 #[async_trait]
@@ -73,7 +76,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
                 .offchain_id;
         }
 
-        let schema = DbOrderSchema {
+        let order = DbOrderSchema {
             order_id: order_id_str,
             status: OrderStatus::Submitted,
             order_type: order_enum,
@@ -88,8 +91,13 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             attributes,
         };
 
-        match self.db.orders().insert_orders(vec![schema]).await {
-            Ok(_) => info!("Successfully indexed order from EVM"),
+        match self.db.orders().insert_orders(vec![order.clone()]).await {
+            Ok(_) => {
+                info!("Successfully indexed order from EVM");
+                if let Some(publisher) = &self.event_publisher {
+                    publisher.publish_order_created(order);
+                }
+            }
             Err(e) => error!("Failed to insert order into DB: {:?}", e),
         }
 
@@ -130,7 +138,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         let bid_bson = mongodb::bson::to_bson(&bid_hash_str).unwrap();
         let offer_bson = mongodb::bson::to_bson(&offer_hash_str).unwrap();
 
-        let trade_schema = DbTradeSchema {
+        let trade = DbTradeSchema {
             trade_uuid: trade_hash.clone(),
             status: TradeStatus::Settled,
             seller: bytes16_to_hex(event.seller_id),
@@ -148,7 +156,11 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             },
         };
 
-        self.db.trades().insert_trades(vec![trade_schema]).await?;
+        self.db.trades().insert_trades(vec![trade.clone()]).await?;
+
+        if let Some(publisher) = &self.event_publisher {
+            publisher.publish_trade_created(trade);
+        }
 
         self.db
             .orders()
@@ -170,6 +182,17 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             hex::encode(event.market_id),
             event.is_open
         );
+
+        if let Some(publisher) = &self.event_publisher {
+            publisher.publish_market_status_updated(
+                EwdsMarketStatusDto {
+                    market_id: bytes16_to_hex(event.market_id),
+                    is_open: event.is_open,
+                },
+                chrono::Utc::now().timestamp() as u64,
+            );
+        }
+
         Ok(())
     }
 
@@ -200,9 +223,13 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             clearing_time: block_timestamp,
         };
 
-        self.db.clearing_results().insert(clearing_result).await?;
+        let clearing_result = self.db.clearing_results().insert(clearing_result).await?;
 
         info!("Market clearing result saved.");
+
+        if let Some(publisher) = &self.event_publisher {
+            publisher.publish_clearing_result_created(clearing_result);
+        }
         Ok(())
     }
 }

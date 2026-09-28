@@ -9,7 +9,8 @@ use primitives::ewds::dto::{
 use primitives::ewds::{
     client_id_for_suffix, env_var, ewds_rate_limit_backoff_ms, format_response_body,
     is_rate_limited_message, is_rate_limited_response, is_transient_gateway_message,
-    is_transient_gateway_response, parse_gateway_delivery_summary, EwdsOperation, EwdsTopicConfig,
+    is_transient_gateway_response, parse_gateway_delivery_summary, EwdsEventType, EwdsOperation,
+    EwdsTopicConfig,
 };
 use primitives::utils::timestamp_to_string_with_padding;
 use reqwest::Client;
@@ -25,6 +26,13 @@ pub struct EwdsHandlerConfig {
     pub gateway_url: String,
     pub request_fqcn: String,
     pub response_fqcn: String,
+    pub event_publish_fqcn: String,
+    // Not consumed yet; reserved for a future events subscriber.
+    pub event_subscribe_fqcn: String,
+    pub order_created_topic: String,
+    pub trade_created_topic: String,
+    pub clearing_result_created_topic: String,
+    pub market_status_updated_topic: String,
     pub topic_owner: String,
     pub topic_version: String,
     pub request_client_id: String,
@@ -63,6 +71,18 @@ impl EwdsHandlerConfig {
         let response_fqcn = env_var("EWDS_RESPONSE_PUBLISH_FQCN")
             .or_else(|| env_var("EWDS_RESPONSE_FQCN"))
             .unwrap_or_else(|| "gsy.intelligent.responses.pub".to_string());
+        let event_publish_fqcn = env_var("EWDS_EVENT_PUBLISH_FQCN")
+            .unwrap_or_else(|| "gsy.intelligent.events.pub".to_string());
+        let event_subscribe_fqcn = env_var("EWDS_EVENT_SUBSCRIBE_FQCN")
+            .unwrap_or_else(|| "gsy.intelligent.events.sub".to_string());
+        let order_created_topic =
+            env_var("EWDS_ORDER_CREATED_EVENT_TOPIC").unwrap_or_else(|| "orderCreated".to_string());
+        let trade_created_topic =
+            env_var("EWDS_TRADE_CREATED_EVENT_TOPIC").unwrap_or_else(|| "tradeCreated".to_string());
+        let clearing_result_created_topic = env_var("EWDS_CLEARING_RESULT_CREATED_EVENT_TOPIC")
+            .unwrap_or_else(|| "clearingResultCreated".to_string());
+        let market_status_updated_topic = env_var("EWDS_MARKET_STATUS_UPDATED_EVENT_TOPIC")
+            .unwrap_or_else(|| "marketStatusUpdated".to_string());
 
         Self {
             enabled,
@@ -70,6 +90,12 @@ impl EwdsHandlerConfig {
                 .unwrap_or_else(|_| "http://ewds-gateway-api:3333".to_string()),
             request_fqcn,
             response_fqcn,
+            event_publish_fqcn,
+            event_subscribe_fqcn,
+            order_created_topic,
+            trade_created_topic,
+            clearing_result_created_topic,
+            market_status_updated_topic,
             topic_owner: std::env::var("EWDS_TOPIC_OWNER")
                 .unwrap_or_else(|_| "integration.apps.intelligent.auth.ewc".to_string()),
             topic_version: std::env::var("EWDS_TOPIC_VERSION")
@@ -81,6 +107,16 @@ impl EwdsHandlerConfig {
             poll_interval_ms,
             request_batch_size,
             response_send_timeout_ms,
+        }
+    }
+
+    /// The EWDS topic an event of the given type is published on.
+    pub fn event_topic(&self, event_type: EwdsEventType) -> &str {
+        match event_type {
+            EwdsEventType::OrderCreated => &self.order_created_topic,
+            EwdsEventType::TradeCreated => &self.trade_created_topic,
+            EwdsEventType::ClearingResultCreated => &self.clearing_result_created_topic,
+            EwdsEventType::MarketStatusUpdated => &self.market_status_updated_topic,
         }
     }
 }
@@ -597,7 +633,7 @@ async fn send_message(
     .await
 }
 
-async fn send_message_with_fqcn(
+pub(crate) async fn send_message_with_fqcn(
     client: &Client,
     config: &EwdsHandlerConfig,
     fqcn: String,

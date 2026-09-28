@@ -10,12 +10,18 @@ use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 // --- Test helpers ---------------------------------------------------
 
-fn test_config(gateway_url: String) -> EwdsHandlerConfig {
+pub(crate) fn test_config(gateway_url: String) -> EwdsHandlerConfig {
     EwdsHandlerConfig {
         enabled: true,
         gateway_url,
         request_fqcn: "gsy.requests.sub".to_string(),
         response_fqcn: "gsy.responses.pub".to_string(),
+        event_publish_fqcn: "gsy.events.pub".to_string(),
+        event_subscribe_fqcn: "gsy.events.sub".to_string(),
+        order_created_topic: "orderCreated".to_string(),
+        trade_created_topic: "tradeCreated".to_string(),
+        clearing_result_created_topic: "clearingResultCreated".to_string(),
+        market_status_updated_topic: "marketStatusUpdated".to_string(),
         topic_owner: "test.owner".to_string(),
         topic_version: "1.0.0".to_string(),
         request_client_id: "gsyoffchainstorage".to_string(),
@@ -38,7 +44,7 @@ fn envelope(
     }
 }
 
-async fn mock_gateway() -> MockServer {
+pub(crate) async fn mock_gateway() -> MockServer {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/api/v2/messages"))
