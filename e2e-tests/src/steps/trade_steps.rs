@@ -1,3 +1,4 @@
+use crate::utils::indexed_bytes16_topic;
 use crate::world::{CommunityMarketOrderPair, MyWorld, PayAsClearScenario};
 use cucumber::{then, when};
 use ethers::prelude::*;
@@ -1178,15 +1179,12 @@ async fn verify_preferred_residual(
         .expect("No trade was recorded in the previous step");
 
     let trade_id = parse_uuid_or_hex_bytes16(&trade.trade_uuid).expect("Invalid trade ID");
-    // Indexed bytes16 values are right-padded to a 32-byte event topic.
-    let mut topic = [0u8; 32];
-    topic[..16].copy_from_slice(&trade_id);
     let settlement =
         TradeSettlementContract::new(world.trade_settlement_address, world.provider.clone());
     let events = settlement
         .event::<TradeSettledFilter>()
         .from_block(0u64)
-        .topic1(H256::from(topic))
+        .topic1(indexed_bytes16_topic(trade_id))
         .query()
         .await
         .expect("Failed to query preferred settlement event");
