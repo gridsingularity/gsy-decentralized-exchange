@@ -457,7 +457,8 @@ pub fn build_local_origin_records_with_allocation(
         records.push(LocalOriginRecord {
             identity: RecordIdentity {
                 record_type: RecordType::LocalOriginRecord,
-                site_id: PILOT.site_id.clone(),
+                // The seller facility's site, the one `community_id_origin` resolves through.
+                site_id: seller_facility.site_id.clone(),
             },
             time_and_quantity: RecordTimeAndQuantity {
                 interval_start,

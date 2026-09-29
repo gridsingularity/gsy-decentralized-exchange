@@ -6,7 +6,6 @@ use std::sync::LazyLock;
 use primitives::utils::read_env_or;
 
 pub struct PilotConfig {
-    pub site_id: String,
     pub interval_duration_s: u64,
     pub rounding_rule: String,
     pub municipality_code: String,
@@ -19,7 +18,6 @@ pub struct PilotConfig {
 impl PilotConfig {
     fn from_env() -> Self {
         Self {
-            site_id: read_env_or("GOO_SITE_ID", "ch-aem-lic-goo-poc".to_string()),
             interval_duration_s: read_env_or("GOO_INTERVAL_DURATION_S", 900u64),
             rounding_rule: read_env_or("GOO_ROUNDING_RULE", "half_up_2dp".to_string()),
             municipality_code: read_env_or("GOO_MUNICIPALITY_CODE", "5226".to_string()),

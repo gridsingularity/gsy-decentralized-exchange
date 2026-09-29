@@ -1096,7 +1096,12 @@ components:
           type: object
           properties:
             record_type: { type: string, enum: [local_origin_record] }
-            site_id: { type: string }
+            site_id:
+              type: string
+              description: |
+                The seller facility's `site_id` from the database — the site through which
+                `location.community_id_origin` is resolved (listed in that community's `sites`).
+                Not configurable.
         time_and_quantity:
           type: object
           properties:

@@ -295,6 +295,7 @@ async fn rest_returns_a_record_for_a_trade_executed_in_the_window() {
         record.trade_and_delivery.trade_reference,
         vec!["goo-trade-1".to_string()]
     );
+    assert_eq!(record.identity.site_id, "goo-site");
     assert_eq!(record.production_asset.production_asset_id, SELLER_FACILITY);
     assert_eq!(
         record.consumption_asset.consumption_asset_id,

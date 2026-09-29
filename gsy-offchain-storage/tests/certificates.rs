@@ -290,7 +290,7 @@ fn one_covered_sale_yields_one_record_with_the_full_key_set_and_mapping() {
     assert!(value["attribute_provenance"]["support_scheme_status"].is_null());
 
     let record = &records[0];
-    assert_eq!(record.identity.site_id, "ch-aem-lic-goo-poc");
+    assert_eq!(record.identity.site_id, "site-1");
     assert_eq!(record.time_and_quantity.source_slot_timestamp, SLOT);
     assert_eq!(record.time_and_quantity.interval_duration_s, 900);
     assert_eq!(record.time_and_quantity.energy_quantity, 3.0);
@@ -651,6 +651,64 @@ fn allocation_does_not_depend_on_which_trades_are_selected() {
     // Without the earlier trade in `slot_executed` the later one alone would fit.
     let alone = build_local_origin_records(vec![later], &inputs);
     assert_eq!(trade_references(&alone), vec!["trade-b"]);
+}
+
+#[test]
+fn site_id_is_the_seller_facility_site() {
+    let mut fixture = Fixture::exporting(4.0, 0.0);
+    const REMOTE_EXPORT_POINT: &str = "Measurement:community-2:fac-remote:export";
+    fixture
+        .assets
+        .push(asset("pv-remote", AssetType::PV, "Remote House"));
+    fixture.points.push(point(
+        REMOTE_EXPORT_POINT,
+        REMOTE_FACILITY,
+        PointDirection::Export,
+        MeasurementPointType::Measurement,
+    ));
+    fixture
+        .timeseries
+        .push(value(REMOTE_EXPORT_POINT, SLOT, 4.0));
+    let remote_sale = trade(
+        "trade-remote",
+        REMOTE_OWNER,
+        &hash(BUYER_OWNER),
+        SLOT,
+        2.0,
+        TradeStatus::Executed,
+        100,
+    );
+    let records = fixture.build(vec![sale("trade-seller", 3.0, 100), remote_sale]);
+    assert_eq!(records.len(), 2);
+
+    let by_trade = |trade_uuid: &str| {
+        records
+            .iter()
+            .find(|record| record.trade_and_delivery.trade_reference[0] == trade_uuid)
+            .unwrap()
+    };
+    let seller_record = by_trade("trade-seller");
+    assert_eq!(seller_record.identity.site_id, "site-1");
+    assert_eq!(
+        seller_record.location.community_id_origin.as_deref(),
+        Some(COMMUNITY)
+    );
+    let remote_record = by_trade("trade-remote");
+    assert_eq!(remote_record.identity.site_id, "site-2");
+    assert_eq!(
+        remote_record.location.community_id_origin.as_deref(),
+        Some(OTHER_COMMUNITY)
+    );
+}
+
+#[test]
+fn a_seller_site_in_no_community_keeps_its_site_id_and_has_no_origin_community() {
+    let mut fixture = Fixture::exporting(4.0, 0.0);
+    fixture.facilities[0].site_id = "site-orphan".to_string();
+    let records = fixture.build(vec![sale("trade-1", 3.0, 100)]);
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].identity.site_id, "site-orphan");
+    assert!(records[0].location.community_id_origin.is_none());
 }
 
 #[test]
