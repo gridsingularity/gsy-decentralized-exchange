@@ -108,21 +108,20 @@ Each service:
 | `gsy.intelligent.requests.sub` | Subscribe | `ordersQuery`, `tradesQuery`, `measurementsQuery`, `clearingResultsQuery`, `marketsQuery`, `idsQuery`, `communityUpsert`, `communitiesQuery` | `EWDS_REQUEST_SUBSCRIBE_FQCN` |
 | `gsy.intelligent.responses.pub` | Publish | `ordersQueryResponse`, `tradesQueryResponse`, `measurementsQueryResponse`, `clearingResultsQueryResponse`, `marketsQueryResponse`, `idsQueryResponse`, `communityUpsertResponse`, `communitiesQueryResponse` | `EWDS_RESPONSE_PUBLISH_FQCN` |
 | `gsy.intelligent.responses.sub` | Subscribe | `ordersQueryResponse`, `tradesQueryResponse`, `measurementsQueryResponse`, `clearingResultsQueryResponse`, `marketsQueryResponse`, `idsQueryResponse`, `communityUpsertResponse`, `communitiesQueryResponse` | `EWDS_RESPONSE_SUBSCRIBE_FQCN` |
-| `gsy.intelligent.events.pub` | Publish | `orderCreated`, `tradeCreated`, `clearingResultCreated`, `marketStatusUpdated` | `EWDS_EVENT_PUBLISH_FQCN` |
-| `gsy.intelligent.events.sub` | Subscribe | `orderCreated`, `tradeCreated`, `clearingResultCreated`, `marketStatusUpdated` | `EWDS_EVENT_SUBSCRIBE_FQCN` |
+| `gsy.intelligent.events.pub` | Publish | `tradeCreated`, `clearingResultCreated`, `marketStatusUpdated` | `EWDS_EVENT_PUBLISH_FQCN` |
+| `gsy.intelligent.events.sub` | Subscribe | `tradeCreated`, `clearingResultCreated`, `marketStatusUpdated` | `EWDS_EVENT_SUBSCRIBE_FQCN` |
 
 The events channels carry fire-and-forget domain events rather than
 request/reply traffic. When `EWDS_ENABLE_HANDLER` is on, the off-chain storage
-publishes an `order.created` event on `orderCreated` every time it persists an
-order from an EVM `OrderPlaced` event, and a `trade.created` event on
-`tradeCreated` every time it persists a trade from an EVM `TradeSettled` event,
-a `clearing_result.created` event on `clearingResultCreated` every time it
-persists a clearing result from an EVM `MarketClearing` event, and a
+publishes a `trade.created` event on `tradeCreated` every time it persists a
+trade from an EVM `TradeSettled` event, a `clearing_result.created` event on
+`clearingResultCreated` every time it persists a clearing result from an EVM
+`MarketClearing` event, and a
 `market_status.updated` event on `marketStatusUpdated` for every EVM
 `MarketStatusUpdated` event. The payload is an event envelope (`eventId`,
-`eventType`, `occurredAt`, `data`) whose `data` is the order, trade, clearing
-result or market status in its `EwdsOrderDto`, `EwdsTradeDto`,
-`EwdsClearingResultDto` or `EwdsMarketStatusDto` (`marketId`, `isOpen`) form.
+`eventType`, `occurredAt`, `data`) whose `data` is the trade, clearing result
+or market status in its `EwdsTradeDto`, `EwdsClearingResultDto` or
+`EwdsMarketStatusDto` (`marketId`, `isOpen`) form.
 Market status updates are not persisted, so their `occurredAt` is the time the
 off-chain storage received the EVM event. No GSY service consumes `gsy.intelligent.events.sub` yet.
 

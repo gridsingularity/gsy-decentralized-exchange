@@ -76,7 +76,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
                 .offchain_id;
         }
 
-        let order = DbOrderSchema {
+        let schema = DbOrderSchema {
             order_id: order_id_str,
             status: OrderStatus::Submitted,
             order_type: order_enum,
@@ -91,13 +91,8 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             attributes,
         };
 
-        match self.db.orders().insert_orders(vec![order.clone()]).await {
-            Ok(_) => {
-                info!("Successfully indexed order from EVM");
-                if let Some(publisher) = &self.event_publisher {
-                    publisher.publish_order_created(order);
-                }
-            }
+        match self.db.orders().insert_orders(vec![schema]).await {
+            Ok(_) => info!("Successfully indexed order from EVM"),
             Err(e) => error!("Failed to insert order into DB: {:?}", e),
         }
 

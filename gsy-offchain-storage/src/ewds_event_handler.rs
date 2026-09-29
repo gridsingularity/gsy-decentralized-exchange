@@ -1,11 +1,8 @@
 use crate::ewds_handler::{send_message_with_fqcn, EwdsHandlerConfig};
 use anyhow::Result;
-use primitives::db_api_schema::{
-    orders::DbOrderSchema,
-    trades::{ClearingResultSchema, DbTradeSchema},
-};
+use primitives::db_api_schema::trades::{ClearingResultSchema, DbTradeSchema};
 use primitives::ewds::dto::{
-    EwdsClearingResultDto, EwdsEventEnvelope, EwdsMarketStatusDto, EwdsOrderDto, EwdsTradeDto,
+    EwdsClearingResultDto, EwdsEventEnvelope, EwdsMarketStatusDto, EwdsTradeDto,
 };
 use primitives::ewds::EwdsEventType;
 use reqwest::Client;
@@ -30,17 +27,6 @@ impl EwdsEventPublisher {
             client: Client::new(),
             config,
         }
-    }
-
-    pub fn publish_order_created(&self, order: DbOrderSchema) -> JoinHandle<()> {
-        let event_id = format!("order-created-{}", order.order_id);
-        let occurred_at = order.creation_time;
-        self.spawn_event(
-            EwdsEventType::OrderCreated,
-            event_id,
-            occurred_at,
-            EwdsOrderDto::from(order),
-        )
     }
 
     pub fn publish_trade_created(&self, trade: DbTradeSchema) -> JoinHandle<()> {

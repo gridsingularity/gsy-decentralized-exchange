@@ -18,7 +18,6 @@ pub(crate) fn test_config(gateway_url: String) -> EwdsHandlerConfig {
         response_fqcn: "gsy.responses.pub".to_string(),
         event_publish_fqcn: "gsy.events.pub".to_string(),
         event_subscribe_fqcn: "gsy.events.sub".to_string(),
-        order_created_topic: "orderCreated".to_string(),
         trade_created_topic: "tradeCreated".to_string(),
         clearing_result_created_topic: "clearingResultCreated".to_string(),
         market_status_updated_topic: "marketStatusUpdated".to_string(),

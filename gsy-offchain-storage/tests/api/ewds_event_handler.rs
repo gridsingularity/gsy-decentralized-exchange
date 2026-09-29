@@ -3,19 +3,17 @@ use crate::helpers::{init_app, stop_app};
 use ethers::contract::LogMeta;
 use ethers::types::{Address, H256, U256, U64};
 use gsy_ethers_listener::{
-    GsyEventHandler, MarketClearingFilter, MarketStatusUpdatedFilter, OrderPlacedFilter,
-    TradeSettledFilter,
+    GsyEventHandler, MarketClearingFilter, MarketStatusUpdatedFilter, TradeSettledFilter,
 };
 use gsy_offchain_storage::evm_handler::OffchainStorageEvmHandler;
 use gsy_offchain_storage::ewds_event_handler::EwdsEventPublisher;
 use gsy_offchain_storage::ewds_handler::EwdsHandlerConfig;
-use primitives::db_api_schema::orders::{DbOrderSchema, OrderEnum, OrderStatus};
 use primitives::db_api_schema::trades::{
     ClearingResultSchema, ClearingStatus, DbTradeSchema, TradeParameters, TradeStatus,
 };
 use primitives::ewds::dto::{EwdsMarketStatusDto, EwdsSendMessageDto};
 use primitives::ewds::EwdsEventType;
-use primitives::utils::{bytes16_to_hex, NODE_FLOAT_SCALING_FACTOR};
+use primitives::utils::bytes16_to_hex;
 use serde_json::json;
 use std::time::Duration;
 use wiremock::matchers::{method, path};
@@ -56,24 +54,6 @@ fn evm_handler(app: &crate::helpers::TestApp, server: &MockServer) -> OffchainSt
     OffchainStorageEvmHandler {
         db: app.db_wrapper.clone(),
         event_publisher: Some(EwdsEventPublisher::new(test_config(server.uri()))),
-    }
-}
-
-fn order_placed_event() -> OrderPlacedFilter {
-    OrderPlacedFilter {
-        order_id: [0xaa; 16],
-        created_by: [0xbb; 16],
-        market_id: [0xcc; 16],
-        time_slot: 1_000,
-        creation_time: 900,
-        energy: 20_000,
-        energy_rate: 3_000,
-        energy_source_preference: 0,
-        energy_type: 0,
-        is_bid: true,
-        preferred_trading_partner: [0; 16],
-        preferred_energy_rate: 0,
-        trading_partner: [0; 16],
     }
 }
 
@@ -155,45 +135,6 @@ async fn publish_trade_created_sends_event_on_events_channel() {
     );
     assert_eq!(event["occurredAt"], json!(950));
     assert_eq!(event["data"]["tradeId"], json!("trade-1"));
-    assert_eq!(event["data"]["marketId"], json!("market-1"));
-}
-
-#[tokio::test]
-async fn publish_order_created_sends_event_on_events_channel() {
-    let server = mock_gateway().await;
-    let publisher = EwdsEventPublisher::new(test_config(server.uri()));
-    let order = DbOrderSchema {
-        order_id: "order-1".to_string(),
-        status: OrderStatus::Submitted,
-        order_type: OrderEnum::Bid,
-        area_uuid: "buyer-1".to_string(),
-        market_id: "market-1".to_string(),
-        time_slot: 1_000,
-        creation_time: 900,
-        energy_kWh: 2.0,
-        energy_rate: 0.3,
-        created_by: "buyer-1".to_string(),
-        requirements: None,
-        attributes: None,
-    };
-
-    publisher.publish_order_created(order).await.unwrap();
-
-    let requests = server.received_requests().await.unwrap();
-    assert_eq!(requests.len(), 1, "expected exactly one gateway POST");
-    let send_dto: EwdsSendMessageDto = serde_json::from_slice(&requests[0].body).unwrap();
-    assert_eq!(send_dto.fqcn, "gsy.events.pub");
-    assert_eq!(send_dto.topic_name, "orderCreated");
-    assert_eq!(send_dto.transaction_id, "order-created-order-1");
-
-    let event: serde_json::Value = serde_json::from_str(&send_dto.payload).unwrap();
-    assert_eq!(event["eventId"], json!("order-created-order-1"));
-    assert_eq!(
-        event["eventType"],
-        json!(EwdsEventType::OrderCreated.as_str())
-    );
-    assert_eq!(event["occurredAt"], json!(900));
-    assert_eq!(event["data"]["orderId"], json!("order-1"));
     assert_eq!(event["data"]["marketId"], json!("market-1"));
 }
 
@@ -326,11 +267,6 @@ fn handler_config_defaults_to_the_events_channels() {
             "gsy.intelligent.events.sub",
         ),
         (
-            "EWDS_ORDER_CREATED_EVENT_TOPIC",
-            config.order_created_topic.as_str(),
-            "orderCreated",
-        ),
-        (
             "EWDS_TRADE_CREATED_EVENT_TOPIC",
             config.trade_created_topic.as_str(),
             "tradeCreated",
@@ -354,80 +290,6 @@ fn handler_config_defaults_to_the_events_channels() {
 }
 
 // --- EVM handler integration ----------------------------------------
-
-#[tokio::test]
-async fn order_placed_publishes_order_created_event() {
-    let app = init_app().await;
-    let server = mock_gateway().await;
-    let handler = evm_handler(&app, &server);
-
-    handler
-        .handle_order_placed(order_placed_event())
-        .await
-        .unwrap();
-
-    let messages = wait_for_gateway_messages(&server, 1).await;
-    let order_id = bytes16_to_hex([0xaa; 16]);
-    assert_eq!(messages[0].topic_name, "orderCreated");
-    let event = event_payload(&messages[0]);
-    assert_eq!(
-        event["eventType"],
-        json!(EwdsEventType::OrderCreated.as_str())
-    );
-    assert_eq!(
-        event["eventId"],
-        json!(format!("order-created-{}", order_id))
-    );
-    assert_eq!(event["occurredAt"], json!(900));
-    assert_eq!(event["data"]["orderId"], json!(order_id));
-    assert_eq!(event["data"]["marketId"], json!(bytes16_to_hex([0xcc; 16])));
-    assert_eq!(
-        event["data"]["quantity"],
-        json!(20_000.0 / NODE_FLOAT_SCALING_FACTOR)
-    );
-
-    stop_app(app).await;
-}
-
-#[tokio::test]
-async fn order_placed_does_not_publish_when_order_is_not_persisted() {
-    let app = init_app().await;
-    let server = mock_gateway().await;
-    let handler = evm_handler(&app, &server);
-    let mut event = order_placed_event();
-    // Without an ID mapping for the partner the handler rejects the order before persisting it.
-    event.preferred_trading_partner = [0x11; 16];
-
-    assert!(handler.handle_order_placed(event).await.is_err());
-    assert_no_further_gateway_messages(&server, 0).await;
-
-    stop_app(app).await;
-}
-
-#[tokio::test]
-async fn order_placed_replay_republishes_with_the_same_event_id() {
-    let app = init_app().await;
-    let server = mock_gateway().await;
-    let handler = evm_handler(&app, &server);
-
-    // Orders are upserted, so a replayed EVM event is persisted (and published) again. The
-    // deterministic event ID lets subscribers drop the duplicate.
-    for _ in 0..2 {
-        handler
-            .handle_order_placed(order_placed_event())
-            .await
-            .unwrap();
-    }
-
-    let messages = wait_for_gateway_messages(&server, 2).await;
-    assert_eq!(messages[0].transaction_id, messages[1].transaction_id);
-    assert_eq!(
-        event_payload(&messages[0])["eventId"],
-        event_payload(&messages[1])["eventId"]
-    );
-
-    stop_app(app).await;
-}
 
 #[tokio::test]
 async fn trade_settled_publishes_trade_created_event() {
@@ -577,7 +439,6 @@ async fn market_status_publishes_market_status_updated_event() {
 fn handler_config_maps_event_types_to_their_topics() {
     let config = test_config("http://gateway".to_string());
     for (event_type, topic) in [
-        (EwdsEventType::OrderCreated, "orderCreated"),
         (EwdsEventType::TradeCreated, "tradeCreated"),
         (
             EwdsEventType::ClearingResultCreated,

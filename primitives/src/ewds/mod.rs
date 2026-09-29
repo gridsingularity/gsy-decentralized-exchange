@@ -91,8 +91,6 @@ impl fmt::Display for EwdsOperation {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EwdsEventType {
-    #[serde(rename = "order.created")]
-    OrderCreated,
     #[serde(rename = "trade.created")]
     TradeCreated,
     #[serde(rename = "clearing_result.created")]
@@ -102,8 +100,7 @@ pub enum EwdsEventType {
 }
 
 impl EwdsEventType {
-    pub const ALL: [Self; 4] = [
-        Self::OrderCreated,
+    pub const ALL: [Self; 3] = [
         Self::TradeCreated,
         Self::ClearingResultCreated,
         Self::MarketStatusUpdated,
@@ -111,7 +108,6 @@ impl EwdsEventType {
 
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::OrderCreated => "order.created",
             Self::TradeCreated => "trade.created",
             Self::ClearingResultCreated => "clearing_result.created",
             Self::MarketStatusUpdated => "market_status.updated",
@@ -750,7 +746,6 @@ mod tests {
     #[test]
     fn event_types_serialize_to_their_wire_names() {
         for (event_type, wire_name) in EwdsEventType::ALL.into_iter().zip([
-            "order.created",
             "trade.created",
             "clearing_result.created",
             "market_status.updated",

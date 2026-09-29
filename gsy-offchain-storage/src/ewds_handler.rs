@@ -29,7 +29,6 @@ pub struct EwdsHandlerConfig {
     pub event_publish_fqcn: String,
     // Not consumed yet; reserved for a future events subscriber.
     pub event_subscribe_fqcn: String,
-    pub order_created_topic: String,
     pub trade_created_topic: String,
     pub clearing_result_created_topic: String,
     pub market_status_updated_topic: String,
@@ -75,8 +74,6 @@ impl EwdsHandlerConfig {
             .unwrap_or_else(|| "gsy.intelligent.events.pub".to_string());
         let event_subscribe_fqcn = env_var("EWDS_EVENT_SUBSCRIBE_FQCN")
             .unwrap_or_else(|| "gsy.intelligent.events.sub".to_string());
-        let order_created_topic =
-            env_var("EWDS_ORDER_CREATED_EVENT_TOPIC").unwrap_or_else(|| "orderCreated".to_string());
         let trade_created_topic =
             env_var("EWDS_TRADE_CREATED_EVENT_TOPIC").unwrap_or_else(|| "tradeCreated".to_string());
         let clearing_result_created_topic = env_var("EWDS_CLEARING_RESULT_CREATED_EVENT_TOPIC")
@@ -92,7 +89,6 @@ impl EwdsHandlerConfig {
             response_fqcn,
             event_publish_fqcn,
             event_subscribe_fqcn,
-            order_created_topic,
             trade_created_topic,
             clearing_result_created_topic,
             market_status_updated_topic,
@@ -113,7 +109,6 @@ impl EwdsHandlerConfig {
     /// The EWDS topic an event of the given type is published on.
     pub fn event_topic(&self, event_type: EwdsEventType) -> &str {
         match event_type {
-            EwdsEventType::OrderCreated => &self.order_created_topic,
             EwdsEventType::TradeCreated => &self.trade_created_topic,
             EwdsEventType::ClearingResultCreated => &self.clearing_result_created_topic,
             EwdsEventType::MarketStatusUpdated => &self.market_status_updated_topic,
