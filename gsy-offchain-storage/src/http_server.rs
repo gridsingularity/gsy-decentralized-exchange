@@ -1,12 +1,13 @@
 use crate::db::DatabaseWrapper;
 use crate::routes::{
     get_assets, get_clearing_results, get_communities, get_facilities, get_flexibility_orders,
-    get_forecasts, get_market, get_market_roles, get_markets, get_measurement_points,
-    get_measurements, get_or_create_ids, get_orders, get_pilot_sites, get_sites, get_tariffs,
-    get_timeseries, get_trades, health_check, post_assets, post_clearing_result, post_community,
-    post_facility, post_flexibility_orders, post_forecasts, post_market, post_market_role,
-    post_measurement_points, post_measurements, post_normalized_orders, post_normalized_trades,
-    post_orders, post_pilot_site, post_site, post_tariff, post_timeseries, post_trades,
+    get_forecasts, get_guarantees_of_origin, get_market, get_market_roles, get_markets,
+    get_measurement_points, get_measurements, get_or_create_ids, get_orders, get_pilot_sites,
+    get_sites, get_tariffs, get_timeseries, get_trades, health_check, post_assets,
+    post_clearing_result, post_community, post_facility, post_flexibility_orders, post_forecasts,
+    post_market, post_market_role, post_measurement_points, post_measurements,
+    post_normalized_orders, post_normalized_trades, post_orders, post_pilot_site, post_site,
+    post_tariff, post_timeseries, post_trades,
 };
 use actix_web::dev::Server;
 use actix_web::{web, App, HttpServer};
@@ -59,6 +60,11 @@ pub fn run_http_server(
             .route("/measurement-points", web::get().to(get_measurement_points))
             .route("/timeseries", web::post().to(post_timeseries))
             .route("/timeseries", web::get().to(get_timeseries))
+            // Guarantees of origin (local_origin_record), derived on request
+            .route(
+                "/guarantees-of-origin-measurements",
+                web::get().to(get_guarantees_of_origin),
+            )
             // Grid Topology and Market Storage (D3.2 section 5.1)
             .route("/assets", web::post().to(post_assets))
             .route("/assets", web::get().to(get_assets))

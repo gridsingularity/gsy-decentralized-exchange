@@ -34,6 +34,11 @@ pub struct DbTradeSchema {
     #[serde(default)]
     pub residual_bid_id: Option<String>,
     pub parameters: TradeParameters,
+    /// Unix seconds of the last status change (e.g. the verdict that made the trade
+    /// `Executed`). `None` for trades whose status never changed after insertion, including
+    /// every trade written before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_updated_at: Option<u64>,
 }
 
 impl DbTradeSchema {

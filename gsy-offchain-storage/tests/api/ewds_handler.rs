@@ -1,3 +1,7 @@
+use crate::guarantees_of_origin::{
+    seed_certifiable_trade, SELLER_FACILITY as GOO_SELLER_FACILITY, SLOT as GOO_SLOT,
+    VERDICT_AT as GOO_VERDICT_AT,
+};
 use crate::helpers::{init_app, stop_app};
 use gsy_offchain_storage::ewds_handler::{handle_request, EwdsHandlerConfig};
 use primitives::db_api_schema::grid_topology::FacilitySchema;
@@ -462,6 +466,144 @@ async fn facilities_query_empty_returns_empty() {
 
     let data = captured_data(&server).await;
     assert!(data.is_empty());
+
+    stop_app(app).await;
+}
+
+// --- GuaranteesOfOriginQuery ----------------------------------------
+
+/// Parse the single captured POST body into the full response envelope.
+async fn captured_envelope(server: &MockServer) -> serde_json::Value {
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 1, "expected exactly one gateway POST");
+    let send_dto: EwdsSendMessageDto = serde_json::from_slice(&requests[0].body).unwrap();
+    assert_eq!(send_dto.topic_name, "guaranteesOfOriginQueryResponse");
+    serde_json::from_str(&send_dto.payload).unwrap()
+}
+
+#[tokio::test]
+async fn guarantees_of_origin_query_success() {
+    let app = init_app().await;
+    let server = mock_gateway().await;
+    let config = test_config(server.uri());
+    let client = reqwest::Client::new();
+    seed_certifiable_trade(&app.db_wrapper, "goo-ewds-trade-1").await;
+
+    let env = envelope(
+        EwdsOperation::GuaranteesOfOriginQuery,
+        "req-goo-1",
+        json!({ "startTime": GOO_VERDICT_AT - 450, "endTime": GOO_VERDICT_AT + 450 }),
+    );
+    handle_request(&app.db_wrapper, &client, &config, env)
+        .await
+        .unwrap();
+
+    let data = captured_data(&server).await;
+    assert_eq!(data.len(), 1);
+    assert_eq!(
+        data[0]["identity"]["record_type"],
+        json!("local_origin_record")
+    );
+    assert_eq!(
+        data[0]["trade_and_delivery"]["trade_reference"],
+        json!(["goo-ewds-trade-1"])
+    );
+    assert_eq!(
+        data[0]["trade_and_delivery"]["trade_status_at_issuance"],
+        json!("delivery_verified")
+    );
+    assert_eq!(
+        data[0]["production_asset"]["production_asset_id"],
+        json!(GOO_SELLER_FACILITY)
+    );
+    assert_eq!(
+        data[0]["time_and_quantity"]["source_slot_timestamp"],
+        json!(GOO_SLOT)
+    );
+    assert!(data[0]["production_asset"]["rated_power"].is_null());
+
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn guarantees_of_origin_query_accepts_snake_case_and_default_end() {
+    let app = init_app().await;
+    let server = mock_gateway().await;
+    let config = test_config(server.uri());
+    let client = reqwest::Client::new();
+    seed_certifiable_trade(&app.db_wrapper, "goo-ewds-trade-2").await;
+
+    // end_time defaults to start_time + 900.
+    let env = envelope(
+        EwdsOperation::GuaranteesOfOriginQuery,
+        "req-goo-snake",
+        json!({ "start_time": GOO_VERDICT_AT - 450 }),
+    );
+    handle_request(&app.db_wrapper, &client, &config, env)
+        .await
+        .unwrap();
+
+    let data = captured_data(&server).await;
+    assert_eq!(data.len(), 1);
+
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn guarantees_of_origin_query_empty_returns_empty() {
+    let app = init_app().await;
+    let server = mock_gateway().await;
+    let config = test_config(server.uri());
+    let client = reqwest::Client::new();
+
+    let env = envelope(
+        EwdsOperation::GuaranteesOfOriginQuery,
+        "req-goo-empty",
+        json!({ "startTime": 1_000 }),
+    );
+    handle_request(&app.db_wrapper, &client, &config, env)
+        .await
+        .unwrap();
+
+    let data = captured_data(&server).await;
+    assert!(data.is_empty());
+
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn guarantees_of_origin_query_invalid_window_replies_with_an_error() {
+    let app = init_app().await;
+    let client = reqwest::Client::new();
+
+    for (request_id, payload) in [
+        ("req-goo-no-start", json!({})),
+        (
+            "req-goo-reversed",
+            json!({ "startTime": 1_000, "endTime": 999 }),
+        ),
+        (
+            "req-goo-too-wide",
+            json!({ "startTime": 1_000, "endTime": 1_901 }),
+        ),
+        ("req-goo-bad-type", json!({ "startTime": "soon" })),
+    ] {
+        let server = mock_gateway().await;
+        let config = test_config(server.uri());
+        let env = envelope(EwdsOperation::GuaranteesOfOriginQuery, request_id, payload);
+
+        // Answered, not errored: an erroring worker would re-poll the message forever.
+        handle_request(&app.db_wrapper, &client, &config, env)
+            .await
+            .unwrap();
+
+        let envelope = captured_envelope(&server).await;
+        assert_eq!(envelope["requestId"], json!(request_id));
+        assert_eq!(envelope["success"], json!(false), "{request_id}");
+        assert_eq!(envelope["data"], json!([]));
+        assert_eq!(envelope["error"]["code"], json!("invalid_request"));
+        assert!(!envelope["error"]["message"].as_str().unwrap().is_empty());
+    }
 
     stop_app(app).await;
 }

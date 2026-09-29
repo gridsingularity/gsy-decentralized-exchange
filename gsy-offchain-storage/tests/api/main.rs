@@ -1,6 +1,7 @@
 mod evm_integration;
 mod ewds_handler;
 mod grid_topology;
+mod guarantees_of_origin;
 mod health_check;
 mod helpers;
 mod ids;

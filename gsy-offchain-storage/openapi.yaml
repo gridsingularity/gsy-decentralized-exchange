@@ -30,6 +30,8 @@ tags:
     description: D3.2 §5.2
   - name: Grid Topology
     description: D3.2 §5.1
+  - name: Guarantees of Origin
+    description: local_origin_record certificates, derived on request
 
 paths:
   /health_check:
@@ -416,6 +418,45 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/TimeseriesSchema"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /guarantees-of-origin-measurements:
+    get:
+      tags: [Guarantees of Origin]
+      summary: Derive local_origin_record certificates from Executed trades.
+      description: |
+        Returns one `local_origin_record` per trade that reached `executed` within the
+        window, whose seller facility has a PV asset, is net exporting at the delivery
+        slot, and whose sale is fully covered by that net export (time priority over all
+        executed sales of the facility in the slot). The window is on **verdict time**
+        (`status_updated_at`, Unix seconds of the trade's last status change, stored on
+        the trade document), not delivery slot; trades without `status_updated_at` are
+        never returned. Also available over EWDS as `guarantees_of_origin.query`.
+      parameters:
+        - in: query
+          name: start_time
+          required: true
+          description: Lower bound (inclusive) on the verdict time, Unix seconds.
+          schema: { type: integer, format: int64, minimum: 0 }
+        - in: query
+          name: end_time
+          required: false
+          description: |
+            Upper bound (inclusive) on the verdict time, Unix seconds. Defaults to
+            `start_time + 900`; `end_time - start_time` may not exceed 900.
+          schema: { type: integer, format: int64, minimum: 0 }
+      responses:
+        "200":
+          description: Certificates, deterministically ordered.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/LocalOriginRecord"
+        "400":
+          description: Missing `start_time`, `end_time < start_time`, or a window over 900 s.
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -1034,3 +1075,107 @@ components:
         facility_name: { type: string }
         site_id: { type: string }
         owner_id: { type: string }
+
+    LocalOriginRecord:
+      description: |
+        `local_origin_record` record type. Mirrors `primitives::certificates::LocalOriginRecord`.
+        Optional fields are always present and `null` when unset.
+      type: object
+      required:
+        - identity
+        - time_and_quantity
+        - production_asset
+        - consumption_asset
+        - location
+        - measurement_provenance
+        - attribute_provenance
+        - beneficiary_and_claim
+        - trade_and_delivery
+      properties:
+        identity:
+          type: object
+          properties:
+            record_type: { type: string, enum: [local_origin_record] }
+            site_id: { type: string }
+        time_and_quantity:
+          type: object
+          properties:
+            interval_start: { type: string, format: date-time }
+            interval_end: { type: string, format: date-time }
+            interval_duration_s: { type: integer, format: int64 }
+            source_slot_timestamp: { type: integer, format: int64 }
+            energy_quantity: { type: number, format: double }
+            energy_unit: { type: string, enum: [kWh] }
+            rounding_rule: { type: string }
+            loss_adjustment: { type: [number, "null"], format: double }
+        production_asset:
+          type: object
+          properties:
+            production_asset_id: { type: string, description: Seller facility id. }
+            asset_registry_reference: { type: [string, "null"] }
+            metering_point_id: { type: [string, "null"], description: Seller facility id. }
+            asset_class: { $ref: "#/components/schemas/GooAssetClass" }
+            rated_power:
+              description: Always null.
+              type: ["null", object]
+              properties:
+                value: { type: number, format: double }
+                unit: { type: string }
+        consumption_asset:
+          type: object
+          properties:
+            consumption_asset_id:
+              type: string
+              description: Buyer facility id, else buyer community id, else the raw buyer hash.
+            asset_registry_reference: { type: [string, "null"] }
+            metering_point_id: { type: [string, "null"] }
+            asset_class: { $ref: "#/components/schemas/GooAssetClass" }
+        location:
+          type: object
+          properties:
+            municipality_code: { type: string }
+            grid_operator_id: { type: string }
+            grid_level: { type: integer, format: int32 }
+            community_id_origin: { type: [string, "null"] }
+            community_id_consumption: { type: [string, "null"] }
+            delivery_scope:
+              type: string
+              enum: [intra_community, inter_community, supplier_offtake]
+        measurement_provenance:
+          type: object
+          properties:
+            measurement_id: { type: string }
+            measuring_sensor_id: { type: string }
+            property_measured: { type: string }
+            flow_direction: { type: string, enum: [import, export] }
+            data_provider_id: { type: string }
+            data_completeness: { type: string, enum: [complete, substituted, incomplete] }
+            source_of_record: { type: string, enum: [platform, operator_validated] }
+            data_record_class: { type: string, enum: [measurement, forecast] }
+            measurement_recorded_at: { type: integer, format: int64 }
+        attribute_provenance:
+          type: object
+          properties:
+            support_scheme_status:
+              type: [string, "null"]
+              enum: [feed_in_tariff, one_off_payment, waiting_list, none, null]
+            storage_mediated_flag: { type: boolean }
+        beneficiary_and_claim:
+          type: object
+          properties:
+            owner_id: { type: string, description: Seller party hash. }
+            consumption_metering_point_id: { type: [string, "null"] }
+            facility_id: { type: [string, "null"] }
+        trade_and_delivery:
+          type: object
+          properties:
+            trade_reference: { type: array, items: { type: string } }
+            trade_hash: { type: array, items: { type: string } }
+            trade_status_at_issuance:
+              type: [string, "null"]
+              enum: [settled, delivery_verified, null]
+            delivery_verification_reference: { type: [string, "null"] }
+
+    GooAssetClass:
+      type: string
+      enum: [PV, Battery, HeatPump, MeteringPoint]
