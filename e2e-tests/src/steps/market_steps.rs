@@ -300,7 +300,7 @@ async fn publish_community_via_ewds(community: &EnergyCommunitySchema) {
         event_id: Uuid::new_v4().to_string(),
         event_type: EwdsEventType::CommunitySubmitted,
         occurred_at: epoch_to_rfc3339(get_current_timestamp_in_secs()),
-        data: &community,
+        data: vec![&community],
     };
     client
         .publish_event(&event)

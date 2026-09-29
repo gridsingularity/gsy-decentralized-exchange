@@ -612,7 +612,10 @@ async fn handle_event_saves_facilities_sites_and_communities() {
         event(
             EwdsEventType::FacilitySubmitted,
             "facility-event",
-            json!(facility("facility-1", "owner-1")),
+            json!([
+                facility("facility-1", "owner-1"),
+                facility("facility-2", "owner-2")
+            ]),
         ),
     )
     .await
@@ -622,11 +625,11 @@ async fn handle_event_saves_facilities_sites_and_communities() {
         event(
             EwdsEventType::SiteSubmitted,
             "site-event",
-            json!({
+            json!([{
                 "site_name": "site-1",
                 "site_description": "Main building",
-                "facilities": ["facility-1"],
-            }),
+                "facilities": ["facility-1", "facility-2"],
+            }]),
         ),
     )
     .await
@@ -636,26 +639,31 @@ async fn handle_event_saves_facilities_sites_and_communities() {
         event(
             EwdsEventType::CommunitySubmitted,
             "community-event",
-            json!({
+            json!([{
                 "communityId": "community-1",
                 "communityName": "Community 1",
                 "sites": ["site-1"],
-            }),
+            }]),
         ),
     )
     .await
     .unwrap();
 
+    let mut facilities = db.facilities().get_all().await.unwrap();
+    facilities.sort_by(|a, b| a.facility_id.cmp(&b.facility_id));
     assert_eq!(
-        db.facilities().get_all().await.unwrap(),
-        vec![facility("facility-1", "owner-1")]
+        facilities,
+        vec![
+            facility("facility-1", "owner-1"),
+            facility("facility-2", "owner-2")
+        ]
     );
     assert_eq!(
         db.sites().get_all().await.unwrap(),
         vec![SiteSchema {
             site_name: "site-1".to_string(),
             site_description: "Main building".to_string(),
-            facilities: vec!["facility-1".to_string()],
+            facilities: vec!["facility-1".to_string(), "facility-2".to_string()],
         }]
     );
     assert_eq!(
@@ -749,6 +757,36 @@ async fn handle_event_stores_nothing_from_a_batch_with_an_invalid_measurement() 
 }
 
 #[tokio::test]
+async fn handle_event_stores_nothing_from_a_batch_with_an_invalid_facility() {
+    let app = init_app().await;
+
+    let error = handle_event(
+        &app.db_wrapper,
+        event(
+            EwdsEventType::FacilitySubmitted,
+            "facility-event",
+            json!([
+                facility("facility-1", "owner-1"),
+                {"facility_id": "facility-2"}
+            ]),
+        ),
+    )
+    .await
+    .unwrap_err();
+
+    assert!(format!("{error:#}").contains("index 1"), "{error:#}");
+    assert!(app
+        .db_wrapper
+        .facilities()
+        .get_all()
+        .await
+        .unwrap()
+        .is_empty());
+
+    stop_app(app).await;
+}
+
+#[tokio::test]
 async fn handle_event_updates_the_record_when_an_event_arrives_again() {
     let app = init_app().await;
     let db = &app.db_wrapper;
@@ -759,7 +797,7 @@ async fn handle_event_updates_the_record_when_an_event_arrives_again() {
             event(
                 EwdsEventType::FacilitySubmitted,
                 "facility-event",
-                json!(facility("facility-1", owner_id)),
+                json!([facility("facility-1", owner_id)]),
             ),
         )
         .await
@@ -800,7 +838,7 @@ async fn handle_event_rejects_invalid_data_and_events_gsy_publishes() {
         event(
             EwdsEventType::FacilitySubmitted,
             "facility-event",
-            json!({"facility_id": "facility-1"}),
+            json!(facility("facility-1", "owner-1")),
         ),
     )
     .await
@@ -834,12 +872,12 @@ async fn event_subscriber_skips_bad_messages_and_saves_the_next_one() {
     let wrong_topic_event = event(
         EwdsEventType::SiteSubmitted,
         "site-event",
-        json!({"site_name": "wrong-topic-site", "site_description": "", "facilities": []}),
+        json!([{"site_name": "wrong-topic-site", "site_description": "", "facilities": []}]),
     );
     let facility_event = event(
         EwdsEventType::FacilitySubmitted,
         "facility-event",
-        json!(facility("facility-1", "owner-1")),
+        json!([facility("facility-1", "owner-1")]),
     );
     Mock::given(method("GET"))
         .and(path("/api/v2/messages"))

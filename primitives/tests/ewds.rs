@@ -251,20 +251,19 @@ mod tests {
 
     #[test]
     fn event_envelope_parses_a_measurement_batch() {
-        let event: EwdsEventEnvelope<Vec<EwdsMeasurementDto>> =
-            serde_json::from_value(json!({
-                "eventId": "7d3f7a52-0c5e-4a8e-9a57-2b8f5f3f7e10",
-                "eventType": "measurements.submitted",
-                "occurredAt": "2026-09-29T10:16:02Z",
-                "data": [{
-                    "facilityId": "facility-id",
-                    "communityUuid": "community-id",
-                    "timeSlot": "1970-01-01T00:15:00Z",
-                    "creationTime": "1970-01-01T00:15:10Z",
-                    "energyKwh": -1.5,
-                }],
-            }))
-            .unwrap();
+        let event: EwdsEventEnvelope<Vec<EwdsMeasurementDto>> = serde_json::from_value(json!({
+            "eventId": "7d3f7a52-0c5e-4a8e-9a57-2b8f5f3f7e10",
+            "eventType": "measurements.submitted",
+            "occurredAt": "2026-09-29T10:16:02Z",
+            "data": [{
+                "facilityId": "facility-id",
+                "communityUuid": "community-id",
+                "timeSlot": "1970-01-01T00:15:00Z",
+                "creationTime": "1970-01-01T00:15:10Z",
+                "energyKwh": -1.5,
+            }],
+        }))
+        .unwrap();
 
         assert_eq!(event.event_id, "7d3f7a52-0c5e-4a8e-9a57-2b8f5f3f7e10");
         assert_eq!(event.event_type, EwdsEventType::MeasurementsSubmitted);
@@ -280,48 +279,49 @@ mod tests {
 
     #[test]
     fn event_envelopes_carry_facility_and_site_schemas() {
-        let facility_event: EwdsEventEnvelope<FacilitySchema> = serde_json::from_value(json!({
-            "eventId": "facility-event",
-            "eventType": "facility.submitted",
-            "occurredAt": "2026-09-29T10:16:02Z",
-            "data": {
-                "facility_id": "facility-id",
-                "facility_name": "Facility",
-                "site_id": "site-name",
-                "owner_id": "owner-id",
-            },
-        }))
-        .unwrap();
+        let facility_event: EwdsEventEnvelope<Vec<FacilitySchema>> =
+            serde_json::from_value(json!({
+                "eventId": "facility-event",
+                "eventType": "facility.submitted",
+                "occurredAt": "2026-09-29T10:16:02Z",
+                "data": [{
+                    "facility_id": "facility-id",
+                    "facility_name": "Facility",
+                    "site_id": "site-name",
+                    "owner_id": "owner-id",
+                }],
+            }))
+            .unwrap();
         assert_eq!(facility_event.event_type, EwdsEventType::FacilitySubmitted);
         assert_eq!(
             facility_event.data,
-            FacilitySchema {
+            vec![FacilitySchema {
                 facility_id: "facility-id".to_string(),
                 facility_name: "Facility".to_string(),
                 site_id: "site-name".to_string(),
                 owner_id: "owner-id".to_string(),
-            }
+            }]
         );
 
-        let site_event: EwdsEventEnvelope<SiteSchema> = serde_json::from_value(json!({
+        let site_event: EwdsEventEnvelope<Vec<SiteSchema>> = serde_json::from_value(json!({
             "eventId": "site-event",
             "eventType": "site.submitted",
             "occurredAt": "2026-09-29T10:16:02Z",
-            "data": {
+            "data": [{
                 "site_name": "site-name",
                 "site_description": "Main building",
                 "facilities": ["facility-id"],
-            },
+            }],
         }))
         .unwrap();
         assert_eq!(site_event.event_type, EwdsEventType::SiteSubmitted);
         assert_eq!(
             site_event.data,
-            SiteSchema {
+            vec![SiteSchema {
                 site_name: "site-name".to_string(),
                 site_description: "Main building".to_string(),
                 facilities: vec!["facility-id".to_string()],
-            }
+            }]
         );
     }
 

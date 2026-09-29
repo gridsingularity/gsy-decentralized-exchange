@@ -148,9 +148,9 @@ REST API uses:
 | Topic | `eventType` | `data` | Stored with |
 |---|---|---|---|
 | `measurementsSubmitted` | `measurements.submitted` | array of 1..N measurements (`EwdsMeasurementDto`) | measurement points and timeseries, upserted by point and timestamp |
-| `facilitySubmitted` | `facility.submitted` | one facility (`FacilitySchema`) | upserted by `facility_id` |
-| `siteSubmitted` | `site.submitted` | one site (`SiteSchema`) | upserted by `site_name` |
-| `communitySubmitted` | `community.submitted` | one community (`EwdsCommunityDto`) | upserted by `communityId` |
+| `facilitySubmitted` | `facility.submitted` | array of 1..N facilities (`FacilitySchema`) | upserted by `facility_id` |
+| `siteSubmitted` | `site.submitted` | array of 1..N sites (`SiteSchema`) | upserted by `site_name` |
+| `communitySubmitted` | `community.submitted` | array of 1..N communities (`EwdsCommunityDto`) | upserted by `communityId` |
 
 The envelope is the one GSY uses for its own events:
 
@@ -171,10 +171,11 @@ The envelope is the one GSY uses for its own events:
 }
 ```
 
+- Every event carries a list, so one event can submit many items. Its size is
+  only limited by the 6 MB message limit.
 - Measurements use camelCase fields with RFC 3339 times. `timeSlot` is the
   start of the 15-minute slot, and `energyKwh` is positive for consumed and
-  negative for produced energy. A batch can mix facilities and slots; its size
-  is only limited by the 6 MB message limit.
+  negative for produced energy. A batch can mix facilities and slots.
 - Facilities and sites use the snake_case fields of `FacilitySchema`
   (`facility_id`, `facility_name`, `site_id`, `owner_id`) and `SiteSchema`
   (`site_name`, `site_description`, `facilities`), the same form
@@ -189,8 +190,8 @@ Handling rules:
   upserts, an event that arrives again only updates its record.
 - Events whose `eventType` doesn't match their topic, malformed messages and
   invalid data are logged and skipped, and the next message is still handled.
-  One invalid item rejects a whole measurement batch, so nothing of it is
-  stored; a corrected batch needs a new `eventId`.
+  One invalid item rejects the whole event, so nothing of it is stored; a
+  corrected event needs a new `eventId`.
 - A failed database write is tried up to three times in total. A duplicate
   key, such as a facility or community name that is already taken, is not
   retried.

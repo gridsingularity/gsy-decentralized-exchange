@@ -76,9 +76,9 @@ Used by `measurements.query` responses and `measurements.submitted` events.
 
 ### Facility and Site Mapping
 
-`facility.submitted` and `site.submitted` events carry `FacilitySchema` and
-`SiteSchema` unchanged, so their fields are snake_case (`facility_id`,
-`site_name`, ...), like `facilities.query` responses.
+`facility.submitted` and `site.submitted` events carry lists of
+`FacilitySchema` and `SiteSchema` unchanged, so their fields are snake_case
+(`facility_id`, `site_name`, ...), like `facilities.query` responses.
 
 ### Community Mapping
 

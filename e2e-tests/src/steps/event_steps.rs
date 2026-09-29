@@ -50,11 +50,11 @@ async fn publish_events(world: &mut MyWorld) {
 
     let client = EwdsClient::from_env("EWDS_E2E_CLIENT_ID", "gsye2e", 60_000);
     client
-        .publish_event(&event(EwdsEventType::SiteSubmitted, &site))
+        .publish_event(&event(EwdsEventType::SiteSubmitted, vec![&site]))
         .await
         .expect("Failed to publish the site event");
     client
-        .publish_event(&event(EwdsEventType::FacilitySubmitted, &facility))
+        .publish_event(&event(EwdsEventType::FacilitySubmitted, vec![&facility]))
         .await
         .expect("Failed to publish the facility event");
     let batch = measurements

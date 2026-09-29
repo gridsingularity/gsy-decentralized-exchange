@@ -17,7 +17,7 @@ use primitives::ewds::dto::{
 use primitives::ewds::EwdsEventType;
 use primitives::utils::epoch_to_rfc3339;
 use reqwest::Client;
-use serde::Serialize;
+use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
 use std::collections::{HashSet, VecDeque};
 use std::future::Future;
@@ -247,55 +247,66 @@ async fn process_event_batch(
 pub async fn handle_event(db: &DatabaseWrapper, envelope: EwdsEventEnvelope<Value>) -> Result<()> {
     match envelope.event_type {
         EwdsEventType::MeasurementsSubmitted => {
-            let measurements = parse_measurements(envelope.data)?;
+            let measurements = parse_batch(envelope.data, |measurement: EwdsMeasurementDto| {
+                MeasurementSchema::try_from(measurement)
+            })?;
             retry_db_write(|| insert_measurements(db, &measurements)).await?;
         }
         EwdsEventType::FacilitySubmitted => {
-            let facility: FacilitySchema = serde_json::from_value(envelope.data)?;
-            retry_db_write(|| {
-                let facility = facility.clone();
-                async move { db.facilities().upsert(facility).await }
-            })
-            .await?;
+            let facilities = parse_batch(envelope.data, |facility: FacilitySchema| Ok(facility))?;
+            for facility in facilities {
+                retry_db_write(|| {
+                    let facility = facility.clone();
+                    async move { db.facilities().upsert(facility).await }
+                })
+                .await?;
+            }
         }
         EwdsEventType::SiteSubmitted => {
-            let site: SiteSchema = serde_json::from_value(envelope.data)?;
-            retry_db_write(|| {
-                let site = site.clone();
-                async move { db.sites().upsert(site).await }
-            })
-            .await?;
+            let sites = parse_batch(envelope.data, |site: SiteSchema| Ok(site))?;
+            for site in sites {
+                retry_db_write(|| {
+                    let site = site.clone();
+                    async move { db.sites().upsert(site).await }
+                })
+                .await?;
+            }
         }
         EwdsEventType::CommunitySubmitted => {
-            let community: EwdsCommunityDto = serde_json::from_value(envelope.data)?;
-            let community = EnergyCommunitySchema::from(community);
-            retry_db_write(|| {
-                let community = community.clone();
-                async move { db.communities().upsert(community).await }
-            })
-            .await?;
+            let communities = parse_batch(envelope.data, |community: EwdsCommunityDto| {
+                Ok(EnergyCommunitySchema::from(community))
+            })?;
+            for community in communities {
+                retry_db_write(|| {
+                    let community = community.clone();
+                    async move { db.communities().upsert(community).await }
+                })
+                .await?;
+            }
         }
         other => bail!("{} events are published by GSY, not saved from EWDS", other),
     }
     Ok(())
 }
 
-/// Parses a measurement batch. One invalid item rejects the whole batch.
-fn parse_measurements(data: Value) -> Result<Vec<MeasurementSchema>> {
-    let items: Vec<Value> =
-        serde_json::from_value(data).context("the measurement batch is not a list")?;
+/// Parses the list of items an event carries. One invalid item rejects the whole event.
+fn parse_batch<Item: DeserializeOwned, T>(
+    data: Value,
+    convert: impl Fn(Item) -> Result<T>,
+) -> Result<Vec<T>> {
+    let items: Vec<Value> = serde_json::from_value(data).context("the event data is not a list")?;
     if items.is_empty() {
-        bail!("the measurement batch is empty");
+        bail!("the event data is empty");
     }
 
     items
         .into_iter()
         .enumerate()
         .map(|(index, item)| {
-            serde_json::from_value::<EwdsMeasurementDto>(item)
+            serde_json::from_value::<Item>(item)
                 .map_err(anyhow::Error::from)
-                .and_then(MeasurementSchema::try_from)
-                .with_context(|| format!("invalid measurement at index {}", index))
+                .and_then(&convert)
+                .with_context(|| format!("invalid item at index {}", index))
         })
         .collect()
 }

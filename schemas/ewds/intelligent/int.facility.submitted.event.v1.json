@@ -8,7 +8,11 @@
     "eventId": { "type": "string", "minLength": 1 },
     "eventType": { "const": "facility.submitted" },
     "occurredAt": { "type": "string", "format": "date-time" },
-    "data": { "$ref": "./int.facility.schema.v1.json" }
+    "data": {
+      "type": "array",
+      "items": { "$ref": "./int.facility.schema.v1.json" },
+      "minItems": 1
+    }
   },
   "required": ["eventId", "eventType", "occurredAt", "data"]
 }
