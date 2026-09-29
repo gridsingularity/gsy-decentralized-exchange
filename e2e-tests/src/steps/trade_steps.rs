@@ -14,10 +14,8 @@ use primitives::ewds::dto::{EwdsOrderDto, EwdsTradeDto};
 use primitives::matching::matching_block_interval;
 use primitives::offchain_storage::{resolve_order_partner_ids, OffchainStorageClient};
 use primitives::utils::{
-    bytes16_to_hex,
-    create_encrypted_bytes16_from_string,
-    NODE_FLOAT_SCALING_FACTOR,
-    parse_uuid_or_hex_bytes16,
+    bytes16_to_hex, create_encrypted_bytes16_from_string, parse_uuid_or_hex_bytes16,
+    rfc3339_to_epoch, NODE_FLOAT_SCALING_FACTOR,
 };
 use std::collections::HashSet;
 use std::env;
@@ -1339,5 +1337,7 @@ async fn verify_clearing_results(world: &mut MyWorld) {
     assert_eq!(result.trade_quantity, 10.0);
     assert_eq!(result.num_trades, 1);
     assert!(!result.tx_hash.is_empty(), "tx_hash should not be empty");
-    assert!(result.created_at > 0, "created_at should be set");
+    let created_at =
+        rfc3339_to_epoch(&result.created_at).expect("created_at should be an RFC 3339 timestamp");
+    assert!(created_at > 0, "created_at should be set");
 }

@@ -1,9 +1,13 @@
 use crate::db_api_schema::grid_topology::{EnergyCommunitySchema, FacilitySchema};
 use crate::db_api_schema::ids::IdMappingSchema;
 use crate::db_api_schema::orders::{DbAttributes, DbRequirements};
-use crate::ewds::dto::{EwdsClearingResultDto, EwdsCommunityDto};
+use crate::db_api_schema::profiles::{MeasurementPointSchema, MeasurementSchema, TimeseriesSchema};
+use crate::db_api_schema::trades::DbTradeSchema;
+use crate::ewds::dto::{EwdsClearingResultDto, EwdsCommunityDto, EwdsMeasurementDto, EwdsTradeDto};
 use crate::ewds::{format_response_body, EwdsClient, EwdsOperation};
-use crate::utils::{bytes16_to_hex, parse_uuid_or_hex_bytes16};
+use crate::utils::{
+    bytes16_to_hex, epoch_to_rfc3339, parse_uuid_or_hex_bytes16, timestamp_to_string_with_padding,
+};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use reqwest::Client;
@@ -41,10 +45,6 @@ pub trait CommunityProvider: Send + Sync {
     async fn fetch_communities(&self) -> Result<Vec<EnergyCommunitySchema>>;
 }
 
-/// Reads communities, facility/owner mappings and offchain->onchain ID
-/// resolutions from off-chain storage, over whichever transport it was
-/// configured with. Construct once (per consumer client id) and reuse it
-/// across calls rather than rebuilding it per request.
 pub struct OffchainStorageClient {
     transport: OffchainStorageTransport,
     offchain_storage_url: String,
@@ -234,6 +234,137 @@ impl OffchainStorageClient {
             }
         }
     }
+
+    /// Trades created in `[start_time, end_time)`.
+    pub async fn fetch_trades(&self, start_time: u64, end_time: u64) -> Result<Vec<DbTradeSchema>> {
+        let trades: Vec<EwdsTradeDto> = match self.transport {
+            OffchainStorageTransport::Ewds => {
+                info!("Fetching trades via EWDS transport");
+                self.ewds_client()
+                    .query(
+                        EwdsOperation::TradesQuery,
+                        time_range_query(start_time, end_time),
+                    )
+                    .await?
+            }
+            OffchainStorageTransport::Http => {
+                let url = self.endpoint_url("trades");
+                info!("Fetching trades for {}", url);
+                let response = self
+                    .http_client
+                    .get(&url)
+                    .query(&[("start_time", start_time), ("end_time", end_time)])
+                    .send()
+                    .await?;
+                if !response.status().is_success() {
+                    return Err(anyhow!(
+                        "Failed to fetch trades. HTTP {}",
+                        response.status()
+                    ));
+                }
+                response.json().await?
+            }
+        };
+
+        trades.into_iter().map(DbTradeSchema::try_from).collect()
+    }
+
+    /// Measurements whose time slot lies in `[start_time, end_time]`.
+    pub async fn fetch_measurements(
+        &self,
+        start_time: u64,
+        end_time: u64,
+    ) -> Result<Vec<MeasurementSchema>> {
+        match self.transport {
+            OffchainStorageTransport::Ewds => {
+                info!("Fetching measurements via EWDS transport");
+                let measurements: Vec<EwdsMeasurementDto> = self
+                    .ewds_client()
+                    .query(
+                        EwdsOperation::MeasurementsQuery,
+                        time_range_query(start_time, end_time),
+                    )
+                    .await?;
+                measurements
+                    .into_iter()
+                    .map(MeasurementSchema::try_from)
+                    .collect()
+            }
+            OffchainStorageTransport::Http => {
+                self.fetch_measurements_via_http(start_time, end_time).await
+            }
+        }
+    }
+
+    /// Joins the measurement points with their timeseries values in the range.
+    async fn fetch_measurements_via_http(
+        &self,
+        start_time: u64,
+        end_time: u64,
+    ) -> Result<Vec<MeasurementSchema>> {
+        let points_url = self.endpoint_url("measurement-points");
+        info!("Fetching measurement points for {}", points_url);
+        let points_response = self
+            .http_client
+            .get(&points_url)
+            .query(&[("type", "Measurement")])
+            .send()
+            .await?;
+        if !points_response.status().is_success() {
+            return Err(anyhow!(
+                "Failed to fetch measurement points. HTTP {}",
+                points_response.status()
+            ));
+        }
+        let points_by_id = points_response
+            .json::<Vec<MeasurementPointSchema>>()
+            .await?
+            .into_iter()
+            .map(|point| (point.measurement_id.clone(), point))
+            .collect::<HashMap<_, _>>();
+
+        let timeseries_url = self.endpoint_url("timeseries");
+        info!("Fetching timeseries for {}", timeseries_url);
+        let timeseries_response = self
+            .http_client
+            .get(&timeseries_url)
+            .query(&[
+                ("start_time", timestamp_to_string_with_padding(start_time)),
+                ("end_time", timestamp_to_string_with_padding(end_time)),
+            ])
+            .send()
+            .await?;
+        if !timeseries_response.status().is_success() {
+            return Err(anyhow!(
+                "Failed to fetch timeseries. HTTP {}",
+                timeseries_response.status()
+            ));
+        }
+        let timeseries = timeseries_response.json::<Vec<TimeseriesSchema>>().await?;
+
+        Ok(timeseries
+            .into_iter()
+            .filter_map(|value| {
+                let point = points_by_id.get(&value.measurement_point)?;
+                let time_slot = value.timestamp.parse::<u64>().ok()?;
+                Some(MeasurementSchema {
+                    facility_id: point.asset_name.clone(),
+                    community_uuid: point.datasource_name.clone().unwrap_or_default(),
+                    time_slot,
+                    creation_time: time_slot,
+                    energy_kwh: value.value,
+                })
+            })
+            .collect())
+    }
+}
+
+/// Payload of the EWDS time-range queries (`trades.query`, `measurements.query`).
+fn time_range_query(start_time: u64, end_time: u64) -> serde_json::Value {
+    serde_json::json!({
+        "startTime": epoch_to_rfc3339(start_time),
+        "endTime": epoch_to_rfc3339(end_time),
+    })
 }
 
 #[async_trait]

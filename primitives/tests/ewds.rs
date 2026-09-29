@@ -2,6 +2,7 @@ use primitives::db_api_schema::{
     grid_topology::EnergyCommunitySchema,
     market::{MarketSchema, MarketType, MatchingAlgorithm},
     orders::{DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus},
+    profiles::MeasurementSchema,
     trades::{
         ClearingResultSchema, ClearingStatus, DbTradeSchema, NoBidReason, TradeParameters,
         TradeStatus,
@@ -9,7 +10,7 @@ use primitives::db_api_schema::{
 };
 use primitives::ewds::dto::{
     energy_type_from_ewds, energy_type_to_ewds, EwdsClearingResultDto, EwdsCommunityDto,
-    EwdsMarketDto, EwdsOrderDto, EwdsTradeDto,
+    EwdsMarketDto, EwdsMeasurementDto, EwdsOrderDto, EwdsTradeDto,
 };
 use primitives::ewds::EwdsOperation;
 use primitives::utils::epoch_to_rfc3339;
@@ -201,6 +202,33 @@ mod tests {
         let actual = DbTradeSchema::try_from(EwdsTradeDto::from(expected.clone()))
             .expect("round trip should succeed");
         assert_eq!(actual, expected);
+    }
+
+    // ---- MeasurementDto tests ----
+
+    fn measurement() -> MeasurementSchema {
+        MeasurementSchema {
+            facility_id: "facility-id".to_string(),
+            community_uuid: "community-id".to_string(),
+            time_slot: 900,
+            creation_time: 910,
+            energy_kwh: -1.5,
+        }
+    }
+
+    #[test]
+    fn measurement_round_trips() {
+        let expected = measurement();
+        let actual = MeasurementSchema::try_from(EwdsMeasurementDto::from(expected.clone()))
+            .expect("round trip should succeed");
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn measurement_with_epoch_time_slot_is_error() {
+        let mut dto = EwdsMeasurementDto::from(measurement());
+        dto.time_slot = "900".to_string();
+        assert!(MeasurementSchema::try_from(dto).is_err());
     }
 
     // ---- ClearingResultDto tests ----

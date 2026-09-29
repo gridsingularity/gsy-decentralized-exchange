@@ -580,3 +580,17 @@ impl From<MeasurementSchema> for EwdsMeasurementDto {
         }
     }
 }
+
+impl TryFrom<EwdsMeasurementDto> for MeasurementSchema {
+    type Error = anyhow::Error;
+
+    fn try_from(measurement: EwdsMeasurementDto) -> Result<Self> {
+        Ok(Self {
+            facility_id: measurement.facility_id,
+            community_uuid: measurement.community_uuid,
+            time_slot: rfc3339_to_epoch(&measurement.time_slot)?,
+            creation_time: rfc3339_to_epoch(&measurement.creation_time)?,
+            energy_kwh: measurement.energy_kwh,
+        })
+    }
+}
