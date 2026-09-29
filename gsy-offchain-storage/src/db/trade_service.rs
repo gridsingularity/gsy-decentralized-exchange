@@ -8,12 +8,12 @@ use primitives::db_api_schema::trades::{ClearingResultSchema, DbTradeSchema, Mar
 use std::collections::HashMap;
 use std::ops::Deref;
 
-fn time_slot_bson(value: u64) -> Result<Bson> {
+fn epoch_bson(value: u64) -> Result<Bson> {
     Ok(Bson::Int64(i64::try_from(value)?))
 }
 
 /// Trade indexes per D3.2 section 5.3: `buyer`, `seller`, `market_id` and
-/// `time_slot` accelerate per-asset / per-market / per-slot lookups.
+/// `creation_time` accelerate per-asset / per-market / time-range lookups.
 pub async fn init_trades(db: &DatabaseWrapper) -> Result<()> {
     let controller = db.trades();
     controller
@@ -24,7 +24,7 @@ pub async fn init_trades(db: &DatabaseWrapper) -> Result<()> {
                 .build(),
         )
         .await?;
-    for key in ["buyer", "seller", "market_id", "time_slot"] {
+    for key in ["buyer", "seller", "market_id", "creation_time"] {
         controller
             .create_index(IndexModel::builder().keys(doc! {key: 1}).build())
             .await?;
@@ -96,7 +96,7 @@ impl TradeService {
         Ok(result)
     }
 
-    #[tracing::instrument(name = "Filter trades by time slot", skip(self))]
+    #[tracing::instrument(name = "Filter trades by creation time", skip(self))]
     pub async fn filter_trades(
         &self,
         start_time: Option<u64>,
@@ -106,15 +106,15 @@ impl TradeService {
         match (start_time, end_time) {
             (Some(start), Some(end)) => {
                 filter_params.insert(
-                    "time_slot",
-                    doc! {"$gte": time_slot_bson(start)?, "$lt": time_slot_bson(end)?},
+                    "creation_time",
+                    doc! {"$gte": epoch_bson(start)?, "$lt": epoch_bson(end)?},
                 );
             }
             (Some(start), None) => {
-                filter_params.insert("time_slot", doc! {"$gte": time_slot_bson(start)?});
+                filter_params.insert("creation_time", doc! {"$gte": epoch_bson(start)?});
             }
             (None, Some(end)) => {
-                filter_params.insert("time_slot", doc! {"$lt": time_slot_bson(end)?});
+                filter_params.insert("creation_time", doc! {"$lt": epoch_bson(end)?});
             }
             (None, None) => {}
         }

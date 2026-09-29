@@ -2,6 +2,7 @@ use crate::helpers::{init_app, stop_app};
 use actix_web::web;
 use primitives::db_api_schema::orders::{DbOrderSchema, OrderEnum, OrderStatus};
 use primitives::ewds::dto::EwdsTradeDto;
+use primitives::utils::epoch_to_rfc3339;
 
 fn make_order(order_id: &str, order_type: OrderEnum) -> DbOrderSchema {
     DbOrderSchema {
@@ -33,7 +34,7 @@ fn make_trade(trade_uuid: &str, bid: DbOrderSchema, offer: DbOrderSchema) -> Ewd
         trade_status: "executed".to_string(),
         trade_quantity: 14.0,
         trade_price: 3.0,
-        timestamp: 1_677_453_191,
+        timestamp: "2026-01-01T00:00:02Z".to_string(),
     }
 }
 
@@ -153,7 +154,7 @@ async fn get_trades_filters_by_time_range() {
         OrderEnum::Offer,
     );
     let mut trade = make_trade("TRADE-FILTER-0001", bid, offer);
-    trade.timestamp = 1_677_453_191;
+    trade.timestamp = "2026-01-01T00:00:03Z".to_string();
 
     let client = reqwest::Client::new();
     let resp = client
@@ -167,7 +168,7 @@ async fn get_trades_filters_by_time_range() {
     // Range that includes the trade timestamp
     let resp = client
         .get(&format!("{}/trades", &address))
-        .query(&[("start_time", "1677453190"), ("end_time", "1677453192")])
+        .query(&[("start_time", "1767225602"), ("end_time", "1767225604")])
         .send()
         .await
         .unwrap();
@@ -179,7 +180,7 @@ async fn get_trades_filters_by_time_range() {
     // Range that excludes the trade timestamp
     let resp = client
         .get(&format!("{}/trades", &address))
-        .query(&[("start_time", "1677453192"), ("end_time", "1677453200")])
+        .query(&[("start_time", "1767225604"), ("end_time", "1767225610")])
         .send()
         .await
         .unwrap();
@@ -268,7 +269,7 @@ async fn filter_trades_time_boundaries_are_inclusive_start_exclusive_end() {
             OrderEnum::Offer,
         );
         let mut trade = make_trade(&format!("TRADE-BORDER-{:04}", idx), bid, offer);
-        trade.timestamp = *ts;
+        trade.timestamp = epoch_to_rfc3339(*ts);
 
         let resp = client
             .post(&format!("{}/trades", &address))
@@ -287,19 +288,19 @@ async fn filter_trades_time_boundaries_are_inclusive_start_exclusive_end() {
         .filter_trades(Some(20), Some(30))
         .await
         .unwrap();
-    let mut got: Vec<u64> = both.iter().map(|t| t.time_slot).collect();
+    let mut got: Vec<u64> = both.iter().map(|t| t.creation_time).collect();
     got.sort_unstable();
     assert_eq!(got, vec![20, 29]); // 20 included ($gte), 30 excluded ($lt)
 
-    // Start-only, start on a boundary value: time_slot >= 20 -> {20, 29, 30}.
+    // Start-only, start on a boundary value: creation_time >= 20 -> {20, 29, 30}.
     let start_only = trades_svc().filter_trades(Some(20), None).await.unwrap();
-    let mut got: Vec<u64> = start_only.iter().map(|t| t.time_slot).collect();
+    let mut got: Vec<u64> = start_only.iter().map(|t| t.creation_time).collect();
     got.sort_unstable();
     assert_eq!(got, vec![20, 29, 30]); // 20 included, nothing below
 
-    // End-only, end on a boundary value: time_slot < 30 -> {19, 20, 29}.
+    // End-only, end on a boundary value: creation_time < 30 -> {19, 20, 29}.
     let end_only = trades_svc().filter_trades(None, Some(30)).await.unwrap();
-    let mut got: Vec<u64> = end_only.iter().map(|t| t.time_slot).collect();
+    let mut got: Vec<u64> = end_only.iter().map(|t| t.creation_time).collect();
     got.sort_unstable();
     assert_eq!(got, vec![19, 20, 29]); // 30 excluded ($lt)
 
@@ -316,7 +317,7 @@ async fn filter_trades_time_boundaries_are_inclusive_start_exclusive_end() {
         .await
         .unwrap();
     assert_eq!(single.len(), 1);
-    assert_eq!(single[0].time_slot, 20);
+    assert_eq!(single[0].creation_time, 20);
 
     // No bounds: returns everything seeded here.
     let all = trades_svc().filter_trades(None, None).await.unwrap();
