@@ -105,12 +105,11 @@ mod tests {
         expected.order_type = OrderEnum::Offer;
         expected.requirements = None;
         expected.attributes = Some(DbAttributes {
-            trading_partner_id: Some("partner-id".to_string()),
             energy_type: EnergyType::Pv,
         });
 
         let dto = EwdsOrderDto::from(expected.clone());
-        assert_eq!(dto.preferred_trading_partner.as_deref(), Some("partner-id"));
+        assert_eq!(dto.preferred_trading_partner, None);
         assert_eq!(dto.energy_type.as_deref(), Some("PV"));
         assert_eq!(dto.energy_source_preference, None);
         assert_eq!(dto.preferred_energy_rate, None);

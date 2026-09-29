@@ -38,7 +38,7 @@ Order payload includes:
 
 The EVM order tuple also supports optional bid requirements
 (`energySourcePreference`, `preferredTradingPartner`, `preferredEnergyRate`)
-and offer attributes (`energyType`, `tradingPartner`). Missing optional values
+and offer attributes (`energyType`). Missing optional values
 are encoded with zero-value sentinels.
 
 ## Configuration

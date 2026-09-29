@@ -139,10 +139,7 @@ impl From<DbOrderSchema> for EwdsOrderDto {
                 .requirements
                 .as_ref()
                 .and_then(|requirements| requirements.trading_partner_id.clone()),
-            OrderEnum::Offer => order
-                .attributes
-                .as_ref()
-                .and_then(|attributes| attributes.trading_partner_id.clone()),
+            OrderEnum::Offer => None,
         };
 
         Self {
@@ -206,22 +203,11 @@ impl TryFrom<EwdsOrderDto> for DbOrderSchema {
             None
         };
 
-        let attributes = if order.energy_type.is_some()
-            || (!is_bid && order.preferred_trading_partner.is_some())
-        {
-            Some(DbAttributes {
-                trading_partner_id: if is_bid {
-                    None
-                } else {
-                    order.preferred_trading_partner.clone()
-                },
-                energy_type: match order.energy_type {
-                    Some(ref energy_type) => energy_type_from_ewds(energy_type)?,
-                    None => EnergyType::None,
-                },
-            })
-        } else {
-            None
+        let attributes = match order.energy_type {
+            Some(ref energy_type) => Some(DbAttributes {
+                energy_type: energy_type_from_ewds(energy_type)?,
+            }),
+            None => None,
         };
 
         Ok(Self {

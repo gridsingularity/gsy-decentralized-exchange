@@ -1,6 +1,6 @@
 use crate::db_api_schema::grid_topology::{EnergyCommunitySchema, FacilitySchema};
 use crate::db_api_schema::ids::IdMappingSchema;
-use crate::db_api_schema::orders::{DbAttributes, DbRequirements};
+use crate::db_api_schema::orders::DbRequirements;
 use crate::ewds::dto::EwdsCommunityDto;
 use crate::ewds::{format_response_body, EwdsClient, EwdsOperation};
 use crate::utils::{bytes16_to_hex, parse_uuid_or_hex_bytes16};
@@ -217,19 +217,11 @@ impl CommunityProvider for OffchainStorageClient {
 /// Input identifiers are always off-chain IDs, including UUID and hex-shaped strings.
 pub async fn resolve_order_partner_ids(
     requirements: &mut Option<DbRequirements>,
-    attributes: &mut Option<DbAttributes>,
     id_mapping_source: &OffchainStorageClient,
 ) -> Result<()> {
-    for partner in [
-        requirements
-            .as_mut()
-            .and_then(|value| value.trading_partner_id.as_mut()),
-        attributes
-            .as_mut()
-            .and_then(|value| value.trading_partner_id.as_mut()),
-    ]
-    .into_iter()
-    .flatten()
+    if let Some(partner) = requirements
+        .as_mut()
+        .and_then(|value| value.trading_partner_id.as_mut())
     {
         *partner = id_mapping_source.fetch_onchain_id(partner).await?;
     }

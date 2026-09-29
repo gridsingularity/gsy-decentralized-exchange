@@ -39,8 +39,7 @@
                             {"name": "energyType", "type": "uint8"},
                             {"name": "isBid", "type": "bool"},
                             {"name": "preferredTradingPartner", "type": "bytes16"},
-                            {"name": "preferredEnergyRate", "type": "uint64"},
-                            {"name": "tradingPartner", "type": "bytes16"}
+                            {"name": "preferredEnergyRate", "type": "uint64"}
                         ]
                     },
                     {
@@ -59,8 +58,7 @@
                             {"name": "energyType", "type": "uint8"},
                             {"name": "isBid", "type": "bool"},
                             {"name": "preferredTradingPartner", "type": "bytes16"},
-                            {"name": "preferredEnergyRate", "type": "uint64"},
-                            {"name": "tradingPartner", "type": "bytes16"}
+                            {"name": "preferredEnergyRate", "type": "uint64"}
                         ]
                     },
                     {"name": "residualBidId", "type": "bytes16"},

@@ -110,7 +110,7 @@
       "default": null
     },
     "preferredTradingPartner": {
-      "description": "Preferred counterparty: a bid requirement or offer attribute depending on orderType. IRI: int:preferredTradingPartner. Nullable.",
+      "description": "Preferred counterparty of a bid (requirement); always null for offers. IRI: int:preferredTradingPartner. Nullable.",
       "type": [
         "string",
         "null"
