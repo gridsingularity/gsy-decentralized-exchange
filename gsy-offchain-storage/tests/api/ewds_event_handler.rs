@@ -16,6 +16,7 @@ use primitives::ewds::EwdsEventType;
 use primitives::utils::bytes16_to_hex;
 use serde_json::json;
 use std::time::Duration;
+use uuid::Uuid;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -44,6 +45,16 @@ async fn wait_for_gateway_messages(
 async fn assert_no_further_gateway_messages(server: &MockServer, expected: usize) {
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(server.received_requests().await.unwrap().len(), expected);
+}
+
+/// Every event gets a random UUID as its ID, which is also its DDHub transaction ID.
+fn assert_event_id(message: &EwdsSendMessageDto, event: &serde_json::Value) {
+    assert!(
+        Uuid::parse_str(&message.transaction_id).is_ok(),
+        "{}",
+        message.transaction_id
+    );
+    assert_eq!(event["eventId"], json!(message.transaction_id));
 }
 
 fn event_payload(message: &EwdsSendMessageDto) -> serde_json::Value {
@@ -96,18 +107,15 @@ fn log_meta(transaction_hash: H256) -> LogMeta {
     }
 }
 
-#[tokio::test]
-async fn publish_trade_created_sends_event_on_events_channel() {
-    let server = mock_gateway().await;
-    let publisher = EwdsEventPublisher::new(test_config(server.uri()));
-    let trade = DbTradeSchema {
-        trade_uuid: "trade-1".to_string(),
+fn trade(trade_uuid: &str, creation_time: u64) -> DbTradeSchema {
+    DbTradeSchema {
+        trade_uuid: trade_uuid.to_string(),
         status: TradeStatus::Settled,
         seller: "seller-1".to_string(),
         buyer: "buyer-1".to_string(),
         market_id: "market-1".to_string(),
         time_slot: 1_000,
-        creation_time: 950,
+        creation_time,
         offer_hash: "offer-1".to_string(),
         bid_hash: "bid-1".to_string(),
         residual_offer_id: None,
@@ -116,30 +124,85 @@ async fn publish_trade_created_sends_event_on_events_channel() {
             selected_energy_kWh: 2.0,
             energy_rate: 0.3,
         },
-    };
+    }
+}
 
-    publisher.publish_trade_created(trade).await.unwrap();
+#[tokio::test]
+async fn publish_trades_created_sends_event_on_events_channel() {
+    let server = mock_gateway().await;
+    let publisher = EwdsEventPublisher::new(test_config(server.uri()));
+
+    publisher
+        .publish_trades_created(vec![trade("trade-1", 950)])
+        .await
+        .unwrap();
 
     let requests = server.received_requests().await.unwrap();
     assert_eq!(requests.len(), 1, "expected exactly one gateway POST");
     let send_dto: EwdsSendMessageDto = serde_json::from_slice(&requests[0].body).unwrap();
     assert_eq!(send_dto.fqcn, "gsy.events.pub");
     assert_eq!(send_dto.topic_name, "tradeCreated");
-    assert_eq!(send_dto.transaction_id, "trade-created-trade-1");
 
     let event: serde_json::Value = serde_json::from_str(&send_dto.payload).unwrap();
-    assert_eq!(event["eventId"], json!("trade-created-trade-1"));
+    assert_event_id(&send_dto, &event);
     assert_eq!(
         event["eventType"],
         json!(EwdsEventType::TradeCreated.as_str())
     );
     assert_eq!(event["occurredAt"], json!(950));
-    assert_eq!(event["data"]["tradeId"], json!("trade-1"));
-    assert_eq!(event["data"]["marketId"], json!("market-1"));
+    assert_eq!(event["data"].as_array().unwrap().len(), 1);
+    assert_eq!(event["data"][0]["tradeId"], json!("trade-1"));
+    assert_eq!(event["data"][0]["marketId"], json!("market-1"));
 }
 
 #[tokio::test]
-async fn publish_clearing_result_created_sends_event_on_events_channel() {
+async fn publish_trades_created_sends_several_trades_in_one_event() {
+    let server = mock_gateway().await;
+    let publisher = EwdsEventPublisher::new(test_config(server.uri()));
+
+    publisher
+        .publish_trades_created(vec![trade("trade-1", 950), trade("trade-2", 960)])
+        .await
+        .unwrap();
+
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 1, "expected exactly one gateway POST");
+    let send_dto: EwdsSendMessageDto = serde_json::from_slice(&requests[0].body).unwrap();
+    let event: serde_json::Value = serde_json::from_str(&send_dto.payload).unwrap();
+    assert_event_id(&send_dto, &event);
+    // occurredAt is the time of the newest trade.
+    assert_eq!(event["occurredAt"], json!(960));
+    assert_eq!(event["data"][0]["tradeId"], json!("trade-1"));
+    assert_eq!(event["data"][1]["tradeId"], json!("trade-2"));
+}
+
+#[tokio::test]
+async fn every_event_gets_its_own_id() {
+    let server = mock_gateway().await;
+    let publisher = EwdsEventPublisher::new(test_config(server.uri()));
+
+    for _ in 0..2 {
+        publisher
+            .publish_trades_created(vec![trade("trade-1", 950)])
+            .await
+            .unwrap();
+    }
+
+    let requests = server.received_requests().await.unwrap();
+    let ids = requests
+        .iter()
+        .map(|request| {
+            serde_json::from_slice::<EwdsSendMessageDto>(&request.body)
+                .unwrap()
+                .transaction_id
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(ids.len(), 2);
+    assert_ne!(ids[0], ids[1]);
+}
+
+#[tokio::test]
+async fn publish_clearing_results_created_sends_event_on_events_channel() {
     let server = mock_gateway().await;
     let publisher = EwdsEventPublisher::new(test_config(server.uri()));
     let clearing_result = ClearingResultSchema {
@@ -156,7 +219,7 @@ async fn publish_clearing_result_created_sends_event_on_events_channel() {
     };
 
     publisher
-        .publish_clearing_result_created(clearing_result)
+        .publish_clearing_results_created(vec![clearing_result])
         .await
         .unwrap();
 
@@ -165,37 +228,30 @@ async fn publish_clearing_result_created_sends_event_on_events_channel() {
     let send_dto: EwdsSendMessageDto = serde_json::from_slice(&requests[0].body).unwrap();
     assert_eq!(send_dto.fqcn, "gsy.events.pub");
     assert_eq!(send_dto.topic_name, "clearingResultCreated");
-    assert_eq!(
-        send_dto.transaction_id,
-        "clearing-result-created-market-1-0xabc"
-    );
 
     let event: serde_json::Value = serde_json::from_str(&send_dto.payload).unwrap();
-    assert_eq!(
-        event["eventId"],
-        json!("clearing-result-created-market-1-0xabc")
-    );
+    assert_event_id(&send_dto, &event);
     assert_eq!(
         event["eventType"],
         json!(EwdsEventType::ClearingResultCreated.as_str())
     );
     assert_eq!(event["occurredAt"], json!(1_100));
-    assert_eq!(event["data"]["marketId"], json!("market-1"));
-    assert_eq!(event["data"]["numTrades"], json!(2));
-    assert_eq!(event["data"]["txHash"], json!("0xabc"));
+    assert_eq!(event["data"][0]["marketId"], json!("market-1"));
+    assert_eq!(event["data"][0]["numTrades"], json!(2));
+    assert_eq!(event["data"][0]["txHash"], json!("0xabc"));
 }
 
 #[tokio::test]
-async fn publish_market_status_updated_sends_event_on_events_channel() {
+async fn publish_market_statuses_updated_sends_event_on_events_channel() {
     let server = mock_gateway().await;
     let publisher = EwdsEventPublisher::new(test_config(server.uri()));
 
     publisher
-        .publish_market_status_updated(
-            EwdsMarketStatusDto {
+        .publish_market_statuses_updated(
+            vec![EwdsMarketStatusDto {
                 market_id: "market-1".to_string(),
                 is_open: false,
-            },
+            }],
             1_200,
         )
         .await
@@ -206,16 +262,9 @@ async fn publish_market_status_updated_sends_event_on_events_channel() {
     let send_dto: EwdsSendMessageDto = serde_json::from_slice(&requests[0].body).unwrap();
     assert_eq!(send_dto.fqcn, "gsy.events.pub");
     assert_eq!(send_dto.topic_name, "marketStatusUpdated");
-    assert_eq!(
-        send_dto.transaction_id,
-        "market-status-updated-market-1-closed"
-    );
 
     let event: serde_json::Value = serde_json::from_str(&send_dto.payload).unwrap();
-    assert_eq!(
-        event["eventId"],
-        json!("market-status-updated-market-1-closed")
-    );
+    assert_event_id(&send_dto, &event);
     assert_eq!(
         event["eventType"],
         json!(EwdsEventType::MarketStatusUpdated.as_str())
@@ -223,7 +272,7 @@ async fn publish_market_status_updated_sends_event_on_events_channel() {
     assert_eq!(event["occurredAt"], json!(1_200));
     assert_eq!(
         event["data"],
-        json!({"marketId": "market-1", "isOpen": false})
+        json!([{"marketId": "market-1", "isOpen": false}])
     );
 }
 
@@ -239,11 +288,11 @@ async fn publish_does_not_retry_or_panic_when_gateway_rejects_event() {
 
     // The send error is logged inside the task; the task itself must still finish cleanly.
     publisher
-        .publish_market_status_updated(
-            EwdsMarketStatusDto {
+        .publish_market_statuses_updated(
+            vec![EwdsMarketStatusDto {
                 market_id: "market-1".to_string(),
                 is_open: true,
-            },
+            }],
             1_200,
         )
         .await
@@ -310,15 +359,16 @@ async fn trade_settled_publishes_trade_created_event() {
         event["eventType"],
         json!(EwdsEventType::TradeCreated.as_str())
     );
+    assert_event_id(&messages[0], &event);
+    assert_eq!(event["data"].as_array().unwrap().len(), 1);
+    assert_eq!(event["data"][0]["tradeId"], json!(trade_id));
+    assert_eq!(event["data"][0]["bidId"], json!(bytes16_to_hex([0x02; 16])));
     assert_eq!(
-        event["eventId"],
-        json!(format!("trade-created-{}", trade_id))
+        event["data"][0]["offerId"],
+        json!(bytes16_to_hex([0x03; 16]))
     );
-    assert_eq!(event["data"]["tradeId"], json!(trade_id));
-    assert_eq!(event["data"]["bidId"], json!(bytes16_to_hex([0x02; 16])));
-    assert_eq!(event["data"]["offerId"], json!(bytes16_to_hex([0x03; 16])));
-    assert_eq!(event["data"]["tradeStatus"], json!("settled"));
-    assert_eq!(event["data"]["residualBidId"], json!(null));
+    assert_eq!(event["data"][0]["tradeStatus"], json!("settled"));
+    assert_eq!(event["data"][0]["residualBidId"], json!(null));
 
     let stored = app.db_wrapper.trades().get_all_trades().await.unwrap();
     assert_eq!(event["occurredAt"], json!(stored[0].creation_time));
@@ -369,15 +419,12 @@ async fn market_clearing_publishes_clearing_result_created_event() {
         event["eventType"],
         json!(EwdsEventType::ClearingResultCreated.as_str())
     );
-    assert_eq!(
-        event["eventId"],
-        json!(format!("clearing-result-created-{}-{}", market_id, tx_hash))
-    );
+    assert_event_id(&messages[0], &event);
     assert_eq!(event["occurredAt"], json!(1_100));
-    assert_eq!(event["data"]["marketId"], json!(market_id));
-    assert_eq!(event["data"]["clearingStatus"], json!("final"));
-    assert_eq!(event["data"]["numTrades"], json!(2));
-    assert_eq!(event["data"]["txHash"], json!(tx_hash));
+    assert_eq!(event["data"][0]["marketId"], json!(market_id));
+    assert_eq!(event["data"][0]["clearingStatus"], json!("final"));
+    assert_eq!(event["data"][0]["numTrades"], json!(2));
+    assert_eq!(event["data"][0]["txHash"], json!(tx_hash));
 
     stop_app(app).await;
 }
@@ -420,13 +467,10 @@ async fn market_status_publishes_market_status_updated_event() {
         event["eventType"],
         json!(EwdsEventType::MarketStatusUpdated.as_str())
     );
-    assert_eq!(
-        event["eventId"],
-        json!(format!("market-status-updated-{}-open", market_id))
-    );
+    assert_event_id(&messages[0], &event);
     assert_eq!(
         event["data"],
-        json!({"marketId": market_id, "isOpen": true})
+        json!([{"marketId": market_id, "isOpen": true}])
     );
     // Market status is not persisted, so occurredAt is the time the event was received.
     let occurred_at = event["occurredAt"].as_u64().unwrap();
