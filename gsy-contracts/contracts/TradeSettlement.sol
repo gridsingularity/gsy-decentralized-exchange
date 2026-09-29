@@ -43,6 +43,7 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
     error PriceMismatch();
     error EnergyMismatch();
     error InvalidPenalty();
+    error TradedQuantityMismatch();
 
     constructor() {
         _disableInitializers();
@@ -54,25 +55,10 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
         registry = OrderRegistry(_registry);
     }
 
-    struct OrderData {
-        bytes16 orderId;
-        bytes16 createdBy;
-        bytes16 marketId;
-        uint64 timeSlot;
-        uint64 creationTime;
-        uint64 energy;
-        uint64 energyRate;
-        uint8 energySourcePreference;
-        uint8 energyType;
-        bytes16 preferredTradingPartner;
-        uint64 preferredEnergyRate;
-        bytes16 tradingPartner;
-    }
-
     struct Match {
         bytes16 tradeId;
-        OrderData bid;
-        OrderData offer;
+        OrderRegistry.OrderParams bid;
+        OrderRegistry.OrderParams offer;
         bytes16 residualBidId;
         bytes16 residualOfferId;
         uint256 selectedEnergy;
@@ -86,6 +72,30 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
         uint64 penaltyEnergy;
     }
 
+    struct ClearingResult {
+        bytes16 marketId;
+        uint8 clearingStatus;
+        uint256 clearingPrice;
+        uint256 totalSupply;
+        uint256 totalDemand;
+        uint256 tradedQuantity;
+        uint32 numTrades;
+    }
+
+    event MarketClearing(
+        bytes16 indexed marketId,
+        uint8 clearingStatus,
+        uint256 clearingPrice,
+        uint256 totalSupply,
+        uint256 totalDemand,
+        uint256 tradedQuantity,
+        uint32 numTrades
+    );
+    struct MarketSettlement {
+        Match[] matches;
+        ClearingResult clearingResult;
+    }
+
     mapping(bytes16 => uint256) public penaltyEnergyByTrade;
     mapping(bytes16 => uint256) public penaltyEnergyByActor;
 
@@ -94,10 +104,36 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
      * @dev Only callable by the Matching Engine (Operator).
      */
     function settleBatch(
-        Match[] calldata matches
+        MarketSettlement[] calldata settlements
     ) external onlyRole(OPERATOR_ROLE) {
+        for (uint256 m = 0; m < settlements.length; m++) {
+            MarketSettlement calldata settlement = settlements[m];
+
+            if (_sumSelectedEnergy(settlement.matches) != settlement.clearingResult.tradedQuantity) {
+                revert TradedQuantityMismatch();
+            }
+
+            for (uint256 i = 0; i < settlement.matches.length; i++) {
+                _settleTrade(settlement.matches[i]);
+            }
+
+            emit MarketClearing(
+                settlement.clearingResult.marketId,
+                settlement.clearingResult.clearingStatus,
+                settlement.clearingResult.clearingPrice,
+                settlement.clearingResult.totalSupply,
+                settlement.clearingResult.totalDemand,
+                settlement.clearingResult.tradedQuantity,
+                settlement.clearingResult.numTrades
+            );
+        }
+    }
+
+    function _sumSelectedEnergy(
+        Match[] calldata matches
+    ) internal pure returns (uint256 total) {
         for (uint256 i = 0; i < matches.length; i++) {
-            _settleTrade(matches[i]);
+            total += matches[i].selectedEnergy;
         }
     }
 
@@ -154,8 +190,8 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
             revert OrderNotOpen();
         }
 
-        _validateOrderData(trade.bid, registry.getOrder(trade.bid.orderId), true);
-        _validateOrderData(
+        _validateOrderParams(trade.bid, registry.getOrder(trade.bid.orderId), true);
+        _validateOrderParams(
             trade.offer,
             registry.getOrder(trade.offer.orderId),
             false
@@ -193,8 +229,8 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
         );
     }
 
-    function _validateOrderData(
-        OrderData calldata provided,
+    function _validateOrderParams(
+        OrderRegistry.OrderParams calldata provided,
         OrderRegistry.OrderParams memory stored,
         bool expectedBid
     ) internal pure {
@@ -211,6 +247,7 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
             stored.preferredTradingPartner != provided.preferredTradingPartner ||
             stored.preferredEnergyRate != provided.preferredEnergyRate ||
             stored.tradingPartner != provided.tradingPartner ||
+            stored.isBid != provided.isBid ||
             stored.isBid != expectedBid
         ) {
             revert InvalidOrderParams();
