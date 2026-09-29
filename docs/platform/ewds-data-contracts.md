@@ -34,10 +34,14 @@ Primary files:
 - `int.forecasts.upsert.request.v1.json`
 - `int.measurements.upsert.request.v1.json`
 - `int.market.upsert.request.v1.json`
-- `int.community.upsert.request.v1.json`
-- `int.community.upsert.response.v1.json`
 - `int.communities.query.request.v1.json`
 - `int.communities.query.response.v1.json`
+- `int.facility.schema.v1.json`
+- `int.site.schema.v1.json`
+- `int.measurements.submitted.event.v1.json`
+- `int.facility.submitted.event.v1.json`
+- `int.site.submitted.event.v1.json`
+- `int.community.submitted.event.v1.json`
 
 DDHub topic names use camelCase because the Client Gateway UI rejects dots in
 topic names. The schema file names and payload `operation` values keep dotted
@@ -51,10 +55,30 @@ operation names for readability and service routing:
 | `tradesQueryResponse` | response envelope | `int.trades.query.response.v1.json` |
 | `measurementsQuery` | `measurements.query` | `int.measurements.query.request.v1.json` |
 | `measurementsQueryResponse` | response envelope | `int.measurements.query.response.v1.json` |
-| `communityUpsert` | `community.upsert` | `int.community.upsert.request.v1.json` |
-| `communityUpsertResponse` | response envelope | `int.community.upsert.response.v1.json` |
 | `communitiesQuery` | `communities.query` | `int.communities.query.request.v1.json` |
 | `communitiesQueryResponse` | response envelope | `int.communities.query.response.v1.json` |
+| `measurementsSubmitted` | `measurements.submitted` event | `int.measurements.submitted.event.v1.json` |
+| `facilitySubmitted` | `facility.submitted` event | `int.facility.submitted.event.v1.json` |
+| `siteSubmitted` | `site.submitted` event | `int.site.submitted.event.v1.json` |
+| `communitySubmitted` | `community.submitted` event | `int.community.submitted.event.v1.json` |
+
+### Measurement Mapping
+
+Used by `measurements.query` responses and `measurements.submitted` events.
+
+| Schema field | Current runtime source |
+|---|---|
+| `facilityId` | `MeasurementSchema.facility_id` |
+| `communityUuid` | `MeasurementSchema.community_uuid` |
+| `timeSlot` | `MeasurementSchema.time_slot` (RFC 3339) |
+| `creationTime` | `MeasurementSchema.creation_time` (RFC 3339) |
+| `energyKwh` | `MeasurementSchema.energy_kwh` |
+
+### Facility and Site Mapping
+
+`facility.submitted` and `site.submitted` events carry `FacilitySchema` and
+`SiteSchema` unchanged, so their fields are snake_case (`facility_id`,
+`site_name`, ...), like `facilities.query` responses.
 
 ### Community Mapping
 
@@ -106,7 +130,8 @@ Runtime-only fields not represented in the agreed Intelligent `Order` schema:
 The first schema pack encodes the following validation intent from the spreadsheet:
 
 - UUID fields for Intelligent identifiers.
-- ISO 8601 date-time fields for market, order, trade, and clearing timestamps.
+- ISO 8601 date-time fields for market, order, trade, clearing, measurement and
+  event timestamps.
 - Positive numeric constraints for quantities.
 - Explicit enums for market type, matching algorithm, order type/status, trade
   status, clearing status, and no-bid reason.

@@ -11,7 +11,6 @@ clearingResultsQuery
 marketsQuery
 facilitiesQuery
 idsQuery
-communityUpsert
 communitiesQuery
 ordersQueryTest
 tradesQueryTest
@@ -20,7 +19,6 @@ clearingResultsQueryTest
 marketsQueryTest
 facilitiesQueryTest
 idsQueryTest
-communityUpsertTest
 communitiesQueryTest
 "
 
@@ -29,6 +27,14 @@ orderCreated
 tradeCreated
 clearingResultCreated
 marketStatusUpdated
+measurementsSubmitted
+facilitySubmitted
+siteSubmitted
+communitySubmitted
+measurementsSubmittedTest
+facilitySubmittedTest
+siteSubmittedTest
+communitySubmittedTest
 "
 
 CHANNELS="

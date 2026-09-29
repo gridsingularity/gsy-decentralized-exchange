@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "int.site.submitted.event.v1",
+  "title": "siteSubmitted event",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "eventId": { "type": "string", "minLength": 1 },
+    "eventType": { "const": "site.submitted" },
+    "occurredAt": { "type": "string", "format": "date-time" },
+    "data": { "$ref": "./int.site.schema.v1.json" }
+  },
+  "required": ["eventId", "eventType", "occurredAt", "data"]
+}

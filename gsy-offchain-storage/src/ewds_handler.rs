@@ -3,14 +3,14 @@ use anyhow::{anyhow, Result};
 use futures::future::join_all;
 use primitives::db_api_schema::profiles::{MeasurementPointType, MeasurementSchema};
 use primitives::ewds::dto::{
-    EwdsClearingResultDto, EwdsCommunityDto, EwdsInboundMessage, EwdsMarketDto, EwdsOrderDto,
-    EwdsRequestEnvelope, EwdsResponseEnvelope, EwdsSendMessageDto, EwdsTradeDto, EwdsMeasurementDto
+    EwdsClearingResultDto, EwdsCommunityDto, EwdsInboundMessage, EwdsMarketDto, EwdsMeasurementDto,
+    EwdsOrderDto, EwdsRequestEnvelope, EwdsResponseEnvelope, EwdsSendMessageDto, EwdsTradeDto,
 };
 use primitives::ewds::{
     client_id_for_suffix, env_var, ewds_rate_limit_backoff_ms, format_response_body,
     is_rate_limited_message, is_rate_limited_response, is_transient_gateway_message,
-    is_transient_gateway_response, parse_gateway_delivery_summary, EwdsEventType, EwdsOperation,
-    EwdsTopicConfig,
+    is_transient_gateway_response, parse_gateway_delivery_summary, EwdsEventTopicConfig,
+    EwdsEventType, EwdsOperation, EwdsTopicConfig,
 };
 use primitives::utils::{rfc3339_to_epoch, timestamp_to_string_with_padding};
 use reqwest::Client;
@@ -34,12 +34,8 @@ pub struct EwdsHandlerConfig {
     pub request_fqcn: String,
     pub response_fqcn: String,
     pub event_publish_fqcn: String,
-    // Not consumed yet; reserved for a future events subscriber.
     pub event_subscribe_fqcn: String,
-    pub order_created_topic: String,
-    pub trade_created_topic: String,
-    pub clearing_result_created_topic: String,
-    pub market_status_updated_topic: String,
+    pub event_topics: EwdsEventTopicConfig,
     pub topic_owner: String,
     pub topic_version: String,
     pub request_client_id: String,
@@ -82,14 +78,6 @@ impl EwdsHandlerConfig {
             .unwrap_or_else(|| "gsy.intelligent.events.pub".to_string());
         let event_subscribe_fqcn = env_var("EWDS_EVENT_SUBSCRIBE_FQCN")
             .unwrap_or_else(|| "gsy.intelligent.events.sub".to_string());
-        let order_created_topic =
-            env_var("EWDS_ORDER_CREATED_EVENT_TOPIC").unwrap_or_else(|| "orderCreated".to_string());
-        let trade_created_topic =
-            env_var("EWDS_TRADE_CREATED_EVENT_TOPIC").unwrap_or_else(|| "tradeCreated".to_string());
-        let clearing_result_created_topic = env_var("EWDS_CLEARING_RESULT_CREATED_EVENT_TOPIC")
-            .unwrap_or_else(|| "clearingResultCreated".to_string());
-        let market_status_updated_topic = env_var("EWDS_MARKET_STATUS_UPDATED_EVENT_TOPIC")
-            .unwrap_or_else(|| "marketStatusUpdated".to_string());
 
         Self {
             enabled,
@@ -99,10 +87,7 @@ impl EwdsHandlerConfig {
             response_fqcn,
             event_publish_fqcn,
             event_subscribe_fqcn,
-            order_created_topic,
-            trade_created_topic,
-            clearing_result_created_topic,
-            market_status_updated_topic,
+            event_topics: EwdsEventTopicConfig::from_env(),
             topic_owner: std::env::var("EWDS_TOPIC_OWNER")
                 .unwrap_or_else(|_| "integration.apps.intelligent.auth.ewc".to_string()),
             topic_version: std::env::var("EWDS_TOPIC_VERSION")
@@ -119,11 +104,17 @@ impl EwdsHandlerConfig {
 
     /// The EWDS topic an event of the given type is published on.
     pub fn event_topic(&self, event_type: EwdsEventType) -> &str {
-        match event_type {
-            EwdsEventType::OrderCreated => &self.order_created_topic,
-            EwdsEventType::TradeCreated => &self.trade_created_topic,
-            EwdsEventType::ClearingResultCreated => &self.clearing_result_created_topic,
-            EwdsEventType::MarketStatusUpdated => &self.market_status_updated_topic,
+        self.event_topics.for_event_type(event_type)
+    }
+
+    pub fn subscribe_fqcn(&self, topic_name: &str) -> &str {
+        if EwdsEventType::ALL
+            .into_iter()
+            .any(|event_type| self.event_topic(event_type) == topic_name)
+        {
+            &self.event_subscribe_fqcn
+        } else {
+            &self.request_fqcn
         }
     }
 }
@@ -210,7 +201,7 @@ async fn run_topic_worker(
     let mut rate_limit_attempt = 0u32;
 
     loop {
-        let delay_ms = match process_topic_batch(
+        let result = process_topic_batch(
             &db,
             &client,
             &config,
@@ -218,30 +209,41 @@ async fn run_topic_worker(
             &mut seen_request_ids,
             &mut seen_queue,
         )
-        .await
-        {
-            Ok(()) => {
-                rate_limit_attempt = 0;
+        .await;
+        if let Err(error) = &result {
+            warn!(
+                "EWDS {} worker batch processing failed: {}",
+                operation, error
+            );
+        }
+
+        let delay_ms = next_poll_delay_ms(&result, &config, &mut rate_limit_attempt);
+        sleep(Duration::from_millis(delay_ms)).await;
+    }
+}
+
+pub(crate) fn next_poll_delay_ms(
+    result: &Result<()>,
+    config: &EwdsHandlerConfig,
+    rate_limit_attempt: &mut u32,
+) -> u64 {
+    match result {
+        Ok(()) => {
+            *rate_limit_attempt = 0;
+            config.poll_interval_ms
+        }
+        Err(error) => {
+            let message = error.to_string();
+            if is_rate_limited_message(message.as_str())
+                || is_transient_gateway_message(message.as_str())
+            {
+                let delay_ms = ewds_rate_limit_backoff_ms(*rate_limit_attempt);
+                *rate_limit_attempt = rate_limit_attempt.saturating_add(1);
+                delay_ms
+            } else {
                 config.poll_interval_ms
             }
-            Err(error) => {
-                warn!(
-                    "EWDS {} worker batch processing failed: {}",
-                    operation, error
-                );
-                if is_rate_limited_message(error.to_string().as_str())
-                    || is_transient_gateway_message(error.to_string().as_str())
-                {
-                    let delay_ms = ewds_rate_limit_backoff_ms(rate_limit_attempt);
-                    rate_limit_attempt = rate_limit_attempt.saturating_add(1);
-                    delay_ms
-                } else {
-                    config.poll_interval_ms
-                }
-            }
-        };
-
-        sleep(Duration::from_millis(delay_ms)).await;
+        }
     }
 }
 
@@ -255,7 +257,7 @@ async fn process_topic_batch(
 ) -> Result<()> {
     let amount = config.request_batch_size.to_string();
     let topic_name = config.topics.for_operation(operation).request.as_str();
-    let messages = poll_requests_for_topic(client, config, topic_name, amount.as_str()).await?;
+    let messages = poll_messages(client, config, topic_name, amount.as_str()).await?;
 
     for message in messages {
         let parsed = serde_json::from_str::<EwdsRequestEnvelope>(&message.payload);
@@ -277,13 +279,13 @@ async fn process_topic_batch(
             return Err(error);
         }
 
-        remember_request_id(&request_id, seen_request_ids, seen_queue);
+        remember_id(&request_id, seen_request_ids, seen_queue);
     }
 
     Ok(())
 }
 
-async fn poll_requests_for_topic(
+pub(crate) async fn poll_messages(
     client: &Client,
     config: &EwdsHandlerConfig,
     topic_name: &str,
@@ -293,11 +295,12 @@ async fn poll_requests_for_topic(
         "{}/api/v2/messages",
         config.gateway_url.trim_end_matches('/')
     );
+    let fqcn = config.subscribe_fqcn(topic_name);
     let client_id = client_id_for_suffix(config.request_client_id.as_str(), topic_name);
     let response = client
         .get(get_url.as_str())
         .query(&[
-            ("fqcn", config.request_fqcn.as_str()),
+            ("fqcn", fqcn),
             ("amount", amount),
             ("topicName", topic_name),
             ("topicOwner", config.topic_owner.as_str()),
@@ -310,7 +313,8 @@ async fn poll_requests_for_topic(
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();
         return Err(anyhow!(
-            "EWDS request poll failed for topic '{}': HTTP {}{}",
+            "EWDS poll failed for fqcn='{}', topic='{}': HTTP {}{}",
+            fqcn,
             topic_name,
             status,
             format_response_body(&body)
@@ -323,19 +327,20 @@ async fn poll_requests_for_topic(
         .unwrap_or_default())
 }
 
-fn remember_request_id(
-    request_id: &str,
-    seen_request_ids: &mut HashSet<String>,
+/// Remembers a handled request or event ID, keeping only the most recent ones.
+pub(crate) fn remember_id(
+    id: &str,
+    seen_ids: &mut HashSet<String>,
     seen_queue: &mut VecDeque<String>,
 ) {
-    const MAX_SEEN_REQUEST_IDS: usize = 2_048;
+    const MAX_SEEN_IDS: usize = 2_048;
 
-    seen_request_ids.insert(request_id.to_string());
-    seen_queue.push_back(request_id.to_string());
+    seen_ids.insert(id.to_string());
+    seen_queue.push_back(id.to_string());
 
-    while seen_queue.len() > MAX_SEEN_REQUEST_IDS {
+    while seen_queue.len() > MAX_SEEN_IDS {
         if let Some(evicted) = seen_queue.pop_front() {
-            seen_request_ids.remove(&evicted);
+            seen_ids.remove(&evicted);
         }
     }
 }
@@ -425,34 +430,19 @@ pub async fn handle_request(
                 opt_rfc3339_to_epoch(payload.start_time)?,
                 opt_rfc3339_to_epoch(payload.end_time)?,
             )
-                .await?
-                .into_iter()
-                .filter(|measurement| match payload.facility_id.as_ref() {
-                    Some(facility_id) => measurement.facility_id == *facility_id,
-                    None => true,
-                })
-                .map(EwdsMeasurementDto::from)
-                .collect::<Vec<_>>();
+            .await?
+            .into_iter()
+            .filter(|measurement| match payload.facility_id.as_ref() {
+                Some(facility_id) => measurement.facility_id == *facility_id,
+                None => true,
+            })
+            .map(EwdsMeasurementDto::from)
+            .collect::<Vec<_>>();
             info!(
                 "Publishing EWDS measurements.query response (request_id={}, measurements={})",
                 request_id,
                 data.len()
             );
-
-            send_success_response(client, config, request_id, response_topic.as_str(), data).await
-        }
-        EwdsOperation::CommunityUpsert => {
-            let community = serde_json::from_value::<EwdsCommunityDto>(envelope.payload)
-                .map_err(|e| anyhow!("community.upsert payload parse error: {}", e))?;
-            let request_id = envelope.request_id;
-
-            info!(
-                "Handling EWDS community.upsert request (request_id={}, community_id={})",
-                request_id, community.community_id
-            );
-
-            let saved = db.communities().upsert(community.into()).await?;
-            let data = vec![EwdsCommunityDto::from(saved)];
 
             send_success_response(client, config, request_id, response_topic.as_str(), data).await
         }

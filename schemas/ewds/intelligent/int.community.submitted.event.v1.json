@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "int.community.submitted.event.v1",
+  "title": "communitySubmitted event",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "eventId": { "type": "string", "minLength": 1 },
+    "eventType": { "const": "community.submitted" },
+    "occurredAt": { "type": "string", "format": "date-time" },
+    "data": { "$ref": "./int.community.schema.v1.json" }
+  },
+  "required": ["eventId", "eventType", "occurredAt", "data"]
+}

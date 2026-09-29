@@ -2,7 +2,7 @@ pub mod dto;
 
 use anyhow::{anyhow, Result};
 use dto::{
-    EwdsDeliverySummary, EwdsMessageDto, EwdsQueryResponse, EwdsRequestEnvelope,
+    EwdsDeliverySummary, EwdsEventEnvelope, EwdsMessageDto, EwdsQueryResponse, EwdsRequestEnvelope,
     EwdsSendMessageDto, EwdsSendMessageResponse,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -14,6 +14,7 @@ use tracing::warn;
 const DEFAULT_GATEWAY_URL: &str = "http://ewds-gateway-api:3333";
 const DEFAULT_REQUEST_FQCN: &str = "gsy.intelligent.requests.pub";
 const DEFAULT_RESPONSE_FQCN: &str = "gsy.intelligent.responses.sub";
+const DEFAULT_EVENT_PUBLISH_FQCN: &str = "gsy.intelligent.events.pub";
 const DEFAULT_TOPIC_OWNER: &str = "integration.apps.intelligent.auth.ewc";
 const DEFAULT_TOPIC_VERSION: &str = "1.0.0";
 const DEFAULT_POLL_INTERVAL_MS: u64 = 400;
@@ -27,8 +28,6 @@ pub enum EwdsOperation {
     TradesQuery,
     #[serde(rename = "measurements.query")]
     MeasurementsQuery,
-    #[serde(rename = "community.upsert")]
-    CommunityUpsert,
     #[serde(rename = "communities.query")]
     CommunitiesQuery,
     #[serde(rename = "ids.query")]
@@ -42,11 +41,10 @@ pub enum EwdsOperation {
 }
 
 impl EwdsOperation {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 8] = [
         Self::OrdersQuery,
         Self::TradesQuery,
         Self::MeasurementsQuery,
-        Self::CommunityUpsert,
         Self::CommunitiesQuery,
         Self::ClearingResultsQuery,
         Self::MarketsQuery,
@@ -59,7 +57,6 @@ impl EwdsOperation {
             Self::OrdersQuery => "orders.query",
             Self::TradesQuery => "trades.query",
             Self::MeasurementsQuery => "measurements.query",
-            Self::CommunityUpsert => "community.upsert",
             Self::CommunitiesQuery => "communities.query",
             Self::IdsQuery => "ids.query",
             Self::ClearingResultsQuery => "clearing_results.query",
@@ -73,7 +70,6 @@ impl EwdsOperation {
             Self::OrdersQuery => "orders-query",
             Self::TradesQuery => "trades-query",
             Self::MeasurementsQuery => "measurements-query",
-            Self::CommunityUpsert => "community-upsert",
             Self::CommunitiesQuery => "communities-query",
             Self::IdsQuery => "ids-query",
             Self::ClearingResultsQuery => "clearing_results-query",
@@ -99,14 +95,26 @@ pub enum EwdsEventType {
     ClearingResultCreated,
     #[serde(rename = "market_status.updated")]
     MarketStatusUpdated,
+    #[serde(rename = "measurements.submitted")]
+    MeasurementsSubmitted,
+    #[serde(rename = "facility.submitted")]
+    FacilitySubmitted,
+    #[serde(rename = "site.submitted")]
+    SiteSubmitted,
+    #[serde(rename = "community.submitted")]
+    CommunitySubmitted,
 }
 
 impl EwdsEventType {
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 8] = [
         Self::OrderCreated,
         Self::TradeCreated,
         Self::ClearingResultCreated,
         Self::MarketStatusUpdated,
+        Self::MeasurementsSubmitted,
+        Self::FacilitySubmitted,
+        Self::SiteSubmitted,
+        Self::CommunitySubmitted,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -115,6 +123,10 @@ impl EwdsEventType {
             Self::TradeCreated => "trade.created",
             Self::ClearingResultCreated => "clearing_result.created",
             Self::MarketStatusUpdated => "market_status.updated",
+            Self::MeasurementsSubmitted => "measurements.submitted",
+            Self::FacilitySubmitted => "facility.submitted",
+            Self::SiteSubmitted => "site.submitted",
+            Self::CommunitySubmitted => "community.submitted",
         }
     }
 }
@@ -136,7 +148,6 @@ pub struct EwdsTopicConfig {
     orders: EwdsTopicPair,
     trades: EwdsTopicPair,
     measurements: EwdsTopicPair,
-    community_upsert: EwdsTopicPair,
     communities: EwdsTopicPair,
     ids: EwdsTopicPair,
     clearing_results: EwdsTopicPair,
@@ -158,10 +169,6 @@ impl Default for EwdsTopicConfig {
             measurements: EwdsTopicPair {
                 request: "measurementsQuery".to_string(),
                 response: "measurementsQueryResponse".to_string(),
-            },
-            community_upsert: EwdsTopicPair {
-                request: "communityUpsert".to_string(),
-                response: "communityUpsertResponse".to_string(),
             },
             communities: EwdsTopicPair {
                 request: "communitiesQuery".to_string(),
@@ -221,16 +228,6 @@ impl EwdsTopicConfig {
                     defaults.measurements.response.as_str(),
                 ),
             },
-            community_upsert: EwdsTopicPair {
-                request: env_or(
-                    "EWDS_COMMUNITY_UPSERT_TOPIC",
-                    defaults.community_upsert.request.as_str(),
-                ),
-                response: env_or(
-                    "EWDS_COMMUNITY_UPSERT_RESPONSE_TOPIC",
-                    defaults.community_upsert.response.as_str(),
-                ),
-            },
             communities: EwdsTopicPair {
                 request: env_or(
                     "EWDS_COMMUNITIES_REQUEST_TOPIC",
@@ -283,12 +280,91 @@ impl EwdsTopicConfig {
             EwdsOperation::OrdersQuery => &self.orders,
             EwdsOperation::TradesQuery => &self.trades,
             EwdsOperation::MeasurementsQuery => &self.measurements,
-            EwdsOperation::CommunityUpsert => &self.community_upsert,
             EwdsOperation::CommunitiesQuery => &self.communities,
             EwdsOperation::IdsQuery => &self.ids,
             EwdsOperation::ClearingResultsQuery => &self.clearing_results,
             EwdsOperation::MarketsQuery => &self.markets,
             EwdsOperation::FacilitiesQuery => &self.facilities,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EwdsEventTopicConfig {
+    order_created: String,
+    trade_created: String,
+    clearing_result_created: String,
+    market_status_updated: String,
+    measurements_submitted: String,
+    facility_submitted: String,
+    site_submitted: String,
+    community_submitted: String,
+}
+
+impl Default for EwdsEventTopicConfig {
+    fn default() -> Self {
+        Self {
+            order_created: "orderCreated".to_string(),
+            trade_created: "tradeCreated".to_string(),
+            clearing_result_created: "clearingResultCreated".to_string(),
+            market_status_updated: "marketStatusUpdated".to_string(),
+            measurements_submitted: "measurementsSubmitted".to_string(),
+            facility_submitted: "facilitySubmitted".to_string(),
+            site_submitted: "siteSubmitted".to_string(),
+            community_submitted: "communitySubmitted".to_string(),
+        }
+    }
+}
+
+impl EwdsEventTopicConfig {
+    pub fn from_env() -> Self {
+        let defaults = Self::default();
+        Self {
+            order_created: env_or(
+                "EWDS_ORDER_CREATED_EVENT_TOPIC",
+                defaults.order_created.as_str(),
+            ),
+            trade_created: env_or(
+                "EWDS_TRADE_CREATED_EVENT_TOPIC",
+                defaults.trade_created.as_str(),
+            ),
+            clearing_result_created: env_or(
+                "EWDS_CLEARING_RESULT_CREATED_EVENT_TOPIC",
+                defaults.clearing_result_created.as_str(),
+            ),
+            market_status_updated: env_or(
+                "EWDS_MARKET_STATUS_UPDATED_EVENT_TOPIC",
+                defaults.market_status_updated.as_str(),
+            ),
+            measurements_submitted: env_or(
+                "EWDS_MEASUREMENTS_SUBMITTED_EVENT_TOPIC",
+                defaults.measurements_submitted.as_str(),
+            ),
+            facility_submitted: env_or(
+                "EWDS_FACILITY_SUBMITTED_EVENT_TOPIC",
+                defaults.facility_submitted.as_str(),
+            ),
+            site_submitted: env_or(
+                "EWDS_SITE_SUBMITTED_EVENT_TOPIC",
+                defaults.site_submitted.as_str(),
+            ),
+            community_submitted: env_or(
+                "EWDS_COMMUNITY_SUBMITTED_EVENT_TOPIC",
+                defaults.community_submitted.as_str(),
+            ),
+        }
+    }
+
+    pub fn for_event_type(&self, event_type: EwdsEventType) -> &str {
+        match event_type {
+            EwdsEventType::OrderCreated => &self.order_created,
+            EwdsEventType::TradeCreated => &self.trade_created,
+            EwdsEventType::ClearingResultCreated => &self.clearing_result_created,
+            EwdsEventType::MarketStatusUpdated => &self.market_status_updated,
+            EwdsEventType::MeasurementsSubmitted => &self.measurements_submitted,
+            EwdsEventType::FacilitySubmitted => &self.facility_submitted,
+            EwdsEventType::SiteSubmitted => &self.site_submitted,
+            EwdsEventType::CommunitySubmitted => &self.community_submitted,
         }
     }
 }
@@ -305,6 +381,8 @@ pub struct EwdsClientConfig {
     pub poll_interval_ms: u64,
     pub empty_response_grace_ms: u64,
     pub topics: EwdsTopicConfig,
+    pub event_publish_fqcn: String,
+    pub event_topics: EwdsEventTopicConfig,
 }
 
 impl EwdsClientConfig {
@@ -336,6 +414,8 @@ impl EwdsClientConfig {
                 DEFAULT_EMPTY_RESPONSE_GRACE_MS,
             ),
             topics: EwdsTopicConfig::from_env(),
+            event_publish_fqcn: env_or("EWDS_EVENT_PUBLISH_FQCN", DEFAULT_EVENT_PUBLISH_FQCN),
+            event_topics: EwdsEventTopicConfig::from_env(),
         }
     }
 }
@@ -381,6 +461,40 @@ impl EwdsClient {
         self.poll_response(pending_query).await
     }
 
+    pub async fn publish(
+        &self,
+        fqcn: &str,
+        topic_name: &str,
+        transaction_id: &str,
+        payload: String,
+    ) -> Result<()> {
+        let message = EwdsSendMessageDto {
+            fqcn: fqcn.to_string(),
+            topic_name: topic_name.to_string(),
+            topic_version: self.config.topic_version.clone(),
+            topic_owner: self.config.topic_owner.clone(),
+            transaction_id: transaction_id.to_string(),
+            payload,
+            anonymous_recipient: Vec::new(),
+        };
+        self.post_message(
+            &message,
+            format!("{} message", topic_name).as_str(),
+            Instant::now(),
+        )
+        .await
+    }
+
+    pub async fn publish_event<T: Serialize>(&self, event: &EwdsEventEnvelope<T>) -> Result<()> {
+        self.publish(
+            self.config.event_publish_fqcn.as_str(),
+            self.config.event_topics.for_event_type(event.event_type),
+            event.event_id.as_str(),
+            serde_json::to_string(event)?,
+        )
+        .await
+    }
+
     async fn send_query(
         &self,
         operation: EwdsOperation,
@@ -408,7 +522,30 @@ impl EwdsClient {
             payload: serde_json::to_string(&envelope)?,
             anonymous_recipient: Vec::new(),
         };
+        self.post_message(
+            &send_message_body,
+            format!("{} request", operation).as_str(),
+            started,
+        )
+        .await?;
 
+        Ok(PendingQuery {
+            operation,
+            request_id,
+            response_topic: topic_pair.response.clone(),
+            started,
+        })
+    }
+
+    /// Posts `message` to the gateway. Rate limits, transient gateway errors and deliveries
+    /// that reached no recipient are retried until the timeout, counted from `started`.
+    /// `label` names the message in errors and logs.
+    async fn post_message(
+        &self,
+        message: &EwdsSendMessageDto,
+        label: &str,
+        started: Instant,
+    ) -> Result<()> {
         let post_url = format!(
             "{}/api/v2/messages",
             self.config.gateway_base.trim_end_matches('/')
@@ -417,16 +554,16 @@ impl EwdsClient {
         loop {
             if started.elapsed() > Duration::from_millis(self.config.timeout_ms) {
                 return Err(anyhow!(
-                    "EWDS timeout sending {} request (request_id={})",
-                    operation,
-                    request_id
+                    "EWDS timeout sending {} (transaction_id={})",
+                    label,
+                    message.transaction_id
                 ));
             }
 
             let send_response = self
                 .client
                 .post(post_url.as_str())
-                .json(&send_message_body)
+                .json(message)
                 .send()
                 .await?;
             let send_status = send_response.status();
@@ -434,13 +571,13 @@ impl EwdsClient {
             if send_status.is_success() {
                 let delivery = parse_gateway_delivery_summary(body.as_str())?;
                 if delivery.sent > 0 {
-                    break;
+                    return Ok(());
                 }
 
                 let delay_ms = ewds_rate_limit_backoff_ms(delivery_attempt);
                 warn!(
-                    "EWDS gateway accepted {} request but delivered it to no recipients (failed={}, total={}); retrying in {} ms",
-                    operation, delivery.failed, delivery.total, delay_ms
+                    "EWDS gateway accepted {} but delivered it to no recipients (failed={}, total={}); retrying in {} ms",
+                    label, delivery.failed, delivery.total, delay_ms
                 );
                 delivery_attempt = delivery_attempt.saturating_add(1);
                 sleep(Duration::from_millis(delay_ms)).await;
@@ -450,8 +587,8 @@ impl EwdsClient {
             if is_rate_limited_response(send_status, &body) {
                 let delay_ms = ewds_rate_limit_backoff_ms(delivery_attempt);
                 warn!(
-                    "EWDS rate limit while sending {} request; retrying in {} ms",
-                    operation, delay_ms
+                    "EWDS rate limit while sending {}; retrying in {} ms",
+                    label, delay_ms
                 );
                 delivery_attempt = delivery_attempt.saturating_add(1);
                 sleep(Duration::from_millis(delay_ms)).await;
@@ -461,8 +598,8 @@ impl EwdsClient {
             if is_transient_gateway_response(send_status, &body) {
                 let delay_ms = ewds_rate_limit_backoff_ms(delivery_attempt);
                 warn!(
-                    "EWDS transient gateway error while sending {} request; retrying in {} ms",
-                    operation, delay_ms
+                    "EWDS transient gateway error while sending {}; retrying in {} ms",
+                    label, delay_ms
                 );
                 delivery_attempt = delivery_attempt.saturating_add(1);
                 sleep(Duration::from_millis(delay_ms)).await;
@@ -471,18 +608,11 @@ impl EwdsClient {
 
             return Err(anyhow!(
                 "EWDS message send failed for {}: HTTP {}{}",
-                operation,
+                label,
                 send_status,
                 format_response_body(&body)
             ));
         }
-
-        Ok(PendingQuery {
-            operation,
-            request_id,
-            response_topic: topic_pair.response.clone(),
-            started,
-        })
     }
 
     async fn poll_response<T: DeserializeOwned>(
@@ -707,6 +837,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn event_types_map_to_their_topics() {
+        let topics = EwdsEventTopicConfig::default();
+        let expected = [
+            "orderCreated",
+            "tradeCreated",
+            "clearingResultCreated",
+            "marketStatusUpdated",
+            "measurementsSubmitted",
+            "facilitySubmitted",
+            "siteSubmitted",
+            "communitySubmitted",
+        ];
+        assert_eq!(EwdsEventType::ALL.len(), expected.len());
+        for (event_type, topic) in EwdsEventType::ALL.into_iter().zip(expected) {
+            assert_eq!(topics.for_event_type(event_type), topic);
+        }
+    }
+
+    #[test]
     fn operations_map_to_their_topic_pairs() {
         let topics = EwdsTopicConfig::default();
 
@@ -732,13 +881,6 @@ mod tests {
             }
         );
         assert_eq!(
-            topics.for_operation(EwdsOperation::CommunityUpsert),
-            &EwdsTopicPair {
-                request: "communityUpsert".to_string(),
-                response: "communityUpsertResponse".to_string(),
-            }
-        );
-        assert_eq!(
             topics.for_operation(EwdsOperation::CommunitiesQuery),
             &EwdsTopicPair {
                 request: "communitiesQuery".to_string(),
@@ -749,12 +891,18 @@ mod tests {
 
     #[test]
     fn event_types_serialize_to_their_wire_names() {
-        for (event_type, wire_name) in EwdsEventType::ALL.into_iter().zip([
+        let wire_names = [
             "order.created",
             "trade.created",
             "clearing_result.created",
             "market_status.updated",
-        ]) {
+            "measurements.submitted",
+            "facility.submitted",
+            "site.submitted",
+            "community.submitted",
+        ];
+        assert_eq!(EwdsEventType::ALL.len(), wire_names.len());
+        for (event_type, wire_name) in EwdsEventType::ALL.into_iter().zip(wire_names) {
             assert_eq!(event_type.as_str(), wire_name);
             assert_eq!(event_type.to_string(), wire_name);
             assert_eq!(
@@ -769,22 +917,17 @@ mod tests {
     }
 
     #[test]
-    fn community_operations_round_trip_through_the_request_envelope() {
-        for operation in [
-            EwdsOperation::CommunityUpsert,
-            EwdsOperation::CommunitiesQuery,
-        ] {
-            let envelope = EwdsRequestEnvelope {
-                request_id: "request-id".to_string(),
-                operation,
-                payload: Value::Object(Default::default()),
-            };
+    fn communities_query_round_trips_through_the_request_envelope() {
+        let envelope = EwdsRequestEnvelope {
+            request_id: "request-id".to_string(),
+            operation: EwdsOperation::CommunitiesQuery,
+            payload: Value::Object(Default::default()),
+        };
 
-            let serialized = serde_json::to_string(&envelope).unwrap();
-            let deserialized: EwdsRequestEnvelope = serde_json::from_str(&serialized).unwrap();
+        let serialized = serde_json::to_string(&envelope).unwrap();
+        let deserialized: EwdsRequestEnvelope = serde_json::from_str(&serialized).unwrap();
 
-            assert_eq!(deserialized.operation, operation);
-        }
+        assert_eq!(deserialized.operation, EwdsOperation::CommunitiesQuery);
     }
 
     #[test]

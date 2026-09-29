@@ -1,8 +1,11 @@
+use crate::db::measurements_service::{
+    flow_direction, insert_measurements, profile_measurement_id,
+};
 use crate::db::DbRef;
 use actix_web::{web::Json, web::Query, HttpResponse, Responder};
 use anyhow::Result;
 use primitives::db_api_schema::profiles::{
-    FlowDirection, ForecastSchema, MeasurementPointSchema, MeasurementPointType, MeasurementSchema,
+    ForecastSchema, MeasurementPointSchema, MeasurementPointType, MeasurementSchema,
     TimeseriesSchema,
 };
 use primitives::utils::timestamp_to_string_with_padding;
@@ -16,59 +19,8 @@ pub struct ProfilesParameters {
     end_time: Option<u64>,
 }
 
-fn profile_measurement_id(
-    point_type: MeasurementPointType,
-    community_uuid: &str,
-    facility_id: &str,
-) -> String {
-    let prefix = match point_type {
-        MeasurementPointType::Measurement => "measurement",
-        MeasurementPointType::Forecast => "forecast",
-    };
-    format!("{prefix}:{community_uuid}:{facility_id}")
-}
-
 fn parse_timeseries_timestamp(timestamp: &str) -> Option<u64> {
     timestamp.parse::<u64>().ok()
-}
-
-fn flow_direction(value: f64) -> FlowDirection {
-    if value >= 0.0 {
-        FlowDirection::Import
-    } else {
-        FlowDirection::Export
-    }
-}
-
-fn measurement_point_from_measurement(measurement: &MeasurementSchema) -> MeasurementPointSchema {
-    MeasurementPointSchema {
-        point_type: MeasurementPointType::Measurement,
-        measurement_id: profile_measurement_id(
-            MeasurementPointType::Measurement,
-            measurement.community_uuid.as_str(),
-            measurement.facility_id.as_str(),
-        ),
-        property_measured: "energy_measured".to_string(),
-        unit: "kWh".to_string(),
-        direction: flow_direction(measurement.energy_kwh),
-        energy_accumulated: false,
-        time_resolution: "PT15M".to_string(),
-        phase: 0,
-        asset_name: measurement.facility_id.clone(),
-        datasource_name: Some(measurement.community_uuid.clone()),
-    }
-}
-
-fn measurement_timeseries(measurement: &MeasurementSchema) -> TimeseriesSchema {
-    TimeseriesSchema {
-        measurement_point: profile_measurement_id(
-            MeasurementPointType::Measurement,
-            measurement.community_uuid.as_str(),
-            measurement.facility_id.as_str(),
-        ),
-        timestamp: timestamp_to_string_with_padding(measurement.time_slot),
-        value: measurement.energy_kwh,
-    }
 }
 
 fn measurement_point_from_forecast(forecast: &ForecastSchema) -> MeasurementPointSchema {
@@ -140,25 +92,7 @@ pub async fn post_measurements(
     measurements: Json<Vec<MeasurementSchema>>,
     db: DbRef,
 ) -> impl Responder {
-    let points = measurements
-        .iter()
-        .map(measurement_point_from_measurement)
-        .collect::<Vec<_>>();
-    let values = measurements
-        .iter()
-        .map(measurement_timeseries)
-        .collect::<Vec<_>>();
-
-    let result = async {
-        db.get_ref()
-            .measurement_points()
-            .insert_points(points)
-            .await?;
-        db.get_ref().timeseries().insert_values(values).await
-    }
-    .await;
-
-    match result {
+    match insert_measurements(db.get_ref(), &measurements).await {
         Ok(ids) => HttpResponse::Ok().json(ids),
         Err(_) => HttpResponse::InternalServerError().finish(),
     }

@@ -45,6 +45,11 @@ async fn main() {
         matching_algorithm, feature_path
     );
 
+    // @ewds features publish EWDS events, so they only run with the EWDS transport.
+    let ewds_transport = env::var("OFFCHAIN_STORAGE_TRANSPORT")
+        .map(|transport| transport.eq_ignore_ascii_case("ewds"))
+        .unwrap_or(false);
+
     world::MyWorld::cucumber()
         .max_concurrent_scenarios(1)
         .after(|_feature, _rule, _scenario, _ev, _world| {
@@ -52,6 +57,13 @@ async fn main() {
                 delete_database().await.ok();
             })
         })
-        .run_and_exit(feature_path)
+        .filter_run_and_exit(feature_path, move |feature, _rule, scenario| {
+            ewds_transport
+                || !feature
+                    .tags
+                    .iter()
+                    .chain(&scenario.tags)
+                    .any(|tag| tag == "ewds")
+        })
         .await;
 }

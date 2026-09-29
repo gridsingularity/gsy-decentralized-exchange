@@ -102,10 +102,16 @@ book, the E2E harness first advances local Anvil to the next matching boundary.
 After the order book is indexed, it fast-forwards to the clearing boundary with
 empty-block RPC calls rather than waiting for one transaction per block.
 
-Before waiting for the orchestrator, the E2E runner idempotently upserts a
-canonical community using `OFFCHAIN_STORAGE_TRANSPORT`. The orchestrator then
-queries the same community collection and opens the community-aware Spot market
-whose ID is derived from community UUID, market type, and delivery slot.
+Before waiting for the orchestrator, the E2E runner idempotently stores a
+canonical community using `OFFCHAIN_STORAGE_TRANSPORT`: over HTTP it calls
+`POST /communities`, and with the EWDS transport it publishes a
+`community.submitted` event and waits until `communities.query` returns the
+community. The orchestrator then queries the same community collection and
+opens the community-aware Spot market whose ID is derived from community UUID,
+market type, and delivery slot.
+
+Features tagged `@ewds`, such as `events.feature`, only run with
+`OFFCHAIN_STORAGE_TRANSPORT=ewds`; HTTP runs skip them.
 
 The contracts command starts the dedicated local Anvil container, deploys the
 upgradeable contract suite, grants service roles, and writes
@@ -221,8 +227,13 @@ EWF-hosted broker and the following local channels/topics:
 - `ordersQuery` / `ordersQueryResponse`
 - `tradesQuery` / `tradesQueryResponse`
 - `measurementsQuery` / `measurementsQueryResponse`
-- `communityUpsert` / `communityUpsertResponse`
 - `communitiesQuery` / `communitiesQueryResponse`
+
+The community setup and the `@ewds` events feature also need
+`gsy.intelligent.events.pub` / `gsy.intelligent.events.sub` with the
+`communitySubmittedTest`, `siteSubmittedTest`, `facilitySubmittedTest` and
+`measurementsSubmittedTest` topics. The events feature adds one
+feature, one scenario and four steps to the pay-as-bid summary below.
 
 Expected passing summary:
 
