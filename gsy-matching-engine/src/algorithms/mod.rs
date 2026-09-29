@@ -3,7 +3,7 @@ mod pay_as_clear;
 
 pub use pay_as_clear::PayAsClearPricing;
 
-use crate::models::{BidOfferMatch, MatchingData, Order};
+use crate::models::{BidOfferMatch, MatchType, MatchingData, Order};
 use primitives::MatchingAlgorithm;
 use uuid::Uuid;
 
@@ -72,7 +72,13 @@ impl MatchingData {
                     continue;
                 }
 
-                matches.push(fill_order_pair(bid, offer, selected_energy, preferred_rate));
+                matches.push(fill_order_pair(
+                    bid,
+                    offer,
+                    selected_energy,
+                    preferred_rate,
+                    MatchType::Preferred,
+                ));
 
                 if bid.energy == 0 {
                     break;
@@ -133,7 +139,13 @@ impl MatchingData {
                 let rate = clearing_point
                     .map(|point| point.clearing_price)
                     .unwrap_or(bid.energy_rate);
-                matches.push(fill_order_pair(bid, offer, selected_energy, rate));
+                matches.push(fill_order_pair(
+                    bid,
+                    offer,
+                    selected_energy,
+                    rate,
+                    MatchType::Standard,
+                ));
             }
         }
 
@@ -141,8 +153,15 @@ impl MatchingData {
     }
 }
 
-fn fill_order_pair(bid: &mut Order, offer: &mut Order, energy: u64, rate: u64) -> BidOfferMatch {
+fn fill_order_pair(
+    bid: &mut Order,
+    offer: &mut Order,
+    energy: u64,
+    rate: u64,
+    match_type: MatchType,
+) -> BidOfferMatch {
     let matched = BidOfferMatch {
+        match_type,
         market_id: offer.market_id.clone(),
         time_slot: offer.time_slot,
         bid: bid.clone(),

@@ -28,8 +28,15 @@ pub struct Order {
     pub attributes: Option<Attributes>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatchType {
+    Standard,
+    Preferred,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct BidOfferMatch {
+    pub match_type: MatchType,
     pub market_id: String,
     pub time_slot: u64,
     pub bid: Order,

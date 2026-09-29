@@ -1,7 +1,7 @@
 use ethers::{prelude::*, utils::Anvil};
 use ethers_solc::{artifacts::Severity, Project, ProjectPathsConfig};
 use gsy_matching_engine::connectors::evm_connector::send_settle_batch_transaction;
-use gsy_matching_engine::models::{BidOfferMatch, Order};
+use gsy_matching_engine::models::{BidOfferMatch, MatchType, Order};
 use primitives::db_api_schema::orders::{
     DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus,
 };
@@ -251,6 +251,7 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
         ..ask_order.clone()
     };
     let second_match = BidOfferMatch {
+        match_type: MatchType::Standard,
         market_id: market_id.clone(),
         time_slot: 1000,
         selected_energy: residual_bid.energy,
@@ -262,6 +263,7 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
     };
     let matches = vec![
         BidOfferMatch {
+            match_type: MatchType::Standard,
             market_id: market_id.clone(),
             time_slot: 1000,
             bid: bid_order,

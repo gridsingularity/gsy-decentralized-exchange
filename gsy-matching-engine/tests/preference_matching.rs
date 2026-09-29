@@ -1,5 +1,5 @@
 use gsy_matching_engine::algorithms::MatchOrders;
-use gsy_matching_engine::models::{BidOfferMatch, MatchingData, Order, Requirements};
+use gsy_matching_engine::models::{BidOfferMatch, MatchType, MatchingData, Order, Requirements};
 use primitives::db_api_schema::orders::{OrderEnum, OrderStatus};
 use primitives::MatchingAlgorithm;
 
@@ -59,6 +59,14 @@ fn every_declared_partner_must_identify_the_counterparty() {
                 matches[0].energy_rate,
                 if eligible { 15 } else { normal_price }
             );
+            assert_eq!(
+                matches[0].match_type,
+                if eligible {
+                    MatchType::Preferred
+                } else {
+                    MatchType::Standard
+                }
+            );
         }
     }
 }
@@ -97,6 +105,7 @@ fn absent_preferred_rates_use_each_orders_normal_rate() {
             let matches = run(&algorithm, vec![bid], vec![offer]);
             assert_eq!(matches.len(), 1);
             assert_eq!(matches[0].energy_rate, price);
+            assert_eq!(matches[0].match_type, MatchType::Preferred);
         }
     }
 }
@@ -121,6 +130,7 @@ fn unequal_effective_rates_fall_back_to_normal_prices() {
             let matches = run(&algorithm, vec![bid], vec![offer]);
             assert_eq!(matches.len(), 1);
             assert_eq!(matches[0].energy_rate, price);
+            assert_eq!(matches[0].match_type, MatchType::Standard);
         }
         let bid = order("buyer", OrderEnum::Bid, 8, Some("seller"), Some(15));
         let offer = order("seller", OrderEnum::Offer, 10, Some("buyer"), Some(12));
@@ -137,6 +147,7 @@ fn equal_preferred_rates_supersede_normal_price_limits() {
             let matches = run(&algorithm, vec![bid], vec![offer]);
             assert_eq!(matches.len(), 1);
             assert_eq!(matches[0].energy_rate, price);
+            assert_eq!(matches[0].match_type, MatchType::Preferred);
         }
     }
 }
@@ -225,6 +236,14 @@ fn latest_residual_after_multiple_preferred_fills_is_reused() {
             };
             let matches = run(&algorithm, bids, offers);
             assert_eq!(matches.len(), 3);
+            assert_eq!(
+                matches.iter().map(|item| item.match_type).collect::<Vec<_>>(),
+                vec![
+                    MatchType::Preferred,
+                    MatchType::Preferred,
+                    MatchType::Standard,
+                ]
+            );
             let (first_residual, latest_residual, standard_order) = if residual_is_bid {
                 (
                     &matches[0].residual_bid,
@@ -279,6 +298,9 @@ fn standard_fills_consume_the_preceding_residual() {
             };
             let matches = run(&algorithm, bids, offers);
             assert_eq!(matches.len(), 2);
+            assert!(matches
+                .iter()
+                .all(|item| item.match_type == MatchType::Standard));
             let (residual, next_order, last_residual) = if residual_is_bid {
                 (
                     &matches[0].residual_bid,
