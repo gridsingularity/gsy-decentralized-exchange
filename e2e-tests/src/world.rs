@@ -2,6 +2,7 @@ use anyhow::{anyhow, Result};
 use cucumber::World;
 use ethers::prelude::*;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
+use primitives::certificates::LocalOriginRecord;
 use primitives::db_api_schema::grid_topology::FacilitySchema;
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::profiles::ForecastSchema;
@@ -37,6 +38,34 @@ pub struct CommunityMarketOrderPair {
     pub offer_id: String,
 }
 
+/// Ids and values seeded into Mongo by a guarantees-of-origin scenario.
+#[derive(Clone, Debug)]
+pub struct GreenProofSeed {
+    pub community_id: String,
+    pub site_id: String,
+    pub seller_owner_id: String,
+    pub buyer_owner_id: String,
+    pub seller_facility_id: String,
+    pub buyer_facility_id: String,
+    pub pv_asset_uuid: String,
+    /// `None` when the scenario seeds no seller export measurement.
+    pub measurement_id: Option<String>,
+    pub trade_uuid: String,
+    pub time_slot: u64,
+    pub status_updated_at: u64,
+    pub energy_kwh: f64,
+}
+
+/// Per-scenario state of the guarantees-of-origin feature.
+#[derive(Clone, Debug, Default)]
+pub struct GreenProofState {
+    pub seed: Option<GreenProofSeed>,
+    /// The `(start_time, end_time)` of the last query, unix seconds.
+    pub window: Option<(u64, u64)>,
+    pub ewds_records: Vec<LocalOriginRecord>,
+    pub ewds_error: Option<String>,
+}
+
 #[derive(Debug, World)]
 #[world(init = Self::new)]
 pub struct MyWorld {
@@ -67,6 +96,7 @@ pub struct MyWorld {
     pub cross_community_order_ids: Option<(String, String)>,
     pub community_market_order_pairs: Vec<CommunityMarketOrderPair>,
     pub community_market_trades: Vec<DbTradeSchema>,
+    pub green_proof: GreenProofState,
 }
 
 impl MyWorld {
@@ -134,6 +164,7 @@ impl MyWorld {
             cross_community_order_ids: None,
             community_market_order_pairs: vec![],
             community_market_trades: vec![],
+            green_proof: GreenProofState::default(),
         })
     }
 
