@@ -87,8 +87,6 @@ impl fmt::Display for EwdsOperation {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EwdsEventType {
-    #[serde(rename = "order.created")]
-    OrderCreated,
     #[serde(rename = "trade.created")]
     TradeCreated,
     #[serde(rename = "clearing_result.created")]
@@ -106,8 +104,7 @@ pub enum EwdsEventType {
 }
 
 impl EwdsEventType {
-    pub const ALL: [Self; 8] = [
-        Self::OrderCreated,
+    pub const ALL: [Self; 7] = [
         Self::TradeCreated,
         Self::ClearingResultCreated,
         Self::MarketStatusUpdated,
@@ -119,7 +116,6 @@ impl EwdsEventType {
 
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::OrderCreated => "order.created",
             Self::TradeCreated => "trade.created",
             Self::ClearingResultCreated => "clearing_result.created",
             Self::MarketStatusUpdated => "market_status.updated",
@@ -291,7 +287,6 @@ impl EwdsTopicConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EwdsEventTopicConfig {
-    order_created: String,
     trade_created: String,
     clearing_result_created: String,
     market_status_updated: String,
@@ -304,7 +299,6 @@ pub struct EwdsEventTopicConfig {
 impl Default for EwdsEventTopicConfig {
     fn default() -> Self {
         Self {
-            order_created: "orderCreated".to_string(),
             trade_created: "tradeCreated".to_string(),
             clearing_result_created: "clearingResultCreated".to_string(),
             market_status_updated: "marketStatusUpdated".to_string(),
@@ -320,10 +314,6 @@ impl EwdsEventTopicConfig {
     pub fn from_env() -> Self {
         let defaults = Self::default();
         Self {
-            order_created: env_or(
-                "EWDS_ORDER_CREATED_EVENT_TOPIC",
-                defaults.order_created.as_str(),
-            ),
             trade_created: env_or(
                 "EWDS_TRADE_CREATED_EVENT_TOPIC",
                 defaults.trade_created.as_str(),
@@ -357,7 +347,6 @@ impl EwdsEventTopicConfig {
 
     pub fn for_event_type(&self, event_type: EwdsEventType) -> &str {
         match event_type {
-            EwdsEventType::OrderCreated => &self.order_created,
             EwdsEventType::TradeCreated => &self.trade_created,
             EwdsEventType::ClearingResultCreated => &self.clearing_result_created,
             EwdsEventType::MarketStatusUpdated => &self.market_status_updated,
@@ -840,7 +829,6 @@ mod tests {
     fn event_types_map_to_their_topics() {
         let topics = EwdsEventTopicConfig::default();
         let expected = [
-            "orderCreated",
             "tradeCreated",
             "clearingResultCreated",
             "marketStatusUpdated",
@@ -892,7 +880,6 @@ mod tests {
     #[test]
     fn event_types_serialize_to_their_wire_names() {
         let wire_names = [
-            "order.created",
             "trade.created",
             "clearing_result.created",
             "market_status.updated",

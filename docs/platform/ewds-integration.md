@@ -108,24 +108,24 @@ Each service:
 | `gsy.intelligent.requests.sub` | Subscribe | `ordersQuery`, `tradesQuery`, `measurementsQuery`, `clearingResultsQuery`, `marketsQuery`, `idsQuery`, `communitiesQuery` | `EWDS_REQUEST_SUBSCRIBE_FQCN` |
 | `gsy.intelligent.responses.pub` | Publish | `ordersQueryResponse`, `tradesQueryResponse`, `measurementsQueryResponse`, `clearingResultsQueryResponse`, `marketsQueryResponse`, `idsQueryResponse`, `communitiesQueryResponse` | `EWDS_RESPONSE_PUBLISH_FQCN` |
 | `gsy.intelligent.responses.sub` | Subscribe | `ordersQueryResponse`, `tradesQueryResponse`, `measurementsQueryResponse`, `clearingResultsQueryResponse`, `marketsQueryResponse`, `idsQueryResponse`, `communitiesQueryResponse` | `EWDS_RESPONSE_SUBSCRIBE_FQCN` |
-| `gsy.intelligent.events.pub` | Publish | `orderCreated`, `tradeCreated`, `clearingResultCreated`, `marketStatusUpdated`, `measurementsSubmitted`, `facilitySubmitted`, `siteSubmitted`, `communitySubmitted` | `EWDS_EVENT_PUBLISH_FQCN` |
-| `gsy.intelligent.events.sub` | Subscribe | `orderCreated`, `tradeCreated`, `clearingResultCreated`, `marketStatusUpdated`, `measurementsSubmitted`, `facilitySubmitted`, `siteSubmitted`, `communitySubmitted` | `EWDS_EVENT_SUBSCRIBE_FQCN` |
+| `gsy.intelligent.events.pub` | Publish | `tradeCreated`, `clearingResultCreated`, `marketStatusUpdated`, `measurementsSubmitted`, `facilitySubmitted`, `siteSubmitted`, `communitySubmitted` | `EWDS_EVENT_PUBLISH_FQCN` |
+| `gsy.intelligent.events.sub` | Subscribe | `tradeCreated`, `clearingResultCreated`, `marketStatusUpdated`, `measurementsSubmitted`, `facilitySubmitted`, `siteSubmitted`, `communitySubmitted` | `EWDS_EVENT_SUBSCRIBE_FQCN` |
 
 The events channels carry fire-and-forget domain events rather than
 request/reply traffic. When `EWDS_ENABLE_HANDLER` is on, the off-chain storage
-publishes an `order.created` event on `orderCreated` every time it persists an
-order from an EVM `OrderPlaced` event, and a `trade.created` event on
-`tradeCreated` every time it persists a trade from an EVM `TradeSettled` event,
-a `clearing_result.created` event on `clearingResultCreated` every time it
-persists a clearing result from an EVM `MarketClearing` event, and a
-`market_status.updated` event on `marketStatusUpdated` for every EVM
-`MarketStatusUpdated` event. The payload is an event envelope (`eventId`,
-`eventType`, `occurredAt`, `data`) whose `data` is the order, trade, clearing
-result or market status in its `EwdsOrderDto`, `EwdsTradeDto`,
-`EwdsClearingResultDto` or `EwdsMarketStatusDto` (`marketId`, `isOpen`) form.
-Market status updates are not persisted, so their `occurredAt` is the time the
-off-chain storage received the EVM event. `occurredAt` is an RFC 3339
-timestamp.
+publishes a `trade.created` event on `tradeCreated` every time it persists a
+trade from an EVM `TradeSettled` event, a `clearing_result.created` event on
+`clearingResultCreated` every time it persists a clearing result from an EVM
+`MarketClearing` event, and a `market_status.updated` event on
+`marketStatusUpdated` for every EVM `MarketStatusUpdated` event. The payload is
+an event envelope (`eventId`, `eventType`, `occurredAt`, `data`) whose `data` is
+a list of trades, clearing results or market statuses in their `EwdsTradeDto`,
+`EwdsClearingResultDto` or `EwdsMarketStatusDto` (`marketId`, `isOpen`) form,
+so one event can carry several of them. The off-chain storage currently sends
+one item per EVM event. Every event gets a random UUID as `eventId`, which is
+also its DDHub `transactionId`. `occurredAt` is an RFC 3339 timestamp: the time
+of the newest item. Market status updates are not persisted, so their
+`occurredAt` is the time the off-chain storage received the EVM event.
 
 The same channels also carry the events other systems send to GSY; see
 [Inbound Events](#inbound-events).
@@ -345,7 +345,7 @@ Channel/topic setup notes:
 
 - Topic application/owner: `integration.apps.intelligent.auth.ewc`.
 - Local channel FQCNs: `gsy.intelligent.requests.pub`, `gsy.intelligent.requests.sub`, `gsy.intelligent.responses.pub`, `gsy.intelligent.responses.sub`, `gsy.intelligent.events.pub`, `gsy.intelligent.events.sub`.
-- The events channels need the eight event topics from the channel table, plus
+- The events channels need the seven event topics from the channel table, plus
   `measurementsSubmittedTest`, `facilitySubmittedTest`, `siteSubmittedTest` and
   `communitySubmittedTest` for e2e runs. `scripts/ewds_channel_topic_handler.sh`
   creates all topics and attaches them to the channels.

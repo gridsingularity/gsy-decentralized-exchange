@@ -7,13 +7,12 @@ use anyhow::{bail, Context, Result};
 use futures::future::join_all;
 use primitives::db_api_schema::{
     grid_topology::{EnergyCommunitySchema, FacilitySchema, SiteSchema},
-    orders::DbOrderSchema,
     profiles::MeasurementSchema,
     trades::{ClearingResultSchema, DbTradeSchema},
 };
 use primitives::ewds::dto::{
     EwdsClearingResultDto, EwdsCommunityDto, EwdsEventEnvelope, EwdsMarketStatusDto,
-    EwdsMeasurementDto, EwdsOrderDto, EwdsTradeDto,
+    EwdsMeasurementDto, EwdsTradeDto,
 };
 use primitives::ewds::EwdsEventType;
 use primitives::utils::epoch_to_rfc3339;
@@ -25,6 +24,7 @@ use std::future::Future;
 use tokio::task::JoinHandle;
 use tokio::time::{sleep, Duration};
 use tracing::{error, info, warn};
+use uuid::Uuid;
 
 /// The events other systems send to GSY. Each is polled on its own topic.
 const SUBSCRIBED_EVENT_TYPES: [EwdsEventType; 4] = [
@@ -56,76 +56,60 @@ impl EwdsEventPublisher {
         }
     }
 
-    pub fn publish_order_created(&self, order: DbOrderSchema) -> JoinHandle<()> {
-        let event_id = format!("order-created-{}", order.order_id);
-        let occurred_at = order.creation_time;
-        self.spawn_event(
-            EwdsEventType::OrderCreated,
-            event_id,
-            occurred_at,
-            EwdsOrderDto::from(order),
-        )
-    }
-
-    pub fn publish_trade_created(&self, trade: DbTradeSchema) -> JoinHandle<()> {
-        let event_id = format!("trade-created-{}", trade.trade_uuid);
-        let occurred_at = trade.creation_time;
+    pub fn publish_trades_created(&self, trades: Vec<DbTradeSchema>) -> JoinHandle<()> {
+        let occurred_at = trades
+            .iter()
+            .map(|trade| trade.creation_time)
+            .max()
+            .unwrap_or_default();
         self.spawn_event(
             EwdsEventType::TradeCreated,
-            event_id,
             occurred_at,
-            EwdsTradeDto::from(trade),
+            trades
+                .into_iter()
+                .map(EwdsTradeDto::from)
+                .collect::<Vec<_>>(),
         )
     }
 
-    pub fn publish_clearing_result_created(
+    pub fn publish_clearing_results_created(
         &self,
-        clearing_result: ClearingResultSchema,
+        clearing_results: Vec<ClearingResultSchema>,
     ) -> JoinHandle<()> {
-        // A market can be cleared more than once (e.g. partial, then final), so the market ID
-        // alone does not identify the clearing.
-        let event_id = format!(
-            "clearing-result-created-{}-{}",
-            clearing_result.market_id, clearing_result.tx_hash
-        );
-        let occurred_at = clearing_result.clearing_time;
+        let occurred_at = clearing_results
+            .iter()
+            .map(|clearing_result| clearing_result.clearing_time)
+            .max()
+            .unwrap_or_default();
         self.spawn_event(
             EwdsEventType::ClearingResultCreated,
-            event_id,
             occurred_at,
-            EwdsClearingResultDto::from(clearing_result),
+            clearing_results
+                .into_iter()
+                .map(EwdsClearingResultDto::from)
+                .collect::<Vec<_>>(),
         )
     }
 
-    pub fn publish_market_status_updated(
+    pub fn publish_market_statuses_updated(
         &self,
-        market_status: EwdsMarketStatusDto,
+        market_statuses: Vec<EwdsMarketStatusDto>,
         occurred_at: u64,
     ) -> JoinHandle<()> {
-        let status = if market_status.is_open {
-            "open"
-        } else {
-            "closed"
-        };
-        let event_id = format!(
-            "market-status-updated-{}-{}",
-            market_status.market_id, status
-        );
         self.spawn_event(
             EwdsEventType::MarketStatusUpdated,
-            event_id,
             occurred_at,
-            market_status,
+            market_statuses,
         )
     }
 
     fn spawn_event<T: Serialize + Send + 'static>(
         &self,
         event_type: EwdsEventType,
-        event_id: String,
         occurred_at: u64,
         data: T,
     ) -> JoinHandle<()> {
+        let event_id = Uuid::new_v4().to_string();
         let publisher = self.clone();
         tokio::spawn(async move {
             if let Err(e) = publisher

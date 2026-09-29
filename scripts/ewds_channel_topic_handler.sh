@@ -23,7 +23,6 @@ communitiesQueryTest
 "
 
 EVENT_TOPICS="
-orderCreated
 tradeCreated
 clearingResultCreated
 marketStatusUpdated

@@ -76,7 +76,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
                 .offchain_id;
         }
 
-        let order = DbOrderSchema {
+        let schema = DbOrderSchema {
             order_id: order_id_str,
             status: OrderStatus::Submitted,
             order_type: order_enum,
@@ -91,13 +91,8 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             attributes,
         };
 
-        match self.db.orders().insert_orders(vec![order.clone()]).await {
-            Ok(_) => {
-                info!("Successfully indexed order from EVM");
-                if let Some(publisher) = &self.event_publisher {
-                    publisher.publish_order_created(order);
-                }
-            }
+        match self.db.orders().insert_orders(vec![schema]).await {
+            Ok(_) => info!("Successfully indexed order from EVM"),
             Err(e) => error!("Failed to insert order into DB: {:?}", e),
         }
 
@@ -158,7 +153,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         self.db.trades().insert_trades(vec![trade.clone()]).await?;
 
         if let Some(publisher) = &self.event_publisher {
-            publisher.publish_trade_created(trade);
+            publisher.publish_trades_created(vec![trade]);
         }
 
         self.db
@@ -183,11 +178,11 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         );
 
         if let Some(publisher) = &self.event_publisher {
-            publisher.publish_market_status_updated(
-                EwdsMarketStatusDto {
+            publisher.publish_market_statuses_updated(
+                vec![EwdsMarketStatusDto {
                     market_id: bytes16_to_hex(event.market_id),
                     is_open: event.is_open,
-                },
+                }],
                 chrono::Utc::now().timestamp() as u64,
             );
         }
@@ -227,7 +222,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         info!("Market clearing result saved.");
 
         if let Some(publisher) = &self.event_publisher {
-            publisher.publish_clearing_result_created(clearing_result);
+            publisher.publish_clearing_results_created(vec![clearing_result]);
         }
         Ok(())
     }
