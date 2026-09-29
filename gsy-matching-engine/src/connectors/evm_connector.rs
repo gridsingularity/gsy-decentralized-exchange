@@ -449,7 +449,7 @@ fn convert_db_order_to_canonical(order: &DbOrderSchema) -> Result<Order> {
             creation_time: order.creation_time,
             energy: (order.energy_kWh * NODE_FLOAT_SCALING_FACTOR).round() as u64,
             energy_rate: (order.energy_rate * NODE_FLOAT_SCALING_FACTOR).round() as u64,
-            requirements: None,
+            requirements: convert_requirements(order.requirements.as_ref())?,
             attributes: convert_attributes(order.attributes.as_ref())?,
         },
     })
