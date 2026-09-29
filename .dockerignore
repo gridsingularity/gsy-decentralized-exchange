@@ -1,1 +1,11 @@
 **/target
+
+**/.DS_Store
+
+**/.git
+**/.gitignore
+**/.claude
+**/*.swp
+**/*~
+
+docs

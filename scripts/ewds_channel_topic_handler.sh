@@ -9,6 +9,7 @@ tradesQuery
 measurementsQuery
 clearingResultsQuery
 marketsQuery
+facilitiesQuery
 idsQuery
 communityUpsert
 communitiesQuery
@@ -17,6 +18,7 @@ tradesQueryTest
 measurementsQueryTest
 clearingResultsQueryTest
 marketsQueryTest
+facilitiesQueryTest
 idsQueryTest
 communityUpsertTest
 communitiesQueryTest

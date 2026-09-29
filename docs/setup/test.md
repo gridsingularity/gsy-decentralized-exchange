@@ -1,24 +1,61 @@
 # Testing
 
-## Contract Tests
+## Integration & Unit Tests (consolidated)
+
+All Rust integration tests, the contract tests, and the listener test run
+through a single Compose file and a wrapper script. The script runs every
+service sequentially, continues past failures, and prints a summary listing
+each test with its runtime — passed and failed separately. It exits non-zero
+if any test failed, so CI marks the job red.
 
 ```bash
-cd gsy-contracts
-npm install
-npx hardhat test
+./run-integration-tests.sh
 ```
 
-## Rust Integration Tests
+Services executed (in order):
 
-Run per component:
+- `gsy-listener-test`
+- `gsy-primitives-integration-test`
+- `gsy-offchain-storage-integration-test` (starts `mongodb`)
+- `gsy-market-orchestrator-integration-test`
+- `gsy-matching-engine-integration-test`
+- `gsy-execution-engine-integration-test`
+- `gsy-community-client-integration-test`
+- `gsy-contracts-tests`
+
+The script tears down containers and volumes on exit (`docker compose down -v`),
+including on failure. When run under GitHub Actions it also appends the
+results to the run's step summary.
+
+### Running a single test
+
+Target one service directly instead of the whole suite:
 
 ```bash
-cargo test --manifest-path gsy-market-orchestrator/Cargo.toml --test evm_integration
-cargo test --manifest-path gsy-matching-engine/Cargo.toml --test evm_integration
-cargo test --manifest-path gsy-execution-engine/Cargo.toml --test evm_integration
-cargo test --manifest-path gsy-offchain-storage/Cargo.toml --test api
-cargo test --manifest-path gsy-community-client/Cargo.toml --tests
+docker compose -f docker-compose.integration.yml run --rm --build \
+  gsy-matching-engine-integration-test
 ```
+
+If the full dev stack is already up, isolate the run with a project name to
+avoid `mongodb` container/port (27017) clashes:
+
+```bash
+docker compose -p integration -f docker-compose.integration.yml run --rm --build \
+  gsy-matching-engine-integration-test
+```
+
+### CI
+
+The suite runs in GitHub Actions via `.github/workflows/integration.yml`:
+
+```yaml
+- name: Run integration tests
+  run: ./run-integration-tests.sh
+```
+
+Docker and Compose are preinstalled on `ubuntu-latest`; no setup action is
+needed. The script's per-test pass/fail list with runtimes appears in the run's
+summary panel.
 
 ## End-to-End Cucumber Tests
 

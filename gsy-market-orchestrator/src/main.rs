@@ -1,5 +1,6 @@
 use anyhow::Result;
-use gsy_market_orchestrator::{chain_connector, community_source, config, orchestrator};
+use gsy_market_orchestrator::{chain_connector, config, orchestrator};
+use primitives::offchain_storage::OffchainStorageClient;
 use tracing::info;
 
 #[tokio::main]
@@ -11,7 +12,12 @@ async fn main() -> Result<()> {
     info!("Starting GSY Market Orchestrator...");
     let config = config::get_config()?;
     let client = chain_connector::GsyMarketOrchestratorNodeClient::new(&config).await?;
-    let community_source = community_source::OffchainStorageCommunitySource::from_config(&config);
+    let community_source = OffchainStorageClient::new(
+        config.offchain_storage_transport,
+        config.offchain_storage_url.clone(),
+        "EWDS_MARKET_ORCHESTRATOR_CLIENT_ID",
+        "gsymarketorchestrator",
+    );
 
     orchestrator::run(config, client, community_source).await
 }

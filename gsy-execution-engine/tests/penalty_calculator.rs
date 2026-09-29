@@ -5,6 +5,7 @@ use primitives::db_api_schema::{
     trades::{DbTradeSchema, TradeParameters, TradeStatus},
 };
 use primitives::utils::{bytes16_to_hex, create_encrypted_bytes16_from_string};
+use std::collections::HashMap;
 
 fn order(order_id: &str, facility_id: &str, is_bid: bool) -> DbOrderSchema {
     let actor_id = bytes16_to_hex(create_encrypted_bytes16_from_string(facility_id));
@@ -53,14 +54,18 @@ fn trade() -> DbTradeSchema {
 #[test]
 fn compute_penalties_matches_facility_measurements_to_evm_actor_ids() {
     let measurements = vec![MeasurementSchema {
-        facility_id: "alice".to_string(),
+        facility_id: "areaalice".to_string(),
         community_uuid: "community1".to_string(),
         time_slot: 1_000,
         creation_time: 1_000,
         energy_kwh: 12.0,
     }];
 
-    let penalties = compute_penalties(&[trade()], &measurements, 0.10);
+    // The mapping holds plain owner ids; compute_penalties converts them to
+    // the on-chain representation, mirroring the community client's orders.
+    let facility_owner_mapping = HashMap::from([("areaalice".to_string(), "alice".to_string())]);
+
+    let penalties = compute_penalties(&[trade()], &measurements, &facility_owner_mapping, 0.10);
 
     assert_eq!(penalties.len(), 1);
     assert_eq!(penalties[0].penalty_cost, 2_000);

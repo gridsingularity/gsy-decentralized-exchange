@@ -148,8 +148,8 @@ async fn filter_orders_by_market_and_time_range() {
         (market_a, 30),
         (market_b, 20),
     ]
-        .iter()
-        .enumerate()
+    .iter()
+    .enumerate()
     {
         let mut order = make_order(
             &format!(

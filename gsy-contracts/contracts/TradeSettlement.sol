@@ -139,8 +139,8 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
             revert OrderNotOpen();
         }
 
-        _validateOrderData(trade.bid, registry.getOrder(trade.bid.orderId), true);
-        _validateOrderData(
+        _validateOrderParams(trade.bid, registry.getOrder(trade.bid.orderId), true);
+        _validateOrderParams(
             trade.offer,
             registry.getOrder(trade.offer.orderId),
             false
@@ -178,7 +178,7 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
         );
     }
 
-    function _validateOrderData(
+    function _validateOrderParams(
         OrderRegistry.OrderParams calldata provided,
         OrderRegistry.OrderParams memory stored,
         bool expectedBid

@@ -1,4 +1,4 @@
-FROM rust:1.89.0-bookworm AS chef
+FROM rust:1.95-bookworm AS chef
 RUN cargo install cargo-chef --locked
 
 # First prepare dependencies of primitives
@@ -18,7 +18,7 @@ RUN apt-get update && apt-get install -y libssl-dev pkg-config git curl
 RUN cargo install svm-rs --version 0.5.25 --locked && svm install 0.8.20 && ln -s /root/.svm/0.8.20/solc-0.8.20 /usr/local/bin/solc
 RUN curl -L https://foundry.paradigm.xyz | bash
 ENV PATH="/root/.foundry/bin:${PATH}"
-RUN foundryup
+RUN for i in 1 2 3 4 5; do foundryup && break || { echo "foundryup attempt $i failed, retrying..."; sleep $((i * 5)); }; done
 
 COPY ./primitives /var/www/primitives
 COPY --from=chef /var/www/primitives/target /var/www/primitives/target
@@ -34,7 +34,7 @@ RUN rm -rf \
     target/release/deps/libprimitives*
 RUN cargo build --release
 
-FROM rust:1.89.0-bookworm AS runtime
+FROM rust:1.95-bookworm AS runtime
 WORKDIR /var/www/gsy-community-client
 COPY --from=builder /var/www/gsy-community-client/target/release/gsy-community-client /usr/local/bin
 ENTRYPOINT ["/usr/local/bin/gsy-community-client"]

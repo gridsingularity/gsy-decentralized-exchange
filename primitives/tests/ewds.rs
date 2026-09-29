@@ -1,19 +1,17 @@
 use primitives::db_api_schema::{
     grid_topology::EnergyCommunitySchema,
     market::{MarketSchema, MarketType, MatchingAlgorithm},
-    orders::{
-        DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus,
-    },
+    orders::{DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus},
     trades::{
         ClearingResultSchema, ClearingStatus, DbTradeSchema, NoBidReason, TradeParameters,
         TradeStatus,
     },
 };
-use primitives::ewds::EwdsOperation;
 use primitives::ewds::dto::{
-    EwdsClearingResultDto, EwdsCommunityDto, EwdsMarketDto, EwdsOrderDto, EwdsTradeDto,
-    energy_type_from_ewds, energy_type_to_ewds,
+    energy_type_from_ewds, energy_type_to_ewds, EwdsClearingResultDto, EwdsCommunityDto,
+    EwdsMarketDto, EwdsOrderDto, EwdsTradeDto,
 };
+use primitives::ewds::EwdsOperation;
 use serde_json::Value;
 use std::str::FromStr;
 

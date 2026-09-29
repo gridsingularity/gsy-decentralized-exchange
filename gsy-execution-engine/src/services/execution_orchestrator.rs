@@ -1,5 +1,6 @@
 use ::primitives::utils::timestamp_to_datetime_string;
 use anyhow::Result;
+use primitives::offchain_storage::OffchainStorageClient;
 use tracing::info;
 
 use crate::{
@@ -33,8 +34,27 @@ pub async fn run_execution_cycle(
         timestamp_to_datetime_string(timeslot),
     );
 
+    if trades.is_empty() || measurements.is_empty() {
+        info!(
+            "No trades or measurements for timeslot {}. Skipping execution cycle.",
+            timestamp_to_datetime_string(timeslot),
+        );
+        return Ok(0);
+    }
+
+    // 1.2) fetch facility_id>owner_id mapping
+    let facility_owner_mapping =
+        OffchainStorageClient::from_env("EWDS_EXECUTION_ENGINE_CLIENT_ID", "gsyexecutionengine")
+            .fetch_facility_owner_mapping()
+            .await?;
+
     // 2) compute penalties
-    let penalties: Vec<Penalty> = compute_penalties(&trades, &measurements, penalty_rate);
+    let penalties: Vec<Penalty> = compute_penalties(
+        &trades,
+        &measurements,
+        &facility_owner_mapping,
+        penalty_rate,
+    );
     info!("Computed {} penalties", penalties.len());
 
     // 3) submit penalties

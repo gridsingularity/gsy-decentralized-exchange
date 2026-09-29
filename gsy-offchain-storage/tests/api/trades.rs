@@ -283,7 +283,10 @@ async fn filter_trades_time_boundaries_are_inclusive_start_exclusive_end() {
     let trades_svc = || db.get_ref().trades();
 
     // [20, 30): start inclusive, end exclusive -> {20, 29}.
-    let both = trades_svc().filter_trades(Some(20), Some(30)).await.unwrap();
+    let both = trades_svc()
+        .filter_trades(Some(20), Some(30))
+        .await
+        .unwrap();
     let mut got: Vec<u64> = both.iter().map(|t| t.time_slot).collect();
     got.sort_unstable();
     assert_eq!(got, vec![20, 29]); // 20 included ($gte), 30 excluded ($lt)
@@ -301,11 +304,17 @@ async fn filter_trades_time_boundaries_are_inclusive_start_exclusive_end() {
     assert_eq!(got, vec![19, 20, 29]); // 30 excluded ($lt)
 
     // Empty range: start == end -> nothing (20 fails $lt 20).
-    let empty = trades_svc().filter_trades(Some(20), Some(20)).await.unwrap();
+    let empty = trades_svc()
+        .filter_trades(Some(20), Some(20))
+        .await
+        .unwrap();
     assert!(empty.is_empty()); // [20, 20) is empty
 
     // Single-slot range: [20, 21) -> exactly {20}.
-    let single = trades_svc().filter_trades(Some(20), Some(21)).await.unwrap();
+    let single = trades_svc()
+        .filter_trades(Some(20), Some(21))
+        .await
+        .unwrap();
     assert_eq!(single.len(), 1);
     assert_eq!(single[0].time_slot, 20);
 
