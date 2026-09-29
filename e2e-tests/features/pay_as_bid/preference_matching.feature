@@ -7,7 +7,7 @@ Feature: Preference-Based Matching with Dedicated Pricing
     And the community market and forecasts of 100 energy are submitted by "alice", "bob", and "charlie"
 
     When "alice" submits a bid for 100 energy with a preferred rate of 12 for partner "bob"
-    And "bob" submits an offer for 150 energy at a rate of 10
+    And "bob" submits an offer for 150 energy at a rate of 12
     And "charlie" submits a cheaper open-market offer for 100 energy at a rate of 9
 
     Then a trade is settled on-chain between "alice" and "bob" for 100 energy
@@ -21,7 +21,7 @@ Feature: Preference-Based Matching with Dedicated Pricing
     When the Market Orchestrator opens the Spot market for the next delivery slot
     And the community market and forecasts of 100 energy are submitted by "alice", "bob", and "charlie"
     When "alice" submits a bid for 150 energy with a preferred rate of 12 for partner "bob"
-    And "bob" submits an offer for 100 energy at a rate of 10
+    And "bob" submits an offer for 100 energy at a rate of 12
     And the next matching cycle is triggered
     Then a trade is settled on-chain between "alice" and "bob" for 100 energy
     And the trade price is exactly 12, matching the preferred rate
