@@ -234,20 +234,50 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
 
     let selected_energy = (80.0 * NODE_FLOAT_SCALING_FACTOR) as u64;
     let clearing_price = (50.0 * NODE_FLOAT_SCALING_FACTOR) as u64;
-    let matches = vec![BidOfferMatch {
+    let residual_bid = Order {
+        order_id: uuid::Uuid::new_v4().to_string(),
+        energy: bid_order.energy - selected_energy,
+        ..bid_order.clone()
+    };
+    let second_offer_id = format!("0x{}", "44".repeat(16));
+    let second_offer_db = DbOrderSchema {
+        order_id: second_offer_id.clone(),
+        energy_kWh: 20.0,
+        ..ask_db.clone()
+    };
+    let second_offer = Order {
+        order_id: second_offer_id.clone(),
+        energy: residual_bid.energy,
+        ..ask_order.clone()
+    };
+    let second_match = BidOfferMatch {
         market_id: market_id.clone(),
         time_slot: 1000,
-        bid: bid_order,
-        offer: ask_order,
+        selected_energy: residual_bid.energy,
+        bid: residual_bid.clone(),
+        offer: second_offer,
         residual_bid: None,
         residual_offer: None,
-        selected_energy,
         energy_rate: clearing_price,
-    }];
+    };
+    let matches = vec![
+        BidOfferMatch {
+            market_id: market_id.clone(),
+            time_slot: 1000,
+            bid: bid_order,
+            offer: ask_order,
+            residual_bid: Some(residual_bid),
+            residual_offer: None,
+            selected_energy,
+            energy_rate: clearing_price,
+        },
+        second_match,
+    ];
 
     let mut lookup = HashMap::new();
     lookup.insert(bid_order_id, bid_db);
     lookup.insert(ask_order_id, ask_db);
+    lookup.insert(second_offer_id, second_offer_db);
 
     send_settle_batch_transaction(
         &ws_endpoint,
@@ -263,7 +293,7 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
 
     assert_eq!(
         mock_contract.settled_count().call().await.unwrap(),
-        U256::from(1u64)
+        U256::from(2u64)
     );
     assert_eq!(
         mock_contract.last_selected_energy().call().await.unwrap(),

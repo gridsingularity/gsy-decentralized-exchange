@@ -66,7 +66,7 @@ mod tests {
     #[test]
     fn preference_match_compares_actor_ids_without_account_wrappers() {
         let mut bid = order("bid", OrderEnum::Bid, 100, 50);
-        let mut offer = order("offer", OrderEnum::Offer, 100, 40);
+        let mut offer = order("offer", OrderEnum::Offer, 100, 45);
         offer.created_by = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string();
         bid.requirements = Some(Requirements {
             trading_partner_id: Some(offer.created_by.clone()),
@@ -91,7 +91,7 @@ mod tests {
         for algorithm in [MatchingAlgorithm::PayAsBid, MatchingAlgorithm::PayAsClear] {
             for (bid_energy, offer_energy) in [(100, 60), (60, 100), (100, 100)] {
                 let mut bid = order("bid", OrderEnum::Bid, bid_energy, 50);
-                let offer = order("offer", OrderEnum::Offer, offer_energy, 40);
+                let offer = order("offer", OrderEnum::Offer, offer_energy, 45);
                 bid.requirements = Some(Requirements {
                     trading_partner_id: Some(offer.created_by.clone()),
                     energy_type: None,
@@ -132,7 +132,7 @@ mod tests {
     }
 
     #[test]
-    fn preference_rate_outside_order_limits_falls_back_to_standard_matching() {
+    fn unequal_effective_rates_fall_back_to_standard_matching() {
         let mut bid = order("bid", OrderEnum::Bid, 100, 50);
         let mut offer = order("offer", OrderEnum::Offer, 100, 40);
         offer.created_by = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string();

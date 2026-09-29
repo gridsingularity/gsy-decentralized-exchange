@@ -5,7 +5,6 @@ pub use pay_as_clear::PayAsClearPricing;
 
 use crate::models::{BidOfferMatch, MatchingData, Order};
 use primitives::MatchingAlgorithm;
-use std::collections::HashMap;
 use uuid::Uuid;
 
 pub trait PayAsBid {
@@ -57,108 +56,37 @@ struct ClearingPoint {
 impl MatchingData {
     fn match_preferences(
         &self,
-        bids: Vec<Order>,
-        offers: Vec<Order>,
+        mut bids: Vec<Order>,
+        mut offers: Vec<Order>,
     ) -> (Vec<BidOfferMatch>, Vec<Order>, Vec<Order>) {
         let mut matches = Vec::new();
-        let mut bid_matched_amounts: HashMap<String, u64> = HashMap::new();
-        let mut offer_matched_amounts: HashMap<String, u64> = HashMap::new();
-
-        let preference_bids = bids.iter().filter(|bid| {
-            bid.requirements
-                .as_ref()
-                .and_then(|requirements| requirements.trading_partner_id.as_ref())
-                .is_some()
-        });
-
-        for bid in preference_bids {
-            let requirements = bid
-                .requirements
-                .as_ref()
-                .expect("requirements checked above");
-            let partner_id = requirements
-                .trading_partner_id
-                .as_ref()
-                .expect("trading partner checked above");
-
-            for offer in offers
-                .iter()
-                .filter(|offer| offer.created_by == *partner_id)
-            {
-                let preferred_rate = requirements
-                    .preferred_energy_rate
-                    .unwrap_or(bid.energy_rate);
-                if preferred_rate < offer.energy_rate || preferred_rate > bid.energy_rate {
+        for bid in &mut bids {
+            for offer in &mut offers {
+                let Some(preferred_rate) = preferred_matching_rate(bid, offer) else {
                     continue;
-                }
+                };
 
-                let bid_amount_used = bid_matched_amounts
-                    .get(&bid.order_id)
-                    .copied()
-                    .unwrap_or_default();
-                let offer_amount_used = offer_matched_amounts
-                    .get(&offer.order_id)
-                    .copied()
-                    .unwrap_or_default();
-                let selected_energy = bid
-                    .energy
-                    .saturating_sub(bid_amount_used)
-                    .min(offer.energy.saturating_sub(offer_amount_used));
+                let selected_energy = bid.energy.min(offer.energy);
 
                 if selected_energy == 0 {
                     continue;
                 }
 
-                matches.push(BidOfferMatch {
-                    market_id: offer.market_id.clone(),
-                    time_slot: offer.time_slot,
-                    bid: bid.clone(),
-                    offer: offer.clone(),
-                    residual_bid: residual_order(bid, bid_amount_used + selected_energy),
-                    residual_offer: residual_order(offer, offer_amount_used + selected_energy),
-                    selected_energy,
-                    energy_rate: preferred_rate,
-                });
+                matches.push(fill_order_pair(bid, offer, selected_energy, preferred_rate));
 
-                *bid_matched_amounts.entry(bid.order_id.clone()).or_default() += selected_energy;
-                *offer_matched_amounts
-                    .entry(offer.order_id.clone())
-                    .or_default() += selected_energy;
-
-                if bid.energy
-                    == bid_matched_amounts
-                        .get(&bid.order_id)
-                        .copied()
-                        .unwrap_or_default()
-                {
+                if bid.energy == 0 {
                     break;
                 }
             }
         }
 
         let remaining_bids = bids
-            .iter()
-            .filter_map(|bid| {
-                residual_order(
-                    bid,
-                    bid_matched_amounts
-                        .get(&bid.order_id)
-                        .copied()
-                        .unwrap_or_default(),
-                )
-            })
+            .into_iter()
+            .filter(|bid| bid.energy > 0)
             .collect();
         let remaining_offers = offers
-            .iter()
-            .filter_map(|offer| {
-                residual_order(
-                    offer,
-                    offer_matched_amounts
-                        .get(&offer.order_id)
-                        .copied()
-                        .unwrap_or_default(),
-                )
-            })
+            .into_iter()
+            .filter(|offer| offer.energy > 0)
             .collect();
 
         (matches, remaining_bids, remaining_offers)
@@ -178,17 +106,8 @@ impl MatchingData {
         bids.sort_by(|left, right| right.energy_rate.cmp(&left.energy_rate));
         offers.sort_by(|left, right| left.energy_rate.cmp(&right.energy_rate));
 
-        let mut available_bid_energy = bids
-            .iter()
-            .map(|bid| (bid.order_id.clone(), bid.energy))
-            .collect::<HashMap<_, _>>();
-        let mut available_offer_energy = offers
-            .iter()
-            .map(|offer| (offer.order_id.clone(), offer.energy))
-            .collect::<HashMap<_, _>>();
-
-        for offer in &offers {
-            for bid in &bids {
+        for offer in &mut offers {
+            for bid in &mut bids {
                 if remaining_clearing_energy == 0 {
                     return matches;
                 }
@@ -205,43 +124,74 @@ impl MatchingData {
                     }
                 }
 
-                let offer_energy = available_offer_energy
-                    .get(&offer.order_id)
-                    .copied()
-                    .unwrap_or_default();
-                let bid_energy = available_bid_energy
-                    .get(&bid.order_id)
-                    .copied()
-                    .unwrap_or_default();
-
-                if offer_energy == 0 || bid_energy == 0 {
+                if offer.energy == 0 || bid.energy == 0 {
                     continue;
                 }
 
-                let selected_energy = offer_energy.min(bid_energy).min(remaining_clearing_energy);
-                let remaining_bid_energy = bid_energy - selected_energy;
-                let remaining_offer_energy = offer_energy - selected_energy;
-                available_bid_energy.insert(bid.order_id.clone(), remaining_bid_energy);
-                available_offer_energy.insert(offer.order_id.clone(), remaining_offer_energy);
+                let selected_energy = offer.energy.min(bid.energy).min(remaining_clearing_energy);
                 remaining_clearing_energy -= selected_energy;
-
-                matches.push(BidOfferMatch {
-                    market_id: offer.market_id.clone(),
-                    time_slot: offer.time_slot,
-                    bid: bid.clone(),
-                    offer: offer.clone(),
-                    residual_bid: residual_order(bid, bid.energy - remaining_bid_energy),
-                    residual_offer: residual_order(offer, offer.energy - remaining_offer_energy),
-                    selected_energy,
-                    energy_rate: clearing_point
-                        .map(|point| point.clearing_price)
-                        .unwrap_or(bid.energy_rate),
-                });
+                let rate = clearing_point
+                    .map(|point| point.clearing_price)
+                    .unwrap_or(bid.energy_rate);
+                matches.push(fill_order_pair(bid, offer, selected_energy, rate));
             }
         }
 
         matches
     }
+}
+
+fn fill_order_pair(bid: &mut Order, offer: &mut Order, energy: u64, rate: u64) -> BidOfferMatch {
+    let matched = BidOfferMatch {
+        market_id: offer.market_id.clone(),
+        time_slot: offer.time_slot,
+        bid: bid.clone(),
+        offer: offer.clone(),
+        residual_bid: residual_order(bid, energy),
+        residual_offer: residual_order(offer, energy),
+        selected_energy: energy,
+        energy_rate: rate,
+    };
+    // The next fill must consume the residual registered by this settlement.
+    match &matched.residual_bid {
+        Some(residual) => *bid = residual.clone(),
+        None => bid.energy = 0,
+    }
+    match &matched.residual_offer {
+        Some(residual) => *offer = residual.clone(),
+        None => offer.energy = 0,
+    }
+    matched
+}
+
+fn preferred_matching_rate(bid: &Order, offer: &Order) -> Option<u64> {
+    let bid_partner = bid
+        .requirements
+        .as_ref()
+        .and_then(|requirements| requirements.trading_partner_id.as_deref());
+    let offer_partner = offer
+        .requirements
+        .as_ref()
+        .and_then(|requirements| requirements.trading_partner_id.as_deref());
+
+    if (bid_partner.is_none() && offer_partner.is_none())
+        || bid_partner.is_some_and(|partner| partner != offer.created_by)
+        || offer_partner.is_some_and(|partner| partner != bid.created_by)
+    {
+        return None;
+    }
+
+    let effective_rate = |order: &Order| {
+        order
+            .requirements
+            .as_ref()
+            .and_then(|requirements| requirements.preferred_energy_rate)
+            // Zero is the on-chain sentinel for an absent preferred rate.
+            .filter(|rate| *rate != 0)
+            .unwrap_or(order.energy_rate)
+    };
+    let bid_rate = effective_rate(bid);
+    (bid_rate == effective_rate(offer)).then_some(bid_rate)
 }
 
 fn residual_order(order: &Order, matched_energy: u64) -> Option<Order> {

@@ -279,7 +279,7 @@ mod tests {
                 order(5, OrderEnum::Bid, 5, 1, 9),
             ],
             vec![
-                order(2, OrderEnum::Offer, 2, 2, 10),
+                order(2, OrderEnum::Offer, 2, 2, 11),
                 order(6, OrderEnum::Offer, 6, 3, 8),
                 order(7, OrderEnum::Offer, 7, 4, 10),
                 order(8, OrderEnum::Offer, 8, 1, 12),

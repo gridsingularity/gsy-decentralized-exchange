@@ -164,7 +164,7 @@ fn standard_pricing_policy_does_not_change_preference_prices() {
         let mut bids = standard.bids().to_vec();
         let mut offers = standard.offers().to_vec();
         bids.push(preferred_bid);
-        offers.push(order("preferred-offer", OrderEnum::Offer, 2, 10));
+        offers.push(order("preferred-offer", OrderEnum::Offer, 2, 11));
 
         let matches = book(bids, offers).pay_as_clear_with_pricing(policy);
         assert_eq!(matches.len(), 3);
