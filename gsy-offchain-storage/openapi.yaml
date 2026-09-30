@@ -444,8 +444,9 @@ paths:
           required: false
           description: |
             Upper bound (exclusive) on the verdict time, Unix seconds. Defaults to
-            `start_time + 900`; must satisfy `start_time < end_time <= start_time + 900`.
-            Back-to-back windows `[t, t+900)`, `[t+900, t+1800)` never overlap.
+            `start_time + d`, where `d` is the pilot interval (`GOO_INTERVAL_DURATION_S`,
+            default 900); must satisfy `start_time < end_time <= start_time + d`.
+            Back-to-back windows `[t, t+d)`, `[t+d, t+2d)` never overlap.
           schema: { type: integer, format: int64, minimum: 0 }
       responses:
         "200":
@@ -457,7 +458,7 @@ paths:
                 items:
                   $ref: "#/components/schemas/LocalOriginRecord"
         "400":
-          description: Missing `start_time`, `end_time <= start_time`, or a window over 900 s.
+          description: Missing `start_time`, `end_time <= start_time`, or a window over one interval (default 900 s).
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -1170,7 +1171,9 @@ components:
           type: object
           properties:
             owner_id: { type: string, description: Seller party hash. }
-            consumption_metering_point_id: { type: [string, "null"] }
+            consumption_metering_point_id:
+              type: [string, "null"]
+              description: Buyer facility id; null when the buyer is not a facility.
             facility_id: { type: [string, "null"] }
         trade_and_delivery:
           type: object

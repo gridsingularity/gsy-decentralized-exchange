@@ -11,35 +11,40 @@ use primitives::utils::timestamp_to_string_with_padding;
 use crate::certificates::builder::{
     build_local_origin_records_with_allocation, sort_records, CertificateInputs,
 };
+use crate::certificates::config::PILOT;
 use crate::db::DatabaseWrapper;
 
-/// Maximum width of a query window, `end_time - start_time`, in seconds (D7).
-pub const MAX_WINDOW_S: u64 = 900;
+/// Maximum width of a query window, `end_time - start_time`, in seconds (D7): one
+/// interval, `GOO_INTERVAL_DURATION_S` (default 900).
+pub fn max_window_s() -> u64 {
+    PILOT.interval_duration_s
+}
 
 /// A validated verdict-time window `[start_time, end_time)`, unix seconds. The upper bound is
-/// exclusive so that back-to-back windows `[t, t + 900)`, `[t + 900, t + 1800)` never return
-/// the same trade twice.
+/// exclusive so that back-to-back windows `[t, t + d)`, `[t + d, t + 2d)` never return the
+/// same trade twice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GooWindow {
     pub start_time: u64,
     pub end_time: u64,
 }
 
-/// `start_time` is required; `end_time` defaults to `start_time + 900`. Rejects an empty
-/// window (`end_time <= start_time`) and windows wider than [`MAX_WINDOW_S`].
+/// `start_time` is required; `end_time` defaults to `start_time + max_window_s()`. Rejects an
+/// empty window (`end_time <= start_time`) and windows wider than [`max_window_s`].
 pub fn validate_window(
     start_time: Option<u64>,
     end_time: Option<u64>,
 ) -> Result<GooWindow, String> {
     let start_time = start_time.ok_or_else(|| "start_time is required".to_string())?;
-    let end_time = end_time.unwrap_or_else(|| start_time.saturating_add(MAX_WINDOW_S));
+    let max_window_s = max_window_s();
+    let end_time = end_time.unwrap_or_else(|| start_time.saturating_add(max_window_s));
     if end_time <= start_time {
         return Err("end_time must be after start_time".to_string());
     }
-    if end_time - start_time > MAX_WINDOW_S {
+    if end_time - start_time > max_window_s {
         return Err(format!(
             "window too wide: end_time - start_time must be at most {} seconds",
-            MAX_WINDOW_S
+            max_window_s
         ));
     }
     Ok(GooWindow {

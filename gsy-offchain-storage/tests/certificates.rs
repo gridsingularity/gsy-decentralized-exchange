@@ -331,7 +331,7 @@ fn one_covered_sale_yields_one_record_with_the_full_key_set_and_mapping() {
     assert_eq!(claim.owner_id, hash(SELLER_OWNER));
     assert_eq!(
         claim.consumption_metering_point_id.as_deref(),
-        Some(hash(BUYER_OWNER).as_str())
+        Some(BUYER_FACILITY)
     );
     assert_eq!(claim.facility_id.as_deref(), Some(SELLER_FACILITY));
 
@@ -630,6 +630,26 @@ fn sales_of_other_facilities_do_not_consume_the_seller_net_export() {
 }
 
 #[test]
+fn a_duplicated_trade_does_not_consume_the_net_export_twice() {
+    // 6 kWh covers trade-a, trade-b and trade-c once each. The duplicate of trade-a sorts
+    // between trade-b and trade-c, so it is not adjacent to the original.
+    let fixture = Fixture::exporting(6.0, 0.0);
+    let inputs = fixture.inputs();
+    let slot_executed = vec![
+        sale("trade-a", 2.0, 100),
+        sale("trade-b", 2.0, 150),
+        sale("trade-a", 2.0, 200),
+        sale("trade-c", 2.0, 300),
+    ];
+    let records = build_local_origin_records_with_allocation(
+        vec![sale("trade-c", 2.0, 300)],
+        &slot_executed,
+        &inputs,
+    );
+    assert_eq!(trade_references(&records), vec!["trade-c"]);
+}
+
+#[test]
 fn allocation_does_not_depend_on_which_trades_are_selected() {
     let fixture = Fixture::exporting(1.5, 0.0);
     let inputs = fixture.inputs();
@@ -840,16 +860,27 @@ fn delivery_verification_reference_names_the_slot_of_the_day() {
     // 12:30 UTC = 45000s past midnight = slot 50.
     let noon_thirty = SLOT - (SLOT % 86400) + 12 * 3600 + 30 * 60;
     assert_eq!(
-        delivery_verification_reference(noon_thirty).as_deref(),
+        delivery_verification_reference(noon_thirty, 900).as_deref(),
         Some("exec:2026-05-14:slot50")
     );
+}
+
+#[test]
+fn delivery_verification_reference_follows_the_interval_duration() {
+    // 12:30 UTC with hourly intervals = slot 12; a zero duration has no slot.
+    let noon_thirty = SLOT - (SLOT % 86400) + 12 * 3600 + 30 * 60;
+    assert_eq!(
+        delivery_verification_reference(noon_thirty, 3600).as_deref(),
+        Some("exec:2026-05-14:slot12")
+    );
+    assert_eq!(delivery_verification_reference(noon_thirty, 0), None);
 }
 
 #[test]
 fn unrepresentable_time_slot_yields_no_record_and_does_not_panic() {
     let absurd = (u64::MAX / 900) * 900;
     assert_eq!(interval_bounds_utc(absurd, 900), None);
-    assert_eq!(delivery_verification_reference(absurd), None);
+    assert_eq!(delivery_verification_reference(absurd, 900), None);
 
     let mut fixture = Fixture::new();
     fixture.timeseries = vec![value(EXPORT_POINT, absurd, 4.0)];
@@ -916,7 +947,7 @@ fn sort_records_is_deterministic() {
 // --- Window validation (D7) -------------------------------------------
 
 mod window {
-    use gsy_offchain_storage::certificates::query::{validate_window, GooWindow, MAX_WINDOW_S};
+    use gsy_offchain_storage::certificates::query::{max_window_s, validate_window, GooWindow};
 
     #[test]
     fn start_time_is_required() {
@@ -939,7 +970,7 @@ mod window {
 
     #[test]
     fn a_window_of_exactly_900_seconds_or_less_is_accepted() {
-        assert_eq!(MAX_WINDOW_S, 900);
+        assert_eq!(max_window_s(), 900);
         assert!(validate_window(Some(1_000), Some(1_900)).is_ok());
         assert!(validate_window(Some(1_000), Some(1_001)).is_ok());
     }

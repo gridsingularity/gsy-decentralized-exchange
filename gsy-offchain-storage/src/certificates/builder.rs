@@ -235,10 +235,15 @@ fn net_export_allocation<'a>(
     slot_executed: &'a [DbTradeSchema],
 ) -> HashSet<(&'a str, u64, &'a str)> {
     let mut sales_by_facility_slot: HashMap<(&str, u64), Vec<&DbTradeSchema>> = HashMap::new();
+    // A duplicated `trade_uuid` must not consume the net export twice; the first copy wins.
+    let mut seen_uuids: HashSet<&str> = HashSet::new();
     for trade in slot_executed
         .iter()
         .filter(|trade| trade.status == TradeStatus::Executed)
     {
+        if !seen_uuids.insert(trade.trade_uuid.as_str()) {
+            continue;
+        }
         let Some(facility) = topology.facility_by_party.get(trade.seller.as_str()) else {
             continue;
         };
@@ -256,7 +261,6 @@ fn net_export_allocation<'a>(
         sales.sort_by(|a, b| {
             (a.creation_time, a.trade_uuid.as_str()).cmp(&(b.creation_time, b.trade_uuid.as_str()))
         });
-        sales.dedup_by(|a, b| a.trade_uuid == b.trade_uuid);
 
         let mut remaining = slot_evidence.net_export_kwh().max(0.0);
         for sale in sales {
@@ -289,12 +293,15 @@ pub fn round_half_up_2dp(value: f64) -> f64 {
 }
 
 /// Names the execution cycle that promoted the trade: `exec:<date>:slot<n>`, where
-/// `n = (time_slot mod 86400) / 900` — the fifteen-minute slot of the day, UTC.
+/// `n = (time_slot mod 86400) / duration_s` — the interval of the day, UTC.
 /// `None` on an unrepresentable `time_slot`, for the same reason as
-/// [`interval_bounds_utc`].
-pub fn delivery_verification_reference(time_slot: u64) -> Option<String> {
+/// [`interval_bounds_utc`], or on a zero `duration_s`.
+pub fn delivery_verification_reference(time_slot: u64, duration_s: u64) -> Option<String> {
+    if duration_s == 0 {
+        return None;
+    }
     let date = DateTime::<Utc>::from_timestamp(i64::try_from(time_slot).ok()?, 0)?;
-    let slot = (time_slot % 86400) / 900;
+    let slot = (time_slot % 86400) / duration_s;
     Some(format!("exec:{}:slot{}", date.format("%Y-%m-%d"), slot))
 }
 
@@ -414,7 +421,7 @@ pub fn build_local_origin_records_with_allocation(
 
         let (Some((interval_start, interval_end)), Some(delivery_reference)) = (
             interval_bounds_utc(trade.time_slot, PILOT.interval_duration_s),
-            delivery_verification_reference(trade.time_slot),
+            delivery_verification_reference(trade.time_slot, PILOT.interval_duration_s),
         ) else {
             tracing::warn!(
                 trade_uuid = %trade.trade_uuid,
@@ -512,7 +519,8 @@ pub fn build_local_origin_records_with_allocation(
             },
             beneficiary_and_claim: BeneficiaryAndClaim {
                 owner_id: trade.seller.clone(),
-                consumption_metering_point_id: buyer_facility.map(|_| trade.buyer.clone()),
+                consumption_metering_point_id: buyer_facility
+                    .map(|facility| facility.facility_id.clone()),
                 facility_id: Some(seller_facility.facility_id.clone()),
             },
             trade_and_delivery: TradeAndDeliveryReference {

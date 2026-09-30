@@ -9,7 +9,8 @@ pub struct GuaranteesOfOriginParams {
     /// Required: an absent bound would scan every trade ever validated.
     start_time: Option<u64>,
     /// Upper bound (exclusive) on when the trade reached `Executed`. Defaults to
-    /// `start_time + 900`; must be after `start_time`, at most 900 seconds later.
+    /// `start_time` plus one interval (`GOO_INTERVAL_DURATION_S`, default 900 s); must be
+    /// after `start_time`, at most one interval later.
     end_time: Option<u64>,
 }
 
