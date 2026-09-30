@@ -8,8 +8,8 @@ pub struct GuaranteesOfOriginParams {
     /// Lower bound (inclusive) on when the trade reached `Executed`, in unix seconds.
     /// Required: an absent bound would scan every trade ever validated.
     start_time: Option<u64>,
-    /// Upper bound (inclusive) on when the trade reached `Executed`. Defaults to
-    /// `start_time + 900`; `end_time - start_time` may not exceed 900 seconds.
+    /// Upper bound (exclusive) on when the trade reached `Executed`. Defaults to
+    /// `start_time + 900`; must be after `start_time`, at most 900 seconds later.
     end_time: Option<u64>,
 }
 

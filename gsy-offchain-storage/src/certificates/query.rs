@@ -16,23 +16,25 @@ use crate::db::DatabaseWrapper;
 /// Maximum width of a query window, `end_time - start_time`, in seconds (D7).
 pub const MAX_WINDOW_S: u64 = 900;
 
-/// A validated verdict-time window, unix seconds, both bounds inclusive.
+/// A validated verdict-time window `[start_time, end_time)`, unix seconds. The upper bound is
+/// exclusive so that back-to-back windows `[t, t + 900)`, `[t + 900, t + 1800)` never return
+/// the same trade twice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GooWindow {
     pub start_time: u64,
     pub end_time: u64,
 }
 
-/// `start_time` is required; `end_time` defaults to `start_time + 900`. Rejects
-/// `end_time < start_time` and windows wider than [`MAX_WINDOW_S`].
+/// `start_time` is required; `end_time` defaults to `start_time + 900`. Rejects an empty
+/// window (`end_time <= start_time`) and windows wider than [`MAX_WINDOW_S`].
 pub fn validate_window(
     start_time: Option<u64>,
     end_time: Option<u64>,
 ) -> Result<GooWindow, String> {
     let start_time = start_time.ok_or_else(|| "start_time is required".to_string())?;
     let end_time = end_time.unwrap_or_else(|| start_time.saturating_add(MAX_WINDOW_S));
-    if end_time < start_time {
-        return Err("end_time must not be before start_time".to_string());
+    if end_time <= start_time {
+        return Err("end_time must be after start_time".to_string());
     }
     if end_time - start_time > MAX_WINDOW_S {
         return Err(format!(

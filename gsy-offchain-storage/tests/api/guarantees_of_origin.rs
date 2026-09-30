@@ -148,7 +148,7 @@ fn sorted_uuids(trades: Vec<DbTradeSchema>) -> Vec<String> {
 // --- filter_trades_by_status_change ---------------------------------
 
 #[tokio::test]
-async fn filter_trades_by_status_change_bounds_are_inclusive() {
+async fn filter_trades_by_status_change_is_start_inclusive_end_exclusive() {
     let app = init_app().await;
     let db = &app.db_wrapper;
     db.trades()
@@ -162,13 +162,13 @@ async fn filter_trades_by_status_change_bounds_are_inclusive() {
         .await
         .unwrap();
 
-    // [100, 200], both inclusive, any status.
+    // [100, 200), any status.
     let all = db
         .trades()
         .filter_trades_by_status_change(100, Some(200), None)
         .await
         .unwrap();
-    assert_eq!(sorted_uuids(all), vec!["t-100", "t-150", "t-200"]);
+    assert_eq!(sorted_uuids(all), vec!["t-100", "t-150"]);
 
     // Restricted to Executed.
     let executed = db
@@ -176,15 +176,15 @@ async fn filter_trades_by_status_change_bounds_are_inclusive() {
         .filter_trades_by_status_change(100, Some(200), Some(TradeStatus::Executed))
         .await
         .unwrap();
-    assert_eq!(sorted_uuids(executed), vec!["t-100", "t-200"]);
+    assert_eq!(sorted_uuids(executed), vec!["t-100"]);
 
-    // A single-instant window.
-    let instant = db
+    // The next back-to-back window picks up the boundary trade, and only once.
+    let next = db
         .trades()
-        .filter_trades_by_status_change(200, Some(200), None)
+        .filter_trades_by_status_change(200, Some(300), None)
         .await
         .unwrap();
-    assert_eq!(sorted_uuids(instant), vec!["t-200"]);
+    assert_eq!(sorted_uuids(next), vec!["t-200", "t-201"]);
 
     // Open-ended upper bound.
     let open = db
@@ -249,6 +249,10 @@ async fn rest_rejects_an_invalid_window_with_400() {
         vec![
             ("start_time", "1000".to_string()),
             ("end_time", "999".to_string()),
+        ],
+        vec![
+            ("start_time", "1000".to_string()),
+            ("end_time", "1000".to_string()),
         ],
         vec![
             ("start_time", "1000".to_string()),

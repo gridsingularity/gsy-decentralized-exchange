@@ -137,8 +137,8 @@ impl TradeService {
         }
     }
 
-    /// Trades whose status last changed within `[start_time, end_time]` (both inclusive, unix
-    /// seconds; no upper bound when `end_time` is `None`), optionally restricted to `status`.
+    /// Trades whose status last changed within `[start_time, end_time)` (unix seconds, end
+    /// exclusive; no upper bound when `end_time` is `None`), optionally restricted to `status`.
     ///
     /// This windows on `status_updated_at` rather than `time_slot`: the delivery slot says
     /// when the energy flowed, while the verdict arrives later and by a variable delay.
@@ -153,7 +153,7 @@ impl TradeService {
     ) -> Result<Vec<DbTradeSchema>> {
         let mut bounds = doc! {"$gte": time_slot_bson(start_time)?};
         if let Some(end_time) = end_time {
-            bounds.insert("$lte", time_slot_bson(end_time)?);
+            bounds.insert("$lt", time_slot_bson(end_time)?);
         }
         let mut filter_params = doc! {"status_updated_at": bounds};
         if let Some(status) = &status {

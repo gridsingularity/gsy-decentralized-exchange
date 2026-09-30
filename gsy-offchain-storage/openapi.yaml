@@ -443,8 +443,9 @@ paths:
           name: end_time
           required: false
           description: |
-            Upper bound (inclusive) on the verdict time, Unix seconds. Defaults to
-            `start_time + 900`; `end_time - start_time` may not exceed 900.
+            Upper bound (exclusive) on the verdict time, Unix seconds. Defaults to
+            `start_time + 900`; must satisfy `start_time < end_time <= start_time + 900`.
+            Back-to-back windows `[t, t+900)`, `[t+900, t+1800)` never overlap.
           schema: { type: integer, format: int64, minimum: 0 }
       responses:
         "200":
@@ -456,7 +457,7 @@ paths:
                 items:
                   $ref: "#/components/schemas/LocalOriginRecord"
         "400":
-          description: Missing `start_time`, `end_time < start_time`, or a window over 900 s.
+          description: Missing `start_time`, `end_time <= start_time`, or a window over 900 s.
         "500":
           $ref: "#/components/responses/InternalError"
 

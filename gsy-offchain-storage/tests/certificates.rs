@@ -933,22 +933,20 @@ mod window {
                 end_time: 1_900
             })
         );
-        // Saturates instead of overflowing.
-        assert_eq!(
-            validate_window(Some(u64::MAX), None).map(|w| w.end_time),
-            Ok(u64::MAX)
-        );
+        // Saturates instead of overflowing; the resulting empty window is rejected.
+        assert!(validate_window(Some(u64::MAX), None).is_err());
     }
 
     #[test]
     fn a_window_of_exactly_900_seconds_or_less_is_accepted() {
         assert_eq!(MAX_WINDOW_S, 900);
         assert!(validate_window(Some(1_000), Some(1_900)).is_ok());
-        assert!(validate_window(Some(1_000), Some(1_000)).is_ok());
+        assert!(validate_window(Some(1_000), Some(1_001)).is_ok());
     }
 
     #[test]
-    fn end_before_start_or_a_wider_window_is_rejected() {
+    fn an_empty_or_inverted_or_wider_window_is_rejected() {
+        assert!(validate_window(Some(1_000), Some(1_000)).is_err());
         assert!(validate_window(Some(1_000), Some(999)).is_err());
         assert!(validate_window(Some(1_000), Some(1_901)).is_err());
     }
