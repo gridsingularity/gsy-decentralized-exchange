@@ -1,5 +1,5 @@
 use crate::algorithms::{MatchOrders, PayAsClearPricing};
-use crate::models::{Attributes, BidOfferMatch, MatchingData, Order, Requirements};
+use crate::models::{Attributes, BidOfferMatch, MatchType, MatchingData, Order, Requirements};
 use anyhow::{anyhow, Error, Result};
 use ethers::prelude::*;
 use ethers::utils::keccak256;
@@ -570,6 +570,10 @@ fn to_evm_matches(
                 residual_offer_id,
                 selected_energy: U256::from(item.selected_energy),
                 clearing_price: U256::from(item.energy_rate),
+                match_type: match item.match_type {
+                    MatchType::Standard => 0,
+                    MatchType::Preferred => 1,
+                },
             })
         })
         .collect()

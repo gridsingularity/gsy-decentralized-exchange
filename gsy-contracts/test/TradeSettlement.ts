@@ -99,6 +99,17 @@ describe("TradeSettlement", function () {
     };
   }
 
+  it("Should expose the match type in settlement calldata", async function () {
+    const factory = await ethers.getContractFactory("TradeSettlement");
+    const fields = factory.interface.getFunction("settleBatch")!
+      .inputs[0].arrayChildren!.components!;
+    expect(fields.map((field) => field.name)).to.deep.equal([
+      "tradeId", "bid", "offer", "residualBidId", "residualOfferId",
+      "selectedEnergy", "clearingPrice", "matchType",
+    ]);
+    expect(fields[7].type).to.equal("uint8");
+  });
+
   it("Should settle a valid trade", async function () {
     const {
       settlement,
@@ -125,6 +136,7 @@ describe("TradeSettlement", function () {
       residualOfferId: ZERO_BYTES16,
       selectedEnergy: 100,
       clearingPrice: 45,
+      matchType: 0,
     };
 
     await expect(settlement.connect(operator).settleBatch([matchData]))
@@ -175,6 +187,7 @@ describe("TradeSettlement", function () {
       residualOfferId,
       selectedEnergy: 100,
       clearingPrice: 45,
+      matchType: 0,
     };
 
     await expect(settlement.connect(operator).settleBatch([matchData]))
@@ -223,6 +236,7 @@ describe("TradeSettlement", function () {
           residualOfferId: side === "offer" ? residual.orderId : ZERO_BYTES16,
           selectedEnergy: 100,
           clearingPrice: 45,
+          matchType: 0,
         };
         const second = {
           ...first,
@@ -275,6 +289,7 @@ describe("TradeSettlement", function () {
         residualOfferId: bytes16Id("residual-offer"),
         selectedEnergy: 50,
         clearingPrice: 45,
+        matchType: 0,
       };
       if (invalid === "missing") matchData.residualOfferId = ZERO_BYTES16;
       if (invalid === "unexpected") matchData.selectedEnergy = 100;
@@ -391,6 +406,7 @@ describe("TradeSettlement", function () {
       residualOfferId: ZERO_BYTES16,
       selectedEnergy: 100,
       clearingPrice: 45,
+      matchType: 0,
     };
 
     await expect(
@@ -414,6 +430,7 @@ describe("TradeSettlement", function () {
       residualOfferId: ZERO_BYTES16,
       selectedEnergy: 100,
       clearingPrice: 45,
+      matchType: 0,
     };
 
     await expect(
@@ -449,6 +466,7 @@ describe("TradeSettlement", function () {
           residualOfferId: ZERO_BYTES16,
           selectedEnergy: 100,
           clearingPrice: 45,
+          matchType: 0,
         };
 
         await expect(
@@ -476,6 +494,7 @@ describe("TradeSettlement", function () {
       residualOfferId: ZERO_BYTES16,
       selectedEnergy: 100,
       clearingPrice: 55,
+      matchType: 0,
     };
 
     await expect(

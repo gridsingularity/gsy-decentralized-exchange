@@ -165,6 +165,10 @@ fn encodes_chained_fills_from_original_orders_only() {
             let (matches, lookup) = match_book(&algorithm, &[parent.clone(), first, second, last]);
             assert_eq!(matches.len(), 3);
             let encoded = to_evm_matches(matches, &lookup).unwrap();
+            assert_eq!(
+                encoded.iter().map(|item| item.match_type).collect::<Vec<_>>(),
+                vec![1, 1, 0]
+            );
             let mut expected = to_evm_order_data(&parent, side).unwrap();
             for item in encoded {
                 let (order, residual_id) = if is_bid {

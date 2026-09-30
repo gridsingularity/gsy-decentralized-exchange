@@ -64,7 +64,8 @@
                     {"name": "residualBidId", "type": "bytes16"},
                     {"name": "residualOfferId", "type": "bytes16"},
                     {"name": "selectedEnergy", "type": "uint256"},
-                    {"name": "clearingPrice", "type": "uint256"}
+                    {"name": "clearingPrice", "type": "uint256"},
+                    {"name": "matchType", "type": "uint8", "internalType": "enum TradeSettlement.MatchType"}
                 ]
             }
         ],

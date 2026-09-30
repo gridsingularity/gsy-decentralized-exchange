@@ -19,6 +19,7 @@ abigen!(
         function lastOfferCreatedBy() external view returns (bytes16)
         function lastBidPreferredTradingPartner() external view returns (bytes16)
         function lastBidPreferredEnergyRate() external view returns (uint64)
+        function matchTypes(uint256 index) external view returns (uint8)
     ]"#
 );
 
@@ -60,6 +61,8 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
                 uint64 preferredEnergyRate;
             }
 
+            enum MatchType { Standard, Preferred }
+
             struct Match {
                 bytes16 tradeId;
                 OrderData bid;
@@ -68,6 +71,7 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
                 bytes16 residualOfferId;
                 uint256 selectedEnergy;
                 uint256 clearingPrice;
+                MatchType matchType;
             }
 
             uint256 public settledCount;
@@ -77,6 +81,7 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
             bytes16 public lastOfferCreatedBy;
             bytes16 public lastBidPreferredTradingPartner;
             uint64 public lastBidPreferredEnergyRate;
+            MatchType[] public matchTypes;
 
             constructor() {
                 roles[msg.sender][OPERATOR_ROLE] = true;
@@ -89,6 +94,9 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
             function settleBatch(Match[] calldata matches) external {
                 require(roles[msg.sender][OPERATOR_ROLE], "missing operator role");
                 settledCount += matches.length;
+                for (uint256 i = 0; i < matches.length; i++) {
+                    matchTypes.push(matches[i].matchType);
+                }
                 if (matches.length > 0) {
                     Match calldata first = matches[0];
                     require(first.bid.isBid, "bid must have isBid=true");
@@ -263,7 +271,7 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
     };
     let matches = vec![
         BidOfferMatch {
-            match_type: MatchType::Standard,
+            match_type: MatchType::Preferred,
             market_id: market_id.clone(),
             time_slot: 1000,
             bid: bid_order,
@@ -292,6 +300,14 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
     .unwrap();
 
     let mock_contract = MockTradeSettlement::new(contract_address, client.clone());
+    assert_eq!(
+        mock_contract.match_types(U256::zero()).call().await.unwrap(),
+        1
+    );
+    assert_eq!(
+        mock_contract.match_types(U256::one()).call().await.unwrap(),
+        0
+    );
 
     assert_eq!(
         mock_contract.settled_count().call().await.unwrap(),

@@ -63,6 +63,7 @@ function buildMatch(
     residualOfferId,
     selectedEnergy: 100_000,
     clearingPrice: 12_000,
+    matchType: 0,
   };
 }
 

@@ -54,6 +54,11 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
         registry = OrderRegistry(_registry);
     }
 
+    enum MatchType {
+        Standard,
+        Preferred
+    }
+
     struct Match {
         bytes16 tradeId;
         OrderRegistry.OrderParams bid;
@@ -62,6 +67,7 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
         bytes16 residualOfferId;
         uint256 selectedEnergy;
         uint256 clearingPrice;
+        MatchType matchType;
     }
 
     struct TradePenalty {
