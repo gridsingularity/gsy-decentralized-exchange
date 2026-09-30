@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""Seed and validate dummy Trade data on the INTELLIGENT staging offchain-storage.
-
-Plan: docs/plans/intelligent-staging-dummy-trades.md
+"""Seed and validate dummy Trade data on the staging offchain-storage.
 
 Only the `trades` collection is written (via REST `POST /trades`); cleanup uses
 mongosh inside the Mongo container over SSH. Standard library only.
@@ -677,7 +675,7 @@ def main():
     parser.add_argument("--exhaustive", action="store_true", help="validate: EWDS query every day")
     parser.add_argument("--check-range-limit", action="store_true",
                         help="validate: also check the 1-day tradesQuery limit (Part B)")
-    parser.add_argument("--ssh-host", default="root@167.233.109.37")
+    parser.add_argument("--ssh-host", default="root@localhost")
     parser.add_argument("--rest-url", help="skip the tunnel for REST, e.g. http://localhost:8080")
     parser.add_argument("--gateway-url", help="skip the tunnel for the gateway")
     parser.add_argument("--local-rest-port", type=int, default=18080)
