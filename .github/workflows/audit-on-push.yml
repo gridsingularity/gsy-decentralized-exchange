@@ -5,10 +5,6 @@ permissions:
 
 on:
   push:
-    paths:
-      - ".github/workflows/audit-on-push.yml"
-      - "**/Cargo.toml"
-      - "**/Cargo.lock"
 
 jobs:
   security_audit:
