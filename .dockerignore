@@ -8,5 +8,24 @@
 **/.claude
 **/*.swp
 **/*~
+**/.idea
+**/.env*
 
 docs
+
+# Not needed by the Rust builds. gsy-contracts is excluded from the Cargo
+# workspace and built from its own context (./gsy-contracts), which this file
+# does not apply to. Config directories used by docker-compose are bind-mounted
+# at run time, not copied into images.
+.github
+contracts-output
+gsy-contracts
+metadata
+proxy-config
+schemas
+scripts
+vault-config
+docker-compose*.yml
+run_integration_tests.sh
+mkdocs.yml
+robots.txt
