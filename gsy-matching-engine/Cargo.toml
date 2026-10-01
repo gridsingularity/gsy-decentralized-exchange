@@ -13,17 +13,17 @@ path = "src/main.rs"
 name = "gsy-matching-engine"
 
 [dependencies]
-primitives = { path = "../primitives" }
-anyhow = "1"
-clap = { version = "4", features = ["derive"]}
-reqwest = { version = "0.11", features = ["json"] }
-ethers = { version = "2.0.14", features = ["ws", "rustls"] }
+primitives = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+reqwest = { workspace = true }
+ethers = { workspace = true, features = ["ws", "rustls"] }
 rand = "0.8"
-serde_json = { version = "1.0"}
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-tracing = { version = "0.1", features = ["log"] }
-uuid = { version = "1.12.1", features = ["v4"] }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tracing = { workspace = true, features = ["log"] }
+uuid = { workspace = true }
 
 [dev-dependencies]
-ethers-solc = "2.0.14"
-tempfile = "3"
+ethers-solc = { workspace = true }
+tempfile = { workspace = true }
