@@ -1,6 +1,7 @@
 use crate::utils::indexed_bytes16_topic;
 use crate::world::{CommunityMarketOrderPair, MyWorld, PayAsClearScenario};
 use cucumber::{then, when};
+use ethers::abi::Tokenize;
 use ethers::prelude::*;
 use gsy_community_client::node_connector::orders::publish_orders;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
@@ -52,6 +53,27 @@ type EvmOrderParamsTuple = (
 abigen!(
     OrderRegistryContract,
     r#"[
+        {
+            "type": "function",
+            "name": "getOrder",
+            "stateMutability": "view",
+            "inputs": [{"name": "orderId", "type": "bytes16"}],
+            "outputs": [{"name": "", "type": "tuple", "components": [
+                {"name": "orderId", "type": "bytes16"},
+                {"name": "createdBy", "type": "bytes16"},
+                {"name": "marketId", "type": "bytes16"},
+                {"name": "timeSlot", "type": "uint64"},
+                {"name": "creationTime", "type": "uint64"},
+                {"name": "energy", "type": "uint64"},
+                {"name": "energyRate", "type": "uint64"},
+                {"name": "energySourcePreference", "type": "uint8"},
+                {"name": "energyType", "type": "uint8"},
+                {"name": "isBid", "type": "bool"},
+                {"name": "preferredTradingPartner", "type": "bytes16"},
+                {"name": "preferredEnergyRate", "type": "uint64"},
+                {"name": "tradingPartner", "type": "bytes16"}
+            ]}]
+        },
         {
             "type": "function",
             "name": "getStatus",
@@ -1238,6 +1260,185 @@ async fn verify_preferred_residual(
             assert_eq!(emitted_residual, [0u8; 16], "Fully filled {side} has an on-chain residual");
         }
     }
+}
+
+#[then(expr = "the preferred {word} residual lifecycle succeeds with {string} consumption")]
+async fn verify_residual_lifecycle(world: &mut MyWorld, side: String, consumption: String) {
+    assert!(matches!(side.as_str(), "bid" | "offer"));
+    assert!(matches!(consumption.as_str(), "same-batch" | "later-cycle"));
+    let is_bid = side == "bid";
+    let later = consumption == "later-cycle";
+    align_to_matching_window(world, 3).await;
+    let bid_id = place_custom_order(
+        world,
+        "alice",
+        true,
+        if is_bid { 6.0 } else { 2.0 },
+        12.0,
+        Some(DbRequirements {
+            trading_partner_id: Some("bob".to_string()),
+            energy_type: None,
+            preferred_energy_rate: Some(12.0),
+        }),
+        None,
+    )
+    .await;
+    let offer_id = place_custom_order(
+        world,
+        "bob",
+        false,
+        if is_bid { 2.0 } else { 6.0 },
+        12.0,
+        None,
+        Some(DbAttributes {
+            energy_type: EnergyType::Green,
+            trading_partner_id: None,
+        }),
+    )
+    .await;
+    let parent_id = if is_bid { &bid_id } else { &offer_id };
+    let parent = wait_for_order_in_offchain_storage(world, parent_id).await;
+    let registry = OrderRegistryContract::new(world.order_registry_address, world.provider.clone());
+    let mut expected_params = registry
+        .get_order(parse_uuid_or_hex_bytes16(parent_id).unwrap())
+        .call()
+        .await
+        .expect("Failed to read original order");
+
+    if later {
+        mine_until_matching_block(world, matching_block_interval() as usize + 1).await;
+        verify_partner_trade(world, "alice".into(), "bob".into(), 2.0).await;
+        verify_preferred_residual(world, side.clone(), 4.0).await;
+        let first = world.last_trade.as_ref().unwrap();
+        let residual_id = if is_bid {
+            &first.residual_bid_id
+        } else {
+            &first.residual_offer_id
+        };
+        let residual_id = residual_id.as_ref().expect("Missing residual ID");
+        let residual = wait_for_order_in_offchain_storage(world, residual_id).await;
+        assert_eq!(residual.status, OrderStatus::Submitted);
+        assert_eq!(
+            registry
+                .get_status(parse_uuid_or_hex_bytes16(residual_id).unwrap())
+                .call()
+                .await
+                .unwrap(),
+            1,
+            "Residual must be open before its next fill"
+        );
+    }
+
+    // The second pair has no matching partner preference, so it uses the standard phase.
+    let counter_id = place_custom_order(world, "charlie", !is_bid, 4.0, 12.0, None, None).await;
+    wait_for_order_in_offchain_storage(world, &counter_id).await;
+    mine_until_matching_block(world, matching_block_interval() as usize + 1).await;
+
+    let mut chain = None;
+    for _ in 0..60 {
+        let trades = query_market_trades(world).await;
+        if let Some(first) = trades.iter().find(|trade| {
+            trade.bid_hash.eq_ignore_ascii_case(&bid_id)
+                && trade.offer_hash.eq_ignore_ascii_case(&offer_id)
+        }) {
+            let residual_id = if is_bid {
+                &first.residual_bid_id
+            } else {
+                &first.residual_offer_id
+            };
+            if let Some(residual_id) = residual_id {
+                if let Some(second) = trades.iter().find(|trade| {
+                    let (consumed, counterpart) = if is_bid {
+                        (&trade.bid_hash, &trade.offer_hash)
+                    } else {
+                        (&trade.offer_hash, &trade.bid_hash)
+                    };
+                    consumed.eq_ignore_ascii_case(residual_id)
+                        && counterpart.eq_ignore_ascii_case(&counter_id)
+                }) {
+                    chain = Some((first.clone(), second.clone(), residual_id.clone()));
+                    break;
+                }
+            }
+        }
+        sleep(Duration::from_secs(2)).await;
+    }
+    let (first, second, residual_id) = chain.expect("Residual settlement chain was not indexed");
+    assert!(approx_eq(first.parameters.selected_energy_kWh, 2.0));
+    assert!(approx_eq(second.parameters.selected_energy_kWh, 4.0));
+    assert!(second.residual_bid_id.is_none() && second.residual_offer_id.is_none());
+    assert_ne!(first.trade_uuid, second.trade_uuid);
+    assert_trade_settled_on_chain(world, &first).await;
+    assert_trade_settled_on_chain(world, &second).await;
+
+    let residual = wait_for_order_in_offchain_storage(world, &residual_id).await;
+    let mut expected = parent;
+    expected.order_id = residual_id.clone();
+    expected.energy_kWh = 4.0;
+    expected.status = OrderStatus::Executed;
+    assert_eq!(
+        residual, expected,
+        "Residual metadata or indexed status changed"
+    );
+    let residual_bytes = parse_uuid_or_hex_bytes16(&residual_id).unwrap();
+    expected_params.0 = residual_bytes;
+    expected_params.5 = (4.0 * NODE_FLOAT_SCALING_FACTOR) as u64;
+    assert_eq!(
+        registry
+            .get_order(residual_bytes)
+            .call()
+            .await
+            .unwrap()
+            .into_tokens(),
+        expected_params.into_tokens(),
+        "On-chain residual metadata changed"
+    );
+
+    let settlement =
+        TradeSettlementContract::new(world.trade_settlement_address, world.provider.clone());
+    let mut transaction_hashes = Vec::new();
+    for trade in [&first, &second] {
+        let topic = indexed_bytes16_topic(parse_uuid_or_hex_bytes16(&trade.trade_uuid).unwrap());
+        let events = settlement
+            .event::<TradeSettledFilter>()
+            .from_block(0u64)
+            .topic1(topic)
+            .query_with_meta()
+            .await
+            .unwrap();
+        assert_eq!(events.len(), 1, "Each trade must settle exactly once");
+        let event = &events[0].0;
+        assert_eq!(
+            event.bid_id,
+            parse_uuid_or_hex_bytes16(&trade.bid_hash).unwrap()
+        );
+        assert_eq!(
+            event.offer_id,
+            parse_uuid_or_hex_bytes16(&trade.offer_hash).unwrap()
+        );
+        assert_eq!(
+            event.energy.as_u64(),
+            (trade.parameters.selected_energy_kWh * NODE_FLOAT_SCALING_FACTOR) as u64
+        );
+        assert_eq!(event.price.as_u64(), 12 * NODE_FLOAT_SCALING_FACTOR as u64);
+        let (expected_bid, expected_offer) = if trade.trade_uuid == first.trade_uuid {
+            if is_bid {
+                (residual_bytes, [0; 16])
+            } else {
+                ([0; 16], residual_bytes)
+            }
+        } else {
+            ([0; 16], [0; 16])
+        };
+        assert_eq!(event.residual_bid_id, expected_bid);
+        assert_eq!(event.residual_offer_id, expected_offer);
+        transaction_hashes.push(events[0].1.transaction_hash);
+    }
+    assert_eq!(
+        transaction_hashes[0] == transaction_hashes[1],
+        !later,
+        "Residual was not consumed in the expected settlement batch/cycle"
+    );
 }
 
 #[then(expr = "Charlie's cheaper offer remains untouched in this phase")]
