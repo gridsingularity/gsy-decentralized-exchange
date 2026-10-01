@@ -1,5 +1,6 @@
 use crate::world::{CommunityMarketOrderPair, MyWorld, PayAsClearScenario};
 use cucumber::{then, when};
+use ethers::abi::AbiDecode;
 use ethers::prelude::*;
 use gsy_community_client::node_connector::orders::publish_orders;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
@@ -43,6 +44,17 @@ type EvmOrderParamsTuple = (
     bool,
     [u8; 16],
     u64,
+);
+
+type EvmMatchTuple = (
+    [u8; 16],
+    EvmOrderParamsTuple,
+    EvmOrderParamsTuple,
+    [u8; 16],
+    [u8; 16],
+    U256,
+    U256,
+    u8,
 );
 
 abigen!(
@@ -1310,6 +1322,130 @@ async fn verify_preferred_residual(
     }
 }
 
+#[when(expr = "a bid at {float} preferring {string} at {float} and an offer at {float} preferring {string} at {float} are submitted")]
+async fn submit_preference_policy_pair(
+    world: &mut MyWorld,
+    bid_rate: f64,
+    bid_partner: String,
+    bid_preferred: f64,
+    offer_rate: f64,
+    offer_partner: String,
+    offer_preferred: f64,
+) {
+    let requirements = |partner: String, rate: f64| {
+        (partner != "none" || rate != 0.0).then(|| DbRequirements {
+            trading_partner_id: (partner != "none").then_some(partner),
+            energy_type: None,
+            preferred_energy_rate: (rate != 0.0).then_some(rate),
+        })
+    };
+    align_to_matching_window(world, 2).await;
+    let bid_id = place_custom_order(
+        world,
+        "alice",
+        true,
+        2.0,
+        bid_rate,
+        requirements(bid_partner, bid_preferred),
+        None,
+    )
+    .await;
+    let offer_id = place_custom_order(
+        world,
+        "bob",
+        false,
+        2.0,
+        offer_rate,
+        requirements(offer_partner, offer_preferred),
+        None,
+    )
+    .await;
+    wait_for_order_in_offchain_storage(world, &bid_id).await;
+    wait_for_order_in_offchain_storage(world, &offer_id).await;
+    world.preference_order_ids = Some((bid_id, offer_id));
+    mine_until_matching_block(world, matching_block_interval() as usize + 1).await;
+}
+
+#[then(expr = "the pair settles as {string} at {float} for pay-as-bid or max_offer {float}, min_bid {float}, midpoint {float} for pay-as-clear")]
+async fn verify_preference_policy_pair(
+    world: &mut MyWorld,
+    match_type: String,
+    pay_as_bid: f64,
+    max_offer: f64,
+    min_bid: f64,
+    midpoint: f64,
+) {
+    let expected_type = match match_type.as_str() {
+        "standard" => 0,
+        "preferred" => 1,
+        _ => panic!("Unknown expected match type: {match_type}"),
+    };
+    let algorithm = env::var("MATCHING_ALGORITHM").unwrap_or_else(|_| "pay_as_bid".into());
+    let expected_price = match algorithm.parse::<primitives::MatchingAlgorithm>().unwrap() {
+        primitives::MatchingAlgorithm::PayAsBid => pay_as_bid,
+        primitives::MatchingAlgorithm::PayAsClear => {
+            match env::var("PAY_AS_CLEAR_PRICING").unwrap_or_else(|_| "max_offer".into())
+                .trim().to_ascii_lowercase().as_str() {
+                "max_offer" => max_offer,
+                "min_bid" => min_bid,
+                "midpoint" => midpoint,
+                pricing => panic!("Invalid PAY_AS_CLEAR_PRICING: {pricing}"),
+            }
+        }
+        _ => panic!("Unsupported matching algorithm for preference policy test"),
+    };
+    verify_partner_trade(world, "alice".into(), "bob".into(), 2.0).await;
+    let trade = world.last_trade.as_ref().unwrap();
+    let (bid_id, offer_id) = world.preference_order_ids.as_ref().unwrap();
+    assert!(trade.bid_hash.eq_ignore_ascii_case(bid_id));
+    assert!(trade.offer_hash.eq_ignore_ascii_case(offer_id));
+    assert!(
+        approx_eq(trade.parameters.energy_rate, expected_price),
+        "Expected {match_type} price {expected_price}, got {}",
+        trade.parameters.energy_rate
+    );
+    assert!(trade.residual_bid_id.is_none() && trade.residual_offer_id.is_none());
+    assert_trade_settled_on_chain(world, trade).await;
+    assert_settlement_match_type(world, trade, expected_type).await;
+}
+
+async fn assert_settlement_match_type(world: &MyWorld, trade: &DbTradeSchema, expected: u8) {
+    let trade_id = parse_uuid_or_hex_bytes16(&trade.trade_uuid).unwrap();
+    let mut topic = [0u8; 32];
+    topic[..16].copy_from_slice(&trade_id);
+    let settlement =
+        TradeSettlementContract::new(world.trade_settlement_address, world.provider.clone());
+    let events = settlement.event::<TradeSettledFilter>()
+        .from_block(0u64)
+        .topic1(H256::from(topic))
+        .query_with_meta()
+        .await
+        .unwrap();
+    assert_eq!(events.len(), 1, "Expected exactly one settlement event");
+    let event = &events[0].0;
+    assert_eq!(event.bid_id, parse_uuid_or_hex_bytes16(&trade.bid_hash).unwrap());
+    assert_eq!(event.offer_id, parse_uuid_or_hex_bytes16(&trade.offer_hash).unwrap());
+    assert_eq!(
+        event.energy.as_u64(),
+        (trade.parameters.selected_energy_kWh * NODE_FLOAT_SCALING_FACTOR).round() as u64
+    );
+    assert_eq!(
+        event.price.as_u64(),
+        (trade.parameters.energy_rate * NODE_FLOAT_SCALING_FACTOR).round() as u64
+    );
+    let transaction = world.provider.get_transaction(events[0].1.transaction_hash)
+        .await.unwrap().expect("Missing settlement transaction");
+    assert_eq!(transaction.to, Some(world.trade_settlement_address));
+    // Match type is calldata-only; checking the price alone cannot identify the phase.
+    let (matches,) = <(Vec<EvmMatchTuple>,)>::decode(
+        transaction.input.as_ref().get(4..).expect("Missing function selector")
+    ).expect("Failed to decode settlement matches");
+    let matched = matches.iter()
+        .find(|item| item.0 == trade_id)
+        .expect("Missing trade in calldata");
+    assert_eq!(matched.7, expected, "Unexpected settlement match type");
+}
+
 #[then(expr = "the preferred {word} residual lifecycle succeeds with {string} consumption")]
 async fn verify_residual_lifecycle(world: &mut MyWorld, side: String, consumption: String) {
     assert!(matches!(side.as_str(), "bid" | "offer"));
@@ -1417,6 +1553,8 @@ async fn verify_residual_lifecycle(world: &mut MyWorld, side: String, consumptio
     assert_ne!(first.trade_uuid, second.trade_uuid);
     assert_trade_settled_on_chain(world, &first).await;
     assert_trade_settled_on_chain(world, &second).await;
+    assert_settlement_match_type(world, &first, 1).await;
+    assert_settlement_match_type(world, &second, 0).await;
 
     let residual = wait_for_order_in_offchain_storage(world, &residual_id).await;
     let mut expected = parent;
