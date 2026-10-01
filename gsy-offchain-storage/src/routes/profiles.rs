@@ -2,6 +2,7 @@ use crate::db::measurements_service::{
     flow_direction, insert_measurements, profile_measurement_id,
 };
 use crate::db::DbRef;
+use crate::routes::parse_time_range;
 use actix_web::{web::Json, web::Query, HttpResponse, Responder};
 use anyhow::Result;
 use primitives::db_api_schema::profiles::{
@@ -15,8 +16,8 @@ use std::collections::HashMap;
 #[derive(Deserialize)]
 pub struct ProfilesParameters {
     facility_id: Option<String>,
-    start_time: Option<u64>,
-    end_time: Option<u64>,
+    start_time: Option<String>,
+    end_time: Option<String>,
 }
 
 fn parse_timeseries_timestamp(timestamp: &str) -> Option<u64> {
@@ -102,12 +103,19 @@ pub async fn get_measurements(
     db: DbRef,
     query_params: Query<ProfilesParameters>,
 ) -> impl Responder {
+    let (start_time, end_time) = match parse_time_range(
+        query_params.start_time.as_deref(),
+        query_params.end_time.as_deref(),
+    ) {
+        Ok(range) => range,
+        Err(response) => return response,
+    };
     match fetch_profile_values(
         db.get_ref(),
         MeasurementPointType::Measurement,
         query_params.facility_id.clone(),
-        query_params.start_time,
-        query_params.end_time,
+        start_time,
+        end_time,
     )
     .await
     {
@@ -159,12 +167,19 @@ pub async fn post_forecasts(forecasts: Json<Vec<ForecastSchema>>, db: DbRef) -> 
 }
 
 pub async fn get_forecasts(db: DbRef, query_params: Query<ProfilesParameters>) -> impl Responder {
+    let (start_time, end_time) = match parse_time_range(
+        query_params.start_time.as_deref(),
+        query_params.end_time.as_deref(),
+    ) {
+        Ok(range) => range,
+        Err(response) => return response,
+    };
     match fetch_profile_values(
         db.get_ref(),
         MeasurementPointType::Forecast,
         query_params.facility_id.clone(),
-        query_params.start_time,
-        query_params.end_time,
+        start_time,
+        end_time,
     )
     .await
     {

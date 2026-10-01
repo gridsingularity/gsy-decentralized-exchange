@@ -1,11 +1,12 @@
 use primitives::db_api_schema::grid_topology::{EnergyCommunitySchema, FacilitySchema};
 use primitives::db_api_schema::ids::IdMappingSchema;
+use primitives::db_api_schema::orders::{DbOrderSchema, OrderEnum, OrderStatus};
 use primitives::db_api_schema::profiles::{
     FlowDirection, MeasurementPointSchema, MeasurementPointType, MeasurementSchema,
     TimeseriesSchema,
 };
 use primitives::db_api_schema::trades::{DbTradeSchema, TradeParameters, TradeStatus};
-use primitives::ewds::dto::{EwdsCommunityDto, EwdsMeasurementDto, EwdsTradeDto};
+use primitives::ewds::dto::{EwdsCommunityDto, EwdsMeasurementDto, EwdsOrderDto, EwdsTradeDto};
 use primitives::offchain_storage::{
     CommunityProvider, OffchainStorageClient, OffchainStorageTransport,
 };
@@ -451,8 +452,8 @@ async fn fetches_trades_over_http() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/trades"))
-        .and(query_param("start_time", TIMESLOT.to_string()))
-        .and(query_param("end_time", TIMESLOT_END.to_string()))
+        .and(query_param("start_time", epoch_to_rfc3339(TIMESLOT)))
+        .and(query_param("end_time", epoch_to_rfc3339(TIMESLOT_END)))
         .respond_with(ResponseTemplate::new(200).set_body_json(vec![EwdsTradeDto::from(trade())]))
         .mount(&server)
         .await;
@@ -463,7 +464,10 @@ async fn fetches_trades_over_http() {
         "UNUSED_ENV",
         "unused-default",
     );
-    let trades = client.fetch_trades(TIMESLOT, TIMESLOT_END).await.unwrap();
+    let trades = client
+        .fetch_trades(None, Some(TIMESLOT), Some(TIMESLOT_END))
+        .await
+        .unwrap();
 
     assert_eq!(trades, vec![trade()]);
 }
@@ -487,12 +491,151 @@ async fn fetches_trades_over_ewds_with_rfc3339_range() {
         "EWDS_TEST_CLIENT_ID",
         "testtrades",
     );
-    let trades = client.fetch_trades(TIMESLOT, TIMESLOT_END).await.unwrap();
+    let trades = client
+        .fetch_trades(None, Some(TIMESLOT), Some(TIMESLOT_END))
+        .await
+        .unwrap();
 
     assert_eq!(trades, vec![trade()]);
     assert_eq!(
         sent_ewds_query(&server).await,
         json!({
+            "startTime": epoch_to_rfc3339(TIMESLOT),
+            "endTime": epoch_to_rfc3339(TIMESLOT_END),
+        })
+    );
+
+    clear_ewds_env();
+}
+
+#[tokio::test]
+async fn fetches_trades_by_market_over_http() {
+    let _guard = ENV_LOCK.lock().unwrap();
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/trades"))
+        .and(query_param("market_id", "market-1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(vec![EwdsTradeDto::from(trade())]))
+        .mount(&server)
+        .await;
+
+    let client = OffchainStorageClient::new(
+        OffchainStorageTransport::Http,
+        server.uri(),
+        "UNUSED_ENV",
+        "unused-default",
+    );
+    let trades = client
+        .fetch_trades(Some("market-1"), None, None)
+        .await
+        .unwrap();
+
+    assert_eq!(trades, vec![trade()]);
+}
+
+#[tokio::test]
+async fn fetches_trades_by_market_over_ewds() {
+    let _guard = ENV_LOCK.lock().unwrap();
+
+    let server = MockServer::start().await;
+    mount_ewds_query(
+        &server,
+        "trades.query",
+        json!([EwdsTradeDto::from(trade())]),
+    )
+    .await;
+    set_ewds_env(&server);
+
+    let client = OffchainStorageClient::new(
+        OffchainStorageTransport::Ewds,
+        server.uri(),
+        "EWDS_TEST_CLIENT_ID",
+        "testmarkettrades",
+    );
+    let trades = client
+        .fetch_trades(Some("market-1"), None, None)
+        .await
+        .unwrap();
+
+    assert_eq!(trades, vec![trade()]);
+    assert_eq!(
+        sent_ewds_query(&server).await,
+        json!({ "marketId": "market-1" })
+    );
+
+    clear_ewds_env();
+}
+
+fn order_dto() -> EwdsOrderDto {
+    EwdsOrderDto::from(DbOrderSchema {
+        order_id: "order-1".to_string(),
+        status: OrderStatus::Submitted,
+        order_type: OrderEnum::Bid,
+        area_uuid: "buyer-1".to_string(),
+        market_id: "market-1".to_string(),
+        time_slot: TIMESLOT,
+        creation_time: TIMESLOT - 60,
+        energy_kWh: 2.0,
+        energy_rate: 0.3,
+        created_by: "buyer-1".to_string(),
+        requirements: None,
+        attributes: None,
+    })
+}
+
+#[tokio::test]
+async fn fetches_orders_over_http() {
+    let _guard = ENV_LOCK.lock().unwrap();
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/orders"))
+        .and(query_param("market_id", "market-1"))
+        .and(query_param("start_time", epoch_to_rfc3339(TIMESLOT)))
+        .and(query_param("end_time", epoch_to_rfc3339(TIMESLOT_END)))
+        .respond_with(ResponseTemplate::new(200).set_body_json(vec![order_dto()]))
+        .mount(&server)
+        .await;
+
+    let client = OffchainStorageClient::new(
+        OffchainStorageTransport::Http,
+        server.uri(),
+        "UNUSED_ENV",
+        "unused-default",
+    );
+    let orders = client
+        .fetch_orders("market-1", TIMESLOT, TIMESLOT_END)
+        .await
+        .unwrap();
+
+    assert_eq!(orders, vec![DbOrderSchema::try_from(order_dto()).unwrap()]);
+}
+
+#[tokio::test]
+async fn fetches_orders_over_ewds() {
+    let _guard = ENV_LOCK.lock().unwrap();
+
+    let server = MockServer::start().await;
+    mount_ewds_query(&server, "orders.query", json!([order_dto()])).await;
+    set_ewds_env(&server);
+
+    let client = OffchainStorageClient::new(
+        OffchainStorageTransport::Ewds,
+        server.uri(),
+        "EWDS_TEST_CLIENT_ID",
+        "testorders",
+    );
+    let orders = client
+        .fetch_orders("market-1", TIMESLOT, TIMESLOT_END)
+        .await
+        .unwrap();
+
+    assert_eq!(orders, vec![DbOrderSchema::try_from(order_dto()).unwrap()]);
+    assert_eq!(
+        sent_ewds_query(&server).await,
+        json!({
+            "marketId": "market-1",
             "startTime": epoch_to_rfc3339(TIMESLOT),
             "endTime": epoch_to_rfc3339(TIMESLOT_END),
         })

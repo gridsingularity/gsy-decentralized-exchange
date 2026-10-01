@@ -12,20 +12,13 @@ use primitives::ewds::{
     is_transient_gateway_response, parse_gateway_delivery_summary, EwdsEventTopicConfig,
     EwdsEventType, EwdsOperation, EwdsTopicConfig,
 };
-use primitives::utils::{rfc3339_to_epoch, timestamp_to_string_with_padding};
+use primitives::utils::{opt_rfc3339_to_epoch, timestamp_to_string_with_padding};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;
 use tokio::time::{sleep, Duration};
 use tracing::{error, info, warn};
-
-fn opt_rfc3339_to_epoch(value: Option<String>) -> Result<Option<u64>> {
-    match value {
-        Some(v) => Ok(Some(rfc3339_to_epoch(&v)?)),
-        None => Ok(None),
-    }
-}
 
 #[derive(Clone)]
 pub struct EwdsHandlerConfig {
@@ -121,6 +114,19 @@ impl EwdsHandlerConfig {
 
 #[derive(Deserialize)]
 struct OrdersQueryPayload {
+    #[serde(alias = "marketId")]
+    #[serde(default)]
+    market_id: Option<String>,
+    #[serde(alias = "startTime")]
+    #[serde(default)]
+    start_time: Option<String>,
+    #[serde(alias = "endTime")]
+    #[serde(default)]
+    end_time: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct TradesQueryPayload {
     #[serde(alias = "marketId")]
     #[serde(default)]
     market_id: Option<String>,
@@ -372,8 +378,8 @@ pub async fn handle_request(
                 .orders()
                 .filter_orders(
                     payload.market_id,
-                    opt_rfc3339_to_epoch(payload.start_time)?,
-                    opt_rfc3339_to_epoch(payload.end_time)?,
+                    opt_rfc3339_to_epoch(payload.start_time.as_deref())?,
+                    opt_rfc3339_to_epoch(payload.end_time.as_deref())?,
                 )
                 .await?
                 .into_iter()
@@ -388,7 +394,7 @@ pub async fn handle_request(
             send_success_response(client, config, request_id, response_topic.as_str(), data).await
         }
         EwdsOperation::TradesQuery => {
-            let payload = serde_json::from_value::<TimeRangePayload>(envelope.payload.clone())
+            let payload = serde_json::from_value::<TradesQueryPayload>(envelope.payload.clone())
                 .map_err(|e| anyhow!("trades.query payload parse error: {}", e))?;
             let request_id = envelope.request_id;
 
@@ -400,8 +406,9 @@ pub async fn handle_request(
             let data = db
                 .trades()
                 .filter_trades(
-                    opt_rfc3339_to_epoch(payload.start_time)?,
-                    opt_rfc3339_to_epoch(payload.end_time)?,
+                    payload.market_id,
+                    opt_rfc3339_to_epoch(payload.start_time.as_deref())?,
+                    opt_rfc3339_to_epoch(payload.end_time.as_deref())?,
                 )
                 .await?
                 .into_iter()
@@ -427,8 +434,8 @@ pub async fn handle_request(
 
             let data = fetch_measurements_from_timeseries(
                 db,
-                opt_rfc3339_to_epoch(payload.start_time)?,
-                opt_rfc3339_to_epoch(payload.end_time)?,
+                opt_rfc3339_to_epoch(payload.start_time.as_deref())?,
+                opt_rfc3339_to_epoch(payload.end_time.as_deref())?,
             )
             .await?
             .into_iter()

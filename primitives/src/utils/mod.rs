@@ -89,3 +89,6 @@ pub fn rfc3339_to_epoch(value: &str) -> Result<u64> {
         .map_err(|e| anyhow!("invalid ISO 8601 timestamp '{}': {}", value, e))?;
     Ok(parsed.timestamp() as u64)
 }
+pub fn opt_rfc3339_to_epoch(value: Option<&str>) -> Result<Option<u64>> {
+    value.map(rfc3339_to_epoch).transpose()
+}

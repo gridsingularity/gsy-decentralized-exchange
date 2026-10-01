@@ -42,7 +42,7 @@ pub async fn run_execution_cycle(
     // 1) fetch trades/measurements
     let (start_time, end_time) = timeslot_window(timeslot, market_duration);
     let (trades, measurements) = tokio::try_join!(
-        offchain_storage_client.fetch_trades(start_time, end_time),
+        offchain_storage_client.fetch_trades(None, Some(start_time), Some(end_time)),
         offchain_storage_client.fetch_measurements(start_time, end_time),
     )?;
     info!(
@@ -61,7 +61,9 @@ pub async fn run_execution_cycle(
     }
 
     // 1.2) fetch facility_id>owner_id mapping
-    let facility_owner_mapping = offchain_storage_client.fetch_facility_owner_mapping().await?;
+    let facility_owner_mapping = offchain_storage_client
+        .fetch_facility_owner_mapping()
+        .await?;
 
     // 2) compute penalties
     let penalties: Vec<Penalty> = compute_penalties(
