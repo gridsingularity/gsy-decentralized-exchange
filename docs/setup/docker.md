@@ -10,7 +10,7 @@ Recommended local sequence:
 
 1. Run `./scripts/contracts.sh local deploy`.
 2. Keep the local Anvil container running.
-3. Start `docker-compose.yml` or `docker-compose.test.yml` with
+3. Start `docker-compose.yml` or `docker-compose.e2e-test.yml` with
    `--env-file contracts-output/addresses.env`.
 4. `gsy-offchain-storage` subscribes to chain events and exposes APIs.
 
@@ -284,7 +284,7 @@ Use the test compose file to run e2e and integration scenarios:
 ./scripts/contracts.sh local deploy
 
 docker compose --env-file contracts-output/addresses.env \
-  -f docker-compose.test.yml \
+  -f docker-compose.e2e-test.yml \
   up --build --force-recreate \
   --abort-on-container-exit \
   --exit-code-from e2e-tests \
@@ -311,7 +311,7 @@ Then run the GSY e2e stack with the EWDS and contract address env files:
 ```bash
 docker compose --env-file .env.ewds.local \
   --env-file contracts-output/addresses.env \
-  -f docker-compose.test.yml \
+  -f docker-compose.e2e-test.yml \
   up --build \
   --abort-on-container-exit \
   --exit-code-from e2e-tests \
