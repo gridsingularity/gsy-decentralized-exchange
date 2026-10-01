@@ -4,6 +4,7 @@ use ethers::prelude::*;
 use gsy_community_client::node_connector::orders::publish_orders;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use primitives::db_api_schema::grid_topology::FacilitySchema;
+use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::orders::{
     order_metadata_to_contract, DbAttributes, DbOrderSchema, DbRequirements, EnergyType,
     OrderStatus,
@@ -14,8 +15,9 @@ use primitives::ewds::dto::{EwdsOrderDto, EwdsTradeDto};
 use primitives::matching::matching_block_interval;
 use primitives::offchain_storage::{resolve_order_partner_ids, OffchainStorageClient};
 use primitives::utils::{
-    bytes16_to_hex, create_encrypted_bytes16_from_string, parse_uuid_or_hex_bytes16,
-    rfc3339_to_epoch, NODE_FLOAT_SCALING_FACTOR,
+    bytes16_to_hex, create_encrypted_bytes16_from_string, epoch_to_rfc3339,
+    parse_uuid_or_hex_bytes16, rfc3339_to_epoch, timestamp_to_string_with_padding,
+    NODE_FLOAT_SCALING_FACTOR,
 };
 use std::collections::HashSet;
 use std::env;
@@ -190,10 +192,12 @@ async fn query_orders_for_market(world: &MyWorld, market_id: &str) -> Vec<DbOrde
 
     let response = world
         .http_client
-        .get(format!(
-            "{}/orders?market_id={}&start_time={}&end_time={}",
-            world.offchain_storage_url, market_id, start_time, end_time
-        ))
+        .get(format!("{}/orders", world.offchain_storage_url))
+        .query(&[
+            ("market_id", market_id.to_string()),
+            ("start_time", epoch_to_rfc3339(start_time)),
+            ("end_time", epoch_to_rfc3339(end_time)),
+        ])
         .send()
         .await
         .expect("Failed to query orders endpoint");
@@ -213,15 +217,49 @@ async fn query_orders_for_market(world: &MyWorld, market_id: &str) -> Vec<DbOrde
         .collect()
 }
 
-async fn query_market_trades(world: &MyWorld) -> Vec<DbTradeSchema> {
-    let (start_time, end_time) = market_window(world);
-
+async fn query_market(world: &MyWorld, market_id: &str) -> MarketSchema {
     let response = world
         .http_client
-        .get(format!(
-            "{}/trades?start_time={}&end_time={}",
-            world.offchain_storage_url, start_time, end_time
-        ))
+        .get(format!("{}/market", world.offchain_storage_url))
+        .query(&[("market_id", market_id)])
+        .send()
+        .await
+        .expect("Failed to query market endpoint");
+
+    assert!(
+        response.status().is_success(),
+        "Market query for {} failed with status {}",
+        market_id,
+        response.status()
+    );
+
+    response
+        .json::<MarketSchema>()
+        .await
+        .expect("Failed to parse market response")
+}
+
+async fn query_market_trades(world: &MyWorld) -> Vec<DbTradeSchema> {
+    fetch_trades(world, &[("market_id", market_id_as_hex(world))]).await
+}
+
+async fn query_community_market_trades(world: &MyWorld) -> Vec<DbTradeSchema> {
+    let (start_time, end_time) = market_window(world);
+    fetch_trades(
+        world,
+        &[
+            ("start_time", epoch_to_rfc3339(start_time)),
+            ("end_time", epoch_to_rfc3339(end_time)),
+        ],
+    )
+    .await
+}
+
+async fn fetch_trades(world: &MyWorld, query: &[(&str, String)]) -> Vec<DbTradeSchema> {
+    let response = world
+        .http_client
+        .get(format!("{}/trades", world.offchain_storage_url))
+        .query(query)
         .send()
         .await
         .expect("Failed to query trades endpoint");
@@ -421,10 +459,13 @@ async fn verify_no_cross_community_trade(world: &mut MyWorld) {
     // Allow the matching engine to observe and process the trigger block.
     sleep(Duration::from_secs(3)).await;
 
-    let cross_trade = query_market_trades(world).await.into_iter().find(|trade| {
-        trade.bid_hash.eq_ignore_ascii_case(bid_id)
-            && trade.offer_hash.eq_ignore_ascii_case(offer_id)
-    });
+    let cross_trade = query_community_market_trades(world)
+        .await
+        .into_iter()
+        .find(|trade| {
+            trade.bid_hash.eq_ignore_ascii_case(bid_id)
+                && trade.offer_hash.eq_ignore_ascii_case(offer_id)
+        });
     assert!(
         cross_trade.is_none(),
         "Matching engine settled a bid and offer from different community markets"
@@ -526,7 +567,7 @@ async fn verify_community_market_settlements(world: &mut MyWorld) {
             mine_until_matching_block(world, matching_block_interval() as usize + 1).await;
         }
 
-        let scenario_trades = query_market_trades(world)
+        let scenario_trades = query_community_market_trades(world)
             .await
             .into_iter()
             .filter(|trade| {
@@ -574,13 +615,12 @@ async fn verify_community_market_settlements(world: &mut MyWorld) {
                 "Trade {} was indexed under the wrong community market",
                 trade.trade_uuid
             );
-            let creation_window = world.target_delivery_time..=world.target_delivery_time + 60 * 60;
-            assert!(
-                creation_window.contains(&trade.creation_time),
-                "Trade {} was created at {}, outside of the expected window {:?}",
-                trade.trade_uuid,
-                trade.creation_time,
-                creation_window
+            let market = query_market(world, trade.market_id.as_str()).await;
+            assert_eq!(
+                market.delivery_start_time,
+                timestamp_to_string_with_padding(world.target_delivery_time),
+                "Trade {} belongs to a market with the wrong delivery start time",
+                trade.trade_uuid
             );
             assert_trade_settled_on_chain(world, trade).await;
         }

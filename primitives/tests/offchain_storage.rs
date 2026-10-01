@@ -451,8 +451,8 @@ async fn fetches_trades_over_http() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/trades"))
-        .and(query_param("start_time", TIMESLOT.to_string()))
-        .and(query_param("end_time", TIMESLOT_END.to_string()))
+        .and(query_param("start_time", epoch_to_rfc3339(TIMESLOT)))
+        .and(query_param("end_time", epoch_to_rfc3339(TIMESLOT_END)))
         .respond_with(ResponseTemplate::new(200).set_body_json(vec![EwdsTradeDto::from(trade())]))
         .mount(&server)
         .await;

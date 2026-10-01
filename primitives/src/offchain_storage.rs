@@ -253,7 +253,10 @@ impl OffchainStorageClient {
                 let response = self
                     .http_client
                     .get(&url)
-                    .query(&[("start_time", start_time), ("end_time", end_time)])
+                    .query(&[
+                        ("start_time", epoch_to_rfc3339(start_time)),
+                        ("end_time", epoch_to_rfc3339(end_time)),
+                    ])
                     .send()
                     .await?;
                 if !response.status().is_success() {
