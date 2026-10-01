@@ -11,13 +11,13 @@ use primitives::db_api_schema::orders::{
 };
 use primitives::db_api_schema::profiles::MeasurementSchema;
 use primitives::db_api_schema::trades::DbTradeSchema;
-use primitives::ewds::dto::{EwdsOrderDto, EwdsTradeDto};
 use primitives::matching::matching_block_interval;
-use primitives::offchain_storage::{resolve_order_partner_ids, OffchainStorageClient};
+use primitives::offchain_storage::{
+    resolve_order_partner_ids, OffchainStorageClient, OffchainStorageTransport,
+};
 use primitives::utils::{
-    bytes16_to_hex, create_encrypted_bytes16_from_string, epoch_to_rfc3339,
-    parse_uuid_or_hex_bytes16, rfc3339_to_epoch, timestamp_to_string_with_padding,
-    NODE_FLOAT_SCALING_FACTOR,
+    bytes16_to_hex, create_encrypted_bytes16_from_string, parse_uuid_or_hex_bytes16,
+    rfc3339_to_epoch, timestamp_to_string_with_padding, NODE_FLOAT_SCALING_FACTOR,
 };
 use std::collections::HashSet;
 use std::env;
@@ -187,34 +187,21 @@ async fn query_market_orders(world: &MyWorld) -> Vec<DbOrderSchema> {
     query_orders_for_market(world, market_id_as_hex(world).as_str()).await
 }
 
+fn offchain_storage_client(world: &MyWorld) -> OffchainStorageClient {
+    OffchainStorageClient::new(
+        OffchainStorageTransport::from_env(),
+        world.offchain_storage_url.clone(),
+        "EWDS_E2E_CLIENT_ID",
+        "gsye2e",
+    )
+}
+
 async fn query_orders_for_market(world: &MyWorld, market_id: &str) -> Vec<DbOrderSchema> {
     let (start_time, end_time) = market_window(world);
-
-    let response = world
-        .http_client
-        .get(format!("{}/orders", world.offchain_storage_url))
-        .query(&[
-            ("market_id", market_id.to_string()),
-            ("start_time", epoch_to_rfc3339(start_time)),
-            ("end_time", epoch_to_rfc3339(end_time)),
-        ])
-        .send()
+    offchain_storage_client(world)
+        .fetch_orders(market_id, start_time, end_time)
         .await
-        .expect("Failed to query orders endpoint");
-
-    assert!(
-        response.status().is_success(),
-        "Order query failed with status {}",
-        response.status()
-    );
-
-    response
-        .json::<Vec<EwdsOrderDto>>()
-        .await
-        .expect("Failed to parse orders response")
-        .into_iter()
-        .map(|dto| DbOrderSchema::try_from(dto).expect("valid order DTO"))
-        .collect()
+        .expect("Failed to fetch orders from off-chain storage")
 }
 
 async fn query_market(world: &MyWorld, market_id: &str) -> MarketSchema {
@@ -240,43 +227,18 @@ async fn query_market(world: &MyWorld, market_id: &str) -> MarketSchema {
 }
 
 async fn query_market_trades(world: &MyWorld) -> Vec<DbTradeSchema> {
-    fetch_trades(world, &[("market_id", market_id_as_hex(world))]).await
+    offchain_storage_client(world)
+        .fetch_trades(Some(&market_id_as_hex(world)), None, None)
+        .await
+        .expect("Failed to fetch market trades from off-chain storage")
 }
 
 async fn query_community_market_trades(world: &MyWorld) -> Vec<DbTradeSchema> {
     let (start_time, end_time) = market_window(world);
-    fetch_trades(
-        world,
-        &[
-            ("start_time", epoch_to_rfc3339(start_time)),
-            ("end_time", epoch_to_rfc3339(end_time)),
-        ],
-    )
-    .await
-}
-
-async fn fetch_trades(world: &MyWorld, query: &[(&str, String)]) -> Vec<DbTradeSchema> {
-    let response = world
-        .http_client
-        .get(format!("{}/trades", world.offchain_storage_url))
-        .query(query)
-        .send()
+    offchain_storage_client(world)
+        .fetch_trades(None, Some(start_time), Some(end_time))
         .await
-        .expect("Failed to query trades endpoint");
-
-    assert!(
-        response.status().is_success(),
-        "Trade query failed with status {}",
-        response.status()
-    );
-
-    response
-        .json::<Vec<EwdsTradeDto>>()
-        .await
-        .expect("Failed to parse trades response")
-        .into_iter()
-        .map(|dto| DbTradeSchema::try_from(dto).expect("valid trade DTO"))
-        .collect()
+        .expect("Failed to fetch trades from off-chain storage")
 }
 
 async fn wait_for_order_in_offchain_storage(world: &MyWorld, order_id: &str) -> DbOrderSchema {
