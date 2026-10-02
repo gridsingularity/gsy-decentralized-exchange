@@ -867,13 +867,12 @@ fn delivery_verification_reference_names_the_slot_of_the_day() {
 
 #[test]
 fn delivery_verification_reference_follows_the_interval_duration() {
-    // 12:30 UTC with hourly intervals = slot 12; a zero duration has no slot.
+    // 12:30 UTC with hourly intervals = slot 12.
     let noon_thirty = SLOT - (SLOT % 86400) + 12 * 3600 + 30 * 60;
     assert_eq!(
         delivery_verification_reference(noon_thirty, 3600).as_deref(),
         Some("exec:2026-05-14:slot12")
     );
-    assert_eq!(delivery_verification_reference(noon_thirty, 0), None);
 }
 
 #[test]

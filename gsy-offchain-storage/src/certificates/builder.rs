@@ -295,11 +295,8 @@ pub fn round_half_up_2dp(value: f64) -> f64 {
 /// Names the execution cycle that promoted the trade: `exec:<date>:slot<n>`, where
 /// `n = (time_slot mod 86400) / duration_s` — the interval of the day, UTC.
 /// `None` on an unrepresentable `time_slot`, for the same reason as
-/// [`interval_bounds_utc`], or on a zero `duration_s`.
+/// [`interval_bounds_utc`]. `duration_s` must be non-zero; the pilot config guarantees it.
 pub fn delivery_verification_reference(time_slot: u64, duration_s: u64) -> Option<String> {
-    if duration_s == 0 {
-        return None;
-    }
     let date = DateTime::<Utc>::from_timestamp(i64::try_from(time_slot).ok()?, 0)?;
     let slot = (time_slot % 86400) / duration_s;
     Some(format!("exec:{}:slot{}", date.format("%Y-%m-%d"), slot))
@@ -361,7 +358,7 @@ pub fn build_local_origin_records_with_allocation(
             continue;
         }
 
-        if PILOT.interval_duration_s == 0 || trade.time_slot % PILOT.interval_duration_s != 0 {
+        if trade.time_slot % PILOT.interval_duration_s != 0 {
             tracing::info!(
                 trade_uuid = %trade.trade_uuid,
                 time_slot = trade.time_slot,

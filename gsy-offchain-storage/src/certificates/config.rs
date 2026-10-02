@@ -16,9 +16,16 @@ pub struct PilotConfig {
 }
 
 impl PilotConfig {
+    /// Panics on a zero `GOO_INTERVAL_DURATION_S`, so that the builder never has to check it.
+    /// `main` forces [`PILOT`] at startup, so a bad value stops the service before it serves.
     fn from_env() -> Self {
+        let interval_duration_s = read_env_or("GOO_INTERVAL_DURATION_S", 900u64);
+        assert!(
+            interval_duration_s > 0,
+            "GOO_INTERVAL_DURATION_S must be greater than 0"
+        );
         Self {
-            interval_duration_s: read_env_or("GOO_INTERVAL_DURATION_S", 900u64),
+            interval_duration_s,
             rounding_rule: read_env_or("GOO_ROUNDING_RULE", "half_up_2dp".to_string()),
             municipality_code: read_env_or("GOO_MUNICIPALITY_CODE", "5226".to_string()),
             grid_operator_id: read_env_or("GOO_GRID_OPERATOR_ID", "AEM".to_string()),
