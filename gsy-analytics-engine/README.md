@@ -58,7 +58,6 @@ All settings are environment variables.
 | `ANALYTICS_SETTLEMENT_DELAY_MINUTES` | `15` | Only slots that ended at least this long ago are computed. |
 | `ANALYTICS_BACKFILL_FROM` | unset | Unix seconds or RFC 3339. At startup, computes everything from this time up to the tick window, one day at a time. |
 | `ANALYTICS_ENABLED_KPIS` | `procurement_cost_per_kwh` | Comma-separated KPI ids. Unknown ids stop the service at startup. |
-| `ANALYTICS_GRANULARITIES` | `15min` | Only `15min` is supported. |
 | `ANALYTICS_GRID_TARIFF_EUR_PER_KWH` | unset | Grid tariff for all communities. Without any tariff, values and baselines are `null`. |
 | `ANALYTICS_GRID_TARIFF_OVERRIDES` | unset | Per-community tariffs, e.g. `Pilot1=0.28,Pilot2=0.25`. |
 | `ANALYTICS_API_HOST` | `0.0.0.0` | HTTP API bind address. |

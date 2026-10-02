@@ -1,6 +1,5 @@
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::DateTime;
-use primitives::MarketTimeSeriesGranularity;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fmt;
@@ -30,8 +29,6 @@ struct RawConfig {
     analytics_backfill_from: Option<String>,
     #[serde(default = "default_enabled_kpis")]
     analytics_enabled_kpis: String,
-    #[serde(default = "default_granularities")]
-    analytics_granularities: String,
     // Kept as strings so that empty values (e.g. `${VAR:-}` in compose) mean "unset".
     analytics_grid_tariff_eur_per_kwh: Option<String>,
     analytics_grid_tariff_overrides: Option<String>,
@@ -76,9 +73,6 @@ fn default_api_host() -> String {
 }
 fn default_api_port() -> u16 {
     8081
-}
-fn default_granularities() -> String {
-    "15min".to_string()
 }
 
 /// Database password, hidden from `Debug` output.
@@ -135,7 +129,6 @@ pub struct Config {
     /// Unix seconds.
     pub backfill_from: Option<i64>,
     pub enabled_kpis: Vec<String>,
-    pub granularities: Vec<MarketTimeSeriesGranularity>,
     pub tariffs: TariffConfig,
     pub api_host: String,
     pub api_port: u16,
@@ -181,7 +174,6 @@ impl Config {
                 .map(|value| parse_timestamp(&value))
                 .transpose()?,
             enabled_kpis: parse_list(&raw.analytics_enabled_kpis),
-            granularities: parse_granularities(&raw.analytics_granularities)?,
             tariffs: TariffConfig {
                 default_eur_per_kwh: non_empty(raw.analytics_grid_tariff_eur_per_kwh)
                     .map(|value| parse_tariff(&value))
@@ -211,24 +203,6 @@ fn parse_list(value: &str) -> Vec<String> {
         .filter(|item| !item.is_empty())
         .map(str::to_string)
         .collect()
-}
-
-fn parse_granularities(value: &str) -> Result<Vec<MarketTimeSeriesGranularity>> {
-    let granularities = parse_list(value)
-        .iter()
-        .map(|item| match item.as_str() {
-            "15min" => Ok(MarketTimeSeriesGranularity::FifteenMinutes),
-            "1h" | "1d" => Err(anyhow!(
-                "Granularity '{}' is not supported yet. Only 15min is supported",
-                item
-            )),
-            other => Err(anyhow!("Unknown granularity '{}'. Expected 15min", other)),
-        })
-        .collect::<Result<Vec<_>>>()?;
-    if granularities.is_empty() {
-        bail!("ANALYTICS_GRANULARITIES must contain at least one granularity");
-    }
-    Ok(granularities)
 }
 
 fn parse_tariff(value: &str) -> Result<f64> {

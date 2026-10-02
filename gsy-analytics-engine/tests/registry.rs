@@ -14,7 +14,6 @@ fn default_config_enables_procurement_cost_per_kwh() {
 
     assert_eq!(kpis.len(), 1);
     assert_eq!(kpis[0].id(), "procurement_cost_per_kwh");
-    assert_eq!(kpis[0].unit(), "EUR/kWh");
 }
 
 #[test]

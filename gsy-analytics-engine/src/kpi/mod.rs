@@ -62,7 +62,6 @@ impl KpiResult {
 
 pub trait Kpi: Send + Sync {
     fn id(&self) -> &'static str;
-    fn unit(&self) -> &'static str;
     fn requirements(&self) -> DataRequirements;
     /// Pure: no I/O.
     fn compute(&self, context: &KpiContext) -> Vec<KpiResult>;

@@ -1,5 +1,4 @@
 use gsy_analytics_engine::config::Config;
-use primitives::MarketTimeSeriesGranularity;
 
 fn config_from(vars: &[(&str, &str)]) -> anyhow::Result<Config> {
     Config::from_vars(
@@ -26,10 +25,6 @@ fn defaults_are_applied_when_no_env_is_set() {
     assert_eq!(
         config.enabled_kpis,
         vec!["procurement_cost_per_kwh".to_string()]
-    );
-    assert_eq!(
-        config.granularities,
-        vec![MarketTimeSeriesGranularity::FifteenMinutes]
     );
     assert_eq!(config.tariffs.default_eur_per_kwh, None);
     assert!(config.tariffs.overrides.is_empty());
@@ -103,19 +98,6 @@ fn password_is_redacted_in_debug_output() {
 
     assert!(!debug.contains("super-secret"));
     assert!(debug.contains("***"));
-}
-
-#[test]
-fn only_fifteen_minute_granularity_is_supported() {
-    for value in ["1h", "15min,1d"] {
-        let error = config_from(&[("ANALYTICS_GRANULARITIES", value)]).unwrap_err();
-        assert!(error.to_string().contains("not supported yet"), "{}", value);
-    }
-
-    let error = config_from(&[("ANALYTICS_GRANULARITIES", "5min")]).unwrap_err();
-    assert!(error.to_string().contains("Unknown granularity"));
-
-    assert!(config_from(&[("ANALYTICS_GRANULARITIES", " , ")]).is_err());
 }
 
 #[test]

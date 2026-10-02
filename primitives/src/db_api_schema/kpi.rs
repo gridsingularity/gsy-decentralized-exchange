@@ -36,7 +36,6 @@ pub struct KpiResultSchema<C> {
 pub enum KpiNullReason {
     ZeroNetDemand,
     MissingTariff,
-    NoData,
 }
 
 /// Comparison of a KPI value against its base case (e.g. no P2P trading).

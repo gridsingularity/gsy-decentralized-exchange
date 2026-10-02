@@ -110,10 +110,6 @@ impl Kpi for ProcurementCostPerKwhKpi {
         PROCUREMENT_COST_PER_KWH_KPI_ID
     }
 
-    fn unit(&self) -> &'static str {
-        UNIT
-    }
-
     fn requirements(&self) -> DataRequirements {
         DataRequirements {
             communities: true,

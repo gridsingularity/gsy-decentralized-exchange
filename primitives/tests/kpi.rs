@@ -111,7 +111,6 @@ fn null_reasons_use_snake_case() {
     for (reason, expected) in [
         (KpiNullReason::ZeroNetDemand, "zero_net_demand"),
         (KpiNullReason::MissingTariff, "missing_tariff"),
-        (KpiNullReason::NoData, "no_data"),
     ] {
         assert_eq!(serde_json::to_value(reason).unwrap(), json!(expected));
     }

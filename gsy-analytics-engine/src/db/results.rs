@@ -5,7 +5,7 @@ use crate::kpi::KpiResult;
 use anyhow::Result;
 use futures::TryStreamExt;
 use mongodb::bson::{self, doc, Document};
-use mongodb::options::IndexOptions;
+use mongodb::options::{IndexOptions, UpdateOneModel};
 use mongodb::{Collection, IndexModel};
 use serde::de::DeserializeOwned;
 
@@ -47,24 +47,34 @@ fn to_document(result: &KpiResult) -> Result<Document> {
     })
 }
 
-/// Inserts or replaces each result by its key. Returns the number of results written.
+/// Inserts or replaces each result by its key, in one bulk write (MongoDB 8.0+).
+/// Returns the number of results written.
 pub async fn upsert_results(
     collection: &Collection<Document>,
     results: &[KpiResult],
 ) -> Result<usize> {
-    for result in results {
-        let (kpi_id, community_id, granularity, period_start) = result.key();
-        let filter = doc! {
-            "kpi_id": kpi_id,
-            "community_id": community_id,
-            "granularity": bson::to_bson(granularity)?,
-            "period_start": period_start,
-        };
-        collection
-            .update_one(filter, doc! {"$set": to_document(result)?})
-            .upsert(true)
-            .await?;
+    if results.is_empty() {
+        return Ok(0);
     }
+    let models = results
+        .iter()
+        .map(|result| {
+            let (kpi_id, community_id, granularity, period_start) = result.key();
+            let filter = doc! {
+                "kpi_id": kpi_id,
+                "community_id": community_id,
+                "granularity": bson::to_bson(granularity)?,
+                "period_start": period_start,
+            };
+            Ok(UpdateOneModel::builder()
+                .namespace(collection.namespace())
+                .filter(filter)
+                .update(doc! {"$set": to_document(result)?})
+                .upsert(true)
+                .build())
+        })
+        .collect::<Result<Vec<_>>>()?;
+    collection.client().bulk_write(models).await?;
     Ok(results.len())
 }
 
