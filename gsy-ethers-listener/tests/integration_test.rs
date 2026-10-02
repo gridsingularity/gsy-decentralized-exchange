@@ -6,8 +6,8 @@ use ethers::{
     utils::{Anvil, AnvilInstance},
 };
 use gsy_ethers_listener::{
-    GsyEthersListener, GsyEventHandler, ListenerConfig, MarketStatusUpdatedFilter,
-    OrderCancelledFilter, OrderPlacedFilter, TradeSettledFilter, MarketClearingFilter
+    GsyEthersListener, GsyEventHandler, ListenerConfig, MarketClearingFilter,
+    MarketStatusUpdatedFilter, OrderCancelledFilter, OrderPlacedFilter, TradeSettledFilter,
 };
 use std::fs::File;
 use std::io::Write;

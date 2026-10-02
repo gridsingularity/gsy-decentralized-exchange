@@ -323,7 +323,8 @@ pub fn build_local_origin_records_with_allocation(
 ) -> Vec<LocalOriginRecord> {
     let topology = Topology::build(inputs);
     let measurements = map_measurements(&topology, inputs);
-    let facility_net_export_per_slot = net_export_allocation(&topology, &measurements, trades_for_selected_slots);
+    let facility_net_export_per_slot =
+        net_export_allocation(&topology, &measurements, trades_for_selected_slots);
     let mut records = Vec::with_capacity(selected_trades.len());
 
     for trade in selected_trades {
