@@ -1,46 +1,12 @@
-FROM rust:1.95-bookworm AS chef
-RUN cargo install cargo-chef --locked
-
-# First prepare dependencies of primitives
-WORKDIR /app/primitives
-COPY ./primitives/Cargo.lock ./primitives/Cargo.toml /app/primitives/
-RUN cargo chef prepare --recipe-path recipe.json
-RUN cargo chef cook --release --recipe-path recipe.json
-
-# Then dependencies of the community client
-WORKDIR /app/gsy-community-client
-COPY ./gsy-community-client/Cargo.lock ./gsy-community-client/Cargo.toml /app/gsy-community-client/
-RUN cargo chef prepare --recipe-path recipe.json
-RUN cargo chef cook --release --recipe-path recipe.json
-
-# Then dependencies of the e2e tests
-WORKDIR /app/e2e-tests
-COPY ./e2e-tests/Cargo.lock ./e2e-tests/Cargo.toml /app/e2e-tests/
-RUN cargo chef prepare --recipe-path recipe.json
-RUN cargo chef cook --release --recipe-path recipe.json
-
-FROM chef AS builder
-WORKDIR /app
-COPY e2e-tests ./e2e-tests
-COPY --from=chef /app/e2e-tests/target /app/e2e-tests/target
-COPY primitives ./primitives
-COPY --from=chef /app/primitives/target /app/primitives/target
-COPY gsy-community-client ./gsy-community-client
-COPY --from=chef /app/gsy-community-client/target /app/gsy-community-client/target
-
-WORKDIR /app/e2e-tests
-RUN rm -rf \
-    target/release/.fingerprint/primitives-* \
-    target/release/build/primitives-* \
-    target/release/deps/primitives-* \
-    target/release/deps/libprimitives*
+FROM ghcr.io/gridsingularity/gsy-rust-base:latest AS builder
+COPY . .
 RUN cargo build --release --bin trade_executor
 
-FROM chef AS runtime
+FROM rust:1.95-bookworm AS runtime
 
 WORKDIR /usr/src/app
-COPY --from=builder /app/e2e-tests/target/release/trade_executor .
-COPY --from=builder /app/e2e-tests/features ./features
+COPY --from=builder /var/www/target/release/trade_executor .
+COPY --from=builder /var/www/e2e-tests/features ./features
 
 ENV EVM_NODE_URL="ws://anvil:8545"
 ENV OFFCHAIN_STORAGE_URL="http://gsy-offchain-storage:8080"
