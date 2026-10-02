@@ -107,7 +107,7 @@ async fn mine_empty_blocks(world: &MyWorld, count: usize) {
     }
 }
 
-async fn mine_until_matching_block(world: &MyWorld, max_blocks: usize) {
+pub(crate) async fn mine_until_matching_block(world: &MyWorld, max_blocks: usize) {
     let matching_block_interval = matching_block_interval();
     for _ in 0..max_blocks {
         mine_empty_blocks(world, 1).await;
@@ -131,7 +131,7 @@ async fn mine_until_matching_block(world: &MyWorld, max_blocks: usize) {
     );
 }
 
-async fn align_to_matching_window(world: &MyWorld, required_blocks: u64) {
+pub(crate) async fn align_to_matching_window(world: &MyWorld, required_blocks: u64) {
     let matching_block_interval = matching_block_interval();
     assert!(
         required_blocks < matching_block_interval,
@@ -172,7 +172,7 @@ async fn actor_id_as_hex(world: &MyWorld, user_name: &str) -> String {
     )
 }
 
-fn market_id_as_hex(world: &MyWorld) -> String {
+pub(crate) fn market_id_as_hex(world: &MyWorld) -> String {
     bytes16_to_hex(world.last_market_id.expect("Missing market id"))
 }
 
@@ -241,7 +241,10 @@ async fn query_community_market_trades(world: &MyWorld) -> Vec<DbTradeSchema> {
         .expect("Failed to fetch trades from off-chain storage")
 }
 
-async fn wait_for_order_in_offchain_storage(world: &MyWorld, order_id: &str) -> DbOrderSchema {
+pub(crate) async fn wait_for_order_in_offchain_storage(
+    world: &MyWorld,
+    order_id: &str,
+) -> DbOrderSchema {
     wait_for_order_in_market(world, market_id_as_hex(world).as_str(), order_id).await
 }
 
@@ -618,13 +621,13 @@ async fn submit_community_market_measurements(world: &mut MyWorld) {
         FacilitySchema {
             facility_id: "alice".to_string(),
             facility_name: "alice".to_string(),
-            site_id: "12345".to_string(),
+            site_id: "site-12345".to_string(),
             owner_id: "alice".to_string(),
         },
         FacilitySchema {
             facility_id: "bob".to_string(),
             facility_name: "bob".to_string(),
-            site_id: "12346".to_string(),
+            site_id: "site-12346".to_string(),
             owner_id: "bob".to_string(),
         },
     ];

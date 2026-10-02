@@ -7,13 +7,8 @@
   "properties": {
     "facilityId": { "type": "string", "minLength": 1 },
     "communityUuid": { "type": "string", "minLength": 1 },
-    "timeSlot": {
-      "oneOf": [
-        { "type": "string", "format": "date-time" },
-        { "type": "integer", "minimum": 0 }
-      ]
-    },
-    "creationTime": { "type": "integer", "minimum": 0 },
+    "timeSlot": { "type": "string", "format": "date-time" },
+    "creationTime": { "type": "string", "format": "date-time" },
     "energyKwh": { "type": "number" }
   },
   "required": ["facilityId", "communityUuid", "timeSlot", "creationTime", "energyKwh"]

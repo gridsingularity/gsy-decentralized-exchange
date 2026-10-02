@@ -158,10 +158,16 @@ book, the E2E harness first advances local Anvil to the next matching boundary.
 After the order book is indexed, it fast-forwards to the clearing boundary with
 empty-block RPC calls rather than waiting for one transaction per block.
 
-Before waiting for the orchestrator, the E2E runner idempotently upserts a
-canonical community using `OFFCHAIN_STORAGE_TRANSPORT`. The orchestrator then
-queries the same community collection and opens the community-aware Spot market
-whose ID is derived from community UUID, market type, and delivery slot.
+Before waiting for the orchestrator, the E2E runner idempotently stores a
+canonical community using `OFFCHAIN_STORAGE_TRANSPORT`: over HTTP it calls
+`POST /communities`, and with the EWDS transport it publishes a
+`community.submitted` event and waits until `communities.query` returns the
+community. The orchestrator then queries the same community collection and
+opens the community-aware Spot market whose ID is derived from community UUID,
+market type, and delivery slot.
+
+Features tagged `@ewds`, such as `events.feature`, only run with
+`OFFCHAIN_STORAGE_TRANSPORT=ewds`; HTTP runs skip them.
 
 The contracts command starts the dedicated local Anvil container, deploys the
 upgradeable contract suite, grants service roles, and writes
@@ -277,8 +283,15 @@ EWF-hosted broker and the following local channels/topics:
 - `ordersQuery` / `ordersQueryResponse`
 - `tradesQuery` / `tradesQueryResponse`
 - `measurementsQuery` / `measurementsQueryResponse`
-- `communityUpsert` / `communityUpsertResponse`
 - `communitiesQuery` / `communitiesQueryResponse`
+
+The community setup and the `@ewds` events feature also need
+`gsy.intelligent.events.pub` / `gsy.intelligent.events.sub` with the
+`communitySubmittedTest`, `siteSubmittedTest`, `facilitySubmittedTest`,
+`measurementsSubmittedTest` and `orderSubmittedTest` topics. The events
+feature adds one feature, two scenarios and ten steps to the pay-as-bid
+summary below. Its order scenario needs the community client's order event
+subscriber, which `EWDS_ENABLE_HANDLER=true` in `.env.ewds.local` starts.
 
 Expected passing summary:
 
@@ -311,11 +324,18 @@ the asynchronous DDHub broker path:
 EWDS_RESPONSE_TIMEOUT_MS=60000
 EWDS_RESPONSE_POLL_INTERVAL_MS=1000
 EWDS_EMPTY_RESPONSE_GRACE_MS=10000
-EWDS_HANDLER_POLL_INTERVAL_MS=500
+EWDS_HANDLER_POLL_INTERVAL_MS=1000
 EWDS_HANDLER_BATCH_SIZE=100
 EWDS_RATE_LIMIT_BACKOFF_MS=2000
 EWDS_RATE_LIMIT_MAX_BACKOFF_MS=30000
+EXECUTION_ENGINE_ROLLOVER_RETRY_LIMIT=10
 ```
+
+Over EWDS a scenario can take several minutes, so its trades may only settle
+after the delivery slot has started. `EXECUTION_ENGINE_ROLLOVER_RETRY_LIMIT=10`
+keeps the execution engine retrying that slot for about ten cycles (roughly
+ten minutes over EWDS) after it rolled over; with the production default of 2
+the penalty step fails when a scenario starts late in the 15-minute window.
 
 Important EWDS variables for test runs:
 
@@ -337,6 +357,10 @@ Important EWDS variables for test runs:
 - `EWDS_RATE_LIMIT_BACKOFF_MS`
 - `EWDS_RATE_LIMIT_MAX_BACKOFF_MS`
 - `EWDS_E2E_CLIENT_ID`
+- `EWDS_COMMUNITY_CLIENT_ID`
+- `EWDS_EVENT_BATCH_SIZE`
+- `EWDS_EVENT_POLL_INTERVAL_MS` (fixed to 1000 in `docker-compose.e2e-test.yml`;
+  the default outside the e2e stack is 60000)
 - `EWDS_GATEWAY_PLATFORM` (set `linux/amd64` on Apple Silicon when using current EWDS images)
 
 Current e2e suite validates:

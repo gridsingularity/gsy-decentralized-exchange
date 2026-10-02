@@ -2,9 +2,9 @@ use anyhow::{anyhow, Result};
 use cucumber::World;
 use ethers::prelude::*;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
-use primitives::db_api_schema::grid_topology::FacilitySchema;
+use primitives::db_api_schema::grid_topology::{FacilitySchema, SiteSchema};
 use primitives::db_api_schema::market::MarketSchema;
-use primitives::db_api_schema::profiles::ForecastSchema;
+use primitives::db_api_schema::profiles::{ForecastSchema, MeasurementSchema};
 use primitives::db_api_schema::trades::DbTradeSchema;
 use primitives::offchain_storage::OffchainStorageClient;
 use primitives::utils::parse_uuid_or_hex_bytes16;
@@ -67,6 +67,9 @@ pub struct MyWorld {
     pub cross_community_order_ids: Option<(String, String)>,
     pub community_market_order_pairs: Vec<CommunityMarketOrderPair>,
     pub community_market_trades: Vec<DbTradeSchema>,
+    pub submitted_site: Option<SiteSchema>,
+    pub submitted_facility: Option<FacilitySchema>,
+    pub submitted_measurements: Vec<MeasurementSchema>,
 }
 
 impl MyWorld {
@@ -134,6 +137,9 @@ impl MyWorld {
             cross_community_order_ids: None,
             community_market_order_pairs: vec![],
             community_market_trades: vec![],
+            submitted_site: None,
+            submitted_facility: None,
+            submitted_measurements: vec![],
         })
     }
 

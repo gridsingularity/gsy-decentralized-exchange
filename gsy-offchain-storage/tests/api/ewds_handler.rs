@@ -4,7 +4,7 @@ use primitives::db_api_schema::grid_topology::FacilitySchema;
 use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
 use primitives::db_api_schema::trades::{DbTradeSchema, TradeParameters, TradeStatus};
 use primitives::ewds::dto::{EwdsRequestEnvelope, EwdsSendMessageDto};
-use primitives::ewds::{EwdsOperation, EwdsTopicConfig};
+use primitives::ewds::{EwdsEventTopicConfig, EwdsOperation, EwdsTopicConfig};
 use primitives::utils::{bytes16_to_hex, create_encrypted_bytes16_from_string};
 use serde_json::json;
 use wiremock::matchers::{method, path};
@@ -19,14 +19,13 @@ pub(crate) fn test_config(gateway_url: String) -> EwdsHandlerConfig {
         response_fqcn: "gsy.responses.pub".to_string(),
         event_publish_fqcn: "gsy.events.pub".to_string(),
         event_subscribe_fqcn: "gsy.events.sub".to_string(),
-        trade_created_topic: "tradeCreated".to_string(),
-        clearing_result_created_topic: "clearingResultCreated".to_string(),
-        market_status_updated_topic: "marketStatusUpdated".to_string(),
+        event_topics: EwdsEventTopicConfig::default(),
         topic_owner: "test.owner".to_string(),
         topic_version: "1.0.0".to_string(),
         request_client_id: "gsyoffchainstorage".to_string(),
         topics: EwdsTopicConfig::from_env(),
         poll_interval_ms: 500,
+        event_poll_interval_ms: 500,
         request_batch_size: 100,
         response_send_timeout_ms: 1_000,
     }
