@@ -228,11 +228,11 @@ async fn filter_trades_by_status_change_excludes_trades_without_a_verdict() {
     stop_app(app).await;
 }
 
-// --- REST: GET /guarantees-of-origin-measurements --------------------
+// --- REST: GET /guarantees-of-origin --------------------
 
 async fn get_goo(address: &str, query: &[(&str, String)]) -> reqwest::Response {
     reqwest::Client::new()
-        .get(format!("{}/guarantees-of-origin-measurements", address))
+        .get(format!("{}/guarantees-of-origin", address))
         .query(query)
         .send()
         .await

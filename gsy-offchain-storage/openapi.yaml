@@ -421,7 +421,7 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
-  /guarantees-of-origin-measurements:
+  /guarantees-of-origin:
     get:
       tags: [Guarantees of Origin]
       summary: Derive local_origin_record certificates from Executed trades.

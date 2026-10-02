@@ -1,7 +1,8 @@
 //! Steps of `features/green_proofs`: guarantees of origin (`local_origin_record`s) derived
-//! by offchain storage from `Executed` trades, queried over EWDS
-//! (`guarantees_of_origin.query`) and over the REST twin
-//! (`GET /guarantees-of-origin-measurements`).
+//! by offchain storage from `Executed` trades. Queried over the transport selected by
+//! `OFFCHAIN_STORAGE_TRANSPORT`, like the other features: `GET /guarantees-of-origin` for
+//! `http`, `guarantees_of_origin.query` for `ewds`. That the two return the same records is
+//! covered by offchain-storage's API tests.
 //!
 //! No verdict pipeline marks trades `Executed` yet, so the scenarios seed the topology,
 //! measurements and an already-`Executed` trade directly into Mongo. Every id is unique per
@@ -31,6 +32,7 @@ use primitives::utils::{
     timestamp_to_string_with_padding,
 };
 use serde_json::json;
+use std::env;
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
 use tracing::info;
@@ -40,9 +42,9 @@ use uuid::Uuid;
 const SLOT_S: u64 = 900;
 /// How long a query is retried until it yields the expected kind of answer. Each EWDS
 /// query additionally has its own response timeout (`EWDS_RESPONSE_TIMEOUT_MS`).
-const EWDS_RETRY_BUDGET: Duration = Duration::from_secs(60);
-const EWDS_RETRY_INTERVAL: Duration = Duration::from_secs(3);
-const REST_PATH: &str = "guarantees-of-origin-measurements";
+const QUERY_RETRY_BUDGET: Duration = Duration::from_secs(60);
+const QUERY_RETRY_INTERVAL: Duration = Duration::from_secs(3);
+const REST_PATH: &str = "guarantees-of-origin";
 
 async fn database() -> Database {
     let db_url = std::env::var("MONGO_URL").unwrap_or_else(|_| {
@@ -80,13 +82,6 @@ fn seed(world: &MyWorld) -> &GreenProofSeed {
         .seed
         .as_ref()
         .expect("No green-proof data was seeded in this scenario")
-}
-
-fn window(world: &MyWorld) -> (u64, u64) {
-    world
-        .green_proof
-        .window
-        .expect("No guarantees-of-origin query was made in this scenario")
 }
 
 // --- Seeding -------------------------------------------------------------------------
@@ -249,6 +244,27 @@ async fn seed_executed_pv_sale(world: &mut MyWorld, energy_kwh: f64, export_kwh:
 
 // --- Queries ---------------------------------------------------------------------------
 
+#[derive(Clone, Copy, Debug)]
+enum Transport {
+    Http,
+    Ewds,
+}
+
+/// The transport from `OFFCHAIN_STORAGE_TRANSPORT`, `http` by default.
+fn transport() -> Transport {
+    let transport = env::var("OFFCHAIN_STORAGE_TRANSPORT")
+        .unwrap_or_else(|_| "http".to_string())
+        .to_ascii_lowercase();
+    match transport.as_str() {
+        "http" => Transport::Http,
+        "ewds" => Transport::Ewds,
+        _ => panic!(
+            "Unsupported OFFCHAIN_STORAGE_TRANSPORT '{}'; expected http or ewds",
+            transport
+        ),
+    }
+}
+
 async fn ewds_query(window: (u64, u64)) -> Result<Vec<LocalOriginRecord>, String> {
     EwdsClient::from_env("EWDS_E2E_CLIENT_ID", "gsye2e", 60_000)
         .query::<LocalOriginRecord>(
@@ -259,51 +275,77 @@ async fn ewds_query(window: (u64, u64)) -> Result<Vec<LocalOriginRecord>, String
         .map_err(|error| format!("{error:#}"))
 }
 
-/// Repeats the EWDS query until `done` accepts the outcome or [`EWDS_RETRY_BUDGET`]
-/// elapses, then records the last outcome in the world.
-async fn query_ewds_until<F>(world: &mut MyWorld, window: (u64, u64), done: F)
+async fn rest_query(world: &MyWorld, window: (u64, u64)) -> Result<Vec<LocalOriginRecord>, String> {
+    let response = world
+        .http_client
+        .get(format!("{}/{}", world.offchain_storage_url, REST_PATH))
+        .query(&[("start_time", window.0), ("end_time", window.1)])
+        .send()
+        .await
+        .map_err(|error| format!("GET /{} failed: {error}", REST_PATH))?;
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!(
+            "GET /{} failed with status {}: {}",
+            REST_PATH, status, body
+        ));
+    }
+    serde_json::from_str(&body)
+        .map_err(|error| format!("Invalid GET /{} response ({error}): {body}", REST_PATH))
+}
+
+async fn query(world: &MyWorld, window: (u64, u64)) -> Result<Vec<LocalOriginRecord>, String> {
+    match transport() {
+        Transport::Http => rest_query(world, window).await,
+        Transport::Ewds => ewds_query(window).await,
+    }
+}
+
+/// Repeats the query until `done` accepts the outcome or [`QUERY_RETRY_BUDGET`] elapses,
+/// then records the last outcome in the world.
+async fn query_until<F>(world: &mut MyWorld, window: (u64, u64), done: F)
 where
     F: Fn(&Result<Vec<LocalOriginRecord>, String>) -> bool,
 {
+    let transport = transport();
     let started = Instant::now();
     let mut attempt = 0u32;
     let outcome = loop {
         attempt += 1;
-        let outcome = ewds_query(window).await;
-        if done(&outcome) || started.elapsed() >= EWDS_RETRY_BUDGET {
+        let outcome = query(world, window).await;
+        if done(&outcome) || started.elapsed() >= QUERY_RETRY_BUDGET {
             break outcome;
         }
         info!(
-            "guarantees_of_origin.query attempt {} not conclusive yet ({}); retrying",
+            "Guarantees-of-origin query over {:?}, attempt {} not conclusive yet ({}); retrying",
+            transport,
             attempt,
             match &outcome {
                 Ok(records) => format!("{} record(s)", records.len()),
                 Err(error) => error.clone(),
             }
         );
-        sleep(EWDS_RETRY_INTERVAL).await;
+        sleep(QUERY_RETRY_INTERVAL).await;
     };
 
-    world.green_proof.window = Some(window);
     match outcome {
         Ok(records) => {
-            world.green_proof.ewds_records = records;
-            world.green_proof.ewds_error = None;
+            world.green_proof.records = records;
+            world.green_proof.query_error = None;
         }
         Err(error) => {
-            world.green_proof.ewds_records = vec![];
-            world.green_proof.ewds_error = Some(error);
+            world.green_proof.records = vec![];
+            world.green_proof.query_error = Some(error);
         }
     }
 }
 
-#[when(
-    "the guarantees of origin around the verdict time are queried over EWDS until the seeded sale is certified"
-)]
+#[when("the guarantees of origin around the verdict time are queried until the seeded sale is certified")]
 async fn query_until_certified(world: &mut MyWorld) {
     let trade_uuid = seed(world).trade_uuid.clone();
     let window = window_around(seed(world).status_updated_at);
-    query_ewds_until(world, window, |outcome| {
+    query_until(world, window, |outcome| {
         matches!(outcome, Ok(records) if records
             .iter()
             .any(|record| record.trade_and_delivery.trade_reference.contains(&trade_uuid)))
@@ -311,39 +353,29 @@ async fn query_until_certified(world: &mut MyWorld) {
     .await;
 }
 
-#[when("the guarantees of origin around the verdict time are queried over EWDS")]
+#[when("the guarantees of origin around the verdict time are queried")]
 async fn query_once(world: &mut MyWorld) {
     let window = window_around(seed(world).status_updated_at);
-    query_ewds_until(world, window, |outcome| outcome.is_ok()).await;
-}
-
-async fn rest_query(world: &MyWorld, window: (u64, u64)) -> reqwest::Response {
-    world
-        .http_client
-        .get(format!("{}/{}", world.offchain_storage_url, REST_PATH))
-        .query(&[("start_time", window.0), ("end_time", window.1)])
-        .send()
-        .await
-        .expect("Failed to contact the guarantees-of-origin REST endpoint")
+    query_until(world, window, |outcome| outcome.is_ok()).await;
 }
 
 // --- Assertions ------------------------------------------------------------------------
 
-fn ewds_records(world: &MyWorld) -> &[LocalOriginRecord] {
-    if let Some(error) = world.green_proof.ewds_error.as_ref() {
-        panic!("guarantees_of_origin.query failed: {error}");
+fn query_records(world: &MyWorld) -> &[LocalOriginRecord] {
+    if let Some(error) = world.green_proof.query_error.as_ref() {
+        panic!("The guarantees-of-origin query failed: {error}");
     }
-    &world.green_proof.ewds_records
+    &world.green_proof.records
 }
 
 #[then("exactly one local origin record is returned for the seeded sale")]
 async fn exactly_one_record(world: &mut MyWorld) {
     let trade_uuid = seed(world).trade_uuid.clone();
-    let records = ewds_records(world);
+    let records = query_records(world);
     assert_eq!(
         records.len(),
         1,
-        "Expected exactly one local_origin_record over EWDS, got {}: {:#?}",
+        "Expected exactly one local_origin_record, got {}: {:#?}",
         records.len(),
         records
     );
@@ -359,7 +391,7 @@ async fn exactly_one_record(world: &mut MyWorld) {
 )]
 async fn record_fields(world: &mut MyWorld, energy_quantity: f64) {
     let seed = seed(world).clone();
-    let record = ewds_records(world)
+    let record = query_records(world)
         .first()
         .expect("No local_origin_record was returned")
         .clone();
@@ -431,33 +463,12 @@ async fn record_fields(world: &mut MyWorld, energy_quantity: f64) {
 
 #[then("no local origin record is returned")]
 async fn no_record(world: &mut MyWorld) {
-    let records = ewds_records(world);
+    let records = query_records(world);
     assert!(
         records.is_empty(),
-        "Expected no local_origin_record over EWDS, got {}: {:#?}",
+        "Expected no local_origin_record, got {}: {:#?}",
         records.len(),
         records
-    );
-}
-
-#[then("the REST endpoint returns the same records")]
-async fn rest_returns_same_records(world: &mut MyWorld) {
-    let response = rest_query(world, window(world)).await;
-    let status = response.status();
-    let body = response.text().await.unwrap_or_default();
-    assert!(
-        status.is_success(),
-        "GET /{} failed with status {}: {}",
-        REST_PATH,
-        status,
-        body
-    );
-    let rest_records: Vec<LocalOriginRecord> = serde_json::from_str(&body)
-        .unwrap_or_else(|e| panic!("Invalid GET /{} response ({e}): {body}", REST_PATH));
-    assert_eq!(
-        rest_records,
-        ewds_records(world),
-        "The REST twin and EWDS returned different records"
     );
 }
 

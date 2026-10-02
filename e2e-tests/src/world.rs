@@ -60,10 +60,8 @@ pub struct GreenProofSeed {
 #[derive(Clone, Debug, Default)]
 pub struct GreenProofState {
     pub seed: Option<GreenProofSeed>,
-    /// The `(start_time, end_time)` of the last query, unix seconds.
-    pub window: Option<(u64, u64)>,
-    pub ewds_records: Vec<LocalOriginRecord>,
-    pub ewds_error: Option<String>,
+    pub records: Vec<LocalOriginRecord>,
+    pub query_error: Option<String>,
 }
 
 #[derive(Debug, World)]

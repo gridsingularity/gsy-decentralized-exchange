@@ -1,5 +1,5 @@
 //! `local_origin_record` shape. Read-side API types only, never persisted:
-//! offchain storage derives them on request (REST `GET /guarantees-of-origin-measurements`
+//! offchain storage derives them on request (REST `GET /guarantees-of-origin`
 //! and EWDS `guarantees_of_origin.query`). Shared here so EWDS consumers can deserialize
 //! the response. The serialized JSON is identical to the fedecom `LocalOriginRecord`.
 
