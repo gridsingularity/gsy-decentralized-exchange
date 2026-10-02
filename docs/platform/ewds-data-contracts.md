@@ -42,6 +42,7 @@ Primary files:
 - `int.facility.submitted.event.v1.json`
 - `int.site.submitted.event.v1.json`
 - `int.community.submitted.event.v1.json`
+- `int.order.submitted.event.v1.json`
 
 DDHub topic names use camelCase because the Client Gateway UI rejects dots in
 topic names. The schema file names and payload `operation` values keep dotted
@@ -61,6 +62,7 @@ operation names for readability and service routing:
 | `facilitySubmitted` | `facility.submitted` event | `int.facility.submitted.event.v1.json` |
 | `siteSubmitted` | `site.submitted` event | `int.site.submitted.event.v1.json` |
 | `communitySubmitted` | `community.submitted` event | `int.community.submitted.event.v1.json` |
+| `orderSubmitted` | `order.submitted` event | `int.order.submitted.event.v1.json` |
 
 ### Measurement Mapping
 
@@ -107,6 +109,9 @@ Used by `measurements.query` responses and `measurements.submitted` events.
 
 ### Order Mapping
 
+Used by `orders.query` responses and `order.submitted` events. Times are
+RFC 3339 strings on the wire.
+
 | Ontology property | Schema field | Current runtime source |
 |---|---|---|
 | `int:orderId` | `orderId` | `DbOrderSchema.order_id` |
@@ -117,7 +122,21 @@ Used by `measurements.query` responses and `measurements.submitted` events.
 | `int:priceLimit` | `priceLimit` | `DbOrderSchema.energy_rate` |
 | `int:timeSlot` | `timeSlot` | `DbOrderSchema.time_slot` |
 | `int:createdBy` | `createdBy` | `DbOrderSchema.created_by` |
-| `int:createdAt` | `createdAt` | `DbOrderSchema.creation_time` |
+| `int:createdAt` | `creationTime` | `DbOrderSchema.creation_time` |
+
+For an `order.submitted` event, the community client builds the
+`OrderRegistry.placeOrder` parameters like this:
+
+| Contract parameter | From |
+|---|---|
+| `orderId` | the 16 bytes of the `orderId` UUID |
+| `createdBy` | `createdBy`, mapped to the on-chain actor ID by the ID service |
+| `marketId` | the 16 bytes of `marketId` |
+| `timeSlot`, `creationTime` | `timeSlot`, `creationTime` as epoch seconds |
+| `energy`, `energyRate` | `quantity`, `priceLimit` × 10 000, rounded |
+| `isBid` | `orderType` is `bid` |
+| `energySourcePreference`, `preferredTradingPartner`, `preferredEnergyRate` | the bid requirements (`energySourcePreference`, `preferredTradingPartner` mapped by the ID service, `preferredEnergyRate` × 10 000) |
+| `energyType`, `tradingPartner` | the offer attributes (`energyType`, `preferredTradingPartner` mapped by the ID service) |
 
 Runtime-only fields not represented in the agreed Intelligent `Order` schema:
 

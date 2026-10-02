@@ -287,9 +287,11 @@ EWF-hosted broker and the following local channels/topics:
 
 The community setup and the `@ewds` events feature also need
 `gsy.intelligent.events.pub` / `gsy.intelligent.events.sub` with the
-`communitySubmittedTest`, `siteSubmittedTest`, `facilitySubmittedTest` and
-`measurementsSubmittedTest` topics. The events feature adds one
-feature, one scenario and four steps to the pay-as-bid summary below.
+`communitySubmittedTest`, `siteSubmittedTest`, `facilitySubmittedTest`,
+`measurementsSubmittedTest` and `orderSubmittedTest` topics. The events
+feature adds one feature, two scenarios and ten steps to the pay-as-bid
+summary below. Its order scenario needs the community client's order event
+subscriber, which `EWDS_ENABLE_HANDLER=true` in `.env.ewds.local` starts.
 
 Expected passing summary:
 
@@ -322,11 +324,18 @@ the asynchronous DDHub broker path:
 EWDS_RESPONSE_TIMEOUT_MS=60000
 EWDS_RESPONSE_POLL_INTERVAL_MS=1000
 EWDS_EMPTY_RESPONSE_GRACE_MS=10000
-EWDS_HANDLER_POLL_INTERVAL_MS=500
+EWDS_HANDLER_POLL_INTERVAL_MS=1000
 EWDS_HANDLER_BATCH_SIZE=100
 EWDS_RATE_LIMIT_BACKOFF_MS=2000
 EWDS_RATE_LIMIT_MAX_BACKOFF_MS=30000
+EXECUTION_ENGINE_ROLLOVER_RETRY_LIMIT=10
 ```
+
+Over EWDS a scenario can take several minutes, so its trades may only settle
+after the delivery slot has started. `EXECUTION_ENGINE_ROLLOVER_RETRY_LIMIT=10`
+keeps the execution engine retrying that slot for about ten cycles (roughly
+ten minutes over EWDS) after it rolled over; with the production default of 2
+the penalty step fails when a scenario starts late in the 15-minute window.
 
 Important EWDS variables for test runs:
 
@@ -348,6 +357,10 @@ Important EWDS variables for test runs:
 - `EWDS_RATE_LIMIT_BACKOFF_MS`
 - `EWDS_RATE_LIMIT_MAX_BACKOFF_MS`
 - `EWDS_E2E_CLIENT_ID`
+- `EWDS_COMMUNITY_CLIENT_ID`
+- `EWDS_EVENT_BATCH_SIZE`
+- `EWDS_EVENT_POLL_INTERVAL_MS` (fixed to 1000 in `docker-compose.e2e-test.yml`;
+  the default outside the e2e stack is 60000)
 - `EWDS_GATEWAY_PLATFORM` (set `linux/amd64` on Apple Silicon when using current EWDS images)
 
 Current e2e suite validates:

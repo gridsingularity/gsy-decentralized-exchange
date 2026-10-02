@@ -90,6 +90,7 @@ Each service:
 | `markets.query` over `marketsQuery` / `marketsQueryResponse` | community client | off-chain storage service | off-chain storage service | community client | `GET /markets` |
 | `ids.query` over `idsQuery` / `idsQueryResponse` | requester service | off-chain storage service | off-chain storage service | requester | `POST /ids` (get-or-create) |
 | `community.submitted` event over `communitySubmitted` | other systems or e2e runner | off-chain storage service | none | none | `POST /communities` |
+| `order.submitted` event over `orderSubmitted` | FOS or e2e runner | community client | none | none | none (the community client calls `OrderRegistry.placeOrder`) |
 | `communities.query` over `communitiesQuery` / `communitiesQueryResponse` | market orchestrator | off-chain storage service | off-chain storage service | market orchestrator | `GET /communities` |
 | `forecasts.upsert` | community client | off-chain storage service | none | none | `POST /measurement-points` + `POST /timeseries` |
 | `measurements.upsert` | community client | off-chain storage service | none | none | `POST /measurement-points` + `POST /timeseries` |
@@ -108,8 +109,8 @@ Each service:
 | `gsy.intelligent.requests.sub` | Subscribe | `ordersQuery`, `tradesQuery`, `measurementsQuery`, `clearingResultsQuery`, `marketsQuery`, `idsQuery`, `communitiesQuery` | `EWDS_REQUEST_SUBSCRIBE_FQCN` |
 | `gsy.intelligent.responses.pub` | Publish | `ordersQueryResponse`, `tradesQueryResponse`, `measurementsQueryResponse`, `clearingResultsQueryResponse`, `marketsQueryResponse`, `idsQueryResponse`, `communitiesQueryResponse` | `EWDS_RESPONSE_PUBLISH_FQCN` |
 | `gsy.intelligent.responses.sub` | Subscribe | `ordersQueryResponse`, `tradesQueryResponse`, `measurementsQueryResponse`, `clearingResultsQueryResponse`, `marketsQueryResponse`, `idsQueryResponse`, `communitiesQueryResponse` | `EWDS_RESPONSE_SUBSCRIBE_FQCN` |
-| `gsy.intelligent.events.pub` | Publish | `tradeCreated`, `clearingResultCreated`, `marketStatusUpdated`, `measurementsSubmitted`, `facilitySubmitted`, `siteSubmitted`, `communitySubmitted` | `EWDS_EVENT_PUBLISH_FQCN` |
-| `gsy.intelligent.events.sub` | Subscribe | `tradeCreated`, `clearingResultCreated`, `marketStatusUpdated`, `measurementsSubmitted`, `facilitySubmitted`, `siteSubmitted`, `communitySubmitted` | `EWDS_EVENT_SUBSCRIBE_FQCN` |
+| `gsy.intelligent.events.pub` | Publish | `tradeCreated`, `clearingResultCreated`, `marketStatusUpdated`, `measurementsSubmitted`, `facilitySubmitted`, `siteSubmitted`, `communitySubmitted`, `orderSubmitted` | `EWDS_EVENT_PUBLISH_FQCN` |
+| `gsy.intelligent.events.sub` | Subscribe | `tradeCreated`, `clearingResultCreated`, `marketStatusUpdated`, `measurementsSubmitted`, `facilitySubmitted`, `siteSubmitted`, `communitySubmitted`, `orderSubmitted` | `EWDS_EVENT_SUBSCRIBE_FQCN` |
 
 The events channels carry fire-and-forget domain events rather than
 request/reply traffic. When `EWDS_ENABLE_HANDLER` is on, the off-chain storage
@@ -143,7 +144,8 @@ Other systems publish new or changed measurements, facilities, sites
 and communities on `gsy.intelligent.events.pub`. When `EWDS_ENABLE_HANDLER` is
 on, the off-chain storage polls these four topics on
 `gsy.intelligent.events.sub` and stores the data in the same collections the
-REST API uses:
+REST API uses. New orders go to the community client instead; see
+[Order Events](#order-events).
 
 | Topic | `eventType` | `data` | Stored with |
 |---|---|---|---|
@@ -200,8 +202,80 @@ Handling rules:
 
 The event schemas are `int.<eventType>.event.v1.json` in
 `schemas/ewds/intelligent/`, e.g. `int.facility.submitted.event.v1.json`. The
-e2e stack uses the `...Test` variants of the four topics
-(`measurementsSubmittedTest`, ...).
+e2e stack uses the `...Test` variants of the inbound topics
+(`measurementsSubmittedTest`, ..., `orderSubmittedTest`).
+
+#### Order Events
+
+FOS publishes new orders on the `orderSubmitted` topic
+(`EWDS_ORDER_SUBMITTED_EVENT_TOPIC`). When `EWDS_ENABLE_HANDLER` is on, the
+community client polls only this topic on `gsy.intelligent.events.sub`, with
+the client ID `EWDS_COMMUNITY_CLIENT_ID`, and sends each order to
+`OrderRegistry.placeOrder`. The off-chain storage doesn't subscribe to it.
+From there the usual flow takes over: the off-chain storage indexes
+`OrderPlaced`, the matching engine matches, and trades go out as
+`trade.created` events.
+
+`data` is a list of orders in the `EwdsOrderDto` form that `orders.query`
+returns (`int.order.submitted.event.v1.json`):
+
+```json
+{
+  "eventId": "5e0f1c2d-3b4a-4f6e-8d7c-9a0b1c2d3e4f",
+  "eventType": "order.submitted",
+  "occurredAt": "2026-09-30T09:40:13Z",
+  "data": [
+    {
+      "orderId": "3f2c6d1e-8a4b-4c7d-9e2f-1a5b6c7d8e9f",
+      "marketId": "0x5b0f3c2a9d8e7f6a5b4c3d2e1f0a9b8c",
+      "orderType": "bid",
+      "orderStatus": "submitted",
+      "timeSlot": "2026-09-30T10:00:00Z",
+      "quantity": 1.5,
+      "priceLimit": 0.3,
+      "createdBy": "owner-1",
+      "creationTime": "2026-09-30T09:40:12Z",
+      "energySourcePreference": "GREEN",
+      "preferredTradingPartner": "owner-2",
+      "preferredEnergyRate": 0.25
+    }
+  ]
+}
+```
+
+| Field | Rule |
+|---|---|
+| `orderId` | A UUID chosen by the publisher. Its 16 bytes become the on-chain order ID, so `orders.query` and the trades' `bidId`/`offerId` return it as `0x` plus 32 hex digits. |
+| `marketId` | The market's hex ID, e.g. from `markets.query`. The market must be open. |
+| `createdBy` | The off-chain actor ID, e.g. the facility owner. The ID service maps it to the on-chain actor ID. |
+| `orderStatus` | Must be `submitted`. |
+| `quantity` | Greater than 0, in kWh. |
+| `priceLimit` | 0 or more, in EUR/kWh. |
+| `preferredTradingPartner` | The partner's off-chain ID, resolved like `createdBy`. A requirement for bids and an attribute for offers. |
+| `updatedAt`, `rejectReason` | Ignored. |
+
+Handling rules:
+
+- One invalid order rejects the whole event before anything is sent: parsing,
+  the rules above and resolving the IDs all have to pass.
+- The orders are then sent one at a time. The community client doesn't wait
+  for the transactions to be mined:
+  - An order whose ID is already on-chain (`getStatus`) is skipped.
+  - An order the contract would reject (`MarketClosed`, `Unauthorized`,
+    `InvalidOrderParams`, `OrderAlreadyExists`) is caught when the node
+    estimates gas. It is logged with `eventId`, `orderId` and the reason and
+    not sent, and the remaining orders are still sent.
+  - A revert that only happens in the mined transaction, e.g. because the
+    market closed in between, is not noticed.
+  - Transport errors are tried up to three times in total.
+- Resending an event, even under a new `eventId`, doesn't place an order
+  twice. A resend while the first transaction is still pending sends the
+  order again, but that duplicate reverts with `OrderAlreadyExists`.
+- FOS gets no feedback on rejected orders. It sees placed orders through
+  `orders.query` and their trades through `trade.created`.
+- `placeOrder` only accepts an order if the community client's wallet is
+  authorized for the actor in the `ActorRegistry`. Registering it is up to
+  whoever publishes the orders.
 
 ### Query Payload Fields
 
@@ -280,6 +354,11 @@ Validator requirements:
 - `EwdsClientConfig` resolves gateway, FQCN, topic, client-ID, and polling settings from the environment once when a client is created.
 - `EwdsOperation` maps each query operation to its configured request/response topic pair; callers pass only the operation and query payload.
 - `EwdsClient` separates request publishing from response polling behind its `query` method.
+- `EwdsClient::run_event_worker` polls one event type's topic on
+  `EWDS_EVENT_SUBSCRIBE_FQCN` (up to `EWDS_EVENT_BATCH_SIZE` messages) every
+  `EWDS_EVENT_POLL_INTERVAL_MS` (default 60 000 ms, 1 000 ms in the e2e
+  stack) and passes every new event to a handler. The off-chain storage and the
+  community client share it.
 - EWDS wire DTOs and database-schema conversions are isolated in `ewds::dto`.
 
 ### gsy-offchain-storage
@@ -316,6 +395,9 @@ Validator requirements:
 
 - Route facility-topology-derived market, forecast, and measurement writes through ontology-aligned off-chain storage APIs.
 - Keep fallback transport via direct HTTP until cutover is complete.
+- Send the orders of `order.submitted` events to `OrderRegistry.placeOrder`
+  (see [Order Events](#order-events)). Runtime switch:
+  `EWDS_ENABLE_HANDLER=true`.
 
 ### gsy-market-orchestrator
 
@@ -346,9 +428,9 @@ Channel/topic setup notes:
 
 - Topic application/owner: `integration.apps.intelligent.auth.ewc`.
 - Local channel FQCNs: `gsy.intelligent.requests.pub`, `gsy.intelligent.requests.sub`, `gsy.intelligent.responses.pub`, `gsy.intelligent.responses.sub`, `gsy.intelligent.events.pub`, `gsy.intelligent.events.sub`.
-- The events channels need the seven event topics from the channel table, plus
-  `measurementsSubmittedTest`, `facilitySubmittedTest`, `siteSubmittedTest` and
-  `communitySubmittedTest` for e2e runs. `scripts/ewds_channel_topic_handler.sh`
+- The events channels need the eight event topics from the channel table, plus
+  `measurementsSubmittedTest`, `facilitySubmittedTest`, `siteSubmittedTest`,
+  `communitySubmittedTest` and `orderSubmittedTest` for e2e runs. `scripts/ewds_channel_topic_handler.sh`
   creates all topics and attaches them to the channels.
 - Required topics: `ordersQuery`, `ordersQueryResponse`, `tradesQuery`,
   `tradesQueryResponse`, `measurementsQuery`, `measurementsQueryResponse`,

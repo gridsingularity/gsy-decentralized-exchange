@@ -325,6 +325,76 @@ mod tests {
         );
     }
 
+    #[test]
+    fn event_envelope_parses_an_order_batch() {
+        let event: EwdsEventEnvelope<Vec<EwdsOrderDto>> = serde_json::from_value(json!({
+            "eventId": "order-event",
+            "eventType": "order.submitted",
+            "occurredAt": "2026-09-30T09:40:13Z",
+            "data": [
+                {
+                    "orderId": "3f2c6d1e-8a4b-4c7d-9e2f-1a5b6c7d8e9f",
+                    "marketId": "0x5b0f3c2a9d8e7f6a5b4c3d2e1f0a9b8c",
+                    "orderType": "bid",
+                    "orderStatus": "submitted",
+                    "timeSlot": "2026-09-30T10:00:00Z",
+                    "quantity": 1.5,
+                    "priceLimit": 0.3,
+                    "createdBy": "owner-1",
+                    "creationTime": "2026-09-30T09:40:12Z",
+                    "energySourcePreference": "GREEN",
+                    "preferredTradingPartner": "owner-2",
+                    "preferredEnergyRate": 0.25,
+                },
+                {
+                    "orderId": "9a1b2c3d-4e5f-4a6b-8c7d-0e1f2a3b4c5d",
+                    "marketId": "0x5b0f3c2a9d8e7f6a5b4c3d2e1f0a9b8c",
+                    "orderType": "offer",
+                    "orderStatus": "submitted",
+                    "timeSlot": "2026-09-30T10:00:00Z",
+                    "quantity": 2.0,
+                    "priceLimit": 0.2,
+                    "createdBy": "owner-2",
+                    "creationTime": "2026-09-30T09:40:12Z",
+                },
+            ],
+        }))
+        .unwrap();
+
+        assert_eq!(event.event_type, EwdsEventType::OrderSubmitted);
+        let orders = event
+            .data
+            .into_iter()
+            .map(DbOrderSchema::try_from)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(orders.len(), 2);
+
+        let bid = &orders[0];
+        assert_eq!(bid.order_id, "3f2c6d1e-8a4b-4c7d-9e2f-1a5b6c7d8e9f");
+        assert_eq!(bid.order_type, OrderEnum::Bid);
+        assert_eq!(bid.time_slot, 1_790_762_400);
+        assert_eq!(bid.creation_time, 1_790_761_212);
+        assert_eq!(bid.energy_kWh, 1.5);
+        assert_eq!(bid.energy_rate, 0.3);
+        assert_eq!(bid.created_by, "owner-1");
+        assert_eq!(
+            bid.requirements,
+            Some(DbRequirements {
+                trading_partner_id: Some("owner-2".to_string()),
+                energy_type: Some(EnergyType::Green),
+                preferred_energy_rate: Some(0.25),
+            })
+        );
+
+        let offer = &orders[1];
+        assert_eq!(offer.order_type, OrderEnum::Offer);
+        assert_eq!(offer.energy_kWh, 2.0);
+        assert_eq!(offer.created_by, "owner-2");
+        assert_eq!(offer.requirements, None);
+        assert_eq!(offer.attributes, None);
+    }
+
     // ---- ClearingResultDto tests ----
 
     fn clearing_result() -> ClearingResultSchema {

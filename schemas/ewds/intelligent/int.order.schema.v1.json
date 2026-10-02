@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://intelligent-project.eu/ontology/v1.0.0/market/Order",
   "title": "int:Order",
-  "description": "A single buy (bid) or sell (offer) order submission to a market slot. Subclass of cim:MarketFactors. Mirrors the Rust EwdsOrderDto (camelCase wire form; epoch-integer timestamps).",
+  "description": "A single buy (bid) or sell (offer) order submission to a market slot. Subclass of cim:MarketFactors. Mirrors the Rust EwdsOrderDto (camelCase wire form; RFC 3339 timestamps).",
   "type": "object",
   "properties": {
     "orderId": {
@@ -36,9 +36,9 @@
       "default": "submitted"
     },
     "timeSlot": {
-      "description": "Target delivery timeslot. IRI: int:timeSlot. Unix epoch (seconds).",
-      "type": "integer",
-      "minimum": 0
+      "description": "Target delivery timeslot. IRI: int:timeSlot. RFC 3339 with timezone.",
+      "type": "string",
+      "format": "date-time"
     },
     "quantity": {
       "description": "Energy quantity in kWh. IRI: int:quantity. Unit: kWh. Must be > 0.",
@@ -88,17 +88,17 @@
       "type": "string"
     },
     "creationTime": {
-      "description": "Order creation datetime. IRI: int:createdAt. Unix epoch (seconds).",
-      "type": "integer",
-      "minimum": 0
+      "description": "Order creation datetime. IRI: int:createdAt. RFC 3339 with timezone.",
+      "type": "string",
+      "format": "date-time"
     },
     "updatedAt": {
-      "description": "Order last updated datetime. IRI: int:updatedAt. Unix epoch (seconds). Nullable.",
+      "description": "Order last updated datetime. IRI: int:updatedAt. RFC 3339 with timezone. Nullable.",
       "type": [
-        "integer",
+        "string",
         "null"
       ],
-      "minimum": 0,
+      "format": "date-time",
       "default": null
     },
     "rejectReason": {

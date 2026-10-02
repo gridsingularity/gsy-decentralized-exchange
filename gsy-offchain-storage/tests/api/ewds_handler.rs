@@ -25,6 +25,7 @@ pub(crate) fn test_config(gateway_url: String) -> EwdsHandlerConfig {
         request_client_id: "gsyoffchainstorage".to_string(),
         topics: EwdsTopicConfig::from_env(),
         poll_interval_ms: 500,
+        event_poll_interval_ms: 500,
         request_batch_size: 100,
         response_send_timeout_ms: 1_000,
     }

@@ -42,19 +42,19 @@ async fn submit_market_forecasts_three_users(
         FacilitySchema {
             facility_id: format!("area{}", user1.clone()),
             facility_name: format!("area{}", user1.clone()),
-            site_id: "12345".to_string(),
+            site_id: "site-12345".to_string(),
             owner_id: user1.clone(),
         },
         FacilitySchema {
             facility_id: format!("area{}", user2.clone()),
             facility_name: format!("area{}", user2.clone()),
-            site_id: "12345".to_string(),
+            site_id: "site-12345".to_string(),
             owner_id: user2.clone(),
         },
         FacilitySchema {
             facility_id: format!("area{}", user3.clone()),
             facility_name: format!("area{}", user3.clone()),
-            site_id: "12345".to_string(),
+            site_id: "site-12345".to_string(),
             owner_id: user3.clone(),
         },
     ];

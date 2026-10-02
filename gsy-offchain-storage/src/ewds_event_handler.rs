@@ -1,9 +1,7 @@
 use crate::db::measurements_service::insert_measurements;
 use crate::db::DatabaseWrapper;
-use crate::ewds_handler::{
-    next_poll_delay_ms, poll_messages, remember_id, send_message_with_fqcn, EwdsHandlerConfig,
-};
-use anyhow::{bail, Context, Result};
+use crate::ewds_handler::{send_message_with_fqcn, EwdsHandlerConfig};
+use anyhow::{bail, Result};
 use futures::future::join_all;
 use primitives::db_api_schema::{
     grid_topology::{EnergyCommunitySchema, FacilitySchema, SiteSchema},
@@ -14,12 +12,11 @@ use primitives::ewds::dto::{
     EwdsClearingResultDto, EwdsCommunityDto, EwdsEventEnvelope, EwdsMarketStatusDto,
     EwdsMeasurementDto, EwdsTradeDto,
 };
-use primitives::ewds::EwdsEventType;
+use primitives::ewds::{parse_batch, EwdsClient, EwdsClientConfig, EwdsEventType};
 use primitives::utils::epoch_to_rfc3339;
 use reqwest::Client;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::Serialize;
 use serde_json::Value;
-use std::collections::{HashSet, VecDeque};
 use std::future::Future;
 use tokio::task::JoinHandle;
 use tokio::time::{sleep, Duration};
@@ -161,87 +158,33 @@ pub async fn start_ewds_event_subscriber(db: DatabaseWrapper, config: EwdsHandle
         config.gateway_url, config.event_subscribe_fqcn
     );
 
-    let workers = SUBSCRIBED_EVENT_TYPES
-        .into_iter()
-        .map(|event_type| run_event_worker(db.clone(), Client::new(), config.clone(), event_type));
+    let client = event_client(&config);
+    let db = &db;
+    let workers = SUBSCRIBED_EVENT_TYPES.into_iter().map(|event_type| {
+        client.run_event_worker(event_type, move |envelope| handle_event(db, envelope))
+    });
     join_all(workers).await;
 }
 
-async fn run_event_worker(
-    db: DatabaseWrapper,
-    client: Client,
-    config: EwdsHandlerConfig,
-    event_type: EwdsEventType,
-) {
-    let mut seen_event_ids: HashSet<String> = HashSet::new();
-    let mut seen_queue: VecDeque<String> = VecDeque::new();
-    let mut rate_limit_attempt = 0u32;
-
-    loop {
-        let result = process_event_batch(
-            &db,
-            &client,
-            &config,
-            event_type,
-            &mut seen_event_ids,
-            &mut seen_queue,
+/// The client the subscriber polls events with. It only polls, so the query settings keep their
+/// defaults.
+fn event_client(config: &EwdsHandlerConfig) -> EwdsClient {
+    EwdsClient::new(EwdsClientConfig {
+        gateway_base: config.gateway_url.clone(),
+        topic_owner: config.topic_owner.clone(),
+        topic_version: config.topic_version.clone(),
+        consumer_client_id: config.request_client_id.clone(),
+        event_poll_interval_ms: config.event_poll_interval_ms,
+        event_publish_fqcn: config.event_publish_fqcn.clone(),
+        event_subscribe_fqcn: config.event_subscribe_fqcn.clone(),
+        event_batch_size: config.request_batch_size,
+        event_topics: config.event_topics.clone(),
+        ..EwdsClientConfig::from_env(
+            "EWDS_REQUEST_CLIENT_ID",
+            "gsyoffchainstorage",
+            config.response_send_timeout_ms,
         )
-        .await;
-        if let Err(error) = &result {
-            warn!("EWDS {} event worker failed to poll: {}", event_type, error);
-        }
-
-        let delay_ms = next_poll_delay_ms(&result, &config, &mut rate_limit_attempt);
-        sleep(Duration::from_millis(delay_ms)).await;
-    }
-}
-
-async fn process_event_batch(
-    db: &DatabaseWrapper,
-    client: &Client,
-    config: &EwdsHandlerConfig,
-    event_type: EwdsEventType,
-    seen_event_ids: &mut HashSet<String>,
-    seen_queue: &mut VecDeque<String>,
-) -> Result<()> {
-    let amount = config.request_batch_size.to_string();
-    let topic_name = config.event_topic(event_type);
-    let messages = poll_messages(client, config, topic_name, amount.as_str()).await?;
-
-    for message in messages {
-        let envelope = match serde_json::from_str::<EwdsEventEnvelope<Value>>(&message.payload) {
-            Ok(envelope) => envelope,
-            Err(error) => {
-                warn!(
-                    "Skipping malformed EWDS message on topic '{}': {}",
-                    topic_name, error
-                );
-                continue;
-            }
-        };
-        if envelope.event_type != event_type {
-            warn!(
-                "Skipping EWDS {} event {} on topic '{}', which carries {} events",
-                envelope.event_type, envelope.event_id, topic_name, event_type
-            );
-            continue;
-        }
-        if seen_event_ids.contains(&envelope.event_id) {
-            continue;
-        }
-
-        let event_id = envelope.event_id.clone();
-        match handle_event(db, envelope).await {
-            Ok(()) => info!("Saved EWDS {} event {}", event_type, event_id),
-            Err(error) => error!(
-                "Dropping EWDS {} event {}: {:#}",
-                event_type, event_id, error
-            ),
-        }
-        remember_id(&event_id, seen_event_ids, seen_queue);
-    }
-
-    Ok(())
+    })
 }
 
 pub async fn handle_event(db: &DatabaseWrapper, envelope: EwdsEventEnvelope<Value>) -> Result<()> {
@@ -284,31 +227,9 @@ pub async fn handle_event(db: &DatabaseWrapper, envelope: EwdsEventEnvelope<Valu
                 .await?;
             }
         }
-        other => bail!("{} events are published by GSY, not saved from EWDS", other),
+        other => bail!("{} events are not handled by the off-chain storage", other),
     }
     Ok(())
-}
-
-/// Parses the list of items an event carries. One invalid item rejects the whole event.
-fn parse_batch<Item: DeserializeOwned, T>(
-    data: Value,
-    convert: impl Fn(Item) -> Result<T>,
-) -> Result<Vec<T>> {
-    let items: Vec<Value> = serde_json::from_value(data).context("the event data is not a list")?;
-    if items.is_empty() {
-        bail!("the event data is empty");
-    }
-
-    items
-        .into_iter()
-        .enumerate()
-        .map(|(index, item)| {
-            serde_json::from_value::<Item>(item)
-                .map_err(anyhow::Error::from)
-                .and_then(&convert)
-                .with_context(|| format!("invalid item at index {}", index))
-        })
-        .collect()
 }
 
 async fn retry_db_write<T, F, Fut>(write: F) -> Result<T>

@@ -30,10 +30,12 @@ measurementsSubmitted
 facilitySubmitted
 siteSubmitted
 communitySubmitted
+orderSubmitted
 measurementsSubmittedTest
 facilitySubmittedTest
 siteSubmittedTest
 communitySubmittedTest
+orderSubmittedTest
 "
 
 CHANNELS="
@@ -88,11 +90,11 @@ REQUEST_TOPICS_JSON=$(build_topics_json "$REQUEST_TOPICS")
 RESPONSE_TOPICS_JSON=$(build_topics_json "$RESPONSE_TOPICS")
 EVENT_TOPICS_JSON=$(build_topics_json "$EVENT_TOPICS")
 
-# 2. Configure each channel
+# 2. Create or update each channel
 for CHANNEL in $CHANNELS; do
   TYPE="${CHANNEL##*.}"
 
-  # 3rd part of the name decides request vs response channel
+  # 3rd part of the name decides request vs response vs events channel
   KIND=$(echo "$CHANNEL" | cut -d. -f3)
   case "$KIND" in
     request*) TOPICS_JSON="$REQUEST_TOPICS_JSON" ;;
@@ -101,23 +103,39 @@ for CHANNEL in $CHANNELS; do
     *) echo "Unknown channel kind for $CHANNEL, skipping"; continue ;;
   esac
 
-  echo "Configuring channel: $CHANNEL (type: $TYPE, kind: $KIND)"
-  curl -X 'PUT' \
-    "$BASE_URL/channels/$CHANNEL" \
-    -H 'accept: application/json' \
-    -H 'Content-Type: application/json' \
-    -d "{
-    \"type\": \"$TYPE\",
+  CHANNEL_SETTINGS="\"type\": \"$TYPE\",
     \"payloadEncryption\": false,
     \"conditions\": {
-    \"roles\": [
-      \"user.roles.$OWNER\"
-    ],
-    \"topics\": [$TOPICS_JSON
-       ],
-       \"responseTopics\": [
-       ]
-  }
+      \"dids\": [],
+      \"roles\": [
+        \"user.roles.$OWNER\"
+      ],
+      \"topics\": [$TOPICS_JSON
+      ],
+      \"responseTopics\": []
+    }"
+
+  # The gateway answers 200 for an existing channel and 400 (CHANNEL::NOT_FOUND) otherwise
+  STATUS=$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL/channels/$CHANNEL")
+  if [ "$STATUS" = "200" ]; then
+    echo "Updating channel: $CHANNEL (type: $TYPE, kind: $KIND)"
+    curl -X 'PUT' \
+      "$BASE_URL/channels/$CHANNEL" \
+      -H 'accept: application/json' \
+      -H 'Content-Type: application/json' \
+      -d "{
+    $CHANNEL_SETTINGS
 }"
+  else
+    echo "Creating channel: $CHANNEL (type: $TYPE, kind: $KIND)"
+    curl -X 'POST' \
+      "$BASE_URL/channels" \
+      -H 'accept: application/json' \
+      -H 'Content-Type: application/json' \
+      -d "{
+    \"fqcn\": \"$CHANNEL\",
+    $CHANNEL_SETTINGS
+}"
+  fi
   echo ""
 done

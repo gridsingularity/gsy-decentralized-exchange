@@ -25,6 +25,8 @@ to GSY on the events channels, one per topic:
 - `int.facility.submitted.event.v1.json` (`int.facility.schema.v1.json`)
 - `int.site.submitted.event.v1.json` (`int.site.schema.v1.json`)
 - `int.community.submitted.event.v1.json` (`int.community.schema.v1.json`)
+- `int.order.submitted.event.v1.json` (`int.order.schema.v1.json`), consumed
+  by the community client rather than the off-chain storage
 
 Notes:
 

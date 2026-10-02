@@ -8,9 +8,9 @@ use primitives::ewds::dto::{
 };
 use primitives::ewds::{
     client_id_for_suffix, env_var, ewds_rate_limit_backoff_ms, format_response_body,
-    is_rate_limited_message, is_rate_limited_response, is_transient_gateway_message,
-    is_transient_gateway_response, parse_gateway_delivery_summary, EwdsEventTopicConfig,
-    EwdsEventType, EwdsOperation, EwdsTopicConfig,
+    is_rate_limited_response, is_transient_gateway_response, next_poll_delay_ms,
+    parse_gateway_delivery_summary, remember_id, EwdsEventTopicConfig, EwdsEventType,
+    EwdsOperation, EwdsTopicConfig,
 };
 use primitives::utils::{opt_rfc3339_to_epoch, timestamp_to_string_with_padding};
 use reqwest::Client;
@@ -34,6 +34,7 @@ pub struct EwdsHandlerConfig {
     pub request_client_id: String,
     pub topics: EwdsTopicConfig,
     pub poll_interval_ms: u64,
+    pub event_poll_interval_ms: u64,
     pub request_batch_size: u32,
     pub response_send_timeout_ms: u64,
 }
@@ -50,7 +51,11 @@ impl EwdsHandlerConfig {
         let poll_interval_ms = std::env::var("EWDS_HANDLER_POLL_INTERVAL_MS")
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
-            .unwrap_or(500);
+            .unwrap_or(1_000);
+        let event_poll_interval_ms = std::env::var("EWDS_EVENT_POLL_INTERVAL_MS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(60_000);
 
         let request_batch_size = std::env::var("EWDS_HANDLER_BATCH_SIZE")
             .ok()
@@ -90,6 +95,7 @@ impl EwdsHandlerConfig {
                 .unwrap_or_else(|| "gsyoffchainstorage".to_string()),
             topics: EwdsTopicConfig::from_env(),
             poll_interval_ms,
+            event_poll_interval_ms,
             request_batch_size,
             response_send_timeout_ms,
         }
@@ -98,17 +104,6 @@ impl EwdsHandlerConfig {
     /// The EWDS topic an event of the given type is published on.
     pub fn event_topic(&self, event_type: EwdsEventType) -> &str {
         self.event_topics.for_event_type(event_type)
-    }
-
-    pub fn subscribe_fqcn(&self, topic_name: &str) -> &str {
-        if EwdsEventType::ALL
-            .into_iter()
-            .any(|event_type| self.event_topic(event_type) == topic_name)
-        {
-            &self.event_subscribe_fqcn
-        } else {
-            &self.request_fqcn
-        }
     }
 }
 
@@ -223,33 +218,9 @@ async fn run_topic_worker(
             );
         }
 
-        let delay_ms = next_poll_delay_ms(&result, &config, &mut rate_limit_attempt);
+        let delay_ms =
+            next_poll_delay_ms(&result, config.poll_interval_ms, &mut rate_limit_attempt);
         sleep(Duration::from_millis(delay_ms)).await;
-    }
-}
-
-pub(crate) fn next_poll_delay_ms(
-    result: &Result<()>,
-    config: &EwdsHandlerConfig,
-    rate_limit_attempt: &mut u32,
-) -> u64 {
-    match result {
-        Ok(()) => {
-            *rate_limit_attempt = 0;
-            config.poll_interval_ms
-        }
-        Err(error) => {
-            let message = error.to_string();
-            if is_rate_limited_message(message.as_str())
-                || is_transient_gateway_message(message.as_str())
-            {
-                let delay_ms = ewds_rate_limit_backoff_ms(*rate_limit_attempt);
-                *rate_limit_attempt = rate_limit_attempt.saturating_add(1);
-                delay_ms
-            } else {
-                config.poll_interval_ms
-            }
-        }
     }
 }
 
@@ -291,7 +262,7 @@ async fn process_topic_batch(
     Ok(())
 }
 
-pub(crate) async fn poll_messages(
+async fn poll_messages(
     client: &Client,
     config: &EwdsHandlerConfig,
     topic_name: &str,
@@ -301,7 +272,7 @@ pub(crate) async fn poll_messages(
         "{}/api/v2/messages",
         config.gateway_url.trim_end_matches('/')
     );
-    let fqcn = config.subscribe_fqcn(topic_name);
+    let fqcn = config.request_fqcn.as_str();
     let client_id = client_id_for_suffix(config.request_client_id.as_str(), topic_name);
     let response = client
         .get(get_url.as_str())
@@ -331,24 +302,6 @@ pub(crate) async fn poll_messages(
         .json::<Vec<EwdsInboundMessage>>()
         .await
         .unwrap_or_default())
-}
-
-/// Remembers a handled request or event ID, keeping only the most recent ones.
-pub(crate) fn remember_id(
-    id: &str,
-    seen_ids: &mut HashSet<String>,
-    seen_queue: &mut VecDeque<String>,
-) {
-    const MAX_SEEN_IDS: usize = 2_048;
-
-    seen_ids.insert(id.to_string());
-    seen_queue.push_back(id.to_string());
-
-    while seen_queue.len() > MAX_SEEN_IDS {
-        if let Some(evicted) = seen_queue.pop_front() {
-            seen_ids.remove(&evicted);
-        }
-    }
 }
 
 pub async fn handle_request(

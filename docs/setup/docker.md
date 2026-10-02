@@ -171,6 +171,9 @@ Useful runtime overrides:
 - `EWDS_MEASUREMENTS_REQUEST_TOPIC` / `EWDS_MEASUREMENTS_RESPONSE_TOPIC`
 - `EWDS_ENABLE_HANDLER=true` (enables EWDS query responder in `gsy-offchain-storage`)
 - `EWDS_HANDLER_POLL_INTERVAL_MS` / `EWDS_HANDLER_BATCH_SIZE`
+- `EWDS_EVENT_POLL_INTERVAL_MS` (default `60000`): how often the off-chain
+  storage and the community client poll the inbound event topics. The e2e
+  compose sets `1000`.
 - `EWDS_RESPONSE_TIMEOUT_MS` / `EWDS_RESPONSE_POLL_INTERVAL_MS`
 - `EWDS_EMPTY_RESPONSE_GRACE_MS` controls how long a query waits for a
   non-empty reply after receiving an empty reply with the same request ID.

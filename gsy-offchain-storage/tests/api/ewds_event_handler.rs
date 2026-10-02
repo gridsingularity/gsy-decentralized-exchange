@@ -16,7 +16,7 @@ use primitives::db_api_schema::trades::{
     ClearingResultSchema, ClearingStatus, DbTradeSchema, TradeParameters, TradeStatus,
 };
 use primitives::ewds::dto::{EwdsEventEnvelope, EwdsMarketStatusDto, EwdsSendMessageDto};
-use primitives::ewds::{EwdsEventType, EwdsOperation};
+use primitives::ewds::EwdsEventType;
 use primitives::utils::{
     bytes16_to_hex, epoch_to_rfc3339, rfc3339_to_epoch, timestamp_to_string_with_padding,
 };
@@ -355,6 +355,11 @@ fn handler_config_defaults_to_the_events_channels() {
             config.event_topic(EwdsEventType::CommunitySubmitted),
             "communitySubmitted",
         ),
+        (
+            "EWDS_ORDER_SUBMITTED_EVENT_TOPIC",
+            config.event_topic(EwdsEventType::OrderSubmitted),
+            "orderSubmitted",
+        ),
     ] {
         // Only the defaults are under test; an explicitly configured value is left alone.
         if std::env::var(env_key).is_err() {
@@ -524,26 +529,9 @@ fn handler_config_maps_event_types_to_their_topics() {
         (EwdsEventType::FacilitySubmitted, "facilitySubmitted"),
         (EwdsEventType::SiteSubmitted, "siteSubmitted"),
         (EwdsEventType::CommunitySubmitted, "communitySubmitted"),
+        (EwdsEventType::OrderSubmitted, "orderSubmitted"),
     ] {
         assert_eq!(config.event_topic(event_type), topic);
-    }
-}
-
-#[test]
-fn handler_config_maps_topics_to_their_subscribe_channels() {
-    let config = test_config("http://gateway".to_string());
-    for operation in EwdsOperation::ALL {
-        let topic = config.topics.for_operation(operation).request.as_str();
-        assert_eq!(
-            config.subscribe_fqcn(topic),
-            "gsy.requests.sub",
-            "{}",
-            topic
-        );
-    }
-    for event_type in EwdsEventType::ALL {
-        let topic = config.event_topic(event_type);
-        assert_eq!(config.subscribe_fqcn(topic), "gsy.events.sub", "{}", topic);
     }
 }
 
