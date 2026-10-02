@@ -8,7 +8,7 @@
 //! scenario run; the seeded documents are deleted by the last step (and the whole database
 //! is dropped after every scenario by `main.rs` anyway).
 
-use crate::world::{GreenProofSeed, GreenProofState, MyWorld};
+use crate::world::{GreenProofSeed, MyWorld};
 use cucumber::{given, then, when};
 use gsy_community_client::time_utils::get_current_timestamp_in_secs;
 use mongodb::bson::{doc, Document};
@@ -87,24 +87,6 @@ fn window(world: &MyWorld) -> (u64, u64) {
         .green_proof
         .window
         .expect("No guarantees-of-origin query was made in this scenario")
-}
-
-// --- Background --------------------------------------------------------------------
-
-#[given("the off-chain storage service is reachable")]
-async fn offchain_storage_is_reachable(world: &mut MyWorld) {
-    let response = world
-        .http_client
-        .get(format!("{}/health_check", world.offchain_storage_url))
-        .send()
-        .await
-        .expect("Failed to contact off-chain storage service");
-    assert!(
-        response.status().is_success(),
-        "Off-chain storage service is not healthy (status {})",
-        response.status()
-    );
-    world.green_proof = GreenProofState::default();
 }
 
 // --- Seeding -------------------------------------------------------------------------
