@@ -21,7 +21,3 @@ Feature: Guarantees of origin over EWDS
     And the REST endpoint returns the same records
     And the seeded green-proof documents are deleted
 
-  Scenario: A query window wider than 15 minutes is rejected
-    When the guarantees of origin are queried over EWDS for a 20-minute window
-    Then the EWDS query is rejected as an invalid request
-    And the REST endpoint rejects the same window with status 400

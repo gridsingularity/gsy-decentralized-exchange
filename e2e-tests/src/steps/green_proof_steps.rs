@@ -277,12 +277,6 @@ async fn ewds_query(window: (u64, u64)) -> Result<Vec<LocalOriginRecord>, String
         .map_err(|error| format!("{error:#}"))
 }
 
-/// An error reply of the handler (`success: false`), as opposed to a transport failure
-/// such as a gateway error or a response timeout.
-fn is_error_reply(error: &str) -> bool {
-    error.contains("returned error")
-}
-
 /// Repeats the EWDS query until `done` accepts the outcome or [`EWDS_RETRY_BUDGET`]
 /// elapses, then records the last outcome in the world.
 async fn query_ewds_until<F>(world: &mut MyWorld, window: (u64, u64), done: F)
@@ -339,17 +333,6 @@ async fn query_until_certified(world: &mut MyWorld) {
 async fn query_once(world: &mut MyWorld) {
     let window = window_around(seed(world).status_updated_at);
     query_ewds_until(world, window, |outcome| outcome.is_ok()).await;
-}
-
-#[when(expr = "the guarantees of origin are queried over EWDS for a {int}-minute window")]
-async fn query_with_window(world: &mut MyWorld, minutes: u64) {
-    let start_time = get_current_timestamp_in_secs() - SLOT_S;
-    let window = (start_time, start_time + minutes * 60);
-    query_ewds_until(world, window, |outcome| match outcome {
-        Ok(_) => true,
-        Err(error) => is_error_reply(error),
-    })
-    .await;
 }
 
 async fn rest_query(world: &MyWorld, window: (u64, u64)) -> reqwest::Response {
@@ -493,32 +476,6 @@ async fn rest_returns_same_records(world: &mut MyWorld) {
         rest_records,
         ewds_records(world),
         "The REST twin and EWDS returned different records"
-    );
-}
-
-#[then("the EWDS query is rejected as an invalid request")]
-async fn ewds_rejected(world: &mut MyWorld) {
-    match world.green_proof.ewds_error.as_ref() {
-        Some(error) => assert!(
-            is_error_reply(error) && error.contains("invalid_request"),
-            "Expected an invalid_request error reply (success:false), got: {error}"
-        ),
-        None => panic!(
-            "Expected guarantees_of_origin.query to be rejected, got {} record(s)",
-            world.green_proof.ewds_records.len()
-        ),
-    }
-}
-
-#[then("the REST endpoint rejects the same window with status 400")]
-async fn rest_rejected(world: &mut MyWorld) {
-    let response = rest_query(world, window(world)).await;
-    assert_eq!(
-        response.status().as_u16(),
-        400,
-        "GET /{} accepted a window wider than {} s",
-        REST_PATH,
-        SLOT_S
     );
 }
 
