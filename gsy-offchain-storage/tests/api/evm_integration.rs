@@ -24,6 +24,7 @@ async fn test_order_listener_rejects_unknown_partner_mapping() {
     let app = init_app().await;
     let handler = OffchainStorageEvmHandler {
         db: app.db_wrapper.clone(),
+        event_publisher: None,
     };
     let event = OrderPlacedFilter {
         order_id: [0xaa; 16],
@@ -177,7 +178,10 @@ async fn test_evm_order_listener_persists_to_db() {
         market_controller_address: Address::zero(),
     };
 
-    let handler = OffchainStorageEvmHandler { db: db.clone() };
+    let handler = OffchainStorageEvmHandler {
+        db: db.clone(),
+        event_publisher: None,
+    };
     let listener = GsyEthersListener::new(config, handler);
 
     tokio::spawn(async move {

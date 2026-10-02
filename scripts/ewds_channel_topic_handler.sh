@@ -24,11 +24,19 @@ communityUpsertTest
 communitiesQueryTest
 "
 
+EVENT_TOPICS="
+tradeCreated
+clearingResultCreated
+marketStatusUpdated
+"
+
 CHANNELS="
 gsy.intelligent.requests.pub
 gsy.intelligent.requests.sub
 gsy.intelligent.responses.pub
 gsy.intelligent.responses.sub
+gsy.intelligent.events.pub
+gsy.intelligent.events.sub
 "
 
 # Response topics are the request topics with a "Response" suffix
@@ -38,8 +46,8 @@ for TOPIC in $REQUEST_TOPICS; do
 ${TOPIC}Response"
 done
 
-# 1. Add all topics (request + response)
-for TOPIC in $REQUEST_TOPICS $RESPONSE_TOPICS; do
+# 1. Add all topics (request + response + event)
+for TOPIC in $REQUEST_TOPICS $RESPONSE_TOPICS $EVENT_TOPICS; do
   echo "Adding topic: $TOPIC"
   curl -X 'POST' \
     "$BASE_URL/topics" \
@@ -72,6 +80,7 @@ build_topics_json() {
 
 REQUEST_TOPICS_JSON=$(build_topics_json "$REQUEST_TOPICS")
 RESPONSE_TOPICS_JSON=$(build_topics_json "$RESPONSE_TOPICS")
+EVENT_TOPICS_JSON=$(build_topics_json "$EVENT_TOPICS")
 
 # 2. Configure each channel
 for CHANNEL in $CHANNELS; do
@@ -82,6 +91,7 @@ for CHANNEL in $CHANNELS; do
   case "$KIND" in
     request*) TOPICS_JSON="$REQUEST_TOPICS_JSON" ;;
     response*) TOPICS_JSON="$RESPONSE_TOPICS_JSON" ;;
+    event*) TOPICS_JSON="$EVENT_TOPICS_JSON" ;;
     *) echo "Unknown channel kind for $CHANNEL, skipping"; continue ;;
   esac
 

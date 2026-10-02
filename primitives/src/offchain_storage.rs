@@ -1,12 +1,19 @@
 use crate::db_api_schema::grid_topology::{EnergyCommunitySchema, FacilitySchema};
 use crate::db_api_schema::ids::IdMappingSchema;
-use crate::db_api_schema::orders::{DbAttributes, DbRequirements};
-use crate::ewds::dto::{EwdsClearingResultDto, EwdsCommunityDto};
+use crate::db_api_schema::orders::{DbAttributes, DbOrderSchema, DbRequirements};
+use crate::db_api_schema::profiles::{MeasurementPointSchema, MeasurementSchema, TimeseriesSchema};
+use crate::db_api_schema::trades::DbTradeSchema;
+use crate::ewds::dto::{
+    EwdsClearingResultDto, EwdsCommunityDto, EwdsMeasurementDto, EwdsOrderDto, EwdsTradeDto,
+};
 use crate::ewds::{format_response_body, EwdsClient, EwdsOperation};
-use crate::utils::{bytes16_to_hex, parse_uuid_or_hex_bytes16};
+use crate::utils::{
+    bytes16_to_hex, epoch_to_rfc3339, parse_uuid_or_hex_bytes16, timestamp_to_string_with_padding,
+};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use reqwest::Client;
+use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::env;
@@ -41,10 +48,6 @@ pub trait CommunityProvider: Send + Sync {
     async fn fetch_communities(&self) -> Result<Vec<EnergyCommunitySchema>>;
 }
 
-/// Reads communities, facility/owner mappings and offchain->onchain ID
-/// resolutions from off-chain storage, over whichever transport it was
-/// configured with. Construct once (per consumer client id) and reuse it
-/// across calls rather than rebuilding it per request.
 pub struct OffchainStorageClient {
     transport: OffchainStorageTransport,
     offchain_storage_url: String,
@@ -233,6 +236,184 @@ impl OffchainStorageClient {
                 Ok(response.json().await?)
             }
         }
+    }
+
+    pub async fn fetch_trades(
+        &self,
+        market_id: Option<&str>,
+        start_time: Option<u64>,
+        end_time: Option<u64>,
+    ) -> Result<Vec<DbTradeSchema>> {
+        let mut ewds_payload = serde_json::Map::new();
+        let mut http_query = Vec::new();
+        if let Some(market_id) = market_id {
+            ewds_payload.insert("marketId".to_string(), market_id.into());
+            http_query.push(("market_id", market_id.to_string()));
+        }
+        if let Some(start_time) = start_time {
+            ewds_payload.insert("startTime".to_string(), epoch_to_rfc3339(start_time).into());
+            http_query.push(("start_time", epoch_to_rfc3339(start_time)));
+        }
+        if let Some(end_time) = end_time {
+            ewds_payload.insert("endTime".to_string(), epoch_to_rfc3339(end_time).into());
+            http_query.push(("end_time", epoch_to_rfc3339(end_time)));
+        }
+
+        let trades: Vec<EwdsTradeDto> = self
+            .query_records(
+                EwdsOperation::TradesQuery,
+                ewds_payload.into(),
+                "trades",
+                &http_query,
+            )
+            .await?;
+        trades.into_iter().map(DbTradeSchema::try_from).collect()
+    }
+
+    /// Orders of `market_id` whose time slot lies in `[start_time, end_time)`.
+    pub async fn fetch_orders(
+        &self,
+        market_id: &str,
+        start_time: u64,
+        end_time: u64,
+    ) -> Result<Vec<DbOrderSchema>> {
+        let orders: Vec<EwdsOrderDto> = self
+            .query_records(
+                EwdsOperation::OrdersQuery,
+                serde_json::json!({
+                    "marketId": market_id,
+                    "startTime": epoch_to_rfc3339(start_time),
+                    "endTime": epoch_to_rfc3339(end_time),
+                }),
+                "orders",
+                &[
+                    ("market_id", market_id.to_string()),
+                    ("start_time", epoch_to_rfc3339(start_time)),
+                    ("end_time", epoch_to_rfc3339(end_time)),
+                ],
+            )
+            .await?;
+        orders.into_iter().map(DbOrderSchema::try_from).collect()
+    }
+
+    async fn query_records<T: DeserializeOwned>(
+        &self,
+        operation: EwdsOperation,
+        ewds_payload: serde_json::Value,
+        path: &str,
+        http_query: &[(&str, String)],
+    ) -> Result<Vec<T>> {
+        match self.transport {
+            OffchainStorageTransport::Ewds => {
+                info!("Fetching {} via EWDS transport", path);
+                self.ewds_client().query(operation, ewds_payload).await
+            }
+            OffchainStorageTransport::Http => {
+                let url = self.endpoint_url(path);
+                info!("Fetching {} for {}", path, url);
+                let response = self.http_client.get(&url).query(http_query).send().await?;
+                if !response.status().is_success() {
+                    return Err(anyhow!(
+                        "Failed to fetch {}. HTTP {}",
+                        path,
+                        response.status()
+                    ));
+                }
+                Ok(response.json().await?)
+            }
+        }
+    }
+
+    /// Measurements whose time slot lies in `[start_time, end_time]`.
+    pub async fn fetch_measurements(
+        &self,
+        start_time: u64,
+        end_time: u64,
+    ) -> Result<Vec<MeasurementSchema>> {
+        match self.transport {
+            OffchainStorageTransport::Ewds => {
+                info!("Fetching measurements via EWDS transport");
+                let measurements: Vec<EwdsMeasurementDto> = self
+                    .ewds_client()
+                    .query(
+                        EwdsOperation::MeasurementsQuery,
+                        serde_json::json!({
+                            "startTime": epoch_to_rfc3339(start_time),
+                            "endTime": epoch_to_rfc3339(end_time),
+                        }),
+                    )
+                    .await?;
+                measurements
+                    .into_iter()
+                    .map(MeasurementSchema::try_from)
+                    .collect()
+            }
+            OffchainStorageTransport::Http => {
+                self.fetch_measurements_via_http(start_time, end_time).await
+            }
+        }
+    }
+
+    /// Joins the measurement points with their timeseries values in the range.
+    async fn fetch_measurements_via_http(
+        &self,
+        start_time: u64,
+        end_time: u64,
+    ) -> Result<Vec<MeasurementSchema>> {
+        let points_url = self.endpoint_url("measurement-points");
+        info!("Fetching measurement points for {}", points_url);
+        let points_response = self
+            .http_client
+            .get(&points_url)
+            .query(&[("type", "Measurement")])
+            .send()
+            .await?;
+        if !points_response.status().is_success() {
+            return Err(anyhow!(
+                "Failed to fetch measurement points. HTTP {}",
+                points_response.status()
+            ));
+        }
+        let points_by_id = points_response
+            .json::<Vec<MeasurementPointSchema>>()
+            .await?
+            .into_iter()
+            .map(|point| (point.measurement_id.clone(), point))
+            .collect::<HashMap<_, _>>();
+
+        let timeseries_url = self.endpoint_url("timeseries");
+        info!("Fetching timeseries for {}", timeseries_url);
+        let timeseries_response = self
+            .http_client
+            .get(&timeseries_url)
+            .query(&[
+                ("start_time", timestamp_to_string_with_padding(start_time)),
+                ("end_time", timestamp_to_string_with_padding(end_time)),
+            ])
+            .send()
+            .await?;
+        if !timeseries_response.status().is_success() {
+            return Err(anyhow!(
+                "Failed to fetch timeseries. HTTP {}",
+                timeseries_response.status()
+            ));
+        }
+        let timeseries = timeseries_response.json::<Vec<TimeseriesSchema>>().await?;
+
+        Ok(timeseries
+            .into_iter()
+            .filter_map(|value| {
+                let point = points_by_id.get(&value.measurement_point)?;
+                let time_slot = value.timestamp.parse::<u64>().ok()?;
+                Some(MeasurementSchema {
+                    facility_id: point.asset_name.clone(),
+                    community_uuid: point.datasource_name.clone().unwrap_or_default(),
+                    time_slot,
+                    creation_time: time_slot,
+                    energy_kwh: value.value,
+                })
+            })
+            .collect())
     }
 }
 

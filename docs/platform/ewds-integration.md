@@ -108,6 +108,24 @@ Each service:
 | `gsy.intelligent.requests.sub` | Subscribe | `ordersQuery`, `tradesQuery`, `measurementsQuery`, `clearingResultsQuery`, `marketsQuery`, `idsQuery`, `communityUpsert`, `communitiesQuery` | `EWDS_REQUEST_SUBSCRIBE_FQCN` |
 | `gsy.intelligent.responses.pub` | Publish | `ordersQueryResponse`, `tradesQueryResponse`, `measurementsQueryResponse`, `clearingResultsQueryResponse`, `marketsQueryResponse`, `idsQueryResponse`, `communityUpsertResponse`, `communitiesQueryResponse` | `EWDS_RESPONSE_PUBLISH_FQCN` |
 | `gsy.intelligent.responses.sub` | Subscribe | `ordersQueryResponse`, `tradesQueryResponse`, `measurementsQueryResponse`, `clearingResultsQueryResponse`, `marketsQueryResponse`, `idsQueryResponse`, `communityUpsertResponse`, `communitiesQueryResponse` | `EWDS_RESPONSE_SUBSCRIBE_FQCN` |
+| `gsy.intelligent.events.pub` | Publish | `tradeCreated`, `clearingResultCreated`, `marketStatusUpdated` | `EWDS_EVENT_PUBLISH_FQCN` |
+| `gsy.intelligent.events.sub` | Subscribe | `tradeCreated`, `clearingResultCreated`, `marketStatusUpdated` | `EWDS_EVENT_SUBSCRIBE_FQCN` |
+
+The events channels carry fire-and-forget domain events rather than
+request/reply traffic. When `EWDS_ENABLE_HANDLER` is on, the off-chain storage
+publishes a `trade.created` event on `tradeCreated` every time it persists a
+trade from an EVM `TradeSettled` event, a `clearing_result.created` event on
+`clearingResultCreated` every time it persists a clearing result from an EVM
+`MarketClearing` event, and a `market_status.updated` event on
+`marketStatusUpdated` for every EVM `MarketStatusUpdated` event. The payload is an event envelope (`eventId`,
+`eventType`, `occurredAt`, `data`) whose `data` is a list of trades, clearing
+results or market statuses in their `EwdsTradeDto`, `EwdsClearingResultDto`
+or `EwdsMarketStatusDto` (`marketId`, `isOpen`) form, so one event can carry
+several of them. The off-chain storage currently sends one item per EVM event.
+Every event gets a random UUID as `eventId`, which is also its DDHub
+`transactionId`. `occurredAt` is the time of the newest item. Market status updates are not
+persisted, so their `occurredAt` is the time the off-chain storage received
+the EVM event. No GSY service consumes `gsy.intelligent.events.sub` yet.
 
 The broad `user.roles.integration.apps.intelligent.auth.ewc` restriction can be
 used for an initial delivery smoke test. For request/reply operation, the
@@ -123,7 +141,7 @@ Each `*.query` request payload accepts both snake_case and camelCase keys (via s
 | Operation | Fields (all optional unless noted) |
 |---|---|
 | `orders.query` | `market_id`/`marketId`, `start_time`/`startTime`, `end_time`/`endTime` |
-| `trades.query` | `start_time`/`startTime`, `end_time`/`endTime`, `facility_id`/`areaUuid` |
+| `trades.query` | `market_id`/`marketId`, `start_time`/`startTime`, `end_time`/`endTime` (`market_id` takes precedence over the time range, which matches the market `delivery_start_time`) |
 | `measurements.query` | `start_time`/`startTime`, `end_time`/`endTime`, `facility_id`/`areaUuid` (filters after fetch) |
 | `ids.query` | `offchain_id`/`offchainId` (required) |
 

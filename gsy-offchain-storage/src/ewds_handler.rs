@@ -4,14 +4,15 @@ use futures::future::join_all;
 use primitives::db_api_schema::profiles::{MeasurementPointType, MeasurementSchema};
 use primitives::ewds::dto::{
     EwdsClearingResultDto, EwdsCommunityDto, EwdsInboundMessage, EwdsMarketDto, EwdsOrderDto,
-    EwdsRequestEnvelope, EwdsResponseEnvelope, EwdsSendMessageDto, EwdsTradeDto,
+    EwdsRequestEnvelope, EwdsResponseEnvelope, EwdsSendMessageDto, EwdsTradeDto, EwdsMeasurementDto
 };
 use primitives::ewds::{
     client_id_for_suffix, env_var, ewds_rate_limit_backoff_ms, format_response_body,
     is_rate_limited_message, is_rate_limited_response, is_transient_gateway_message,
-    is_transient_gateway_response, parse_gateway_delivery_summary, EwdsOperation, EwdsTopicConfig,
+    is_transient_gateway_response, parse_gateway_delivery_summary, EwdsEventType, EwdsOperation,
+    EwdsTopicConfig,
 };
-use primitives::utils::timestamp_to_string_with_padding;
+use primitives::utils::{opt_rfc3339_to_epoch, timestamp_to_string_with_padding};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -25,6 +26,12 @@ pub struct EwdsHandlerConfig {
     pub gateway_url: String,
     pub request_fqcn: String,
     pub response_fqcn: String,
+    pub event_publish_fqcn: String,
+    // Not consumed yet; reserved for a future events subscriber.
+    pub event_subscribe_fqcn: String,
+    pub trade_created_topic: String,
+    pub clearing_result_created_topic: String,
+    pub market_status_updated_topic: String,
     pub topic_owner: String,
     pub topic_version: String,
     pub request_client_id: String,
@@ -63,6 +70,16 @@ impl EwdsHandlerConfig {
         let response_fqcn = env_var("EWDS_RESPONSE_PUBLISH_FQCN")
             .or_else(|| env_var("EWDS_RESPONSE_FQCN"))
             .unwrap_or_else(|| "gsy.intelligent.responses.pub".to_string());
+        let event_publish_fqcn = env_var("EWDS_EVENT_PUBLISH_FQCN")
+            .unwrap_or_else(|| "gsy.intelligent.events.pub".to_string());
+        let event_subscribe_fqcn = env_var("EWDS_EVENT_SUBSCRIBE_FQCN")
+            .unwrap_or_else(|| "gsy.intelligent.events.sub".to_string());
+        let trade_created_topic =
+            env_var("EWDS_TRADE_CREATED_EVENT_TOPIC").unwrap_or_else(|| "tradeCreated".to_string());
+        let clearing_result_created_topic = env_var("EWDS_CLEARING_RESULT_CREATED_EVENT_TOPIC")
+            .unwrap_or_else(|| "clearingResultCreated".to_string());
+        let market_status_updated_topic = env_var("EWDS_MARKET_STATUS_UPDATED_EVENT_TOPIC")
+            .unwrap_or_else(|| "marketStatusUpdated".to_string());
 
         Self {
             enabled,
@@ -70,6 +87,11 @@ impl EwdsHandlerConfig {
                 .unwrap_or_else(|_| "http://ewds-gateway-api:3333".to_string()),
             request_fqcn,
             response_fqcn,
+            event_publish_fqcn,
+            event_subscribe_fqcn,
+            trade_created_topic,
+            clearing_result_created_topic,
+            market_status_updated_topic,
             topic_owner: std::env::var("EWDS_TOPIC_OWNER")
                 .unwrap_or_else(|_| "integration.apps.intelligent.auth.ewc".to_string()),
             topic_version: std::env::var("EWDS_TOPIC_VERSION")
@@ -83,6 +105,15 @@ impl EwdsHandlerConfig {
             response_send_timeout_ms,
         }
     }
+
+    /// The EWDS topic an event of the given type is published on.
+    pub fn event_topic(&self, event_type: EwdsEventType) -> &str {
+        match event_type {
+            EwdsEventType::TradeCreated => &self.trade_created_topic,
+            EwdsEventType::ClearingResultCreated => &self.clearing_result_created_topic,
+            EwdsEventType::MarketStatusUpdated => &self.market_status_updated_topic,
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -92,20 +123,33 @@ struct OrdersQueryPayload {
     market_id: Option<String>,
     #[serde(alias = "startTime")]
     #[serde(default)]
-    start_time: Option<u64>,
+    start_time: Option<String>,
     #[serde(alias = "endTime")]
     #[serde(default)]
-    end_time: Option<u64>,
+    end_time: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct TradesQueryPayload {
+    #[serde(alias = "marketId")]
+    #[serde(default)]
+    market_id: Option<String>,
+    #[serde(alias = "startTime")]
+    #[serde(default)]
+    start_time: Option<String>,
+    #[serde(alias = "endTime")]
+    #[serde(default)]
+    end_time: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct TimeRangePayload {
     #[serde(alias = "startTime")]
     #[serde(default)]
-    start_time: Option<u64>,
+    start_time: Option<String>,
     #[serde(alias = "endTime")]
     #[serde(default)]
-    end_time: Option<u64>,
+    end_time: Option<String>,
     #[serde(alias = "areaUuid")]
     #[serde(default)]
     facility_id: Option<String>,
@@ -322,7 +366,11 @@ pub async fn handle_request(
 
             let data = db
                 .orders()
-                .filter_orders(payload.market_id, payload.start_time, payload.end_time)
+                .filter_orders(
+                    payload.market_id,
+                    opt_rfc3339_to_epoch(payload.start_time.as_deref())?,
+                    opt_rfc3339_to_epoch(payload.end_time.as_deref())?,
+                )
                 .await?
                 .into_iter()
                 .map(EwdsOrderDto::from)
@@ -336,7 +384,7 @@ pub async fn handle_request(
             send_success_response(client, config, request_id, response_topic.as_str(), data).await
         }
         EwdsOperation::TradesQuery => {
-            let payload = serde_json::from_value::<TimeRangePayload>(envelope.payload.clone())
+            let payload = serde_json::from_value::<TradesQueryPayload>(envelope.payload.clone())
                 .map_err(|e| anyhow!("trades.query payload parse error: {}", e))?;
             let request_id = envelope.request_id;
 
@@ -347,7 +395,11 @@ pub async fn handle_request(
 
             let data = db
                 .trades()
-                .filter_trades(payload.start_time, payload.end_time)
+                .filter_trades(
+                    payload.market_id,
+                    opt_rfc3339_to_epoch(payload.start_time.as_deref())?,
+                    opt_rfc3339_to_epoch(payload.end_time.as_deref())?,
+                )
                 .await?
                 .into_iter()
                 .map(EwdsTradeDto::from)
@@ -370,16 +422,21 @@ pub async fn handle_request(
                 request_id
             );
 
-            let data = fetch_measurements_from_timeseries(db, payload.start_time, payload.end_time)
+            let data = fetch_measurements_from_timeseries(
+                db,
+                opt_rfc3339_to_epoch(payload.start_time.as_deref())?,
+                opt_rfc3339_to_epoch(payload.end_time.as_deref())?,
+            )
                 .await?
                 .into_iter()
                 .filter(|measurement| match payload.facility_id.as_ref() {
                     Some(facility_id) => measurement.facility_id == *facility_id,
                     None => true,
                 })
+                .map(EwdsMeasurementDto::from)
                 .collect::<Vec<_>>();
             info!(
-                "Publishing EWDS measurements.query response (request_id={}, orders={})",
+                "Publishing EWDS measurements.query response (request_id={}, measurements={})",
                 request_id,
                 data.len()
             );
@@ -597,7 +654,7 @@ async fn send_message(
     .await
 }
 
-async fn send_message_with_fqcn(
+pub(crate) async fn send_message_with_fqcn(
     client: &Client,
     config: &EwdsHandlerConfig,
     fqcn: String,

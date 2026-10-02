@@ -2,6 +2,7 @@ use crate::helpers::{init_app, stop_app};
 use gsy_offchain_storage::ewds_handler::{handle_request, EwdsHandlerConfig};
 use primitives::db_api_schema::grid_topology::FacilitySchema;
 use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
+use primitives::db_api_schema::trades::{DbTradeSchema, TradeParameters, TradeStatus};
 use primitives::ewds::dto::{EwdsRequestEnvelope, EwdsSendMessageDto};
 use primitives::ewds::{EwdsOperation, EwdsTopicConfig};
 use primitives::utils::{bytes16_to_hex, create_encrypted_bytes16_from_string};
@@ -10,12 +11,17 @@ use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 // --- Test helpers ---------------------------------------------------
 
-fn test_config(gateway_url: String) -> EwdsHandlerConfig {
+pub(crate) fn test_config(gateway_url: String) -> EwdsHandlerConfig {
     EwdsHandlerConfig {
         enabled: true,
         gateway_url,
         request_fqcn: "gsy.requests.sub".to_string(),
         response_fqcn: "gsy.responses.pub".to_string(),
+        event_publish_fqcn: "gsy.events.pub".to_string(),
+        event_subscribe_fqcn: "gsy.events.sub".to_string(),
+        trade_created_topic: "tradeCreated".to_string(),
+        clearing_result_created_topic: "clearingResultCreated".to_string(),
+        market_status_updated_topic: "marketStatusUpdated".to_string(),
         topic_owner: "test.owner".to_string(),
         topic_version: "1.0.0".to_string(),
         request_client_id: "gsyoffchainstorage".to_string(),
@@ -38,7 +44,7 @@ fn envelope(
     }
 }
 
-async fn mock_gateway() -> MockServer {
+pub(crate) async fn mock_gateway() -> MockServer {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/api/v2/messages"))
@@ -97,7 +103,7 @@ async fn orders_query_bad_payload_errors() {
     let env = envelope(
         EwdsOperation::OrdersQuery,
         "req-orders-bad",
-        json!({ "startTime": "not-a-number" }),
+        json!({ "startTime": 0 }),
     );
 
     let err = handle_request(&app.db_wrapper, &client, &config, env)
@@ -121,13 +127,64 @@ async fn trades_query_success() {
     let env = envelope(
         EwdsOperation::TradesQuery,
         "req-trades-1",
-        json!({ "startTime": 0, "endTime": 9_999_999_999u64 }),
+        json!({ "startTime": "1970-01-01T00:00:00Z", "endTime": "2286-11-20T17:46:39Z" }),
     );
 
     handle_request(&app.db_wrapper, &client, &config, env)
         .await
         .unwrap();
     let _data = captured_data(&server).await;
+
+    stop_app(app).await;
+}
+
+fn make_trade(trade_uuid: &str, market_id: &str) -> DbTradeSchema {
+    DbTradeSchema {
+        trade_uuid: trade_uuid.to_string(),
+        status: TradeStatus::Settled,
+        seller: "seller-1".to_string(),
+        buyer: "buyer-1".to_string(),
+        market_id: market_id.to_string(),
+        creation_time: 1_767_225_600,
+        offer_hash: format!("{trade_uuid}-offer"),
+        bid_hash: format!("{trade_uuid}-bid"),
+        residual_offer_id: None,
+        residual_bid_id: None,
+        parameters: TradeParameters {
+            selected_energy_kWh: 1.0,
+            energy_rate: 10.0,
+        },
+    }
+}
+
+#[tokio::test]
+async fn trades_query_filters_by_market_id() {
+    let app = init_app().await;
+    let server = mock_gateway().await;
+    let config = test_config(server.uri());
+    let client = reqwest::Client::new();
+
+    app.db_wrapper
+        .trades()
+        .insert_trades(vec![
+            make_trade("TRADE-EWDS-A", "MARKET-EWDS-A"),
+            make_trade("TRADE-EWDS-B", "MARKET-EWDS-B"),
+        ])
+        .await
+        .unwrap();
+
+    let env = envelope(
+        EwdsOperation::TradesQuery,
+        "req-trades-market",
+        json!({ "marketId": "MARKET-EWDS-A" }),
+    );
+
+    handle_request(&app.db_wrapper, &client, &config, env)
+        .await
+        .unwrap();
+    let data = captured_data(&server).await;
+    assert_eq!(data.len(), 1);
+    assert_eq!(data[0]["tradeId"], json!("TRADE-EWDS-A"));
 
     stop_app(app).await;
 }
@@ -142,7 +199,7 @@ async fn trades_query_bad_payload_errors() {
     let env = envelope(
         EwdsOperation::TradesQuery,
         "req-trades-bad",
-        json!({ "endTime": "nope" }),
+        json!({ "endTime": 9_999_999_999u64 }),
     );
 
     let err = handle_request(&app.db_wrapper, &client, &config, env)
@@ -166,7 +223,7 @@ async fn measurements_query_success() {
     let env = envelope(
         EwdsOperation::MeasurementsQuery,
         "req-meas-1",
-        json!({ "startTime": 0, "endTime": 9_999_999_999u64, "areaUuid": "facility-1" }),
+        json!({ "startTime": "1970-01-01T00:00:00Z", "endTime": "2286-11-20T17:46:39Z", "areaUuid": "facility-1" }),
     );
 
     handle_request(&app.db_wrapper, &client, &config, env)
@@ -187,7 +244,7 @@ async fn measurements_query_bad_payload_errors() {
     let env = envelope(
         EwdsOperation::MeasurementsQuery,
         "req-meas-bad",
-        json!({ "startTime": "x" }),
+        json!({ "startTime": 0 }),
     );
 
     let err = handle_request(&app.db_wrapper, &client, &config, env)
