@@ -4,11 +4,7 @@ permissions:
   contents: read
 
 on:
-  push:
-    paths:
-      - ".github/workflows/audit-on-push.yml"
-      - "**/Cargo.toml"
-      - "**/Cargo.lock"
+  pull_request:
 
 jobs:
   security_audit:
