@@ -381,6 +381,7 @@ impl TryFrom<EwdsTradeDto> for DbTradeSchema {
                 selected_energy_kWh: trade.trade_quantity,
                 energy_rate: trade.trade_price,
             },
+            status_updated_at: None,
         })
     }
 }

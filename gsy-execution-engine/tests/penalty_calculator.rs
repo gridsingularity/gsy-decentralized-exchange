@@ -48,6 +48,7 @@ fn trade() -> DbTradeSchema {
             selected_energy_kWh: 10.0,
             energy_rate: 1.0,
         },
+        status_updated_at: None,
     }
 }
 
