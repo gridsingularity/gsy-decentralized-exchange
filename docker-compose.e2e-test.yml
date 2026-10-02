@@ -32,11 +32,21 @@ x-gsy-ewds-env: &gsy-ewds-env
 
 services:
 
+  gsy-rust-base:
+    image: ghcr.io/gridsingularity/gsy-rust-base:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.base
+    pull_policy: build
+    scale: 0
+
   gsy-offchain-storage:
     container_name: gsy-offchain-storage
     build:
       context: .
       dockerfile: ./gsy-offchain-storage/Dockerfile
+      additional_contexts:
+        - ghcr.io/gridsingularity/gsy-rust-base:latest=service:gsy-rust-base
     depends_on:
       mongodb:
         condition: service_started
@@ -73,6 +83,8 @@ services:
     build:
       context: .
       dockerfile: ./gsy-matching-engine/Dockerfile
+      additional_contexts:
+        - ghcr.io/gridsingularity/gsy-rust-base:latest=service:gsy-rust-base
     depends_on:
       gsy-offchain-storage:
         condition: service_healthy
@@ -93,6 +105,8 @@ services:
     build:
       context: .
       dockerfile: ./gsy-community-client/Dockerfile
+      additional_contexts:
+        - ghcr.io/gridsingularity/gsy-rust-base:latest=service:gsy-rust-base
     depends_on:
       gsy-offchain-storage:
         condition: service_healthy
@@ -111,6 +125,8 @@ services:
     build:
       context: .
       dockerfile: ./gsy-market-orchestrator/Dockerfile
+      additional_contexts:
+        - ghcr.io/gridsingularity/gsy-rust-base:latest=service:gsy-rust-base
     environment:
       <<: *gsy-ewds-env
       RUST_LOG: info,gsy_market_orchestrator=debug
@@ -130,6 +146,8 @@ services:
     build:
       context: .
       dockerfile: ./gsy-execution-engine/Dockerfile
+      additional_contexts:
+        - ghcr.io/gridsingularity/gsy-rust-base:latest=service:gsy-rust-base
     depends_on:
       gsy-offchain-storage:
         condition: service_healthy
@@ -159,6 +177,8 @@ services:
     build:
       context: .
       dockerfile: ./e2e-tests/Dockerfile
+      additional_contexts:
+        - ghcr.io/gridsingularity/gsy-rust-base:latest=service:gsy-rust-base
     depends_on:
       gsy-offchain-storage:
         condition: service_healthy
