@@ -54,7 +54,7 @@ All settings are environment variables.
 | `ANALYTICS_RESULTS_DATABASE_NAME` | `DATABASE_NAME` | Database the results are written to. |
 | `ANALYTICS_RESULTS_COLLECTION` | `kpi_results` | |
 | `ANALYTICS_INTERVAL_SECONDS` | `900` | Time between ticks. The first tick runs at startup. |
-| `ANALYTICS_LOOKBACK_HOURS` | `48` | Window recomputed on every tick. |
+| `ANALYTICS_LOOKBACK_HOURS` | `48` | Window recomputed on every tick. Data that lands later than this is never picked up: a buyer whose reading arrives after its slot left the window keeps "demand = bought energy". Keep it above the worst expected meter data lag. |
 | `ANALYTICS_SETTLEMENT_DELAY_MINUTES` | `15` | Only slots that ended at least this long ago are computed. |
 | `ANALYTICS_BACKFILL_FROM` | unset | Unix seconds or RFC 3339. At startup, computes everything from this time up to the tick window, one day at a time. |
 | `ANALYTICS_ENABLED_KPIS` | `procurement_cost_per_kwh` | Comma-separated KPI ids. Unknown ids stop the service at startup. |
@@ -93,15 +93,15 @@ Set `ANALYTICS_GRID_TARIFF_EUR_PER_KWH` (and optionally the other `ANALYTICS_*` 
 | GET | `/health_check` | `200 OK` |
 | GET | `/kpis/procurement-cost-per-kwh` | JSON array of procurement cost per kWh results |
 
-Query parameters, all optional:
+Query parameters:
 
 | Parameter | Description |
 |---|---|
-| `start_time` | Unix seconds. Periods with `period_start >= start_time`. |
-| `end_time` | Unix seconds. Periods with `period_start < end_time`. |
-| `community_id` | Only this community. |
+| `start_time` | Required. Unix seconds. Periods with `period_start >= start_time`. |
+| `end_time` | Required. Unix seconds. Periods with `period_start < end_time`. |
+| `community_id` | Optional. Only this community. |
 
-Results are ordered by community and period start. `end_time` at or before `start_time`, or a non-numeric time, returns `400`.
+Results are ordered by community and period start. A missing or non-numeric time, `end_time` at or before `start_time`, or a range longer than 31 days returns `400`.
 
 ```bash
 curl 'http://localhost:8081/kpis/procurement-cost-per-kwh?start_time=1758621600&end_time=1758625200&community_id=Pilot1'

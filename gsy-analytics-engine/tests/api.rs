@@ -1,7 +1,7 @@
 //! Runs the HTTP API against a real MongoDB, using the `DATABASE_*` env vars like the other
 //! services' integration tests. Each test uses its own randomly named database and drops it.
 
-use gsy_analytics_engine::api::run_http_server;
+use gsy_analytics_engine::api::{run_http_server, MAX_QUERY_RANGE_SECONDS};
 use gsy_analytics_engine::config::Config;
 use gsy_analytics_engine::db::{connect, Databases};
 use mongodb::bson::Document;
@@ -17,6 +17,12 @@ use uuid::Uuid;
 const SLOT: i64 = 1_758_621_600; // 2025-09-23 10:00 UTC
 const SLOT_LENGTH: i64 = 900;
 const ENDPOINT: &str = "kpis/procurement-cost-per-kwh";
+const DAY: i64 = 24 * 3600;
+
+/// A range around every seeded result.
+fn whole_day() -> String {
+    format!("start_time={}&end_time={}", SLOT, SLOT + DAY)
+}
 
 struct TestApi {
     address: String,
@@ -152,7 +158,7 @@ async fn returns_the_stored_result_document() {
     let api = TestApi::new().await;
     api.seed(vec![result("Pilot1", SLOT)]).await;
 
-    let response = api.get("").await;
+    let response = api.get(&format!("?{}", whole_day())).await;
     assert_eq!(response.status(), StatusCode::OK);
     let results: Vec<ProcurementCostResultSchema> = response.json().await.unwrap();
     assert_eq!(results, vec![result("Pilot1", SLOT)]);
@@ -161,12 +167,12 @@ async fn returns_the_stored_result_document() {
 }
 
 #[tokio::test]
-async fn without_parameters_returns_everything_ordered() {
+async fn results_are_ordered_by_community_and_period_start() {
     let api = TestApi::new().await;
     api.seed(seed_results()).await;
 
     assert_eq!(
-        api.get_keys("").await,
+        api.get_keys(&format!("?{}", whole_day())).await,
         keys(&[
             ("Pilot1", SLOT),
             ("Pilot1", SLOT + SLOT_LENGTH),
@@ -201,22 +207,56 @@ async fn time_range_is_half_open_on_period_start() {
 }
 
 #[tokio::test]
-async fn a_single_bound_is_open_ended() {
+async fn both_bounds_are_required() {
     let api = TestApi::new().await;
     api.seed(seed_results()).await;
 
+    for (query, message) in [
+        ("".to_string(), "start_time is required"),
+        (format!("?start_time={}", SLOT), "end_time is required"),
+        (
+            format!("?end_time={}", SLOT + DAY),
+            "start_time is required",
+        ),
+        ("?community_id=Pilot1".to_string(), "start_time is required"),
+    ] {
+        let response = api.get(&query).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{}", query);
+        assert_eq!(response.text().await.unwrap(), message, "{}", query);
+    }
+
+    api.drop().await;
+}
+
+#[tokio::test]
+async fn range_is_limited_to_31_days() {
+    let api = TestApi::new().await;
+    api.seed(seed_results()).await;
+    let max_range = MAX_QUERY_RANGE_SECONDS as i64;
+    assert_eq!(max_range, 31 * DAY);
+
     assert_eq!(
-        api.get_keys(&format!("?start_time={}", SLOT + 2 * SLOT_LENGTH))
-            .await,
-        keys(&[
-            ("Pilot1", SLOT + 2 * SLOT_LENGTH),
-            ("Pilot1", SLOT + 3 * SLOT_LENGTH),
-        ])
+        api.get_keys(&format!(
+            "?start_time={}&end_time={}",
+            SLOT,
+            SLOT + max_range
+        ))
+        .await
+        .len(),
+        seed_results().len()
     );
+
+    let response = api
+        .get(&format!(
+            "?start_time={}&end_time={}",
+            SLOT,
+            SLOT + max_range + 1
+        ))
+        .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     assert_eq!(
-        api.get_keys(&format!("?end_time={}", SLOT + SLOT_LENGTH))
-            .await,
-        keys(&[("Pilot1", SLOT), ("Pilot2", SLOT)])
+        response.text().await.unwrap(),
+        "The time range must not exceed 2678400 seconds (31 days)"
     );
 
     api.drop().await;
@@ -228,7 +268,8 @@ async fn community_filter_combines_with_the_time_range() {
     api.seed(seed_results()).await;
 
     assert_eq!(
-        api.get_keys("?community_id=Pilot2").await,
+        api.get_keys(&format!("?community_id=Pilot2&{}", whole_day()))
+            .await,
         keys(&[("Pilot2", SLOT)])
     );
     assert_eq!(
@@ -240,7 +281,10 @@ async fn community_filter_combines_with_the_time_range() {
         .await,
         keys(&[("Pilot1", SLOT)])
     );
-    assert!(api.get_keys("?community_id=Unknown").await.is_empty());
+    assert!(api
+        .get_keys(&format!("?community_id=Unknown&{}", whole_day()))
+        .await
+        .is_empty());
 
     api.drop().await;
 }
@@ -261,12 +305,12 @@ async fn invalid_parameters_are_rejected() {
         );
     }
     for query in [
-        "?start_time=yesterday",
-        "?end_time=-5",
-        "?start_time=18446744073709551615",
+        format!("?start_time=yesterday&end_time={}", SLOT),
+        format!("?start_time={}&end_time=-5", SLOT),
+        format!("?start_time=18446744073709551615&end_time={}", SLOT),
     ] {
         assert_eq!(
-            api.get(query).await.status(),
+            api.get(&query).await.status(),
             StatusCode::BAD_REQUEST,
             "{}",
             query
@@ -280,7 +324,7 @@ async fn invalid_parameters_are_rejected() {
 async fn empty_collection_returns_an_empty_list() {
     let api = TestApi::new().await;
 
-    assert!(api.get_keys("").await.is_empty());
+    assert!(api.get_keys(&format!("?{}", whole_day())).await.is_empty());
 
     api.drop().await;
 }

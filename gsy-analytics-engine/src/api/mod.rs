@@ -19,8 +19,12 @@ pub type ResultsRef = web::Data<Collection<Document>>;
 /// The API only serves a few small read queries; one worker per CPU would be wasteful.
 const API_WORKERS: usize = 2;
 
+/// Longest `[start_time, end_time)` range one request may ask for: 31 days, so that any
+/// calendar month fits.
+pub const MAX_QUERY_RANGE_SECONDS: u64 = 31 * 24 * 3600;
+
 /// Query parameters shared by the KPI endpoints. Times are unix seconds and select periods
-/// by `period_start` in `[start_time, end_time)`.
+/// by `period_start` in `[start_time, end_time)`. Both bounds are required.
 #[derive(Deserialize, Debug)]
 pub struct KpiQuery {
     #[serde(default)]
@@ -31,27 +35,31 @@ pub struct KpiQuery {
     pub community_id: Option<String>,
 }
 
-fn to_unix_seconds(value: Option<u64>, name: &str) -> Result<Option<i64>, HttpResponse> {
-    value
-        .map(|value| {
-            i64::try_from(value)
-                .map_err(|_| HttpResponse::BadRequest().body(format!("{} is out of range", name)))
-        })
-        .transpose()
+fn to_unix_seconds(value: Option<u64>, name: &str) -> Result<i64, HttpResponse> {
+    let value =
+        value.ok_or_else(|| HttpResponse::BadRequest().body(format!("{} is required", name)))?;
+    i64::try_from(value)
+        .map_err(|_| HttpResponse::BadRequest().body(format!("{} is out of range", name)))
 }
 
 impl KpiQuery {
     pub fn to_filter(&self, kpi_id: &str) -> Result<ResultsFilter, HttpResponse> {
-        if let (Some(start), Some(end)) = (self.start_time, self.end_time) {
-            if end <= start {
-                return Err(HttpResponse::BadRequest().body("end_time must be after start_time"));
-            }
+        let start_time = to_unix_seconds(self.start_time, "start_time")?;
+        let end_time = to_unix_seconds(self.end_time, "end_time")?;
+        if end_time <= start_time {
+            return Err(HttpResponse::BadRequest().body("end_time must be after start_time"));
+        }
+        if (end_time - start_time) as u64 > MAX_QUERY_RANGE_SECONDS {
+            return Err(HttpResponse::BadRequest().body(format!(
+                "The time range must not exceed {} seconds (31 days)",
+                MAX_QUERY_RANGE_SECONDS
+            )));
         }
         Ok(ResultsFilter {
             kpi_id: kpi_id.to_string(),
             community_id: self.community_id.clone(),
-            start_time: to_unix_seconds(self.start_time, "start_time")?,
-            end_time: to_unix_seconds(self.end_time, "end_time")?,
+            start_time: Some(start_time),
+            end_time: Some(end_time),
         })
     }
 }
