@@ -62,7 +62,7 @@ pub fn run_http_server(
             .route("/timeseries", web::get().to(get_timeseries))
             // Guarantees of origin (local_origin_record), derived on request
             .route(
-                "/guarantees-of-origin-measurements",
+                "/guarantees-of-origin",
                 web::get().to(get_guarantees_of_origin),
             )
             // Grid Topology and Market Storage (D3.2 section 5.1)

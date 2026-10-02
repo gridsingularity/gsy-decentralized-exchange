@@ -164,7 +164,7 @@ fn split_flow(direction: &PointDirection, value: f64) -> (f64, f64) {
 
 /// Keyed by `(facility_id, time_slot)`. Only `Measurement` points whose `asset_name`
 /// resolves to a facility, and only timeseries values with a numeric timestamp, count.
-fn evidence_index<'a>(
+fn map_measurements<'a>(
     topology: &Topology<'a>,
     inputs: &CertificateInputs<'a>,
 ) -> HashMap<(&'a str, u64), SlotEvidence<'a>> {
@@ -320,16 +320,16 @@ pub fn build_local_origin_records(
 /// the slots `selected` covers: a facility's net-export allocation runs over all of them, so
 /// whether a trade is certified does not depend on which others were selected.
 pub fn build_local_origin_records_with_allocation(
-    selected: Vec<DbTradeSchema>,
-    slot_executed: &[DbTradeSchema],
+    selected_trades: Vec<DbTradeSchema>,
+    trades_for_selected_slots: &[DbTradeSchema],
     inputs: &CertificateInputs,
 ) -> Vec<LocalOriginRecord> {
     let topology = Topology::build(inputs);
-    let evidence = evidence_index(&topology, inputs);
-    let allocated = net_export_allocation(&topology, &evidence, slot_executed);
-    let mut records = Vec::with_capacity(selected.len());
+    let measurements = map_measurements(&topology, inputs);
+    let facility_net_export_per_slot = net_export_allocation(&topology, &measurements, trades_for_selected_slots);
+    let mut records = Vec::with_capacity(selected_trades.len());
 
-    for trade in selected {
+    for trade in selected_trades {
         // `trade_status_at_issuance` is unconditionally `delivery_verified`; the query
         // already filters to `Executed` trades, but the builder re-checks so it stays
         // correct if ever called with an unfiltered set.
@@ -380,7 +380,7 @@ pub fn build_local_origin_records_with_allocation(
             continue;
         }
 
-        let Some(slot_evidence) = evidence.get(&(seller_facility_id, trade.time_slot)) else {
+        let Some(slot_evidence) = measurements.get(&(seller_facility_id, trade.time_slot)) else {
             tracing::info!(
                 trade_uuid = %trade.trade_uuid,
                 facility_id = seller_facility_id,
@@ -404,7 +404,7 @@ pub fn build_local_origin_records_with_allocation(
             continue;
         };
 
-        if !allocated.contains(&(
+        if !facility_net_export_per_slot.contains(&(
             seller_facility_id,
             trade.time_slot,
             trade.trade_uuid.as_str(),
