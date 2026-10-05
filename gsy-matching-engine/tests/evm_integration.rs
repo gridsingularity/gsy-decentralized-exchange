@@ -277,13 +277,18 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
 
     let selected_energy = (80.0 * NODE_FLOAT_SCALING_FACTOR) as u64;
     let clearing_price = (50.0 * NODE_FLOAT_SCALING_FACTOR) as u64;
+    let residual_bid = Order {
+        order_id: format!("0x{}", "44".repeat(16)),
+        energy: bid_order.energy - selected_energy,
+        ..bid_order.clone()
+    };
 
     let bid_offer_matches = vec![BidOfferMatch {
         market_id: market_id.clone(),
         time_slot: 1000,
         bid: bid_order,
         offer: ask_order,
-        residual_bid: None,
+        residual_bid: Some(residual_bid),
         residual_offer: None,
         selected_energy,
         energy_rate: clearing_price,
