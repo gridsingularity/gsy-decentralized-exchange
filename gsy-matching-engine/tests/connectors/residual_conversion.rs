@@ -120,7 +120,7 @@ fn converted_offer_preferences_participate_in_both_matching_algorithms() {
                     matches[0].selected_energy,
                     (6.0 * NODE_FLOAT_SCALING_FACTOR) as u64
                 );
-                assert_eq!(to_evm_matches(matches, &lookup).unwrap().len(), 1);
+                assert_eq!(convert_matches(matches, &lookup).unwrap().len(), 1);
             }
         }
     }
@@ -164,9 +164,12 @@ fn encodes_chained_fills_from_original_orders_only() {
             }
             let (matches, lookup) = match_book(&algorithm, &[parent.clone(), first, second, last]);
             assert_eq!(matches.len(), 3);
-            let encoded = to_evm_matches(matches, &lookup).unwrap();
+            let encoded = convert_matches(matches, &lookup).unwrap();
             assert_eq!(
-                encoded.iter().map(|item| item.match_type).collect::<Vec<_>>(),
+                encoded
+                    .iter()
+                    .map(|item| item.match_type)
+                    .collect::<Vec<_>>(),
                 vec![1, 1, 0]
             );
             let mut expected = to_evm_order_data(&parent, side).unwrap();
@@ -196,13 +199,13 @@ fn rejects_unknown_out_of_order_and_repeated_consumption() {
     let (matches, lookup) = match_book(&MatchingAlgorithm::PayAsBid, &orders);
     let mut reversed = matches.clone();
     reversed.reverse();
-    assert!(to_evm_matches(reversed, &lookup).is_err());
+    assert!(convert_matches(reversed, &lookup).is_err());
     let mut replay = matches.clone();
     replay.push(matches[0].clone());
-    assert!(to_evm_matches(replay, &lookup).is_err());
+    assert!(convert_matches(replay, &lookup).is_err());
     let mut unknown = matches;
     unknown[0].bid.order_id = bytes16_to_hex([42; 16]);
-    assert!(to_evm_matches(unknown, &lookup).is_err());
+    assert!(convert_matches(unknown, &lookup).is_err());
 }
 
 #[test]
@@ -236,7 +239,7 @@ fn rejects_invalid_residual_ids_and_quantities() {
             _ => unreachable!(),
         }
         assert!(
-            to_evm_matches(invalid_matches, &lookup).is_err(),
+            convert_matches(invalid_matches, &lookup).is_err(),
             "{invalid}"
         );
     }
@@ -250,7 +253,7 @@ fn preserves_exact_integer_energy_when_encoding_a_residual() {
         db_order(3, OrderEnum::Offer, 0.2),
     ];
     let (matches, lookup) = match_book(&MatchingAlgorithm::PayAsBid, &orders);
-    let encoded = to_evm_matches(matches, &lookup).unwrap();
+    let encoded = convert_matches(matches, &lookup).unwrap();
     assert_eq!(encoded.len(), 2);
     assert_eq!(encoded[1].bid.order_id, encoded[0].residual_bid_id);
     assert_eq!(
@@ -258,4 +261,27 @@ fn preserves_exact_integer_energy_when_encoding_a_residual() {
         encoded[0].bid.energy - encoded[0].selected_energy.as_u64()
     );
     assert_eq!(encoded[1].residual_bid_id, [0; 16]);
+}
+
+// Exercise the production market-batch encoder while keeping assertions per match.
+fn convert_matches(
+    matches: Vec<BidOfferMatch>,
+    lookup: &HashMap<String, DbOrderSchema>,
+) -> Result<Vec<Match>> {
+    let clearing_result = ClearingResult {
+        market_id: matches.first().map(|item| item.market_id.clone()),
+        traded_quantity: Some(matches.iter().map(|item| item.selected_energy).sum()),
+        num_trades: Some(matches.len() as u32),
+        ..Default::default()
+    };
+    Ok(to_evm_matches(
+        vec![MarketMatches {
+            bid_offer_matches: matches,
+            clearing_result,
+        }],
+        lookup,
+    )?
+    .into_iter()
+    .flat_map(|market| market.matches)
+    .collect())
 }

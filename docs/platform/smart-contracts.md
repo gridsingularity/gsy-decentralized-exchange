@@ -158,6 +158,11 @@ calldata is not compatible. The flag is not added to `TradeSettled` or storage.
 It describes the submitted match, not the residual order's eligibility in a
 later phase.
 
+`settleBatch` accepts `MarketSettlement[]`: each entry contains `Match[] matches`
+and a `ClearingResult`. The contract checks that `tradedQuantity` equals the sum
+of selected energy in that entry and emits `MarketClearing` after its trades.
+Callers must include this per-market envelope as well as each match's type.
+
 Deploy or upgrade the registry and settlement implementations together with the
 updated matcher. For local validation, run `./scripts/contracts.sh local deploy`
 and restart services using the refreshed `contracts-output/addresses.env`.

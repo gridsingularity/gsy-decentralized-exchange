@@ -1,3 +1,4 @@
+use crate::utils::indexed_bytes16_topic;
 use crate::world::{CommunityMarketOrderPair, MyWorld, PayAsClearScenario};
 use cucumber::{then, when};
 use ethers::abi::AbiDecode;
@@ -15,8 +16,10 @@ use primitives::ewds::dto::{EwdsOrderDto, EwdsTradeDto};
 use primitives::matching::matching_block_interval;
 use primitives::offchain_storage::{resolve_order_partner_ids, OffchainStorageClient};
 use primitives::utils::{
-    bytes16_to_hex, create_encrypted_bytes16_from_string, parse_uuid_or_hex_bytes16,
+    bytes16_to_hex,
+    create_encrypted_bytes16_from_string,
     NODE_FLOAT_SCALING_FACTOR,
+    parse_uuid_or_hex_bytes16,
 };
 use std::collections::HashSet;
 use std::env;
@@ -1122,12 +1125,11 @@ async fn verify_pay_as_clear_result(
             TradeSettlementContract::new(world.trade_settlement_address, world.provider.clone());
         for trade in &matching_trades {
             let trade_id = parse_uuid_or_hex_bytes16(&trade.trade_uuid).expect("Invalid trade ID");
-            let mut topic = [0u8; 32];
-            topic[..16].copy_from_slice(&trade_id);
+            let topic = indexed_bytes16_topic(trade_id);
             let events = settlement
                 .event::<TradeSettledFilter>()
                 .from_block(0u64)
-                .topic1(H256::from(topic))
+                .topic1(topic)
                 .query()
                 .await
                 .expect("Failed to query clearing settlement event");
@@ -1277,15 +1279,12 @@ async fn verify_preferred_residual(
         .expect("No trade was recorded in the previous step");
 
     let trade_id = parse_uuid_or_hex_bytes16(&trade.trade_uuid).expect("Invalid trade ID");
-    // Indexed bytes16 values are right-padded to a 32-byte event topic.
-    let mut topic = [0u8; 32];
-    topic[..16].copy_from_slice(&trade_id);
     let settlement =
         TradeSettlementContract::new(world.trade_settlement_address, world.provider.clone());
     let events = settlement
         .event::<TradeSettledFilter>()
         .from_block(0u64)
-        .topic1(H256::from(topic))
+        .topic1(indexed_bytes16_topic(trade_id))
         .query()
         .await
         .expect("Failed to query preferred settlement event");
@@ -1411,13 +1410,12 @@ async fn verify_preference_policy_pair(
 
 async fn assert_settlement_match_type(world: &MyWorld, trade: &DbTradeSchema, expected: u8) {
     let trade_id = parse_uuid_or_hex_bytes16(&trade.trade_uuid).unwrap();
-    let mut topic = [0u8; 32];
-    topic[..16].copy_from_slice(&trade_id);
+    let topic = indexed_bytes16_topic(trade_id);
     let settlement =
         TradeSettlementContract::new(world.trade_settlement_address, world.provider.clone());
     let events = settlement.event::<TradeSettledFilter>()
         .from_block(0u64)
-        .topic1(H256::from(topic))
+        .topic1(topic)
         .query_with_meta()
         .await
         .unwrap();
@@ -1437,10 +1435,10 @@ async fn assert_settlement_match_type(world: &MyWorld, trade: &DbTradeSchema, ex
         .await.unwrap().expect("Missing settlement transaction");
     assert_eq!(transaction.to, Some(world.trade_settlement_address));
     // Match type is calldata-only; checking the price alone cannot identify the phase.
-    let (matches,) = <(Vec<EvmMatchTuple>,)>::decode(
+    let (settlements,) = <(Vec<(Vec<EvmMatchTuple>, ([u8; 16], u8, U256, U256, U256, U256, u32))>,)>::decode(
         transaction.input.as_ref().get(4..).expect("Missing function selector")
     ).expect("Failed to decode settlement matches");
-    let matched = matches.iter()
+    let matched = settlements.iter().flat_map(|(matches, _)| matches.iter())
         .find(|item| item.0 == trade_id)
         .expect("Missing trade in calldata");
     assert_eq!(matched.7, expected, "Unexpected settlement match type");
@@ -1578,12 +1576,11 @@ async fn verify_residual_lifecycle(world: &mut MyWorld, side: String, consumptio
         TradeSettlementContract::new(world.trade_settlement_address, world.provider.clone());
     let mut transaction_hashes = Vec::new();
     for trade in [&first, &second] {
-        let mut topic = [0u8; 32];
-        topic[..16].copy_from_slice(&parse_uuid_or_hex_bytes16(&trade.trade_uuid).unwrap());
+        let topic = indexed_bytes16_topic(parse_uuid_or_hex_bytes16(&trade.trade_uuid).unwrap());
         let events = settlement
             .event::<TradeSettledFilter>()
             .from_block(0u64)
-            .topic1(H256::from(topic))
+            .topic1(topic)
             .query_with_meta()
             .await
             .unwrap();
@@ -1726,4 +1723,33 @@ async fn verify_penalties_on_chain(world: &mut MyWorld) {
         recorded_trade_ids.len(),
         trades.len()
     );
+}
+
+#[then("corresponding clearing results are written to the DB")]
+async fn verify_clearing_results(world: &mut MyWorld) {
+    let clearing_results = OffchainStorageClient::from_env("E2E_TESTS_CLIENT_ID", "e2e_tests")
+        .fetch_clearing_results(&market_id_as_hex(world).to_lowercase())
+        .await
+        .expect("failed to fetch clearing results");
+
+    eprintln!("{:?}", clearing_results);
+
+    assert_eq!(
+        clearing_results.len(),
+        1,
+        "expected exactly 1 clearing result, got {}",
+        clearing_results.len()
+    );
+
+    let result = &clearing_results[0];
+    assert_eq!(result.market_id, market_id_as_hex(world).to_lowercase());
+    assert_eq!(result.clearing_status, "final");
+    assert_eq!(result.no_bid_reason, None);
+    assert_eq!(result.clearing_price, 3.0);
+    assert_eq!(result.total_supply, 10.0);
+    assert_eq!(result.total_demand, 10.0);
+    assert_eq!(result.trade_quantity, 10.0);
+    assert_eq!(result.num_trades, 1);
+    assert!(!result.tx_hash.is_empty(), "tx_hash should not be empty");
+    assert!(result.created_at > 0, "created_at should be set");
 }

@@ -49,6 +49,9 @@ function parseSettleBatchSizes(): number[] {
   return [...new Set(sizes)].sort((left, right) => left - right);
 }
 
+// Matches primitives::db_api_schema::trades::ClearingStatus::Final.to_evm().
+const CLEARING_STATUS_FINAL = 1;
+
 function buildMatch(
   tradeId: string,
   bid: any,
@@ -678,6 +681,19 @@ async function main() {
     settleBatchMatches.set(batchSize, matches);
   }
 
+  const asMarketBatch = (matches: any[]) => [{
+    matches,
+    clearingResult: {
+      marketId,
+      clearingStatus: CLEARING_STATUS_FINAL,
+      clearingPrice: 12_000,
+      totalSupply: 0,
+      totalDemand: 0,
+      tradedQuantity: matches.reduce((total, match) => total + BigInt(match.selectedEnergy), 0n),
+      numTrades: matches.length,
+    },
+  }];
+
   for (const batchSize of settleBatchSizes) {
     const matches = settleBatchMatches.get(batchSize);
     if (!matches) {
@@ -688,7 +704,7 @@ async function main() {
       "Mutating calls",
       `settleBatch(Match[${batchSize}])`,
       "TradeSettlement",
-      tradeSettlementContract.settleBatch(matches),
+      tradeSettlementContract.settleBatch(asMarketBatch(matches)),
       "Standard matchType=0; includes residual offer registration for each match. Order placement gas is separate.",
     );
   }
@@ -731,7 +747,7 @@ async function main() {
         "Mutating calls",
         `settleBatch(Match[${batchSize}]) preferred ${preference}`,
         "TradeSettlement",
-        tradeSettlementContract.settleBatch(matches),
+        tradeSettlementContract.settleBatch(asMarketBatch(matches)),
         "Preferred matchType=1; includes residual offer registration for each match. Order placement gas is separate.",
       );
     }

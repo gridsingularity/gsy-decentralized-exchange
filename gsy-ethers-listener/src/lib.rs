@@ -15,6 +15,7 @@ abigen!(
         event OrderStatusUpdated(bytes16 indexed orderId, uint8 status)
         event TradeSettled(bytes16 indexed tradeId, bytes16 indexed bidId, bytes16 indexed offerId, bytes16 buyerId, bytes16 sellerId, bytes16 marketId, uint64 timeSlot, bytes16 residualBidId, bytes16 residualOfferId, uint256 energy, uint256 price)
         event MarketStatusUpdated(bytes16 indexed marketId, bool isOpen)
+        event MarketClearing(bytes16 indexed marketId, uint8 clearingStatus, uint256 clearingPrice, uint256 totalSupply, uint256 totalDemand, uint256 tradedQuantity, uint32 numTrades)
     ]"#
 );
 
@@ -33,6 +34,12 @@ pub trait GsyEventHandler: Send + Sync + 'static {
     async fn handle_order_cancelled(&self, event: OrderCancelledFilter) -> Result<()>;
     async fn handle_trade_settled(&self, event: TradeSettledFilter) -> Result<()>;
     async fn handle_market_status(&self, event: MarketStatusUpdatedFilter) -> Result<()>;
+    async fn handle_market_clearing(
+        &self,
+        event: MarketClearingFilter,
+        meta: LogMeta,
+        block_timestamp: u64,
+    ) -> Result<()>;
 }
 
 pub struct GsyEthersListener<H: GsyEventHandler> {
@@ -77,14 +84,18 @@ impl<H: GsyEventHandler> GsyEthersListener<H> {
                 OrderCancelledFilter::signature(),
                 TradeSettledFilter::signature(),
                 MarketStatusUpdatedFilter::signature(),
+                MarketClearingFilter::signature(),
             ]);
         let mut stream = provider.subscribe_logs(&filter).await?;
+
+        // All clearing events in one block share its timestamp.
+        let mut last_block_timestamp: Option<(H256, u64)> = None;
 
         info!("GSy Ethers Listener started. Waiting for events...");
 
         while let Some(log) = stream.next().await {
             let raw = ethers::abi::RawLog {
-                topics: log.topics,
+                topics: log.topics.clone(),
                 data: log.data.to_vec(),
             };
             let event = <GsyContractsEvents as ethers::contract::EthLogDecode>::decode_log(&raw)
@@ -117,6 +128,27 @@ impl<H: GsyEventHandler> GsyEthersListener<H> {
                     );
                     self.handler.handle_market_status(event).await
                 }
+                GsyContractsEvents::MarketClearingFilter(event)
+                    if log.address == self.config.trade_settlement_address =>
+                {
+                    info!("Detected MarketClearing: {:?}", hex::encode(event.market_id));
+                    let meta = LogMeta::from(&log);
+                    let block_timestamp = match last_block_timestamp {
+                        Some((block_hash, timestamp)) if block_hash == meta.block_hash => {
+                            Ok(timestamp)
+                        }
+                        _ => fetch_block_timestamp(&provider, meta.block_hash).await,
+                    };
+                    match block_timestamp {
+                        Ok(timestamp) => {
+                            last_block_timestamp = Some((meta.block_hash, timestamp));
+                            self.handler
+                                .handle_market_clearing(event, meta, timestamp)
+                                .await
+                        }
+                        Err(error) => Err(error),
+                    }
+                }
                 _ => continue,
             };
             if let Err(error) = result {
@@ -125,4 +157,12 @@ impl<H: GsyEventHandler> GsyEthersListener<H> {
         }
         Err(anyhow!("Contract event stream ended"))
     }
+}
+
+async fn fetch_block_timestamp(client: &Provider<Ws>, block_hash: H256) -> Result<u64> {
+    let block = client
+        .get_block(block_hash)
+        .await?
+        .ok_or_else(|| anyhow!("Block {:?} not found", block_hash))?;
+    Ok(block.timestamp.as_u64())
 }
