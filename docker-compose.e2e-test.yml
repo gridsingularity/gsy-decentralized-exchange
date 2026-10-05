@@ -45,8 +45,9 @@ services:
     build:
       context: .
       dockerfile: ./gsy-offchain-storage/Dockerfile
+
       additional_contexts:
-        - ghcr.io/gridsingularity/gsy-rust-base:latest=service:gsy-rust-base
+        - ghcr.io/gridsingularity/gsy-rust-base=service:gsy-rust-base
     depends_on:
       mongodb:
         condition: service_started
@@ -84,7 +85,7 @@ services:
       context: .
       dockerfile: ./gsy-matching-engine/Dockerfile
       additional_contexts:
-        - ghcr.io/gridsingularity/gsy-rust-base:latest=service:gsy-rust-base
+        - ghcr.io/gridsingularity/gsy-rust-base=service:gsy-rust-base
     depends_on:
       gsy-offchain-storage:
         condition: service_healthy
@@ -107,7 +108,7 @@ services:
       context: .
       dockerfile: ./gsy-community-client/Dockerfile
       additional_contexts:
-        - ghcr.io/gridsingularity/gsy-rust-base:latest=service:gsy-rust-base
+        - ghcr.io/gridsingularity/gsy-rust-base=service:gsy-rust-base
     depends_on:
       gsy-offchain-storage:
         condition: service_healthy
@@ -127,7 +128,7 @@ services:
       context: .
       dockerfile: ./gsy-market-orchestrator/Dockerfile
       additional_contexts:
-        - ghcr.io/gridsingularity/gsy-rust-base:latest=service:gsy-rust-base
+        - ghcr.io/gridsingularity/gsy-rust-base=service:gsy-rust-base
     environment:
       <<: *gsy-ewds-env
       RUST_LOG: info,gsy_market_orchestrator=debug
@@ -148,7 +149,7 @@ services:
       context: .
       dockerfile: ./gsy-execution-engine/Dockerfile
       additional_contexts:
-        - ghcr.io/gridsingularity/gsy-rust-base:latest=service:gsy-rust-base
+        - ghcr.io/gridsingularity/gsy-rust-base=service:gsy-rust-base
     depends_on:
       gsy-offchain-storage:
         condition: service_healthy
@@ -165,7 +166,7 @@ services:
       EWDS_EXECUTION_ENGINE_CLIENT_ID: ${EWDS_EXECUTION_ENGINE_CLIENT_ID:-gsyexecutionengine}
 
   mongodb:
-    image: mongo:8.3.8
+    image: mongo:8.3.9
     container_name: mongodb
     ports:
       - "27017:27017"
@@ -179,7 +180,7 @@ services:
       context: .
       dockerfile: ./e2e-tests/Dockerfile
       additional_contexts:
-        - ghcr.io/gridsingularity/gsy-rust-base:latest=service:gsy-rust-base
+        - ghcr.io/gridsingularity/gsy-rust-base=service:gsy-rust-base
     depends_on:
       gsy-offchain-storage:
         condition: service_healthy
