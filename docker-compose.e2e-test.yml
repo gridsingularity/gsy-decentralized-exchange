@@ -18,6 +18,8 @@ x-gsy-ewds-env: &gsy-ewds-env
   EWDS_MEASUREMENTS_RESPONSE_TOPIC: "measurementsQueryTestResponse"
   EWDS_FACILITIES_REQUEST_TOPIC: "facilitiesQueryTest"
   EWDS_FACILITIES_RESPONSE_TOPIC: "facilitiesQueryTestResponse"
+  EWDS_GUARANTEES_OF_ORIGIN_REQUEST_TOPIC: "guaranteesOfOriginQueryTest"
+  EWDS_GUARANTEES_OF_ORIGIN_RESPONSE_TOPIC: "guaranteesOfOriginQueryTestResponse"
   EWDS_IDS_REQUEST_TOPIC: "idsQueryTest"
   EWDS_IDS_RESPONSE_TOPIC: "idsQueryTestResponse"
   EWDS_COMMUNITY_UPSERT_TOPIC: "communityUpsertTest"
@@ -71,6 +73,14 @@ services:
       EWDS_REQUEST_CLIENT_ID: ${EWDS_OFFCHAIN_STORAGE_CLIENT_ID:-gsyoffchainstorage}
       EWDS_HANDLER_POLL_INTERVAL_MS: ${EWDS_HANDLER_POLL_INTERVAL_MS:-500}
       EWDS_HANDLER_BATCH_SIZE: ${EWDS_HANDLER_BATCH_SIZE:-100}
+      # Guarantees of origin: pilot parameters.
+      # GOO_INTERVAL_DURATION_S: ${GOO_INTERVAL_DURATION_S:-900}
+      # GOO_ROUNDING_RULE: ${GOO_ROUNDING_RULE:-half_up_2dp}
+      # GOO_MUNICIPALITY_CODE: ${GOO_MUNICIPALITY_CODE:-5226}
+      # GOO_GRID_OPERATOR_ID: ${GOO_GRID_OPERATOR_ID:-AEM}
+      # GOO_GRID_LEVEL: ${GOO_GRID_LEVEL:-7}
+      # GOO_DATA_PROVIDER_ID: ${GOO_DATA_PROVIDER_ID:-did:example:aem-metering}
+      # GOO_PROPERTY_MEASURED: ${GOO_PROPERTY_MEASURED:-measurement#active_energy}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health_check"]
       interval: 10s

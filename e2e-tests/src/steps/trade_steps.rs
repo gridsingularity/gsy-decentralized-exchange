@@ -16,10 +16,8 @@ use primitives::ewds::dto::{EwdsOrderDto, EwdsTradeDto};
 use primitives::matching::matching_block_interval;
 use primitives::offchain_storage::{resolve_order_partner_ids, OffchainStorageClient};
 use primitives::utils::{
-    bytes16_to_hex,
-    create_encrypted_bytes16_from_string,
+    bytes16_to_hex, create_encrypted_bytes16_from_string, parse_uuid_or_hex_bytes16,
     NODE_FLOAT_SCALING_FACTOR,
-    parse_uuid_or_hex_bytes16,
 };
 use std::collections::HashSet;
 use std::env;

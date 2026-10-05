@@ -11,7 +11,7 @@ use primitives::ewds::dto::{
     energy_type_from_ewds, energy_type_to_ewds, EwdsClearingResultDto, EwdsCommunityDto,
     EwdsMarketDto, EwdsOrderDto, EwdsTradeDto,
 };
-use primitives::ewds::EwdsOperation;
+use primitives::ewds::{EwdsOperation, EwdsTopicConfig};
 use serde_json::Value;
 use std::str::FromStr;
 
@@ -156,6 +156,7 @@ mod tests {
                 selected_energy_kWh: 4.5,
                 energy_rate: 12.0,
             },
+            status_updated_at: None,
         }
     }
 
@@ -400,5 +401,86 @@ mod tests {
             serde_json::json!("markets.query")
         );
         assert!(EwdsOperation::ALL.contains(&EwdsOperation::MarketsQuery));
+    }
+
+    #[test]
+    fn guarantees_of_origin_query_operation_wire_name_and_prefix() {
+        let operation = EwdsOperation::GuaranteesOfOriginQuery;
+        assert_eq!(operation.as_str(), "guarantees_of_origin.query");
+        assert_eq!(operation.request_id_prefix(), "guarantees_of_origin-query");
+        assert_eq!(
+            serde_json::to_value(operation).unwrap(),
+            serde_json::json!("guarantees_of_origin.query")
+        );
+        assert_eq!(
+            serde_json::from_value::<EwdsOperation>(serde_json::json!(
+                "guarantees_of_origin.query"
+            ))
+            .unwrap(),
+            operation
+        );
+        assert!(EwdsOperation::ALL.contains(&operation));
+    }
+
+    #[test]
+    fn every_operation_is_in_all_exactly_once() {
+        for operation in EwdsOperation::ALL {
+            assert_eq!(
+                EwdsOperation::ALL
+                    .iter()
+                    .filter(|candidate| **candidate == operation)
+                    .count(),
+                1,
+                "{} listed more than once",
+                operation
+            );
+        }
+    }
+
+    #[test]
+    fn guarantees_of_origin_default_topics() {
+        let topics = EwdsTopicConfig::default();
+        let pair = topics.for_operation(EwdsOperation::GuaranteesOfOriginQuery);
+        assert_eq!(pair.request, "guaranteesOfOriginQuery");
+        assert_eq!(pair.response, "guaranteesOfOriginQueryResponse");
+    }
+
+    #[test]
+    fn guarantees_of_origin_topics_follow_env() {
+        std::env::set_var(
+            "EWDS_GUARANTEES_OF_ORIGIN_REQUEST_TOPIC",
+            "guaranteesOfOriginQueryTest",
+        );
+        std::env::set_var(
+            "EWDS_GUARANTEES_OF_ORIGIN_RESPONSE_TOPIC",
+            "guaranteesOfOriginQueryTestResponse",
+        );
+        let topics = EwdsTopicConfig::from_env();
+        std::env::remove_var("EWDS_GUARANTEES_OF_ORIGIN_REQUEST_TOPIC");
+        std::env::remove_var("EWDS_GUARANTEES_OF_ORIGIN_RESPONSE_TOPIC");
+
+        let pair = topics.for_operation(EwdsOperation::GuaranteesOfOriginQuery);
+        assert_eq!(pair.request, "guaranteesOfOriginQueryTest");
+        assert_eq!(pair.response, "guaranteesOfOriginQueryTestResponse");
+    }
+
+    #[test]
+    fn trade_status_updated_at_is_optional_in_storage() {
+        // Omitted when unset.
+        let db_json = serde_json::to_value(trade()).unwrap();
+        assert!(db_json.get("status_updated_at").is_none());
+
+        // A pre-existing document without the field still deserializes.
+        let db: DbTradeSchema = serde_json::from_value(db_json).unwrap();
+        assert_eq!(db.status_updated_at, None);
+
+        // A set value round-trips under its snake_case storage name.
+        let mut executed = trade();
+        executed.status = TradeStatus::Executed;
+        executed.status_updated_at = Some(1_234);
+        let json = serde_json::to_value(&executed).unwrap();
+        assert_eq!(json["status_updated_at"], serde_json::json!(1_234));
+        let parsed: DbTradeSchema = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed.status_updated_at, Some(1_234));
     }
 }

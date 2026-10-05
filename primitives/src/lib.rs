@@ -1,5 +1,6 @@
 pub mod db_api_schema;
 
+pub mod certificates;
 pub mod constants;
 pub mod ewds;
 pub mod log;

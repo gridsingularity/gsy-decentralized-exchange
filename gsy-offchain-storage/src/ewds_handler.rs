@@ -1,10 +1,11 @@
+use crate::certificates::query::{guarantees_of_origin, validate_window};
 use crate::db::DatabaseWrapper;
 use anyhow::{anyhow, Result};
 use futures::future::join_all;
 use primitives::db_api_schema::profiles::{MeasurementPointType, MeasurementSchema};
 use primitives::ewds::dto::{
-    EwdsClearingResultDto, EwdsCommunityDto, EwdsInboundMessage, EwdsMarketDto, EwdsOrderDto,
-    EwdsRequestEnvelope, EwdsResponseEnvelope, EwdsSendMessageDto, EwdsTradeDto,
+    EwdsClearingResultDto, EwdsCommunityDto, EwdsErrorPayload, EwdsInboundMessage, EwdsMarketDto,
+    EwdsOrderDto, EwdsRequestEnvelope, EwdsResponseEnvelope, EwdsSendMessageDto, EwdsTradeDto,
 };
 use primitives::ewds::{
     client_id_for_suffix, env_var, ewds_rate_limit_backoff_ms, format_response_body,
@@ -110,6 +111,19 @@ struct TimeRangePayload {
     #[serde(default)]
     facility_id: Option<String>,
 }
+
+#[derive(Deserialize)]
+struct GuaranteesOfOriginPayload {
+    #[serde(alias = "startTime")]
+    #[serde(default)]
+    start_time: Option<u64>,
+    #[serde(alias = "endTime")]
+    #[serde(default)]
+    end_time: Option<u64>,
+}
+
+/// `code` of the error payload sent for a request rejected before it reaches storage.
+const INVALID_REQUEST_ERROR_CODE: &str = "invalid_request";
 
 #[derive(Deserialize)]
 struct IdsQueryPayload {
@@ -509,6 +523,47 @@ pub async fn handle_request(
 
             send_success_response(client, config, request_id, response_topic.as_str(), data).await
         }
+        EwdsOperation::GuaranteesOfOriginQuery => {
+            let request_id = envelope.request_id;
+
+            info!(
+                "Handling EWDS guarantees_of_origin.query request (request_id={})",
+                request_id
+            );
+
+            // An invalid request is answered with `success: false` rather than returned as an
+            // error: an erroring worker re-polls the same message forever.
+            let window = match serde_json::from_value::<GuaranteesOfOriginPayload>(envelope.payload)
+                .map_err(|e| format!("guarantees_of_origin.query payload parse error: {}", e))
+                .and_then(|payload| validate_window(payload.start_time, payload.end_time))
+            {
+                Ok(window) => window,
+                Err(reason) => {
+                    warn!(
+                        "Rejecting EWDS guarantees_of_origin.query request (request_id={}): {}",
+                        request_id, reason
+                    );
+                    return send_error_response(
+                        client,
+                        config,
+                        request_id,
+                        response_topic.as_str(),
+                        INVALID_REQUEST_ERROR_CODE,
+                        reason,
+                    )
+                    .await;
+                }
+            };
+
+            let data = guarantees_of_origin(db, window).await?;
+            info!(
+                "Publishing EWDS guarantees_of_origin.query response (request_id={}, records={})",
+                request_id,
+                data.len()
+            );
+
+            send_success_response(client, config, request_id, response_topic.as_str(), data).await
+        }
     }
 }
 
@@ -567,6 +622,34 @@ async fn send_success_response<T: Serialize>(
         success: true,
         data,
         error: None,
+    };
+
+    send_message(
+        client,
+        config,
+        request_id,
+        topic_name.to_string(),
+        serde_json::to_string(&payload)?,
+    )
+    .await
+}
+
+async fn send_error_response(
+    client: &Client,
+    config: &EwdsHandlerConfig,
+    request_id: String,
+    topic_name: &str,
+    code: &str,
+    message: String,
+) -> Result<()> {
+    let payload = EwdsResponseEnvelope::<serde_json::Value> {
+        request_id: request_id.clone(),
+        success: false,
+        data: Vec::new(),
+        error: Some(EwdsErrorPayload {
+            code: code.to_string(),
+            message,
+        }),
     };
 
     send_message(
