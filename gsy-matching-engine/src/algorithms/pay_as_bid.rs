@@ -84,6 +84,54 @@ mod tests {
     }
 
     #[test]
+    fn preferred_matches_include_residuals_only_for_partially_filled_orders() {
+        use crate::algorithms::MatchOrders;
+        use primitives::MatchingAlgorithm;
+
+        for algorithm in [MatchingAlgorithm::PayAsBid, MatchingAlgorithm::PayAsClear] {
+            for (bid_energy, offer_energy) in [(100, 60), (60, 100), (100, 100)] {
+                let mut bid = order("bid", OrderEnum::Bid, bid_energy, 50);
+                let offer = order("offer", OrderEnum::Offer, offer_energy, 40);
+                bid.requirements = Some(Requirements {
+                    trading_partner_id: Some(offer.created_by.clone()),
+                    energy_type: None,
+                    preferred_energy_rate: Some(45),
+                });
+                let mut data = MatchingData::new(
+                    bid.market_id.clone(),
+                    bid.time_slot,
+                    vec![bid.clone()],
+                    vec![offer.clone()],
+                ).unwrap();
+
+                let matches = algorithm.match_orders(&mut data).unwrap();
+
+                assert_eq!(matches.len(), 1);
+                let matched = &matches[0];
+                let selected_energy = bid_energy.min(offer_energy);
+                assert_eq!(matched.selected_energy, selected_energy);
+                assert_eq!(matched.energy_rate, 45);
+                for (original, residual) in [
+                    (&bid, &matched.residual_bid),
+                    (&offer, &matched.residual_offer),
+                ] {
+                    if original.energy == selected_energy {
+                        assert!(residual.is_none());
+                    } else {
+                        let residual = residual.as_ref().expect("missing preferred residual");
+                        Uuid::parse_str(&residual.order_id).expect("invalid residual UUID");
+                        assert_ne!(residual.order_id, original.order_id);
+                        let mut expected = original.clone();
+                        expected.order_id = residual.order_id.clone();
+                        expected.energy -= selected_energy;
+                        assert_eq!(*residual, expected);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn preference_rate_outside_order_limits_falls_back_to_standard_matching() {
         let mut bid = order("bid", OrderEnum::Bid, 100, 50);
         let mut offer = order("offer", OrderEnum::Offer, 100, 40);

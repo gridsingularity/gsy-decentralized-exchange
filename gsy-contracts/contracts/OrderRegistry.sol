@@ -113,6 +113,10 @@ contract OrderRegistry is Initializable, AccessControlUpgradeable {
             revert Unauthorized();
         }
 
+        _storeOrder(params);
+    }
+
+    function _storeOrder(OrderParams memory params) internal {
         if (orderStatus[params.orderId] != OrderStatus.None) {
             revert OrderAlreadyExists();
         }
@@ -135,6 +139,37 @@ contract OrderRegistry is Initializable, AccessControlUpgradeable {
             params.preferredEnergyRate,
             params.tradingPartner
         );
+    }
+
+    /**
+     * @notice Consume an open order and register its remaining quantity atomically.
+     * @dev Residual metadata is inherited from the stored order, not supplied by the operator.
+     */
+    function settleOrder(
+        bytes16 orderId,
+        uint64 selectedEnergy,
+        bytes16 residualOrderId
+    ) external onlyRole(SETTLEMENT_ROLE) {
+        if (orderStatus[orderId] != OrderStatus.Open) {
+            revert OrderNotOpen();
+        }
+
+        OrderParams memory residual = orders[orderId];
+        if (selectedEnergy == 0 || selectedEnergy > residual.energy) {
+            revert InvalidOrderParams();
+        }
+        residual.energy -= selectedEnergy;
+        if ((residual.energy == 0) != (residualOrderId == bytes16(0))) {
+            revert InvalidOrderParams();
+        }
+
+        orderStatus[orderId] = OrderStatus.Executed;
+        emit OrderStatusUpdated(orderId, OrderStatus.Executed);
+
+        if (residual.energy > 0) {
+            residual.orderId = residualOrderId;
+            _storeOrder(residual);
+        }
     }
 
     /**
