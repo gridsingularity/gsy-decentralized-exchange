@@ -63,7 +63,7 @@ summary panel.
 ./scripts/contracts.sh local deploy
 
 docker compose --env-file contracts-output/addresses.env \
-  -f docker-compose.test.yml \
+  -f docker-compose.e2e-test.yml \
   up --build --force-recreate \
   --abort-on-container-exit \
   --exit-code-from e2e-tests \
@@ -78,7 +78,7 @@ Compose:
 ```bash
 MATCHING_ALGORITHM=pay_as_clear \
 docker compose --env-file contracts-output/addresses.env \
-  -f docker-compose.test.yml \
+  -f docker-compose.e2e-test.yml \
   up --build --force-recreate \
   --abort-on-container-exit \
   --exit-code-from e2e-tests \
@@ -93,6 +93,16 @@ also verifies that a preferred bilateral trade keeps its negotiated rate while
 the remaining standard order book clears at one uniform price. Both scenarios
 verify on-chain settlement and non-zero execution-engine penalties for every
 accepted trade.
+
+Both algorithm directories also include `preference_policy.feature` and
+`residual_lifecycle.feature`. The policy cases cover buyer-only, seller-only and
+reciprocal preferences, absent preferred rates, preferred prices outside normal
+limits, and standard fallback for incompatible partners or unequal effective
+rates. They verify indexed values, on-chain settlement and the match-type flag
+in transaction calldata. Residual cases cover both bids and offers consumed in
+the same batch or a later cycle, checking ID continuity, metadata, statuses and
+exactly-once settlement. These focused cases do not exercise penalty scheduling.
+
 `pay_as_clear` defaults to a `64`-block matching interval so all scenario
 orders are collected before one clearing cycle. Override it with a positive
 `MATCHING_ENGINE_BLOCK_INTERVAL` value only when both the matching engine and
@@ -151,7 +161,7 @@ e2e compose stack executes.
 ```bash
 docker compose --env-file .env.ewds.local \
   --env-file contracts-output/addresses.env \
-  -f docker-compose.test.yml \
+  -f docker-compose.e2e-test.yml \
   up --build \
   --abort-on-container-exit \
   --exit-code-from e2e-tests \
@@ -176,11 +186,11 @@ containers when a clean e2e service run is needed:
 
 ```bash
 docker compose --env-file .env.ewds.local \
-  -f docker-compose.test.yml \
+  -f docker-compose.e2e-test.yml \
   stop e2e-tests gsy-offchain-storage gsy-matching-engine gsy-execution-engine gsy-community-client gsy-market-orchestrator mongodb
 
 docker compose --env-file .env.ewds.local \
-  -f docker-compose.test.yml \
+  -f docker-compose.e2e-test.yml \
   rm -f e2e-tests gsy-offchain-storage gsy-matching-engine gsy-execution-engine gsy-community-client gsy-market-orchestrator mongodb
 ```
 
@@ -191,7 +201,7 @@ Final validated EWDS e2e command:
 
 docker compose --env-file .env.ewds.local \
   --env-file contracts-output/addresses.env \
-  -f docker-compose.test.yml \
+  -f docker-compose.e2e-test.yml \
   up --build --force-recreate \
   --abort-on-container-exit \
   --exit-code-from e2e-tests \
@@ -206,7 +216,7 @@ default aggregation interval for both the matching engine and the E2E runner:
 MATCHING_ALGORITHM=pay_as_clear \
 docker compose --env-file .env.ewds.local \
   --env-file contracts-output/addresses.env \
-  -f docker-compose.test.yml \
+  -f docker-compose.e2e-test.yml \
   up --build --force-recreate \
   --abort-on-container-exit \
   --exit-code-from e2e-tests \
