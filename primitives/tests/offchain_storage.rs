@@ -1,13 +1,14 @@
 use primitives::db_api_schema::grid_topology::{EnergyCommunitySchema, FacilitySchema};
 use primitives::db_api_schema::ids::IdMappingSchema;
-use primitives::ewds::dto::EwdsCommunityDto;
+use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
+use primitives::ewds::dto::{EwdsCommunityDto, EwdsMarketDto};
 use primitives::offchain_storage::{
     CommunityProvider, OffchainStorageClient, OffchainStorageTransport,
 };
 use serde_json::{json, Value};
 use std::env;
 use std::sync::{Arc, Mutex};
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
 // Env vars are process-global; serialize tests that mutate them.
@@ -387,6 +388,111 @@ async fn fetches_communities_over_ewds() {
         fetched[0].community_id,
         "11111111-1111-4111-8111-111111111111"
     );
+
+    clear_ewds_env();
+}
+
+// -- Markets ---------------------------------------------------------------
+
+const MARKET_ID: &str = "0xcccccccccccccccccccccccccccccccc";
+
+fn market() -> MarketSchema {
+    MarketSchema {
+        market_id: MARKET_ID.to_string(),
+        community_id: "11111111-1111-4111-8111-111111111111".to_string(),
+        opening_time: "00000000001699998300".to_string(),
+        closing_time: "00000000001700000100".to_string(),
+        delivery_start_time: "00000000001700000100".to_string(),
+        delivery_end_time: "00000000001700001000".to_string(),
+        market_type: MarketType::Spot,
+        matching_algorithm: MatchingAlgorithm::PayAsBid,
+        created_at: "00000000001699998301".to_string(),
+    }
+}
+
+fn http_client(server: &MockServer) -> OffchainStorageClient {
+    OffchainStorageClient::new(
+        OffchainStorageTransport::Http,
+        server.uri(),
+        "UNUSED_ENV",
+        "unused-default",
+    )
+}
+
+#[tokio::test]
+async fn fetches_market_over_http() {
+    let _guard = ENV_LOCK.lock().unwrap();
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/market"))
+        .and(query_param("market_id", MARKET_ID))
+        .respond_with(ResponseTemplate::new(200).set_body_json(market()))
+        .mount(&server)
+        .await;
+
+    let fetched = http_client(&server).fetch_market(MARKET_ID).await.unwrap();
+
+    assert_eq!(fetched, Some(market()));
+}
+
+#[tokio::test]
+async fn missing_market_over_http_is_none() {
+    let _guard = ENV_LOCK.lock().unwrap();
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/market"))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&server)
+        .await;
+
+    let fetched = http_client(&server).fetch_market(MARKET_ID).await.unwrap();
+
+    assert_eq!(fetched, None);
+}
+
+#[tokio::test]
+async fn propagates_market_http_failures() {
+    let _guard = ENV_LOCK.lock().unwrap();
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/market"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&server)
+        .await;
+
+    let error = http_client(&server)
+        .fetch_market(MARKET_ID)
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("HTTP 500"));
+}
+
+#[tokio::test]
+async fn fetches_market_over_ewds() {
+    let _guard = ENV_LOCK.lock().unwrap();
+
+    let server = MockServer::start().await;
+    mount_ewds_query(
+        &server,
+        "markets.query",
+        json!([EwdsMarketDto::from(market())]),
+    )
+    .await;
+    set_ewds_env(&server);
+
+    let client = OffchainStorageClient::new(
+        OffchainStorageTransport::Ewds,
+        server.uri(),
+        "EWDS_TEST_CLIENT_ID",
+        "testmarkets",
+    );
+    let fetched = client.fetch_market(MARKET_ID).await.unwrap();
+
+    assert_eq!(fetched, Some(market()));
 
     clear_ewds_env();
 }

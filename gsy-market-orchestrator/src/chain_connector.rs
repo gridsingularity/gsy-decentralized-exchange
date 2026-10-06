@@ -10,8 +10,9 @@ abigen!(
     MarketControllerContract,
     r#"[
         function hasRole(bytes32 role, address account) external view returns (bool)
-        function isMarketOpen(bytes16 marketId) external view returns (bool)
-        function setMarketStatuses(bytes16[] marketIds, bool isOpen) external
+        function marketExists(bytes16 marketId) external view returns (bool)
+        struct NewMarket { bytes16 marketId; bytes16 communityId; uint64 openingTime; uint64 closingTime; uint64 deliveryStartTime; uint64 deliveryEndTime; uint8 marketType; uint8 matchingAlgorithm; }
+        function createMarkets(NewMarket[] newMarkets) external
     ]"#
 );
 
@@ -20,12 +21,9 @@ type WsSignerMiddleware = SignerMiddleware<Provider<Ws>, LocalWallet>;
 #[async_trait]
 pub trait MarketChainClient: Send + Sync {
     async fn is_operator_registered(&self) -> Result<bool>;
-    async fn get_market_status(&self, market_id: [u8; 16]) -> Result<bool>;
-    async fn update_market_statuses(&self, market_ids: Vec<[u8; 16]>, is_open: bool) -> Result<()>;
-
-    async fn update_market_status(&self, market_id: [u8; 16], is_open: bool) -> Result<()> {
-        self.update_market_statuses(vec![market_id], is_open).await
-    }
+    async fn market_exists(&self, market_id: [u8; 16]) -> Result<bool>;
+    /// Creates the markets in one transaction; existing ones are skipped on-chain.
+    async fn create_markets(&self, new_markets: Vec<NewMarket>) -> Result<()>;
 }
 
 #[derive(Clone)]
@@ -79,25 +77,23 @@ impl MarketChainClient for GsyMarketOrchestratorNodeClient {
         Ok(is_registered)
     }
 
-    async fn get_market_status(&self, market_id: [u8; 16]) -> Result<bool> {
-        let status = self
+    async fn market_exists(&self, market_id: [u8; 16]) -> Result<bool> {
+        let exists = self
             .market_controller
-            .is_market_open(market_id)
+            .market_exists(market_id)
             .call()
             .await?;
-        Ok(status)
+        Ok(exists)
     }
 
-    async fn update_market_statuses(&self, market_ids: Vec<[u8; 16]>, is_open: bool) -> Result<()> {
-        if market_ids.is_empty() {
+    async fn create_markets(&self, new_markets: Vec<NewMarket>) -> Result<()> {
+        if new_markets.is_empty() {
             return Ok(());
         }
 
-        let market_count = market_ids.len();
-        let set_market_statuses_call = self
-            .market_controller
-            .set_market_statuses(market_ids, is_open);
-        let pending_tx = set_market_statuses_call.send().await?;
+        let market_count = new_markets.len();
+        let create_markets_call = self.market_controller.create_markets(new_markets);
+        let pending_tx = create_markets_call.send().await?;
 
         let tx_hash = pending_tx.tx_hash();
         let receipt = pending_tx.await?;
@@ -110,19 +106,19 @@ impl MarketChainClient for GsyMarketOrchestratorNodeClient {
                     .unwrap_or_default();
                 if status != 1 {
                     return Err(anyhow!(
-                        "Market status batch transaction {:?} reverted with status {:?}",
+                        "Market creation transaction {:?} reverted with status {:?}",
                         tx_hash,
                         receipt.status
                     ));
                 }
                 info!(
-                    "Successfully finalized market status batch tx {:?} (markets={}, is_open={})",
-                    tx_hash, market_count, is_open
+                    "Successfully finalized market creation tx {:?} (markets={})",
+                    tx_hash, market_count
                 );
                 Ok(())
             }
             None => Err(anyhow!(
-                "Market status batch transaction {:?} dropped without receipt",
+                "Market creation transaction {:?} dropped without receipt",
                 tx_hash
             )),
         }

@@ -1,12 +1,18 @@
-import { loadFixture } from "@nomicfoundation/hardhat-toolbox/network-helpers";
+import {
+  loadFixture,
+  time,
+} from "@nomicfoundation/hardhat-toolbox/network-helpers";
 import { expect } from "chai";
 import { ethers } from "hardhat";
 import {
   bytes16Id,
+  createOpenMarket,
   deployUpgradeableContract,
   ENERGY_TYPE_GREEN,
   ENERGY_TYPE_NONE,
+  newMarket,
   ORDER_TYPE_BID,
+  OPEN_MARKET_DURATION,
   ZERO_BYTES16,
 } from "./utils";
 
@@ -30,7 +36,7 @@ describe("OrderRegistry", function () {
     const marketId = bytes16Id("market-1");
     const ORCHESTRATOR_ROLE = await controller.ORCHESTRATOR_ROLE();
     await controller.grantRole(ORCHESTRATOR_ROLE, admin.address);
-    await controller.setMarketStatus(marketId, true);
+    await createOpenMarket(controller, marketId);
 
     await actorRegistry.registerActor(actorId, user.address);
     await actorRegistry.connect(user).setProxy(actorId, proxy.address, true);
@@ -99,10 +105,41 @@ describe("OrderRegistry", function () {
   it("Should revert if market is closed", async function () {
     const { registry, controller, user, baseOrder, marketId } =
       await loadFixture(deployRegistryFixture);
-    await controller.setMarketStatus(marketId, false);
+    await time.increase(OPEN_MARKET_DURATION);
 
     await expect(
       registry.connect(user).placeOrder(baseOrder),
+    ).to.be.revertedWithCustomError(registry, "MarketClosed");
+  });
+
+  it("Should revert if market has not opened yet", async function () {
+    const { registry, controller, user, baseOrder } =
+      await loadFixture(deployRegistryFixture);
+    const futureMarketId = bytes16Id("market-future");
+    const latest = await time.latest();
+    await controller.createMarkets([
+      newMarket(futureMarketId, {
+        openingTime: latest + 600,
+        closingTime: latest + 1200,
+      }),
+    ]);
+
+    await expect(
+      registry
+        .connect(user)
+        .placeOrder({ ...baseOrder, marketId: futureMarketId }),
+    ).to.be.revertedWithCustomError(registry, "MarketClosed");
+  });
+
+  it("Should revert if market does not exist", async function () {
+    const { registry, user, baseOrder } = await loadFixture(
+      deployRegistryFixture,
+    );
+
+    await expect(
+      registry
+        .connect(user)
+        .placeOrder({ ...baseOrder, marketId: bytes16Id("unknown-market") }),
     ).to.be.revertedWithCustomError(registry, "MarketClosed");
   });
 

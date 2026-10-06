@@ -12,6 +12,19 @@ pub fn bytes16_to_hex(value: [u8; 16]) -> String {
     format!("0x{}", hex::encode(value))
 }
 
+/// Formats 16 bytes as a lowercase hyphenated UUID (8-4-4-4-12).
+pub fn bytes16_to_uuid_string(value: [u8; 16]) -> String {
+    let hex = hex::encode(value);
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    )
+}
+
 pub fn parse_uuid_or_hex_bytes16(value: &str) -> Option<[u8; 16]> {
     let trimmed = value.trim();
     let hex_value = if let Some(stripped) = trimmed.strip_prefix("0x") {

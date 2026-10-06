@@ -6,8 +6,8 @@ use ethers::{
     utils::{Anvil, AnvilInstance},
 };
 use gsy_ethers_listener::{
-    GsyEthersListener, GsyEventHandler, ListenerConfig, MarketStatusUpdatedFilter,
-    OrderCancelledFilter, OrderPlacedFilter, TradeSettledFilter, MarketClearingFilter
+    GsyEthersListener, GsyEventHandler, ListenerConfig, MarketClearingFilter,
+    NewMarketCreatedFilter, OrderCancelledFilter, OrderPlacedFilter, TradeSettledFilter,
 };
 use std::fs::File;
 use std::io::Write;
@@ -33,7 +33,7 @@ impl GsyEventHandler for MockHandler {
     async fn handle_trade_settled(&self, _: TradeSettledFilter) -> Result<()> {
         Ok(())
     }
-    async fn handle_market_status(&self, _: MarketStatusUpdatedFilter) -> Result<()> {
+    async fn handle_new_market_created(&self, _: NewMarketCreatedFilter) -> Result<()> {
         Ok(())
     }
     async fn handle_market_clearing(

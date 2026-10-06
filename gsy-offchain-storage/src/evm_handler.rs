@@ -4,10 +4,11 @@ use async_trait::async_trait;
 use ethers::contract::LogMeta;
 use ethers::types::U256;
 use gsy_ethers_listener::{
-    GsyEventHandler, MarketClearingFilter, MarketStatusUpdatedFilter, OrderCancelledFilter,
+    GsyEventHandler, MarketClearingFilter, NewMarketCreatedFilter, OrderCancelledFilter,
     OrderPlacedFilter, TradeSettledFilter,
 };
 use primitives::db_api_schema::{
+    market::{MarketChainRecord, MarketSchema},
     orders::{
         order_metadata_from_contract, ContractOrderMetadata, DbOrderSchema, OrderEnum, OrderStatus,
     },
@@ -164,12 +165,27 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         Ok(())
     }
 
-    async fn handle_market_status(&self, event: MarketStatusUpdatedFilter) -> Result<()> {
+    async fn handle_new_market_created(&self, event: NewMarketCreatedFilter) -> Result<()> {
         info!(
-            "Processing EVM MarketStatus: {:?} -> Open? {}",
-            hex::encode(event.market_id),
-            event.is_open
+            "Processing EVM NewMarketCreated: {:?}",
+            hex::encode(event.market_id)
         );
+
+        // Upsert by market_id so a replayed event is harmless.
+        let market = MarketSchema::try_from(MarketChainRecord {
+            market_id: event.market_id,
+            community_id: event.community_id,
+            opening_time: event.opening_time,
+            closing_time: event.closing_time,
+            delivery_start_time: event.delivery_start_time,
+            delivery_end_time: event.delivery_end_time,
+            market_type: event.market_type,
+            matching_algorithm: event.matching_algorithm,
+            created_at: event.created_at,
+        })?;
+        self.db.markets().upsert(market).await?;
+
+        info!("Market persisted.");
         Ok(())
     }
 

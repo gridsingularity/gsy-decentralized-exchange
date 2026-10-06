@@ -4,15 +4,25 @@ use ethers::{
     utils::Anvil,
 };
 use gsy_market_orchestrator::{
-    chain_connector::{GsyMarketOrchestratorNodeClient, MarketChainClient},
+    chain_connector::{GsyMarketOrchestratorNodeClient, MarketChainClient, NewMarket},
     config::{Config, OffchainStorageTransport},
 };
-use primitives::{utils::generate_market_id, MarketType};
-use std::{fs::File, io::Write, sync::Arc, time::Duration};
+use primitives::{
+    utils::{generate_market_id, parse_uuid_or_hex_bytes16},
+    MarketType, MatchingAlgorithm,
+};
+use std::{fs::File, io::Write, sync::Arc};
 use tempfile::TempDir;
 
+abigen!(
+    MockMarketControllerReader,
+    r#"[
+        function markets(bytes16 marketId) external view returns (bytes16, bytes16, uint64, uint64, uint64, uint64, uint8, uint8)
+    ]"#
+);
+
 #[tokio::test]
-async fn test_evm_market_controller_client_updates_status_batch() {
+async fn test_evm_market_controller_client_creates_markets() {
     let anvil = Anvil::new().spawn();
     let ws_endpoint = anvil.ws_endpoint();
     let wallet: LocalWallet = anvil.keys()[0].clone().into();
@@ -33,9 +43,19 @@ async fn test_evm_market_controller_client_updates_status_batch() {
         contract MockMarketController {
             bytes32 public constant ORCHESTRATOR_ROLE = keccak256("ORCHESTRATOR_ROLE");
             mapping(address => mapping(bytes32 => bool)) private roles;
-            mapping(bytes16 => bool) public marketStatus;
 
-            event MarketStatusUpdated(bytes16 indexed marketId, bool isOpen);
+            struct NewMarket {
+                bytes16 marketId;
+                bytes16 communityId;
+                uint64 openingTime;
+                uint64 closingTime;
+                uint64 deliveryStartTime;
+                uint64 deliveryEndTime;
+                uint8 marketType;
+                uint8 matchingAlgorithm;
+            }
+
+            mapping(bytes16 => NewMarket) public markets;
 
             constructor() {
                 roles[msg.sender][ORCHESTRATOR_ROLE] = true;
@@ -45,15 +65,17 @@ async fn test_evm_market_controller_client_updates_status_batch() {
                 return roles[account][role];
             }
 
-            function isMarketOpen(bytes16 marketId) external view returns (bool) {
-                return marketStatus[marketId];
+            function marketExists(bytes16 marketId) external view returns (bool) {
+                return markets[marketId].marketId != bytes16(0);
             }
 
-            function setMarketStatuses(bytes16[] calldata marketIds, bool isOpen) external {
+            function createMarkets(NewMarket[] calldata newMarkets) external {
                 require(roles[msg.sender][ORCHESTRATOR_ROLE], "missing orchestrator role");
-                for (uint256 index = 0; index < marketIds.length; index++) {
-                    marketStatus[marketIds[index]] = isOpen;
-                    emit MarketStatusUpdated(marketIds[index], isOpen);
+                for (uint256 index = 0; index < newMarkets.length; index++) {
+                    if (markets[newMarkets[index].marketId].marketId != bytes16(0)) {
+                        continue;
+                    }
+                    markets[newMarkets[index].marketId] = newMarkets[index];
                 }
             }
         }
@@ -123,55 +145,75 @@ async fn test_evm_market_controller_client_updates_status_batch() {
         look_ahead_hours: 1,
         offchain_storage_transport: OffchainStorageTransport::Http,
         offchain_storage_url: "http://localhost:8080".to_string(),
+        market_creation_batch_size: 50,
     };
 
     let orchestrator_client = GsyMarketOrchestratorNodeClient::new(&config).await.unwrap();
 
     assert!(orchestrator_client.is_operator_registered().await.unwrap());
 
-    let market_ids = vec![
-        generate_market_id(
-            "11111111-1111-4111-8111-111111111111",
-            MarketType::Spot,
-            1_700_000_000,
-        ),
-        generate_market_id(
-            "11111111-1111-4111-8111-111111111111",
-            MarketType::Flex,
-            1_700_000_000,
-        ),
-    ];
-    for market_id in &market_ids {
+    let community_id = "11111111-1111-4111-8111-111111111111";
+    let delivery_start = 1_700_000_100;
+    let new_markets = [MarketType::Spot, MarketType::Flex]
+        .into_iter()
+        .map(|market_type| NewMarket {
+            market_id: generate_market_id(community_id, market_type.clone(), delivery_start),
+            community_id: parse_uuid_or_hex_bytes16(community_id).unwrap(),
+            opening_time: delivery_start - 1800,
+            closing_time: delivery_start + 1800,
+            delivery_start_time: delivery_start,
+            delivery_end_time: delivery_start + 900,
+            market_type: market_type.to_evm(),
+            matching_algorithm: MatchingAlgorithm::PayAsClear.to_evm(),
+        })
+        .collect::<Vec<_>>();
+    for market in &new_markets {
         assert!(!orchestrator_client
-            .get_market_status(*market_id)
+            .market_exists(market.market_id)
             .await
             .unwrap());
     }
 
     orchestrator_client
-        .update_market_statuses(market_ids.clone(), true)
+        .create_markets(new_markets.clone())
         .await
         .unwrap();
 
-    let mut markets_open = false;
-    for _ in 0..20 {
-        let first_open = orchestrator_client
-            .get_market_status(market_ids[0])
+    let reader = MockMarketControllerReader::new(contract_address, client.clone());
+    for market in &new_markets {
+        assert!(orchestrator_client
+            .market_exists(market.market_id)
             .await
-            .unwrap();
-        let second_open = orchestrator_client
-            .get_market_status(market_ids[1])
-            .await
-            .unwrap();
-        if first_open && second_open {
-            markets_open = true;
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+            .unwrap());
+        let stored = reader.markets(market.market_id).call().await.unwrap();
+        assert_eq!(
+            stored,
+            (
+                market.market_id,
+                market.community_id,
+                market.opening_time,
+                market.closing_time,
+                market.delivery_start_time,
+                market.delivery_end_time,
+                market.market_type,
+                market.matching_algorithm,
+            )
+        );
     }
 
-    assert!(
-        markets_open,
-        "Markets were not opened on-chain after setMarketStatuses transaction"
-    );
+    // Resending succeeds and leaves the stored record unchanged.
+    let resent = NewMarket {
+        closing_time: delivery_start + 60,
+        ..new_markets[0].clone()
+    };
+    orchestrator_client
+        .create_markets(vec![resent])
+        .await
+        .unwrap();
+    let stored = reader
+        .markets(new_markets[0].market_id)
+        .call()
+        .await
+        .unwrap();
+    assert_eq!(stored.3, new_markets[0].closing_time);
 }

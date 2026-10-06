@@ -21,7 +21,7 @@ This gives:
 
 ```mermaid
 flowchart LR
-    MO["Market Orchestrator"] -->|setMarketStatus| MC["MarketController"]
+    MO["Market Orchestrator"] -->|createMarkets| MC["MarketController"]
     AR["ActorRegistry"] -->|isAuthorized| OR["OrderRegistry"]
     CC["Community Client"] -->|placeOrder| OR["OrderRegistry"]
     ME["Matching Engine"] -->|settleBatch| TS["TradeSettlement"]
@@ -39,7 +39,8 @@ flowchart LR
 - **Primary trigger model**:
   - Matching runs on block cadence.
   - Execution runs on periodic timeslot cycles.
-  - Orchestrator runs time-window checks for market open/close.
+  - Orchestrator creates markets before they open; markets open and close by
+    their own times, and off-chain storage indexes them from `NewMarketCreated`.
 
 ## Reference Pages
 

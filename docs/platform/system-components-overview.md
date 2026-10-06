@@ -5,7 +5,7 @@
 | Component | Responsibility | Primary Inputs | Primary Outputs |
 |---|---|---|---|
 | `gsy-contracts` | Deployable EVM contract suite | deployment config, signer keys | contract addresses, role assignments |
-| `gsy-market-orchestrator` | Market open/close management | wall-clock time, market rules | `setMarketStatus` txs |
+| `gsy-market-orchestrator` | Market creation | wall-clock time, market rules, communities, `marketExists` | `createMarkets` txs |
 | `gsy-community-client` | Publish forecasts/measurements and orders | external facility topology + profile streams | off-chain storage HTTP writes + `placeOrder` txs |
 | `gsy-matching-engine` | Build matches and settle trades | open orders + block progression | `settleBatch` txs |
 | `gsy-execution-engine` | Compute and submit penalties | settled trades + measurements | `submitPenalties` txs |
@@ -35,11 +35,11 @@ When EWDS integration is enabled:
 - `TradeSettlement.EXECUTION_ENGINE_ROLE` is held by execution engine signer.
 - `OrderRegistry.SETTLEMENT_ROLE` is granted to settlement contract.
 
-This ensures only dedicated components can register actor wallets, update market status, settle matches, or submit penalties.
+This ensures only dedicated components can register actor wallets, create markets, settle matches, or submit penalties.
 
 ## Data Planes
 
-- **On-chain plane**: actor authorization, market status, order status transitions, settlement events, penalty ledger.
+- **On-chain plane**: actor authorization, market records (open by time), order status transitions, settlement events, penalty ledger.
 - **Off-chain plane**: indexed orders/trades, forecasts/measurements, analytics and querying.
 - **Inter-service transport plane**: EWDS channels/topics for resilient authenticated messaging.
 

@@ -108,9 +108,20 @@ Purpose:
 
 Purpose:
 
-- Stores market open/closed state keyed by `marketId`.
-- Exposes `setMarketStatus(bytes16,bool)` and `isMarketOpen(bytes16)`.
-- Restricts updates to `ORCHESTRATOR_ROLE`.
+- Stores one record per `marketId` that mirrors the off-chain `MarketSchema`:
+  community ID, opening/closing time, delivery start/end, market type,
+  matching algorithm and `createdAt` (block timestamp; `0` means missing).
+- `createMarkets(NewMarket[])` (`ORCHESTRATOR_ROLE` only) stores new markets
+  and emits `NewMarketCreated` with every field. Existing markets are skipped
+  without an event. `InvalidMarket` is raised for a zero market or community
+  ID, `closingTime <= openingTime` or `deliveryEndTime <= deliveryStartTime`;
+  one invalid entry reverts the whole batch.
+- There is no open/closed flag and no update function: `isMarketOpen(bytes16)`
+  is true while `openingTime <= block.timestamp < closingTime`.
+- Views: `marketExists(bytes16)`, `isMarketOpen(bytes16)`, `getMarket(bytes16)`.
+- Enum values: `MarketType` `Spot=0, Flex=1, Settlement=2`;
+  `MatchingAlgorithm` `PayAsBid=0, PayAsClear=1, Amm=2` (same order as
+  `primitives`).
 
 ### `OrderRegistry`
 

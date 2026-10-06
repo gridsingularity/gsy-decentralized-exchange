@@ -27,7 +27,7 @@ Related participant service:
 ### On-chain Plane
 
 - `anvil` (or target EVM) hosts contracts.
-- `gsy-market-orchestrator` opens/closes markets.
+- `gsy-market-orchestrator` creates markets on-chain.
 - `gsy-community-client` publishes orders.
 - `gsy-matching-engine` settles matched trades.
 - `gsy-execution-engine` submits penalties.
@@ -38,7 +38,8 @@ Related participant service:
 - `gsy-market-orchestrator` fetches communities before each scheduling tick.
 - `gsy-matching-engine` polls `/orders`.
 - `gsy-execution-engine` polls `/trades`, `/measurement-points`, and `/timeseries`.
-- `gsy-community-client` writes to `/measurement-points`, `/timeseries`, and `/markets`.
+- `gsy-community-client` writes to `/measurement-points` and `/timeseries`.
+  Markets reach off-chain storage only through `NewMarketCreated`.
 
 ## Existing Endpoint Inventory and Callers
 
@@ -87,13 +88,13 @@ Each service:
 | `trades.query` over `tradesQuery` / `tradesQueryResponse` | execution engine | off-chain storage service | off-chain storage service | execution engine | `GET /trades` |
 | `measurements.query` over `measurementsQuery` / `measurementsQueryResponse` | execution engine | off-chain storage service | off-chain storage service | execution engine | `GET /measurement-points` + `GET /timeseries` |
 | `clearing_results.query` over `clearingResultsQuery` / `clearingResultsQueryResponse` | matching/execution engine | off-chain storage service | off-chain storage service | requester | `GET /clearing-results` |
-| `markets.query` over `marketsQuery` / `marketsQueryResponse` | community client | off-chain storage service | off-chain storage service | community client | `GET /markets` |
+| `markets.query` over `marketsQuery` / `marketsQueryResponse` | community client or e2e runner | off-chain storage service | off-chain storage service | requester | `GET /markets` |
 | `ids.query` over `idsQuery` / `idsQueryResponse` | requester service | off-chain storage service | off-chain storage service | requester | `POST /ids` (get-or-create) |
 | `community.upsert` over `communityUpsert` / `communityUpsertResponse` | pilot integration or e2e runner | off-chain storage service | off-chain storage service | request publisher | `POST /communities` |
 | `communities.query` over `communitiesQuery` / `communitiesQueryResponse` | market orchestrator | off-chain storage service | off-chain storage service | market orchestrator | `GET /communities` |
 | `forecasts.upsert` | community client | off-chain storage service | none | none | `POST /measurement-points` + `POST /timeseries` |
 | `measurements.upsert` | community client | off-chain storage service | none | none | `POST /measurement-points` + `POST /timeseries` |
-| `market.upsert` | community client | off-chain storage service | none | none | `POST /markets` |
+| `market.upsert` | manual use only (markets are indexed from `NewMarketCreated`) | off-chain storage service | none | none | `POST /markets` |
 
 > Note: the `*.query` operations above are implemented in the current responder
 > (`EwdsOperation` variants `OrdersQuery`, `TradesQuery`, `MeasurementsQuery`,
@@ -234,8 +235,8 @@ Validator requirements:
 - Fetch all communities before every scheduling tick through HTTP
   `/communities` or EWDS `communities.query`.
 - Derive each market ID from community UUID, market type, and delivery slot.
-- Open and close the community/market-type permutations through batched contract
-  calls.
+- Create the community/market-type markets before they open through batched
+  `createMarkets` calls, after checking `marketExists` on-chain.
 - Runtime switch via `OFFCHAIN_STORAGE_TRANSPORT=http|ewds`.
 
 ## Docker and Local Testing Integration
