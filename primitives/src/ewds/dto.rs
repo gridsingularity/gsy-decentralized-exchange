@@ -137,13 +137,11 @@ impl From<EwdsCommunityDto> for EnergyCommunitySchema {
 
 impl From<DbOrderSchema> for EwdsOrderDto {
     fn from(order: DbOrderSchema) -> Self {
-        let preferred_trading_partner = match &order.order_type {
-            OrderEnum::Bid => order
-                .requirements
-                .as_ref()
-                .and_then(|requirements| requirements.trading_partner_id.clone()),
-            OrderEnum::Offer => None,
-        };
+        // Bids and offers both carry their preferred partner in requirements.
+        let preferred_trading_partner = order
+            .requirements
+            .as_ref()
+            .and_then(|requirements| requirements.trading_partner_id.clone());
 
         Self {
             order_id: order.order_id,
@@ -180,17 +178,12 @@ impl TryFrom<EwdsOrderDto> for DbOrderSchema {
 
     fn try_from(order: EwdsOrderDto) -> Result<Self> {
         let order_type = order_type_from_ewds(order.order_type.as_str())?;
-        let is_bid = matches!(&order_type, OrderEnum::Bid);
         let requirements = if order.energy_source_preference.is_some()
             || order.preferred_energy_rate.is_some()
-            || (is_bid && order.preferred_trading_partner.is_some())
+            || order.preferred_trading_partner.is_some()
         {
             Some(DbRequirements {
-                trading_partner_id: if is_bid {
-                    order.preferred_trading_partner.clone()
-                } else {
-                    None
-                },
+                trading_partner_id: order.preferred_trading_partner.clone(),
                 energy_type: match order.energy_source_preference {
                     Some(ref pref) => Some(energy_type_from_ewds(pref)?),
                     None => None,
