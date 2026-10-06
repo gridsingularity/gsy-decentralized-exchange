@@ -12,5 +12,17 @@ Feature: Preference-Based Matching with Dedicated Pricing
 
     Then a trade is settled on-chain between "alice" and "bob" for 100 energy
     And the trade price is exactly 12, matching the preferred rate
-    And Bob's residual offer of 50 energy is available for the next matching phase
+    And the preferred trade records a residual offer of 50 energy
     And Charlie's cheaper offer remains untouched in this phase
+
+  Scenario: A preferred trade records the residual of a partially filled bid
+    Given the GSY DEX services are running
+    And users "alice", "bob", and "charlie" are registered
+    When the Market Orchestrator opens the Spot market for the next delivery slot
+    And the community market and forecasts of 100 energy are submitted by "alice", "bob", and "charlie"
+    When "alice" submits a bid for 150 energy with a preferred rate of 12 for partner "bob"
+    And "bob" submits an offer for 100 energy at a rate of 10 for the preferred partner "alice"
+    And the next matching cycle is triggered
+    Then a trade is settled on-chain between "alice" and "bob" for 100 energy
+    And the trade price is exactly 12, matching the preferred rate
+    And the preferred trade records a residual bid of 50 energy

@@ -25,7 +25,6 @@ pub struct DbTradeSchema {
     pub seller: String,
     pub buyer: String,
     pub market_id: String,
-    pub time_slot: u64,
     pub creation_time: u64,
     pub offer_hash: String,
     pub bid_hash: String,
@@ -49,6 +48,32 @@ pub enum ClearingStatus {
     Partial,
     Rejected,
     NoBid,
+}
+impl Default for ClearingStatus {
+    fn default() -> Self {
+        ClearingStatus::Rejected
+    }
+}
+
+impl ClearingStatus {
+    pub fn to_evm(&self) -> u8 {
+        match self {
+            ClearingStatus::Final => 1,
+            ClearingStatus::Partial => 2,
+            ClearingStatus::Rejected => 3,
+            ClearingStatus::NoBid => 4,
+        }
+    }
+
+    pub fn from_evm(value: u8) -> Option<Self> {
+        match value {
+            1 => Some(ClearingStatus::Final),
+            2 => Some(ClearingStatus::Partial),
+            3 => Some(ClearingStatus::Rejected),
+            4 => Some(ClearingStatus::NoBid),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]

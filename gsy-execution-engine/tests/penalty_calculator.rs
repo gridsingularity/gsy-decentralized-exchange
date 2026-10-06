@@ -38,7 +38,6 @@ fn trade() -> DbTradeSchema {
         seller: offer.created_by.clone(),
         buyer: bid.created_by.clone(),
         market_id: "market-1".to_string(),
-        time_slot: 1_000,
         creation_time: 950,
         offer_hash: "offer-1".to_string(),
         bid_hash: "bid-1".to_string(),

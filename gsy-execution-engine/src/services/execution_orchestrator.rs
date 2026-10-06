@@ -1,15 +1,23 @@
 use ::primitives::utils::timestamp_to_datetime_string;
 use anyhow::Result;
-use primitives::offchain_storage::OffchainStorageClient;
+use primitives::constants::GLOBAL_CONSTANTS;
+use primitives::offchain_storage::{OffchainStorageClient, OffchainStorageTransport};
 use tracing::info;
 
 use crate::{
-    connectors::{
-        evm_connector::submit_penalties,
-        offchain_storage::fetch_trades_and_measurements_for_timeslot,
-    },
+    connectors::evm_connector::submit_penalties,
     primitives::penalty_calculator::{compute_penalties, Penalty},
 };
+
+/// The window of trade creation and measurement times checked for `timeslot`.
+fn timeslot_window(timeslot: u64, market_duration: u64) -> (u64, u64) {
+    let start_time = (timeslot / GLOBAL_CONSTANTS.time_slot_sec) * GLOBAL_CONSTANTS.time_slot_sec;
+    let end_time = start_time
+        + (market_duration
+            .checked_sub(1)
+            .unwrap_or(GLOBAL_CONSTANTS.time_slot_sec));
+    (start_time, end_time)
+}
 
 /// Higher-level function that does the repeated/polling logic
 /// 1) fetch trades/measurements
@@ -24,9 +32,19 @@ pub async fn run_execution_cycle(
     penalty_rate: f64,
     market_duration: u64,
 ) -> Result<usize> {
+    let offchain_storage_client = OffchainStorageClient::new(
+        OffchainStorageTransport::from_env(),
+        offchain_url,
+        "EWDS_EXECUTION_ENGINE_CLIENT_ID",
+        "gsyexecutionengine",
+    );
+
     // 1) fetch trades/measurements
-    let (trades, measurements) =
-        fetch_trades_and_measurements_for_timeslot(offchain_url, timeslot, market_duration).await?;
+    let (start_time, end_time) = timeslot_window(timeslot, market_duration);
+    let (trades, measurements) = tokio::try_join!(
+        offchain_storage_client.fetch_trades(None, Some(start_time), Some(end_time)),
+        offchain_storage_client.fetch_measurements(start_time, end_time),
+    )?;
     info!(
         "Fetched {} trades, {} measurements for timeslot {}.",
         trades.len(),
@@ -43,10 +61,9 @@ pub async fn run_execution_cycle(
     }
 
     // 1.2) fetch facility_id>owner_id mapping
-    let facility_owner_mapping =
-        OffchainStorageClient::from_env("EWDS_EXECUTION_ENGINE_CLIENT_ID", "gsyexecutionengine")
-            .fetch_facility_owner_mapping()
-            .await?;
+    let facility_owner_mapping = offchain_storage_client
+        .fetch_facility_owner_mapping()
+        .await?;
 
     // 2) compute penalties
     let penalties: Vec<Penalty> = compute_penalties(
