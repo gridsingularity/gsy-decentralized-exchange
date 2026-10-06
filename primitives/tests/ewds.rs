@@ -2,6 +2,7 @@ use primitives::db_api_schema::{
     grid_topology::EnergyCommunitySchema,
     market::{MarketSchema, MarketType, MatchingAlgorithm},
     orders::{DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus},
+    profiles::MeasurementSchema,
     trades::{
         ClearingResultSchema, ClearingStatus, DbTradeSchema, NoBidReason, TradeParameters,
         TradeStatus,
@@ -9,9 +10,10 @@ use primitives::db_api_schema::{
 };
 use primitives::ewds::dto::{
     energy_type_from_ewds, energy_type_to_ewds, EwdsClearingResultDto, EwdsCommunityDto,
-    EwdsMarketDto, EwdsOrderDto, EwdsTradeDto,
+    EwdsMarketDto, EwdsMeasurementDto, EwdsOrderDto, EwdsTradeDto,
 };
 use primitives::ewds::EwdsOperation;
+use primitives::utils::epoch_to_rfc3339;
 use serde_json::Value;
 use std::str::FromStr;
 
@@ -66,7 +68,7 @@ mod tests {
         assert_eq!(dto.market_id, "market-id");
         assert_eq!(dto.order_type, "bid");
         assert_eq!(dto.order_status, "submitted");
-        assert_eq!(dto.time_slot, 10);
+        assert_eq!(dto.time_slot, epoch_to_rfc3339(10));
         assert_eq!(dto.quantity, 4.5);
         assert_eq!(dto.price_limit, 20.0);
         assert_eq!(dto.preferred_energy_rate, Some(12.0));
@@ -85,7 +87,6 @@ mod tests {
         assert_eq!(db.market_id, "market-id");
         assert_eq!(db.order_type, OrderEnum::Bid);
         assert_eq!(db.status, OrderStatus::Submitted);
-        assert_eq!(db.time_slot, 10);
         assert_eq!(db.energy_kWh, 4.5);
         assert_eq!(db.energy_rate, 20.0);
         assert_eq!(db.created_by, "actor-id");
@@ -146,8 +147,7 @@ mod tests {
             seller: "seller-id".to_string(),
             buyer: "buyer-id".to_string(),
             market_id: "market-id".to_string(),
-            time_slot: 10,
-            creation_time: 10, // equal to time_slot so round-trip holds
+            creation_time: 10,
             offer_hash: "offer-hash".to_string(),
             bid_hash: "bid-hash".to_string(),
             residual_offer_id: Some("res-offer".to_string()),
@@ -174,7 +174,7 @@ mod tests {
         assert_eq!(dto.trade_status, "settled");
         assert_eq!(dto.trade_quantity, 4.5);
         assert_eq!(dto.trade_price, 12.0);
-        assert_eq!(dto.timestamp, 10);
+        assert_eq!(dto.timestamp, epoch_to_rfc3339(10));
     }
 
     #[test]
@@ -187,7 +187,6 @@ mod tests {
         assert_eq!(db.seller, "seller-id");
         assert_eq!(db.buyer, "buyer-id");
         assert_eq!(db.market_id, "market-id");
-        assert_eq!(db.time_slot, 10);
         assert_eq!(db.creation_time, 10);
         assert_eq!(db.offer_hash, "offer-hash");
         assert_eq!(db.bid_hash, "bid-hash");
@@ -198,22 +197,38 @@ mod tests {
     }
 
     #[test]
-    fn trade_round_trips_when_creation_time_equals_time_slot() {
+    fn trade_round_trips() {
         let expected = trade();
         let actual = DbTradeSchema::try_from(EwdsTradeDto::from(expected.clone()))
             .expect("round trip should succeed");
         assert_eq!(actual, expected);
     }
 
+    // ---- MeasurementDto tests ----
+
+    fn measurement() -> MeasurementSchema {
+        MeasurementSchema {
+            facility_id: "facility-id".to_string(),
+            community_uuid: "community-id".to_string(),
+            time_slot: 900,
+            creation_time: 910,
+            energy_kwh: -1.5,
+        }
+    }
+
     #[test]
-    fn creation_time_is_lost_when_it_differs_from_time_slot() {
-        let mut original = trade();
-        original.creation_time = 99; // differs from time_slot (10)
+    fn measurement_round_trips() {
+        let expected = measurement();
+        let actual = MeasurementSchema::try_from(EwdsMeasurementDto::from(expected.clone()))
+            .expect("round trip should succeed");
+        assert_eq!(actual, expected);
+    }
 
-        let actual = DbTradeSchema::try_from(EwdsTradeDto::from(original.clone())).unwrap();
-
-        assert_ne!(actual, original);
-        assert_eq!(actual.creation_time, original.time_slot); // both come from timestamp
+    #[test]
+    fn measurement_with_epoch_time_slot_is_error() {
+        let mut dto = EwdsMeasurementDto::from(measurement());
+        dto.time_slot = "900".to_string();
+        assert!(MeasurementSchema::try_from(dto).is_err());
     }
 
     // ---- ClearingResultDto tests ----
@@ -246,7 +261,7 @@ mod tests {
         assert_eq!(dto.trade_quantity, 75.0); // traded_quantity -> trade_quantity
         assert_eq!(dto.num_trades, 3);
         assert_eq!(dto.tx_hash, "0xabc");
-        assert_eq!(dto.created_at, 42); // clearing_time -> created_at
+        assert_eq!(dto.created_at, epoch_to_rfc3339(42)); // clearing_time -> created_at
     }
 
     #[test]

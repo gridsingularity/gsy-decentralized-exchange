@@ -137,7 +137,6 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             seller: bytes16_to_hex(event.seller_id),
             buyer: bytes16_to_hex(event.buyer_id),
             market_id: bytes16_to_hex(event.market_id),
-            time_slot: event.time_slot,
             creation_time: chrono::Utc::now().timestamp() as u64,
             offer_hash: offer_hash_str,
             bid_hash: bid_hash_str,

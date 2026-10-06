@@ -3,15 +3,16 @@ use anyhow::{anyhow, Result};
 use futures::future::join_all;
 use primitives::db_api_schema::profiles::{MeasurementPointType, MeasurementSchema};
 use primitives::ewds::dto::{
-    EwdsClearingResultDto, EwdsCommunityDto, EwdsInboundMessage, EwdsMarketDto, EwdsOrderDto,
-    EwdsRequestEnvelope, EwdsResponseEnvelope, EwdsSendMessageDto, EwdsTradeDto,
+    EwdsClearingResultDto, EwdsCommunityDto, EwdsErrorPayload, EwdsInboundMessage, EwdsMarketDto,
+    EwdsMeasurementDto, EwdsOrderDto, EwdsRequestEnvelope, EwdsResponseEnvelope,
+    EwdsSendMessageDto, EwdsTradeDto,
 };
 use primitives::ewds::{
     client_id_for_suffix, env_var, ewds_rate_limit_backoff_ms, format_response_body,
     is_rate_limited_message, is_rate_limited_response, is_transient_gateway_message,
     is_transient_gateway_response, parse_gateway_delivery_summary, EwdsOperation, EwdsTopicConfig,
 };
-use primitives::utils::timestamp_to_string_with_padding;
+use primitives::utils::{opt_rfc3339_to_epoch, timestamp_to_string_with_padding};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -92,23 +93,79 @@ struct OrdersQueryPayload {
     market_id: Option<String>,
     #[serde(alias = "startTime")]
     #[serde(default)]
-    start_time: Option<u64>,
+    start_time: Option<String>,
     #[serde(alias = "endTime")]
     #[serde(default)]
-    end_time: Option<u64>,
+    end_time: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct TradesQueryPayload {
+    #[serde(alias = "marketId")]
+    #[serde(default)]
+    market_id: Option<String>,
+    #[serde(alias = "startTime")]
+    #[serde(default)]
+    start_time: Option<String>,
+    #[serde(alias = "endTime")]
+    #[serde(default)]
+    end_time: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct TimeRangePayload {
     #[serde(alias = "startTime")]
     #[serde(default)]
-    start_time: Option<u64>,
+    start_time: Option<String>,
     #[serde(alias = "endTime")]
     #[serde(default)]
-    end_time: Option<u64>,
+    end_time: Option<String>,
     #[serde(alias = "areaUuid")]
     #[serde(default)]
     facility_id: Option<String>,
+}
+
+/// Maximum span of a `trades.query` range. The whole result is published as a
+/// single EWDS message, so the range is capped to keep that message small.
+pub const MAX_TRADES_QUERY_RANGE_SECS: u64 = 86_400;
+pub const TIME_RANGE_TOO_LARGE: &str = "TIME_RANGE_TOO_LARGE";
+pub const INVALID_TIME_RANGE: &str = "INVALID_TIME_RANGE";
+
+/// Validates a `trades.query` range (`endTime` is exclusive), returning the
+/// bounds or the error to publish back to the requester.
+pub fn validate_trades_query_range(
+    start_time: Option<u64>,
+    end_time: Option<u64>,
+) -> std::result::Result<(u64, u64), EwdsErrorPayload> {
+    let (start, end) = match (start_time, end_time) {
+        (Some(start), Some(end)) => (start, end),
+        _ => {
+            return Err(EwdsErrorPayload {
+                code: INVALID_TIME_RANGE.to_string(),
+                message: "trades.query requires both startTime and endTime".to_string(),
+            })
+        }
+    };
+    if end < start {
+        return Err(EwdsErrorPayload {
+            code: INVALID_TIME_RANGE.to_string(),
+            message: format!(
+                "trades.query endTime ({}) must not be before startTime ({})",
+                end, start
+            ),
+        });
+    }
+    if end - start > MAX_TRADES_QUERY_RANGE_SECS {
+        return Err(EwdsErrorPayload {
+            code: TIME_RANGE_TOO_LARGE.to_string(),
+            message: format!(
+                "trades.query range {}s exceeds maximum of {}s (1 day)",
+                end - start,
+                MAX_TRADES_QUERY_RANGE_SECS
+            ),
+        });
+    }
+    Ok((start, end))
 }
 
 #[derive(Deserialize)]
@@ -322,7 +379,11 @@ pub async fn handle_request(
 
             let data = db
                 .orders()
-                .filter_orders(payload.market_id, payload.start_time, payload.end_time)
+                .filter_orders(
+                    payload.market_id,
+                    opt_rfc3339_to_epoch(payload.start_time.as_deref())?,
+                    opt_rfc3339_to_epoch(payload.end_time.as_deref())?,
+                )
                 .await?
                 .into_iter()
                 .map(EwdsOrderDto::from)
@@ -336,7 +397,7 @@ pub async fn handle_request(
             send_success_response(client, config, request_id, response_topic.as_str(), data).await
         }
         EwdsOperation::TradesQuery => {
-            let payload = serde_json::from_value::<TimeRangePayload>(envelope.payload.clone())
+            let payload = serde_json::from_value::<TradesQueryPayload>(envelope.payload.clone())
                 .map_err(|e| anyhow!("trades.query payload parse error: {}", e))?;
             let request_id = envelope.request_id;
 
@@ -345,9 +406,30 @@ pub async fn handle_request(
                 request_id
             );
 
+            let payload_start_time = opt_rfc3339_to_epoch(payload.start_time.as_deref())?;
+            let payload_end_time = opt_rfc3339_to_epoch(payload.end_time.as_deref())?;
+            let (start_time, end_time) =
+                match validate_trades_query_range(payload_start_time, payload_end_time) {
+                    Ok(range) => range,
+                    Err(error) => {
+                        warn!(
+                            "Rejecting EWDS trades.query request (request_id={}): {}: {}",
+                            request_id, error.code, error.message
+                        );
+                        return send_error_response(
+                            client,
+                            config,
+                            request_id,
+                            response_topic.as_str(),
+                            error,
+                        )
+                        .await;
+                    }
+                };
+
             let data = db
                 .trades()
-                .filter_trades(payload.start_time, payload.end_time)
+                .filter_trades(payload.market_id, Some(start_time), Some(end_time))
                 .await?
                 .into_iter()
                 .map(EwdsTradeDto::from)
@@ -370,16 +452,21 @@ pub async fn handle_request(
                 request_id
             );
 
-            let data = fetch_measurements_from_timeseries(db, payload.start_time, payload.end_time)
-                .await?
-                .into_iter()
-                .filter(|measurement| match payload.facility_id.as_ref() {
-                    Some(facility_id) => measurement.facility_id == *facility_id,
-                    None => true,
-                })
-                .collect::<Vec<_>>();
+            let data = fetch_measurements_from_timeseries(
+                db,
+                opt_rfc3339_to_epoch(payload.start_time.as_deref())?,
+                opt_rfc3339_to_epoch(payload.end_time.as_deref())?,
+            )
+            .await?
+            .into_iter()
+            .filter(|measurement| match payload.facility_id.as_ref() {
+                Some(facility_id) => measurement.facility_id == *facility_id,
+                None => true,
+            })
+            .map(EwdsMeasurementDto::from)
+            .collect::<Vec<_>>();
             info!(
-                "Publishing EWDS measurements.query response (request_id={}, orders={})",
+                "Publishing EWDS measurements.query response (request_id={}, measurements={})",
                 request_id,
                 data.len()
             );
@@ -567,6 +654,30 @@ async fn send_success_response<T: Serialize>(
         success: true,
         data,
         error: None,
+    };
+
+    send_message(
+        client,
+        config,
+        request_id,
+        topic_name.to_string(),
+        serde_json::to_string(&payload)?,
+    )
+    .await
+}
+
+async fn send_error_response(
+    client: &Client,
+    config: &EwdsHandlerConfig,
+    request_id: String,
+    topic_name: &str,
+    error: EwdsErrorPayload,
+) -> Result<()> {
+    let payload = EwdsResponseEnvelope::<serde_json::Value> {
+        request_id: request_id.clone(),
+        success: false,
+        data: Vec::new(),
+        error: Some(error),
     };
 
     send_message(

@@ -1,5 +1,5 @@
 use crate::db::DbRef;
-use crate::routes::validate_start_end_time;
+use crate::routes::parse_time_range;
 use actix_web::web::Query;
 use actix_web::{web::Json, HttpResponse, Responder};
 use mongodb::bson::Bson;
@@ -50,19 +50,24 @@ pub async fn post_normalized_trades(trades: Json<Vec<EwdsTradeDto>>, db: DbRef) 
 
 #[derive(Deserialize, Debug)]
 pub struct GetTradesParams {
-    start_time: Option<u64>,
-    end_time: Option<u64>,
+    market_id: Option<String>,
+    start_time: Option<String>,
+    end_time: Option<String>,
 }
 
 #[tracing::instrument(name = "Retrieve trades", skip(db))]
 pub async fn get_trades(db: DbRef, query_params: Query<GetTradesParams>) -> impl Responder {
-    if let Err(response) = validate_start_end_time(query_params.start_time, query_params.end_time) {
-        return response;
-    }
+    let (start_time, end_time) = match parse_time_range(
+        query_params.start_time.as_deref(),
+        query_params.end_time.as_deref(),
+    ) {
+        Ok(range) => range,
+        Err(response) => return response,
+    };
     match db
         .get_ref()
         .trades()
-        .filter_trades(query_params.start_time, query_params.end_time)
+        .filter_trades(query_params.market_id.clone(), start_time, end_time)
         .await
     {
         Ok(trades) => {

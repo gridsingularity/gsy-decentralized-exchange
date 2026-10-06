@@ -1,10 +1,17 @@
 use crate::helpers::{init_app, stop_app};
-use gsy_offchain_storage::ewds_handler::{handle_request, EwdsHandlerConfig};
+use gsy_offchain_storage::ewds_handler::{
+    handle_request, validate_trades_query_range, EwdsHandlerConfig, INVALID_TIME_RANGE,
+    MAX_TRADES_QUERY_RANGE_SECS, TIME_RANGE_TOO_LARGE,
+};
 use primitives::db_api_schema::grid_topology::FacilitySchema;
 use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
+use primitives::db_api_schema::trades::{DbTradeSchema, TradeParameters, TradeStatus};
 use primitives::ewds::dto::{EwdsRequestEnvelope, EwdsSendMessageDto};
 use primitives::ewds::{EwdsOperation, EwdsTopicConfig};
-use primitives::utils::{bytes16_to_hex, create_encrypted_bytes16_from_string};
+use primitives::utils::{
+    bytes16_to_hex, create_encrypted_bytes16_from_string, epoch_to_rfc3339,
+    timestamp_to_string_with_padding,
+};
 use serde_json::json;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -50,12 +57,17 @@ async fn mock_gateway() -> MockServer {
     server
 }
 
-/// Parse the single captured POST body into the response envelope's data array.
-async fn captured_data(server: &MockServer) -> Vec<serde_json::Value> {
+/// Parse the single captured POST body into the response envelope.
+async fn captured_envelope(server: &MockServer) -> serde_json::Value {
     let requests = server.received_requests().await.unwrap();
     assert_eq!(requests.len(), 1, "expected exactly one gateway POST");
     let send_dto: EwdsSendMessageDto = serde_json::from_slice(&requests[0].body).unwrap();
-    let envelope: serde_json::Value = serde_json::from_str(&send_dto.payload).unwrap();
+    serde_json::from_str(&send_dto.payload).unwrap()
+}
+
+/// Parse the single captured POST body into the response envelope's data array.
+async fn captured_data(server: &MockServer) -> Vec<serde_json::Value> {
+    let envelope = captured_envelope(server).await;
     assert_eq!(envelope["success"], json!(true));
     envelope["data"].as_array().unwrap().clone()
 }
@@ -97,7 +109,7 @@ async fn orders_query_bad_payload_errors() {
     let env = envelope(
         EwdsOperation::OrdersQuery,
         "req-orders-bad",
-        json!({ "startTime": "not-a-number" }),
+        json!({ "startTime": 0 }),
     );
 
     let err = handle_request(&app.db_wrapper, &client, &config, env)
@@ -111,23 +123,217 @@ async fn orders_query_bad_payload_errors() {
 
 // --- TradesQuery ----------------------------------------------------
 
-#[tokio::test]
-async fn trades_query_success() {
+const TRADES_BASE_TIME: u64 = 1_767_225_600;
+
+fn trades_time(offset: u64) -> String {
+    epoch_to_rfc3339(TRADES_BASE_TIME + offset)
+}
+
+fn make_trade(trade_uuid: &str, market_id: &str) -> DbTradeSchema {
+    DbTradeSchema {
+        trade_uuid: trade_uuid.to_string(),
+        status: TradeStatus::Settled,
+        seller: "seller-1".to_string(),
+        buyer: "buyer-1".to_string(),
+        market_id: market_id.to_string(),
+        creation_time: TRADES_BASE_TIME,
+        offer_hash: format!("{trade_uuid}-offer"),
+        bid_hash: format!("{trade_uuid}-bid"),
+        residual_offer_id: None,
+        residual_bid_id: None,
+        parameters: TradeParameters {
+            selected_energy_kWh: 1.0,
+            energy_rate: 10.0,
+        },
+    }
+}
+
+fn make_delivery_market(market_id: &str, delivery_offset: u64) -> MarketSchema {
+    let delivery_start_time = TRADES_BASE_TIME + delivery_offset;
+    MarketSchema {
+        market_id: market_id.to_string(),
+        community_id: "community-1".to_string(),
+        opening_time: timestamp_to_string_with_padding(delivery_start_time - 900),
+        closing_time: timestamp_to_string_with_padding(delivery_start_time),
+        delivery_start_time: timestamp_to_string_with_padding(delivery_start_time),
+        delivery_end_time: timestamp_to_string_with_padding(delivery_start_time + 900),
+        market_type: MarketType::Spot,
+        matching_algorithm: MatchingAlgorithm::PayAsBid,
+        created_at: timestamp_to_string_with_padding(delivery_start_time - 900),
+    }
+}
+
+/// Run a trades.query with the given payload against a DB holding one trade
+/// in a market delivering at the start of the day and one in a market
+/// delivering on the next day, returning the response.
+async fn run_trades_query(request_id: &str, payload: serde_json::Value) -> serde_json::Value {
     let app = init_app().await;
     let server = mock_gateway().await;
     let config = test_config(server.uri());
     let client = reqwest::Client::new();
 
+    for market in [
+        make_delivery_market("market-day-start", 0),
+        make_delivery_market("market-next-day", MAX_TRADES_QUERY_RANGE_SECS),
+    ] {
+        app.db_wrapper.markets().upsert(market).await.unwrap();
+    }
+    app.db_wrapper
+        .trades()
+        .insert_trades(vec![
+            make_trade("trade-day-start", "market-day-start"),
+            make_trade("trade-next-day", "market-next-day"),
+        ])
+        .await
+        .unwrap();
+
+    let env = envelope(EwdsOperation::TradesQuery, request_id, payload);
+    handle_request(&app.db_wrapper, &client, &config, env)
+        .await
+        .unwrap();
+    let response = captured_envelope(&server).await;
+
+    stop_app(app).await;
+    response
+}
+
+fn assert_trades_query_rejected(response: &serde_json::Value, request_id: &str, code: &str) {
+    assert_eq!(response["requestId"], json!(request_id));
+    assert_eq!(response["success"], json!(false));
+    assert_eq!(response["data"], json!([]));
+    assert_eq!(response["error"]["code"], json!(code));
+    assert!(response["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("trades.query"));
+}
+
+#[tokio::test]
+async fn trades_query_success() {
+    // Exactly one day is the largest allowed range; endTime is exclusive.
+    let response = run_trades_query(
+        "req-trades-1",
+        json!({ "startTime": trades_time(0), "endTime": trades_time(MAX_TRADES_QUERY_RANGE_SECS) }),
+    )
+    .await;
+
+    assert_eq!(response["success"], json!(true));
+    let ids: Vec<&str> = response["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|trade| trade["tradeId"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, vec!["trade-day-start"]);
+}
+
+#[tokio::test]
+async fn trades_query_range_over_one_day_publishes_error() {
+    let response = run_trades_query(
+        "req-trades-too-large",
+        json!({ "startTime": trades_time(0), "endTime": trades_time(MAX_TRADES_QUERY_RANGE_SECS + 1) }),
+    )
+    .await;
+
+    assert_trades_query_rejected(&response, "req-trades-too-large", TIME_RANGE_TOO_LARGE);
+}
+
+#[tokio::test]
+async fn trades_query_missing_start_time_publishes_error() {
+    let response = run_trades_query(
+        "req-trades-no-start",
+        json!({ "endTime": trades_time(3_600) }),
+    )
+    .await;
+
+    assert_trades_query_rejected(&response, "req-trades-no-start", INVALID_TIME_RANGE);
+}
+
+#[tokio::test]
+async fn trades_query_inverted_range_publishes_error() {
+    let response = run_trades_query(
+        "req-trades-inverted",
+        json!({ "startTime": trades_time(3_600), "endTime": trades_time(0) }),
+    )
+    .await;
+
+    assert_trades_query_rejected(&response, "req-trades-inverted", INVALID_TIME_RANGE);
+}
+
+#[test]
+fn validate_trades_query_range_boundaries() {
+    let day = MAX_TRADES_QUERY_RANGE_SECS;
+    assert_eq!(
+        validate_trades_query_range(Some(0), Some(0)).unwrap(),
+        (0, 0)
+    );
+    assert_eq!(
+        validate_trades_query_range(Some(10), Some(10 + day - 1)).unwrap(),
+        (10, 10 + day - 1)
+    );
+    assert_eq!(
+        validate_trades_query_range(Some(10), Some(10 + day)).unwrap(),
+        (10, 10 + day)
+    );
+
+    let too_large = validate_trades_query_range(Some(10), Some(10 + day + 1)).unwrap_err();
+    assert_eq!(too_large.code, TIME_RANGE_TOO_LARGE);
+    assert!(too_large.message.contains("86401s"));
+
+    for (start, end) in [
+        (Some(11), Some(10)),
+        (None, Some(10)),
+        (Some(10), None),
+        (None, None),
+    ] {
+        let error = validate_trades_query_range(start, end).unwrap_err();
+        assert_eq!(
+            error.code, INVALID_TIME_RANGE,
+            "start={:?} end={:?}",
+            start, end
+        );
+    }
+}
+
+#[tokio::test]
+async fn trades_query_filters_by_market_id() {
+    let app = init_app().await;
+    let server = mock_gateway().await;
+    let config = test_config(server.uri());
+    let client = reqwest::Client::new();
+
+    for market_id in ["MARKET-EWDS-A", "MARKET-EWDS-B"] {
+        app.db_wrapper
+            .markets()
+            .upsert(make_delivery_market(market_id, 0))
+            .await
+            .unwrap();
+    }
+    app.db_wrapper
+        .trades()
+        .insert_trades(vec![
+            make_trade("TRADE-EWDS-A", "MARKET-EWDS-A"),
+            make_trade("TRADE-EWDS-B", "MARKET-EWDS-B"),
+        ])
+        .await
+        .unwrap();
+
     let env = envelope(
         EwdsOperation::TradesQuery,
-        "req-trades-1",
-        json!({ "startTime": 0, "endTime": 9_999_999_999u64 }),
+        "req-trades-market",
+        json!({
+            "marketId": "MARKET-EWDS-A",
+            "startTime": trades_time(0),
+            "endTime": trades_time(3_600),
+        }),
     );
 
     handle_request(&app.db_wrapper, &client, &config, env)
         .await
         .unwrap();
-    let _data = captured_data(&server).await;
+    let data = captured_data(&server).await;
+    assert_eq!(data.len(), 1);
+    assert_eq!(data[0]["tradeId"], json!("TRADE-EWDS-A"));
 
     stop_app(app).await;
 }
@@ -142,7 +348,7 @@ async fn trades_query_bad_payload_errors() {
     let env = envelope(
         EwdsOperation::TradesQuery,
         "req-trades-bad",
-        json!({ "endTime": "nope" }),
+        json!({ "endTime": 9_999_999_999u64 }),
     );
 
     let err = handle_request(&app.db_wrapper, &client, &config, env)
@@ -166,7 +372,7 @@ async fn measurements_query_success() {
     let env = envelope(
         EwdsOperation::MeasurementsQuery,
         "req-meas-1",
-        json!({ "startTime": 0, "endTime": 9_999_999_999u64, "areaUuid": "facility-1" }),
+        json!({ "startTime": "1970-01-01T00:00:00Z", "endTime": "2286-11-20T17:46:39Z", "areaUuid": "facility-1" }),
     );
 
     handle_request(&app.db_wrapper, &client, &config, env)
@@ -187,7 +393,7 @@ async fn measurements_query_bad_payload_errors() {
     let env = envelope(
         EwdsOperation::MeasurementsQuery,
         "req-meas-bad",
-        json!({ "startTime": "x" }),
+        json!({ "startTime": 0 }),
     );
 
     let err = handle_request(&app.db_wrapper, &client, &config, env)
