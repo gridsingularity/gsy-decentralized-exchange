@@ -74,7 +74,6 @@ fn encodes_chained_fills_from_original_orders_only() {
             } else {
                 parent.attributes = Some(DbAttributes {
                     energy_type: EnergyType::Pv,
-                    trading_partner_id: None,
                 });
                 for bid in [&mut first, &mut second] {
                     bid.requirements = Some(DbRequirements {

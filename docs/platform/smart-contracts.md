@@ -139,8 +139,8 @@ Purpose:
 
 `OrderRegistry.OrderParams` is the single Solidity order definition used by
 `placeOrder`, `getOrder`, and both orders in `TradeSettlement.Match`. It includes
-`isBid`, `preferredTradingPartner`, `preferredEnergyRate`, and `tradingPartner`
-alongside the identity, energy, and timing fields. There is no separate
+`isBid`, `preferredTradingPartner` and `preferredEnergyRate` alongside the
+identity, energy, and timing fields. There is no separate
 `TradeSettlement.OrderData` definition.
 
 Settlement verifies these fields against the stored orders and requires

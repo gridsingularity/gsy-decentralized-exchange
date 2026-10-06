@@ -75,7 +75,8 @@ through `community.upsert` and `communities.query` request/reply operations.
 ## Data Model Notes
 
 - Order IDs and market IDs are stored as hex strings (`0x...`).
-- Order requirements/attributes store original off-chain partner facility IDs.
+- Order requirements store original off-chain partner facility IDs (offers
+  carry no partner).
   Callers resolve these through `POST /ids` or EWDS `ids.query` before contract
   submission. The event indexer uses the ID mapping collection to recover the
   facility IDs; the matcher resolves them back before comparing on-chain actors.

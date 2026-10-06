@@ -21,7 +21,7 @@ mod mock_contract {
     abigen!(
         MockEmitter,
         r#"[
-            event OrderPlaced(bytes16 indexed orderId, bytes16 indexed createdBy, bytes16 indexed marketId, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, uint8 energySourcePreference, uint8 energyType, bool isBid, bytes16 preferredTradingPartner, uint64 preferredEnergyRate, bytes16 tradingPartner)
+            event OrderPlaced(bytes16 indexed orderId, bytes16 indexed createdBy, bytes16 indexed marketId, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, uint8 energySourcePreference, uint8 energyType, bool isBid, bytes16 preferredTradingPartner, uint64 preferredEnergyRate)
             function emitOrderPlaced(bytes16 orderId, bytes16 createdBy) external
             function emitResidualBatch(address registry, bool residualIsBid, bool consumeResidual) external
             function emitFollowup(bool residualIsBid) external
@@ -216,15 +216,15 @@ async fn deploy_emitter(
         // SPDX-License-Identifier: MIT
         pragma solidity ^0.8.0;
         contract MockEmitter {
-            event OrderPlaced(bytes16 indexed orderId, bytes16 indexed createdBy, bytes16 indexed marketId, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, uint8 energySourcePreference, uint8 energyType, bool isBid, bytes16 preferredTradingPartner, uint64 preferredEnergyRate, bytes16 tradingPartner);
+            event OrderPlaced(bytes16 indexed orderId, bytes16 indexed createdBy, bytes16 indexed marketId, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, uint8 energySourcePreference, uint8 energyType, bool isBid, bytes16 preferredTradingPartner, uint64 preferredEnergyRate);
             event TradeSettled(bytes16 indexed tradeId, bytes16 indexed bidId, bytes16 indexed offerId, bytes16 buyerId, bytes16 sellerId, bytes16 marketId, uint64 timeSlot, bytes16 residualBidId, bytes16 residualOfferId, uint256 energy, uint256 price);
             event MarketStatusUpdated(bytes16 indexed marketId, bool isOpen);
             event OrderCancelled(bytes16 indexed orderId);
             function emitOrderPlaced(bytes16 orderId, bytes16 createdBy) external {
-                emit OrderPlaced(orderId, createdBy, bytes16(0), 100, 100, 1000, 50, 1, 0, true, bytes16(0), 0, bytes16(0));
+                emit OrderPlaced(orderId, createdBy, bytes16(0), 100, 100, 1000, 50, 1, 0, true, bytes16(0), 0);
             }
             function place(uint128 id, uint64 energy, bool isBid) external {
-                emit OrderPlaced(bytes16(id), bytes16(uint128(isBid ? 100 : 200)), bytes16(uint128(99)), 100, 90, energy, 50, 1, 2, isBid, bytes16(0), 0, bytes16(0));
+                emit OrderPlaced(bytes16(id), bytes16(uint128(isBid ? 100 : 200)), bytes16(uint128(99)), 100, 90, energy, 50, 1, 2, isBid, bytes16(0), 0);
             }
             function emitResidualBatch(MockEmitter registry, bool residualIsBid, bool consumeResidual) external {
                 uint128 base = residualIsBid ? 1 : 11;

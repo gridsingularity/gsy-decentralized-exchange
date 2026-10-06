@@ -21,7 +21,6 @@ abigen!(
         function lastIsBid() external view returns (bool)
         function lastPreferredTradingPartner() external view returns (bytes16)
         function lastPreferredEnergyRate() external view returns (uint64)
-        function lastTradingPartner() external view returns (bytes16)
     ]"#
 );
 
@@ -174,7 +173,6 @@ async fn test_publish_orders_calls_evm_order_registry() {
                 bool isBid;
                 bytes16 preferredTradingPartner;
                 uint64 preferredEnergyRate;
-                bytes16 tradingPartner;
             }
 
             uint256 public placedCount;
@@ -185,7 +183,6 @@ async fn test_publish_orders_calls_evm_order_registry() {
             bool public lastIsBid;
             bytes16 public lastPreferredTradingPartner;
             uint64 public lastPreferredEnergyRate;
-            bytes16 public lastTradingPartner;
 
             function placeOrder(OrderParams calldata params) external {
                 placedCount += 1;
@@ -196,7 +193,6 @@ async fn test_publish_orders_calls_evm_order_registry() {
                 lastIsBid = params.isBid;
                 lastPreferredTradingPartner = params.preferredTradingPartner;
                 lastPreferredEnergyRate = params.preferredEnergyRate;
-                lastTradingPartner = params.tradingPartner;
             }
         }
     "#;
@@ -256,10 +252,6 @@ async fn test_publish_orders_calls_evm_order_registry() {
             .await
             .unwrap(),
         0
-    );
-    assert_eq!(
-        mock_contract.last_trading_partner().call().await.unwrap(),
-        [0; 16]
     );
 }
 
@@ -335,7 +327,6 @@ async fn test_publish_orders_returns_error_when_contract_reverts() {
                 bool isBid;
                 bytes16 preferredTradingPartner;
                 uint64 preferredEnergyRate;
-                bytes16 tradingPartner;
             }
 
             function placeOrder(OrderParams calldata) external pure {

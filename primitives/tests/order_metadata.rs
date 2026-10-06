@@ -5,7 +5,6 @@ use primitives::db_api_schema::orders::{
 use primitives::utils::{parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR};
 
 const PREFERRED_PARTNER: &str = "0x00112233445566778899aabbccddeeff";
-const TRADING_PARTNER: &str = "0xffeeddccbbaa99887766554433221100";
 
 #[test]
 fn converts_complete_order_metadata_to_and_from_contract_values() {
@@ -15,7 +14,6 @@ fn converts_complete_order_metadata_to_and_from_contract_values() {
         preferred_energy_rate: Some(12.3456),
     };
     let attributes = DbAttributes {
-        trading_partner_id: Some(TRADING_PARTNER.to_string()),
         energy_type: EnergyType::Pv,
     };
 
@@ -30,10 +28,6 @@ fn converts_complete_order_metadata_to_and_from_contract_values() {
     assert_eq!(
         encoded.preferred_energy_rate,
         (12.3456 * NODE_FLOAT_SCALING_FACTOR).round() as u64
-    );
-    assert_eq!(
-        encoded.trading_partner,
-        parse_uuid_or_hex_bytes16(TRADING_PARTNER).expect("Invalid on-chain actor ID")
     );
 
     assert_eq!(
@@ -55,12 +49,7 @@ fn rejects_unresolved_or_invalid_partner_ids() {
             energy_type: None,
             preferred_energy_rate: None,
         };
-        let attributes = DbAttributes {
-            trading_partner_id: Some(id.to_string()),
-            energy_type: EnergyType::None,
-        };
         assert!(order_metadata_to_contract(Some(&requirements), None).is_err());
-        assert!(order_metadata_to_contract(None, Some(&attributes)).is_err());
     }
 }
 
@@ -75,7 +64,6 @@ fn converts_absent_order_metadata_to_and_from_zero_values() {
             energy_type: 0,
             preferred_trading_partner: [0; 16],
             preferred_energy_rate: 0,
-            trading_partner: [0; 16],
         }
     );
     assert_eq!(order_metadata_from_contract(encoded), (None, None));

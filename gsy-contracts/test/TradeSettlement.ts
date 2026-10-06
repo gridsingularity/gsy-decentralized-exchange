@@ -70,7 +70,6 @@ describe("TradeSettlement", function () {
       isBid: ORDER_TYPE_BID,
       preferredTradingPartner: sellerActorId,
       preferredEnergyRate: 45,
-      tradingPartner: ZERO_BYTES16,
     };
 
     const offer = {
@@ -86,7 +85,6 @@ describe("TradeSettlement", function () {
       isBid: ORDER_TYPE_ASK,
       preferredTradingPartner: ZERO_BYTES16,
       preferredEnergyRate: 0,
-      tradingPartner: buyerActorId,
     };
 
     // Helper to build a ClearingResult, defaulting tradedQuantity to the
@@ -362,7 +360,7 @@ describe("TradeSettlement", function () {
           residual.orderId, residual.createdBy, residual.marketId, residual.timeSlot,
           residual.creationTime, residual.energy, residual.energyRate,
           residual.energySourcePreference, residual.energyType, residual.isBid,
-          residual.preferredTradingPartner, residual.preferredEnergyRate, residual.tradingPartner,
+          residual.preferredTradingPartner, residual.preferredEnergyRate,
         );
         const stored = await registry.getOrder(residual.orderId);
         for (const [field, value] of Object.entries(residual)) {
@@ -557,7 +555,6 @@ describe("TradeSettlement", function () {
       "isBid",
       "preferredTradingPartner",
       "preferredEnergyRate",
-      "tradingPartner",
     ] as const) {
       it(`Should reject a changed ${field} on the ${side}`, async function () {
         const { settlement, registry, buyer, seller, operator, bid, offer, makeClearingResult } =
