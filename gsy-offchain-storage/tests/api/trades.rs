@@ -1,7 +1,9 @@
 use crate::helpers::{init_app, stop_app};
 use actix_web::web;
+use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
 use primitives::db_api_schema::orders::{DbOrderSchema, OrderEnum, OrderStatus};
 use primitives::ewds::dto::EwdsTradeDto;
+use primitives::utils::{epoch_to_rfc3339, timestamp_to_string_with_padding};
 
 fn make_order(order_id: &str, order_type: OrderEnum) -> DbOrderSchema {
     DbOrderSchema {
@@ -33,7 +35,21 @@ fn make_trade(trade_uuid: &str, bid: DbOrderSchema, offer: DbOrderSchema) -> Ewd
         trade_status: "executed".to_string(),
         trade_quantity: 14.0,
         trade_price: 3.0,
-        timestamp: 1_677_453_191,
+        timestamp: "2026-01-01T00:00:02Z".to_string(),
+    }
+}
+
+fn make_market(market_id: &str, delivery_start_time: u64) -> MarketSchema {
+    MarketSchema {
+        market_id: market_id.to_string(),
+        community_id: "community-1".to_string(),
+        opening_time: timestamp_to_string_with_padding(delivery_start_time.saturating_sub(900)),
+        closing_time: timestamp_to_string_with_padding(delivery_start_time),
+        delivery_start_time: timestamp_to_string_with_padding(delivery_start_time),
+        delivery_end_time: timestamp_to_string_with_padding(delivery_start_time + 900),
+        market_type: MarketType::Spot,
+        matching_algorithm: MatchingAlgorithm::PayAsBid,
+        created_at: timestamp_to_string_with_padding(delivery_start_time.saturating_sub(900)),
     }
 }
 
@@ -152,8 +168,15 @@ async fn get_trades_filters_by_time_range() {
         "0x0000000000000000000000000000000000000000000000000000000000000a7c",
         OrderEnum::Offer,
     );
-    let mut trade = make_trade("TRADE-FILTER-0001", bid, offer);
-    trade.timestamp = 1_677_453_191;
+    let trade = make_trade("TRADE-FILTER-0001", bid, offer);
+
+    // The trade's market delivers at 2026-01-01T00:00:03Z.
+    let db = web::Data::new(app.db_wrapper.clone());
+    db.get_ref()
+        .markets()
+        .upsert(make_market(&trade.market_id, 1_767_225_603))
+        .await
+        .unwrap();
 
     let client = reqwest::Client::new();
     let resp = client
@@ -164,10 +187,13 @@ async fn get_trades_filters_by_time_range() {
         .unwrap();
     assert_eq!(200, resp.status().as_u16());
 
-    // Range that includes the trade timestamp
+    // Range that includes the market delivery start
     let resp = client
         .get(&format!("{}/trades", &address))
-        .query(&[("start_time", "1677453190"), ("end_time", "1677453192")])
+        .query(&[
+            ("start_time", "2026-01-01T00:00:02Z"),
+            ("end_time", "2026-01-01T00:00:04Z"),
+        ])
         .send()
         .await
         .unwrap();
@@ -176,10 +202,25 @@ async fn get_trades_filters_by_time_range() {
     assert_eq!(returned.len(), 1);
     assert_eq!(returned[0].trade_id, "TRADE-FILTER-0001");
 
-    // Range that excludes the trade timestamp
+    // Filter by market_id
     let resp = client
         .get(&format!("{}/trades", &address))
-        .query(&[("start_time", "1677453192"), ("end_time", "1677453200")])
+        .query(&[("market_id", trade.market_id.as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(200, resp.status().as_u16());
+    let returned: Vec<EwdsTradeDto> = resp.json().await.unwrap();
+    assert_eq!(returned.len(), 1);
+    assert_eq!(returned[0].trade_id, "TRADE-FILTER-0001");
+
+    // Range that excludes the market delivery start
+    let resp = client
+        .get(&format!("{}/trades", &address))
+        .query(&[
+            ("start_time", "2026-01-01T00:00:04Z"),
+            ("end_time", "2026-01-01T00:00:10Z"),
+        ])
         .send()
         .await
         .unwrap();
@@ -234,7 +275,10 @@ async fn get_trades_returns_400_when_start_after_end() {
     let client = reqwest::Client::new();
     let resp = client
         .get(&format!("{}/trades", &address))
-        .query(&[("start_time", "1677453200"), ("end_time", "1677453190")])
+        .query(&[
+            ("start_time", "2023-02-26T23:13:20Z"),
+            ("end_time", "2023-02-26T23:13:10Z"),
+        ])
         .send()
         .await
         .unwrap();
@@ -249,8 +293,10 @@ async fn filter_trades_time_boundaries_are_inclusive_start_exclusive_end() {
     let app = init_app().await;
     let address = app.address.clone();
 
-    // Seed four trades at timestamps 19, 20, 29, 30 around the [20, 30) borders.
+    // Seed four markets delivering at 19, 20, 29, 30 around the [20, 30) borders, one trade
+    // each. The trade's creation_time equals its market's delivery start to identify it below.
     let slots = [19u64, 20, 29, 30];
+    let db = web::Data::new(app.db_wrapper.clone());
     let client = reqwest::Client::new();
     for (idx, ts) in slots.iter().enumerate() {
         let bid = make_order(
@@ -268,7 +314,13 @@ async fn filter_trades_time_boundaries_are_inclusive_start_exclusive_end() {
             OrderEnum::Offer,
         );
         let mut trade = make_trade(&format!("TRADE-BORDER-{:04}", idx), bid, offer);
-        trade.timestamp = *ts;
+        trade.market_id = format!("MARKET-BORDER-{:04}", idx);
+        trade.timestamp = epoch_to_rfc3339(*ts);
+        db.get_ref()
+            .markets()
+            .upsert(make_market(&trade.market_id, *ts))
+            .await
+            .unwrap();
 
         let resp = client
             .post(&format!("{}/trades", &address))
@@ -279,48 +331,62 @@ async fn filter_trades_time_boundaries_are_inclusive_start_exclusive_end() {
         assert_eq!(200, resp.status().as_u16());
     }
 
-    let db = web::Data::new(app.db_wrapper.clone());
     let trades_svc = || db.get_ref().trades();
 
     // [20, 30): start inclusive, end exclusive -> {20, 29}.
     let both = trades_svc()
-        .filter_trades(Some(20), Some(30))
+        .filter_trades(None, Some(20), Some(30))
         .await
         .unwrap();
-    let mut got: Vec<u64> = both.iter().map(|t| t.time_slot).collect();
+    let mut got: Vec<u64> = both.iter().map(|t| t.creation_time).collect();
     got.sort_unstable();
     assert_eq!(got, vec![20, 29]); // 20 included ($gte), 30 excluded ($lt)
 
-    // Start-only, start on a boundary value: time_slot >= 20 -> {20, 29, 30}.
-    let start_only = trades_svc().filter_trades(Some(20), None).await.unwrap();
-    let mut got: Vec<u64> = start_only.iter().map(|t| t.time_slot).collect();
+    // Start-only, start on a boundary value: delivery_start_time >= 20 -> {20, 29, 30}.
+    let start_only = trades_svc()
+        .filter_trades(None, Some(20), None)
+        .await
+        .unwrap();
+    let mut got: Vec<u64> = start_only.iter().map(|t| t.creation_time).collect();
     got.sort_unstable();
     assert_eq!(got, vec![20, 29, 30]); // 20 included, nothing below
 
-    // End-only, end on a boundary value: time_slot < 30 -> {19, 20, 29}.
-    let end_only = trades_svc().filter_trades(None, Some(30)).await.unwrap();
-    let mut got: Vec<u64> = end_only.iter().map(|t| t.time_slot).collect();
+    // End-only, end on a boundary value: delivery_start_time < 30 -> {19, 20, 29}.
+    let end_only = trades_svc()
+        .filter_trades(None, None, Some(30))
+        .await
+        .unwrap();
+    let mut got: Vec<u64> = end_only.iter().map(|t| t.creation_time).collect();
     got.sort_unstable();
     assert_eq!(got, vec![19, 20, 29]); // 30 excluded ($lt)
 
     // Empty range: start == end -> nothing (20 fails $lt 20).
     let empty = trades_svc()
-        .filter_trades(Some(20), Some(20))
+        .filter_trades(None, Some(20), Some(20))
         .await
         .unwrap();
     assert!(empty.is_empty()); // [20, 20) is empty
 
     // Single-slot range: [20, 21) -> exactly {20}.
     let single = trades_svc()
-        .filter_trades(Some(20), Some(21))
+        .filter_trades(None, Some(20), Some(21))
         .await
         .unwrap();
     assert_eq!(single.len(), 1);
-    assert_eq!(single[0].time_slot, 20);
+    assert_eq!(single[0].creation_time, 20);
 
     // No bounds: returns everything seeded here.
-    let all = trades_svc().filter_trades(None, None).await.unwrap();
+    let all = trades_svc().filter_trades(None, None, None).await.unwrap();
     assert!(all.len() >= 4);
+
+    // market_id takes precedence: the range [20, 30) is ignored, so the trade of the market
+    // delivering at 19 is returned.
+    let by_market = trades_svc()
+        .filter_trades(Some("MARKET-BORDER-0000".to_string()), Some(20), Some(30))
+        .await
+        .unwrap();
+    assert_eq!(by_market.len(), 1);
+    assert_eq!(by_market[0].creation_time, 19);
 
     stop_app(app).await;
 }
