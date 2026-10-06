@@ -158,10 +158,16 @@ book, the E2E harness first advances local Anvil to the next matching boundary.
 After the order book is indexed, it fast-forwards to the clearing boundary with
 empty-block RPC calls rather than waiting for one transaction per block.
 
-Before waiting for the orchestrator, the E2E runner idempotently upserts a
-canonical community using `OFFCHAIN_STORAGE_TRANSPORT`. The orchestrator then
-queries the same community collection and opens the community-aware Spot market
-whose ID is derived from community UUID, market type, and delivery slot.
+Before waiting for the orchestrator, the E2E runner idempotently upserts a new
+community using `OFFCHAIN_STORAGE_TRANSPORT`. The orchestrator then queries the
+same community collection and creates that community's markets for the current
+delivery slot on-chain. The runner waits until the Spot market of the current
+slot is open on-chain (`isMarketOpen`) and stored in off-chain storage
+(`fetch_market`, HTTP or EWDS), and checks that the stored `MarketSchema`
+mirrors `MarketController.getMarket` and the configured `MATCHING_ALGORITHM`.
+Because the suite trades the current slot, `docker-compose.e2e-test.yml` sets
+`EXECUTION_ENGINE_OFFSET_MIN` to `0` so the execution engine targets the same
+slot.
 
 The contracts command starts the dedicated local Anvil container, deploys the
 upgradeable contract suite, grants service roles, and writes

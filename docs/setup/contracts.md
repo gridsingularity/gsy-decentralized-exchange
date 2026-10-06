@@ -80,7 +80,8 @@ The report deploys a benchmark-only contract suite and records gas for:
 - Role grants.
 - `ActorRegistry` mutating calls: `registerActor`, `setActorWallet`,
   `setProxy`.
-- `MarketController` mutating calls: `setMarketStatus`.
+- `MarketController` mutating calls: `createMarkets` (1, 3 and 50 markets,
+  and resending existing markets).
 - `OrderRegistry` mutating calls: `placeOrder`, `cancelOrder`, `updateStatus`.
 - `TradeSettlement` mutating calls: `settleBatch`, `submitPenalties`.
 - View-call `estimateGas` values for the read functions used by services.

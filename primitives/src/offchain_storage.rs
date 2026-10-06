@@ -1,10 +1,12 @@
 use crate::db_api_schema::grid_topology::{EnergyCommunitySchema, FacilitySchema};
 use crate::db_api_schema::ids::IdMappingSchema;
+use crate::db_api_schema::market::MarketSchema;
 use crate::db_api_schema::orders::{DbAttributes, DbOrderSchema, DbRequirements};
 use crate::db_api_schema::profiles::{MeasurementPointSchema, MeasurementSchema, TimeseriesSchema};
 use crate::db_api_schema::trades::DbTradeSchema;
 use crate::ewds::dto::{
-    EwdsClearingResultDto, EwdsCommunityDto, EwdsMeasurementDto, EwdsOrderDto, EwdsTradeDto,
+    EwdsClearingResultDto, EwdsCommunityDto, EwdsMarketDto, EwdsMeasurementDto, EwdsOrderDto,
+    EwdsTradeDto,
 };
 use crate::ewds::{format_response_body, EwdsClient, EwdsOperation};
 use crate::utils::{
@@ -203,6 +205,41 @@ impl OffchainStorageClient {
             .filter(|bytes| *bytes != [0; 16])
             .ok_or_else(|| anyhow!("Invalid on-chain ID returned for facility {}", offchain_id))?;
         Ok(bytes16_to_hex(bytes))
+    }
+
+    /// Returns the market with this ID, or `None` if the storage has none yet.
+    pub async fn fetch_market(&self, market_id: &str) -> Result<Option<MarketSchema>> {
+        match self.transport {
+            OffchainStorageTransport::Ewds => {
+                let markets: Vec<EwdsMarketDto> = self
+                    .ewds_client()
+                    .query(
+                        EwdsOperation::MarketsQuery,
+                        serde_json::json!({"market_id": market_id}),
+                    )
+                    .await?;
+                Ok(markets.into_iter().next().map(MarketSchema::from))
+            }
+            OffchainStorageTransport::Http => {
+                let url = self.endpoint_url("market");
+                let response = self
+                    .http_client
+                    .get(&url)
+                    .query(&[("market_id", market_id)])
+                    .send()
+                    .await?;
+                if response.status() == reqwest::StatusCode::NOT_FOUND {
+                    return Ok(None);
+                }
+                if !response.status().is_success() {
+                    return Err(anyhow!(
+                        "Failed to fetch market. HTTP {}",
+                        response.status()
+                    ));
+                }
+                Ok(Some(response.json().await?))
+            }
+        }
     }
 
     pub async fn fetch_clearing_results(

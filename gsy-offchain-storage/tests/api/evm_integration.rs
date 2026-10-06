@@ -4,9 +4,12 @@ use ethers::{
     solc::{Project, ProjectPathsConfig},
     utils::Anvil,
 };
-use gsy_ethers_listener::{GsyEthersListener, GsyEventHandler, ListenerConfig, OrderPlacedFilter};
+use gsy_ethers_listener::{
+    GsyEthersListener, GsyEventHandler, ListenerConfig, NewMarketCreatedFilter, OrderPlacedFilter,
+};
 use gsy_offchain_storage::evm_handler::OffchainStorageEvmHandler;
 use primitives::db_api_schema::ids::IdMappingSchema;
+use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
 use primitives::db_api_schema::orders::{EnergyType, OrderEnum};
 use std::{fs::File, io::Write, sync::Arc, time::Duration};
 use tempfile::TempDir;
@@ -18,6 +21,125 @@ abigen!(
         function emitOrderPlaced(bytes16 orderId, bytes16 createdBy, uint64 energy, uint64 rate) external
     ]"#
 );
+
+fn new_market_event() -> NewMarketCreatedFilter {
+    NewMarketCreatedFilter {
+        market_id: [0xcc; 16],
+        community_id: [
+            0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x41, 0x11, 0x81, 0x11, 0x11, 0x11, 0x11, 0x11,
+            0x11, 0x11,
+        ],
+        opening_time: 1_699_998_300,
+        closing_time: 1_700_000_100,
+        delivery_start_time: 1_700_000_100,
+        delivery_end_time: 1_700_001_000,
+        market_type: 1,
+        matching_algorithm: 1,
+        created_at: 1_699_998_301,
+    }
+}
+
+fn expected_market() -> MarketSchema {
+    MarketSchema {
+        market_id: "0xcccccccccccccccccccccccccccccccc".to_string(),
+        community_id: "11111111-1111-4111-8111-111111111111".to_string(),
+        opening_time: "00000000001699998300".to_string(),
+        closing_time: "00000000001700000100".to_string(),
+        delivery_start_time: "00000000001700000100".to_string(),
+        delivery_end_time: "00000000001700001000".to_string(),
+        market_type: MarketType::Flex,
+        matching_algorithm: MatchingAlgorithm::PayAsClear,
+        created_at: "00000000001699998301".to_string(),
+    }
+}
+
+async fn stored_markets(app: &crate::helpers::TestApp) -> Vec<MarketSchema> {
+    app.db_wrapper
+        .markets()
+        .filter(None, None, None, None)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn test_new_market_event_creates_market() {
+    let app = init_app().await;
+    let handler = OffchainStorageEvmHandler {
+        db: app.db_wrapper.clone(),
+    };
+
+    handler
+        .handle_new_market_created(new_market_event())
+        .await
+        .unwrap();
+
+    assert_eq!(stored_markets(&app).await, vec![expected_market()]);
+    crate::helpers::stop_app(app).await;
+}
+
+#[tokio::test]
+async fn test_replayed_new_market_event_keeps_one_market() {
+    let app = init_app().await;
+    let handler = OffchainStorageEvmHandler {
+        db: app.db_wrapper.clone(),
+    };
+
+    for _ in 0..2 {
+        handler
+            .handle_new_market_created(new_market_event())
+            .await
+            .unwrap();
+    }
+
+    assert_eq!(stored_markets(&app).await, vec![expected_market()]);
+    crate::helpers::stop_app(app).await;
+}
+
+#[tokio::test]
+async fn test_new_market_event_overwrites_a_posted_market() {
+    let app = init_app().await;
+    let handler = OffchainStorageEvmHandler {
+        db: app.db_wrapper.clone(),
+    };
+    app.db_wrapper
+        .markets()
+        .upsert(MarketSchema {
+            opening_time: "00000000000000000001".to_string(),
+            market_type: MarketType::Spot,
+            matching_algorithm: MatchingAlgorithm::PayAsBid,
+            ..expected_market()
+        })
+        .await
+        .unwrap();
+
+    handler
+        .handle_new_market_created(new_market_event())
+        .await
+        .unwrap();
+
+    assert_eq!(stored_markets(&app).await, vec![expected_market()]);
+    crate::helpers::stop_app(app).await;
+}
+
+#[tokio::test]
+async fn test_new_market_event_with_unknown_enum_is_rejected() {
+    let app = init_app().await;
+    let handler = OffchainStorageEvmHandler {
+        db: app.db_wrapper.clone(),
+    };
+
+    let error = handler
+        .handle_new_market_created(NewMarketCreatedFilter {
+            market_type: 9,
+            ..new_market_event()
+        })
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("Unknown market type 9"));
+    assert!(stored_markets(&app).await.is_empty());
+    crate::helpers::stop_app(app).await;
+}
 
 #[tokio::test]
 async fn test_order_listener_rejects_unknown_partner_mapping() {
