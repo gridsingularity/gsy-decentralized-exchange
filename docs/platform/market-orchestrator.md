@@ -17,14 +17,14 @@ closing time, so there is no open/close step.
    (`deliveryStart <= now < deliveryEnd`) so its markets exist right after a
    (re)start even if they have already opened. Markets of later slots whose
    opening time has passed are not created.
-5. For each selected slot and community:
-   - Compute the deterministic `marketId`.
-   - Ask `MarketController.marketExists`; the chain is the single source of
-     truth, the orchestrator keeps no state between ticks.
-   - Build the full record for missing markets: community UUID (as `bytes16`),
-     opening/closing time from the market-type offsets, delivery start and end
-     (`+ TIME_SLOT_SEC`), market type and matching algorithm.
-6. Send the missing markets through `createMarkets` in transactions of at most
+5. For each selected slot and community, compute the deterministic `marketId`
+   and build the full record: community UUID (as `bytes16`), opening/closing
+   time from the market-type offsets, delivery start and end
+   (`+ TIME_SLOT_SEC`), market type and matching algorithm.
+6. Ask `MarketController.marketsExist` which of these candidates exist, with
+   one `eth_call` per 500 IDs instead of one call per market. The chain is the
+   single source of truth; the orchestrator keeps no state between ticks.
+7. Send the missing markets through `createMarkets` in transactions of at most
    `MARKET_CREATION_BATCH_SIZE` markets. The contract skips markets that
    already exist, so a race with a pending transaction does not revert a batch.
 

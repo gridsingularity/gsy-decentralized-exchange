@@ -95,10 +95,20 @@ contract MarketController is Initializable, AccessControlUpgradeable {
     }
 
     /**
-     * @notice Check if a market has been created.
+     * @notice Check which of several markets have been created, in one call.
+     * @return exists exists[i] is true if marketIds[i] has been created.
      */
-    function marketExists(bytes16 marketId) external view returns (bool) {
-        return _markets[marketId].createdAt != 0;
+    function marketsExist(
+        bytes16[] calldata marketIds
+    ) external view returns (bool[] memory exists) {
+        uint256 marketCount = marketIds.length;
+        exists = new bool[](marketCount);
+        for (uint256 index = 0; index < marketCount; ) {
+            exists[index] = _markets[marketIds[index]].createdAt != 0;
+            unchecked {
+                ++index;
+            }
+        }
     }
 
     /**
@@ -110,13 +120,6 @@ contract MarketController is Initializable, AccessControlUpgradeable {
             market.createdAt != 0 &&
             market.openingTime <= block.timestamp &&
             block.timestamp < market.closingTime;
-    }
-
-    /**
-     * @notice Return a market record; createdAt is 0 if it does not exist.
-     */
-    function getMarket(bytes16 marketId) external view returns (Market memory) {
-        return _markets[marketId];
     }
 
     function _createMarket(NewMarket calldata newMarket) private {

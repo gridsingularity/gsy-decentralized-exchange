@@ -10,7 +10,7 @@ abigen!(
     MarketControllerContract,
     r#"[
         function hasRole(bytes32 role, address account) external view returns (bool)
-        function marketExists(bytes16 marketId) external view returns (bool)
+        function marketsExist(bytes16[] marketIds) external view returns (bool[])
         struct NewMarket { bytes16 marketId; bytes16 communityId; uint64 openingTime; uint64 closingTime; uint64 deliveryStartTime; uint64 deliveryEndTime; uint8 marketType; uint8 matchingAlgorithm; }
         function createMarkets(NewMarket[] newMarkets) external
     ]"#
@@ -21,7 +21,8 @@ type WsSignerMiddleware = SignerMiddleware<Provider<Ws>, LocalWallet>;
 #[async_trait]
 pub trait MarketChainClient: Send + Sync {
     async fn is_operator_registered(&self) -> Result<bool>;
-    async fn market_exists(&self, market_id: [u8; 16]) -> Result<bool>;
+    /// One `eth_call` for all IDs; `result[i]` is true if `market_ids[i]` exists.
+    async fn markets_exist(&self, market_ids: Vec<[u8; 16]>) -> Result<Vec<bool>>;
     /// Creates the markets in one transaction; existing ones are skipped on-chain.
     async fn create_markets(&self, new_markets: Vec<NewMarket>) -> Result<()>;
 }
@@ -77,12 +78,20 @@ impl MarketChainClient for GsyMarketOrchestratorNodeClient {
         Ok(is_registered)
     }
 
-    async fn market_exists(&self, market_id: [u8; 16]) -> Result<bool> {
+    async fn markets_exist(&self, market_ids: Vec<[u8; 16]>) -> Result<Vec<bool>> {
+        let market_count = market_ids.len();
         let exists = self
             .market_controller
-            .market_exists(market_id)
+            .markets_exist(market_ids)
             .call()
             .await?;
+        if exists.len() != market_count {
+            return Err(anyhow!(
+                "marketsExist returned {} results for {} markets",
+                exists.len(),
+                market_count
+            ));
+        }
         Ok(exists)
     }
 

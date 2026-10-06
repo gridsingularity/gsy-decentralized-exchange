@@ -65,8 +65,11 @@ async fn test_evm_market_controller_client_creates_markets() {
                 return roles[account][role];
             }
 
-            function marketExists(bytes16 marketId) external view returns (bool) {
-                return markets[marketId].marketId != bytes16(0);
+            function marketsExist(bytes16[] calldata marketIds) external view returns (bool[] memory exists) {
+                exists = new bool[](marketIds.length);
+                for (uint256 index = 0; index < marketIds.length; index++) {
+                    exists[index] = markets[marketIds[index]].marketId != bytes16(0);
+                }
             }
 
             function createMarkets(NewMarket[] calldata newMarkets) external {
@@ -167,24 +170,35 @@ async fn test_evm_market_controller_client_creates_markets() {
             matching_algorithm: MatchingAlgorithm::PayAsClear.to_evm(),
         })
         .collect::<Vec<_>>();
-    for market in &new_markets {
-        assert!(!orchestrator_client
-            .market_exists(market.market_id)
+    let market_ids = new_markets
+        .iter()
+        .map(|market| market.market_id)
+        .collect::<Vec<_>>();
+    let unknown_market_id = [0x42; 16];
+    assert_eq!(
+        orchestrator_client
+            .markets_exist(market_ids.clone())
             .await
-            .unwrap());
-    }
+            .unwrap(),
+        vec![false, false]
+    );
 
     orchestrator_client
         .create_markets(new_markets.clone())
         .await
         .unwrap();
 
+    // One call answers for every ID, in request order.
+    assert_eq!(
+        orchestrator_client
+            .markets_exist(vec![market_ids[1], unknown_market_id, market_ids[0]])
+            .await
+            .unwrap(),
+        vec![true, false, true]
+    );
+
     let reader = MockMarketControllerReader::new(contract_address, client.clone());
     for market in &new_markets {
-        assert!(orchestrator_client
-            .market_exists(market.market_id)
-            .await
-            .unwrap());
         let stored = reader.markets(market.market_id).call().await.unwrap();
         assert_eq!(
             stored,

@@ -766,15 +766,9 @@ async function main() {
   );
   await recordEstimate(
     "View estimates",
-    "marketExists(bytes16)",
+    "marketsExist(3 markets)",
     "MarketController",
-    marketControllerContract.marketExists.estimateGas(marketId),
-  );
-  await recordEstimate(
-    "View estimates",
-    "getMarket(bytes16)",
-    "MarketController",
-    marketControllerContract.getMarket.estimateGas(marketId),
+    marketControllerContract.marketsExist.estimateGas(batchMarketIds),
   );
   await recordEstimate(
     "View estimates",

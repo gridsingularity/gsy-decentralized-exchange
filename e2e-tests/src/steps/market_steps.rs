@@ -1,3 +1,4 @@
+use crate::utils::indexed_bytes16_topic;
 use crate::world::MyWorld;
 use cucumber::{then, when};
 use ethers::prelude::*;
@@ -22,8 +23,7 @@ abigen!(
     MarketControllerContract,
     r#"[
         function isMarketOpen(bytes16 marketId) external view returns (bool)
-        struct Market { bytes16 communityId; uint64 openingTime; uint64 closingTime; uint64 deliveryStartTime; uint64 deliveryEndTime; uint64 createdAt; uint8 marketType; uint8 matchingAlgorithm; }
-        function getMarket(bytes16 marketId) external view returns (Market)
+        event NewMarketCreated(bytes16 indexed marketId, bytes16 indexed communityId, uint64 openingTime, uint64 closingTime, uint64 deliveryStartTime, uint64 deliveryEndTime, uint8 marketType, uint8 matchingAlgorithm, uint64 createdAt)
     ]"#
 );
 
@@ -133,7 +133,7 @@ async fn wait_for_market_to_open(world: &mut MyWorld) {
 }
 
 /// Waits until the market is open on-chain and stored off-chain, and checks
-/// that the stored market mirrors the on-chain record.
+/// that the stored market mirrors its `NewMarketCreated` event.
 async fn wait_for_market(world: &MyWorld, market_id: [u8; 16]) -> MarketSchema {
     let market_id_hex = bytes16_to_hex(market_id);
     info!(
@@ -166,35 +166,30 @@ async fn wait_for_market(world: &MyWorld, market_id: [u8; 16]) -> MarketSchema {
                 market_id_hex,
                 attempt + 1
             );
-            let (
-                community_id,
-                opening_time,
-                closing_time,
-                delivery_start_time,
-                delivery_end_time,
-                created_at,
-                market_type,
-                matching_algorithm,
-            ) = market_controller
-                .get_market(market_id)
-                .call()
+            let events = market_controller
+                .event::<NewMarketCreatedFilter>()
+                .from_block(0u64)
+                .topic1(indexed_bytes16_topic(market_id))
+                .query()
                 .await
-                .expect("Failed to read market from MarketController");
+                .expect("Failed to query NewMarketCreated events");
+            assert_eq!(events.len(), 1, "Expected one NewMarketCreated event");
+            let event = &events[0];
             let expected = MarketSchema::try_from(MarketChainRecord {
-                market_id,
-                community_id,
-                opening_time,
-                closing_time,
-                delivery_start_time,
-                delivery_end_time,
-                market_type,
-                matching_algorithm,
-                created_at,
+                market_id: event.market_id,
+                community_id: event.community_id,
+                opening_time: event.opening_time,
+                closing_time: event.closing_time,
+                delivery_start_time: event.delivery_start_time,
+                delivery_end_time: event.delivery_end_time,
+                market_type: event.market_type,
+                matching_algorithm: event.matching_algorithm,
+                created_at: event.created_at,
             })
-            .expect("Invalid on-chain market record");
+            .expect("Invalid NewMarketCreated event");
             assert_eq!(
                 stored, expected,
-                "Stored market differs from the on-chain record"
+                "Stored market differs from the NewMarketCreated event"
             );
             assert_eq!(stored.matching_algorithm, matching_algorithm_from_env());
             return stored;

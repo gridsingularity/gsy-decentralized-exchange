@@ -164,7 +164,8 @@ same community collection and creates that community's markets for the current
 delivery slot on-chain. The runner waits until the Spot market of the current
 slot is open on-chain (`isMarketOpen`) and stored in off-chain storage
 (`fetch_market`, HTTP or EWDS), and checks that the stored `MarketSchema`
-mirrors `MarketController.getMarket` and the configured `MATCHING_ALGORITHM`.
+mirrors the market's `NewMarketCreated` event and the configured
+`MATCHING_ALGORITHM`.
 Because the suite trades the current slot, `docker-compose.e2e-test.yml` sets
 `EXECUTION_ENGINE_OFFSET_MIN` to `0` so the execution engine targets the same
 slot.

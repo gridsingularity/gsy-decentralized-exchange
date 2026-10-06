@@ -236,7 +236,7 @@ Validator requirements:
   `/communities` or EWDS `communities.query`.
 - Derive each market ID from community UUID, market type, and delivery slot.
 - Create the community/market-type markets before they open through batched
-  `createMarkets` calls, after checking `marketExists` on-chain.
+  `createMarkets` calls, after checking `marketsExist` on-chain in batches.
 - Runtime switch via `OFFCHAIN_STORAGE_TRANSPORT=http|ewds`.
 
 ## Docker and Local Testing Integration

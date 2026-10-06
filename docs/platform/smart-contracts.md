@@ -118,7 +118,10 @@ Purpose:
   one invalid entry reverts the whole batch.
 - There is no open/closed flag and no update function: `isMarketOpen(bytes16)`
   is true while `openingTime <= block.timestamp < closingTime`.
-- Views: `marketExists(bytes16)`, `isMarketOpen(bytes16)`, `getMarket(bytes16)`.
+- Views: `marketsExist(bytes16[])` (existence of many markets in one call,
+  used by the orchestrator) and `isMarketOpen(bytes16)` (used by
+  `OrderRegistry`). The full record is read from `NewMarketCreated` or from
+  off-chain storage; there is no record getter.
 - Enum values: `MarketType` `Spot=0, Flex=1, Settlement=2`;
   `MatchingAlgorithm` `PayAsBid=0, PayAsClear=1, Amm=2` (same order as
   `primitives`).
