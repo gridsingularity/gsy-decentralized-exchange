@@ -8,12 +8,8 @@ use primitives::db_api_schema::trades::{ClearingResultSchema, DbTradeSchema, Mar
 use std::collections::HashMap;
 use std::ops::Deref;
 
-fn time_slot_bson(value: u64) -> Result<Bson> {
-    Ok(Bson::Int64(i64::try_from(value)?))
-}
-
 /// Trade indexes per D3.2 section 5.3: `buyer`, `seller`, `market_id` and
-/// `time_slot` accelerate per-asset / per-market / per-slot lookups.
+/// `creation_time` accelerate per-asset / per-market / time-range lookups.
 pub async fn init_trades(db: &DatabaseWrapper) -> Result<()> {
     let controller = db.trades();
     controller
@@ -24,7 +20,7 @@ pub async fn init_trades(db: &DatabaseWrapper) -> Result<()> {
                 .build(),
         )
         .await?;
-    for key in ["buyer", "seller", "market_id", "time_slot"] {
+    for key in ["buyer", "seller", "market_id", "creation_time"] {
         controller
             .create_index(IndexModel::builder().keys(doc! {key: 1}).build())
             .await?;
@@ -96,27 +92,25 @@ impl TradeService {
         Ok(result)
     }
 
-    #[tracing::instrument(name = "Filter trades by time slot", skip(self))]
+    /// Trades of `market_id` if set; otherwise trades of the markets whose
+    /// `delivery_start_time` lies in `[start_time, end_time)`.
+    #[tracing::instrument(name = "Filter trades by market", skip(self))]
     pub async fn filter_trades(
         &self,
+        market_id: Option<String>,
         start_time: Option<u64>,
         end_time: Option<u64>,
     ) -> Result<Vec<DbTradeSchema>> {
         let mut filter_params = doc! {};
-        match (start_time, end_time) {
-            (Some(start), Some(end)) => {
-                filter_params.insert(
-                    "time_slot",
-                    doc! {"$gte": time_slot_bson(start)?, "$lt": time_slot_bson(end)?},
-                );
-            }
-            (Some(start), None) => {
-                filter_params.insert("time_slot", doc! {"$gte": time_slot_bson(start)?});
-            }
-            (None, Some(end)) => {
-                filter_params.insert("time_slot", doc! {"$lt": time_slot_bson(end)?});
-            }
-            (None, None) => {}
+        if let Some(market_id) = market_id {
+            filter_params.insert("market_id", market_id);
+        } else if start_time.is_some() || end_time.is_some() {
+            let database = self.0.client().database(&self.0.namespace().db);
+            let market_ids = DatabaseWrapper(database)
+                .markets()
+                .market_ids_by_delivery_start(start_time, end_time)
+                .await?;
+            filter_params.insert("market_id", doc! {"$in": market_ids});
         }
 
         match self.0.find(filter_params).await {

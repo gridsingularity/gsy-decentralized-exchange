@@ -119,7 +119,7 @@ async fn post_and_get_clearing_result() {
         trade_quantity: 2.10,
         num_trades: 6,
         tx_hash: "0xabc123def456789".to_string(),
-        created_at: 1_700_000_000,
+        created_at: "2026-01-01T00:00:00Z".to_string(),
     };
 
     let client = reqwest::Client::new();
