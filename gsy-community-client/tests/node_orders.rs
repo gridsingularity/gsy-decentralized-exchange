@@ -89,7 +89,6 @@ async fn test_orders_to_evm_params_are_created_correctly() {
         bid_type,
         bid_preferred_partner,
         bid_preferred_rate,
-        bid_trading_partner,
     ) = input_orders[0];
     assert_eq!(
         bid_created_by,
@@ -107,7 +106,6 @@ async fn test_orders_to_evm_params_are_created_correctly() {
     assert!(bid_type);
     assert_eq!(bid_preferred_partner, [0; 16]);
     assert_eq!(bid_preferred_rate, 0);
-    assert_eq!(bid_trading_partner, [0; 16]);
 
     let (
         _offer_order_id,
@@ -122,7 +120,6 @@ async fn test_orders_to_evm_params_are_created_correctly() {
         offer_type,
         offer_preferred_partner,
         offer_preferred_rate,
-        offer_trading_partner,
     ) = input_orders[1];
     assert_eq!(
         offer_created_by,
@@ -139,7 +136,6 @@ async fn test_orders_to_evm_params_are_created_correctly() {
     assert!(!offer_type);
     assert_eq!(offer_preferred_partner, [0; 16]);
     assert_eq!(offer_preferred_rate, 0);
-    assert_eq!(offer_trading_partner, [0; 16]);
 }
 
 #[tokio::test]

@@ -205,14 +205,15 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
         }
 
         if (
+            trade.selectedEnergy == 0 ||
             trade.selectedEnergy > trade.bid.energy ||
             trade.selectedEnergy > trade.offer.energy
         ) {
             revert EnergyMismatch();
         }
 
-        registry.updateStatus(trade.bid.orderId, OrderRegistry.OrderStatus.Executed);
-        registry.updateStatus(trade.offer.orderId, OrderRegistry.OrderStatus.Executed);
+        registry.settleOrder(trade.bid.orderId, uint64(trade.selectedEnergy), trade.residualBidId);
+        registry.settleOrder(trade.offer.orderId, uint64(trade.selectedEnergy), trade.residualOfferId);
 
         emit TradeSettled(
             trade.tradeId,
@@ -246,7 +247,6 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
             stored.energyType != provided.energyType ||
             stored.preferredTradingPartner != provided.preferredTradingPartner ||
             stored.preferredEnergyRate != provided.preferredEnergyRate ||
-            stored.tradingPartner != provided.tradingPartner ||
             stored.isBid != provided.isBid ||
             stored.isBid != expectedBid
         ) {

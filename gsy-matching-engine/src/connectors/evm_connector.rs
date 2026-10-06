@@ -13,7 +13,7 @@ use primitives::matching::matching_block_interval;
 use primitives::offchain_storage::{resolve_order_partner_ids, OffchainStorageClient};
 use primitives::utils::{bytes16_to_hex, parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR};
 use primitives::MatchingAlgorithm;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::env;
 use std::str::FromStr;
 use tokio::time::{sleep, Duration};
@@ -356,12 +356,7 @@ async fn fetch_market_orders(body: Vec<EwdsOrderDto>) -> Result<PreparedOrders> 
         .into_iter()
         .filter(|order| order.status == OrderStatus::Submitted)
     {
-        resolve_order_partner_ids(
-            &mut db_order_schema.requirements,
-            &mut db_order_schema.attributes,
-            &id_mapping_source,
-        )
-        .await?;
+        resolve_order_partner_ids(&mut db_order_schema.requirements, &id_mapping_source).await?;
         match convert_db_order_to_canonical(&db_order_schema) {
             Ok(order) => {
                 by_order_id.insert(order.order_id.clone(), db_order_schema);
@@ -480,10 +475,6 @@ fn convert_attributes(
     attributes
         .map(|attributes| -> Result<Attributes> {
             Ok(Attributes {
-                trading_partner_id: normalize_optional_bytes16_field(
-                    "attributes.trading_partner_id",
-                    attributes.trading_partner_id.as_deref(),
-                )?,
                 energy_type: attributes.energy_type.clone(),
             })
         })
@@ -553,7 +544,6 @@ fn to_evm_order_data(order: &DbOrderSchema, expected_type: OrderEnum) -> Result<
         is_bid: order.order_type == OrderEnum::Bid,
         preferred_trading_partner: metadata.preferred_trading_partner,
         preferred_energy_rate: metadata.preferred_energy_rate,
-        trading_partner: metadata.trading_partner,
     })
 }
 
@@ -587,7 +577,8 @@ fn to_evm_clearing_result(clearing_result: &ClearingResult) -> Result<EvmClearin
 
 fn to_evm_match(
     item: &BidOfferMatch,
-    order_lookup: &HashMap<String, DbOrderSchema>,
+    available_orders: &mut HashMap<[u8; 16], OrderParams>,
+    known_ids: &mut HashSet<[u8; 16]>,
 ) -> Result<Match> {
     if item.bid.market_id != item.offer.market_id
         || item.bid.time_slot != item.offer.time_slot
@@ -603,32 +594,50 @@ fn to_evm_match(
         ));
     }
 
-    let bid_id = item.bid.order_id.to_ascii_lowercase();
-    let offer_id = item.offer.order_id.to_ascii_lowercase();
-    let bid_order = order_lookup
-        .get(&bid_id)
-        .ok_or_else(|| anyhow!("Could not find bid order '{}' in lookup map", bid_id))?;
-    let offer_order = order_lookup
-        .get(&offer_id)
-        .ok_or_else(|| anyhow!("Could not find offer order '{}' in lookup map", offer_id))?;
-    let bid_market_id = parse_bytes16_field("bid.market_id", &bid_order.market_id)?;
-    let offer_market_id = parse_bytes16_field("offer.market_id", &offer_order.market_id)?;
-    if bid_market_id != offer_market_id || bid_order.time_slot != offer_order.time_slot {
-        return Err(anyhow!(
-            "Refusing DB orders from different market/time-slot boundaries: bid {}/{} and offer {}/{}",
-            bid_order.market_id,
-            bid_order.time_slot,
-            offer_order.market_id,
-            offer_order.time_slot
-        ));
+    let bid_id = parse_bytes16_field("bid.order_id", &item.bid.order_id)?;
+    let offer_id = parse_bytes16_field("offer.order_id", &item.offer.order_id)?;
+    let bid = available_orders
+        .remove(&bid_id)
+        .ok_or_else(|| anyhow!("Bid {} is unknown or already consumed", item.bid.order_id))?;
+    let offer = available_orders.remove(&offer_id).ok_or_else(|| {
+        anyhow!("Offer {} is unknown or already consumed", item.offer.order_id)
+    })?;
+    if !bid.is_bid
+        || offer.is_bid
+        || bid.market_id != offer.market_id
+        || bid.time_slot != offer.time_slot
+        || bid.market_id != parse_bytes16_field("match.market_id", &item.market_id)?
+        || bid.time_slot != item.time_slot
+    {
+        return Err(anyhow!("Invalid order types or market/time-slot boundaries"));
     }
+    if item.selected_energy == 0
+        || item.selected_energy > bid.energy
+        || item.selected_energy > offer.energy
+    {
+        return Err(anyhow!("Invalid selected energy for settlement"));
+    }
+    let residual_bid_id = register_residual(
+        &bid,
+        item.residual_bid.as_ref(),
+        item.selected_energy,
+        available_orders,
+        known_ids,
+    )?;
+    let residual_offer_id = register_residual(
+        &offer,
+        item.residual_offer.as_ref(),
+        item.selected_energy,
+        available_orders,
+        known_ids,
+    )?;
 
     Ok(Match {
         trade_id: derive_trade_id(),
-        bid: to_evm_order_data(bid_order, OrderEnum::Bid)?,
-        offer: to_evm_order_data(offer_order, OrderEnum::Offer)?,
-        residual_bid_id: optional_order_id_to_bytes16(item.residual_bid.as_ref())?,
-        residual_offer_id: optional_order_id_to_bytes16(item.residual_offer.as_ref())?,
+        bid,
+        offer,
+        residual_bid_id,
+        residual_offer_id,
         selected_energy: U256::from(item.selected_energy),
         clearing_price: U256::from(item.energy_rate),
     })
@@ -638,13 +647,20 @@ fn to_evm_matches(
     matches: Vec<MarketMatches>,
     order_lookup: &HashMap<String, DbOrderSchema>,
 ) -> Result<Vec<MarketSettlement>> {
+    let mut available_orders = order_lookup
+        .values()
+        .map(|order| {
+            to_evm_order_data(order, order.order_type.clone()).map(|params| (params.order_id, params))
+        })
+        .collect::<Result<HashMap<_, _>>>()?;
+    let mut known_ids = available_orders.keys().copied().collect::<HashSet<_>>();
     matches
         .into_iter()
         .map(|market| {
             let bid_offer_matches = market
                 .bid_offer_matches
                 .iter()
-                .map(|item| to_evm_match(item, order_lookup))
+                .map(|item| to_evm_match(item, &mut available_orders, &mut known_ids))
                 .collect::<Result<Vec<_>>>()?;
             Ok(MarketSettlement {
                 matches: bid_offer_matches,
@@ -653,3 +669,34 @@ fn to_evm_matches(
         })
         .collect()
 }
+
+fn register_residual(
+    parent: &OrderParams,
+    residual: Option<&Order>,
+    selected_energy: u64,
+    available_orders: &mut HashMap<[u8; 16], OrderParams>,
+    known_ids: &mut HashSet<[u8; 16]>,
+) -> Result<[u8; 16]> {
+    let remaining_energy = parent.energy - selected_energy;
+    let residual_id = optional_order_id_to_bytes16(residual)?;
+    if (remaining_energy == 0) != residual.is_none()
+        || residual.is_some_and(|order| order.energy != remaining_energy || residual_id == [0; 16])
+    {
+        return Err(anyhow!("Residual must contain exactly the unfilled energy"));
+    }
+    if residual.is_some() {
+        if !known_ids.insert(residual_id) {
+            return Err(anyhow!("Residual order ID has already been used"));
+        }
+        // Mirror OrderRegistry::settleOrder without a floating-point round trip.
+        let mut params = parent.clone();
+        params.order_id = residual_id;
+        params.energy = remaining_energy;
+        available_orders.insert(residual_id, params);
+    }
+    Ok(residual_id)
+}
+
+#[cfg(test)]
+#[path = "../../tests/connectors/residual_conversion.rs"]
+mod residual_conversion_tests;

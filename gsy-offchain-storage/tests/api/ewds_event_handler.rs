@@ -114,7 +114,6 @@ fn trade(trade_uuid: &str, creation_time: u64) -> DbTradeSchema {
         seller: "seller-1".to_string(),
         buyer: "buyer-1".to_string(),
         market_id: "market-1".to_string(),
-        time_slot: 1_000,
         creation_time,
         offer_hash: "offer-1".to_string(),
         bid_hash: "bid-1".to_string(),

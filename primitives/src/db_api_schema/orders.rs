@@ -139,7 +139,6 @@ pub struct ContractOrderMetadata {
     pub energy_type: u8,
     pub preferred_trading_partner: [u8; 16],
     pub preferred_energy_rate: u64,
-    pub trading_partner: [u8; 16],
 }
 
 /// Encode metadata whose partner IDs have already been resolved by the ID service.
@@ -163,11 +162,6 @@ pub fn order_metadata_to_contract(
         preferred_energy_rate: requirements
             .and_then(|value| value.preferred_energy_rate)
             .map(|rate| (rate * NODE_FLOAT_SCALING_FACTOR).round() as u64)
-            .unwrap_or_default(),
-        trading_partner: attributes
-            .and_then(|value| value.trading_partner_id.as_deref())
-            .map(resolved_partner_id)
-            .transpose()?
             .unwrap_or_default(),
     })
 }
@@ -203,16 +197,8 @@ pub fn order_metadata_from_contract(
         None
     };
 
-    let trading_partner = bytes16_to_optional_hex(metadata.trading_partner);
-    let attribute_energy_type = non_empty_energy_type(metadata.energy_type);
-    let attributes = if trading_partner.is_some() || attribute_energy_type.is_some() {
-        Some(DbAttributes {
-            trading_partner_id: trading_partner,
-            energy_type: attribute_energy_type.unwrap_or(EnergyType::None),
-        })
-    } else {
-        None
-    };
+    let attributes =
+        non_empty_energy_type(metadata.energy_type).map(|energy_type| DbAttributes { energy_type });
 
     (requirements, attributes)
 }
@@ -234,6 +220,5 @@ pub struct DbRequirements {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd)]
 pub struct DbAttributes {
-    pub trading_partner_id: Option<String>,
     pub energy_type: EnergyType,
 }
