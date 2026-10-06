@@ -6,9 +6,12 @@ use gsy_offchain_storage::ewds_handler::{
 use primitives::db_api_schema::grid_topology::FacilitySchema;
 use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
 use primitives::db_api_schema::trades::{DbTradeSchema, TradeParameters, TradeStatus};
-use primitives::ewds::dto::{EwdsRequestEnvelope, EwdsSendMessageDto, EwdsTradeDto};
+use primitives::ewds::dto::{EwdsRequestEnvelope, EwdsSendMessageDto};
 use primitives::ewds::{EwdsOperation, EwdsTopicConfig};
-use primitives::utils::{bytes16_to_hex, create_encrypted_bytes16_from_string};
+use primitives::utils::{
+    bytes16_to_hex, create_encrypted_bytes16_from_string, epoch_to_rfc3339,
+    timestamp_to_string_with_padding,
+};
 use serde_json::json;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -120,37 +123,66 @@ async fn orders_query_bad_payload_errors() {
 
 // --- TradesQuery ----------------------------------------------------
 
-fn make_trade(trade_id: &str, timestamp: u64) -> DbTradeSchema {
-    DbTradeSchema::try_from(EwdsTradeDto {
-        trade_id: trade_id.to_string(),
-        market_id: "m1".to_string(),
-        bid_id: format!("{}-bid", trade_id),
-        buyer_id: "Load1".to_string(),
-        residual_bid_id: None,
-        offer_id: format!("{}-offer", trade_id),
-        seller_id: "PV1".to_string(),
+const TRADES_BASE_TIME: u64 = 1_767_225_600;
+
+fn trades_time(offset: u64) -> String {
+    epoch_to_rfc3339(TRADES_BASE_TIME + offset)
+}
+
+fn make_trade(trade_uuid: &str, market_id: &str) -> DbTradeSchema {
+    DbTradeSchema {
+        trade_uuid: trade_uuid.to_string(),
+        status: TradeStatus::Settled,
+        seller: "seller-1".to_string(),
+        buyer: "buyer-1".to_string(),
+        market_id: market_id.to_string(),
+        creation_time: TRADES_BASE_TIME,
+        offer_hash: format!("{trade_uuid}-offer"),
+        bid_hash: format!("{trade_uuid}-bid"),
         residual_offer_id: None,
-        trade_status: "settled".to_string(),
-        trade_quantity: 1.5,
-        trade_price: 0.12,
-        timestamp,
-    })
-    .unwrap()
+        residual_bid_id: None,
+        parameters: TradeParameters {
+            selected_energy_kWh: 1.0,
+            energy_rate: 10.0,
+        },
+    }
+}
+
+fn make_delivery_market(market_id: &str, delivery_offset: u64) -> MarketSchema {
+    let delivery_start_time = TRADES_BASE_TIME + delivery_offset;
+    MarketSchema {
+        market_id: market_id.to_string(),
+        community_id: "community-1".to_string(),
+        opening_time: timestamp_to_string_with_padding(delivery_start_time - 900),
+        closing_time: timestamp_to_string_with_padding(delivery_start_time),
+        delivery_start_time: timestamp_to_string_with_padding(delivery_start_time),
+        delivery_end_time: timestamp_to_string_with_padding(delivery_start_time + 900),
+        market_type: MarketType::Spot,
+        matching_algorithm: MatchingAlgorithm::PayAsBid,
+        created_at: timestamp_to_string_with_padding(delivery_start_time - 900),
+    }
 }
 
 /// Run a trades.query with the given payload against a DB holding one trade
-/// at the start of the day and one at the next day, returning the response.
+/// in a market delivering at the start of the day and one in a market
+/// delivering on the next day, returning the response.
 async fn run_trades_query(request_id: &str, payload: serde_json::Value) -> serde_json::Value {
     let app = init_app().await;
     let server = mock_gateway().await;
     let config = test_config(server.uri());
     let client = reqwest::Client::new();
 
+    for market in [
+        make_delivery_market("market-day-start", 0),
+        make_delivery_market("market-next-day", MAX_TRADES_QUERY_RANGE_SECS),
+    ] {
+        app.db_wrapper.markets().upsert(market).await.unwrap();
+    }
     app.db_wrapper
         .trades()
         .insert_trades(vec![
-            make_trade("trade-day-start", 0),
-            make_trade("trade-next-day", MAX_TRADES_QUERY_RANGE_SECS),
+            make_trade("trade-day-start", "market-day-start"),
+            make_trade("trade-next-day", "market-next-day"),
         ])
         .await
         .unwrap();
@@ -181,7 +213,7 @@ async fn trades_query_success() {
     // Exactly one day is the largest allowed range; endTime is exclusive.
     let response = run_trades_query(
         "req-trades-1",
-        json!({ "startTime": 0, "endTime": MAX_TRADES_QUERY_RANGE_SECS }),
+        json!({ "startTime": trades_time(0), "endTime": trades_time(MAX_TRADES_QUERY_RANGE_SECS) }),
     )
     .await;
 
@@ -199,7 +231,7 @@ async fn trades_query_success() {
 async fn trades_query_range_over_one_day_publishes_error() {
     let response = run_trades_query(
         "req-trades-too-large",
-        json!({ "startTime": 0, "endTime": MAX_TRADES_QUERY_RANGE_SECS + 1 }),
+        json!({ "startTime": trades_time(0), "endTime": trades_time(MAX_TRADES_QUERY_RANGE_SECS + 1) }),
     )
     .await;
 
@@ -208,7 +240,11 @@ async fn trades_query_range_over_one_day_publishes_error() {
 
 #[tokio::test]
 async fn trades_query_missing_start_time_publishes_error() {
-    let response = run_trades_query("req-trades-no-start", json!({ "endTime": 3_600 })).await;
+    let response = run_trades_query(
+        "req-trades-no-start",
+        json!({ "endTime": trades_time(3_600) }),
+    )
+    .await;
 
     assert_trades_query_rejected(&response, "req-trades-no-start", INVALID_TIME_RANGE);
 }
@@ -217,7 +253,7 @@ async fn trades_query_missing_start_time_publishes_error() {
 async fn trades_query_inverted_range_publishes_error() {
     let response = run_trades_query(
         "req-trades-inverted",
-        json!({ "startTime": 3_600, "endTime": 0 }),
+        json!({ "startTime": trades_time(3_600), "endTime": trades_time(0) }),
     )
     .await;
 
@@ -259,25 +295,6 @@ fn validate_trades_query_range_boundaries() {
     }
 }
 
-fn make_trade(trade_uuid: &str, market_id: &str) -> DbTradeSchema {
-    DbTradeSchema {
-        trade_uuid: trade_uuid.to_string(),
-        status: TradeStatus::Settled,
-        seller: "seller-1".to_string(),
-        buyer: "buyer-1".to_string(),
-        market_id: market_id.to_string(),
-        creation_time: 1_767_225_600,
-        offer_hash: format!("{trade_uuid}-offer"),
-        bid_hash: format!("{trade_uuid}-bid"),
-        residual_offer_id: None,
-        residual_bid_id: None,
-        parameters: TradeParameters {
-            selected_energy_kWh: 1.0,
-            energy_rate: 10.0,
-        },
-    }
-}
-
 #[tokio::test]
 async fn trades_query_filters_by_market_id() {
     let app = init_app().await;
@@ -285,6 +302,13 @@ async fn trades_query_filters_by_market_id() {
     let config = test_config(server.uri());
     let client = reqwest::Client::new();
 
+    for market_id in ["MARKET-EWDS-A", "MARKET-EWDS-B"] {
+        app.db_wrapper
+            .markets()
+            .upsert(make_delivery_market(market_id, 0))
+            .await
+            .unwrap();
+    }
     app.db_wrapper
         .trades()
         .insert_trades(vec![
@@ -297,7 +321,11 @@ async fn trades_query_filters_by_market_id() {
     let env = envelope(
         EwdsOperation::TradesQuery,
         "req-trades-market",
-        json!({ "marketId": "MARKET-EWDS-A" }),
+        json!({
+            "marketId": "MARKET-EWDS-A",
+            "startTime": trades_time(0),
+            "endTime": trades_time(3_600),
+        }),
     );
 
     handle_request(&app.db_wrapper, &client, &config, env)

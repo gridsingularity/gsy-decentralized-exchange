@@ -4,8 +4,8 @@ use futures::future::join_all;
 use primitives::db_api_schema::profiles::{MeasurementPointType, MeasurementSchema};
 use primitives::ewds::dto::{
     EwdsClearingResultDto, EwdsCommunityDto, EwdsErrorPayload, EwdsInboundMessage, EwdsMarketDto,
-    EwdsOrderDto, EwdsRequestEnvelope, EwdsResponseEnvelope, EwdsSendMessageDto, EwdsTradeDto,
-    EwdsMeasurementDto
+    EwdsMeasurementDto, EwdsOrderDto, EwdsRequestEnvelope, EwdsResponseEnvelope,
+    EwdsSendMessageDto, EwdsTradeDto,
 };
 use primitives::ewds::{
     client_id_for_suffix, env_var, ewds_rate_limit_backoff_ms, format_response_body,
@@ -457,14 +457,14 @@ pub async fn handle_request(
                 opt_rfc3339_to_epoch(payload.start_time.as_deref())?,
                 opt_rfc3339_to_epoch(payload.end_time.as_deref())?,
             )
-                .await?
-                .into_iter()
-                .filter(|measurement| match payload.facility_id.as_ref() {
-                    Some(facility_id) => measurement.facility_id == *facility_id,
-                    None => true,
-                })
-                .map(EwdsMeasurementDto::from)
-                .collect::<Vec<_>>();
+            .await?
+            .into_iter()
+            .filter(|measurement| match payload.facility_id.as_ref() {
+                Some(facility_id) => measurement.facility_id == *facility_id,
+                None => true,
+            })
+            .map(EwdsMeasurementDto::from)
+            .collect::<Vec<_>>();
             info!(
                 "Publishing EWDS measurements.query response (request_id={}, measurements={})",
                 request_id,
