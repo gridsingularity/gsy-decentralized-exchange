@@ -76,11 +76,11 @@ impl EwdsHandlerConfig {
         let event_subscribe_fqcn = env_var("EWDS_EVENT_SUBSCRIBE_FQCN")
             .unwrap_or_else(|| "gsy.intelligent.events.sub".to_string());
         let trade_created_topic =
-            env_var("EWDS_TRADE_CREATED_EVENT_TOPIC").unwrap_or_else(|| "tradeCreated".to_string());
+            env_var("EWDS_TRADE_CREATED_EVENT_TOPIC").unwrap_or_else(|| "trade".to_string());
         let clearing_result_created_topic = env_var("EWDS_CLEARING_RESULT_CREATED_EVENT_TOPIC")
-            .unwrap_or_else(|| "clearingResultCreated".to_string());
+            .unwrap_or_else(|| "clearingResult".to_string());
         let market_status_updated_topic = env_var("EWDS_MARKET_STATUS_UPDATED_EVENT_TOPIC")
-            .unwrap_or_else(|| "marketStatusUpdated".to_string());
+            .unwrap_or_else(|| "market".to_string());
 
         Self {
             enabled,

@@ -108,16 +108,16 @@ Each service:
 | `gsy.intelligent.requests.sub` | Subscribe | `ordersQuery`, `tradesQuery`, `measurementsQuery`, `clearingResultsQuery`, `marketsQuery`, `idsQuery`, `communityUpsert`, `communitiesQuery` | `EWDS_REQUEST_SUBSCRIBE_FQCN` |
 | `gsy.intelligent.responses.pub` | Publish | `ordersQueryResponse`, `tradesQueryResponse`, `measurementsQueryResponse`, `clearingResultsQueryResponse`, `marketsQueryResponse`, `idsQueryResponse`, `communityUpsertResponse`, `communitiesQueryResponse` | `EWDS_RESPONSE_PUBLISH_FQCN` |
 | `gsy.intelligent.responses.sub` | Subscribe | `ordersQueryResponse`, `tradesQueryResponse`, `measurementsQueryResponse`, `clearingResultsQueryResponse`, `marketsQueryResponse`, `idsQueryResponse`, `communityUpsertResponse`, `communitiesQueryResponse` | `EWDS_RESPONSE_SUBSCRIBE_FQCN` |
-| `gsy.intelligent.events.pub` | Publish | `tradeCreated`, `clearingResultCreated`, `marketStatusUpdated` | `EWDS_EVENT_PUBLISH_FQCN` |
-| `gsy.intelligent.events.sub` | Subscribe | `tradeCreated`, `clearingResultCreated`, `marketStatusUpdated` | `EWDS_EVENT_SUBSCRIBE_FQCN` |
+| `gsy.intelligent.events.pub` | Publish | `trade`, `clearingResult`, `market` | `EWDS_EVENT_PUBLISH_FQCN` |
+| `gsy.intelligent.events.sub` | Subscribe | `trade`, `clearingResult`, `market` | `EWDS_EVENT_SUBSCRIBE_FQCN` |
 
 The events channels carry fire-and-forget domain events rather than
 request/reply traffic. When `EWDS_ENABLE_HANDLER` is on, the off-chain storage
-publishes a `trade.created` event on `tradeCreated` every time it persists a
+publishes a `trade.created` event on `trade` every time it persists a
 trade from an EVM `TradeSettled` event, a `clearing_result.created` event on
-`clearingResultCreated` every time it persists a clearing result from an EVM
+`clearingResult` every time it persists a clearing result from an EVM
 `MarketClearing` event, and a `market_status.updated` event on
-`marketStatusUpdated` for every EVM `MarketStatusUpdated` event. The payload is an event envelope (`eventId`,
+`market` for every EVM `MarketStatusUpdated` event. The payload is an event envelope (`eventId`,
 `eventType`, `occurredAt`, `data`) whose `data` is a list of trades, clearing
 results or market statuses in their `EwdsTradeDto`, `EwdsClearingResultDto`
 or `EwdsMarketStatusDto` (`marketId`, `isOpen`) form, so one event can carry

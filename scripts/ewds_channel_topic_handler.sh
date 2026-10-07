@@ -46,9 +46,9 @@ communitiesQueryTest
 "
 
 EVENT_TOPICS="
-tradeCreated
-clearingResultCreated
-marketStatusUpdated
+trade
+clearingResult
+market
 "
 
 CHANNELS="

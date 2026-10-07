@@ -140,7 +140,7 @@ async fn publish_trades_created_sends_event_on_events_channel() {
     assert_eq!(requests.len(), 1, "expected exactly one gateway POST");
     let send_dto: EwdsSendMessageDto = serde_json::from_slice(&requests[0].body).unwrap();
     assert_eq!(send_dto.fqcn, "gsy.events.pub");
-    assert_eq!(send_dto.topic_name, "tradeCreated");
+    assert_eq!(send_dto.topic_name, "trade");
 
     let event: serde_json::Value = serde_json::from_str(&send_dto.payload).unwrap();
     assert_event_id(&send_dto, &event);
@@ -226,7 +226,7 @@ async fn publish_clearing_results_created_sends_event_on_events_channel() {
     assert_eq!(requests.len(), 1, "expected exactly one gateway POST");
     let send_dto: EwdsSendMessageDto = serde_json::from_slice(&requests[0].body).unwrap();
     assert_eq!(send_dto.fqcn, "gsy.events.pub");
-    assert_eq!(send_dto.topic_name, "clearingResultCreated");
+    assert_eq!(send_dto.topic_name, "clearingResult");
 
     let event: serde_json::Value = serde_json::from_str(&send_dto.payload).unwrap();
     assert_event_id(&send_dto, &event);
@@ -260,7 +260,7 @@ async fn publish_market_statuses_updated_sends_event_on_events_channel() {
     assert_eq!(requests.len(), 1, "expected exactly one gateway POST");
     let send_dto: EwdsSendMessageDto = serde_json::from_slice(&requests[0].body).unwrap();
     assert_eq!(send_dto.fqcn, "gsy.events.pub");
-    assert_eq!(send_dto.topic_name, "marketStatusUpdated");
+    assert_eq!(send_dto.topic_name, "market");
 
     let event: serde_json::Value = serde_json::from_str(&send_dto.payload).unwrap();
     assert_event_id(&send_dto, &event);
@@ -317,17 +317,17 @@ fn handler_config_defaults_to_the_events_channels() {
         (
             "EWDS_TRADE_CREATED_EVENT_TOPIC",
             config.trade_created_topic.as_str(),
-            "tradeCreated",
+            "trade",
         ),
         (
             "EWDS_CLEARING_RESULT_CREATED_EVENT_TOPIC",
             config.clearing_result_created_topic.as_str(),
-            "clearingResultCreated",
+            "clearingResult",
         ),
         (
             "EWDS_MARKET_STATUS_UPDATED_EVENT_TOPIC",
             config.market_status_updated_topic.as_str(),
-            "marketStatusUpdated",
+            "market",
         ),
     ] {
         // Only the defaults are under test; an explicitly configured value is left alone.
@@ -352,7 +352,7 @@ async fn trade_settled_publishes_trade_created_event() {
 
     let messages = wait_for_gateway_messages(&server, 1).await;
     let trade_id = bytes16_to_hex([0x01; 16]);
-    assert_eq!(messages[0].topic_name, "tradeCreated");
+    assert_eq!(messages[0].topic_name, "trade");
     let event = event_payload(&messages[0]);
     assert_eq!(
         event["eventType"],
@@ -413,7 +413,7 @@ async fn market_clearing_publishes_clearing_result_created_event() {
     let messages = wait_for_gateway_messages(&server, 1).await;
     let market_id = bytes16_to_hex([0x07; 16]);
     let tx_hash = format!("{:?}", transaction_hash);
-    assert_eq!(messages[0].topic_name, "clearingResultCreated");
+    assert_eq!(messages[0].topic_name, "clearingResult");
     let event = event_payload(&messages[0]);
     assert_eq!(
         event["eventType"],
@@ -461,7 +461,7 @@ async fn market_status_publishes_market_status_updated_event() {
 
     let messages = wait_for_gateway_messages(&server, 1).await;
     let market_id = bytes16_to_hex([0x08; 16]);
-    assert_eq!(messages[0].topic_name, "marketStatusUpdated");
+    assert_eq!(messages[0].topic_name, "market");
     let event = event_payload(&messages[0]);
     assert_eq!(
         event["eventType"],
@@ -483,12 +483,9 @@ async fn market_status_publishes_market_status_updated_event() {
 fn handler_config_maps_event_types_to_their_topics() {
     let config = test_config("http://gateway".to_string());
     for (event_type, topic) in [
-        (EwdsEventType::TradeCreated, "tradeCreated"),
-        (
-            EwdsEventType::ClearingResultCreated,
-            "clearingResultCreated",
-        ),
-        (EwdsEventType::MarketStatusUpdated, "marketStatusUpdated"),
+        (EwdsEventType::TradeCreated, "trade"),
+        (EwdsEventType::ClearingResultCreated, "clearingResult"),
+        (EwdsEventType::MarketStatusUpdated, "market"),
     ] {
         assert_eq!(config.event_topic(event_type), topic);
     }
