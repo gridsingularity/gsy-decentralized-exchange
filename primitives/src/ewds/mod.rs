@@ -20,6 +20,9 @@ const DEFAULT_EVENT_PUBLISH_FQCN: &str = "gsy.intelligent.events.pub";
 const DEFAULT_EVENT_SUBSCRIBE_FQCN: &str = "gsy.intelligent.events.sub";
 const DEFAULT_EVENT_BATCH_SIZE: u32 = 100;
 const DEFAULT_EVENT_POLL_INTERVAL_MS: u64 = 60_000;
+const DEFAULT_EVENT_HANDLE_ATTEMPTS: u32 = 8;
+const DEFAULT_EVENT_RETRY_DELAY_MS: u64 = 2_000;
+const MAX_EVENT_RETRY_DELAY_MS: u64 = 300_000;
 const DEFAULT_TOPIC_OWNER: &str = "integration.apps.intelligent.auth.ewc";
 const DEFAULT_TOPIC_VERSION: &str = "1.0.0";
 const DEFAULT_POLL_INTERVAL_MS: u64 = 400;
@@ -386,6 +389,11 @@ pub struct EwdsClientConfig {
     pub event_batch_size: u32,
     /// The pause between two polls of an event topic.
     pub event_poll_interval_ms: u64,
+    /// How often an event whose handler fails is tried in total before it is dropped.
+    pub event_handle_attempts: u32,
+    /// The delay before the first retry of a failed event. It doubles with every further
+    /// attempt, up to 5 minutes.
+    pub event_retry_delay_ms: u64,
     pub event_topics: EwdsEventTopicConfig,
 }
 
@@ -427,6 +435,13 @@ impl EwdsClientConfig {
                 "EWDS_EVENT_POLL_INTERVAL_MS",
                 DEFAULT_EVENT_POLL_INTERVAL_MS,
             ),
+            event_handle_attempts: env_var("EWDS_EVENT_HANDLE_ATTEMPTS")
+                .and_then(|value| value.parse::<u32>().ok())
+                .unwrap_or(DEFAULT_EVENT_HANDLE_ATTEMPTS),
+            event_retry_delay_ms: env_u64_or(
+                "EWDS_EVENT_RETRY_DELAY_MS",
+                DEFAULT_EVENT_RETRY_DELAY_MS,
+            ),
             event_topics: EwdsEventTopicConfig::from_env(),
         }
     }
@@ -435,6 +450,13 @@ impl EwdsClientConfig {
 pub struct EwdsClient {
     client: reqwest::Client,
     config: EwdsClientConfig,
+}
+
+/// An inbound event waiting to be handled, or to be retried after its handler failed.
+struct QueuedEvent {
+    envelope: EwdsEventEnvelope<Value>,
+    attempts: u32,
+    retry_at: Instant,
 }
 
 struct PendingQuery {
@@ -508,45 +530,67 @@ impl EwdsClient {
     }
 
     /// Polls the topic of `event_type` on the events channel and passes every new event to
-    /// `handle`. Malformed messages, events of another type and events seen before are skipped.
-    /// A failed event is logged and not retried. Runs until the task is dropped.
+    /// `handle`, in the order the events arrived. Malformed messages, events of another type and
+    /// events seen before are skipped.
+    ///
+    /// The gateway acknowledges a message when it is polled, so a failed event is never
+    /// delivered again and the worker retries it itself: up to `event_handle_attempts` times in
+    /// total, with a delay that starts at `event_retry_delay_ms` and doubles with every attempt.
+    /// Meanwhile the later events of the topic wait, so an older event never overwrites the
+    /// data of a newer one. An event whose handler error is marked with [`invalid_event`] is
+    /// dropped at once, because handling it again would fail the same way. Runs until the task
+    /// is dropped.
     pub async fn run_event_worker<F, Fut>(&self, event_type: EwdsEventType, handle: F)
     where
         F: Fn(EwdsEventEnvelope<Value>) -> Fut,
         Fut: Future<Output = Result<()>>,
     {
+        let mut queue: VecDeque<QueuedEvent> = VecDeque::new();
         let mut seen_event_ids: HashSet<String> = HashSet::new();
         let mut seen_queue: VecDeque<String> = VecDeque::new();
         let mut rate_limit_attempt = 0u32;
+        let mut next_poll_at = Instant::now();
 
         loop {
-            let result = self
-                .process_event_batch(event_type, &handle, &mut seen_event_ids, &mut seen_queue)
-                .await;
-            if let Err(error) = &result {
-                warn!("EWDS {} event worker failed to poll: {}", event_type, error);
+            if Instant::now() >= next_poll_at {
+                let result = self
+                    .enqueue_new_events(event_type, &mut queue, &seen_event_ids)
+                    .await;
+                if let Err(error) = &result {
+                    warn!("EWDS {} event worker failed to poll: {}", event_type, error);
+                }
+                let delay_ms = next_poll_delay_ms(
+                    &result,
+                    self.config.event_poll_interval_ms,
+                    &mut rate_limit_attempt,
+                );
+                next_poll_at = Instant::now() + Duration::from_millis(delay_ms);
             }
 
-            let delay_ms = next_poll_delay_ms(
-                &result,
-                self.config.event_poll_interval_ms,
-                &mut rate_limit_attempt,
-            );
-            sleep(Duration::from_millis(delay_ms)).await;
+            self.handle_queued_events(
+                event_type,
+                &handle,
+                &mut queue,
+                &mut seen_event_ids,
+                &mut seen_queue,
+            )
+            .await;
+
+            // Wake up early when a retry is due before the next poll.
+            let wake_at = queue
+                .front()
+                .map_or(next_poll_at, |event| event.retry_at.min(next_poll_at));
+            sleep(wake_at.saturating_duration_since(Instant::now())).await;
         }
     }
 
-    async fn process_event_batch<F, Fut>(
+    /// Polls the topic of `event_type` and queues every new event of that type.
+    async fn enqueue_new_events(
         &self,
         event_type: EwdsEventType,
-        handle: &F,
-        seen_event_ids: &mut HashSet<String>,
-        seen_queue: &mut VecDeque<String>,
-    ) -> Result<()>
-    where
-        F: Fn(EwdsEventEnvelope<Value>) -> Fut,
-        Fut: Future<Output = Result<()>>,
-    {
+        queue: &mut VecDeque<QueuedEvent>,
+        seen_event_ids: &HashSet<String>,
+    ) -> Result<()> {
         let topic_name = self.config.event_topics.for_event_type(event_type);
         let messages = self.poll_events(topic_name).await?;
 
@@ -569,22 +613,76 @@ impl EwdsClient {
                 );
                 continue;
             }
-            if seen_event_ids.contains(&envelope.event_id) {
+            if seen_event_ids.contains(&envelope.event_id)
+                || queue
+                    .iter()
+                    .any(|queued| queued.envelope.event_id == envelope.event_id)
+            {
                 continue;
             }
-
-            let event_id = envelope.event_id.clone();
-            match handle(envelope).await {
-                Ok(()) => info!("Handled EWDS {} event {}", event_type, event_id),
-                Err(error) => error!(
-                    "Dropping EWDS {} event {}: {:#}",
-                    event_type, event_id, error
-                ),
-            }
-            remember_id(&event_id, seen_event_ids, seen_queue);
+            queue.push_back(QueuedEvent {
+                envelope,
+                attempts: 0,
+                retry_at: Instant::now(),
+            });
         }
 
         Ok(())
+    }
+
+    /// Handles the queued events in order until the queue is empty or the first event has to
+    /// wait for its retry.
+    async fn handle_queued_events<F, Fut>(
+        &self,
+        event_type: EwdsEventType,
+        handle: &F,
+        queue: &mut VecDeque<QueuedEvent>,
+        seen_event_ids: &mut HashSet<String>,
+        seen_queue: &mut VecDeque<String>,
+    ) where
+        F: Fn(EwdsEventEnvelope<Value>) -> Fut,
+        Fut: Future<Output = Result<()>>,
+    {
+        let max_attempts = self.config.event_handle_attempts.max(1);
+        while queue
+            .front()
+            .is_some_and(|event| event.retry_at <= Instant::now())
+        {
+            let Some(mut event) = queue.pop_front() else {
+                break;
+            };
+            event.attempts += 1;
+            let event_id = event.envelope.event_id.clone();
+            match handle(event.envelope.clone()).await {
+                Ok(()) => info!("Handled EWDS {} event {}", event_type, event_id),
+                Err(error) if is_invalid_event(&error) => error!(
+                    "Dropping EWDS {} event {}: {:#}",
+                    event_type, event_id, error
+                ),
+                Err(error) if event.attempts >= max_attempts => error!(
+                    "Dropping EWDS {} event {} after {} failed attempts: {:#}",
+                    event_type, event_id, event.attempts, error
+                ),
+                Err(error) => {
+                    let delay_ms =
+                        event_retry_delay_ms(self.config.event_retry_delay_ms, event.attempts);
+                    warn!(
+                        "EWDS {} event {} failed (attempt {} of {}), retrying in {} ms; {} later events wait: {:#}",
+                        event_type,
+                        event_id,
+                        event.attempts,
+                        max_attempts,
+                        delay_ms,
+                        queue.len(),
+                        error
+                    );
+                    event.retry_at = Instant::now() + Duration::from_millis(delay_ms);
+                    queue.push_front(event);
+                    return;
+                }
+            }
+            remember_id(&event_id, seen_event_ids, seen_queue);
+        }
     }
 
     async fn poll_events(&self, topic_name: &str) -> Result<Vec<EwdsMessageDto>> {
@@ -947,8 +1045,49 @@ pub fn remember_id(id: &str, seen_ids: &mut HashSet<String>, seen_queue: &mut Ve
     }
 }
 
-/// Parses the list of items an event carries. One invalid item rejects the whole event.
+/// Marks the error of an event handler as caused by the event itself, e.g. invalid data.
+/// [`EwdsClient::run_event_worker`] drops such an event instead of retrying it.
+#[derive(Debug)]
+pub struct InvalidEvent;
+
+impl fmt::Display for InvalidEvent {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("invalid event")
+    }
+}
+
+impl std::error::Error for InvalidEvent {}
+
+/// Marks `error` as caused by the event itself, so the event is not retried.
+pub fn invalid_event(error: anyhow::Error) -> anyhow::Error {
+    error.context(InvalidEvent)
+}
+
+/// Whether `error`, or an error it wraps, was marked with [`invalid_event`].
+pub fn is_invalid_event(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<InvalidEvent>().is_some()
+}
+
+/// The delay before retrying an event that failed `attempts` times.
+pub fn event_retry_delay_ms(base_delay_ms: u64, attempts: u32) -> u64 {
+    let factor = 1u64
+        .checked_shl(attempts.saturating_sub(1))
+        .unwrap_or(u64::MAX);
+    base_delay_ms
+        .saturating_mul(factor)
+        .min(MAX_EVENT_RETRY_DELAY_MS)
+}
+
+/// Parses the list of items an event carries. One invalid item rejects the whole event, and
+/// any problem with the data is marked with [`invalid_event`].
 pub fn parse_batch<Item: DeserializeOwned, T>(
+    data: Value,
+    convert: impl Fn(Item) -> Result<T>,
+) -> Result<Vec<T>> {
+    parse_items(data, convert).map_err(invalid_event)
+}
+
+fn parse_items<Item: DeserializeOwned, T>(
     data: Value,
     convert: impl Fn(Item) -> Result<T>,
 ) -> Result<Vec<T>> {

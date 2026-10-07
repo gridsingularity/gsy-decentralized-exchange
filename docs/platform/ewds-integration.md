@@ -194,9 +194,19 @@ Handling rules:
   invalid data are logged and skipped, and the next message is still handled.
   One invalid item rejects the whole event, so nothing of it is stored; a
   corrected event needs a new `eventId`.
-- A failed database write is tried up to three times in total. A duplicate
-  key, such as a facility or community name that is already taken, is not
-  retried.
+- A failed database write is tried up to three times in a row. A duplicate
+  key, such as a facility or community name that is already taken, counts as
+  invalid data and is not retried.
+- The gateway acknowledges a message when it is polled, so it never delivers a
+  failed event again. The subscriber therefore keeps a failed event and
+  retries it, up to `EWDS_EVENT_HANDLE_ATTEMPTS` (default 8) attempts in
+  total. The first retry waits `EWDS_EVENT_RETRY_DELAY_MS` (default 2 000 ms),
+  and the delay doubles with every attempt up to 5 minutes, so the defaults
+  cover an outage of about 4 minutes. Then the event is logged and dropped.
+- Events of one topic are handled in the order they arrive. While a failed
+  event waits for its retry, the later events of its topic wait too, so an
+  older event never overwrites the data of a newer one. Failed events are only
+  kept in memory and are lost if the service restarts.
 - The broker keeps messages for 24 hours, so events sent while the off-chain
   storage is down for longer are lost.
 
@@ -267,7 +277,13 @@ Handling rules:
     not sent, and the remaining orders are still sent.
   - A revert that only happens in the mined transaction, e.g. because the
     market closed in between, is not noticed.
-  - Transport errors are tried up to three times in total.
+  - Transport errors are tried up to three times in a row. If an order still
+    can't be sent, the event fails after the other orders were sent, and the
+    community client retries it like the off-chain storage retries its events
+    (see [Inbound Events](#inbound-events)). Orders already on-chain are
+    skipped then.
+- An ID the ID service doesn't know may be registered later, so an event that
+  fails on it is retried as well; invalid order data is not.
 - Resending an event, even under a new `eventId`, doesn't place an order
   twice. A resend while the first transaction is still pending sends the
   order again, but that duplicate reverts with `OrderAlreadyExists`.
@@ -357,7 +373,9 @@ Validator requirements:
 - `EwdsClient::run_event_worker` polls one event type's topic on
   `EWDS_EVENT_SUBSCRIBE_FQCN` (up to `EWDS_EVENT_BATCH_SIZE` messages) every
   `EWDS_EVENT_POLL_INTERVAL_MS` (default 60 000 ms, 1 000 ms in the e2e
-  stack) and passes every new event to a handler. The off-chain storage and the
+  stack) and passes every new event to a handler, in arrival order. A failed
+  event is retried (`EWDS_EVENT_HANDLE_ATTEMPTS`, `EWDS_EVENT_RETRY_DELAY_MS`)
+  unless the handler marks it as invalid. The off-chain storage and the
   community client share it.
 - EWDS wire DTOs and database-schema conversions are isolated in `ewds::dto`.
 

@@ -16,7 +16,7 @@ use primitives::db_api_schema::trades::{
     ClearingResultSchema, ClearingStatus, DbTradeSchema, TradeParameters, TradeStatus,
 };
 use primitives::ewds::dto::{EwdsEventEnvelope, EwdsMarketStatusDto, EwdsSendMessageDto};
-use primitives::ewds::EwdsEventType;
+use primitives::ewds::{is_invalid_event, EwdsEventType};
 use primitives::utils::{
     bytes16_to_hex, epoch_to_rfc3339, rfc3339_to_epoch, timestamp_to_string_with_padding,
 };
@@ -730,6 +730,8 @@ async fn handle_event_stores_nothing_from_a_batch_with_an_invalid_measurement() 
     .unwrap_err();
 
     assert!(format!("{error:#}").contains("index 1"), "{error:#}");
+    // Invalid data is not retried by the event worker.
+    assert!(is_invalid_event(&error));
     assert!(stored_values(&app).await.is_empty());
     assert!(app
         .db_wrapper
@@ -761,6 +763,7 @@ async fn handle_event_stores_nothing_from_a_batch_with_an_invalid_facility() {
     .unwrap_err();
 
     assert!(format!("{error:#}").contains("index 1"), "{error:#}");
+    assert!(is_invalid_event(&error));
     assert!(app
         .db_wrapper
         .facilities()

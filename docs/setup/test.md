@@ -361,6 +361,7 @@ Important EWDS variables for test runs:
 - `EWDS_EVENT_BATCH_SIZE`
 - `EWDS_EVENT_POLL_INTERVAL_MS` (fixed to 1000 in `docker-compose.e2e-test.yml`;
   the default outside the e2e stack is 60000)
+- `EWDS_EVENT_HANDLE_ATTEMPTS` / `EWDS_EVENT_RETRY_DELAY_MS`
 - `EWDS_GATEWAY_PLATFORM` (set `linux/amd64` on Apple Silicon when using current EWDS images)
 
 Current e2e suite validates:

@@ -70,7 +70,7 @@ pub struct EwdsResponseEnvelope<T> {
     pub error: Option<EwdsErrorPayload>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EwdsEventEnvelope<T> {
     pub event_id: String,

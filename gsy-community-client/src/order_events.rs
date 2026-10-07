@@ -7,7 +7,7 @@ use primitives::db_api_schema::orders::{
     order_metadata_to_contract, DbOrderSchema, OrderEnum, OrderStatus,
 };
 use primitives::ewds::dto::{EwdsEventEnvelope, EwdsOrderDto};
-use primitives::ewds::{env_var, parse_batch, EwdsClient, EwdsEventType};
+use primitives::ewds::{env_var, invalid_event, parse_batch, EwdsClient, EwdsEventType};
 use primitives::offchain_storage::{resolve_order_partner_ids, OffchainStorageClient};
 use primitives::utils::{parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR};
 use serde_json::Value;
@@ -85,8 +85,10 @@ impl OrderEventHandler {
     ///
     /// The event is rejected before anything is sent if one of its orders is invalid or its IDs
     /// cannot be resolved. After that every order is sent on its own: one the contract rejects
-    /// is logged and the others are still sent, because sent orders cannot be rolled back. The
-    /// handler does not wait for the transactions to be mined.
+    /// is logged and the others are still sent, because sent orders cannot be rolled back. If an
+    /// order could not be sent because the node was unreachable, the event fails after the other
+    /// orders were sent, so the event worker retries it; orders already placed are skipped then.
+    /// The handler does not wait for the transactions to be mined.
     pub async fn handle(&self, envelope: EwdsEventEnvelope<Value>) -> Result<()> {
         let event_id = envelope.event_id;
         let orders = parse_batch(envelope.data, |order: EwdsOrderDto| {
@@ -99,13 +101,14 @@ impl OrderEventHandler {
             let order = self
                 .resolve_ids(order)
                 .await
-                .and_then(|order| order_params(&order))
+                .and_then(|order| order_params(&order).map_err(invalid_event))
                 .with_context(|| format!("invalid order {} at index {}", order_id, index))?;
             params.push((order_id, order));
         }
 
         let total = params.len();
         let mut sent = 0;
+        let mut unsent = 0;
         for (order_id, order) in params {
             match self.place(order).await {
                 Placement::Sent(tx_hash) => {
@@ -122,16 +125,29 @@ impl OrderEventHandler {
                         order_id, event_id
                     );
                 }
-                Placement::Failed(error) => warn!(
-                    "Order {} of EWDS event {} was not sent: {}",
-                    order_id, event_id, error
-                ),
+                Placement::Failed(error) => {
+                    if matches!(error, PlaceOrderError::Transport(_)) {
+                        unsent += 1;
+                    }
+                    warn!(
+                        "Order {} of EWDS event {} was not sent: {}",
+                        order_id, event_id, error
+                    );
+                }
             }
         }
         info!(
             "EWDS event {}: {} of {} orders sent or already placed",
             event_id, sent, total
         );
+        if unsent > 0 {
+            bail!(
+                "{} of {} orders of EWDS event {} could not be sent to the node",
+                unsent,
+                total,
+                event_id
+            );
+        }
         Ok(())
     }
 

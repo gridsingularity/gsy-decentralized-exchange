@@ -1,7 +1,7 @@
 use crate::db::measurements_service::insert_measurements;
 use crate::db::DatabaseWrapper;
 use crate::ewds_handler::{send_message_with_fqcn, EwdsHandlerConfig};
-use anyhow::{bail, Result};
+use anyhow::{anyhow, Result};
 use futures::future::join_all;
 use primitives::db_api_schema::{
     grid_topology::{EnergyCommunitySchema, FacilitySchema, SiteSchema},
@@ -12,7 +12,7 @@ use primitives::ewds::dto::{
     EwdsClearingResultDto, EwdsCommunityDto, EwdsEventEnvelope, EwdsMarketStatusDto,
     EwdsMeasurementDto, EwdsTradeDto,
 };
-use primitives::ewds::{parse_batch, EwdsClient, EwdsClientConfig, EwdsEventType};
+use primitives::ewds::{invalid_event, parse_batch, EwdsClient, EwdsClientConfig, EwdsEventType};
 use primitives::utils::epoch_to_rfc3339;
 use reqwest::Client;
 use serde::Serialize;
@@ -227,11 +227,18 @@ pub async fn handle_event(db: &DatabaseWrapper, envelope: EwdsEventEnvelope<Valu
                 .await?;
             }
         }
-        other => bail!("{} events are not handled by the off-chain storage", other),
+        other => {
+            return Err(invalid_event(anyhow!(
+                "{} events are not handled by the off-chain storage",
+                other
+            )))
+        }
     }
     Ok(())
 }
 
+/// Runs `write` up to `DB_WRITE_ATTEMPTS` times. A duplicate key is not retried and marks the
+/// event as invalid, because writing it again would fail the same way.
 async fn retry_db_write<T, F, Fut>(write: F) -> Result<T>
 where
     F: Fn() -> Fut,
@@ -240,9 +247,8 @@ where
     let mut attempt = 1;
     loop {
         match write().await {
-            Err(error)
-                if attempt < DB_WRITE_ATTEMPTS && !format!("{error:#}").contains("E11000") =>
-            {
+            Err(error) if is_duplicate_key(&error) => return Err(invalid_event(error)),
+            Err(error) if attempt < DB_WRITE_ATTEMPTS => {
                 warn!(
                     "EWDS event DB write failed (attempt {}): {:#}",
                     attempt, error
@@ -256,4 +262,8 @@ where
             result => return result,
         }
     }
+}
+
+fn is_duplicate_key(error: &anyhow::Error) -> bool {
+    format!("{error:#}").contains("E11000")
 }

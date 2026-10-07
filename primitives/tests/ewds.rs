@@ -14,7 +14,8 @@ use primitives::ewds::dto::{
     EwdsTradeDto,
 };
 use primitives::ewds::{
-    empty_response_grace_elapsed, is_rate_limited_response, is_transient_gateway_response,
+    empty_response_grace_elapsed, event_retry_delay_ms, invalid_event, is_invalid_event,
+    is_rate_limited_response, is_transient_gateway_response, parse_batch,
     parse_gateway_delivery_summary, select_response_data, EwdsEventTopicConfig, EwdsEventType,
     EwdsOperation, EwdsTopicConfig, EwdsTopicPair,
 };
@@ -786,5 +787,34 @@ mod tests {
     fn completes_empty_response_after_grace_period() {
         assert!(empty_response_grace_elapsed(Some(Instant::now()), 0));
         assert!(!empty_response_grace_elapsed(None, 0));
+    }
+
+    #[test]
+    fn event_retry_delay_doubles_up_to_five_minutes() {
+        assert_eq!(event_retry_delay_ms(2_000, 1), 2_000);
+        assert_eq!(event_retry_delay_ms(2_000, 2), 4_000);
+        assert_eq!(event_retry_delay_ms(2_000, 4), 16_000);
+        assert_eq!(event_retry_delay_ms(2_000, 10), 300_000);
+        assert_eq!(event_retry_delay_ms(2_000, 100), 300_000);
+    }
+
+    #[test]
+    fn invalid_event_mark_survives_further_context() {
+        let error = invalid_event(anyhow::anyhow!("bad data")).context("handling event e-1");
+
+        assert!(is_invalid_event(&error));
+        assert!(!is_invalid_event(&anyhow::anyhow!("database unavailable")));
+    }
+
+    #[test]
+    fn parse_batch_marks_bad_data_as_invalid_event() {
+        let error = parse_batch(json!({"not": "a list"}), |item: Value| Ok(item)).unwrap_err();
+        assert!(is_invalid_event(&error));
+
+        let error = parse_batch(json!([1]), |_: Value| -> anyhow::Result<()> {
+            Err(anyhow::anyhow!("rejected"))
+        })
+        .unwrap_err();
+        assert!(is_invalid_event(&error));
     }
 }

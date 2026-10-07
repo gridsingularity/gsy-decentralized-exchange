@@ -174,6 +174,9 @@ Useful runtime overrides:
 - `EWDS_EVENT_POLL_INTERVAL_MS` (default `60000`): how often the off-chain
   storage and the community client poll the inbound event topics. The e2e
   compose sets `1000`.
+- `EWDS_EVENT_HANDLE_ATTEMPTS` (default `8`) / `EWDS_EVENT_RETRY_DELAY_MS`
+  (default `2000`): how often a failed inbound event is tried and how long the
+  first retry waits; the delay doubles with every attempt, up to 5 minutes.
 - `EWDS_RESPONSE_TIMEOUT_MS` / `EWDS_RESPONSE_POLL_INTERVAL_MS`
 - `EWDS_EMPTY_RESPONSE_GRACE_MS` controls how long a query waits for a
   non-empty reply after receiving an empty reply with the same request ID.

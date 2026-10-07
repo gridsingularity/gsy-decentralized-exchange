@@ -9,7 +9,7 @@ use gsy_community_client::order_events::{
 use primitives::db_api_schema::orders::DbOrderSchema;
 use primitives::ewds::dto::EwdsEventEnvelope;
 use primitives::ewds::dto::EwdsOrderDto;
-use primitives::ewds::EwdsEventType;
+use primitives::ewds::{is_invalid_event, EwdsEventType};
 use primitives::offchain_storage::{OffchainStorageClient, OffchainStorageTransport};
 use primitives::utils::parse_uuid_or_hex_bytes16;
 use serde_json::{json, Value};
@@ -367,25 +367,49 @@ async fn places_the_other_orders_when_the_contract_rejects_one() {
 }
 
 #[tokio::test]
+async fn fails_the_event_when_the_node_cannot_be_reached() {
+    let chain = deploy_mock_order_registry().await;
+    let id_service = mock_id_service().await;
+    let handler = handler(&chain, &id_service).await;
+    // Stops the node.
+    drop(chain);
+
+    let error = tokio::time::timeout(
+        Duration::from_secs(30),
+        handler.handle(event("event-1", vec![bid(), offer()])),
+    )
+    .await
+    .expect("the handler did not give up on the unreachable node")
+    .unwrap_err();
+
+    // The event worker retries the event, so it must not be marked as invalid.
+    assert!(!is_invalid_event(&error));
+    assert!(format!("{error:#}").contains("2 of 2 orders"), "{error:#}");
+}
+
+#[tokio::test]
 async fn rejects_the_whole_event_when_one_order_is_invalid() {
     let chain = deploy_mock_order_registry().await;
     let id_service = mock_id_service().await;
     let handler = handler(&chain, &id_service).await;
 
-    for (field, value, expected) in [
-        ("orderId", json!("order-1"), "is not a UUID"),
-        ("orderStatus", json!("cancelled"), "orderStatus"),
-        ("quantity", json!(0.0), "quantity"),
-        ("quantity", json!(-1.0), "quantity"),
-        ("priceLimit", json!(-0.1), "priceLimit"),
-        ("energyType", json!("COAL"), "COAL"),
-        ("createdBy", json!("unknown-owner"), "createdBy"),
+    // An ID the ID service doesn't know yet may be registered later, so that event is retried;
+    // invalid data is not.
+    for (field, value, expected, invalid_data) in [
+        ("orderId", json!("order-1"), "is not a UUID", true),
+        ("orderStatus", json!("cancelled"), "orderStatus", true),
+        ("quantity", json!(0.0), "quantity", true),
+        ("quantity", json!(-1.0), "quantity", true),
+        ("priceLimit", json!(-0.1), "priceLimit", true),
+        ("energyType", json!("COAL"), "COAL", true),
+        ("createdBy", json!("unknown-owner"), "createdBy", false),
         (
             "preferredTradingPartner",
             json!("unknown-owner"),
             "preferredTradingPartner",
+            false,
         ),
-        ("marketId", json!("market-1"), "marketId"),
+        ("marketId", json!("market-1"), "marketId", true),
     ] {
         let mut invalid = offer();
         invalid[field] = value;
@@ -395,6 +419,7 @@ async fn rejects_the_whole_event_when_one_order_is_invalid() {
             .await
             .unwrap_err();
 
+        assert_eq!(is_invalid_event(&error), invalid_data, "{field}: {error:#}");
         let error = format!("{error:#}");
         assert!(error.contains("index 1"), "{field}: {error}");
         assert!(error.contains(expected), "{field}: {error}");
