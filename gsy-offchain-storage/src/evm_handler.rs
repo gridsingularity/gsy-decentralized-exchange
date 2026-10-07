@@ -47,24 +47,15 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         } else {
             OrderEnum::Offer
         };
-        let (mut requirements, mut attributes) =
-            order_metadata_from_contract(ContractOrderMetadata {
-                energy_source_preference: event.energy_source_preference,
-                energy_type: event.energy_type,
-                preferred_trading_partner: event.preferred_trading_partner,
-                preferred_energy_rate: event.preferred_energy_rate,
-                trading_partner: event.trading_partner,
-            });
-        for partner in [
-            requirements
-                .as_mut()
-                .and_then(|value| value.trading_partner_id.as_mut()),
-            attributes
-                .as_mut()
-                .and_then(|value| value.trading_partner_id.as_mut()),
-        ]
-        .into_iter()
-        .flatten()
+        let (mut requirements, attributes) = order_metadata_from_contract(ContractOrderMetadata {
+            energy_source_preference: event.energy_source_preference,
+            energy_type: event.energy_type,
+            preferred_trading_partner: event.preferred_trading_partner,
+            preferred_energy_rate: event.preferred_energy_rate,
+        });
+        if let Some(partner) = requirements
+            .as_mut()
+            .and_then(|value| value.trading_partner_id.as_mut())
         {
             *partner = self
                 .db
@@ -77,7 +68,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         }
 
         let schema = DbOrderSchema {
-            order_id: order_id_str,
+            order_id: order_id_str.clone(),
             status: OrderStatus::Submitted,
             order_type: order_enum,
             area_uuid: created_by_str.clone(),
@@ -91,11 +82,13 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             attributes,
         };
 
-        match self.db.orders().insert_orders(vec![schema]).await {
-            Ok(_) => info!("Successfully indexed order from EVM"),
-            Err(e) => error!("Failed to insert order into DB: {:?}", e),
-        }
+        self.db
+            .orders()
+            .insert_orders(vec![schema])
+            .await
+            .with_context(|| format!("Failed to insert order {} into DB", order_id_str))?;
 
+        info!("Successfully indexed order from EVM");
         Ok(())
     }
 
@@ -150,22 +143,39 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             },
         };
 
-        self.db.trades().insert_trades(vec![trade.clone()]).await?;
-
-        if let Some(publisher) = &self.event_publisher {
-            publisher.publish_trades_created(vec![trade]);
-        }
+        self.db
+            .trades()
+            .insert_trades(vec![trade.clone()])
+            .await
+            .with_context(|| format!("Failed to insert trade {} into DB", trade_hash))?;
 
         self.db
             .orders()
             .update_order_status_by_id(&bid_bson, OrderStatus::Executed)
-            .await?;
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to mark bid {} of trade {} as executed",
+                    bid_bson, trade_hash
+                )
+            })?;
         self.db
             .orders()
             .update_order_status_by_id(&offer_bson, OrderStatus::Executed)
-            .await?;
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to mark offer {} of trade {} as executed",
+                    offer_bson, trade_hash
+                )
+            })?;
 
         info!("Trade persisted and orders updated.");
+
+        // Publish only once the trade and both order status updates are persisted.
+        if let Some(publisher) = &self.event_publisher {
+            publisher.publish_trades_created(vec![trade]);
+        }
 
         Ok(())
     }
@@ -217,7 +227,18 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             clearing_time: block_timestamp,
         };
 
-        let clearing_result = self.db.clearing_results().insert(clearing_result).await?;
+        let market_id = clearing_result.market_id.clone();
+        let clearing_result = self
+            .db
+            .clearing_results()
+            .insert(clearing_result)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to insert clearing result for market {} into DB",
+                    market_id
+                )
+            })?;
 
         info!("Market clearing result saved.");
 

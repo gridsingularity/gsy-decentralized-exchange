@@ -25,7 +25,6 @@ abigen!(
         function lastMarketId() external view returns (bytes16)
         function lastBidPreferredTradingPartner() external view returns (bytes16)
         function lastBidPreferredEnergyRate() external view returns (uint64)
-        function lastOfferTradingPartner() external view returns (bytes16)
     ]"#
 );
 
@@ -66,7 +65,6 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
                 bool isBid;
                 bytes16 preferredTradingPartner;
                 uint64 preferredEnergyRate;
-                bytes16 tradingPartner;
             }
 
             struct Match {
@@ -103,7 +101,6 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
             bytes16 public lastMarketId;
             bytes16 public lastBidPreferredTradingPartner;
             uint64 public lastBidPreferredEnergyRate;
-            bytes16 public lastOfferTradingPartner;
 
             constructor() {
                 roles[msg.sender][OPERATOR_ROLE] = true;
@@ -138,7 +135,6 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
                         lastOfferCreatedBy = first.offer.createdBy;
                         lastBidPreferredTradingPartner = first.bid.preferredTradingPartner;
                         lastBidPreferredEnergyRate = first.bid.preferredEnergyRate;
-                        lastOfferTradingPartner = first.offer.tradingPartner;
                     }
                     lastTradedQuantity = settlement.clearingResult.tradedQuantity;
                     lastMarketId = settlement.clearingResult.marketId;
@@ -241,7 +237,6 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
         created_by: ask_actor_id.clone(),
         requirements: None,
         attributes: Some(DbAttributes {
-            trading_partner_id: Some(bid_actor_id.clone()),
             energy_type: EnergyType::Pv,
         }),
     };
@@ -278,13 +273,18 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
 
     let selected_energy = (80.0 * NODE_FLOAT_SCALING_FACTOR) as u64;
     let clearing_price = (50.0 * NODE_FLOAT_SCALING_FACTOR) as u64;
+    let residual_bid = Order {
+        order_id: format!("0x{}", "44".repeat(16)),
+        energy: bid_order.energy - selected_energy,
+        ..bid_order.clone()
+    };
 
     let bid_offer_matches = vec![BidOfferMatch {
         market_id: market_id.clone(),
         time_slot: 1000,
         bid: bid_order,
         offer: ask_order,
-        residual_bid: None,
+        residual_bid: Some(residual_bid),
         residual_offer: None,
         selected_energy,
         energy_rate: clearing_price,
@@ -362,13 +362,5 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
             .await
             .unwrap(),
         (45.0 * NODE_FLOAT_SCALING_FACTOR) as u64
-    );
-    assert_eq!(
-        mock_contract
-            .last_offer_trading_partner()
-            .call()
-            .await
-            .unwrap(),
-        parse_uuid_or_hex_bytes16(&bid_actor_id).expect("Invalid on-chain actor ID")
     );
 }

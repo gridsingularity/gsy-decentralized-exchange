@@ -21,7 +21,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 abigen!(
     MockOrderRegistry,
     r#"[
-        struct OrderParams { bytes16 orderId; bytes16 createdBy; bytes16 marketId; uint64 timeSlot; uint64 creationTime; uint64 energy; uint64 energyRate; uint8 energySourcePreference; uint8 energyType; bool isBid; bytes16 preferredTradingPartner; uint64 preferredEnergyRate; bytes16 tradingPartner; }
+        struct OrderParams { bytes16 orderId; bytes16 createdBy; bytes16 marketId; uint64 timeSlot; uint64 creationTime; uint64 energy; uint64 energyRate; uint8 energySourcePreference; uint8 energyType; bool isBid; bytes16 preferredTradingPartner; uint64 preferredEnergyRate; }
         function placedCount() external view returns (uint256)
         function placedOrder(uint256 index) external view returns (OrderParams)
         function setClosedMarket(bytes16 marketId) external
@@ -48,7 +48,6 @@ const MOCK_ORDER_REGISTRY: &str = r#"
             bool isBid;
             bytes16 preferredTradingPartner;
             uint64 preferredEnergyRate;
-            bytes16 tradingPartner;
         }
 
         error MarketClosed();
@@ -245,7 +244,6 @@ async fn placed_orders(chain: &TestChain) -> Vec<OrderParams> {
             is_bid: order.9,
             preferred_trading_partner: order.10,
             preferred_energy_rate: order.11,
-            trading_partner: order.12,
         });
     }
     orders
@@ -302,7 +300,6 @@ async fn places_a_bid_and_an_offer_with_their_contract_params() {
                 is_bid: true,
                 preferred_trading_partner: bytes16(OWNER_2_ONCHAIN),
                 preferred_energy_rate: 2_500,
-                trading_partner: [0; 16],
             },
             OrderParams {
                 order_id: bytes16(OFFER_ID),
@@ -315,9 +312,9 @@ async fn places_a_bid_and_an_offer_with_their_contract_params() {
                 energy_source_preference: 0,
                 energy_type: 2, // PV
                 is_bid: false,
-                preferred_trading_partner: [0; 16],
-                preferred_energy_rate: 0,
-                trading_partner: bytes16(OWNER_1_ONCHAIN),
+                preferred_trading_partner: bytes16(OWNER_1_ONCHAIN),
+                // Without its own preferredEnergyRate the order falls back to its priceLimit.
+                preferred_energy_rate: 2_000,
             },
         ]
     );
@@ -419,7 +416,7 @@ async fn order_registry_client_reports_why_the_contract_rejected_an_order() {
     let mut order: DbOrderSchema =
         DbOrderSchema::try_from(serde_json::from_value::<EwdsOrderDto>(offer()).unwrap()).unwrap();
     order.created_by = OWNER_2_ONCHAIN.to_string();
-    order.attributes = None;
+    order.requirements = None;
     let params = order_params(&order).unwrap();
 
     assert!(!order_registry.is_placed(params.0).await.unwrap());

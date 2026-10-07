@@ -10,12 +10,18 @@ use primitives::db_api_schema::{
 };
 use primitives::ewds::dto::{
     energy_type_from_ewds, energy_type_to_ewds, EwdsClearingResultDto, EwdsCommunityDto,
-    EwdsEventEnvelope, EwdsMarketDto, EwdsMeasurementDto, EwdsOrderDto, EwdsTradeDto,
+    EwdsEventEnvelope, EwdsMarketDto, EwdsMeasurementDto, EwdsOrderDto, EwdsRequestEnvelope,
+    EwdsTradeDto,
 };
-use primitives::ewds::{EwdsEventType, EwdsOperation};
+use primitives::ewds::{
+    empty_response_grace_elapsed, is_rate_limited_response, is_transient_gateway_response,
+    parse_gateway_delivery_summary, select_response_data, EwdsEventTopicConfig, EwdsEventType,
+    EwdsOperation, EwdsTopicConfig, EwdsTopicPair,
+};
 use primitives::utils::epoch_to_rfc3339;
 use serde_json::{json, Value};
 use std::str::FromStr;
+use std::time::Instant;
 
 #[cfg(test)]
 mod tests {
@@ -106,15 +112,37 @@ mod tests {
         expected.order_type = OrderEnum::Offer;
         expected.requirements = None;
         expected.attributes = Some(DbAttributes {
-            trading_partner_id: Some("partner-id".to_string()),
             energy_type: EnergyType::Pv,
         });
 
         let dto = EwdsOrderDto::from(expected.clone());
-        assert_eq!(dto.preferred_trading_partner.as_deref(), Some("partner-id"));
+        assert_eq!(dto.preferred_trading_partner, None);
         assert_eq!(dto.energy_type.as_deref(), Some("PV"));
         assert_eq!(dto.energy_source_preference, None);
         assert_eq!(dto.preferred_energy_rate, None);
+
+        let actual = DbOrderSchema::try_from(dto).expect("EWDS offer should convert to DB schema");
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn offer_preferred_partner_round_trips_through_requirements() {
+        let mut expected = order();
+        expected.order_type = OrderEnum::Offer;
+        expected.requirements = Some(DbRequirements {
+            trading_partner_id: Some("partner-id".to_string()),
+            energy_type: None,
+            preferred_energy_rate: Some(12.0),
+        });
+        expected.attributes = Some(DbAttributes {
+            energy_type: EnergyType::Pv,
+        });
+
+        let dto = EwdsOrderDto::from(expected.clone());
+        assert_eq!(dto.order_type, "offer");
+        assert_eq!(dto.preferred_trading_partner.as_deref(), Some("partner-id"));
+        assert_eq!(dto.preferred_energy_rate, Some(12.0));
+        assert_eq!(dto.energy_type.as_deref(), Some("PV"));
 
         let actual = DbOrderSchema::try_from(dto).expect("EWDS offer should convert to DB schema");
         assert_eq!(actual, expected);
@@ -579,5 +607,184 @@ mod tests {
             serde_json::json!("markets.query")
         );
         assert!(EwdsOperation::ALL.contains(&EwdsOperation::MarketsQuery));
+    }
+
+    #[test]
+    fn event_types_map_to_their_topics() {
+        let topics = EwdsEventTopicConfig::default();
+        let expected = [
+            "trade",
+            "clearingResult",
+            "market",
+            "measurementsSubmitted",
+            "facilitySubmitted",
+            "siteSubmitted",
+            "communitySubmitted",
+            "orderSubmitted",
+        ];
+        assert_eq!(EwdsEventType::ALL.len(), expected.len());
+        for (event_type, topic) in EwdsEventType::ALL.into_iter().zip(expected) {
+            assert_eq!(topics.for_event_type(event_type), topic);
+        }
+    }
+
+    #[test]
+    fn operations_map_to_their_topic_pairs() {
+        let topics = EwdsTopicConfig::default();
+
+        assert_eq!(
+            topics.for_operation(EwdsOperation::OrdersQuery),
+            &EwdsTopicPair {
+                request: "ordersQuery".to_string(),
+                response: "ordersQueryResponse".to_string(),
+            }
+        );
+        assert_eq!(
+            topics.for_operation(EwdsOperation::TradesQuery),
+            &EwdsTopicPair {
+                request: "tradesQuery".to_string(),
+                response: "tradesQueryResponse".to_string(),
+            }
+        );
+        assert_eq!(
+            topics.for_operation(EwdsOperation::MeasurementsQuery),
+            &EwdsTopicPair {
+                request: "measurementsQuery".to_string(),
+                response: "measurementsQueryResponse".to_string(),
+            }
+        );
+        assert_eq!(
+            topics.for_operation(EwdsOperation::CommunitiesQuery),
+            &EwdsTopicPair {
+                request: "communitiesQuery".to_string(),
+                response: "communitiesQueryResponse".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn event_types_serialize_to_their_wire_names() {
+        let wire_names = [
+            "trade.created",
+            "clearing_result.created",
+            "market_status.updated",
+            "measurements.submitted",
+            "facility.submitted",
+            "site.submitted",
+            "community.submitted",
+            "order.submitted",
+        ];
+        assert_eq!(EwdsEventType::ALL.len(), wire_names.len());
+        for (event_type, wire_name) in EwdsEventType::ALL.into_iter().zip(wire_names) {
+            assert_eq!(event_type.as_str(), wire_name);
+            assert_eq!(event_type.to_string(), wire_name);
+            assert_eq!(
+                serde_json::to_value(event_type).unwrap(),
+                serde_json::json!(wire_name)
+            );
+            assert_eq!(
+                serde_json::from_value::<EwdsEventType>(serde_json::json!(wire_name)).unwrap(),
+                event_type
+            );
+        }
+    }
+
+    #[test]
+    fn communities_query_round_trips_through_the_request_envelope() {
+        let envelope = EwdsRequestEnvelope {
+            request_id: "request-id".to_string(),
+            operation: EwdsOperation::CommunitiesQuery,
+            payload: Value::Object(Default::default()),
+        };
+
+        let serialized = serde_json::to_string(&envelope).unwrap();
+        let deserialized: EwdsRequestEnvelope = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(deserialized.operation, EwdsOperation::CommunitiesQuery);
+    }
+
+    #[test]
+    fn recognizes_client_gateway_wrapped_rate_limit() {
+        let body = r#"{
+            "err": {
+                "code": "MB::ERROR",
+                "reason": "Request failed with status code 429"
+            },
+            "statusCode": 400
+        }"#;
+
+        assert!(is_rate_limited_response(
+            reqwest::StatusCode::BAD_REQUEST,
+            body
+        ));
+    }
+
+    #[test]
+    fn does_not_treat_an_unrelated_bad_request_as_rate_limit() {
+        assert!(!is_rate_limited_response(
+            reqwest::StatusCode::BAD_REQUEST,
+            r#"{"reason":"Channel not found","statusCode":400}"#
+        ));
+    }
+
+    #[test]
+    fn recognizes_transient_gateway_failures() {
+        assert!(is_transient_gateway_response(
+            reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+            ""
+        ));
+        assert!(is_transient_gateway_response(
+            reqwest::StatusCode::BAD_REQUEST,
+            r#"{"reason":"Timeout or no response waiting for NATS JetStream server"}"#
+        ));
+    }
+
+    #[test]
+    fn does_not_treat_an_unrelated_bad_request_as_transient() {
+        assert!(!is_transient_gateway_response(
+            reqwest::StatusCode::BAD_REQUEST,
+            r#"{"reason":"Channel not found","statusCode":400}"#
+        ));
+    }
+
+    #[test]
+    fn parses_gateway_recipient_delivery_summary() {
+        let summary =
+            parse_gateway_delivery_summary(r#"{"recipients":{"failed":0,"sent":8,"total":8}}"#)
+                .unwrap();
+
+        assert_eq!(summary.sent, 8);
+        assert_eq!(summary.failed, 0);
+        assert_eq!(summary.total, 8);
+    }
+
+    #[test]
+    fn identifies_gateway_response_with_no_delivered_recipients() {
+        let summary =
+            parse_gateway_delivery_summary(r#"{"recipients":{"failed":8,"sent":0,"total":8}}"#)
+                .unwrap();
+
+        assert_eq!(summary.sent, 0);
+        assert_eq!(summary.failed, summary.total);
+    }
+
+    #[test]
+    fn defers_empty_response_and_selects_later_data() {
+        let mut empty_response_seen_at = None;
+
+        assert!(
+            select_response_data::<u8>(Vec::new(), &mut empty_response_seen_at, 10_000).is_none()
+        );
+        assert!(empty_response_seen_at.is_some());
+        assert_eq!(
+            select_response_data(vec![1u8], &mut empty_response_seen_at, 10_000),
+            Some(vec![1u8])
+        );
+    }
+
+    #[test]
+    fn completes_empty_response_after_grace_period() {
+        assert!(empty_response_grace_elapsed(Some(Instant::now()), 0));
+        assert!(!empty_response_grace_elapsed(None, 0));
     }
 }

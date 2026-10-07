@@ -143,13 +143,9 @@ impl OrderEventHandler {
             .await
             .with_context(|| format!("createdBy '{}' could not be resolved", order.created_by))?;
         order.area_uuid = order.created_by.clone();
-        resolve_order_partner_ids(
-            &mut order.requirements,
-            &mut order.attributes,
-            &self.id_service,
-        )
-        .await
-        .context("preferredTradingPartner could not be resolved")?;
+        resolve_order_partner_ids(&mut order.requirements, &self.id_service)
+            .await
+            .context("preferredTradingPartner could not be resolved")?;
         Ok(order)
     }
 
@@ -327,7 +323,6 @@ pub fn order_params(order: &DbOrderSchema) -> Result<EvmOrderParamsTuple> {
         matches!(order.order_type, OrderEnum::Bid),
         metadata.preferred_trading_partner,
         metadata.preferred_energy_rate,
-        metadata.trading_partner,
     ))
 }
 
@@ -447,7 +442,6 @@ mod order_params_tests {
             created_by: format!("0x{}", "aa".repeat(16)),
             requirements: None,
             attributes: Some(DbAttributes {
-                trading_partner_id: Some(format!("0x{}", "bb".repeat(16))),
                 energy_type: EnergyType::Battery,
             }),
         }
@@ -469,7 +463,6 @@ mod order_params_tests {
         assert_eq!((params.7, params.8), (0, 5));
         assert!(!params.9);
         assert_eq!((params.10, params.11), ([0; 16], 0));
-        assert_eq!(params.12, [0xbb; 16]);
     }
 
     #[test]

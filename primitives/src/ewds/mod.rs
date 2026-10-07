@@ -296,9 +296,9 @@ impl EwdsTopicConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EwdsEventTopicConfig {
-    trade_created: String,
-    clearing_result_created: String,
-    market_status_updated: String,
+    trade_event: String,
+    clearing_result_event: String,
+    market_event: String,
     measurements_submitted: String,
     facility_submitted: String,
     site_submitted: String,
@@ -309,9 +309,9 @@ pub struct EwdsEventTopicConfig {
 impl Default for EwdsEventTopicConfig {
     fn default() -> Self {
         Self {
-            trade_created: "tradeCreated".to_string(),
-            clearing_result_created: "clearingResultCreated".to_string(),
-            market_status_updated: "marketStatusUpdated".to_string(),
+            trade_event: "trade".to_string(),
+            clearing_result_event: "clearingResult".to_string(),
+            market_event: "market".to_string(),
             measurements_submitted: "measurementsSubmitted".to_string(),
             facility_submitted: "facilitySubmitted".to_string(),
             site_submitted: "siteSubmitted".to_string(),
@@ -325,18 +325,12 @@ impl EwdsEventTopicConfig {
     pub fn from_env() -> Self {
         let defaults = Self::default();
         Self {
-            trade_created: env_or(
-                "EWDS_TRADE_CREATED_EVENT_TOPIC",
-                defaults.trade_created.as_str(),
+            trade_event: env_or("EWDS_TRADE_EVENT_TOPIC", defaults.trade_event.as_str()),
+            clearing_result_event: env_or(
+                "EWDS_CLEARING_RESULT_EVENT_TOPIC",
+                defaults.clearing_result_event.as_str(),
             ),
-            clearing_result_created: env_or(
-                "EWDS_CLEARING_RESULT_CREATED_EVENT_TOPIC",
-                defaults.clearing_result_created.as_str(),
-            ),
-            market_status_updated: env_or(
-                "EWDS_MARKET_STATUS_UPDATED_EVENT_TOPIC",
-                defaults.market_status_updated.as_str(),
-            ),
+            market_event: env_or("EWDS_MARKET_EVENT_TOPIC", defaults.market_event.as_str()),
             measurements_submitted: env_or(
                 "EWDS_MEASUREMENTS_SUBMITTED_EVENT_TOPIC",
                 defaults.measurements_submitted.as_str(),
@@ -362,9 +356,9 @@ impl EwdsEventTopicConfig {
 
     pub fn for_event_type(&self, event_type: EwdsEventType) -> &str {
         match event_type {
-            EwdsEventType::TradeCreated => &self.trade_created,
-            EwdsEventType::ClearingResultCreated => &self.clearing_result_created,
-            EwdsEventType::MarketStatusUpdated => &self.market_status_updated,
+            EwdsEventType::TradeCreated => &self.trade_event,
+            EwdsEventType::ClearingResultCreated => &self.clearing_result_event,
+            EwdsEventType::MarketStatusUpdated => &self.market_event,
             EwdsEventType::MeasurementsSubmitted => &self.measurements_submitted,
             EwdsEventType::FacilitySubmitted => &self.facility_submitted,
             EwdsEventType::SiteSubmitted => &self.site_submitted,
@@ -891,12 +885,15 @@ fn warn_about_unparsable_response(
     }
 }
 
-fn empty_response_grace_elapsed(empty_response_seen_at: Option<Instant>, grace_ms: u64) -> bool {
+pub fn empty_response_grace_elapsed(
+    empty_response_seen_at: Option<Instant>,
+    grace_ms: u64,
+) -> bool {
     empty_response_seen_at
         .is_some_and(|seen_at| seen_at.elapsed() >= Duration::from_millis(grace_ms))
 }
 
-fn select_response_data<T>(
+pub fn select_response_data<T>(
     data: Vec<T>,
     empty_response_seen_at: &mut Option<Instant>,
     grace_ms: u64,
@@ -1051,188 +1048,4 @@ fn env_u64_or(key: &str, default: u64) -> u64 {
     env_var(key)
         .and_then(|value| value.parse::<u64>().ok())
         .unwrap_or(default)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn event_types_map_to_their_topics() {
-        let topics = EwdsEventTopicConfig::default();
-        let expected = [
-            "tradeCreated",
-            "clearingResultCreated",
-            "marketStatusUpdated",
-            "measurementsSubmitted",
-            "facilitySubmitted",
-            "siteSubmitted",
-            "communitySubmitted",
-            "orderSubmitted",
-        ];
-        assert_eq!(EwdsEventType::ALL.len(), expected.len());
-        for (event_type, topic) in EwdsEventType::ALL.into_iter().zip(expected) {
-            assert_eq!(topics.for_event_type(event_type), topic);
-        }
-    }
-
-    #[test]
-    fn operations_map_to_their_topic_pairs() {
-        let topics = EwdsTopicConfig::default();
-
-        assert_eq!(
-            topics.for_operation(EwdsOperation::OrdersQuery),
-            &EwdsTopicPair {
-                request: "ordersQuery".to_string(),
-                response: "ordersQueryResponse".to_string(),
-            }
-        );
-        assert_eq!(
-            topics.for_operation(EwdsOperation::TradesQuery),
-            &EwdsTopicPair {
-                request: "tradesQuery".to_string(),
-                response: "tradesQueryResponse".to_string(),
-            }
-        );
-        assert_eq!(
-            topics.for_operation(EwdsOperation::MeasurementsQuery),
-            &EwdsTopicPair {
-                request: "measurementsQuery".to_string(),
-                response: "measurementsQueryResponse".to_string(),
-            }
-        );
-        assert_eq!(
-            topics.for_operation(EwdsOperation::CommunitiesQuery),
-            &EwdsTopicPair {
-                request: "communitiesQuery".to_string(),
-                response: "communitiesQueryResponse".to_string(),
-            }
-        );
-    }
-
-    #[test]
-    fn event_types_serialize_to_their_wire_names() {
-        let wire_names = [
-            "trade.created",
-            "clearing_result.created",
-            "market_status.updated",
-            "measurements.submitted",
-            "facility.submitted",
-            "site.submitted",
-            "community.submitted",
-            "order.submitted",
-        ];
-        assert_eq!(EwdsEventType::ALL.len(), wire_names.len());
-        for (event_type, wire_name) in EwdsEventType::ALL.into_iter().zip(wire_names) {
-            assert_eq!(event_type.as_str(), wire_name);
-            assert_eq!(event_type.to_string(), wire_name);
-            assert_eq!(
-                serde_json::to_value(event_type).unwrap(),
-                serde_json::json!(wire_name)
-            );
-            assert_eq!(
-                serde_json::from_value::<EwdsEventType>(serde_json::json!(wire_name)).unwrap(),
-                event_type
-            );
-        }
-    }
-
-    #[test]
-    fn communities_query_round_trips_through_the_request_envelope() {
-        let envelope = EwdsRequestEnvelope {
-            request_id: "request-id".to_string(),
-            operation: EwdsOperation::CommunitiesQuery,
-            payload: Value::Object(Default::default()),
-        };
-
-        let serialized = serde_json::to_string(&envelope).unwrap();
-        let deserialized: EwdsRequestEnvelope = serde_json::from_str(&serialized).unwrap();
-
-        assert_eq!(deserialized.operation, EwdsOperation::CommunitiesQuery);
-    }
-
-    #[test]
-    fn recognizes_client_gateway_wrapped_rate_limit() {
-        let body = r#"{
-            "err": {
-                "code": "MB::ERROR",
-                "reason": "Request failed with status code 429"
-            },
-            "statusCode": 400
-        }"#;
-
-        assert!(is_rate_limited_response(
-            reqwest::StatusCode::BAD_REQUEST,
-            body
-        ));
-    }
-
-    #[test]
-    fn does_not_treat_an_unrelated_bad_request_as_rate_limit() {
-        assert!(!is_rate_limited_response(
-            reqwest::StatusCode::BAD_REQUEST,
-            r#"{"reason":"Channel not found","statusCode":400}"#
-        ));
-    }
-
-    #[test]
-    fn recognizes_transient_gateway_failures() {
-        assert!(is_transient_gateway_response(
-            reqwest::StatusCode::INTERNAL_SERVER_ERROR,
-            ""
-        ));
-        assert!(is_transient_gateway_response(
-            reqwest::StatusCode::BAD_REQUEST,
-            r#"{"reason":"Timeout or no response waiting for NATS JetStream server"}"#
-        ));
-    }
-
-    #[test]
-    fn does_not_treat_an_unrelated_bad_request_as_transient() {
-        assert!(!is_transient_gateway_response(
-            reqwest::StatusCode::BAD_REQUEST,
-            r#"{"reason":"Channel not found","statusCode":400}"#
-        ));
-    }
-
-    #[test]
-    fn parses_gateway_recipient_delivery_summary() {
-        let summary =
-            parse_gateway_delivery_summary(r#"{"recipients":{"failed":0,"sent":8,"total":8}}"#)
-                .unwrap();
-
-        assert_eq!(summary.sent, 8);
-        assert_eq!(summary.failed, 0);
-        assert_eq!(summary.total, 8);
-    }
-
-    #[test]
-    fn identifies_gateway_response_with_no_delivered_recipients() {
-        let summary =
-            parse_gateway_delivery_summary(r#"{"recipients":{"failed":8,"sent":0,"total":8}}"#)
-                .unwrap();
-
-        assert_eq!(summary.sent, 0);
-        assert_eq!(summary.failed, summary.total);
-    }
-
-    #[test]
-    fn defers_empty_response_and_selects_later_data() {
-        let mut empty_response_seen_at = None;
-
-        assert!(
-            select_response_data::<u8>(Vec::new(), &mut empty_response_seen_at, 10_000).is_none()
-        );
-        assert!(empty_response_seen_at.is_some());
-        assert_eq!(
-            select_response_data(vec![1u8], &mut empty_response_seen_at, 10_000),
-            Some(vec![1u8])
-        );
-    }
-
-    #[test]
-    fn completes_empty_response_after_grace_period() {
-        assert!(empty_response_grace_elapsed(Some(Instant::now()), 0));
-        assert!(!empty_response_grace_elapsed(None, 0));
-    }
 }
