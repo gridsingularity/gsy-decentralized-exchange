@@ -89,6 +89,38 @@ impl fmt::Display for EwdsOperation {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EwdsEventType {
+    #[serde(rename = "trade.created")]
+    TradeCreated,
+    #[serde(rename = "clearing_result.created")]
+    ClearingResultCreated,
+    #[serde(rename = "market_status.updated")]
+    MarketStatusUpdated,
+}
+
+impl EwdsEventType {
+    pub const ALL: [Self; 3] = [
+        Self::TradeCreated,
+        Self::ClearingResultCreated,
+        Self::MarketStatusUpdated,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::TradeCreated => "trade.created",
+            Self::ClearingResultCreated => "clearing_result.created",
+            Self::MarketStatusUpdated => "market_status.updated",
+        }
+    }
+}
+
+impl fmt::Display for EwdsEventType {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EwdsTopicPair {
     pub request: String,
@@ -567,12 +599,15 @@ impl EwdsClient {
     }
 }
 
-fn empty_response_grace_elapsed(empty_response_seen_at: Option<Instant>, grace_ms: u64) -> bool {
+pub fn empty_response_grace_elapsed(
+    empty_response_seen_at: Option<Instant>,
+    grace_ms: u64,
+) -> bool {
     empty_response_seen_at
         .is_some_and(|seen_at| seen_at.elapsed() >= Duration::from_millis(grace_ms))
 }
 
-fn select_response_data<T>(
+pub fn select_response_data<T>(
     data: Vec<T>,
     empty_response_seen_at: &mut Option<Instant>,
     grace_ms: u64,
@@ -664,154 +699,4 @@ fn env_u64_or(key: &str, default: u64) -> u64 {
     env_var(key)
         .and_then(|value| value.parse::<u64>().ok())
         .unwrap_or(default)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn operations_map_to_their_topic_pairs() {
-        let topics = EwdsTopicConfig::default();
-
-        assert_eq!(
-            topics.for_operation(EwdsOperation::OrdersQuery),
-            &EwdsTopicPair {
-                request: "ordersQuery".to_string(),
-                response: "ordersQueryResponse".to_string(),
-            }
-        );
-        assert_eq!(
-            topics.for_operation(EwdsOperation::TradesQuery),
-            &EwdsTopicPair {
-                request: "tradesQuery".to_string(),
-                response: "tradesQueryResponse".to_string(),
-            }
-        );
-        assert_eq!(
-            topics.for_operation(EwdsOperation::MeasurementsQuery),
-            &EwdsTopicPair {
-                request: "measurementsQuery".to_string(),
-                response: "measurementsQueryResponse".to_string(),
-            }
-        );
-        assert_eq!(
-            topics.for_operation(EwdsOperation::CommunityUpsert),
-            &EwdsTopicPair {
-                request: "communityUpsert".to_string(),
-                response: "communityUpsertResponse".to_string(),
-            }
-        );
-        assert_eq!(
-            topics.for_operation(EwdsOperation::CommunitiesQuery),
-            &EwdsTopicPair {
-                request: "communitiesQuery".to_string(),
-                response: "communitiesQueryResponse".to_string(),
-            }
-        );
-    }
-
-    #[test]
-    fn community_operations_round_trip_through_the_request_envelope() {
-        for operation in [
-            EwdsOperation::CommunityUpsert,
-            EwdsOperation::CommunitiesQuery,
-        ] {
-            let envelope = EwdsRequestEnvelope {
-                request_id: "request-id".to_string(),
-                operation,
-                payload: Value::Object(Default::default()),
-            };
-
-            let serialized = serde_json::to_string(&envelope).unwrap();
-            let deserialized: EwdsRequestEnvelope = serde_json::from_str(&serialized).unwrap();
-
-            assert_eq!(deserialized.operation, operation);
-        }
-    }
-
-    #[test]
-    fn recognizes_client_gateway_wrapped_rate_limit() {
-        let body = r#"{
-            "err": {
-                "code": "MB::ERROR",
-                "reason": "Request failed with status code 429"
-            },
-            "statusCode": 400
-        }"#;
-
-        assert!(is_rate_limited_response(
-            reqwest::StatusCode::BAD_REQUEST,
-            body
-        ));
-    }
-
-    #[test]
-    fn does_not_treat_an_unrelated_bad_request_as_rate_limit() {
-        assert!(!is_rate_limited_response(
-            reqwest::StatusCode::BAD_REQUEST,
-            r#"{"reason":"Channel not found","statusCode":400}"#
-        ));
-    }
-
-    #[test]
-    fn recognizes_transient_gateway_failures() {
-        assert!(is_transient_gateway_response(
-            reqwest::StatusCode::INTERNAL_SERVER_ERROR,
-            ""
-        ));
-        assert!(is_transient_gateway_response(
-            reqwest::StatusCode::BAD_REQUEST,
-            r#"{"reason":"Timeout or no response waiting for NATS JetStream server"}"#
-        ));
-    }
-
-    #[test]
-    fn does_not_treat_an_unrelated_bad_request_as_transient() {
-        assert!(!is_transient_gateway_response(
-            reqwest::StatusCode::BAD_REQUEST,
-            r#"{"reason":"Channel not found","statusCode":400}"#
-        ));
-    }
-
-    #[test]
-    fn parses_gateway_recipient_delivery_summary() {
-        let summary =
-            parse_gateway_delivery_summary(r#"{"recipients":{"failed":0,"sent":8,"total":8}}"#)
-                .unwrap();
-
-        assert_eq!(summary.sent, 8);
-        assert_eq!(summary.failed, 0);
-        assert_eq!(summary.total, 8);
-    }
-
-    #[test]
-    fn identifies_gateway_response_with_no_delivered_recipients() {
-        let summary =
-            parse_gateway_delivery_summary(r#"{"recipients":{"failed":8,"sent":0,"total":8}}"#)
-                .unwrap();
-
-        assert_eq!(summary.sent, 0);
-        assert_eq!(summary.failed, summary.total);
-    }
-
-    #[test]
-    fn defers_empty_response_and_selects_later_data() {
-        let mut empty_response_seen_at = None;
-
-        assert!(
-            select_response_data::<u8>(Vec::new(), &mut empty_response_seen_at, 10_000).is_none()
-        );
-        assert!(empty_response_seen_at.is_some());
-        assert_eq!(
-            select_response_data(vec![1u8], &mut empty_response_seen_at, 10_000),
-            Some(vec![1u8])
-        );
-    }
-
-    #[test]
-    fn completes_empty_response_after_grace_period() {
-        assert!(empty_response_grace_elapsed(Some(Instant::now()), 0));
-        assert!(!empty_response_grace_elapsed(None, 0));
-    }
 }

@@ -4,6 +4,7 @@ use gsy_ethers_listener::{GsyEthersListener, ListenerConfig};
 use gsy_offchain_storage::configuration::get_configuration;
 use gsy_offchain_storage::db::{init_database, DbRef};
 use gsy_offchain_storage::evm_handler::OffchainStorageEvmHandler;
+use gsy_offchain_storage::ewds_event_handler::EwdsEventPublisher;
 use gsy_offchain_storage::ewds_handler::{start_ewds_request_handler, EwdsHandlerConfig};
 use gsy_offchain_storage::http_server::start_server;
 use gsy_offchain_storage::update_db::expire_orders_scheduler;
@@ -24,6 +25,8 @@ async fn main() -> Result<(), anyhow::Error> {
         init_database(db_connection_string, configuration.database_name).await?;
     let db: DbRef = web::Data::new(db_connection_wrapper.clone());
 
+    let ewds_config = EwdsHandlerConfig::from_env();
+
     info!("Starting off-chain storage service with EVM listener");
     let db_for_listener = db_connection_wrapper.clone();
     let listener_config = ListenerConfig {
@@ -33,9 +36,15 @@ async fn main() -> Result<(), anyhow::Error> {
         market_controller_address: configuration.contract_market_controller,
     };
 
+    let event_publisher = if ewds_config.enabled {
+        Some(EwdsEventPublisher::new(ewds_config.clone()))
+    } else {
+        None
+    };
     tokio::task::spawn(async move {
         let handler = OffchainStorageEvmHandler {
             db: db_for_listener,
+            event_publisher,
         };
         let listener = GsyEthersListener::new(listener_config, handler);
         if let Err(e) = listener.run().await {
@@ -47,7 +56,6 @@ async fn main() -> Result<(), anyhow::Error> {
         expire_orders_scheduler(db, update_interval).await;
     });
 
-    let ewds_config = EwdsHandlerConfig::from_env();
     if ewds_config.enabled {
         let db_for_ewds = db_connection_wrapper.clone();
         let request_handler_config = ewds_config.clone();
