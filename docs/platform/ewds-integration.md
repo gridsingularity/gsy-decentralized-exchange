@@ -123,7 +123,7 @@ Each `*.query` request payload accepts both snake_case and camelCase keys (via s
 | Operation | Fields (all optional unless noted) |
 |---|---|
 | `orders.query` | `market_id`/`marketId`, `start_time`/`startTime`, `end_time`/`endTime` |
-| `trades.query` | `start_time`/`startTime`, `end_time`/`endTime`, `facility_id`/`areaUuid` |
+| `trades.query` | `market_id`/`marketId`, `start_time`/`startTime`, `end_time`/`endTime` (`market_id` takes precedence over the time range, which matches the market `delivery_start_time`) |
 | `measurements.query` | `start_time`/`startTime`, `end_time`/`endTime`, `facility_id`/`areaUuid` (filters after fetch) |
 | `ids.query` | `offchain_id`/`offchainId` (required) |
 
@@ -243,7 +243,7 @@ Validator requirements:
 A local DDHub Client Gateway should be deployed against EWF-hosted EWC Digital Spine services:
 
 - Gateway-only stack: `docker-compose.ewds.yml`
-- GSY DEX EWDS mode: `docker-compose.yml` or `docker-compose.test.yml` with `.env.ewds.local`
+- GSY DEX EWDS mode: `docker-compose.yml` or `docker-compose.e2e-test.yml` with `.env.ewds.local`
 - Gateway namespace validator: `APPLICATION_NAMESPACE_REGULAR_EXPRESSION=\w+\.apps\..*\.(iam|auth)\.ewc` for both API and scheduler, as required by EWF for Intelligent `.auth.ewc` application namespaces.
 
 Operational startup order:

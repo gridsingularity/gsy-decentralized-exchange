@@ -12,6 +12,7 @@
       "items": { "$ref": "./int.trade.schema.v1.json" }
     },
     "error": {
+      "description": "Set when success is false. Codes: TIME_RANGE_TOO_LARGE (endTime - startTime > 86400), INVALID_TIME_RANGE (startTime or endTime missing, or endTime < startTime). data is then an empty array.",
       "type": ["object", "null"],
       "additionalProperties": false,
       "properties": {

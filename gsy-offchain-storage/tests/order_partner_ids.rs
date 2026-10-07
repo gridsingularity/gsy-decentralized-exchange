@@ -77,30 +77,36 @@ async fn resolves_partner_facility_ids_over_http_and_ewds() {
             energy_type: Some(EnergyType::Green),
             preferred_energy_rate: Some(11.0),
         });
-        let mut attributes = Some(DbAttributes {
-            trading_partner_id: Some(HEX_FACILITY_ID.to_string()),
+        let attributes = Some(DbAttributes {
             energy_type: EnergyType::Pv,
         });
-        resolve_order_partner_ids(&mut requirements, &mut attributes, &id_mapping_source)
+        resolve_order_partner_ids(&mut requirements, &id_mapping_source)
             .await
             .unwrap();
         let encoded =
             order_metadata_to_contract(requirements.as_ref(), attributes.as_ref()).unwrap();
         assert_eq!(encoded.preferred_trading_partner, [0x11; 16]);
-        assert_eq!(encoded.trading_partner, [0x22; 16]);
         assert_eq!(encoded.preferred_energy_rate, 110_000);
         assert_eq!(encoded.energy_source_preference, 1);
         assert_eq!(encoded.energy_type, 2);
 
+        // Hex-shaped identifiers are off-chain IDs too and must be resolved.
+        requirements.as_mut().unwrap().trading_partner_id = Some(HEX_FACILITY_ID.to_string());
+        resolve_order_partner_ids(&mut requirements, &id_mapping_source)
+            .await
+            .unwrap();
+        let encoded = order_metadata_to_contract(requirements.as_ref(), None).unwrap();
+        assert_eq!(encoded.preferred_trading_partner, [0x22; 16]);
+
         let count = server.received_requests().await.unwrap().len();
-        resolve_order_partner_ids(&mut None, &mut None, &id_mapping_source)
+        resolve_order_partner_ids(&mut None, &id_mapping_source)
             .await
             .unwrap();
         assert_eq!(server.received_requests().await.unwrap().len(), count);
 
         requirements.as_mut().unwrap().trading_partner_id = Some("invalid-mapping".to_string());
         assert!(
-            resolve_order_partner_ids(&mut requirements, &mut None, &id_mapping_source)
+            resolve_order_partner_ids(&mut requirements, &id_mapping_source)
                 .await
                 .is_err()
         );

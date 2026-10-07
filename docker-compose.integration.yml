@@ -15,7 +15,7 @@ services:
       context: .
       dockerfile: primitives/Dockerfile
       target: builder
-    command: cargo test
+    command: cargo test --release
     working_dir: /var/www/primitives
     environment:
       - RUST_LOG=info
@@ -34,9 +34,11 @@ services:
   gsy-listener-test:
     container_name: gsy-listener-test
     build:
-      context: ./gsy-ethers-listener
-      dockerfile: Dockerfile
-    entrypoint: ["cargo", "test"]
+      context: .
+      dockerfile: gsy-ethers-listener/Dockerfile
+      target: builder
+    entrypoint: ["cargo", "test", "--release"]
+    working_dir: /var/www/gsy-ethers-listener
     environment:
       - RUST_LOG=info
 
@@ -69,6 +71,7 @@ services:
     build:
       context: .
       dockerfile: gsy-market-orchestrator/Dockerfile
+      target: builder
     entrypoint: ["cargo", "test", "--release"]
     working_dir: /var/www/gsy-market-orchestrator
     environment:

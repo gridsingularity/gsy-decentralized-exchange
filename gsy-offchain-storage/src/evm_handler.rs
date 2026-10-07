@@ -1,18 +1,24 @@
 use crate::db::DatabaseWrapper;
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
+use ethers::contract::LogMeta;
+use ethers::types::U256;
 use gsy_ethers_listener::{
-    GsyEventHandler, MarketStatusUpdatedFilter, OrderCancelledFilter, OrderPlacedFilter,
-    TradeSettledFilter,
+    GsyEventHandler, MarketClearingFilter, MarketStatusUpdatedFilter, OrderCancelledFilter,
+    OrderPlacedFilter, TradeSettledFilter,
 };
 use primitives::db_api_schema::{
     orders::{
         order_metadata_from_contract, ContractOrderMetadata, DbOrderSchema, OrderEnum, OrderStatus,
     },
-    trades::{DbTradeSchema, TradeParameters, TradeStatus},
+    trades::{ClearingResultSchema, ClearingStatus, DbTradeSchema, TradeParameters, TradeStatus},
 };
 use primitives::utils::{bytes16_to_hex, NODE_FLOAT_SCALING_FACTOR};
 use tracing::{error, info};
+
+fn scaled_u256_to_f64(value: U256) -> f64 {
+    value.as_u128() as f64 / NODE_FLOAT_SCALING_FACTOR
+}
 
 pub struct OffchainStorageEvmHandler {
     pub db: DatabaseWrapper,
@@ -38,24 +44,15 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         } else {
             OrderEnum::Offer
         };
-        let (mut requirements, mut attributes) =
-            order_metadata_from_contract(ContractOrderMetadata {
-                energy_source_preference: event.energy_source_preference,
-                energy_type: event.energy_type,
-                preferred_trading_partner: event.preferred_trading_partner,
-                preferred_energy_rate: event.preferred_energy_rate,
-                trading_partner: event.trading_partner,
-            });
-        for partner in [
-            requirements
-                .as_mut()
-                .and_then(|value| value.trading_partner_id.as_mut()),
-            attributes
-                .as_mut()
-                .and_then(|value| value.trading_partner_id.as_mut()),
-        ]
-        .into_iter()
-        .flatten()
+        let (mut requirements, attributes) = order_metadata_from_contract(ContractOrderMetadata {
+            energy_source_preference: event.energy_source_preference,
+            energy_type: event.energy_type,
+            preferred_trading_partner: event.preferred_trading_partner,
+            preferred_energy_rate: event.preferred_energy_rate,
+        });
+        if let Some(partner) = requirements
+            .as_mut()
+            .and_then(|value| value.trading_partner_id.as_mut())
         {
             *partner = self
                 .db
@@ -130,7 +127,6 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             seller: bytes16_to_hex(event.seller_id),
             buyer: bytes16_to_hex(event.buyer_id),
             market_id: bytes16_to_hex(event.market_id),
-            time_slot: event.time_slot,
             creation_time: chrono::Utc::now().timestamp() as u64,
             offer_hash: offer_hash_str,
             bid_hash: bid_hash_str,
@@ -164,6 +160,39 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             hex::encode(event.market_id),
             event.is_open
         );
+        Ok(())
+    }
+
+    async fn handle_market_clearing(
+        &self,
+        event: MarketClearingFilter,
+        meta: LogMeta,
+        block_timestamp: u64,
+    ) -> Result<()> {
+        info!(
+            "Processing EVM MarketClearing: {:?}",
+            hex::encode(event.market_id)
+        );
+
+        let clearing_status = ClearingStatus::from_evm(event.clearing_status)
+            .ok_or_else(|| anyhow!("invalid clearing status byte: {}", event.clearing_status))?;
+
+        let clearing_result = ClearingResultSchema {
+            market_id: bytes16_to_hex(event.market_id),
+            clearing_status,
+            no_bid_reason: None,
+            clearing_price: scaled_u256_to_f64(event.clearing_price),
+            total_supply: scaled_u256_to_f64(event.total_supply),
+            total_demand: scaled_u256_to_f64(event.total_demand),
+            traded_quantity: scaled_u256_to_f64(event.traded_quantity),
+            num_trades: event.num_trades,
+            tx_hash: format!("{:?}", meta.transaction_hash),
+            clearing_time: block_timestamp,
+        };
+
+        self.db.clearing_results().insert(clearing_result).await?;
+
+        info!("Market clearing result saved.");
         Ok(())
     }
 }

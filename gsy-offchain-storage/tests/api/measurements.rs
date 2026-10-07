@@ -61,7 +61,7 @@ async fn post_and_filter_measurements() {
 
     let resp = client
         .get(&format!(
-            "{}/measurements?start_time=1900000000&end_time=1900000001",
+            "{}/measurements?start_time=2030-03-17T17:46:40Z&end_time=2030-03-17T17:46:41Z",
             &address
         ))
         .send()
