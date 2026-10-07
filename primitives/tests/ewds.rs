@@ -125,6 +125,29 @@ mod tests {
     }
 
     #[test]
+    fn offer_preferred_partner_round_trips_through_requirements() {
+        let mut expected = order();
+        expected.order_type = OrderEnum::Offer;
+        expected.requirements = Some(DbRequirements {
+            trading_partner_id: Some("partner-id".to_string()),
+            energy_type: None,
+            preferred_energy_rate: Some(12.0),
+        });
+        expected.attributes = Some(DbAttributes {
+            energy_type: EnergyType::Pv,
+        });
+
+        let dto = EwdsOrderDto::from(expected.clone());
+        assert_eq!(dto.order_type, "offer");
+        assert_eq!(dto.preferred_trading_partner.as_deref(), Some("partner-id"));
+        assert_eq!(dto.preferred_energy_rate, Some(12.0));
+        assert_eq!(dto.energy_type.as_deref(), Some("PV"));
+
+        let actual = DbOrderSchema::try_from(dto).expect("EWDS offer should convert to DB schema");
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
     fn energy_type_round_trips() {
         for et in [
             EnergyType::Green,
