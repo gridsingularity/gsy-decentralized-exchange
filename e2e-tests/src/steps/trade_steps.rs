@@ -711,6 +711,49 @@ async fn submit_offer(world: &mut MyWorld, user_name: String) {
     mine_until_matching_block(world, 12).await;
 }
 
+// Offers name their preferred partner the same way bids do: in requirements.
+#[when(
+    expr = "{string} submits an offer for {float} energy at a rate of {float} for the preferred partner {string}"
+)]
+async fn submit_preferred_partner_offer(
+    world: &mut MyWorld,
+    user_name: String,
+    energy: f64,
+    energy_rate: f64,
+    partner_name: String,
+) {
+    let requirements = DbRequirements {
+        trading_partner_id: Some(partner_name.clone()),
+        energy_type: None,
+        preferred_energy_rate: None,
+    };
+    let attributes = DbAttributes {
+        energy_type: EnergyType::Green,
+    };
+
+    let order_id = place_custom_order(
+        world,
+        user_name.as_str(),
+        false,
+        energy,
+        energy_rate,
+        Some(requirements),
+        Some(attributes),
+    )
+    .await;
+
+    let stored = wait_for_order_in_offchain_storage(world, order_id.as_str()).await;
+    assert_eq!(
+        stored
+            .requirements
+            .as_ref()
+            .and_then(|requirements| requirements.trading_partner_id.as_deref()),
+        Some(partner_name.as_str()),
+        "Offer {} lost its preferred partner in requirements",
+        order_id
+    );
+}
+
 #[when(expr = "{string} submits an offer for {float} energy at a rate of {float}")]
 async fn submit_green_offer(world: &mut MyWorld, user_name: String, energy: f64, energy_rate: f64) {
     let attributes = DbAttributes {
