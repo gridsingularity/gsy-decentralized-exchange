@@ -388,10 +388,11 @@ async fn trade_settled_does_not_publish_when_trade_is_not_persisted() {
     wait_for_gateway_messages(&server, 1).await;
 
     // The unique trade_uuid index rejects the duplicate, so no second event may be sent.
-    assert!(handler
+    let error = handler
         .handle_trade_settled(trade_settled_event())
         .await
-        .is_err());
+        .unwrap_err();
+    assert!(error.to_string().contains("Failed to insert trade"));
     assert_no_further_gateway_messages(&server, 1).await;
 
     stop_app(app).await;
