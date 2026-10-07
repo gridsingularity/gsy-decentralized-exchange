@@ -30,9 +30,9 @@ pub struct EwdsHandlerConfig {
     pub event_publish_fqcn: String,
     // Not consumed yet; reserved for a future events subscriber.
     pub event_subscribe_fqcn: String,
-    pub trade_created_topic: String,
-    pub clearing_result_created_topic: String,
-    pub market_status_updated_topic: String,
+    pub trade_event_topic: String,
+    pub clearing_result_event_topic: String,
+    pub market_event_topic: String,
     pub topic_owner: String,
     pub topic_version: String,
     pub request_client_id: String,
@@ -75,12 +75,12 @@ impl EwdsHandlerConfig {
             .unwrap_or_else(|| "gsy.intelligent.events.pub".to_string());
         let event_subscribe_fqcn = env_var("EWDS_EVENT_SUBSCRIBE_FQCN")
             .unwrap_or_else(|| "gsy.intelligent.events.sub".to_string());
-        let trade_created_topic =
-            env_var("EWDS_TRADE_CREATED_EVENT_TOPIC").unwrap_or_else(|| "trade".to_string());
-        let clearing_result_created_topic = env_var("EWDS_CLEARING_RESULT_CREATED_EVENT_TOPIC")
+        let trade_event_topic =
+            env_var("EWDS_TRADE_EVENT_TOPIC").unwrap_or_else(|| "trade".to_string());
+        let clearing_result_event_topic = env_var("EWDS_CLEARING_RESULT_EVENT_TOPIC")
             .unwrap_or_else(|| "clearingResult".to_string());
-        let market_status_updated_topic = env_var("EWDS_MARKET_STATUS_UPDATED_EVENT_TOPIC")
-            .unwrap_or_else(|| "market".to_string());
+        let market_event_topic =
+            env_var("EWDS_MARKET_EVENT_TOPIC").unwrap_or_else(|| "market".to_string());
 
         Self {
             enabled,
@@ -90,9 +90,9 @@ impl EwdsHandlerConfig {
             response_fqcn,
             event_publish_fqcn,
             event_subscribe_fqcn,
-            trade_created_topic,
-            clearing_result_created_topic,
-            market_status_updated_topic,
+            trade_event_topic,
+            clearing_result_event_topic,
+            market_event_topic,
             topic_owner: std::env::var("EWDS_TOPIC_OWNER")
                 .unwrap_or_else(|_| "integration.apps.intelligent.auth.ewc".to_string()),
             topic_version: std::env::var("EWDS_TOPIC_VERSION")
@@ -110,9 +110,9 @@ impl EwdsHandlerConfig {
     /// The EWDS topic an event of the given type is published on.
     pub fn event_topic(&self, event_type: EwdsEventType) -> &str {
         match event_type {
-            EwdsEventType::TradeCreated => &self.trade_created_topic,
-            EwdsEventType::ClearingResultCreated => &self.clearing_result_created_topic,
-            EwdsEventType::MarketStatusUpdated => &self.market_status_updated_topic,
+            EwdsEventType::TradeCreated => &self.trade_event_topic,
+            EwdsEventType::ClearingResultCreated => &self.clearing_result_event_topic,
+            EwdsEventType::MarketStatusUpdated => &self.market_event_topic,
         }
     }
 }

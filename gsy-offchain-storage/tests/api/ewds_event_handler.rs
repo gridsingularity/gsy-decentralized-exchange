@@ -315,18 +315,18 @@ fn handler_config_defaults_to_the_events_channels() {
             "gsy.intelligent.events.sub",
         ),
         (
-            "EWDS_TRADE_CREATED_EVENT_TOPIC",
-            config.trade_created_topic.as_str(),
+            "EWDS_TRADE_EVENT_TOPIC",
+            config.trade_event_topic.as_str(),
             "trade",
         ),
         (
-            "EWDS_CLEARING_RESULT_CREATED_EVENT_TOPIC",
-            config.clearing_result_created_topic.as_str(),
+            "EWDS_CLEARING_RESULT_EVENT_TOPIC",
+            config.clearing_result_event_topic.as_str(),
             "clearingResult",
         ),
         (
-            "EWDS_MARKET_STATUS_UPDATED_EVENT_TOPIC",
-            config.market_status_updated_topic.as_str(),
+            "EWDS_MARKET_EVENT_TOPIC",
+            config.market_event_topic.as_str(),
             "market",
         ),
     ] {
