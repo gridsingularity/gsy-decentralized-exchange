@@ -137,6 +137,35 @@ services:
       EXECUTION_ENGINE_PRIVATE_KEY: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
       EWDS_EXECUTION_ENGINE_CLIENT_ID: ${EWDS_EXECUTION_ENGINE_CLIENT_ID:-gsyexecutionengine}
 
+  gsy-analytics-engine:
+    container_name: gsy-analytics-engine
+    build:
+      context: .
+      dockerfile: ./gsy-analytics-engine/Dockerfile
+    depends_on:
+      mongodb:
+        condition: service_started
+      gsy-offchain-storage:
+        condition: service_started
+    ports:
+      - "8081:8081"
+    environment:
+      RUST_LOG: info
+      DATABASE_NAME: offchain_storage
+      DATABASE_HOST: mongodb
+      DATABASE_URL_SCHEME: mongodb
+      DATABASE_USERNAME: gsy
+      DATABASE_PASSWORD: gsy
+      ANALYTICS_API_HOST: "0.0.0.0"
+      ANALYTICS_API_PORT: "8081"
+      ANALYTICS_INTERVAL_SECONDS: ${ANALYTICS_INTERVAL_SECONDS:-900}
+      ANALYTICS_LOOKBACK_HOURS: ${ANALYTICS_LOOKBACK_HOURS:-48}
+      ANALYTICS_SETTLEMENT_DELAY_MINUTES: ${ANALYTICS_SETTLEMENT_DELAY_MINUTES:-15}
+      ANALYTICS_BACKFILL_FROM: ${ANALYTICS_BACKFILL_FROM:-}
+      ANALYTICS_ENABLED_KPIS: ${ANALYTICS_ENABLED_KPIS:-procurement_cost_per_kwh}
+      ANALYTICS_GRID_TARIFF_EUR_PER_KWH: ${ANALYTICS_GRID_TARIFF_EUR_PER_KWH:-}
+      ANALYTICS_GRID_TARIFF_OVERRIDES: ${ANALYTICS_GRID_TARIFF_OVERRIDES:-}
+
   mongodb:
     image: mongo:8.3.8
     ports:
