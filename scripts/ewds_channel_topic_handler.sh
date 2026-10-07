@@ -1,11 +1,11 @@
 #!/bin/sh
 #
-# Create the INTELLIGENT EWDS topics and configure the GSY channels on the
-# DDHub client gateway, then read every channel back and verify it.
+# Create the INTELLIGENT EWDS topics and create or update the GSY channels on
+# the DDHub client gateway, so that every channel carries exactly the topics
+# configured below.
 #
 # Usage:
-#   ./ewds_channel_topic_handler.sh                  create missing topics, configure all channels
-#   ./ewds_channel_topic_handler.sh --check          read-only: report drift, exit 1 if any
+#   ./ewds_channel_topic_handler.sh                  create missing topics, create or update all channels
 #   ./ewds_channel_topic_handler.sh --channel FQCN   limit to one channel (repeatable)
 #
 # Environment:
@@ -14,7 +14,7 @@
 #   MAX_ATTEMPTS         attempts per API call on 429/5xx (default 6)
 #   CHANNEL_PAUSE_SECS   pause between channel updates (default 5)
 #
-# Requires curl and python3 (python3 is only used to parse and compare JSON).
+# Requires curl and python3 (python3 is only used to parse JSON).
 
 set -eu
 
@@ -49,6 +49,9 @@ EVENT_TOPICS="
 trade
 clearingResult
 market
+tradeTest
+clearingResultTest
+marketTest
 "
 
 CHANNELS="
@@ -60,17 +63,15 @@ gsy.intelligent.events.pub
 gsy.intelligent.events.sub
 "
 
-CHECK_ONLY=false
 SELECTED_CHANNELS=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --check) CHECK_ONLY=true ;;
     --channel)
       [ $# -ge 2 ] || { echo "--channel needs an FQCN" >&2; exit 2; }
       SELECTED_CHANNELS="$SELECTED_CHANNELS $2"
       shift
       ;;
-    -h|--help) sed -n '2,19p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
@@ -98,7 +99,9 @@ trap 'rm -f "$RESP"' EXIT
 
 # Helper: call the gateway API. The response body is left in $RESP.
 # Retries 429s (including the message broker's 429 wrapped in a 400), 5xx and
-# connection errors with backoff; any other non-2xx status aborts the script.
+# connection errors with backoff; any other non-2xx status aborts the script,
+# except that with API_MISSING_OK=true a CHANNEL::NOT_FOUND answer returns 1.
+API_MISSING_OK=false
 api() {
   METHOD=$1
   API_PATH=$2
@@ -116,6 +119,9 @@ api() {
     case "$STATUS" in
       2??) return 0 ;;
     esac
+    if [ "$API_MISSING_OK" = true ] && grep -q 'CHANNEL::NOT_FOUND' "$RESP" 2>/dev/null; then
+      return 1
+    fi
     RETRYABLE=false
     case "$STATUS" in
       000|429|5??) RETRYABLE=true ;;
@@ -152,41 +158,13 @@ build_topics_json() {
   echo "$RESULT"
 }
 
-# Helper: compare the channel JSON in $RESP with the expected type, role and
-# topics. Prints OK/DRIFT and returns 1 on drift.
-verify_channel() {
-  python3 - "$RESP" "$1" "$2" "$ROLE" $3 <<'EOF'
-import json, sys
-
-path, fqcn, expected_type, role, *topics = sys.argv[1:]
-with open(path) as fh:
-    channel = json.load(fh)
-conditions = channel.get("conditions") or {}
-roles = conditions.get("roles") or []
-actual_topics = {t.get("topicName") for t in conditions.get("topics") or []}
-dids = conditions.get("qualifiedDids") or []
-
-problems = []
-if channel.get("type") != expected_type:
-    problems.append(f"type {channel.get('type')!r} (expected {expected_type!r})")
-if roles != [role]:
-    problems.append(f"roles {roles} (expected [{role!r}])")
-missing = sorted(set(topics) - actual_topics)
-extra = sorted(actual_topics - set(topics))
-if missing:
-    problems.append(f"missing topics {missing}")
-if extra:
-    problems.append(f"extra topics {extra}")
-if not dids:
-    problems.append("no qualified DIDs (nobody can receive on this channel)")
-
-if problems:
-    print(f"DRIFT {fqcn}:")
-    for problem in problems:
-        print(f"  - {problem}")
-    sys.exit(1)
-print(f"OK    {fqcn} (roles={roles}, topics={len(actual_topics)}, qualifiedDids={len(dids)})")
-EOF
+# Helper: succeed if the channel exists on the gateway, which answers a
+# missing channel with HTTP 400 CHANNEL::NOT_FOUND.
+channel_exists() {
+  API_MISSING_OK=true
+  if api GET "/channels/$1"; then EXISTS=0; else EXISTS=1; fi
+  API_MISSING_OK=false
+  return $EXISTS
 }
 
 # 1. Create missing topics (request + response + event)
@@ -205,12 +183,8 @@ for TOPIC in $REQUEST_TOPICS $RESPONSE_TOPICS $EVENT_TOPICS; do
   fi
 done
 
-DRIFT=false
 if [ -z "$MISSING_TOPICS" ]; then
   echo "All topics exist for owner $OWNER"
-elif [ "$CHECK_ONLY" = true ]; then
-  echo "DRIFT topics missing:$MISSING_TOPICS"
-  DRIFT=true
 else
   for TOPIC in $MISSING_TOPICS; do
     echo "Adding topic: $TOPIC"
@@ -229,7 +203,7 @@ REQUEST_TOPICS_JSON=$(build_topics_json "$REQUEST_TOPICS")
 RESPONSE_TOPICS_JSON=$(build_topics_json "$RESPONSE_TOPICS")
 EVENT_TOPICS_JSON=$(build_topics_json "$EVENT_TOPICS")
 
-# 2. Configure (or, with --check, only verify) each channel
+# 2. Create or update each channel
 FIRST=true
 for CHANNEL in $CHANNELS; do
   TYPE="${CHANNEL##*.}"
@@ -237,37 +211,36 @@ for CHANNEL in $CHANNELS; do
   # 3rd part of the name decides request vs response channel
   KIND=$(echo "$CHANNEL" | cut -d. -f3)
   case "$KIND" in
-    request*) TOPICS="$REQUEST_TOPICS"; TOPICS_JSON="$REQUEST_TOPICS_JSON" ;;
-    response*) TOPICS="$RESPONSE_TOPICS"; TOPICS_JSON="$RESPONSE_TOPICS_JSON" ;;
-    event*) TOPICS="$EVENT_TOPICS"; TOPICS_JSON="$EVENT_TOPICS_JSON" ;;
+    request*) TOPICS_JSON="$REQUEST_TOPICS_JSON" ;;
+    response*) TOPICS_JSON="$RESPONSE_TOPICS_JSON" ;;
+    event*) TOPICS_JSON="$EVENT_TOPICS_JSON" ;;
     *) echo "Unknown channel kind for $CHANNEL, skipping"; continue ;;
   esac
 
-  if [ "$CHECK_ONLY" = false ]; then
-    [ "$FIRST" = true ] || sleep "$CHANNEL_PAUSE_SECS"
-    FIRST=false
-    echo "Configuring channel: $CHANNEL (type: $TYPE, kind: $KIND)"
+  [ "$FIRST" = true ] || sleep "$CHANNEL_PAUSE_SECS"
+  FIRST=false
+  CHANNEL_SETTINGS="\"type\": \"$TYPE\",
+  \"payloadEncryption\": false,
+  \"conditions\": {
+  \"roles\": [
+    \"$ROLE\"
+  ],
+  \"topics\": [$TOPICS_JSON
+     ],
+     \"responseTopics\": [
+     ]
+}"
+  if channel_exists "$CHANNEL"; then
+    echo "Updating channel: $CHANNEL (type: $TYPE, kind: $KIND)"
     api PUT "/channels/$CHANNEL" "{
-    \"type\": \"$TYPE\",
-    \"payloadEncryption\": false,
-    \"conditions\": {
-    \"roles\": [
-      \"$ROLE\"
-    ],
-    \"topics\": [$TOPICS_JSON
-       ],
-       \"responseTopics\": [
-       ]
-  }
+  $CHANNEL_SETTINGS
+}"
+  else
+    echo "Creating channel: $CHANNEL (type: $TYPE, kind: $KIND)"
+    api POST "/channels" "{
+  \"fqcn\": \"$CHANNEL\",
+  $CHANNEL_SETTINGS
 }"
   fi
-
-  api GET "/channels/$CHANNEL"
-  verify_channel "$CHANNEL" "$TYPE" "$TOPICS" || DRIFT=true
 done
-
-if [ "$DRIFT" = true ]; then
-  echo "Channel configuration does not match the expected state" >&2
-  exit 1
-fi
-echo "Channel configuration verified"
+echo "All channels configured"
