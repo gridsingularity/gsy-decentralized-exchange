@@ -1,4 +1,4 @@
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use primitives::constants::GLOBAL_CONSTANTS;
 use tracing::info;
 
@@ -19,7 +19,7 @@ pub struct TimeslotScheduler {
 
 impl TimeslotScheduler {
     pub fn new(rollover_retry_limit: u32) -> Self {
-        Self::with_initial_timeslot(generate_target_timeslot(), rollover_retry_limit)
+        Self::with_initial_timeslot(generate_target_timeslot(Utc::now()), rollover_retry_limit)
     }
 
     pub fn with_initial_timeslot(initial_timeslot: u64, rollover_retry_limit: u32) -> Self {
@@ -31,7 +31,12 @@ impl TimeslotScheduler {
     }
 
     pub fn calculate_timeslot(&mut self) -> u64 {
-        let current_target_timeslot = generate_target_timeslot();
+        self.calculate_timeslot_at(Utc::now())
+    }
+
+    /// Select a slot at an explicit time, allowing rollover tests without sleeping.
+    pub fn calculate_timeslot_at(&mut self, now: DateTime<Utc>) -> u64 {
+        let current_target_timeslot = generate_target_timeslot(now);
 
         if current_target_timeslot != self.latest_target_timeslot {
             if self.rollover_retry_limit > 0 {
@@ -86,8 +91,7 @@ impl TimeslotScheduler {
     }
 }
 
-fn generate_target_timeslot() -> u64 {
-    let now = Utc::now();
+fn generate_target_timeslot(now: DateTime<Utc>) -> u64 {
     let previous = now - Duration::minutes(GLOBAL_CONSTANTS.execution_engine_offset_min);
 
     (previous.timestamp() as u64 / GLOBAL_CONSTANTS.time_slot_sec) * GLOBAL_CONSTANTS.time_slot_sec
