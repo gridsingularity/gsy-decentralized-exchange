@@ -24,8 +24,7 @@ pub struct UserAccount {
 #[derive(Clone, Debug)]
 pub struct PayAsClearScenario {
     pub accepted_order_ids: Vec<String>,
-    pub unmatched_bid_order_id: String,
-    pub unmatched_offer_order_id: String,
+    pub unmatched_order_ids: Vec<String>,
     pub expected_match_count: usize,
     pub preferred_order_ids: Option<(String, String)>,
 }
