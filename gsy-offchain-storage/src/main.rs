@@ -4,7 +4,7 @@ use gsy_ethers_listener::{GsyEthersListener, ListenerConfig};
 use gsy_offchain_storage::configuration::get_configuration;
 use gsy_offchain_storage::db::{init_database, DbRef};
 use gsy_offchain_storage::evm_handler::OffchainStorageEvmHandler;
-use gsy_offchain_storage::ewds_event_handler::EwdsEventPublisher;
+use gsy_offchain_storage::ewds_event_handler::{start_ewds_event_subscriber, EwdsEventPublisher};
 use gsy_offchain_storage::ewds_handler::{start_ewds_request_handler, EwdsHandlerConfig};
 use gsy_offchain_storage::http_server::start_server;
 use gsy_offchain_storage::update_db::expire_orders_scheduler;
@@ -61,6 +61,12 @@ async fn main() -> Result<(), anyhow::Error> {
         let request_handler_config = ewds_config.clone();
         tokio::task::spawn(async move {
             start_ewds_request_handler(db_for_ewds, request_handler_config).await;
+        });
+
+        let db_for_events = db_connection_wrapper.clone();
+        let event_subscriber_config = ewds_config.clone();
+        tokio::task::spawn(async move {
+            start_ewds_event_subscriber(db_for_events, event_subscriber_config).await;
         });
     }
 

@@ -6,18 +6,24 @@ use gsy_ethers_listener::{
     GsyEventHandler, MarketClearingFilter, MarketStatusUpdatedFilter, TradeSettledFilter,
 };
 use gsy_offchain_storage::evm_handler::OffchainStorageEvmHandler;
-use gsy_offchain_storage::ewds_event_handler::EwdsEventPublisher;
+use gsy_offchain_storage::ewds_event_handler::{
+    handle_event, start_ewds_event_subscriber, EwdsEventPublisher,
+};
 use gsy_offchain_storage::ewds_handler::EwdsHandlerConfig;
+use primitives::db_api_schema::grid_topology::{EnergyCommunitySchema, FacilitySchema, SiteSchema};
+use primitives::db_api_schema::profiles::MeasurementPointType;
 use primitives::db_api_schema::trades::{
     ClearingResultSchema, ClearingStatus, DbTradeSchema, TradeParameters, TradeStatus,
 };
-use primitives::ewds::dto::{EwdsMarketStatusDto, EwdsSendMessageDto};
-use primitives::ewds::EwdsEventType;
-use primitives::utils::bytes16_to_hex;
-use serde_json::json;
+use primitives::ewds::dto::{EwdsEventEnvelope, EwdsMarketStatusDto, EwdsSendMessageDto};
+use primitives::ewds::{is_invalid_event, EwdsEventType};
+use primitives::utils::{
+    bytes16_to_hex, epoch_to_rfc3339, rfc3339_to_epoch, timestamp_to_string_with_padding,
+};
+use serde_json::{json, Value};
 use std::time::Duration;
 use uuid::Uuid;
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 // --- Test helpers ---------------------------------------------------
@@ -148,7 +154,7 @@ async fn publish_trades_created_sends_event_on_events_channel() {
         event["eventType"],
         json!(EwdsEventType::TradeCreated.as_str())
     );
-    assert_eq!(event["occurredAt"], json!(950));
+    assert_eq!(event["occurredAt"], json!(epoch_to_rfc3339(950)));
     assert_eq!(event["data"].as_array().unwrap().len(), 1);
     assert_eq!(event["data"][0]["tradeId"], json!("trade-1"));
     assert_eq!(event["data"][0]["marketId"], json!("market-1"));
@@ -170,7 +176,7 @@ async fn publish_trades_created_sends_several_trades_in_one_event() {
     let event: serde_json::Value = serde_json::from_str(&send_dto.payload).unwrap();
     assert_event_id(&send_dto, &event);
     // occurredAt is the time of the newest trade.
-    assert_eq!(event["occurredAt"], json!(960));
+    assert_eq!(event["occurredAt"], json!(epoch_to_rfc3339(960)));
     assert_eq!(event["data"][0]["tradeId"], json!("trade-1"));
     assert_eq!(event["data"][1]["tradeId"], json!("trade-2"));
 }
@@ -234,7 +240,7 @@ async fn publish_clearing_results_created_sends_event_on_events_channel() {
         event["eventType"],
         json!(EwdsEventType::ClearingResultCreated.as_str())
     );
-    assert_eq!(event["occurredAt"], json!(1_100));
+    assert_eq!(event["occurredAt"], json!(epoch_to_rfc3339(1_100)));
     assert_eq!(event["data"][0]["marketId"], json!("market-1"));
     assert_eq!(event["data"][0]["numTrades"], json!(2));
     assert_eq!(event["data"][0]["txHash"], json!("0xabc"));
@@ -268,7 +274,7 @@ async fn publish_market_statuses_updated_sends_event_on_events_channel() {
         event["eventType"],
         json!(EwdsEventType::MarketStatusUpdated.as_str())
     );
-    assert_eq!(event["occurredAt"], json!(1_200));
+    assert_eq!(event["occurredAt"], json!(epoch_to_rfc3339(1_200)));
     assert_eq!(
         event["data"],
         json!([{"marketId": "market-1", "isOpen": false}])
@@ -316,18 +322,43 @@ fn handler_config_defaults_to_the_events_channels() {
         ),
         (
             "EWDS_TRADE_EVENT_TOPIC",
-            config.trade_event_topic.as_str(),
+            config.event_topic(EwdsEventType::TradeCreated),
             "trade",
         ),
         (
             "EWDS_CLEARING_RESULT_EVENT_TOPIC",
-            config.clearing_result_event_topic.as_str(),
+            config.event_topic(EwdsEventType::ClearingResultCreated),
             "clearingResult",
         ),
         (
             "EWDS_MARKET_EVENT_TOPIC",
-            config.market_event_topic.as_str(),
+            config.event_topic(EwdsEventType::MarketStatusUpdated),
             "market",
+        ),
+        (
+            "EWDS_MEASUREMENTS_EVENT_TOPIC",
+            config.event_topic(EwdsEventType::MeasurementsSubmitted),
+            "measurements",
+        ),
+        (
+            "EWDS_FACILITY_EVENT_TOPIC",
+            config.event_topic(EwdsEventType::FacilitySubmitted),
+            "facility",
+        ),
+        (
+            "EWDS_SITE_EVENT_TOPIC",
+            config.event_topic(EwdsEventType::SiteSubmitted),
+            "site",
+        ),
+        (
+            "EWDS_COMMUNITY_EVENT_TOPIC",
+            config.event_topic(EwdsEventType::CommunitySubmitted),
+            "community",
+        ),
+        (
+            "EWDS_ORDER_EVENT_TOPIC",
+            config.event_topic(EwdsEventType::OrderSubmitted),
+            "order",
         ),
     ] {
         // Only the defaults are under test; an explicitly configured value is left alone.
@@ -370,7 +401,10 @@ async fn trade_settled_publishes_trade_created_event() {
     assert_eq!(event["data"][0]["residualBidId"], json!(null));
 
     let stored = app.db_wrapper.trades().get_all_trades().await.unwrap();
-    assert_eq!(event["occurredAt"], json!(stored[0].creation_time));
+    assert_eq!(
+        event["occurredAt"],
+        json!(epoch_to_rfc3339(stored[0].creation_time))
+    );
 
     stop_app(app).await;
 }
@@ -420,7 +454,7 @@ async fn market_clearing_publishes_clearing_result_created_event() {
         json!(EwdsEventType::ClearingResultCreated.as_str())
     );
     assert_event_id(&messages[0], &event);
-    assert_eq!(event["occurredAt"], json!(1_100));
+    assert_eq!(event["occurredAt"], json!(epoch_to_rfc3339(1_100)));
     assert_eq!(event["data"][0]["marketId"], json!(market_id));
     assert_eq!(event["data"][0]["clearingStatus"], json!("final"));
     assert_eq!(event["data"][0]["numTrades"], json!(2));
@@ -473,7 +507,7 @@ async fn market_status_publishes_market_status_updated_event() {
         json!([{"marketId": market_id, "isOpen": true}])
     );
     // Market status is not persisted, so occurredAt is the time the event was received.
-    let occurred_at = event["occurredAt"].as_u64().unwrap();
+    let occurred_at = rfc3339_to_epoch(event["occurredAt"].as_str().unwrap()).unwrap();
     assert!(occurred_at >= before && occurred_at <= chrono::Utc::now().timestamp() as u64);
 
     stop_app(app).await;
@@ -486,7 +520,385 @@ fn handler_config_maps_event_types_to_their_topics() {
         (EwdsEventType::TradeCreated, "trade"),
         (EwdsEventType::ClearingResultCreated, "clearingResult"),
         (EwdsEventType::MarketStatusUpdated, "market"),
+        (EwdsEventType::MeasurementsSubmitted, "measurements"),
+        (EwdsEventType::FacilitySubmitted, "facility"),
+        (EwdsEventType::SiteSubmitted, "site"),
+        (EwdsEventType::CommunitySubmitted, "community"),
+        (EwdsEventType::OrderSubmitted, "order"),
     ] {
         assert_eq!(config.event_topic(event_type), topic);
     }
+}
+
+// --- Event subscriber -----------------------------------------------
+
+const TIMESLOT: u64 = 1_767_225_600;
+
+fn event(event_type: EwdsEventType, event_id: &str, data: Value) -> EwdsEventEnvelope<Value> {
+    EwdsEventEnvelope {
+        event_id: event_id.to_string(),
+        event_type,
+        occurred_at: epoch_to_rfc3339(TIMESLOT),
+        data,
+    }
+}
+
+fn facility(facility_id: &str, owner_id: &str) -> FacilitySchema {
+    FacilitySchema {
+        facility_id: facility_id.to_string(),
+        facility_name: format!("Facility {}", facility_id),
+        site_id: "site-1".to_string(),
+        owner_id: owner_id.to_string(),
+    }
+}
+
+fn measurement_data(facility_id: &str, time_slot: u64, energy_kwh: f64) -> Value {
+    json!({
+        "facilityId": facility_id,
+        "communityUuid": "community-1",
+        "timeSlot": epoch_to_rfc3339(time_slot),
+        "creationTime": epoch_to_rfc3339(time_slot + 10),
+        "energyKwh": energy_kwh,
+    })
+}
+
+/// The stored timeseries values as (measurement point, timestamp, value), sorted.
+async fn stored_values(app: &crate::helpers::TestApp) -> Vec<(String, String, f64)> {
+    let mut values = app
+        .db_wrapper
+        .timeseries()
+        .filter_values(None, None, None)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|value| (value.measurement_point, value.timestamp, value.value))
+        .collect::<Vec<_>>();
+    values.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
+    values
+}
+
+fn value(facility_id: &str, time_slot: u64, energy_kwh: f64) -> (String, String, f64) {
+    (
+        format!("measurement:community-1:{}", facility_id),
+        timestamp_to_string_with_padding(time_slot),
+        energy_kwh,
+    )
+}
+
+#[tokio::test]
+async fn handle_event_saves_facilities_sites_and_communities() {
+    let app = init_app().await;
+    let db = &app.db_wrapper;
+
+    handle_event(
+        db,
+        event(
+            EwdsEventType::FacilitySubmitted,
+            "facility-event",
+            json!([
+                facility("facility-1", "owner-1"),
+                facility("facility-2", "owner-2")
+            ]),
+        ),
+    )
+    .await
+    .unwrap();
+    handle_event(
+        db,
+        event(
+            EwdsEventType::SiteSubmitted,
+            "site-event",
+            json!([{
+                "site_name": "site-1",
+                "site_description": "Main building",
+                "facilities": ["facility-1", "facility-2"],
+            }]),
+        ),
+    )
+    .await
+    .unwrap();
+    handle_event(
+        db,
+        event(
+            EwdsEventType::CommunitySubmitted,
+            "community-event",
+            json!([{
+                "communityId": "community-1",
+                "communityName": "Community 1",
+                "sites": ["site-1"],
+            }]),
+        ),
+    )
+    .await
+    .unwrap();
+
+    let mut facilities = db.facilities().get_all().await.unwrap();
+    facilities.sort_by(|a, b| a.facility_id.cmp(&b.facility_id));
+    assert_eq!(
+        facilities,
+        vec![
+            facility("facility-1", "owner-1"),
+            facility("facility-2", "owner-2")
+        ]
+    );
+    assert_eq!(
+        db.sites().get_all().await.unwrap(),
+        vec![SiteSchema {
+            site_name: "site-1".to_string(),
+            site_description: "Main building".to_string(),
+            facilities: vec!["facility-1".to_string(), "facility-2".to_string()],
+        }]
+    );
+    assert_eq!(
+        db.communities().get_all().await.unwrap(),
+        vec![EnergyCommunitySchema {
+            community_id: "community-1".to_string(),
+            community_name: "Community 1".to_string(),
+            sites: vec!["site-1".to_string()],
+        }]
+    );
+
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn handle_event_saves_a_measurement_batch_across_facilities_and_slots() {
+    let app = init_app().await;
+
+    handle_event(
+        &app.db_wrapper,
+        event(
+            EwdsEventType::MeasurementsSubmitted,
+            "measurements-event",
+            json!([
+                measurement_data("facility-1", TIMESLOT, 1.5),
+                measurement_data("facility-1", TIMESLOT + 900, 2.0),
+                measurement_data("facility-2", TIMESLOT, -0.5),
+            ]),
+        ),
+    )
+    .await
+    .unwrap();
+
+    let mut point_ids = app
+        .db_wrapper
+        .measurement_points()
+        .filter_points(None, Some(MeasurementPointType::Measurement))
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|point| point.measurement_id)
+        .collect::<Vec<_>>();
+    point_ids.sort();
+    assert_eq!(
+        point_ids,
+        vec![
+            "measurement:community-1:facility-1",
+            "measurement:community-1:facility-2",
+        ]
+    );
+    assert_eq!(
+        stored_values(&app).await,
+        vec![
+            value("facility-1", TIMESLOT, 1.5),
+            value("facility-1", TIMESLOT + 900, 2.0),
+            value("facility-2", TIMESLOT, -0.5),
+        ]
+    );
+
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn handle_event_stores_nothing_from_a_batch_with_an_invalid_measurement() {
+    let app = init_app().await;
+    let mut invalid = measurement_data("facility-1", TIMESLOT + 900, 2.0);
+    invalid["timeSlot"] = json!(TIMESLOT + 900);
+
+    let error = handle_event(
+        &app.db_wrapper,
+        event(
+            EwdsEventType::MeasurementsSubmitted,
+            "measurements-event",
+            json!([measurement_data("facility-1", TIMESLOT, 1.5), invalid]),
+        ),
+    )
+    .await
+    .unwrap_err();
+
+    assert!(format!("{error:#}").contains("index 1"), "{error:#}");
+    // Invalid data is not retried by the event worker.
+    assert!(is_invalid_event(&error));
+    assert!(stored_values(&app).await.is_empty());
+    assert!(app
+        .db_wrapper
+        .measurement_points()
+        .filter_points(None, None)
+        .await
+        .unwrap()
+        .is_empty());
+
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn handle_event_stores_nothing_from_a_batch_with_an_invalid_facility() {
+    let app = init_app().await;
+
+    let error = handle_event(
+        &app.db_wrapper,
+        event(
+            EwdsEventType::FacilitySubmitted,
+            "facility-event",
+            json!([
+                facility("facility-1", "owner-1"),
+                {"facility_id": "facility-2"}
+            ]),
+        ),
+    )
+    .await
+    .unwrap_err();
+
+    assert!(format!("{error:#}").contains("index 1"), "{error:#}");
+    assert!(is_invalid_event(&error));
+    assert!(app
+        .db_wrapper
+        .facilities()
+        .get_all()
+        .await
+        .unwrap()
+        .is_empty());
+
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn handle_event_updates_the_record_when_an_event_arrives_again() {
+    let app = init_app().await;
+    let db = &app.db_wrapper;
+
+    for owner_id in ["owner-1", "owner-1", "owner-2"] {
+        handle_event(
+            db,
+            event(
+                EwdsEventType::FacilitySubmitted,
+                "facility-event",
+                json!([facility("facility-1", owner_id)]),
+            ),
+        )
+        .await
+        .unwrap();
+    }
+    for _ in 0..2 {
+        handle_event(
+            db,
+            event(
+                EwdsEventType::MeasurementsSubmitted,
+                "measurements-event",
+                json!([measurement_data("facility-1", TIMESLOT, 1.5)]),
+            ),
+        )
+        .await
+        .unwrap();
+    }
+
+    assert_eq!(
+        db.facilities().get_all().await.unwrap(),
+        vec![facility("facility-1", "owner-2")]
+    );
+    assert_eq!(
+        stored_values(&app).await,
+        vec![value("facility-1", TIMESLOT, 1.5)]
+    );
+
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn handle_event_rejects_invalid_data_and_events_gsy_publishes() {
+    let app = init_app().await;
+    let db = &app.db_wrapper;
+
+    assert!(handle_event(
+        db,
+        event(
+            EwdsEventType::FacilitySubmitted,
+            "facility-event",
+            json!(facility("facility-1", "owner-1")),
+        ),
+    )
+    .await
+    .is_err());
+    assert!(handle_event(
+        db,
+        event(
+            EwdsEventType::MeasurementsSubmitted,
+            "measurements-event",
+            json!([]),
+        ),
+    )
+    .await
+    .is_err());
+    assert!(handle_event(
+        db,
+        event(EwdsEventType::TradeCreated, "trade-event", json!([])),
+    )
+    .await
+    .is_err());
+    assert!(db.facilities().get_all().await.unwrap().is_empty());
+
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn event_subscriber_skips_bad_messages_and_saves_the_next_one() {
+    let app = init_app().await;
+    let server = MockServer::start().await;
+    // A site event on the facility topic must be skipped, not saved as a site.
+    let wrong_topic_event = event(
+        EwdsEventType::SiteSubmitted,
+        "site-event",
+        json!([{"site_name": "wrong-topic-site", "site_description": "", "facilities": []}]),
+    );
+    let facility_event = event(
+        EwdsEventType::FacilitySubmitted,
+        "facility-event",
+        json!([facility("facility-1", "owner-1")]),
+    );
+    Mock::given(method("GET"))
+        .and(path("/api/v2/messages"))
+        .and(query_param("fqcn", "gsy.events.sub"))
+        .and(query_param("topicName", "facility"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+            {"payload": "not an event"},
+            {"payload": serde_json::to_string(&wrong_topic_event).unwrap()},
+            {"payload": serde_json::to_string(&facility_event).unwrap()},
+        ])))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v2/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .with_priority(10)
+        .mount(&server)
+        .await;
+
+    let subscriber = tokio::spawn(start_ewds_event_subscriber(
+        app.db_wrapper.clone(),
+        test_config(server.uri()),
+    ));
+    let mut facilities = Vec::new();
+    for _ in 0..100 {
+        facilities = app.db_wrapper.facilities().get_all().await.unwrap();
+        if !facilities.is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    subscriber.abort();
+
+    assert_eq!(facilities, vec![facility("facility-1", "owner-1")]);
+    assert!(app.db_wrapper.sites().get_all().await.unwrap().is_empty());
+
+    stop_app(app).await;
 }

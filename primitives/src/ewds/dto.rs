@@ -3,11 +3,11 @@ use crate::db_api_schema::{
     grid_topology::EnergyCommunitySchema,
     market::{MarketSchema, MarketType, MatchingAlgorithm},
     orders::{DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus},
+    profiles::MeasurementSchema,
     trades::{
         ClearingResultSchema, ClearingStatus, DbTradeSchema, NoBidReason, TradeParameters,
         TradeStatus,
     },
-    profiles::{MeasurementSchema}
 };
 
 use crate::utils::{epoch_to_rfc3339, rfc3339_to_epoch};
@@ -70,12 +70,12 @@ pub struct EwdsResponseEnvelope<T> {
     pub error: Option<EwdsErrorPayload>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EwdsEventEnvelope<T> {
     pub event_id: String,
     pub event_type: EwdsEventType,
-    pub occurred_at: u64,
+    pub occurred_at: String,
     pub data: T,
 }
 
@@ -540,6 +540,7 @@ impl From<EwdsMarketDto> for MarketSchema {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct EwdsMeasurementDto {
     pub facility_id: String,
     pub community_uuid: String,

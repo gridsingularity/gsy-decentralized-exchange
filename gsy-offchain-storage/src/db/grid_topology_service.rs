@@ -247,6 +247,18 @@ impl SiteService {
         Ok(self.0.find_one(doc! {"site_name": site_name}).await?)
     }
 
+    pub async fn upsert(&self, site: SiteSchema) -> Result<SiteSchema> {
+        let site_doc = bson::to_document(&site)?;
+        self.0
+            .update_one(
+                doc! {"site_name": site.site_name.clone()},
+                doc! {"$set": site_doc},
+            )
+            .upsert(true)
+            .await?;
+        Ok(site)
+    }
+
     pub async fn get_all(&self) -> Result<Vec<SiteSchema>> {
         collect_all(&self.0).await
     }
@@ -279,6 +291,18 @@ impl FacilityService {
             .0
             .find_one(doc! {"facility_name": facility_name})
             .await?)
+    }
+
+    pub async fn upsert(&self, facility: FacilitySchema) -> Result<FacilitySchema> {
+        let facility_doc = bson::to_document(&facility)?;
+        self.0
+            .update_one(
+                doc! {"facility_id": facility.facility_id.clone()},
+                doc! {"$set": facility_doc},
+            )
+            .upsert(true)
+            .await?;
+        Ok(facility)
     }
 
     pub async fn get_all(&self) -> Result<Vec<FacilitySchema>> {

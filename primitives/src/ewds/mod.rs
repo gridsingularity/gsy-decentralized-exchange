@@ -1,19 +1,28 @@
 pub mod dto;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use dto::{
-    EwdsDeliverySummary, EwdsMessageDto, EwdsQueryResponse, EwdsRequestEnvelope,
+    EwdsDeliverySummary, EwdsEventEnvelope, EwdsMessageDto, EwdsQueryResponse, EwdsRequestEnvelope,
     EwdsSendMessageDto, EwdsSendMessageResponse,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::{HashSet, VecDeque};
+use std::future::Future;
 use std::{env, fmt, time::Instant};
 use tokio::time::{sleep, Duration};
-use tracing::warn;
+use tracing::{error, info, warn};
 
 const DEFAULT_GATEWAY_URL: &str = "http://ewds-gateway-api:3333";
 const DEFAULT_REQUEST_FQCN: &str = "gsy.intelligent.requests.pub";
 const DEFAULT_RESPONSE_FQCN: &str = "gsy.intelligent.responses.sub";
+const DEFAULT_EVENT_PUBLISH_FQCN: &str = "gsy.intelligent.events.pub";
+const DEFAULT_EVENT_SUBSCRIBE_FQCN: &str = "gsy.intelligent.events.sub";
+const DEFAULT_EVENT_BATCH_SIZE: u32 = 100;
+const DEFAULT_EVENT_POLL_INTERVAL_MS: u64 = 60_000;
+const DEFAULT_EVENT_HANDLE_ATTEMPTS: u32 = 8;
+const DEFAULT_EVENT_RETRY_DELAY_MS: u64 = 2_000;
+const MAX_EVENT_RETRY_DELAY_MS: u64 = 300_000;
 const DEFAULT_TOPIC_OWNER: &str = "integration.apps.intelligent.auth.ewc";
 const DEFAULT_TOPIC_VERSION: &str = "1.0.0";
 const DEFAULT_POLL_INTERVAL_MS: u64 = 400;
@@ -27,8 +36,6 @@ pub enum EwdsOperation {
     TradesQuery,
     #[serde(rename = "measurements.query")]
     MeasurementsQuery,
-    #[serde(rename = "community.upsert")]
-    CommunityUpsert,
     #[serde(rename = "communities.query")]
     CommunitiesQuery,
     #[serde(rename = "ids.query")]
@@ -42,11 +49,10 @@ pub enum EwdsOperation {
 }
 
 impl EwdsOperation {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 8] = [
         Self::OrdersQuery,
         Self::TradesQuery,
         Self::MeasurementsQuery,
-        Self::CommunityUpsert,
         Self::CommunitiesQuery,
         Self::ClearingResultsQuery,
         Self::MarketsQuery,
@@ -59,7 +65,6 @@ impl EwdsOperation {
             Self::OrdersQuery => "orders.query",
             Self::TradesQuery => "trades.query",
             Self::MeasurementsQuery => "measurements.query",
-            Self::CommunityUpsert => "community.upsert",
             Self::CommunitiesQuery => "communities.query",
             Self::IdsQuery => "ids.query",
             Self::ClearingResultsQuery => "clearing_results.query",
@@ -73,7 +78,6 @@ impl EwdsOperation {
             Self::OrdersQuery => "orders-query",
             Self::TradesQuery => "trades-query",
             Self::MeasurementsQuery => "measurements-query",
-            Self::CommunityUpsert => "community-upsert",
             Self::CommunitiesQuery => "communities-query",
             Self::IdsQuery => "ids-query",
             Self::ClearingResultsQuery => "clearing_results-query",
@@ -97,13 +101,28 @@ pub enum EwdsEventType {
     ClearingResultCreated,
     #[serde(rename = "market_status.updated")]
     MarketStatusUpdated,
+    #[serde(rename = "measurements.submitted")]
+    MeasurementsSubmitted,
+    #[serde(rename = "facility.submitted")]
+    FacilitySubmitted,
+    #[serde(rename = "site.submitted")]
+    SiteSubmitted,
+    #[serde(rename = "community.submitted")]
+    CommunitySubmitted,
+    #[serde(rename = "order.submitted")]
+    OrderSubmitted,
 }
 
 impl EwdsEventType {
-    pub const ALL: [Self; 3] = [
+    pub const ALL: [Self; 8] = [
         Self::TradeCreated,
         Self::ClearingResultCreated,
         Self::MarketStatusUpdated,
+        Self::MeasurementsSubmitted,
+        Self::FacilitySubmitted,
+        Self::SiteSubmitted,
+        Self::CommunitySubmitted,
+        Self::OrderSubmitted,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -111,6 +130,11 @@ impl EwdsEventType {
             Self::TradeCreated => "trade.created",
             Self::ClearingResultCreated => "clearing_result.created",
             Self::MarketStatusUpdated => "market_status.updated",
+            Self::MeasurementsSubmitted => "measurements.submitted",
+            Self::FacilitySubmitted => "facility.submitted",
+            Self::SiteSubmitted => "site.submitted",
+            Self::CommunitySubmitted => "community.submitted",
+            Self::OrderSubmitted => "order.submitted",
         }
     }
 }
@@ -132,7 +156,6 @@ pub struct EwdsTopicConfig {
     orders: EwdsTopicPair,
     trades: EwdsTopicPair,
     measurements: EwdsTopicPair,
-    community_upsert: EwdsTopicPair,
     communities: EwdsTopicPair,
     ids: EwdsTopicPair,
     clearing_results: EwdsTopicPair,
@@ -154,10 +177,6 @@ impl Default for EwdsTopicConfig {
             measurements: EwdsTopicPair {
                 request: "measurementsQuery".to_string(),
                 response: "measurementsQueryResponse".to_string(),
-            },
-            community_upsert: EwdsTopicPair {
-                request: "communityUpsert".to_string(),
-                response: "communityUpsertResponse".to_string(),
             },
             communities: EwdsTopicPair {
                 request: "communitiesQuery".to_string(),
@@ -217,16 +236,6 @@ impl EwdsTopicConfig {
                     defaults.measurements.response.as_str(),
                 ),
             },
-            community_upsert: EwdsTopicPair {
-                request: env_or(
-                    "EWDS_COMMUNITY_UPSERT_TOPIC",
-                    defaults.community_upsert.request.as_str(),
-                ),
-                response: env_or(
-                    "EWDS_COMMUNITY_UPSERT_RESPONSE_TOPIC",
-                    defaults.community_upsert.response.as_str(),
-                ),
-            },
             communities: EwdsTopicPair {
                 request: env_or(
                     "EWDS_COMMUNITIES_REQUEST_TOPIC",
@@ -279,12 +288,79 @@ impl EwdsTopicConfig {
             EwdsOperation::OrdersQuery => &self.orders,
             EwdsOperation::TradesQuery => &self.trades,
             EwdsOperation::MeasurementsQuery => &self.measurements,
-            EwdsOperation::CommunityUpsert => &self.community_upsert,
             EwdsOperation::CommunitiesQuery => &self.communities,
             EwdsOperation::IdsQuery => &self.ids,
             EwdsOperation::ClearingResultsQuery => &self.clearing_results,
             EwdsOperation::MarketsQuery => &self.markets,
             EwdsOperation::FacilitiesQuery => &self.facilities,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EwdsEventTopicConfig {
+    trade_event: String,
+    clearing_result_event: String,
+    market_event: String,
+    measurements_event: String,
+    facility_event: String,
+    site_event: String,
+    community_event: String,
+    order_event: String,
+}
+
+impl Default for EwdsEventTopicConfig {
+    fn default() -> Self {
+        Self {
+            trade_event: "trade".to_string(),
+            clearing_result_event: "clearingResult".to_string(),
+            market_event: "market".to_string(),
+            measurements_event: "measurements".to_string(),
+            facility_event: "facility".to_string(),
+            site_event: "site".to_string(),
+            community_event: "community".to_string(),
+            order_event: "order".to_string(),
+        }
+    }
+}
+
+impl EwdsEventTopicConfig {
+    pub fn from_env() -> Self {
+        let defaults = Self::default();
+        Self {
+            trade_event: env_or("EWDS_TRADE_EVENT_TOPIC", defaults.trade_event.as_str()),
+            clearing_result_event: env_or(
+                "EWDS_CLEARING_RESULT_EVENT_TOPIC",
+                defaults.clearing_result_event.as_str(),
+            ),
+            market_event: env_or("EWDS_MARKET_EVENT_TOPIC", defaults.market_event.as_str()),
+            measurements_event: env_or(
+                "EWDS_MEASUREMENTS_EVENT_TOPIC",
+                defaults.measurements_event.as_str(),
+            ),
+            facility_event: env_or(
+                "EWDS_FACILITY_EVENT_TOPIC",
+                defaults.facility_event.as_str(),
+            ),
+            site_event: env_or("EWDS_SITE_EVENT_TOPIC", defaults.site_event.as_str()),
+            community_event: env_or(
+                "EWDS_COMMUNITY_EVENT_TOPIC",
+                defaults.community_event.as_str(),
+            ),
+            order_event: env_or("EWDS_ORDER_EVENT_TOPIC", defaults.order_event.as_str()),
+        }
+    }
+
+    pub fn for_event_type(&self, event_type: EwdsEventType) -> &str {
+        match event_type {
+            EwdsEventType::TradeCreated => &self.trade_event,
+            EwdsEventType::ClearingResultCreated => &self.clearing_result_event,
+            EwdsEventType::MarketStatusUpdated => &self.market_event,
+            EwdsEventType::MeasurementsSubmitted => &self.measurements_event,
+            EwdsEventType::FacilitySubmitted => &self.facility_event,
+            EwdsEventType::SiteSubmitted => &self.site_event,
+            EwdsEventType::CommunitySubmitted => &self.community_event,
+            EwdsEventType::OrderSubmitted => &self.order_event,
         }
     }
 }
@@ -301,6 +377,18 @@ pub struct EwdsClientConfig {
     pub poll_interval_ms: u64,
     pub empty_response_grace_ms: u64,
     pub topics: EwdsTopicConfig,
+    pub event_publish_fqcn: String,
+    pub event_subscribe_fqcn: String,
+    /// How many events one poll of an event topic fetches at most.
+    pub event_batch_size: u32,
+    /// The pause between two polls of an event topic.
+    pub event_poll_interval_ms: u64,
+    /// How often an event whose handler fails is tried in total before it is dropped.
+    pub event_handle_attempts: u32,
+    /// The delay before the first retry of a failed event. It doubles with every further
+    /// attempt, up to 5 minutes.
+    pub event_retry_delay_ms: u64,
+    pub event_topics: EwdsEventTopicConfig,
 }
 
 impl EwdsClientConfig {
@@ -332,6 +420,23 @@ impl EwdsClientConfig {
                 DEFAULT_EMPTY_RESPONSE_GRACE_MS,
             ),
             topics: EwdsTopicConfig::from_env(),
+            event_publish_fqcn: env_or("EWDS_EVENT_PUBLISH_FQCN", DEFAULT_EVENT_PUBLISH_FQCN),
+            event_subscribe_fqcn: env_or("EWDS_EVENT_SUBSCRIBE_FQCN", DEFAULT_EVENT_SUBSCRIBE_FQCN),
+            event_batch_size: env_var("EWDS_EVENT_BATCH_SIZE")
+                .and_then(|value| value.parse::<u32>().ok())
+                .unwrap_or(DEFAULT_EVENT_BATCH_SIZE),
+            event_poll_interval_ms: env_u64_or(
+                "EWDS_EVENT_POLL_INTERVAL_MS",
+                DEFAULT_EVENT_POLL_INTERVAL_MS,
+            ),
+            event_handle_attempts: env_var("EWDS_EVENT_HANDLE_ATTEMPTS")
+                .and_then(|value| value.parse::<u32>().ok())
+                .unwrap_or(DEFAULT_EVENT_HANDLE_ATTEMPTS),
+            event_retry_delay_ms: env_u64_or(
+                "EWDS_EVENT_RETRY_DELAY_MS",
+                DEFAULT_EVENT_RETRY_DELAY_MS,
+            ),
+            event_topics: EwdsEventTopicConfig::from_env(),
         }
     }
 }
@@ -339,6 +444,13 @@ impl EwdsClientConfig {
 pub struct EwdsClient {
     client: reqwest::Client,
     config: EwdsClientConfig,
+}
+
+/// An inbound event waiting to be handled, or to be retried after its handler failed.
+struct QueuedEvent {
+    envelope: EwdsEventEnvelope<Value>,
+    attempts: u32,
+    retry_at: Instant,
 }
 
 struct PendingQuery {
@@ -377,6 +489,235 @@ impl EwdsClient {
         self.poll_response(pending_query).await
     }
 
+    pub async fn publish(
+        &self,
+        fqcn: &str,
+        topic_name: &str,
+        transaction_id: &str,
+        payload: String,
+    ) -> Result<()> {
+        let message = EwdsSendMessageDto {
+            fqcn: fqcn.to_string(),
+            topic_name: topic_name.to_string(),
+            topic_version: self.config.topic_version.clone(),
+            topic_owner: self.config.topic_owner.clone(),
+            transaction_id: transaction_id.to_string(),
+            payload,
+            anonymous_recipient: Vec::new(),
+        };
+        self.post_message(
+            &message,
+            format!("{} message", topic_name).as_str(),
+            Instant::now(),
+        )
+        .await
+    }
+
+    pub async fn publish_event<T: Serialize>(&self, event: &EwdsEventEnvelope<T>) -> Result<()> {
+        self.publish(
+            self.config.event_publish_fqcn.as_str(),
+            self.config.event_topics.for_event_type(event.event_type),
+            event.event_id.as_str(),
+            serde_json::to_string(event)?,
+        )
+        .await
+    }
+
+    /// Polls the topic of `event_type` on the events channel and passes every new event to
+    /// `handle`, in the order the events arrived. Malformed messages, events of another type and
+    /// events seen before are skipped.
+    ///
+    /// The gateway acknowledges a message when it is polled, so a failed event is never
+    /// delivered again and the worker retries it itself: up to `event_handle_attempts` times in
+    /// total, with a delay that starts at `event_retry_delay_ms` and doubles with every attempt.
+    /// Meanwhile the later events of the topic wait, so an older event never overwrites the
+    /// data of a newer one. An event whose handler error is marked with [`invalid_event`] is
+    /// dropped at once, because handling it again would fail the same way. Runs until the task
+    /// is dropped.
+    pub async fn run_event_worker<F, Fut>(&self, event_type: EwdsEventType, handle: F)
+    where
+        F: Fn(EwdsEventEnvelope<Value>) -> Fut,
+        Fut: Future<Output = Result<()>>,
+    {
+        let mut queue: VecDeque<QueuedEvent> = VecDeque::new();
+        let mut seen_event_ids: HashSet<String> = HashSet::new();
+        let mut seen_queue: VecDeque<String> = VecDeque::new();
+        let mut rate_limit_attempt = 0u32;
+        let mut next_poll_at = Instant::now();
+
+        loop {
+            if Instant::now() >= next_poll_at {
+                let result = self
+                    .enqueue_new_events(event_type, &mut queue, &seen_event_ids)
+                    .await;
+                if let Err(error) = &result {
+                    warn!("EWDS {} event worker failed to poll: {}", event_type, error);
+                }
+                let delay_ms = next_poll_delay_ms(
+                    &result,
+                    self.config.event_poll_interval_ms,
+                    &mut rate_limit_attempt,
+                );
+                next_poll_at = Instant::now() + Duration::from_millis(delay_ms);
+            }
+
+            self.handle_queued_events(
+                event_type,
+                &handle,
+                &mut queue,
+                &mut seen_event_ids,
+                &mut seen_queue,
+            )
+            .await;
+
+            // Wake up early when a retry is due before the next poll.
+            let wake_at = queue
+                .front()
+                .map_or(next_poll_at, |event| event.retry_at.min(next_poll_at));
+            sleep(wake_at.saturating_duration_since(Instant::now())).await;
+        }
+    }
+
+    /// Polls the topic of `event_type` and queues every new event of that type.
+    async fn enqueue_new_events(
+        &self,
+        event_type: EwdsEventType,
+        queue: &mut VecDeque<QueuedEvent>,
+        seen_event_ids: &HashSet<String>,
+    ) -> Result<()> {
+        let topic_name = self.config.event_topics.for_event_type(event_type);
+        let messages = self.poll_events(topic_name).await?;
+
+        for message in messages {
+            let envelope = match serde_json::from_str::<EwdsEventEnvelope<Value>>(&message.payload)
+            {
+                Ok(envelope) => envelope,
+                Err(error) => {
+                    warn!(
+                        "Skipping malformed EWDS message on topic '{}': {}",
+                        topic_name, error
+                    );
+                    continue;
+                }
+            };
+            if envelope.event_type != event_type {
+                warn!(
+                    "Skipping EWDS {} event {} on topic '{}', which carries {} events",
+                    envelope.event_type, envelope.event_id, topic_name, event_type
+                );
+                continue;
+            }
+            if seen_event_ids.contains(&envelope.event_id)
+                || queue
+                    .iter()
+                    .any(|queued| queued.envelope.event_id == envelope.event_id)
+            {
+                continue;
+            }
+            queue.push_back(QueuedEvent {
+                envelope,
+                attempts: 0,
+                retry_at: Instant::now(),
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Handles the queued events in order until the queue is empty or the first event has to
+    /// wait for its retry.
+    async fn handle_queued_events<F, Fut>(
+        &self,
+        event_type: EwdsEventType,
+        handle: &F,
+        queue: &mut VecDeque<QueuedEvent>,
+        seen_event_ids: &mut HashSet<String>,
+        seen_queue: &mut VecDeque<String>,
+    ) where
+        F: Fn(EwdsEventEnvelope<Value>) -> Fut,
+        Fut: Future<Output = Result<()>>,
+    {
+        let max_attempts = self.config.event_handle_attempts.max(1);
+        while queue
+            .front()
+            .is_some_and(|event| event.retry_at <= Instant::now())
+        {
+            let Some(mut event) = queue.pop_front() else {
+                break;
+            };
+            event.attempts += 1;
+            let event_id = event.envelope.event_id.clone();
+            match handle(event.envelope.clone()).await {
+                Ok(()) => info!("Handled EWDS {} event {}", event_type, event_id),
+                Err(error) if is_invalid_event(&error) => error!(
+                    "Dropping EWDS {} event {}: {:#}",
+                    event_type, event_id, error
+                ),
+                Err(error) if event.attempts >= max_attempts => error!(
+                    "Dropping EWDS {} event {} after {} failed attempts: {:#}",
+                    event_type, event_id, event.attempts, error
+                ),
+                Err(error) => {
+                    let delay_ms =
+                        event_retry_delay_ms(self.config.event_retry_delay_ms, event.attempts);
+                    warn!(
+                        "EWDS {} event {} failed (attempt {} of {}), retrying in {} ms; {} later events wait: {:#}",
+                        event_type,
+                        event_id,
+                        event.attempts,
+                        max_attempts,
+                        delay_ms,
+                        queue.len(),
+                        error
+                    );
+                    event.retry_at = Instant::now() + Duration::from_millis(delay_ms);
+                    queue.push_front(event);
+                    return;
+                }
+            }
+            remember_id(&event_id, seen_event_ids, seen_queue);
+        }
+    }
+
+    async fn poll_events(&self, topic_name: &str) -> Result<Vec<EwdsMessageDto>> {
+        let get_url = format!(
+            "{}/api/v2/messages",
+            self.config.gateway_base.trim_end_matches('/')
+        );
+        let fqcn = self.config.event_subscribe_fqcn.as_str();
+        let amount = self.config.event_batch_size.to_string();
+        let client_id = client_id_for_suffix(self.config.consumer_client_id.as_str(), topic_name);
+        let response = self
+            .client
+            .get(get_url.as_str())
+            .query(&[
+                ("fqcn", fqcn),
+                ("amount", amount.as_str()),
+                ("topicName", topic_name),
+                ("topicOwner", self.config.topic_owner.as_str()),
+                ("clientId", client_id.as_str()),
+            ])
+            .send()
+            .await?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(anyhow!(
+                "EWDS poll failed for fqcn='{}', topic='{}': HTTP {}{}",
+                fqcn,
+                topic_name,
+                status,
+                format_response_body(&body)
+            ));
+        }
+
+        Ok(response
+            .json::<Vec<EwdsMessageDto>>()
+            .await
+            .unwrap_or_default())
+    }
+
     async fn send_query(
         &self,
         operation: EwdsOperation,
@@ -404,7 +745,30 @@ impl EwdsClient {
             payload: serde_json::to_string(&envelope)?,
             anonymous_recipient: Vec::new(),
         };
+        self.post_message(
+            &send_message_body,
+            format!("{} request", operation).as_str(),
+            started,
+        )
+        .await?;
 
+        Ok(PendingQuery {
+            operation,
+            request_id,
+            response_topic: topic_pair.response.clone(),
+            started,
+        })
+    }
+
+    /// Posts `message` to the gateway. Rate limits, transient gateway errors and deliveries
+    /// that reached no recipient are retried until the timeout, counted from `started`.
+    /// `label` names the message in errors and logs.
+    async fn post_message(
+        &self,
+        message: &EwdsSendMessageDto,
+        label: &str,
+        started: Instant,
+    ) -> Result<()> {
         let post_url = format!(
             "{}/api/v2/messages",
             self.config.gateway_base.trim_end_matches('/')
@@ -413,16 +777,16 @@ impl EwdsClient {
         loop {
             if started.elapsed() > Duration::from_millis(self.config.timeout_ms) {
                 return Err(anyhow!(
-                    "EWDS timeout sending {} request (request_id={})",
-                    operation,
-                    request_id
+                    "EWDS timeout sending {} (transaction_id={})",
+                    label,
+                    message.transaction_id
                 ));
             }
 
             let send_response = self
                 .client
                 .post(post_url.as_str())
-                .json(&send_message_body)
+                .json(message)
                 .send()
                 .await?;
             let send_status = send_response.status();
@@ -430,13 +794,13 @@ impl EwdsClient {
             if send_status.is_success() {
                 let delivery = parse_gateway_delivery_summary(body.as_str())?;
                 if delivery.sent > 0 {
-                    break;
+                    return Ok(());
                 }
 
                 let delay_ms = ewds_rate_limit_backoff_ms(delivery_attempt);
                 warn!(
-                    "EWDS gateway accepted {} request but delivered it to no recipients (failed={}, total={}); retrying in {} ms",
-                    operation, delivery.failed, delivery.total, delay_ms
+                    "EWDS gateway accepted {} but delivered it to no recipients (failed={}, total={}); retrying in {} ms",
+                    label, delivery.failed, delivery.total, delay_ms
                 );
                 delivery_attempt = delivery_attempt.saturating_add(1);
                 sleep(Duration::from_millis(delay_ms)).await;
@@ -446,8 +810,8 @@ impl EwdsClient {
             if is_rate_limited_response(send_status, &body) {
                 let delay_ms = ewds_rate_limit_backoff_ms(delivery_attempt);
                 warn!(
-                    "EWDS rate limit while sending {} request; retrying in {} ms",
-                    operation, delay_ms
+                    "EWDS rate limit while sending {}; retrying in {} ms",
+                    label, delay_ms
                 );
                 delivery_attempt = delivery_attempt.saturating_add(1);
                 sleep(Duration::from_millis(delay_ms)).await;
@@ -457,8 +821,8 @@ impl EwdsClient {
             if is_transient_gateway_response(send_status, &body) {
                 let delay_ms = ewds_rate_limit_backoff_ms(delivery_attempt);
                 warn!(
-                    "EWDS transient gateway error while sending {} request; retrying in {} ms",
-                    operation, delay_ms
+                    "EWDS transient gateway error while sending {}; retrying in {} ms",
+                    label, delay_ms
                 );
                 delivery_attempt = delivery_attempt.saturating_add(1);
                 sleep(Duration::from_millis(delay_ms)).await;
@@ -467,18 +831,11 @@ impl EwdsClient {
 
             return Err(anyhow!(
                 "EWDS message send failed for {}: HTTP {}{}",
-                operation,
+                label,
                 send_status,
                 format_response_body(&body)
             ));
         }
-
-        Ok(PendingQuery {
-            operation,
-            request_id,
-            response_topic: topic_pair.response.clone(),
-            started,
-        })
     }
 
     async fn poll_response<T: DeserializeOwned>(
@@ -537,6 +894,9 @@ impl EwdsClient {
                     .unwrap_or_default();
                 for message in messages {
                     let parsed = serde_json::from_str::<EwdsQueryResponse<T>>(&message.payload);
+                    if let Err(error) = &parsed {
+                        warn_about_unparsable_response(&pending_query, &message.payload, error);
+                    }
                     if let Ok(parsed_payload) = parsed {
                         if parsed_payload.request_id == pending_query.request_id {
                             if !parsed_payload.success {
@@ -599,6 +959,24 @@ impl EwdsClient {
     }
 }
 
+/// Logs a response to `pending_query` whose payload could not be parsed. Messages for other
+/// requests on the same topic are expected and stay silent.
+fn warn_about_unparsable_response(
+    pending_query: &PendingQuery,
+    payload: &str,
+    error: &serde_json::Error,
+) {
+    let request_id = serde_json::from_str::<Value>(payload)
+        .ok()
+        .and_then(|value| value.get("requestId")?.as_str().map(str::to_string));
+    if request_id.as_deref() == Some(pending_query.request_id.as_str()) {
+        warn!(
+            "Ignoring EWDS {} response that could not be parsed (request_id={}): {}",
+            pending_query.operation, pending_query.request_id, error
+        );
+    }
+}
+
 pub fn empty_response_grace_elapsed(
     empty_response_seen_at: Option<Instant>,
     grace_ms: u64,
@@ -618,6 +996,110 @@ pub fn select_response_data<T>(
     } else {
         Some(data)
     }
+}
+
+/// The delay before the next poll of a topic: backs off while the gateway rate-limits or fails
+/// transiently, and waits `poll_interval_ms` otherwise.
+pub fn next_poll_delay_ms(
+    result: &Result<()>,
+    poll_interval_ms: u64,
+    rate_limit_attempt: &mut u32,
+) -> u64 {
+    match result {
+        Ok(()) => {
+            *rate_limit_attempt = 0;
+            poll_interval_ms
+        }
+        Err(error) => {
+            let message = error.to_string();
+            if is_rate_limited_message(message.as_str())
+                || is_transient_gateway_message(message.as_str())
+            {
+                let delay_ms = ewds_rate_limit_backoff_ms(*rate_limit_attempt);
+                *rate_limit_attempt = rate_limit_attempt.saturating_add(1);
+                delay_ms
+            } else {
+                poll_interval_ms
+            }
+        }
+    }
+}
+
+/// Remembers a handled request or event ID, keeping only the most recent ones.
+pub fn remember_id(id: &str, seen_ids: &mut HashSet<String>, seen_queue: &mut VecDeque<String>) {
+    const MAX_SEEN_IDS: usize = 2_048;
+
+    seen_ids.insert(id.to_string());
+    seen_queue.push_back(id.to_string());
+
+    while seen_queue.len() > MAX_SEEN_IDS {
+        if let Some(evicted) = seen_queue.pop_front() {
+            seen_ids.remove(&evicted);
+        }
+    }
+}
+
+/// Marks the error of an event handler as caused by the event itself, e.g. invalid data.
+/// [`EwdsClient::run_event_worker`] drops such an event instead of retrying it.
+#[derive(Debug)]
+pub struct InvalidEvent;
+
+impl fmt::Display for InvalidEvent {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("invalid event")
+    }
+}
+
+impl std::error::Error for InvalidEvent {}
+
+/// Marks `error` as caused by the event itself, so the event is not retried.
+pub fn invalid_event(error: anyhow::Error) -> anyhow::Error {
+    error.context(InvalidEvent)
+}
+
+/// Whether `error`, or an error it wraps, was marked with [`invalid_event`].
+pub fn is_invalid_event(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<InvalidEvent>().is_some()
+}
+
+/// The delay before retrying an event that failed `attempts` times.
+pub fn event_retry_delay_ms(base_delay_ms: u64, attempts: u32) -> u64 {
+    let factor = 1u64
+        .checked_shl(attempts.saturating_sub(1))
+        .unwrap_or(u64::MAX);
+    base_delay_ms
+        .saturating_mul(factor)
+        .min(MAX_EVENT_RETRY_DELAY_MS)
+}
+
+/// Parses the list of items an event carries. One invalid item rejects the whole event, and
+/// any problem with the data is marked with [`invalid_event`].
+pub fn parse_batch<Item: DeserializeOwned, T>(
+    data: Value,
+    convert: impl Fn(Item) -> Result<T>,
+) -> Result<Vec<T>> {
+    parse_items(data, convert).map_err(invalid_event)
+}
+
+fn parse_items<Item: DeserializeOwned, T>(
+    data: Value,
+    convert: impl Fn(Item) -> Result<T>,
+) -> Result<Vec<T>> {
+    let items: Vec<Value> = serde_json::from_value(data).context("the event data is not a list")?;
+    if items.is_empty() {
+        bail!("the event data is empty");
+    }
+
+    items
+        .into_iter()
+        .enumerate()
+        .map(|(index, item)| {
+            serde_json::from_value::<Item>(item)
+                .map_err(anyhow::Error::from)
+                .and_then(&convert)
+                .with_context(|| format!("invalid item at index {}", index))
+        })
+        .collect()
 }
 
 pub fn is_rate_limited_response(status: reqwest::StatusCode, body: &str) -> bool {

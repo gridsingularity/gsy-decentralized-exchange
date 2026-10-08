@@ -67,7 +67,11 @@ These adapters do not own separate collections. They read and write the same
 `markets`, `measurement_points`, and `timeseries` records as the canonical API.
 
 When `EWDS_ENABLE_HANDLER=true`, the same community collection is available
-through `community.upsert` and `communities.query` request/reply operations.
+through the `communities.query` request/reply operation.
+The off-chain storage then also stores the measurements, facilities, sites and
+communities that other systems publish on the EWDS events channel, in
+the same collections (see
+[Inbound Events](ewds-integration.md#inbound-events)).
 
 ## Scheduler Behavior
 
@@ -103,5 +107,7 @@ Key env variables:
 - `DATABASE_*`
 - `SCHEDULER_INTERVAL`
 - `EWDS_ENABLE_HANDLER`
-- `EWDS_COMMUNITY_UPSERT_TOPIC`
 - `EWDS_COMMUNITIES_REQUEST_TOPIC`
+- `EWDS_EVENT_PUBLISH_FQCN`, `EWDS_EVENT_SUBSCRIBE_FQCN`
+- `EWDS_MEASUREMENTS_EVENT_TOPIC`, `EWDS_FACILITY_EVENT_TOPIC`,
+  `EWDS_SITE_EVENT_TOPIC`, `EWDS_COMMUNITY_EVENT_TOPIC`

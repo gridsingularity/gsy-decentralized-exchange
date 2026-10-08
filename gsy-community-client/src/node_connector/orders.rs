@@ -129,7 +129,19 @@ abigen!(
                 }
             ],
             "outputs": []
-        }
+        },
+        {
+            "type": "function",
+            "name": "getStatus",
+            "stateMutability": "view",
+            "inputs": [{"name": "orderId", "type": "bytes16"}],
+            "outputs": [{"name": "", "type": "uint8"}]
+        },
+        {"type": "error", "name": "MarketClosed", "inputs": []},
+        {"type": "error", "name": "Unauthorized", "inputs": []},
+        {"type": "error", "name": "InvalidOrderParams", "inputs": []},
+        {"type": "error", "name": "OrderNotOpen", "inputs": []},
+        {"type": "error", "name": "OrderAlreadyExists", "inputs": []}
     ]"#
 );
 

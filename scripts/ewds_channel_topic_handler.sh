@@ -32,7 +32,6 @@ clearingResultsQuery
 marketsQuery
 facilitiesQuery
 idsQuery
-communityUpsert
 communitiesQuery
 ordersQueryTest
 tradesQueryTest
@@ -41,7 +40,6 @@ clearingResultsQueryTest
 marketsQueryTest
 facilitiesQueryTest
 idsQueryTest
-communityUpsertTest
 communitiesQueryTest
 "
 
@@ -49,9 +47,19 @@ EVENT_TOPICS="
 trade
 clearingResult
 market
+measurements
+facility
+site
+community
+order
 tradeTest
 clearingResultTest
 marketTest
+measurementsTest
+facilityTest
+siteTest
+communityTest
+orderTest
 "
 
 CHANNELS="
@@ -208,7 +216,7 @@ FIRST=true
 for CHANNEL in $CHANNELS; do
   TYPE="${CHANNEL##*.}"
 
-  # 3rd part of the name decides request vs response channel
+  # 3rd part of the name decides request vs response vs events channel
   KIND=$(echo "$CHANNEL" | cut -d. -f3)
   case "$KIND" in
     request*) TOPICS_JSON="$REQUEST_TOPICS_JSON" ;;
