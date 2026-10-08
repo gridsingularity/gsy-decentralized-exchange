@@ -89,8 +89,8 @@ Each service:
 | `clearing_results.query` over `clearingResultsQuery` / `clearingResultsQueryResponse` | matching/execution engine | off-chain storage service | off-chain storage service | requester | `GET /clearing-results` |
 | `markets.query` over `marketsQuery` / `marketsQueryResponse` | community client | off-chain storage service | off-chain storage service | community client | `GET /markets` |
 | `ids.query` over `idsQuery` / `idsQueryResponse` | requester service | off-chain storage service | off-chain storage service | requester | `POST /ids` (get-or-create) |
-| `community.submitted` event over `communitySubmitted` | other systems or e2e runner | off-chain storage service | none | none | `POST /communities` |
-| `order.submitted` event over `orderSubmitted` | FOS or e2e runner | community client | none | none | none (the community client calls `OrderRegistry.placeOrder`) |
+| `community.submitted` event over `community` | other systems or e2e runner | off-chain storage service | none | none | `POST /communities` |
+| `order.submitted` event over `order` | FOS or e2e runner | community client | none | none | none (the community client calls `OrderRegistry.placeOrder`) |
 | `communities.query` over `communitiesQuery` / `communitiesQueryResponse` | market orchestrator | off-chain storage service | off-chain storage service | market orchestrator | `GET /communities` |
 | `forecasts.upsert` | community client | off-chain storage service | none | none | `POST /measurement-points` + `POST /timeseries` |
 | `measurements.upsert` | community client | off-chain storage service | none | none | `POST /measurement-points` + `POST /timeseries` |
@@ -109,8 +109,8 @@ Each service:
 | `gsy.intelligent.requests.sub` | Subscribe | `ordersQuery`, `tradesQuery`, `measurementsQuery`, `clearingResultsQuery`, `marketsQuery`, `idsQuery`, `communitiesQuery` | `EWDS_REQUEST_SUBSCRIBE_FQCN` |
 | `gsy.intelligent.responses.pub` | Publish | `ordersQueryResponse`, `tradesQueryResponse`, `measurementsQueryResponse`, `clearingResultsQueryResponse`, `marketsQueryResponse`, `idsQueryResponse`, `communitiesQueryResponse` | `EWDS_RESPONSE_PUBLISH_FQCN` |
 | `gsy.intelligent.responses.sub` | Subscribe | `ordersQueryResponse`, `tradesQueryResponse`, `measurementsQueryResponse`, `clearingResultsQueryResponse`, `marketsQueryResponse`, `idsQueryResponse`, `communitiesQueryResponse` | `EWDS_RESPONSE_SUBSCRIBE_FQCN` |
-| `gsy.intelligent.events.pub` | Publish | `trade`, `clearingResult`, `market`, `measurementsSubmitted`, `facilitySubmitted`, `siteSubmitted`, `communitySubmitted`, `orderSubmitted` | `EWDS_EVENT_PUBLISH_FQCN` |
-| `gsy.intelligent.events.sub` | Subscribe | `trade`, `clearingResult`, `market`, `measurementsSubmitted`, `facilitySubmitted`, `siteSubmitted`, `communitySubmitted`, `orderSubmitted` | `EWDS_EVENT_SUBSCRIBE_FQCN` |
+| `gsy.intelligent.events.pub` | Publish | `trade`, `clearingResult`, `market`, `measurements`, `facility`, `site`, `community`, `order` | `EWDS_EVENT_PUBLISH_FQCN` |
+| `gsy.intelligent.events.sub` | Subscribe | `trade`, `clearingResult`, `market`, `measurements`, `facility`, `site`, `community`, `order` | `EWDS_EVENT_SUBSCRIBE_FQCN` |
 
 The events channels carry fire-and-forget domain events rather than
 request/reply traffic. When `EWDS_ENABLE_HANDLER` is on, the off-chain storage
@@ -149,10 +149,10 @@ REST API uses. New orders go to the community client instead; see
 
 | Topic | `eventType` | `data` | Stored with |
 |---|---|---|---|
-| `measurementsSubmitted` | `measurements.submitted` | array of 1..N measurements (`EwdsMeasurementDto`) | measurement points and timeseries, upserted by point and timestamp |
-| `facilitySubmitted` | `facility.submitted` | array of 1..N facilities (`FacilitySchema`) | upserted by `facility_id` |
-| `siteSubmitted` | `site.submitted` | array of 1..N sites (`SiteSchema`) | upserted by `site_name` |
-| `communitySubmitted` | `community.submitted` | array of 1..N communities (`EwdsCommunityDto`) | upserted by `communityId` |
+| `measurements` | `measurements.submitted` | array of 1..N measurements (`EwdsMeasurementDto`) | measurement points and timeseries, upserted by point and timestamp |
+| `facility` | `facility.submitted` | array of 1..N facilities (`FacilitySchema`) | upserted by `facility_id` |
+| `site` | `site.submitted` | array of 1..N sites (`SiteSchema`) | upserted by `site_name` |
+| `community` | `community.submitted` | array of 1..N communities (`EwdsCommunityDto`) | upserted by `communityId` |
 
 The envelope is the one GSY uses for its own events:
 
@@ -213,12 +213,12 @@ Handling rules:
 The event schemas are `int.<eventType>.event.v1.json` in
 `schemas/ewds/intelligent/`, e.g. `int.facility.submitted.event.v1.json`. The
 e2e stack uses the `...Test` variants of the inbound topics
-(`measurementsSubmittedTest`, ..., `orderSubmittedTest`).
+(`measurementsTest`, ..., `orderTest`).
 
 #### Order Events
 
-FOS publishes new orders on the `orderSubmitted` topic
-(`EWDS_ORDER_SUBMITTED_EVENT_TOPIC`). When `EWDS_ENABLE_HANDLER` is on, the
+FOS publishes new orders on the `order` topic
+(`EWDS_ORDER_EVENT_TOPIC`). When `EWDS_ENABLE_HANDLER` is on, the
 community client polls only this topic on `gsy.intelligent.events.sub`, with
 the client ID `EWDS_COMMUNITY_CLIENT_ID`, and sends each order to
 `OrderRegistry.placeOrder`. The off-chain storage doesn't subscribe to it.
@@ -447,8 +447,8 @@ Channel/topic setup notes:
 - Topic application/owner: `integration.apps.intelligent.auth.ewc`.
 - Local channel FQCNs: `gsy.intelligent.requests.pub`, `gsy.intelligent.requests.sub`, `gsy.intelligent.responses.pub`, `gsy.intelligent.responses.sub`, `gsy.intelligent.events.pub`, `gsy.intelligent.events.sub`.
 - The events channels need the eight event topics from the channel table, plus
-  `measurementsSubmittedTest`, `facilitySubmittedTest`, `siteSubmittedTest`,
-  `communitySubmittedTest` and `orderSubmittedTest` for e2e runs. `scripts/ewds_channel_topic_handler.sh`
+  `measurementsTest`, `facilityTest`, `siteTest`,
+  `communityTest` and `orderTest` for e2e runs. `scripts/ewds_channel_topic_handler.sh`
   creates all topics and attaches them to the channels.
 - Required topics: `ordersQuery`, `ordersQueryResponse`, `tradesQuery`,
   `tradesQueryResponse`, `measurementsQuery`, `measurementsQueryResponse`,

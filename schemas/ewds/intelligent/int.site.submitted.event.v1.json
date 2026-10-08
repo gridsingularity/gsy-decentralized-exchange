@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "int.site.submitted.event.v1",
-  "title": "siteSubmitted event",
+  "title": "site event",
   "type": "object",
   "additionalProperties": false,
   "properties": {

@@ -336,29 +336,29 @@ fn handler_config_defaults_to_the_events_channels() {
             "market",
         ),
         (
-            "EWDS_MEASUREMENTS_SUBMITTED_EVENT_TOPIC",
+            "EWDS_MEASUREMENTS_EVENT_TOPIC",
             config.event_topic(EwdsEventType::MeasurementsSubmitted),
-            "measurementsSubmitted",
+            "measurements",
         ),
         (
-            "EWDS_FACILITY_SUBMITTED_EVENT_TOPIC",
+            "EWDS_FACILITY_EVENT_TOPIC",
             config.event_topic(EwdsEventType::FacilitySubmitted),
-            "facilitySubmitted",
+            "facility",
         ),
         (
-            "EWDS_SITE_SUBMITTED_EVENT_TOPIC",
+            "EWDS_SITE_EVENT_TOPIC",
             config.event_topic(EwdsEventType::SiteSubmitted),
-            "siteSubmitted",
+            "site",
         ),
         (
-            "EWDS_COMMUNITY_SUBMITTED_EVENT_TOPIC",
+            "EWDS_COMMUNITY_EVENT_TOPIC",
             config.event_topic(EwdsEventType::CommunitySubmitted),
-            "communitySubmitted",
+            "community",
         ),
         (
-            "EWDS_ORDER_SUBMITTED_EVENT_TOPIC",
+            "EWDS_ORDER_EVENT_TOPIC",
             config.event_topic(EwdsEventType::OrderSubmitted),
-            "orderSubmitted",
+            "order",
         ),
     ] {
         // Only the defaults are under test; an explicitly configured value is left alone.
@@ -520,14 +520,11 @@ fn handler_config_maps_event_types_to_their_topics() {
         (EwdsEventType::TradeCreated, "trade"),
         (EwdsEventType::ClearingResultCreated, "clearingResult"),
         (EwdsEventType::MarketStatusUpdated, "market"),
-        (
-            EwdsEventType::MeasurementsSubmitted,
-            "measurementsSubmitted",
-        ),
-        (EwdsEventType::FacilitySubmitted, "facilitySubmitted"),
-        (EwdsEventType::SiteSubmitted, "siteSubmitted"),
-        (EwdsEventType::CommunitySubmitted, "communitySubmitted"),
-        (EwdsEventType::OrderSubmitted, "orderSubmitted"),
+        (EwdsEventType::MeasurementsSubmitted, "measurements"),
+        (EwdsEventType::FacilitySubmitted, "facility"),
+        (EwdsEventType::SiteSubmitted, "site"),
+        (EwdsEventType::CommunitySubmitted, "community"),
+        (EwdsEventType::OrderSubmitted, "order"),
     ] {
         assert_eq!(config.event_topic(event_type), topic);
     }
@@ -871,7 +868,7 @@ async fn event_subscriber_skips_bad_messages_and_saves_the_next_one() {
     Mock::given(method("GET"))
         .and(path("/api/v2/messages"))
         .and(query_param("fqcn", "gsy.events.sub"))
-        .and(query_param("topicName", "facilitySubmitted"))
+        .and(query_param("topicName", "facility"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!([
             {"payload": "not an event"},
             {"payload": serde_json::to_string(&wrong_topic_event).unwrap()},

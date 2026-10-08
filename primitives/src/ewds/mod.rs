@@ -302,11 +302,11 @@ pub struct EwdsEventTopicConfig {
     trade_event: String,
     clearing_result_event: String,
     market_event: String,
-    measurements_submitted: String,
-    facility_submitted: String,
-    site_submitted: String,
-    community_submitted: String,
-    order_submitted: String,
+    measurements_event: String,
+    facility_event: String,
+    site_event: String,
+    community_event: String,
+    order_event: String,
 }
 
 impl Default for EwdsEventTopicConfig {
@@ -315,11 +315,11 @@ impl Default for EwdsEventTopicConfig {
             trade_event: "trade".to_string(),
             clearing_result_event: "clearingResult".to_string(),
             market_event: "market".to_string(),
-            measurements_submitted: "measurementsSubmitted".to_string(),
-            facility_submitted: "facilitySubmitted".to_string(),
-            site_submitted: "siteSubmitted".to_string(),
-            community_submitted: "communitySubmitted".to_string(),
-            order_submitted: "orderSubmitted".to_string(),
+            measurements_event: "measurements".to_string(),
+            facility_event: "facility".to_string(),
+            site_event: "site".to_string(),
+            community_event: "community".to_string(),
+            order_event: "order".to_string(),
         }
     }
 }
@@ -334,26 +334,20 @@ impl EwdsEventTopicConfig {
                 defaults.clearing_result_event.as_str(),
             ),
             market_event: env_or("EWDS_MARKET_EVENT_TOPIC", defaults.market_event.as_str()),
-            measurements_submitted: env_or(
-                "EWDS_MEASUREMENTS_SUBMITTED_EVENT_TOPIC",
-                defaults.measurements_submitted.as_str(),
+            measurements_event: env_or(
+                "EWDS_MEASUREMENTS_EVENT_TOPIC",
+                defaults.measurements_event.as_str(),
             ),
-            facility_submitted: env_or(
-                "EWDS_FACILITY_SUBMITTED_EVENT_TOPIC",
-                defaults.facility_submitted.as_str(),
+            facility_event: env_or(
+                "EWDS_FACILITY_EVENT_TOPIC",
+                defaults.facility_event.as_str(),
             ),
-            site_submitted: env_or(
-                "EWDS_SITE_SUBMITTED_EVENT_TOPIC",
-                defaults.site_submitted.as_str(),
+            site_event: env_or("EWDS_SITE_EVENT_TOPIC", defaults.site_event.as_str()),
+            community_event: env_or(
+                "EWDS_COMMUNITY_EVENT_TOPIC",
+                defaults.community_event.as_str(),
             ),
-            community_submitted: env_or(
-                "EWDS_COMMUNITY_SUBMITTED_EVENT_TOPIC",
-                defaults.community_submitted.as_str(),
-            ),
-            order_submitted: env_or(
-                "EWDS_ORDER_SUBMITTED_EVENT_TOPIC",
-                defaults.order_submitted.as_str(),
-            ),
+            order_event: env_or("EWDS_ORDER_EVENT_TOPIC", defaults.order_event.as_str()),
         }
     }
 
@@ -362,11 +356,11 @@ impl EwdsEventTopicConfig {
             EwdsEventType::TradeCreated => &self.trade_event,
             EwdsEventType::ClearingResultCreated => &self.clearing_result_event,
             EwdsEventType::MarketStatusUpdated => &self.market_event,
-            EwdsEventType::MeasurementsSubmitted => &self.measurements_submitted,
-            EwdsEventType::FacilitySubmitted => &self.facility_submitted,
-            EwdsEventType::SiteSubmitted => &self.site_submitted,
-            EwdsEventType::CommunitySubmitted => &self.community_submitted,
-            EwdsEventType::OrderSubmitted => &self.order_submitted,
+            EwdsEventType::MeasurementsSubmitted => &self.measurements_event,
+            EwdsEventType::FacilitySubmitted => &self.facility_event,
+            EwdsEventType::SiteSubmitted => &self.site_event,
+            EwdsEventType::CommunitySubmitted => &self.community_event,
+            EwdsEventType::OrderSubmitted => &self.order_event,
         }
     }
 }

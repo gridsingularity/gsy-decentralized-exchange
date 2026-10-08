@@ -287,8 +287,8 @@ EWF-hosted broker and the following local channels/topics:
 
 The community setup and the `@ewds` events feature also need
 `gsy.intelligent.events.pub` / `gsy.intelligent.events.sub` with the
-`communitySubmittedTest`, `siteSubmittedTest`, `facilitySubmittedTest`,
-`measurementsSubmittedTest` and `orderSubmittedTest` topics. The events
+`communityTest`, `siteTest`, `facilityTest`,
+`measurementsTest` and `orderTest` topics. The events
 feature adds one feature, two scenarios and ten steps to the pay-as-bid
 summary below. Its order scenario needs the community client's order event
 subscriber, which `EWDS_ENABLE_HANDLER=true` in `.env.ewds.local` starts.

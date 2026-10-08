@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "int.order.submitted.event.v1",
-  "title": "orderSubmitted event",
+  "title": "order event",
   "type": "object",
   "additionalProperties": false,
   "properties": {

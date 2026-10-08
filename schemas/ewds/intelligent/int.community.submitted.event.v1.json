@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "int.community.submitted.event.v1",
-  "title": "communitySubmitted event",
+  "title": "community event",
   "type": "object",
   "additionalProperties": false,
   "properties": {

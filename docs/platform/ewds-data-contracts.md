@@ -58,11 +58,11 @@ operation names for readability and service routing:
 | `measurementsQueryResponse` | response envelope | `int.measurements.query.response.v1.json` |
 | `communitiesQuery` | `communities.query` | `int.communities.query.request.v1.json` |
 | `communitiesQueryResponse` | response envelope | `int.communities.query.response.v1.json` |
-| `measurementsSubmitted` | `measurements.submitted` event | `int.measurements.submitted.event.v1.json` |
-| `facilitySubmitted` | `facility.submitted` event | `int.facility.submitted.event.v1.json` |
-| `siteSubmitted` | `site.submitted` event | `int.site.submitted.event.v1.json` |
-| `communitySubmitted` | `community.submitted` event | `int.community.submitted.event.v1.json` |
-| `orderSubmitted` | `order.submitted` event | `int.order.submitted.event.v1.json` |
+| `measurements` | `measurements.submitted` event | `int.measurements.submitted.event.v1.json` |
+| `facility` | `facility.submitted` event | `int.facility.submitted.event.v1.json` |
+| `site` | `site.submitted` event | `int.site.submitted.event.v1.json` |
+| `community` | `community.submitted` event | `int.community.submitted.event.v1.json` |
+| `order` | `order.submitted` event | `int.order.submitted.event.v1.json` |
 
 ### Measurement Mapping
 

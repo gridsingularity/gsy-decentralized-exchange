@@ -52,7 +52,7 @@ async fn publish_posts_the_message_on_the_given_channel_and_topic() {
     client(&server)
         .publish(
             "gsy.intelligent.events.pub",
-            "facilitySubmitted",
+            "facility",
             "event-1",
             r#"{"eventId":"event-1"}"#.to_string(),
         )
@@ -62,7 +62,7 @@ async fn publish_posts_the_message_on_the_given_channel_and_topic() {
     let requests = server.received_requests().await.unwrap();
     let sent: EwdsSendMessageDto = serde_json::from_slice(&requests[0].body).unwrap();
     assert_eq!(sent.fqcn, "gsy.intelligent.events.pub");
-    assert_eq!(sent.topic_name, "facilitySubmitted");
+    assert_eq!(sent.topic_name, "facility");
     assert_eq!(sent.topic_owner, "test.owner");
     assert_eq!(sent.topic_version, "1.0.0");
     assert_eq!(sent.transaction_id, "event-1");
@@ -89,7 +89,7 @@ async fn publish_retries_when_rate_limited() {
     client(&server)
         .publish(
             "gsy.intelligent.events.pub",
-            "siteSubmitted",
+            "site",
             "event-2",
             "{}".to_string(),
         )
@@ -112,7 +112,7 @@ async fn publish_fails_when_the_gateway_rejects_the_message() {
     let error = client(&server)
         .publish(
             "gsy.intelligent.events.pub",
-            "facilitySubmitted",
+            "facility",
             "event-3",
             "{}".to_string(),
         )
@@ -120,7 +120,7 @@ async fn publish_fails_when_the_gateway_rejects_the_message() {
         .unwrap_err()
         .to_string();
 
-    assert!(error.contains("facilitySubmitted message"), "{error}");
+    assert!(error.contains("facility message"), "{error}");
     assert!(error.contains("HTTP 400"), "{error}");
     assert!(error.contains("unknown topic"), "{error}");
 }
@@ -146,7 +146,7 @@ async fn publish_event_uses_the_events_channel_and_the_topic_of_its_type() {
     let requests = server.received_requests().await.unwrap();
     let sent: EwdsSendMessageDto = serde_json::from_slice(&requests[0].body).unwrap();
     assert_eq!(sent.fqcn, "gsy.events.pub");
-    assert_eq!(sent.topic_name, "communitySubmitted");
+    assert_eq!(sent.topic_name, "community");
     assert_eq!(sent.transaction_id, "event-4");
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&sent.payload).unwrap(),
@@ -229,9 +229,9 @@ async fn event_worker_polls_the_topic_of_its_type_on_the_events_channel() {
     Mock::given(method("GET"))
         .and(path("/api/v2/messages"))
         .and(query_param("fqcn", "gsy.events.sub"))
-        .and(query_param("topicName", "orderSubmitted"))
+        .and(query_param("topicName", "order"))
         .and(query_param("topicOwner", "test.owner"))
-        .and(query_param("clientId", "testclientorderSubmitted"))
+        .and(query_param("clientId", "testclientorder"))
         .and(query_param("amount", "50"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!([
             {"payload": serde_json::to_string(&order_event("order-event")).unwrap()},

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "int.facility.submitted.event.v1",
-  "title": "facilitySubmitted event",
+  "title": "facility event",
   "type": "object",
   "additionalProperties": false,
   "properties": {

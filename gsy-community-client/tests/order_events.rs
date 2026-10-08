@@ -472,8 +472,8 @@ async fn subscriber_places_the_orders_it_polls_from_the_order_topic() {
     Mock::given(method("GET"))
         .and(path("/api/v2/messages"))
         .and(query_param("fqcn", "gsy.intelligent.events.sub"))
-        .and(query_param("topicName", "orderSubmitted"))
-        .and(query_param("clientId", "gsycommunityclientorderSubmitted"))
+        .and(query_param("topicName", "order"))
+        .and(query_param("clientId", "gsycommunityclientorder"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!([
             {"payload": serde_json::to_string(&event("event-1", vec![bid()])).unwrap()},
         ])))
@@ -489,7 +489,7 @@ async fn subscriber_places_the_orders_it_polls_from_the_order_topic() {
     // The only test in this binary that reads the environment.
     for key in [
         "EWDS_EVENT_SUBSCRIBE_FQCN",
-        "EWDS_ORDER_SUBMITTED_EVENT_TOPIC",
+        "EWDS_ORDER_EVENT_TOPIC",
         "EWDS_COMMUNITY_CLIENT_ID",
         "EWDS_RESPONSE_CLIENT_ID",
         "OFFCHAIN_STORAGE_TRANSPORT",

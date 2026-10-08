@@ -617,11 +617,11 @@ mod tests {
             "trade",
             "clearingResult",
             "market",
-            "measurementsSubmitted",
-            "facilitySubmitted",
-            "siteSubmitted",
-            "communitySubmitted",
-            "orderSubmitted",
+            "measurements",
+            "facility",
+            "site",
+            "community",
+            "order",
         ];
         assert_eq!(EwdsEventType::ALL.len(), expected.len());
         for (event_type, topic) in EwdsEventType::ALL.into_iter().zip(expected) {
