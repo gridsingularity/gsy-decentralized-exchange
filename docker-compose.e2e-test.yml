@@ -45,8 +45,9 @@ services:
     build:
       context: .
       dockerfile: ./gsy-offchain-storage/Dockerfile
+
       additional_contexts:
-        - ghcr.io/gridsingularity/gsy-rust-base:latest=service:gsy-rust-base
+        - ghcr.io/gridsingularity/gsy-rust-base=service:gsy-rust-base
     depends_on:
       mongodb:
         condition: service_started
@@ -84,7 +85,7 @@ services:
       context: .
       dockerfile: ./gsy-matching-engine/Dockerfile
       additional_contexts:
-        - ghcr.io/gridsingularity/gsy-rust-base:latest=service:gsy-rust-base
+        - ghcr.io/gridsingularity/gsy-rust-base=service:gsy-rust-base
     depends_on:
       gsy-offchain-storage:
         condition: service_healthy
@@ -97,6 +98,7 @@ services:
       TRADE_SETTLEMENT_ADDRESS: ${TRADE_SETTLEMENT_ADDRESS:-0xa513E6E4b8f2a923D98304ec87F64353C4D5C853}
       MATCHING_ENGINE_PRIVATE_KEY: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
       MATCHING_ALGORITHM: ${MATCHING_ALGORITHM:-pay_as_bid}
+      PAY_AS_CLEAR_PRICING: ${PAY_AS_CLEAR_PRICING:-max_offer}
       MATCHING_ENGINE_BLOCK_INTERVAL: ${MATCHING_ENGINE_BLOCK_INTERVAL:-}
       EWDS_MATCHING_ENGINE_CLIENT_ID: ${EWDS_MATCHING_ENGINE_CLIENT_ID:-gsymatchingengine}
 
@@ -106,7 +108,7 @@ services:
       context: .
       dockerfile: ./gsy-community-client/Dockerfile
       additional_contexts:
-        - ghcr.io/gridsingularity/gsy-rust-base:latest=service:gsy-rust-base
+        - ghcr.io/gridsingularity/gsy-rust-base=service:gsy-rust-base
     depends_on:
       gsy-offchain-storage:
         condition: service_healthy
@@ -126,7 +128,7 @@ services:
       context: .
       dockerfile: ./gsy-market-orchestrator/Dockerfile
       additional_contexts:
-        - ghcr.io/gridsingularity/gsy-rust-base:latest=service:gsy-rust-base
+        - ghcr.io/gridsingularity/gsy-rust-base=service:gsy-rust-base
     environment:
       <<: *gsy-ewds-env
       RUST_LOG: info,gsy_market_orchestrator=debug
@@ -147,7 +149,7 @@ services:
       context: .
       dockerfile: ./gsy-execution-engine/Dockerfile
       additional_contexts:
-        - ghcr.io/gridsingularity/gsy-rust-base:latest=service:gsy-rust-base
+        - ghcr.io/gridsingularity/gsy-rust-base=service:gsy-rust-base
     depends_on:
       gsy-offchain-storage:
         condition: service_healthy
@@ -164,7 +166,7 @@ services:
       EWDS_EXECUTION_ENGINE_CLIENT_ID: ${EWDS_EXECUTION_ENGINE_CLIENT_ID:-gsyexecutionengine}
 
   mongodb:
-    image: mongo:8.3.8
+    image: mongo:8.3.9
     container_name: mongodb
     ports:
       - "27017:27017"
@@ -178,7 +180,7 @@ services:
       context: .
       dockerfile: ./e2e-tests/Dockerfile
       additional_contexts:
-        - ghcr.io/gridsingularity/gsy-rust-base:latest=service:gsy-rust-base
+        - ghcr.io/gridsingularity/gsy-rust-base=service:gsy-rust-base
     depends_on:
       gsy-offchain-storage:
         condition: service_healthy
@@ -203,6 +205,7 @@ services:
       CHARLIE_PRIVATE_KEY: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
       ACTOR_REGISTRAR_PRIVATE_KEY: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
       MATCHING_ALGORITHM: ${MATCHING_ALGORITHM:-pay_as_bid}
+      PAY_AS_CLEAR_PRICING: ${PAY_AS_CLEAR_PRICING:-max_offer}
       MATCHING_ENGINE_BLOCK_INTERVAL: ${MATCHING_ENGINE_BLOCK_INTERVAL:-}
       EWDS_E2E_CLIENT_ID: ${EWDS_E2E_CLIENT_ID:-gsye2e}
       MONGO_URL: mongodb://gsy:gsy@mongodb:27017/?retryWrites=true&w=majority

@@ -24,8 +24,7 @@ pub struct UserAccount {
 #[derive(Clone, Debug)]
 pub struct PayAsClearScenario {
     pub accepted_order_ids: Vec<String>,
-    pub unmatched_bid_order_id: String,
-    pub unmatched_offer_order_id: String,
+    pub unmatched_order_ids: Vec<String>,
     pub expected_match_count: usize,
     pub preferred_order_ids: Option<(String, String)>,
 }
@@ -57,6 +56,7 @@ pub struct MyWorld {
     pub bid_forecast: Option<ForecastSchema>,
     pub offer_forecast: Option<ForecastSchema>,
     pub last_trade: Option<DbTradeSchema>,
+    pub preference_order_ids: Option<(String, String)>,
     pub last_charlie_offer_order_id: Option<String>,
     pub market_schema: Option<MarketSchema>,
     pub facilities_topology: Vec<FacilitySchema>,
@@ -124,6 +124,7 @@ impl MyWorld {
             bid_forecast: None,
             offer_forecast: None,
             last_trade: None,
+            preference_order_ids: None,
             last_charlie_offer_order_id: None,
             market_schema: None,
             facilities_topology: vec![],
