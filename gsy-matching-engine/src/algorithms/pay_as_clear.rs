@@ -47,23 +47,17 @@ impl FromStr for PayAsClearPricing {
     }
 }
 
-struct ClearingVolume {
-    traded_energy: u64,
-    max_accepted_offer: u64,
-    min_accepted_bid: u64,
-    demand_remaining: bool,
-    supply_remaining: bool,
 struct ClearingPointStats {
     traded_energy: u64,
     max_accepted_offer_rate: u64,
     min_accepted_bid_rate: u64,
     has_remaining_demand: bool,
-    has_remaining_supply: bool
+    has_remaining_supply: bool,
 }
 
-impl ClearingVolume {
-    fn pricing_with_scarcity_override(&self, configured: PayAsClearPricing) -> PayAsClearPricing {
-        match (self.demand_remaining, self.supply_remaining) {
+impl ClearingPointStats {
+    fn get_pay_as_clear_pricing(&self, configured: PayAsClearPricing) -> PayAsClearPricing {
+        match (self.has_remaining_demand, self.has_remaining_supply) {
             (true, false) => PayAsClearPricing::MinBid,
             (false, true) => PayAsClearPricing::MaxOffer,
             // A price crossing or simultaneous exhaustion keeps the configured policy.
@@ -89,9 +83,11 @@ impl MatchingData {
         let pay_as_clear_pricing = clearing_point_stats.get_pay_as_clear_pricing(pricing);
 
         Some(ClearingPoint {
-            traded_energy: volume.traded_energy,
-            clearing_price: effective_pricing
-                .clearing_price(volume.max_accepted_offer, volume.min_accepted_bid),
+            traded_energy: clearing_point_stats.traded_energy,
+            clearing_price: pay_as_clear_pricing.clearing_price(
+                clearing_point_stats.max_accepted_offer_rate,
+                clearing_point_stats.min_accepted_bid_rate,
+            ),
         })
     }
 
@@ -127,7 +123,7 @@ impl PayAsClear for MatchingData {
 }
 
 /// Walk descending bids and ascending offers until prices cross or one side ends.
-fn walk_sorted_curves(bids: &[&Order], offers: &[&Order]) -> Option<ClearingVolume> {
+fn walk_sorted_curves(bids: &[&Order], offers: &[&Order]) -> Option<ClearingPointStats> {
     let mut bid_index = 0;
     let mut offer_index = 0;
     let mut bid_energy = bids.first().map(|bid| bid.energy).unwrap_or_default();
@@ -167,20 +163,20 @@ fn walk_sorted_curves(bids: &[&Order], offers: &[&Order]) -> Option<ClearingVolu
         offer_energy -= accepted_energy;
     }
 
-    let (max_accepted_offer, min_accepted_bid) = marginal_rates?;
+    let (max_accepted_offer_rate, min_accepted_bid_rate) = marginal_rates?;
     // The loop can stop before advancing both cursors. Include later positive
     // quantities so simultaneous exhaustion and empty trailing orders are handled.
-    let demand_remaining =
+    let has_remaining_demand =
         bid_energy > 0 || bids.iter().skip(bid_index + 1).any(|bid| bid.energy > 0);
-    let supply_remaining =
+    let has_remaining_supply =
         offer_energy > 0 || offers.iter().skip(offer_index + 1).any(|offer| offer.energy > 0);
 
-    Some(ClearingVolume {
+    Some(ClearingPointStats {
         traded_energy,
-        max_accepted_offer,
-        min_accepted_bid,
-        demand_remaining,
-        supply_remaining,
+        max_accepted_offer_rate,
+        min_accepted_bid_rate,
+        has_remaining_demand,
+        has_remaining_supply,
     })
 }
 
