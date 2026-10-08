@@ -85,8 +85,8 @@ impl MatchingData {
         bids.sort_by(|left, right| right.energy_rate.cmp(&left.energy_rate));
         offers.sort_by(|left, right| left.energy_rate.cmp(&right.energy_rate));
 
-        let volume = walk_sorted_curves(&bids, &offers)?;
-        let effective_pricing = volume.pricing_with_scarcity_override(pricing);
+        let clearing_point_stats = walk_sorted_curves(&bids, &offers)?;
+        let pay_as_clear_pricing = clearing_point_stats.get_pay_as_clear_pricing(pricing);
 
         Some(ClearingPoint {
             traded_energy: volume.traded_energy,
