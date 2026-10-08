@@ -285,3 +285,27 @@ fn convert_matches(
     .flat_map(|market| market.matches)
     .collect())
 }
+
+#[test]
+fn keeps_requirements_of_bids_and_offers() {
+    let partner = bytes16_to_hex([7; 16]);
+    for side in [OrderEnum::Bid, OrderEnum::Offer] {
+        let mut order = db_order(1, side.clone(), 10.0);
+        order.requirements = Some(DbRequirements {
+            trading_partner_id: Some(partner.clone()),
+            energy_type: None,
+            preferred_energy_rate: Some(12.0),
+        });
+
+        let canonical = convert_db_order_to_canonical(&order).unwrap();
+
+        let requirements = canonical
+            .requirements
+            .unwrap_or_else(|| panic!("{side:?} lost its requirements"));
+        assert_eq!(requirements.trading_partner_id, Some(partner.clone()));
+        assert_eq!(
+            requirements.preferred_energy_rate,
+            Some((12.0 * NODE_FLOAT_SCALING_FACTOR) as u64)
+        );
+    }
+}

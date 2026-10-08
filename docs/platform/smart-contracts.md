@@ -119,7 +119,8 @@ Purpose:
 - Records order lifecycle commitments keyed by Intelligent Order UUID.
 - Validates market openness before order acceptance.
 - Accepts the actor wallet or an approved proxy as sender.
-- Stores requirements for both bids and offers, and energy attributes used by matching.
+- Stores order requirements (bids and offers, including the preferred trading
+  partner) and offer attributes used by matching.
 - Emits the complete order metadata in `OrderPlaced`, allowing the event
   listener to reconstruct the off-chain order without a separate update.
 - Emits `OrderCancelled` and `OrderStatusUpdated` lifecycle events.
@@ -141,8 +142,8 @@ Purpose:
 
 `OrderRegistry.OrderParams` is the single Solidity order definition used by
 `placeOrder`, `getOrder`, and both orders in `TradeSettlement.Match`. It includes
-`isBid`, `preferredTradingPartner`, and `preferredEnergyRate`
-alongside the identity, energy, and timing fields. There is no separate
+`isBid`, `preferredTradingPartner` and `preferredEnergyRate` alongside the
+identity, energy, and timing fields. There is no separate
 `TradeSettlement.OrderData` definition.
 
 Settlement verifies these fields against the stored orders and requires
