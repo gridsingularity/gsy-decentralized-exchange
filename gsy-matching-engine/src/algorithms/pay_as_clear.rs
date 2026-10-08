@@ -53,6 +53,12 @@ struct ClearingVolume {
     min_accepted_bid: u64,
     demand_remaining: bool,
     supply_remaining: bool,
+struct ClearingPointStats {
+    traded_energy: u64,
+    max_accepted_offer_rate: u64,
+    min_accepted_bid_rate: u64,
+    has_remaining_demand: bool,
+    has_remaining_supply: bool
 }
 
 impl ClearingVolume {
