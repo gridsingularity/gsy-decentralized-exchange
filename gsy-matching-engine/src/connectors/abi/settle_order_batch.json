@@ -91,10 +91,6 @@
                                     {
                                         "name": "preferredEnergyRate",
                                         "type": "uint64"
-                                    },
-                                    {
-                                        "name": "tradingPartner",
-                                        "type": "bytes16"
                                     }
                                 ]
                             },
@@ -150,10 +146,6 @@
                                     {
                                         "name": "preferredEnergyRate",
                                         "type": "uint64"
-                                    },
-                                    {
-                                        "name": "tradingPartner",
-                                        "type": "bytes16"
                                     }
                                 ]
                             },

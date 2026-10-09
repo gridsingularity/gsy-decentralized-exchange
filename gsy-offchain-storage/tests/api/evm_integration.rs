@@ -14,7 +14,7 @@ use tempfile::TempDir;
 abigen!(
     MockEmitter,
     r#"[
-        event OrderPlaced(bytes16 indexed orderId, bytes16 indexed createdBy, bytes16 indexed marketId, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, uint8 energySourcePreference, uint8 energyType, bool isBid, bytes16 preferredTradingPartner, uint64 preferredEnergyRate, bytes16 tradingPartner)
+        event OrderPlaced(bytes16 indexed orderId, bytes16 indexed createdBy, bytes16 indexed marketId, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, uint8 energySourcePreference, uint8 energyType, bool isBid, bytes16 preferredTradingPartner, uint64 preferredEnergyRate)
         function emitOrderPlaced(bytes16 orderId, bytes16 createdBy, uint64 energy, uint64 rate) external
     ]"#
 );
@@ -38,7 +38,6 @@ async fn test_order_listener_rejects_unknown_partner_mapping() {
         is_bid: true,
         preferred_trading_partner: [0x11; 16],
         preferred_energy_rate: 4000,
-        trading_partner: [0; 16],
     };
     let error = handler.handle_order_placed(event).await.unwrap_err();
     assert!(error.to_string().contains("No facility ID mapping"));
@@ -57,13 +56,10 @@ async fn test_evm_order_listener_persists_to_db() {
     let app = init_app().await;
     let db = app.db_wrapper.clone();
     // Register external facility IDs independently of their on-chain representation.
-    for (offchain_id, onchain_id) in [
-        (
-            "00112233-4455-6677-8899-aabbccddeeff",
-            "0x11111111111111111111111111111111",
-        ),
-        ("facility-bob", "0x22222222222222222222222222222222"),
-    ] {
+    for (offchain_id, onchain_id) in [(
+        "00112233-4455-6677-8899-aabbccddeeff",
+        "0x11111111111111111111111111111111",
+    )] {
         db.ids()
             .insert_one(IdMappingSchema {
                 offchain_id: offchain_id.to_string(),
@@ -92,7 +88,7 @@ async fn test_evm_order_listener_persists_to_db() {
         // SPDX-License-Identifier: MIT
         pragma solidity ^0.8.0;
         contract MockEmitter {
-            event OrderPlaced(bytes16 indexed orderId, bytes16 indexed createdBy, bytes16 indexed marketId, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, uint8 energySourcePreference, uint8 energyType, bool isBid, bytes16 preferredTradingPartner, uint64 preferredEnergyRate, bytes16 tradingPartner);
+            event OrderPlaced(bytes16 indexed orderId, bytes16 indexed createdBy, bytes16 indexed marketId, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, uint8 energySourcePreference, uint8 energyType, bool isBid, bytes16 preferredTradingPartner, uint64 preferredEnergyRate);
             function emitOrderPlaced(bytes16 orderId, bytes16 createdBy, uint64 energy, uint64 rate) external {
                 // Emit representative order metadata so indexing is verified end-to-end.
                 emit OrderPlaced(
@@ -107,8 +103,7 @@ async fn test_evm_order_listener_persists_to_db() {
                     2,
                     true,
                     hex"11111111111111111111111111111111",
-                    110000,
-                    hex"22222222222222222222222222222222"
+                    110000
                 );
             }
         }
@@ -234,10 +229,6 @@ async fn test_evm_order_listener_persists_to_db() {
             );
             let attributes = order.attributes.as_ref().expect("attributes missing");
             assert_eq!(attributes.energy_type, EnergyType::Pv);
-            assert_eq!(
-                attributes.trading_partner_id.as_deref(),
-                Some("facility-bob")
-            );
             break;
         }
         tokio::time::sleep(Duration::from_millis(200)).await;

@@ -123,7 +123,7 @@ Each `*.query` request payload accepts both snake_case and camelCase keys (via s
 | Operation | Fields (all optional unless noted) |
 |---|---|
 | `orders.query` | `market_id`/`marketId`, `start_time`/`startTime`, `end_time`/`endTime` |
-| `trades.query` | `start_time`/`startTime`, `end_time`/`endTime`, `facility_id`/`areaUuid` |
+| `trades.query` | `market_id`/`marketId`, `start_time`/`startTime`, `end_time`/`endTime` (`market_id` takes precedence over the time range, which matches the market `delivery_start_time`) |
 | `measurements.query` | `start_time`/`startTime`, `end_time`/`endTime`, `facility_id`/`areaUuid` (filters after fetch) |
 | `ids.query` | `offchain_id`/`offchainId` (required) |
 

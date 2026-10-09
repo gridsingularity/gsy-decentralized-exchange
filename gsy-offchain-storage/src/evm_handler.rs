@@ -44,24 +44,15 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         } else {
             OrderEnum::Offer
         };
-        let (mut requirements, mut attributes) =
-            order_metadata_from_contract(ContractOrderMetadata {
-                energy_source_preference: event.energy_source_preference,
-                energy_type: event.energy_type,
-                preferred_trading_partner: event.preferred_trading_partner,
-                preferred_energy_rate: event.preferred_energy_rate,
-                trading_partner: event.trading_partner,
-            });
-        for partner in [
-            requirements
-                .as_mut()
-                .and_then(|value| value.trading_partner_id.as_mut()),
-            attributes
-                .as_mut()
-                .and_then(|value| value.trading_partner_id.as_mut()),
-        ]
-        .into_iter()
-        .flatten()
+        let (mut requirements, attributes) = order_metadata_from_contract(ContractOrderMetadata {
+            energy_source_preference: event.energy_source_preference,
+            energy_type: event.energy_type,
+            preferred_trading_partner: event.preferred_trading_partner,
+            preferred_energy_rate: event.preferred_energy_rate,
+        });
+        if let Some(partner) = requirements
+            .as_mut()
+            .and_then(|value| value.trading_partner_id.as_mut())
         {
             *partner = self
                 .db
@@ -136,7 +127,6 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             seller: bytes16_to_hex(event.seller_id),
             buyer: bytes16_to_hex(event.buyer_id),
             market_id: bytes16_to_hex(event.market_id),
-            time_slot: event.time_slot,
             creation_time: chrono::Utc::now().timestamp() as u64,
             offer_hash: offer_hash_str,
             bid_hash: bid_hash_str,

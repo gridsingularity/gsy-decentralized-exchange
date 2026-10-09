@@ -1,5 +1,5 @@
 use crate::db::DbRef;
-use crate::routes::validate_start_end_time;
+use crate::routes::parse_time_range;
 use actix_web::{web::Json, web::Query, HttpResponse, Responder};
 use anyhow::{Error, Result};
 use primitives::db_api_schema::orders::{DbOrderSchema, FlexibilityOrderSchema};
@@ -33,41 +33,39 @@ pub struct OrdersParameters {
     #[serde(default)]
     market_id: Option<String>,
     #[serde(default)]
-    start_time: Option<u64>,
+    start_time: Option<String>,
     #[serde(default)]
-    end_time: Option<u64>,
+    end_time: Option<String>,
 }
 
 async fn filter_orders_from_db(
     db: DbRef,
-    orders_parameters: Query<OrdersParameters>,
+    market_id: Option<String>,
+    start_time: Option<u64>,
+    end_time: Option<u64>,
 ) -> Result<Vec<EwdsOrderDto>, Error> {
-    let orders = if orders_parameters.market_id.is_none()
-        && orders_parameters.start_time.is_none()
-        && orders_parameters.end_time.is_none()
-    {
+    let orders = if market_id.is_none() && start_time.is_none() && end_time.is_none() {
         db.get_ref().orders().get_all_orders().await?
     } else {
         db.get_ref()
             .orders()
-            .filter_orders(
-                orders_parameters.market_id.clone(),
-                orders_parameters.start_time,
-                orders_parameters.end_time,
-            )
+            .filter_orders(market_id, start_time, end_time)
             .await?
     };
     Ok(orders.into_iter().map(EwdsOrderDto::from).collect())
 }
 
 pub async fn get_orders(db: DbRef, orders_parameters: Query<OrdersParameters>) -> impl Responder {
-    if let Err(response) =
-        validate_start_end_time(orders_parameters.start_time, orders_parameters.end_time)
-    {
-        return response;
-    }
+    let (start_time, end_time) = match parse_time_range(
+        orders_parameters.start_time.as_deref(),
+        orders_parameters.end_time.as_deref(),
+    ) {
+        Ok(range) => range,
+        Err(response) => return response,
+    };
 
-    match filter_orders_from_db(db, orders_parameters).await {
+    let market_id = orders_parameters.into_inner().market_id;
+    match filter_orders_from_db(db, market_id, start_time, end_time).await {
         Ok(orders) => HttpResponse::Ok().json(
             orders
                 .into_iter()

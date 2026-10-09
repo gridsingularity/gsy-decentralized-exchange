@@ -17,8 +17,9 @@ Backend: MongoDB (`mongo:5.0`).
 2. `OffchainStorageEvmHandler` maps event payloads into DB schemas.
 3. `gsy-offchain-storage` updates order/trade records and exposes them via REST APIs.
 
-`OrderPlaced` contains the optional bid requirements and offer attributes, so
-the indexed order is complete without a follow-up `/orders` write.
+`OrderPlaced` contains the optional order requirements (bids and offers) and
+offer attributes, so the indexed order is complete without a follow-up
+`/orders` write.
 
 ## HTTP API Surface
 
@@ -75,7 +76,9 @@ through `community.upsert` and `communities.query` request/reply operations.
 ## Data Model Notes
 
 - Order IDs and market IDs are stored as hex strings (`0x...`).
-- Order requirements/attributes store original off-chain partner facility IDs.
+- The preferred trading partner of a bid or an offer is stored in its
+  requirements (`requirements.trading_partner_id`) as the original off-chain
+  partner facility ID; attributes carry no partner.
   Callers resolve these through `POST /ids` or EWDS `ids.query` before contract
   submission. The event indexer uses the ID mapping collection to recover the
   facility IDs; the matcher resolves them back before comparing on-chain actors.

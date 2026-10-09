@@ -192,6 +192,26 @@ async fn submit_two_communities(world: &mut MyWorld) {
 
     let (_, next_timeslot) = get_last_and_next_timeslot();
     world.target_delivery_time = next_timeslot;
+
+    // TODO: This should be removed by DD-439
+    // The Market Orchestrator only opens markets on-chain, so register them in off-chain storage
+    // for the delivery-time filter of GET /trades to resolve them.
+    let adapter = AreaMarketInfoAdapter::new(Some(world.offchain_storage_url.clone()));
+    for community in &communities {
+        adapter
+            .create_market(
+                community.community_id.clone(),
+                world.target_delivery_time,
+                matching_algorithm_from_env(),
+            )
+            .await
+            .unwrap_or_else(|| {
+                panic!(
+                    "market_creation_failed community={} time_slot={}",
+                    community.community_id, world.target_delivery_time
+                )
+            });
+    }
 }
 
 fn unique_community_id() -> String {

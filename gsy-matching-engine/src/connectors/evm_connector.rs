@@ -354,12 +354,7 @@ async fn fetch_market_orders(body: Vec<EwdsOrderDto>) -> Result<PreparedOrders> 
         .into_iter()
         .filter(|order| order.status == OrderStatus::Submitted)
     {
-        resolve_order_partner_ids(
-            &mut db_order_schema.requirements,
-            &mut db_order_schema.attributes,
-            &id_mapping_source,
-        )
-        .await?;
+        resolve_order_partner_ids(&mut db_order_schema.requirements, &id_mapping_source).await?;
         match convert_db_order_to_canonical(&db_order_schema) {
             Ok(order) => {
                 by_order_id.insert(order.order_id.clone(), db_order_schema);
@@ -478,10 +473,6 @@ fn convert_attributes(
     attributes
         .map(|attributes| -> Result<Attributes> {
             Ok(Attributes {
-                trading_partner_id: normalize_optional_bytes16_field(
-                    "attributes.trading_partner_id",
-                    attributes.trading_partner_id.as_deref(),
-                )?,
                 energy_type: attributes.energy_type.clone(),
             })
         })
@@ -519,7 +510,7 @@ fn convert_db_order_to_canonical(order: &DbOrderSchema) -> Result<Order> {
             creation_time: order.creation_time,
             energy: (order.energy_kWh * NODE_FLOAT_SCALING_FACTOR).round() as u64,
             energy_rate: (order.energy_rate * NODE_FLOAT_SCALING_FACTOR).round() as u64,
-            requirements: None,
+            requirements: convert_requirements(order.requirements.as_ref())?,
             attributes: convert_attributes(order.attributes.as_ref())?,
         },
     })
@@ -551,7 +542,6 @@ fn to_evm_order_data(order: &DbOrderSchema, expected_type: OrderEnum) -> Result<
         is_bid: order.order_type == OrderEnum::Bid,
         preferred_trading_partner: metadata.preferred_trading_partner,
         preferred_energy_rate: metadata.preferred_energy_rate,
-        trading_partner: metadata.trading_partner,
     })
 }
 

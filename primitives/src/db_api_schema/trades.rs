@@ -25,7 +25,6 @@ pub struct DbTradeSchema {
     pub seller: String,
     pub buyer: String,
     pub market_id: String,
-    pub time_slot: u64,
     pub creation_time: u64,
     pub offer_hash: String,
     pub bid_hash: String,

@@ -5,6 +5,7 @@ use mongodb::bson::doc;
 use mongodb::options::IndexOptions;
 use mongodb::{bson, Collection, IndexModel};
 use primitives::db_api_schema::market::MarketSchema;
+use primitives::utils::timestamp_to_string_with_padding;
 use std::ops::Deref;
 
 pub async fn init_markets(db: &DatabaseWrapper) -> Result<()> {
@@ -75,6 +76,31 @@ impl MarketService {
             }
         }
         Ok(result)
+    }
+
+    /// IDs of the markets whose `delivery_start_time` lies in `[start_time, end_time)`.
+    #[tracing::instrument(name = "Fetching market ids by delivery start", skip(self))]
+    pub async fn market_ids_by_delivery_start(
+        &self,
+        start_time: Option<u64>,
+        end_time: Option<u64>,
+    ) -> Result<Vec<String>> {
+        let mut range = doc! {};
+        if let Some(start) = start_time {
+            range.insert("$gte", timestamp_to_string_with_padding(start));
+        }
+        if let Some(end) = end_time {
+            range.insert("$lt", timestamp_to_string_with_padding(end));
+        }
+
+        let market_ids = self
+            .0
+            .distinct("market_id", doc! {"delivery_start_time": range})
+            .await?;
+        Ok(market_ids
+            .into_iter()
+            .filter_map(|id| id.as_str().map(str::to_string))
+            .collect())
     }
 
     #[tracing::instrument(name = "Saving market", skip(self, market), fields(market = ?market))]

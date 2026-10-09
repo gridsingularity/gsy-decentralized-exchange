@@ -125,7 +125,7 @@
 				"method": "GET",
 				"header": [],
 				"url": {
-					"raw": "{{hostname}}/orders?market_id=market1&start_time=123122&end_time=123124",
+					"raw": "{{hostname}}/orders?market_id=market1&start_time=1970-01-02T10:12:02Z&end_time=1970-01-02T10:12:04Z",
 					"host": [
 						"{{hostname}}"
 					],
@@ -139,11 +139,11 @@
 						},
 						{
 							"key": "start_time",
-							"value": "123122"
+							"value": "1970-01-02T10:12:02Z"
 						},
 						{
 							"key": "end_time",
-							"value": "123124"
+							"value": "1970-01-02T10:12:04Z"
 						}
 					]
 				}

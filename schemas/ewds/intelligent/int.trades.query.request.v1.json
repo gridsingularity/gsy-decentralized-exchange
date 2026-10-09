@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "int.trades.query.request.v1",
   "title": "tradesQuery request",
+  "description": "Query trades whose timestamp lies in [startTime, endTime). The range may span at most 86400 seconds (1 day): endTime - startTime <= 86400 and endTime >= startTime. Other requests are answered with success=false and error.code TIME_RANGE_TOO_LARGE or INVALID_TIME_RANGE.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -11,8 +12,8 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "startTime": { "type": "integer", "minimum": 0 },
-        "endTime": { "type": "integer", "minimum": 0 }
+        "startTime": { "type": "integer", "minimum": 0, "description": "Inclusive range start, Unix epoch seconds." },
+        "endTime": { "type": "integer", "minimum": 0, "description": "Exclusive range end, Unix epoch seconds. At most startTime + 86400." }
       },
       "required": ["startTime", "endTime"]
     }

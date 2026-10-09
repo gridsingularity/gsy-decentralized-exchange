@@ -3,6 +3,7 @@ use actix_web::web;
 use mongodb::bson::{to_bson, Bson};
 use primitives::db_api_schema::orders::{OrderEnum, OrderStatus};
 use primitives::ewds::dto::{order_status_to_ewds, order_type_to_ewds, EwdsOrderDto};
+use primitives::utils::epoch_to_rfc3339;
 use std::collections::HashMap;
 
 fn make_order(order_id: &str, market_id: &str, order_type: OrderEnum) -> EwdsOrderDto {
@@ -11,13 +12,13 @@ fn make_order(order_id: &str, market_id: &str, order_type: OrderEnum) -> EwdsOrd
         market_id: market_id.to_string(),
         order_type: order_type_to_ewds(&order_type).to_string(),
         order_status: order_status_to_ewds(&OrderStatus::Submitted).to_string(),
-        time_slot: 1,
+        time_slot: "2026-01-01T00:00:00Z".to_string(),
         quantity: 100.0,
         price_limit: 10.0,
         energy_source_preference: None,
         energy_type: None,
         created_by: "0x0000000000000000000000000000000000000abc".to_string(),
-        creation_time: 1_677_453_190,
+        creation_time: "2026-01-01T00:00:01Z".to_string(),
         updated_at: None,
         reject_reason: None,
         preferred_trading_partner: None,
@@ -159,7 +160,7 @@ async fn filter_orders_by_market_and_time_range() {
             market,
             OrderEnum::Bid,
         );
-        order.time_slot = *ts;
+        order.time_slot = epoch_to_rfc3339(*ts);
         orders.push(order);
     }
 
@@ -235,7 +236,7 @@ async fn filter_orders_time_boundaries_are_inclusive_start_exclusive_end() {
             market,
             OrderEnum::Bid,
         );
-        order.time_slot = *ts;
+        order.time_slot = epoch_to_rfc3339(*ts);
         orders.push(order);
     }
 

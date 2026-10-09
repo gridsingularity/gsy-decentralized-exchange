@@ -36,3 +36,5 @@ contracts-output/*
 !contracts-output/gas-report.md
 !contracts-output/volta-gas-report.md
 !contracts-output/ewc-gas-report.md
+
+.claude/
