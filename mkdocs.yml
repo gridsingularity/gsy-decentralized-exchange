@@ -8,6 +8,7 @@ nav:
     - System Components Overview: platform/system-components-overview.md
     - EWDS Integration: platform/ewds-integration.md
     - EWDS Data Contracts: platform/ewds-data-contracts.md
+    - EWDS Communication Workflow: ewds-communication-workflow.md
     - Smart Contracts: platform/smart-contracts.md
     - Off-Chain Storage: platform/off-chain-storage.md
     - Matching Engine: platform/matching-engine.md

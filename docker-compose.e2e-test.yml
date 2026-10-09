@@ -202,6 +202,9 @@ services:
         condition: service_started
       gsy-market-orchestrator:
         condition: service_started
+      # Places the orders of the `order` events the @ewds features publish.
+      gsy-community-client:
+        condition: service_started
     environment:
       <<: *gsy-ewds-env
       RUST_BACKTRACE: full

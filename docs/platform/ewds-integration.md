@@ -138,12 +138,52 @@ off-chain-storage responder DID. If multiple qualified responders consume the
 same request topics, they can return different snapshots for the same request
 ID. The response publish channel can resolve to all GSY request clients.
 
+### Polling
+
+Every service polls each subscribe channel it reads as a whole. The
+`GET /api/v2/messages` call sends only `fqcn`, `amount` and `clientId`, with
+no `topicName` and no `topicOwner`, so the gateway returns the messages of
+every topic on the channel. The service then:
+
+- drops messages whose `topicOwner` is not `EWDS_TOPIC_OWNER`,
+- hands every other message to the queue of its `topicName`, in arrival order,
+- drops the messages of topics it doesn't consume. These are expected, because
+  a service also receives the topics meant for other services.
+
+Each message the gateway returns carries `topicName`, `topicOwner`,
+`topicVersion`, `id`, `transactionId` and `sender` next to `payload`. If a
+message ever has no `topicName`, it is routed by its payload instead: an
+event by `eventType`, a request by `operation`.
+
+| Channel | Polled by | `clientId` |
+|---|---|---|
+| `gsy.intelligent.requests.sub` | off-chain storage | `EWDS_REQUEST_CLIENT_ID` + `requests`, e.g. `gsyoffchainstoragerequests` |
+| `gsy.intelligent.events.sub` | off-chain storage | `EWDS_REQUEST_CLIENT_ID` + `events`, e.g. `gsyoffchainstorageevents` |
+| `gsy.intelligent.events.sub` | community client | `EWDS_COMMUNITY_CLIENT_ID` + `events`, e.g. `gsycommunityclientevents` |
+| `gsy.intelligent.responses.sub` | every query caller | client ID + response topic, e.g. `gsymatchingengineordersQueryResponse` |
+
+Query responses are the exception: they are still polled per response topic.
+Every topic has its own `clientId` cursor and the caller matches responses by
+`requestId`, so this works whether or not the gateway filters by topic.
+
+Gateway behaviour to keep in mind:
+
+- A `clientId` is a cursor of its own. Two pollers must never share one, or
+  they split the messages between them.
+- A new `clientId` receives everything the broker still keeps for the channel,
+  up to 24 hours.
+- The first poll of a new `clientId` can take more than 30 seconds while the
+  gateway sets up the consumer.
+- A poll returns at most `amount` messages over all topics of the channel.
+  When it returns a full batch, the service polls again at once instead of
+  waiting for the next interval.
+
 ### Inbound Events
 
 Other systems publish new or changed measurements, facilities, sites
 and communities on `gsy.intelligent.events.pub`. When `EWDS_ENABLE_HANDLER` is
-on, the off-chain storage polls these four topics on
-`gsy.intelligent.events.sub` and stores the data in the same collections the
+on, the off-chain storage takes these four topics from its poll of
+`gsy.intelligent.events.sub` (see [Polling](#polling)) and stores the data in the same collections the
 REST API uses. New orders go to the community client instead; see
 [Order Events](#order-events).
 
@@ -197,15 +237,16 @@ Handling rules:
 - A failed database write is tried up to three times in a row. A duplicate
   key, such as a facility or community name that is already taken, counts as
   invalid data and is not retried.
-- The gateway acknowledges a message when it is polled, so it never delivers a
-  failed event again. The subscriber therefore keeps a failed event and
+- The gateway acknowledges the messages of a poll at the next poll of the same
+  `clientId`, so it never delivers a failed event again. The subscriber therefore keeps a failed event and
   retries it, up to `EWDS_EVENT_HANDLE_ATTEMPTS` (default 8) attempts in
   total. The first retry waits `EWDS_EVENT_RETRY_DELAY_MS` (default 2 000 ms),
   and the delay doubles with every attempt up to 5 minutes, so the defaults
   cover an outage of about 4 minutes. Then the event is logged and dropped.
 - Events of one topic are handled in the order they arrive. While a failed
   event waits for its retry, the later events of its topic wait too, so an
-  older event never overwrites the data of a newer one. Failed events are only
+  older event never overwrites the data of a newer one. The other topics carry
+  on. Failed events are only
   kept in memory and are lost if the service restarts.
 - The broker keeps messages for 24 hours, so events sent while the off-chain
   storage is down for longer are lost.
@@ -219,8 +260,9 @@ e2e stack uses the `...Test` variants of the inbound topics
 
 FOS publishes new orders on the `order` topic
 (`EWDS_ORDER_EVENT_TOPIC`). When `EWDS_ENABLE_HANDLER` is on, the
-community client polls only this topic on `gsy.intelligent.events.sub`, with
-the client ID `EWDS_COMMUNITY_CLIENT_ID`, and sends each order to
+community client handles only this topic of `gsy.intelligent.events.sub`. It
+polls the channel with the client ID `EWDS_COMMUNITY_CLIENT_ID` + `events` and
+drops the other topics (see [Polling](#polling)). It sends each order to
 `OrderRegistry.placeOrder`. The off-chain storage doesn't subscribe to it.
 From there the usual flow takes over: the off-chain storage indexes
 `OrderPlaced`, the matching engine matches, and trades go out as
@@ -370,10 +412,13 @@ Validator requirements:
 - `EwdsClientConfig` resolves gateway, FQCN, topic, client-ID, and polling settings from the environment once when a client is created.
 - `EwdsOperation` maps each query operation to its configured request/response topic pair; callers pass only the operation and query payload.
 - `EwdsClient` separates request publishing from response polling behind its `query` method.
-- `EwdsClient::run_event_worker` polls one event type's topic on
-  `EWDS_EVENT_SUBSCRIBE_FQCN` (up to `EWDS_EVENT_BATCH_SIZE` messages) every
-  `EWDS_EVENT_POLL_INTERVAL_MS` (default 60 000 ms, 1 000 ms in the e2e
-  stack) and passes every new event to a handler, in arrival order. A failed
+- `ewds::channel::EwdsChannelPoller` polls one subscribe channel without a
+  topic filter and routes its messages to a queue per topic (see
+  [Polling](#polling)).
+- `EwdsClient::run_event_subscriber` polls `EWDS_EVENT_SUBSCRIBE_FQCN` (up to
+  `EWDS_EVENT_BATCH_SIZE` messages) every `EWDS_EVENT_POLL_INTERVAL_MS`
+  (default 1 000 ms). It passes every new event of
+  the given event types to a handler, in arrival order per topic. A failed
   event is retried (`EWDS_EVENT_HANDLE_ATTEMPTS`, `EWDS_EVENT_RETRY_DELAY_MS`)
   unless the handler marks it as invalid. The off-chain storage and the
   community client share it.
@@ -383,8 +428,17 @@ Validator requirements:
 
 - EWDS handlers are implemented for `orders.query`, `trades.query`,
   `measurements.query`, and `communities.query`.
-- Each operation has an independent bounded polling worker, so response retries
-  for one topic do not block request handling for unrelated topics.
+- One poller reads the request channel and every operation has its own worker,
+  so response retries for one operation do not block request handling for the
+  others. A request whose `operation` doesn't belong to its topic is answered
+  with an `OPERATION_TOPIC_MISMATCH` error. A request that fails is logged and
+  doesn't hold up the rest of its poll.
+- A request published longer ago than `EWDS_REQUEST_MAX_AGE_MS` (default:
+  `EWDS_RESPONSE_TIMEOUT_MS`) is skipped, using the gateway's `timestampNanos`.
+  Its sender has stopped waiting. Answering would only flood the response
+  topic, which every requester reads, so that the fresh responses arrive
+  minutes late. This matters after an outage or a new `clientId`, when a
+  backlog of up to 24 hours arrives at once.
 - An event subscriber stores the measurements, facilities, sites and
   communities that other systems publish on the events channel (see
   [Inbound Events](#inbound-events)).
@@ -456,7 +510,7 @@ Channel/topic setup notes:
   `communitiesQueryResponse`.
 - Topic creation requires `topiccreator`; channel creation requires gateway admin access.
 - The gateway API validates send requests against a `pub` channel and receive polling against a `sub` channel. The direction-specific FQCN env vars are the default integration path.
-- Gateway smoke testing confirmed that message payloads must be JSON-encoded strings, sends must include `topicVersion`, `transactionId`, and `anonymousRecipient`, and receive polling must use `GET /api/v2/messages` with an alphanumeric `clientId` cursor.
+- Gateway smoke testing confirmed that message payloads must be JSON-encoded strings, sends must include `topicVersion`, `transactionId`, and `anonymousRecipient`, and receive polling must use `GET /api/v2/messages` with an alphanumeric `clientId` cursor. Leaving out `topicName` and `topicOwner` on the `GET` returns the messages of all topics of the channel (see [Polling](#polling)).
 
 Validated e2e status:
 

@@ -1,16 +1,20 @@
+pub mod channel;
 pub mod dto;
 
 use anyhow::{anyhow, bail, Context, Result};
+use channel::{route_event_by_type, EwdsChannelPoller, EwdsChannelPollerConfig};
 use dto::{
-    EwdsDeliverySummary, EwdsEventEnvelope, EwdsMessageDto, EwdsQueryResponse, EwdsRequestEnvelope,
-    EwdsSendMessageDto, EwdsSendMessageResponse,
+    EwdsDeliverySummary, EwdsEventEnvelope, EwdsInboundMessage, EwdsQueryResponse,
+    EwdsRequestEnvelope, EwdsSendMessageDto, EwdsSendMessageResponse,
 };
+use futures::future::{join, join_all};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{HashSet, VecDeque};
 use std::future::Future;
 use std::{env, fmt, time::Instant};
-use tokio::time::{sleep, Duration};
+use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::time::{sleep, timeout, Duration};
 use tracing::{error, info, warn};
 
 const DEFAULT_GATEWAY_URL: &str = "http://ewds-gateway-api:3333";
@@ -19,13 +23,13 @@ const DEFAULT_RESPONSE_FQCN: &str = "gsy.intelligent.responses.sub";
 const DEFAULT_EVENT_PUBLISH_FQCN: &str = "gsy.intelligent.events.pub";
 const DEFAULT_EVENT_SUBSCRIBE_FQCN: &str = "gsy.intelligent.events.sub";
 const DEFAULT_EVENT_BATCH_SIZE: u32 = 100;
-const DEFAULT_EVENT_POLL_INTERVAL_MS: u64 = 60_000;
+const DEFAULT_EVENT_POLL_INTERVAL_MS: u64 = 1_000;
 const DEFAULT_EVENT_HANDLE_ATTEMPTS: u32 = 8;
 const DEFAULT_EVENT_RETRY_DELAY_MS: u64 = 2_000;
 const MAX_EVENT_RETRY_DELAY_MS: u64 = 300_000;
 const DEFAULT_TOPIC_OWNER: &str = "integration.apps.intelligent.auth.ewc";
 const DEFAULT_TOPIC_VERSION: &str = "1.0.0";
-const DEFAULT_POLL_INTERVAL_MS: u64 = 400;
+const DEFAULT_POLL_INTERVAL_MS: u64 = 1_000;
 const DEFAULT_EMPTY_RESPONSE_GRACE_MS: u64 = 10_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -523,105 +527,103 @@ impl EwdsClient {
         .await
     }
 
-    /// Polls the topic of `event_type` on the events channel and passes every new event to
-    /// `handle`, in the order the events arrived. Malformed messages, events of another type and
-    /// events seen before are skipped.
+    /// Polls the events channel once for all of `event_types` and passes every new event to
+    /// `handle`. Each event type's topic has its own queue, handled in the order the events
+    /// arrived; malformed messages, events of another type and events seen before are skipped.
     ///
     /// The gateway acknowledges a message when it is polled, so a failed event is never
-    /// delivered again and the worker retries it itself: up to `event_handle_attempts` times in
-    /// total, with a delay that starts at `event_retry_delay_ms` and doubles with every attempt.
-    /// Meanwhile the later events of the topic wait, so an older event never overwrites the
-    /// data of a newer one. An event whose handler error is marked with [`invalid_event`] is
-    /// dropped at once, because handling it again would fail the same way. Runs until the task
-    /// is dropped.
-    pub async fn run_event_worker<F, Fut>(&self, event_type: EwdsEventType, handle: F)
+    /// delivered again and the subscriber retries it itself: up to `event_handle_attempts`
+    /// times in total, with a delay that starts at `event_retry_delay_ms` and doubles with every
+    /// attempt. Meanwhile the later events of its topic wait, so an older event never
+    /// overwrites the data of a newer one; the other topics carry on. An event whose handler
+    /// error is marked with [`invalid_event`] is dropped at once, because handling it again
+    /// would fail the same way. Runs until the task is dropped.
+    pub async fn run_event_subscriber<F, Fut>(&self, event_types: &[EwdsEventType], handle: F)
     where
         F: Fn(EwdsEventEnvelope<Value>) -> Fut,
         Fut: Future<Output = Result<()>>,
     {
+        let mut poller = self.event_channel_poller();
+        let workers = event_types
+            .iter()
+            .map(|event_type| {
+                let topic_name = self.config.event_topics.for_event_type(*event_type);
+                let messages = poller.route(topic_name);
+                self.run_topic_event_worker(*event_type, messages, &handle)
+            })
+            .collect::<Vec<_>>();
+
+        join(poller.run(), join_all(workers)).await;
+    }
+
+    /// The poller of the events channel. Its `clientId` is the consumer ID plus `events`, so it
+    /// never shares a cursor with the per-topic response polls of the same consumer.
+    fn event_channel_poller(&self) -> EwdsChannelPoller {
+        EwdsChannelPoller::new(EwdsChannelPollerConfig {
+            gateway_base: self.config.gateway_base.clone(),
+            fqcn: self.config.event_subscribe_fqcn.clone(),
+            client_id: client_id_for_suffix(self.config.consumer_client_id.as_str(), "events"),
+            topic_owner: self.config.topic_owner.clone(),
+            batch_size: self.config.event_batch_size,
+            poll_interval_ms: self.config.event_poll_interval_ms,
+        })
+        .with_fallback_router(route_event_by_type(self.config.event_topics.clone()))
+    }
+
+    /// Handles the events the poller routes to the topic of `event_type`.
+    async fn run_topic_event_worker<F, Fut>(
+        &self,
+        event_type: EwdsEventType,
+        mut messages: UnboundedReceiver<EwdsInboundMessage>,
+        handle: &F,
+    ) where
+        F: Fn(EwdsEventEnvelope<Value>) -> Fut,
+        Fut: Future<Output = Result<()>>,
+    {
+        let topic_name = self.config.event_topics.for_event_type(event_type);
         let mut queue: VecDeque<QueuedEvent> = VecDeque::new();
         let mut seen_event_ids: HashSet<String> = HashSet::new();
         let mut seen_queue: VecDeque<String> = VecDeque::new();
-        let mut rate_limit_attempt = 0u32;
-        let mut next_poll_at = Instant::now();
 
         loop {
-            if Instant::now() >= next_poll_at {
-                let result = self
-                    .enqueue_new_events(event_type, &mut queue, &seen_event_ids)
-                    .await;
-                if let Err(error) = &result {
-                    warn!("EWDS {} event worker failed to poll: {}", event_type, error);
-                }
-                let delay_ms = next_poll_delay_ms(
-                    &result,
-                    self.config.event_poll_interval_ms,
-                    &mut rate_limit_attempt,
-                );
-                next_poll_at = Instant::now() + Duration::from_millis(delay_ms);
+            while let Ok(message) = messages.try_recv() {
+                enqueue_event(event_type, topic_name, message, &mut queue, &seen_event_ids);
             }
 
             self.handle_queued_events(
                 event_type,
-                &handle,
+                handle,
                 &mut queue,
                 &mut seen_event_ids,
                 &mut seen_queue,
             )
             .await;
 
-            // Wake up early when a retry is due before the next poll.
-            let wake_at = queue
-                .front()
-                .map_or(next_poll_at, |event| event.retry_at.min(next_poll_at));
-            sleep(wake_at.saturating_duration_since(Instant::now())).await;
-        }
-    }
-
-    /// Polls the topic of `event_type` and queues every new event of that type.
-    async fn enqueue_new_events(
-        &self,
-        event_type: EwdsEventType,
-        queue: &mut VecDeque<QueuedEvent>,
-        seen_event_ids: &HashSet<String>,
-    ) -> Result<()> {
-        let topic_name = self.config.event_topics.for_event_type(event_type);
-        let messages = self.poll_events(topic_name).await?;
-
-        for message in messages {
-            let envelope = match serde_json::from_str::<EwdsEventEnvelope<Value>>(&message.payload)
-            {
-                Ok(envelope) => envelope,
-                Err(error) => {
-                    warn!(
-                        "Skipping malformed EWDS message on topic '{}': {}",
-                        topic_name, error
-                    );
-                    continue;
+            // Wait for the next message, but wake up early when a retry is due.
+            let next = match queue.front() {
+                Some(event) => {
+                    let wait = event.retry_at.saturating_duration_since(Instant::now());
+                    match timeout(wait, messages.recv()).await {
+                        Ok(message) => message,
+                        Err(_) => continue,
+                    }
                 }
+                None => messages.recv().await,
             };
-            if envelope.event_type != event_type {
-                warn!(
-                    "Skipping EWDS {} event {} on topic '{}', which carries {} events",
-                    envelope.event_type, envelope.event_id, topic_name, event_type
-                );
-                continue;
+            match next {
+                Some(message) => {
+                    enqueue_event(event_type, topic_name, message, &mut queue, &seen_event_ids)
+                }
+                None if queue.is_empty() => return,
+                // The poller stopped; finish the queued events before returning.
+                None => {
+                    sleep(queue.front().map_or(Duration::ZERO, |event| {
+                        event.retry_at.saturating_duration_since(Instant::now())
+                    }))
+                    .await
+                }
             }
-            if seen_event_ids.contains(&envelope.event_id)
-                || queue
-                    .iter()
-                    .any(|queued| queued.envelope.event_id == envelope.event_id)
-            {
-                continue;
-            }
-            queue.push_back(QueuedEvent {
-                envelope,
-                attempts: 0,
-                retry_at: Instant::now(),
-            });
         }
-
-        Ok(())
     }
 
     /// Handles the queued events in order until the queue is empty or the first event has to
@@ -677,45 +679,6 @@ impl EwdsClient {
             }
             remember_id(&event_id, seen_event_ids, seen_queue);
         }
-    }
-
-    async fn poll_events(&self, topic_name: &str) -> Result<Vec<EwdsMessageDto>> {
-        let get_url = format!(
-            "{}/api/v2/messages",
-            self.config.gateway_base.trim_end_matches('/')
-        );
-        let fqcn = self.config.event_subscribe_fqcn.as_str();
-        let amount = self.config.event_batch_size.to_string();
-        let client_id = client_id_for_suffix(self.config.consumer_client_id.as_str(), topic_name);
-        let response = self
-            .client
-            .get(get_url.as_str())
-            .query(&[
-                ("fqcn", fqcn),
-                ("amount", amount.as_str()),
-                ("topicName", topic_name),
-                ("topicOwner", self.config.topic_owner.as_str()),
-                ("clientId", client_id.as_str()),
-            ])
-            .send()
-            .await?;
-
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            return Err(anyhow!(
-                "EWDS poll failed for fqcn='{}', topic='{}': HTTP {}{}",
-                fqcn,
-                topic_name,
-                status,
-                format_response_body(&body)
-            ));
-        }
-
-        Ok(response
-            .json::<Vec<EwdsMessageDto>>()
-            .await
-            .unwrap_or_default())
     }
 
     async fn send_query(
@@ -888,10 +851,16 @@ impl EwdsClient {
             let status = response.status();
             if status.is_success() {
                 rate_limit_attempt = 0;
-                let messages = response
-                    .json::<Vec<EwdsMessageDto>>()
-                    .await
-                    .unwrap_or_default();
+                let messages = match parse_inbound_messages(&response.text().await?) {
+                    Ok(messages) => messages,
+                    Err(error) => {
+                        warn!(
+                            "EWDS response poll for {} (request_id={}) failed: {:#}",
+                            pending_query.operation, pending_query.request_id, error
+                        );
+                        Vec::new()
+                    }
+                };
                 for message in messages {
                     let parsed = serde_json::from_str::<EwdsQueryResponse<T>>(&message.payload);
                     if let Err(error) = &parsed {
@@ -957,6 +926,45 @@ impl EwdsClient {
             sleep(Duration::from_millis(self.config.poll_interval_ms)).await;
         }
     }
+}
+
+/// Queues `message` if it is a new event of `event_type`.
+fn enqueue_event(
+    event_type: EwdsEventType,
+    topic_name: &str,
+    message: EwdsInboundMessage,
+    queue: &mut VecDeque<QueuedEvent>,
+    seen_event_ids: &HashSet<String>,
+) {
+    let envelope = match serde_json::from_str::<EwdsEventEnvelope<Value>>(&message.payload) {
+        Ok(envelope) => envelope,
+        Err(error) => {
+            warn!(
+                "Skipping malformed EWDS message on topic '{}': {}",
+                topic_name, error
+            );
+            return;
+        }
+    };
+    if envelope.event_type != event_type {
+        warn!(
+            "Skipping EWDS {} event {} on topic '{}', which carries {} events",
+            envelope.event_type, envelope.event_id, topic_name, event_type
+        );
+        return;
+    }
+    if seen_event_ids.contains(&envelope.event_id)
+        || queue
+            .iter()
+            .any(|queued| queued.envelope.event_id == envelope.event_id)
+    {
+        return;
+    }
+    queue.push_back(QueuedEvent {
+        envelope,
+        attempts: 0,
+        retry_at: Instant::now(),
+    });
 }
 
 /// Logs a response to `pending_query` whose payload could not be parsed. Messages for other
@@ -1040,7 +1048,7 @@ pub fn remember_id(id: &str, seen_ids: &mut HashSet<String>, seen_queue: &mut Ve
 }
 
 /// Marks the error of an event handler as caused by the event itself, e.g. invalid data.
-/// [`EwdsClient::run_event_worker`] drops such an event instead of retrying it.
+/// [`EwdsClient::run_event_subscriber`] drops such an event instead of retrying it.
 #[derive(Debug)]
 pub struct InvalidEvent;
 
@@ -1100,6 +1108,18 @@ fn parse_items<Item: DeserializeOwned, T>(
                 .with_context(|| format!("invalid item at index {}", index))
         })
         .collect()
+}
+
+/// Parses the body of a successful `GET /api/v2/messages`. A body that is not a list of
+/// messages is an error rather than an empty poll, so a gateway problem does not go unnoticed.
+pub fn parse_inbound_messages(body: &str) -> Result<Vec<EwdsInboundMessage>> {
+    serde_json::from_str::<Vec<EwdsInboundMessage>>(body).map_err(|error| {
+        anyhow!(
+            "the gateway returned no message list ({}){}",
+            error,
+            format_response_body(body)
+        )
+    })
 }
 
 pub fn is_rate_limited_response(status: reqwest::StatusCode, body: &str) -> bool {

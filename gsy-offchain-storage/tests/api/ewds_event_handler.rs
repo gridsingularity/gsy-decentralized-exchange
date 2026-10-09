@@ -23,7 +23,7 @@ use primitives::utils::{
 use serde_json::{json, Value};
 use std::time::Duration;
 use uuid::Uuid;
-use wiremock::matchers::{method, path, query_param};
+use wiremock::matchers::{method, path, query_param, query_param_is_missing};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 // --- Test helpers ---------------------------------------------------
@@ -868,11 +868,11 @@ async fn event_subscriber_skips_bad_messages_and_saves_the_next_one() {
     Mock::given(method("GET"))
         .and(path("/api/v2/messages"))
         .and(query_param("fqcn", "gsy.events.sub"))
-        .and(query_param("topicName", "facility"))
+        .and(query_param_is_missing("topicName"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-            {"payload": "not an event"},
-            {"payload": serde_json::to_string(&wrong_topic_event).unwrap()},
-            {"payload": serde_json::to_string(&facility_event).unwrap()},
+            {"topicName": "facility", "payload": "not an event"},
+            {"topicName": "facility", "payload": serde_json::to_string(&wrong_topic_event).unwrap()},
+            {"topicName": "facility", "payload": serde_json::to_string(&facility_event).unwrap()},
         ])))
         .mount(&server)
         .await;

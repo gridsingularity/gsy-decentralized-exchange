@@ -54,7 +54,7 @@ pub async fn start_order_event_subscriber() -> Result<()> {
         order_registry_address
     );
     ewds_client
-        .run_event_worker(EwdsEventType::OrderSubmitted, |envelope| {
+        .run_event_subscriber(&[EwdsEventType::OrderSubmitted], |envelope| {
             handler.handle(envelope)
         })
         .await;

@@ -15,11 +15,38 @@ use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::str::FromStr;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-#[derive(Deserialize)]
+/// A message as the gateway returns it from `GET /api/v2/messages`. Only `payload` is
+/// guaranteed; the metadata is optional so that a gateway which leaves it out still parses.
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EwdsInboundMessage {
     pub payload: String,
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub topic_name: Option<String>,
+    #[serde(default)]
+    pub topic_owner: Option<String>,
+    #[serde(default)]
+    pub topic_version: Option<String>,
+    #[serde(default)]
+    pub transaction_id: Option<String>,
+    #[serde(default)]
+    pub sender: Option<String>,
+    /// When the sender published the message, in nanoseconds since the Unix epoch.
+    #[serde(default)]
+    pub timestamp_nanos: Option<u64>,
+}
+
+impl EwdsInboundMessage {
+    /// How long before `now` the message was published, if the gateway returned its timestamp.
+    /// A timestamp after `now`, e.g. from clock skew, counts as zero.
+    pub fn age_at(&self, now: SystemTime) -> Option<Duration> {
+        let published = UNIX_EPOCH + Duration::from_nanos(self.timestamp_nanos?);
+        Some(now.duration_since(published).unwrap_or_default())
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -53,12 +80,6 @@ pub struct EwdsDeliverySummary {
     pub failed: u32,
     pub sent: u32,
     pub total: u32,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EwdsMessageDto {
-    pub payload: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -197,12 +218,7 @@ impl TryFrom<EwdsOrderDto> for DbOrderSchema {
                     Some(ref pref) => Some(energy_type_from_ewds(pref)?),
                     None => None,
                 },
-                preferred_energy_rate: order.preferred_energy_rate.or_else(|| {
-                    order
-                        .preferred_trading_partner
-                        .as_ref()
-                        .map(|_| order.price_limit)
-                }),
+                preferred_energy_rate: order.preferred_energy_rate,
             })
         } else {
             None

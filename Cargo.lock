@@ -4227,6 +4227,7 @@ dependencies = [
  "async-trait",
  "blake2",
  "chrono",
+ "futures",
  "hex",
  "once_cell",
  "reqwest",
