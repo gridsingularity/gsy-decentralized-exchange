@@ -1,7 +1,8 @@
 use crate::helpers::{init_app, stop_app};
 use gsy_offchain_storage::ewds_handler::{
-    handle_request, validate_trades_query_range, EwdsHandlerConfig, INVALID_TIME_RANGE,
-    MAX_TRADES_QUERY_RANGE_SECS, TIME_RANGE_TOO_LARGE,
+    handle_request, start_ewds_request_handler, validate_trades_query_range, EwdsHandlerConfig,
+    INVALID_TIME_RANGE, MAX_TRADES_QUERY_RANGE_SECS, OPERATION_TOPIC_MISMATCH,
+    TIME_RANGE_TOO_LARGE,
 };
 use primitives::db_api_schema::grid_topology::FacilitySchema;
 use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
@@ -13,7 +14,8 @@ use primitives::utils::{
     timestamp_to_string_with_padding,
 };
 use serde_json::json;
-use wiremock::matchers::{method, path};
+use std::time::Duration;
+use wiremock::matchers::{method, path, query_param, query_param_is_missing};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 // --- Test helpers ---------------------------------------------------
 
@@ -34,6 +36,7 @@ pub(crate) fn test_config(gateway_url: String) -> EwdsHandlerConfig {
         event_poll_interval_ms: 500,
         request_batch_size: 100,
         response_send_timeout_ms: 1_000,
+        request_max_age_ms: 60_000,
     }
 }
 
@@ -775,6 +778,143 @@ async fn ids_query_bad_payload_errors() {
         .unwrap_err();
     assert!(err.to_string().contains("id.query payload parse error"));
     assert!(server.received_requests().await.unwrap().is_empty());
+
+    stop_app(app).await;
+}
+
+// --- Request channel poller -----------------------------------------
+
+fn request_message(topic_name: &str, request: &EwdsRequestEnvelope) -> serde_json::Value {
+    request_message_published_secs_ago(topic_name, request, 1)
+}
+
+fn request_message_published_secs_ago(
+    topic_name: &str,
+    request: &EwdsRequestEnvelope,
+    secs_ago: u64,
+) -> serde_json::Value {
+    let published = std::time::SystemTime::now() - Duration::from_secs(secs_ago);
+    let timestamp_nanos = published
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos() as u64;
+    json!({
+        "topicName": topic_name,
+        "topicOwner": "test.owner",
+        "timestampNanos": timestamp_nanos,
+        "payload": serde_json::to_string(request).unwrap(),
+    })
+}
+
+async fn posted_messages(server: &MockServer) -> Vec<EwdsSendMessageDto> {
+    server
+        .received_requests()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|request| request.method.as_str() == "POST")
+        .map(|request| serde_json::from_slice(&request.body).unwrap())
+        .collect()
+}
+
+#[tokio::test]
+async fn request_handler_answers_every_request_of_one_channel_poll() {
+    let app = init_app().await;
+    let server = mock_gateway().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v2/messages"))
+        .and(query_param("fqcn", "gsy.requests.sub"))
+        .and(query_param("clientId", "gsyoffchainstoragerequests"))
+        .and(query_param_is_missing("topicName"))
+        .and(query_param_is_missing("topicOwner"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+            // A request that fails must not take the rest of the poll down with it.
+            request_message(
+                "ordersQuery",
+                &envelope(EwdsOperation::OrdersQuery, "req-bad", json!({ "startTime": 0 })),
+            ),
+            request_message(
+                "ordersQuery",
+                &envelope(EwdsOperation::OrdersQuery, "req-orders", json!({})),
+            ),
+            request_message(
+                "facilitiesQuery",
+                &envelope(EwdsOperation::FacilitiesQuery, "req-facilities", json!({})),
+            ),
+            // Its sender stopped waiting long ago, so it gets no response.
+            request_message_published_secs_ago(
+                "ordersQuery",
+                &envelope(EwdsOperation::OrdersQuery, "req-stale", json!({})),
+                3_600,
+            ),
+            request_message(
+                "ordersQuery",
+                &envelope(EwdsOperation::TradesQuery, "req-mismatch", json!({})),
+            ),
+            request_message("communityUpsert", &envelope(EwdsOperation::OrdersQuery, "req-unrouted", json!({}))),
+            {"topicName": "ordersQuery", "topicOwner": "test.owner", "payload": "not a request"},
+        ])))
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v2/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .with_priority(10)
+        .mount(&server)
+        .await;
+
+    let handler = tokio::spawn(start_ewds_request_handler(
+        app.db_wrapper.clone(),
+        test_config(server.uri()),
+    ));
+    for _ in 0..100 {
+        if posted_messages(&server).await.len() >= 3 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    // Give a wrongly answered request the chance to show up.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    handler.abort();
+    let responses = posted_messages(&server).await;
+
+    let mut answered = responses
+        .iter()
+        .map(|response| {
+            let payload: serde_json::Value = serde_json::from_str(&response.payload).unwrap();
+            (
+                response.topic_name.clone(),
+                payload["requestId"].as_str().unwrap().to_string(),
+                payload["success"].as_bool().unwrap(),
+                payload["error"]["code"].as_str().map(str::to_string),
+            )
+        })
+        .collect::<Vec<_>>();
+    answered.sort();
+    assert_eq!(
+        answered,
+        vec![
+            (
+                "facilitiesQueryResponse".to_string(),
+                "req-facilities".to_string(),
+                true,
+                None
+            ),
+            (
+                "ordersQueryResponse".to_string(),
+                "req-orders".to_string(),
+                true,
+                None
+            ),
+            (
+                "tradesQueryResponse".to_string(),
+                "req-mismatch".to_string(),
+                false,
+                Some(OPERATION_TOPIC_MISMATCH.to_string())
+            ),
+        ]
+    );
 
     stop_app(app).await;
 }

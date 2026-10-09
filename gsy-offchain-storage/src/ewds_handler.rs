@@ -1,7 +1,10 @@
 use crate::db::DatabaseWrapper;
 use anyhow::{anyhow, Result};
-use futures::future::join_all;
+use futures::future::{join, join_all};
 use primitives::db_api_schema::profiles::{MeasurementPointType, MeasurementSchema};
+use primitives::ewds::channel::{
+    route_request_by_operation, EwdsChannelPoller, EwdsChannelPollerConfig,
+};
 use primitives::ewds::dto::{
     EwdsClearingResultDto, EwdsCommunityDto, EwdsErrorPayload, EwdsInboundMessage, EwdsMarketDto,
     EwdsMeasurementDto, EwdsOrderDto, EwdsRequestEnvelope, EwdsResponseEnvelope,
@@ -9,15 +12,15 @@ use primitives::ewds::dto::{
 };
 use primitives::ewds::{
     client_id_for_suffix, env_var, ewds_rate_limit_backoff_ms, format_response_body,
-    is_rate_limited_response, is_transient_gateway_response, next_poll_delay_ms,
-    parse_gateway_delivery_summary, remember_id, EwdsEventTopicConfig, EwdsEventType,
-    EwdsOperation, EwdsTopicConfig,
+    is_rate_limited_response, is_transient_gateway_response, parse_gateway_delivery_summary,
+    remember_id, EwdsEventTopicConfig, EwdsEventType, EwdsOperation, EwdsTopicConfig,
 };
 use primitives::utils::{opt_rfc3339_to_epoch, timestamp_to_string_with_padding};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
+use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::time::{sleep, Duration};
 use tracing::{error, info, warn};
 
@@ -38,6 +41,9 @@ pub struct EwdsHandlerConfig {
     pub event_poll_interval_ms: u64,
     pub request_batch_size: u32,
     pub response_send_timeout_ms: u64,
+    /// Requests published longer ago than this are skipped: their senders have stopped waiting
+    /// for a response.
+    pub request_max_age_ms: u64,
 }
 
 impl EwdsHandlerConfig {
@@ -56,7 +62,7 @@ impl EwdsHandlerConfig {
         let event_poll_interval_ms = std::env::var("EWDS_EVENT_POLL_INTERVAL_MS")
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
-            .unwrap_or(60_000);
+            .unwrap_or(1_000);
 
         let request_batch_size = std::env::var("EWDS_HANDLER_BATCH_SIZE")
             .ok()
@@ -99,6 +105,10 @@ impl EwdsHandlerConfig {
             event_poll_interval_ms,
             request_batch_size,
             response_send_timeout_ms,
+            // The senders wait `EWDS_RESPONSE_TIMEOUT_MS` for a response, too.
+            request_max_age_ms: env_var("EWDS_REQUEST_MAX_AGE_MS")
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(response_send_timeout_ms),
         }
     }
 
@@ -229,123 +239,126 @@ pub async fn start_ewds_request_handler(db: DatabaseWrapper, config: EwdsHandler
         config.gateway_url, config.request_fqcn, config.response_fqcn
     );
 
+    let client = Client::new();
+    let mut poller = request_channel_poller(&config);
     let workers = EwdsOperation::ALL
         .into_iter()
-        .map(|operation| run_topic_worker(db.clone(), Client::new(), config.clone(), operation));
-    join_all(workers).await;
+        .map(|operation| {
+            let requests = poller.route(config.topics.for_operation(operation).request.as_str());
+            run_operation_worker(&db, &client, &config, operation, requests)
+        })
+        .collect::<Vec<_>>();
+    join(poller.run(), join_all(workers)).await;
 }
 
-async fn run_topic_worker(
-    db: DatabaseWrapper,
-    client: Client,
-    config: EwdsHandlerConfig,
-    operation: EwdsOperation,
-) {
-    let mut seen_request_ids: HashSet<String> = HashSet::new();
-    let mut seen_queue: VecDeque<String> = VecDeque::new();
-    let mut rate_limit_attempt = 0u32;
-
-    loop {
-        let result = process_topic_batch(
-            &db,
-            &client,
-            &config,
-            operation,
-            &mut seen_request_ids,
-            &mut seen_queue,
-        )
-        .await;
-        if let Err(error) = &result {
-            warn!(
-                "EWDS {} worker batch processing failed: {}",
-                operation, error
-            );
-        }
-
-        let delay_ms =
-            next_poll_delay_ms(&result, config.poll_interval_ms, &mut rate_limit_attempt);
-        sleep(Duration::from_millis(delay_ms)).await;
-    }
+/// The poller of the request channel. Every operation's request topic gets its own queue, so a
+/// slow request or a response that waits for a retry only holds up requests of its operation.
+fn request_channel_poller(config: &EwdsHandlerConfig) -> EwdsChannelPoller {
+    EwdsChannelPoller::new(EwdsChannelPollerConfig {
+        gateway_base: config.gateway_url.clone(),
+        fqcn: config.request_fqcn.clone(),
+        client_id: client_id_for_suffix(config.request_client_id.as_str(), "requests"),
+        topic_owner: config.topic_owner.clone(),
+        batch_size: config.request_batch_size,
+        poll_interval_ms: config.poll_interval_ms,
+    })
+    .with_fallback_router(route_request_by_operation(config.topics.clone()))
 }
 
-async fn process_topic_batch(
+/// Answers the requests the poller routes to the request topic of `operation`, in order.
+async fn run_operation_worker(
     db: &DatabaseWrapper,
     client: &Client,
     config: &EwdsHandlerConfig,
     operation: EwdsOperation,
-    seen_request_ids: &mut HashSet<String>,
-    seen_queue: &mut VecDeque<String>,
-) -> Result<()> {
-    let amount = config.request_batch_size.to_string();
-    let topic_name = config.topics.for_operation(operation).request.as_str();
-    let messages = poll_messages(client, config, topic_name, amount.as_str()).await?;
+    mut requests: UnboundedReceiver<EwdsInboundMessage>,
+) {
+    let mut seen_request_ids: HashSet<String> = HashSet::new();
+    let mut seen_queue: VecDeque<String> = VecDeque::new();
 
-    for message in messages {
-        let parsed = serde_json::from_str::<EwdsRequestEnvelope>(&message.payload);
-        let envelope = match parsed {
-            Ok(value) => value,
-            Err(_) => continue,
+    while let Some(message) = requests.recv().await {
+        let max_age = Duration::from_millis(config.request_max_age_ms);
+        if let Some(age) = message
+            .age_at(SystemTime::now())
+            .filter(|age| *age > max_age)
+        {
+            // Answering would only flood the response topic, which every requester reads.
+            info!(
+                "Skipping stale EWDS {} request '{}' published {} s ago",
+                operation,
+                message.transaction_id.as_deref().unwrap_or_default(),
+                age.as_secs()
+            );
+            continue;
+        }
+        let envelope = match serde_json::from_str::<EwdsRequestEnvelope>(&message.payload) {
+            Ok(envelope) => envelope,
+            Err(error) => {
+                warn!("Skipping malformed EWDS {} request: {}", operation, error);
+                continue;
+            }
         };
-
         if seen_request_ids.contains(&envelope.request_id) {
             continue;
         }
 
         let request_id = envelope.request_id.clone();
-        if let Err(error) = handle_request(db, client, config, envelope).await {
+        let result = if envelope.operation == operation {
+            handle_request(db, client, config, envelope).await
+        } else {
+            reject_mismatched_operation(client, config, operation, envelope).await
+        };
+        // The gateway has already acknowledged the request, so a failure cannot be redelivered;
+        // log it and carry on with the next request.
+        if let Err(error) = result {
             error!(
-                "EWDS request handling failed (request_id={}): {}",
-                request_id, error
+                "EWDS {} request handling failed (request_id={}): {:#}",
+                operation, request_id, error
             );
-            return Err(error);
         }
-
-        remember_id(&request_id, seen_request_ids, seen_queue);
+        remember_id(&request_id, &mut seen_request_ids, &mut seen_queue);
     }
-
-    Ok(())
 }
 
-async fn poll_messages(
+pub const OPERATION_TOPIC_MISMATCH: &str = "OPERATION_TOPIC_MISMATCH";
+
+/// Answers a request whose `operation` doesn't belong to the topic it arrived on with an error,
+/// on the response topic of its `operation`, where the requester waits.
+async fn reject_mismatched_operation(
     client: &Client,
     config: &EwdsHandlerConfig,
-    topic_name: &str,
-    amount: &str,
-) -> Result<Vec<EwdsInboundMessage>> {
-    let get_url = format!(
-        "{}/api/v2/messages",
-        config.gateway_url.trim_end_matches('/')
+    topic_operation: EwdsOperation,
+    envelope: EwdsRequestEnvelope,
+) -> Result<()> {
+    let topic_name = config
+        .topics
+        .for_operation(topic_operation)
+        .request
+        .as_str();
+    warn!(
+        "Rejecting EWDS {} request on topic '{}' (request_id={})",
+        envelope.operation, topic_name, envelope.request_id
     );
-    let fqcn = config.request_fqcn.as_str();
-    let client_id = client_id_for_suffix(config.request_client_id.as_str(), topic_name);
-    let response = client
-        .get(get_url.as_str())
-        .query(&[
-            ("fqcn", fqcn),
-            ("amount", amount),
-            ("topicName", topic_name),
-            ("topicOwner", config.topic_owner.as_str()),
-            ("clientId", client_id.as_str()),
-        ])
-        .send()
-        .await?;
-
-    let status = response.status();
-    if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
-        return Err(anyhow!(
-            "EWDS poll failed for fqcn='{}', topic='{}': HTTP {}{}",
-            fqcn,
-            topic_name,
-            status,
-            format_response_body(&body)
-        ));
-    }
-
-    Ok(response
-        .json::<Vec<EwdsInboundMessage>>()
-        .await
-        .unwrap_or_default())
+    send_error_response(
+        client,
+        config,
+        envelope.request_id,
+        config
+            .topics
+            .for_operation(envelope.operation)
+            .response
+            .as_str(),
+        EwdsErrorPayload {
+            code: OPERATION_TOPIC_MISMATCH.to_string(),
+            message: format!(
+                "{} requests must be sent on topic '{}', not '{}'",
+                envelope.operation,
+                config.topics.for_operation(envelope.operation).request,
+                topic_name
+            ),
+        },
+    )
+    .await
 }
 
 pub async fn handle_request(

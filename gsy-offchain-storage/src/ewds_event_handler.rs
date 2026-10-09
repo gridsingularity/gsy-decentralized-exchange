@@ -2,7 +2,6 @@ use crate::db::measurements_service::insert_measurements;
 use crate::db::DatabaseWrapper;
 use crate::ewds_handler::{send_message_with_fqcn, EwdsHandlerConfig};
 use anyhow::{anyhow, Result};
-use futures::future::join_all;
 use primitives::db_api_schema::{
     grid_topology::{EnergyCommunitySchema, FacilitySchema, SiteSchema},
     profiles::MeasurementSchema,
@@ -160,10 +159,11 @@ pub async fn start_ewds_event_subscriber(db: DatabaseWrapper, config: EwdsHandle
 
     let client = event_client(&config);
     let db = &db;
-    let workers = SUBSCRIBED_EVENT_TYPES.into_iter().map(|event_type| {
-        client.run_event_worker(event_type, move |envelope| handle_event(db, envelope))
-    });
-    join_all(workers).await;
+    client
+        .run_event_subscriber(&SUBSCRIBED_EVENT_TYPES, |envelope| {
+            handle_event(db, envelope)
+        })
+        .await;
 }
 
 /// The client the subscriber polls events with. It only polls, so the query settings keep their

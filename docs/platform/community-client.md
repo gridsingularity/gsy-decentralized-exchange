@@ -45,9 +45,10 @@ zero-value sentinels.
 
 ## Order Events
 
-When `EWDS_ENABLE_HANDLER` is on, the binary polls the `order.submitted` topic
-(`EWDS_ORDER_EVENT_TOPIC`, default `order`) on
-`EWDS_EVENT_SUBSCRIBE_FQCN`, and no other topic. For every event it:
+When `EWDS_ENABLE_HANDLER` is on, the binary polls `EWDS_EVENT_SUBSCRIBE_FQCN`
+and handles only the `order.submitted` topic (`EWDS_ORDER_EVENT_TOPIC`, default
+`order`); messages of the other topics on the channel are dropped. For every
+event it:
 
 1. parses and checks all orders (UUID `orderId`, `orderStatus` `submitted`,
    `quantity` above 0, `priceLimit` 0 or more) and resolves `createdBy` and the
@@ -77,11 +78,12 @@ order with `Unauthorized`.
 - `ORDER_REGISTRY_ADDRESS` (required for order events)
 - `COMMUNITY_CLIENT_PRIVATE_KEY` (required for order events)
 - `EWDS_ENABLE_HANDLER`: starts the order event subscriber
-- `EWDS_COMMUNITY_CLIENT_ID` (default `gsycommunityclient`): EWDS client ID,
-  also used for ID service queries over EWDS
+- `EWDS_COMMUNITY_CLIENT_ID` (default `gsycommunityclient`): EWDS client ID.
+  The events channel is polled as `<id>events`; ID service queries over EWDS
+  poll their response topic as `<id><responseTopic>`.
 - `EWDS_ORDER_EVENT_TOPIC`, `EWDS_EVENT_SUBSCRIBE_FQCN`,
   `EWDS_EVENT_BATCH_SIZE` (default 100), `EWDS_EVENT_POLL_INTERVAL_MS`
-  (default 60 000 ms, 1 000 ms in the e2e stack), `EWDS_EVENT_HANDLE_ATTEMPTS`
+  (default 1 000 ms), `EWDS_EVENT_HANDLE_ATTEMPTS`
   (default 8), `EWDS_EVENT_RETRY_DELAY_MS` (default 2 000 ms) and the shared
   EWDS gateway settings
 - `OFFCHAIN_STORAGE_TRANSPORT` / `OFFCHAIN_STORAGE_URL` for the ID service

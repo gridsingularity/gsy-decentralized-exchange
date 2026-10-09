@@ -248,8 +248,14 @@ async fn query_market(world: &MyWorld, market_id: &str) -> MarketSchema {
 }
 
 async fn query_market_trades(world: &MyWorld) -> Vec<DbTradeSchema> {
+    // trades.query requires a time range; with a market ID it only filters by the market.
+    let (start_time, end_time) = market_window(world);
     offchain_storage_client(world)
-        .fetch_trades(Some(&market_id_as_hex(world)), None, None)
+        .fetch_trades(
+            Some(&market_id_as_hex(world)),
+            Some(start_time),
+            Some(end_time),
+        )
         .await
         .expect("Failed to fetch market trades from off-chain storage")
 }

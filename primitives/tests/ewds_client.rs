@@ -8,11 +8,15 @@ use serde_json::{json, Value};
 use std::env;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use wiremock::matchers::{method, path, query_param};
+use wiremock::matchers::{method, path, query_param, query_param_is_missing};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn client(server: &MockServer) -> EwdsClient {
-    EwdsClient::new(EwdsClientConfig {
+    EwdsClient::new(client_config(server))
+}
+
+fn client_config(server: &MockServer) -> EwdsClientConfig {
+    EwdsClientConfig {
         gateway_base: server.uri(),
         request_fqcn: "gsy.requests.pub".to_string(),
         response_fqcn: "gsy.responses.sub".to_string(),
@@ -30,7 +34,7 @@ fn client(server: &MockServer) -> EwdsClient {
         event_handle_attempts: 3,
         event_retry_delay_ms: 10,
         event_topics: EwdsEventTopicConfig::default(),
-    })
+    }
 }
 
 fn delivered() -> ResponseTemplate {
@@ -177,7 +181,7 @@ async fn run_order_event_worker(
     let worker_handled = handled.clone();
     let worker = tokio::spawn(async move {
         worker_client
-            .run_event_worker(EwdsEventType::OrderSubmitted, |envelope| {
+            .run_event_subscriber(&[EwdsEventType::OrderSubmitted], |envelope| {
                 let handled = worker_handled.clone();
                 async move {
                     let mut handled = handled.lock().unwrap();
@@ -224,17 +228,34 @@ async fn serve_order_events(server: &MockServer, events: &[&str]) {
 }
 
 #[tokio::test]
-async fn event_worker_polls_the_topic_of_its_type_on_the_events_channel() {
+async fn event_subscriber_polls_the_whole_events_channel() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/api/v2/messages"))
         .and(query_param("fqcn", "gsy.events.sub"))
-        .and(query_param("topicName", "order"))
-        .and(query_param("topicOwner", "test.owner"))
-        .and(query_param("clientId", "testclientorder"))
+        .and(query_param_is_missing("topicName"))
+        .and(query_param_is_missing("topicOwner"))
+        .and(query_param("clientId", "testclientevents"))
         .and(query_param("amount", "50"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-            {"payload": serde_json::to_string(&order_event("order-event")).unwrap()},
+            {
+                "topicName": "order",
+                "topicOwner": "test.owner",
+                "payload": serde_json::to_string(&order_event("order-event")).unwrap(),
+            },
+            {
+                "topicName": "trade",
+                "topicOwner": "test.owner",
+                "payload": serde_json::to_string(&EwdsEventEnvelope {
+                    event_type: EwdsEventType::TradeCreated,
+                    ..order_event("trade-event")
+                }).unwrap(),
+            },
+            {
+                "topicName": "order",
+                "topicOwner": "other.owner",
+                "payload": serde_json::to_string(&order_event("foreign-event")).unwrap(),
+            },
         ])))
         .mount(&server)
         .await;
@@ -251,7 +272,7 @@ async fn event_worker_polls_the_topic_of_its_type_on_the_events_channel() {
 }
 
 #[tokio::test]
-async fn event_worker_skips_bad_and_seen_messages() {
+async fn event_subscriber_skips_bad_and_seen_messages() {
     let server = MockServer::start().await;
     let wrong_type_event = EwdsEventEnvelope {
         event_type: EwdsEventType::SiteSubmitted,
@@ -274,7 +295,7 @@ async fn event_worker_skips_bad_and_seen_messages() {
 }
 
 #[tokio::test]
-async fn event_worker_retries_a_failed_event_and_keeps_later_events_waiting() {
+async fn event_subscriber_retries_a_failed_event_and_keeps_later_events_waiting() {
     let server = MockServer::start().await;
     serve_order_events(&server, &["flaky-event", "order-event"]).await;
 
@@ -290,7 +311,7 @@ async fn event_worker_retries_a_failed_event_and_keeps_later_events_waiting() {
 }
 
 #[tokio::test]
-async fn event_worker_drops_an_event_after_its_last_attempt() {
+async fn event_subscriber_drops_an_event_after_its_last_attempt() {
     let server = MockServer::start().await;
     serve_order_events(&server, &["failing-event", "order-event"]).await;
 
@@ -315,7 +336,7 @@ async fn event_worker_drops_an_event_after_its_last_attempt() {
 }
 
 #[tokio::test]
-async fn event_worker_drops_an_invalid_event_without_retrying_it() {
+async fn event_subscriber_drops_an_invalid_event_without_retrying_it() {
     let server = MockServer::start().await;
     serve_order_events(&server, &["invalid-event", "order-event"]).await;
 
@@ -331,7 +352,7 @@ async fn event_worker_drops_an_invalid_event_without_retrying_it() {
 }
 
 #[tokio::test]
-async fn event_worker_keeps_polling_after_a_failed_poll() {
+async fn event_subscriber_keeps_polling_after_a_failed_poll() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/api/v2/messages"))
@@ -350,4 +371,66 @@ async fn event_worker_keeps_polling_after_a_failed_poll() {
     let handled = run_order_event_worker(&server, 1, succeeds).await;
 
     assert_eq!(handled, vec!["order-event"]);
+}
+
+#[tokio::test]
+async fn event_subscriber_keeps_other_topics_going_while_one_waits_for_a_retry() {
+    let server = MockServer::start().await;
+    let site_event = EwdsEventEnvelope {
+        event_type: EwdsEventType::SiteSubmitted,
+        ..order_event("site-event")
+    };
+    Mock::given(method("GET"))
+        .and(path("/api/v2/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+            {"topicName": "order", "payload": serde_json::to_string(&order_event("flaky-order")).unwrap()},
+            {"topicName": "site", "payload": serde_json::to_string(&site_event).unwrap()},
+        ])))
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v2/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .with_priority(10)
+        .mount(&server)
+        .await;
+
+    let handled = Arc::new(Mutex::new(Vec::<String>::new()));
+    let subscriber_client = EwdsClient::new(EwdsClientConfig {
+        // Long enough that the site event can only be handled before the order event's retry
+        // if it does not wait behind it.
+        event_retry_delay_ms: 2_000,
+        ..client_config(&server)
+    });
+    let subscriber_handled = handled.clone();
+    let subscriber = tokio::spawn(async move {
+        subscriber_client
+            .run_event_subscriber(
+                &[EwdsEventType::OrderSubmitted, EwdsEventType::SiteSubmitted],
+                |envelope| {
+                    let handled = subscriber_handled.clone();
+                    async move {
+                        handled.lock().unwrap().push(envelope.event_id.clone());
+                        if envelope.event_id == "flaky-order" {
+                            return Err(anyhow!("database unavailable"));
+                        }
+                        Ok(())
+                    }
+                },
+            )
+            .await
+    });
+
+    for _ in 0..50 {
+        if handled.lock().unwrap().len() >= 2 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    subscriber.abort();
+
+    let mut handled = handled.lock().unwrap().clone();
+    handled.sort();
+    assert_eq!(handled, vec!["flaky-order", "site-event"]);
 }
