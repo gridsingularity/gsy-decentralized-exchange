@@ -1,210 +1,256 @@
 [
     {
-        "type": "function",
-        "name": "hasRole",
-        "stateMutability": "view",
         "inputs": [
             {
+                "internalType": "bytes32",
                 "name": "role",
                 "type": "bytes32"
             },
             {
+                "internalType": "address",
                 "name": "account",
                 "type": "address"
             }
         ],
+        "name": "hasRole",
         "outputs": [
             {
+                "internalType": "bool",
                 "name": "",
                 "type": "bool"
             }
-        ]
+        ],
+        "stateMutability": "view",
+        "type": "function"
     },
     {
-        "type": "function",
-        "name": "settleBatch",
-        "stateMutability": "nonpayable",
         "inputs": [
             {
-                "name": "settlements",
-                "type": "tuple[]",
-                "internalType": "struct TradeSettlement.MarketSettlement[]",
                 "components": [
                     {
-                        "name": "matches",
-                        "type": "tuple[]",
-                        "internalType": "struct TradeSettlement.Match[]",
                         "components": [
                             {
+                                "internalType": "bytes16",
                                 "name": "tradeId",
                                 "type": "bytes16"
                             },
                             {
+                                "components": [
+                                    {
+                                        "internalType": "bytes16",
+                                        "name": "orderId",
+                                        "type": "bytes16"
+                                    },
+                                    {
+                                        "internalType": "bytes16",
+                                        "name": "createdBy",
+                                        "type": "bytes16"
+                                    },
+                                    {
+                                        "internalType": "bytes16",
+                                        "name": "marketId",
+                                        "type": "bytes16"
+                                    },
+                                    {
+                                        "internalType": "uint64",
+                                        "name": "timeSlot",
+                                        "type": "uint64"
+                                    },
+                                    {
+                                        "internalType": "uint64",
+                                        "name": "creationTime",
+                                        "type": "uint64"
+                                    },
+                                    {
+                                        "internalType": "uint64",
+                                        "name": "energy",
+                                        "type": "uint64"
+                                    },
+                                    {
+                                        "internalType": "uint64",
+                                        "name": "energyRate",
+                                        "type": "uint64"
+                                    },
+                                    {
+                                        "internalType": "uint8",
+                                        "name": "energySourcePreference",
+                                        "type": "uint8"
+                                    },
+                                    {
+                                        "internalType": "uint8",
+                                        "name": "energyType",
+                                        "type": "uint8"
+                                    },
+                                    {
+                                        "internalType": "bool",
+                                        "name": "isBid",
+                                        "type": "bool"
+                                    },
+                                    {
+                                        "internalType": "bytes16",
+                                        "name": "preferredTradingPartner",
+                                        "type": "bytes16"
+                                    },
+                                    {
+                                        "internalType": "uint64",
+                                        "name": "preferredEnergyRate",
+                                        "type": "uint64"
+                                    }
+                                ],
+                                "internalType": "struct OrderRegistry.OrderParams",
                                 "name": "bid",
-                                "type": "tuple",
-                                "internalType": "struct OrderRegistry.OrderParams",
+                                "type": "tuple"
+                            },
+                            {
                                 "components": [
                                     {
+                                        "internalType": "bytes16",
                                         "name": "orderId",
                                         "type": "bytes16"
                                     },
                                     {
+                                        "internalType": "bytes16",
                                         "name": "createdBy",
                                         "type": "bytes16"
                                     },
                                     {
+                                        "internalType": "bytes16",
                                         "name": "marketId",
                                         "type": "bytes16"
                                     },
                                     {
+                                        "internalType": "uint64",
                                         "name": "timeSlot",
                                         "type": "uint64"
                                     },
                                     {
+                                        "internalType": "uint64",
                                         "name": "creationTime",
                                         "type": "uint64"
                                     },
                                     {
+                                        "internalType": "uint64",
                                         "name": "energy",
                                         "type": "uint64"
                                     },
                                     {
+                                        "internalType": "uint64",
                                         "name": "energyRate",
                                         "type": "uint64"
                                     },
                                     {
+                                        "internalType": "uint8",
                                         "name": "energySourcePreference",
                                         "type": "uint8"
                                     },
                                     {
+                                        "internalType": "uint8",
                                         "name": "energyType",
                                         "type": "uint8"
                                     },
                                     {
+                                        "internalType": "bool",
                                         "name": "isBid",
                                         "type": "bool"
                                     },
                                     {
+                                        "internalType": "bytes16",
                                         "name": "preferredTradingPartner",
                                         "type": "bytes16"
                                     },
                                     {
+                                        "internalType": "uint64",
                                         "name": "preferredEnergyRate",
                                         "type": "uint64"
                                     }
-                                ]
-                            },
-                            {
+                                ],
+                                "internalType": "struct OrderRegistry.OrderParams",
                                 "name": "offer",
-                                "type": "tuple",
-                                "internalType": "struct OrderRegistry.OrderParams",
-                                "components": [
-                                    {
-                                        "name": "orderId",
-                                        "type": "bytes16"
-                                    },
-                                    {
-                                        "name": "createdBy",
-                                        "type": "bytes16"
-                                    },
-                                    {
-                                        "name": "marketId",
-                                        "type": "bytes16"
-                                    },
-                                    {
-                                        "name": "timeSlot",
-                                        "type": "uint64"
-                                    },
-                                    {
-                                        "name": "creationTime",
-                                        "type": "uint64"
-                                    },
-                                    {
-                                        "name": "energy",
-                                        "type": "uint64"
-                                    },
-                                    {
-                                        "name": "energyRate",
-                                        "type": "uint64"
-                                    },
-                                    {
-                                        "name": "energySourcePreference",
-                                        "type": "uint8"
-                                    },
-                                    {
-                                        "name": "energyType",
-                                        "type": "uint8"
-                                    },
-                                    {
-                                        "name": "isBid",
-                                        "type": "bool"
-                                    },
-                                    {
-                                        "name": "preferredTradingPartner",
-                                        "type": "bytes16"
-                                    },
-                                    {
-                                        "name": "preferredEnergyRate",
-                                        "type": "uint64"
-                                    }
-                                ]
+                                "type": "tuple"
                             },
                             {
+                                "internalType": "bytes16",
                                 "name": "residualBidId",
                                 "type": "bytes16"
                             },
                             {
+                                "internalType": "bytes16",
                                 "name": "residualOfferId",
                                 "type": "bytes16"
                             },
                             {
+                                "internalType": "uint256",
                                 "name": "selectedEnergy",
                                 "type": "uint256"
                             },
                             {
+                                "internalType": "uint256",
                                 "name": "clearingPrice",
                                 "type": "uint256"
+                            },
+                            {
+                                "internalType": "enum TradeSettlement.MatchType",
+                                "name": "matchType",
+                                "type": "uint8"
                             }
-                        ]
+                        ],
+                        "internalType": "struct TradeSettlement.Match[]",
+                        "name": "matches",
+                        "type": "tuple[]"
                     },
                     {
-                        "name": "clearingResult",
-                        "type": "tuple",
-                        "internalType": "struct TradeSettlement.ClearingResult",
                         "components": [
                             {
+                                "internalType": "bytes16",
                                 "name": "marketId",
                                 "type": "bytes16"
                             },
                             {
+                                "internalType": "uint8",
                                 "name": "clearingStatus",
                                 "type": "uint8"
                             },
                             {
+                                "internalType": "uint256",
                                 "name": "clearingPrice",
                                 "type": "uint256"
                             },
                             {
+                                "internalType": "uint256",
                                 "name": "totalSupply",
                                 "type": "uint256"
                             },
                             {
+                                "internalType": "uint256",
                                 "name": "totalDemand",
                                 "type": "uint256"
                             },
                             {
+                                "internalType": "uint256",
                                 "name": "tradedQuantity",
                                 "type": "uint256"
                             },
                             {
+                                "internalType": "uint32",
                                 "name": "numTrades",
                                 "type": "uint32"
                             }
-                        ]
+                        ],
+                        "internalType": "struct TradeSettlement.ClearingResult",
+                        "name": "clearingResult",
+                        "type": "tuple"
                     }
-                ]
+                ],
+                "internalType": "struct TradeSettlement.MarketSettlement[]",
+                "name": "settlements",
+                "type": "tuple[]"
             }
         ],
-        "outputs": []
+        "name": "settleBatch",
+        "outputs": [
+
+        ],
+        "stateMutability": "nonpayable",
+        "type": "function"
     }
 ]

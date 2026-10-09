@@ -149,6 +149,16 @@ also verifies that a preferred bilateral trade keeps its negotiated rate while
 the remaining standard order book clears at one uniform price. Both scenarios
 verify on-chain settlement and non-zero execution-engine penalties for every
 accepted trade.
+
+Both algorithm directories also include `preference_policy.feature` and
+`residual_lifecycle.feature`. The policy cases cover buyer-only, seller-only and
+reciprocal preferences, absent preferred rates, preferred prices outside normal
+limits, and standard fallback for incompatible partners or unequal effective
+rates. They verify indexed values, on-chain settlement and the match-type flag
+in transaction calldata. Residual cases cover both bids and offers consumed in
+the same batch or a later cycle, checking ID continuity, metadata, statuses and
+exactly-once settlement. These focused cases do not exercise penalty scheduling.
+
 `pay_as_clear` defaults to a `64`-block matching interval so all scenario
 orders are collected before one clearing cycle. Override it with a positive
 `MATCHING_ENGINE_BLOCK_INTERVAL` value only when both the matching engine and

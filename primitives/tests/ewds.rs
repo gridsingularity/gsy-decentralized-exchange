@@ -120,6 +120,35 @@ mod tests {
     }
 
     #[test]
+    fn order_preferences_round_trip_without_inventing_rates() {
+        for order_type in [OrderEnum::Bid, OrderEnum::Offer] {
+            for partner in [None, Some("partner-id".to_string())] {
+                for rate in [None, Some(12.0)] {
+                    let mut expected = order();
+                    expected.order_type = order_type.clone();
+                    expected.requirements = if partner.is_some() || rate.is_some() {
+                        Some(DbRequirements {
+                            trading_partner_id: partner.clone(),
+                            energy_type: None,
+                            preferred_energy_rate: rate,
+                        })
+                    } else {
+                        None
+                    };
+
+                    let json = serde_json::to_value(EwdsOrderDto::from(expected.clone())).unwrap();
+                    assert_eq!(json["preferredTradingPartner"], serde_json::json!(partner));
+                    assert_eq!(json.get("preferredEnergyRate").is_some(), rate.is_some());
+                    let dto: EwdsOrderDto = serde_json::from_value(json).unwrap();
+                    let actual = DbOrderSchema::try_from(dto).unwrap();
+
+                    assert_eq!(actual, expected);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn offer_preferred_partner_round_trips_through_requirements() {
         let mut expected = order();
         expected.order_type = OrderEnum::Offer;

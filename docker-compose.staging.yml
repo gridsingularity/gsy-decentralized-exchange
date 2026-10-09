@@ -58,7 +58,7 @@ services:
       EWDS_HANDLER_BATCH_SIZE: ${EWDS_HANDLER_BATCH_SIZE:-100}
 
   mongodb:
-    image: mongo:8.3.8
+    image: mongo:8.3.9
     ports:
       - "27017:27017"
     volumes:

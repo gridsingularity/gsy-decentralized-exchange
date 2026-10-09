@@ -1,3 +1,4 @@
+use gsy_matching_engine::algorithms::PayAsClearPricing;
 use gsy_matching_engine::connectors::evm_connector::{
     match_order_books, partition_orders_by_market_slot,
 };
@@ -74,8 +75,12 @@ fn pay_as_clear_calculates_an_independent_price_for_each_order_book() {
         vec![first_offer, second_offer],
     )
     .expect("partitioned orders should be valid");
-    let market_matches = match_order_books(order_books, &MatchingAlgorithm::PayAsClear)
-        .expect("partitioned order books should match");
+    let market_matches = match_order_books(
+        order_books,
+        &MatchingAlgorithm::PayAsClear,
+        PayAsClearPricing::Midpoint,
+    )
+    .expect("partitioned order books should match");
 
     assert_eq!(market_matches.len(), 2);
 
@@ -86,7 +91,7 @@ fn pay_as_clear_calculates_an_independent_price_for_each_order_book() {
         .map(|item| item.energy_rate)
         .collect::<Vec<_>>();
     clearing_prices.sort_unstable();
-    assert_eq!(clearing_prices, vec![10, 30]);
+    assert_eq!(clearing_prices, vec![15, 35]);
 
     assert!(market_matches.iter().all(|market| {
         market.bid_offer_matches.iter().all(|item| {
@@ -100,7 +105,7 @@ fn pay_as_clear_calculates_an_independent_price_for_each_order_book() {
         .map(|market| market.clearing_result.clearing_price.unwrap())
         .collect::<Vec<_>>();
     computed_prices.sort_unstable();
-    assert_eq!(computed_prices, vec![10, 30]);
+    assert_eq!(computed_prices, vec![15, 35]);
     assert!(market_matches
         .iter()
         .all(|market| market.clearing_result.clearing_status == ClearingStatus::Final));
@@ -127,8 +132,12 @@ fn total_supply_and_demand_are_summed_over_the_whole_order_book() {
         vec![first_offer, second_offer],
     )
     .expect("partitioned orders should be valid");
-    let market_matches = match_order_books(order_books, &MatchingAlgorithm::PayAsClear)
-        .expect("partitioned order books should match");
+    let market_matches = match_order_books(
+        order_books,
+        &MatchingAlgorithm::PayAsClear,
+        PayAsClearPricing::default(),
+    )
+    .expect("partitioned order books should match");
 
     assert_eq!(market_matches.len(), 1);
     let clearing_result = &market_matches[0].clearing_result;
@@ -147,8 +156,12 @@ fn rejected_clearing_still_reports_total_supply_and_demand() {
 
     let order_books = partition_orders_by_market_slot(vec![bid], vec![offer])
         .expect("partitioned orders should be valid");
-    let market_matches = match_order_books(order_books, &MatchingAlgorithm::PayAsClear)
-        .expect("partitioned order books should match");
+    let market_matches = match_order_books(
+        order_books,
+        &MatchingAlgorithm::PayAsClear,
+        PayAsClearPricing::default(),
+    )
+    .expect("partitioned order books should match");
 
     assert_eq!(market_matches.len(), 1);
     let clearing_result = &market_matches[0].clearing_result;
@@ -173,8 +186,12 @@ fn clearing_is_final_when_the_whole_bid_energy_is_matched() {
 
     let order_books = partition_orders_by_market_slot(vec![bid], vec![first_offer, second_offer])
         .expect("partitioned orders should be valid");
-    let market_matches = match_order_books(order_books, &MatchingAlgorithm::PayAsClear)
-        .expect("partitioned order books should match");
+    let market_matches = match_order_books(
+        order_books,
+        &MatchingAlgorithm::PayAsClear,
+        PayAsClearPricing::default(),
+    )
+    .expect("partitioned order books should match");
 
     assert_eq!(market_matches.len(), 1);
     let clearing_result = &market_matches[0].clearing_result;
@@ -199,8 +216,12 @@ fn clearing_is_final_when_the_whole_offer_energy_is_matched() {
 
     let order_books = partition_orders_by_market_slot(vec![first_bid, second_bid], vec![offer])
         .expect("partitioned orders should be valid");
-    let market_matches = match_order_books(order_books, &MatchingAlgorithm::PayAsClear)
-        .expect("partitioned order books should match");
+    let market_matches = match_order_books(
+        order_books,
+        &MatchingAlgorithm::PayAsClear,
+        PayAsClearPricing::default(),
+    )
+    .expect("partitioned order books should match");
 
     assert_eq!(market_matches.len(), 1);
     let clearing_result = &market_matches[0].clearing_result;
@@ -231,8 +252,12 @@ fn clearing_is_partial_when_energy_is_left_on_both_sides() {
         vec![first_offer, second_offer],
     )
     .expect("partitioned orders should be valid");
-    let market_matches = match_order_books(order_books, &MatchingAlgorithm::PayAsClear)
-        .expect("partitioned order books should match");
+    let market_matches = match_order_books(
+        order_books,
+        &MatchingAlgorithm::PayAsClear,
+        PayAsClearPricing::default(),
+    )
+    .expect("partitioned order books should match");
 
     assert_eq!(market_matches.len(), 1);
     let clearing_result = &market_matches[0].clearing_result;
