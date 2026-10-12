@@ -51,16 +51,20 @@ struct ClearingPointStats {
     traded_energy: u64,
     max_accepted_offer_rate: u64,
     min_accepted_bid_rate: u64,
+    prices_crossed: bool,
     has_remaining_demand: bool,
     has_remaining_supply: bool,
 }
 
 impl ClearingPointStats {
     fn get_pay_as_clear_pricing(&self, configured: PayAsClearPricing) -> PayAsClearPricing {
+        if self.prices_crossed {
+            return configured;
+        }
         match (self.has_remaining_demand, self.has_remaining_supply) {
             (true, false) => PayAsClearPricing::MinBid,
             (false, true) => PayAsClearPricing::MaxOffer,
-            // A price crossing or simultaneous exhaustion keeps the configured policy.
+            // Simultaneous exhaustion or no eligible remainder keeps the configured policy.
             _ => configured,
         }
     }
@@ -130,6 +134,7 @@ fn walk_sorted_curves(bids: &[&Order], offers: &[&Order]) -> Option<ClearingPoin
     let mut offer_energy = offers.first().map(|offer| offer.energy).unwrap_or_default();
     let mut traded_energy = 0u64;
     let mut marginal_rates = None;
+    let mut prices_crossed = false;
 
     while bid_index < bids.len() && offer_index < offers.len() {
         if bid_energy == 0 {
@@ -153,6 +158,7 @@ fn walk_sorted_curves(bids: &[&Order], offers: &[&Order]) -> Option<ClearingPoin
         let bid = bids[bid_index];
         let offer = offers[offer_index];
         if bid.energy_rate < offer.energy_rate {
+            prices_crossed = true;
             break;
         }
 
@@ -164,17 +170,26 @@ fn walk_sorted_curves(bids: &[&Order], offers: &[&Order]) -> Option<ClearingPoin
     }
 
     let (max_accepted_offer_rate, min_accepted_bid_rate) = marginal_rates?;
-    // The loop can stop before advancing both cursors. Include later positive
-    // quantities so simultaneous exhaustion and empty trailing orders are handled.
-    let has_remaining_demand =
-        bid_energy > 0 || bids.iter().skip(bid_index + 1).any(|bid| bid.energy > 0);
-    let has_remaining_supply =
-        offer_energy > 0 || offers.iter().skip(offer_index + 1).any(|offer| offer.energy > 0);
+    // Only price-eligible remainders trigger scarcity. The loop can stop before
+    // both cursors advance, so include later positive quantities too.
+    let has_remaining_demand = (bid_energy > 0
+        && bids[bid_index].energy_rate >= max_accepted_offer_rate)
+        || bids
+            .iter()
+            .skip(bid_index + 1)
+            .any(|bid| bid.energy > 0 && bid.energy_rate >= max_accepted_offer_rate);
+    let has_remaining_supply = (offer_energy > 0
+        && offers[offer_index].energy_rate <= min_accepted_bid_rate)
+        || offers
+            .iter()
+            .skip(offer_index + 1)
+            .any(|offer| offer.energy > 0 && offer.energy_rate <= min_accepted_bid_rate);
 
     Some(ClearingPointStats {
         traded_energy,
         max_accepted_offer_rate,
         min_accepted_bid_rate,
+        prices_crossed,
         has_remaining_demand,
         has_remaining_supply,
     })

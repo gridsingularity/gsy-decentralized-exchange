@@ -179,15 +179,20 @@ fn standard_pricing_policy_does_not_change_preference_prices() {
 }
 
 #[test]
-fn supply_exhaustion_uses_minimum_accepted_bid_under_every_policy() {
-    for policy in POLICIES {
-        // Exercise both an exact order boundary and a partially filled last bid.
-        for marginal_bid_energy in [4, 5] {
+fn supply_exhaustion_only_overrides_pricing_for_eligible_demand() {
+    // Cover ineligible, equal-price and higher-price tails, plus a partial fill.
+    for (marginal_bid_energy, unmatched_bid_rate, expected_prices) in [
+        (4, 5, [10, 17, 13]),
+        (4, 10, [17; 3]),
+        (4, 11, [17; 3]),
+        (5, 5, [17; 3]),
+    ] {
+        for (policy, expected_price) in POLICIES.into_iter().zip(expected_prices) {
             let matches = book(
                 vec![
                     order("bid-high", OrderEnum::Bid, 3, 20),
                     order("bid-marginal", OrderEnum::Bid, marginal_bid_energy, 17),
-                    order("bid-unmatched", OrderEnum::Bid, 1, 5),
+                    order("bid-unmatched", OrderEnum::Bid, 1, unmatched_bid_rate),
                 ],
                 vec![
                     order("offer-low", OrderEnum::Offer, 3, 8),
@@ -202,7 +207,7 @@ fn supply_exhaustion_uses_minimum_accepted_bid_under_every_policy() {
                 matches.iter().map(|item| item.selected_energy).sum::<u64>(),
                 7
             );
-            assert!(matches.iter().all(|item| item.energy_rate == 17));
+            assert!(matches.iter().all(|item| item.energy_rate == expected_price));
             assert!(matches
                 .iter()
                 .all(|item| item.bid.order_id != "bid-unmatched"));
@@ -220,9 +225,14 @@ fn supply_exhaustion_uses_minimum_accepted_bid_under_every_policy() {
 }
 
 #[test]
-fn demand_exhaustion_uses_maximum_accepted_offer_under_every_policy() {
-    for policy in POLICIES {
-        for marginal_offer_energy in [4, 5] {
+fn demand_exhaustion_only_overrides_pricing_for_eligible_supply() {
+    for (marginal_offer_energy, unmatched_offer_rate, expected_prices) in [
+        (4, 30, [10, 17, 13]),
+        (4, 17, [10; 3]),
+        (4, 16, [10; 3]),
+        (5, 30, [10; 3]),
+    ] {
+        for (policy, expected_price) in POLICIES.into_iter().zip(expected_prices) {
             let matches = book(
                 vec![
                     order("bid-high", OrderEnum::Bid, 3, 20),
@@ -237,7 +247,7 @@ fn demand_exhaustion_uses_maximum_accepted_offer_under_every_policy() {
                         marginal_offer_energy,
                         10,
                     ),
-                    order("offer-unmatched", OrderEnum::Offer, 1, 30),
+                    order("offer-unmatched", OrderEnum::Offer, 1, unmatched_offer_rate),
                 ],
             )
             .pay_as_clear_with_pricing(policy);
@@ -247,7 +257,7 @@ fn demand_exhaustion_uses_maximum_accepted_offer_under_every_policy() {
                 matches.iter().map(|item| item.selected_energy).sum::<u64>(),
                 7
             );
-            assert!(matches.iter().all(|item| item.energy_rate == 10));
+            assert!(matches.iter().all(|item| item.energy_rate == expected_price));
             assert!(matches
                 .iter()
                 .all(|item| item.offer.order_id != "offer-unmatched"));
@@ -312,12 +322,22 @@ fn simultaneous_exhaustion_uses_configured_policy_despite_empty_orders() {
 #[test]
 fn crossing_with_unequal_total_energy_is_not_scarcity() {
     for (policy, expected_price) in POLICIES.into_iter().zip([10, 17, 13]) {
-        for (unmatched_bid_energy, unmatched_offer_energy) in [(100, 1), (1, 100)] {
+        // A crossing keeps the policy even if only one tail satisfies the last
+        // accepted counterparty's rate (9/12 and 12/30).
+        for (unmatched_bid_energy, unmatched_offer_energy, bid_rate, offer_rate) in [
+            (100, 1, 9, 30),
+            (1, 100, 9, 30),
+            (1, 1, 9, 12),
+            (1, 1, 12, 30),
+            (1, 1, 12, 15),
+        ] {
             let original = crossing_book();
             let mut bids = original.bids().to_vec();
             let mut offers = original.offers().to_vec();
             bids[0].energy = unmatched_bid_energy;
             offers[0].energy = unmatched_offer_energy;
+            bids[0].energy_rate = bid_rate;
+            offers[0].energy_rate = offer_rate;
             let matches = book(bids, offers).pay_as_clear_with_pricing(policy);
             assert_eq!(
                 matches.iter().map(|item| item.selected_energy).sum::<u64>(),

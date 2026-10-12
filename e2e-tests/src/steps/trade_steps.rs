@@ -831,7 +831,9 @@ async fn place_standard_pay_as_clear_order_book(world: &MyWorld, book: &str) -> 
     let first_bid = place_custom_order(world, "alice", true, 3.0, 20.0, None, None).await;
     let second_bid = place_custom_order(world, "bob", true, 4.0, 17.0, None, None).await;
     if include_unmatched_bid {
-        let order_id = place_custom_order(world, "alice", true, 1.0, 9.0, None, None).await;
+        // Scarcity requires demand that can still afford the last accepted offer.
+        let rate = if book == "supply scarcity" { 12.0 } else { 9.0 };
+        let order_id = place_custom_order(world, "alice", true, 1.0, rate, None, None).await;
         wait_for_order_in_offchain_storage(world, &order_id).await;
         unmatched_order_ids.push(order_id);
     }
