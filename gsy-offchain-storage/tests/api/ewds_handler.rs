@@ -149,6 +149,7 @@ fn make_trade(trade_uuid: &str, market_id: &str) -> DbTradeSchema {
             selected_energy_kWh: 1.0,
             energy_rate: 10.0,
         },
+        status_updated_at: None,
     }
 }
 
@@ -678,8 +679,8 @@ async fn facilities_query_empty_returns_empty() {
 
 // --- GuaranteesOfOriginQuery ----------------------------------------
 
-/// Parse the single captured POST body into the full response envelope.
-async fn captured_envelope(server: &MockServer) -> serde_json::Value {
+/// Parse the single captured POST body into the full response envelope, asserting the GoO response topic.
+async fn captured_goo_envelope(server: &MockServer) -> serde_json::Value {
     let requests = server.received_requests().await.unwrap();
     assert_eq!(requests.len(), 1, "expected exactly one gateway POST");
     let send_dto: EwdsSendMessageDto = serde_json::from_slice(&requests[0].body).unwrap();
@@ -803,7 +804,7 @@ async fn guarantees_of_origin_query_invalid_window_replies_with_an_error() {
             .await
             .unwrap();
 
-        let envelope = captured_envelope(&server).await;
+        let envelope = captured_goo_envelope(&server).await;
         assert_eq!(envelope["requestId"], json!(request_id));
         assert_eq!(envelope["success"], json!(false), "{request_id}");
         assert_eq!(envelope["data"], json!([]));

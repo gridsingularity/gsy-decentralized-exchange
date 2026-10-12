@@ -14,6 +14,7 @@ use primitives::certificates::{
 use primitives::db_api_schema::grid_topology::{
     AssetSchema, AssetType, EnergyCommunitySchema, FacilitySchema,
 };
+use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
 use primitives::db_api_schema::profiles::{
     FlowDirection as PointDirection, MeasurementPointSchema, MeasurementPointType, TimeseriesSchema,
 };
@@ -176,19 +177,49 @@ impl Fixture {
         fixture
     }
 
-    fn inputs(&self) -> CertificateInputs<'_> {
+    fn inputs<'a>(&'a self, markets: &'a [MarketSchema]) -> CertificateInputs<'a> {
         CertificateInputs {
             facilities: &self.facilities,
             communities: &self.communities,
             assets: &self.assets,
             measurement_points: &self.points,
             timeseries: &self.timeseries,
+            markets,
         }
     }
 
     fn build(&self, trades: Vec<DbTradeSchema>) -> Vec<LocalOriginRecord> {
-        build_local_origin_records(trades, &self.inputs())
+        let markets = markets_of(&trades);
+        build_local_origin_records(trades, &self.inputs(&markets))
     }
+}
+
+fn market_id(time_slot: u64) -> String {
+    format!("0xmarket-{time_slot}")
+}
+
+/// The market delivering at `time_slot`, the one [`trade`] files a trade under.
+fn market(time_slot: u64) -> MarketSchema {
+    MarketSchema {
+        market_id: market_id(time_slot),
+        community_id: COMMUNITY.to_string(),
+        opening_time: timestamp_to_string_with_padding(time_slot.saturating_sub(900)),
+        closing_time: timestamp_to_string_with_padding(time_slot),
+        delivery_start_time: timestamp_to_string_with_padding(time_slot),
+        delivery_end_time: timestamp_to_string_with_padding(time_slot.saturating_add(900)),
+        market_type: MarketType::Spot,
+        matching_algorithm: MatchingAlgorithm::PayAsBid,
+        created_at: timestamp_to_string_with_padding(time_slot.saturating_sub(900)),
+    }
+}
+
+/// The markets of `trades`, recovered from the slot [`trade`] encodes in `market_id`.
+fn markets_of(trades: &[DbTradeSchema]) -> Vec<MarketSchema> {
+    let slots: HashSet<u64> = trades
+        .iter()
+        .filter_map(|trade| trade.market_id.strip_prefix("0xmarket-")?.parse().ok())
+        .collect();
+    slots.into_iter().map(market).collect()
 }
 
 fn trade(
@@ -205,8 +236,7 @@ fn trade(
         status,
         seller: hash(seller_owner),
         buyer: buyer.to_string(),
-        market_id: "0xmarket".to_string(),
-        time_slot,
+        market_id: market_id(time_slot),
         creation_time,
         offer_hash: format!("{trade_uuid}-offer"),
         bid_hash: format!("{trade_uuid}-bid"),
@@ -458,6 +488,13 @@ fn off_boundary_time_slot_yields_no_record() {
 }
 
 #[test]
+fn a_trade_whose_market_is_unknown_yields_no_record() {
+    let fixture = Fixture::exporting(4.0, 0.0);
+    let trades = vec![sale("trade-1", 3.0, 100)];
+    assert!(build_local_origin_records(trades, &fixture.inputs(&[])).is_empty());
+}
+
+#[test]
 fn non_positive_energy_yields_no_record() {
     let fixture = Fixture::exporting(4.0, 0.0);
     for energy in [0.0, -1.0, f64::NAN] {
@@ -634,13 +671,14 @@ fn a_duplicated_trade_does_not_consume_the_net_export_twice() {
     // 6 kWh covers trade-a, trade-b and trade-c once each. The duplicate of trade-a sorts
     // between trade-b and trade-c, so it is not adjacent to the original.
     let fixture = Fixture::exporting(6.0, 0.0);
-    let inputs = fixture.inputs();
     let slot_executed = vec![
         sale("trade-a", 2.0, 100),
         sale("trade-b", 2.0, 150),
         sale("trade-a", 2.0, 200),
         sale("trade-c", 2.0, 300),
     ];
+    let markets = markets_of(&slot_executed);
+    let inputs = fixture.inputs(&markets);
     let records = build_local_origin_records_with_allocation(
         vec![sale("trade-c", 2.0, 300)],
         &slot_executed,
@@ -652,10 +690,11 @@ fn a_duplicated_trade_does_not_consume_the_net_export_twice() {
 #[test]
 fn allocation_does_not_depend_on_which_trades_are_selected() {
     let fixture = Fixture::exporting(1.5, 0.0);
-    let inputs = fixture.inputs();
     let earlier = sale("trade-a", 1.0, 100);
     let later = sale("trade-b", 1.0, 200);
     let slot_executed = vec![earlier.clone(), later.clone()];
+    let markets = markets_of(&slot_executed);
+    let inputs = fixture.inputs(&markets);
 
     let both =
         build_local_origin_records_with_allocation(slot_executed.clone(), &slot_executed, &inputs);

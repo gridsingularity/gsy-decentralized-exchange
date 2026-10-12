@@ -1,10 +1,11 @@
+use crate::certificates::query::{guarantees_of_origin, validate_window};
 use crate::db::DatabaseWrapper;
 use anyhow::{anyhow, Result};
 use futures::future::join_all;
 use primitives::db_api_schema::profiles::{MeasurementPointType, MeasurementSchema};
 use primitives::ewds::dto::{
-    EwdsErrorPayload, EwdsOrderDto, EwdsClearingResultDto, EwdsCommunityDto, EwdsInboundMessage,
-    EwdsMarketDto, EwdsMeasurementDto, EwdsRequestEnvelope, EwdsResponseEnvelope,
+    EwdsClearingResultDto, EwdsCommunityDto, EwdsErrorPayload, EwdsInboundMessage, EwdsMarketDto,
+    EwdsMeasurementDto, EwdsOrderDto, EwdsRequestEnvelope, EwdsResponseEnvelope,
     EwdsSendMessageDto, EwdsTradeDto,
 };
 use primitives::ewds::{
@@ -634,7 +635,10 @@ pub async fn handle_request(
                         config,
                         request_id,
                         response_topic.as_str(),
-                        reason,
+                        EwdsErrorPayload {
+                            code: INVALID_REQUEST_ERROR_CODE.to_string(),
+                            message: reason,
+                        },
                     )
                     .await;
                 }

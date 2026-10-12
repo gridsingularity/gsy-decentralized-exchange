@@ -10,8 +10,13 @@ use primitives::db_api_schema::trades::{
 use std::collections::HashMap;
 use std::ops::Deref;
 
+fn timestamp_bson(value: u64) -> Result<Bson> {
+    Ok(Bson::Int64(i64::try_from(value)?))
+}
+
 /// Trade indexes per D3.2 section 5.3: `buyer`, `seller`, `market_id` and
-/// `creation_time` accelerate per-asset / per-market / time-range lookups.
+/// `creation_time` accelerate per-asset / per-market / time-range lookups;
+/// `status_updated_at` backs the verdict-time window of the guarantees-of-origin query.
 pub async fn init_trades(db: &DatabaseWrapper) -> Result<()> {
     let controller = db.trades();
     controller
@@ -22,7 +27,13 @@ pub async fn init_trades(db: &DatabaseWrapper) -> Result<()> {
                 .build(),
         )
         .await?;
-    for key in ["buyer", "seller", "market_id", "creation_time", "status_updated_at"] {
+    for key in [
+        "buyer",
+        "seller",
+        "market_id",
+        "creation_time",
+        "status_updated_at",
+    ] {
         controller
             .create_index(IndexModel::builder().keys(doc! {key: 1}).build())
             .await?;
@@ -127,7 +138,7 @@ impl TradeService {
     /// Trades whose status last changed within `[start_time, end_time)` (unix seconds, end
     /// exclusive; no upper bound when `end_time` is `None`), optionally restricted to `status`.
     ///
-    /// This windows on `status_updated_at` rather than `time_slot`: the delivery slot says
+    /// This windows on `status_updated_at` rather than the market's delivery slot: that says
     /// when the energy flowed, while the verdict arrives later and by a variable delay.
     /// Trades with no `status_updated_at` are excluded, which is every trade that never
     /// changed status after insertion, including all trades written before the field existed.
@@ -138,9 +149,9 @@ impl TradeService {
         end_time: Option<u64>,
         status: Option<TradeStatus>,
     ) -> Result<Vec<DbTradeSchema>> {
-        let mut bounds = doc! {"$gte": time_slot_bson(start_time)?};
+        let mut bounds = doc! {"$gte": timestamp_bson(start_time)?};
         if let Some(end_time) = end_time {
-            bounds.insert("$lt", time_slot_bson(end_time)?);
+            bounds.insert("$lt", timestamp_bson(end_time)?);
         }
         let mut filter_params = doc! {"status_updated_at": bounds};
         if let Some(status) = &status {

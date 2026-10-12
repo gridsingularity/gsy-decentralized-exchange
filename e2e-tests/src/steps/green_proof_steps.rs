@@ -22,6 +22,7 @@ use primitives::certificates::{
 use primitives::db_api_schema::grid_topology::{
     AssetSchema, AssetType, EnergyCommunitySchema, FacilitySchema, SiteSchema,
 };
+use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
 use primitives::db_api_schema::profiles::{
     FlowDirection, MeasurementPointSchema, MeasurementPointType, TimeseriesSchema,
 };
@@ -116,6 +117,7 @@ async fn seed_executed_pv_sale(world: &mut MyWorld, energy_kwh: f64, export_kwh:
         measurement_id: export_kwh
             .map(|_| format!("Measurement:{community_id}:{seller_facility_id}")),
         trade_uuid: Uuid::new_v4().to_string(),
+        market_id: format!("0xgooe2e{run}"),
         time_slot,
         status_updated_at: now,
         energy_kwh,
@@ -213,14 +215,28 @@ async fn seed_executed_pv_sale(world: &mut MyWorld, energy_kwh: f64, export_kwh:
             .expect("Failed to seed the export measurement");
     }
 
+    db.collection::<MarketSchema>("markets")
+        .insert_one(MarketSchema {
+            market_id: seed.market_id.clone(),
+            community_id: seed.community_id.clone(),
+            opening_time: timestamp_to_string_with_padding(time_slot - SLOT_S),
+            closing_time: timestamp_to_string_with_padding(time_slot),
+            delivery_start_time: timestamp_to_string_with_padding(time_slot),
+            delivery_end_time: timestamp_to_string_with_padding(time_slot + SLOT_S),
+            market_type: MarketType::Spot,
+            matching_algorithm: MatchingAlgorithm::PayAsBid,
+            created_at: timestamp_to_string_with_padding(time_slot - SLOT_S),
+        })
+        .await
+        .expect("Failed to seed the market");
+
     db.collection::<DbTradeSchema>("trades")
         .insert_one(DbTradeSchema {
             trade_uuid: seed.trade_uuid.clone(),
             status: TradeStatus::Executed,
             seller: party_hash(&seed.seller_owner_id),
             buyer: party_hash(&seed.buyer_owner_id),
-            market_id: format!("0xgooe2e{run}"),
-            time_slot,
+            market_id: seed.market_id.clone(),
             creation_time: time_slot - SLOT_S,
             offer_hash: format!("{}-offer", seed.trade_uuid),
             bid_hash: format!("{}-bid", seed.trade_uuid),
@@ -482,6 +498,7 @@ async fn delete_seeded_documents(world: &mut MyWorld) {
     let db = database().await;
     let mut deletions: Vec<(&str, Document)> = vec![
         ("trades", doc! {"trade_uuid": &seed.trade_uuid}),
+        ("markets", doc! {"market_id": &seed.market_id}),
         (
             "facilities",
             doc! {"facility_id": {"$in": [&seed.seller_facility_id, &seed.buyer_facility_id]}},

@@ -4,6 +4,7 @@ use primitives::certificates::{DeliveryScope, LocalOriginRecord};
 use primitives::db_api_schema::grid_topology::{
     AssetSchema, AssetType, EnergyCommunitySchema, FacilitySchema,
 };
+use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
 use primitives::db_api_schema::profiles::{
     FlowDirection, MeasurementPointSchema, MeasurementPointType, TimeseriesSchema,
 };
@@ -21,6 +22,7 @@ const BUYER_FACILITY: &str = "goo-buyer";
 const BUYER_OWNER: &str = "goo-owner-buyer";
 const COMMUNITY: &str = "goo-community";
 const EXPORT_POINT: &str = "Measurement:goo-community:goo-seller";
+const MARKET: &str = "0xmarket";
 
 fn hash(offchain_id: &str) -> String {
     bytes16_to_hex(create_encrypted_bytes16_from_string(offchain_id))
@@ -37,8 +39,7 @@ pub fn trade(
         status,
         seller: hash(SELLER_OWNER),
         buyer: hash(BUYER_OWNER),
-        market_id: "0xmarket".to_string(),
-        time_slot: SLOT,
+        market_id: MARKET.to_string(),
         creation_time: SLOT - 600,
         offer_hash: format!("{trade_uuid}-offer"),
         bid_hash: format!("{trade_uuid}-bid"),
@@ -52,9 +53,23 @@ pub fn trade(
     }
 }
 
-/// Seeds a PV seller facility exporting `export_kwh` at `SLOT` and a buyer facility in the
-/// same community. No trades.
+/// Seeds a PV seller facility exporting `export_kwh` at `SLOT`, a buyer facility in the
+/// same community and the market delivering at `SLOT`. No trades.
 pub async fn seed_topology(db: &DatabaseWrapper, export_kwh: f64) {
+    db.markets()
+        .upsert(MarketSchema {
+            market_id: MARKET.to_string(),
+            community_id: COMMUNITY.to_string(),
+            opening_time: timestamp_to_string_with_padding(SLOT - 900),
+            closing_time: timestamp_to_string_with_padding(SLOT),
+            delivery_start_time: timestamp_to_string_with_padding(SLOT),
+            delivery_end_time: timestamp_to_string_with_padding(SLOT + 900),
+            market_type: MarketType::Spot,
+            matching_algorithm: MatchingAlgorithm::PayAsBid,
+            created_at: timestamp_to_string_with_padding(SLOT - 900),
+        })
+        .await
+        .unwrap();
     for (facility_id, owner_id) in [
         (SELLER_FACILITY, SELLER_OWNER),
         (BUYER_FACILITY, BUYER_OWNER),

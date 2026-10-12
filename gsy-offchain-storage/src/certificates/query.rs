@@ -5,8 +5,8 @@
 use anyhow::Result;
 use primitives::certificates::LocalOriginRecord;
 use primitives::db_api_schema::profiles::MeasurementPointType;
-use primitives::db_api_schema::trades::TradeStatus;
-use primitives::utils::timestamp_to_string_with_padding;
+use primitives::db_api_schema::trades::{DbTradeSchema, TradeStatus};
+use primitives::utils::{string_to_timestamp, timestamp_to_string_with_padding};
 
 use crate::certificates::builder::{
     build_local_origin_records_with_allocation, sort_records, CertificateInputs,
@@ -81,10 +81,19 @@ pub async fn guarantees_of_origin(
     }
 
     // The window above is on verdict time; measurements and the allocation set are keyed by
-    // delivery slot, so bound those fetches by the delivery slots of the selected trades.
-    let (earliest_slot, latest_slot) = trades.iter().fold((u64::MAX, 0), |(min, max), trade| {
-        (min.min(trade.time_slot), max.max(trade.time_slot))
-    });
+    // delivery slot (the market's `delivery_start_time`), so bound those fetches by the
+    // delivery slots of the selected trades.
+    let selected_markets = db.markets().get_by_ids(market_ids(&trades)).await?;
+    let Some((earliest_slot, latest_slot)) = selected_markets
+        .iter()
+        .filter_map(|market| string_to_timestamp(market.delivery_start_time.trim()).ok())
+        .fold(None, |bounds, slot| match bounds {
+            None => Some((slot, slot)),
+            Some((min, max)) => Some((u64::min(min, slot), u64::max(max, slot))),
+        })
+    else {
+        return Ok(Vec::new());
+    };
 
     // A facility's net export is allocated over every `Executed` sale of the slot, not just
     // those the window selected, so a trade's certificate does not depend on the window it
@@ -92,12 +101,13 @@ pub async fn guarantees_of_origin(
     // unbounded, since a superset is always correct here.
     let slot_executed = db
         .trades()
-        .filter_trades(Some(earliest_slot), latest_slot.checked_add(1))
+        .filter_trades(None, Some(earliest_slot), latest_slot.checked_add(1))
         .await?
         .into_iter()
         .filter(|trade| trade.status == TradeStatus::Executed)
         .collect::<Vec<_>>();
 
+    let markets = db.markets().get_by_ids(market_ids(&slot_executed)).await?;
     let facilities = db.facilities().get_all().await?;
     let communities = db.communities().get_all().await?;
     let assets = db.assets().get_all().await?;
@@ -120,8 +130,16 @@ pub async fn guarantees_of_origin(
         assets: &assets,
         measurement_points: &measurement_points,
         timeseries: &timeseries,
+        markets: &markets,
     };
     let mut records = build_local_origin_records_with_allocation(trades, &slot_executed, &inputs);
     sort_records(&mut records);
     Ok(records)
+}
+
+fn market_ids(trades: &[DbTradeSchema]) -> Vec<String> {
+    let mut ids: Vec<String> = trades.iter().map(|trade| trade.market_id.clone()).collect();
+    ids.sort();
+    ids.dedup();
+    ids
 }

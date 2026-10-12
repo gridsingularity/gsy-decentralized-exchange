@@ -25,6 +25,11 @@
 //!   `Import` subtracts it.
 //!
 //! Net export = Σexport − Σimport over the facility's `Measurement` points at the slot.
+//!
+//! # Delivery slot
+//!
+//! A trade's slot is its market's `delivery_start_time`; a trade whose market is not among
+//! the inputs is skipped.
 
 use std::collections::{HashMap, HashSet};
 
@@ -38,11 +43,14 @@ use primitives::certificates::{
 use primitives::db_api_schema::grid_topology::{
     AssetSchema, AssetType, EnergyCommunitySchema, FacilitySchema,
 };
+use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::profiles::{
     FlowDirection as PointDirection, MeasurementPointSchema, MeasurementPointType, TimeseriesSchema,
 };
 use primitives::db_api_schema::trades::{DbTradeSchema, TradeStatus};
-use primitives::utils::{bytes16_to_hex, create_encrypted_bytes16_from_string};
+use primitives::utils::{
+    bytes16_to_hex, create_encrypted_bytes16_from_string, string_to_timestamp,
+};
 
 use crate::certificates::config::PILOT;
 
@@ -54,6 +62,20 @@ pub struct CertificateInputs<'a> {
     pub assets: &'a [AssetSchema],
     pub measurement_points: &'a [MeasurementPointSchema],
     pub timeseries: &'a [TimeseriesSchema],
+    /// The markets of the trades, for their delivery slot.
+    pub markets: &'a [MarketSchema],
+}
+
+/// `market_id` → delivery slot (`delivery_start_time`, unix seconds). Markets with an
+/// unparsable `delivery_start_time` are left out, so their trades are skipped.
+fn delivery_slots<'a>(markets: &'a [MarketSchema]) -> HashMap<&'a str, u64> {
+    markets
+        .iter()
+        .filter_map(|market| {
+            let slot = string_to_timestamp(market.delivery_start_time.trim()).ok()?;
+            Some((market.market_id.as_str(), slot))
+        })
+        .collect()
 }
 
 /// The on-chain party hash of an off-chain id, as written into `DbTradeSchema::seller` /
@@ -232,6 +254,7 @@ const ALLOCATION_TOLERANCE_KWH: f64 = 1e-9;
 fn net_export_allocation<'a>(
     topology: &Topology<'a>,
     evidence: &HashMap<(&'a str, u64), SlotEvidence<'a>>,
+    slots: &HashMap<&str, u64>,
     slot_executed: &'a [DbTradeSchema],
 ) -> HashSet<(&'a str, u64, &'a str)> {
     let mut sales_by_facility_slot: HashMap<(&str, u64), Vec<&DbTradeSchema>> = HashMap::new();
@@ -247,8 +270,11 @@ fn net_export_allocation<'a>(
         let Some(facility) = topology.facility_by_party.get(trade.seller.as_str()) else {
             continue;
         };
+        let Some(&time_slot) = slots.get(trade.market_id.as_str()) else {
+            continue;
+        };
         sales_by_facility_slot
-            .entry((facility.facility_id.as_str(), trade.time_slot))
+            .entry((facility.facility_id.as_str(), time_slot))
             .or_default()
             .push(trade);
     }
@@ -323,8 +349,9 @@ pub fn build_local_origin_records_with_allocation(
 ) -> Vec<LocalOriginRecord> {
     let topology = Topology::build(inputs);
     let measurements = map_measurements(&topology, inputs);
+    let slots = delivery_slots(inputs.markets);
     let facility_net_export_per_slot =
-        net_export_allocation(&topology, &measurements, trades_for_selected_slots);
+        net_export_allocation(&topology, &measurements, &slots, trades_for_selected_slots);
     let mut records = Vec::with_capacity(selected_trades.len());
 
     for trade in selected_trades {
@@ -359,10 +386,19 @@ pub fn build_local_origin_records_with_allocation(
             continue;
         }
 
-        if trade.time_slot % PILOT.interval_duration_s != 0 {
+        let Some(&time_slot) = slots.get(trade.market_id.as_str()) else {
             tracing::info!(
                 trade_uuid = %trade.trade_uuid,
-                time_slot = trade.time_slot,
+                market_id = %trade.market_id,
+                "skipping trade: market not found"
+            );
+            continue;
+        };
+
+        if time_slot % PILOT.interval_duration_s != 0 {
+            tracing::info!(
+                trade_uuid = %trade.trade_uuid,
+                time_slot,
                 "skipping trade: time_slot is not on an interval boundary"
             );
             continue;
@@ -378,11 +414,11 @@ pub fn build_local_origin_records_with_allocation(
             continue;
         }
 
-        let Some(slot_evidence) = measurements.get(&(seller_facility_id, trade.time_slot)) else {
+        let Some(slot_evidence) = measurements.get(&(seller_facility_id, time_slot)) else {
             tracing::info!(
                 trade_uuid = %trade.trade_uuid,
                 facility_id = seller_facility_id,
-                time_slot = trade.time_slot,
+                time_slot,
                 "skipping trade: no measurement for seller facility at slot"
             );
             continue;
@@ -396,7 +432,7 @@ pub fn build_local_origin_records_with_allocation(
                 trade_uuid = %trade.trade_uuid,
                 facility_id = seller_facility_id,
                 net_export_kwh,
-                time_slot = trade.time_slot,
+                time_slot,
                 "skipping trade: seller facility is not net exporting at slot"
             );
             continue;
@@ -404,26 +440,26 @@ pub fn build_local_origin_records_with_allocation(
 
         if !facility_net_export_per_slot.contains(&(
             seller_facility_id,
-            trade.time_slot,
+            time_slot,
             trade.trade_uuid.as_str(),
         )) {
             tracing::info!(
                 trade_uuid = %trade.trade_uuid,
                 facility_id = seller_facility_id,
                 net_export_kwh,
-                time_slot = trade.time_slot,
+                time_slot,
                 "skipping trade: sale not covered by the facility's net export"
             );
             continue;
         }
 
         let (Some((interval_start, interval_end)), Some(delivery_reference)) = (
-            interval_bounds_utc(trade.time_slot, PILOT.interval_duration_s),
-            delivery_verification_reference(trade.time_slot, PILOT.interval_duration_s),
+            interval_bounds_utc(time_slot, PILOT.interval_duration_s),
+            delivery_verification_reference(time_slot, PILOT.interval_duration_s),
         ) else {
             tracing::warn!(
                 trade_uuid = %trade.trade_uuid,
-                time_slot = trade.time_slot,
+                time_slot,
                 "skipping trade: time_slot is not a representable timestamp"
             );
             continue;
@@ -469,7 +505,7 @@ pub fn build_local_origin_records_with_allocation(
                 interval_start,
                 interval_end,
                 interval_duration_s: PILOT.interval_duration_s,
-                source_slot_timestamp: trade.time_slot,
+                source_slot_timestamp: time_slot,
                 energy_quantity: round_half_up_2dp(energy),
                 energy_unit: EnergyUnit::KWh,
                 rounding_rule: PILOT.rounding_rule.clone(),

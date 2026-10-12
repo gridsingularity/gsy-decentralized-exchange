@@ -51,6 +51,8 @@ pub struct GreenProofSeed {
     /// `None` when the scenario seeds no seller export measurement.
     pub measurement_id: Option<String>,
     pub trade_uuid: String,
+    /// The trade's market; its `delivery_start_time` is `time_slot`.
+    pub market_id: String,
     pub time_slot: u64,
     pub status_updated_at: u64,
     pub energy_kwh: f64,
