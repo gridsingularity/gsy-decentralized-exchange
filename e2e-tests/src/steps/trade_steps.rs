@@ -18,8 +18,12 @@ use primitives::offchain_storage::{
     resolve_order_partner_ids, OffchainStorageClient, OffchainStorageTransport,
 };
 use primitives::utils::{
-    bytes16_to_hex, create_encrypted_bytes16_from_string, parse_uuid_or_hex_bytes16,
-    rfc3339_to_epoch, timestamp_to_string_with_padding, NODE_FLOAT_SCALING_FACTOR,
+    bytes16_to_hex,
+    create_encrypted_bytes16_from_string,
+    NODE_FLOAT_SCALING_FACTOR,
+    parse_uuid_or_hex_bytes16,
+    rfc3339_to_epoch,
+    timestamp_to_string_with_padding
 };
 use std::collections::HashSet;
 use std::env;

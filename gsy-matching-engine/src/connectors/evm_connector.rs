@@ -177,8 +177,7 @@ pub fn match_order_books(
             .match_orders(&mut market_matching_data)
             .map_err(|error| anyhow!(error))?;
 
-        let clearing_result = compute_clearing_result(
-            &market_matching_data, &market_matches);
+        let clearing_result = compute_clearing_result(&market_matching_data, &market_matches);
 
         all_matches.push(MarketMatches {
             bid_offer_matches: market_matches,
@@ -226,8 +225,7 @@ fn compute_clearing_result(
 
     if !matches.is_empty() {
         let num_trades = matches.len() as u32;
-        let clearing_price =
-            matches.iter().map(|m| m.energy_rate).sum::<u64>() / num_trades as u64;
+        let clearing_price = matches.iter().map(|m| m.energy_rate).sum::<u64>() / num_trades as u64;
 
         clearing_result.clearing_price = Some(clearing_price);
         clearing_result.traded_quantity = Some(traded_quantity);
