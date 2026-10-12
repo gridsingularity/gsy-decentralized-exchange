@@ -103,9 +103,16 @@ fn midpoint_rounds_down_without_overflow() {
         (u64::MAX - 3, u64::MAX, u64::MAX - 2),
         (0, u64::MAX, u64::MAX / 2),
     ] {
+        // Leave a price crossing so configured midpoint pricing applies.
         let matches = book(
-            vec![order("bid", OrderEnum::Bid, 1, bid_rate)],
-            vec![order("offer", OrderEnum::Offer, 1, offer_rate)],
+            vec![
+                order("bid", OrderEnum::Bid, 1, bid_rate),
+                order("bid-unmatched", OrderEnum::Bid, 1, 0),
+            ],
+            vec![
+                order("offer", OrderEnum::Offer, 1, offer_rate),
+                order("offer-unmatched", OrderEnum::Offer, 1, u64::MAX),
+            ],
         )
         .pay_as_clear_with_pricing(PayAsClearPricing::Midpoint);
         assert_eq!(matches.len(), 1);
@@ -179,10 +186,10 @@ fn standard_pricing_policy_does_not_change_preference_prices() {
 }
 
 #[test]
-fn supply_exhaustion_only_overrides_pricing_for_eligible_demand() {
+fn supply_exhaustion_uses_min_bid_under_every_policy() {
     // Cover ineligible, equal-price and higher-price tails, plus a partial fill.
     for (marginal_bid_energy, unmatched_bid_rate, expected_prices) in [
-        (4, 5, [10, 17, 13]),
+        (4, 5, [17; 3]),
         (4, 10, [17; 3]),
         (4, 11, [17; 3]),
         (5, 5, [17; 3]),
@@ -225,9 +232,9 @@ fn supply_exhaustion_only_overrides_pricing_for_eligible_demand() {
 }
 
 #[test]
-fn demand_exhaustion_only_overrides_pricing_for_eligible_supply() {
+fn demand_exhaustion_uses_max_offer_only_for_eligible_supply() {
     for (marginal_offer_energy, unmatched_offer_rate, expected_prices) in [
-        (4, 30, [10, 17, 13]),
+        (4, 30, [17; 3]),
         (4, 17, [10; 3]),
         (4, 16, [10; 3]),
         (5, 30, [10; 3]),
@@ -291,8 +298,8 @@ fn scarcity_detects_remaining_energy_within_the_last_order() {
 }
 
 #[test]
-fn simultaneous_exhaustion_uses_configured_policy_despite_empty_orders() {
-    for (policy, expected_price) in POLICIES.into_iter().zip([10, 17, 13]) {
+fn simultaneous_exhaustion_uses_min_bid_despite_empty_orders() {
+    for policy in POLICIES {
         let matches = book(
             vec![
                 order("bid-empty-high", OrderEnum::Bid, 0, 30),
@@ -313,9 +320,7 @@ fn simultaneous_exhaustion_uses_configured_policy_despite_empty_orders() {
             matches.iter().map(|item| item.selected_energy).sum::<u64>(),
             7
         );
-        assert!(matches
-            .iter()
-            .all(|item| item.energy_rate == expected_price));
+        assert!(matches.iter().all(|item| item.energy_rate == 17));
     }
 }
 

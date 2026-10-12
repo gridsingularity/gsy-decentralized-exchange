@@ -75,9 +75,25 @@ fn pay_as_clear_calculates_an_independent_price_for_each_order_book() {
         let mut second_offer = order(4, OrderEnum::Offer, 2, 100);
         second_offer.energy_rate = 30;
 
+        // Each book must reach a price crossing to exercise the configured policy.
+        let mut first_unmatched_offer = order(6, OrderEnum::Offer, 1, 100);
+        first_unmatched_offer.energy_rate = 50;
+        let mut second_unmatched_offer = order(8, OrderEnum::Offer, 2, 100);
+        second_unmatched_offer.energy_rate = 50;
+
         let order_books = partition_orders_by_market_slot(
-            vec![first_bid, second_bid],
-            vec![first_offer, second_offer],
+            vec![
+                first_bid,
+                second_bid,
+                order(5, OrderEnum::Bid, 1, 100),
+                order(7, OrderEnum::Bid, 2, 100),
+            ],
+            vec![
+                first_offer,
+                second_offer,
+                first_unmatched_offer,
+                second_unmatched_offer,
+            ],
         )
         .expect("partitioned orders should be valid");
         let market_matches = match_order_books(order_books, &MatchingAlgorithm::PayAsClear, pricing)
@@ -109,7 +125,7 @@ fn pay_as_clear_calculates_an_independent_price_for_each_order_book() {
         assert_eq!(computed_prices, expected_prices);
         assert!(market_matches
             .iter()
-            .all(|market| market.clearing_result.clearing_status == ClearingStatus::Final));
+            .all(|market| market.clearing_result.clearing_status == ClearingStatus::Partial));
     }
 }
 

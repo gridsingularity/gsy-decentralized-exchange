@@ -47,4 +47,4 @@ Feature: Two-Sided Pay-as-Clear Matching
       | book                    | max_offer | min_bid | midpoint |
       | supply scarcity         | 17        | 17      | 17       |
       | demand scarcity         | 10        | 10      | 10       |
-      | simultaneous exhaustion | 10        | 17      | 13.5     |
+      | simultaneous exhaustion | 17        | 17      | 17       |

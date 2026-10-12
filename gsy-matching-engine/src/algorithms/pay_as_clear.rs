@@ -64,8 +64,8 @@ impl ClearingPointStats {
         match (self.has_remaining_demand, self.has_remaining_supply) {
             (true, false) => PayAsClearPricing::MinBid,
             (false, true) => PayAsClearPricing::MaxOffer,
+            // Simultaneous exhaustion or no eligible remainder uses the marginal bid.
             (false, false) => PayAsClearPricing::MinBid,
-            // Simultaneous exhaustion or no eligible remainder keeps the configured policy.
             _ => configured,
         }
     }
