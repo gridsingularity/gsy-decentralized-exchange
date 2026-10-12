@@ -13,7 +13,7 @@ use primitives::utils::{parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR};
 use serde_json::Value;
 use std::str::FromStr;
 use std::sync::Arc;
-use tokio::time::{sleep, Duration};
+use tokio::time::{sleep, timeout, Duration};
 use tracing::{info, warn};
 use uuid::Uuid;
 
@@ -22,9 +22,12 @@ const CONSUMER_CLIENT_ID_DEFAULT: &str = "gsycommunityclient";
 const EWDS_TIMEOUT_MS: u64 = 60_000;
 const PLACE_ORDER_ATTEMPTS: u32 = 3;
 const PLACE_ORDER_RETRY_DELAY_MS: u64 = 1_000;
+const NODE_HEALTH_CHECK_INTERVAL_MS: u64 = 30_000;
+const NODE_HEALTH_CHECK_TIMEOUT_MS: u64 = 10_000;
 
 /// Polls `order.submitted` events from EWDS and sends their orders to the `OrderRegistry`. Runs until the
-/// task is dropped, and only returns early if the node or the configuration is unusable.
+/// task is dropped, and only returns early if the node or the configuration is unusable, or the
+/// connection to the node is lost for good.
 pub async fn start_order_event_subscriber() -> Result<()> {
     let evm_node_url = env_var("EVM_NODE_URL").unwrap_or_else(|| "ws://anvil:8545".to_string());
     let order_registry_address =
@@ -53,12 +56,24 @@ pub async fn start_order_event_subscriber() -> Result<()> {
         "Starting EWDS order event subscriber (order_registry={})",
         order_registry_address
     );
-    ewds_client
-        .run_event_worker(EwdsEventType::OrderSubmitted, |envelope| {
+    tokio::select! {
+        _ = ewds_client.run_event_worker(EwdsEventType::OrderSubmitted, |envelope| {
             handler.handle(envelope)
-        })
-        .await;
-    Ok(())
+        }) => Ok(()),
+        error = watch_node(&handler.order_registry) => Err(error),
+    }
+}
+
+/// Checks the connection to the node periodically and returns once a check fails. The websocket
+/// provider does not report when it gives up reconnecting, and never recovers from it; every
+/// request fails from then on, so the subscriber has to stop and be restarted.
+async fn watch_node(order_registry: &OrderRegistryClient) -> Error {
+    loop {
+        sleep(Duration::from_millis(NODE_HEALTH_CHECK_INTERVAL_MS)).await;
+        if let Err(error) = order_registry.check_connection().await {
+            return error.context("Lost the connection to the EVM node");
+        }
+    }
 }
 
 /// What happened to one order of an event.
@@ -251,6 +266,17 @@ impl OrderRegistryClient {
         Ok(Self {
             contract: OrderRegistryContract::new(order_registry_address, client),
         })
+    }
+
+    /// Fails if the node does not answer in time, e.g. because the provider gave up reconnecting.
+    pub async fn check_connection(&self) -> Result<()> {
+        timeout(
+            Duration::from_millis(NODE_HEALTH_CHECK_TIMEOUT_MS),
+            self.contract.client().get_block_number(),
+        )
+        .await
+        .context("The EVM node did not answer in time")??;
+        Ok(())
     }
 
     /// Whether an order with this ID was ever placed, whatever its status is now.
