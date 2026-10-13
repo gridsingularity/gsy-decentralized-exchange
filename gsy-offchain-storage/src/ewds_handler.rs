@@ -1,3 +1,4 @@
+use crate::certificates::query::{guarantees_of_origin, validate_window};
 use crate::db::DatabaseWrapper;
 use anyhow::{anyhow, Result};
 use futures::future::join_all;
@@ -155,6 +156,19 @@ struct TimeRangePayload {
     #[serde(default)]
     facility_id: Option<String>,
 }
+
+#[derive(Deserialize)]
+struct GuaranteesOfOriginPayload {
+    #[serde(alias = "startTime")]
+    #[serde(default)]
+    start_time: Option<u64>,
+    #[serde(alias = "endTime")]
+    #[serde(default)]
+    end_time: Option<u64>,
+}
+
+/// `code` of the error payload sent for a request rejected before it reaches storage.
+const INVALID_REQUEST_ERROR_CODE: &str = "invalid_request";
 
 /// Maximum span of a `trades.query` range. The whole result is published as a
 /// single EWDS message, so the range is capped to keep that message small.
@@ -621,6 +635,49 @@ pub async fn handle_request(
             let data = db.facilities().get_all().await?;
             info!(
                 "Publishing EWDS facilities.query response (request_id={}, facilities={})",
+                request_id,
+                data.len()
+            );
+
+            send_success_response(client, config, request_id, response_topic.as_str(), data).await
+        }
+        EwdsOperation::GuaranteesOfOriginQuery => {
+            let request_id = envelope.request_id;
+
+            info!(
+                "Handling EWDS guarantees_of_origin.query request (request_id={})",
+                request_id
+            );
+
+            // An invalid request is answered with `success: false` rather than returned as an
+            // error: an erroring worker re-polls the same message forever.
+            let window = match serde_json::from_value::<GuaranteesOfOriginPayload>(envelope.payload)
+                .map_err(|e| format!("guarantees_of_origin.query payload parse error: {}", e))
+                .and_then(|payload| validate_window(payload.start_time, payload.end_time))
+            {
+                Ok(window) => window,
+                Err(reason) => {
+                    warn!(
+                        "Rejecting EWDS guarantees_of_origin.query request (request_id={}): {}",
+                        request_id, reason
+                    );
+                    return send_error_response(
+                        client,
+                        config,
+                        request_id,
+                        response_topic.as_str(),
+                        EwdsErrorPayload {
+                            code: INVALID_REQUEST_ERROR_CODE.to_string(),
+                            message: reason,
+                        },
+                    )
+                    .await;
+                }
+            };
+
+            let data = guarantees_of_origin(db, window).await?;
+            info!(
+                "Publishing EWDS guarantees_of_origin.query response (request_id={}, records={})",
                 request_id,
                 data.len()
             );

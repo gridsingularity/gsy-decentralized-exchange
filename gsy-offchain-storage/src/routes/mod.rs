@@ -1,4 +1,5 @@
 mod grid_topology;
+mod guarantees_of_origin;
 mod health_check;
 mod ids;
 mod market;
@@ -7,6 +8,7 @@ mod profiles;
 mod trades;
 
 pub use grid_topology::*;
+pub use guarantees_of_origin::*;
 pub use health_check::*;
 pub use ids::*;
 pub use market::*;

@@ -197,12 +197,7 @@ impl TryFrom<EwdsOrderDto> for DbOrderSchema {
                     Some(ref pref) => Some(energy_type_from_ewds(pref)?),
                     None => None,
                 },
-                preferred_energy_rate: order.preferred_energy_rate.or_else(|| {
-                    order
-                        .preferred_trading_partner
-                        .as_ref()
-                        .map(|_| order.price_limit)
-                }),
+                preferred_energy_rate: order.preferred_energy_rate,
             })
         } else {
             None
@@ -371,6 +366,7 @@ impl TryFrom<EwdsTradeDto> for DbTradeSchema {
                 selected_energy_kWh: trade.trade_quantity,
                 energy_rate: trade.trade_price,
             },
+            status_updated_at: None,
         })
     }
 }
