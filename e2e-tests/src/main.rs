@@ -1,3 +1,4 @@
+mod feature_selection;
 mod steps;
 mod utils;
 mod world;
@@ -70,15 +71,28 @@ async fn main() {
         env::var("MATCHING_ALGORITHM").unwrap_or_else(|_| MatchingAlgorithm::default().to_string());
     let matching_algorithm = MatchingAlgorithm::from_str(&matching_algorithm)
         .unwrap_or_else(|error| panic!("Invalid MATCHING_ALGORITHM: {}", error));
-    let feature_path = env::var("E2E_FEATURE_PATH")
-        .unwrap_or_else(|_| format!("features/{}", matching_algorithm.as_str()));
+    let feature_override = env::var("E2E_FEATURE_PATH").ok();
+    let feature_selection = feature_override.clone().unwrap_or_else(|| {
+        format!(
+            "features/{} and features/matching_algorithms",
+            matching_algorithm.as_str()
+        )
+    });
+    let mut cli = cucumber::cli::Opts::<cucumber::parser::basic::Cli, _, _>::parsed();
+    feature_selection::configure_features(
+        &mut cli.parser,
+        &matching_algorithm,
+        feature_override.as_deref(),
+    );
+    let feature_path = feature_override.unwrap_or_else(|| "features".to_string());
 
     println!(
         "Running {} E2E feature(s) from {}",
-        matching_algorithm, feature_path
+        matching_algorithm, feature_selection
     );
 
     world::MyWorld::cucumber()
+        .with_cli(cli)
         .max_concurrent_scenarios(1)
         .after(|_feature, _rule, _scenario, _ev, _world| {
             Box::pin(async move {

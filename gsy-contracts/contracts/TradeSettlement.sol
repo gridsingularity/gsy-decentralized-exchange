@@ -184,6 +184,7 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
             trade.offer.orderId == bytes16(0) ||
             trade.bid.createdBy == bytes16(0) ||
             trade.offer.createdBy == bytes16(0) ||
+            trade.bid.createdBy == trade.offer.createdBy ||
             trade.bid.marketId != trade.offer.marketId ||
             trade.bid.timeSlot != trade.offer.timeSlot
         ) {

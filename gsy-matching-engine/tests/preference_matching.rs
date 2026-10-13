@@ -73,6 +73,25 @@ fn every_declared_partner_must_identify_the_counterparty() {
 }
 
 #[test]
+fn self_trades_are_rejected_in_both_phases() {
+    for algorithm in [MatchingAlgorithm::PayAsBid, MatchingAlgorithm::PayAsClear] {
+        for (bid_partner, offer_partner) in [
+            (None, None),
+            (Some("actor"), None),
+            (None, Some("actor")),
+            (Some("actor"), Some("actor")),
+        ] {
+            let mut bid = order("bid", OrderEnum::Bid, 20, bid_partner, Some(15));
+            let mut offer = order("offer", OrderEnum::Offer, 10, offer_partner, Some(15));
+            // Different areas must not bypass the same-actor check.
+            bid.created_by = "actor".into();
+            offer.created_by = "actor".into();
+            assert!(run(&algorithm, vec![bid], vec![offer]).is_empty());
+        }
+    }
+}
+
+#[test]
 fn absent_preferred_rates_use_each_orders_normal_rate() {
     for algorithm in [MatchingAlgorithm::PayAsBid, MatchingAlgorithm::PayAsClear] {
         for (

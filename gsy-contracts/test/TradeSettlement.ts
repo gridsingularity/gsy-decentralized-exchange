@@ -225,6 +225,29 @@ describe("TradeSettlement", function () {
     });
   }
 
+  for (const matchType of [0, 1]) {
+    it(`Should reject self-trades for match type ${matchType}`, async function () {
+      const { settlement, registry, buyer, operator, bid, offer: originalOffer } =
+        await loadFixture(deploySettlementFixture);
+      bid.preferredTradingPartner = bid.createdBy;
+      const offer = {
+        ...originalOffer,
+        createdBy: bid.createdBy,
+        preferredTradingPartner: bid.createdBy,
+        preferredEnergyRate: bid.preferredEnergyRate,
+      };
+      await registry.connect(buyer).placeOrder(bid);
+      await registry.connect(buyer).placeOrder(offer);
+      await expect(settlement.connect(operator).settleBatch(asMarketBatch([{
+        tradeId: bytes16Id("self-trade"), bid, offer,
+        residualBidId: ZERO_BYTES16, residualOfferId: ZERO_BYTES16,
+        selectedEnergy: 100, clearingPrice: 45, matchType,
+      }]))).to.be.revertedWithCustomError(settlement, "InvalidOrderParams");
+      expect(await registry.getStatus(bid.orderId)).to.equal(1);
+      expect(await registry.getStatus(offer.orderId)).to.equal(1);
+    });
+  }
+
   it("Should reject an unknown match type", async function () {
     const { settlement, registry, buyer, seller, operator, bid, offer } =
       await loadFixture(deploySettlementFixture);

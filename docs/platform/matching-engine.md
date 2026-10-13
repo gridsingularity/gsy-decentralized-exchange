@@ -65,6 +65,7 @@ The matching algorithm executes:
 2. **Standard phase**: remaining bids/offers run through the configured
    `pay_as_bid` or `pay_as_clear` algorithm.
 
+Self-trades (equal `created_by`) are rejected in both phases and on-chain.
 Both bids and offers use `requirements.trading_partner_id`, compared with the
 counterparty's `created_by`. At least one side must name a preferred partner.
 One-sided preferences are valid, but every declared preference must identify

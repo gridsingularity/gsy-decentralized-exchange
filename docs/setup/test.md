@@ -150,8 +150,10 @@ the remaining standard order book clears at one uniform price. Both scenarios
 verify on-chain settlement and non-zero execution-engine penalties for every
 accepted trade.
 
-Both algorithm directories also include `preference_policy.feature` and
-`residual_lifecycle.feature`. The policy cases cover buyer-only, seller-only and
+Both default algorithm runs also include the shared
+`features/matching_algorithms/preference_policy.feature`; each algorithm directory
+still includes `residual_lifecycle.feature`. An explicit `E2E_FEATURE_PATH` override
+runs only the requested path. The policy cases cover buyer-only, seller-only and
 reciprocal preferences, absent preferred rates, preferred prices outside normal
 limits, and standard fallback for incompatible partners or unequal effective
 rates. They verify indexed values, on-chain settlement and the match-type flag
