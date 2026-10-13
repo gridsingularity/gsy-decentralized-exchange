@@ -12,6 +12,7 @@ use gsy_community_client::node_connector::orders::{
     calculate_order_rate, create_inter_community_order, publish_input_orders, publish_orders,
     remove_orders,
 };
+use gsy_community_client::node_connector::signer::trader_keypair;
 use gsy_community_client::offchain_storage_connector::adapter::{
     AreaMarketInfoAdapter, deterministic_areas, deterministic_community_uuid,
     plan_residual_replacement,
@@ -32,7 +33,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use subxt::utils::AccountId32;
-use subxt_signer::sr25519::dev;
+use subxt_signer::sr25519::Keypair;
 use tokio::time::sleep;
 use tracing::{error, info, warn};
 
@@ -44,6 +45,8 @@ struct AppState {
     forecasts_manager: ForecastsManager,
     asset_did_client: AssetDidClient,
     gsy_node_url: String,
+    /// The account every order is signed with and owned by (`TRADER_SIGNER_SURI`).
+    trader: Keypair,
     /// The latest metering points, written by the measurement loop and read by the publish
     /// loop for the inter-community demand guard. `None` until the first set is built.
     metering_points: Arc<RwLock<Option<MeteringPointSet>>>,
@@ -74,6 +77,8 @@ impl AppState {
             // subxt's default transport (jsonrpsee) is WebSocket-only and rejects any
             // scheme other than ws/wss, so this must stay a `ws://` URL.
             gsy_node_url: read_env_or("GSY_NODE_URL", "ws://gsy-node:9944".to_string()),
+            trader: trader_keypair(&CommunityClientConstants.TRADER_SIGNER_SURI)
+                .unwrap_or_else(|error| panic!("{error}")),
             metering_points: Arc::new(RwLock::new(None)),
         }
     }
@@ -126,7 +131,7 @@ impl AppState {
                 plan_residual_replacement(&open_orders, trader, vec![net_forecast]);
 
             if let Err(e) =
-                remove_orders(self.gsy_node_url.clone(), hashes_to_delete, &dev::alice()).await
+                remove_orders(self.gsy_node_url.clone(), hashes_to_delete, &self.trader).await
             {
                 error!(
                     "Failed to remove previous inter-community order for community {}: {}",
@@ -148,13 +153,13 @@ impl AppState {
                 market_id,
                 timeslot,
                 rate,
-                &dev::alice(),
+                &self.trader,
             ) else {
                 continue;
             };
 
             if let Err(e) =
-                publish_input_orders(self.gsy_node_url.clone(), vec![order], &dev::alice()).await
+                publish_input_orders(self.gsy_node_url.clone(), vec![order], &self.trader).await
             {
                 error!(
                     "Failed to publish inter-community order for community {}: {}",
@@ -475,7 +480,7 @@ impl AppState {
             .max(1);
 
         // The account every order is signed with.
-        let trader = AccountId32::from(dev::alice().public_key()).to_string();
+        let trader = AccountId32::from(self.trader.public_key()).to_string();
         // Communities not on the inter-community list that have already been reported as
         // ready for it, so the readiness line is logged once per run.
         let mut reported_ready: HashSet<String> = HashSet::new();
@@ -617,7 +622,7 @@ impl AppState {
                         plan_residual_replacement(&open_orders, &trader, timeslot_forecasts);
 
                     if let Err(e) =
-                        remove_orders(self.gsy_node_url.clone(), hashes_to_delete, &dev::alice())
+                        remove_orders(self.gsy_node_url.clone(), hashes_to_delete, &self.trader)
                             .await
                     {
                         error!(
@@ -636,7 +641,7 @@ impl AppState {
                         market.clone(),
                         bid_rate,
                         offer_rate,
-                        &dev::alice(),
+                        &self.trader,
                     )
                     .await
                     {

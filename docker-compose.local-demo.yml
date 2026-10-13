@@ -1,8 +1,53 @@
+# =============================================================================
+# GSY DEX — local demo, configured like the FEDECOM deployment
+# =============================================================================
+# Same real FEDECOM ontology, forecasters and pilot sites as the deployed stack
+# (deployment/handoff), and a chain configured like production: a `poa` build
+# (15 s blocks) with TWO validators, so GRANDPA needs both votes and finality
+# trails the head by a couple of blocks as it does live. The node is built locally
+# (not the production image) because the offchain worker's storage URL is compiled
+# in, and the production image points at the partner's storage.
+#
+# Differences that remain on purpose: dev keys (//Alice sudo + operator + trader,
+# //Bob second validator), plain bridge networking instead of Tailscale, a local
+# identity server, and a fresh chain whenever the node containers are recreated.
+#
+#   docker compose -f docker-compose.local-demo.yml up -d --build
+#   SPOT_MARKET_COMMUNITIES= docker compose -f docker-compose.local-demo.yml up -d
+#     -> markets for all nine ontology sites, as the partner's stack does today
+# =============================================================================
 
+# Validator settings shared by both nodes; mirrors docker-compose.node-1.yml (paritydb,
+# pruning, safe RPC). --unsafe-rpc-external only lifts Substrate's refusal to expose RPC
+# on a validator; the methods stay `safe`, exactly what production serves.
+x-gsy-node-poa: &gsy-node-poa
+  image: gsy-node:local-poa
+  build:
+    context: .
+    dockerfile: ./gsy-node/Dockerfile
+    args:
+      NODE_BUILD_FEATURES: "--features poa"
+  env_file:
+    - ./.env/gsy-node.env
+  entrypoint: ["/var/www/gsy-node/target/release/gsy-node"]
+  healthcheck:
+    test:
+      [
+        "CMD-SHELL",
+        'curl -H ''Content-Type: application/json'' -d ''{"id":1, "jsonrpc":"2.0", "method":"system_health"}'' http://localhost:9944 | grep -q ''"result":''',
+      ]
+    interval: 10s
+    timeout: 5s
+    retries: 10
+    start_period: 30s
 
 x-mongo-node: &mongo-node
   image: mongo:8.0
   command: ["mongod", "--replSet", "rs0", "--keyFile", "/keyfile/mongo-keyfile", "--bind_ip_all"]
+  # mongo:8.x exits on Linux kernels >= 6.19 (Docker Desktop's VM; SERVER-121912)
+  # unless rseq is disabled for glibc. Harmless elsewhere; keeps the deployed 8.0.
+  environment:
+    - GLIBC_TUNABLES=glibc.pthread.rseq=1
   restart: unless-stopped
   depends_on:
     mongo-keyfile-init:
@@ -15,26 +60,46 @@ x-mongo-node: &mongo-node
     start_period: 20s
 
 services:
+  # Validator #1 (//Alice). Every service talks to this node, as the partner's
+  # services talk to one node. Fixed node key so validator #2 can find it.
   gsy-node:
+    <<: *gsy-node-poa
     container_name: gsy-node
-    build:
-      context: .
-      dockerfile: ./gsy-node/Dockerfile
-    env_file:
-      - ./.env/gsy-node.env
+    command:
+      - --chain=poa
+      - --alice
+      - --node-key=0000000000000000000000000000000000000000000000000000000000000001
+      - --base-path=/var/lib/gsy
+      - --database=paritydb
+      - --state-pruning=256
+      - --blocks-pruning=1000
+      - --listen-addr=/ip4/0.0.0.0/tcp/30333
+      - --no-mdns
+      - --unsafe-rpc-external
+      - --rpc-methods=safe
+      - --rpc-cors=all
     ports:
       - "9944:9944"
-      - "9933:9933"
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          'curl -H ''Content-Type: application/json'' -d ''{"id":1, "jsonrpc":"2.0", "method":"system_health"}'' http://localhost:9944 | grep -q ''"result":''',
-        ]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 30s
+
+  # Validator #2 (//Bob). The `poa` preset has two authorities, so without this node
+  # nothing is finalized.
+  gsy-node-bob:
+    <<: *gsy-node-poa
+    container_name: gsy-node-bob
+    command:
+      - --chain=poa
+      - --bob
+      - --node-key=0000000000000000000000000000000000000000000000000000000000000002
+      - --bootnodes=/dns/gsy-node/tcp/30333/p2p/12D3KooWEyoppNCUx8Yx66oV9fJnriXwCcXwDDUA2kj6vnc6iDEp
+      - --base-path=/var/lib/gsy
+      - --database=paritydb
+      - --state-pruning=256
+      - --blocks-pruning=1000
+      - --listen-addr=/ip4/0.0.0.0/tcp/30333
+      - --no-mdns
+      - --unsafe-rpc-external
+      - --rpc-methods=safe
+      - --rpc-cors=all
 
   gsy-offchain-storage:
     container_name: gsy-offchain-storage
@@ -43,6 +108,16 @@ services:
       dockerfile: ./gsy-offchain-storage/Dockerfile
     env_file:
       - ./.env/gsy-offchain-storage.env
+    # Guarantees-of-origin settings, identical to deployment/handoff/docker-compose.central.yml.
+    environment:
+      - GOO_SITE_ID=ch-aem-goo-poc
+      - GOO_INTERVAL_DURATION_S=900
+      - GOO_ROUNDING_RULE=half_up_2dp
+      - GOO_MUNICIPALITY_CODE=5226
+      - GOO_GRID_OPERATOR_ID=AEM
+      - GOO_GRID_LEVEL=7
+      - GOO_DATA_PROVIDER_ID=did:example:aem-metering
+      - GOO_PROPERTY_MEASURED=measurement#active_energy
     depends_on:
       mongo-init:
         condition: service_completed_successfully
@@ -168,6 +243,10 @@ services:
     # identity server must not delay or stall forecast ingestion or order publication.
     environment:
       - IDENTITY_SERVER_URL=http://gsy-ewf-identity-server:3000
+      # Sites that get a spot market. Defaults to the three forecast sites; run with
+      # `SPOT_MARKET_COMMUNITIES=` (empty = every site) to reproduce the partner's
+      # current 10-markets-per-slot load.
+      - SPOT_MARKET_COMMUNITIES=${SPOT_MARKET_COMMUNITIES-ArenaInnovationCommunity,GaramèDistrict,LugaggiaInnovationCommunity}
     depends_on:
       gsy-node:
         condition: service_healthy

@@ -1,11 +1,12 @@
 use crate::constants::CommunityClientConstants;
+use crate::inter_community::parse_community_list;
 use crate::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use crate::sites::SiteIndex;
 use gsy_offchain_primitives::db_api_schema::market::{AssetType, MarketTopologySchema};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
-use tracing::error;
+use tracing::{error, warn};
 
 #[derive(Deserialize, Serialize)]
 struct GetBuildingsPostParameters {
@@ -326,11 +327,20 @@ impl TopologyManager {
         }
     }
 
+    /// The per-site communities that get a spot market: [`Self::communities_by_site`]
+    /// restricted to `SPOT_MARKET_COMMUNITIES` (see [`retain_spot_market_communities`]).
+    fn spot_market_communities(&self, raw: &RawOntology) -> Vec<ExternalCommunityTopology> {
+        retain_spot_market_communities(
+            self.communities_by_site(raw),
+            &parse_community_list(&CommunityClientConstants.SPOT_MARKET_COMMUNITIES),
+        )
+    }
+
     pub async fn get(&self, next_timeslot: u64) -> Vec<MarketTopologySchema> {
         // Fetch topology
         match self.fetch_raw_ontology().await {
             Ok(raw) => {
-                let all_assets = self.communities_by_site(&raw);
+                let all_assets = self.spot_market_communities(&raw);
                 self.api_adapter
                     .get_or_create_market_topology(all_assets, next_timeslot)
                     .await
@@ -350,7 +360,7 @@ impl TopologyManager {
     ) -> Vec<(u64, Vec<MarketTopologySchema>)> {
         match self.fetch_raw_ontology().await {
             Ok(raw) => {
-                let all_assets = self.communities_by_site(&raw);
+                let all_assets = self.spot_market_communities(&raw);
                 let mut markets_per_timeslot = Vec::with_capacity(timeslots.len());
                 for &timeslot in timeslots {
                     let markets = self
@@ -367,4 +377,35 @@ impl TopologyManager {
             }
         }
     }
+}
+
+/// Keep only the communities named in `allowed`; an empty `allowed` keeps all of them.
+///
+/// Every community kept here gets a spot market per delivery slot, and every market costs the
+/// market orchestrator an open and a close transaction. Sites that are never forecast receive
+/// no orders, so creating their markets only slows the orchestrator down. A name in `allowed`
+/// that matches no site is logged, as it is most likely a typo.
+pub fn retain_spot_market_communities(
+    communities: Vec<ExternalCommunityTopology>,
+    allowed: &[String],
+) -> Vec<ExternalCommunityTopology> {
+    if allowed.is_empty() {
+        return communities;
+    }
+    for name in allowed {
+        if !communities
+            .iter()
+            .any(|community| &community.community_name == name)
+        {
+            warn!(
+                "SPOT_MARKET_COMMUNITIES names '{}', which is not a site of the ontology; \
+                 no market is created for it",
+                name
+            );
+        }
+    }
+    communities
+        .into_iter()
+        .filter(|community| allowed.contains(&community.community_name))
+        .collect()
 }

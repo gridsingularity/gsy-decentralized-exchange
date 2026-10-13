@@ -12,6 +12,13 @@ pub const INTER_COMMUNITY_MARKET_NAME: &str = "INTER_COMMUNITY";
 /// one of its meters either.
 pub const EXCLUDED_METERS: [&str; 1] = ["LIC02SM"];
 
+/// Default of `SPOT_MARKET_COMMUNITIES`: the sites that have forecasters (Lugaggia, Garamè,
+/// Arena). The ontology lists further sites (Brico_HQ, ENBRO_Community, ...) that are never
+/// forecast, so their markets would receive no orders and only add open/close transactions
+/// for the market orchestrator.
+pub const DEFAULT_SPOT_MARKET_COMMUNITIES: &str =
+    "ArenaInnovationCommunity,GaramèDistrict,LugaggiaInnovationCommunity";
+
 /// Default of `INTER_COMMUNITY_ELIGIBLE_COMMUNITIES`. Arena is left out until its demand is
 /// forecast: without bids its net would be its PV alone.
 pub const DEFAULT_INTER_COMMUNITY_ELIGIBLE_COMMUNITIES: &str =
@@ -89,6 +96,14 @@ pub struct Constants {
     /// full subject set to the identity server. The sync is idempotent, so a tick that
     /// changes nothing costs one request and creates no records.
     pub ASSET_DID_SYNC_INTERVAL_SEC: u64,
+    /// Comma-separated names of the communities (sites) that get a spot market per delivery
+    /// slot, parsed by `inter_community::parse_community_list`. Empty means every site of the
+    /// ontology. A community left out here cannot trade at all, including in the
+    /// inter-community market.
+    pub SPOT_MARKET_COMMUNITIES: String,
+    /// Secret URI of the account the community client signs and owns its orders with. It
+    /// must be a registered user with collateral. Defaults to the dev account `//Alice`.
+    pub TRADER_SIGNER_SURI: String,
     /// Comma-separated names of the communities (sites) that publish their aggregated net
     /// order into the inter-community market, parsed by
     /// `inter_community::parse_community_list`.
@@ -171,6 +186,11 @@ impl Constants {
                 "http://gsy-ewf-identity-server:3000".to_string(),
             ),
             ASSET_DID_SYNC_INTERVAL_SEC: read_env_or("ASSET_DID_SYNC_INTERVAL_SEC", 3600u64),
+            TRADER_SIGNER_SURI: read_env_or("TRADER_SIGNER_SURI", "//Alice".to_string()),
+            SPOT_MARKET_COMMUNITIES: read_env_or(
+                "SPOT_MARKET_COMMUNITIES",
+                DEFAULT_SPOT_MARKET_COMMUNITIES.to_string(),
+            ),
             INTER_COMMUNITY_ELIGIBLE_COMMUNITIES: read_env_or(
                 "INTER_COMMUNITY_ELIGIBLE_COMMUNITIES",
                 DEFAULT_INTER_COMMUNITY_ELIGIBLE_COMMUNITIES.to_string(),
