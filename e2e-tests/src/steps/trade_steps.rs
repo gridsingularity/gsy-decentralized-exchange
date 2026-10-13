@@ -985,6 +985,30 @@ async fn verify_trade_on_chain(world: &mut MyWorld) {
     panic!("Timeout: no settled trade was indexed for the expected market");
 }
 
+#[then(expr = "the trade has {string} as buyer and {string} as seller")]
+async fn verify_trade_parties(world: &mut MyWorld, buyer_name: String, seller_name: String) {
+    let trade = world.last_trade.clone().expect("Missing settled trade");
+    let expected_buyer = actor_id_as_hex(world, &buyer_name).await;
+    let expected_seller = actor_id_as_hex(world, &seller_name).await;
+
+    assert!(
+        trade.buyer.eq_ignore_ascii_case(expected_buyer.as_str()),
+        "Trade {} has buyer {}, expected {} ({})",
+        trade.trade_uuid,
+        trade.buyer,
+        buyer_name,
+        expected_buyer
+    );
+    assert!(
+        trade.seller.eq_ignore_ascii_case(expected_seller.as_str()),
+        "Trade {} has seller {}, expected {} ({})",
+        trade.trade_uuid,
+        trade.seller,
+        seller_name,
+        expected_seller
+    );
+}
+
 #[then(expr = "a trade is settled on-chain between {string} and {string} for {float} energy")]
 async fn verify_partner_trade(
     world: &mut MyWorld,

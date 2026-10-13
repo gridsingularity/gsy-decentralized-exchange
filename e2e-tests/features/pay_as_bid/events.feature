@@ -17,3 +17,4 @@ Feature: Events over EWDS
     And the community market and forecasts of 10 energy are submitted
     And a bid by "alice" and an offer by "bob" are published on EWDS
     Then the matching engine matches the bid and offer and a trade is settled on-chain
+    And the trade has "alice" as buyer and "bob" as seller

@@ -154,17 +154,21 @@ pub const TIME_RANGE_TOO_LARGE: &str = "TIME_RANGE_TOO_LARGE";
 pub const INVALID_TIME_RANGE: &str = "INVALID_TIME_RANGE";
 
 /// Validates a `trades.query` range (`endTime` is exclusive), returning the
-/// bounds or the error to publish back to the requester.
+/// bounds or the error to publish back to the requester. A query for one market
+/// needs no range, since the market already limits the result; any other query
+/// needs both bounds.
 pub fn validate_trades_query_range(
+    market_id: Option<&str>,
     start_time: Option<u64>,
     end_time: Option<u64>,
-) -> std::result::Result<(u64, u64), EwdsErrorPayload> {
+) -> std::result::Result<Option<(u64, u64)>, EwdsErrorPayload> {
     let (start, end) = match (start_time, end_time) {
         (Some(start), Some(end)) => (start, end),
+        (None, None) if market_id.is_some() => return Ok(None),
         _ => {
             return Err(EwdsErrorPayload {
                 code: INVALID_TIME_RANGE.to_string(),
-                message: "trades.query requires both startTime and endTime".to_string(),
+                message: "trades.query requires marketId or both startTime and endTime".to_string(),
             })
         }
     };
@@ -187,7 +191,7 @@ pub fn validate_trades_query_range(
             ),
         });
     }
-    Ok((start, end))
+    Ok(Some((start, end)))
 }
 
 #[derive(Deserialize)]
@@ -402,28 +406,35 @@ pub async fn handle_request(
 
             let payload_start_time = opt_rfc3339_to_epoch(payload.start_time.as_deref())?;
             let payload_end_time = opt_rfc3339_to_epoch(payload.end_time.as_deref())?;
-            let (start_time, end_time) =
-                match validate_trades_query_range(payload_start_time, payload_end_time) {
-                    Ok(range) => range,
-                    Err(error) => {
-                        warn!(
-                            "Rejecting EWDS trades.query request (request_id={}): {}: {}",
-                            request_id, error.code, error.message
-                        );
-                        return send_error_response(
-                            client,
-                            config,
-                            request_id,
-                            response_topic.as_str(),
-                            error,
-                        )
-                        .await;
-                    }
-                };
+            let range = match validate_trades_query_range(
+                payload.market_id.as_deref(),
+                payload_start_time,
+                payload_end_time,
+            ) {
+                Ok(range) => range,
+                Err(error) => {
+                    warn!(
+                        "Rejecting EWDS trades.query request (request_id={}): {}: {}",
+                        request_id, error.code, error.message
+                    );
+                    return send_error_response(
+                        client,
+                        config,
+                        request_id,
+                        response_topic.as_str(),
+                        error,
+                    )
+                    .await;
+                }
+            };
 
             let data = db
                 .trades()
-                .filter_trades(payload.market_id, Some(start_time), Some(end_time))
+                .filter_trades(
+                    payload.market_id,
+                    range.map(|(start, _)| start),
+                    range.map(|(_, end)| end),
+                )
                 .await?
                 .into_iter()
                 .map(EwdsTradeDto::from)

@@ -150,6 +150,23 @@ mod tests {
     }
 
     #[test]
+    fn preferred_partner_without_preferred_rate_round_trips_through_ewds_dto() {
+        let mut expected = order();
+        expected.order_type = OrderEnum::Offer;
+        expected.requirements = Some(DbRequirements {
+            trading_partner_id: Some("partner-id".to_string()),
+            energy_type: None,
+            preferred_energy_rate: None,
+        });
+
+        let dto = EwdsOrderDto::from(expected.clone());
+        assert_eq!(dto.preferred_energy_rate, None);
+
+        let actual = DbOrderSchema::try_from(dto).expect("EWDS offer should convert to DB schema");
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
     fn energy_type_round_trips() {
         for et in [
             EnergyType::Green,
