@@ -5,6 +5,7 @@ use ethers::types::{Address, H256, U256, U64};
 use gsy_ethers_listener::{
     GsyEventHandler, MarketClearingFilter, MarketStatusUpdatedFilter, TradeSettledFilter,
 };
+use gsy_offchain_storage::db::DatabaseWrapper;
 use gsy_offchain_storage::evm_handler::OffchainStorageEvmHandler;
 use gsy_offchain_storage::ewds_event_handler::{
     handle_event, start_ewds_event_subscriber, EwdsEventPublisher,
@@ -647,6 +648,103 @@ async fn handle_event_saves_facilities_sites_and_communities() {
     );
 
     stop_app(app).await;
+}
+
+/// Sends batches of `(id, name)` records as `event_type` events and returns the `(id, name)`
+/// pairs stored afterwards. The first batch is stored; every later one conflicts with it or
+/// with itself, so it must be rejected without writing anything.
+async fn assert_conflicting_batches_are_rejected<F, G>(
+    event_type: EwdsEventType,
+    record: F,
+    stored: impl Fn(DatabaseWrapper) -> G,
+) where
+    F: Fn(&str, &str) -> Value,
+    G: std::future::Future<Output = Vec<(String, String)>>,
+{
+    let app = init_app().await;
+    let db = &app.db_wrapper;
+    let batch = |records: &[(&str, &str)]| {
+        Value::Array(records.iter().map(|(id, name)| record(id, name)).collect())
+    };
+    let initial = vec![("id-1".to_string(), "name-1".to_string())];
+
+    handle_event(
+        db,
+        event(event_type, "initial", batch(&[("id-1", "name-1")])),
+    )
+    .await
+    .unwrap();
+
+    let conflicting: [&[(&str, &str)]; 4] = [
+        // A stored id under another name.
+        &[("id-1", "name-2")],
+        // A stored name under another id, after a valid record that must not be written.
+        &[("id-3", "name-3"), ("id-2", "name-1")],
+        // One id with two names in the batch.
+        &[("id-4", "name-4"), ("id-4", "name-5")],
+        // One name with two ids in the batch.
+        &[("id-5", "name-6"), ("id-6", "name-6")],
+    ];
+    for (index, records) in conflicting.into_iter().enumerate() {
+        let error = handle_event(
+            db,
+            event(event_type, &format!("conflict-{index}"), batch(records)),
+        )
+        .await
+        .expect_err("A conflicting batch must be rejected");
+        assert!(is_invalid_event(&error), "{:#}", error);
+        assert_eq!(stored(db.clone()).await, initial, "batch {:?}", records);
+    }
+
+    // Sending a stored record again is fine.
+    handle_event(
+        db,
+        event(event_type, "repeat", batch(&[("id-1", "name-1")])),
+    )
+    .await
+    .unwrap();
+    assert_eq!(stored(db.clone()).await, initial);
+
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn handle_event_rejects_facilities_that_conflict_with_stored_ids_or_names() {
+    assert_conflicting_batches_are_rejected(
+        EwdsEventType::Facility,
+        |id, name| {
+            json!(FacilitySchema {
+                facility_name: name.to_string(),
+                ..facility(id, "owner-1")
+            })
+        },
+        |db| async move {
+            let mut facilities = db.facilities().get_all().await.unwrap();
+            facilities.sort_by(|a, b| a.facility_id.cmp(&b.facility_id));
+            facilities
+                .into_iter()
+                .map(|facility| (facility.facility_id, facility.facility_name))
+                .collect()
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn handle_event_rejects_communities_that_conflict_with_stored_ids_or_names() {
+    assert_conflicting_batches_are_rejected(
+        EwdsEventType::Community,
+        |id, name| json!({"communityId": id, "communityName": name, "sites": []}),
+        |db| async move {
+            let mut communities = db.communities().get_all().await.unwrap();
+            communities.sort_by(|a, b| a.community_id.cmp(&b.community_id));
+            communities
+                .into_iter()
+                .map(|community| (community.community_id, community.community_name))
+                .collect()
+        },
+    )
+    .await;
 }
 
 #[tokio::test]

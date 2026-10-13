@@ -150,9 +150,9 @@ REST API uses. New orders go to the community client instead; see
 | Topic | `eventType` | `data` | Stored with |
 |---|---|---|---|
 | `measurements` | `measurements.event` | array of 1..N measurements (`EwdsMeasurementDto`) | measurement points and timeseries, upserted by point and timestamp |
-| `facility` | `facility.event` | array of 1..N facilities (`FacilitySchema`) | upserted by `facility_id` |
+| `facility` | `facility.event` | array of 1..N facilities (`FacilitySchema`) | upserted by `facility_id`; the whole batch is dropped if it would give a stored `facility_id` another name or a stored name another `facility_id` |
 | `site` | `site.event` | array of 1..N sites (`SiteSchema`) | upserted by `site_name` |
-| `community` | `community.event` | array of 1..N communities (`EwdsCommunityDto`) | upserted by `communityId` |
+| `community` | `community.event` | array of 1..N communities (`EwdsCommunityDto`) | upserted by `communityId`; the whole batch is dropped if it would give a stored `communityId` another name or a stored name another `communityId` |
 
 The envelope is the one GSY uses for its own events:
 

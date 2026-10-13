@@ -1,8 +1,12 @@
+use crate::db::grid_topology_service::{
+    check_for_duplicates, upsert_by_id, DuplicateRecord, NamedRecord,
+};
 use crate::db::measurements_service::insert_measurements;
 use crate::db::DatabaseWrapper;
 use crate::ewds_handler::{send_message_with_fqcn, EwdsHandlerConfig};
 use anyhow::{anyhow, Result};
 use futures::future::join_all;
+use mongodb::Collection;
 use primitives::db_api_schema::{
     grid_topology::{EnergyCommunitySchema, FacilitySchema, SiteSchema},
     profiles::MeasurementSchema,
@@ -193,13 +197,7 @@ pub async fn handle_event(db: &DatabaseWrapper, envelope: EwdsEventEnvelope<Valu
         }
         EwdsEventType::Facility => {
             let facilities = parse_batch(envelope.data, |facility: FacilitySchema| Ok(facility))?;
-            for facility in facilities {
-                retry_db_write(|| {
-                    let facility = facility.clone();
-                    async move { db.facilities().upsert(facility).await }
-                })
-                .await?;
-            }
+            upsert_named_records(&db.facilities(), facilities).await?;
         }
         EwdsEventType::Site => {
             let sites = parse_batch(envelope.data, |site: SiteSchema| Ok(site))?;
@@ -215,13 +213,7 @@ pub async fn handle_event(db: &DatabaseWrapper, envelope: EwdsEventEnvelope<Valu
             let communities = parse_batch(envelope.data, |community: EwdsCommunityDto| {
                 Ok(EnergyCommunitySchema::from(community))
             })?;
-            for community in communities {
-                retry_db_write(|| {
-                    let community = community.clone();
-                    async move { db.communities().upsert(community).await }
-                })
-                .await?;
-            }
+            upsert_named_records(&db.communities(), communities).await?;
         }
         other => {
             return Err(invalid_event(anyhow!(
@@ -229,6 +221,20 @@ pub async fn handle_event(db: &DatabaseWrapper, envelope: EwdsEventEnvelope<Valu
                 other
             )))
         }
+    }
+    Ok(())
+}
+
+/// Writes a batch of facilities or communities, or nothing if a record would give an id a second
+/// name or a name a second id.
+async fn upsert_named_records<T: NamedRecord + Clone>(
+    collection: &Collection<T>,
+    records: Vec<T>,
+) -> Result<()> {
+    let batch = records.as_slice();
+    retry_db_write(|| check_for_duplicates(collection, batch)).await?;
+    for record in records {
+        retry_db_write(|| upsert_by_id(collection, record.clone())).await?;
     }
     Ok(())
 }
@@ -260,6 +266,8 @@ where
     }
 }
 
+/// Whether `error` is a write that conflicts with the stored data, so retrying it fails the same
+/// way.
 fn is_duplicate_key(error: &anyhow::Error) -> bool {
-    format!("{error:#}").contains("E11000")
+    error.downcast_ref::<DuplicateRecord>().is_some() || format!("{error:#}").contains("E11000")
 }
