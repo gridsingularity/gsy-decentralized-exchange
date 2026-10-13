@@ -13,8 +13,8 @@
       "additionalProperties": false,
       "properties": {
         "marketId": { "type": "string", "minLength": 1, "description": "Market whose trades are returned. Takes precedence over the time range." },
-        "startTime": { "type": "integer", "minimum": 0, "description": "Inclusive range start, Unix epoch seconds." },
-        "endTime": { "type": "integer", "minimum": 0, "description": "Exclusive range end, Unix epoch seconds. At most startTime + 86400." }
+        "startTime": { "type": "string", "format": "date-time", "description": "Inclusive range start, RFC 3339." },
+        "endTime": { "type": "string", "format": "date-time", "description": "Exclusive range end, RFC 3339. At most 1 day after startTime." }
       },
       "dependentRequired": { "startTime": ["endTime"], "endTime": ["startTime"] },
       "anyOf": [
