@@ -130,6 +130,7 @@ fn trade(trade_uuid: &str, creation_time: u64) -> DbTradeSchema {
             selected_energy_kWh: 2.0,
             energy_rate: 0.3,
         },
+        status_updated_at: None,
     }
 }
 

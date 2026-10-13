@@ -141,6 +141,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
                 selected_energy_kWh: energy_f64,
                 energy_rate: price_f64,
             },
+            status_updated_at: None,
         };
 
         self.db

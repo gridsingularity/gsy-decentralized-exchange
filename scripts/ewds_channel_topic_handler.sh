@@ -31,6 +31,7 @@ measurementsQuery
 clearingResultsQuery
 marketsQuery
 facilitiesQuery
+guaranteesOfOriginQuery
 idsQuery
 communitiesQuery
 ordersQueryTest
@@ -39,6 +40,7 @@ measurementsQueryTest
 clearingResultsQueryTest
 marketsQueryTest
 facilitiesQueryTest
+guaranteesOfOriginQueryTest
 idsQueryTest
 communitiesQueryTest
 "
