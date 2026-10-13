@@ -209,6 +209,7 @@ fn offer() -> Value {
         "creationTime": "2026-09-30T09:40:12Z",
         "energyType": "PV",
         "preferredTradingPartner": "owner-1",
+        "preferredEnergyRate": 0.15,
     })
 }
 
@@ -313,8 +314,7 @@ async fn places_a_bid_and_an_offer_with_their_contract_params() {
                 energy_type: 2, // PV
                 is_bid: false,
                 preferred_trading_partner: bytes16(OWNER_1_ONCHAIN),
-                // Without its own preferredEnergyRate the order falls back to its priceLimit.
-                preferred_energy_rate: 2_000,
+                preferred_energy_rate: 1_500,
             },
         ]
     );
