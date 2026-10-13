@@ -125,6 +125,7 @@ async fn post_normalized_trade_round_trips() {
 
     let resp = client
         .get(&format!("{}/trades", &address))
+        .query(&[("market_id", trade.market_id.as_str())])
         .send()
         .await
         .unwrap();
@@ -232,37 +233,49 @@ async fn get_trades_filters_by_time_range() {
 }
 
 #[tokio::test]
-async fn get_trades_returns_all_when_no_params() {
+async fn get_trades_returns_400_without_market_id_or_full_range() {
     let app = init_app().await;
     let address = app.address.clone();
-    let bid = make_order(
-        "0x0000000000000000000000000000000000000000000000000000000000000b4d",
-        OrderEnum::Bid,
-    );
-    let offer = make_order(
-        "0x0000000000000000000000000000000000000000000000000000000000000a8c",
-        OrderEnum::Offer,
-    );
-    let trade = make_trade("TRADE-NOPARAMS-0001", bid, offer);
+
+    let client = reqwest::Client::new();
+    let queries: [&[(&str, &str)]; 4] = [
+        &[],
+        &[("start_time", "2026-01-01T00:00:00Z")],
+        &[("end_time", "2026-01-01T00:00:00Z")],
+        &[
+            ("market_id", "MARKET-1"),
+            ("start_time", "2026-01-01T00:00:00Z"),
+        ],
+    ];
+    for query in queries {
+        let resp = client
+            .get(&format!("{}/trades", &address))
+            .query(query)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(400, resp.status().as_u16(), "query: {:?}", query);
+    }
+
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn get_trades_returns_400_when_range_exceeds_one_day() {
+    let app = init_app().await;
+    let address = app.address.clone();
 
     let client = reqwest::Client::new();
     let resp = client
-        .post(&format!("{}/trades", &address))
-        .json(&vec![trade.clone()])
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(200, resp.status().as_u16());
-
-    let resp = client
         .get(&format!("{}/trades", &address))
+        .query(&[
+            ("start_time", "2026-01-01T00:00:00Z"),
+            ("end_time", "2026-01-02T00:00:01Z"),
+        ])
         .send()
         .await
         .unwrap();
-    assert_eq!(200, resp.status().as_u16());
-    let returned: Vec<EwdsTradeDto> = resp.json().await.unwrap();
-    assert_eq!(returned.len(), 1);
-    assert_eq!(returned[0].trade_id, "TRADE-NOPARAMS-0001");
+    assert_eq!(400, resp.status().as_u16());
 
     stop_app(app).await;
 }

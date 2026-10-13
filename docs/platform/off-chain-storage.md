@@ -34,7 +34,7 @@ offer attributes, so the indexed order is complete without a follow-up
 
 ### Trades Storage (D3.2 section 5.3)
 - `/trades-normalized` (`POST`)
-- `/trades` (`GET`, `POST`)
+- `/trades` (`GET`, `POST`); `GET` follows the `trades.query` rules: `market_id` alone is enough, otherwise both `start_time` and `end_time` are required and span at most 1 day (`400` otherwise)
 - `/market` (`GET`) compatibility adapter for EVM JSON callers
 - `/communities` (`GET`, `POST`) for idempotent community query/upsert
 - `/markets` (`GET`, `POST`) for ontology-aligned market-opening records
