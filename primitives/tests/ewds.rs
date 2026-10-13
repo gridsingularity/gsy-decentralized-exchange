@@ -282,7 +282,7 @@ mod tests {
     fn event_envelope_parses_a_measurement_batch() {
         let event: EwdsEventEnvelope<Vec<EwdsMeasurementDto>> = serde_json::from_value(json!({
             "eventId": "7d3f7a52-0c5e-4a8e-9a57-2b8f5f3f7e10",
-            "eventType": "measurements.submitted",
+            "eventType": "measurements.event",
             "occurredAt": "2026-09-29T10:16:02Z",
             "data": [{
                 "facilityId": "facility-id",
@@ -295,7 +295,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(event.event_id, "7d3f7a52-0c5e-4a8e-9a57-2b8f5f3f7e10");
-        assert_eq!(event.event_type, EwdsEventType::MeasurementsSubmitted);
+        assert_eq!(event.event_type, EwdsEventType::Measurements);
         assert_eq!(event.occurred_at, "2026-09-29T10:16:02Z");
         let measurements = event
             .data
@@ -311,7 +311,7 @@ mod tests {
         let facility_event: EwdsEventEnvelope<Vec<FacilitySchema>> =
             serde_json::from_value(json!({
                 "eventId": "facility-event",
-                "eventType": "facility.submitted",
+                "eventType": "facility.event",
                 "occurredAt": "2026-09-29T10:16:02Z",
                 "data": [{
                     "facility_id": "facility-id",
@@ -321,7 +321,7 @@ mod tests {
                 }],
             }))
             .unwrap();
-        assert_eq!(facility_event.event_type, EwdsEventType::FacilitySubmitted);
+        assert_eq!(facility_event.event_type, EwdsEventType::Facility);
         assert_eq!(
             facility_event.data,
             vec![FacilitySchema {
@@ -334,7 +334,7 @@ mod tests {
 
         let site_event: EwdsEventEnvelope<Vec<SiteSchema>> = serde_json::from_value(json!({
             "eventId": "site-event",
-            "eventType": "site.submitted",
+            "eventType": "site.event",
             "occurredAt": "2026-09-29T10:16:02Z",
             "data": [{
                 "site_name": "site-name",
@@ -343,7 +343,7 @@ mod tests {
             }],
         }))
         .unwrap();
-        assert_eq!(site_event.event_type, EwdsEventType::SiteSubmitted);
+        assert_eq!(site_event.event_type, EwdsEventType::Site);
         assert_eq!(
             site_event.data,
             vec![SiteSchema {
@@ -358,7 +358,7 @@ mod tests {
     fn event_envelope_parses_an_order_batch() {
         let event: EwdsEventEnvelope<Vec<EwdsOrderDto>> = serde_json::from_value(json!({
             "eventId": "order-event",
-            "eventType": "order.submitted",
+            "eventType": "order.event",
             "occurredAt": "2026-09-30T09:40:13Z",
             "data": [
                 {
@@ -390,7 +390,7 @@ mod tests {
         }))
         .unwrap();
 
-        assert_eq!(event.event_type, EwdsEventType::OrderSubmitted);
+        assert_eq!(event.event_type, EwdsEventType::Order);
         let orders = event
             .data
             .into_iter()
@@ -666,14 +666,14 @@ mod tests {
     #[test]
     fn event_types_serialize_to_their_wire_names() {
         let wire_names = [
-            "trade.created",
-            "clearing_result.created",
-            "market_status.updated",
-            "measurements.submitted",
-            "facility.submitted",
-            "site.submitted",
-            "community.submitted",
-            "order.submitted",
+            "trade.event",
+            "clearingResult.event",
+            "market.event",
+            "measurements.event",
+            "facility.event",
+            "site.event",
+            "community.event",
+            "order.event",
         ];
         assert_eq!(EwdsEventType::ALL.len(), wire_names.len());
         for (event_type, wire_name) in EwdsEventType::ALL.into_iter().zip(wire_names) {

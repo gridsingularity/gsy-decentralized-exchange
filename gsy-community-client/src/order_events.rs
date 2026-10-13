@@ -25,7 +25,7 @@ const PLACE_ORDER_RETRY_DELAY_MS: u64 = 1_000;
 const NODE_HEALTH_CHECK_INTERVAL_MS: u64 = 30_000;
 const NODE_HEALTH_CHECK_TIMEOUT_MS: u64 = 10_000;
 
-/// Polls `order.submitted` events from EWDS and sends their orders to the `OrderRegistry`. Runs until the
+/// Polls `order.event` messages from EWDS and sends their orders to the `OrderRegistry`. Runs until the
 /// task is dropped, and only returns early if the node or the configuration is unusable, or the
 /// connection to the node is lost for good.
 pub async fn start_order_event_subscriber() -> Result<()> {
@@ -57,7 +57,7 @@ pub async fn start_order_event_subscriber() -> Result<()> {
         order_registry_address
     );
     tokio::select! {
-        _ = ewds_client.run_event_worker(EwdsEventType::OrderSubmitted, |envelope| {
+        _ = ewds_client.run_event_worker(EwdsEventType::Order, |envelope| {
             handler.handle(envelope)
         }) => Ok(()),
         error = watch_node(&handler.order_registry) => Err(error),
@@ -96,7 +96,7 @@ impl OrderEventHandler {
         }
     }
 
-    /// Sends the orders of an `order.submitted` event to the `OrderRegistry`.
+    /// Sends the orders of an `order.event` to the `OrderRegistry`.
     ///
     /// The event is rejected before anything is sent if one of its orders is invalid or its IDs
     /// cannot be resolved. After that every order is sent on its own: one the contract rejects

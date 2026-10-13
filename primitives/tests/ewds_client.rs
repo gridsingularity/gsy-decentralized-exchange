@@ -136,7 +136,7 @@ async fn publish_event_uses_the_events_channel_and_the_topic_of_its_type() {
         .await;
     let event = EwdsEventEnvelope {
         event_id: "event-4".to_string(),
-        event_type: EwdsEventType::CommunitySubmitted,
+        event_type: EwdsEventType::Community,
         occurred_at: "2026-09-29T10:16:02+00:00".to_string(),
         data: json!({"communityId": "community-1"}),
     };
@@ -157,7 +157,7 @@ async fn publish_event_uses_the_events_channel_and_the_topic_of_its_type() {
 fn order_event(event_id: &str) -> EwdsEventEnvelope<Value> {
     EwdsEventEnvelope {
         event_id: event_id.to_string(),
-        event_type: EwdsEventType::OrderSubmitted,
+        event_type: EwdsEventType::Order,
         occurred_at: "2026-09-30T09:40:13Z".to_string(),
         data: json!([]),
     }
@@ -177,7 +177,7 @@ async fn run_order_event_worker(
     let worker_handled = handled.clone();
     let worker = tokio::spawn(async move {
         worker_client
-            .run_event_worker(EwdsEventType::OrderSubmitted, |envelope| {
+            .run_event_worker(EwdsEventType::Order, |envelope| {
                 let handled = worker_handled.clone();
                 async move {
                     let mut handled = handled.lock().unwrap();
@@ -254,7 +254,7 @@ async fn event_worker_polls_the_topic_of_its_type_on_the_events_channel() {
 async fn event_worker_skips_bad_and_seen_messages() {
     let server = MockServer::start().await;
     let wrong_type_event = EwdsEventEnvelope {
-        event_type: EwdsEventType::SiteSubmitted,
+        event_type: EwdsEventType::Site,
         ..order_event("site-event")
     };
     Mock::given(method("GET"))

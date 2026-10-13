@@ -215,7 +215,7 @@ fn offer() -> Value {
 fn event(event_id: &str, orders: Vec<Value>) -> EwdsEventEnvelope<Value> {
     EwdsEventEnvelope {
         event_id: event_id.to_string(),
-        event_type: EwdsEventType::OrderSubmitted,
+        event_type: EwdsEventType::Order,
         occurred_at: "2026-09-30T09:40:13Z".to_string(),
         data: Value::Array(orders),
     }

@@ -318,7 +318,7 @@ async fn publish_community_via_ewds(community: &EnergyCommunitySchema) {
     let community = EwdsCommunityDto::from(community.clone());
     let event = EwdsEventEnvelope {
         event_id: Uuid::new_v4().to_string(),
-        event_type: EwdsEventType::CommunitySubmitted,
+        event_type: EwdsEventType::Community,
         occurred_at: epoch_to_rfc3339(get_current_timestamp_in_secs()),
         data: vec![&community],
     };

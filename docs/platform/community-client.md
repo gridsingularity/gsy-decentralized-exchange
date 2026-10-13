@@ -11,7 +11,7 @@ publication.
 - Normalize profile data into ontology `MeasurementPoint` and `Timeseries` records.
 - Forward market openings as ontology `Market` records.
 - Publish bid/offer orders on-chain via `OrderRegistry.placeOrder`.
-- Send the orders FOS publishes as EWDS `order.submitted` events to
+- Send the orders FOS publishes as EWDS `order.event` messages to
   `OrderRegistry.placeOrder`.
 
 ## Facility Topology and Market Coupling
@@ -45,7 +45,7 @@ zero-value sentinels.
 
 ## Order Events
 
-When `EWDS_ENABLE_HANDLER` is on, the binary polls the `order.submitted` topic
+When `EWDS_ENABLE_HANDLER` is on, the binary polls the `order` topic for `order.event` messages
 (`EWDS_ORDER_EVENT_TOPIC`, default `order`) on
 `EWDS_EVENT_SUBSCRIBE_FQCN`, and no other topic. For every event it:
 

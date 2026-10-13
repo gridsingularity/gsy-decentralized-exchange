@@ -161,7 +161,7 @@ empty-block RPC calls rather than waiting for one transaction per block.
 Before waiting for the orchestrator, the E2E runner idempotently stores a
 canonical community using `OFFCHAIN_STORAGE_TRANSPORT`: over HTTP it calls
 `POST /communities`, and with the EWDS transport it publishes a
-`community.submitted` event and waits until `communities.query` returns the
+`community.event` and waits until `communities.query` returns the
 community. The orchestrator then queries the same community collection and
 opens the community-aware Spot market whose ID is derived from community UUID,
 market type, and delivery slot.

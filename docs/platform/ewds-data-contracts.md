@@ -38,11 +38,15 @@ Primary files:
 - `int.communities.query.response.v1.json`
 - `int.facility.schema.v1.json`
 - `int.site.schema.v1.json`
-- `int.measurements.submitted.event.v1.json`
-- `int.facility.submitted.event.v1.json`
-- `int.site.submitted.event.v1.json`
-- `int.community.submitted.event.v1.json`
-- `int.order.submitted.event.v1.json`
+- `int.measurements.event.v1.json`
+- `int.facility.event.v1.json`
+- `int.site.event.v1.json`
+- `int.community.event.v1.json`
+- `int.order.event.v1.json`
+- `int.trade.event.v1.json`
+- `int.clearing-result.event.v1.json`
+- `int.market.event.v1.json`
+- `int.market-status.schema.v1.json`
 
 DDHub topic names use camelCase because the Client Gateway UI rejects dots in
 topic names. The schema file names and payload `operation` values keep dotted
@@ -58,15 +62,18 @@ operation names for readability and service routing:
 | `measurementsQueryResponse` | response envelope | `int.measurements.query.response.v1.json` |
 | `communitiesQuery` | `communities.query` | `int.communities.query.request.v1.json` |
 | `communitiesQueryResponse` | response envelope | `int.communities.query.response.v1.json` |
-| `measurements` | `measurements.submitted` event | `int.measurements.submitted.event.v1.json` |
-| `facility` | `facility.submitted` event | `int.facility.submitted.event.v1.json` |
-| `site` | `site.submitted` event | `int.site.submitted.event.v1.json` |
-| `community` | `community.submitted` event | `int.community.submitted.event.v1.json` |
-| `order` | `order.submitted` event | `int.order.submitted.event.v1.json` |
+| `measurements` | `measurements.event` | `int.measurements.event.v1.json` |
+| `facility` | `facility.event` | `int.facility.event.v1.json` |
+| `site` | `site.event` | `int.site.event.v1.json` |
+| `community` | `community.event` | `int.community.event.v1.json` |
+| `order` | `order.event` | `int.order.event.v1.json` |
+| `trade` | `trade.event` | `int.trade.event.v1.json` |
+| `clearingResult` | `clearingResult.event` | `int.clearing-result.event.v1.json` |
+| `market` | `market.event` | `int.market.event.v1.json` |
 
 ### Measurement Mapping
 
-Used by `measurements.query` responses and `measurements.submitted` events.
+Used by `measurements.query` responses and `measurements.event` messages.
 
 | Schema field | Current runtime source |
 |---|---|
@@ -78,7 +85,7 @@ Used by `measurements.query` responses and `measurements.submitted` events.
 
 ### Facility and Site Mapping
 
-`facility.submitted` and `site.submitted` events carry lists of
+`facility.event` and `site.event` messages carry lists of
 `FacilitySchema` and `SiteSchema` unchanged, so their fields are snake_case
 (`facility_id`, `site_name`, ...), like `facilities.query` responses.
 
@@ -109,7 +116,7 @@ Used by `measurements.query` responses and `measurements.submitted` events.
 
 ### Order Mapping
 
-Used by `orders.query` responses and `order.submitted` events. Times are
+Used by `orders.query` responses and `order.event` messages. Times are
 RFC 3339 strings on the wire.
 
 | Ontology property | Schema field | Current runtime source |
@@ -124,7 +131,7 @@ RFC 3339 strings on the wire.
 | `int:createdBy` | `createdBy` | `DbOrderSchema.created_by` |
 | `int:createdAt` | `creationTime` | `DbOrderSchema.creation_time` |
 
-For an `order.submitted` event, the community client builds the
+For an `order.event`, the community client builds the
 `OrderRegistry.placeOrder` parameters like this:
 
 | Contract parameter | From |

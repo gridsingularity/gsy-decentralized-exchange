@@ -1,16 +1,16 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "int.measurements.submitted.event.v1",
-  "title": "measurements event",
+  "$id": "int.community.event.v1",
+  "title": "community event",
   "type": "object",
   "additionalProperties": false,
   "properties": {
     "eventId": { "type": "string", "minLength": 1 },
-    "eventType": { "const": "measurements.submitted" },
+    "eventType": { "const": "community.event" },
     "occurredAt": { "type": "string", "format": "date-time" },
     "data": {
       "type": "array",
-      "items": { "$ref": "./int.measurement.schema.v1.json" },
+      "items": { "$ref": "./int.community.schema.v1.json" },
       "minItems": 1
     }
   },

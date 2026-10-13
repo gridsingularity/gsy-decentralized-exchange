@@ -133,12 +133,12 @@ fn trade(trade_uuid: &str, creation_time: u64) -> DbTradeSchema {
 }
 
 #[tokio::test]
-async fn publish_trades_created_sends_event_on_events_channel() {
+async fn publish_trade_event_sends_event_on_events_channel() {
     let server = mock_gateway().await;
     let publisher = EwdsEventPublisher::new(test_config(server.uri()));
 
     publisher
-        .publish_trades_created(vec![trade("trade-1", 950)])
+        .publish_trade_event(vec![trade("trade-1", 950)])
         .await
         .unwrap();
 
@@ -150,10 +150,7 @@ async fn publish_trades_created_sends_event_on_events_channel() {
 
     let event: serde_json::Value = serde_json::from_str(&send_dto.payload).unwrap();
     assert_event_id(&send_dto, &event);
-    assert_eq!(
-        event["eventType"],
-        json!(EwdsEventType::TradeCreated.as_str())
-    );
+    assert_eq!(event["eventType"], json!(EwdsEventType::Trade.as_str()));
     assert_eq!(event["occurredAt"], json!(epoch_to_rfc3339(950)));
     assert_eq!(event["data"].as_array().unwrap().len(), 1);
     assert_eq!(event["data"][0]["tradeId"], json!("trade-1"));
@@ -161,12 +158,12 @@ async fn publish_trades_created_sends_event_on_events_channel() {
 }
 
 #[tokio::test]
-async fn publish_trades_created_sends_several_trades_in_one_event() {
+async fn publish_trade_event_sends_several_trades_in_one_event() {
     let server = mock_gateway().await;
     let publisher = EwdsEventPublisher::new(test_config(server.uri()));
 
     publisher
-        .publish_trades_created(vec![trade("trade-1", 950), trade("trade-2", 960)])
+        .publish_trade_event(vec![trade("trade-1", 950), trade("trade-2", 960)])
         .await
         .unwrap();
 
@@ -188,7 +185,7 @@ async fn every_event_gets_its_own_id() {
 
     for _ in 0..2 {
         publisher
-            .publish_trades_created(vec![trade("trade-1", 950)])
+            .publish_trade_event(vec![trade("trade-1", 950)])
             .await
             .unwrap();
     }
@@ -207,7 +204,7 @@ async fn every_event_gets_its_own_id() {
 }
 
 #[tokio::test]
-async fn publish_clearing_results_created_sends_event_on_events_channel() {
+async fn publish_clearing_result_event_sends_event_on_events_channel() {
     let server = mock_gateway().await;
     let publisher = EwdsEventPublisher::new(test_config(server.uri()));
     let clearing_result = ClearingResultSchema {
@@ -224,7 +221,7 @@ async fn publish_clearing_results_created_sends_event_on_events_channel() {
     };
 
     publisher
-        .publish_clearing_results_created(vec![clearing_result])
+        .publish_clearing_result_event(vec![clearing_result])
         .await
         .unwrap();
 
@@ -238,7 +235,7 @@ async fn publish_clearing_results_created_sends_event_on_events_channel() {
     assert_event_id(&send_dto, &event);
     assert_eq!(
         event["eventType"],
-        json!(EwdsEventType::ClearingResultCreated.as_str())
+        json!(EwdsEventType::ClearingResult.as_str())
     );
     assert_eq!(event["occurredAt"], json!(epoch_to_rfc3339(1_100)));
     assert_eq!(event["data"][0]["marketId"], json!("market-1"));
@@ -247,12 +244,12 @@ async fn publish_clearing_results_created_sends_event_on_events_channel() {
 }
 
 #[tokio::test]
-async fn publish_market_statuses_updated_sends_event_on_events_channel() {
+async fn publish_market_event_sends_event_on_events_channel() {
     let server = mock_gateway().await;
     let publisher = EwdsEventPublisher::new(test_config(server.uri()));
 
     publisher
-        .publish_market_statuses_updated(
+        .publish_market_event(
             vec![EwdsMarketStatusDto {
                 market_id: "market-1".to_string(),
                 is_open: false,
@@ -270,10 +267,7 @@ async fn publish_market_statuses_updated_sends_event_on_events_channel() {
 
     let event: serde_json::Value = serde_json::from_str(&send_dto.payload).unwrap();
     assert_event_id(&send_dto, &event);
-    assert_eq!(
-        event["eventType"],
-        json!(EwdsEventType::MarketStatusUpdated.as_str())
-    );
+    assert_eq!(event["eventType"], json!(EwdsEventType::Market.as_str()));
     assert_eq!(event["occurredAt"], json!(epoch_to_rfc3339(1_200)));
     assert_eq!(
         event["data"],
@@ -293,7 +287,7 @@ async fn publish_does_not_retry_or_panic_when_gateway_rejects_event() {
 
     // The send error is logged inside the task; the task itself must still finish cleanly.
     publisher
-        .publish_market_statuses_updated(
+        .publish_market_event(
             vec![EwdsMarketStatusDto {
                 market_id: "market-1".to_string(),
                 is_open: true,
@@ -322,42 +316,42 @@ fn handler_config_defaults_to_the_events_channels() {
         ),
         (
             "EWDS_TRADE_EVENT_TOPIC",
-            config.event_topic(EwdsEventType::TradeCreated),
+            config.event_topic(EwdsEventType::Trade),
             "trade",
         ),
         (
             "EWDS_CLEARING_RESULT_EVENT_TOPIC",
-            config.event_topic(EwdsEventType::ClearingResultCreated),
+            config.event_topic(EwdsEventType::ClearingResult),
             "clearingResult",
         ),
         (
             "EWDS_MARKET_EVENT_TOPIC",
-            config.event_topic(EwdsEventType::MarketStatusUpdated),
+            config.event_topic(EwdsEventType::Market),
             "market",
         ),
         (
             "EWDS_MEASUREMENTS_EVENT_TOPIC",
-            config.event_topic(EwdsEventType::MeasurementsSubmitted),
+            config.event_topic(EwdsEventType::Measurements),
             "measurements",
         ),
         (
             "EWDS_FACILITY_EVENT_TOPIC",
-            config.event_topic(EwdsEventType::FacilitySubmitted),
+            config.event_topic(EwdsEventType::Facility),
             "facility",
         ),
         (
             "EWDS_SITE_EVENT_TOPIC",
-            config.event_topic(EwdsEventType::SiteSubmitted),
+            config.event_topic(EwdsEventType::Site),
             "site",
         ),
         (
             "EWDS_COMMUNITY_EVENT_TOPIC",
-            config.event_topic(EwdsEventType::CommunitySubmitted),
+            config.event_topic(EwdsEventType::Community),
             "community",
         ),
         (
             "EWDS_ORDER_EVENT_TOPIC",
-            config.event_topic(EwdsEventType::OrderSubmitted),
+            config.event_topic(EwdsEventType::Order),
             "order",
         ),
     ] {
@@ -371,7 +365,7 @@ fn handler_config_defaults_to_the_events_channels() {
 // --- EVM handler integration ----------------------------------------
 
 #[tokio::test]
-async fn trade_settled_publishes_trade_created_event() {
+async fn trade_settled_publishes_trade_event() {
     let app = init_app().await;
     let server = mock_gateway().await;
     let handler = evm_handler(&app, &server);
@@ -385,10 +379,7 @@ async fn trade_settled_publishes_trade_created_event() {
     let trade_id = bytes16_to_hex([0x01; 16]);
     assert_eq!(messages[0].topic_name, "trade");
     let event = event_payload(&messages[0]);
-    assert_eq!(
-        event["eventType"],
-        json!(EwdsEventType::TradeCreated.as_str())
-    );
+    assert_eq!(event["eventType"], json!(EwdsEventType::Trade.as_str()));
     assert_event_id(&messages[0], &event);
     assert_eq!(event["data"].as_array().unwrap().len(), 1);
     assert_eq!(event["data"][0]["tradeId"], json!(trade_id));
@@ -433,7 +424,7 @@ async fn trade_settled_does_not_publish_when_trade_is_not_persisted() {
 }
 
 #[tokio::test]
-async fn market_clearing_publishes_clearing_result_created_event() {
+async fn market_clearing_publishes_clearing_result_event() {
     let app = init_app().await;
     let server = mock_gateway().await;
     let handler = evm_handler(&app, &server);
@@ -451,7 +442,7 @@ async fn market_clearing_publishes_clearing_result_created_event() {
     let event = event_payload(&messages[0]);
     assert_eq!(
         event["eventType"],
-        json!(EwdsEventType::ClearingResultCreated.as_str())
+        json!(EwdsEventType::ClearingResult.as_str())
     );
     assert_event_id(&messages[0], &event);
     assert_eq!(event["occurredAt"], json!(epoch_to_rfc3339(1_100)));
@@ -479,7 +470,7 @@ async fn market_clearing_does_not_publish_for_invalid_clearing_status() {
 }
 
 #[tokio::test]
-async fn market_status_publishes_market_status_updated_event() {
+async fn market_status_publishes_market_event() {
     let app = init_app().await;
     let server = mock_gateway().await;
     let handler = evm_handler(&app, &server);
@@ -497,10 +488,7 @@ async fn market_status_publishes_market_status_updated_event() {
     let market_id = bytes16_to_hex([0x08; 16]);
     assert_eq!(messages[0].topic_name, "market");
     let event = event_payload(&messages[0]);
-    assert_eq!(
-        event["eventType"],
-        json!(EwdsEventType::MarketStatusUpdated.as_str())
-    );
+    assert_eq!(event["eventType"], json!(EwdsEventType::Market.as_str()));
     assert_event_id(&messages[0], &event);
     assert_eq!(
         event["data"],
@@ -517,14 +505,14 @@ async fn market_status_publishes_market_status_updated_event() {
 fn handler_config_maps_event_types_to_their_topics() {
     let config = test_config("http://gateway".to_string());
     for (event_type, topic) in [
-        (EwdsEventType::TradeCreated, "trade"),
-        (EwdsEventType::ClearingResultCreated, "clearingResult"),
-        (EwdsEventType::MarketStatusUpdated, "market"),
-        (EwdsEventType::MeasurementsSubmitted, "measurements"),
-        (EwdsEventType::FacilitySubmitted, "facility"),
-        (EwdsEventType::SiteSubmitted, "site"),
-        (EwdsEventType::CommunitySubmitted, "community"),
-        (EwdsEventType::OrderSubmitted, "order"),
+        (EwdsEventType::Trade, "trade"),
+        (EwdsEventType::ClearingResult, "clearingResult"),
+        (EwdsEventType::Market, "market"),
+        (EwdsEventType::Measurements, "measurements"),
+        (EwdsEventType::Facility, "facility"),
+        (EwdsEventType::Site, "site"),
+        (EwdsEventType::Community, "community"),
+        (EwdsEventType::Order, "order"),
     ] {
         assert_eq!(config.event_topic(event_type), topic);
     }
@@ -593,7 +581,7 @@ async fn handle_event_saves_facilities_sites_and_communities() {
     handle_event(
         db,
         event(
-            EwdsEventType::FacilitySubmitted,
+            EwdsEventType::Facility,
             "facility-event",
             json!([
                 facility("facility-1", "owner-1"),
@@ -606,7 +594,7 @@ async fn handle_event_saves_facilities_sites_and_communities() {
     handle_event(
         db,
         event(
-            EwdsEventType::SiteSubmitted,
+            EwdsEventType::Site,
             "site-event",
             json!([{
                 "site_name": "site-1",
@@ -620,7 +608,7 @@ async fn handle_event_saves_facilities_sites_and_communities() {
     handle_event(
         db,
         event(
-            EwdsEventType::CommunitySubmitted,
+            EwdsEventType::Community,
             "community-event",
             json!([{
                 "communityId": "community-1",
@@ -668,7 +656,7 @@ async fn handle_event_saves_a_measurement_batch_across_facilities_and_slots() {
     handle_event(
         &app.db_wrapper,
         event(
-            EwdsEventType::MeasurementsSubmitted,
+            EwdsEventType::Measurements,
             "measurements-event",
             json!([
                 measurement_data("facility-1", TIMESLOT, 1.5),
@@ -718,7 +706,7 @@ async fn handle_event_stores_nothing_from_a_batch_with_an_invalid_measurement() 
     let error = handle_event(
         &app.db_wrapper,
         event(
-            EwdsEventType::MeasurementsSubmitted,
+            EwdsEventType::Measurements,
             "measurements-event",
             json!([measurement_data("facility-1", TIMESLOT, 1.5), invalid]),
         ),
@@ -748,7 +736,7 @@ async fn handle_event_stores_nothing_from_a_batch_with_an_invalid_facility() {
     let error = handle_event(
         &app.db_wrapper,
         event(
-            EwdsEventType::FacilitySubmitted,
+            EwdsEventType::Facility,
             "facility-event",
             json!([
                 facility("facility-1", "owner-1"),
@@ -781,7 +769,7 @@ async fn handle_event_updates_the_record_when_an_event_arrives_again() {
         handle_event(
             db,
             event(
-                EwdsEventType::FacilitySubmitted,
+                EwdsEventType::Facility,
                 "facility-event",
                 json!([facility("facility-1", owner_id)]),
             ),
@@ -793,7 +781,7 @@ async fn handle_event_updates_the_record_when_an_event_arrives_again() {
         handle_event(
             db,
             event(
-                EwdsEventType::MeasurementsSubmitted,
+                EwdsEventType::Measurements,
                 "measurements-event",
                 json!([measurement_data("facility-1", TIMESLOT, 1.5)]),
             ),
@@ -822,7 +810,7 @@ async fn handle_event_rejects_invalid_data_and_events_gsy_publishes() {
     assert!(handle_event(
         db,
         event(
-            EwdsEventType::FacilitySubmitted,
+            EwdsEventType::Facility,
             "facility-event",
             json!(facility("facility-1", "owner-1")),
         ),
@@ -831,20 +819,15 @@ async fn handle_event_rejects_invalid_data_and_events_gsy_publishes() {
     .is_err());
     assert!(handle_event(
         db,
-        event(
-            EwdsEventType::MeasurementsSubmitted,
-            "measurements-event",
-            json!([]),
-        ),
+        event(EwdsEventType::Measurements, "measurements-event", json!([]),),
     )
     .await
     .is_err());
-    assert!(handle_event(
-        db,
-        event(EwdsEventType::TradeCreated, "trade-event", json!([])),
-    )
-    .await
-    .is_err());
+    assert!(
+        handle_event(db, event(EwdsEventType::Trade, "trade-event", json!([])),)
+            .await
+            .is_err()
+    );
     assert!(db.facilities().get_all().await.unwrap().is_empty());
 
     stop_app(app).await;
@@ -856,12 +839,12 @@ async fn event_subscriber_skips_bad_messages_and_saves_the_next_one() {
     let server = MockServer::start().await;
     // A site event on the facility topic must be skipped, not saved as a site.
     let wrong_topic_event = event(
-        EwdsEventType::SiteSubmitted,
+        EwdsEventType::Site,
         "site-event",
         json!([{"site_name": "wrong-topic-site", "site_description": "", "facilities": []}]),
     );
     let facility_event = event(
-        EwdsEventType::FacilitySubmitted,
+        EwdsEventType::Facility,
         "facility-event",
         json!([facility("facility-1", "owner-1")]),
     );

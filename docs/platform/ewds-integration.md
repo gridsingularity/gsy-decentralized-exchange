@@ -89,8 +89,8 @@ Each service:
 | `clearing_results.query` over `clearingResultsQuery` / `clearingResultsQueryResponse` | matching/execution engine | off-chain storage service | off-chain storage service | requester | `GET /clearing-results` |
 | `markets.query` over `marketsQuery` / `marketsQueryResponse` | community client | off-chain storage service | off-chain storage service | community client | `GET /markets` |
 | `ids.query` over `idsQuery` / `idsQueryResponse` | requester service | off-chain storage service | off-chain storage service | requester | `POST /ids` (get-or-create) |
-| `community.submitted` event over `community` | other systems or e2e runner | off-chain storage service | none | none | `POST /communities` |
-| `order.submitted` event over `order` | FOS or e2e runner | community client | none | none | none (the community client calls `OrderRegistry.placeOrder`) |
+| `community.event` over `community` | other systems or e2e runner | off-chain storage service | none | none | `POST /communities` |
+| `order.event` over `order` | FOS or e2e runner | community client | none | none | none (the community client calls `OrderRegistry.placeOrder`) |
 | `communities.query` over `communitiesQuery` / `communitiesQueryResponse` | market orchestrator | off-chain storage service | off-chain storage service | market orchestrator | `GET /communities` |
 | `forecasts.upsert` | community client | off-chain storage service | none | none | `POST /measurement-points` + `POST /timeseries` |
 | `measurements.upsert` | community client | off-chain storage service | none | none | `POST /measurement-points` + `POST /timeseries` |
@@ -101,7 +101,7 @@ Each service:
 > `ClearingResultsQuery`, `MarketsQuery`, `IdsQuery`). The `*.upsert` operations
 > for forecasts, measurements and markets remain future work; those writes still
 > go over the REST compatibility path. Communities are written over EWDS with
-> the `community.submitted` event (see [Inbound Events](#inbound-events)).
+> the `community.event` (see [Inbound Events](#inbound-events)).
 
 | Local channel FQCN | Gateway type | Attached topics | Default env var |
 |---|---|---|---|
@@ -114,10 +114,10 @@ Each service:
 
 The events channels carry fire-and-forget domain events rather than
 request/reply traffic. When `EWDS_ENABLE_HANDLER` is on, the off-chain storage
-publishes a `trade.created` event on `trade` every time it persists a
-trade from an EVM `TradeSettled` event, a `clearing_result.created` event on
+publishes a `trade.event` on `trade` every time it persists a
+trade from an EVM `TradeSettled` event, a `clearingResult.event` on
 `clearingResult` every time it persists a clearing result from an EVM
-`MarketClearing` event, and a `market_status.updated` event on
+`MarketClearing` event, and a `market.event` on
 `market` for every EVM `MarketStatusUpdated` event. The payload is
 an event envelope (`eventId`, `eventType`, `occurredAt`, `data`) whose `data` is
 a list of trades, clearing results or market statuses in their `EwdsTradeDto`,
@@ -149,17 +149,17 @@ REST API uses. New orders go to the community client instead; see
 
 | Topic | `eventType` | `data` | Stored with |
 |---|---|---|---|
-| `measurements` | `measurements.submitted` | array of 1..N measurements (`EwdsMeasurementDto`) | measurement points and timeseries, upserted by point and timestamp |
-| `facility` | `facility.submitted` | array of 1..N facilities (`FacilitySchema`) | upserted by `facility_id` |
-| `site` | `site.submitted` | array of 1..N sites (`SiteSchema`) | upserted by `site_name` |
-| `community` | `community.submitted` | array of 1..N communities (`EwdsCommunityDto`) | upserted by `communityId` |
+| `measurements` | `measurements.event` | array of 1..N measurements (`EwdsMeasurementDto`) | measurement points and timeseries, upserted by point and timestamp |
+| `facility` | `facility.event` | array of 1..N facilities (`FacilitySchema`) | upserted by `facility_id` |
+| `site` | `site.event` | array of 1..N sites (`SiteSchema`) | upserted by `site_name` |
+| `community` | `community.event` | array of 1..N communities (`EwdsCommunityDto`) | upserted by `communityId` |
 
 The envelope is the one GSY uses for its own events:
 
 ```json
 {
   "eventId": "7d3f7a52-0c5e-4a8e-9a57-2b8f5f3f7e10",
-  "eventType": "measurements.submitted",
+  "eventType": "measurements.event",
   "occurredAt": "2026-09-29T10:16:02Z",
   "data": [
     {
@@ -211,7 +211,7 @@ Handling rules:
   storage is down for longer are lost.
 
 The event schemas are `int.<eventType>.event.v1.json` in
-`schemas/ewds/intelligent/`, e.g. `int.facility.submitted.event.v1.json`. The
+`schemas/ewds/intelligent/`, e.g. `int.facility.event.v1.json`. The
 e2e stack uses the `...Test` variants of the inbound topics
 (`measurementsTest`, ..., `orderTest`).
 
@@ -224,15 +224,15 @@ the client ID `EWDS_COMMUNITY_CLIENT_ID`, and sends each order to
 `OrderRegistry.placeOrder`. The off-chain storage doesn't subscribe to it.
 From there the usual flow takes over: the off-chain storage indexes
 `OrderPlaced`, the matching engine matches, and trades go out as
-`trade.created` events.
+`trade.event` messages.
 
 `data` is a list of orders in the `EwdsOrderDto` form that `orders.query`
-returns (`int.order.submitted.event.v1.json`):
+returns (`int.order.event.v1.json`):
 
 ```json
 {
   "eventId": "5e0f1c2d-3b4a-4f6e-8d7c-9a0b1c2d3e4f",
-  "eventType": "order.submitted",
+  "eventType": "order.event",
   "occurredAt": "2026-09-30T09:40:13Z",
   "data": [
     {
@@ -288,7 +288,7 @@ Handling rules:
   twice. A resend while the first transaction is still pending sends the
   order again, but that duplicate reverts with `OrderAlreadyExists`.
 - FOS gets no feedback on rejected orders. It sees placed orders through
-  `orders.query` and their trades through `trade.created`.
+  `orders.query` and their trades through `trade.event`.
 - `placeOrder` only accepts an order if the community client's wallet is
   authorized for the actor in the `ActorRegistry`. Registering it is up to
   whoever publishes the orders.
@@ -413,7 +413,7 @@ Validator requirements:
 
 - Route facility-topology-derived market, forecast, and measurement writes through ontology-aligned off-chain storage APIs.
 - Keep fallback transport via direct HTTP until cutover is complete.
-- Send the orders of `order.submitted` events to `OrderRegistry.placeOrder`
+- Send the orders of `order.event` messages to `OrderRegistry.placeOrder`
   (see [Order Events](#order-events)). Runtime switch:
   `EWDS_ENABLE_HANDLER=true`.
 

@@ -21,12 +21,18 @@ request/reply topics:
 Event envelopes wrap a non-empty list of the entities that other systems send
 to GSY on the events channels, one per topic:
 
-- `int.measurements.submitted.event.v1.json` (`int.measurement.schema.v1.json`)
-- `int.facility.submitted.event.v1.json` (`int.facility.schema.v1.json`)
-- `int.site.submitted.event.v1.json` (`int.site.schema.v1.json`)
-- `int.community.submitted.event.v1.json` (`int.community.schema.v1.json`)
-- `int.order.submitted.event.v1.json` (`int.order.schema.v1.json`), consumed
+- `int.measurements.event.v1.json` (`int.measurement.schema.v1.json`)
+- `int.facility.event.v1.json` (`int.facility.schema.v1.json`)
+- `int.site.event.v1.json` (`int.site.schema.v1.json`)
+- `int.community.event.v1.json` (`int.community.schema.v1.json`)
+- `int.order.event.v1.json` (`int.order.schema.v1.json`), consumed
   by the community client rather than the off-chain storage
+
+The off-chain storage publishes these event envelopes on the events channels:
+
+- `int.trade.event.v1.json` (`int.trade.schema.v1.json`)
+- `int.clearing-result.event.v1.json` (`int.clearing-result.schema.v1.json`)
+- `int.market.event.v1.json` (`int.market-status.schema.v1.json`)
 
 Notes:
 

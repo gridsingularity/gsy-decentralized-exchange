@@ -54,11 +54,11 @@ async fn publish_events(world: &mut MyWorld) {
 
     let client = EwdsClient::from_env("EWDS_E2E_CLIENT_ID", "gsye2e", 60_000);
     client
-        .publish_event(&event(EwdsEventType::SiteSubmitted, vec![&site]))
+        .publish_event(&event(EwdsEventType::Site, vec![&site]))
         .await
         .expect("Failed to publish the site event");
     client
-        .publish_event(&event(EwdsEventType::FacilitySubmitted, vec![&facility]))
+        .publish_event(&event(EwdsEventType::Facility, vec![&facility]))
         .await
         .expect("Failed to publish the facility event");
     let batch = measurements
@@ -67,7 +67,7 @@ async fn publish_events(world: &mut MyWorld) {
         .map(EwdsMeasurementDto::from)
         .collect::<Vec<_>>();
     client
-        .publish_event(&event(EwdsEventType::MeasurementsSubmitted, batch))
+        .publish_event(&event(EwdsEventType::Measurements, batch))
         .await
         .expect("Failed to publish the measurements event");
 
@@ -102,7 +102,7 @@ fn order_dto(
     }
 }
 
-/// Publishes one `order.submitted` event with a bid and an offer, which the community client
+/// Publishes one `order.event` with a bid and an offer, which the community client
 /// places on-chain. Waits until both are indexed, then mines to the next matching block.
 #[when(expr = "a bid by {string} and an offer by {string} are published on EWDS")]
 async fn publish_order_event(world: &mut MyWorld, buyer_name: String, seller_name: String) {
@@ -113,7 +113,7 @@ async fn publish_order_event(world: &mut MyWorld, buyer_name: String, seller_nam
 
     EwdsClient::from_env("EWDS_E2E_CLIENT_ID", "gsye2e", 60_000)
         .publish_event(&event(
-            EwdsEventType::OrderSubmitted,
+            EwdsEventType::Order,
             vec![bid.clone(), offer.clone()],
         ))
         .await
