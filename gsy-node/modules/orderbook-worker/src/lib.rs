@@ -1,3 +1,4 @@
+#![allow(clippy::large_enum_variant)]
 #![cfg_attr(not(feature = "std"), no_std)]
 
 use frame_support::sp_runtime::transaction_validity::{TransactionValidity, ValidTransaction};
@@ -29,6 +30,7 @@ pub const KEY_TYPE: KeyTypeId = KeyTypeId(*b"ocw!");
 
 pub mod crypto {
 	use super::KEY_TYPE;
+	#[allow(unused_imports)]
 	use scale_info::prelude::string::String;
 	use sp_core::sr25519::Signature as Sr25519Signature;
 	use sp_runtime::{
@@ -36,7 +38,6 @@ pub mod crypto {
 		traits::Verify,
 		MultiSignature, MultiSigner,
 	};
-
 	app_crypto!(sr25519, KEY_TYPE);
 
 	pub struct TestAuthId;
@@ -65,8 +66,8 @@ pub mod pallet {
 	};
 	use frame_system::{
 		offchain::{
-			AppCrypto, CreateSignedTransaction, SendTransactionTypes, SendUnsignedTransaction,
-			SignedPayload, Signer, SigningTypes,
+			AppCrypto, CreateSignedTransaction, CreateTransactionBase, CreateBare,
+			Signer, SubmitTransaction
 		},
 		pallet_prelude::*,
 	};
@@ -81,20 +82,21 @@ pub mod pallet {
 	#[pallet::config]
 	pub trait Config:
 		CreateSignedTransaction<Call<Self>>
-		+ SendTransactionTypes<Call<Self>>
 		+ frame_system::Config
+		+ CreateBare<Call<Self>>
+		+ frame_system::offchain::CreateTransactionBase<Self::Call>
 		+ orderbook_registry::Config
 		+ gsy_collateral::Config
 	{
-		type AuthorityId: AppCrypto<Self::Public, Self::Signature>;
 
-		type RuntimeEvent: From<Event<Self>>
-			+ IsType<<Self as frame_system::Config>::RuntimeEvent>
-			+ Into<<Self as frame_system::Config>::RuntimeEvent>;
+		#[allow(deprecated)]
+		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
+
+		type AuthorityId: AppCrypto<Self::Public, Self::Signature>;
 
 		/// A dispatchable call type. We need to define it for the Orderbook worker to
 		/// reference the `send_response` function it wants to call.
-		type Call: From<Call<Self>> + Into<<Self as frame_system::Config>::RuntimeCall>;
+		type Call: From<Call<Self>> + Into<<Self as CreateTransactionBase<pallet::Call<Self>>>::RuntimeCall>;
 
 		#[pallet::constant]
 		type UnsignedPriority: Get<TransactionPriority>;
@@ -291,8 +293,7 @@ pub mod pallet {
 		#[pallet::call_index(3)]
 		pub fn remove_order_by_order_reference(
 			origin: OriginFor<T>,
-			order_payload: Payload<T::Public, T::AccountId, T::Hash>,
-			_signature: T::Signature,
+			order_payload: Payload<T::AccountId, T::Hash>,
 		) -> DispatchResult {
 			ensure_none(origin.clone())?;
 			for payload in order_payload.order_reference {
@@ -301,8 +302,7 @@ pub mod pallet {
 					payload.hash,
 					payload.user_id
 				);
-				let mut hash_vector = Vec::<T::Hash>::new();
-				hash_vector.push(payload.hash);
+				let hash_vector: Vec<T::Hash> = vec![payload.hash];
 				<orderbook_registry::Pallet<T>>::delete_orders(origin.clone(), hash_vector)?;
 				Self::delete_order(payload)?;
 			}
@@ -319,8 +319,7 @@ pub mod pallet {
 		#[pallet::call_index(4)]
 		pub fn remove_local_order_by_order_reference(
 			origin: OriginFor<T>,
-			order_payload: Payload<T::Public, T::AccountId, T::Hash>,
-			_signature: T::Signature,
+			order_payload: Payload<T::AccountId, T::Hash>,
 		) -> DispatchResult {
 			ensure_none(origin)?;
 			for payload in order_payload.order_reference {
@@ -374,8 +373,7 @@ pub mod pallet {
 		#[pallet::call_index(6)]
 		pub fn remove_offchain_worker_trade(
 			origin: OriginFor<T>,
-			trade_payload: TradePayload<T::Public, T::AccountId, T::Hash>,
-			_signature: T::Signature,
+			trade_payload: TradePayload<T::AccountId, T::Hash>,
 		) -> DispatchResult {
 			ensure_none(origin)?;
 			for trade in trade_payload.trade {
@@ -395,11 +393,10 @@ pub mod pallet {
 		/// By default unsigned transactions are disallowed, but implementing the validator
 		/// here we make sure that some particular calls (the ones produced by offchain worker)
 		/// are being whitelisted and marked as valid.
-
 		fn validate_unsigned(_source: TransactionSource, call: &Self::Call) -> TransactionValidity {
 			let valid_tx = |provide| {
 				ValidTransaction::with_tag_prefix("gsy-node")
-					.priority(TransactionPriority::max_value())
+					.priority(TransactionPriority::MAX)
 					.and_provides([&provide])
 					.longevity(3)
 					.propagate(true)
@@ -408,31 +405,19 @@ pub mod pallet {
 
 			match call {
 				Call::remove_local_order_by_order_reference {
-					order_payload: ref payload,
-					ref signature,
+					order_payload: _payload,
 				} => {
-					if !SignedPayload::<T>::verify::<T::AuthorityId>(payload, signature.clone()) {
-						return InvalidTransaction::BadProof.into();
-					}
 					valid_tx(b"remove_local_order_by_order_reference".to_vec())
 				},
 
 				Call::remove_order_by_order_reference {
-					order_payload: ref payload,
-					ref signature,
+					order_payload: _payload,
 				} => {
-					if !SignedPayload::<T>::verify::<T::AuthorityId>(payload, signature.clone()) {
-						return InvalidTransaction::BadProof.into();
-					}
 					valid_tx(b"remove_order_by_order_reference".to_vec())
 				},
 				Call::remove_offchain_worker_trade {
-					trade_payload: ref payload,
-					ref signature,
+					trade_payload: _payload,
 				} => {
-					if !SignedPayload::<T>::verify::<T::AuthorityId>(payload, signature.clone()) {
-						return InvalidTransaction::BadProof.into();
-					}
 					valid_tx(b"remove_offchain_worker_trade".to_vec())
 				},
 
@@ -441,47 +426,29 @@ pub mod pallet {
 		}
 	}
 
-	impl<T: SigningTypes> SignedPayload<T> for Payload<T::Public, T::AccountId, T::Hash> {
-		fn public(&self) -> T::Public {
-			self.public.clone()
-		}
-	}
-
-	impl<T: SigningTypes> SignedPayload<T> for TradePayload<T::Public, T::AccountId, T::Hash> {
-		fn public(&self) -> T::Public {
-			self.public.clone()
-		}
-	}
-
-	#[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug, TypeInfo)]
-	pub struct Payload<Public, AccountId, Hash> {
+	#[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug, TypeInfo, DecodeWithMemTracking)]
+	pub struct Payload<AccountId, Hash> {
 		order_reference: Vec<OrderReference<AccountId, Hash>>,
-		public: Public,
 	}
 
-	#[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug, TypeInfo)]
-	pub struct TradePayload<Public, AccountId, Hash> {
+	#[derive(Encode, Decode, Clone, PartialEq, Eq, RuntimeDebug, TypeInfo, DecodeWithMemTracking)]
+	pub struct TradePayload<AccountId, Hash> {
 		trade: Vec<Trade<AccountId, Hash>>,
-		public: Public,
 	}
 
 	impl<T: Config> Pallet<T> {
 		pub fn input_order_to_order(order: InputOrder<T::AccountId>) -> Order<T::AccountId> {
 			match &order {
-				InputOrder::Bid(input_order) => Order::Bid {
-					0: Bid {
+				InputOrder::Bid(input_order) => Order::Bid(Bid {
 						buyer: input_order.buyer.clone(),
 						nonce: Self::get_and_increment_user_nonce(input_order.buyer.clone()),
 						bid_component: input_order.bid_component.clone(),
-					},
-				},
-				InputOrder::Offer(input_order) => Order::Offer {
-					0: Offer {
+					}),
+				InputOrder::Offer(input_order) => Order::Offer(Offer {
 						seller: input_order.seller.clone(),
 						nonce: Self::get_and_increment_user_nonce(input_order.seller.clone()),
 						offer_component: input_order.offer_component.clone(),
-					},
-				},
+					}),
 			}
 		}
 		/// The main entry point for the offchain worker.
@@ -503,16 +470,10 @@ pub mod pallet {
 			let mut trade_hashes = Vec::<T::Hash>::new();
 
 			for (order_ref, order) in <OrdersForWorker<T>>::iter() {
-				match &order {
-					_order_in_book => {
-						log::info!(
-							"Offchain process: reference: {:?}, order: {:?}",
-							&order_ref,
-							&order
-						);
-						orders.push(order);
-					},
-				}
+				let _order_in_book = &order;
+				log::info!(
+					"Offchain process: reference: {:?}, order: {:?}", &order_ref, &order);
+				orders.push(order);
 			}
 			if !orders.is_empty() {
 				let orders_schema: Vec<OrderSchema<T::AccountId, T::Hash>> = orders
@@ -542,17 +503,14 @@ pub mod pallet {
 			// TODO: Trades transmission process starts here
 
 			for (trade_hash, trade) in <TradesForWorker<T>>::iter() {
-				match &trade {
-					_trade_in_book => {
-						log::info!(
-							"Offchain process: reference: {:?}, trade: {:?}",
-							&trade_hash,
-							&trade
-						);
-						trades.push(trade);
-						trade_hashes.push(trade_hash);
-					},
-				}
+				let _trade_in_book = &trade;
+				log::info!(
+					"Offchain process: reference: {:?}, trade: {:?}",
+					&trade_hash,
+					&trade
+				);
+				trades.push(trade);
+				trade_hashes.push(trade_hash);
 			}
 
 			if !trades.is_empty() {
@@ -584,10 +542,10 @@ pub mod pallet {
 			let pending = request
 				.deadline(deadline)
 				.add_header("Content-Type", "application/json")
+				.add_header("x-api-key", &orderbook_service_urls.api_key)
 				.send()
-				.map_err(|e| {
+				.inspect_err(|&e| {
 					log::error!("❌ Failed to send the trade HTTP request: {:?}", e);
-					e
 				})
 				.map_err(|_| http::Error::DeadlineReached)?;
 
@@ -614,10 +572,10 @@ pub mod pallet {
 			let pending = request
 				.deadline(deadline)
 				.add_header("Content-Type", "application/json")
+				.add_header("x-api-key", &orderbook_service_url.api_key)
 				.send()
-				.map_err(|e| {
+				.inspect_err(|&e| {
 					log::error!("❌ Failed to send order HTTP request: {:?}", e);
-					e
 				})
 				.map_err(|_| http::Error::DeadlineReached)?;
 			let response = pending
@@ -642,31 +600,27 @@ pub mod pallet {
 		pub fn remove_processed_orders_failed(
 			orders: Vec<Order<T::AccountId>>,
 		) -> Result<(), Error<T>> {
-			let signer = Signer::<T, T::AuthorityId>::any_account();
 			let mut order_reference_vec = Vec::<OrderReference<T::AccountId, T::Hash>>::new();
 			for order in orders {
 				let order_hash = T::Hashing::hash_of(&order);
 				let order_ref = Self::get_order_owner_id(order.clone());
 				let order_reference =
-					OrderReference { user_id: order_ref.clone(), hash: order_hash.clone() };
+					OrderReference { user_id: order_ref.clone(), hash: order_hash };
 				order_reference_vec.push(order_reference)
 			}
 
-			if let Some((_, res)) = signer.send_unsigned_transaction(
-				move |account| Payload {
-					order_reference: order_reference_vec.clone(),
-					public: account.public.clone(),
-				},
-				move |payload, signature| Call::remove_order_by_order_reference {
-					order_payload: payload,
-					signature,
-				},
-			) {
-				match res {
-					Ok(_) => log::info!("Unsigned transaction - remove_processed_orders_succeeded"),
-					Err(()) => log::error!("{:?}", <Error<T>>::OffchainSignedTxError),
-				};
+			let payload = Payload {
+				order_reference: order_reference_vec.clone(),
 			};
+
+			let call: T::Call = Call::<T>::remove_order_by_order_reference {
+				order_payload: payload,
+			}.into();
+
+			let extrinsic = T::create_bare(call.into());
+			let _ = SubmitTransaction::<T, Call<T>>::submit_transaction(extrinsic)
+				.map_err(|()| log::error!("{:?}", <Error<T>>::OffchainSignedTxError));
+
 			Ok(())
 		}
 
@@ -678,31 +632,28 @@ pub mod pallet {
 		pub fn remove_processed_orders_succeeded(
 			orders: Vec<Order<T::AccountId>>,
 		) -> Result<(), Error<T>> {
-			let signer = Signer::<T, T::AuthorityId>::any_account();
+			let _signer = Signer::<T, T::AuthorityId>::any_account();
 			let mut order_reference_vec = Vec::<OrderReference<T::AccountId, T::Hash>>::new();
 			for order in orders {
 				let order_hash = T::Hashing::hash_of(&order);
 				let order_ref = Self::get_order_owner_id(order.clone());
 				let order_reference =
-					OrderReference { user_id: order_ref.clone(), hash: order_hash.clone() };
+					OrderReference { user_id: order_ref.clone(), hash: order_hash };
 				order_reference_vec.push(order_reference)
 			}
 
-			if let Some((_, res)) = signer.send_unsigned_transaction(
-				move |account| Payload {
-					order_reference: order_reference_vec.clone(),
-					public: account.public.clone(),
-				},
-				move |payload, signature| Call::remove_local_order_by_order_reference {
-					order_payload: payload,
-					signature,
-				},
-			) {
-				match res {
-					Ok(_) => log::info!("Unsigned transaction - remove_processed_orders_succeeded"),
-					Err(()) => log::error!("{:?}", <Error<T>>::OffchainSignedTxError),
-				};
+			let payload = Payload {
+				order_reference: order_reference_vec.clone(),
 			};
+
+			let call = Call::<T>::remove_local_order_by_order_reference {
+				order_payload: payload,
+			};
+
+			let extrinsic = T::create_bare(call.into());
+			let _ = SubmitTransaction::<T, Call<T>>::submit_transaction(extrinsic)
+				.map_err(|()| log::error!("{:?}", <Error<T>>::OffchainSignedTxError));
+
 			Ok(())
 		}
 
@@ -714,23 +665,19 @@ pub mod pallet {
 		pub fn remove_processed_trades_succeeded(
 			trades: Vec<Trade<T::AccountId, T::Hash>>,
 		) -> Result<(), Error<T>> {
-			let signer = Signer::<T, T::AuthorityId>::any_account();
 
-			if let Some((_, res)) = signer.send_unsigned_transaction(
-				move |account| TradePayload {
-					trade: trades.clone(),
-					public: account.public.clone(),
-				},
-				move |payload, signature| Call::remove_offchain_worker_trade {
-					trade_payload: payload,
-					signature,
-				},
-			) {
-				match res {
-					Ok(_) => log::info!("Unsigned transaction - remove_processed_orders_succeeded"),
-					Err(()) => log::error!("{:?}", <Error<T>>::OffchainSignedTxError),
-				};
+			let payload = TradePayload {
+				trade: trades.clone(),
 			};
+
+			let call = Call::<T>::remove_offchain_worker_trade {
+				trade_payload: payload,
+			};
+
+			let extrinsic = T::create_bare(call.into());
+			let _ = SubmitTransaction::<T, Call<T>>::submit_transaction(extrinsic)
+				.map_err(|()| log::error!("{:?}", <Error<T>>::OffchainSignedTxError));
+
 			Ok(())
 		}
 
@@ -750,7 +697,7 @@ pub mod pallet {
 			);
 			let order_hash = T::Hashing::hash_of(&order);
 			let order_reference =
-				OrderReference { user_id: sender.clone(), hash: order_hash.clone() };
+				OrderReference { user_id: sender.clone(), hash: order_hash };
 			<OrdersForWorker<T>>::insert(order_reference, order.clone());
 			Self::deposit_event(Event::NewOrderInserted(order, order_hash));
 			Ok(())
@@ -846,14 +793,12 @@ pub mod pallet {
 				Order::Offer(offer) => offer
 					.offer_component
 					.energy
-					.clone()
-					.checked_mul(offer.offer_component.energy_rate.clone())
+					.checked_mul(offer.offer_component.energy_rate)
 					.unwrap(),
 				Order::Bid(bid) => bid
 					.bid_component
 					.energy
-					.clone()
-					.checked_mul(bid.bid_component.energy_rate.clone())
+					.checked_mul(bid.bid_component.energy_rate)
 					.unwrap(),
 			}
 		}
@@ -863,20 +808,16 @@ pub mod pallet {
 			delegator: T::AccountId,
 		) -> Order<T::AccountId> {
 			match &order {
-				InputOrder::Bid(input_order) => Order::Bid {
-					0: Bid {
+				InputOrder::Bid(input_order) => Order::Bid(Bid {
 						buyer: input_order.buyer.clone(),
 						nonce: Self::get_and_increment_user_nonce(delegator),
 						bid_component: input_order.bid_component.clone(),
-					},
-				},
-				InputOrder::Offer(input_order) => Order::Offer {
-					0: Offer {
+					}),
+				InputOrder::Offer(input_order) => Order::Offer(Offer {
 						seller: input_order.seller.clone(),
 						nonce: Self::get_and_increment_user_nonce(delegator),
 						offer_component: input_order.offer_component.clone(),
-					},
-				},
+					}),
 			}
 		}
 	}

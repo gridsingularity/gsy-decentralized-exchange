@@ -1,1 +1,15 @@
 **/target
+
+# macOS Finder metadata — rewritten on folder browse, silently busts the
+# COPY cache and forces full cargo rebuilds if copied into the build context.
+**/.DS_Store
+
+# Git + local tooling: not needed in image, only churns the context hash.
+**/.git
+**/.gitignore
+**/.claude
+**/*.swp
+**/*~
+
+# Docs / plans: not part of any build.
+docs

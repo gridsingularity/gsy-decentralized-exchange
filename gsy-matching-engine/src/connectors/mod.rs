@@ -1,3 +1,4 @@
+pub mod registry_filter;
 mod redis_connector;
 mod substrate_connector;
 pub use redis_connector::redis_subscribe;

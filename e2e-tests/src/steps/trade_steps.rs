@@ -6,21 +6,23 @@ use gsy_offchain_primitives::db_api_schema::profiles::MeasurementSchema;
 use std::time::Duration;
 use tracing::info;
 
-#[when(regex = r#""([^"]*)" submits a bid"#)]
+#[when(regex = r#"^"([^"]*)" submits a bid$"#)]
 async fn submit_bid(world: &mut MyWorld, user_name: String) {
 	let user = world.users.get(&user_name).unwrap().clone();
 
 	let node_url =
 		std::env::var("GSY_NODE_URL").unwrap_or_else(|_| "ws://127.0.0.1:9944".to_string());
 
+	// Bids price at the flat 0.3, offers at 0.07 (the MIN_ORDER_RATE default the offer ramp
+	// reaches at market close).
 	publish_orders(node_url, vec![world.bid_forecast.clone().unwrap()],
-				   world.topology_schema.clone().unwrap(), &user)
+				   world.topology_schema.clone().unwrap(), 0.3, 0.07, &user)
 		.await
 		.expect("Failed to publish bid");
 	println!("Submitted bid for {}", user_name);
 }
 
-#[when(regex = r#""([^"]*)" submits an offer"#)]
+#[when(regex = r#"^"([^"]*)" submits an offer$"#)]
 async fn submit_offer(world: &mut MyWorld, user_name: String) {
 	let user = world.users.get(&user_name).unwrap().clone();
 
@@ -28,7 +30,7 @@ async fn submit_offer(world: &mut MyWorld, user_name: String) {
 		std::env::var("GSY_NODE_URL").unwrap_or_else(|_| "ws://127.0.0.1:9944".to_string());
 
 	publish_orders(node_url, vec![world.offer_forecast.clone().unwrap()],
-				   world.topology_schema.clone().unwrap(), &user)
+				   world.topology_schema.clone().unwrap(), 0.3, 0.07, &user)
 		.await
 		.expect("Failed to publish offer");
 	println!("Submitted offer for {}", user_name);
@@ -48,6 +50,7 @@ async fn submit_measurements(world: &mut MyWorld, _user1: String, _user2: String
 			energy_kwh: 12.0,
 			time_slot: world.target_delivery_time,
 			creation_time: 1,
+			metering_point: None,
 		},
 		MeasurementSchema {
 			area_uuid: world.seller_id.clone(),
@@ -56,6 +59,7 @@ async fn submit_measurements(world: &mut MyWorld, _user1: String, _user2: String
 			energy_kwh: -8.0,
 			time_slot: world.target_delivery_time,
 			creation_time: 1,
+			metering_point: None,
 		},
 	];
 	adapter.forward_measurement(measurements).await.unwrap();
@@ -88,16 +92,18 @@ async fn verify_trade_on_chain(world: &mut MyWorld) {
 		if let Ok(Some(event)) = order_executed_event {
 			println!("OrderExecuted event found: {:?}", event.0);
 			let trade = event.0;
-			let alice_pubkey = world.users.get("alice").unwrap().public_key();
-			let bob_pubkey = world.users.get("bob").unwrap().public_key();
-			let alice_account_id: subxt::utils::AccountId32 = alice_pubkey.into();
-			let bob_account_id: subxt::utils::AccountId32 = bob_pubkey.into();
+			let buyer_pubkey = world.users.get("charlie").unwrap().public_key();
+			let seller_pubkey = world.users.get("bob").unwrap().public_key();
+			let buyer_account_id: subxt::utils::AccountId32 = buyer_pubkey.into();
+			let seller_account_id: subxt::utils::AccountId32 = seller_pubkey.into();
 
-			assert_eq!(trade.buyer, alice_account_id);
-			assert_eq!(trade.seller, bob_account_id);
+			assert_eq!(trade.buyer, buyer_account_id);
+			assert_eq!(trade.seller, seller_account_id);
 			assert_eq!(trade.parameters.selected_energy, 100000);
 			let expected_rate = 30000;
 			assert_eq!(trade.parameters.energy_rate, expected_rate);
+			world.last_trade_uuid = Some(trade.trade_uuid);
+			world.last_market_id = Some(trade.market_id);
 			return;
 		}
 	}
