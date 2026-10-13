@@ -39,10 +39,12 @@ longer represent one uniform-price auction.
   lower than the next offer price. The accepted cumulative quantity is the
   clearing volume. Accepted standard matches share a price selected by
   `PAY_AS_CLEAR_PRICING` (`max_offer`, `min_bid`, or `midpoint`, default
-  `max_offer`). Supply exhaustion with demand remaining uses the minimum
-  accepted bid; demand exhaustion with supply remaining uses the maximum
-  accepted offer. Price crossings and simultaneous exhaustion use the configured
-  policy. Orders beyond the clearing volume remain open.
+  `max_offer`). Supply exhaustion with price-eligible demand remaining uses the
+  minimum accepted bid; demand exhaustion with price-eligible supply remaining
+  uses the maximum accepted offer. Simultaneous exhaustion or no price-eligible
+  remainder uses the minimum accepted bid. Price crossings use the configured
+  policy. Equal rates count as price-eligible. Orders beyond the clearing volume
+  remain open.
 
 The preference phase runs before either standard-market
 algorithm. Preference matches retain their agreed effective rate; the

@@ -16,6 +16,6 @@ Feature: Preference settlement policy
       | absent preferred rates       | 15  | 15    | bob           | 0               | alice          | 0                | preferred | 15         | 15        | 15      | 15       |
       | below normal offer limit     | 20  | 10    | bob           | 5               | alice          | 5                | preferred | 5          | 5         | 5       | 5        |
       | above normal bid limit       | 20  | 10    | bob           | 25              | alice          | 25               | preferred | 25         | 25        | 25      | 25       |
-      | conflicting partners         | 20  | 10    | bob           | 15              | charlie        | 15               | standard  | 20         | 10        | 20      | 15       |
-      | unavailable preferred seller | 20  | 10    | charlie       | 15              | none           | 0                | standard  | 20         | 10        | 20      | 15       |
-      | unequal preferred rates      | 20  | 10    | bob           | 15              | alice          | 12               | standard  | 20         | 10        | 20      | 15       |
+      | conflicting partners         | 20  | 10    | bob           | 15              | charlie        | 15               | standard  | 20         | 20        | 20      | 20       |
+      | unavailable preferred seller | 20  | 10    | charlie       | 15              | none           | 0                | standard  | 20         | 20        | 20      | 20       |
+      | unequal preferred rates      | 20  | 10    | bob           | 15              | alice          | 12               | standard  | 20         | 20        | 20      | 20       |

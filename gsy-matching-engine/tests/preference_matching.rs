@@ -37,9 +37,10 @@ fn run(algorithm: &MatchingAlgorithm, bids: Vec<Order>, offers: Vec<Order>) -> V
 
 #[test]
 fn every_declared_partner_must_identify_the_counterparty() {
+    // The balanced standard book uses min_bid when both sides are exhausted.
     for (algorithm, normal_price) in [
         (MatchingAlgorithm::PayAsBid, 20),
-        (MatchingAlgorithm::PayAsClear, 10),
+        (MatchingAlgorithm::PayAsClear, 20),
     ] {
         for (buyer_partner, seller_partner, eligible) in [
             (None, None, false),
@@ -112,9 +113,10 @@ fn absent_preferred_rates_use_each_orders_normal_rate() {
 
 #[test]
 fn unequal_effective_rates_fall_back_to_normal_prices() {
+    // The balanced standard book uses min_bid when both sides are exhausted.
     for (algorithm, price) in [
         (MatchingAlgorithm::PayAsBid, 20),
-        (MatchingAlgorithm::PayAsClear, 10),
+        (MatchingAlgorithm::PayAsClear, 20),
     ] {
         for (bid_preferred, offer_preferred) in
             [(Some(15), Some(12)), (Some(9), None), (None, None)]
