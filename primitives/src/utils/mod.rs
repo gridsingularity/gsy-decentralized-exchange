@@ -5,6 +5,7 @@ use blake2::Blake2bVar;
 use chrono::{prelude::DateTime, Utc, TimeZone};
 use std::env;
 use std::str::FromStr;
+use uuid::Uuid;
 
 pub const NODE_FLOAT_SCALING_FACTOR: f64 = 10000.0;
 
@@ -14,15 +15,7 @@ pub fn bytes16_to_hex(value: [u8; 16]) -> String {
 
 /// Formats 16 bytes as a lowercase hyphenated UUID (8-4-4-4-12).
 pub fn bytes16_to_uuid_string(value: [u8; 16]) -> String {
-    let hex = hex::encode(value);
-    format!(
-        "{}-{}-{}-{}-{}",
-        &hex[0..8],
-        &hex[8..12],
-        &hex[12..16],
-        &hex[16..20],
-        &hex[20..32]
-    )
+    Uuid::from_bytes(value).to_string()
 }
 
 pub fn parse_uuid_or_hex_bytes16(value: &str) -> Option<[u8; 16]> {
