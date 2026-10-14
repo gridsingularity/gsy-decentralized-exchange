@@ -12,6 +12,7 @@ fn order(order_id: &str, facility_id: &str, is_bid: bool) -> DbOrderSchema {
     DbOrderSchema {
         order_id: order_id.to_string(),
         status: OrderStatus::Executed,
+        status_updated_at: None,
         order_type: if is_bid {
             OrderEnum::Bid
         } else {

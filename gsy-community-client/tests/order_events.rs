@@ -532,6 +532,7 @@ mod validate_order {
         DbOrderSchema {
             order_id: "3f2c6d1e-8a4b-4c7d-9e2f-1a5b6c7d8e9f".to_string(),
             status: OrderStatus::Submitted,
+            status_updated_at: None,
             order_type: OrderEnum::Bid,
             area_uuid: "owner-1".to_string(),
             market_id: format!("0x{}", "11".repeat(16)),
@@ -615,6 +616,7 @@ mod order_params {
         DbOrderSchema {
             order_id: "3f2c6d1e-8a4b-4c7d-9e2f-1a5b6c7d8e9f".to_string(),
             status: OrderStatus::Submitted,
+            status_updated_at: None,
             order_type: OrderEnum::Offer,
             area_uuid: format!("0x{}", "aa".repeat(16)),
             market_id: format!("0x{}", "11".repeat(16)),

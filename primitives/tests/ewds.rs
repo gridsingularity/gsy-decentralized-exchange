@@ -50,6 +50,7 @@ mod tests {
         DbOrderSchema {
             order_id: "order-id".to_string(),
             status: OrderStatus::Submitted,
+            status_updated_at: None,
             order_type: OrderEnum::Bid,
             area_uuid: "actor-id".to_string(),
             market_id: "market-id".to_string(),
@@ -65,6 +66,76 @@ mod tests {
             }),
             attributes: None,
         }
+    }
+
+    #[test]
+    fn order_status_timestamp_is_optional_for_legacy_records() {
+        let expected = order();
+        let stored = serde_json::to_value(&expected).unwrap();
+        assert!(stored.get("status_updated_at").is_none());
+        assert_eq!(
+            serde_json::from_value::<DbOrderSchema>(stored).unwrap(),
+            expected
+        );
+
+        let dto = EwdsOrderDto::from(expected.clone());
+        assert_eq!(dto.updated_at, None);
+        assert_eq!(dto.reject_reason, None);
+        let mut wire = serde_json::to_value(dto).unwrap();
+        wire.as_object_mut().unwrap().remove("updatedAt");
+        wire.as_object_mut().unwrap().remove("rejectReason");
+        let parsed: EwdsOrderDto = serde_json::from_value(wire).unwrap();
+        assert_eq!(DbOrderSchema::try_from(parsed).unwrap(), expected);
+    }
+
+    #[test]
+    fn stored_order_statuses_preserve_update_time_through_storage_and_ewds() {
+        for order_type in [OrderEnum::Bid, OrderEnum::Offer] {
+            for (status, wire_status) in [
+                (OrderStatus::Submitted, "submitted"),
+                (OrderStatus::PartiallyFilled, "partially_filled"),
+                (OrderStatus::Filled, "filled"),
+                (OrderStatus::Cancelled, "cancelled"),
+                (OrderStatus::Expired, "expired"),
+                (OrderStatus::Executed, "executed"),
+            ] {
+                let mut expected = order();
+                expected.order_type = order_type.clone();
+                expected.status = status;
+                expected.status_updated_at = Some(1_234);
+
+                let stored = serde_json::to_value(&expected).unwrap();
+                assert_eq!(stored["status_updated_at"], serde_json::json!(1_234));
+                let parsed: DbOrderSchema = serde_json::from_value(stored).unwrap();
+                assert_eq!(parsed, expected);
+
+                let wire = serde_json::to_value(EwdsOrderDto::from(parsed)).unwrap();
+                assert_eq!(wire["orderStatus"], wire_status);
+                assert_eq!(wire["updatedAt"], epoch_to_rfc3339(1_234));
+                let dto: EwdsOrderDto = serde_json::from_value(wire).unwrap();
+                assert_eq!(DbOrderSchema::try_from(dto).unwrap(), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn rejection_notification_preserves_status_and_reason() {
+        let mut dto = EwdsOrderDto::from(order());
+        dto.order_status = "rejected".to_string();
+        dto.reject_reason = Some("Market is closed".to_string());
+        let wire = serde_json::to_value(dto).unwrap();
+        assert_eq!(wire["orderStatus"], "rejected");
+        assert_eq!(wire["rejectReason"], "Market is closed");
+        let parsed: EwdsOrderDto = serde_json::from_value(wire).unwrap();
+        assert_eq!(parsed.order_status, "rejected");
+        assert_eq!(parsed.reject_reason.as_deref(), Some("Market is closed"));
+    }
+
+    #[test]
+    fn invalid_order_status_timestamp_is_rejected() {
+        let mut dto = EwdsOrderDto::from(order());
+        dto.updated_at = Some("not-a-timestamp".to_string());
+        assert!(DbOrderSchema::try_from(dto).is_err());
     }
 
     #[test]

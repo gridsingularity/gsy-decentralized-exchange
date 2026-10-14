@@ -8,6 +8,7 @@ use primitives::utils::{epoch_to_rfc3339, timestamp_to_string_with_padding};
 fn make_order(order_id: &str, order_type: OrderEnum) -> DbOrderSchema {
     DbOrderSchema {
         status: OrderStatus::Submitted,
+        status_updated_at: None,
         order_id: order_id.to_string(),
         order_type,
         created_by: "0x0000000000000000000000000000000000000abc".to_string(),

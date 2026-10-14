@@ -70,6 +70,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         let schema = DbOrderSchema {
             order_id: order_id_str.clone(),
             status: OrderStatus::Submitted,
+            status_updated_at: None,
             order_type: order_enum,
             area_uuid: created_by_str.clone(),
             market_id: market_id_str,

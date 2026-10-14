@@ -571,7 +571,8 @@ async fn fetches_trades_by_market_over_ewds() {
 fn order_dto() -> EwdsOrderDto {
     EwdsOrderDto::from(DbOrderSchema {
         order_id: "order-1".to_string(),
-        status: OrderStatus::Submitted,
+        status: OrderStatus::Filled,
+        status_updated_at: Some(TIMESLOT),
         order_type: OrderEnum::Bid,
         area_uuid: "buyer-1".to_string(),
         market_id: "market-1".to_string(),
