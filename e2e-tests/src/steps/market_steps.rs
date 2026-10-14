@@ -118,8 +118,9 @@ async fn wait_for_market_to_open(world: &mut MyWorld) {
     world.community_id = unique_community_id();
     upsert_default_community(world).await;
 
-    // The orchestrator creates the current delivery slot's markets for a new
-    // community; markets of later slots that have already opened are not created.
+    // The orchestrator creates every market of a new community that has not
+    // closed. The e2e Spot market closes 30 min after delivery start, so the
+    // current delivery slot's market is still open.
     let (current_timeslot, _) = get_last_and_next_timeslot();
     world.target_delivery_time = current_timeslot;
 

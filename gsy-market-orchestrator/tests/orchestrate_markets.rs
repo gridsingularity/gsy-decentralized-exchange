@@ -192,9 +192,8 @@ fn expected_market(
 }
 
 /// Every market the tick at NOW should create, in creation order: per
-/// rule, the current delivery slot (unless it also opens in the window)
-/// followed by the slots opening in (NOW, NOW + look-ahead], each for
-/// every community.
+/// rule, the slots whose market has not closed at NOW and opens by
+/// NOW + look-ahead, each for every community.
 fn expected_markets(
     communities: &[EnergyCommunitySchema],
     look_ahead_hours: u64,
@@ -203,16 +202,14 @@ fn expected_markets(
     let mut markets = Vec::new();
     for rule in MARKET_RULES.iter() {
         let opening = |slot: u64| (slot as i64 + rule.open_offset_mins * 60) as u64;
+        let closing = |slot: u64| (slot as i64 + rule.close_offset_mins * 60) as u64;
         let mut slots = Vec::new();
         let mut slot = current_slot() - 86_400;
         while slot <= horizon + 86_400 {
-            if NOW < opening(slot) && opening(slot) <= horizon {
+            if NOW < closing(slot) && opening(slot) <= horizon {
                 slots.push(slot);
             }
             slot += GLOBAL_CONSTANTS.time_slot_sec;
-        }
-        if !slots.contains(&current_slot()) {
-            slots.insert(0, current_slot());
         }
         for slot in slots {
             for community in communities {
@@ -329,7 +326,7 @@ async fn new_market_carries_the_full_market_record() {
 }
 
 #[tokio::test]
-async fn never_creates_a_market_that_has_opened() {
+async fn creates_missing_markets_that_have_already_opened() {
     let config = test_config(3);
     let client = MockChainClient::default();
     let communities = vec![community()];
@@ -352,46 +349,55 @@ async fn never_creates_a_market_that_has_opened() {
         .await
         .expect("orchestration should succeed");
 
-    assert!(client.created_market(open_market.market_id).is_none());
-    assert!(client.created().iter().all(|market| {
-        NOW < market.opening_time || market.delivery_start_time == current_slot()
-    }));
+    assert_eq!(client.created_market(open_market.market_id), Some(open_market));
 }
 
 #[tokio::test]
-async fn creates_the_markets_of_the_current_delivery_slot() {
-    let config = test_config(1);
-    let communities = vec![community()];
+async fn never_creates_a_market_that_has_closed() {
+    let config = test_config(3);
     let client = MockChainClient::default();
-    let current_market_ids = MARKET_RULES
-        .iter()
-        .map(|rule| {
-            generate_market_id(
-                communities[0].community_id.as_str(),
-                rule.market_type.clone(),
-                current_slot(),
-            )
-        })
-        .collect::<Vec<_>>();
+    let communities = vec![community()];
 
     orchestrate_markets_at(&config, &client, communities.as_slice(), NOW)
         .await
-        .expect("tick should succeed");
+        .expect("orchestration should succeed");
 
-    for market_id in &current_market_ids {
-        let market = client.created_market(*market_id).expect("market created");
-        assert!(market.delivery_start_time <= NOW && NOW < market.delivery_end_time);
-    }
-
-    // Still in the same delivery slot: they exist on-chain and are not resent.
-    let delivery_end = current_slot() + GLOBAL_CONSTANTS.time_slot_sec;
-    orchestrate_markets_at(&config, &client, communities.as_slice(), delivery_end - 1)
-        .await
-        .expect("tick should succeed");
-    let resent = client.batches().get(1).cloned().unwrap_or_default();
-    assert!(resent
+    let created = client.created();
+    assert!(!created.is_empty());
+    assert!(created.iter().all(|market| NOW < market.closing_time));
+    // Every market type closes at or before delivery start by default, so
+    // the markets of the current delivery slot have closed.
+    assert!(created
         .iter()
-        .all(|market| !current_market_ids.contains(&market.market_id)));
+        .all(|market| market.delivery_start_time != current_slot()));
+}
+
+#[tokio::test]
+async fn creates_markets_until_they_close() {
+    let config = test_config(1);
+    let communities = vec![community()];
+    let rule = &MARKET_RULES[0];
+    let slot = current_slot() + 4 * 3600;
+    let market_id = generate_market_id(
+        communities[0].community_id.as_str(),
+        rule.market_type.clone(),
+        slot,
+    );
+    let closing = expected_market(market_id, community_bytes(), rule, slot).closing_time;
+
+    // One second before closing: still open, created.
+    let client = MockChainClient::default();
+    orchestrate_markets_at(&config, &client, communities.as_slice(), closing - 1)
+        .await
+        .expect("orchestration should succeed");
+    assert!(client.created_market(market_id).is_some());
+
+    // Closing exactly now: closed, not created.
+    let client = MockChainClient::default();
+    orchestrate_markets_at(&config, &client, communities.as_slice(), closing)
+        .await
+        .expect("orchestration should succeed");
+    assert!(client.created_market(market_id).is_none());
 }
 
 #[tokio::test]
@@ -414,9 +420,9 @@ async fn creates_markets_opening_up_to_and_including_the_window_end() {
         .expect("orchestration should succeed");
     assert!(client.created_market(market_id).is_some());
 
-    // Opening exactly now: already open, not created.
+    // Opening one second after the end of the window: not created yet.
     let client = MockChainClient::default();
-    orchestrate_markets_at(&config, &client, communities.as_slice(), opening)
+    orchestrate_markets_at(&config, &client, communities.as_slice(), opening - 3600 - 1)
         .await
         .expect("orchestration should succeed");
     assert!(client.created_market(market_id).is_none());
@@ -535,12 +541,9 @@ async fn sends_only_markets_new_to_the_window() {
     assert!(second
         .iter()
         .all(|market| !first.iter().any(|sent| sent.market_id == market.market_id)));
-    // New: markets that entered the opening window, and those of the
-    // delivery slot that became current.
-    let later_slot = (later / GLOBAL_CONSTANTS.time_slot_sec) * GLOBAL_CONSTANTS.time_slot_sec;
+    // New: only markets that entered the opening window.
     assert!(second.iter().all(|market| {
-        (NOW + 3600 < market.opening_time && market.opening_time <= later + 3600)
-            || market.delivery_start_time == later_slot
+        NOW + 3600 < market.opening_time && market.opening_time <= later + 3600
     }));
 }
 

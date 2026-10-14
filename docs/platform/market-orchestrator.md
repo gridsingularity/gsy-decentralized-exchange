@@ -12,11 +12,11 @@ closing time, so there is no open/close step.
 2. Run periodic ticks (`tick_interval_seconds`).
 3. Fetch the current communities from off-chain storage through the configured
    HTTP or EWDS transport.
-4. For each market type, select the delivery slots whose market opens in
-   `(now, now + LOOK_AHEAD_HOURS]`, plus the current delivery slot
-   (`deliveryStart <= now < deliveryEnd`) so its markets exist right after a
-   (re)start even if they have already opened. Markets of later slots whose
-   opening time has passed are not created.
+4. For each market type, select the delivery slots whose market has not
+   closed (`now < closingTime`) and opens by `now + LOOK_AHEAD_HOURS`.
+   Markets are normally created before they open; markets that have already
+   opened are included too, so a new community or a (re)start after downtime
+   still gets every market it can trade in. Closed markets are never created.
 5. For each selected slot and community, compute the deterministic `marketId`
    and build the full record: community UUID (as `bytes16`), opening/closing
    time from the market-type offsets, delivery start and end
@@ -72,6 +72,7 @@ and the next tick continues, so transient failures do not stop orchestration
 permanently. Markets of a failed batch are still missing on-chain and are
 sent again on the next tick.
 
-If the orchestrator is down when a market of a later delivery slot opens, that
-market is not created; only the current delivery slot is covered on restart. Community-source failures are not replaced with a global fallback
-market.
+If the orchestrator is down when a market opens, the market is created on the
+first tick after the restart, as long as it has not closed yet. Markets that
+closed during the downtime are not created. Community-source failures are not
+replaced with a global fallback market.

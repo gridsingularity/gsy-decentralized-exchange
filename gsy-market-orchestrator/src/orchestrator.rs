@@ -76,8 +76,8 @@ where
 }
 
 /// One orchestration tick at `now` (epoch seconds) for the given communities:
-/// creates every missing market that opens in `(now, now + LOOK_AHEAD_HOURS]`
-/// and every missing market of the current delivery slot.
+/// creates every missing market that has not closed at `now` and opens by
+/// `now + LOOK_AHEAD_HOURS`.
 pub async fn orchestrate_markets_at<C>(
     config: &Config,
     client: &C,
@@ -114,17 +114,11 @@ where
 
     let mut candidates = Vec::new();
 
-    // Markets are created before they open: those opening in
-    // (now, look_ahead_horizon]. The markets of the current delivery slot are
-    // added too, so they exist after a (re)start even if they have opened.
-    let current_delivery_slot =
-        (now / GLOBAL_CONSTANTS.time_slot_sec) * GLOBAL_CONSTANTS.time_slot_sec;
+    // Markets are normally created before they open. Markets that have opened
+    // but not closed are included too, so a new community or a (re)start
+    // after downtime still gets every market it can trade in.
     for rule in MARKET_RULES.iter() {
-        let mut delivery_slots = delivery_slots_opening_in(rule, now, look_ahead_horizon);
-        if !delivery_slots.contains(&current_delivery_slot) {
-            delivery_slots.insert(0, current_delivery_slot);
-        }
-        for delivery_start in delivery_slots {
+        for delivery_start in delivery_slots_to_create(rule, now, look_ahead_horizon) {
             for (community, community_bytes) in &communities {
                 let market_id = generate_market_id(
                     community.community_id.as_str(),
@@ -176,13 +170,15 @@ where
     Ok(())
 }
 
-/// Delivery slots whose market for `rule` opens in `(after, until]`.
-fn delivery_slots_opening_in(rule: &MarketRule, after: u64, until: u64) -> Vec<u64> {
+/// Delivery slots whose market for `rule` has not closed at `now` and opens by
+/// `until`.
+fn delivery_slots_to_create(rule: &MarketRule, now: u64, until: u64) -> Vec<u64> {
     let time_slot = GLOBAL_CONSTANTS.time_slot_sec as i64;
-    let open_offset = rule.open_offset_mins * 60;
-    // opening = delivery + open_offset, so the delivery range is shifted by -open_offset.
-    let first_slot = ((after as i64 - open_offset).div_euclid(time_slot) + 1) * time_slot;
-    let last_delivery = until as i64 - open_offset;
+    // closing = delivery + close_offset and opening = delivery + open_offset,
+    // so both bounds are shifted by the offsets to get delivery times.
+    let first_slot =
+        ((now as i64 - rule.close_offset_mins * 60).div_euclid(time_slot) + 1) * time_slot;
+    let last_delivery = until as i64 - rule.open_offset_mins * 60;
     (first_slot..=last_delivery)
         .step_by(time_slot as usize)
         .map(|slot| slot as u64)
