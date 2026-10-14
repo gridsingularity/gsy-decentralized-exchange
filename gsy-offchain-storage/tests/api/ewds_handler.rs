@@ -11,7 +11,7 @@ use primitives::db_api_schema::grid_topology::FacilitySchema;
 use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
 use primitives::db_api_schema::trades::{DbTradeSchema, TradeParameters, TradeStatus};
 use primitives::ewds::dto::{EwdsRequestEnvelope, EwdsSendMessageDto};
-use primitives::ewds::{EwdsOperation, EwdsTopicConfig};
+use primitives::ewds::{EwdsEventTopicConfig, EwdsOperation, EwdsTopicConfig};
 use primitives::utils::{
     bytes16_to_hex, create_encrypted_bytes16_from_string, epoch_to_rfc3339,
     timestamp_to_string_with_padding,
@@ -29,14 +29,13 @@ pub(crate) fn test_config(gateway_url: String) -> EwdsHandlerConfig {
         response_fqcn: "gsy.responses.pub".to_string(),
         event_publish_fqcn: "gsy.events.pub".to_string(),
         event_subscribe_fqcn: "gsy.events.sub".to_string(),
-        trade_event_topic: "trade".to_string(),
-        clearing_result_event_topic: "clearingResult".to_string(),
-        market_event_topic: "market".to_string(),
+        event_topics: EwdsEventTopicConfig::default(),
         topic_owner: "test.owner".to_string(),
         topic_version: "1.0.0".to_string(),
         request_client_id: "gsyoffchainstorage".to_string(),
         topics: EwdsTopicConfig::from_env(),
         poll_interval_ms: 500,
+        event_poll_interval_ms: 500,
         request_batch_size: 100,
         response_send_timeout_ms: 1_000,
     }
@@ -274,19 +273,19 @@ async fn trades_query_inverted_range_publishes_error() {
 fn validate_trades_query_range_boundaries() {
     let day = MAX_TRADES_QUERY_RANGE_SECS;
     assert_eq!(
-        validate_trades_query_range(Some(0), Some(0)).unwrap(),
-        (0, 0)
+        validate_trades_query_range(None, Some(0), Some(0)).unwrap(),
+        Some((0, 0))
     );
     assert_eq!(
-        validate_trades_query_range(Some(10), Some(10 + day - 1)).unwrap(),
-        (10, 10 + day - 1)
+        validate_trades_query_range(None, Some(10), Some(10 + day - 1)).unwrap(),
+        Some((10, 10 + day - 1))
     );
     assert_eq!(
-        validate_trades_query_range(Some(10), Some(10 + day)).unwrap(),
-        (10, 10 + day)
+        validate_trades_query_range(None, Some(10), Some(10 + day)).unwrap(),
+        Some((10, 10 + day))
     );
 
-    let too_large = validate_trades_query_range(Some(10), Some(10 + day + 1)).unwrap_err();
+    let too_large = validate_trades_query_range(None, Some(10), Some(10 + day + 1)).unwrap_err();
     assert_eq!(too_large.code, TIME_RANGE_TOO_LARGE);
     assert!(too_large.message.contains("86401s"));
 
@@ -296,7 +295,29 @@ fn validate_trades_query_range_boundaries() {
         (Some(10), None),
         (None, None),
     ] {
-        let error = validate_trades_query_range(start, end).unwrap_err();
+        let error = validate_trades_query_range(None, start, end).unwrap_err();
+        assert_eq!(
+            error.code, INVALID_TIME_RANGE,
+            "start={:?} end={:?}",
+            start, end
+        );
+    }
+}
+
+#[test]
+fn validate_trades_query_range_needs_no_range_for_a_market() {
+    let market_id = Some("MARKET-EWDS-A");
+    assert_eq!(
+        validate_trades_query_range(market_id, None, None).unwrap(),
+        None
+    );
+    // A range sent with a market is still checked.
+    assert_eq!(
+        validate_trades_query_range(market_id, Some(10), Some(20)).unwrap(),
+        Some((10, 20))
+    );
+    for (start, end) in [(Some(11), Some(10)), (None, Some(10)), (Some(10), None)] {
+        let error = validate_trades_query_range(market_id, start, end).unwrap_err();
         assert_eq!(
             error.code, INVALID_TIME_RANGE,
             "start={:?} end={:?}",
@@ -308,8 +329,6 @@ fn validate_trades_query_range_boundaries() {
 #[tokio::test]
 async fn trades_query_filters_by_market_id() {
     let app = init_app().await;
-    let server = mock_gateway().await;
-    let config = test_config(server.uri());
     let client = reqwest::Client::new();
 
     for market_id in ["MARKET-EWDS-A", "MARKET-EWDS-B"] {
@@ -328,22 +347,30 @@ async fn trades_query_filters_by_market_id() {
         .await
         .unwrap();
 
-    let env = envelope(
-        EwdsOperation::TradesQuery,
-        "req-trades-market",
+    // The time range is optional when a market is given.
+    for payload in [
         json!({
             "marketId": "MARKET-EWDS-A",
             "startTime": trades_time(0),
             "endTime": trades_time(3_600),
         }),
-    );
+        json!({ "marketId": "MARKET-EWDS-A" }),
+    ] {
+        let server = mock_gateway().await;
+        let config = test_config(server.uri());
+        let env = envelope(
+            EwdsOperation::TradesQuery,
+            "req-trades-market",
+            payload.clone(),
+        );
 
-    handle_request(&app.db_wrapper, &client, &config, env)
-        .await
-        .unwrap();
-    let data = captured_data(&server).await;
-    assert_eq!(data.len(), 1);
-    assert_eq!(data[0]["tradeId"], json!("TRADE-EWDS-A"));
+        handle_request(&app.db_wrapper, &client, &config, env)
+            .await
+            .unwrap();
+        let data = captured_data(&server).await;
+        assert_eq!(data.len(), 1, "{payload}");
+        assert_eq!(data[0]["tradeId"], json!("TRADE-EWDS-A"), "{payload}");
+    }
 
     stop_app(app).await;
 }

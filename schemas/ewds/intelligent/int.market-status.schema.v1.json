@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "int.market-status.schema.v1",
+  "title": "market status",
+  "description": "Whether a market is open for orders, as reported by the EVM MarketStatusUpdated event. Mirrors the Rust EwdsMarketStatusDto.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "marketId": { "type": "string", "minLength": 1 },
+    "isOpen": { "type": "boolean" }
+  },
+  "required": ["marketId", "isOpen"]
+}

@@ -175,7 +175,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
 
         // Publish only once the trade and both order status updates are persisted.
         if let Some(publisher) = &self.event_publisher {
-            publisher.publish_trades_created(vec![trade]);
+            publisher.publish_trade_event(vec![trade]);
         }
 
         Ok(())
@@ -189,7 +189,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         );
 
         if let Some(publisher) = &self.event_publisher {
-            publisher.publish_market_statuses_updated(
+            publisher.publish_market_event(
                 vec![EwdsMarketStatusDto {
                     market_id: bytes16_to_hex(event.market_id),
                     is_open: event.is_open,
@@ -244,7 +244,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         info!("Market clearing result saved.");
 
         if let Some(publisher) = &self.event_publisher {
-            publisher.publish_clearing_results_created(vec![clearing_result]);
+            publisher.publish_clearing_result_event(vec![clearing_result]);
         }
         Ok(())
     }
