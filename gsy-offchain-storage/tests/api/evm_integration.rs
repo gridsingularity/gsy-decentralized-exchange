@@ -1,13 +1,18 @@
-use crate::helpers::init_app;
+use crate::helpers::{init_app, stop_app};
 use ethers::{
     prelude::*,
     solc::{Project, ProjectPathsConfig},
     utils::Anvil,
 };
-use gsy_ethers_listener::{GsyEthersListener, GsyEventHandler, ListenerConfig, OrderPlacedFilter};
+use gsy_ethers_listener::{
+    GsyEthersListener, GsyEventHandler, ListenerConfig, OrderPlacedFilter, TradeSettledFilter,
+};
 use gsy_offchain_storage::evm_handler::OffchainStorageEvmHandler;
 use primitives::db_api_schema::ids::IdMappingSchema;
-use primitives::db_api_schema::orders::{EnergyType, OrderEnum};
+use primitives::db_api_schema::orders::{EnergyType, OrderEnum, OrderStatus};
+use primitives::db_api_schema::trades::TradeStatus;
+use primitives::ewds::dto::EwdsOrderDto;
+use primitives::utils::bytes16_to_hex;
 use std::{fs::File, io::Write, sync::Arc, time::Duration};
 use tempfile::TempDir;
 
@@ -239,4 +244,169 @@ async fn test_evm_order_listener_persists_to_db() {
     }
 
     assert!(found, "Order was not found in MongoDB after 4 seconds");
+}
+
+fn placed_order(order_id: [u8; 16], is_bid: bool, energy: u64) -> OrderPlacedFilter {
+    OrderPlacedFilter {
+        order_id,
+        created_by: if is_bid { [0xaa; 16] } else { [0xbb; 16] },
+        market_id: [0xcc; 16],
+        time_slot: 1000,
+        creation_time: 900,
+        energy,
+        energy_rate: 5000,
+        energy_source_preference: 0,
+        energy_type: 0,
+        is_bid,
+        preferred_trading_partner: [0; 16],
+        preferred_energy_rate: 0,
+    }
+}
+
+#[tokio::test]
+async fn settlement_indexes_fill_statuses_and_keeps_residuals_independent() {
+    for (partial_bid, partial_offer) in [(false, false), (true, false), (false, true), (true, true)]
+    {
+        let app = init_app().await;
+        let handler = OffchainStorageEvmHandler {
+            db: app.db_wrapper.clone(),
+            event_publisher: None,
+        };
+        let sides = [
+            (true, [1; 16], [3; 16], partial_bid),
+            (false, [2; 16], [4; 16], partial_offer),
+        ];
+        for (is_bid, original, residual, partial) in sides {
+            handler
+                .handle_order_placed(placed_order(
+                    original,
+                    is_bid,
+                    if partial { 20000 } else { 10000 },
+                ))
+                .await
+                .unwrap();
+            if partial {
+                handler
+                    .handle_order_placed(placed_order(residual, is_bid, 10000))
+                    .await
+                    .unwrap();
+            }
+        }
+        let event = TradeSettledFilter {
+            trade_id: [10; 16],
+            bid_id: [1; 16],
+            offer_id: [2; 16],
+            buyer_id: [0xaa; 16],
+            seller_id: [0xbb; 16],
+            market_id: [0xcc; 16],
+            time_slot: 1000,
+            residual_bid_id: if partial_bid { [3; 16] } else { [0; 16] },
+            residual_offer_id: if partial_offer { [4; 16] } else { [0; 16] },
+            energy: U256::from(10000u64),
+            price: U256::from(5000u64),
+        };
+        handler.handle_trade_settled(event.clone()).await.unwrap();
+        let orders = app.db_wrapper.orders();
+        let indexed = orders.get_all_orders().await.unwrap();
+        let returned = reqwest::Client::new()
+            .get(format!("{}/orders", app.address))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json::<Vec<EwdsOrderDto>>()
+            .await
+            .unwrap();
+
+        for (is_bid, original, residual, partial) in sides {
+            let original_id = bytes16_to_hex(original);
+            let original_order = indexed
+                .iter()
+                .find(|order| order.order_id == original_id)
+                .unwrap();
+            assert_eq!(
+                original_order.status,
+                if partial {
+                    OrderStatus::PartiallyFilled
+                } else {
+                    OrderStatus::Filled
+                }
+            );
+            assert_eq!(original_order.energy_kWh, if partial { 2.0 } else { 1.0 });
+            let dto = returned
+                .iter()
+                .find(|order| order.order_id == original_id)
+                .unwrap();
+            assert_eq!(
+                dto.order_status,
+                if partial {
+                    "partially_filled"
+                } else {
+                    "filled"
+                }
+            );
+            if !partial {
+                continue;
+            }
+            let residual_id = bytes16_to_hex(residual);
+            let mut expected_residual = original_order.clone();
+            expected_residual.order_id = residual_id.clone();
+            expected_residual.energy_kWh = 1.0;
+            expected_residual.status = OrderStatus::Submitted;
+            assert_eq!(
+                indexed
+                    .iter()
+                    .find(|order| order.order_id == residual_id)
+                    .unwrap(),
+                &expected_residual
+            );
+
+            let counterpart = if is_bid { [5; 16] } else { [6; 16] };
+            handler
+                .handle_order_placed(placed_order(counterpart, !is_bid, 10000))
+                .await
+                .unwrap();
+            handler
+                .handle_trade_settled(TradeSettledFilter {
+                    trade_id: if is_bid { [11; 16] } else { [12; 16] },
+                    bid_id: if is_bid { residual } else { counterpart },
+                    offer_id: if is_bid { counterpart } else { residual },
+                    residual_bid_id: [0; 16],
+                    residual_offer_id: [0; 16],
+                    ..event.clone()
+                })
+                .await
+                .unwrap();
+
+            expected_residual.status = OrderStatus::Filled;
+            let stored_residual = orders
+                .get_order_by_id(&residual_id.into())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(stored_residual, expected_residual);
+            let stored_original = orders
+                .get_order_by_id(&original_id.into())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(&stored_original, original_order);
+            let stored_counterpart = orders
+                .get_order_by_id(&bytes16_to_hex(counterpart).into())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(stored_counterpart.status, OrderStatus::Filled);
+        }
+        let trades = app.db_wrapper.trades().get_all_trades().await.unwrap();
+        assert_eq!(
+            trades.len(),
+            1 + usize::from(partial_bid) + usize::from(partial_offer)
+        );
+        assert!(trades
+            .iter()
+            .all(|trade| trade.status == TradeStatus::Settled));
+        stop_app(app).await;
+    }
 }

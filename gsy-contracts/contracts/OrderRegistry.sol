@@ -18,7 +18,10 @@ contract OrderRegistry is Initializable, AccessControlUpgradeable {
         Open,
         Executed,
         Cancelled,
-        Expired
+        Expired,
+        // Append new statuses to preserve existing on-chain enum values.
+        PartiallyFilled,
+        Filled
     }
 
     MarketController public marketController;
@@ -160,8 +163,11 @@ contract OrderRegistry is Initializable, AccessControlUpgradeable {
             revert InvalidOrderParams();
         }
 
-        orderStatus[orderId] = OrderStatus.Executed;
-        emit OrderStatusUpdated(orderId, OrderStatus.Executed);
+        OrderStatus status = residual.energy == 0
+            ? OrderStatus.Filled
+            : OrderStatus.PartiallyFilled;
+        orderStatus[orderId] = status;
+        emit OrderStatusUpdated(orderId, status);
 
         if (residual.energy > 0) {
             residual.orderId = residualOrderId;

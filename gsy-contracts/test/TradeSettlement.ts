@@ -14,6 +14,8 @@ import {
 describe("TradeSettlement", function () {
   // Clearing status enum values (adjust if your contract defines them differently)
   const CLEARING_STATUS_FINAL = 0;
+  const ORDER_STATUS_PARTIALLY_FILLED = 5;
+  const ORDER_STATUS_FILLED = 6;
 
   async function deploySettlementFixture() {
     const [admin, buyer, seller, operator, executionEngine] =
@@ -149,7 +151,8 @@ describe("TradeSettlement", function () {
       clearingResult: makeClearingResult(),
     };
 
-    await expect(settlement.connect(operator).settleBatch([settlementBatch]))
+    const tx = settlement.connect(operator).settleBatch([settlementBatch]);
+    await expect(tx)
         .to.emit(settlement, "TradeSettled")
         .withArgs(
             matchData.tradeId,
@@ -165,8 +168,11 @@ describe("TradeSettlement", function () {
             matchData.clearingPrice,
         );
 
-    expect(await registry.getStatus(bid.orderId)).to.equal(2); // Executed
-    expect(await registry.getStatus(offer.orderId)).to.equal(2); // Executed
+    for (const order of [bid, offer]) {
+      await expect(tx).to.emit(registry, "OrderStatusUpdated")
+        .withArgs(order.orderId, ORDER_STATUS_FILLED);
+      expect(await registry.getStatus(order.orderId)).to.equal(ORDER_STATUS_FILLED);
+    }
   });
 
   it("Should emit a MarketClearing event", async function () {
@@ -356,6 +362,10 @@ describe("TradeSettlement", function () {
         };
 
         const firstTx = settlement.connect(operator).settleBatch(asMarketBatch(sameBatch ? [first, second] : [first]));
+        await expect(firstTx).to.emit(registry, "OrderStatusUpdated")
+          .withArgs(orders[side].orderId, ORDER_STATUS_PARTIALLY_FILLED);
+        await expect(firstTx).to.emit(registry, "OrderStatusUpdated")
+          .withArgs(orders[otherSide].orderId, ORDER_STATUS_FILLED);
         await expect(firstTx).to.emit(registry, "OrderPlaced").withArgs(
           residual.orderId, residual.createdBy, residual.marketId, residual.timeSlot,
           residual.creationTime, residual.energy, residual.energyRate,
@@ -366,13 +376,19 @@ describe("TradeSettlement", function () {
         for (const [field, value] of Object.entries(residual)) {
           expect(stored[field], field).to.equal(value);
         }
-        expect(await registry.getStatus(orders[side].orderId)).to.equal(2);
+        expect(await registry.getStatus(orders[side].orderId)).to.equal(ORDER_STATUS_PARTIALLY_FILLED);
+        expect(await registry.getStatus(orders[otherSide].orderId)).to.equal(ORDER_STATUS_FILLED);
         if (!sameBatch) {
           expect(await registry.getStatus(residual.orderId)).to.equal(1);
-          await settlement.connect(operator).settleBatch(asMarketBatch([second]));
+          await expect(settlement.connect(operator).settleBatch(asMarketBatch([second])))
+            .to.emit(registry, "OrderStatusUpdated")
+            .withArgs(residual.orderId, ORDER_STATUS_FILLED);
         }
-        expect(await registry.getStatus(residual.orderId)).to.equal(2);
-        expect(await registry.getStatus(counterpart.orderId)).to.equal(2);
+        expect(await registry.getStatus(residual.orderId)).to.equal(ORDER_STATUS_FILLED);
+        expect(await registry.getStatus(counterpart.orderId)).to.equal(ORDER_STATUS_FILLED);
+        expect(await registry.getStatus(orders[side].orderId)).to.equal(ORDER_STATUS_PARTIALLY_FILLED);
+        await expect(registry.connect(side === "bid" ? buyer : seller).cancelOrder(orders[side]))
+          .to.be.revertedWithCustomError(registry, "OrderNotOpen");
         await expect(settlement.connect(operator).settleBatch(asMarketBatch([first])))
           .to.be.revertedWithCustomError(settlement, "OrderNotOpen");
         await expect(settlement.connect(operator).settleBatch(asMarketBatch([second])))
@@ -380,6 +396,32 @@ describe("TradeSettlement", function () {
       });
     }
   }
+
+  it("Should mark both originals partially filled and keep their residuals open", async function () {
+    const { settlement, registry, buyer, seller, operator, bid, offer } =
+      await loadFixture(deploySettlementFixture);
+    await registry.connect(buyer).placeOrder(bid);
+    await registry.connect(seller).placeOrder(offer);
+    const residualBidId = bytes16Id("residual-bid");
+    const residualOfferId = bytes16Id("residual-offer");
+    const matchData = {
+      tradeId: bytes16Id("partial-trade"),
+      bid,
+      offer,
+      residualBidId,
+      residualOfferId,
+      selectedEnergy: 50,
+      clearingPrice: 45,
+    };
+    const tx = settlement.connect(operator).settleBatch(asMarketBatch([matchData]));
+    for (const [order, residualId] of [[bid, residualBidId], [offer, residualOfferId]] as const) {
+      await expect(tx).to.emit(registry, "OrderStatusUpdated")
+        .withArgs(order.orderId, ORDER_STATUS_PARTIALLY_FILLED);
+      expect(await registry.getStatus(order.orderId)).to.equal(ORDER_STATUS_PARTIALLY_FILLED);
+      expect(await registry.getStatus(residualId)).to.equal(1); // Open
+      expect((await registry.getOrder(residualId)).energy).to.equal(50);
+    }
+  });
 
   for (const invalid of ["missing", "unexpected", "parent", "counterpart", "duplicate", "zero-energy", "excess-energy"]) {
     it(`Should reject ${invalid} residual settlement atomically`, async function () {

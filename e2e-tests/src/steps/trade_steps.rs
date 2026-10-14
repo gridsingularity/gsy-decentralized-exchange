@@ -37,6 +37,8 @@ const COMMUNITY_TRADE_POLL_ATTEMPTS: usize = 180;
 const COMMUNITY_MATCHING_RETRIGGER_INTERVAL: usize = 30;
 const HTTP_PENALTY_POLL_ATTEMPTS: usize = 60;
 const EWDS_PENALTY_POLL_ATTEMPTS: usize = 180;
+const ORDER_STATUS_PARTIALLY_FILLED: u8 = 5;
+const ORDER_STATUS_FILLED: u8 = 6;
 
 type EvmOrderParamsTuple = (
     [u8; 16],
@@ -935,23 +937,49 @@ async fn assert_trade_settled_on_chain(world: &MyWorld, trade: &DbTradeSchema) {
         .await
         .expect("Failed to read offer status from contract");
 
-    assert_eq!(bid_status, 2u8, "Bid order is not Executed on-chain");
-    assert_eq!(offer_status, 2u8, "Offer order is not Executed on-chain");
+    assert_eq!(
+        bid_status,
+        if trade.residual_bid_id.is_some() {
+            ORDER_STATUS_PARTIALLY_FILLED
+        } else {
+            ORDER_STATUS_FILLED
+        },
+        "Unexpected settled bid status on-chain"
+    );
+    assert_eq!(
+        offer_status,
+        if trade.residual_offer_id.is_some() {
+            ORDER_STATUS_PARTIALLY_FILLED
+        } else {
+            ORDER_STATUS_FILLED
+        },
+        "Unexpected settled offer status on-chain"
+    );
 
+    let expected_bid_status = if trade.residual_bid_id.is_some() {
+        OrderStatus::PartiallyFilled
+    } else {
+        OrderStatus::Filled
+    };
+    let expected_offer_status = if trade.residual_offer_id.is_some() {
+        OrderStatus::PartiallyFilled
+    } else {
+        OrderStatus::Filled
+    };
     for attempt in 0..40 {
         let orders = query_orders_for_market(world, trade.market_id.as_str()).await;
-        let bid_executed = orders.iter().any(|order| {
+        let bid_settled = orders.iter().any(|order| {
             order.order_id.eq_ignore_ascii_case(trade.bid_hash.as_str())
-                && order.status == OrderStatus::Executed
+                && order.status == expected_bid_status
         });
-        let offer_executed = orders.iter().any(|order| {
+        let offer_settled = orders.iter().any(|order| {
             order
                 .order_id
                 .eq_ignore_ascii_case(trade.offer_hash.as_str())
-                && order.status == OrderStatus::Executed
+                && order.status == expected_offer_status
         });
 
-        if bid_executed && offer_executed {
+        if bid_settled && offer_settled {
             return;
         }
 
@@ -1073,8 +1101,24 @@ async fn verify_partner_trade(
                 .await
                 .expect("Failed to read offer status from contract");
 
-            assert_eq!(bid_status, 2u8, "Bid order is not Executed on-chain");
-            assert_eq!(offer_status, 2u8, "Offer order is not Executed on-chain");
+            assert_eq!(
+                bid_status,
+                if trade.residual_bid_id.is_some() {
+                    ORDER_STATUS_PARTIALLY_FILLED
+                } else {
+                    ORDER_STATUS_FILLED
+                },
+                "Unexpected settled bid status on-chain"
+            );
+            assert_eq!(
+                offer_status,
+                if trade.residual_offer_id.is_some() {
+                    ORDER_STATUS_PARTIALLY_FILLED
+                } else {
+                    ORDER_STATUS_FILLED
+                },
+                "Unexpected settled offer status on-chain"
+            );
             return;
         }
 
@@ -1502,7 +1546,7 @@ async fn verify_residual_lifecycle(world: &mut MyWorld, side: String, consumptio
     let mut expected = parent;
     expected.order_id = residual_id.clone();
     expected.energy_kWh = 4.0;
-    expected.status = OrderStatus::Executed;
+    expected.status = OrderStatus::Filled;
     assert_eq!(
         residual, expected,
         "Residual metadata or indexed status changed"

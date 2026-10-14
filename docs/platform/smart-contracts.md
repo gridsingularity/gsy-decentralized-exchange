@@ -130,7 +130,9 @@ Purpose:
 Purpose:
 
 - Validates and settles matched trades (`settleBatch`).
-- Updates order statuses to executed.
+- Marks consumed orders `Filled` or `PartiallyFilled` and registers residuals as
+  separate `Open` orders. Existing status enum values are preserved; the appended
+  values are `PartiallyFilled = 5` and `Filled = 6`.
 - Emits all settlement data needed by off-chain storage to create a Trade object.
 - Records penalties via `submitPenalties`.
 

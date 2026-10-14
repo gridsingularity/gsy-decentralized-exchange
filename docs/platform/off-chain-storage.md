@@ -99,7 +99,10 @@ the same collections (see
   Existing records with on-chain partner IDs must be migrated using the mapping
   collection (or reindexed after mappings are restored); they must not be used
   as off-chain inputs to create new mappings.
-- Settlement events transition order statuses to `Executed`.
+- Settlement events mark consumed orders `Filled`, or `PartiallyFilled` when a
+  residual ID is emitted. Each residual is a separate `Submitted` order; filling
+  it later does not change its original's status. Settlement does not mark orders
+  `Executed`; delivery-verification transitions are still pending in DD-423.
 - Trade records include both order payload snapshots and selected settlement parameters.
 
 ## Operational Configuration

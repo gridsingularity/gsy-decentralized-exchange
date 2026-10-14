@@ -123,6 +123,16 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         let offer_hash_str = bytes16_to_hex(event.offer_id);
         let residual_bid_id = bytes16_to_optional_hex(event.residual_bid_id);
         let residual_offer_id = bytes16_to_optional_hex(event.residual_offer_id);
+        let bid_status = if residual_bid_id.is_some() {
+            OrderStatus::PartiallyFilled
+        } else {
+            OrderStatus::Filled
+        };
+        let offer_status = if residual_offer_id.is_some() {
+            OrderStatus::PartiallyFilled
+        } else {
+            OrderStatus::Filled
+        };
 
         let bid_bson = mongodb::bson::to_bson(&bid_hash_str).unwrap();
         let offer_bson = mongodb::bson::to_bson(&offer_hash_str).unwrap();
@@ -153,21 +163,21 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
 
         self.db
             .orders()
-            .update_order_status_by_id(&bid_bson, OrderStatus::Executed)
+            .update_order_status_by_id(&bid_bson, bid_status)
             .await
             .with_context(|| {
                 format!(
-                    "Failed to mark bid {} of trade {} as executed",
+                    "Failed to update bid {} after settlement of trade {}",
                     bid_bson, trade_hash
                 )
             })?;
         self.db
             .orders()
-            .update_order_status_by_id(&offer_bson, OrderStatus::Executed)
+            .update_order_status_by_id(&offer_bson, offer_status)
             .await
             .with_context(|| {
                 format!(
-                    "Failed to mark offer {} of trade {} as executed",
+                    "Failed to update offer {} after settlement of trade {}",
                     offer_bson, trade_hash
                 )
             })?;
