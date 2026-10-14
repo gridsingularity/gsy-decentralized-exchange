@@ -1,5 +1,5 @@
 use primitives::db_api_schema::{
-    grid_topology::EnergyCommunitySchema,
+    grid_topology::{EnergyCommunitySchema, FacilitySchema, SiteSchema},
     market::{MarketSchema, MarketType, MatchingAlgorithm},
     orders::{DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus},
     profiles::MeasurementSchema,
@@ -10,12 +10,19 @@ use primitives::db_api_schema::{
 };
 use primitives::ewds::dto::{
     energy_type_from_ewds, energy_type_to_ewds, EwdsClearingResultDto, EwdsCommunityDto,
-    EwdsMarketDto, EwdsMeasurementDto, EwdsOrderDto, EwdsTradeDto,
+    EwdsEventEnvelope, EwdsMarketDto, EwdsMeasurementDto, EwdsOrderDto, EwdsRequestEnvelope,
+    EwdsTradeDto,
 };
-use primitives::ewds::EwdsOperation;
+use primitives::ewds::{
+    empty_response_grace_elapsed, event_retry_delay_ms, invalid_event, is_invalid_event,
+    is_rate_limited_response, is_transient_gateway_response, parse_batch,
+    parse_gateway_delivery_summary, select_response_data, EwdsEventTopicConfig, EwdsEventType,
+    EwdsOperation, EwdsTopicConfig, EwdsTopicPair,
+};
 use primitives::utils::epoch_to_rfc3339;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::str::FromStr;
+use std::time::Instant;
 
 #[cfg(test)]
 mod tests {
@@ -106,18 +113,86 @@ mod tests {
         expected.order_type = OrderEnum::Offer;
         expected.requirements = None;
         expected.attributes = Some(DbAttributes {
-            trading_partner_id: Some("partner-id".to_string()),
             energy_type: EnergyType::Pv,
         });
 
         let dto = EwdsOrderDto::from(expected.clone());
-        assert_eq!(dto.preferred_trading_partner.as_deref(), Some("partner-id"));
+        assert_eq!(dto.preferred_trading_partner, None);
         assert_eq!(dto.energy_type.as_deref(), Some("PV"));
         assert_eq!(dto.energy_source_preference, None);
         assert_eq!(dto.preferred_energy_rate, None);
 
         let actual = DbOrderSchema::try_from(dto).expect("EWDS offer should convert to DB schema");
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn offer_preferred_partner_round_trips_through_requirements() {
+        let mut expected = order();
+        expected.order_type = OrderEnum::Offer;
+        expected.requirements = Some(DbRequirements {
+            trading_partner_id: Some("partner-id".to_string()),
+            energy_type: None,
+            preferred_energy_rate: Some(12.0),
+        });
+        expected.attributes = Some(DbAttributes {
+            energy_type: EnergyType::Pv,
+        });
+
+        let dto = EwdsOrderDto::from(expected.clone());
+        assert_eq!(dto.order_type, "offer");
+        assert_eq!(dto.preferred_trading_partner.as_deref(), Some("partner-id"));
+        assert_eq!(dto.preferred_energy_rate, Some(12.0));
+        assert_eq!(dto.energy_type.as_deref(), Some("PV"));
+
+        let actual = DbOrderSchema::try_from(dto).expect("EWDS offer should convert to DB schema");
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn preferred_partner_without_preferred_rate_round_trips_through_ewds_dto() {
+        let mut expected = order();
+        expected.order_type = OrderEnum::Offer;
+        expected.requirements = Some(DbRequirements {
+            trading_partner_id: Some("partner-id".to_string()),
+            energy_type: None,
+            preferred_energy_rate: None,
+        });
+
+        let dto = EwdsOrderDto::from(expected.clone());
+        assert_eq!(dto.preferred_energy_rate, None);
+
+        let actual = DbOrderSchema::try_from(dto).expect("EWDS offer should convert to DB schema");
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn order_preferences_round_trip_without_inventing_rates() {
+        for order_type in [OrderEnum::Bid, OrderEnum::Offer] {
+            for partner in [None, Some("partner-id".to_string())] {
+                for rate in [None, Some(12.0)] {
+                    let mut expected = order();
+                    expected.order_type = order_type.clone();
+                    expected.requirements = if partner.is_some() || rate.is_some() {
+                        Some(DbRequirements {
+                            trading_partner_id: partner.clone(),
+                            energy_type: None,
+                            preferred_energy_rate: rate,
+                        })
+                    } else {
+                        None
+                    };
+
+                    let json = serde_json::to_value(EwdsOrderDto::from(expected.clone())).unwrap();
+                    assert_eq!(json["preferredTradingPartner"], serde_json::json!(partner));
+                    assert_eq!(json.get("preferredEnergyRate").is_some(), rate.is_some());
+                    let dto: EwdsOrderDto = serde_json::from_value(json).unwrap();
+                    let actual = DbOrderSchema::try_from(dto).unwrap();
+
+                    assert_eq!(actual, expected);
+                }
+            }
+        }
     }
 
     #[test]
@@ -156,6 +231,7 @@ mod tests {
                 selected_energy_kWh: 4.5,
                 energy_rate: 12.0,
             },
+            status_updated_at: None,
         }
     }
 
@@ -229,6 +305,170 @@ mod tests {
         let mut dto = EwdsMeasurementDto::from(measurement());
         dto.time_slot = "900".to_string();
         assert!(MeasurementSchema::try_from(dto).is_err());
+    }
+
+    #[test]
+    fn measurement_dto_serializes_camel_case() {
+        let serialized = serde_json::to_value(EwdsMeasurementDto::from(measurement())).unwrap();
+
+        assert_eq!(
+            serialized,
+            json!({
+                "facilityId": "facility-id",
+                "communityUuid": "community-id",
+                "timeSlot": epoch_to_rfc3339(900),
+                "creationTime": epoch_to_rfc3339(910),
+                "energyKwh": -1.5,
+            })
+        );
+    }
+
+    // ---- Event envelope tests ----
+
+    #[test]
+    fn event_envelope_parses_a_measurement_batch() {
+        let event: EwdsEventEnvelope<Vec<EwdsMeasurementDto>> = serde_json::from_value(json!({
+            "eventId": "7d3f7a52-0c5e-4a8e-9a57-2b8f5f3f7e10",
+            "eventType": "measurements.event",
+            "occurredAt": "2026-09-29T10:16:02Z",
+            "data": [{
+                "facilityId": "facility-id",
+                "communityUuid": "community-id",
+                "timeSlot": "1970-01-01T00:15:00Z",
+                "creationTime": "1970-01-01T00:15:10Z",
+                "energyKwh": -1.5,
+            }],
+        }))
+        .unwrap();
+
+        assert_eq!(event.event_id, "7d3f7a52-0c5e-4a8e-9a57-2b8f5f3f7e10");
+        assert_eq!(event.event_type, EwdsEventType::Measurements);
+        assert_eq!(event.occurred_at, "2026-09-29T10:16:02Z");
+        let measurements = event
+            .data
+            .into_iter()
+            .map(MeasurementSchema::try_from)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(measurements, vec![measurement()]);
+    }
+
+    #[test]
+    fn event_envelopes_carry_facility_and_site_schemas() {
+        let facility_event: EwdsEventEnvelope<Vec<FacilitySchema>> =
+            serde_json::from_value(json!({
+                "eventId": "facility-event",
+                "eventType": "facility.event",
+                "occurredAt": "2026-09-29T10:16:02Z",
+                "data": [{
+                    "facility_id": "facility-id",
+                    "facility_name": "Facility",
+                    "site_id": "site-name",
+                    "owner_id": "owner-id",
+                }],
+            }))
+            .unwrap();
+        assert_eq!(facility_event.event_type, EwdsEventType::Facility);
+        assert_eq!(
+            facility_event.data,
+            vec![FacilitySchema {
+                facility_id: "facility-id".to_string(),
+                facility_name: "Facility".to_string(),
+                site_id: "site-name".to_string(),
+                owner_id: "owner-id".to_string(),
+            }]
+        );
+
+        let site_event: EwdsEventEnvelope<Vec<SiteSchema>> = serde_json::from_value(json!({
+            "eventId": "site-event",
+            "eventType": "site.event",
+            "occurredAt": "2026-09-29T10:16:02Z",
+            "data": [{
+                "site_name": "site-name",
+                "site_description": "Main building",
+                "facilities": ["facility-id"],
+            }],
+        }))
+        .unwrap();
+        assert_eq!(site_event.event_type, EwdsEventType::Site);
+        assert_eq!(
+            site_event.data,
+            vec![SiteSchema {
+                site_name: "site-name".to_string(),
+                site_description: "Main building".to_string(),
+                facilities: vec!["facility-id".to_string()],
+            }]
+        );
+    }
+
+    #[test]
+    fn event_envelope_parses_an_order_batch() {
+        let event: EwdsEventEnvelope<Vec<EwdsOrderDto>> = serde_json::from_value(json!({
+            "eventId": "order-event",
+            "eventType": "order.event",
+            "occurredAt": "2026-09-30T09:40:13Z",
+            "data": [
+                {
+                    "orderId": "3f2c6d1e-8a4b-4c7d-9e2f-1a5b6c7d8e9f",
+                    "marketId": "0x5b0f3c2a9d8e7f6a5b4c3d2e1f0a9b8c",
+                    "orderType": "bid",
+                    "orderStatus": "submitted",
+                    "timeSlot": "2026-09-30T10:00:00Z",
+                    "quantity": 1.5,
+                    "priceLimit": 0.3,
+                    "createdBy": "owner-1",
+                    "creationTime": "2026-09-30T09:40:12Z",
+                    "energySourcePreference": "GREEN",
+                    "preferredTradingPartner": "owner-2",
+                    "preferredEnergyRate": 0.25,
+                },
+                {
+                    "orderId": "9a1b2c3d-4e5f-4a6b-8c7d-0e1f2a3b4c5d",
+                    "marketId": "0x5b0f3c2a9d8e7f6a5b4c3d2e1f0a9b8c",
+                    "orderType": "offer",
+                    "orderStatus": "submitted",
+                    "timeSlot": "2026-09-30T10:00:00Z",
+                    "quantity": 2.0,
+                    "priceLimit": 0.2,
+                    "createdBy": "owner-2",
+                    "creationTime": "2026-09-30T09:40:12Z",
+                },
+            ],
+        }))
+        .unwrap();
+
+        assert_eq!(event.event_type, EwdsEventType::Order);
+        let orders = event
+            .data
+            .into_iter()
+            .map(DbOrderSchema::try_from)
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(orders.len(), 2);
+
+        let bid = &orders[0];
+        assert_eq!(bid.order_id, "3f2c6d1e-8a4b-4c7d-9e2f-1a5b6c7d8e9f");
+        assert_eq!(bid.order_type, OrderEnum::Bid);
+        assert_eq!(bid.time_slot, 1_790_762_400);
+        assert_eq!(bid.creation_time, 1_790_761_212);
+        assert_eq!(bid.energy_kWh, 1.5);
+        assert_eq!(bid.energy_rate, 0.3);
+        assert_eq!(bid.created_by, "owner-1");
+        assert_eq!(
+            bid.requirements,
+            Some(DbRequirements {
+                trading_partner_id: Some("owner-2".to_string()),
+                energy_type: Some(EnergyType::Green),
+                preferred_energy_rate: Some(0.25),
+            })
+        );
+
+        let offer = &orders[1];
+        assert_eq!(offer.order_type, OrderEnum::Offer);
+        assert_eq!(offer.energy_kWh, 2.0);
+        assert_eq!(offer.created_by, "owner-2");
+        assert_eq!(offer.requirements, None);
+        assert_eq!(offer.attributes, None);
     }
 
     // ---- ClearingResultDto tests ----
@@ -415,5 +655,294 @@ mod tests {
             serde_json::json!("markets.query")
         );
         assert!(EwdsOperation::ALL.contains(&EwdsOperation::MarketsQuery));
+    }
+
+    #[test]
+    fn event_types_map_to_their_topics() {
+        let topics = EwdsEventTopicConfig::default();
+        let expected = [
+            "trade",
+            "clearingResult",
+            "market",
+            "measurements",
+            "facility",
+            "site",
+            "community",
+            "order",
+        ];
+        assert_eq!(EwdsEventType::ALL.len(), expected.len());
+        for (event_type, topic) in EwdsEventType::ALL.into_iter().zip(expected) {
+            assert_eq!(topics.for_event_type(event_type), topic);
+        }
+    }
+
+    #[test]
+    fn operations_map_to_their_topic_pairs() {
+        let topics = EwdsTopicConfig::default();
+
+        assert_eq!(
+            topics.for_operation(EwdsOperation::OrdersQuery),
+            &EwdsTopicPair {
+                request: "ordersQuery".to_string(),
+                response: "ordersQueryResponse".to_string(),
+            }
+        );
+        assert_eq!(
+            topics.for_operation(EwdsOperation::TradesQuery),
+            &EwdsTopicPair {
+                request: "tradesQuery".to_string(),
+                response: "tradesQueryResponse".to_string(),
+            }
+        );
+        assert_eq!(
+            topics.for_operation(EwdsOperation::MeasurementsQuery),
+            &EwdsTopicPair {
+                request: "measurementsQuery".to_string(),
+                response: "measurementsQueryResponse".to_string(),
+            }
+        );
+        assert_eq!(
+            topics.for_operation(EwdsOperation::CommunitiesQuery),
+            &EwdsTopicPair {
+                request: "communitiesQuery".to_string(),
+                response: "communitiesQueryResponse".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn event_types_serialize_to_their_wire_names() {
+        let wire_names = [
+            "trade.event",
+            "clearingResult.event",
+            "market.event",
+            "measurements.event",
+            "facility.event",
+            "site.event",
+            "community.event",
+            "order.event",
+        ];
+        assert_eq!(EwdsEventType::ALL.len(), wire_names.len());
+        for (event_type, wire_name) in EwdsEventType::ALL.into_iter().zip(wire_names) {
+            assert_eq!(event_type.as_str(), wire_name);
+            assert_eq!(event_type.to_string(), wire_name);
+            assert_eq!(
+                serde_json::to_value(event_type).unwrap(),
+                serde_json::json!(wire_name)
+            );
+            assert_eq!(
+                serde_json::from_value::<EwdsEventType>(serde_json::json!(wire_name)).unwrap(),
+                event_type
+            );
+        }
+    }
+
+    #[test]
+    fn communities_query_round_trips_through_the_request_envelope() {
+        let envelope = EwdsRequestEnvelope {
+            request_id: "request-id".to_string(),
+            operation: EwdsOperation::CommunitiesQuery,
+            payload: Value::Object(Default::default()),
+        };
+
+        let serialized = serde_json::to_string(&envelope).unwrap();
+        let deserialized: EwdsRequestEnvelope = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(deserialized.operation, EwdsOperation::CommunitiesQuery);
+    }
+
+    #[test]
+    fn recognizes_client_gateway_wrapped_rate_limit() {
+        let body = r#"{
+            "err": {
+                "code": "MB::ERROR",
+                "reason": "Request failed with status code 429"
+            },
+            "statusCode": 400
+        }"#;
+
+        assert!(is_rate_limited_response(
+            reqwest::StatusCode::BAD_REQUEST,
+            body
+        ));
+    }
+
+    #[test]
+    fn does_not_treat_an_unrelated_bad_request_as_rate_limit() {
+        assert!(!is_rate_limited_response(
+            reqwest::StatusCode::BAD_REQUEST,
+            r#"{"reason":"Channel not found","statusCode":400}"#
+        ));
+    }
+
+    #[test]
+    fn recognizes_transient_gateway_failures() {
+        assert!(is_transient_gateway_response(
+            reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+            ""
+        ));
+        assert!(is_transient_gateway_response(
+            reqwest::StatusCode::BAD_REQUEST,
+            r#"{"reason":"Timeout or no response waiting for NATS JetStream server"}"#
+        ));
+    }
+
+    #[test]
+    fn does_not_treat_an_unrelated_bad_request_as_transient() {
+        assert!(!is_transient_gateway_response(
+            reqwest::StatusCode::BAD_REQUEST,
+            r#"{"reason":"Channel not found","statusCode":400}"#
+        ));
+    }
+
+    #[test]
+    fn parses_gateway_recipient_delivery_summary() {
+        let summary =
+            parse_gateway_delivery_summary(r#"{"recipients":{"failed":0,"sent":8,"total":8}}"#)
+                .unwrap();
+
+        assert_eq!(summary.sent, 8);
+        assert_eq!(summary.failed, 0);
+        assert_eq!(summary.total, 8);
+    }
+
+    #[test]
+    fn identifies_gateway_response_with_no_delivered_recipients() {
+        let summary =
+            parse_gateway_delivery_summary(r#"{"recipients":{"failed":8,"sent":0,"total":8}}"#)
+                .unwrap();
+
+        assert_eq!(summary.sent, 0);
+        assert_eq!(summary.failed, summary.total);
+    }
+
+    #[test]
+    fn defers_empty_response_and_selects_later_data() {
+        let mut empty_response_seen_at = None;
+
+        assert!(
+            select_response_data::<u8>(Vec::new(), &mut empty_response_seen_at, 10_000).is_none()
+        );
+        assert!(empty_response_seen_at.is_some());
+        assert_eq!(
+            select_response_data(vec![1u8], &mut empty_response_seen_at, 10_000),
+            Some(vec![1u8])
+        );
+    }
+
+    #[test]
+    fn completes_empty_response_after_grace_period() {
+        assert!(empty_response_grace_elapsed(Some(Instant::now()), 0));
+        assert!(!empty_response_grace_elapsed(None, 0));
+    }
+
+    #[test]
+    fn event_retry_delay_doubles_up_to_five_minutes() {
+        assert_eq!(event_retry_delay_ms(2_000, 1), 2_000);
+        assert_eq!(event_retry_delay_ms(2_000, 2), 4_000);
+        assert_eq!(event_retry_delay_ms(2_000, 4), 16_000);
+        assert_eq!(event_retry_delay_ms(2_000, 10), 300_000);
+        assert_eq!(event_retry_delay_ms(2_000, 100), 300_000);
+    }
+
+    #[test]
+    fn invalid_event_mark_survives_further_context() {
+        let error = invalid_event(anyhow::anyhow!("bad data")).context("handling event e-1");
+
+        assert!(is_invalid_event(&error));
+        assert!(!is_invalid_event(&anyhow::anyhow!("database unavailable")));
+    }
+
+    #[test]
+    fn parse_batch_marks_bad_data_as_invalid_event() {
+        let error = parse_batch(json!({"not": "a list"}), |item: Value| Ok(item)).unwrap_err();
+        assert!(is_invalid_event(&error));
+
+        let error = parse_batch(json!([1]), |_: Value| -> anyhow::Result<()> {
+            Err(anyhow::anyhow!("rejected"))
+        })
+        .unwrap_err();
+        assert!(is_invalid_event(&error));
+    }
+
+    #[test]
+    fn guarantees_of_origin_query_operation_wire_name_and_prefix() {
+        let operation = EwdsOperation::GuaranteesOfOriginQuery;
+        assert_eq!(operation.as_str(), "guarantees_of_origin.query");
+        assert_eq!(operation.request_id_prefix(), "guarantees_of_origin-query");
+        assert_eq!(
+            serde_json::to_value(operation).unwrap(),
+            serde_json::json!("guarantees_of_origin.query")
+        );
+        assert_eq!(
+            serde_json::from_value::<EwdsOperation>(serde_json::json!(
+                "guarantees_of_origin.query"
+            ))
+            .unwrap(),
+            operation
+        );
+        assert!(EwdsOperation::ALL.contains(&operation));
+    }
+
+    #[test]
+    fn every_operation_is_in_all_exactly_once() {
+        for operation in EwdsOperation::ALL {
+            assert_eq!(
+                EwdsOperation::ALL
+                    .iter()
+                    .filter(|candidate| **candidate == operation)
+                    .count(),
+                1,
+                "{} listed more than once",
+                operation
+            );
+        }
+    }
+
+    #[test]
+    fn guarantees_of_origin_default_topics() {
+        let topics = EwdsTopicConfig::default();
+        let pair = topics.for_operation(EwdsOperation::GuaranteesOfOriginQuery);
+        assert_eq!(pair.request, "guaranteesOfOriginQuery");
+        assert_eq!(pair.response, "guaranteesOfOriginQueryResponse");
+    }
+
+    #[test]
+    fn guarantees_of_origin_topics_follow_env() {
+        std::env::set_var(
+            "EWDS_GUARANTEES_OF_ORIGIN_REQUEST_TOPIC",
+            "guaranteesOfOriginQueryTest",
+        );
+        std::env::set_var(
+            "EWDS_GUARANTEES_OF_ORIGIN_RESPONSE_TOPIC",
+            "guaranteesOfOriginQueryTestResponse",
+        );
+        let topics = EwdsTopicConfig::from_env();
+        std::env::remove_var("EWDS_GUARANTEES_OF_ORIGIN_REQUEST_TOPIC");
+        std::env::remove_var("EWDS_GUARANTEES_OF_ORIGIN_RESPONSE_TOPIC");
+
+        let pair = topics.for_operation(EwdsOperation::GuaranteesOfOriginQuery);
+        assert_eq!(pair.request, "guaranteesOfOriginQueryTest");
+        assert_eq!(pair.response, "guaranteesOfOriginQueryTestResponse");
+    }
+
+    #[test]
+    fn trade_status_updated_at_is_optional_in_storage() {
+        // Omitted when unset.
+        let db_json = serde_json::to_value(trade()).unwrap();
+        assert!(db_json.get("status_updated_at").is_none());
+
+        // A pre-existing document without the field still deserializes.
+        let db: DbTradeSchema = serde_json::from_value(db_json).unwrap();
+        assert_eq!(db.status_updated_at, None);
+
+        // A set value round-trips under its snake_case storage name.
+        let mut executed = trade();
+        executed.status = TradeStatus::Executed;
+        executed.status_updated_at = Some(1_234);
+        let json = serde_json::to_value(&executed).unwrap();
+        assert_eq!(json["status_updated_at"], serde_json::json!(1_234));
+        let parsed: DbTradeSchema = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed.status_updated_at, Some(1_234));
     }
 }

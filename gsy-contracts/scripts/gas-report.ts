@@ -588,7 +588,6 @@ async function main() {
     isBid: true,
     preferredTradingPartner: ethers.ZeroHash.slice(0, 34),
     preferredEnergyRate: 0,
-    tradingPartner: ethers.ZeroHash.slice(0, 34),
   };
   const offerOrder = {
     orderId: offerId,
@@ -603,7 +602,6 @@ async function main() {
     isBid: false,
     preferredTradingPartner: ethers.ZeroHash.slice(0, 34),
     preferredEnergyRate: 0,
-    tradingPartner: ethers.ZeroHash.slice(0, 34),
   };
   const cancelOrder = {
     ...bidOrder,

@@ -74,7 +74,6 @@ fn encodes_chained_fills_from_original_orders_only() {
             } else {
                 parent.attributes = Some(DbAttributes {
                     energy_type: EnergyType::Pv,
-                    trading_partner_id: None,
                 });
                 for bid in [&mut first, &mut second] {
                     bid.requirements = Some(DbRequirements {
@@ -176,4 +175,28 @@ fn preserves_exact_integer_energy_when_encoding_a_residual() {
         encoded[0].bid.energy - encoded[0].selected_energy.as_u64()
     );
     assert_eq!(encoded[1].residual_bid_id, [0; 16]);
+}
+
+#[test]
+fn keeps_requirements_of_bids_and_offers() {
+    let partner = bytes16_to_hex([7; 16]);
+    for side in [OrderEnum::Bid, OrderEnum::Offer] {
+        let mut order = db_order(1, side.clone(), 10.0);
+        order.requirements = Some(DbRequirements {
+            trading_partner_id: Some(partner.clone()),
+            energy_type: None,
+            preferred_energy_rate: Some(12.0),
+        });
+
+        let canonical = convert_db_order_to_canonical(&order).unwrap();
+
+        let requirements = canonical
+            .requirements
+            .unwrap_or_else(|| panic!("{side:?} lost its requirements"));
+        assert_eq!(requirements.trading_partner_id, Some(partner.clone()));
+        assert_eq!(
+            requirements.preferred_energy_rate,
+            Some((12.0 * NODE_FLOAT_SCALING_FACTOR) as u64)
+        );
+    }
 }

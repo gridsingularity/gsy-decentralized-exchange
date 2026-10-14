@@ -3,15 +3,16 @@ use crate::world::MyWorld;
 use cucumber::{then, when};
 use ethers::prelude::*;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
-use gsy_community_client::time_utils::get_last_and_next_timeslot;
+use gsy_community_client::time_utils::{get_current_timestamp_in_secs, get_last_and_next_timeslot};
 use primitives::db_api_schema::grid_topology::{EnergyCommunitySchema, FacilitySchema};
 use primitives::db_api_schema::market::{MarketChainRecord, MarketSchema};
 use primitives::db_api_schema::profiles::ForecastSchema;
-use primitives::ewds::dto::EwdsCommunityDto;
-use primitives::ewds::{EwdsClient, EwdsOperation};
+use primitives::ewds::dto::{EwdsCommunityDto, EwdsEventEnvelope};
+use primitives::ewds::{EwdsClient, EwdsEventType, EwdsOperation};
 use primitives::offchain_storage::OffchainStorageClient;
-use primitives::utils::{bytes16_to_hex, generate_market_id};
+use primitives::utils::{bytes16_to_hex, epoch_to_rfc3339, generate_market_id};
 use primitives::{MarketType, MatchingAlgorithm};
+use serde_json::json;
 use std::env;
 use std::str::FromStr;
 use std::time::Duration;
@@ -29,6 +30,7 @@ abigen!(
 
 const MARKET_POLL_ATTEMPTS: usize = 60;
 const MARKET_POLL_INTERVAL: Duration = Duration::from_secs(2);
+const EWDS_COMMUNITY_POLL_ATTEMPTS: usize = 30;
 
 #[when(expr = "forecasts of {float} energy are submitted by {string}, {string}, and {string}")]
 async fn submit_market_forecasts_three_users(
@@ -44,19 +46,19 @@ async fn submit_market_forecasts_three_users(
         FacilitySchema {
             facility_id: format!("area{}", user1.clone()),
             facility_name: format!("area{}", user1.clone()),
-            site_id: "12345".to_string(),
+            site_id: "site-12345".to_string(),
             owner_id: user1.clone(),
         },
         FacilitySchema {
             facility_id: format!("area{}", user2.clone()),
             facility_name: format!("area{}", user2.clone()),
-            site_id: "12345".to_string(),
+            site_id: "site-12345".to_string(),
             owner_id: user2.clone(),
         },
         FacilitySchema {
             facility_id: format!("area{}", user3.clone()),
             facility_name: format!("area{}", user3.clone()),
-            site_id: "12345".to_string(),
+            site_id: "site-12345".to_string(),
             owner_id: user3.clone(),
         },
     ];
@@ -280,7 +282,7 @@ async fn upsert_community(world: &MyWorld, community: &EnergyCommunitySchema) {
         .to_ascii_lowercase();
     match transport.as_str() {
         "http" => upsert_community_via_http(world, &community).await,
-        "ewds" => upsert_community_via_ewds(&community).await,
+        "ewds" => publish_community_via_ewds(&community).await,
         _ => panic!(
             "Unsupported OFFCHAIN_STORAGE_TRANSPORT '{}'; expected http or ewds",
             transport
@@ -304,20 +306,34 @@ async fn upsert_community_via_http(world: &MyWorld, community: &EnergyCommunityS
     }
 }
 
-async fn upsert_community_via_ewds(community: &EnergyCommunitySchema) {
+async fn publish_community_via_ewds(community: &EnergyCommunitySchema) {
     let client = EwdsClient::from_env("EWDS_E2E_CLIENT_ID", "gsye2e", 60_000);
-    let payload = serde_json::to_value(EwdsCommunityDto::from(community.clone()))
-        .expect("Failed to serialize E2E community");
-    let saved = client
-        .query::<EwdsCommunityDto>(EwdsOperation::CommunityUpsert, payload)
+    let community = EwdsCommunityDto::from(community.clone());
+    let event = EwdsEventEnvelope {
+        event_id: Uuid::new_v4().to_string(),
+        event_type: EwdsEventType::Community,
+        occurred_at: epoch_to_rfc3339(get_current_timestamp_in_secs()),
+        data: vec![&community],
+    };
+    client
+        .publish_event(&event)
         .await
-        .expect("Failed to upsert E2E community through EWDS");
+        .expect("Failed to publish E2E community through EWDS");
 
-    assert!(
-        saved
-            .iter()
-            .any(|item| item.community_id == community.community_id),
-        "EWDS community upsert response did not contain {}",
+    // Events get no reply, so wait until the off-chain storage has stored the community.
+    for _ in 0..EWDS_COMMUNITY_POLL_ATTEMPTS {
+        let communities = client
+            .query::<EwdsCommunityDto>(EwdsOperation::CommunitiesQuery, json!({}))
+            .await
+            .expect("Failed to query E2E communities through EWDS");
+        if communities.contains(&community) {
+            return;
+        }
+        sleep(Duration::from_secs(2)).await;
+    }
+
+    panic!(
+        "Timeout: community {} was not stored after publishing it through EWDS",
         community.community_id
     );
 }

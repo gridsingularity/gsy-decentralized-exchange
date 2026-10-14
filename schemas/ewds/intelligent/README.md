@@ -16,8 +16,23 @@ Additional local message contracts wrap these entities for the current
 request/reply topics:
 
 - query request/reply envelopes for orders, trades, measurements, and communities
-- an upsert request/reply envelope for communities
 - upsert request envelopes for forecasts, measurements, and markets
+
+Event envelopes wrap a non-empty list of the entities that other systems send
+to GSY on the events channels, one per topic:
+
+- `int.measurements.event.v1.json` (`int.measurement.schema.v1.json`)
+- `int.facility.event.v1.json` (`int.facility.schema.v1.json`)
+- `int.site.event.v1.json` (`int.site.schema.v1.json`)
+- `int.community.event.v1.json` (`int.community.schema.v1.json`)
+- `int.order.event.v1.json` (`int.order.schema.v1.json`), consumed
+  by the community client rather than the off-chain storage
+
+The off-chain storage publishes these event envelopes on the events channels:
+
+- `int.trade.event.v1.json` (`int.trade.schema.v1.json`)
+- `int.clearing-result.event.v1.json` (`int.clearing-result.schema.v1.json`)
+- `int.market.event.v1.json` (`int.market.schema.v1.json`)
 
 Notes:
 

@@ -54,7 +54,6 @@ describe("OrderRegistry", function () {
       isBid: ORDER_TYPE_BID,
       preferredTradingPartner: bytes16Id("actor:preferred-partner"),
       preferredEnergyRate: 45,
-      tradingPartner: ZERO_BYTES16,
     };
 
     return {
@@ -88,7 +87,6 @@ describe("OrderRegistry", function () {
         baseOrder.isBid,
         baseOrder.preferredTradingPartner,
         baseOrder.preferredEnergyRate,
-        baseOrder.tradingPartner,
       );
 
     expect(await registry.getStatus(baseOrder.orderId)).to.equal(1); // Open
@@ -99,7 +97,6 @@ describe("OrderRegistry", function () {
     expect(storedOrder.preferredEnergyRate).to.equal(
       baseOrder.preferredEnergyRate,
     );
-    expect(storedOrder.tradingPartner).to.equal(baseOrder.tradingPartner);
   });
 
   it("Should revert if market is closed", async function () {

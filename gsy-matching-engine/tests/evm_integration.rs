@@ -1,14 +1,14 @@
 use ethers::{prelude::*, utils::Anvil};
 use ethers_solc::{artifacts::Severity, Project, ProjectPathsConfig};
+use gsy_matching_engine::connectors::evm_connector::ClearingResult;
 use gsy_matching_engine::connectors::evm_connector::{
     send_settle_batch_transaction, MarketMatches,
 };
-use gsy_matching_engine::connectors::evm_connector::ClearingResult;
-use primitives::db_api_schema::trades::ClearingStatus;
 use gsy_matching_engine::models::{BidOfferMatch, Order};
 use primitives::db_api_schema::orders::{
     DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus,
 };
+use primitives::db_api_schema::trades::ClearingStatus;
 use primitives::utils::{parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR};
 use std::{collections::HashMap, fs::File, io::Write, sync::Arc};
 use tempfile::TempDir;
@@ -25,10 +25,8 @@ abigen!(
         function lastMarketId() external view returns (bytes16)
         function lastBidPreferredTradingPartner() external view returns (bytes16)
         function lastBidPreferredEnergyRate() external view returns (uint64)
-        function lastOfferTradingPartner() external view returns (bytes16)
     ]"#
 );
-
 
 #[tokio::test]
 async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
@@ -66,7 +64,6 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
                 bool isBid;
                 bytes16 preferredTradingPartner;
                 uint64 preferredEnergyRate;
-                bytes16 tradingPartner;
             }
 
             struct Match {
@@ -103,7 +100,6 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
             bytes16 public lastMarketId;
             bytes16 public lastBidPreferredTradingPartner;
             uint64 public lastBidPreferredEnergyRate;
-            bytes16 public lastOfferTradingPartner;
 
             constructor() {
                 roles[msg.sender][OPERATOR_ROLE] = true;
@@ -138,7 +134,6 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
                         lastOfferCreatedBy = first.offer.createdBy;
                         lastBidPreferredTradingPartner = first.bid.preferredTradingPartner;
                         lastBidPreferredEnergyRate = first.bid.preferredEnergyRate;
-                        lastOfferTradingPartner = first.offer.tradingPartner;
                     }
                     lastTradedQuantity = settlement.clearingResult.tradedQuantity;
                     lastMarketId = settlement.clearingResult.marketId;
@@ -241,7 +236,6 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
         created_by: ask_actor_id.clone(),
         requirements: None,
         attributes: Some(DbAttributes {
-            trading_partner_id: Some(bid_actor_id.clone()),
             energy_type: EnergyType::Pv,
         }),
     };
@@ -305,7 +299,10 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
         num_trades: Some(1),
     };
 
-    let market_matches = vec![MarketMatches { bid_offer_matches, clearing_result }];
+    let market_matches = vec![MarketMatches {
+        bid_offer_matches,
+        clearing_result,
+    }];
 
     let mut lookup = HashMap::new();
     lookup.insert(bid_order_id, bid_db);
@@ -318,8 +315,8 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
         market_matches,
         lookup,
     )
-        .await
-        .unwrap();
+    .await
+    .unwrap();
 
     let mock_contract = MockTradeSettlement::new(contract_address, client.clone());
 
@@ -350,7 +347,6 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
     assert_eq!(
         mock_contract.last_market_id().call().await.unwrap(),
         parse_uuid_or_hex_bytes16(&market_id).expect("Failed to parse market id")
-
     );
     assert_eq!(
         mock_contract
@@ -367,13 +363,5 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
             .await
             .unwrap(),
         (45.0 * NODE_FLOAT_SCALING_FACTOR) as u64
-    );
-    assert_eq!(
-        mock_contract
-            .last_offer_trading_partner()
-            .call()
-            .await
-            .unwrap(),
-        parse_uuid_or_hex_bytes16(&bid_actor_id).expect("Invalid on-chain actor ID")
     );
 }

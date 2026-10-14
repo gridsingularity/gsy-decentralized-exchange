@@ -1,13 +1,13 @@
-use super::EwdsOperation;
+use super::{EwdsEventType, EwdsOperation};
 use crate::db_api_schema::{
     grid_topology::EnergyCommunitySchema,
     market::{MarketSchema, MarketType, MatchingAlgorithm},
     orders::{DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus},
+    profiles::MeasurementSchema,
     trades::{
         ClearingResultSchema, ClearingStatus, DbTradeSchema, NoBidReason, TradeParameters,
         TradeStatus,
     },
-    profiles::{MeasurementSchema}
 };
 
 use crate::utils::{epoch_to_rfc3339, rfc3339_to_epoch};
@@ -68,6 +68,15 @@ pub struct EwdsResponseEnvelope<T> {
     pub success: bool,
     pub data: Vec<T>,
     pub error: Option<EwdsErrorPayload>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EwdsEventEnvelope<T> {
+    pub event_id: String,
+    pub event_type: EwdsEventType,
+    pub occurred_at: String,
+    pub data: T,
 }
 
 #[derive(Debug, Deserialize)]
@@ -137,16 +146,11 @@ impl From<EwdsCommunityDto> for EnergyCommunitySchema {
 
 impl From<DbOrderSchema> for EwdsOrderDto {
     fn from(order: DbOrderSchema) -> Self {
-        let preferred_trading_partner = match &order.order_type {
-            OrderEnum::Bid => order
-                .requirements
-                .as_ref()
-                .and_then(|requirements| requirements.trading_partner_id.clone()),
-            OrderEnum::Offer => order
-                .attributes
-                .as_ref()
-                .and_then(|attributes| attributes.trading_partner_id.clone()),
-        };
+        // Bids and offers both carry their preferred partner in requirements.
+        let preferred_trading_partner = order
+            .requirements
+            .as_ref()
+            .and_then(|requirements| requirements.trading_partner_id.clone());
 
         Self {
             order_id: order.order_id,
@@ -183,48 +187,28 @@ impl TryFrom<EwdsOrderDto> for DbOrderSchema {
 
     fn try_from(order: EwdsOrderDto) -> Result<Self> {
         let order_type = order_type_from_ewds(order.order_type.as_str())?;
-        let is_bid = matches!(&order_type, OrderEnum::Bid);
         let requirements = if order.energy_source_preference.is_some()
             || order.preferred_energy_rate.is_some()
-            || (is_bid && order.preferred_trading_partner.is_some())
+            || order.preferred_trading_partner.is_some()
         {
             Some(DbRequirements {
-                trading_partner_id: if is_bid {
-                    order.preferred_trading_partner.clone()
-                } else {
-                    None
-                },
+                trading_partner_id: order.preferred_trading_partner.clone(),
                 energy_type: match order.energy_source_preference {
                     Some(ref pref) => Some(energy_type_from_ewds(pref)?),
                     None => None,
                 },
-                preferred_energy_rate: order.preferred_energy_rate.or_else(|| {
-                    order
-                        .preferred_trading_partner
-                        .as_ref()
-                        .map(|_| order.price_limit)
-                }),
+                // Left empty when not sent: the matching engine falls back to the bid's rate.
+                preferred_energy_rate: order.preferred_energy_rate,
             })
         } else {
             None
         };
 
-        let attributes = if order.energy_type.is_some()
-            || (!is_bid && order.preferred_trading_partner.is_some())
-        {
-            Some(DbAttributes {
-                trading_partner_id: if is_bid {
-                    None
-                } else {
-                    order.preferred_trading_partner.clone()
-                },
-                energy_type: match order.energy_type {
-                    Some(ref energy_type) => energy_type_from_ewds(energy_type)?,
-                    None => EnergyType::None,
-                },
-            })
-        } else {
-            None
+        let attributes = match order.energy_type {
+            Some(ref energy_type) => Some(DbAttributes {
+                energy_type: energy_type_from_ewds(energy_type)?,
+            }),
+            None => None,
         };
 
         Ok(Self {
@@ -383,6 +367,7 @@ impl TryFrom<EwdsTradeDto> for DbTradeSchema {
                 selected_energy_kWh: trade.trade_quantity,
                 energy_rate: trade.trade_price,
             },
+            status_updated_at: None,
         })
     }
 }
@@ -545,6 +530,7 @@ impl From<EwdsMarketDto> for MarketSchema {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct EwdsMeasurementDto {
     pub facility_id: String,
     pub community_uuid: String,

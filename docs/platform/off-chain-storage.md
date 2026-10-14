@@ -18,8 +18,9 @@ Backend: MongoDB (`mongo:5.0`).
 2. `OffchainStorageEvmHandler` maps event payloads into DB schemas.
 3. `gsy-offchain-storage` updates order/trade records and exposes them via REST APIs.
 
-`OrderPlaced` contains the optional bid requirements and offer attributes, so
-the indexed order is complete without a follow-up `/orders` write.
+`OrderPlaced` contains the optional order requirements (bids and offers) and
+offer attributes, so the indexed order is complete without a follow-up
+`/orders` write.
 
 `NewMarketCreated` carries the full market record. The handler converts it to
 `MarketSchema` (`market_id` as `0x` + 32 hex digits, `community_id` as UUID,
@@ -40,7 +41,7 @@ posts them any more.
 
 ### Trades Storage (D3.2 section 5.3)
 - `/trades-normalized` (`POST`)
-- `/trades` (`GET`, `POST`)
+- `/trades` (`GET`, `POST`); `GET` follows the `trades.query` rules: `market_id` alone is enough, otherwise both `start_time` and `end_time` are required and span at most 1 day (`400` otherwise)
 - `/market` (`GET`) compatibility adapter for EVM JSON callers
 - `/communities` (`GET`, `POST`) for idempotent community query/upsert
 - `/markets` (`GET`, `POST`) for ontology-aligned market-opening records;
@@ -74,7 +75,11 @@ These adapters do not own separate collections. They read and write the same
 `markets`, `measurement_points`, and `timeseries` records as the canonical API.
 
 When `EWDS_ENABLE_HANDLER=true`, the same community collection is available
-through `community.upsert` and `communities.query` request/reply operations.
+through the `communities.query` request/reply operation.
+The off-chain storage then also stores the measurements, facilities, sites and
+communities that other systems publish on the EWDS events channel, in
+the same collections (see
+[Inbound Events](ewds-integration.md#inbound-events)).
 
 ## Scheduler Behavior
 
@@ -83,7 +88,9 @@ through `community.upsert` and `communities.query` request/reply operations.
 ## Data Model Notes
 
 - Order IDs and market IDs are stored as hex strings (`0x...`).
-- Order requirements/attributes store original off-chain partner facility IDs.
+- The preferred trading partner of a bid or an offer is stored in its
+  requirements (`requirements.trading_partner_id`) as the original off-chain
+  partner facility ID; attributes carry no partner.
   Callers resolve these through `POST /ids` or EWDS `ids.query` before contract
   submission. The event indexer uses the ID mapping collection to recover the
   facility IDs; the matcher resolves them back before comparing on-chain actors.
@@ -108,5 +115,7 @@ Key env variables:
 - `DATABASE_*`
 - `SCHEDULER_INTERVAL`
 - `EWDS_ENABLE_HANDLER`
-- `EWDS_COMMUNITY_UPSERT_TOPIC`
 - `EWDS_COMMUNITIES_REQUEST_TOPIC`
+- `EWDS_EVENT_PUBLISH_FQCN`, `EWDS_EVENT_SUBSCRIBE_FQCN`
+- `EWDS_MEASUREMENTS_EVENT_TOPIC`, `EWDS_FACILITY_EVENT_TOPIC`,
+  `EWDS_SITE_EVENT_TOPIC`, `EWDS_COMMUNITY_EVENT_TOPIC`

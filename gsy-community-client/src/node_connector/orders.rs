@@ -30,7 +30,6 @@ pub type EvmOrderParamsTuple = (
     bool,
     [u8; 16],
     u64,
-    [u8; 16],
 );
 
 pub async fn publish_orders(
@@ -125,13 +124,24 @@ abigen!(
                         {"name": "energyType", "type": "uint8"},
                         {"name": "isBid", "type": "bool"},
                         {"name": "preferredTradingPartner", "type": "bytes16"},
-                        {"name": "preferredEnergyRate", "type": "uint64"},
-                        {"name": "tradingPartner", "type": "bytes16"}
+                        {"name": "preferredEnergyRate", "type": "uint64"}
                     ]
                 }
             ],
             "outputs": []
-        }
+        },
+        {
+            "type": "function",
+            "name": "getStatus",
+            "stateMutability": "view",
+            "inputs": [{"name": "orderId", "type": "bytes16"}],
+            "outputs": [{"name": "", "type": "uint8"}]
+        },
+        {"type": "error", "name": "MarketClosed", "inputs": []},
+        {"type": "error", "name": "Unauthorized", "inputs": []},
+        {"type": "error", "name": "InvalidOrderParams", "inputs": []},
+        {"type": "error", "name": "OrderNotOpen", "inputs": []},
+        {"type": "error", "name": "OrderAlreadyExists", "inputs": []}
     ]"#
 );
 
@@ -163,7 +173,6 @@ async fn build_order_param(
         is_bid,
         metadata.preferred_trading_partner,
         metadata.preferred_energy_rate,
-        metadata.trading_partner,
     ))
 }
 

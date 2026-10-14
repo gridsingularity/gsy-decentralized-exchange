@@ -4,6 +4,16 @@ x-gsy-ewds-env: &gsy-ewds-env
   EWDS_REQUEST_SUBSCRIBE_FQCN: ${EWDS_REQUEST_SUBSCRIBE_FQCN:-gsy.intelligent.requests.sub}
   EWDS_RESPONSE_PUBLISH_FQCN: ${EWDS_RESPONSE_PUBLISH_FQCN:-gsy.intelligent.responses.pub}
   EWDS_RESPONSE_SUBSCRIBE_FQCN: ${EWDS_RESPONSE_SUBSCRIBE_FQCN:-gsy.intelligent.responses.sub}
+  EWDS_EVENT_PUBLISH_FQCN: ${EWDS_EVENT_PUBLISH_FQCN:-gsy.intelligent.events.pub}
+  EWDS_EVENT_SUBSCRIBE_FQCN: ${EWDS_EVENT_SUBSCRIBE_FQCN:-gsy.intelligent.events.sub}
+  EWDS_TRADE_EVENT_TOPIC: "tradeTest"
+  EWDS_CLEARING_RESULT_EVENT_TOPIC: "clearingResultTest"
+  EWDS_MARKET_EVENT_TOPIC: "marketTest"
+  EWDS_MEASUREMENTS_EVENT_TOPIC: "measurementsTest"
+  EWDS_FACILITY_EVENT_TOPIC: "facilityTest"
+  EWDS_SITE_EVENT_TOPIC: "siteTest"
+  EWDS_COMMUNITY_EVENT_TOPIC: "communityTest"
+  EWDS_ORDER_EVENT_TOPIC: "orderTest"
   EWDS_TOPIC_OWNER: ${EWDS_TOPIC_OWNER:-integration.apps.intelligent.auth.ewc}
   EWDS_TOPIC_VERSION: ${EWDS_TOPIC_VERSION:-1.0.0}
   EWDS_ORDERS_REQUEST_TOPIC: "ordersQueryTest"
@@ -18,14 +28,17 @@ x-gsy-ewds-env: &gsy-ewds-env
   EWDS_MEASUREMENTS_RESPONSE_TOPIC: "measurementsQueryTestResponse"
   EWDS_FACILITIES_REQUEST_TOPIC: "facilitiesQueryTest"
   EWDS_FACILITIES_RESPONSE_TOPIC: "facilitiesQueryTestResponse"
+  EWDS_GUARANTEES_OF_ORIGIN_REQUEST_TOPIC: "guaranteesOfOriginQueryTest"
+  EWDS_GUARANTEES_OF_ORIGIN_RESPONSE_TOPIC: "guaranteesOfOriginQueryTestResponse"
   EWDS_IDS_REQUEST_TOPIC: "idsQueryTest"
   EWDS_IDS_RESPONSE_TOPIC: "idsQueryTestResponse"
-  EWDS_COMMUNITY_UPSERT_TOPIC: "communityUpsertTest"
-  EWDS_COMMUNITY_UPSERT_RESPONSE_TOPIC: "communityUpsertTestResponse"
   EWDS_COMMUNITIES_REQUEST_TOPIC: "communitiesQueryTest"
   EWDS_COMMUNITIES_RESPONSE_TOPIC: "communitiesQueryTestResponse"
   EWDS_RESPONSE_TIMEOUT_MS: ${EWDS_RESPONSE_TIMEOUT_MS:-60000}
   EWDS_RESPONSE_POLL_INTERVAL_MS: ${EWDS_RESPONSE_POLL_INTERVAL_MS:-1000}
+  EWDS_EVENT_POLL_INTERVAL_MS: "1000"
+  EWDS_EVENT_HANDLE_ATTEMPTS: ${EWDS_EVENT_HANDLE_ATTEMPTS:-8}
+  EWDS_EVENT_RETRY_DELAY_MS: ${EWDS_EVENT_RETRY_DELAY_MS:-2000}
   EWDS_EMPTY_RESPONSE_GRACE_MS: ${EWDS_EMPTY_RESPONSE_GRACE_MS:-10000}
   EWDS_RATE_LIMIT_BACKOFF_MS: ${EWDS_RATE_LIMIT_BACKOFF_MS:-2000}
   EWDS_RATE_LIMIT_MAX_BACKOFF_MS: ${EWDS_RATE_LIMIT_MAX_BACKOFF_MS:-30000}
@@ -69,8 +82,16 @@ services:
       CONTRACT_MARKET_CONTROLLER: ${MARKET_CONTROLLER_ADDRESS:-0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9}
       EWDS_ENABLE_HANDLER: "${EWDS_ENABLE_HANDLER:-false}"
       EWDS_REQUEST_CLIENT_ID: ${EWDS_OFFCHAIN_STORAGE_CLIENT_ID:-gsyoffchainstorage}
-      EWDS_HANDLER_POLL_INTERVAL_MS: ${EWDS_HANDLER_POLL_INTERVAL_MS:-500}
+      EWDS_HANDLER_POLL_INTERVAL_MS: ${EWDS_HANDLER_POLL_INTERVAL_MS:-1000}
       EWDS_HANDLER_BATCH_SIZE: ${EWDS_HANDLER_BATCH_SIZE:-100}
+      # Guarantees of origin: pilot parameters.
+      # GOO_INTERVAL_DURATION_S: ${GOO_INTERVAL_DURATION_S:-900}
+      # GOO_ROUNDING_RULE: ${GOO_ROUNDING_RULE:-half_up_2dp}
+      # GOO_MUNICIPALITY_CODE: ${GOO_MUNICIPALITY_CODE:-5226}
+      # GOO_GRID_OPERATOR_ID: ${GOO_GRID_OPERATOR_ID:-AEM}
+      # GOO_GRID_LEVEL: ${GOO_GRID_LEVEL:-7}
+      # GOO_DATA_PROVIDER_ID: ${GOO_DATA_PROVIDER_ID:-did:example:aem-metering}
+      # GOO_PROPERTY_MEASURED: ${GOO_PROPERTY_MEASURED:-measurement#active_energy}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health_check"]
       interval: 10s
@@ -97,6 +118,7 @@ services:
       TRADE_SETTLEMENT_ADDRESS: ${TRADE_SETTLEMENT_ADDRESS:-0xa513E6E4b8f2a923D98304ec87F64353C4D5C853}
       MATCHING_ENGINE_PRIVATE_KEY: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
       MATCHING_ALGORITHM: ${MATCHING_ALGORITHM:-pay_as_bid}
+      PAY_AS_CLEAR_PRICING: ${PAY_AS_CLEAR_PRICING:-max_offer}
       MATCHING_ENGINE_BLOCK_INTERVAL: ${MATCHING_ENGINE_BLOCK_INTERVAL:-}
       EWDS_MATCHING_ENGINE_CLIENT_ID: ${EWDS_MATCHING_ENGINE_CLIENT_ID:-gsymatchingengine}
 
@@ -117,6 +139,7 @@ services:
       EVM_NODE_URL: ${EVM_NODE_URL:-ws://anvil:8545}
       ORDER_REGISTRY_ADDRESS: ${ORDER_REGISTRY_ADDRESS:-0x5FC8d32690cc91D4c39d9d3abcBD16989F875707}
       COMMUNITY_CLIENT_PRIVATE_KEY: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+      EWDS_ENABLE_HANDLER: "${EWDS_ENABLE_HANDLER:-false}"
       EWDS_COMMUNITY_CLIENT_ID: ${EWDS_COMMUNITY_CLIENT_ID:-gsycommunityclient}
       MATCHING_ALGORITHM: ${MATCHING_ALGORITHM:-pay_as_bid}
 
@@ -161,13 +184,15 @@ services:
       # The e2e suite trades the current delivery slot (the orchestrator creates
       # its markets on start), so the execution engine targets that slot too.
       EXECUTION_ENGINE_OFFSET_MIN: "0"
-      EXECUTION_ENGINE_ROLLOVER_RETRY_LIMIT: ${EXECUTION_ENGINE_ROLLOVER_RETRY_LIMIT:-2}
+      # Trades can settle a few minutes after their delivery slot started, especially over
+      # EWDS, so the engine keeps retrying a slot for about 10 cycles after it rolled over.
+      EXECUTION_ENGINE_ROLLOVER_RETRY_LIMIT: ${EXECUTION_ENGINE_ROLLOVER_RETRY_LIMIT:-10}
       TRADE_SETTLEMENT_ADDRESS: ${TRADE_SETTLEMENT_ADDRESS:-0xa513E6E4b8f2a923D98304ec87F64353C4D5C853}
       EXECUTION_ENGINE_PRIVATE_KEY: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
       EWDS_EXECUTION_ENGINE_CLIENT_ID: ${EWDS_EXECUTION_ENGINE_CLIENT_ID:-gsyexecutionengine}
 
   mongodb:
-    image: mongo:8.3.8
+    image: mongo:8.3.9
     container_name: mongodb
     ports:
       - "27017:27017"
@@ -191,6 +216,8 @@ services:
         condition: service_started
       gsy-market-orchestrator:
         condition: service_started
+      gsy-community-client:
+        condition: service_started
     environment:
       <<: *gsy-ewds-env
       RUST_BACKTRACE: full
@@ -206,6 +233,7 @@ services:
       CHARLIE_PRIVATE_KEY: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
       ACTOR_REGISTRAR_PRIVATE_KEY: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
       MATCHING_ALGORITHM: ${MATCHING_ALGORITHM:-pay_as_bid}
+      PAY_AS_CLEAR_PRICING: ${PAY_AS_CLEAR_PRICING:-max_offer}
       MATCHING_ENGINE_BLOCK_INTERVAL: ${MATCHING_ENGINE_BLOCK_INTERVAL:-}
       EWDS_E2E_CLIENT_ID: ${EWDS_E2E_CLIENT_ID:-gsye2e}
       MONGO_URL: mongodb://gsy:gsy@mongodb:27017/?retryWrites=true&w=majority

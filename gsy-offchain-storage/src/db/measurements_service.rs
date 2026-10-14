@@ -5,10 +5,87 @@ use mongodb::bson::{doc, Bson};
 use mongodb::options::IndexOptions;
 use mongodb::{Collection, IndexModel};
 use primitives::db_api_schema::profiles::{
-    MeasurementPointSchema, MeasurementPointType, TimeseriesSchema,
+    FlowDirection, MeasurementPointSchema, MeasurementPointType, MeasurementSchema,
+    TimeseriesSchema,
 };
+use primitives::utils::timestamp_to_string_with_padding;
 use std::collections::HashMap;
 use std::ops::Deref;
+
+pub(crate) fn profile_measurement_id(
+    point_type: MeasurementPointType,
+    community_uuid: &str,
+    facility_id: &str,
+) -> String {
+    let prefix = match point_type {
+        MeasurementPointType::Measurement => "measurement",
+        MeasurementPointType::Forecast => "forecast",
+    };
+    format!("{prefix}:{community_uuid}:{facility_id}")
+}
+
+pub(crate) fn flow_direction(value: f64) -> FlowDirection {
+    if value >= 0.0 {
+        FlowDirection::Import
+    } else {
+        FlowDirection::Export
+    }
+}
+
+fn measurement_point_from_measurement(measurement: &MeasurementSchema) -> MeasurementPointSchema {
+    MeasurementPointSchema {
+        point_type: MeasurementPointType::Measurement,
+        measurement_id: profile_measurement_id(
+            MeasurementPointType::Measurement,
+            measurement.community_uuid.as_str(),
+            measurement.facility_id.as_str(),
+        ),
+        property_measured: "energy_measured".to_string(),
+        unit: "kWh".to_string(),
+        direction: flow_direction(measurement.energy_kwh),
+        energy_accumulated: false,
+        time_resolution: "PT15M".to_string(),
+        phase: 0,
+        asset_name: measurement.facility_id.clone(),
+        datasource_name: Some(measurement.community_uuid.clone()),
+    }
+}
+
+fn measurement_timeseries(measurement: &MeasurementSchema) -> TimeseriesSchema {
+    TimeseriesSchema {
+        measurement_point: profile_measurement_id(
+            MeasurementPointType::Measurement,
+            measurement.community_uuid.as_str(),
+            measurement.facility_id.as_str(),
+        ),
+        timestamp: timestamp_to_string_with_padding(measurement.time_slot),
+        value: measurement.energy_kwh,
+    }
+}
+
+pub async fn insert_measurements(
+    db: &DatabaseWrapper,
+    measurements: &[MeasurementSchema],
+) -> Result<HashMap<usize, Bson>> {
+    // A batch usually has many values per point, so each point is written once, in the state
+    // of its last value.
+    let points = measurements
+        .iter()
+        .map(|measurement| {
+            let point = measurement_point_from_measurement(measurement);
+            (point.measurement_id.clone(), point)
+        })
+        .collect::<HashMap<_, _>>()
+        .into_values()
+        .collect::<Vec<_>>();
+    let values = measurements
+        .iter()
+        .map(measurement_timeseries)
+        .collect::<Vec<_>>();
+
+    db.measurement_points().insert_points(points).await?;
+    db.timeseries().insert_values(values).await
+}
 
 pub async fn init_measurement_points(db: &DatabaseWrapper) -> Result<()> {
     let controller = db.measurement_points();

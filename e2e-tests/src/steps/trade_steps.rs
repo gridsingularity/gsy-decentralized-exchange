@@ -18,8 +18,12 @@ use primitives::offchain_storage::{
     resolve_order_partner_ids, OffchainStorageClient, OffchainStorageTransport,
 };
 use primitives::utils::{
-    bytes16_to_hex, create_encrypted_bytes16_from_string, parse_uuid_or_hex_bytes16,
-    rfc3339_to_epoch, timestamp_to_string_with_padding, NODE_FLOAT_SCALING_FACTOR,
+    bytes16_to_hex,
+    create_encrypted_bytes16_from_string,
+    NODE_FLOAT_SCALING_FACTOR,
+    parse_uuid_or_hex_bytes16,
+    rfc3339_to_epoch,
+    timestamp_to_string_with_padding
 };
 use std::collections::HashSet;
 use std::env;
@@ -47,7 +51,6 @@ type EvmOrderParamsTuple = (
     bool,
     [u8; 16],
     u64,
-    [u8; 16],
 );
 
 abigen!(
@@ -70,8 +73,7 @@ abigen!(
                 {"name": "energyType", "type": "uint8"},
                 {"name": "isBid", "type": "bool"},
                 {"name": "preferredTradingPartner", "type": "bytes16"},
-                {"name": "preferredEnergyRate", "type": "uint64"},
-                {"name": "tradingPartner", "type": "bytes16"}
+                {"name": "preferredEnergyRate", "type": "uint64"}
             ]}]
         },
         {
@@ -103,8 +105,7 @@ abigen!(
                         {"name": "energyType", "type": "uint8"},
                         {"name": "isBid", "type": "bool"},
                         {"name": "preferredTradingPartner", "type": "bytes16"},
-                        {"name": "preferredEnergyRate", "type": "uint64"},
-                        {"name": "tradingPartner", "type": "bytes16"}
+                        {"name": "preferredEnergyRate", "type": "uint64"}
                     ]
                 }
             ],
@@ -131,7 +132,7 @@ async fn mine_empty_blocks(world: &MyWorld, count: usize) {
     }
 }
 
-async fn mine_until_matching_block(world: &MyWorld, max_blocks: usize) {
+pub(crate) async fn mine_until_matching_block(world: &MyWorld, max_blocks: usize) {
     let matching_block_interval = matching_block_interval();
     for _ in 0..max_blocks {
         mine_empty_blocks(world, 1).await;
@@ -155,7 +156,7 @@ async fn mine_until_matching_block(world: &MyWorld, max_blocks: usize) {
     );
 }
 
-async fn align_to_matching_window(world: &MyWorld, required_blocks: u64) {
+pub(crate) async fn align_to_matching_window(world: &MyWorld, required_blocks: u64) {
     let matching_block_interval = matching_block_interval();
     assert!(
         required_blocks < matching_block_interval,
@@ -196,7 +197,7 @@ async fn actor_id_as_hex(world: &MyWorld, user_name: &str) -> String {
     )
 }
 
-fn market_id_as_hex(world: &MyWorld) -> String {
+pub(crate) fn market_id_as_hex(world: &MyWorld) -> String {
     bytes16_to_hex(world.last_market_id.expect("Missing market id"))
 }
 
@@ -265,7 +266,10 @@ async fn query_community_market_trades(world: &MyWorld) -> Vec<DbTradeSchema> {
         .expect("Failed to fetch trades from off-chain storage")
 }
 
-async fn wait_for_order_in_offchain_storage(world: &MyWorld, order_id: &str) -> DbOrderSchema {
+pub(crate) async fn wait_for_order_in_offchain_storage(
+    world: &MyWorld,
+    order_id: &str,
+) -> DbOrderSchema {
     wait_for_order_in_market(world, market_id_as_hex(world).as_str(), order_id).await
 }
 
@@ -340,18 +344,12 @@ async fn place_custom_order_for_market(
     let order_id = Uuid::new_v4().to_string();
     let order_id_bytes = create_encrypted_bytes16_from_string(&order_id);
     let mut resolved_requirements = requirements.clone();
-    let mut resolved_attributes = attributes.clone();
     let id_mapping_source = OffchainStorageClient::from_env("EWDS_E2E_CLIENT_ID", "gsye2e");
-    resolve_order_partner_ids(
-        &mut resolved_requirements,
-        &mut resolved_attributes,
-        &id_mapping_source,
-    )
-    .await
-    .expect("Failed to resolve order partner IDs");
-    let metadata =
-        order_metadata_to_contract(resolved_requirements.as_ref(), resolved_attributes.as_ref())
-            .expect("Invalid resolved order metadata");
+    resolve_order_partner_ids(&mut resolved_requirements, &id_mapping_source)
+        .await
+        .expect("Failed to resolve order partner IDs");
+    let metadata = order_metadata_to_contract(resolved_requirements.as_ref(), attributes.as_ref())
+        .expect("Invalid resolved order metadata");
 
     let params: EvmOrderParamsTuple = (
         order_id_bytes,
@@ -366,7 +364,6 @@ async fn place_custom_order_for_market(
         is_bid,
         metadata.preferred_trading_partner,
         metadata.preferred_energy_rate,
-        metadata.trading_partner,
     );
 
     let order_id = bytes16_to_hex(order_id_bytes);
@@ -642,13 +639,13 @@ async fn submit_community_market_measurements(world: &mut MyWorld) {
         FacilitySchema {
             facility_id: "alice".to_string(),
             facility_name: "alice".to_string(),
-            site_id: "12345".to_string(),
+            site_id: "site-12345".to_string(),
             owner_id: "alice".to_string(),
         },
         FacilitySchema {
             facility_id: "bob".to_string(),
             facility_name: "bob".to_string(),
-            site_id: "12346".to_string(),
+            site_id: "site-12346".to_string(),
             owner_id: "bob".to_string(),
         },
     ];
@@ -721,6 +718,7 @@ async fn submit_offer(world: &mut MyWorld, user_name: String) {
     mine_until_matching_block(world, 12).await;
 }
 
+// Offers name their preferred partner the same way bids do: in requirements.
 #[when(
     expr = "{string} submits an offer for {float} energy at a rate of {float} for the preferred partner {string}"
 )]
@@ -731,8 +729,41 @@ async fn submit_preferred_partner_offer(
     energy_rate: f64,
     partner_name: String,
 ) {
-    let attributes = DbAttributes {
+    let requirements = DbRequirements {
         trading_partner_id: Some(partner_name.clone()),
+        energy_type: None,
+        preferred_energy_rate: None,
+    };
+    let attributes = DbAttributes {
+        energy_type: EnergyType::Green,
+    };
+
+    let order_id = place_custom_order(
+        world,
+        user_name.as_str(),
+        false,
+        energy,
+        energy_rate,
+        Some(requirements),
+        Some(attributes),
+    )
+    .await;
+
+    let stored = wait_for_order_in_offchain_storage(world, order_id.as_str()).await;
+    assert_eq!(
+        stored
+            .requirements
+            .as_ref()
+            .and_then(|requirements| requirements.trading_partner_id.as_deref()),
+        Some(partner_name.as_str()),
+        "Offer {} lost its preferred partner in requirements",
+        order_id
+    );
+}
+
+#[when(expr = "{string} submits an offer for {float} energy at a rate of {float}")]
+async fn submit_green_offer(world: &mut MyWorld, user_name: String, energy: f64, energy_rate: f64) {
+    let attributes = DbAttributes {
         energy_type: EnergyType::Green,
     };
 
@@ -762,9 +793,14 @@ async fn submit_cheaper_offer(world: &mut MyWorld, user_name: String, energy: f6
 
 #[when("the pay-as-clear order book is submitted")]
 async fn submit_pay_as_clear_order_book(world: &mut MyWorld) {
+    submit_pay_as_clear_order_book_with(world, "price crossing".to_string()).await;
+}
+
+#[when(expr = "the pay-as-clear order book with {string} is submitted")]
+async fn submit_pay_as_clear_order_book_with(world: &mut MyWorld, book: String) {
     // A uniform-price auction must observe the complete book in one interval.
     align_to_matching_window(world, 8).await;
-    world.pay_as_clear_scenario = Some(place_standard_pay_as_clear_order_book(world).await);
+    world.pay_as_clear_scenario = Some(place_standard_pay_as_clear_order_book(world, &book).await);
 
     mine_until_matching_block(world, matching_block_interval() as usize + 1).await;
 }
@@ -774,27 +810,42 @@ async fn trigger_matching_cycle(world: &mut MyWorld) {
     mine_until_matching_block(world, matching_block_interval() as usize + 1).await;
 }
 
-async fn place_standard_pay_as_clear_order_book(world: &MyWorld) -> PayAsClearScenario {
+async fn place_standard_pay_as_clear_order_book(world: &MyWorld, book: &str) -> PayAsClearScenario {
+    let (include_unmatched_bid, include_unmatched_offer) = match book {
+        "price crossing" => (true, true),
+        "supply scarcity" => (true, false),
+        "demand scarcity" => (false, true),
+        "simultaneous exhaustion" => (false, false),
+        _ => panic!("Unknown pay-as-clear fixture: {book}"),
+    };
+    let mut unmatched_order_ids = Vec::new();
     let first_offer = place_custom_order(world, "charlie", false, 3.0, 8.0, None, None).await;
     let second_offer = place_custom_order(world, "charlie", false, 4.0, 10.0, None, None).await;
-    let unmatched_offer = place_custom_order(world, "charlie", false, 1.0, 12.0, None, None).await;
+    if include_unmatched_offer {
+        let order_id = place_custom_order(world, "charlie", false, 1.0, 12.0, None, None).await;
+        wait_for_order_in_offchain_storage(world, &order_id).await;
+        unmatched_order_ids.push(order_id);
+    }
     wait_for_order_in_offchain_storage(world, first_offer.as_str()).await;
     wait_for_order_in_offchain_storage(world, second_offer.as_str()).await;
-    wait_for_order_in_offchain_storage(world, unmatched_offer.as_str()).await;
 
-    // The cumulative curves clear 7 energy at 10. The next bid/offer tranche
-    // crosses at 9 < 12, so both orders must remain outside the clearing point.
+    // Every fixture accepts 7 energy with marginal rates 10 (offer) and 17 (bid).
+    // Optional tail orders distinguish a price crossing from side exhaustion.
     let first_bid = place_custom_order(world, "alice", true, 3.0, 20.0, None, None).await;
     let second_bid = place_custom_order(world, "bob", true, 4.0, 17.0, None, None).await;
-    let unmatched_bid = place_custom_order(world, "alice", true, 1.0, 9.0, None, None).await;
+    if include_unmatched_bid {
+        // Scarcity requires demand that can still afford the last accepted offer.
+        let rate = if book == "supply scarcity" { 12.0 } else { 9.0 };
+        let order_id = place_custom_order(world, "alice", true, 1.0, rate, None, None).await;
+        wait_for_order_in_offchain_storage(world, &order_id).await;
+        unmatched_order_ids.push(order_id);
+    }
     wait_for_order_in_offchain_storage(world, first_bid.as_str()).await;
     wait_for_order_in_offchain_storage(world, second_bid.as_str()).await;
-    wait_for_order_in_offchain_storage(world, unmatched_bid.as_str()).await;
 
     PayAsClearScenario {
         accepted_order_ids: vec![first_bid, second_bid, first_offer, second_offer],
-        unmatched_bid_order_id: unmatched_bid,
-        unmatched_offer_order_id: unmatched_offer,
+        unmatched_order_ids,
         expected_match_count: 2,
         preferred_order_ids: None,
     }
@@ -822,7 +873,6 @@ async fn submit_combined_pay_as_clear_order_book(world: &mut MyWorld) {
     .await;
 
     let preferred_offer_attributes = DbAttributes {
-        trading_partner_id: Some("alice".to_string()),
         energy_type: EnergyType::Green,
     };
     let preferred_offer = place_custom_order(
@@ -839,7 +889,7 @@ async fn submit_combined_pay_as_clear_order_book(world: &mut MyWorld) {
     wait_for_order_in_offchain_storage(world, preferred_bid.as_str()).await;
     wait_for_order_in_offchain_storage(world, preferred_offer.as_str()).await;
 
-    let mut scenario = place_standard_pay_as_clear_order_book(world).await;
+    let mut scenario = place_standard_pay_as_clear_order_book(world, "price crossing").await;
     scenario.preferred_order_ids = Some((preferred_bid, preferred_offer));
     world.pay_as_clear_scenario = Some(scenario);
 
@@ -959,6 +1009,30 @@ async fn verify_trade_on_chain(world: &mut MyWorld) {
     panic!("Timeout: no settled trade was indexed for the expected market");
 }
 
+#[then(expr = "the trade has {string} as buyer and {string} as seller")]
+async fn verify_trade_parties(world: &mut MyWorld, buyer_name: String, seller_name: String) {
+    let trade = world.last_trade.clone().expect("Missing settled trade");
+    let expected_buyer = actor_id_as_hex(world, &buyer_name).await;
+    let expected_seller = actor_id_as_hex(world, &seller_name).await;
+
+    assert!(
+        trade.buyer.eq_ignore_ascii_case(expected_buyer.as_str()),
+        "Trade {} has buyer {}, expected {} ({})",
+        trade.trade_uuid,
+        trade.buyer,
+        buyer_name,
+        expected_buyer
+    );
+    assert!(
+        trade.seller.eq_ignore_ascii_case(expected_seller.as_str()),
+        "Trade {} has seller {}, expected {} ({})",
+        trade.trade_uuid,
+        trade.seller,
+        seller_name,
+        expected_seller
+    );
+}
+
 #[then(expr = "a trade is settled on-chain between {string} and {string} for {float} energy")]
 async fn verify_partner_trade(
     world: &mut MyWorld,
@@ -1017,7 +1091,26 @@ async fn verify_partner_trade(
     );
 }
 
-#[then(expr = "the market clears {float} energy at a uniform price of {float}")]
+#[then(expr = "the standard market clears {float} energy at the configured price: max_offer {float}, min_bid {float}, midpoint {float}")]
+async fn verify_configured_pay_as_clear_result(
+    world: &mut MyWorld,
+    expected_energy: f64,
+    max_offer: f64,
+    min_bid: f64,
+    midpoint: f64,
+) {
+    let pricing = env::var("PAY_AS_CLEAR_PRICING").unwrap_or_else(|_| "max_offer".to_string());
+    // Expected prices are explicit fixture values, not calculated by the matcher.
+    let expected_price = match pricing.trim().to_ascii_lowercase().as_str() {
+        "max_offer" => max_offer,
+        "min_bid" => min_bid,
+        "midpoint" => midpoint,
+        _ => panic!("Invalid PAY_AS_CLEAR_PRICING: {pricing}"),
+    };
+    info!("Checking pay-as-clear fixture with {pricing}: expected price {expected_price}");
+    verify_pay_as_clear_result(world, expected_energy, expected_price).await;
+}
+
 async fn verify_pay_as_clear_result(
     world: &mut MyWorld,
     expected_energy: f64,
@@ -1088,8 +1181,50 @@ async fn verify_pay_as_clear_result(
             matching_trades
                 .iter()
                 .all(|trade| approx_eq(trade.parameters.energy_rate, expected_price)),
-            "Pay-as-clear trades do not share the expected uniform clearing price"
+            "Expected uniform price {}, got {:?}",
+            expected_price,
+            matching_trades
+                .iter()
+                .map(|trade| trade.parameters.energy_rate)
+                .collect::<Vec<_>>()
         );
+
+        let settlement =
+            TradeSettlementContract::new(world.trade_settlement_address, world.provider.clone());
+        for trade in &matching_trades {
+            let trade_id = parse_uuid_or_hex_bytes16(&trade.trade_uuid).expect("Invalid trade ID");
+            let mut topic = [0u8; 32];
+            topic[..16].copy_from_slice(&trade_id);
+            let events = settlement
+                .event::<TradeSettledFilter>()
+                .from_block(0u64)
+                .topic1(H256::from(topic))
+                .query()
+                .await
+                .expect("Failed to query clearing settlement event");
+            assert_eq!(events.len(), 1, "Expected one settlement event per trade");
+            let event = &events[0];
+            assert_eq!(
+                event.bid_id,
+                parse_uuid_or_hex_bytes16(&trade.bid_hash).unwrap()
+            );
+            assert_eq!(
+                event.offer_id,
+                parse_uuid_or_hex_bytes16(&trade.offer_hash).unwrap()
+            );
+            assert_eq!(event.market_id, world.last_market_id.unwrap());
+            assert_eq!(event.time_slot, world.target_delivery_time);
+            assert_eq!(
+                event.price,
+                U256::from((expected_price * NODE_FLOAT_SCALING_FACTOR).round() as u64)
+            );
+            assert_eq!(
+                event.energy,
+                U256::from(
+                    (trade.parameters.selected_energy_kWh * NODE_FLOAT_SCALING_FACTOR).round() as u64
+                )
+            );
+        }
 
         world.last_trade = matching_trades.first().cloned();
         world.pay_as_clear_trades = matching_trades;
@@ -1150,49 +1285,39 @@ async fn verify_combined_preferred_trade(
     panic!("Timeout: combined preferred trade was not indexed in off-chain storage");
 }
 
-#[then(expr = "the remaining standard market clears {float} energy at a uniform price of {float}")]
-async fn verify_remaining_pay_as_clear_result(
-    world: &mut MyWorld,
-    expected_energy: f64,
-    expected_price: f64,
-) {
-    verify_pay_as_clear_result(world, expected_energy, expected_price).await;
-}
-
-#[then("orders beyond the clearing point remain open")]
+#[then("unmatched orders remain open on-chain and in storage")]
 async fn verify_pay_as_clear_unmatched_orders(world: &mut MyWorld) {
     let scenario = world
         .pay_as_clear_scenario
         .as_ref()
         .expect("Missing pay-as-clear scenario state");
     let market_orders = query_market_orders(world).await;
-    let unmatched_bid = market_orders
-        .iter()
-        .find(|order| {
-            order
-                .order_id
-                .eq_ignore_ascii_case(scenario.unmatched_bid_order_id.as_str())
-        })
-        .expect("Unmatched pay-as-clear bid was not found in off-chain storage");
-    assert_eq!(
-        unmatched_bid.status,
-        OrderStatus::Submitted,
-        "Bid beyond the clearing point must remain open"
-    );
-
-    let unmatched_offer = market_orders
-        .iter()
-        .find(|order| {
-            order
-                .order_id
-                .eq_ignore_ascii_case(scenario.unmatched_offer_order_id.as_str())
-        })
-        .expect("Unmatched pay-as-clear offer was not found in off-chain storage");
-    assert_eq!(
-        unmatched_offer.status,
-        OrderStatus::Submitted,
-        "Offer beyond the clearing point must remain open"
-    );
+    let registry = OrderRegistryContract::new(world.order_registry_address, world.provider.clone());
+    let trades = query_market_trades(world).await;
+    for order_id in &scenario.unmatched_order_ids {
+        let order = market_orders
+            .iter()
+            .find(|order| order.order_id.eq_ignore_ascii_case(order_id))
+            .expect("Unmatched fixture order was not found in off-chain storage");
+        assert_eq!(
+            order.status,
+            OrderStatus::Submitted,
+            "Order {order_id} must remain open"
+        );
+        let status = registry
+            .get_status(parse_uuid_or_hex_bytes16(order_id).unwrap())
+            .call()
+            .await
+            .expect("Failed to read unmatched order status");
+        assert_eq!(status, 1u8, "Order {order_id} must remain open on-chain");
+        assert!(
+            !trades.iter().any(|trade| {
+                trade.bid_hash.eq_ignore_ascii_case(order_id)
+                    || trade.offer_hash.eq_ignore_ascii_case(order_id)
+            }),
+            "Unmatched order {order_id} must not appear in trades"
+        );
+    }
 }
 
 #[then(regex = r#"^the trade price is exactly (\d+), matching the preferred rate$"#)]
@@ -1295,7 +1420,6 @@ async fn verify_residual_lifecycle(world: &mut MyWorld, side: String, consumptio
         None,
         Some(DbAttributes {
             energy_type: EnergyType::Green,
-            trading_partner_id: None,
         }),
     )
     .await;
