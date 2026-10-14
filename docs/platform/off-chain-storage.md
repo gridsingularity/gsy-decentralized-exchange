@@ -19,7 +19,13 @@ Backend: MongoDB (`mongo:5.0`).
 
 `OrderPlaced` contains the optional order requirements (bids and offers) and
 offer attributes, so the indexed order is complete without a follow-up
-`/orders` write.
+`/orders` write. `POST /orders` and `POST /orders-normalized` remain available as
+direct database upserts, but neither is used by the E2E scenarios or production
+order lifecycle. Orders are submitted through `placeOrder` (directly or through
+the community client's EWDS subscriber), then indexed by the EVM listener.
+The POST endpoints still accept caller-supplied statuses; their ownership and
+access policy remain to be clarified. Posting trades leaves referenced orders
+unchanged; settlement updates are handled by the EVM listener.
 
 ## HTTP API Surface
 

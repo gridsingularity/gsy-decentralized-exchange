@@ -48,7 +48,7 @@ Provider: `gsy-offchain-storage` (`gsy-offchain-storage/src/startup.rs`)
 |---|---|---|---|
 | `/health_check` | `GET` | compose healthcheck, tests | `http://gsy-offchain-storage:8080` |
 | `/orders` | `GET` | matching engine, e2e tests | `http://gsy-offchain-storage:8080/orders` |
-| `/orders` | `POST` | e2e tests/internal tooling | `http://gsy-offchain-storage:8080/orders` |
+| `/orders`, `/orders-normalized` | `POST` | API integration tests/manual tooling; not used by E2E scenarios or production order lifecycle | `http://gsy-offchain-storage:8080` |
 | `/trades` | `GET` | execution engine, e2e tests | `http://gsy-offchain-storage:8080/trades` |
 | `/trades` | `POST` | e2e tests/internal tooling | `http://gsy-offchain-storage:8080/trades` |
 | `/communities` | `GET/POST` | market orchestrator, pilot sites, e2e tests | `http://gsy-offchain-storage:8080/communities` |

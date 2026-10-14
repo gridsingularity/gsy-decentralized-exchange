@@ -55,7 +55,7 @@ fn make_market(market_id: &str, delivery_start_time: u64) -> MarketSchema {
 }
 
 #[tokio::test]
-async fn post_trade_request_writes_trades_to_the_db() {
+async fn post_trade_requests_persist_trades_without_updating_orders() {
     let app = init_app().await;
     let address = app.address.clone();
     let bid = make_order(
@@ -66,8 +66,6 @@ async fn post_trade_request_writes_trades_to_the_db() {
         "0x0000000000000000000000000000000000000000000000000000000000000a5c",
         OrderEnum::Offer,
     );
-    let trade = make_trade("trade_id", bid.clone(), offer.clone());
-
     let db = web::Data::new(app.db_wrapper.clone());
     db.get_ref()
         .orders()
@@ -76,28 +74,33 @@ async fn post_trade_request_writes_trades_to_the_db() {
         .unwrap();
 
     let client = reqwest::Client::new();
-    let resp = client
-        .post(&format!("{}/trades", &address))
-        .json(&vec![trade.clone()])
-        .send()
-        .await
-        .unwrap();
+    for (index, endpoint) in ["/trades", "/trades-normalized"].into_iter().enumerate() {
+        let trade = make_trade(&format!("trade_{index}"), bid.clone(), offer.clone());
+        let resp = client
+            .post(format!("{address}{endpoint}"))
+            .json(&vec![trade.clone()])
+            .send()
+            .await
+            .unwrap();
 
-    assert_eq!(200, resp.status().as_u16());
+        assert_eq!(200, resp.status().as_u16());
 
-    let saved = db.get_ref().trades().get_all_trades().await.unwrap();
-    let result_trade = saved.first().unwrap();
-    assert_eq!(result_trade.trade_uuid, "trade_id".to_string());
+        let saved = db.get_ref().trades().get_all_trades().await.unwrap();
+        assert_eq!(saved.len(), index + 1);
+        assert!(saved.iter().any(|stored| stored.trade_uuid == trade.trade_id));
 
-    let bid_bson = mongodb::bson::to_bson(&bid.order_id).unwrap();
-    let bid_after = db
-        .get_ref()
-        .orders()
-        .get_order_by_id(&bid_bson)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(bid_after.status, OrderStatus::Executed);
+        for order in [&bid, &offer] {
+            let id = mongodb::bson::to_bson(&order.order_id).unwrap();
+            let stored = db
+                .get_ref()
+                .orders()
+                .get_order_by_id(&id)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(&stored, order);
+        }
+    }
     stop_app(app).await;
 }
 
