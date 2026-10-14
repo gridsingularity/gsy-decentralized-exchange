@@ -65,9 +65,9 @@
       "type": "number"
     },
     "timestamp": {
-      "description": "Trade time slot / creation timestamp. IRI: int:tradedAt. Unix epoch (seconds).",
-      "type": "integer",
-      "minimum": 0
+      "description": "Trade time slot / creation timestamp. IRI: int:tradedAt. RFC 3339.",
+      "type": "string",
+      "format": "date-time"
     }
   },
   "required": [
