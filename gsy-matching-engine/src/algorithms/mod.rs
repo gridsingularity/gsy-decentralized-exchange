@@ -156,6 +156,9 @@ impl MatchingData {
     }
 }
 
+/// Creates a match for `energy` at `rate`, including residuals for partly filled orders.
+/// Replaces each input order with its residual (including the new ID), or sets its
+/// energy to zero if fully filled, so subsequent matches consume the remaining order.
 fn fill_order_pair(
     bid: &mut Order,
     offer: &mut Order,

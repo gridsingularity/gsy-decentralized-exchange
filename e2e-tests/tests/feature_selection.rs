@@ -68,3 +68,33 @@ fn explicit_cli_input_is_preserved() {
         "trade_execution.feature"
     );
 }
+
+#[test]
+fn explicit_cli_input_can_select_multiple_feature_groups() {
+    let mut cli = Cli {
+        features: Some(
+            "features/{pay_as_bid,matching_algorithms,green_proofs}/**/*.feature"
+                .parse()
+                .unwrap(),
+        ),
+    };
+    configure_features(&mut cli, &MatchingAlgorithm::PayAsBid, None);
+    let features = Basic::new()
+        .parse("features", cli)
+        .into_inner()
+        .map(Result::unwrap)
+        .collect::<Vec<_>>();
+    let directories = features
+        .iter()
+        .map(|feature| {
+            feature.path.as_ref().unwrap().parent().unwrap().file_name().unwrap()
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        directories,
+        ["pay_as_bid", "matching_algorithms", "green_proofs"]
+            .map(std::ffi::OsStr::new)
+            .into_iter()
+            .collect()
+    );
+}
