@@ -103,6 +103,7 @@ describe("TradeSettlement", function () {
     });
 
     return {
+      controller,
       settlement,
       registry,
       buyer,
@@ -173,6 +174,24 @@ describe("TradeSettlement", function () {
         .withArgs(order.orderId, ORDER_STATUS_FILLED);
       expect(await registry.getStatus(order.orderId)).to.equal(ORDER_STATUS_FILLED);
     }
+  });
+
+  it("Should reject settlement after market closure, including after reopening", async function () {
+    const { settlement, registry, controller, buyer, seller, operator, bid, offer, marketId } =
+      await loadFixture(deploySettlementFixture);
+    await registry.connect(buyer).placeOrder(bid);
+    await registry.connect(seller).placeOrder(offer);
+    const matchData = {
+      tradeId: bytes16Id("expired-trade"), bid, offer,
+      residualBidId: ZERO_BYTES16, residualOfferId: ZERO_BYTES16,
+      selectedEnergy: 100, clearingPrice: 45,
+    };
+    await controller.setMarketStatus(marketId, false);
+    await expect(settlement.connect(operator).settleBatch(asMarketBatch([matchData])))
+      .to.be.revertedWithCustomError(settlement, "OrderNotOpen");
+    await controller.setMarketStatus(marketId, true);
+    await expect(settlement.connect(operator).settleBatch(asMarketBatch([matchData])))
+      .to.be.revertedWithCustomError(settlement, "OrderNotOpen");
   });
 
   it("Should emit a MarketClearing event", async function () {

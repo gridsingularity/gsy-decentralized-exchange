@@ -373,7 +373,7 @@ async fn trade_settled_publishes_trade_event() {
     let handler = evm_handler(&app, &server);
 
     handler
-        .handle_trade_settled(trade_settled_event())
+        .handle_trade_settled(trade_settled_event(), 1_100)
         .await
         .unwrap();
 
@@ -409,14 +409,14 @@ async fn trade_settled_does_not_publish_when_trade_is_not_persisted() {
     let handler = evm_handler(&app, &server);
 
     handler
-        .handle_trade_settled(trade_settled_event())
+        .handle_trade_settled(trade_settled_event(), 1_100)
         .await
         .unwrap();
     wait_for_gateway_messages(&server, 1).await;
 
     // The unique trade_uuid index rejects the duplicate, so no second event may be sent.
     let error = handler
-        .handle_trade_settled(trade_settled_event())
+        .handle_trade_settled(trade_settled_event(), 1_100)
         .await
         .unwrap_err();
     assert!(error.to_string().contains("Failed to insert trade"));
@@ -476,13 +476,15 @@ async fn market_status_publishes_market_event() {
     let app = init_app().await;
     let server = mock_gateway().await;
     let handler = evm_handler(&app, &server);
-    let before = chrono::Utc::now().timestamp() as u64;
 
     handler
-        .handle_market_status(MarketStatusUpdatedFilter {
-            market_id: [0x08; 16],
-            is_open: true,
-        })
+        .handle_market_status(
+            MarketStatusUpdatedFilter {
+                market_id: [0x08; 16],
+                is_open: true,
+            },
+            1_100,
+        )
         .await
         .unwrap();
 
@@ -496,9 +498,8 @@ async fn market_status_publishes_market_event() {
         event["data"],
         json!([{"marketId": market_id, "isOpen": true}])
     );
-    // Market status is not persisted, so occurredAt is the time the event was received.
     let occurred_at = rfc3339_to_epoch(event["occurredAt"].as_str().unwrap()).unwrap();
-    assert!(occurred_at >= before && occurred_at <= chrono::Utc::now().timestamp() as u64);
+    assert_eq!(occurred_at, 1_100);
 
     stop_app(app).await;
 }

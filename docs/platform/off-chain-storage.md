@@ -79,9 +79,20 @@ communities that other systems publish on the EWDS events channel, in
 the same collections (see
 [Inbound Events](ewds-integration.md#inbound-events)).
 
-## Scheduler Behavior
+## Order Expiry
 
-`expire_orders_scheduler` periodically marks stale open orders as `Expired` using `time_slot` and current time.
+The EVM listener expires `Submitted` orders when it receives a confirmed
+`MarketStatusUpdated(marketId, false)` event. Only that market's orders are
+updated, using the closure block timestamp; the delivery slot does not trigger
+expiry. This includes open residuals, but leaves consumed or cancelled orders
+unchanged. Repeated closure events preserve the original expiry timestamp, and
+reopening a market does not reactivate expired orders.
+
+The former wall-clock expiry scheduler and `scheduler_interval` setting have
+been removed. This uses the same listener in HTTP and EWDS mode; market event
+notifications are still published only when the EWDS handler is enabled.
+The listener currently has no historical replay: missed closure events require
+reconciliation/reindexing, as do other missed lifecycle events.
 
 ## Data Model Notes
 
@@ -103,6 +114,11 @@ the same collections (see
   residual ID is emitted. Each residual is a separate `Submitted` order; filling
   it later does not change its original's status. Settlement does not mark orders
   `Executed`; delivery-verification transitions are still pending in DD-423.
+- Order placement, cancellation and settlement indexing use the event block's
+  timestamp for `status_updated_at` (exposed as `updatedAt` in HTTP/EWDS DTOs),
+  not the indexing time. Status and timestamp are updated together. Residual
+  orders have independent status timestamps; `creation_time` remains unchanged.
+  Existing records without a status timestamp are not backfilled by this change.
 - Trade records include both order payload snapshots and selected settlement parameters.
 
 ## Operational Configuration

@@ -63,11 +63,22 @@ describe("MarketController", function () {
     }
     for (const marketId of marketIds) {
       expect(await controller.isMarketOpen(marketId)).to.be.true;
+      expect(await controller.marketOpeningCount(marketId)).to.equal(1);
     }
 
     await controller.connect(orchestrator).setMarketStatuses(marketIds, false);
     for (const marketId of marketIds) {
       expect(await controller.isMarketOpen(marketId)).to.be.false;
+      expect(await controller.marketOpeningCount(marketId)).to.equal(1);
+    }
+    await controller.connect(orchestrator).setMarketStatuses(marketIds, false);
+    for (const marketId of marketIds) {
+      expect(await controller.marketOpeningCount(marketId)).to.equal(1);
+    }
+    await controller.connect(orchestrator).setMarketStatuses(marketIds, true);
+    await controller.connect(orchestrator).setMarketStatuses(marketIds, false);
+    for (const marketId of marketIds) {
+      expect(await controller.marketOpeningCount(marketId)).to.equal(2);
     }
   });
 

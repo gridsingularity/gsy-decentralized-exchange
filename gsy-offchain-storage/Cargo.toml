@@ -22,7 +22,6 @@ dotenv = "0.15.0"
 futures = "0.3.30"
 mongodb = { workspace = true }
 serde = { workspace = true }
-tokio_schedule = "0.3.2"
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 reqwest = { workspace = true }

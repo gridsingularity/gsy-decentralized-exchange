@@ -1547,10 +1547,6 @@ async fn verify_residual_lifecycle(world: &mut MyWorld, side: String, consumptio
     expected.order_id = residual_id.clone();
     expected.energy_kWh = 4.0;
     expected.status = OrderStatus::Filled;
-    assert_eq!(
-        residual, expected,
-        "Residual metadata or indexed status changed"
-    );
     let residual_bytes = parse_uuid_or_hex_bytes16(&residual_id).unwrap();
     expected_params.0 = residual_bytes;
     expected_params.5 = (4.0 * NODE_FLOAT_SCALING_FACTOR) as u64;
@@ -1603,8 +1599,22 @@ async fn verify_residual_lifecycle(world: &mut MyWorld, side: String, consumptio
         };
         assert_eq!(event.residual_bid_id, expected_bid);
         assert_eq!(event.residual_offer_id, expected_offer);
+        if trade.trade_uuid == second.trade_uuid {
+            expected.status_updated_at = Some(
+                world.provider
+                    .get_block(events[0].1.block_hash)
+                    .await
+                    .expect("Failed to fetch residual settlement block")
+                    .expect("Missing residual settlement block")
+                    .timestamp.as_u64(),
+            );
+        }
         transaction_hashes.push(events[0].1.transaction_hash);
     }
+    assert_eq!(
+        residual, expected,
+        "Residual metadata, indexed status or settlement timestamp changed"
+    );
     assert_eq!(
         transaction_hashes[0] == transaction_hashes[1],
         !later,

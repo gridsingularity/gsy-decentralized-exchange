@@ -111,6 +111,7 @@ Purpose:
 - Stores market open/closed state keyed by `marketId`.
 - Exposes `setMarketStatus(bytes16,bool)` and `isMarketOpen(bytes16)`.
 - Restricts updates to `ORCHESTRATOR_ROLE`.
+- Tracks each market opening so orders from a previous opening cannot be reused.
 
 ### `OrderRegistry`
 
@@ -124,6 +125,18 @@ Purpose:
 - Emits the complete order metadata in `OrderPlaced`, allowing the event
   listener to reconstruct the off-chain order without a separate update.
 - Emits `OrderCancelled` and `OrderStatusUpdated` lifecycle events.
+- Both `getStatus` and `orderStatus` derive `Expired` for an open order whose
+  market is closed or has since reopened. This includes residuals. Settlement
+  and cancellation reject these orders; consumed statuses remain unchanged.
+  Expiry requires no per-order transaction or `OrderStatusUpdated` event:
+  storage indexes it from `MarketStatusUpdated(marketId, false)`.
+
+This change appends market/order opening counters and preserves the existing
+storage slots and status getter ABI. Deploy/upgrade `MarketController` before
+`OrderRegistry`, with market/order activity paused during the upgrade. Counters
+start tracking on upgrade; historical closures are not backfilled. Reconcile
+legacy closed-market records before resuming, especially if those markets had
+already reopened before the upgrade.
 
 ### `TradeSettlement`
 

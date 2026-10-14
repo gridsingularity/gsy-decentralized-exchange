@@ -214,11 +214,18 @@ impl OrderService {
         &self,
         id: &Bson,
         status: OrderStatus,
+        status_updated_at: u64,
     ) -> Result<UpdateResult> {
         let filter = build_order_identifier_filter(id);
         match self
             .0
-            .update_one(filter, doc! {"$set": {"status": bson::to_bson(&status)?}})
+            .update_one(
+                filter,
+                doc! {"$set": {
+                    "status": bson::to_bson(&status)?,
+                    "status_updated_at": bson::to_bson(&status_updated_at)?,
+                }},
+            )
             .await
         {
             Ok(doc) => Ok(doc),
@@ -229,20 +236,23 @@ impl OrderService {
         }
     }
 
-    #[tracing::instrument(name = "Update expired orders", skip(self))]
-    pub async fn update_expired_orders(
+    #[tracing::instrument(name = "Expire open orders in closed market", skip(self))]
+    pub async fn expire_market_orders(
         &self,
-        now_time_slot: u64,
-        status: OrderStatus,
+        market_id: &str,
+        block_timestamp: u64,
     ) -> Result<UpdateResult> {
         match self
             .0
             .update_many(
                 doc! {
-                    "time_slot": {"$lt": time_slot_bson(now_time_slot)?},
+                    "market_id": market_id,
                     "status": bson::to_bson(&OrderStatus::Submitted)?,
                 },
-                doc! {"$set": {"status": bson::to_bson(&status)?}},
+                doc! {"$set": {
+                    "status": bson::to_bson(&OrderStatus::Expired)?,
+                    "status_updated_at": bson::to_bson(&block_timestamp)?,
+                }},
             )
             .await
         {

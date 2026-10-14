@@ -13,6 +13,8 @@ contract MarketController is Initializable, AccessControlUpgradeable {
 
     // Market UUID (bytes16) => isOpen
     mapping(bytes16 => bool) public marketStatus;
+    // Orders from an earlier opening stay expired when a market is reopened.
+    mapping(bytes16 => uint256) public marketOpeningCount;
 
     event MarketStatusUpdated(bytes16 indexed marketId, bool isOpen);
 
@@ -63,6 +65,9 @@ contract MarketController is Initializable, AccessControlUpgradeable {
     }
 
     function _setMarketStatus(bytes16 marketId, bool isOpen) private {
+        if (!marketStatus[marketId] && isOpen) {
+            marketOpeningCount[marketId] += 1;
+        }
         marketStatus[marketId] = isOpen;
         emit MarketStatusUpdated(marketId, isOpen);
     }

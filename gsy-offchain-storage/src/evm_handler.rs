@@ -29,7 +29,11 @@ pub struct OffchainStorageEvmHandler {
 
 #[async_trait]
 impl GsyEventHandler for OffchainStorageEvmHandler {
-    async fn handle_order_placed(&self, event: OrderPlacedFilter) -> Result<()> {
+    async fn handle_order_placed(
+        &self,
+        event: OrderPlacedFilter,
+        block_timestamp: u64,
+    ) -> Result<()> {
         info!(
             "Processing EVM OrderPlaced: {:?}",
             hex::encode(event.order_id)
@@ -70,7 +74,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         let schema = DbOrderSchema {
             order_id: order_id_str.clone(),
             status: OrderStatus::Submitted,
-            status_updated_at: None,
+            status_updated_at: Some(block_timestamp),
             order_type: order_enum,
             area_uuid: created_by_str.clone(),
             market_id: market_id_str,
@@ -93,7 +97,11 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         Ok(())
     }
 
-    async fn handle_order_cancelled(&self, event: OrderCancelledFilter) -> Result<()> {
+    async fn handle_order_cancelled(
+        &self,
+        event: OrderCancelledFilter,
+        block_timestamp: u64,
+    ) -> Result<()> {
         info!(
             "Processing EVM OrderCancelled: {:?}",
             hex::encode(event.order_id)
@@ -103,7 +111,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         match self
             .db
             .orders()
-            .update_order_status_by_id(&id_bson, OrderStatus::Cancelled)
+            .update_order_status_by_id(&id_bson, OrderStatus::Cancelled, block_timestamp)
             .await
         {
             Ok(_) => info!("Successfully marked order as deleted"),
@@ -112,7 +120,11 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         Ok(())
     }
 
-    async fn handle_trade_settled(&self, event: TradeSettledFilter) -> Result<()> {
+    async fn handle_trade_settled(
+        &self,
+        event: TradeSettledFilter,
+        block_timestamp: u64,
+    ) -> Result<()> {
         let trade_hash = bytes16_to_hex(event.trade_id);
         info!("Processing EVM TradeSettled: {:?}", trade_hash);
 
@@ -163,7 +175,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
 
         self.db
             .orders()
-            .update_order_status_by_id(&bid_bson, bid_status)
+            .update_order_status_by_id(&bid_bson, bid_status, block_timestamp)
             .await
             .with_context(|| {
                 format!(
@@ -173,7 +185,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             })?;
         self.db
             .orders()
-            .update_order_status_by_id(&offer_bson, offer_status)
+            .update_order_status_by_id(&offer_bson, offer_status, block_timestamp)
             .await
             .with_context(|| {
                 format!(
@@ -192,12 +204,24 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         Ok(())
     }
 
-    async fn handle_market_status(&self, event: MarketStatusUpdatedFilter) -> Result<()> {
+    async fn handle_market_status(
+        &self,
+        event: MarketStatusUpdatedFilter,
+        block_timestamp: u64,
+    ) -> Result<()> {
         info!(
             "Processing EVM MarketStatus: {:?} -> Open? {}",
             hex::encode(event.market_id),
             event.is_open
         );
+
+        if !event.is_open {
+            self.db
+                .orders()
+                .expire_market_orders(&bytes16_to_hex(event.market_id), block_timestamp)
+                .await
+                .context("Failed to expire orders after market closure")?;
+        }
 
         if let Some(publisher) = &self.event_publisher {
             publisher.publish_market_event(
@@ -205,7 +229,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
                     market_id: bytes16_to_hex(event.market_id),
                     is_open: event.is_open,
                 }],
-                chrono::Utc::now().timestamp() as u64,
+                block_timestamp,
             );
         }
 
