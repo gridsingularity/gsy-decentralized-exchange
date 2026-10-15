@@ -13,6 +13,7 @@ Backend: MongoDB (`mongo:5.0`).
    - `OrderPlaced`
    - `OrderCancelled`
    - `TradeSettled`
+   - `DeliveryVerified`
    - `MarketStatusUpdated`
 2. `OffchainStorageEvmHandler` maps event payloads into DB schemas.
 3. `gsy-offchain-storage` updates order/trade records and exposes them via REST APIs.
@@ -113,7 +114,11 @@ reconciliation/reindexing, as do other missed lifecycle events.
 - Settlement events mark consumed orders `Filled`, or `PartiallyFilled` when a
   residual ID is emitted. Each residual is a separate `Submitted` order; filling
   it later does not change its original's status. Settlement does not mark orders
-  `Executed`; delivery-verification transitions are still pending in DD-423.
+  `Executed`; the later `DeliveryVerified` event does so for that trade and only
+  its two consumed orders, including `PartiallyFilled` originals. Residuals are
+  independent. The verification block timestamp is stored on both the trade and
+  consumed orders; replaying that event preserves the first completion timestamp.
+  This also makes verified trades available to the status-time/GoO query.
 - Order placement, cancellation and settlement indexing use the event block's
   timestamp for `status_updated_at` (exposed as `updatedAt` in HTTP/EWDS DTOs),
   not the indexing time. Status and timestamp are updated together. Residual

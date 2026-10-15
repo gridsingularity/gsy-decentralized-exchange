@@ -485,6 +485,139 @@ describe("TradeSettlement", function () {
       .to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
   });
 
+  async function settledVerificationFixture() {
+    const fixture = await deploySettlementFixture();
+    const { registry, buyer, seller, operator, settlement, bid, offer } = fixture;
+    await registry.connect(buyer).placeOrder(bid);
+    await registry.connect(seller).placeOrder(offer);
+    const matchData = {
+      tradeId: bytes16Id("verification-trade"), bid, offer,
+      residualBidId: bytes16Id("verification-residual-bid"),
+      residualOfferId: bytes16Id("verification-residual-offer"),
+      selectedEnergy: 50, clearingPrice: 45,
+    };
+    await settlement.connect(operator).settleBatch(asMarketBatch([matchData]));
+    return { ...fixture, matchData };
+  }
+
+  it("Should complete fully filled orders without a penalty transaction", async function () {
+    const { settlement, registry, buyer, seller, operator, executionEngine, bid, offer } = await loadFixture(deploySettlementFixture);
+    await registry.connect(buyer).placeOrder(bid);
+    await registry.connect(seller).placeOrder(offer);
+    const tradeId = bytes16Id("fully-delivered");
+    await settlement.connect(operator).settleBatch(asMarketBatch([{
+      tradeId, bid, offer, residualBidId: ZERO_BYTES16, residualOfferId: ZERO_BYTES16,
+      selectedEnergy: 100, clearingPrice: 45,
+    }]));
+    const tx = settlement.connect(executionEngine).completeDeliveryVerification([{
+      tradeId, buyerPenaltyEnergy: 0, sellerPenaltyEnergy: 0,
+    }]);
+    await expect(tx).to.emit(settlement, "DeliveryVerified");
+    await expect(tx).not.to.emit(settlement, "PenaltyRecorded");
+    for (const order of [bid, offer]) {
+      expect(await registry.getStatus(order.orderId)).to.equal(2);
+    }
+  });
+
+  for (const [buyerPenaltyEnergy, sellerPenaltyEnergy] of [[0, 0], [30, 0], [0, 20], [30, 20]]) {
+    it(`Should atomically verify delivery with penalties ${buyerPenaltyEnergy}/${sellerPenaltyEnergy}, without completing residuals`, async function () {
+      const { settlement, registry, controller, executionEngine, marketId, matchData, buyerActorId, sellerActorId } =
+        await loadFixture(settledVerificationFixture);
+      // Completion remains valid after the market closes and its residuals expire.
+      await controller.setMarketStatus(marketId, false);
+      const verdict = { tradeId: matchData.tradeId, buyerPenaltyEnergy, sellerPenaltyEnergy };
+      const tx = settlement.connect(executionEngine).completeDeliveryVerification([verdict, verdict]);
+      await expect(tx).to.emit(settlement, "DeliveryVerified")
+        .withArgs(matchData.tradeId, matchData.bid.orderId, matchData.offer.orderId);
+      const receipt = await (await tx).wait();
+      const events = receipt.logs.filter((log: any) => {
+        try { return settlement.interface.parseLog(log)?.name === "DeliveryVerified"; }
+        catch { return false; }
+      });
+      expect(events).to.have.length(1);
+      for (const order of [matchData.bid, matchData.offer]) {
+        expect(await registry.getStatus(order.orderId)).to.equal(2); // Executed
+      }
+      for (const residualId of [matchData.residualBidId, matchData.residualOfferId]) {
+        expect(await registry.getStatus(residualId)).to.equal(4); // Expired, not Executed
+      }
+      expect((await settlement.settledTrades(matchData.tradeId)).verified).to.equal(true);
+      expect(await settlement.penaltyEnergyByTrade(matchData.tradeId)).to.equal(buyerPenaltyEnergy + sellerPenaltyEnergy);
+      expect(await settlement.penaltyEnergyByActor(buyerActorId)).to.equal(buyerPenaltyEnergy);
+      expect(await settlement.penaltyEnergyByActor(sellerActorId)).to.equal(sellerPenaltyEnergy);
+      await expect(settlement.connect(executionEngine).completeDeliveryVerification([verdict]))
+        .not.to.emit(settlement, "DeliveryVerified");
+      expect(await settlement.penaltyEnergyByTrade(matchData.tradeId)).to.equal(buyerPenaltyEnergy + sellerPenaltyEnergy);
+      await expect(settlement.connect(executionEngine).submitPenalties([{
+        tradeId: matchData.tradeId, marketId, penalizedActorId: buyerActorId, penaltyEnergy: 1,
+      }])).to.be.revertedWithCustomError(settlement, "InvalidPenalty");
+    });
+  }
+
+  it("Should restrict verification to the execution role and reject unknown trades atomically", async function () {
+    const { settlement, registry, operator, executionEngine, matchData } = await loadFixture(settledVerificationFixture);
+    const verdict = { tradeId: matchData.tradeId, buyerPenaltyEnergy: 10, sellerPenaltyEnergy: 0 };
+    await expect(settlement.connect(operator).completeDeliveryVerification([verdict]))
+      .to.be.revertedWithCustomError(settlement, "AccessControlUnauthorizedAccount");
+    await expect(settlement.connect(executionEngine).completeDeliveryVerification([
+      verdict, { ...verdict, tradeId: bytes16Id("unknown") },
+    ])).to.be.revertedWithCustomError(settlement, "UnknownTrade");
+    expect(await settlement.penaltyEnergyByTrade(matchData.tradeId)).to.equal(0);
+    expect((await settlement.settledTrades(matchData.tradeId)).verified).to.equal(false);
+    expect(await registry.getStatus(matchData.bid.orderId)).to.equal(ORDER_STATUS_PARTIALLY_FILLED);
+  });
+
+  it("Should account once for penalties when existing settlement rules allow the same actor on both sides", async function () {
+    const { settlement, registry, buyer, operator, executionEngine, bid, offer } = await loadFixture(deploySettlementFixture);
+    const sameActorOffer = { ...offer, createdBy: bid.createdBy };
+    await registry.connect(buyer).placeOrder(bid);
+    await registry.connect(buyer).placeOrder(sameActorOffer);
+    const tradeId = bytes16Id("same-actor-trade");
+    await settlement.connect(operator).settleBatch(asMarketBatch([{
+      tradeId, bid, offer: sameActorOffer, residualBidId: ZERO_BYTES16, residualOfferId: ZERO_BYTES16,
+      selectedEnergy: 100, clearingPrice: 45,
+    }]));
+    await settlement.connect(executionEngine).completeDeliveryVerification([{
+      tradeId, buyerPenaltyEnergy: 10, sellerPenaltyEnergy: 0,
+    }]);
+    expect(await settlement.penaltyEnergyByTrade(tradeId)).to.equal(10);
+    expect(await settlement.penaltyEnergyByActor(bid.createdBy)).to.equal(10);
+  });
+
+  it("Should reuse matching pre-recorded penalties but reject a conflicting verdict", async function () {
+    const { settlement, executionEngine, matchData, buyerActorId, marketId } = await loadFixture(settledVerificationFixture);
+    await settlement.connect(executionEngine).submitPenalties([{
+      tradeId: matchData.tradeId, marketId, penalizedActorId: buyerActorId, penaltyEnergy: 10,
+    }]);
+    await expect(settlement.connect(executionEngine).completeDeliveryVerification([{
+      tradeId: matchData.tradeId, buyerPenaltyEnergy: 20, sellerPenaltyEnergy: 0,
+    }])).to.be.revertedWithCustomError(settlement, "InvalidPenalty");
+    await settlement.connect(executionEngine).completeDeliveryVerification([{
+      tradeId: matchData.tradeId, buyerPenaltyEnergy: 10, sellerPenaltyEnergy: 5,
+    }]);
+    expect(await settlement.penaltyEnergyByTrade(matchData.tradeId)).to.equal(15);
+    expect(await settlement.penaltyEnergyByActor(buyerActorId)).to.equal(10);
+  });
+
+  it("Should reject reusing a trade ID for different consumed orders", async function () {
+    const { settlement, registry, operator, matchData } = await loadFixture(settledVerificationFixture);
+    const bid = { ...matchData.bid, orderId: matchData.residualBidId, energy: 50 };
+    const offer = { ...matchData.offer, orderId: matchData.residualOfferId, energy: 50 };
+    await expect(settlement.connect(operator).settleBatch(asMarketBatch([{
+      ...matchData, bid, offer, residualBidId: ZERO_BYTES16, residualOfferId: ZERO_BYTES16,
+    }]))).to.be.revertedWithCustomError(settlement, "TradeAlreadySettled");
+    expect(await registry.getStatus(bid.orderId)).to.equal(1);
+  });
+
+  it("Should not complete an open residual or allow an unauthorized completion", async function () {
+    const { registry, buyer, matchData } = await loadFixture(settledVerificationFixture);
+    await expect(registry.connect(buyer).markExecuted(matchData.bid.orderId))
+      .to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
+    await registry.grantRole(await registry.SETTLEMENT_ROLE(), buyer.address);
+    await expect(registry.connect(buyer).markExecuted(matchData.residualBidId))
+      .to.be.revertedWithCustomError(registry, "OrderNotFilled");
+  });
+
   it("Should submit penalties from the execution engine", async function () {
     const { settlement, buyerActorId, executionEngine, marketId } =
         await loadFixture(deploySettlementFixture);

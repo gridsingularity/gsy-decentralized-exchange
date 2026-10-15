@@ -39,6 +39,7 @@ const HTTP_PENALTY_POLL_ATTEMPTS: usize = 60;
 const EWDS_PENALTY_POLL_ATTEMPTS: usize = 180;
 const ORDER_STATUS_PARTIALLY_FILLED: u8 = 5;
 const ORDER_STATUS_FILLED: u8 = 6;
+const ORDER_STATUS_EXECUTED: u8 = 2;
 
 type EvmOrderParamsTuple = (
     [u8; 16],
@@ -121,6 +122,7 @@ abigen!(
     r#"[
         function penaltyEnergyByTrade(bytes16 tradeId) external view returns (uint256)
         event TradeSettled(bytes16 indexed tradeId, bytes16 indexed bidId, bytes16 indexed offerId, bytes16 buyerId, bytes16 sellerId, bytes16 marketId, uint64 timeSlot, bytes16 residualBidId, bytes16 residualOfferId, uint256 energy, uint256 price)
+        event DeliveryVerified(bytes16 indexed tradeId, bytes16 indexed bidId, bytes16 indexed offerId)
     ]"#
 );
 
@@ -919,6 +921,18 @@ async fn submit_measurements(world: &mut MyWorld) {
         .expect("Failed to submit measurements");
 }
 
+async fn delivery_verification_timestamp(world: &MyWorld, trade: &DbTradeSchema) -> u64 {
+    let settlement = TradeSettlementContract::new(world.trade_settlement_address, world.provider.clone());
+    let events = settlement.event::<DeliveryVerifiedFilter>()
+        .from_block(0u64)
+        .topic1(indexed_bytes16_topic(parse_uuid_or_hex_bytes16(&trade.trade_uuid).unwrap()))
+        .query_with_meta().await.expect("Failed to query delivery verification");
+    assert_eq!(events.len(), 1, "Executed orders require exactly one verification event");
+    assert_eq!(events[0].0.bid_id, parse_uuid_or_hex_bytes16(&trade.bid_hash).unwrap());
+    assert_eq!(events[0].0.offer_id, parse_uuid_or_hex_bytes16(&trade.offer_hash).unwrap());
+    world.provider.get_block(events[0].1.block_hash).await.unwrap().unwrap().timestamp.as_u64()
+}
+
 async fn assert_trade_settled_on_chain(world: &MyWorld, trade: &DbTradeSchema) {
     let order_registry =
         OrderRegistryContract::new(world.order_registry_address, world.provider.clone());
@@ -937,24 +951,25 @@ async fn assert_trade_settled_on_chain(world: &MyWorld, trade: &DbTradeSchema) {
         .await
         .expect("Failed to read offer status from contract");
 
-    assert_eq!(
-        bid_status,
-        if trade.residual_bid_id.is_some() {
+    assert!(
+        bid_status == ORDER_STATUS_EXECUTED || bid_status == if trade.residual_bid_id.is_some() {
             ORDER_STATUS_PARTIALLY_FILLED
         } else {
             ORDER_STATUS_FILLED
         },
         "Unexpected settled bid status on-chain"
     );
-    assert_eq!(
-        offer_status,
-        if trade.residual_offer_id.is_some() {
+    assert!(
+        offer_status == ORDER_STATUS_EXECUTED || offer_status == if trade.residual_offer_id.is_some() {
             ORDER_STATUS_PARTIALLY_FILLED
         } else {
             ORDER_STATUS_FILLED
         },
         "Unexpected settled offer status on-chain"
     );
+    if bid_status == ORDER_STATUS_EXECUTED || offer_status == ORDER_STATUS_EXECUTED {
+        delivery_verification_timestamp(world, trade).await;
+    }
 
     let expected_bid_status = if trade.residual_bid_id.is_some() {
         OrderStatus::PartiallyFilled
@@ -970,16 +985,23 @@ async fn assert_trade_settled_on_chain(world: &MyWorld, trade: &DbTradeSchema) {
         let orders = query_orders_for_market(world, trade.market_id.as_str()).await;
         let bid_settled = orders.iter().any(|order| {
             order.order_id.eq_ignore_ascii_case(trade.bid_hash.as_str())
-                && order.status == expected_bid_status
+                && (order.status == expected_bid_status || order.status == OrderStatus::Executed)
         });
         let offer_settled = orders.iter().any(|order| {
             order
                 .order_id
                 .eq_ignore_ascii_case(trade.offer_hash.as_str())
-                && order.status == expected_offer_status
+                && (order.status == expected_offer_status || order.status == OrderStatus::Executed)
         });
 
         if bid_settled && offer_settled {
+            for order in orders.iter().filter(|order| {
+                order.status == OrderStatus::Executed
+                    && (order.order_id.eq_ignore_ascii_case(&trade.bid_hash)
+                        || order.order_id.eq_ignore_ascii_case(&trade.offer_hash))
+            }) {
+                assert_eq!(order.status_updated_at, Some(delivery_verification_timestamp(world, trade).await));
+            }
             return;
         }
 
@@ -1610,6 +1632,10 @@ async fn verify_residual_lifecycle(world: &mut MyWorld, side: String, consumptio
             );
         }
         transaction_hashes.push(events[0].1.transaction_hash);
+    }
+    if residual.status == OrderStatus::Executed {
+        expected.status = OrderStatus::Executed;
+        expected.status_updated_at = Some(delivery_verification_timestamp(world, &second).await);
     }
     assert_eq!(
         residual, expected,

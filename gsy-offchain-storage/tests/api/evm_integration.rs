@@ -625,6 +625,58 @@ async fn settlement_indexes_fill_statuses_and_keeps_residuals_independent() {
         assert!(trades
             .iter()
             .all(|trade| trade.status == TradeStatus::Settled));
+        let verification = gsy_ethers_listener::DeliveryVerifiedFilter {
+            trade_id: event.trade_id,
+            bid_id: event.bid_id,
+            offer_id: event.offer_id,
+        };
+        // Parent verification must not complete a residual's later trade.
+        let before = orders.get_all_orders().await.unwrap();
+        for timestamp in [1100, 1101] {
+            handler
+                .handle_delivery_verified(verification.clone(), timestamp)
+                .await
+                .unwrap();
+            for order in &before {
+                let stored = orders
+                    .get_order_by_id(&order.order_id.clone().into())
+                    .await
+                    .unwrap()
+                    .unwrap();
+                let mut expected = order.clone();
+                if [bytes16_to_hex(event.bid_id), bytes16_to_hex(event.offer_id)]
+                    .contains(&order.order_id)
+                {
+                    expected.status = OrderStatus::Executed;
+                    expected.status_updated_at = Some(1100);
+                }
+                assert_eq!(stored, expected);
+            }
+        }
+        let verified = app
+            .db_wrapper
+            .trades()
+            .filter_trades_by_status_change(1100, Some(1101), Some(TradeStatus::Executed))
+            .await
+            .unwrap();
+        assert_eq!(verified.len(), 1);
+        assert_eq!(verified[0].trade_uuid, bytes16_to_hex(event.trade_id));
+        assert_eq!(verified[0].status_updated_at, Some(1100));
+        for invalid in [
+            gsy_ethers_listener::DeliveryVerifiedFilter {
+                trade_id: [99; 16],
+                ..verification.clone()
+            },
+            gsy_ethers_listener::DeliveryVerifiedFilter {
+                bid_id: [99; 16],
+                ..verification
+            },
+        ] {
+            assert!(handler
+                .handle_delivery_verified(invalid, 1200)
+                .await
+                .is_err());
+        }
         stop_app(app).await;
     }
 }

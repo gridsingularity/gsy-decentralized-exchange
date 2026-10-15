@@ -44,6 +44,13 @@ struct OrderedHandler(Arc<Mutex<Projection>>);
 
 #[async_trait]
 impl GsyEventHandler for OrderedHandler {
+    async fn handle_delivery_verified(
+        &self,
+        _: gsy_ethers_listener::DeliveryVerifiedFilter,
+        _: u64,
+    ) -> Result<()> {
+        Ok(())
+    }
     async fn handle_market_clearing(
         &self, _: MarketClearingFilter, _: LogMeta, _: u64,
     ) -> Result<()> {

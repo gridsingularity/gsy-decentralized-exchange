@@ -236,6 +236,29 @@ impl OrderService {
         }
     }
 
+    /// Complete a consumed order only, preserving the timestamp on event retries.
+    pub async fn mark_executed(&self, order_id: &str, block_timestamp: u64) -> Result<()> {
+        self.0.update_one(
+            doc! {
+                "order_id": order_id,
+                "status": {"$in": [bson::to_bson(&OrderStatus::Filled)?, bson::to_bson(&OrderStatus::PartiallyFilled)?]},
+            },
+            doc! {"$set": {
+                "status": bson::to_bson(&OrderStatus::Executed)?,
+                "status_updated_at": bson::to_bson(&block_timestamp)?,
+            }},
+        ).await?;
+        let order = self
+            .get_order_by_id(&Bson::String(order_id.to_string()))
+            .await?;
+        anyhow::ensure!(
+            order.is_some_and(|order| order.status == OrderStatus::Executed),
+            "Cannot complete missing or unfilled order {}",
+            order_id
+        );
+        Ok(())
+    }
+
     #[tracing::instrument(name = "Expire open orders in closed market", skip(self))]
     pub async fn expire_market_orders(
         &self,

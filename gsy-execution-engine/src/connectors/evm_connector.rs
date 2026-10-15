@@ -1,4 +1,4 @@
-use crate::primitives::penalty_calculator::Penalty;
+use crate::primitives::penalty_calculator::{DeliveryVerification, Penalty};
 use ::primitives::utils::parse_uuid_or_hex_bytes16;
 use anyhow::{anyhow, Result};
 use ethers::prelude::*;
@@ -12,6 +12,63 @@ abigen!(
 );
 
 type EvmPenaltyTuple = ([u8; 16], [u8; 16], [u8; 16], u64);
+
+/// Submit one atomic verdict per trade. The contract makes retries safe, including
+/// retries after a successful transaction whose receipt was lost by this process.
+pub async fn complete_delivery_verification(
+    evm_node_url: &str,
+    trade_settlement_address: &str,
+    execution_engine_private_key: &str,
+    verifications: Vec<DeliveryVerification>,
+) -> Result<usize> {
+    if verifications.is_empty() {
+        return Ok(0);
+    }
+    let provider = Provider::<Ws>::connect(evm_node_url).await?;
+    let chain_id = provider.get_chainid().await?.as_u64();
+    let wallet = execution_engine_private_key
+        .parse::<LocalWallet>()?
+        .with_chain_id(chain_id);
+    let client = Arc::new(SignerMiddleware::new(provider, wallet));
+    let contract =
+        SubmitPenaltiesContract::new(trade_settlement_address.parse::<Address>()?, client);
+    let processed = verifications.len();
+    let mut pending = Vec::new();
+    for verification in verifications {
+        let id = parse_uuid_or_hex_bytes16(&verification.trade_uuid)
+            .ok_or_else(|| anyhow!("Invalid trade ID: {}", verification.trade_uuid))?;
+        let (bid_id, _, verified) = contract.settled_trades(id).call().await?;
+        if bid_id == [0; 16] {
+            return Err(anyhow!(
+                "Trade {} is not registered for verification",
+                verification.trade_uuid
+            ));
+        }
+        if !verified {
+            pending.push((
+                id,
+                verification.buyer_penalty_cost,
+                verification.seller_penalty_cost,
+            ));
+        }
+    }
+    if !pending.is_empty() {
+        let call = contract.complete_delivery_verification(pending);
+        let tx = call.send().await?;
+        let hash = tx.tx_hash();
+        let receipt = tx.await?.ok_or_else(|| {
+            anyhow!(
+                "Verification transaction {:?} dropped without receipt",
+                hash
+            )
+        })?;
+        if receipt.status != Some(1u64.into()) {
+            return Err(anyhow!("Verification transaction {:?} reverted", hash));
+        }
+        info!("Delivery verification successful. tx={:?}", hash);
+    }
+    Ok(processed)
+}
 
 fn to_evm_penalties(penalties: Vec<Penalty>) -> Vec<EvmPenaltyTuple> {
     penalties

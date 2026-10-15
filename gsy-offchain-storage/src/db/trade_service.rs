@@ -66,6 +66,24 @@ pub async fn init_market_roles(db: &DatabaseWrapper) -> Result<()> {
 pub struct TradeService(pub Collection<DbTradeSchema>);
 
 impl TradeService {
+    pub async fn mark_executed(&self, trade_id: &str, block_timestamp: u64) -> Result<()> {
+        self.0.update_one(
+            doc! {"trade_uuid": trade_id, "status": mongodb::bson::to_bson(&TradeStatus::Settled)?},
+            doc! {"$set": {
+                "status": mongodb::bson::to_bson(&TradeStatus::Executed)?,
+                "status_updated_at": timestamp_bson(block_timestamp)?,
+            }},
+        )
+        .await?;
+        let trade = self.0.find_one(doc! {"trade_uuid": trade_id}).await?;
+        anyhow::ensure!(
+            trade.is_some_and(|trade| trade.status == TradeStatus::Executed),
+            "Cannot complete missing or unsettled trade {}",
+            trade_id
+        );
+        Ok(())
+    }
+
     #[tracing::instrument(name = "Fetching trades from database", skip(self))]
     pub async fn get_all_trades(&self) -> Result<Vec<DbTradeSchema>> {
         let cursor = self.0.find(doc! {}).await?;

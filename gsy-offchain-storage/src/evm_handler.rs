@@ -5,8 +5,8 @@ use async_trait::async_trait;
 use ethers::contract::LogMeta;
 use ethers::types::U256;
 use gsy_ethers_listener::{
-    GsyEventHandler, MarketClearingFilter, MarketStatusUpdatedFilter, OrderCancelledFilter,
-    OrderPlacedFilter, TradeSettledFilter,
+    DeliveryVerifiedFilter, GsyEventHandler, MarketClearingFilter, MarketStatusUpdatedFilter,
+    OrderCancelledFilter, OrderPlacedFilter, TradeSettledFilter,
 };
 use primitives::db_api_schema::{
     orders::{
@@ -201,6 +201,69 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             publisher.publish_trade_event(vec![trade]);
         }
 
+        Ok(())
+    }
+
+    async fn handle_delivery_verified(
+        &self,
+        event: DeliveryVerifiedFilter,
+        block_timestamp: u64,
+    ) -> Result<()> {
+        let trade_id = bytes16_to_hex(event.trade_id);
+        let bid_id = bytes16_to_hex(event.bid_id);
+        let offer_id = bytes16_to_hex(event.offer_id);
+        let trade = self
+            .db
+            .trades()
+            .find_one(mongodb::bson::doc! {"trade_uuid": &trade_id})
+            .await?
+            .with_context(|| {
+                format!(
+                    "Verification received before trade {} was indexed",
+                    trade_id
+                )
+            })?;
+        if trade.bid_hash != bid_id || trade.offer_hash != offer_id {
+            return Err(anyhow!(
+                "Verification order IDs do not match trade {}",
+                trade_id
+            ));
+        }
+        anyhow::ensure!(
+            matches!(trade.status, TradeStatus::Settled | TradeStatus::Executed),
+            "Cannot complete unsettled trade {}",
+            trade_id
+        );
+        // Check both orders before writing, so malformed or incomplete projections
+        // cannot complete one side of a trade. Retrying partial DB writes is safe.
+        for order_id in [&bid_id, &offer_id] {
+            let order = self
+                .db
+                .orders()
+                .get_order_by_id(&order_id.clone().into())
+                .await?
+                .with_context(|| format!("Missing consumed order {}", order_id))?;
+            anyhow::ensure!(
+                matches!(
+                    order.status,
+                    OrderStatus::Filled | OrderStatus::PartiallyFilled | OrderStatus::Executed
+                ),
+                "Cannot complete unfilled order {}",
+                order_id
+            );
+        }
+
+        for order_id in [&bid_id, &offer_id] {
+            self.db
+                .orders()
+                .mark_executed(order_id, block_timestamp)
+                .await?;
+        }
+        self.db
+            .trades()
+            .mark_executed(&trade_id, block_timestamp)
+            .await?;
+        info!("Indexed delivery verification for trade {}", trade_id);
         Ok(())
     }
 

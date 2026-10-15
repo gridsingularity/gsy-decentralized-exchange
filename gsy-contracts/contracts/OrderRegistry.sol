@@ -76,6 +76,7 @@ contract OrderRegistry is Initializable, AccessControlUpgradeable {
     error InvalidOrderParams();
     error OrderNotOpen();
     error OrderAlreadyExists();
+    error OrderNotFilled();
 
     constructor() {
         _disableInitializers();
@@ -176,6 +177,16 @@ contract OrderRegistry is Initializable, AccessControlUpgradeable {
             residual.orderId = residualOrderId;
             _storeOrder(residual);
         }
+    }
+
+    /// @notice Complete only the consumed quantity; residual order IDs remain independent.
+    function markExecuted(bytes16 orderId) external onlyRole(SETTLEMENT_ROLE) {
+        OrderStatus status = storedOrderStatus[orderId];
+        if (status != OrderStatus.Filled && status != OrderStatus.PartiallyFilled) {
+            revert OrderNotFilled();
+        }
+        storedOrderStatus[orderId] = OrderStatus.Executed;
+        emit OrderStatusUpdated(orderId, OrderStatus.Executed);
     }
 
     /**

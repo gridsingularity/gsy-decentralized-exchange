@@ -2395,6 +2395,7 @@ dependencies = [
  "ethers",
  "futures",
  "gsy-ethers-listener",
+ "gsy-execution-engine",
  "hex",
  "mongodb",
  "once_cell",
