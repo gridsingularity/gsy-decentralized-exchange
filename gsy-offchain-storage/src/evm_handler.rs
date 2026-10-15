@@ -206,7 +206,9 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
 
         // Publish only once the market is persisted.
         if let Some(publisher) = &self.event_publisher {
-            publisher.publish_market_event(vec![EwdsMarketDto::from(market)], event.created_at);
+            let market = EwdsMarketDto::try_from(market)
+                .context("Failed to convert the market for its market.event")?;
+            publisher.publish_market_event(vec![market], event.created_at);
         }
 
         Ok(())

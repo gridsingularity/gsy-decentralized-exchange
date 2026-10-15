@@ -829,7 +829,7 @@ async fn fetches_market_over_ewds() {
     mount_ewds_query(
         &server,
         "markets.query",
-        json!([EwdsMarketDto::from(market())]),
+        json!([EwdsMarketDto::try_from(market()).unwrap()]),
     )
     .await;
     set_ewds_env(&server);

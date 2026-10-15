@@ -17,9 +17,7 @@ use primitives::db_api_schema::trades::{
 };
 use primitives::ewds::dto::{EwdsEventEnvelope, EwdsMarketDto, EwdsSendMessageDto};
 use primitives::ewds::{is_invalid_event, EwdsEventType};
-use primitives::utils::{
-    bytes16_to_hex, epoch_to_rfc3339, timestamp_to_string_with_padding,
-};
+use primitives::utils::{bytes16_to_hex, epoch_to_rfc3339, timestamp_to_string_with_padding};
 use serde_json::{json, Value};
 use std::time::Duration;
 use uuid::Uuid;
@@ -65,6 +63,11 @@ fn assert_event_id(message: &EwdsSendMessageDto, event: &serde_json::Value) {
 
 fn event_payload(message: &EwdsSendMessageDto) -> serde_json::Value {
     serde_json::from_str(&message.payload).unwrap()
+}
+
+/// The `market.event` item for the market of `new_market_event()`.
+fn market_event_dto() -> EwdsMarketDto {
+    EwdsMarketDto::try_from(expected_market()).unwrap()
 }
 
 fn evm_handler(app: &crate::helpers::TestApp, server: &MockServer) -> OffchainStorageEvmHandler {
@@ -250,7 +253,7 @@ async fn publish_market_event_sends_event_on_events_channel() {
     let publisher = EwdsEventPublisher::new(test_config(server.uri()));
 
     publisher
-        .publish_market_event(vec![EwdsMarketDto::from(expected_market())], 1_200)
+        .publish_market_event(vec![market_event_dto()], 1_200)
         .await
         .unwrap();
 
@@ -267,15 +270,15 @@ async fn publish_market_event_sends_event_on_events_channel() {
     assert_eq!(
         event["data"],
         json!([{
-            "marketId": "0xcccccccccccccccccccccccccccccccc",
+            "marketId": "cccccccc-cccc-cccc-cccc-cccccccccccc",
             "communityId": "11111111-1111-4111-8111-111111111111",
-            "openingTime": "00000000001699998300",
-            "closingTime": "00000000001700000100",
-            "deliveryStartTime": "00000000001700000100",
-            "deliveryEndTime": "00000000001700001000",
+            "openingTime": epoch_to_rfc3339(1_699_998_300),
+            "closingTime": epoch_to_rfc3339(1_700_000_100),
+            "deliveryStartTime": epoch_to_rfc3339(1_700_000_100),
+            "deliveryEndTime": epoch_to_rfc3339(1_700_001_000),
             "marketType": "flex",
             "matchingAlgorithm": "pay_as_clear",
-            "createdAt": "00000000001699998301",
+            "createdAt": epoch_to_rfc3339(1_699_998_301),
         }])
     );
 }
@@ -292,7 +295,7 @@ async fn publish_does_not_retry_or_panic_when_gateway_rejects_event() {
 
     // The send error is logged inside the task; the task itself must still finish cleanly.
     publisher
-        .publish_market_event(vec![EwdsMarketDto::from(expected_market())], 1_200)
+        .publish_market_event(vec![market_event_dto()], 1_200)
         .await
         .expect("publish task should not panic on gateway errors");
 
@@ -484,10 +487,7 @@ async fn new_market_publishes_market_event() {
     let event = event_payload(&messages[0]);
     assert_eq!(event["eventType"], json!(EwdsEventType::Market.as_str()));
     assert_event_id(&messages[0], &event);
-    assert_eq!(
-        event["data"],
-        json!([EwdsMarketDto::from(expected_market())])
-    );
+    assert_eq!(event["data"], json!([market_event_dto()]));
     assert_eq!(
         event["occurredAt"],
         json!(epoch_to_rfc3339(new_market_event().created_at))

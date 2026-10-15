@@ -122,8 +122,12 @@ trade from an EVM `TradeSettled` event, a `clearingResult.event` on
 a market from an EVM `NewMarketCreated` event. The payload is
 an event envelope (`eventId`, `eventType`, `occurredAt`, `data`) whose `data` is
 a list of trades, clearing results or markets in their `EwdsTradeDto`,
-`EwdsClearingResultDto` or `EwdsMarketDto` form (the same market shape that
-`markets.query` returns), so one event can carry several of them. The market
+`EwdsClearingResultDto` or `EwdsMarketDto` form, so one event can carry several
+of them. Markets have the same form as in the `markets.query` response and
+follow `int.market.schema.v1.json`: UUID `marketId` and `communityId`, RFC 3339
+times, `marketType` `spot`, `flex` or `settlement` and `matchingAlgorithm`
+`pay_as_bid`, `pay_as_clear` or `amm`. The `marketId` is the same 16 bytes as the
+`0x…` market ID in `trade.event` and orders, formatted as a UUID. The market
 carries its opening and closing times, so consumers derive whether it is open
 from them. The off-chain storage currently sends one item per EVM event. Every
 event gets a random UUID as `eventId`, which is also its DDHub `transactionId`.
@@ -304,6 +308,7 @@ Each `*.query` request payload accepts both snake_case and camelCase keys (via s
 | `orders.query` | `market_id`/`marketId`, `start_time`/`startTime`, `end_time`/`endTime` |
 | `trades.query` | `market_id`/`marketId`, `start_time`/`startTime`, `end_time`/`endTime` (`market_id` alone is enough and takes precedence over the time range; without it, both `start_time` and `end_time` are required, span at most 1 day, and match the market `delivery_start_time`) |
 | `measurements.query` | `start_time`/`startTime`, `end_time`/`endTime`, `facility_id`/`areaUuid` (filters after fetch) |
+| `markets.query` | `market_id`/`marketId` (UUID or `0x…` hex), `community_id`/`communityId`, `start_time`/`startTime`, `end_time`/`endTime` (RFC 3339, match the market `opening_time`) |
 | `ids.query` | `offchain_id`/`offchainId` (required) |
 
 ## DDHub API Surface Used by Integration

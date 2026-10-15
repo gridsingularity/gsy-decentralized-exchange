@@ -218,7 +218,11 @@ impl OffchainStorageClient {
                         serde_json::json!({"market_id": market_id}),
                     )
                     .await?;
-                Ok(markets.into_iter().next().map(MarketSchema::from))
+                markets
+                    .into_iter()
+                    .next()
+                    .map(MarketSchema::try_from)
+                    .transpose()
             }
             OffchainStorageTransport::Http => {
                 let url = self.endpoint_url("market");
