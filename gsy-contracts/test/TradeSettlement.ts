@@ -3,6 +3,7 @@ import { expect } from "chai";
 import { ethers } from "hardhat";
 import {
   bytes16Id,
+  createOpenMarket,
   deployUpgradeableContract,
   ENERGY_TYPE_GREEN,
   ENERGY_TYPE_NONE,
@@ -52,7 +53,7 @@ describe("TradeSettlement", function () {
     const buyerActorId = bytes16Id("actor:buyer");
     const sellerActorId = bytes16Id("actor:seller");
     const marketId = bytes16Id("market-1");
-    await controller.setMarketStatus(marketId, true);
+    await createOpenMarket(controller, marketId);
 
     await actorRegistry.registerActor(buyerActorId, buyer.address);
     await actorRegistry.registerActor(sellerActorId, seller.address);

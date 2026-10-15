@@ -158,13 +158,21 @@ book, the E2E harness first advances local Anvil to the next matching boundary.
 After the order book is indexed, it fast-forwards to the clearing boundary with
 empty-block RPC calls rather than waiting for one transaction per block.
 
-Before waiting for the orchestrator, the E2E runner idempotently stores a
-canonical community using `OFFCHAIN_STORAGE_TRANSPORT`: over HTTP it calls
+Before waiting for the orchestrator, the E2E runner idempotently stores a new
+community using `OFFCHAIN_STORAGE_TRANSPORT`: over HTTP it calls
 `POST /communities`, and with the EWDS transport it publishes a
 `community.event` and waits until `communities.query` returns the
 community. The orchestrator then queries the same community collection and
-opens the community-aware Spot market whose ID is derived from community UUID,
-market type, and delivery slot.
+creates every market of that community that has not closed on-chain,
+including the current slot's Spot market, which closes 30 minutes after
+delivery start in this setup. The runner waits until the Spot market of the
+current slot is open on-chain (`isMarketOpen`) and stored in off-chain storage
+(`fetch_market`, HTTP or EWDS), and checks that the stored `MarketSchema`
+mirrors the market's `NewMarketCreated` event and the configured
+`MATCHING_ALGORITHM`.
+Because the suite trades the current slot, `docker-compose.e2e-test.yml` sets
+`EXECUTION_ENGINE_OFFSET_MIN` to `0` so the execution engine targets the same
+slot.
 
 Features tagged `@ewds`, such as `events.feature`, only run with
 `OFFCHAIN_STORAGE_TRANSPORT=ewds`; HTTP runs skip them.

@@ -2,7 +2,7 @@
 
 ## Metadata
 
-- **generatedAt**: 2026-09-25T07:33:13.581Z
+- **generatedAt**: 2026-10-06T13:36:06.472Z
 - **network**: anvil (31337)
 - **deployer**: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
 - **nativeSymbol**: ETH
@@ -14,13 +14,13 @@
 
 ## Totals
 
-- Deployment gas: 6774980
-- Deployment fee: 0.005466040046477925 ETH
+- Deployment gas: 7368107
+- Deployment fee: 0.005976429802286228 ETH
 - Role setup gas: 339770
-- Role setup fee: 0.000115935194865047 ETH
-- Mutating call gas: 4179287
-- Mutating call fee: 0.000125711389255576 ETH
-- Deployment + setup + mutating fee: 0.005707686630598548 ETH
+- Role setup fee: 0.00011658531987501 ETH
+- Mutating call gas: 8211260
+- Mutating call fee: 0.000316662017220006 ETH
+- Deployment + setup + mutating fee: 0.006409677139381244 ETH
 
 ## Detailed Values
 
@@ -28,56 +28,59 @@
 |---|---|---|---:|---:|---:|---|---|
 | Deployment | ActorRegistry | ActorRegistry implementation deployment | 631465 | 1265625000 | 0.000799197890625 | `0xfc76181135dff9bc0dfe5846f26b9569c1231df288b7476849c88c6cbf9aa74c` |  |
 | Deployment | ActorRegistry | ActorRegistry proxy + ProxyAdmin deployment and initialization | 720849 | 1114081858 | 0.000803084793257442 | `0x9c31c55da1c2c2cd1de89546ddd1d5a8a58582874e1042e3062b2f3c421d6d1f` | Includes TransparentUpgradeableProxy deployment, ProxyAdmin deployment, and initializer delegatecall. |
-| Deployment | MarketController | MarketController implementation deployment | 584915 | 981513999 | 0.000574102260725085 | `0xbe812ee0fd9c0d4800d0ca1d71dc09c2e692d638b0058641f12521c6812cf252` |  |
-| Deployment | MarketController | MarketController proxy + ProxyAdmin deployment and initialization | 696079 | 863608934 | 0.000601140043169786 | `0x8064f638f0e9d85a2602882da093409a517ba4c205860e0cf773b256c09b34b7` | Includes TransparentUpgradeableProxy deployment, ProxyAdmin deployment, and initializer delegatecall. |
-| Deployment | OrderRegistry | OrderRegistry implementation deployment | 1308042 | 760667319 | 0.000994984801279398 | `0x5b418804741ee8f11b96de39da47a268ef5f5844fce5aab97ebc6a26a1a625a7` |  |
-| Deployment | OrderRegistry | OrderRegistry proxy + ProxyAdmin deployment and initialization | 741574 | 673875444 | 0.000499728508508856 | `0x0d6fd98514f9e538c7ebc38081ba44a702c201fce936ad4f0567c714440fb43a` | Includes TransparentUpgradeableProxy deployment, ProxyAdmin deployment, and initializer delegatecall. |
-| Deployment | TradeSettlement | TradeSettlement implementation deployment | 1373206 | 593805418 | 0.000815417162830108 | `0xfdb5c3d107191737b6f96a8b12bab682b8c35de35b90e2e1a8dad9149ce41530` |  |
-| Deployment | TradeSettlement | TradeSettlement proxy + ProxyAdmin deployment and initialization | 718850 | 526374885 | 0.00037838458608225 | `0x306f14f0e84ad3921022f9c355a8fd0dcf345438585fe7b23652204b56efef62` | Includes TransparentUpgradeableProxy deployment, ProxyAdmin deployment, and initializer delegatecall. |
-| Role setup | MarketController | grantRole(ORCHESTRATOR_ROLE) | 56635 | 463731230 | 0.00002626341821105 | `0x4d547a6e3b46f3c7a277cb477c0de8b8aaaa9ad835b245c36dddb9fc73f57e74` |  |
-| Role setup | OrderRegistry | grantRole(SETTLEMENT_ROLE, TradeSettlement) | 56636 | 405983689 | 0.000022993292210204 | `0xb69b7649462247c465772eb968309abca4aeae77140b761cc7d1fdedce1ec663` |  |
-| Role setup | OrderRegistry | grantRole(SETTLEMENT_ROLE, benchmark signer) | 56636 | 355427339 | 0.000020129982771604 | `0x5d60d8f85ea96c1710868a52b8bc49d3d60187ff3cfb441003df88fcd4e0698f` | Benchmark-only grant used to measure updateStatus directly. |
-| Role setup | TradeSettlement | grantRole(OPERATOR_ROLE) | 56636 | 311166672 | 0.000017623235635392 | `0x2ed131a86cc01cc0e77602f0bd4b507d62b0bc77935328068c40bdf9e593ffbf` |  |
-| Role setup | TradeSettlement | grantRole(EXECUTION_ENGINE_ROLE) | 56636 | 272417698 | 0.000015428648743928 | `0x74ed64b57defb47d45346b342775c53185cb507e14f3ce9f9f68f776aaaa7d2f` |  |
-| Role setup | ActorRegistry | grantRole(ACTOR_REGISTRAR_ROLE) | 56591 | 238494059 | 0.000013496617292869 | `0xc33242c2e41c6e1e5e7d9c8c9b7ba87569162a96358dd6a8c43fac034aff696c` |  |
-| Mutating calls | ActorRegistry | registerActor(bytes16,address) | 53878 | 208794774 | 0.000011249444833572 | `0x017413b803cae193b4d372991b92a6a3523ead17bb4973f1aa9c92bea2122402` |  |
-| Mutating calls | ActorRegistry | registerActor(bytes16,address) second actor | 53878 | 182789173 | 0.000009848315062894 | `0x706ccc7373ccb658ef2f0d10c67d1f7eadbc49254580ec2e1ee93aa74d4fefa4` |  |
-| Mutating calls | ActorRegistry | setActorWallet(bytes16,address,true) | 54081 | 160022597 | 0.000008654182068357 | `0x88cd140d5aec935d6fd48ab31fafbaf655d460c41972b1241c1a35d2652580c7` |  |
-| Mutating calls | ActorRegistry | setActorWallet(bytes16,address,false) | 32169 | 140091892 | 0.000004506616073748 | `0xc48f0e16fe0bfc44e5477930a0f6e98f8a0a219eeec3f198d9888be326b3d601` |  |
-| Mutating calls | ActorRegistry | setProxy(bytes16,address,true) | 53774 | 122617960 | 0.00000659365818104 | `0xa08b9a6ce6d5b8c3d396ea24eb89508aba3dd9f09c0bc515126e91407dcccf0d` | Uses a benchmark delegate distinct from the order signer. |
-| Mutating calls | ActorRegistry | setProxy(bytes16,address,false) | 31862 | 107345663 | 0.000003420247514506 | `0x066722a02f1266e535ccbc8ab9bcf45f72fb8fff747a4660ed4b9d973ddf46df` | Uses a benchmark delegate distinct from the order signer. |
-| Mutating calls | MarketController | setMarketStatus(bytes16,true) | 53056 | 93955958 | 0.000004984927307648 | `0x15e8c47f6d1c00b85de8247d2a5220992652e17a7c91cd2b5db5fd3c519081dd` |  |
-| Mutating calls | MarketController | setMarketStatus(bytes16,false) | 31144 | 82253005 | 0.00000256168758772 | `0x10cd9d56a85c899516b9141ae1a85ba4e02bc96ddd819bd867b236ad0c8400b5` |  |
-| Mutating calls | MarketController | setMarketStatus(bytes16,true) reopen | 53056 | 71992727 | 0.000003819646123712 | `0x86be9569418236651faa40bbd11acfb377c0ff6806d78b419de6a2a7cdf931cc` |  |
-| Mutating calls | OrderRegistry | placeOrder(OrderParams) bid | 160455 | 63025468 | 0.00001011275146794 | `0x5a4097290582570b9d913351b6d3f8657f77be8132d61876048cc33f6d691de7` |  |
-| Mutating calls | OrderRegistry | placeOrder(OrderParams) offer | 160443 | 55231558 | 0.000008861516860194 | `0x6cf91bd095551b243af343af136e87db5a9194d9e454763ed456bdf351f31e6e` |  |
-| Mutating calls | OrderRegistry | placeOrder(OrderParams) cancellable order | 160455 | 48401460 | 0.0000077662562643 | `0x1757599ff0bbb96ed691d575500e66ecdcf4f8f73df68067f08bc5bb20bca444` |  |
-| Mutating calls | OrderRegistry | cancelOrder(OrderParams) | 51525 | 42415996 | 0.0000021854841939 | `0x930a813bb7c95f48086ff4929974743b35da955aec64b6220fc413c65b4a9cf1` |  |
-| Mutating calls | OrderRegistry | placeOrder(OrderParams) status benchmark order | 160455 | 37132209 | 0.000005958048595095 | `0x01a5148a31ae077cc5d4f4742742426acdc50ad7cc9de945e805b6b3ba27071d` |  |
-| Mutating calls | OrderRegistry | updateStatus(bytes16,OrderStatus) | 35944 | 32540335 | 0.00000116962980124 | `0x68809f785d20affe746ac182cc57e40b4978ca39adb56a34ddf890731874bdef` | Measured with benchmark-only settlement role granted to deployer. |
-| Mutating calls | OrderRegistry | placeOrder(OrderParams) settleBatch[2] bid 1 | 160455 | 28482541 | 0.000004570166116155 | `0x82f50971159eba7b76af672963aced7adbf1d71c7ce25aa36b8cd1bdda2909c6` | Prepares unique open bid for settleBatch gas benchmark. |
-| Mutating calls | OrderRegistry | placeOrder(OrderParams) settleBatch[2] offer 1 | 160443 | 24960309 | 0.000004004706856887 | `0x84acad5f7ab87292b97ca0564b37f2cb4fd280d6805e08d636af8ac384321977` | Prepares unique open offer for settleBatch gas benchmark. |
-| Mutating calls | OrderRegistry | placeOrder(OrderParams) settleBatch[2] bid 2 | 160443 | 21873643 | 0.000003509472903849 | `0x9ed5abee1468190798f40dc7d96a4d3b9f93aa7e33d86dc46e99776f6ac14681` | Prepares unique open bid for settleBatch gas benchmark. |
-| Mutating calls | OrderRegistry | placeOrder(OrderParams) settleBatch[2] offer 2 | 160443 | 19168684 | 0.000003075481167012 | `0xa18045eb50876010f651436f76f2953231d4395febff8590eaf01db08dc72545` | Prepares unique open offer for settleBatch gas benchmark. |
-| Mutating calls | OrderRegistry | placeOrder(OrderParams) settleBatch[5] bid 1 | 160455 | 16798228 | 0.00000269535967374 | `0x32c5a5fb20b3bd8b00516668782605842e79fff2f9c9253b4cd4700e670c8231` | Prepares unique open bid for settleBatch gas benchmark. |
-| Mutating calls | OrderRegistry | placeOrder(OrderParams) settleBatch[5] offer 1 | 160443 | 14720910 | 0.00000236186696313 | `0xeb3fedf6a8aa2742aaa0c99b72c3e841fe145c1e7a7b27ec2fc2d34bf1ecf6c7` | Prepares unique open offer for settleBatch gas benchmark. |
-| Mutating calls | OrderRegistry | placeOrder(OrderParams) settleBatch[5] bid 2 | 160455 | 12900480 | 0.0000020699465184 | `0xea3d343f259293702e976831373dded2b94bc215211eafd2333c3643313133f8` | Prepares unique open bid for settleBatch gas benchmark. |
-| Mutating calls | OrderRegistry | placeOrder(OrderParams) settleBatch[5] offer 2 | 160443 | 11305170 | 0.00000181383539031 | `0x5ca882b29e1b67480bf1224fbd2277db0de163c59b24f4dfa97c422f9789c0ad` | Prepares unique open offer for settleBatch gas benchmark. |
-| Mutating calls | OrderRegistry | placeOrder(OrderParams) settleBatch[5] bid 3 | 160455 | 9907139 | 0.000001589649988245 | `0x089afe828834bea9b9909493b497229835133f6bc3068daf4fe326a9e3db68fd` | Prepares unique open bid for settleBatch gas benchmark. |
-| Mutating calls | OrderRegistry | placeOrder(OrderParams) settleBatch[5] offer 3 | 160431 | 8681993 | 0.000001392860818983 | `0x339387ed4b1058756746caf88a8912e6a8d53b8da560e34eba42e00e220535e4` | Prepares unique open offer for settleBatch gas benchmark. |
-| Mutating calls | OrderRegistry | placeOrder(OrderParams) settleBatch[5] bid 4 | 160455 | 7608352 | 0.00000122079812016 | `0xe79f1d50f2b29ffbb94f2c743e1c70de40c27ca26848c49602bd86a99232f3f9` | Prepares unique open bid for settleBatch gas benchmark. |
-| Mutating calls | OrderRegistry | placeOrder(OrderParams) settleBatch[5] offer 4 | 160443 | 6667482 | 0.000001069750814526 | `0x21698342cc762ed7493aa7bc4bed1d95b1bc4fc70edbacacd9835626850fef59` | Prepares unique open offer for settleBatch gas benchmark. |
-| Mutating calls | OrderRegistry | placeOrder(OrderParams) settleBatch[5] bid 5 | 160455 | 5842961 | 0.000000937532307255 | `0x96a116f32cf5b1f702f9b14f892cc027a4e69af9554ca4aa8b53eb8b75e05062` | Prepares unique open bid for settleBatch gas benchmark. |
-| Mutating calls | OrderRegistry | placeOrder(OrderParams) settleBatch[5] offer 5 | 160443 | 5120404 | 0.000000821532978972 | `0x5cda02448502e2d28e746a856f78077d4421e5b927247aa688f56d6e4702f44b` | Prepares unique open offer for settleBatch gas benchmark. |
-| Mutating calls | TradeSettlement | settleBatch(Match[1]) | 113426 | 4487201 | 0.000000508965260626 | `0x4d8785481b3f890ea005c2eca26b6da390230b11b78d40b29f8a676023f3839f` | Batch-size benchmark row. Prerequisite order placement gas is reported separately. |
-| Mutating calls | TradeSettlement | settleBatch(Match[2]) | 186641 | 3930542 | 0.000000733600289422 | `0x2d2067bbb58fdda1729ea534d576c3ebbb9f5c1548dde24ae4ec627e6d6498ca` | Batch-size benchmark row. Prerequisite order placement gas is reported separately. |
-| Mutating calls | TradeSettlement | settleBatch(Match[5]) | 406399 | 3445338 | 0.000001400181917862 | `0xa13c8a9f4cec53a37156ca61a6759d0216700eaae3ca06f2d9c49bf6ed3928c8` | Batch-size benchmark row. Prerequisite order placement gas is reported separately. |
-| Mutating calls | TradeSettlement | submitPenalties(TradePenalty[1]) | 80384 | 3026339 | 0.000000243269234176 | `0x3acb576609c635236a8bbec3b035b0fbe0f0494c23fa11850ec8e95e6f1287b8` |  |
+| Deployment | MarketController | MarketController implementation deployment | 885275 | 981513999 | 0.000868909805464725 | `0x3331f00bc7ea090f677d8eac3e18433fe3d278de539e0beb39e1c36d70ba6806` |  |
+| Deployment | MarketController | MarketController proxy + ProxyAdmin deployment and initialization | 696148 | 866065664 | 0.000602909879862272 | `0x6edae9a47888ad068b50ec7bef0c9d89194f3d5998ecee5a9478ad53c6e39f3c` | Includes TransparentUpgradeableProxy deployment, ProxyAdmin deployment, and initializer delegatecall. |
+| Deployment | OrderRegistry | OrderRegistry implementation deployment | 1478841 | 762831706 | 0.001128106802932746 | `0x327a763c200c6a9b8b133b35daa4392a4be944346dc9ae8908436b481ec633ad` |  |
+| Deployment | OrderRegistry | OrderRegistry proxy + ProxyAdmin deployment and initialization | 741598 | 676878633 | 0.000501971840475534 | `0x1d08f4207d093f55952fd759857b60774379735436b2c2c812922cbd200ca12b` | Includes TransparentUpgradeableProxy deployment, ProxyAdmin deployment, and initializer delegatecall. |
+| Deployment | TradeSettlement | TradeSettlement implementation deployment | 1495059 | 596451903 | 0.000891730785647277 | `0xd22f9bdaf1fb14f35e20eb011ce2dc1d1cdda9c2bd9e6c9bd70ad88468ba1986` |  |
+| Deployment | TradeSettlement | TradeSettlement proxy + ProxyAdmin deployment and initialization | 718872 | 529326506 | 0.000380518004021232 | `0x92f9f6f98d534a983f285c9ad0431a6357cf37fd9a2c15066c98cead6385df89` | Includes TransparentUpgradeableProxy deployment, ProxyAdmin deployment, and initializer delegatecall. |
+| Role setup | MarketController | grantRole(ORCHESTRATOR_ROLE) | 56635 | 466331677 | 0.000026410694526895 | `0x80b53f678ffbe758be66abf148cb4cd231df552002875f5a7496a7a53900bb47` |  |
+| Role setup | OrderRegistry | grantRole(SETTLEMENT_ROLE, TradeSettlement) | 56636 | 408260306 | 0.000023122230690616 | `0xe615f627f00dbab5fddbaf9c59bad7cafbff2f066dffb32f84c172aafa249030` |  |
+| Role setup | OrderRegistry | grantRole(SETTLEMENT_ROLE, benchmark signer) | 56636 | 357420454 | 0.000020242864832744 | `0x1c947bb328409632cbc0430dbac9f661b74ad294e99a56a5159279b1ef3d9a6b` | Benchmark-only grant used to measure updateStatus directly. |
+| Role setup | TradeSettlement | grantRole(OPERATOR_ROLE) | 56636 | 312911588 | 0.000017722060697968 | `0x27c9e05ce848e9f3e83d11cc70af2cd3b5f1b72b140648622e30e5913a17677f` |  |
+| Role setup | TradeSettlement | grantRole(EXECUTION_ENGINE_ROLE) | 56636 | 273945324 | 0.000015515167370064 | `0x7e84a2346a1fe8897b3bc122b323e1ee1fe6118ed7f650be039936ae9987824c` |  |
+| Role setup | ActorRegistry | grantRole(ACTOR_REGISTRAR_ROLE) | 56591 | 239831453 | 0.000013572301756723 | `0x4d9d70b497a81f31528bc5ce866857539c9c5e5767ddbf754ba8d4ba6e74438b` |  |
+| Mutating calls | ActorRegistry | registerActor(bytes16,address) | 53878 | 209965624 | 0.000011312527889872 | `0x3c1a833e670c4105fc81a3e25d25989a4448d6096d0bcdc50daf0e43112b5a28` |  |
+| Mutating calls | ActorRegistry | registerActor(bytes16,address) second actor | 53878 | 183814193 | 0.000009903541090454 | `0xc8f380f1bfd81c256e1cfa6a9e6cfaace8d9f526c10dbbfc5050c115e2f5d20d` |  |
+| Mutating calls | ActorRegistry | setActorWallet(bytes16,address,true) | 54081 | 160919949 | 0.000008702711761869 | `0xd61c35f495f7fe9a36633e6ceaa96e135e02eaadf50179e9d0543535c890294e` |  |
+| Mutating calls | ActorRegistry | setActorWallet(bytes16,address,false) | 32169 | 140877479 | 0.000004531887621951 | `0x1283fa6a95fec532f625bdaef8796df13f838ab2cee90a740553098cf9085e8c` |  |
+| Mutating calls | ActorRegistry | setProxy(bytes16,address,true) | 53774 | 123305560 | 0.00000663063318344 | `0x37fc5ae235c61a57bf695e08865829cdb1268634753858d76b62f1f6e698fdfe` | Uses a benchmark delegate distinct from the order signer. |
+| Mutating calls | ActorRegistry | setProxy(bytes16,address,false) | 31862 | 107947621 | 0.000003439427100302 | `0x1ae60a6cc395895e67d8e9ad641f5542106b43acb0077f10fc6ad31ead19a062` | Uses a benchmark delegate distinct from the order signer. |
+| Mutating calls | MarketController | createMarkets(1 market) | 83354 | 94482830 | 0.00000787552181182 | `0x6db8f6f77b81e0d4a00921423f9af02aa1c385518bbde0129eabbe5a3dce1562` |  |
+| Mutating calls | MarketController | createMarkets(3 markets) | 191471 | 82738106 | 0.000015841947893926 | `0x3ecd51755bbc2c5d64ce2fb81cd5dfe78f77dbd91b908dfa836c994e0cfd7e92` | One community's spot, flex and settlement markets for one delivery slot. |
+| Mutating calls | MarketController | createMarkets(3 markets, all existing) | 41784 | 72527860 | 0.00000303050410224 | `0x7157890c36f0ab43a73935e84e96693f488fa896ee9701a3f7590a2b17cebcc2` | Existing markets are skipped; the cost of resending a window. |
+| Mutating calls | MarketController | createMarkets(50 markets) | 2732427 | 63487133 | 0.000173473956361791 | `0x18622c8772e00e7c02dbb805028dd35ac1789e4a7dd7003c99d0657dd3ac9ec3` |  |
+| Mutating calls | MarketController | createMarkets(50 markets, all existing) | 237724 | 56996858 | 0.000013549521071192 | `0x76a685e6b5bcb9c860520129281ce818b6cf0d7bab7e315cf49d9a4f47f846b0` | Existing markets are skipped; the cost of resending a window. |
+| Mutating calls | OrderRegistry | placeOrder(OrderParams) bid | 161179 | 49985164 | 0.000008056558748356 | `0x31f48f369ac331d9e7466424228fadfeec655884b609f25cb83ee67b5b1ba8e7` |  |
+| Mutating calls | OrderRegistry | placeOrder(OrderParams) offer | 161167 | 43804157 | 0.000007059784571219 | `0x4bfa408da23c6eb44a8fa9c35027e55f5e3b778e2f50a98b65f3d283a938bd89` |  |
+| Mutating calls | OrderRegistry | placeOrder(OrderParams) cancellable order | 161179 | 38387469 | 0.000006187253865951 | `0x1a6a88197cdcc21002a75f4567881db493579c5d589fdbe3fc6a339b8f307d8a` |  |
+| Mutating calls | OrderRegistry | cancelOrder(OrderParams) | 51555 | 33640597 | 0.000001734340978335 | `0xa5fec0107eabf85478a09e016ee38db6cae2b180baae3b9a91f874f01ae82b26` |  |
+| Mutating calls | OrderRegistry | placeOrder(OrderParams) status benchmark order | 161179 | 29449976 | 0.000004746717681704 | `0x1be65d79b07a998abb8e47375c1558a24c9dbf756033ac28295cd885fa219b03` |  |
+| Mutating calls | OrderRegistry | updateStatus(bytes16,OrderStatus) | 35950 | 25808285 | 0.00000092780784575 | `0xd2e5cd9cf55f1202b6b9376919a03c33dde12a9bede2a6f210de2d97b5a15983` | Measured with benchmark-only settlement role granted to deployer. |
+| Mutating calls | OrderRegistry | placeOrder(OrderParams) settleBatch[2] bid 1 | 161179 | 22589982 | 0.000003641030708778 | `0x71da53dc10a11e91d4064e50c22727b081ff55186f5287024ffeabaf2b0c6d2e` | Prepares unique open bid for settleBatch gas benchmark. |
+| Mutating calls | OrderRegistry | placeOrder(OrderParams) settleBatch[2] offer 1 | 161167 | 19796577 | 0.000003190554925359 | `0x6e3b0a60e18aa6ee2950ade5492730c541d2ef66853e6547028c5e3ad82c08a6` | Prepares unique open offer for settleBatch gas benchmark. |
+| Mutating calls | OrderRegistry | placeOrder(OrderParams) settleBatch[2] bid 2 | 161167 | 17348593 | 0.000002796020688031 | `0x4cfd307ec2158733a52ab004add95aad3d4b68cf1e80254cbc1d8a2f1187fb98` | Prepares unique open bid for settleBatch gas benchmark. |
+| Mutating calls | OrderRegistry | placeOrder(OrderParams) settleBatch[2] offer 2 | 161167 | 15203320 | 0.00000245027347444 | `0xde4584f5caae91e3e76ea0945e1c0104cb7407a04a28c908b283f762a7572d5f` | Prepares unique open offer for settleBatch gas benchmark. |
+| Mutating calls | OrderRegistry | placeOrder(OrderParams) settleBatch[5] bid 1 | 161179 | 13323324 | 0.000002147440038996 | `0xa6a306992a1b52bf84a1685988485d4e5b145ce9544d5104698d62a22ddccc39` | Prepares unique open bid for settleBatch gas benchmark. |
+| Mutating calls | OrderRegistry | placeOrder(OrderParams) settleBatch[5] offer 1 | 161167 | 11675804 | 0.000001881754303268 | `0xd68ef474ecee9677de6d4bbf4d018e94d4dc457704c25c88e87fba9b0faac9ed` | Prepares unique open offer for settleBatch gas benchmark. |
+| Mutating calls | OrderRegistry | placeOrder(OrderParams) settleBatch[5] bid 2 | 161179 | 10232011 | 0.000001649185300969 | `0xbdff91ffbefc972779c00bad1b5728508f303500f18aaa7ab677457ed7cae6a0` | Prepares unique open bid for settleBatch gas benchmark. |
+| Mutating calls | OrderRegistry | placeOrder(OrderParams) settleBatch[5] offer 2 | 161167 | 8966753 | 0.000001445144680751 | `0x00a64394debc3e2b407085d3b370565cfde44b9681d86b37023d765504fcdd7a` | Prepares unique open offer for settleBatch gas benchmark. |
+| Mutating calls | OrderRegistry | placeOrder(OrderParams) settleBatch[5] bid 3 | 161179 | 7857953 | 0.000001266537006587 | `0x22d493e1bf77e6c05dba96eeef09191e228dded4318bb2790346cf32d97139a3` | Prepares unique open bid for settleBatch gas benchmark. |
+| Mutating calls | OrderRegistry | placeOrder(OrderParams) settleBatch[5] offer 3 | 161155 | 6886264 | 0.00000110975587492 | `0xbd858669ff3224fd67f1515e22cb9fd8e7e559b24b2f0c7b73d7b4840742a78a` | Prepares unique open offer for settleBatch gas benchmark. |
+| Mutating calls | OrderRegistry | placeOrder(OrderParams) settleBatch[5] bid 4 | 161179 | 6034730 | 0.00000097267174667 | `0x7aea1003368e8f891ca9901b275d0d5d6aa04ee85fd1a0b19727812415e8faa9` | Prepares unique open bid for settleBatch gas benchmark. |
+| Mutating calls | OrderRegistry | placeOrder(OrderParams) settleBatch[5] offer 4 | 161167 | 5288495 | 0.000000852330873665 | `0x94f808977cdde35af74a434c15213c1eaf3b8ce499edd56ff65c57881edd5ba0` | Prepares unique open offer for settleBatch gas benchmark. |
+| Mutating calls | OrderRegistry | placeOrder(OrderParams) settleBatch[5] bid 5 | 161179 | 4634536 | 0.000000746989877944 | `0xe63b331ab2eaf91c0ba137a80fbe4095b157503efd61e95686134ea7d5516104` | Prepares unique open bid for settleBatch gas benchmark. |
+| Mutating calls | OrderRegistry | placeOrder(OrderParams) settleBatch[5] offer 5 | 161167 | 4061445 | 0.000000654570906315 | `0x0017334a4d31565327ab520c1f0fa287b2a5b356ba7e214531b6cff349d3d0e4` | Prepares unique open offer for settleBatch gas benchmark. |
+| Mutating calls | TradeSettlement | settleBatch(Match[1]) | 225659 | 3559219 | 0.000000803169800321 | `0x90a7ac7ff75e35ae9971433f9af16095a1da7bfb606ebf89db0b1e0fd282714c` | Batch-size benchmark row. Prerequisite order placement gas is reported separately. |
+| Mutating calls | TradeSettlement | settleBatch(Match[2]) | 405414 | 3121011 | 0.000001265301553554 | `0xf71c3fa7e996904930b4a97cf31fa4df7ae18eef988ce0254edbda483c1656ce` | Batch-size benchmark row. Prerequisite order placement gas is reported separately. |
+| Mutating calls | TradeSettlement | settleBatch(Match[5]) | 944794 | 2741429 | 0.000002590085670626 | `0xc908b6f4dacb2dd1047a5a0174dd2d42ad49d33b6f1c3a9eda08bf7c748c2f7c` | Batch-size benchmark row. Prerequisite order placement gas is reported separately. |
+| Mutating calls | TradeSettlement | submitPenalties(TradePenalty[1]) | 80384 | 2420335 | 0.00000019455620864 | `0x4337940e3a788df13600ebc3967bb619c3c60569d7c151b9fe92278274c8f58d` |  |
 | View estimates | ActorRegistry | isAuthorized(bytes16,address) | 29493 |  |  | view estimate |  |
 | View estimates | ActorRegistry | isProxy(bytes16,address) | 29482 |  |  | view estimate |  |
-| View estimates | MarketController | isMarketOpen(bytes16) | 28991 |  |  | view estimate |  |
-| View estimates | OrderRegistry | getStatus(bytes16) | 29056 |  |  | view estimate |  |
-| View estimates | OrderRegistry | getOrder(bytes16) | 39066 |  |  | view estimate |  |
+| View estimates | MarketController | isMarketOpen(bytes16) | 31285 |  |  | view estimate |  |
+| View estimates | MarketController | marketsExist(3 markets) | 36192 |  |  | view estimate |  |
+| View estimates | OrderRegistry | getStatus(bytes16) | 29062 |  |  | view estimate |  |
+| View estimates | OrderRegistry | getOrder(bytes16) | 39145 |  |  | view estimate |  |
 | View estimates | TradeSettlement | penaltyEnergyByTrade(bytes16) | 28914 |  |  | view estimate |  |
 | View estimates | TradeSettlement | penaltyEnergyByActor(bytes16) | 28893 |  |  | view estimate |  |
 
