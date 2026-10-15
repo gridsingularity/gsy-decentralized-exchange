@@ -25,6 +25,7 @@ abigen!(
         function placedCount() external view returns (uint256)
         function placedOrder(uint256 index) external view returns (OrderParams)
         function setClosedMarket(bytes16 marketId) external
+        function closedMarketId() external view returns (bytes16)
     ]"#
 );
 
@@ -250,8 +251,7 @@ async fn placed_orders(chain: &TestChain) -> Vec<OrderParams> {
     orders
 }
 
-/// The handler does not wait for its transactions to be mined, so the tests wait until
-/// `expected` orders are on-chain.
+/// Waits for orders submitted by the background subscriber.
 async fn wait_for_placed_orders(chain: &TestChain, expected: usize) -> Vec<OrderParams> {
     for _ in 0..50 {
         let orders = placed_orders(chain).await;
@@ -286,7 +286,7 @@ async fn places_a_bid_and_an_offer_with_their_contract_params() {
         .unwrap();
 
     assert_eq!(
-        wait_for_placed_orders(&chain, 2).await,
+        placed_orders(&chain).await,
         vec![
             OrderParams {
                 order_id: bytes16(BID_ID),
@@ -426,6 +426,92 @@ async fn rejects_the_whole_event_when_one_order_is_invalid() {
     }
     assert!(placed_orders(&chain).await.is_empty());
     assert_eq!(sent_transactions(&chain).await, 2);
+}
+
+#[tokio::test]
+async fn order_registry_client_waits_for_mining_and_detects_execution_reverts() {
+    for revert_after_submission in [false, true] {
+        let chain = deploy_mock_order_registry().await;
+        let registry = OrderRegistryClient::connect(
+            &chain.ws_endpoint,
+            &format!("{:?}", chain.contract_address),
+            TEST_PRIVATE_KEY,
+        )
+        .await
+        .unwrap();
+        let mut order =
+            DbOrderSchema::try_from(serde_json::from_value::<EwdsOrderDto>(offer()).unwrap())
+                .unwrap();
+        order.created_by = OWNER_2_ONCHAIN.to_string();
+        order.requirements = None;
+        let params = order_params(&order).unwrap();
+        let client = chain.contract.client();
+        let provider = client.provider();
+        provider
+            .request::<_, Value>("evm_setAutomine", [false])
+            .await
+            .unwrap();
+        let initial_nonce = sent_transactions(&chain).await;
+        let placement = tokio::spawn(async move { registry.place_order(params).await });
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while sent_transactions(&chain).await == initial_nonce {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("placeOrder transaction was not submitted");
+        // Let the caller process the node's acknowledgement before checking it is still waiting.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(
+            !placement.is_finished(),
+            "pending transaction was reported as placed"
+        );
+        assert!(placed_orders(&chain).await.is_empty());
+
+        if revert_after_submission {
+            // Change the mock's closedMarketId (slot 0) after estimation/send but before mining.
+            // This deterministically reproduces an order reverting when its market closes.
+            let mut closed_market = [0u8; 32];
+            closed_market[16..].copy_from_slice(&bytes16(OPEN_MARKET));
+            provider
+                .request::<_, Value>(
+                    "anvil_setStorageAt",
+                    (
+                        chain.contract_address,
+                        H256::zero(),
+                        H256::from(closed_market),
+                    ),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                chain.contract.closed_market_id().call().await.unwrap(),
+                bytes16(OPEN_MARKET)
+            );
+        }
+        provider.request::<_, Value>("evm_mine", ()).await.unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(20), placement)
+            .await
+            .expect("placeOrder did not process the mined receipt")
+            .unwrap();
+        if revert_after_submission {
+            assert!(
+                matches!(result, Err(PlaceOrderError::Rejected(ref reason)) if reason.contains("reverted")),
+                "expected a mined rejection, got {:?}",
+                result
+            );
+            assert!(placed_orders(&chain).await.is_empty());
+        } else {
+            let receipt = provider
+                .get_transaction_receipt(result.unwrap())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(receipt.status, Some(U64::from(1)));
+            assert_eq!(placed_orders(&chain).await.len(), 1);
+        }
+        assert_eq!(sent_transactions(&chain).await, initial_nonce + 1);
+    }
 }
 
 #[tokio::test]

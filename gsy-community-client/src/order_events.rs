@@ -78,7 +78,7 @@ async fn watch_node(order_registry: &OrderRegistryClient) -> Error {
 
 /// What happened to one order of an event.
 enum Placement {
-    Sent(TxHash),
+    Confirmed(TxHash),
     AlreadyPlaced,
     Failed(PlaceOrderError),
 }
@@ -101,9 +101,9 @@ impl OrderEventHandler {
     /// The event is rejected before anything is sent if one of its orders is invalid or its IDs
     /// cannot be resolved. After that every order is sent on its own: one the contract rejects
     /// is logged and the others are still sent, because sent orders cannot be rolled back. If an
-    /// order could not be sent because the node was unreachable, the event fails after the other
-    /// orders were sent, so the event worker retries it; orders already placed are skipped then.
-    /// The handler does not wait for the transactions to be mined.
+    /// order could not be confirmed because the node was unreachable, the event fails after the
+    /// other orders were processed, so the event worker retries it; orders already placed are
+    /// skipped then. A sent order succeeds only after its receipt confirms successful execution.
     pub async fn handle(&self, envelope: EwdsEventEnvelope<Value>) -> Result<()> {
         let event_id = envelope.event_id;
         let orders = parse_batch(envelope.data, |order: EwdsOrderDto| {
@@ -126,10 +126,10 @@ impl OrderEventHandler {
         let mut unsent = 0;
         for (order_id, order) in params {
             match self.place(order).await {
-                Placement::Sent(tx_hash) => {
+                Placement::Confirmed(tx_hash) => {
                     sent += 1;
                     info!(
-                        "Sent order {} of EWDS event {} (tx={:?})",
+                        "Confirmed order {} of EWDS event {} (tx={:?})",
                         order_id, event_id, tx_hash
                     );
                 }
@@ -145,19 +145,19 @@ impl OrderEventHandler {
                         unsent += 1;
                     }
                     warn!(
-                        "Order {} of EWDS event {} was not sent: {}",
+                        "Order {} of EWDS event {} was not placed: {}",
                         order_id, event_id, error
                     );
                 }
             }
         }
         info!(
-            "EWDS event {}: {} of {} orders sent or already placed",
+            "EWDS event {}: {} of {} orders confirmed or already placed",
             event_id, sent, total
         );
         if unsent > 0 {
             bail!(
-                "{} of {} orders of EWDS event {} could not be sent to the node",
+                "{} of {} orders of EWDS event {} could not be confirmed on-chain",
                 unsent,
                 total,
                 event_id
@@ -191,7 +191,7 @@ impl OrderEventHandler {
                 Err(error) => Err(error),
             };
             match result {
-                Ok(tx_hash) => return Placement::Sent(tx_hash),
+                Ok(tx_hash) => return Placement::Confirmed(tx_hash),
                 Err(PlaceOrderError::Rejected(reason)) if reason == ORDER_ALREADY_EXISTS => {
                     return Placement::AlreadyPlaced
                 }
@@ -219,11 +219,10 @@ type OrderRegistrySigner = SignerMiddleware<Provider<Ws>, LocalWallet>;
 /// Why an order was not placed.
 #[derive(Debug)]
 pub enum PlaceOrderError {
-    /// The contract rejected the order when the node estimated gas, so nothing was sent.
-    /// Sending it again would fail the same way.
+    /// The contract rejected the order during gas estimation or the mined transaction reverted.
     Rejected(String),
-    /// The node could not be reached or did not accept the transaction. Sending it again may
-    /// work.
+    /// The transaction could not be sent or its outcome could not be confirmed. This is not
+    /// evidence of rejection; retries check whether the order was already placed first.
     Transport(Error),
 }
 
@@ -290,9 +289,8 @@ impl OrderRegistryClient {
         Ok(status != ORDER_STATUS_NONE)
     }
 
-    /// Sends `placeOrder` and returns as soon as the node accepted the transaction, without
-    /// waiting for it to be mined. A revert is only seen when the node estimates gas before
-    /// sending; one that happens in the mined transaction goes unnoticed.
+    /// Sends `placeOrder` and requires a successful mined receipt. A missing receipt or status
+    /// is an unknown outcome, not a rejection. The storage listener still owns DB persistence.
     pub async fn place_order(
         &self,
         params: EvmOrderParamsTuple,
@@ -305,7 +303,30 @@ impl OrderRegistryClient {
             .map_err(|e| PlaceOrderError::Transport(e.into()))?;
         let call = self.contract.place_order(params).nonce(nonce);
         let pending_tx = call.send().await.map_err(classify_contract_error)?;
-        Ok(pending_tx.tx_hash())
+        let tx_hash = pending_tx.tx_hash();
+        let receipt = pending_tx
+            .await
+            .map_err(|error| PlaceOrderError::Transport(error.into()))?
+            .ok_or_else(|| {
+                PlaceOrderError::Transport(anyhow!("placeOrder tx {:?} has no receipt", tx_hash))
+            })?;
+        match receipt.status.map(|status| status.as_u64()) {
+            Some(1) => Ok(tx_hash),
+            Some(0) => {
+                // A retry can race with the original transaction's confirmation.
+                let reason = if self.is_placed(params.0).await? {
+                    ORDER_ALREADY_EXISTS.to_string()
+                } else {
+                    format!("placeOrder tx {:?} reverted", tx_hash)
+                };
+                Err(PlaceOrderError::Rejected(reason))
+            }
+            status => Err(PlaceOrderError::Transport(anyhow!(
+                "placeOrder tx {:?} has unrecognized receipt status {:?}",
+                tx_hash,
+                status
+            ))),
+        }
     }
 }
 

@@ -268,15 +268,18 @@ Handling rules:
 
 - One invalid order rejects the whole event before anything is sent: parsing,
   the rules above and resolving the IDs all have to pass.
-- The orders are then sent one at a time. The community client doesn't wait
-  for the transactions to be mined:
+- The orders are then sent one at a time. The community client waits for
+  each mined receipt and requires status `1` before confirming placement:
   - An order whose ID is already on-chain (`getStatus`) is skipped.
   - An order the contract would reject (`MarketClosed`, `Unauthorized`,
     `InvalidOrderParams`, `OrderAlreadyExists`) is caught when the node
     estimates gas. It is logged with `eventId`, `orderId` and the reason and
     not sent, and the remaining orders are still sent.
   - A revert that only happens in the mined transaction, e.g. because the
-    market closed in between, is not noticed.
+    market closed in between, is also logged as a rejection. If the order
+    was already placed by an earlier transaction, it is skipped instead.
+  - Missing receipts or receipt status, and RPC failures, are unknown
+    outcomes, not rejections, and follow the existing transport retry path.
   - Transport errors are tried up to three times in a row. If an order still
     can't be sent, the event fails after the other orders were sent, and the
     community client retries it like the off-chain storage retries its events
