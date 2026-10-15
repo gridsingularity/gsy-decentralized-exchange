@@ -8,10 +8,13 @@ use gsy_community_client::order_events::{
 };
 use primitives::db_api_schema::orders::DbOrderSchema;
 use primitives::ewds::dto::EwdsEventEnvelope;
-use primitives::ewds::dto::EwdsOrderDto;
-use primitives::ewds::{is_invalid_event, EwdsEventType};
+use primitives::ewds::dto::{EwdsOrderDto, EwdsSendMessageDto};
+use primitives::ewds::{
+    is_invalid_event, EwdsClient, EwdsClientConfig, EwdsEventTopicConfig, EwdsEventType,
+    EwdsTopicConfig,
+};
 use primitives::offchain_storage::{OffchainStorageClient, OffchainStorageTransport};
-use primitives::utils::parse_uuid_or_hex_bytes16;
+use primitives::utils::{parse_uuid_or_hex_bytes16, rfc3339_to_epoch};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
@@ -133,7 +136,7 @@ async fn deploy_mock_order_registry() -> TestChain {
     }
 }
 
-/// An off-chain storage whose ID service knows `owner-1` and `owner-2`.
+/// Mocks the ID service and the gateway's outbound messages endpoint on one server.
 async fn mock_id_service() -> MockServer {
     let server = MockServer::start().await;
     for (offchain_id, onchain_id) in [("owner-1", OWNER_1_ONCHAIN), ("owner-2", OWNER_2_ONCHAIN)] {
@@ -152,6 +155,13 @@ async fn mock_id_service() -> MockServer {
         .and(path("/ids"))
         .respond_with(ResponseTemplate::new(404))
         .with_priority(10)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/v2/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "recipients": {"sent": 1, "failed": 0, "total": 1}
+        })))
         .mount(&server)
         .await;
     server
@@ -173,7 +183,64 @@ async fn handler(chain: &TestChain, id_service: &MockServer) -> OrderEventHandle
             "gsycommunityclient",
         ),
         order_registry,
+        EwdsClient::new(EwdsClientConfig {
+            gateway_base: id_service.uri(),
+            request_fqcn: "gsy.requests.pub".to_string(),
+            response_fqcn: "gsy.responses.sub".to_string(),
+            topic_owner: "test.owner".to_string(),
+            topic_version: "1.0.0".to_string(),
+            consumer_client_id: "gsycommunityclient".to_string(),
+            timeout_ms: 1_000,
+            poll_interval_ms: 10,
+            empty_response_grace_ms: 0,
+            topics: EwdsTopicConfig::default(),
+            event_publish_fqcn: "gsy.events.pub".to_string(),
+            event_subscribe_fqcn: "gsy.events.sub".to_string(),
+            event_batch_size: 50,
+            event_poll_interval_ms: 10,
+            event_handle_attempts: 3,
+            event_retry_delay_ms: 10,
+            event_topics: EwdsEventTopicConfig::default(),
+        }),
     )
+}
+
+async fn rejection_events(server: &MockServer) -> Vec<EwdsEventEnvelope<Vec<EwdsOrderDto>>> {
+    server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter_map(|request| {
+            // Rejections must never be written to the order database through HTTP.
+            assert!(matches!(request.url.path(), "/ids" | "/api/v2/messages"));
+            if request.url.path() == "/ids" {
+                return None;
+            }
+            let sent: EwdsSendMessageDto = serde_json::from_slice(&request.body).unwrap();
+            assert_eq!(sent.fqcn, "gsy.events.pub");
+            assert_eq!(sent.topic_name, "order");
+            let event: EwdsEventEnvelope<Vec<EwdsOrderDto>> =
+                serde_json::from_str(&sent.payload).unwrap();
+            assert_eq!(event.event_type, EwdsEventType::OrderStatus);
+            assert_eq!(event.event_id, sent.transaction_id);
+            Some(event)
+        })
+        .collect()
+}
+
+fn assert_rejection(event: &EwdsEventEnvelope<Vec<EwdsOrderDto>>, original: Value, reason: &str) {
+    assert_eq!(event.data.len(), 1);
+    let mut expected: EwdsOrderDto = serde_json::from_value(original).unwrap();
+    expected.order_status = "rejected".to_string();
+    expected.reject_reason = Some(reason.to_string());
+    expected.updated_at = Some(event.occurred_at.clone());
+    assert!(rfc3339_to_epoch(&event.occurred_at).is_ok());
+    assert_ne!(event.occurred_at, expected.creation_time);
+    assert_eq!(
+        serde_json::to_value(&event.data[0]).unwrap(),
+        serde_json::to_value(expected).unwrap()
+    );
 }
 
 fn bytes16(value: &str) -> [u8; 16] {
@@ -318,6 +385,7 @@ async fn places_a_bid_and_an_offer_with_their_contract_params() {
             },
         ]
     );
+    assert!(rejection_events(&id_service).await.is_empty());
 }
 
 #[tokio::test]
@@ -341,6 +409,7 @@ async fn skips_orders_that_are_already_placed() {
         .collect::<Vec<_>>();
     assert_eq!(order_ids, vec![bytes16(BID_ID), bytes16(OFFER_ID)]);
     assert_eq!(sent_transactions(&chain).await, 2 + 2);
+    assert!(rejection_events(&id_service).await.is_empty());
 }
 
 #[tokio::test]
@@ -352,7 +421,10 @@ async fn places_the_other_orders_when_the_contract_rejects_one() {
 
     handler(&chain, &id_service)
         .await
-        .handle(event("event-1", vec![bid_in_closed_market, offer()]))
+        .handle(event(
+            "event-1",
+            vec![bid_in_closed_market.clone(), offer()],
+        ))
         .await
         .unwrap();
 
@@ -364,6 +436,9 @@ async fn places_the_other_orders_when_the_contract_rejects_one() {
     assert_eq!(order_ids, vec![bytes16(OFFER_ID)]);
     // The rejected order was never sent.
     assert_eq!(sent_transactions(&chain).await, 2 + 1);
+    let notifications = rejection_events(&id_service).await;
+    assert_eq!(notifications.len(), 1);
+    assert_rejection(&notifications[0], bid_in_closed_market, "MarketClosed");
 }
 
 #[tokio::test]
@@ -385,6 +460,7 @@ async fn fails_the_event_when_the_node_cannot_be_reached() {
     // The event worker retries the event, so it must not be marked as invalid.
     assert!(!is_invalid_event(&error));
     assert!(format!("{error:#}").contains("2 of 2 orders"), "{error:#}");
+    assert!(rejection_events(&id_service).await.is_empty());
 }
 
 #[tokio::test]
@@ -426,6 +502,88 @@ async fn rejects_the_whole_event_when_one_order_is_invalid() {
     }
     assert!(placed_orders(&chain).await.is_empty());
     assert_eq!(sent_transactions(&chain).await, 2);
+    assert!(rejection_events(&id_service).await.is_empty());
+}
+
+#[tokio::test]
+async fn rejection_notification_failure_does_not_retry_placement_or_block_other_orders() {
+    let chain = deploy_mock_order_registry().await;
+    let id_service = mock_id_service().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v2/messages"))
+        .respond_with(ResponseTemplate::new(400).set_body_string("invalid topic"))
+        .with_priority(1)
+        .mount(&id_service)
+        .await;
+    let mut rejected = bid();
+    rejected["marketId"] = json!(CLOSED_MARKET);
+    handler(&chain, &id_service)
+        .await
+        .handle(event("event-1", vec![rejected.clone(), offer()]))
+        .await
+        .unwrap();
+
+    let orders = placed_orders(&chain).await;
+    assert_eq!(orders.len(), 1);
+    assert_eq!(orders[0].order_id, bytes16(OFFER_ID));
+    assert_eq!(sent_transactions(&chain).await, 3);
+    let notifications = rejection_events(&id_service).await;
+    assert_eq!(notifications.len(), 1);
+    assert_rejection(&notifications[0], rejected, "MarketClosed");
+}
+
+#[tokio::test]
+async fn notifies_rejection_only_after_a_failed_mined_receipt() {
+    let chain = deploy_mock_order_registry().await;
+    let id_service = mock_id_service().await;
+    let handler = handler(&chain, &id_service).await;
+    let client = chain.contract.client();
+    let provider = client.provider();
+    provider
+        .request::<_, Value>("evm_setAutomine", [false])
+        .await
+        .unwrap();
+    let initial_nonce = sent_transactions(&chain).await;
+    let handling =
+        tokio::spawn(async move { handler.handle(event("event-1", vec![offer()])).await });
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while sent_transactions(&chain).await == initial_nonce {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("order was not submitted");
+    assert!(!handling.is_finished());
+    assert!(rejection_events(&id_service).await.is_empty());
+
+    // Close the market after gas estimation, but before the transaction executes.
+    let mut closed_market = [0u8; 32];
+    closed_market[16..].copy_from_slice(&bytes16(OPEN_MARKET));
+    provider
+        .request::<_, Value>(
+            "anvil_setStorageAt",
+            (
+                chain.contract_address,
+                H256::zero(),
+                H256::from(closed_market),
+            ),
+        )
+        .await
+        .unwrap();
+    provider.request::<_, Value>("evm_mine", ()).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(20), handling)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+
+    assert!(placed_orders(&chain).await.is_empty());
+    assert_eq!(sent_transactions(&chain).await, initial_nonce + 1);
+    let notifications = rejection_events(&id_service).await;
+    assert_eq!(notifications.len(), 1);
+    let reason = notifications[0].data[0].reject_reason.as_deref().unwrap();
+    assert!(reason.contains("reverted"));
+    assert_rejection(&notifications[0], offer(), reason);
 }
 
 #[tokio::test]
@@ -551,16 +709,23 @@ async fn order_registry_client_reports_why_the_contract_rejected_an_order() {
 }
 
 #[tokio::test]
-async fn subscriber_places_the_orders_it_polls_from_the_order_topic() {
+async fn subscriber_places_submissions_but_not_status_notifications_from_the_order_topic() {
     let chain = deploy_mock_order_registry().await;
     let id_service = mock_id_service().await;
     let gateway = MockServer::start().await;
+    // A Submitted notification looks like a valid submission except for its event type.
+    // Place it first so an incorrect dispatch would submit the offer before the real bid.
+    let notification = EwdsEventEnvelope {
+        event_type: EwdsEventType::OrderStatus,
+        ..event("status-1", vec![offer()])
+    };
     Mock::given(method("GET"))
         .and(path("/api/v2/messages"))
         .and(query_param("fqcn", "gsy.intelligent.events.sub"))
         .and(query_param("topicName", "order"))
         .and(query_param("clientId", "gsycommunityclientorder"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+            {"payload": serde_json::to_string(&notification).unwrap()},
             {"payload": serde_json::to_string(&event("event-1", vec![bid()])).unwrap()},
         ])))
         .mount(&gateway)

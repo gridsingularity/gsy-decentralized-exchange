@@ -27,6 +27,9 @@ the community client's EWDS subscriber), then indexed by the EVM listener.
 The POST endpoints still accept caller-supplied statuses; their ownership and
 access policy remain to be clarified. Posting trades leaves referenced orders
 unchanged; settlement updates are handled by the EVM listener.
+Restricting the order POST endpoints is a separate follow-up, not part of
+DD-423. Until then, listener ownership is the normal lifecycle path, not an
+enforced access-control boundary for those legacy write endpoints.
 
 ## HTTP API Surface
 
@@ -135,7 +138,6 @@ Key env variables:
 - `CONTRACT_TRADE_SETTLEMENT`
 - `CONTRACT_MARKET_CONTROLLER`
 - `DATABASE_*`
-- `SCHEDULER_INTERVAL`
 - `EWDS_ENABLE_HANDLER`
 - `EWDS_COMMUNITIES_REQUEST_TOPIC`
 - `EWDS_EVENT_PUBLISH_FQCN`, `EWDS_EVENT_SUBSCRIBE_FQCN`

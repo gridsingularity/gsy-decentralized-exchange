@@ -1,6 +1,7 @@
 use crate::node_connector::orders::{
     EvmOrderParamsTuple, OrderRegistryContract, OrderRegistryContractErrors,
 };
+use crate::time_utils::get_current_timestamp_in_secs;
 use anyhow::{anyhow, bail, Context, Error, Result};
 use ethers::prelude::*;
 use primitives::db_api_schema::orders::{
@@ -9,12 +10,12 @@ use primitives::db_api_schema::orders::{
 use primitives::ewds::dto::{EwdsEventEnvelope, EwdsOrderDto};
 use primitives::ewds::{env_var, invalid_event, parse_batch, EwdsClient, EwdsEventType};
 use primitives::offchain_storage::{resolve_order_partner_ids, OffchainStorageClient};
-use primitives::utils::{parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR};
+use primitives::utils::{epoch_to_rfc3339, parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR};
 use serde_json::Value;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::time::{sleep, timeout, Duration};
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 const CONSUMER_CLIENT_ID_ENV: &str = "EWDS_COMMUNITY_CLIENT_ID";
@@ -42,14 +43,15 @@ pub async fn start_order_event_subscriber() -> Result<()> {
     )
     .await
     .with_context(|| format!("Failed to connect to the EVM node at {}", evm_node_url))?;
-    let handler = OrderEventHandler::new(
-        OffchainStorageClient::from_env(CONSUMER_CLIENT_ID_ENV, CONSUMER_CLIENT_ID_DEFAULT),
-        order_registry,
-    );
     let ewds_client = EwdsClient::from_env(
         CONSUMER_CLIENT_ID_ENV,
         CONSUMER_CLIENT_ID_DEFAULT,
         EWDS_TIMEOUT_MS,
+    );
+    let handler = OrderEventHandler::new(
+        OffchainStorageClient::from_env(CONSUMER_CLIENT_ID_ENV, CONSUMER_CLIENT_ID_DEFAULT),
+        order_registry,
+        ewds_client,
     );
 
     info!(
@@ -57,7 +59,7 @@ pub async fn start_order_event_subscriber() -> Result<()> {
         order_registry_address
     );
     tokio::select! {
-        _ = ewds_client.run_event_worker(EwdsEventType::Order, |envelope| {
+        _ = handler.ewds_client.run_event_worker(EwdsEventType::Order, |envelope| {
             handler.handle(envelope)
         }) => Ok(()),
         error = watch_node(&handler.order_registry) => Err(error),
@@ -86,13 +88,19 @@ enum Placement {
 pub struct OrderEventHandler {
     id_service: OffchainStorageClient,
     order_registry: OrderRegistryClient,
+    ewds_client: EwdsClient,
 }
 
 impl OrderEventHandler {
-    pub fn new(id_service: OffchainStorageClient, order_registry: OrderRegistryClient) -> Self {
+    pub fn new(
+        id_service: OffchainStorageClient,
+        order_registry: OrderRegistryClient,
+        ewds_client: EwdsClient,
+    ) -> Self {
         Self {
             id_service,
             order_registry,
+            ewds_client,
         }
     }
 
@@ -100,31 +108,33 @@ impl OrderEventHandler {
     ///
     /// The event is rejected before anything is sent if one of its orders is invalid or its IDs
     /// cannot be resolved. After that every order is sent on its own: one the contract rejects
-    /// is logged and the others are still sent, because sent orders cannot be rolled back. If an
-    /// order could not be confirmed because the node was unreachable, the event fails after the
-    /// other orders were processed, so the event worker retries it; orders already placed are
-    /// skipped then. A sent order succeeds only after its receipt confirms successful execution.
+    /// is reported to FOS and the others are still sent, because sent orders cannot be rolled
+    /// back. If an order could not be confirmed because the node was unreachable, the event
+    /// fails after the other orders were processed. The event worker retries it, skipping orders
+    /// already placed. A sent order succeeds only after its receipt confirms successful execution.
     pub async fn handle(&self, envelope: EwdsEventEnvelope<Value>) -> Result<()> {
         let event_id = envelope.event_id;
-        let orders = parse_batch(envelope.data, |order: EwdsOrderDto| {
-            DbOrderSchema::try_from(order).and_then(validate_order)
+        let orders = parse_batch(envelope.data, |submission: EwdsOrderDto| {
+            let order = DbOrderSchema::try_from(submission.clone()).and_then(validate_order)?;
+            Ok((submission, order))
         })?;
 
         let mut params = Vec::with_capacity(orders.len());
-        for (index, order) in orders.into_iter().enumerate() {
+        for (index, (submission, order)) in orders.into_iter().enumerate() {
             let order_id = order.order_id.clone();
             let order = self
                 .resolve_ids(order)
                 .await
                 .and_then(|order| order_params(&order).map_err(invalid_event))
                 .with_context(|| format!("invalid order {} at index {}", order_id, index))?;
-            params.push((order_id, order));
+            params.push((submission, order));
         }
 
         let total = params.len();
         let mut sent = 0;
         let mut unsent = 0;
-        for (order_id, order) in params {
+        for (submission, order) in params {
+            let order_id = &submission.order_id;
             match self.place(order).await {
                 Placement::Confirmed(tx_hash) => {
                     sent += 1;
@@ -141,13 +151,16 @@ impl OrderEventHandler {
                     );
                 }
                 Placement::Failed(error) => {
-                    if matches!(error, PlaceOrderError::Transport(_)) {
-                        unsent += 1;
-                    }
                     warn!(
                         "Order {} of EWDS event {} was not placed: {}",
                         order_id, event_id, error
                     );
+                    match error {
+                        PlaceOrderError::Transport(_) => unsent += 1,
+                        PlaceOrderError::Rejected(reason) => {
+                            self.publish_rejection(submission, reason).await;
+                        }
+                    }
                 }
             }
         }
@@ -164,6 +177,34 @@ impl OrderEventHandler {
             );
         }
         Ok(())
+    }
+
+    /// Report the original submission, not the ID-resolved contract parameters. No DB order
+    /// is created. Gateway failures must not turn a definite rejection into a placement retry.
+    async fn publish_rejection(&self, mut submission: EwdsOrderDto, reason: String) {
+        let occurred_at = epoch_to_rfc3339(get_current_timestamp_in_secs());
+        submission.order_status = "rejected".to_string();
+        submission.updated_at = Some(occurred_at.clone());
+        submission.reject_reason = Some(reason);
+        let event = EwdsEventEnvelope {
+            event_id: Uuid::new_v4().to_string(),
+            event_type: EwdsEventType::OrderStatus,
+            occurred_at,
+            data: vec![submission],
+        };
+        let result = timeout(
+            Duration::from_millis(EWDS_TIMEOUT_MS),
+            self.ewds_client.publish_event(&event),
+        )
+        .await
+        .context("Timed out publishing order rejection")
+        .and_then(|result| result);
+        if let Err(error) = result {
+            error!(
+                "Failed to publish rejection for order {} (event={}): {:#}",
+                event.data[0].order_id, event.event_id, error
+            );
+        }
     }
 
     /// Replaces the off-chain actor and partner IDs with their on-chain IDs.

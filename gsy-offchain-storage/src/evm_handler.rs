@@ -4,6 +4,7 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use ethers::contract::LogMeta;
 use ethers::types::U256;
+use futures::TryStreamExt;
 use gsy_ethers_listener::{
     DeliveryVerifiedFilter, GsyEventHandler, MarketClearingFilter, MarketStatusUpdatedFilter,
     OrderCancelledFilter, OrderPlacedFilter, TradeSettledFilter,
@@ -16,7 +17,7 @@ use primitives::db_api_schema::{
 };
 use primitives::ewds::dto::EwdsMarketStatusDto;
 use primitives::utils::{bytes16_to_hex, NODE_FLOAT_SCALING_FACTOR};
-use tracing::{error, info};
+use tracing::info;
 
 fn scaled_u256_to_f64(value: U256) -> f64 {
     value.as_u128() as f64 / NODE_FLOAT_SCALING_FACTOR
@@ -25,6 +26,30 @@ fn scaled_u256_to_f64(value: U256) -> f64 {
 pub struct OffchainStorageEvmHandler {
     pub db: DatabaseWrapper,
     pub event_publisher: Option<EwdsEventPublisher>,
+}
+
+impl OffchainStorageEvmHandler {
+    /// Read back persisted snapshots before publishing; HTTP-only operation stays local.
+    async fn publish_order_statuses(&self, order_ids: &[String]) -> Result<()> {
+        if let Some(publisher) = &self.event_publisher {
+            let mut orders = Vec::with_capacity(order_ids.len());
+            for order_id in order_ids {
+                let order = self
+                    .db
+                    .orders()
+                    .get_order_by_id(&order_id.clone().into())
+                    .await?
+                    .with_context(|| {
+                        format!("Missing order {} for status notification", order_id)
+                    })?;
+                orders.push(order);
+            }
+            if !orders.is_empty() {
+                publisher.publish_order_status_event(orders);
+            }
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -94,6 +119,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             .with_context(|| format!("Failed to insert order {} into DB", order_id_str))?;
 
         info!("Successfully indexed order from EVM");
+        self.publish_order_statuses(&[order_id_str]).await?;
         Ok(())
     }
 
@@ -106,17 +132,22 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             "Processing EVM OrderCancelled: {:?}",
             hex::encode(event.order_id)
         );
-        let id_bson = mongodb::bson::to_bson(&bytes16_to_hex(event.order_id)).unwrap();
+        let order_id = bytes16_to_hex(event.order_id);
+        let id_bson = mongodb::bson::to_bson(&order_id)?;
 
-        match self
+        let updated = self
             .db
             .orders()
             .update_order_status_by_id(&id_bson, OrderStatus::Cancelled, block_timestamp)
             .await
-        {
-            Ok(_) => info!("Successfully marked order as deleted"),
-            Err(e) => error!("Failed to update order status: {:?}", e),
-        }
+            .context("Failed to persist order cancellation")?;
+        anyhow::ensure!(
+            updated.matched_count == 1,
+            "Missing cancelled order {}",
+            order_id
+        );
+        self.publish_order_statuses(&[order_id]).await?;
+        info!("Successfully marked order as cancelled");
         Ok(())
     }
 
@@ -197,6 +228,8 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         info!("Trade persisted and orders updated.");
 
         // Publish only once the trade and both order status updates are persisted.
+        self.publish_order_statuses(&[trade.bid_hash.clone(), trade.offer_hash.clone()])
+            .await?;
         if let Some(publisher) = &self.event_publisher {
             publisher.publish_trade_event(vec![trade]);
         }
@@ -264,6 +297,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             .mark_executed(&trade_id, block_timestamp)
             .await?;
         info!("Indexed delivery verification for trade {}", trade_id);
+        self.publish_order_statuses(&[bid_id, offer_id]).await?;
         Ok(())
     }
 
@@ -279,11 +313,27 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         );
 
         if !event.is_open {
+            // Capture only orders affected by this closure, not previously expired orders.
+            let order_ids = if self.event_publisher.is_some() {
+                self.db
+                    .orders()
+                    .find(mongodb::bson::doc! {
+                        "market_id": bytes16_to_hex(event.market_id),
+                        "status": mongodb::bson::to_bson(&OrderStatus::Submitted)?,
+                    })
+                    .await?
+                    .map_ok(|order| order.order_id)
+                    .try_collect::<Vec<_>>()
+                    .await?
+            } else {
+                Vec::new()
+            };
             self.db
                 .orders()
                 .expire_market_orders(&bytes16_to_hex(event.market_id), block_timestamp)
                 .await
                 .context("Failed to expire orders after market closure")?;
+            self.publish_order_statuses(&order_ids).await?;
         }
 
         if let Some(publisher) = &self.event_publisher {

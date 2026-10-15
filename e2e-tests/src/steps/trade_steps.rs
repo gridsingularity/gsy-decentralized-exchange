@@ -225,7 +225,7 @@ fn offchain_storage_client(world: &MyWorld) -> OffchainStorageClient {
     )
 }
 
-async fn query_orders_for_market(world: &MyWorld, market_id: &str) -> Vec<DbOrderSchema> {
+pub(crate) async fn query_orders_for_market(world: &MyWorld, market_id: &str) -> Vec<DbOrderSchema> {
     let (start_time, end_time) = market_window(world);
     offchain_storage_client(world)
         .fetch_orders(market_id, start_time, end_time)
@@ -255,7 +255,7 @@ async fn query_market(world: &MyWorld, market_id: &str) -> MarketSchema {
         .expect("Failed to parse market response")
 }
 
-async fn query_market_trades(world: &MyWorld) -> Vec<DbTradeSchema> {
+pub(crate) async fn query_market_trades(world: &MyWorld) -> Vec<DbTradeSchema> {
     offchain_storage_client(world)
         .fetch_trades(Some(&market_id_as_hex(world)), None, None)
         .await
@@ -300,7 +300,7 @@ async fn wait_for_order_in_market(
     );
 }
 
-async fn place_custom_order(
+pub(crate) async fn place_custom_order(
     world: &MyWorld,
     user_name: &str,
     is_bid: bool,
@@ -719,7 +719,7 @@ async fn submit_offer(world: &mut MyWorld, user_name: String) {
 
     // Matching runs on block boundaries. Fast-forward local Anvil after both
     // orders are present in the registry.
-    mine_until_matching_block(world, 12).await;
+    mine_until_matching_block(world, matching_block_interval() as usize + 1).await;
 }
 
 // Offers name their preferred partner the same way bids do: in requirements.
@@ -902,13 +902,18 @@ async fn submit_combined_pay_as_clear_order_book(world: &mut MyWorld) {
 
 #[when(expr = "measurements for facilities are submitted")]
 async fn submit_measurements(world: &mut MyWorld) {
+    submit_measurements_with_energy(world, 12.0).await;
+}
+
+#[when(expr = "measurements of {float} energy for facilities are submitted")]
+pub(crate) async fn submit_measurements_with_energy(world: &mut MyWorld, energy: f64) {
     let adapter = AreaMarketInfoAdapter::new(Some(world.offchain_storage_url.clone()));
     let mut measurements = vec![];
     for facility in world.facilities_topology.iter() {
         measurements.push(MeasurementSchema {
             facility_id: facility.facility_id.clone(),
             community_uuid: world.community_id.clone(),
-            energy_kwh: 12.0,
+            energy_kwh: energy,
             time_slot: world.target_delivery_time,
             creation_time: 1,
         })
@@ -921,7 +926,7 @@ async fn submit_measurements(world: &mut MyWorld) {
         .expect("Failed to submit measurements");
 }
 
-async fn delivery_verification_timestamp(world: &MyWorld, trade: &DbTradeSchema) -> u64 {
+pub(crate) async fn delivery_verification_timestamp(world: &MyWorld, trade: &DbTradeSchema) -> u64 {
     let settlement = TradeSettlementContract::new(world.trade_settlement_address, world.provider.clone());
     let events = settlement.event::<DeliveryVerifiedFilter>()
         .from_block(0u64)
@@ -1734,6 +1739,9 @@ async fn verify_penalties_on_chain(world: &mut MyWorld) {
         }
 
         if recorded_trade_ids.len() == trades.len() {
+            for trade in &trades {
+                super::lifecycle_steps::assert_trade_executed(world, trade).await;
+            }
             return;
         }
 
