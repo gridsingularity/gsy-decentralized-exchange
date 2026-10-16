@@ -1,5 +1,5 @@
 use crate::algorithms::{MatchOrders, PayAsClearPricing};
-use crate::models::{Attributes, BidOfferMatch, MatchingData, Order, Requirements};
+use crate::models::{Attributes, BidOfferMatch, MatchType, MatchingData, Order, Requirements};
 use anyhow::{anyhow, Error, Result};
 use ethers::prelude::*;
 use ethers::utils::keccak256;
@@ -603,7 +603,10 @@ fn to_evm_match(
         .remove(&bid_id)
         .ok_or_else(|| anyhow!("Bid {} is unknown or already consumed", item.bid.order_id))?;
     let offer = available_orders.remove(&offer_id).ok_or_else(|| {
-        anyhow!("Offer {} is unknown or already consumed", item.offer.order_id)
+        anyhow!(
+            "Offer {} is unknown or already consumed",
+            item.offer.order_id
+        )
     })?;
     if !bid.is_bid
         || offer.is_bid
@@ -612,7 +615,9 @@ fn to_evm_match(
         || bid.market_id != parse_bytes16_field("match.market_id", &item.market_id)?
         || bid.time_slot != item.time_slot
     {
-        return Err(anyhow!("Invalid order types or market/time-slot boundaries"));
+        return Err(anyhow!(
+            "Invalid order types or market/time-slot boundaries"
+        ));
     }
     if item.selected_energy == 0
         || item.selected_energy > bid.energy
@@ -643,6 +648,10 @@ fn to_evm_match(
         residual_offer_id,
         selected_energy: U256::from(item.selected_energy),
         clearing_price: U256::from(item.energy_rate),
+        match_type: match item.match_type {
+            MatchType::Standard => 0,
+            MatchType::Preferred => 1,
+        },
     })
 }
 
@@ -653,7 +662,8 @@ fn to_evm_matches(
     let mut available_orders = order_lookup
         .values()
         .map(|order| {
-            to_evm_order_data(order, order.order_type.clone()).map(|params| (params.order_id, params))
+            to_evm_order_data(order, order.order_type.clone())
+                .map(|params| (params.order_id, params))
         })
         .collect::<Result<HashMap<_, _>>>()?;
     let mut known_ids = available_orders.keys().copied().collect::<HashSet<_>>();

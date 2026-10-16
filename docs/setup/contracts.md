@@ -81,12 +81,33 @@ The report deploys a benchmark-only contract suite and records gas for:
 - `ActorRegistry` mutating calls: `registerActor`, `setActorWallet`,
   `setProxy`.
 - `MarketController` mutating calls: `setMarketStatus`.
-- `OrderRegistry` mutating calls: `placeOrder`, `cancelOrder`, `updateStatus`.
+- `OrderRegistry` mutating calls: `placeOrder`, `cancelOrder`, `updateStatus`,
+  and direct `settleOrder` partial-fill/residual-consumption benchmarks.
 - `TradeSettlement` mutating calls: `settleBatch`, `submitPenalties`.
 - View-call `estimateGas` values for the read functions used by services.
 
 View functions do not consume gas when called off-chain; they are included as
 estimates for completeness.
+
+Settlement is measured for standard matches and buyer-only, seller-only and
+reciprocal preferred matches, at batch sizes `1,2,5` by default. Override them
+through Compose with, for example:
+
+```bash
+GAS_REPORT_SETTLE_BATCH_SIZES=1,2,5,10 ./scripts/contracts.sh local gas-report
+```
+
+Each match consumes a 100000 bid against a 150000 offer at price 12000 and
+registers a 50000 residual offer. Preferred cases use equal effective rates;
+the non-preferring side in a one-sided case falls back to its normal rate.
+All cases use unique orders; prerequisite placements are recorded separately.
+Batch-size comparisons include storage and calldata costs, not only match-type
+validation. Direct `settleOrder` rows are isolated benchmarks: production
+`settleBatch` measurements already include those internal calls.
+
+The script deploys a separate benchmark suite and does not update
+`addresses.env`. Report totals include fixture preparation and every alternative
+benchmark, not one production workflow. Local gas fees are not EWC/Volta quotes.
 
 ## Committed Gas Reports
 
@@ -96,8 +117,8 @@ documentation artifacts:
 | Target | Report | Notes |
 |---|---|---|
 | Local Anvil | `contracts-output/gas-report.md` | Baseline local benchmark run. |
-| Energy Web Volta Testnet | `contracts-output/volta-gas-report.md` | Remote testnet benchmark run; values depend on Volta gas price at execution time. |
-| Energy Web Chain | `contracts-output/ewc-gas-report.md` | Remote mainnet benchmark run; values depend on EWC gas price at execution time. |
+| Energy Web Volta Testnet | `contracts-output/volta-gas-report.md` | Historical snapshot predating DD-442; not updated for match-type validation or atomic residual settlement. |
+| Energy Web Chain | `contracts-output/ewc-gas-report.md` | Historical snapshot predating DD-442; not updated for match-type validation or atomic residual settlement. |
 
 Generated address files and JSON reports are intentionally left untracked. They
 remain useful locally, but they are environment-specific execution artifacts
@@ -168,5 +189,6 @@ consume real EWT on Energy Web Chain.
 | `CONTRACTS_ENV_PATH` | Container path for generated address env file. Defaults to `/contracts/addresses.env`. |
 | `GAS_REPORT_PATH` | Container path for Markdown gas report. Defaults to `/contracts/gas-report.md`. |
 | `GAS_REPORT_JSON_PATH` | Container path for JSON gas report. Defaults to `/contracts/gas-report.json`. |
+| `GAS_REPORT_SETTLE_BATCH_SIZES` | Comma-separated positive integers for standard and preferred batch benchmarks. Defaults to `1,2,5`. |
 
 All `/contracts/...` paths are persisted on the host under `contracts-output/`.

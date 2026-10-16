@@ -13,7 +13,7 @@ import {
 
 describe("TradeSettlement", function () {
   // Clearing status enum values (adjust if your contract defines them differently)
-  const CLEARING_STATUS_FINAL = 0;
+  const CLEARING_STATUS_FINAL = 1;
 
   async function deploySettlementFixture() {
     const [admin, buyer, seller, operator, executionEngine] =
@@ -116,6 +116,157 @@ describe("TradeSettlement", function () {
     };
   }
 
+  it("Should expose the match type in settlement calldata", async function () {
+    const factory = await ethers.getContractFactory("TradeSettlement");
+    const fields = factory.interface.getFunction("settleBatch")!
+      .inputs[0].arrayChildren!.components![0].arrayChildren!.components!;
+    expect(fields.map((field) => field.name)).to.deep.equal([
+      "tradeId", "bid", "offer", "residualBidId", "residualOfferId",
+      "selectedEnergy", "clearingPrice", "matchType",
+    ]);
+    expect(fields[7].type).to.equal("uint8");
+  });
+
+  for (const [bidPartner, offerPartner, eligible] of [
+    ["none", "none", false],
+    ["counterparty", "none", true],
+    ["none", "counterparty", true],
+    ["counterparty", "counterparty", true],
+    ["other", "none", false],
+    ["none", "other", false],
+    ["counterparty", "other", false],
+    ["other", "counterparty", false],
+    ["order-id", "counterparty", false],
+    ["counterparty", "order-id", false],
+  ] as const) {
+    it(`Should validate preferred counterparties: ${bidPartner}/${offerPartner}`, async function () {
+      const { settlement, registry, buyer, seller, operator, bid: originalBid, offer: originalOffer } =
+        await loadFixture(deploySettlementFixture);
+      const bid = { ...originalBid };
+      const offer = { ...originalOffer };
+      const partner = (kind: string, counterparty: typeof bid) =>
+        kind === "none" ? ZERO_BYTES16
+          : kind === "counterparty" ? counterparty.createdBy
+          : kind === "order-id" ? counterparty.orderId
+          : bytes16Id("unavailable-partner");
+      bid.preferredTradingPartner = partner(bidPartner, offer);
+      offer.preferredTradingPartner = partner(offerPartner, bid);
+      bid.preferredEnergyRate = offer.preferredEnergyRate = 45;
+      await registry.connect(buyer).placeOrder(bid);
+      await registry.connect(seller).placeOrder(offer);
+      const matchData = {
+        tradeId: bytes16Id("partner-validation"),
+        bid, offer,
+        residualBidId: ZERO_BYTES16, residualOfferId: ZERO_BYTES16,
+        selectedEnergy: 100, clearingPrice: 45, matchType: 1,
+      };
+      if (eligible) {
+        await expect(settlement.connect(operator).settleBatch(asMarketBatch([matchData])))
+          .to.emit(settlement, "TradeSettled");
+      } else {
+        await expect(settlement.connect(operator).settleBatch(asMarketBatch([matchData])))
+          .to.be.revertedWithCustomError(settlement, "InvalidPreferredPartner");
+        expect(await registry.getStatus(bid.orderId)).to.equal(1);
+        expect(await registry.getStatus(offer.orderId)).to.equal(1);
+        // Preferences are not exclusive restrictions on standard matching.
+        await expect(settlement.connect(operator).settleBatch(asMarketBatch([{ ...matchData, matchType: 0 }])))
+          .to.emit(settlement, "TradeSettled");
+      }
+    });
+  }
+
+  for (const [name, bidRate, offerRate, bidPreferred, offerPreferred, price, valid] of [
+    ["equal preferred rates", 50, 40, 45, 45, 45, true],
+    ["absent offer preferred rate", 50, 45, 45, 0, 45, true],
+    ["absent bid preferred rate", 45, 40, 0, 45, 45, true],
+    ["both preferred rates absent", 45, 45, 0, 0, 45, true],
+    ["below normal offer limit", 50, 40, 30, 30, 30, true],
+    ["above normal bid limit", 50, 40, 60, 60, 60, true],
+    ["unequal preferred rates at bid quote", 50, 40, 45, 42, 45, true],
+    ["unequal preferred rates at offer quote", 50, 40, 45, 42, 42, true],
+    ["unequal preferred rates at interior price", 50, 40, 45, 42, 43, true],
+    ["unequal fallback rates", 50, 40, 0, 0, 50, true],
+    ["unequal offer fallback rate", 50, 40, 45, 0, 45, true],
+    ["unequal bid fallback rate", 50, 40, 0, 45, 50, true],
+    ["crossed normal limits with compatible preferred rates", 35, 55, 50, 40, 50, true],
+    ["below preferred offer limit", 50, 40, 45, 42, 41, false],
+    ["above preferred bid limit", 50, 40, 45, 42, 46, false],
+    ["incompatible preferred rates", 50, 40, 42, 45, 43, false],
+    ["incorrect settlement price", 50, 40, 45, 45, 44, false],
+  ] as const) {
+    it(`Should validate preferred prices: ${name}`, async function () {
+      const { settlement, registry, buyer, seller, operator, bid: originalBid, offer: originalOffer } =
+        await loadFixture(deploySettlementFixture);
+      const bid = { ...originalBid };
+      const offer = { ...originalOffer };
+      bid.energyRate = bidRate;
+      offer.energyRate = offerRate;
+      bid.preferredEnergyRate = bidPreferred;
+      offer.preferredEnergyRate = offerPreferred;
+      offer.preferredTradingPartner = bid.createdBy;
+      await registry.connect(buyer).placeOrder(bid);
+      await registry.connect(seller).placeOrder(offer);
+      const matchData = {
+        tradeId: bytes16Id("price-validation"),
+        bid, offer,
+        residualBidId: ZERO_BYTES16, residualOfferId: ZERO_BYTES16,
+        selectedEnergy: 100, clearingPrice: price, matchType: 1,
+      };
+      if (price < offerRate || price > bidRate) {
+        await expect(settlement.connect(operator).settleBatch(asMarketBatch([{ ...matchData, matchType: 0 }])))
+          .to.be.revertedWithCustomError(settlement, "PriceMismatch");
+      }
+      if (valid) {
+        await expect(settlement.connect(operator).settleBatch(asMarketBatch([matchData])))
+          .to.emit(settlement, "TradeSettled");
+      } else {
+        await expect(settlement.connect(operator).settleBatch(asMarketBatch([matchData])))
+          .to.be.revertedWithCustomError(settlement, "PriceMismatch");
+        expect(await registry.getStatus(bid.orderId)).to.equal(1);
+        expect(await registry.getStatus(offer.orderId)).to.equal(1);
+        await expect(settlement.connect(operator).settleBatch(asMarketBatch([{ ...matchData, matchType: 0 }])))
+          .to.emit(settlement, "TradeSettled");
+      }
+    });
+  }
+
+  for (const matchType of [0, 1]) {
+    it(`Should reject self-trades for match type ${matchType}`, async function () {
+      const { settlement, registry, buyer, operator, bid, offer: originalOffer } =
+        await loadFixture(deploySettlementFixture);
+      bid.preferredTradingPartner = bid.createdBy;
+      const offer = {
+        ...originalOffer,
+        createdBy: bid.createdBy,
+        preferredTradingPartner: bid.createdBy,
+        preferredEnergyRate: bid.preferredEnergyRate,
+      };
+      await registry.connect(buyer).placeOrder(bid);
+      await registry.connect(buyer).placeOrder(offer);
+      await expect(settlement.connect(operator).settleBatch(asMarketBatch([{
+        tradeId: bytes16Id("self-trade"), bid, offer,
+        residualBidId: ZERO_BYTES16, residualOfferId: ZERO_BYTES16,
+        selectedEnergy: 100, clearingPrice: 45, matchType,
+      }]))).to.be.revertedWithCustomError(settlement, "InvalidOrderParams");
+      expect(await registry.getStatus(bid.orderId)).to.equal(1);
+      expect(await registry.getStatus(offer.orderId)).to.equal(1);
+    });
+  }
+
+  it("Should reject an unknown match type", async function () {
+    const { settlement, registry, buyer, seller, operator, bid, offer } =
+      await loadFixture(deploySettlementFixture);
+    await registry.connect(buyer).placeOrder(bid);
+    await registry.connect(seller).placeOrder(offer);
+    await expect(settlement.connect(operator).settleBatch(asMarketBatch([{
+      tradeId: bytes16Id("invalid-match-type"), bid, offer,
+      residualBidId: ZERO_BYTES16, residualOfferId: ZERO_BYTES16,
+      selectedEnergy: 100, clearingPrice: 45, matchType: 2,
+    }]))).to.be.reverted;
+    expect(await registry.getStatus(bid.orderId)).to.equal(1);
+    expect(await registry.getStatus(offer.orderId)).to.equal(1);
+  });
+
   it("Should settle a valid trade", async function () {
     const {
       settlement,
@@ -142,6 +293,7 @@ describe("TradeSettlement", function () {
       residualOfferId: ZERO_BYTES16,
       selectedEnergy: 100,
       clearingPrice: 45,
+      matchType: 0,
     };
 
     const settlementBatch = {
@@ -193,6 +345,7 @@ describe("TradeSettlement", function () {
       residualOfferId: ZERO_BYTES16,
       selectedEnergy: 100,
       clearingPrice: 45,
+      matchType: 0,
     };
 
     const clearingResult = makeClearingResult();
@@ -234,6 +387,7 @@ describe("TradeSettlement", function () {
       residualOfferId: ZERO_BYTES16,
       selectedEnergy: 100,
       clearingPrice: 45,
+      matchType: 0,
     };
 
     const settlementBatch = {
@@ -275,6 +429,7 @@ describe("TradeSettlement", function () {
       residualOfferId,
       selectedEnergy: 100,
       clearingPrice: 45,
+      matchType: 0,
     };
 
     const settlementBatch = {
@@ -344,6 +499,7 @@ describe("TradeSettlement", function () {
           residualOfferId: side === "offer" ? residual.orderId : ZERO_BYTES16,
           selectedEnergy: 100,
           clearingPrice: 45,
+          matchType: 0,
         };
         const second = {
           ...first,
@@ -396,6 +552,7 @@ describe("TradeSettlement", function () {
         residualOfferId: bytes16Id("residual-offer"),
         selectedEnergy: 50,
         clearingPrice: 45,
+        matchType: 0,
       };
       if (invalid === "missing") matchData.residualOfferId = ZERO_BYTES16;
       if (invalid === "unexpected") matchData.selectedEnergy = 100;
@@ -510,6 +667,7 @@ describe("TradeSettlement", function () {
       residualOfferId: ZERO_BYTES16,
       selectedEnergy: 100,
       clearingPrice: 45,
+      matchType: 0,
     };
 
     const settlementBatch = {
@@ -538,6 +696,7 @@ describe("TradeSettlement", function () {
       residualOfferId: ZERO_BYTES16,
       selectedEnergy: 100,
       clearingPrice: 45,
+      matchType: 0,
     };
 
     const settlementBatch = {
@@ -578,6 +737,7 @@ describe("TradeSettlement", function () {
           residualOfferId: ZERO_BYTES16,
           selectedEnergy: 100,
           clearingPrice: 45,
+          matchType: 0,
         };
 
         const settlementBatch = {
@@ -610,6 +770,7 @@ describe("TradeSettlement", function () {
       residualOfferId: ZERO_BYTES16,
       selectedEnergy: 100,
       clearingPrice: 55,
+      matchType: 0,
     };
 
     const settlementBatch = {
