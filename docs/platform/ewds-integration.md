@@ -48,7 +48,7 @@ Provider: `gsy-offchain-storage` (`gsy-offchain-storage/src/startup.rs`)
 |---|---|---|---|
 | `/health_check` | `GET` | compose healthcheck, tests | `http://gsy-offchain-storage:8080` |
 | `/orders` | `GET` | matching engine, e2e tests | `http://gsy-offchain-storage:8080/orders` |
-| `/orders` | `POST` | e2e tests/internal tooling | `http://gsy-offchain-storage:8080/orders` |
+| `/orders`, `/orders-normalized` | `POST` | API integration tests/manual tooling; not used by E2E scenarios or production order lifecycle | `http://gsy-offchain-storage:8080` |
 | `/trades` | `GET` | execution engine, e2e tests | `http://gsy-offchain-storage:8080/trades` |
 | `/trades` | `POST` | e2e tests/internal tooling | `http://gsy-offchain-storage:8080/trades` |
 | `/communities` | `GET/POST` | market orchestrator, pilot sites, e2e tests | `http://gsy-offchain-storage:8080/communities` |
@@ -261,22 +261,25 @@ returns (`int.order.event.v1.json`):
 | `orderStatus` | Must be `submitted`. |
 | `quantity` | Greater than 0, in kWh. |
 | `priceLimit` | 0 or more, in EUR/kWh. |
-| `preferredTradingPartner` | The partner's off-chain ID, resolved like `createdBy`. A requirement for bids and an attribute for offers. |
+| `preferredTradingPartner` | The partner's off-chain ID, resolved like `createdBy`. Stored in requirements for both bids and offers. |
 | `updatedAt`, `rejectReason` | Ignored. |
 
 Handling rules:
 
 - One invalid order rejects the whole event before anything is sent: parsing,
   the rules above and resolving the IDs all have to pass.
-- The orders are then sent one at a time. The community client doesn't wait
-  for the transactions to be mined:
+- The orders are then sent one at a time. The community client waits for
+  each mined receipt and requires status `1` before confirming placement:
   - An order whose ID is already on-chain (`getStatus`) is skipped.
   - An order the contract would reject (`MarketClosed`, `Unauthorized`,
     `InvalidOrderParams`, `OrderAlreadyExists`) is caught when the node
     estimates gas. It is logged with `eventId`, `orderId` and the reason and
     not sent, and the remaining orders are still sent.
   - A revert that only happens in the mined transaction, e.g. because the
-    market closed in between, is not noticed.
+    market closed in between, is also logged as a rejection. If the order
+    was already placed by an earlier transaction, it is skipped instead.
+  - Missing receipts or receipt status, and RPC failures, are unknown
+    outcomes, not rejections, and follow the existing transport retry path.
   - Transport errors are tried up to three times in a row. If an order still
     can't be sent, the event fails after the other orders were sent, and the
     community client retries it like the off-chain storage retries its events
@@ -287,11 +290,59 @@ Handling rules:
 - Resending an event, even under a new `eventId`, doesn't place an order
   twice. A resend while the first transaction is still pending sends the
   order again, but that duplicate reverts with `OrderAlreadyExists`.
-- FOS gets no feedback on rejected orders. It sees placed orders through
-  `orders.query` and their trades through `trade.event`.
+- Definite contract rejections are reported through `orderStatus.event`.
+  FOS sees placed orders through `orders.query` and `orderStatus.event`, and
+  their trades through `trade.event`.
 - `placeOrder` only accepts an order if the community client's wallet is
   authorized for the actor in the `ActorRegistry`. Registering it is up to
   whoever publishes the orders.
+
+##### Order Status Notification Contract
+
+The same `order` topic (`EWDS_ORDER_EVENT_TOPIC`, `orderTest` in E2E) also
+accepts `orderStatus.event`. Both event types use the existing envelope and
+a list of `EwdsOrderDto` records; no additional topic or direction field is
+needed. Consumers must dispatch by `eventType`, not `orderStatus`:
+
+- `order.event`: FOS submits orders; the community client processes them.
+- `orderStatus.event`: DEX reports statuses to FOS; the community client
+  ignores these messages, including notifications with status `submitted`.
+
+Off-chain storage publishes confirmed `submitted`, `partially_filled`, `filled`,
+`cancelled`, `expired` and `executed` snapshots after the listener's database
+writes succeed. `updatedAt` carries the persisted status-change timestamp;
+`occurredAt` is the latest such timestamp in the batch. A residual is a separate
+`submitted` order, not an update to the consumed order. Market closure notifies
+only orders newly expired in that market. HTTP POST endpoints do not emit these
+notifications. Publication uses the existing `EWDS_ENABLE_HANDLER` gate, so
+HTTP-only operation with the handler disabled remains local.
+
+The existing background publisher retries gateway failures but has no durable
+outbox or delivery-order guarantee. Replayed listener events may notify again;
+consumers must tolerate duplicates and must not assume arrival order. Query
+`orders.query` when reconciling the current state of stored orders.
+
+The community client reports a contract rejection during gas estimation or a
+failed mined receipt as `rejected`, with `rejectReason`. It preserves the
+original submission's IDs and fields; `updatedAt` and `occurredAt` identify when
+the rejection was observed. It does not create a rejected database order.
+Successful placements and `OrderAlreadyExists` produce no rejection; transport
+failures or unknown transaction outcomes remain retryable, not rejected.
+Rejection publication uses the existing EWDS send retries, capped at 60 seconds
+including an unresponsive gateway. A final publication failure is logged, but
+does not itself cause order placement to be retried or prevent the remaining
+orders in the batch from being processed.
+There is no durable rejection outbox, so delivery is best effort.
+
+Validation-error notifications are outside DD-423: malformed submissions
+may lack the fields needed for a valid order-status snapshot. They retain the
+existing batch validation and retry/drop behavior, with errors logged but no
+rejection messages. A separate message-format decision is needed to report them.
+
+FOS must use its own consumer client ID, distinct from the community client.
+Consumers sharing a topic must not share a polling cursor. Before enabling
+publication, update the configured order topic's schema to the expanded
+`int.order.event.v1.json`, which accepts both event types.
 
 ### Query Payload Fields
 

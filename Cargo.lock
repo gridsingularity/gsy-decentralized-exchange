@@ -2395,6 +2395,7 @@ dependencies = [
  "ethers",
  "futures",
  "gsy-ethers-listener",
+ "gsy-execution-engine",
  "hex",
  "mongodb",
  "once_cell",
@@ -2404,7 +2405,6 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
- "tokio_schedule",
  "tracing",
  "tracing-actix-web",
  "uuid 1.26.0",
@@ -3572,7 +3572,7 @@ dependencies = [
  "percent-encoding",
  "rand 0.9.5",
  "rustc_version_runtime",
- "rustls 0.23.45",
+ "rustls 0.23.46",
  "serde",
  "serde_bytes",
  "serde_with",
@@ -4663,9 +4663,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.45"
+version = "0.23.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
+checksum = "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf"
 dependencies = [
  "log",
  "once_cell",
@@ -5697,7 +5697,7 @@ version = "0.26.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1729aa945f29d91ba541258c8df89027d5792d85a8841fb65e8bf0f4ede4ef61"
 dependencies = [
- "rustls 0.23.45",
+ "rustls 0.23.46",
  "tokio",
 ]
 
@@ -5729,16 +5729,6 @@ dependencies = [
  "futures-util",
  "libc",
  "pin-project-lite",
- "tokio",
-]
-
-[[package]]
-name = "tokio_schedule"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61c291c554da3518d6ef69c76ea35aabc78f736185a16b6017f6d1c224dac2e0"
-dependencies = [
- "chrono",
  "tokio",
 ]
 

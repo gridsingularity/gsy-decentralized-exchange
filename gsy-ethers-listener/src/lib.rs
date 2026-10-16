@@ -14,6 +14,7 @@ abigen!(
         event OrderCancelled(bytes16 indexed orderId)
         event OrderStatusUpdated(bytes16 indexed orderId, uint8 status)
         event TradeSettled(bytes16 indexed tradeId, bytes16 indexed bidId, bytes16 indexed offerId, bytes16 buyerId, bytes16 sellerId, bytes16 marketId, uint64 timeSlot, bytes16 residualBidId, bytes16 residualOfferId, uint256 energy, uint256 price)
+        event DeliveryVerified(bytes16 indexed tradeId, bytes16 indexed bidId, bytes16 indexed offerId)
         event MarketStatusUpdated(bytes16 indexed marketId, bool isOpen)
         event MarketClearing(bytes16 indexed marketId, uint8 clearingStatus, uint256 clearingPrice, uint256 totalSupply, uint256 totalDemand, uint256 tradedQuantity, uint32 numTrades)
     ]"#
@@ -30,10 +31,31 @@ pub struct ListenerConfig {
 #[async_trait]
 pub trait GsyEventHandler: Send + Sync + 'static {
     // *Filter types are automatically generated from the ABI based on the event name.
-    async fn handle_order_placed(&self, event: OrderPlacedFilter) -> Result<()>;
-    async fn handle_order_cancelled(&self, event: OrderCancelledFilter) -> Result<()>;
-    async fn handle_trade_settled(&self, event: TradeSettledFilter) -> Result<()>;
-    async fn handle_market_status(&self, event: MarketStatusUpdatedFilter) -> Result<()>;
+    async fn handle_order_placed(
+        &self,
+        event: OrderPlacedFilter,
+        block_timestamp: u64,
+    ) -> Result<()>;
+    async fn handle_order_cancelled(
+        &self,
+        event: OrderCancelledFilter,
+        block_timestamp: u64,
+    ) -> Result<()>;
+    async fn handle_trade_settled(
+        &self,
+        event: TradeSettledFilter,
+        block_timestamp: u64,
+    ) -> Result<()>;
+    async fn handle_market_status(
+        &self,
+        event: MarketStatusUpdatedFilter,
+        block_timestamp: u64,
+    ) -> Result<()>;
+    async fn handle_delivery_verified(
+        &self,
+        event: DeliveryVerifiedFilter,
+        block_timestamp: u64,
+    ) -> Result<()>;
     async fn handle_market_clearing(
         &self,
         event: MarketClearingFilter,
@@ -83,12 +105,13 @@ impl<H: GsyEventHandler> GsyEthersListener<H> {
                 OrderPlacedFilter::signature(),
                 OrderCancelledFilter::signature(),
                 TradeSettledFilter::signature(),
+                DeliveryVerifiedFilter::signature(),
                 MarketStatusUpdatedFilter::signature(),
                 MarketClearingFilter::signature(),
             ]);
         let mut stream = provider.subscribe_logs(&filter).await?;
 
-        // All clearing events in one block share its timestamp.
+        // All events in one block share its timestamp.
         let mut last_block_timestamp: Option<(H256, u64)> = None;
 
         info!("GSy Ethers Listener started. Waiting for events...");
@@ -105,19 +128,66 @@ impl<H: GsyEventHandler> GsyEthersListener<H> {
                     if log.address == self.config.order_registry_address =>
                 {
                     info!("Detected OrderPlaced: {:?}", hex::encode(event.order_id));
-                    self.handler.handle_order_placed(event).await
+                    match fetch_block_timestamp(
+                        &provider,
+                        LogMeta::from(&log).block_hash,
+                        &mut last_block_timestamp,
+                    )
+                    .await
+                    {
+                        Ok(timestamp) => self.handler.handle_order_placed(event, timestamp).await,
+                        Err(error) => Err(error),
+                    }
                 }
                 GsyContractsEvents::OrderCancelledFilter(event)
                     if log.address == self.config.order_registry_address =>
                 {
                     info!("Detected OrderCancelled: {:?}", hex::encode(event.order_id));
-                    self.handler.handle_order_cancelled(event).await
+                    match fetch_block_timestamp(
+                        &provider,
+                        LogMeta::from(&log).block_hash,
+                        &mut last_block_timestamp,
+                    )
+                    .await
+                    {
+                        Ok(timestamp) => {
+                            self.handler.handle_order_cancelled(event, timestamp).await
+                        }
+                        Err(error) => Err(error),
+                    }
                 }
                 GsyContractsEvents::TradeSettledFilter(event)
                     if log.address == self.config.trade_settlement_address =>
                 {
                     info!("Detected TradeSettled: {:?}", hex::encode(event.trade_id));
-                    self.handler.handle_trade_settled(event).await
+                    match fetch_block_timestamp(
+                        &provider,
+                        LogMeta::from(&log).block_hash,
+                        &mut last_block_timestamp,
+                    )
+                    .await
+                    {
+                        Ok(timestamp) => self.handler.handle_trade_settled(event, timestamp).await,
+                        Err(error) => Err(error),
+                    }
+                }
+                GsyContractsEvents::DeliveryVerifiedFilter(event)
+                    if log.address == self.config.trade_settlement_address =>
+                {
+                    match fetch_block_timestamp(
+                        &provider,
+                        LogMeta::from(&log).block_hash,
+                        &mut last_block_timestamp,
+                    )
+                    .await
+                    {
+                        Ok(timestamp) => {
+                            self.handler
+                                .handle_delivery_verified(event, timestamp)
+                                .await
+                        }
+                        Err(error) => Err(error),
+                    }
                 }
                 GsyContractsEvents::MarketStatusUpdatedFilter(event)
                     if log.address == self.config.market_controller_address =>
@@ -126,22 +196,30 @@ impl<H: GsyEventHandler> GsyEthersListener<H> {
                         "Detected MarketStatusUpdated: {:?}",
                         hex::encode(event.market_id)
                     );
-                    self.handler.handle_market_status(event).await
+                    match fetch_block_timestamp(
+                        &provider,
+                        LogMeta::from(&log).block_hash,
+                        &mut last_block_timestamp,
+                    )
+                    .await
+                    {
+                        Ok(timestamp) => self.handler.handle_market_status(event, timestamp).await,
+                        Err(error) => Err(error),
+                    }
                 }
                 GsyContractsEvents::MarketClearingFilter(event)
                     if log.address == self.config.trade_settlement_address =>
                 {
                     info!("Detected MarketClearing: {:?}", hex::encode(event.market_id));
                     let meta = LogMeta::from(&log);
-                    let block_timestamp = match last_block_timestamp {
-                        Some((block_hash, timestamp)) if block_hash == meta.block_hash => {
-                            Ok(timestamp)
-                        }
-                        _ => fetch_block_timestamp(&provider, meta.block_hash).await,
-                    };
-                    match block_timestamp {
+                    match fetch_block_timestamp(
+                        &provider,
+                        meta.block_hash,
+                        &mut last_block_timestamp,
+                    )
+                    .await
+                    {
                         Ok(timestamp) => {
-                            last_block_timestamp = Some((meta.block_hash, timestamp));
                             self.handler
                                 .handle_market_clearing(event, meta, timestamp)
                                 .await
@@ -159,10 +237,21 @@ impl<H: GsyEventHandler> GsyEthersListener<H> {
     }
 }
 
-async fn fetch_block_timestamp(client: &Provider<Ws>, block_hash: H256) -> Result<u64> {
+async fn fetch_block_timestamp(
+    client: &Provider<Ws>,
+    block_hash: H256,
+    last_block_timestamp: &mut Option<(H256, u64)>,
+) -> Result<u64> {
+    if let Some((cached_hash, timestamp)) = *last_block_timestamp {
+        if cached_hash == block_hash {
+            return Ok(timestamp);
+        }
+    }
     let block = client
         .get_block(block_hash)
         .await?
         .ok_or_else(|| anyhow!("Block {:?} not found", block_hash))?;
-    Ok(block.timestamp.as_u64())
+    let timestamp = block.timestamp.as_u64();
+    *last_block_timestamp = Some((block_hash, timestamp));
+    Ok(timestamp)
 }

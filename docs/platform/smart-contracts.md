@@ -111,6 +111,7 @@ Purpose:
 - Stores market open/closed state keyed by `marketId`.
 - Exposes `setMarketStatus(bytes16,bool)` and `isMarketOpen(bytes16)`.
 - Restricts updates to `ORCHESTRATOR_ROLE`.
+- Tracks each market opening so orders from a previous opening cannot be reused.
 
 ### `OrderRegistry`
 
@@ -124,15 +125,41 @@ Purpose:
 - Emits the complete order metadata in `OrderPlaced`, allowing the event
   listener to reconstruct the off-chain order without a separate update.
 - Emits `OrderCancelled` and `OrderStatusUpdated` lifecycle events.
+- Both `getStatus` and `orderStatus` derive `Expired` for an open order whose
+  market is closed or has since reopened. This includes residuals. Settlement
+  and cancellation reject these orders; consumed statuses remain unchanged.
+  Expiry requires no per-order transaction or `OrderStatusUpdated` event:
+  storage indexes it from `MarketStatusUpdated(marketId, false)`.
+
+This change appends market/order opening counters and preserves the existing
+storage slots and status getter ABI. Deploy/upgrade `MarketController` before
+`OrderRegistry`, with market/order activity paused during the upgrade. Counters
+start tracking on upgrade; historical closures are not backfilled. Reconcile
+legacy closed-market records before resuming, especially if those markets had
+already reopened before the upgrade.
 
 ### `TradeSettlement`
 
 Purpose:
 
 - Validates and settles matched trades (`settleBatch`).
-- Updates order statuses to executed.
+- Marks consumed orders `Filled` or `PartiallyFilled` and registers residuals as
+  separate `Open` orders. Existing status enum values are preserved; the appended
+  values are `PartiallyFilled = 5` and `Filled = 6`.
 - Emits all settlement data needed by off-chain storage to create a Trade object.
 - Records penalties via `submitPenalties`.
+- Stores the consumed order IDs for each new settlement; trade IDs cannot be reused.
+- Accepts idempotent `completeDeliveryVerification` batches from
+  `EXECUTION_ENGINE_ROLE`. Penalties and `Executed` order statuses are recorded
+  in the same transaction, followed by `DeliveryVerified(tradeId,bidId,offerId)`.
+  It trusts the engine's off-chain measurement verdict; no meter data is verified
+  inside the contract. Residual orders are not completed by their parent's verdict.
+
+Verification storage is appended without changing existing proxy slots. Upgrade
+`OrderRegistry` before `TradeSettlement`, then deploy the updated execution engine
+and listener. Trades settled before this upgrade have no stored order-ID linkage
+and cannot use the new completion call without a separate audited migration.
+No historical records or verdicts are fabricated/backfilled automatically.
 
 `TradeSettlement` does not move funds. Billing and payment are handled by external services.
 
@@ -168,7 +195,8 @@ Deployment script assigns:
 - Price window consistency (`bid >= clearing price >= offer`).
 - Selected energy does not exceed available bid/offer energy.
 
-If checks pass, settlement marks orders executed and emits `TradeSettled`.
+If checks pass, settlement marks consumed orders `Filled`/`PartiallyFilled` and
+emits `TradeSettled`. `Executed` is reserved for subsequent delivery verification.
 
 ## Penalty Persistence
 
@@ -176,5 +204,9 @@ If checks pass, settlement marks orders executed and emits `TradeSettled`.
 
 - `penaltyEnergyByTrade[tradeId]`
 - `penaltyEnergyByActor[actorId]`
+- `penaltyEnergyByTradeAndActor[tradeId][actorId]`
 
-Off-chain execution logic checks existing on-chain penalty values to skip already submitted trades.
+The legacy penalty call remains available but cannot add penalties to verified
+trades. The execution engine now uses atomic verification instead. Verification
+reuses an exactly matching per-actor penalty, rejects conflicting totals, and
+never records penalties twice for a repeated verdict.

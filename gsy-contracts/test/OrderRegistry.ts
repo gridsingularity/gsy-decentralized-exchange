@@ -114,6 +114,70 @@ describe("OrderRegistry", function () {
     );
   });
 
+  it("Should expire only open orders in the closed market, not at delivery time", async function () {
+    const { registry, controller, user, baseOrder, marketId } =
+      await loadFixture(deployRegistryFixture);
+    const otherOrder = { ...baseOrder, orderId: bytes16Id("other-order"), marketId: bytes16Id("other-market") };
+    await controller.setMarketStatus(otherOrder.marketId, true);
+    await registry.connect(user).placeOrder(baseOrder);
+    await registry.connect(user).placeOrder(otherOrder);
+    expect((await ethers.provider.getBlock("latest"))!.timestamp).to.be.greaterThan(baseOrder.timeSlot);
+    expect(await registry.getStatus(baseOrder.orderId)).to.equal(1); // Open
+
+    await controller.setMarketStatus(marketId, false);
+    expect(await registry.getStatus(baseOrder.orderId)).to.equal(4); // Expired
+    expect(await registry.orderStatus(baseOrder.orderId)).to.equal(4);
+    expect(await registry.getStatus(otherOrder.orderId)).to.equal(1);
+    expect(await registry.getStatus(bytes16Id("unknown"))).to.equal(0);
+    await expect(registry.connect(user).cancelOrder(baseOrder))
+      .to.be.revertedWithCustomError(registry, "OrderNotOpen");
+  });
+
+  it("Should keep old orders expired after reopening while accepting new orders", async function () {
+    const { registry, controller, user, baseOrder, marketId } =
+      await loadFixture(deployRegistryFixture);
+    await registry.connect(user).placeOrder(baseOrder);
+    await controller.setMarketStatus(marketId, false);
+    await controller.setMarketStatus(marketId, true);
+    expect(await registry.getStatus(baseOrder.orderId)).to.equal(4);
+    expect(await registry.orderStatus(baseOrder.orderId)).to.equal(4);
+
+    await registry.grantRole(await registry.SETTLEMENT_ROLE(), user.address);
+    await expect(registry.connect(user).settleOrder(baseOrder.orderId, baseOrder.energy, ZERO_BYTES16))
+      .to.be.revertedWithCustomError(registry, "OrderNotOpen");
+    await expect(registry.connect(user).placeOrder(baseOrder))
+      .to.be.revertedWithCustomError(registry, "OrderAlreadyExists");
+
+    const newOrder = { ...baseOrder, orderId: bytes16Id("new-order") };
+    await registry.connect(user).placeOrder(newOrder);
+    expect(await registry.getStatus(newOrder.orderId)).to.equal(1);
+    await controller.setMarketStatus(marketId, false);
+    expect(await registry.getStatus(newOrder.orderId)).to.equal(4);
+  });
+
+  for (const isBid of [true, false]) {
+    it(`Should expire a residual ${isBid ? "bid" : "offer"} without changing consumed or cancelled orders`, async function () {
+      const { registry, controller, user, baseOrder, marketId } =
+        await loadFixture(deployRegistryFixture);
+      await registry.grantRole(await registry.SETTLEMENT_ROLE(), user.address);
+      const partial = { ...baseOrder, isBid };
+      const filled = { ...baseOrder, orderId: bytes16Id("filled") };
+      const cancelled = { ...baseOrder, orderId: bytes16Id("cancelled") };
+      for (const order of [partial, filled, cancelled]) {
+        await registry.connect(user).placeOrder(order);
+      }
+      const residualId = bytes16Id("residual");
+      await registry.connect(user).settleOrder(partial.orderId, 40, residualId);
+      await registry.connect(user).settleOrder(filled.orderId, 100, ZERO_BYTES16);
+      await registry.connect(user).cancelOrder(cancelled);
+      await controller.setMarketStatus(marketId, false);
+      expect(await registry.getStatus(partial.orderId)).to.equal(5); // PartiallyFilled
+      expect(await registry.getStatus(filled.orderId)).to.equal(6); // Filled
+      expect(await registry.getStatus(cancelled.orderId)).to.equal(3); // Cancelled
+      expect(await registry.getStatus(residualId)).to.equal(4);
+    });
+  }
+
   it("Should revert unauthorized proxy", async function () {
     const { registry, other, baseOrder } = await loadFixture(
       deployRegistryFixture,

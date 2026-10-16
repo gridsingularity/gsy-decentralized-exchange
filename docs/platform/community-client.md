@@ -54,17 +54,20 @@ When `EWDS_ENABLE_HANDLER` is on, the binary polls the `order` topic for `order.
    trading partners to on-chain IDs through the ID service. One invalid order
    rejects the whole event before anything is sent;
 2. sends the orders to `OrderRegistry.placeOrder` one at a time, skipping
-   orders that are already on-chain. An order the contract would reject is
-   logged and not sent, and the others are still sent.
+   orders that are already on-chain, and waits for each mined receipt.
+   Rejections during gas estimation and mined reverts are logged; the other
+   orders are still processed.
 
 An event that fails for another reason than invalid data, e.g. because the
 node or the ID service can't be reached, is retried with a growing delay
 (`EWDS_EVENT_HANDLE_ATTEMPTS`, `EWDS_EVENT_RETRY_DELAY_MS`), and later events
 wait for it.
 
-It doesn't wait for the transactions to be mined, so a revert in a mined
-transaction goes unnoticed. Each transaction takes its nonce from the pending
-transaction count. The event contract and all handling rules are in
+Only a receipt with status `1` confirms placement. A missing receipt or an
+RPC failure is an unknown outcome and remains retryable, not a rejection.
+Order persistence still belongs to the off-chain storage's EVM listener.
+Each transaction takes its nonce from the pending transaction count.
+The event contract and all handling rules are in
 [EWDS Integration](ewds-integration.md#order-events).
 
 The community client's wallet must be authorized for every actor it sends

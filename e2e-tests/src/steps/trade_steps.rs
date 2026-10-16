@@ -37,6 +37,9 @@ const COMMUNITY_TRADE_POLL_ATTEMPTS: usize = 180;
 const COMMUNITY_MATCHING_RETRIGGER_INTERVAL: usize = 30;
 const HTTP_PENALTY_POLL_ATTEMPTS: usize = 60;
 const EWDS_PENALTY_POLL_ATTEMPTS: usize = 180;
+const ORDER_STATUS_PARTIALLY_FILLED: u8 = 5;
+const ORDER_STATUS_FILLED: u8 = 6;
+const ORDER_STATUS_EXECUTED: u8 = 2;
 
 type EvmOrderParamsTuple = (
     [u8; 16],
@@ -119,6 +122,7 @@ abigen!(
     r#"[
         function penaltyEnergyByTrade(bytes16 tradeId) external view returns (uint256)
         event TradeSettled(bytes16 indexed tradeId, bytes16 indexed bidId, bytes16 indexed offerId, bytes16 buyerId, bytes16 sellerId, bytes16 marketId, uint64 timeSlot, bytes16 residualBidId, bytes16 residualOfferId, uint256 energy, uint256 price)
+        event DeliveryVerified(bytes16 indexed tradeId, bytes16 indexed bidId, bytes16 indexed offerId)
     ]"#
 );
 
@@ -221,7 +225,7 @@ fn offchain_storage_client(world: &MyWorld) -> OffchainStorageClient {
     )
 }
 
-async fn query_orders_for_market(world: &MyWorld, market_id: &str) -> Vec<DbOrderSchema> {
+pub(crate) async fn query_orders_for_market(world: &MyWorld, market_id: &str) -> Vec<DbOrderSchema> {
     let (start_time, end_time) = market_window(world);
     offchain_storage_client(world)
         .fetch_orders(market_id, start_time, end_time)
@@ -251,7 +255,7 @@ async fn query_market(world: &MyWorld, market_id: &str) -> MarketSchema {
         .expect("Failed to parse market response")
 }
 
-async fn query_market_trades(world: &MyWorld) -> Vec<DbTradeSchema> {
+pub(crate) async fn query_market_trades(world: &MyWorld) -> Vec<DbTradeSchema> {
     offchain_storage_client(world)
         .fetch_trades(Some(&market_id_as_hex(world)), None, None)
         .await
@@ -296,7 +300,7 @@ async fn wait_for_order_in_market(
     );
 }
 
-async fn place_custom_order(
+pub(crate) async fn place_custom_order(
     world: &MyWorld,
     user_name: &str,
     is_bid: bool,
@@ -715,7 +719,7 @@ async fn submit_offer(world: &mut MyWorld, user_name: String) {
 
     // Matching runs on block boundaries. Fast-forward local Anvil after both
     // orders are present in the registry.
-    mine_until_matching_block(world, 12).await;
+    mine_until_matching_block(world, matching_block_interval() as usize + 1).await;
 }
 
 // Offers name their preferred partner the same way bids do: in requirements.
@@ -898,13 +902,18 @@ async fn submit_combined_pay_as_clear_order_book(world: &mut MyWorld) {
 
 #[when(expr = "measurements for facilities are submitted")]
 async fn submit_measurements(world: &mut MyWorld) {
+    submit_measurements_with_energy(world, 12.0).await;
+}
+
+#[when(expr = "measurements of {float} energy for facilities are submitted")]
+pub(crate) async fn submit_measurements_with_energy(world: &mut MyWorld, energy: f64) {
     let adapter = AreaMarketInfoAdapter::new(Some(world.offchain_storage_url.clone()));
     let mut measurements = vec![];
     for facility in world.facilities_topology.iter() {
         measurements.push(MeasurementSchema {
             facility_id: facility.facility_id.clone(),
             community_uuid: world.community_id.clone(),
-            energy_kwh: 12.0,
+            energy_kwh: energy,
             time_slot: world.target_delivery_time,
             creation_time: 1,
         })
@@ -915,6 +924,18 @@ async fn submit_measurements(world: &mut MyWorld) {
         .forward_measurement(measurements)
         .await
         .expect("Failed to submit measurements");
+}
+
+pub(crate) async fn delivery_verification_timestamp(world: &MyWorld, trade: &DbTradeSchema) -> u64 {
+    let settlement = TradeSettlementContract::new(world.trade_settlement_address, world.provider.clone());
+    let events = settlement.event::<DeliveryVerifiedFilter>()
+        .from_block(0u64)
+        .topic1(indexed_bytes16_topic(parse_uuid_or_hex_bytes16(&trade.trade_uuid).unwrap()))
+        .query_with_meta().await.expect("Failed to query delivery verification");
+    assert_eq!(events.len(), 1, "Executed orders require exactly one verification event");
+    assert_eq!(events[0].0.bid_id, parse_uuid_or_hex_bytes16(&trade.bid_hash).unwrap());
+    assert_eq!(events[0].0.offer_id, parse_uuid_or_hex_bytes16(&trade.offer_hash).unwrap());
+    world.provider.get_block(events[0].1.block_hash).await.unwrap().unwrap().timestamp.as_u64()
 }
 
 async fn assert_trade_settled_on_chain(world: &MyWorld, trade: &DbTradeSchema) {
@@ -935,23 +956,57 @@ async fn assert_trade_settled_on_chain(world: &MyWorld, trade: &DbTradeSchema) {
         .await
         .expect("Failed to read offer status from contract");
 
-    assert_eq!(bid_status, 2u8, "Bid order is not Executed on-chain");
-    assert_eq!(offer_status, 2u8, "Offer order is not Executed on-chain");
+    assert!(
+        bid_status == ORDER_STATUS_EXECUTED || bid_status == if trade.residual_bid_id.is_some() {
+            ORDER_STATUS_PARTIALLY_FILLED
+        } else {
+            ORDER_STATUS_FILLED
+        },
+        "Unexpected settled bid status on-chain"
+    );
+    assert!(
+        offer_status == ORDER_STATUS_EXECUTED || offer_status == if trade.residual_offer_id.is_some() {
+            ORDER_STATUS_PARTIALLY_FILLED
+        } else {
+            ORDER_STATUS_FILLED
+        },
+        "Unexpected settled offer status on-chain"
+    );
+    if bid_status == ORDER_STATUS_EXECUTED || offer_status == ORDER_STATUS_EXECUTED {
+        delivery_verification_timestamp(world, trade).await;
+    }
 
+    let expected_bid_status = if trade.residual_bid_id.is_some() {
+        OrderStatus::PartiallyFilled
+    } else {
+        OrderStatus::Filled
+    };
+    let expected_offer_status = if trade.residual_offer_id.is_some() {
+        OrderStatus::PartiallyFilled
+    } else {
+        OrderStatus::Filled
+    };
     for attempt in 0..40 {
         let orders = query_orders_for_market(world, trade.market_id.as_str()).await;
-        let bid_executed = orders.iter().any(|order| {
+        let bid_settled = orders.iter().any(|order| {
             order.order_id.eq_ignore_ascii_case(trade.bid_hash.as_str())
-                && order.status == OrderStatus::Executed
+                && (order.status == expected_bid_status || order.status == OrderStatus::Executed)
         });
-        let offer_executed = orders.iter().any(|order| {
+        let offer_settled = orders.iter().any(|order| {
             order
                 .order_id
                 .eq_ignore_ascii_case(trade.offer_hash.as_str())
-                && order.status == OrderStatus::Executed
+                && (order.status == expected_offer_status || order.status == OrderStatus::Executed)
         });
 
-        if bid_executed && offer_executed {
+        if bid_settled && offer_settled {
+            for order in orders.iter().filter(|order| {
+                order.status == OrderStatus::Executed
+                    && (order.order_id.eq_ignore_ascii_case(&trade.bid_hash)
+                        || order.order_id.eq_ignore_ascii_case(&trade.offer_hash))
+            }) {
+                assert_eq!(order.status_updated_at, Some(delivery_verification_timestamp(world, trade).await));
+            }
             return;
         }
 
@@ -1073,8 +1128,24 @@ async fn verify_partner_trade(
                 .await
                 .expect("Failed to read offer status from contract");
 
-            assert_eq!(bid_status, 2u8, "Bid order is not Executed on-chain");
-            assert_eq!(offer_status, 2u8, "Offer order is not Executed on-chain");
+            assert_eq!(
+                bid_status,
+                if trade.residual_bid_id.is_some() {
+                    ORDER_STATUS_PARTIALLY_FILLED
+                } else {
+                    ORDER_STATUS_FILLED
+                },
+                "Unexpected settled bid status on-chain"
+            );
+            assert_eq!(
+                offer_status,
+                if trade.residual_offer_id.is_some() {
+                    ORDER_STATUS_PARTIALLY_FILLED
+                } else {
+                    ORDER_STATUS_FILLED
+                },
+                "Unexpected settled offer status on-chain"
+            );
             return;
         }
 
@@ -1502,11 +1573,7 @@ async fn verify_residual_lifecycle(world: &mut MyWorld, side: String, consumptio
     let mut expected = parent;
     expected.order_id = residual_id.clone();
     expected.energy_kWh = 4.0;
-    expected.status = OrderStatus::Executed;
-    assert_eq!(
-        residual, expected,
-        "Residual metadata or indexed status changed"
-    );
+    expected.status = OrderStatus::Filled;
     let residual_bytes = parse_uuid_or_hex_bytes16(&residual_id).unwrap();
     expected_params.0 = residual_bytes;
     expected_params.5 = (4.0 * NODE_FLOAT_SCALING_FACTOR) as u64;
@@ -1559,8 +1626,26 @@ async fn verify_residual_lifecycle(world: &mut MyWorld, side: String, consumptio
         };
         assert_eq!(event.residual_bid_id, expected_bid);
         assert_eq!(event.residual_offer_id, expected_offer);
+        if trade.trade_uuid == second.trade_uuid {
+            expected.status_updated_at = Some(
+                world.provider
+                    .get_block(events[0].1.block_hash)
+                    .await
+                    .expect("Failed to fetch residual settlement block")
+                    .expect("Missing residual settlement block")
+                    .timestamp.as_u64(),
+            );
+        }
         transaction_hashes.push(events[0].1.transaction_hash);
     }
+    if residual.status == OrderStatus::Executed {
+        expected.status = OrderStatus::Executed;
+        expected.status_updated_at = Some(delivery_verification_timestamp(world, &second).await);
+    }
+    assert_eq!(
+        residual, expected,
+        "Residual metadata, indexed status or settlement timestamp changed"
+    );
     assert_eq!(
         transaction_hashes[0] == transaction_hashes[1],
         !later,
@@ -1654,6 +1739,9 @@ async fn verify_penalties_on_chain(world: &mut MyWorld) {
         }
 
         if recorded_trade_ids.len() == trades.len() {
+            for trade in &trades {
+                super::lifecycle_steps::assert_trade_executed(world, trade).await;
+            }
             return;
         }
 

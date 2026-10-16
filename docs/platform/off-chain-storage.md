@@ -13,13 +13,23 @@ Backend: MongoDB (`mongo:5.0`).
    - `OrderPlaced`
    - `OrderCancelled`
    - `TradeSettled`
+   - `DeliveryVerified`
    - `MarketStatusUpdated`
 2. `OffchainStorageEvmHandler` maps event payloads into DB schemas.
 3. `gsy-offchain-storage` updates order/trade records and exposes them via REST APIs.
 
 `OrderPlaced` contains the optional order requirements (bids and offers) and
 offer attributes, so the indexed order is complete without a follow-up
-`/orders` write.
+`/orders` write. `POST /orders` and `POST /orders-normalized` remain available as
+direct database upserts, but neither is used by the E2E scenarios or production
+order lifecycle. Orders are submitted through `placeOrder` (directly or through
+the community client's EWDS subscriber), then indexed by the EVM listener.
+The POST endpoints still accept caller-supplied statuses; their ownership and
+access policy remain to be clarified. Posting trades leaves referenced orders
+unchanged; settlement updates are handled by the EVM listener.
+Restricting the order POST endpoints is a separate follow-up, not part of
+DD-423. Until then, listener ownership is the normal lifecycle path, not an
+enforced access-control boundary for those legacy write endpoints.
 
 ## HTTP API Surface
 
@@ -73,9 +83,20 @@ communities that other systems publish on the EWDS events channel, in
 the same collections (see
 [Inbound Events](ewds-integration.md#inbound-events)).
 
-## Scheduler Behavior
+## Order Expiry
 
-`expire_orders_scheduler` periodically marks stale open orders as `Expired` using `time_slot` and current time.
+The EVM listener expires `Submitted` orders when it receives a confirmed
+`MarketStatusUpdated(marketId, false)` event. Only that market's orders are
+updated, using the closure block timestamp; the delivery slot does not trigger
+expiry. This includes open residuals, but leaves consumed or cancelled orders
+unchanged. Repeated closure events preserve the original expiry timestamp, and
+reopening a market does not reactivate expired orders.
+
+The former wall-clock expiry scheduler and `scheduler_interval` setting have
+been removed. This uses the same listener in HTTP and EWDS mode; market event
+notifications are still published only when the EWDS handler is enabled.
+The listener currently has no historical replay: missed closure events require
+reconciliation/reindexing, as do other missed lifecycle events.
 
 ## Data Model Notes
 
@@ -93,7 +114,19 @@ the same collections (see
   Existing records with on-chain partner IDs must be migrated using the mapping
   collection (or reindexed after mappings are restored); they must not be used
   as off-chain inputs to create new mappings.
-- Settlement events transition order statuses to `Executed`.
+- Settlement events mark consumed orders `Filled`, or `PartiallyFilled` when a
+  residual ID is emitted. Each residual is a separate `Submitted` order; filling
+  it later does not change its original's status. Settlement does not mark orders
+  `Executed`; the later `DeliveryVerified` event does so for that trade and only
+  its two consumed orders, including `PartiallyFilled` originals. Residuals are
+  independent. The verification block timestamp is stored on both the trade and
+  consumed orders; replaying that event preserves the first completion timestamp.
+  This also makes verified trades available to the status-time/GoO query.
+- Order placement, cancellation and settlement indexing use the event block's
+  timestamp for `status_updated_at` (exposed as `updatedAt` in HTTP/EWDS DTOs),
+  not the indexing time. Status and timestamp are updated together. Residual
+  orders have independent status timestamps; `creation_time` remains unchanged.
+  Existing records without a status timestamp are not backfilled by this change.
 - Trade records include both order payload snapshots and selected settlement parameters.
 
 ## Operational Configuration
@@ -105,7 +138,6 @@ Key env variables:
 - `CONTRACT_TRADE_SETTLEMENT`
 - `CONTRACT_MARKET_CONTROLLER`
 - `DATABASE_*`
-- `SCHEDULER_INTERVAL`
 - `EWDS_ENABLE_HANDLER`
 - `EWDS_COMMUNITIES_REQUEST_TOPIC`
 - `EWDS_EVENT_PUBLISH_FQCN`, `EWDS_EVENT_SUBSCRIBE_FQCN`

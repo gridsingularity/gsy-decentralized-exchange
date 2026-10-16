@@ -12,9 +12,11 @@ info:
       * §5.3 Trades and Market Storage
       * §5.4 Order Book Storage
 
-    The SCALE-encoded ingress endpoints used by the GSY node (`POST /orders`
-    and `POST /trades` for byte payloads) are intentionally omitted; consumers
-    that hand-craft payloads should use the `*-normalized` variants.
+    `POST /orders` and `POST /orders-normalized` accept the same EWDS JSON
+    order payload and directly upsert database records. They are not used by
+    the E2E scenarios or production order lifecycle, which submits orders
+    on-chain and indexes the resulting events. Their access policy remains
+    to be clarified. Trade insertion endpoints do not update referenced orders.
   license:
     name: GPL-3.0-or-later
 servers:
