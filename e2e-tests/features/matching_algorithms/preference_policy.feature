@@ -12,10 +12,10 @@ Feature: Preference settlement policy
       | case                         | bid | offer | buyer_partner | buyer_preferred | seller_partner | seller_preferred | type      | pay_as_bid | max_offer | min_bid | midpoint |
       | buyer-only preference        | 20  | 25    | bob           | 25              | none           | 0                | preferred | 25         | 25        | 25      | 25       |
       | seller-only preference       | 20  | 30    | none          | 0               | alice          | 20               | preferred | 20         | 20        | 20      | 20       |
-      | reciprocal preferences       | 20  | 10    | bob           | 15              | alice          | 15               | preferred | 15         | 15        | 15      | 15       |
+      | reciprocal unequal rates     | 20  | 10    | bob           | 15              | alice          | 12               | preferred | 15         | 15        | 15      | 15       |
       | absent preferred rates       | 15  | 15    | bob           | 0               | alice          | 0                | preferred | 15         | 15        | 15      | 15       |
       | below normal offer limit     | 20  | 10    | bob           | 5               | alice          | 5                | preferred | 5          | 5         | 5       | 5        |
       | above normal bid limit       | 20  | 10    | bob           | 25              | alice          | 25               | preferred | 25         | 25        | 25      | 25       |
       | conflicting partners         | 20  | 10    | bob           | 15              | charlie        | 15               | standard  | 20         | 20        | 20      | 20       |
       | unavailable preferred seller | 20  | 10    | charlie       | 15              | none           | 0                | standard  | 20         | 20        | 20      | 20       |
-      | unequal preferred rates      | 20  | 10    | bob           | 15              | alice          | 12               | standard  | 20         | 20        | 20      | 20       |
+      | incompatible preferred rates | 20  | 10    | bob           | 9               | alice          | 12               | standard  | 20         | 20        | 20      | 20       |

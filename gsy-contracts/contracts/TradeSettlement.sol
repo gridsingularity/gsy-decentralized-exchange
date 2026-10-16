@@ -260,7 +260,11 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
         uint64 offerRate = trade.offer.preferredEnergyRate == 0
             ? trade.offer.energyRate
             : trade.offer.preferredEnergyRate;
-        if (trade.clearingPrice != bidRate || trade.clearingPrice != offerRate) {
+        if (
+            bidRate < offerRate ||
+            trade.clearingPrice > bidRate ||
+            trade.clearingPrice < offerRate
+        ) {
             revert PriceMismatch();
         }
     }

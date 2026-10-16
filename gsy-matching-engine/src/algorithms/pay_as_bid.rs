@@ -134,7 +134,7 @@ mod tests {
     }
 
     #[test]
-    fn unequal_effective_rates_fall_back_to_standard_matching() {
+    fn incompatible_effective_rates_fall_back_to_standard_matching() {
         let mut bid = order("bid", OrderEnum::Bid, 100, 50);
         let mut offer = order("offer", OrderEnum::Offer, 100, 40);
         offer.created_by = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string();

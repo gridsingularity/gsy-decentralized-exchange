@@ -47,7 +47,7 @@ longer represent one uniform-price auction.
   remain open.
 
 The preference phase runs before either standard-market
-algorithm. Preference matches retain their agreed effective rate; the
+algorithm. Preference matches use pay-as-bid at the buyer's effective rate; the
 uniform clearing price applies to the remaining merit-order book.
 The pay-as-clear E2E feature covers both the standalone merit-order auction
 and a combined clearing cycle containing a preferred bilateral trade plus
@@ -73,12 +73,14 @@ the actual counterparty: when both sides declare partners, they must be reciproc
 
 For each side, the effective rate is its non-zero `preferred_energy_rate`, or
 its normal `energy_rate` when the preferred rate is absent (zero on-chain).
-A preferred match requires equal effective rates and settles at that exact
-rate. It is not pay-as-bid pricing or a midpoint calculation. Preferred rates
-supersede the normal price limits and may lie outside them.
+A preferred match requires the offer's effective rate to be no higher than
+the bid's effective rate and settles at the bid's effective rate (pay-as-bid),
+even when the standard phase uses pay-as-clear. Preferred rates supersede the
+normal price limits and may lie outside them.
 
-For example, reciprocal preferred rates of 15 and 12 do not produce a preferred
-match. The orders remain eligible for standard matching at their normal rates,
+For example, a preferred bid of 15 and offer of 12 settle at 15. If the bid's
+effective rate is below the offer's, no preferred match is possible.
+The orders remain eligible for standard matching at their normal rates,
 as do orders whose preferred partners are missing or incompatible. A preference
 is not an exclusive trading restriction. Allocation follows input order, not
 guaranteed insertion order; there is no explicit preference price/time priority.

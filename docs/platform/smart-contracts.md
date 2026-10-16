@@ -188,9 +188,12 @@ Deployment script assigns:
 - `Standard`: normal price limits hold (`bid >= clearing price >= offer`),
   even when an order contains partner preferences.
 - `Preferred`: at least one partner is specified; every specified partner
-  equals the opposite order's `createdBy`. Both effective rates must equal the
-  clearing price. An effective rate is `preferredEnergyRate` when non-zero,
-  otherwise `energyRate`. Normal price limits do not apply to this match type.
+  equals the opposite order's `createdBy`. Effective price limits hold
+  (`effective offer <= clearing price <= effective bid`). An effective rate is
+  `preferredEnergyRate` when non-zero, otherwise `energyRate`. Normal price
+  limits do not apply to this match type.
+  The matcher selects the effective bid rate; the contract validates the
+  inclusive bounds rather than enforcing that pricing choice.
 - Selected energy is positive and does not exceed either order's energy.
 - Each partially filled order has a fresh, non-zero residual ID; a fully filled
   order has no residual. Residual quantity and metadata come from the registry.

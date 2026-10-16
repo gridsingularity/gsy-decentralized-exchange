@@ -155,11 +155,12 @@ Both default algorithm runs also include the shared
 still includes `residual_lifecycle.feature`. An explicit `E2E_FEATURE_PATH` override
 runs only the requested path. The policy cases cover buyer-only, seller-only and
 reciprocal preferences, absent preferred rates, preferred prices outside normal
-limits, and standard fallback for incompatible partners or unequal effective
-rates. They verify indexed values, on-chain settlement and the match-type flag
-in transaction calldata. Residual cases cover both bids and offers consumed in
-the same batch or a later cycle, checking ID continuity, metadata, statuses and
-exactly-once settlement. These focused cases do not exercise penalty scheduling.
+limits, pay-as-bid settlement for compatible unequal rates, and standard fallback
+for incompatible partners or rates. They verify indexed values, on-chain
+settlement and the match-type flag in transaction calldata. Residual cases cover
+bids and offers consumed in the same batch or a later cycle, checking ID
+continuity, metadata, statuses and exactly-once settlement. These focused cases
+do not exercise penalty scheduling.
 
 Feature selection is independent of the transport configuration:
 

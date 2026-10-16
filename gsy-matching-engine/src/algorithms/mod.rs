@@ -217,7 +217,7 @@ fn preferred_trading_partner_matching_rate(bid: &Order, offer: &Order) -> Option
             .unwrap_or(order.energy_rate)
     };
     let bid_rate = effective_rate(bid);
-    (bid_rate == effective_rate(offer)).then_some(bid_rate)
+    (bid_rate >= effective_rate(offer)).then_some(bid_rate)
 }
 
 fn residual_order(order: &Order, matched_energy: u64) -> Option<Order> {
