@@ -44,6 +44,13 @@ jobs:
             # Revisit when migrating the legacy TLS stack or adding custom TLS configuration.
             RUSTSEC-2026-0346 # No custom ClientSessionStore Debug logging; built-in caches redact secrets
             RUSTSEC-2026-0349 # rustls 0.21 supports only classical key exchange, not hybrid post-quantum groups
+            # Temporary zip 0.6 exceptions: locked via optional ethers-solc -> svm-rs 0.3.
+            # svm-solc is disabled; its ZIP extraction is Windows-only. No compatible patch.
+            # The guard below rejects any active ZIP dependency, including tests/all targets.
+            # Remove these exceptions when the legacy compiler dependency is replaced.
+            RUSTSEC-2026-0367 # Extraction preserves SUID/SGID permissions
+            RUSTSEC-2026-0368 # Extraction permits symlinks outside the destination
+            RUSTSEC-2026-0369 # Extraction applies permissions through symlinks
             RUSTSEC-2026-0097 # rand warning; no direct rand::rng custom logger usage
             RUSTSEC-2024-0442 # wasmtime-jit-debug via Substrate / wasmtime runtime
             RUSTSEC-2025-0055 # tracing-subscriber via transitive logging stacks
@@ -73,6 +80,14 @@ jobs:
           for lockfile in "${lockfiles[@]}"; do
             crate_dir="$(dirname "$lockfile")"
             echo "::group::cargo audit ${crate_dir}"
-            (cd "$crate_dir" && cargo audit "${audit_args[@]}")
+            (
+              cd "$crate_dir"
+              dependency_tree="$(cargo tree --locked --workspace --all-features --target all --edges normal,build,dev --prefix none)"
+              if grep -q '^zip v' <<< "$dependency_tree"; then
+                echo "ZIP is active in the dependency tree; revisit the temporary audit exceptions."
+                exit 1
+              fi
+              cargo audit "${audit_args[@]}"
+            )
             echo "::endgroup::"
           done
