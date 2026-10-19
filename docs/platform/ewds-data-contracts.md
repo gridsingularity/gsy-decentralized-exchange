@@ -143,8 +143,8 @@ For an `order.event`, the community client builds the
 | `timeSlot`, `creationTime` | `timeSlot`, `creationTime` as epoch seconds |
 | `energy`, `energyRate` | `quantity`, `priceLimit` × 10 000, rounded |
 | `isBid` | `orderType` is `bid` |
-| `energySourcePreference`, `preferredTradingPartner`, `preferredEnergyRate` | the bid requirements (`energySourcePreference`, `preferredTradingPartner` mapped by the ID service, `preferredEnergyRate` × 10 000) |
-| `energyType`, `tradingPartner` | the offer attributes (`energyType`, `preferredTradingPartner` mapped by the ID service) |
+| `energySourcePreference`, `preferredTradingPartner`, `preferredEnergyRate` | requirements for bids and offers (`energySourcePreference`, `preferredTradingPartner` mapped by the ID service, `preferredEnergyRate` × 10 000) |
+| `energyType` | the offer attributes (`energyType`) |
 
 Runtime-only fields not represented in the agreed Intelligent `Order` schema:
 

@@ -79,7 +79,7 @@ services:
       # GOO_PROPERTY_MEASURED: ${GOO_PROPERTY_MEASURED:-measurement#active_energy}
 
   mongodb:
-    image: mongo:8.3.8
+    image: mongo:8.3.9
     ports:
       - "27017:27017"
     volumes:

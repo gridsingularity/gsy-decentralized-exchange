@@ -146,7 +146,6 @@ impl From<EwdsCommunityDto> for EnergyCommunitySchema {
 
 impl From<DbOrderSchema> for EwdsOrderDto {
     fn from(order: DbOrderSchema) -> Self {
-        // Bids and offers both carry their preferred partner in requirements.
         let preferred_trading_partner = order
             .requirements
             .as_ref()
@@ -192,12 +191,12 @@ impl TryFrom<EwdsOrderDto> for DbOrderSchema {
             || order.preferred_trading_partner.is_some()
         {
             Some(DbRequirements {
-                trading_partner_id: order.preferred_trading_partner.clone(),
+                trading_partner_id: order.preferred_trading_partner,
                 energy_type: match order.energy_source_preference {
                     Some(ref pref) => Some(energy_type_from_ewds(pref)?),
                     None => None,
                 },
-                // Left empty when not sent: the matching engine falls back to the bid's rate.
+                // Left empty when not sent: each order falls back to its own normal rate.
                 preferred_energy_rate: order.preferred_energy_rate,
             })
         } else {

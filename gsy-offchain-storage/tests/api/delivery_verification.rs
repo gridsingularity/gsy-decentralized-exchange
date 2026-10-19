@@ -191,6 +191,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
             [index + 41; 16],
             U256::from(10000),
             U256::from(150000),
+            0u8, // Standard match.
         );
         let clearing = (
             market_id,

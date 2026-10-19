@@ -42,6 +42,7 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
     error InvalidOrderParams();
     error OrderNotOpen();
     error PriceMismatch();
+    error InvalidPreferredPartner();
     error EnergyMismatch();
     error InvalidPenalty();
     error TradedQuantityMismatch();
@@ -58,6 +59,11 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
         registry = OrderRegistry(_registry);
     }
 
+    enum MatchType {
+        Standard,
+        Preferred
+    }
+
     struct Match {
         bytes16 tradeId;
         OrderRegistry.OrderParams bid;
@@ -66,6 +72,7 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
         bytes16 residualOfferId;
         uint256 selectedEnergy;
         uint256 clearingPrice;
+        MatchType matchType;
     }
 
     struct TradePenalty {
@@ -239,6 +246,7 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
             trade.offer.orderId == bytes16(0) ||
             trade.bid.createdBy == bytes16(0) ||
             trade.offer.createdBy == bytes16(0) ||
+            trade.bid.createdBy == trade.offer.createdBy ||
             trade.bid.marketId != trade.offer.marketId ||
             trade.bid.timeSlot != trade.offer.timeSlot
         ) {
@@ -261,12 +269,7 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
 
         if (settledTrades[trade.tradeId].bidId != bytes16(0)) revert TradeAlreadySettled();
 
-        if (
-            trade.bid.energyRate < trade.clearingPrice ||
-            trade.offer.energyRate > trade.clearingPrice
-        ) {
-            revert PriceMismatch();
-        }
+        _validateMatch(trade);
 
         if (
             trade.selectedEnergy == 0 ||
@@ -294,6 +297,42 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
             trade.selectedEnergy,
             trade.clearingPrice
         );
+    }
+
+    function _validateMatch(Match calldata trade) internal pure {
+        if (trade.matchType == MatchType.Standard) {
+            if (
+                trade.bid.energyRate < trade.clearingPrice ||
+                trade.offer.energyRate > trade.clearingPrice
+            ) {
+                revert PriceMismatch();
+            }
+            return;
+        }
+
+        bytes16 bidPartner = trade.bid.preferredTradingPartner;
+        bytes16 offerPartner = trade.offer.preferredTradingPartner;
+        if (
+            (bidPartner == bytes16(0) && offerPartner == bytes16(0)) ||
+            (bidPartner != bytes16(0) && bidPartner != trade.offer.createdBy) ||
+            (offerPartner != bytes16(0) && offerPartner != trade.bid.createdBy)
+        ) {
+            revert InvalidPreferredPartner();
+        }
+
+        uint64 bidRate = trade.bid.preferredEnergyRate == 0
+            ? trade.bid.energyRate
+            : trade.bid.preferredEnergyRate;
+        uint64 offerRate = trade.offer.preferredEnergyRate == 0
+            ? trade.offer.energyRate
+            : trade.offer.preferredEnergyRate;
+        if (
+            bidRate < offerRate ||
+            trade.clearingPrice > bidRate ||
+            trade.clearingPrice < offerRate
+        ) {
+            revert PriceMismatch();
+        }
     }
 
     function _validateOrderParams(
