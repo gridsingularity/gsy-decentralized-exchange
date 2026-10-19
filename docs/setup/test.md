@@ -149,6 +149,38 @@ also verifies that a preferred bilateral trade keeps its negotiated rate while
 the remaining standard order book clears at one uniform price. Both scenarios
 verify on-chain settlement and non-zero execution-engine penalties for every
 accepted trade.
+
+Both default algorithm runs also include the shared
+`features/matching_algorithms/preference_policy.feature`; each algorithm directory
+still includes `residual_lifecycle.feature`. An explicit `E2E_FEATURE_PATH` override
+runs only the requested path. The policy cases cover buyer-only, seller-only and
+reciprocal preferences, absent preferred rates, preferred prices outside normal
+limits, pay-as-bid settlement for compatible unequal rates, and standard fallback
+for incompatible partners or rates. They verify indexed values, on-chain
+settlement and the match-type flag in transaction calldata. Residual cases cover
+bids and offers consumed in the same batch or a later cycle, checking ID
+continuity, metadata, statuses and exactly-once settlement. These focused cases
+do not exercise penalty scheduling.
+
+Feature selection is independent of the transport configuration:
+
+| Selection | Features loaded |
+| --- | --- |
+| `MATCHING_ALGORITHM=pay_as_bid` (default) | `pay_as_bid` and `matching_algorithms` |
+| `MATCHING_ALGORITHM=pay_as_clear` | `pay_as_clear` and `matching_algorithms` |
+| `E2E_FEATURE_PATH` set in the runner container | Only that file or directory, unless `--input` is supplied |
+| Cucumber `--input '<glob>'` | Only files matching the glob; overrides the default selection and `E2E_FEATURE_PATH` |
+
+`green_proofs` is **not** included in either default algorithm run. To select
+multiple groups explicitly, the existing CLI accepts a single glob, for example
+`./trade_executor --input 'features/{pay_as_bid,matching_algorithms,green_proofs}/**/*.feature'`
+inside the E2E container. Keep `MATCHING_ALGORITHM=pay_as_bid` for this selection
+in both the runner and matching engine; selecting files does not reconfigure the engine.
+The current Compose file does not forward `E2E_FEATURE_PATH` from the host shell;
+pass it explicitly to the runner container, for example through `docker compose run -e`.
+A focused selection is not a replacement for the HTTP/EWDS x pay-as-bid/pay-as-clear
+regression matrix, and that default matrix does not cover the opt-in green-proof tests.
+
 `pay_as_clear` defaults to a `64`-block matching interval so all scenario
 orders are collected before one clearing cycle. Override it with a positive
 `MATCHING_ENGINE_BLOCK_INTERVAL` value only when both the matching engine and
