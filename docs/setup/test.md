@@ -360,14 +360,14 @@ EWDS_HANDLER_POLL_INTERVAL_MS=1000
 EWDS_HANDLER_BATCH_SIZE=100
 EWDS_RATE_LIMIT_BACKOFF_MS=2000
 EWDS_RATE_LIMIT_MAX_BACKOFF_MS=30000
-EXECUTION_ENGINE_ROLLOVER_RETRY_LIMIT=10
+EXECUTION_ENGINE_ROLLOVER_GRACE_SECONDS=900
 ```
 
 Over EWDS a scenario can take several minutes, so its trades may only settle
-after the delivery slot has started. `EXECUTION_ENGINE_ROLLOVER_RETRY_LIMIT=10`
-keeps the execution engine retrying that slot for about ten cycles (roughly
-ten minutes over EWDS) after it rolled over; with the production default of 2
-the penalty step fails when a scenario starts late in the 15-minute window.
+after the delivery slot has started. `EXECUTION_ENGINE_ROLLOVER_GRACE_SECONDS=900`
+keeps the execution engine querying that slot for 15 minutes after its target
+rollover, alternating with the current slot. This time-based setting replaces
+the old retry-count limit, independently of HTTP or EWDS polling latency.
 
 Important EWDS variables for test runs:
 

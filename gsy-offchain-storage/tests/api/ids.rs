@@ -3,6 +3,8 @@ use gsy_offchain_storage::db::id_service::init_ids;
 use mongodb::bson::doc;
 use primitives::db_api_schema::ids::IdMappingSchema;
 use primitives::utils::{bytes16_to_hex, create_encrypted_bytes16_from_string};
+use std::sync::Arc;
+use tokio::sync::Barrier;
 
 #[tokio::test]
 async fn filter_by_onchain_id_returns_original_facility_id() {
@@ -150,19 +152,26 @@ async fn post_ids_concurrent_same_id_yields_single_mapping() {
     // Fire several requests for the same offchain_id at once. The unique index
     // is what keeps this from producing duplicate documents under the race.
     let mut handles = Vec::new();
+    let barrier = Arc::new(Barrier::new(8));
     for _ in 0..8 {
         let client = client.clone();
         let url = url.clone();
+        let barrier = barrier.clone();
         handles.push(tokio::spawn(async move {
-            client
+            barrier.wait().await;
+            let response = client
                 .post(&url)
                 .query(&[("offchain_id", offchain)])
                 .send()
                 .await
-                .expect("Failed to execute concurrent request")
-                .json::<IdMappingSchema>()
+                .expect("Failed to execute concurrent request");
+            let status = response.status();
+            let body = response
+                .text()
                 .await
-                .expect("Failed to parse concurrent body")
+                .expect("Failed to read concurrent body");
+            assert_eq!(status.as_u16(), 200, "Concurrent ID request failed: {body}");
+            serde_json::from_str::<IdMappingSchema>(&body).expect("Failed to parse concurrent body")
         }));
     }
 
@@ -172,9 +181,9 @@ async fn post_ids_concurrent_same_id_yields_single_mapping() {
     }
 
     // Every response must describe the same mapping.
-    let onchain = &results[0].onchain_id;
     for r in &results {
-        assert_eq!(&r.onchain_id, onchain);
+        assert_eq!(r, &results[0]);
+        assert_eq!(r.offchain_id, offchain);
     }
 
     // And exactly one document exists in the collection.
@@ -185,6 +194,40 @@ async fn post_ids_concurrent_same_id_yields_single_mapping() {
         .await
         .expect("Failed to count documents");
     assert_eq!(count, 1, "concurrent inserts must collapse to one mapping");
+
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn post_ids_rejects_onchain_id_collision_with_another_offchain_id() {
+    let app = init_app().await;
+    let offchain = "actor-collision";
+    let existing = IdMappingSchema {
+        offchain_id: "another-actor".to_string(),
+        onchain_id: bytes16_to_hex(create_encrypted_bytes16_from_string(offchain)),
+        creation_time: 1,
+    };
+    app.db_wrapper.ids().insert_one(&existing).await.unwrap();
+
+    let response = reqwest::Client::new()
+        .post(format!("{}/ids", app.address))
+        .query(&[("offchain_id", offchain)])
+        .send()
+        .await
+        .expect("Failed to execute collision request");
+
+    assert_eq!(response.status().as_u16(), 500);
+    let mappings = app
+        .db_wrapper
+        .ids()
+        .filter(Some(existing.onchain_id.clone()), None)
+        .await
+        .unwrap();
+    assert_eq!(mappings, vec![existing]);
+    assert_eq!(
+        app.db_wrapper.ids().count_documents(doc! {}).await.unwrap(),
+        1
+    );
 
     stop_app(app).await;
 }
