@@ -34,7 +34,7 @@ offer attributes, so the indexed order is complete without a follow-up
 
 ### Trades Storage (D3.2 section 5.3)
 - `/trades-normalized` (`POST`)
-- `/trades` (`GET`, `POST`)
+- `/trades` (`GET`, `POST`); `GET` follows the `trades.query` rules: `market_id` alone is enough, otherwise both `start_time` and `end_time` are required and span at most 1 day (`400` otherwise)
 - `/market` (`GET`) compatibility adapter for EVM JSON callers
 - `/communities` (`GET`, `POST`) for idempotent community query/upsert
 - `/markets` (`GET`, `POST`) for ontology-aligned market-opening records
@@ -67,7 +67,11 @@ These adapters do not own separate collections. They read and write the same
 `markets`, `measurement_points`, and `timeseries` records as the canonical API.
 
 When `EWDS_ENABLE_HANDLER=true`, the same community collection is available
-through `community.upsert` and `communities.query` request/reply operations.
+through the `communities.query` request/reply operation.
+The off-chain storage then also stores the measurements, facilities, sites and
+communities that other systems publish on the EWDS events channel, in
+the same collections (see
+[Inbound Events](ewds-integration.md#inbound-events)).
 
 ## Scheduler Behavior
 
@@ -103,5 +107,7 @@ Key env variables:
 - `DATABASE_*`
 - `SCHEDULER_INTERVAL`
 - `EWDS_ENABLE_HANDLER`
-- `EWDS_COMMUNITY_UPSERT_TOPIC`
 - `EWDS_COMMUNITIES_REQUEST_TOPIC`
+- `EWDS_EVENT_PUBLISH_FQCN`, `EWDS_EVENT_SUBSCRIBE_FQCN`
+- `EWDS_MEASUREMENTS_EVENT_TOPIC`, `EWDS_FACILITY_EVENT_TOPIC`,
+  `EWDS_SITE_EVENT_TOPIC`, `EWDS_COMMUNITY_EVENT_TOPIC`

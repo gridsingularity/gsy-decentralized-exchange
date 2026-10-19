@@ -11,8 +11,8 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "startTime": { "type": "integer", "minimum": 0 },
-        "endTime": { "type": "integer", "minimum": 0 },
+        "startTime": { "type": "string", "format": "date-time", "description": "Inclusive range start, RFC 3339." },
+        "endTime": { "type": "string", "format": "date-time", "description": "Inclusive range end, RFC 3339." },
         "facilityId": { "type": "string" },
         "communityUuid": { "type": "string" }
       },

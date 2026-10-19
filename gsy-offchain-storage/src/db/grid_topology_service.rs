@@ -1,12 +1,13 @@
 use crate::db::DatabaseWrapper;
-use anyhow::Result;
-use futures::StreamExt;
+use anyhow::{anyhow, Result};
+use futures::{StreamExt, TryStreamExt};
 use mongodb::bson::{self, doc, Bson};
 use mongodb::options::IndexOptions;
 use mongodb::{Collection, IndexModel};
 use primitives::db_api_schema::grid_topology::{
     AssetSchema, EnergyCommunitySchema, FacilitySchema, PilotSiteSchema, SiteSchema,
 };
+use primitives::ewds::invalid_event;
 use std::collections::HashMap;
 use std::ops::Deref;
 
@@ -114,6 +115,31 @@ where
     Ok(result)
 }
 
+/// Fails with an error marked by [`invalid_event`] if two of the `(id, name)` pairs share an id
+/// but not the name, or a name but not the id. `kind` names the records in the error.
+fn check_id_name_pairs<'a>(
+    kind: &str,
+    pairs: impl IntoIterator<Item = (&'a str, &'a str)>,
+) -> Result<()> {
+    let mut names_by_id = HashMap::new();
+    let mut ids_by_name = HashMap::new();
+    for (id, name) in pairs {
+        let known_name = *names_by_id.entry(id).or_insert(name);
+        if known_name != name {
+            return Err(invalid_event(anyhow!(
+                "{kind} id {id} is already named {known_name}, not {name}"
+            )));
+        }
+        let known_id = *ids_by_name.entry(name).or_insert(id);
+        if known_id != id {
+            return Err(invalid_event(anyhow!(
+                "{kind} name {name} is already used by id {known_id}, not {id}"
+            )));
+        }
+    }
+    Ok(())
+}
+
 #[repr(transparent)]
 pub struct AssetService(pub Collection<AssetSchema>);
 
@@ -204,6 +230,37 @@ impl EnergyCommunityService {
             .await?)
     }
 
+    /// Fails with an error marked by [`invalid_event`] if `communities` would give a stored or
+    /// batched `community_id` a second name, or a `community_name` a second id.
+    pub async fn check_for_duplicates(&self, communities: &[EnergyCommunitySchema]) -> Result<()> {
+        let ids: Vec<&str> = communities
+            .iter()
+            .map(|community| community.community_id.as_str())
+            .collect();
+        let names: Vec<&str> = communities
+            .iter()
+            .map(|community| community.community_name.as_str())
+            .collect();
+        let stored: Vec<EnergyCommunitySchema> = self
+            .0
+            .find(
+                doc! {"$or": [{"community_id": {"$in": ids}}, {"community_name": {"$in": names}}]},
+            )
+            .await?
+            .try_collect()
+            .await?;
+
+        check_id_name_pairs(
+            "community",
+            stored.iter().chain(communities).map(|community| {
+                (
+                    community.community_id.as_str(),
+                    community.community_name.as_str(),
+                )
+            }),
+        )
+    }
+
     pub async fn upsert(&self, community: EnergyCommunitySchema) -> Result<EnergyCommunitySchema> {
         let community_doc = bson::to_document(&community)?;
         self.0
@@ -247,6 +304,18 @@ impl SiteService {
         Ok(self.0.find_one(doc! {"site_name": site_name}).await?)
     }
 
+    pub async fn upsert(&self, site: SiteSchema) -> Result<SiteSchema> {
+        let site_doc = bson::to_document(&site)?;
+        self.0
+            .update_one(
+                doc! {"site_name": site.site_name.clone()},
+                doc! {"$set": site_doc},
+            )
+            .upsert(true)
+            .await?;
+        Ok(site)
+    }
+
     pub async fn get_all(&self) -> Result<Vec<SiteSchema>> {
         collect_all(&self.0).await
     }
@@ -279,6 +348,47 @@ impl FacilityService {
             .0
             .find_one(doc! {"facility_name": facility_name})
             .await?)
+    }
+
+    /// Fails with an error marked by [`invalid_event`] if `facilities` would give a stored or
+    /// batched `facility_id` a second name, or a `facility_name` a second id.
+    pub async fn check_for_duplicates(&self, facilities: &[FacilitySchema]) -> Result<()> {
+        let ids: Vec<&str> = facilities
+            .iter()
+            .map(|facility| facility.facility_id.as_str())
+            .collect();
+        let names: Vec<&str> = facilities
+            .iter()
+            .map(|facility| facility.facility_name.as_str())
+            .collect();
+        let stored: Vec<FacilitySchema> = self
+            .0
+            .find(doc! {"$or": [{"facility_id": {"$in": ids}}, {"facility_name": {"$in": names}}]})
+            .await?
+            .try_collect()
+            .await?;
+
+        check_id_name_pairs(
+            "facility",
+            stored.iter().chain(facilities).map(|facility| {
+                (
+                    facility.facility_id.as_str(),
+                    facility.facility_name.as_str(),
+                )
+            }),
+        )
+    }
+
+    pub async fn upsert(&self, facility: FacilitySchema) -> Result<FacilitySchema> {
+        let facility_doc = bson::to_document(&facility)?;
+        self.0
+            .update_one(
+                doc! {"facility_id": facility.facility_id.clone()},
+                doc! {"$set": facility_doc},
+            )
+            .upsert(true)
+            .await?;
+        Ok(facility)
     }
 
     pub async fn get_all(&self) -> Result<Vec<FacilitySchema>> {

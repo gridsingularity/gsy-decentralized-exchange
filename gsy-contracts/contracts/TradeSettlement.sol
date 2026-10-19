@@ -184,6 +184,7 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
             trade.offer.orderId == bytes16(0) ||
             trade.bid.createdBy == bytes16(0) ||
             trade.offer.createdBy == bytes16(0) ||
+            trade.bid.createdBy == trade.offer.createdBy ||
             trade.bid.marketId != trade.offer.marketId ||
             trade.bid.timeSlot != trade.offer.timeSlot
         ) {
@@ -259,7 +260,11 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
         uint64 offerRate = trade.offer.preferredEnergyRate == 0
             ? trade.offer.energyRate
             : trade.offer.preferredEnergyRate;
-        if (trade.clearingPrice != bidRate || trade.clearingPrice != offerRate) {
+        if (
+            bidRate < offerRate ||
+            trade.clearingPrice > bidRate ||
+            trade.clearingPrice < offerRate
+        ) {
             revert PriceMismatch();
         }
     }

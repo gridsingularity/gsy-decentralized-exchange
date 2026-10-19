@@ -39,13 +39,15 @@ longer represent one uniform-price auction.
   lower than the next offer price. The accepted cumulative quantity is the
   clearing volume. Accepted standard matches share a price selected by
   `PAY_AS_CLEAR_PRICING` (`max_offer`, `min_bid`, or `midpoint`, default
-  `max_offer`). Supply exhaustion with demand remaining uses the minimum
-  accepted bid; demand exhaustion with supply remaining uses the maximum
-  accepted offer. Price crossings and simultaneous exhaustion use the configured
-  policy. Orders beyond the clearing volume remain open.
+  `max_offer`). Supply exhaustion with price-eligible demand remaining uses the
+  minimum accepted bid; demand exhaustion with price-eligible supply remaining
+  uses the maximum accepted offer. Simultaneous exhaustion or no price-eligible
+  remainder uses the minimum accepted bid. Price crossings use the configured
+  policy. Equal rates count as price-eligible. Orders beyond the clearing volume
+  remain open.
 
 The preference phase runs before either standard-market
-algorithm. Preference matches retain their agreed effective rate; the
+algorithm. Preference matches use pay-as-bid at the buyer's effective rate; the
 uniform clearing price applies to the remaining merit-order book.
 The pay-as-clear E2E feature covers both the standalone merit-order auction
 and a combined clearing cycle containing a preferred bilateral trade plus
@@ -63,6 +65,7 @@ The matching algorithm executes:
 2. **Standard phase**: remaining bids/offers run through the configured
    `pay_as_bid` or `pay_as_clear` algorithm.
 
+Self-trades (equal `created_by`) are rejected in both phases and on-chain.
 Both bids and offers use `requirements.trading_partner_id`, compared with the
 counterparty's `created_by`. At least one side must name a preferred partner.
 One-sided preferences are valid, but every declared preference must identify
@@ -70,12 +73,14 @@ the actual counterparty: when both sides declare partners, they must be reciproc
 
 For each side, the effective rate is its non-zero `preferred_energy_rate`, or
 its normal `energy_rate` when the preferred rate is absent (zero on-chain).
-A preferred match requires equal effective rates and settles at that exact
-rate. It is not pay-as-bid pricing or a midpoint calculation. Preferred rates
-supersede the normal price limits and may lie outside them.
+A preferred match requires the offer's effective rate to be no higher than
+the bid's effective rate and settles at the bid's effective rate (pay-as-bid),
+even when the standard phase uses pay-as-clear. Preferred rates supersede the
+normal price limits and may lie outside them.
 
-For example, reciprocal preferred rates of 15 and 12 do not produce a preferred
-match. The orders remain eligible for standard matching at their normal rates,
+For example, a preferred bid of 15 and offer of 12 settle at 15. If the bid's
+effective rate is below the offer's, no preferred match is possible.
+The orders remain eligible for standard matching at their normal rates,
 as do orders whose preferred partners are missing or incompatible. A preference
 is not an exclusive trading restriction. Allocation follows input order, not
 guaranteed insertion order; there is no explicit preference price/time priority.

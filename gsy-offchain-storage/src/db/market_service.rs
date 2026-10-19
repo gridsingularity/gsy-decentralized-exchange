@@ -78,6 +78,20 @@ impl MarketService {
         Ok(result)
     }
 
+    #[tracing::instrument(name = "Fetching markets by ids", skip(self))]
+    pub async fn get_by_ids(&self, market_ids: Vec<String>) -> Result<Vec<MarketSchema>> {
+        let mut cursor = self.0.find(doc! {"market_id": {"$in": market_ids}}).await?;
+        let mut result = Vec::new();
+        while let Some(doc) = cursor.next().await {
+            if let Ok(document) = doc {
+                result.push(document);
+            } else {
+                break;
+            }
+        }
+        Ok(result)
+    }
+
     /// IDs of the markets whose `delivery_start_time` lies in `[start_time, end_time)`.
     #[tracing::instrument(name = "Fetching market ids by delivery start", skip(self))]
     pub async fn market_ids_by_delivery_start(

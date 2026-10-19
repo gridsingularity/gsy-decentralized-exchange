@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "int.facility.schema.v1",
+  "title": "GSY Facility",
+  "description": "Mirrors the Rust FacilitySchema (snake_case wire form).",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "facility_id": { "type": "string", "minLength": 1 },
+    "facility_name": { "type": "string", "minLength": 1 },
+    "site_id": {
+      "description": "The site_name of the site the facility belongs to.",
+      "type": "string",
+      "minLength": 1
+    },
+    "owner_id": { "type": "string", "minLength": 1 }
+  },
+  "required": ["facility_id", "facility_name", "site_id", "owner_id"]
+}
