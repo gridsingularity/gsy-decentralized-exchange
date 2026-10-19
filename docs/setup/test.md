@@ -150,14 +150,36 @@ the remaining standard order book clears at one uniform price. Both scenarios
 verify on-chain settlement and non-zero execution-engine penalties for every
 accepted trade.
 
-Both algorithm directories also include `preference_policy.feature` and
-`residual_lifecycle.feature`. The policy cases cover buyer-only, seller-only and
+Both default algorithm runs also include the shared
+`features/matching_algorithms/preference_policy.feature`; each algorithm directory
+still includes `residual_lifecycle.feature`. An explicit `E2E_FEATURE_PATH` override
+runs only the requested path. The policy cases cover buyer-only, seller-only and
 reciprocal preferences, absent preferred rates, preferred prices outside normal
-limits, and standard fallback for incompatible partners or unequal effective
-rates. They verify indexed values, on-chain settlement and the match-type flag
-in transaction calldata. Residual cases cover both bids and offers consumed in
-the same batch or a later cycle, checking ID continuity, metadata, statuses and
-exactly-once settlement. These focused cases do not exercise penalty scheduling.
+limits, pay-as-bid settlement for compatible unequal rates, and standard fallback
+for incompatible partners or rates. They verify indexed values, on-chain
+settlement and the match-type flag in transaction calldata. Residual cases cover
+bids and offers consumed in the same batch or a later cycle, checking ID
+continuity, metadata, statuses and exactly-once settlement. These focused cases
+do not exercise penalty scheduling.
+
+Feature selection is independent of the transport configuration:
+
+| Selection | Features loaded |
+| --- | --- |
+| `MATCHING_ALGORITHM=pay_as_bid` (default) | `pay_as_bid` and `matching_algorithms` |
+| `MATCHING_ALGORITHM=pay_as_clear` | `pay_as_clear` and `matching_algorithms` |
+| `E2E_FEATURE_PATH` set in the runner container | Only that file or directory, unless `--input` is supplied |
+| Cucumber `--input '<glob>'` | Only files matching the glob; overrides the default selection and `E2E_FEATURE_PATH` |
+
+`green_proofs` is **not** included in either default algorithm run. To select
+multiple groups explicitly, the existing CLI accepts a single glob, for example
+`./trade_executor --input 'features/{pay_as_bid,matching_algorithms,green_proofs}/**/*.feature'`
+inside the E2E container. Keep `MATCHING_ALGORITHM=pay_as_bid` for this selection
+in both the runner and matching engine; selecting files does not reconfigure the engine.
+The current Compose file does not forward `E2E_FEATURE_PATH` from the host shell;
+pass it explicitly to the runner container, for example through `docker compose run -e`.
+A focused selection is not a replacement for the HTTP/EWDS x pay-as-bid/pay-as-clear
+regression matrix, and that default matrix does not cover the opt-in green-proof tests.
 
 `pay_as_clear` defaults to a `64`-block matching interval so all scenario
 orders are collected before one clearing cycle. Override it with a positive
@@ -168,10 +190,16 @@ book, the E2E harness first advances local Anvil to the next matching boundary.
 After the order book is indexed, it fast-forwards to the clearing boundary with
 empty-block RPC calls rather than waiting for one transaction per block.
 
-Before waiting for the orchestrator, the E2E runner idempotently upserts a
-canonical community using `OFFCHAIN_STORAGE_TRANSPORT`. The orchestrator then
-queries the same community collection and opens the community-aware Spot market
-whose ID is derived from community UUID, market type, and delivery slot.
+Before waiting for the orchestrator, the E2E runner idempotently stores a
+canonical community using `OFFCHAIN_STORAGE_TRANSPORT`: over HTTP it calls
+`POST /communities`, and with the EWDS transport it publishes a
+`community.event` and waits until `communities.query` returns the
+community. The orchestrator then queries the same community collection and
+opens the community-aware Spot market whose ID is derived from community UUID,
+market type, and delivery slot.
+
+Features tagged `@ewds`, such as `events.feature`, only run with
+`OFFCHAIN_STORAGE_TRANSPORT=ewds`; HTTP runs skip them.
 
 The contracts command starts the dedicated local Anvil container, deploys the
 upgradeable contract suite, grants service roles, and writes
@@ -287,8 +315,15 @@ EWF-hosted broker and the following local channels/topics:
 - `ordersQuery` / `ordersQueryResponse`
 - `tradesQuery` / `tradesQueryResponse`
 - `measurementsQuery` / `measurementsQueryResponse`
-- `communityUpsert` / `communityUpsertResponse`
 - `communitiesQuery` / `communitiesQueryResponse`
+
+The community setup and the `@ewds` events feature also need
+`gsy.intelligent.events.pub` / `gsy.intelligent.events.sub` with the
+`communityTest`, `siteTest`, `facilityTest`,
+`measurementsTest` and `orderTest` topics. The events
+feature adds one feature, two scenarios and ten steps to the pay-as-bid
+summary below. Its order scenario needs the community client's order event
+subscriber, which `EWDS_ENABLE_HANDLER=true` in `.env.ewds.local` starts.
 
 Expected passing summary:
 
@@ -321,11 +356,18 @@ the asynchronous DDHub broker path:
 EWDS_RESPONSE_TIMEOUT_MS=60000
 EWDS_RESPONSE_POLL_INTERVAL_MS=1000
 EWDS_EMPTY_RESPONSE_GRACE_MS=10000
-EWDS_HANDLER_POLL_INTERVAL_MS=500
+EWDS_HANDLER_POLL_INTERVAL_MS=1000
 EWDS_HANDLER_BATCH_SIZE=100
 EWDS_RATE_LIMIT_BACKOFF_MS=2000
 EWDS_RATE_LIMIT_MAX_BACKOFF_MS=30000
+EXECUTION_ENGINE_ROLLOVER_RETRY_LIMIT=10
 ```
+
+Over EWDS a scenario can take several minutes, so its trades may only settle
+after the delivery slot has started. `EXECUTION_ENGINE_ROLLOVER_RETRY_LIMIT=10`
+keeps the execution engine retrying that slot for about ten cycles (roughly
+ten minutes over EWDS) after it rolled over; with the production default of 2
+the penalty step fails when a scenario starts late in the 15-minute window.
 
 Important EWDS variables for test runs:
 
@@ -347,6 +389,11 @@ Important EWDS variables for test runs:
 - `EWDS_RATE_LIMIT_BACKOFF_MS`
 - `EWDS_RATE_LIMIT_MAX_BACKOFF_MS`
 - `EWDS_E2E_CLIENT_ID`
+- `EWDS_COMMUNITY_CLIENT_ID`
+- `EWDS_EVENT_BATCH_SIZE`
+- `EWDS_EVENT_POLL_INTERVAL_MS` (fixed to 1000 in `docker-compose.e2e-test.yml`;
+  the default outside the e2e stack is 60000)
+- `EWDS_EVENT_HANDLE_ATTEMPTS` / `EWDS_EVENT_RETRY_DELAY_MS`
 - `EWDS_GATEWAY_PLATFORM` (set `linux/amd64` on Apple Silicon when using current EWDS images)
 
 Current e2e suite validates:

@@ -1,3 +1,4 @@
+use crate::certificates::query::{guarantees_of_origin, validate_window};
 use crate::db::DatabaseWrapper;
 use anyhow::{anyhow, Result};
 use futures::future::join_all;
@@ -9,8 +10,9 @@ use primitives::ewds::dto::{
 };
 use primitives::ewds::{
     client_id_for_suffix, env_var, ewds_rate_limit_backoff_ms, format_response_body,
-    is_rate_limited_message, is_rate_limited_response, is_transient_gateway_message,
-    is_transient_gateway_response, parse_gateway_delivery_summary, EwdsOperation, EwdsTopicConfig,
+    is_rate_limited_response, is_transient_gateway_response, next_poll_delay_ms,
+    parse_gateway_delivery_summary, remember_id, EwdsEventTopicConfig, EwdsEventType,
+    EwdsOperation, EwdsTopicConfig,
 };
 use primitives::utils::{opt_rfc3339_to_epoch, timestamp_to_string_with_padding};
 use reqwest::Client;
@@ -26,11 +28,15 @@ pub struct EwdsHandlerConfig {
     pub gateway_url: String,
     pub request_fqcn: String,
     pub response_fqcn: String,
+    pub event_publish_fqcn: String,
+    pub event_subscribe_fqcn: String,
+    pub event_topics: EwdsEventTopicConfig,
     pub topic_owner: String,
     pub topic_version: String,
     pub request_client_id: String,
     pub topics: EwdsTopicConfig,
     pub poll_interval_ms: u64,
+    pub event_poll_interval_ms: u64,
     pub request_batch_size: u32,
     pub response_send_timeout_ms: u64,
 }
@@ -47,7 +53,11 @@ impl EwdsHandlerConfig {
         let poll_interval_ms = std::env::var("EWDS_HANDLER_POLL_INTERVAL_MS")
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
-            .unwrap_or(500);
+            .unwrap_or(1_000);
+        let event_poll_interval_ms = std::env::var("EWDS_EVENT_POLL_INTERVAL_MS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(60_000);
 
         let request_batch_size = std::env::var("EWDS_HANDLER_BATCH_SIZE")
             .ok()
@@ -64,6 +74,10 @@ impl EwdsHandlerConfig {
         let response_fqcn = env_var("EWDS_RESPONSE_PUBLISH_FQCN")
             .or_else(|| env_var("EWDS_RESPONSE_FQCN"))
             .unwrap_or_else(|| "gsy.intelligent.responses.pub".to_string());
+        let event_publish_fqcn = env_var("EWDS_EVENT_PUBLISH_FQCN")
+            .unwrap_or_else(|| "gsy.intelligent.events.pub".to_string());
+        let event_subscribe_fqcn = env_var("EWDS_EVENT_SUBSCRIBE_FQCN")
+            .unwrap_or_else(|| "gsy.intelligent.events.sub".to_string());
 
         Self {
             enabled,
@@ -71,6 +85,9 @@ impl EwdsHandlerConfig {
                 .unwrap_or_else(|_| "http://ewds-gateway-api:3333".to_string()),
             request_fqcn,
             response_fqcn,
+            event_publish_fqcn,
+            event_subscribe_fqcn,
+            event_topics: EwdsEventTopicConfig::from_env(),
             topic_owner: std::env::var("EWDS_TOPIC_OWNER")
                 .unwrap_or_else(|_| "integration.apps.intelligent.auth.ewc".to_string()),
             topic_version: std::env::var("EWDS_TOPIC_VERSION")
@@ -80,9 +97,15 @@ impl EwdsHandlerConfig {
                 .unwrap_or_else(|| "gsyoffchainstorage".to_string()),
             topics: EwdsTopicConfig::from_env(),
             poll_interval_ms,
+            event_poll_interval_ms,
             request_batch_size,
             response_send_timeout_ms,
         }
+    }
+
+    /// The EWDS topic an event of the given type is published on.
+    pub fn event_topic(&self, event_type: EwdsEventType) -> &str {
+        self.event_topics.for_event_type(event_type)
     }
 }
 
@@ -125,6 +148,19 @@ struct TimeRangePayload {
     facility_id: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct GuaranteesOfOriginPayload {
+    #[serde(alias = "startTime")]
+    #[serde(default)]
+    start_time: Option<u64>,
+    #[serde(alias = "endTime")]
+    #[serde(default)]
+    end_time: Option<u64>,
+}
+
+/// `code` of the error payload sent for a request rejected before it reaches storage.
+const INVALID_REQUEST_ERROR_CODE: &str = "invalid_request";
+
 /// Maximum span of a `trades.query` range. The whole result is published as a
 /// single EWDS message, so the range is capped to keep that message small.
 pub const MAX_TRADES_QUERY_RANGE_SECS: u64 = 86_400;
@@ -132,17 +168,21 @@ pub const TIME_RANGE_TOO_LARGE: &str = "TIME_RANGE_TOO_LARGE";
 pub const INVALID_TIME_RANGE: &str = "INVALID_TIME_RANGE";
 
 /// Validates a `trades.query` range (`endTime` is exclusive), returning the
-/// bounds or the error to publish back to the requester.
+/// bounds or the error to publish back to the requester. A query for one market
+/// needs no range, since the market already limits the result; any other query
+/// needs both bounds.
 pub fn validate_trades_query_range(
+    market_id: Option<&str>,
     start_time: Option<u64>,
     end_time: Option<u64>,
-) -> std::result::Result<(u64, u64), EwdsErrorPayload> {
+) -> std::result::Result<Option<(u64, u64)>, EwdsErrorPayload> {
     let (start, end) = match (start_time, end_time) {
         (Some(start), Some(end)) => (start, end),
+        (None, None) if market_id.is_some() => return Ok(None),
         _ => {
             return Err(EwdsErrorPayload {
                 code: INVALID_TIME_RANGE.to_string(),
-                message: "trades.query requires both startTime and endTime".to_string(),
+                message: "trades.query requires marketId or both startTime and endTime".to_string(),
             })
         }
     };
@@ -165,7 +205,7 @@ pub fn validate_trades_query_range(
             ),
         });
     }
-    Ok((start, end))
+    Ok(Some((start, end)))
 }
 
 #[derive(Deserialize)]
@@ -224,7 +264,7 @@ async fn run_topic_worker(
     let mut rate_limit_attempt = 0u32;
 
     loop {
-        let delay_ms = match process_topic_batch(
+        let result = process_topic_batch(
             &db,
             &client,
             &config,
@@ -232,29 +272,16 @@ async fn run_topic_worker(
             &mut seen_request_ids,
             &mut seen_queue,
         )
-        .await
-        {
-            Ok(()) => {
-                rate_limit_attempt = 0;
-                config.poll_interval_ms
-            }
-            Err(error) => {
-                warn!(
-                    "EWDS {} worker batch processing failed: {}",
-                    operation, error
-                );
-                if is_rate_limited_message(error.to_string().as_str())
-                    || is_transient_gateway_message(error.to_string().as_str())
-                {
-                    let delay_ms = ewds_rate_limit_backoff_ms(rate_limit_attempt);
-                    rate_limit_attempt = rate_limit_attempt.saturating_add(1);
-                    delay_ms
-                } else {
-                    config.poll_interval_ms
-                }
-            }
-        };
+        .await;
+        if let Err(error) = &result {
+            warn!(
+                "EWDS {} worker batch processing failed: {}",
+                operation, error
+            );
+        }
 
+        let delay_ms =
+            next_poll_delay_ms(&result, config.poll_interval_ms, &mut rate_limit_attempt);
         sleep(Duration::from_millis(delay_ms)).await;
     }
 }
@@ -269,7 +296,7 @@ async fn process_topic_batch(
 ) -> Result<()> {
     let amount = config.request_batch_size.to_string();
     let topic_name = config.topics.for_operation(operation).request.as_str();
-    let messages = poll_requests_for_topic(client, config, topic_name, amount.as_str()).await?;
+    let messages = poll_messages(client, config, topic_name, amount.as_str()).await?;
 
     for message in messages {
         let parsed = serde_json::from_str::<EwdsRequestEnvelope>(&message.payload);
@@ -291,13 +318,13 @@ async fn process_topic_batch(
             return Err(error);
         }
 
-        remember_request_id(&request_id, seen_request_ids, seen_queue);
+        remember_id(&request_id, seen_request_ids, seen_queue);
     }
 
     Ok(())
 }
 
-async fn poll_requests_for_topic(
+async fn poll_messages(
     client: &Client,
     config: &EwdsHandlerConfig,
     topic_name: &str,
@@ -307,11 +334,12 @@ async fn poll_requests_for_topic(
         "{}/api/v2/messages",
         config.gateway_url.trim_end_matches('/')
     );
+    let fqcn = config.request_fqcn.as_str();
     let client_id = client_id_for_suffix(config.request_client_id.as_str(), topic_name);
     let response = client
         .get(get_url.as_str())
         .query(&[
-            ("fqcn", config.request_fqcn.as_str()),
+            ("fqcn", fqcn),
             ("amount", amount),
             ("topicName", topic_name),
             ("topicOwner", config.topic_owner.as_str()),
@@ -324,7 +352,8 @@ async fn poll_requests_for_topic(
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();
         return Err(anyhow!(
-            "EWDS request poll failed for topic '{}': HTTP {}{}",
+            "EWDS poll failed for fqcn='{}', topic='{}': HTTP {}{}",
+            fqcn,
             topic_name,
             status,
             format_response_body(&body)
@@ -335,23 +364,6 @@ async fn poll_requests_for_topic(
         .json::<Vec<EwdsInboundMessage>>()
         .await
         .unwrap_or_default())
-}
-
-fn remember_request_id(
-    request_id: &str,
-    seen_request_ids: &mut HashSet<String>,
-    seen_queue: &mut VecDeque<String>,
-) {
-    const MAX_SEEN_REQUEST_IDS: usize = 2_048;
-
-    seen_request_ids.insert(request_id.to_string());
-    seen_queue.push_back(request_id.to_string());
-
-    while seen_queue.len() > MAX_SEEN_REQUEST_IDS {
-        if let Some(evicted) = seen_queue.pop_front() {
-            seen_request_ids.remove(&evicted);
-        }
-    }
 }
 
 pub async fn handle_request(
@@ -408,28 +420,35 @@ pub async fn handle_request(
 
             let payload_start_time = opt_rfc3339_to_epoch(payload.start_time.as_deref())?;
             let payload_end_time = opt_rfc3339_to_epoch(payload.end_time.as_deref())?;
-            let (start_time, end_time) =
-                match validate_trades_query_range(payload_start_time, payload_end_time) {
-                    Ok(range) => range,
-                    Err(error) => {
-                        warn!(
-                            "Rejecting EWDS trades.query request (request_id={}): {}: {}",
-                            request_id, error.code, error.message
-                        );
-                        return send_error_response(
-                            client,
-                            config,
-                            request_id,
-                            response_topic.as_str(),
-                            error,
-                        )
-                        .await;
-                    }
-                };
+            let range = match validate_trades_query_range(
+                payload.market_id.as_deref(),
+                payload_start_time,
+                payload_end_time,
+            ) {
+                Ok(range) => range,
+                Err(error) => {
+                    warn!(
+                        "Rejecting EWDS trades.query request (request_id={}): {}: {}",
+                        request_id, error.code, error.message
+                    );
+                    return send_error_response(
+                        client,
+                        config,
+                        request_id,
+                        response_topic.as_str(),
+                        error,
+                    )
+                    .await;
+                }
+            };
 
             let data = db
                 .trades()
-                .filter_trades(payload.market_id, Some(start_time), Some(end_time))
+                .filter_trades(
+                    payload.market_id,
+                    range.map(|(start, _)| start),
+                    range.map(|(_, end)| end),
+                )
                 .await?
                 .into_iter()
                 .map(EwdsTradeDto::from)
@@ -470,21 +489,6 @@ pub async fn handle_request(
                 request_id,
                 data.len()
             );
-
-            send_success_response(client, config, request_id, response_topic.as_str(), data).await
-        }
-        EwdsOperation::CommunityUpsert => {
-            let community = serde_json::from_value::<EwdsCommunityDto>(envelope.payload)
-                .map_err(|e| anyhow!("community.upsert payload parse error: {}", e))?;
-            let request_id = envelope.request_id;
-
-            info!(
-                "Handling EWDS community.upsert request (request_id={}, community_id={})",
-                request_id, community.community_id
-            );
-
-            let saved = db.communities().upsert(community.into()).await?;
-            let data = vec![EwdsCommunityDto::from(saved)];
 
             send_success_response(client, config, request_id, response_topic.as_str(), data).await
         }
@@ -590,6 +594,49 @@ pub async fn handle_request(
             let data = db.facilities().get_all().await?;
             info!(
                 "Publishing EWDS facilities.query response (request_id={}, facilities={})",
+                request_id,
+                data.len()
+            );
+
+            send_success_response(client, config, request_id, response_topic.as_str(), data).await
+        }
+        EwdsOperation::GuaranteesOfOriginQuery => {
+            let request_id = envelope.request_id;
+
+            info!(
+                "Handling EWDS guarantees_of_origin.query request (request_id={})",
+                request_id
+            );
+
+            // An invalid request is answered with `success: false` rather than returned as an
+            // error: an erroring worker re-polls the same message forever.
+            let window = match serde_json::from_value::<GuaranteesOfOriginPayload>(envelope.payload)
+                .map_err(|e| format!("guarantees_of_origin.query payload parse error: {}", e))
+                .and_then(|payload| validate_window(payload.start_time, payload.end_time))
+            {
+                Ok(window) => window,
+                Err(reason) => {
+                    warn!(
+                        "Rejecting EWDS guarantees_of_origin.query request (request_id={}): {}",
+                        request_id, reason
+                    );
+                    return send_error_response(
+                        client,
+                        config,
+                        request_id,
+                        response_topic.as_str(),
+                        EwdsErrorPayload {
+                            code: INVALID_REQUEST_ERROR_CODE.to_string(),
+                            message: reason,
+                        },
+                    )
+                    .await;
+                }
+            };
+
+            let data = guarantees_of_origin(db, window).await?;
+            info!(
+                "Publishing EWDS guarantees_of_origin.query response (request_id={}, records={})",
                 request_id,
                 data.len()
             );
@@ -708,7 +755,7 @@ async fn send_message(
     .await
 }
 
-async fn send_message_with_fqcn(
+pub(crate) async fn send_message_with_fqcn(
     client: &Client,
     config: &EwdsHandlerConfig,
     fqcn: String,

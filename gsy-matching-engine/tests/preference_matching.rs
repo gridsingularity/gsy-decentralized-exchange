@@ -1,4 +1,4 @@
-use gsy_matching_engine::algorithms::MatchOrders;
+use gsy_matching_engine::algorithms::{MatchOrders, PayAsClearPricing};
 use gsy_matching_engine::models::{BidOfferMatch, MatchType, MatchingData, Order, Requirements};
 use primitives::db_api_schema::orders::{OrderEnum, OrderStatus};
 use primitives::MatchingAlgorithm;
@@ -37,9 +37,10 @@ fn run(algorithm: &MatchingAlgorithm, bids: Vec<Order>, offers: Vec<Order>) -> V
 
 #[test]
 fn every_declared_partner_must_identify_the_counterparty() {
+    // The balanced standard book uses min_bid when both sides are exhausted.
     for (algorithm, normal_price) in [
         (MatchingAlgorithm::PayAsBid, 20),
-        (MatchingAlgorithm::PayAsClear, 10),
+        (MatchingAlgorithm::PayAsClear, 20),
     ] {
         for (buyer_partner, seller_partner, eligible) in [
             (None, None, false),
@@ -52,7 +53,7 @@ fn every_declared_partner_must_identify_the_counterparty() {
             (Some("another-seller"), Some("buyer"), false),
         ] {
             let bid = order("buyer", OrderEnum::Bid, 20, buyer_partner, Some(15));
-            let offer = order("seller", OrderEnum::Offer, 10, seller_partner, Some(15));
+            let offer = order("seller", OrderEnum::Offer, 10, seller_partner, Some(12));
             let matches = run(&algorithm, vec![bid], vec![offer]);
             assert_eq!(matches.len(), 1);
             assert_eq!(
@@ -67,6 +68,44 @@ fn every_declared_partner_must_identify_the_counterparty() {
                     MatchType::Standard
                 }
             );
+        }
+    }
+}
+
+#[test]
+fn preferred_pay_as_bid_price_is_independent_of_standard_clearing_policy() {
+    for pricing in [
+        PayAsClearPricing::MaxOffer,
+        PayAsClearPricing::MinBid,
+        PayAsClearPricing::Midpoint,
+    ] {
+        let bid = order("buyer", OrderEnum::Bid, 20, Some("seller"), Some(15));
+        let offer = order("seller", OrderEnum::Offer, 10, Some("buyer"), Some(12));
+        let mut book = MatchingData::new("market".into(), 100, vec![bid], vec![offer]).unwrap();
+        let matches = MatchingAlgorithm::PayAsClear
+            .match_orders_with_pricing(&mut book, pricing)
+            .unwrap();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].energy_rate, 15);
+        assert_eq!(matches[0].match_type, MatchType::Preferred);
+    }
+}
+
+#[test]
+fn self_trades_are_rejected_in_both_phases() {
+    for algorithm in [MatchingAlgorithm::PayAsBid, MatchingAlgorithm::PayAsClear] {
+        for (bid_partner, offer_partner) in [
+            (None, None),
+            (Some("actor"), None),
+            (None, Some("actor")),
+            (Some("actor"), Some("actor")),
+        ] {
+            let mut bid = order("bid", OrderEnum::Bid, 20, bid_partner, Some(15));
+            let mut offer = order("offer", OrderEnum::Offer, 10, offer_partner, Some(15));
+            // Different areas must not bypass the same-actor check.
+            bid.created_by = "actor".into();
+            offer.created_by = "actor".into();
+            assert!(run(&algorithm, vec![bid], vec![offer]).is_empty());
         }
     }
 }
@@ -87,6 +126,10 @@ fn absent_preferred_rates_use_each_orders_normal_rate() {
             (20, 10, None, Some("buyer"), None, Some(20), 20),
             (15, 15, Some("seller"), Some("buyer"), None, None, 15),
             (15, 15, None, Some("buyer"), Some(0), Some(0), 15),
+            (20, 10, Some("seller"), None, Some(15), None, 15),
+            (20, 10, None, Some("buyer"), None, Some(12), 20),
+            (20, 10, Some("seller"), Some("buyer"), None, None, 20),
+            (20, 10, None, Some("buyer"), Some(0), Some(0), 20),
         ] {
             let bid = order(
                 "buyer",
@@ -111,13 +154,14 @@ fn absent_preferred_rates_use_each_orders_normal_rate() {
 }
 
 #[test]
-fn unequal_effective_rates_fall_back_to_normal_prices() {
+fn incompatible_effective_rates_fall_back_to_normal_prices() {
+    // The balanced standard book uses min_bid when both sides are exhausted.
     for (algorithm, price) in [
         (MatchingAlgorithm::PayAsBid, 20),
-        (MatchingAlgorithm::PayAsClear, 10),
+        (MatchingAlgorithm::PayAsClear, 20),
     ] {
         for (bid_preferred, offer_preferred) in
-            [(Some(15), Some(12)), (Some(9), None), (None, None)]
+            [(Some(9), Some(12)), (Some(9), None), (None, Some(21))]
         {
             let bid = order("buyer", OrderEnum::Bid, 20, Some("seller"), bid_preferred);
             let offer = order(
@@ -132,21 +176,39 @@ fn unequal_effective_rates_fall_back_to_normal_prices() {
             assert_eq!(matches[0].energy_rate, price);
             assert_eq!(matches[0].match_type, MatchType::Standard);
         }
-        let bid = order("buyer", OrderEnum::Bid, 8, Some("seller"), Some(15));
+        let bid = order("buyer", OrderEnum::Bid, 8, Some("seller"), Some(9));
         let offer = order("seller", OrderEnum::Offer, 10, Some("buyer"), Some(12));
         assert!(run(&algorithm, vec![bid], vec![offer]).is_empty());
     }
 }
 
 #[test]
-fn equal_preferred_rates_supersede_normal_price_limits() {
+fn compatible_preferred_rates_supersede_normal_price_limits() {
     for algorithm in [MatchingAlgorithm::PayAsBid, MatchingAlgorithm::PayAsClear] {
-        for price in [5, 25] {
-            let bid = order("buyer", OrderEnum::Bid, 20, Some("seller"), Some(price));
-            let offer = order("seller", OrderEnum::Offer, 10, Some("buyer"), Some(price));
+        for (bid_rate, offer_rate, bid_preferred, offer_preferred) in [
+            (20, 10, 5, 5),
+            (20, 10, 25, 25),
+            (20, 10, 5, 4),
+            (20, 10, 25, 22),
+            (8, 10, 15, 12),
+        ] {
+            let bid = order(
+                "buyer",
+                OrderEnum::Bid,
+                bid_rate,
+                Some("seller"),
+                Some(bid_preferred),
+            );
+            let offer = order(
+                "seller",
+                OrderEnum::Offer,
+                offer_rate,
+                Some("buyer"),
+                Some(offer_preferred),
+            );
             let matches = run(&algorithm, vec![bid], vec![offer]);
             assert_eq!(matches.len(), 1);
-            assert_eq!(matches[0].energy_rate, price);
+            assert_eq!(matches[0].energy_rate, bid_preferred);
             assert_eq!(matches[0].match_type, MatchType::Preferred);
         }
     }
@@ -170,7 +232,7 @@ fn remaining_preferred_quantity_can_match_in_the_standard_phase() {
     for algorithm in [MatchingAlgorithm::PayAsBid, MatchingAlgorithm::PayAsClear] {
         let mut bid = order("buyer", OrderEnum::Bid, 20, Some("seller"), Some(15));
         bid.energy = 15;
-        let preferred = order("seller", OrderEnum::Offer, 15, None, None);
+        let preferred = order("seller", OrderEnum::Offer, 12, None, None);
         let mut standard = order("other-seller", OrderEnum::Offer, 10, None, None);
         standard.energy = 5;
         let matches = run(&algorithm, vec![bid], vec![standard, preferred]);
@@ -192,7 +254,7 @@ fn remaining_preferred_quantity_can_match_in_the_standard_phase() {
 fn preferred_offer_residual_is_reused_in_the_standard_phase() {
     for algorithm in [MatchingAlgorithm::PayAsBid, MatchingAlgorithm::PayAsClear] {
         let bid = order("buyer", OrderEnum::Bid, 20, Some("seller"), Some(15));
-        let mut offer = order("seller", OrderEnum::Offer, 15, None, None);
+        let mut offer = order("seller", OrderEnum::Offer, 12, None, None);
         offer.energy = 15;
         let mut standard = order("other-buyer", OrderEnum::Bid, 20, None, None);
         standard.energy = 5;

@@ -62,7 +62,7 @@ impl MatchingData {
         let mut matches = Vec::new();
         for bid in &mut bids {
             for offer in &mut offers {
-                let Some(preferred_rate) = preferred_matching_rate(bid, offer) else {
+                let Some(preferred_rate) = preferred_trading_partner_matching_rate(bid, offer) else {
                     continue;
                 };
 
@@ -118,7 +118,10 @@ impl MatchingData {
                     return matches;
                 }
 
-                if offer.area_uuid == bid.area_uuid || offer.energy_rate > bid.energy_rate {
+                if offer.area_uuid == bid.area_uuid
+                    || offer.created_by == bid.created_by
+                    || offer.energy_rate > bid.energy_rate
+                {
                     continue;
                 }
 
@@ -153,6 +156,9 @@ impl MatchingData {
     }
 }
 
+/// Creates a match for `energy` at `rate`, including residuals for partly filled orders.
+/// Replaces each input order with its residual (including the new ID), or sets its
+/// energy to zero if fully filled, so subsequent matches consume the remaining order.
 fn fill_order_pair(
     bid: &mut Order,
     offer: &mut Order,
@@ -183,7 +189,7 @@ fn fill_order_pair(
     matched
 }
 
-fn preferred_matching_rate(bid: &Order, offer: &Order) -> Option<u64> {
+fn preferred_trading_partner_matching_rate(bid: &Order, offer: &Order) -> Option<u64> {
     let bid_partner = bid
         .requirements
         .as_ref()
@@ -196,6 +202,7 @@ fn preferred_matching_rate(bid: &Order, offer: &Order) -> Option<u64> {
     if (bid_partner.is_none() && offer_partner.is_none())
         || bid_partner.is_some_and(|partner| partner != offer.created_by)
         || offer_partner.is_some_and(|partner| partner != bid.created_by)
+        || bid.created_by == offer.created_by
     {
         return None;
     }
@@ -210,7 +217,7 @@ fn preferred_matching_rate(bid: &Order, offer: &Order) -> Option<u64> {
             .unwrap_or(order.energy_rate)
     };
     let bid_rate = effective_rate(bid);
-    (bid_rate == effective_rate(offer)).then_some(bid_rate)
+    (bid_rate >= effective_rate(offer)).then_some(bid_rate)
 }
 
 fn residual_order(order: &Order, matched_energy: u64) -> Option<Order> {

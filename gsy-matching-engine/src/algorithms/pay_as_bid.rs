@@ -66,6 +66,7 @@ mod tests {
     #[test]
     fn preference_match_compares_actor_ids_without_account_wrappers() {
         let mut bid = order("bid", OrderEnum::Bid, 100, 50);
+        // The offer falls back to its normal 45, matching the bid's preferred rate.
         let mut offer = order("offer", OrderEnum::Offer, 100, 45);
         offer.created_by = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string();
         bid.requirements = Some(Requirements {
@@ -80,6 +81,7 @@ mod tests {
         let matches = data.pay_as_bid();
 
         assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].match_type, crate::models::MatchType::Preferred);
         assert_eq!(matches[0].energy_rate, 45);
     }
 
@@ -132,7 +134,7 @@ mod tests {
     }
 
     #[test]
-    fn unequal_effective_rates_fall_back_to_standard_matching() {
+    fn incompatible_effective_rates_fall_back_to_standard_matching() {
         let mut bid = order("bid", OrderEnum::Bid, 100, 50);
         let mut offer = order("offer", OrderEnum::Offer, 100, 40);
         offer.created_by = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string();

@@ -1,13 +1,13 @@
-use super::EwdsOperation;
+use super::{EwdsEventType, EwdsOperation};
 use crate::db_api_schema::{
     grid_topology::EnergyCommunitySchema,
     market::{MarketSchema, MarketType, MatchingAlgorithm},
     orders::{DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus},
+    profiles::MeasurementSchema,
     trades::{
         ClearingResultSchema, ClearingStatus, DbTradeSchema, NoBidReason, TradeParameters,
         TradeStatus,
     },
-    profiles::{MeasurementSchema}
 };
 
 use crate::utils::{epoch_to_rfc3339, rfc3339_to_epoch};
@@ -68,6 +68,15 @@ pub struct EwdsResponseEnvelope<T> {
     pub success: bool,
     pub data: Vec<T>,
     pub error: Option<EwdsErrorPayload>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EwdsEventEnvelope<T> {
+    pub event_id: String,
+    pub event_type: EwdsEventType,
+    pub occurred_at: String,
+    pub data: T,
 }
 
 #[derive(Debug, Deserialize)]
@@ -187,6 +196,7 @@ impl TryFrom<EwdsOrderDto> for DbOrderSchema {
                     Some(ref pref) => Some(energy_type_from_ewds(pref)?),
                     None => None,
                 },
+                // Left empty when not sent: each order falls back to its own normal rate.
                 preferred_energy_rate: order.preferred_energy_rate,
             })
         } else {
@@ -356,8 +366,16 @@ impl TryFrom<EwdsTradeDto> for DbTradeSchema {
                 selected_energy_kWh: trade.trade_quantity,
                 energy_rate: trade.trade_price,
             },
+            status_updated_at: None,
         })
     }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct EwdsMarketStatusDto {
+    pub market_id: String,
+    pub is_open: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -518,6 +536,7 @@ impl From<EwdsMarketDto> for MarketSchema {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct EwdsMeasurementDto {
     pub facility_id: String,
     pub community_uuid: String,

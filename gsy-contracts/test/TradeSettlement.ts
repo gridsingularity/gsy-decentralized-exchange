@@ -182,11 +182,16 @@ describe("TradeSettlement", function () {
     ["both preferred rates absent", 45, 45, 0, 0, 45, true],
     ["below normal offer limit", 50, 40, 30, 30, 30, true],
     ["above normal bid limit", 50, 40, 60, 60, 60, true],
-    ["unequal preferred rates at bid quote", 50, 40, 45, 42, 45, false],
-    ["unequal preferred rates at offer quote", 50, 40, 45, 42, 42, false],
-    ["unequal fallback rates", 50, 40, 0, 0, 45, false],
-    ["unequal offer fallback rate", 50, 40, 45, 0, 45, false],
-    ["unequal bid fallback rate", 50, 40, 0, 45, 45, false],
+    ["unequal preferred rates at bid quote", 50, 40, 45, 42, 45, true],
+    ["unequal preferred rates at offer quote", 50, 40, 45, 42, 42, true],
+    ["unequal preferred rates at interior price", 50, 40, 45, 42, 43, true],
+    ["unequal fallback rates", 50, 40, 0, 0, 50, true],
+    ["unequal offer fallback rate", 50, 40, 45, 0, 45, true],
+    ["unequal bid fallback rate", 50, 40, 0, 45, 50, true],
+    ["crossed normal limits with compatible preferred rates", 35, 55, 50, 40, 50, true],
+    ["below preferred offer limit", 50, 40, 45, 42, 41, false],
+    ["above preferred bid limit", 50, 40, 45, 42, 46, false],
+    ["incompatible preferred rates", 50, 40, 42, 45, 43, false],
     ["incorrect settlement price", 50, 40, 45, 45, 44, false],
   ] as const) {
     it(`Should validate preferred prices: ${name}`, async function () {
@@ -222,6 +227,29 @@ describe("TradeSettlement", function () {
         await expect(settlement.connect(operator).settleBatch(asMarketBatch([{ ...matchData, matchType: 0 }])))
           .to.emit(settlement, "TradeSettled");
       }
+    });
+  }
+
+  for (const matchType of [0, 1]) {
+    it(`Should reject self-trades for match type ${matchType}`, async function () {
+      const { settlement, registry, buyer, operator, bid, offer: originalOffer } =
+        await loadFixture(deploySettlementFixture);
+      bid.preferredTradingPartner = bid.createdBy;
+      const offer = {
+        ...originalOffer,
+        createdBy: bid.createdBy,
+        preferredTradingPartner: bid.createdBy,
+        preferredEnergyRate: bid.preferredEnergyRate,
+      };
+      await registry.connect(buyer).placeOrder(bid);
+      await registry.connect(buyer).placeOrder(offer);
+      await expect(settlement.connect(operator).settleBatch(asMarketBatch([{
+        tradeId: bytes16Id("self-trade"), bid, offer,
+        residualBidId: ZERO_BYTES16, residualOfferId: ZERO_BYTES16,
+        selectedEnergy: 100, clearingPrice: 45, matchType,
+      }]))).to.be.revertedWithCustomError(settlement, "InvalidOrderParams");
+      expect(await registry.getStatus(bid.orderId)).to.equal(1);
+      expect(await registry.getStatus(offer.orderId)).to.equal(1);
     });
   }
 
