@@ -211,6 +211,7 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
                 _ensurePenaltyRecorded(bid.createdBy, bid.marketId, verification.tradeId, verification.buyerPenaltyEnergy);
                 _ensurePenaltyRecorded(offer.createdBy, offer.marketId, verification.tradeId, verification.sellerPenaltyEnergy);
             }
+            // Widen before addition: two uint64 penalties can exceed uint64.
             if (penaltyEnergyByTrade[verification.tradeId] !=
                 uint256(verification.buyerPenaltyEnergy) + verification.sellerPenaltyEnergy) {
                 revert InvalidPenalty();

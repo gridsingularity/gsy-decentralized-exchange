@@ -688,8 +688,8 @@ components:
 
     OrderStatus:
       type: string
-      enum: [Open, Executed, Expired, Deleted]
-      default: Open
+      enum: [submitted, partially_filled, filled, cancelled, expired, rejected, executed]
+      default: submitted
 
     EnergyType:
       type: string

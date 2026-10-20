@@ -714,6 +714,18 @@ describe("TradeSettlement", function () {
     });
   }
 
+  it("Should sum buyer and seller penalties beyond uint64 without overflowing", async function () {
+    const { settlement, executionEngine, matchData } = await loadFixture(settledVerificationFixture);
+    const buyerPenaltyEnergy = (1n << 64n) - 1n;
+    const sellerPenaltyEnergy = 1n;
+    await settlement.connect(executionEngine).completeDeliveryVerification([{
+      tradeId: matchData.tradeId, buyerPenaltyEnergy, sellerPenaltyEnergy,
+    }]);
+    expect(await settlement.penaltyEnergyByTrade(matchData.tradeId))
+      .to.equal(buyerPenaltyEnergy + sellerPenaltyEnergy);
+    expect((await settlement.settledTrades(matchData.tradeId)).verified).to.equal(true);
+  });
+
   it("Should restrict verification to the execution role and reject unknown trades atomically", async function () {
     const { settlement, registry, operator, executionEngine, matchData } = await loadFixture(settledVerificationFixture);
     const verdict = { tradeId: matchData.tradeId, buyerPenaltyEnergy: 10, sellerPenaltyEnergy: 0 };
