@@ -38,9 +38,13 @@ jobs:
             RUSTSEC-2026-0098 # rustls-webpki via rustls stacks pulled by ethers / reqwest
             RUSTSEC-2026-0099 # rustls-webpki via rustls stacks pulled by ethers / reqwest
             RUSTSEC-2026-0104 # rustls-webpki via rustls stacks pulled by ethers / reqwest
-            RUSTSEC-2026-0346 # rustls 0.21 via ethers 2.x / reqwest 0.11; no patched 0.21 release, only custom session stores are affected
-            RUSTSEC-2026-0349 # rustls 0.21 via ethers 2.x / reqwest 0.11; no patched 0.21 release, 0.21 has no post-quantum key exchange to downgrade
             RUSTSEC-2026-0258 # h2 0.3 via ethers 2.x / reqwest 0.11; no patched 0.3 release
+            # zip 0.6 via ethers-solc 2.x -> svm-rs 0.3. svm-rs is optional (svm-solc feature),
+            # which no crate enables, so zip is only listed in Cargo.lock and never compiled.
+            # svm-rs 0.3.5 is the last release ethers-solc 2.x accepts and it pins zip 0.6.
+            RUSTSEC-2026-0367 # zip extraction preserves SUID/SGID bits
+            RUSTSEC-2026-0368 # zip extraction follows symlinks outside the destination
+            RUSTSEC-2026-0369 # zip extraction applies permissions through symlinks
             # Temporary rustls 0.21 exceptions via ethers / reqwest; no patched 0.21 release.
             # Keep rustls 0.23 patched to >=0.23.46 in Cargo.lock despite these ID-wide ignores.
             # Revisit when migrating the legacy TLS stack or adding custom TLS configuration.
