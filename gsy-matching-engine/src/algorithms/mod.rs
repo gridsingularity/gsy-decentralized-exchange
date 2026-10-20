@@ -3,7 +3,7 @@ mod pay_as_clear;
 
 pub use pay_as_clear::PayAsClearPricing;
 
-use crate::models::{BidOfferMatch, MatchingData, Order};
+use crate::models::{BidOfferMatch, MatchType, MatchingData, Order};
 use primitives::MatchingAlgorithm;
 use uuid::Uuid;
 
@@ -62,16 +62,9 @@ impl MatchingData {
         let mut matches = Vec::new();
         for bid in &mut bids {
             for offer in &mut offers {
-                let Some(requirements) = bid.requirements.as_ref() else {
+                let Some(preferred_rate) = preferred_trading_partner_matching_rate(bid, offer) else {
                     continue;
                 };
-                if requirements.trading_partner_id.as_ref() != Some(&offer.created_by) {
-                    continue;
-                }
-                let preferred_rate = requirements.preferred_energy_rate.unwrap_or(bid.energy_rate);
-                if preferred_rate < offer.energy_rate || preferred_rate > bid.energy_rate {
-                    continue;
-                }
 
                 let selected_energy = bid.energy.min(offer.energy);
 
@@ -79,7 +72,13 @@ impl MatchingData {
                     continue;
                 }
 
-                matches.push(fill_order_pair(bid, offer, selected_energy, preferred_rate));
+                matches.push(fill_order_pair(
+                    bid,
+                    offer,
+                    selected_energy,
+                    preferred_rate,
+                    MatchType::Preferred,
+                ));
 
                 if bid.energy == 0 {
                     break;
@@ -119,7 +118,10 @@ impl MatchingData {
                     return matches;
                 }
 
-                if offer.area_uuid == bid.area_uuid || offer.energy_rate > bid.energy_rate {
+                if offer.area_uuid == bid.area_uuid
+                    || offer.created_by == bid.created_by
+                    || offer.energy_rate > bid.energy_rate
+                {
                     continue;
                 }
 
@@ -140,7 +142,13 @@ impl MatchingData {
                 let rate = clearing_point
                     .map(|point| point.clearing_price)
                     .unwrap_or(bid.energy_rate);
-                matches.push(fill_order_pair(bid, offer, selected_energy, rate));
+                matches.push(fill_order_pair(
+                    bid,
+                    offer,
+                    selected_energy,
+                    rate,
+                    MatchType::Standard,
+                ));
             }
         }
 
@@ -148,8 +156,18 @@ impl MatchingData {
     }
 }
 
-fn fill_order_pair(bid: &mut Order, offer: &mut Order, energy: u64, rate: u64) -> BidOfferMatch {
+/// Creates a match for `energy` at `rate`, including residuals for partly filled orders.
+/// Replaces each input order with its residual (including the new ID), or sets its
+/// energy to zero if fully filled, so subsequent matches consume the remaining order.
+fn fill_order_pair(
+    bid: &mut Order,
+    offer: &mut Order,
+    energy: u64,
+    rate: u64,
+    match_type: MatchType,
+) -> BidOfferMatch {
     let matched = BidOfferMatch {
+        match_type,
         market_id: offer.market_id.clone(),
         time_slot: offer.time_slot,
         bid: bid.clone(),
@@ -171,6 +189,36 @@ fn fill_order_pair(bid: &mut Order, offer: &mut Order, energy: u64, rate: u64) -
     matched
 }
 
+fn preferred_trading_partner_matching_rate(bid: &Order, offer: &Order) -> Option<u64> {
+    let bid_partner = bid
+        .requirements
+        .as_ref()
+        .and_then(|requirements| requirements.trading_partner_id.as_deref());
+    let offer_partner = offer
+        .requirements
+        .as_ref()
+        .and_then(|requirements| requirements.trading_partner_id.as_deref());
+
+    if (bid_partner.is_none() && offer_partner.is_none())
+        || bid_partner.is_some_and(|partner| partner != offer.created_by)
+        || offer_partner.is_some_and(|partner| partner != bid.created_by)
+        || bid.created_by == offer.created_by
+    {
+        return None;
+    }
+
+    let effective_rate = |order: &Order| {
+        order
+            .requirements
+            .as_ref()
+            .and_then(|requirements| requirements.preferred_energy_rate)
+            // Zero is the on-chain sentinel for an absent preferred rate.
+            .filter(|rate| *rate != 0)
+            .unwrap_or(order.energy_rate)
+    };
+    let bid_rate = effective_rate(bid);
+    (bid_rate >= effective_rate(offer)).then_some(bid_rate)
+}
 
 fn residual_order(order: &Order, matched_energy: u64) -> Option<Order> {
     if order.energy <= matched_energy {

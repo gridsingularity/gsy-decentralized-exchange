@@ -41,6 +41,11 @@ jobs:
             RUSTSEC-2026-0346 # rustls 0.21 via ethers 2.x / reqwest 0.11; no patched 0.21 release, only custom session stores are affected
             RUSTSEC-2026-0349 # rustls 0.21 via ethers 2.x / reqwest 0.11; no patched 0.21 release, 0.21 has no post-quantum key exchange to downgrade
             RUSTSEC-2026-0258 # h2 0.3 via ethers 2.x / reqwest 0.11; no patched 0.3 release
+            # Temporary rustls 0.21 exceptions via ethers / reqwest; no patched 0.21 release.
+            # Keep rustls 0.23 patched to >=0.23.46 in Cargo.lock despite these ID-wide ignores.
+            # Revisit when migrating the legacy TLS stack or adding custom TLS configuration.
+            RUSTSEC-2026-0346 # No custom ClientSessionStore Debug logging; built-in caches redact secrets
+            RUSTSEC-2026-0349 # rustls 0.21 supports only classical key exchange, not hybrid post-quantum groups
             RUSTSEC-2026-0097 # rand warning; no direct rand::rng custom logger usage
             RUSTSEC-2024-0442 # wasmtime-jit-debug via Substrate / wasmtime runtime
             RUSTSEC-2025-0055 # tracing-subscriber via transitive logging stacks
