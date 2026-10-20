@@ -389,10 +389,53 @@ mod tests {
 
     #[test]
     fn trade_round_trips() {
-        let expected = trade();
-        let actual = DbTradeSchema::try_from(EwdsTradeDto::from(expected.clone()))
-            .expect("round trip should succeed");
-        assert_eq!(actual, expected);
+        let statuses = [
+            (TradeStatus::Matched, "matched"),
+            (TradeStatus::Executed, "executed"),
+            (TradeStatus::Settled, "settled"),
+            (TradeStatus::Penalized, "penalized"),
+        ];
+        let schema: Value = serde_json::from_str(include_str!(
+            "../../schemas/ewds/intelligent/int.trade.schema.v1.json"
+        ))
+        .unwrap();
+        assert_eq!(
+            schema["properties"]["tradeStatus"]["enum"],
+            json!(statuses.iter().map(|(_, name)| name).collect::<Vec<_>>())
+        );
+        for (status, name) in statuses {
+            let mut expected = trade();
+            expected.status = status;
+            let stored = serde_json::to_value(&expected).unwrap();
+            assert_eq!(stored["status"], name);
+            assert_eq!(
+                serde_json::from_value::<DbTradeSchema>(stored).unwrap(),
+                expected
+            );
+
+            let mut dto = EwdsTradeDto::from(expected.clone());
+            let wire = serde_json::to_value(&dto).unwrap();
+            assert_eq!(wire["tradeStatus"], name);
+            let parsed: EwdsTradeDto = serde_json::from_value(wire).unwrap();
+            assert_eq!(DbTradeSchema::try_from(parsed).unwrap(), expected);
+
+            dto.trade_status = name.to_ascii_uppercase();
+            assert_eq!(DbTradeSchema::try_from(dto).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn unsupported_trade_status_is_rejected() {
+        for status in ["rejected", "REJECTED", "unknown"] {
+            let mut stored = serde_json::to_value(trade()).unwrap();
+            stored["status"] = json!(status);
+            assert!(serde_json::from_value::<DbTradeSchema>(stored).is_err());
+
+            let mut dto = EwdsTradeDto::from(trade());
+            dto.trade_status = status.to_string();
+            let error = DbTradeSchema::try_from(dto).unwrap_err();
+            assert!(error.to_string().contains("unsupported EWDS trade status"));
+        }
     }
 
     // ---- MeasurementDto tests ----

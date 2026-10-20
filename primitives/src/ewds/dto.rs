@@ -315,7 +315,7 @@ fn trade_status_to_ewds(status: &TradeStatus) -> &'static str {
         TradeStatus::Matched => "matched",
         TradeStatus::Executed => "executed",
         TradeStatus::Settled => "settled",
-        TradeStatus::Rejected => "rejected",
+        TradeStatus::Penalized => "penalized",
     }
 }
 
@@ -324,7 +324,7 @@ fn trade_status_from_ewds(value: &str) -> Result<TradeStatus> {
         "matched" => Ok(TradeStatus::Matched),
         "executed" => Ok(TradeStatus::Executed),
         "settled" => Ok(TradeStatus::Settled),
-        "rejected" => Ok(TradeStatus::Rejected),
+        "penalized" => Ok(TradeStatus::Penalized),
         _ => Err(anyhow!("unsupported EWDS trade status '{}'", value)),
     }
 }

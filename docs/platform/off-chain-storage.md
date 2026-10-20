@@ -100,6 +100,12 @@ reconciliation/reindexing, as do other missed lifecycle events.
 
 ## Data Model Notes
 
+- The agreed trade lifecycle is `Matched` (match generated), then `Settled`
+  (on-chain match settlement confirmed), then `Executed` (delivery verified
+  without penalties) or terminal `Penalized` (a delivery penalty recorded).
+  `Settled` does not imply a financial payment, and trades cannot be `Rejected`.
+  DD-453 introduces this status contract first; runtime transitions and
+  notifications are being aligned in subsequent increments.
 - Order IDs and market IDs are stored as hex strings (`0x...`).
 - The preferred trading partner of a bid or an offer is stored in its
   requirements (`requirements.trading_partner_id`) as the original off-chain

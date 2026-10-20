@@ -44,7 +44,7 @@ LOADS = ["Load1", "Load2", "Load3"]
 ROSTER = set(PV_SELLERS + [BATTERY] + LOADS)
 DAYTIME_HOURS = range(6, 18)  # UTC hours in which PV sells
 
-TRADE_STATUSES = {"matched", "executed", "settled", "rejected"}
+TRADE_STATUSES = {"matched", "executed", "settled", "penalized"}
 TRADE_KEYS = {
     "tradeId": str,
     "marketId": str,

@@ -2,14 +2,18 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Trade status
+/// Trade lifecycle status. Settlement confirms the match on-chain; it does not move funds.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum TradeStatus {
+    /// The matching engine generated the match.
     Matched,
+    /// Delivery verification completed without penalties.
     Executed,
+    /// The match settlement transaction was confirmed on-chain.
     Settled,
-    Rejected,
+    /// A delivery penalty was recorded. This status is terminal.
+    Penalized,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
