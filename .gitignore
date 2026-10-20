@@ -29,3 +29,7 @@ mongodb-data
 
 /.secrets/
 
+.claude/
+deployment/
+docs/plans/
+docs/completed_plans/
