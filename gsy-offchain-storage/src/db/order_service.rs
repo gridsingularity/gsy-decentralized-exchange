@@ -236,6 +236,42 @@ impl OrderService {
         }
     }
 
+    /// Record a settlement fill without resetting executed orders or replay timestamps.
+    pub async fn mark_filled(
+        &self,
+        order_id: &str,
+        partially_filled: bool,
+        block_timestamp: u64,
+    ) -> Result<()> {
+        let status = if partially_filled {
+            OrderStatus::PartiallyFilled
+        } else {
+            OrderStatus::Filled
+        };
+        self.0.update_one(
+            doc! {
+                "order_id": order_id,
+                // A delayed settlement event may arrive after market closure.
+                "status": {"$in": [bson::to_bson(&OrderStatus::Submitted)?, bson::to_bson(&OrderStatus::Expired)?]},
+            },
+            doc! {"$set": {
+                "status": bson::to_bson(&status)?,
+                "status_updated_at": bson::to_bson(&block_timestamp)?,
+            }},
+        ).await?;
+        let order = self
+            .get_order_by_id(&Bson::String(order_id.to_string()))
+            .await?;
+        anyhow::ensure!(
+            order.is_some_and(
+                |order| order.status == status || order.status == OrderStatus::Executed
+            ),
+            "Cannot settle missing or conflicting order {}",
+            order_id
+        );
+        Ok(())
+    }
+
     /// Complete a consumed order only, preserving the timestamp on event retries.
     pub async fn mark_executed(&self, order_id: &str, block_timestamp: u64) -> Result<()> {
         self.0.update_one(

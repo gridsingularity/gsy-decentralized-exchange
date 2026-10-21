@@ -19,7 +19,7 @@ use primitives::db_api_schema::trades::{
     ClearingResultSchema, ClearingStatus, DbTradeSchema, TradeParameters, TradeStatus,
 };
 use primitives::ewds::dto::{
-    EwdsEventEnvelope, EwdsMarketStatusDto, EwdsOrderDto, EwdsSendMessageDto,
+    EwdsEventEnvelope, EwdsMarketStatusDto, EwdsOrderDto, EwdsSendMessageDto, EwdsTradeDto,
 };
 use primitives::ewds::{is_invalid_event, EwdsEventType};
 use primitives::utils::{
@@ -487,7 +487,7 @@ async fn trade_settled_publishes_trade_event() {
 }
 
 #[tokio::test]
-async fn trade_settled_does_not_publish_when_trade_is_not_persisted() {
+async fn trade_settled_rejects_conflicting_details_without_publishing() {
     let app = init_app().await;
     let server = mock_gateway().await;
     let handler = evm_handler(&app, &server);
@@ -499,14 +499,193 @@ async fn trade_settled_does_not_publish_when_trade_is_not_persisted() {
         .unwrap();
     wait_for_gateway_messages(&server, 2).await;
 
-    // The unique trade_uuid index rejects the duplicate, so no second event may be sent.
-    let error = handler
-        .handle_trade_settled(trade_settled_event(), 1_100)
-        .await
-        .unwrap_err();
-    assert!(error.to_string().contains("Failed to insert trade"));
+    let before =
+        serde_json::to_value(app.db_wrapper.trades().get_all_trades().await.unwrap()).unwrap();
+    let orders_before = app.db_wrapper.orders().get_all_orders().await.unwrap();
+    for field in [
+        "buyer",
+        "seller",
+        "market",
+        "bid",
+        "offer",
+        "residual_bid",
+        "residual_offer",
+        "energy",
+        "price",
+    ] {
+        let mut event = trade_settled_event();
+        match field {
+            "buyer" => event.buyer_id = [0xff; 16],
+            "seller" => event.seller_id = [0xff; 16],
+            "market" => event.market_id = [0xff; 16],
+            "bid" => event.bid_id = [0xff; 16],
+            "offer" => event.offer_id = [0xff; 16],
+            "residual_bid" => event.residual_bid_id = [0xff; 16],
+            "residual_offer" => event.residual_offer_id = [0xff; 16],
+            "energy" => event.energy += U256::one(),
+            "price" => event.price += U256::one(),
+            _ => unreachable!(),
+        }
+        let error = handler
+            .handle_trade_settled(event, 1_101)
+            .await
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("Failed to index trade"),
+            "{field}: {error:?}"
+        );
+    }
+    assert_eq!(
+        serde_json::to_value(app.db_wrapper.trades().get_all_trades().await.unwrap()).unwrap(),
+        before
+    );
+    assert_eq!(
+        app.db_wrapper.orders().get_all_orders().await.unwrap(),
+        orders_before
+    );
     assert_no_further_gateway_messages(&server, 2).await;
 
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn trade_settled_advances_matched_and_preserves_replayed_statuses() {
+    for (status, updated_at) in [
+        (TradeStatus::Matched, Some(960)),
+        (TradeStatus::Matched, None),
+        (TradeStatus::Settled, Some(1_100)),
+        (TradeStatus::Settled, None),
+        (TradeStatus::Executed, Some(1_200)),
+        (TradeStatus::Penalized, Some(1_200)),
+    ] {
+        let app = init_app().await;
+        let server = mock_gateway().await;
+        let handler = evm_handler(&app, &server);
+        seed_settlement_orders(&app).await;
+        let event = trade_settled_event();
+        let mut expected = DbTradeSchema {
+            status: status.clone(),
+            status_updated_at: updated_at,
+            buyer: bytes16_to_hex(event.buyer_id),
+            seller: bytes16_to_hex(event.seller_id),
+            market_id: bytes16_to_hex(event.market_id),
+            bid_hash: bytes16_to_hex(event.bid_id),
+            offer_hash: bytes16_to_hex(event.offer_id),
+            ..trade(&bytes16_to_hex(event.trade_id), 960)
+        };
+        app.db_wrapper
+            .trades()
+            .insert_trades(vec![expected.clone()])
+            .await
+            .unwrap();
+        let executed = matches!(status, TradeStatus::Executed | TradeStatus::Penalized);
+        if executed {
+            app.db_wrapper.orders().update_many(
+                mongodb::bson::doc! {},
+                mongodb::bson::doc! {"$set": {"status": "executed", "status_updated_at": 1_200i64}},
+            ).await.unwrap();
+        }
+        if status == TradeStatus::Matched {
+            expected.status = TradeStatus::Settled;
+            expected.status_updated_at = Some(1_100);
+        }
+        for (index, timestamp) in [1_100, 1_300].into_iter().enumerate() {
+            handler
+                .handle_trade_settled(event.clone(), timestamp)
+                .await
+                .unwrap();
+            let stored = app.db_wrapper.trades().get_all_trades().await.unwrap();
+            assert_eq!(
+                serde_json::to_value(stored).unwrap(),
+                json!([expected.clone()])
+            );
+            let messages = wait_for_gateway_messages(&server, (index + 1) * 2).await;
+            let new_messages = &messages[index * 2..];
+            let order_status = if executed {
+                OrderStatus::Executed
+            } else {
+                OrderStatus::Filled
+            };
+            assert_order_status_event(
+                &app,
+                new_messages,
+                &[
+                    (event.bid_id, order_status.clone()),
+                    (event.offer_id, order_status),
+                ],
+                if executed { 1_200 } else { 1_100 },
+            )
+            .await;
+            let message = new_messages
+                .iter()
+                .find(|message| message.topic_name == "trade")
+                .unwrap();
+            assert_eq!(
+                event_payload(message)["data"],
+                json!([EwdsTradeDto::from(expected.clone())])
+            );
+        }
+        stop_app(app).await;
+    }
+}
+
+#[tokio::test]
+async fn trade_settled_replay_completes_a_partially_persisted_fill() {
+    let app = init_app().await;
+    let server = mock_gateway().await;
+    let handler = evm_handler(&app, &server);
+    seed_settlement_orders(&app).await;
+    let event = trade_settled_event();
+    // Simulate an order that has not been indexed yet: the trade and bid write succeed.
+    app.db_wrapper
+        .orders()
+        .delete_one(mongodb::bson::doc! {"order_id": bytes16_to_hex(event.offer_id)})
+        .await
+        .unwrap();
+    assert!(handler
+        .handle_trade_settled(event.clone(), 1_100)
+        .await
+        .is_err());
+    let trades = app.db_wrapper.trades().get_all_trades().await.unwrap();
+    assert_eq!(trades.len(), 1);
+    assert_eq!(trades[0].status, TradeStatus::Settled);
+    assert_eq!(trades[0].status_updated_at, Some(1_100));
+    assert_no_further_gateway_messages(&server, 0).await;
+    let quiet_handler = OffchainStorageEvmHandler {
+        db: app.db_wrapper.clone(),
+        event_publisher: None,
+    };
+    quiet_handler
+        .handle_order_placed(order_placed_event(event.offer_id, false), 950)
+        .await
+        .unwrap();
+    // Closure can be indexed before this delayed settlement is retried.
+    app.db_wrapper
+        .orders()
+        .expire_market_orders(&bytes16_to_hex(event.market_id), 1_150)
+        .await
+        .unwrap();
+    for (index, timestamp) in [1_100, 1_101].into_iter().enumerate() {
+        handler
+            .handle_trade_settled(event.clone(), timestamp)
+            .await
+            .unwrap();
+        let messages = wait_for_gateway_messages(&server, (index + 1) * 2).await;
+        assert_order_status_event(
+            &app,
+            &messages[index * 2..],
+            &[
+                (event.bid_id, OrderStatus::Filled),
+                (event.offer_id, OrderStatus::Filled),
+            ],
+            1_100,
+        )
+        .await;
+        assert_eq!(
+            serde_json::to_value(app.db_wrapper.trades().get_all_trades().await.unwrap()).unwrap(),
+            json!(trades)
+        );
+    }
     stop_app(app).await;
 }
 

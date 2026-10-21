@@ -166,27 +166,13 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         let offer_hash_str = bytes16_to_hex(event.offer_id);
         let residual_bid_id = bytes16_to_optional_hex(event.residual_bid_id);
         let residual_offer_id = bytes16_to_optional_hex(event.residual_offer_id);
-        let bid_status = if residual_bid_id.is_some() {
-            OrderStatus::PartiallyFilled
-        } else {
-            OrderStatus::Filled
-        };
-        let offer_status = if residual_offer_id.is_some() {
-            OrderStatus::PartiallyFilled
-        } else {
-            OrderStatus::Filled
-        };
-
-        let bid_bson = mongodb::bson::to_bson(&bid_hash_str).unwrap();
-        let offer_bson = mongodb::bson::to_bson(&offer_hash_str).unwrap();
-
         let trade = DbTradeSchema {
             trade_uuid: trade_hash.clone(),
             status: TradeStatus::Settled,
             seller: bytes16_to_hex(event.seller_id),
             buyer: bytes16_to_hex(event.buyer_id),
             market_id: bytes16_to_hex(event.market_id),
-            creation_time: chrono::Utc::now().timestamp() as u64,
+            creation_time: block_timestamp,
             offer_hash: offer_hash_str,
             bid_hash: bid_hash_str,
             residual_offer_id,
@@ -200,30 +186,25 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
 
         self.db
             .trades()
-            .insert_trades(vec![trade.clone()])
+            .record_settlement(trade.clone(), block_timestamp)
             .await
-            .with_context(|| format!("Failed to insert trade {} into DB", trade_hash))?;
+            .with_context(|| format!("Failed to index trade {} into DB", trade_hash))?;
 
-        self.db
-            .orders()
-            .update_order_status_by_id(&bid_bson, bid_status, block_timestamp)
-            .await
-            .with_context(|| {
-                format!(
-                    "Failed to update bid {} after settlement of trade {}",
-                    bid_bson, trade_hash
-                )
-            })?;
-        self.db
-            .orders()
-            .update_order_status_by_id(&offer_bson, offer_status, block_timestamp)
-            .await
-            .with_context(|| {
-                format!(
-                    "Failed to update offer {} after settlement of trade {}",
-                    offer_bson, trade_hash
-                )
-            })?;
+        for (order_id, partial) in [
+            (&trade.bid_hash, trade.residual_bid_id.is_some()),
+            (&trade.offer_hash, trade.residual_offer_id.is_some()),
+        ] {
+            self.db
+                .orders()
+                .mark_filled(order_id, partial, block_timestamp)
+                .await
+                .with_context(|| {
+                    format!(
+                        "Failed to update order {} after settlement of trade {}",
+                        order_id, trade_hash
+                    )
+                })?;
+        }
 
         info!("Trade persisted and orders updated.");
 
@@ -231,6 +212,14 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         self.publish_order_statuses(&[trade.bid_hash.clone(), trade.offer_hash.clone()])
             .await?;
         if let Some(publisher) = &self.event_publisher {
+            let trade = self
+                .db
+                .trades()
+                .find_one(mongodb::bson::doc! {"trade_uuid": &trade_hash})
+                .await?
+                .with_context(|| {
+                    format!("Missing trade {} for settlement notification", trade_hash)
+                })?;
             publisher.publish_trade_event(vec![trade]);
         }
 

@@ -512,10 +512,17 @@ async fn settlement_indexes_fill_statuses_and_keeps_residuals_independent() {
             energy: U256::from(10000u64),
             price: U256::from(5000u64),
         };
-        handler
-            .handle_trade_settled(event.clone(), 980)
-            .await
-            .unwrap();
+        for timestamp in [980, 981] {
+            handler
+                .handle_trade_settled(event.clone(), timestamp)
+                .await
+                .unwrap();
+        }
+        let trades = app.db_wrapper.trades().get_all_trades().await.unwrap();
+        assert_eq!(trades.len(), 1);
+        assert_eq!(trades[0].status, TradeStatus::Settled);
+        assert_eq!(trades[0].creation_time, 980);
+        assert_eq!(trades[0].status_updated_at, Some(980));
         let orders = app.db_wrapper.orders();
         let indexed = orders.get_all_orders().await.unwrap();
         let returned = reqwest::Client::new()
@@ -653,6 +660,12 @@ async fn settlement_indexes_fill_statuses_and_keeps_residuals_independent() {
                 assert_eq!(stored, expected);
             }
         }
+        let completed_orders = orders.get_all_orders().await.unwrap();
+        handler
+            .handle_trade_settled(event.clone(), 1_300)
+            .await
+            .unwrap();
+        assert_eq!(orders.get_all_orders().await.unwrap(), completed_orders);
         let verified = app
             .db_wrapper
             .trades()

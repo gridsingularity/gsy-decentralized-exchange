@@ -1,5 +1,5 @@
 use crate::db::DatabaseWrapper;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use futures::StreamExt;
 use mongodb::bson::{doc, Bson};
 use mongodb::options::IndexOptions;
@@ -66,6 +66,55 @@ pub async fn init_market_roles(db: &DatabaseWrapper) -> Result<()> {
 pub struct TradeService(pub Collection<DbTradeSchema>);
 
 impl TradeService {
+    /// Index a confirmed settlement without overwriting match details or later statuses.
+    pub async fn record_settlement(
+        &self,
+        mut trade: DbTradeSchema,
+        block_timestamp: u64,
+    ) -> Result<()> {
+        trade.status = TradeStatus::Settled;
+        trade.status_updated_at = Some(block_timestamp);
+        let mut identity = doc! {
+            "trade_uuid": &trade.trade_uuid,
+            "seller": &trade.seller,
+            "buyer": &trade.buyer,
+            "market_id": &trade.market_id,
+            "offer_hash": &trade.offer_hash,
+            "bid_hash": &trade.bid_hash,
+            "residual_offer_id": mongodb::bson::to_bson(&trade.residual_offer_id)?,
+            "residual_bid_id": mongodb::bson::to_bson(&trade.residual_bid_id)?,
+            "parameters.selected_energy_kWh": trade.parameters.selected_energy_kWh,
+            "parameters.energy_rate": trade.parameters.energy_rate,
+        };
+        // A conflicting snapshot cannot match this filter; the unique trade_uuid
+        // index then rejects its insertion instead of replacing the existing trade.
+        self.0
+            .update_one(
+                identity.clone(),
+                doc! {"$setOnInsert": mongodb::bson::to_document(&trade)?},
+            )
+            .upsert(true)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to index settlement for trade {} with matching details",
+                    trade.trade_uuid
+                )
+            })?;
+
+        identity.insert("status", mongodb::bson::to_bson(&TradeStatus::Matched)?);
+        self.0
+            .update_one(
+                identity,
+                doc! {"$set": {
+                    "status": mongodb::bson::to_bson(&TradeStatus::Settled)?,
+                    "status_updated_at": timestamp_bson(block_timestamp)?,
+                }},
+            )
+            .await?;
+        Ok(())
+    }
+
     pub async fn mark_executed(&self, trade_id: &str, block_timestamp: u64) -> Result<()> {
         self.0.update_one(
             doc! {"trade_uuid": trade_id, "status": mongodb::bson::to_bson(&TradeStatus::Settled)?},
