@@ -575,7 +575,7 @@ async fn trade_settled_advances_matched_and_preserves_replayed_statuses() {
         };
         app.db_wrapper
             .trades()
-            .insert_trades(vec![expected.clone()])
+            .insert_one(expected.clone())
             .await
             .unwrap();
         let executed = matches!(status, TradeStatus::Executed | TradeStatus::Penalized);

@@ -85,6 +85,7 @@ Each service:
 |---|---|---|---|---|---|
 | `orders.query` over `ordersQuery` / `ordersQueryResponse` | matching engine | off-chain storage service | off-chain storage service | matching engine | `GET /orders` |
 | `trades.query` over `tradesQuery` / `tradesQueryResponse` | execution engine | off-chain storage service | off-chain storage service | execution engine | `GET /trades` |
+| `trades.import` over `tradesImport` / `tradesImportResponse` | shared storage client (matching-engine wiring pending) | off-chain storage service | off-chain storage service | requesting client | `POST /trades` |
 | `measurements.query` over `measurementsQuery` / `measurementsQueryResponse` | execution engine | off-chain storage service | off-chain storage service | execution engine | `GET /measurement-points` + `GET /timeseries` |
 | `clearing_results.query` over `clearingResultsQuery` / `clearingResultsQueryResponse` | matching/execution engine | off-chain storage service | off-chain storage service | requester | `GET /clearing-results` |
 | `markets.query` over `marketsQuery` / `marketsQueryResponse` | community client | off-chain storage service | off-chain storage service | community client | `GET /markets` |
@@ -105,10 +106,10 @@ Each service:
 
 | Local channel FQCN | Gateway type | Attached topics | Default env var |
 |---|---|---|---|
-| `gsy.intelligent.requests.pub` | Publish | `ordersQuery`, `tradesQuery`, `measurementsQuery`, `clearingResultsQuery`, `marketsQuery`, `idsQuery`, `communitiesQuery` | `EWDS_REQUEST_PUBLISH_FQCN` |
-| `gsy.intelligent.requests.sub` | Subscribe | `ordersQuery`, `tradesQuery`, `measurementsQuery`, `clearingResultsQuery`, `marketsQuery`, `idsQuery`, `communitiesQuery` | `EWDS_REQUEST_SUBSCRIBE_FQCN` |
-| `gsy.intelligent.responses.pub` | Publish | `ordersQueryResponse`, `tradesQueryResponse`, `measurementsQueryResponse`, `clearingResultsQueryResponse`, `marketsQueryResponse`, `idsQueryResponse`, `communitiesQueryResponse` | `EWDS_RESPONSE_PUBLISH_FQCN` |
-| `gsy.intelligent.responses.sub` | Subscribe | `ordersQueryResponse`, `tradesQueryResponse`, `measurementsQueryResponse`, `clearingResultsQueryResponse`, `marketsQueryResponse`, `idsQueryResponse`, `communitiesQueryResponse` | `EWDS_RESPONSE_SUBSCRIBE_FQCN` |
+| `gsy.intelligent.requests.pub` | Publish | `ordersQuery`, `tradesQuery`, `tradesImport`, `measurementsQuery`, `clearingResultsQuery`, `marketsQuery`, `idsQuery`, `communitiesQuery` | `EWDS_REQUEST_PUBLISH_FQCN` |
+| `gsy.intelligent.requests.sub` | Subscribe | `ordersQuery`, `tradesQuery`, `tradesImport`, `measurementsQuery`, `clearingResultsQuery`, `marketsQuery`, `idsQuery`, `communitiesQuery` | `EWDS_REQUEST_SUBSCRIBE_FQCN` |
+| `gsy.intelligent.responses.pub` | Publish | `ordersQueryResponse`, `tradesQueryResponse`, `tradesImportResponse`, `measurementsQueryResponse`, `clearingResultsQueryResponse`, `marketsQueryResponse`, `idsQueryResponse`, `communitiesQueryResponse` | `EWDS_RESPONSE_PUBLISH_FQCN` |
+| `gsy.intelligent.responses.sub` | Subscribe | `ordersQueryResponse`, `tradesQueryResponse`, `tradesImportResponse`, `measurementsQueryResponse`, `clearingResultsQueryResponse`, `marketsQueryResponse`, `idsQueryResponse`, `communitiesQueryResponse` | `EWDS_RESPONSE_SUBSCRIBE_FQCN` |
 | `gsy.intelligent.events.pub` | Publish | `trade`, `clearingResult`, `market`, `measurements`, `facility`, `site`, `community`, `order` | `EWDS_EVENT_PUBLISH_FQCN` |
 | `gsy.intelligent.events.sub` | Subscribe | `trade`, `clearingResult`, `market`, `measurements`, `facility`, `site`, `community`, `order` | `EWDS_EVENT_SUBSCRIBE_FQCN` |
 
@@ -355,6 +356,29 @@ Each `*.query` request payload accepts both snake_case and camelCase keys (via s
 | `measurements.query` | `start_time`/`startTime`, `end_time`/`endTime`, `facility_id`/`areaUuid` (filters after fetch) |
 | `ids.query` | `offchain_id`/`offchainId` (required) |
 
+### Trade Imports
+
+`OffchainStorageClient::import_trades` uses `POST /trades` in HTTP mode and
+`trades.import` in EWDS mode. The EWDS payload is a non-empty array of the same
+`EwdsTradeDto` records accepted by the HTTP endpoint. A successful response's
+`data` contains the trade IDs in input order, including idempotent replays.
+Malformed payloads return `invalid_request`; database failures (including
+conflicting match details) return `trade_import_failed`. Both use `success=false`
+and an empty `data` array. As with HTTP imports, writes are ordered but not atomic:
+a database failure may leave earlier records stored. Retrying identical `matched`
+records is safe and never downgrades an already settled or verified trade; other
+statuses retain their existing insert-only behavior.
+
+Before enabling EWDS, associate `tradesImport` with both request channels and
+`tradesImportResponse` with both response channels. E2E uses `tradesImportTest`
+and `tradesImportTestResponse`. The topic setup script includes both pairs.
+The schema files are `int.trades.import.request.v1.json` and
+`int.trades.import.response.v1.json` under `schemas/ewds/intelligent/`; the request
+schema references the existing trade schema. Deployment overrides are
+`EWDS_TRADES_IMPORT_REQUEST_TOPIC` and `EWDS_TRADES_IMPORT_RESPONSE_TOPIC`.
+These are request/reply messages, not outbound `trade.event` notifications.
+HTTP mode does not need these topics or a running gateway.
+
 ## DDHub API Surface Used by Integration
 
 The DDHub client gateway OpenAPI exposes:
@@ -388,6 +412,8 @@ For each operation, define versioned request/response topic schemas. DDHub topic
 - `ordersQueryResponse`
 - `tradesQuery` (`operation=trades.query`)
 - `tradesQueryResponse`
+- `tradesImport` (`operation=trades.import`)
+- `tradesImportResponse`
 - `measurementsQuery` (`operation=measurements.query`)
 - `measurementsQueryResponse`
 - `communitiesQuery` (`operation=communities.query`)
@@ -432,7 +458,7 @@ Validator requirements:
 
 ### gsy-offchain-storage
 
-- EWDS handlers are implemented for `orders.query`, `trades.query`,
+- EWDS handlers are implemented for `orders.query`, `trades.query`, `trades.import`,
   `measurements.query`, and `communities.query`.
 - Each operation has an independent bounded polling worker, so response retries
   for one topic do not block request handling for unrelated topics.
@@ -502,7 +528,8 @@ Channel/topic setup notes:
   `communityTest` and `orderTest` for e2e runs. `scripts/ewds_channel_topic_handler.sh`
   creates all topics and attaches them to the channels.
 - Required topics: `ordersQuery`, `ordersQueryResponse`, `tradesQuery`,
-  `tradesQueryResponse`, `measurementsQuery`, `measurementsQueryResponse`,
+  `tradesQueryResponse`, `tradesImport`, `tradesImportResponse`,
+  `measurementsQuery`, `measurementsQueryResponse`,
   `communitiesQuery`, and
   `communitiesQueryResponse`.
 - Topic creation requires `topiccreator`; channel creation requires gateway admin access.

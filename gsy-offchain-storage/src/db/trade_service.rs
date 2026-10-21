@@ -14,6 +14,22 @@ fn timestamp_bson(value: u64) -> Result<Bson> {
     Ok(Bson::Int64(i64::try_from(value)?))
 }
 
+/// Match details must agree when either registration or settlement is replayed.
+fn trade_identity_filter(trade: &DbTradeSchema) -> Result<mongodb::bson::Document> {
+    Ok(doc! {
+        "trade_uuid": &trade.trade_uuid,
+        "seller": &trade.seller,
+        "buyer": &trade.buyer,
+        "market_id": &trade.market_id,
+        "offer_hash": &trade.offer_hash,
+        "bid_hash": &trade.bid_hash,
+        "residual_offer_id": mongodb::bson::to_bson(&trade.residual_offer_id)?,
+        "residual_bid_id": mongodb::bson::to_bson(&trade.residual_bid_id)?,
+        "parameters.selected_energy_kWh": trade.parameters.selected_energy_kWh,
+        "parameters.energy_rate": trade.parameters.energy_rate,
+    })
+}
+
 /// Trade indexes per D3.2 section 5.3: `buyer`, `seller`, `market_id` and
 /// `creation_time` accelerate per-asset / per-market / time-range lookups;
 /// `status_updated_at` backs the verdict-time window of the guarantees-of-origin query.
@@ -74,18 +90,7 @@ impl TradeService {
     ) -> Result<()> {
         trade.status = TradeStatus::Settled;
         trade.status_updated_at = Some(block_timestamp);
-        let mut identity = doc! {
-            "trade_uuid": &trade.trade_uuid,
-            "seller": &trade.seller,
-            "buyer": &trade.buyer,
-            "market_id": &trade.market_id,
-            "offer_hash": &trade.offer_hash,
-            "bid_hash": &trade.bid_hash,
-            "residual_offer_id": mongodb::bson::to_bson(&trade.residual_offer_id)?,
-            "residual_bid_id": mongodb::bson::to_bson(&trade.residual_bid_id)?,
-            "parameters.selected_energy_kWh": trade.parameters.selected_energy_kWh,
-            "parameters.energy_rate": trade.parameters.energy_rate,
-        };
+        let mut identity = trade_identity_filter(&trade)?;
         // A conflicting snapshot cannot match this filter; the unique trade_uuid
         // index then rejects its insertion instead of replacing the existing trade.
         self.0
@@ -148,6 +153,39 @@ impl TradeService {
         &self,
         trade_schema: Vec<DbTradeSchema>,
     ) -> Result<HashMap<usize, Bson>> {
+        if trade_schema
+            .iter()
+            .any(|trade| trade.status == TradeStatus::Matched)
+        {
+            let mut ids = HashMap::new();
+            for (index, mut trade) in trade_schema.into_iter().enumerate() {
+                let id = if trade.status == TradeStatus::Matched {
+                    trade.status_updated_at = Some(trade.creation_time);
+                    // Only insert: a late registration must not downgrade settlement
+                    // or verification. Conflicting details hit the unique trade ID index.
+                    let result = self
+                        .0
+                        .update_one(
+                            trade_identity_filter(&trade)?,
+                            doc! {"$setOnInsert": mongodb::bson::to_document(&trade)?},
+                        )
+                        .upsert(true)
+                        .await
+                        .with_context(|| {
+                            format!("Failed to register matched trade {}", trade.trade_uuid)
+                        })?;
+                    result
+                        .upserted_id
+                        .unwrap_or_else(|| Bson::String(trade.trade_uuid))
+                } else {
+                    // Preserve ordered, insert-only imports for non-Matched records.
+                    self.0.insert_one(trade).await?.inserted_id
+                };
+                ids.insert(index, id);
+            }
+            return Ok(ids);
+        }
+
         match self.0.insert_many(trade_schema).await {
             Ok(db_result) => Ok(db_result.inserted_ids),
             Err(e) => {

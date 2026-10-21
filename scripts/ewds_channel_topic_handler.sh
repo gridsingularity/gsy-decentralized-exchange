@@ -27,6 +27,7 @@ ROLE="user.roles.$OWNER"
 REQUEST_TOPICS="
 ordersQuery
 tradesQuery
+tradesImport
 measurementsQuery
 clearingResultsQuery
 marketsQuery
@@ -36,6 +37,7 @@ idsQuery
 communitiesQuery
 ordersQueryTest
 tradesQueryTest
+tradesImportTest
 measurementsQueryTest
 clearingResultsQueryTest
 marketsQueryTest

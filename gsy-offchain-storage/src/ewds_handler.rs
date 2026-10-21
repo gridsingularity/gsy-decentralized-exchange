@@ -3,6 +3,7 @@ use crate::db::DatabaseWrapper;
 use anyhow::{anyhow, Result};
 use futures::future::join_all;
 use primitives::db_api_schema::profiles::{MeasurementPointType, MeasurementSchema};
+use primitives::db_api_schema::trades::DbTradeSchema;
 use primitives::ewds::dto::{
     EwdsClearingResultDto, EwdsCommunityDto, EwdsErrorPayload, EwdsInboundMessage, EwdsMarketDto,
     EwdsMeasurementDto, EwdsOrderDto, EwdsRequestEnvelope, EwdsResponseEnvelope,
@@ -460,6 +461,66 @@ pub async fn handle_request(
             );
 
             send_success_response(client, config, request_id, response_topic.as_str(), data).await
+        }
+        EwdsOperation::TradesImport => {
+            // Convert the whole batch before writing, like POST /trades.
+            let trades = serde_json::from_value::<Vec<EwdsTradeDto>>(envelope.payload)
+                .map_err(anyhow::Error::from)
+                .and_then(|trades| {
+                    if trades.is_empty() {
+                        return Err(anyhow!("trade batch must not be empty"));
+                    }
+                    trades
+                        .into_iter()
+                        .map(DbTradeSchema::try_from)
+                        .collect::<Result<Vec<_>>>()
+                });
+            let trades = match trades {
+                Ok(trades) => trades,
+                Err(error) => {
+                    return send_error_response(
+                        client,
+                        config,
+                        envelope.request_id,
+                        &response_topic,
+                        EwdsErrorPayload {
+                            code: INVALID_REQUEST_ERROR_CODE.to_string(),
+                            message: format!("trades.import payload error: {}", error),
+                        },
+                    )
+                    .await;
+                }
+            };
+            let trade_ids = trades.iter().map(|trade| trade.trade_uuid.clone()).collect();
+            match db.trades().insert_trades(trades).await {
+                Ok(_) => {
+                    send_success_response(
+                        client,
+                        config,
+                        envelope.request_id,
+                        &response_topic,
+                        trade_ids,
+                    )
+                    .await
+                }
+                Err(error) => {
+                    warn!(
+                        "EWDS trades.import failed (request_id={}): {}",
+                        envelope.request_id, error
+                    );
+                    send_error_response(
+                        client,
+                        config,
+                        envelope.request_id,
+                        &response_topic,
+                        EwdsErrorPayload {
+                            code: "trade_import_failed".to_string(),
+                            message: format!("trades.import failed: {}", error),
+                        },
+                    )
+                    .await
+                }
+            }
         }
         EwdsOperation::MeasurementsQuery => {
             let payload = serde_json::from_value::<TimeRangePayload>(envelope.payload.clone())

@@ -2,6 +2,7 @@ use crate::helpers::{init_app, stop_app};
 use actix_web::web;
 use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
 use primitives::db_api_schema::orders::{DbOrderSchema, OrderEnum, OrderStatus};
+use primitives::db_api_schema::trades::DbTradeSchema;
 use primitives::ewds::dto::EwdsTradeDto;
 use primitives::utils::{epoch_to_rfc3339, timestamp_to_string_with_padding};
 
@@ -101,6 +102,222 @@ async fn post_trade_requests_persist_trades_without_updating_orders() {
             assert_eq!(&stored, order);
         }
     }
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn post_matched_trades_are_idempotent_without_updating_orders() {
+    for endpoint in ["/trades", "/trades-normalized"] {
+        let app = init_app().await;
+        let client = reqwest::Client::new();
+        let bid = make_order("bid", OrderEnum::Bid);
+        let offer = make_order("offer", OrderEnum::Offer);
+        app.db_wrapper
+            .orders()
+            .insert_orders(vec![bid.clone(), offer.clone()])
+            .await
+            .unwrap();
+        let mut trade = make_trade("matched-trade", bid.clone(), offer.clone());
+        trade.trade_status = "matched".to_string();
+        let mut expected = DbTradeSchema::try_from(trade.clone()).unwrap();
+        expected.status_updated_at = Some(expected.creation_time);
+
+        // Repeated entries within a batch and later retries must both be harmless.
+        for _ in 0..2 {
+            let response = client
+                .post(format!("{}{endpoint}", app.address))
+                .json(&vec![trade.clone(), trade.clone()])
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status().as_u16(), 200);
+            let ids: serde_json::Value = response.json().await.unwrap();
+            assert_eq!(ids.as_object().unwrap().len(), 2);
+            assert_eq!(
+                serde_json::to_value(app.db_wrapper.trades().get_all_trades().await.unwrap())
+                    .unwrap(),
+                serde_json::json!([expected.clone()]),
+            );
+            for original in [&bid, &offer] {
+                let stored = app
+                    .db_wrapper
+                    .orders()
+                    .get_order_by_id(&original.order_id.clone().into())
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(&stored, original);
+            }
+            trade.timestamp = epoch_to_rfc3339(expected.creation_time + 60);
+        }
+        stop_app(app).await;
+    }
+}
+
+#[tokio::test]
+async fn late_matched_imports_preserve_existing_trade_statuses() {
+    let app = init_app().await;
+    let client = reqwest::Client::new();
+    for status in ["matched", "settled", "executed", "penalized"] {
+        let mut trade = make_trade(
+            status,
+            make_order("bid", OrderEnum::Bid),
+            make_order("offer", OrderEnum::Offer),
+        );
+        trade.trade_status = status.to_string();
+        let mut expected = DbTradeSchema::try_from(trade.clone()).unwrap();
+        expected.status_updated_at = Some(expected.creation_time + 10);
+        app.db_wrapper
+            .trades()
+            .insert_one(expected.clone())
+            .await
+            .unwrap();
+        trade.trade_status = "matched".to_string();
+        trade.timestamp = epoch_to_rfc3339(expected.creation_time + 60);
+        for endpoint in ["/trades", "/trades-normalized"] {
+            let response = client
+                .post(format!("{}{endpoint}", app.address))
+                .json(&vec![trade.clone()])
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status().as_u16(), 200);
+            let stored = app
+                .db_wrapper
+                .trades()
+                .find_one(mongodb::bson::doc! {"trade_uuid": &trade.trade_id})
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                serde_json::to_value(stored).unwrap(),
+                serde_json::json!(expected)
+            );
+        }
+    }
+    assert_eq!(
+        app.db_wrapper
+            .trades()
+            .get_all_trades()
+            .await
+            .unwrap()
+            .len(),
+        4
+    );
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn matched_imports_reject_conflicting_details() {
+    let app = init_app().await;
+    let client = reqwest::Client::new();
+    let mut trade = make_trade(
+        "matched-trade",
+        make_order("bid", OrderEnum::Bid),
+        make_order("offer", OrderEnum::Offer),
+    );
+    trade.trade_status = "matched".to_string();
+    client
+        .post(format!("{}/trades", app.address))
+        .json(&vec![trade.clone()])
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    let before =
+        serde_json::to_value(app.db_wrapper.trades().get_all_trades().await.unwrap()).unwrap();
+    for endpoint in ["/trades", "/trades-normalized"] {
+        for field in [
+            "buyerId",
+            "sellerId",
+            "marketId",
+            "bidId",
+            "offerId",
+            "residualBidId",
+            "residualOfferId",
+            "tradeQuantity",
+            "tradePrice",
+        ] {
+            let mut conflicting = serde_json::to_value(&trade).unwrap();
+            conflicting[field] = if field == "tradeQuantity" || field == "tradePrice" {
+                serde_json::json!(999.0)
+            } else {
+                serde_json::json!("different-id")
+            };
+            let response = client
+                .post(format!("{}{endpoint}", app.address))
+                .json(&vec![conflicting])
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status().as_u16(), 500, "{endpoint}: {field}");
+        }
+    }
+    assert_eq!(
+        serde_json::to_value(app.db_wrapper.trades().get_all_trades().await.unwrap()).unwrap(),
+        before
+    );
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn mixed_trade_imports_keep_non_matched_records_insert_only() {
+    let app = init_app().await;
+    let client = reqwest::Client::new();
+    let mut matched = make_trade(
+        "matched-trade",
+        make_order("bid", OrderEnum::Bid),
+        make_order("offer", OrderEnum::Offer),
+    );
+    matched.trade_status = "matched".to_string();
+    let mut executed = matched.clone();
+    executed.trade_id = "executed-trade".to_string();
+    executed.trade_status = "executed".to_string();
+    let response = client
+        .post(format!("{}/trades", app.address))
+        .json(&vec![matched.clone(), executed.clone(), matched.clone()])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status().as_u16(), 200);
+    let ids: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(ids.as_object().unwrap().len(), 3);
+    let before =
+        serde_json::to_value(app.db_wrapper.trades().get_all_trades().await.unwrap()).unwrap();
+    for payload in [
+        vec![executed.clone()],
+        vec![matched.clone(), executed.clone()],
+    ] {
+        let response = client
+            .post(format!("{}/trades-normalized", app.address))
+            .json(&payload)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status().as_u16(), 500);
+        assert_eq!(
+            serde_json::to_value(app.db_wrapper.trades().get_all_trades().await.unwrap()).unwrap(),
+            before
+        );
+    }
+    let mut new_match = matched.clone();
+    new_match.trade_id = "new-match".to_string();
+    let mut after_failure = matched;
+    after_failure.trade_id = "not-inserted".to_string();
+    let response = client
+        .post(format!("{}/trades", app.address))
+        .json(&vec![new_match, executed, after_failure])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status().as_u16(), 500);
+    let stored = app.db_wrapper.trades().get_all_trades().await.unwrap();
+    assert_eq!(stored.len(), 3);
+    assert!(stored.iter().any(|trade| trade.trade_uuid == "new-match"));
+    assert!(!stored
+        .iter()
+        .any(|trade| trade.trade_uuid == "not-inserted"));
     stop_app(app).await;
 }
 

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "int.trades.import.response.v1",
+  "title": "tradesImportResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "requestId": { "type": "string", "minLength": 1 },
+    "success": { "type": "boolean" },
+    "data": {
+      "description": "On success, the imported trade IDs in input order (including idempotent replays). Empty on failure; a database failure may leave a partially imported batch.",
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "error": {
+      "description": "invalid_request for malformed payloads; trade_import_failed for database errors, including conflicting match details.",
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "code": { "type": "string" },
+        "message": { "type": "string" }
+      },
+      "required": ["code", "message"]
+    }
+  },
+  "required": ["requestId", "success", "data"]
+}

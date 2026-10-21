@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "int.trades.import.request.v1",
+  "title": "tradesImport request",
+  "description": "Import the same trade batch as POST /trades. Matched records are idempotent when their IDs and match details agree; other statuses remain insert-only.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "requestId": { "type": "string", "minLength": 1 },
+    "operation": { "const": "trades.import" },
+    "payload": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "./int.trade.schema.v1.json" }
+    }
+  },
+  "required": ["requestId", "operation", "payload"]
+}
