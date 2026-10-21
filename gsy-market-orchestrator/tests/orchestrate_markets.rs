@@ -218,7 +218,8 @@ fn expected_markets(
                         community.community_id.as_str(),
                         rule.market_type.clone(),
                         slot,
-                    ),
+                    )
+                    .unwrap(),
                     parse_uuid_or_hex_bytes16(community.community_id.as_str()).unwrap(),
                     rule,
                     slot,
@@ -304,7 +305,8 @@ async fn new_market_carries_the_full_market_record() {
         communities[0].community_id.as_str(),
         rule.market_type.clone(),
         delivery_slot,
-    );
+    )
+    .unwrap();
 
     orchestrate_markets_at(&config, &client, communities.as_slice(), NOW)
         .await
@@ -338,7 +340,8 @@ async fn creates_missing_markets_that_have_already_opened() {
             communities[0].community_id.as_str(),
             MarketType::Spot,
             open_slot,
-        ),
+        )
+        .unwrap(),
         community_bytes(),
         rule,
         open_slot,
@@ -382,7 +385,8 @@ async fn creates_markets_until_they_close() {
         communities[0].community_id.as_str(),
         rule.market_type.clone(),
         slot,
-    );
+    )
+    .unwrap();
     let closing = expected_market(market_id, community_bytes(), rule, slot).closing_time;
 
     // One second before closing: still open, created.
@@ -410,7 +414,8 @@ async fn creates_markets_opening_up_to_and_including_the_window_end() {
         communities[0].community_id.as_str(),
         rule.market_type.clone(),
         slot,
-    );
+    )
+    .unwrap();
     let opening = expected_market(market_id, community_bytes(), rule, slot).opening_time;
 
     // Opening exactly at the end of the window: created.

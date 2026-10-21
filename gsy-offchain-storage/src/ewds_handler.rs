@@ -14,7 +14,9 @@ use primitives::ewds::{
     parse_gateway_delivery_summary, remember_id, EwdsEventTopicConfig, EwdsEventType,
     EwdsOperation, EwdsTopicConfig,
 };
-use primitives::utils::{bytes16_to_hex, opt_rfc3339_to_epoch, timestamp_to_string_with_padding};
+use primitives::utils::{
+    bytes16_to_hex, normalize_community_id, opt_rfc3339_to_epoch, timestamp_to_string_with_padding,
+};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -569,11 +571,18 @@ pub async fn handle_request(
             );
 
             // The request uses the forms of the response (UUID or hex market
-            // ID, RFC 3339 times); markets are stored with a `0x…` ID and
-            // zero-padded epoch seconds.
+            // and community IDs, RFC 3339 times); markets are stored with a
+            // `0x…` ID, a lowercase UUID community ID and zero-padded epoch
+            // seconds.
             let market_id = payload
                 .market_id
                 .map(|market_id| parse_market_id(&market_id).map(bytes16_to_hex))
+                .transpose()
+                .map_err(|e| anyhow!("markets.query payload parse error: {}", e))?;
+            let community_id = payload
+                .community_id
+                .as_deref()
+                .map(normalize_community_id)
                 .transpose()
                 .map_err(|e| anyhow!("markets.query payload parse error: {}", e))?;
             let stored_time = |time: Option<String>| {
@@ -585,7 +594,7 @@ pub async fn handle_request(
                 .markets()
                 .filter(
                     market_id,
-                    payload.community_id,
+                    community_id,
                     stored_time(payload.start_time)?,
                     stored_time(payload.end_time)?,
                 )

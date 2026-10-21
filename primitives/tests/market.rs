@@ -7,7 +7,7 @@ const COMMUNITY_ID: &str = "11111111-1111-4111-8111-111111111111";
 
 fn record() -> MarketChainRecord {
     MarketChainRecord {
-        market_id: generate_market_id(COMMUNITY_ID, MarketType::Flex, 1_700_000_100),
+        market_id: generate_market_id(COMMUNITY_ID, MarketType::Flex, 1_700_000_100).unwrap(),
         community_id: parse_uuid_or_hex_bytes16(COMMUNITY_ID).unwrap(),
         opening_time: 1_699_998_300,
         closing_time: 1_700_000_100,

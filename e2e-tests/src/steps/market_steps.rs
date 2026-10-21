@@ -128,7 +128,8 @@ async fn wait_for_market_to_open(world: &mut MyWorld) {
         world.community_id.as_str(),
         MarketType::Spot,
         world.target_delivery_time,
-    );
+    )
+    .unwrap();
     let market = wait_for_market(world, market_id).await;
 
     world.last_market_id = Some(market_id);
@@ -247,12 +248,14 @@ async fn wait_for_two_community_markets(world: &mut MyWorld) {
             world.community_id.as_str(),
             MarketType::Spot,
             world.target_delivery_time,
-        ),
+        )
+        .unwrap(),
         generate_market_id(
             world.secondary_community_id.as_str(),
             MarketType::Spot,
             world.target_delivery_time,
-        ),
+        )
+        .unwrap(),
     ];
 
     assert_ne!(

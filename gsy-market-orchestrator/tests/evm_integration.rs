@@ -160,7 +160,8 @@ async fn test_evm_market_controller_client_creates_markets() {
     let new_markets = [MarketType::Spot, MarketType::Flex]
         .into_iter()
         .map(|market_type| NewMarket {
-            market_id: generate_market_id(community_id, market_type.clone(), delivery_start),
+            market_id: generate_market_id(community_id, market_type.clone(), delivery_start)
+                .unwrap(),
             community_id: parse_uuid_or_hex_bytes16(community_id).unwrap(),
             opening_time: delivery_start - 1800,
             closing_time: delivery_start + 1800,

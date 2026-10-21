@@ -124,7 +124,7 @@ where
                     community.community_id.as_str(),
                     rule.market_type.clone(),
                     delivery_start,
-                );
+                )?;
                 candidates.push(new_market(
                     market_id,
                     *community_bytes,
