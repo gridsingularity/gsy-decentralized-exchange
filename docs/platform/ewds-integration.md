@@ -50,7 +50,7 @@ Provider: `gsy-offchain-storage` (`gsy-offchain-storage/src/startup.rs`)
 | `/orders` | `GET` | matching engine, e2e tests | `http://gsy-offchain-storage:8080/orders` |
 | `/orders`, `/orders-normalized` | `POST` | API integration tests/manual tooling; not used by E2E scenarios or production order lifecycle | `http://gsy-offchain-storage:8080` |
 | `/trades` | `GET` | execution engine, e2e tests | `http://gsy-offchain-storage:8080/trades` |
-| `/trades` | `POST` | e2e tests/internal tooling | `http://gsy-offchain-storage:8080/trades` |
+| `/trades` | `POST` | matching engine, e2e tests/internal tooling | `http://gsy-offchain-storage:8080/trades` |
 | `/communities` | `GET/POST` | market orchestrator, pilot sites, e2e tests | `http://gsy-offchain-storage:8080/communities` |
 | `/markets` | `GET/POST` | ontology-aligned market-opening API | `http://gsy-offchain-storage:8080/markets` |
 | `/clearing-results` | `GET/POST` | clearing-result API | `http://gsy-offchain-storage:8080/clearing-results` |
@@ -85,7 +85,7 @@ Each service:
 |---|---|---|---|---|---|
 | `orders.query` over `ordersQuery` / `ordersQueryResponse` | matching engine | off-chain storage service | off-chain storage service | matching engine | `GET /orders` |
 | `trades.query` over `tradesQuery` / `tradesQueryResponse` | execution engine | off-chain storage service | off-chain storage service | execution engine | `GET /trades` |
-| `trades.import` over `tradesImport` / `tradesImportResponse` | shared storage client (matching-engine wiring pending) | off-chain storage service | off-chain storage service | requesting client | `POST /trades` |
+| `trades.import` over `tradesImport` / `tradesImportResponse` | matching engine | off-chain storage service | off-chain storage service | matching engine | `POST /trades` |
 | `measurements.query` over `measurementsQuery` / `measurementsQueryResponse` | execution engine | off-chain storage service | off-chain storage service | execution engine | `GET /measurement-points` + `GET /timeseries` |
 | `clearing_results.query` over `clearingResultsQuery` / `clearingResultsQueryResponse` | matching/execution engine | off-chain storage service | off-chain storage service | requester | `GET /clearing-results` |
 | `markets.query` over `marketsQuery` / `marketsQueryResponse` | community client | off-chain storage service | off-chain storage service | community client | `GET /markets` |
@@ -359,7 +359,9 @@ Each `*.query` request payload accepts both snake_case and camelCase keys (via s
 ### Trade Imports
 
 `OffchainStorageClient::import_trades` uses `POST /trades` in HTTP mode and
-`trades.import` in EWDS mode. The EWDS payload is a non-empty array of the same
+`trades.import` in EWDS mode. The matching engine waits for registration before
+submitting the same trade IDs to `settleBatch`; a registration failure prevents
+submission. The EWDS payload is a non-empty array of the same
 `EwdsTradeDto` records accepted by the HTTP endpoint. A successful response's
 `data` contains the trade IDs in input order, including idempotent replays.
 Malformed payloads return `invalid_request`; database failures (including

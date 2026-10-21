@@ -27,3 +27,4 @@ uuid = { workspace = true }
 [dev-dependencies]
 ethers-solc = { workspace = true }
 tempfile = { workspace = true }
+wiremock = { workspace = true }

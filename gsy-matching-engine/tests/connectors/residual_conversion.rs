@@ -247,6 +247,82 @@ fn rejects_invalid_residual_ids_and_quantities() {
 }
 
 #[test]
+fn trade_registration_preserves_encoded_matches_across_markets_and_residual_sides() {
+    for algorithm in [MatchingAlgorithm::PayAsBid, MatchingAlgorithm::PayAsClear] {
+        let mut markets = Vec::new();
+        let mut lookup = HashMap::new();
+        for (index, side) in [OrderEnum::Bid, OrderEnum::Offer].into_iter().enumerate() {
+            let opposite = if side == OrderEnum::Bid {
+                OrderEnum::Offer
+            } else {
+                OrderEnum::Bid
+            };
+            let id = 1 + index as u8 * 3;
+            let mut orders = [
+                db_order(id, side, 0.3),
+                db_order(id + 1, opposite.clone(), 0.1),
+                db_order(id + 2, opposite, 0.1),
+            ];
+            let market_id = bytes16_to_hex([99 + index as u8; 16]);
+            for order in &mut orders {
+                order.market_id = market_id.clone();
+            }
+            let (matches, originals) = match_book(&algorithm, &orders);
+            assert_eq!(matches.len(), 2);
+            lookup.extend(originals);
+            markets.push(MarketMatches {
+                bid_offer_matches: matches,
+                clearing_result: ClearingResult {
+                    market_id: Some(market_id),
+                    ..Default::default()
+                },
+            });
+        }
+        let encoded = to_evm_matches(markets, &lookup).unwrap();
+        let created_at = 1_767_225_600;
+        let trades = matched_trade_dtos(&encoded, created_at);
+        assert_eq!(trades.len(), 4);
+        let ids: HashSet<_> = trades.iter().map(|trade| &trade.trade_id).collect();
+        assert_eq!(ids.len(), 4);
+        for (dto, item) in trades
+            .iter()
+            .zip(encoded.iter().flat_map(|market| &market.matches))
+        {
+            let trade = DbTradeSchema::try_from(dto.clone()).unwrap();
+            assert_eq!(trade.trade_uuid, bytes16_to_hex(item.trade_id));
+            assert_eq!(trade.status, TradeStatus::Matched);
+            assert_eq!(trade.status_updated_at, None);
+            assert_eq!(trade.creation_time, created_at);
+            assert_eq!(trade.market_id, bytes16_to_hex(item.bid.market_id));
+            assert_eq!(trade.buyer, bytes16_to_hex(item.bid.created_by));
+            assert_eq!(trade.seller, bytes16_to_hex(item.offer.created_by));
+            assert_eq!(trade.bid_hash, bytes16_to_hex(item.bid.order_id));
+            assert_eq!(trade.offer_hash, bytes16_to_hex(item.offer.order_id));
+            assert_eq!(trade.parameters.selected_energy_kWh, 0.1);
+            assert_eq!(
+                trade.parameters.energy_rate,
+                item.clearing_price.as_u64() as f64 / NODE_FLOAT_SCALING_FACTOR
+            );
+        }
+        assert_eq!(trades[0].residual_bid_id.as_ref(), Some(&trades[1].bid_id));
+        assert!(trades[..2]
+            .iter()
+            .all(|trade| trade.residual_offer_id.is_none()));
+        assert!(trades[1].residual_bid_id.is_some());
+        assert_eq!(
+            trades[2].residual_offer_id.as_ref(),
+            Some(&trades[3].offer_id)
+        );
+        assert!(trades[2..]
+            .iter()
+            .all(|trade| trade.residual_bid_id.is_none()));
+        assert!(trades[3].residual_offer_id.is_some());
+        assert_ne!(trades[0].market_id, trades[2].market_id);
+        assert!(matched_trade_dtos(&[], created_at).is_empty());
+    }
+}
+
+#[test]
 fn preserves_exact_integer_energy_when_encoding_a_residual() {
     let orders = [
         db_order(1, OrderEnum::Bid, 0.3),

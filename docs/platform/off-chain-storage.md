@@ -110,8 +110,9 @@ reconciliation/reindexing, as do other missed lifecycle events.
   the same trade ID and match details preserve the stored status and timestamps,
   including when settlement or verification has already been indexed. Conflicting
   details are rejected. Other statuses retain the existing insert-only behavior;
-  no trade import updates order statuses. DD-453 matching-engine registration is
-  added in a subsequent increment.
+  no trade import updates order statuses. The matching engine registers the exact
+  encoded matches before submitting them on-chain; only the listener advances
+  these records to `Settled` after confirmed settlement.
 - Order IDs and market IDs are stored as hex strings (`0x...`).
 - The preferred trading partner of a bid or an offer is stored in its
   requirements (`requirements.trading_partner_id`) as the original off-chain
