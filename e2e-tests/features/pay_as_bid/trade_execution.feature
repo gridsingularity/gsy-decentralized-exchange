@@ -6,8 +6,8 @@ Feature: GSY DEX Trade Execution
   Scenario: A simple bid and offer are matched and executed
     Given the GSY DEX services are running
     And users "alice", "bob", and "charlie" the matching engine operator are registered
-    When the Market Orchestrator opens the Spot market for the next delivery slot
-    And the community market and forecasts of 10 energy are submitted
+    When the Market Orchestrator opens the Spot market for the current delivery slot
+    And forecasts of 10 energy are submitted
     And "alice" submits a bid
     And "bob" submits an offer
     And measurements for facilities are submitted

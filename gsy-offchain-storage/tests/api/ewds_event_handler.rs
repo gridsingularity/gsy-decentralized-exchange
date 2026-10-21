@@ -1,10 +1,9 @@
+use crate::evm_integration::{expected_market, new_market_event};
 use crate::ewds_handler::{mock_gateway, test_config};
 use crate::helpers::{init_app, stop_app};
 use ethers::contract::LogMeta;
 use ethers::types::{Address, H256, U256, U64};
-use gsy_ethers_listener::{
-    GsyEventHandler, MarketClearingFilter, MarketStatusUpdatedFilter, TradeSettledFilter,
-};
+use gsy_ethers_listener::{GsyEventHandler, MarketClearingFilter, TradeSettledFilter};
 use gsy_offchain_storage::db::DatabaseWrapper;
 use gsy_offchain_storage::evm_handler::OffchainStorageEvmHandler;
 use gsy_offchain_storage::ewds_event_handler::{
@@ -16,11 +15,9 @@ use primitives::db_api_schema::profiles::MeasurementPointType;
 use primitives::db_api_schema::trades::{
     ClearingResultSchema, ClearingStatus, DbTradeSchema, TradeParameters, TradeStatus,
 };
-use primitives::ewds::dto::{EwdsEventEnvelope, EwdsMarketStatusDto, EwdsSendMessageDto};
+use primitives::ewds::dto::{EwdsEventEnvelope, EwdsMarketDto, EwdsSendMessageDto};
 use primitives::ewds::{is_invalid_event, EwdsEventType};
-use primitives::utils::{
-    bytes16_to_hex, epoch_to_rfc3339, rfc3339_to_epoch, timestamp_to_string_with_padding,
-};
+use primitives::utils::{bytes16_to_hex, epoch_to_rfc3339, timestamp_to_string_with_padding};
 use serde_json::{json, Value};
 use std::time::Duration;
 use uuid::Uuid;
@@ -66,6 +63,11 @@ fn assert_event_id(message: &EwdsSendMessageDto, event: &serde_json::Value) {
 
 fn event_payload(message: &EwdsSendMessageDto) -> serde_json::Value {
     serde_json::from_str(&message.payload).unwrap()
+}
+
+/// The `market.event` item for the market of `new_market_event()`.
+fn market_event_dto() -> EwdsMarketDto {
+    EwdsMarketDto::try_from(expected_market()).unwrap()
 }
 
 fn evm_handler(app: &crate::helpers::TestApp, server: &MockServer) -> OffchainStorageEvmHandler {
@@ -251,13 +253,7 @@ async fn publish_market_event_sends_event_on_events_channel() {
     let publisher = EwdsEventPublisher::new(test_config(server.uri()));
 
     publisher
-        .publish_market_event(
-            vec![EwdsMarketStatusDto {
-                market_id: "market-1".to_string(),
-                is_open: false,
-            }],
-            1_200,
-        )
+        .publish_market_event(vec![market_event_dto()], 1_200)
         .await
         .unwrap();
 
@@ -273,7 +269,17 @@ async fn publish_market_event_sends_event_on_events_channel() {
     assert_eq!(event["occurredAt"], json!(epoch_to_rfc3339(1_200)));
     assert_eq!(
         event["data"],
-        json!([{"marketId": "market-1", "isOpen": false}])
+        json!([{
+            "marketId": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+            "communityId": "11111111-1111-4111-8111-111111111111",
+            "openingTime": epoch_to_rfc3339(1_699_998_300),
+            "closingTime": epoch_to_rfc3339(1_700_000_100),
+            "deliveryStartTime": epoch_to_rfc3339(1_700_000_100),
+            "deliveryEndTime": epoch_to_rfc3339(1_700_001_000),
+            "marketType": "flex",
+            "matchingAlgorithm": "pay_as_clear",
+            "createdAt": epoch_to_rfc3339(1_699_998_301),
+        }])
     );
 }
 
@@ -289,13 +295,7 @@ async fn publish_does_not_retry_or_panic_when_gateway_rejects_event() {
 
     // The send error is logged inside the task; the task itself must still finish cleanly.
     publisher
-        .publish_market_event(
-            vec![EwdsMarketStatusDto {
-                market_id: "market-1".to_string(),
-                is_open: true,
-            }],
-            1_200,
-        )
+        .publish_market_event(vec![market_event_dto()], 1_200)
         .await
         .expect("publish task should not panic on gateway errors");
 
@@ -472,33 +472,26 @@ async fn market_clearing_does_not_publish_for_invalid_clearing_status() {
 }
 
 #[tokio::test]
-async fn market_status_publishes_market_event() {
+async fn new_market_publishes_market_event() {
     let app = init_app().await;
     let server = mock_gateway().await;
     let handler = evm_handler(&app, &server);
-    let before = chrono::Utc::now().timestamp() as u64;
 
     handler
-        .handle_market_status(MarketStatusUpdatedFilter {
-            market_id: [0x08; 16],
-            is_open: true,
-        })
+        .handle_new_market_created(new_market_event())
         .await
         .unwrap();
 
     let messages = wait_for_gateway_messages(&server, 1).await;
-    let market_id = bytes16_to_hex([0x08; 16]);
     assert_eq!(messages[0].topic_name, "market");
     let event = event_payload(&messages[0]);
     assert_eq!(event["eventType"], json!(EwdsEventType::Market.as_str()));
     assert_event_id(&messages[0], &event);
+    assert_eq!(event["data"], json!([market_event_dto()]));
     assert_eq!(
-        event["data"],
-        json!([{"marketId": market_id, "isOpen": true}])
+        event["occurredAt"],
+        json!(epoch_to_rfc3339(new_market_event().created_at))
     );
-    // Market status is not persisted, so occurredAt is the time the event was received.
-    let occurred_at = rfc3339_to_epoch(event["occurredAt"].as_str().unwrap()).unwrap();
-    assert!(occurred_at >= before && occurred_at <= chrono::Utc::now().timestamp() as u64);
 
     stop_app(app).await;
 }
