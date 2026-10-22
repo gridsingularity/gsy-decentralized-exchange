@@ -1,4 +1,5 @@
 mod evm_integration;
+mod delivery_verification;
 mod ewds_event_handler;
 mod ewds_handler;
 mod grid_topology;

@@ -5,12 +5,13 @@ use anyhow::{anyhow, Result};
 use futures::future::join_all;
 use primitives::db_api_schema::{
     grid_topology::{EnergyCommunitySchema, FacilitySchema, SiteSchema},
+    orders::DbOrderSchema,
     profiles::MeasurementSchema,
     trades::{ClearingResultSchema, DbTradeSchema},
 };
 use primitives::ewds::dto::{
-    EwdsClearingResultDto, EwdsCommunityDto, EwdsEventEnvelope, EwdsMarketStatusDto,
-    EwdsMeasurementDto, EwdsTradeDto,
+    EwdsClearingResultDto, EwdsCommunityDto, EwdsEventEnvelope, EwdsMarketDto, EwdsMeasurementDto,
+    EwdsOrderDto, EwdsTradeDto,
 };
 use primitives::ewds::{invalid_event, parse_batch, EwdsClient, EwdsClientConfig, EwdsEventType};
 use primitives::utils::epoch_to_rfc3339;
@@ -53,6 +54,22 @@ impl EwdsEventPublisher {
         }
     }
 
+    pub fn publish_order_status_event(&self, orders: Vec<DbOrderSchema>) -> JoinHandle<()> {
+        let occurred_at = orders
+            .iter()
+            .filter_map(|order| order.status_updated_at)
+            .max()
+            .unwrap_or_default();
+        self.spawn_event(
+            EwdsEventType::OrderStatus,
+            occurred_at,
+            orders
+                .into_iter()
+                .map(EwdsOrderDto::from)
+                .collect::<Vec<_>>(),
+        )
+    }
+
     pub fn publish_trade_event(&self, trades: Vec<DbTradeSchema>) -> JoinHandle<()> {
         let occurred_at = trades
             .iter()
@@ -90,10 +107,10 @@ impl EwdsEventPublisher {
 
     pub fn publish_market_event(
         &self,
-        market_statuses: Vec<EwdsMarketStatusDto>,
+        markets: Vec<EwdsMarketDto>,
         occurred_at: u64,
     ) -> JoinHandle<()> {
-        self.spawn_event(EwdsEventType::Market, occurred_at, market_statuses)
+        self.spawn_event(EwdsEventType::Market, occurred_at, markets)
     }
 
     fn spawn_event<T: Serialize + Send + 'static>(

@@ -14,6 +14,7 @@ fn db_order(id: u8, side: OrderEnum, energy: f64) -> DbOrderSchema {
         energy_rate: if side == OrderEnum::Bid { 20.0 } else { 10.0 },
         order_type: side,
         status: OrderStatus::Submitted,
+        status_updated_at: None,
         requirements: None,
         attributes: None,
     }

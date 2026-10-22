@@ -1,9 +1,11 @@
+use crate::evm_integration::{expected_market, new_market_event};
 use crate::ewds_handler::{mock_gateway, test_config};
 use crate::helpers::{init_app, stop_app};
 use ethers::contract::LogMeta;
 use ethers::types::{Address, H256, U256, U64};
 use gsy_ethers_listener::{
-    GsyEventHandler, MarketClearingFilter, MarketStatusUpdatedFilter, TradeSettledFilter,
+    DeliveryVerifiedFilter, GsyEventHandler, MarketClearingFilter, NewMarketCreatedFilter,
+    OrderCancelledFilter, OrderPlacedFilter, TradeSettledFilter,
 };
 use gsy_offchain_storage::db::DatabaseWrapper;
 use gsy_offchain_storage::evm_handler::OffchainStorageEvmHandler;
@@ -12,15 +14,14 @@ use gsy_offchain_storage::ewds_event_handler::{
 };
 use gsy_offchain_storage::ewds_handler::EwdsHandlerConfig;
 use primitives::db_api_schema::grid_topology::{EnergyCommunitySchema, FacilitySchema, SiteSchema};
+use primitives::db_api_schema::orders::OrderStatus;
 use primitives::db_api_schema::profiles::MeasurementPointType;
 use primitives::db_api_schema::trades::{
     ClearingResultSchema, ClearingStatus, DbTradeSchema, TradeParameters, TradeStatus,
 };
-use primitives::ewds::dto::{EwdsEventEnvelope, EwdsMarketStatusDto, EwdsSendMessageDto};
+use primitives::ewds::dto::{EwdsEventEnvelope, EwdsMarketDto, EwdsOrderDto, EwdsSendMessageDto};
 use primitives::ewds::{is_invalid_event, EwdsEventType};
-use primitives::utils::{
-    bytes16_to_hex, epoch_to_rfc3339, rfc3339_to_epoch, timestamp_to_string_with_padding,
-};
+use primitives::utils::{bytes16_to_hex, epoch_to_rfc3339, timestamp_to_string_with_padding};
 use serde_json::{json, Value};
 use std::time::Duration;
 use uuid::Uuid;
@@ -68,6 +69,11 @@ fn event_payload(message: &EwdsSendMessageDto) -> serde_json::Value {
     serde_json::from_str(&message.payload).unwrap()
 }
 
+/// The `market.event` item for the market of `new_market_event()`.
+fn market_event_dto() -> EwdsMarketDto {
+    EwdsMarketDto::try_from(expected_market()).unwrap()
+}
+
 fn evm_handler(app: &crate::helpers::TestApp, server: &MockServer) -> OffchainStorageEvmHandler {
     OffchainStorageEvmHandler {
         db: app.db_wrapper.clone(),
@@ -88,6 +94,72 @@ fn trade_settled_event() -> TradeSettledFilter {
         residual_offer_id: [0; 16],
         energy: U256::from(20_000u64),
         price: U256::from(3_000u64),
+    }
+}
+
+fn order_placed_event(order_id: [u8; 16], is_bid: bool) -> OrderPlacedFilter {
+    OrderPlacedFilter {
+        order_id,
+        created_by: if is_bid { [0x04; 16] } else { [0x05; 16] },
+        market_id: [0x06; 16],
+        time_slot: 1_000,
+        creation_time: 900,
+        energy: 20_000,
+        energy_rate: 3_000,
+        energy_source_preference: 0,
+        energy_type: 0,
+        is_bid,
+        preferred_trading_partner: [0; 16],
+        preferred_energy_rate: 0,
+    }
+}
+
+async fn seed_settlement_orders(app: &crate::helpers::TestApp) {
+    let handler = OffchainStorageEvmHandler {
+        db: app.db_wrapper.clone(),
+        event_publisher: None,
+    };
+    for (id, is_bid) in [([0x02; 16], true), ([0x03; 16], false)] {
+        handler
+            .handle_order_placed(order_placed_event(id, is_bid), 950)
+            .await
+            .unwrap();
+    }
+}
+
+async fn assert_order_status_event(
+    app: &crate::helpers::TestApp,
+    messages: &[EwdsSendMessageDto],
+    expected: &[([u8; 16], OrderStatus)],
+    timestamp: u64,
+) {
+    let message = messages
+        .iter()
+        .find(|message| event_payload(message)["eventType"] == EwdsEventType::OrderStatus.as_str())
+        .expect("missing order-status event");
+    assert_eq!(message.topic_name, "order");
+    assert_eq!(message.fqcn, "gsy.events.pub");
+    let envelope = event_payload(message);
+    assert_event_id(message, &envelope);
+    assert_eq!(envelope["occurredAt"], epoch_to_rfc3339(timestamp));
+    let data = envelope["data"].as_array().unwrap();
+    assert_eq!(data.len(), expected.len());
+    for (id, status) in expected {
+        let id = bytes16_to_hex(*id);
+        let stored = app
+            .db_wrapper
+            .orders()
+            .get_order_by_id(&id.clone().into())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(&stored.status, status);
+        assert_eq!(stored.status_updated_at, Some(timestamp));
+        let snapshot = data.iter().find(|order| order["orderId"] == id).unwrap();
+        assert_eq!(
+            *snapshot,
+            serde_json::to_value(EwdsOrderDto::from(stored)).unwrap()
+        );
     }
 }
 
@@ -251,13 +323,7 @@ async fn publish_market_event_sends_event_on_events_channel() {
     let publisher = EwdsEventPublisher::new(test_config(server.uri()));
 
     publisher
-        .publish_market_event(
-            vec![EwdsMarketStatusDto {
-                market_id: "market-1".to_string(),
-                is_open: false,
-            }],
-            1_200,
-        )
+        .publish_market_event(vec![market_event_dto()], 1_200)
         .await
         .unwrap();
 
@@ -273,7 +339,17 @@ async fn publish_market_event_sends_event_on_events_channel() {
     assert_eq!(event["occurredAt"], json!(epoch_to_rfc3339(1_200)));
     assert_eq!(
         event["data"],
-        json!([{"marketId": "market-1", "isOpen": false}])
+        json!([{
+            "marketId": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+            "communityId": "11111111-1111-4111-8111-111111111111",
+            "openingTime": epoch_to_rfc3339(1_699_998_300),
+            "closingTime": epoch_to_rfc3339(1_700_000_100),
+            "deliveryStartTime": epoch_to_rfc3339(1_700_000_100),
+            "deliveryEndTime": epoch_to_rfc3339(1_700_001_000),
+            "marketType": "flex",
+            "matchingAlgorithm": "pay_as_clear",
+            "createdAt": epoch_to_rfc3339(1_699_998_301),
+        }])
     );
 }
 
@@ -289,13 +365,7 @@ async fn publish_does_not_retry_or_panic_when_gateway_rejects_event() {
 
     // The send error is logged inside the task; the task itself must still finish cleanly.
     publisher
-        .publish_market_event(
-            vec![EwdsMarketStatusDto {
-                market_id: "market-1".to_string(),
-                is_open: true,
-            }],
-            1_200,
-        )
+        .publish_market_event(vec![market_event_dto()], 1_200)
         .await
         .expect("publish task should not panic on gateway errors");
 
@@ -371,18 +441,32 @@ async fn trade_settled_publishes_trade_event() {
     let app = init_app().await;
     let server = mock_gateway().await;
     let handler = evm_handler(&app, &server);
+    seed_settlement_orders(&app).await;
 
     handler
-        .handle_trade_settled(trade_settled_event())
+        .handle_trade_settled(trade_settled_event(), 1_100)
         .await
         .unwrap();
 
-    let messages = wait_for_gateway_messages(&server, 1).await;
+    let messages = wait_for_gateway_messages(&server, 2).await;
+    assert_order_status_event(
+        &app,
+        &messages,
+        &[
+            ([0x02; 16], OrderStatus::Filled),
+            ([0x03; 16], OrderStatus::Filled),
+        ],
+        1_100,
+    )
+    .await;
+    let message = messages
+        .iter()
+        .find(|message| message.topic_name == "trade")
+        .unwrap();
     let trade_id = bytes16_to_hex([0x01; 16]);
-    assert_eq!(messages[0].topic_name, "trade");
-    let event = event_payload(&messages[0]);
+    let event = event_payload(message);
     assert_eq!(event["eventType"], json!(EwdsEventType::Trade.as_str()));
-    assert_event_id(&messages[0], &event);
+    assert_event_id(message, &event);
     assert_eq!(event["data"].as_array().unwrap().len(), 1);
     assert_eq!(event["data"][0]["tradeId"], json!(trade_id));
     assert_eq!(event["data"][0]["bidId"], json!(bytes16_to_hex([0x02; 16])));
@@ -407,20 +491,21 @@ async fn trade_settled_does_not_publish_when_trade_is_not_persisted() {
     let app = init_app().await;
     let server = mock_gateway().await;
     let handler = evm_handler(&app, &server);
+    seed_settlement_orders(&app).await;
 
     handler
-        .handle_trade_settled(trade_settled_event())
+        .handle_trade_settled(trade_settled_event(), 1_100)
         .await
         .unwrap();
-    wait_for_gateway_messages(&server, 1).await;
+    wait_for_gateway_messages(&server, 2).await;
 
     // The unique trade_uuid index rejects the duplicate, so no second event may be sent.
     let error = handler
-        .handle_trade_settled(trade_settled_event())
+        .handle_trade_settled(trade_settled_event(), 1_100)
         .await
         .unwrap_err();
     assert!(error.to_string().contains("Failed to insert trade"));
-    assert_no_further_gateway_messages(&server, 1).await;
+    assert_no_further_gateway_messages(&server, 2).await;
 
     stop_app(app).await;
 }
@@ -472,33 +557,26 @@ async fn market_clearing_does_not_publish_for_invalid_clearing_status() {
 }
 
 #[tokio::test]
-async fn market_status_publishes_market_event() {
+async fn new_market_publishes_market_event() {
     let app = init_app().await;
     let server = mock_gateway().await;
     let handler = evm_handler(&app, &server);
-    let before = chrono::Utc::now().timestamp() as u64;
 
     handler
-        .handle_market_status(MarketStatusUpdatedFilter {
-            market_id: [0x08; 16],
-            is_open: true,
-        })
+        .handle_new_market_created(new_market_event())
         .await
         .unwrap();
 
     let messages = wait_for_gateway_messages(&server, 1).await;
-    let market_id = bytes16_to_hex([0x08; 16]);
     assert_eq!(messages[0].topic_name, "market");
     let event = event_payload(&messages[0]);
     assert_eq!(event["eventType"], json!(EwdsEventType::Market.as_str()));
     assert_event_id(&messages[0], &event);
+    assert_eq!(event["data"], json!([market_event_dto()]));
     assert_eq!(
-        event["data"],
-        json!([{"marketId": market_id, "isOpen": true}])
+        event["occurredAt"],
+        json!(epoch_to_rfc3339(new_market_event().created_at))
     );
-    // Market status is not persisted, so occurredAt is the time the event was received.
-    let occurred_at = rfc3339_to_epoch(event["occurredAt"].as_str().unwrap()).unwrap();
-    assert!(occurred_at >= before && occurred_at <= chrono::Utc::now().timestamp() as u64);
 
     stop_app(app).await;
 }
@@ -515,9 +593,230 @@ fn handler_config_maps_event_types_to_their_topics() {
         (EwdsEventType::Site, "site"),
         (EwdsEventType::Community, "community"),
         (EwdsEventType::Order, "order"),
+        (EwdsEventType::OrderStatus, "order"),
     ] {
         assert_eq!(config.event_topic(event_type), topic);
     }
+}
+
+#[tokio::test]
+async fn order_status_notifications_follow_consumed_orders_and_independent_residuals() {
+    for residual_is_bid in [true, false] {
+        let app = init_app().await;
+        let server = mock_gateway().await;
+        let handler = evm_handler(&app, &server);
+        seed_settlement_orders(&app).await;
+        let parent_id = if residual_is_bid {
+            [0x02; 16]
+        } else {
+            [0x03; 16]
+        };
+        let mut parent = order_placed_event(parent_id, residual_is_bid);
+        parent.energy = 30_000;
+        handler.handle_order_placed(parent, 960).await.unwrap();
+        let messages = wait_for_gateway_messages(&server, 1).await;
+        assert_order_status_event(&app, &messages, &[(parent_id, OrderStatus::Submitted)], 960)
+            .await;
+
+        let mut settled = trade_settled_event();
+        if residual_is_bid {
+            settled.residual_bid_id = [0x07; 16];
+        } else {
+            settled.residual_offer_id = [0x07; 16];
+        }
+        handler.handle_trade_settled(settled, 1_100).await.unwrap();
+        let messages = wait_for_gateway_messages(&server, 3).await;
+        let bid_status = if residual_is_bid {
+            OrderStatus::PartiallyFilled
+        } else {
+            OrderStatus::Filled
+        };
+        let offer_status = if residual_is_bid {
+            OrderStatus::Filled
+        } else {
+            OrderStatus::PartiallyFilled
+        };
+        assert_order_status_event(
+            &app,
+            &messages[1..],
+            &[([0x02; 16], bid_status), ([0x03; 16], offer_status)],
+            1_100,
+        )
+        .await;
+
+        let mut residual = order_placed_event([0x07; 16], residual_is_bid);
+        residual.energy = 10_000;
+        handler.handle_order_placed(residual, 1_100).await.unwrap();
+        let messages = wait_for_gateway_messages(&server, 4).await;
+        assert_order_status_event(
+            &app,
+            &messages[3..],
+            &[([0x07; 16], OrderStatus::Submitted)],
+            1_100,
+        )
+        .await;
+
+        // A replay may notify again, but keeps the original persisted status timestamp.
+        for (index, timestamp) in [1_200, 1_201].into_iter().enumerate() {
+            handler
+                .handle_delivery_verified(
+                    DeliveryVerifiedFilter {
+                        trade_id: [0x01; 16],
+                        bid_id: [0x02; 16],
+                        offer_id: [0x03; 16],
+                    },
+                    timestamp,
+                )
+                .await
+                .unwrap();
+            let messages = wait_for_gateway_messages(&server, 5 + index).await;
+            assert_order_status_event(
+                &app,
+                &messages[4 + index..],
+                &[
+                    ([0x02; 16], OrderStatus::Executed),
+                    ([0x03; 16], OrderStatus::Executed),
+                ],
+                1_200,
+            )
+            .await;
+            let trades = app.db_wrapper.trades().get_all_trades().await.unwrap();
+            assert_eq!(trades[0].status, TradeStatus::Executed);
+            assert_eq!(trades[0].status_updated_at, Some(1_200));
+            let residual = app
+                .db_wrapper
+                .orders()
+                .get_order_by_id(&bytes16_to_hex([0x07; 16]).into())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(residual.status, OrderStatus::Submitted);
+            assert_eq!(residual.energy_kWh, 1.0);
+        }
+
+        handler
+            .handle_order_cancelled(
+                OrderCancelledFilter {
+                    order_id: [0x07; 16],
+                },
+                1_300,
+            )
+            .await
+            .unwrap();
+        let messages = wait_for_gateway_messages(&server, 7).await;
+        assert_order_status_event(
+            &app,
+            &messages[6..],
+            &[([0x07; 16], OrderStatus::Cancelled)],
+            1_300,
+        )
+        .await;
+        assert_no_further_gateway_messages(&server, 7).await;
+        stop_app(app).await;
+    }
+}
+
+#[tokio::test]
+async fn market_closure_notifies_only_newly_expired_orders_in_that_market() {
+    let app = init_app().await;
+    let server = mock_gateway().await;
+    let handler = evm_handler(&app, &server);
+    let quiet_handler = OffchainStorageEvmHandler {
+        db: app.db_wrapper.clone(),
+        event_publisher: None,
+    };
+    let statuses = [
+        OrderStatus::Submitted,
+        OrderStatus::Submitted,
+        OrderStatus::Filled,
+        OrderStatus::PartiallyFilled,
+        OrderStatus::Cancelled,
+        OrderStatus::Expired,
+        OrderStatus::Executed,
+    ];
+    for (index, status) in statuses.iter().enumerate() {
+        let id = [index as u8 + 1; 16];
+        let mut placed = order_placed_event(id, true);
+        if index == 1 {
+            placed.market_id = [0x09; 16];
+        }
+        quiet_handler
+            .handle_order_placed(placed, 950)
+            .await
+            .unwrap();
+        app.db_wrapper
+            .orders()
+            .update_order_status_by_id(&bytes16_to_hex(id).into(), status.clone(), 950)
+            .await
+            .unwrap();
+    }
+
+    quiet_handler
+        .handle_new_market_created(NewMarketCreatedFilter {
+            market_id: [0x06; 16],
+            closing_time: 1_100,
+            ..new_market_event()
+        })
+        .await
+        .unwrap();
+    handler.handle_block(1_099).await.unwrap();
+    assert_no_further_gateway_messages(&server, 0).await;
+    handler.handle_block(1_100).await.unwrap();
+    let messages = wait_for_gateway_messages(&server, 1).await;
+    assert_order_status_event(&app, &messages, &[([1; 16], OrderStatus::Expired)], 1_100).await;
+    handler.handle_block(1_101).await.unwrap();
+    assert_no_further_gateway_messages(&server, 1).await;
+    for (index, status) in statuses.iter().enumerate() {
+        let stored = app
+            .db_wrapper
+            .orders()
+            .get_order_by_id(&bytes16_to_hex([index as u8 + 1; 16]).into())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            &stored.status,
+            if index == 0 {
+                &OrderStatus::Expired
+            } else {
+                status
+            }
+        );
+        assert_eq!(
+            stored.status_updated_at,
+            Some(if index == 0 { 1_100 } else { 950 })
+        );
+    }
+    assert_no_further_gateway_messages(&server, 1).await;
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn failed_order_indexing_does_not_publish_status_notifications() {
+    let app = init_app().await;
+    let server = mock_gateway().await;
+    let handler = evm_handler(&app, &server);
+    let mut placed = order_placed_event([0x02; 16], true);
+    placed.preferred_trading_partner = [0x99; 16];
+    assert!(handler.handle_order_placed(placed, 950).await.is_err());
+    assert!(handler
+        .handle_order_cancelled(
+            OrderCancelledFilter {
+                order_id: [0x02; 16]
+            },
+            960
+        )
+        .await
+        .is_err());
+    assert!(app
+        .db_wrapper
+        .orders()
+        .get_all_orders()
+        .await
+        .unwrap()
+        .is_empty());
+    assert_no_further_gateway_messages(&server, 0).await;
+    stop_app(app).await;
 }
 
 // --- Event subscriber -----------------------------------------------

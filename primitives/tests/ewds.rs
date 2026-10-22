@@ -50,6 +50,7 @@ mod tests {
         DbOrderSchema {
             order_id: "order-id".to_string(),
             status: OrderStatus::Submitted,
+            status_updated_at: None,
             order_type: OrderEnum::Bid,
             area_uuid: "actor-id".to_string(),
             market_id: "market-id".to_string(),
@@ -65,6 +66,120 @@ mod tests {
             }),
             attributes: None,
         }
+    }
+
+    #[test]
+    fn order_status_timestamp_is_optional_for_legacy_records() {
+        let expected = order();
+        let stored = serde_json::to_value(&expected).unwrap();
+        assert!(stored.get("status_updated_at").is_none());
+        assert_eq!(
+            serde_json::from_value::<DbOrderSchema>(stored).unwrap(),
+            expected
+        );
+
+        let dto = EwdsOrderDto::from(expected.clone());
+        assert_eq!(dto.updated_at, None);
+        assert_eq!(dto.reject_reason, None);
+        let mut wire = serde_json::to_value(dto).unwrap();
+        wire.as_object_mut().unwrap().remove("updatedAt");
+        wire.as_object_mut().unwrap().remove("rejectReason");
+        let parsed: EwdsOrderDto = serde_json::from_value(wire).unwrap();
+        assert_eq!(DbOrderSchema::try_from(parsed).unwrap(), expected);
+    }
+
+    #[test]
+    fn stored_order_statuses_preserve_update_time_through_storage_and_ewds() {
+        for order_type in [OrderEnum::Bid, OrderEnum::Offer] {
+            for (status, wire_status) in [
+                (OrderStatus::Submitted, "submitted"),
+                (OrderStatus::PartiallyFilled, "partially_filled"),
+                (OrderStatus::Filled, "filled"),
+                (OrderStatus::Cancelled, "cancelled"),
+                (OrderStatus::Expired, "expired"),
+                (OrderStatus::Executed, "executed"),
+            ] {
+                let mut expected = order();
+                expected.order_type = order_type.clone();
+                expected.status = status;
+                expected.status_updated_at = Some(1_234);
+
+                let stored = serde_json::to_value(&expected).unwrap();
+                assert_eq!(stored["status_updated_at"], serde_json::json!(1_234));
+                let parsed: DbOrderSchema = serde_json::from_value(stored).unwrap();
+                assert_eq!(parsed, expected);
+
+                let wire = serde_json::to_value(EwdsOrderDto::from(parsed)).unwrap();
+                assert_eq!(wire["orderStatus"], wire_status);
+                assert_eq!(wire["updatedAt"], epoch_to_rfc3339(1_234));
+                let dto: EwdsOrderDto = serde_json::from_value(wire).unwrap();
+                assert_eq!(DbOrderSchema::try_from(dto).unwrap(), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn rejection_notification_preserves_status_and_reason() {
+        let mut dto = EwdsOrderDto::from(order());
+        dto.order_status = "rejected".to_string();
+        dto.reject_reason = Some("Market is closed".to_string());
+        let wire = serde_json::to_value(dto).unwrap();
+        assert_eq!(wire["orderStatus"], "rejected");
+        assert_eq!(wire["rejectReason"], "Market is closed");
+        let parsed: EwdsOrderDto = serde_json::from_value(wire).unwrap();
+        assert_eq!(parsed.order_status, "rejected");
+        assert_eq!(parsed.reject_reason.as_deref(), Some("Market is closed"));
+    }
+
+    #[test]
+    fn order_topic_contract_distinguishes_submissions_from_status_notifications() {
+        let schema: Value = serde_json::from_str(include_str!(
+            "../../schemas/ewds/intelligent/int.order.event.v1.json"
+        ))
+        .unwrap();
+        assert_eq!(
+            schema["properties"]["eventType"]["enum"],
+            json!(["order.event", "orderStatus.event"])
+        );
+        let topics = EwdsEventTopicConfig::from_env();
+        assert_eq!(
+            topics.for_event_type(EwdsEventType::Order),
+            topics.for_event_type(EwdsEventType::OrderStatus)
+        );
+        for status in [
+            "submitted",
+            "partially_filled",
+            "filled",
+            "cancelled",
+            "expired",
+            "rejected",
+            "executed",
+        ] {
+            let mut dto = EwdsOrderDto::from(order());
+            dto.order_status = status.to_string();
+            dto.updated_at = Some(epoch_to_rfc3339(1_234));
+            dto.reject_reason = (status == "rejected").then(|| "MarketClosed".to_string());
+            let event = EwdsEventEnvelope {
+                event_id: format!("status-{}", status),
+                event_type: EwdsEventType::OrderStatus,
+                occurred_at: epoch_to_rfc3339(1_234),
+                data: vec![dto],
+            };
+            let wire = serde_json::to_value(event).unwrap();
+            assert_eq!(wire["eventType"], "orderStatus.event");
+            assert_eq!(wire["data"][0]["orderStatus"], status);
+            let parsed: EwdsEventEnvelope<Vec<EwdsOrderDto>> =
+                serde_json::from_value(wire.clone()).unwrap();
+            assert_eq!(parsed.event_type, EwdsEventType::OrderStatus);
+            assert_eq!(serde_json::to_value(parsed).unwrap(), wire);
+        }
+    }
+
+    #[test]
+    fn invalid_order_status_timestamp_is_rejected() {
+        let mut dto = EwdsOrderDto::from(order());
+        dto.updated_at = Some("not-a-timestamp".to_string());
+        assert!(DbOrderSchema::try_from(dto).is_err());
     }
 
     #[test]
@@ -592,59 +707,82 @@ mod tests {
         assert!(NoBidReason::from_str("gremlins").is_err());
     }
 
+    /// A market as the off-chain storage stores it: `0x…` market ID and
+    /// zero-padded epoch seconds.
     fn market() -> MarketSchema {
         MarketSchema {
-            market_id: "market-id".to_string(),
-            community_id: "community-id".to_string(),
+            market_id: "0xcccccccccccccccccccccccccccccccc".to_string(),
+            community_id: "11111111-1111-4111-8111-111111111111".to_string(),
             opening_time: "00000000001700000000".to_string(),
             closing_time: "00000000001700001800".to_string(),
             delivery_start_time: "00000000001700001800".to_string(),
             delivery_end_time: "00000000001700002700".to_string(),
-            market_type: MarketType::Spot,
-            matching_algorithm: MatchingAlgorithm::PayAsBid,
+            market_type: MarketType::Settlement,
+            matching_algorithm: MatchingAlgorithm::PayAsClear,
             created_at: "00000000001699999000".to_string(),
         }
     }
 
     #[test]
-    fn market_db_to_ewds_maps_fields() {
-        let dto = EwdsMarketDto::from(market());
+    fn market_dto_uses_a_uuid_market_id_and_rfc3339_times() {
+        let json = serde_json::to_value(EwdsMarketDto::try_from(market()).unwrap()).unwrap();
 
-        assert_eq!(dto.market_id, "market-id");
-        assert_eq!(dto.community_id, "community-id");
-        assert_eq!(dto.opening_time, "00000000001700000000");
-        assert_eq!(dto.closing_time, "00000000001700001800");
-        assert_eq!(dto.delivery_start_time, "00000000001700001800");
-        assert_eq!(dto.delivery_end_time, "00000000001700002700");
-        assert_eq!(dto.market_type, MarketType::Spot);
-        assert_eq!(dto.matching_algorithm, MatchingAlgorithm::PayAsBid);
-        assert_eq!(dto.created_at, "00000000001699999000");
+        assert_eq!(
+            json,
+            json!({
+                "marketId": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+                "communityId": "11111111-1111-4111-8111-111111111111",
+                "openingTime": epoch_to_rfc3339(1_700_000_000),
+                "closingTime": epoch_to_rfc3339(1_700_001_800),
+                "deliveryStartTime": epoch_to_rfc3339(1_700_001_800),
+                "deliveryEndTime": epoch_to_rfc3339(1_700_002_700),
+                "marketType": "settlement",
+                "matchingAlgorithm": "pay_as_clear",
+                "createdAt": epoch_to_rfc3339(1_699_999_000),
+            })
+        );
     }
 
     #[test]
     fn market_round_trip_preserves_schema() {
         let src = market();
-        let back = MarketSchema::from(EwdsMarketDto::from(src.clone()));
+        let back = MarketSchema::try_from(EwdsMarketDto::try_from(src.clone()).unwrap()).unwrap();
         assert_eq!(back, src);
     }
 
     #[test]
-    fn market_dto_serialises_camel_case_with_wire_enums() {
-        let json = serde_json::to_value(EwdsMarketDto::from(market())).unwrap();
+    fn market_dto_accepts_a_hex_market_id() {
+        let dto = EwdsMarketDto {
+            market_id: "0xcccccccccccccccccccccccccccccccc".to_string(),
+            ..EwdsMarketDto::try_from(market()).unwrap()
+        };
+        assert_eq!(MarketSchema::try_from(dto).unwrap(), market());
+    }
 
-        assert_eq!(json["marketId"], serde_json::json!("market-id"));
-        assert_eq!(json["communityId"], serde_json::json!("community-id"));
-        assert_eq!(
-            json["openingTime"],
-            serde_json::json!("00000000001700000000")
-        );
-        assert_eq!(
-            json["deliveryStartTime"],
-            serde_json::json!("00000000001700001800")
-        );
-        assert_eq!(json["marketType"], serde_json::json!("spot"));
-        assert_eq!(json["matchingAlgorithm"], serde_json::json!("pay_as_bid"));
-        assert_eq!(json["createdAt"], serde_json::json!("00000000001699999000"));
+    #[test]
+    fn market_dto_rejects_invalid_ids_and_times() {
+        let invalid_id = MarketSchema {
+            market_id: "market-id".to_string(),
+            ..market()
+        };
+        assert!(EwdsMarketDto::try_from(invalid_id).is_err());
+        let invalid_stored_time = MarketSchema {
+            opening_time: "2023-11-14T22:13:20Z".to_string(),
+            ..market()
+        };
+        assert!(EwdsMarketDto::try_from(invalid_stored_time).is_err());
+
+        let dto = EwdsMarketDto::try_from(market()).unwrap();
+        let invalid_dto_id = EwdsMarketDto {
+            market_id: "market-id".to_string(),
+            ..dto.clone()
+        };
+        assert!(MarketSchema::try_from(invalid_dto_id).is_err());
+        let epoch_dto_time = EwdsMarketDto {
+            opening_time: "00000000001700000000".to_string(),
+            ..dto
+        };
+        assert!(MarketSchema::try_from(epoch_dto_time).is_err());
     }
 
     #[test]
@@ -668,6 +806,7 @@ mod tests {
             "facility",
             "site",
             "community",
+            "order",
             "order",
         ];
         assert_eq!(EwdsEventType::ALL.len(), expected.len());
@@ -721,6 +860,7 @@ mod tests {
             "site.event",
             "community.event",
             "order.event",
+            "orderStatus.event",
         ];
         assert_eq!(EwdsEventType::ALL.len(), wire_names.len());
         for (event_type, wire_name) in EwdsEventType::ALL.into_iter().zip(wire_names) {

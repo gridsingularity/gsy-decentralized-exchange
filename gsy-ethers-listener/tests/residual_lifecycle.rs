@@ -6,8 +6,8 @@ use ethers::{
     utils::Anvil,
 };
 use gsy_ethers_listener::{
-    GsyEthersListener, GsyEventHandler, ListenerConfig, MarketStatusUpdatedFilter,
-    OrderCancelledFilter, OrderPlacedFilter, TradeSettledFilter, MarketClearingFilter,
+    GsyEthersListener, GsyEventHandler, ListenerConfig, MarketClearingFilter,
+    NewMarketCreatedFilter, OrderCancelledFilter, OrderPlacedFilter, TradeSettledFilter,
 };
 use std::collections::HashMap;
 use std::fs::File;
@@ -25,7 +25,7 @@ mod mock_contract {
             function emitOrderPlaced(bytes16 orderId, bytes16 createdBy) external
             function emitResidualBatch(address registry, bool residualIsBid, bool consumeResidual) external
             function emitFollowup(bool residualIsBid) external
-            function emitMarketStatus() external
+            function emitNewMarket() external
             function emitCancellation(bytes16 orderId) external
         ]"#
     );
@@ -35,41 +35,78 @@ use mock_contract::MockEmitter;
 #[derive(Default)]
 struct Projection {
     events: Vec<(&'static str, [u8; 16])>,
+    order_event_timestamps: Vec<u64>,
+    markets: Vec<NewMarketCreatedFilter>,
     orders: HashMap<[u8; 16], (OrderPlacedFilter, bool)>,
     missing_orders: Vec<[u8; 16]>,
+    completed_blocks: Vec<(u64, usize)>,
+    fail_next_cancellation: bool,
 }
 
 struct OrderedHandler(Arc<Mutex<Projection>>);
 
 #[async_trait]
 impl GsyEventHandler for OrderedHandler {
+    async fn handle_block(&self, timestamp: u64) -> Result<()> {
+        let mut state = self.0.lock().unwrap();
+        let count = state.events.len();
+        state.completed_blocks.push((timestamp, count));
+        Ok(())
+    }
+
+    async fn handle_delivery_verified(
+        &self,
+        _: gsy_ethers_listener::DeliveryVerifiedFilter,
+        _: u64,
+    ) -> Result<()> {
+        Ok(())
+    }
     async fn handle_market_clearing(
-        &self, _: MarketClearingFilter, _: LogMeta, _: u64,
+        &self,
+        _: MarketClearingFilter,
+        _: LogMeta,
+        _: u64,
     ) -> Result<()> {
         Ok(())
     }
 
-    async fn handle_order_placed(&self, event: OrderPlacedFilter) -> Result<()> {
+    async fn handle_order_placed(
+        &self,
+        event: OrderPlacedFilter,
+        block_timestamp: u64,
+    ) -> Result<()> {
         // Allow later logs to queue while placement is being indexed.
         tokio::time::sleep(Duration::from_millis(10)).await;
         let mut state = self.0.lock().unwrap();
         state.events.push(("placed", event.order_id));
+        state.order_event_timestamps.push(block_timestamp);
         state.orders.insert(event.order_id, (event, false));
         Ok(())
     }
 
-    async fn handle_order_cancelled(&self, event: OrderCancelledFilter) -> Result<()> {
-        self.0
-            .lock()
-            .unwrap()
-            .events
-            .push(("cancelled", event.order_id));
+    async fn handle_order_cancelled(
+        &self,
+        event: OrderCancelledFilter,
+        block_timestamp: u64,
+    ) -> Result<()> {
+        let mut state = self.0.lock().unwrap();
+        if state.fail_next_cancellation {
+            state.fail_next_cancellation = false;
+            anyhow::bail!("Transient indexing failure");
+        }
+        state.events.push(("cancelled", event.order_id));
+        state.order_event_timestamps.push(block_timestamp);
         Ok(())
     }
 
-    async fn handle_trade_settled(&self, event: TradeSettledFilter) -> Result<()> {
+    async fn handle_trade_settled(
+        &self,
+        event: TradeSettledFilter,
+        block_timestamp: u64,
+    ) -> Result<()> {
         let mut state = self.0.lock().unwrap();
         state.events.push(("settled", event.trade_id));
+        state.order_event_timestamps.push(block_timestamp);
         for id in [event.bid_id, event.offer_id] {
             if let Some((_, executed)) = state.orders.get_mut(&id) {
                 *executed = true;
@@ -80,12 +117,10 @@ impl GsyEventHandler for OrderedHandler {
         Ok(())
     }
 
-    async fn handle_market_status(&self, event: MarketStatusUpdatedFilter) -> Result<()> {
-        self.0
-            .lock()
-            .unwrap()
-            .events
-            .push(("market", event.market_id));
+    async fn handle_new_market_created(&self, event: NewMarketCreatedFilter) -> Result<()> {
+        let mut state = self.0.lock().unwrap();
+        state.events.push(("market", event.market_id));
+        state.markets.push(event);
         Ok(())
     }
 }
@@ -99,7 +134,13 @@ fn id(value: u8) -> [u8; 16] {
 async fn wait_for_events(state: &Arc<Mutex<Projection>>, count: usize) {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            if state.lock().unwrap().events.len() >= count {
+            if state
+                .lock()
+                .unwrap()
+                .completed_blocks
+                .last()
+                .is_some_and(|(_, n)| *n >= count)
+            {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
@@ -125,7 +166,9 @@ async fn residual_events_are_processed_in_chain_order_from_the_correct_contracts
     let controller_address = deploy_emitter(client.clone()).await?;
     let registry = MockEmitter::new(registry_address, client.clone());
     let settlement = MockEmitter::new(settlement_address, client.clone());
-    let controller = MockEmitter::new(controller_address, client);
+    let controller = MockEmitter::new(controller_address, client.clone());
+    // Do not replay an isolated historical event when starting without a replay cursor.
+    registry.emit_cancellation(id(42)).send().await?.await?;
     let state = Arc::new(Mutex::new(Projection::default()));
     let listener = GsyEthersListener::new(
         ListenerConfig {
@@ -138,27 +181,52 @@ async fn residual_events_are_processed_in_chain_order_from_the_correct_contracts
     );
     let handle = tokio::spawn(async move { listener.run().await.unwrap() });
     tokio::time::sleep(Duration::from_secs(1)).await;
+    assert!(state.lock().unwrap().events.is_empty());
 
     for residual_is_bid in [true, false] {
         for same_batch in [true, false] {
             *state.lock().unwrap() = Projection::default();
             let base = if residual_is_bid { 1 } else { 11 };
-            settlement
+            let receipt = settlement
                 .emit_residual_batch(registry_address, residual_is_bid, same_batch)
                 .send()
                 .await?
-                .await?;
+                .await?
+                .unwrap();
+            let timestamp = client
+                .get_block(receipt.block_hash.unwrap())
+                .await?
+                .unwrap()
+                .timestamp
+                .as_u64();
+            let mut expected_timestamps = vec![timestamp; if same_batch { 6 } else { 5 }];
             wait_for_events(&state, if same_batch { 6 } else { 5 }).await;
             if !same_batch {
                 assert!(!state.lock().unwrap().orders[&id(base + 3)].1);
-                settlement
+                client
+                    .provider()
+                    .request::<_, ()>("evm_setNextBlockTimestamp", [timestamp + 30])
+                    .await?;
+                let receipt = settlement
                     .emit_followup(residual_is_bid)
                     .send()
                     .await?
-                    .await?;
+                    .await?
+                    .unwrap();
+                let timestamp = client
+                    .get_block(receipt.block_hash.unwrap())
+                    .await?
+                    .unwrap()
+                    .timestamp
+                    .as_u64();
+                expected_timestamps.push(timestamp);
                 wait_for_events(&state, 6).await;
             }
             let snapshot = state.lock().unwrap();
+            assert_eq!(snapshot.order_event_timestamps, expected_timestamps);
+            assert!(snapshot
+                .completed_blocks
+                .contains(&(*expected_timestamps.last().unwrap(), 6)));
             assert_eq!(
                 snapshot.events,
                 vec![
@@ -191,14 +259,45 @@ async fn residual_events_are_processed_in_chain_order_from_the_correct_contracts
         .send()
         .await?
         .await?;
-    registry.emit_market_status().send().await?.await?;
+    registry.emit_new_market().send().await?.await?;
     settlement.emit_cancellation(id(42)).send().await?.await?;
-    registry.emit_cancellation(id(1)).send().await?.await?;
-    controller.emit_market_status().send().await?.await?;
+    // A failed handler must retry this block before processing later blocks.
+    state.lock().unwrap().fail_next_cancellation = true;
+    let receipt = registry
+        .emit_cancellation(id(1))
+        .send()
+        .await?
+        .await?
+        .unwrap();
+    let timestamp = client
+        .get_block(receipt.block_hash.unwrap())
+        .await?
+        .unwrap()
+        .timestamp
+        .as_u64();
+    controller.emit_new_market().send().await?.await?;
     wait_for_events(&state, 2).await;
+    assert_eq!(
+        state.lock().unwrap().order_event_timestamps,
+        vec![timestamp]
+    );
     assert_eq!(
         state.lock().unwrap().events,
         vec![("cancelled", id(1)), ("market", id(99))]
+    );
+    assert_eq!(
+        state.lock().unwrap().markets,
+        vec![NewMarketCreatedFilter {
+            market_id: id(99),
+            community_id: id(7),
+            opening_time: 1000,
+            closing_time: 1900,
+            delivery_start_time: 2000,
+            delivery_end_time: 2900,
+            market_type: 1,
+            matching_algorithm: 2,
+            created_at: 900,
+        }]
     );
     handle.abort();
     Ok(())
@@ -218,7 +317,7 @@ async fn deploy_emitter(
         contract MockEmitter {
             event OrderPlaced(bytes16 indexed orderId, bytes16 indexed createdBy, bytes16 indexed marketId, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, uint8 energySourcePreference, uint8 energyType, bool isBid, bytes16 preferredTradingPartner, uint64 preferredEnergyRate);
             event TradeSettled(bytes16 indexed tradeId, bytes16 indexed bidId, bytes16 indexed offerId, bytes16 buyerId, bytes16 sellerId, bytes16 marketId, uint64 timeSlot, bytes16 residualBidId, bytes16 residualOfferId, uint256 energy, uint256 price);
-            event MarketStatusUpdated(bytes16 indexed marketId, bool isOpen);
+            event NewMarketCreated(bytes16 indexed marketId, bytes16 indexed communityId, uint64 openingTime, uint64 closingTime, uint64 deliveryStartTime, uint64 deliveryEndTime, uint8 marketType, uint8 matchingAlgorithm, uint64 createdAt);
             event OrderCancelled(bytes16 indexed orderId);
             function emitOrderPlaced(bytes16 orderId, bytes16 createdBy) external {
                 emit OrderPlaced(orderId, createdBy, bytes16(0), 100, 100, 1000, 50, 1, 0, true, bytes16(0), 0);
@@ -240,8 +339,8 @@ async fn deploy_emitter(
                 uint128 base = residualIsBid ? 1 : 11;
                 emit TradeSettled(bytes16(base + 5), bytes16(base + (residualIsBid ? 3 : 2)), bytes16(base + (residualIsBid ? 2 : 3)), bytes16(uint128(100)), bytes16(uint128(200)), bytes16(uint128(99)), 100, bytes16(0), bytes16(0), 40, 50);
             }
-            function emitMarketStatus() external {
-                emit MarketStatusUpdated(bytes16(uint128(99)), true);
+            function emitNewMarket() external {
+                emit NewMarketCreated(bytes16(uint128(99)), bytes16(uint128(7)), 1000, 1900, 2000, 2900, 1, 2, 900);
             }
             function emitCancellation(bytes16 orderId) external {
                 emit OrderCancelled(orderId);

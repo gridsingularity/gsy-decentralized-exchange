@@ -190,13 +190,21 @@ book, the E2E harness first advances local Anvil to the next matching boundary.
 After the order book is indexed, it fast-forwards to the clearing boundary with
 empty-block RPC calls rather than waiting for one transaction per block.
 
-Before waiting for the orchestrator, the E2E runner idempotently stores a
-canonical community using `OFFCHAIN_STORAGE_TRANSPORT`: over HTTP it calls
+Before waiting for the orchestrator, the E2E runner idempotently stores a new
+community using `OFFCHAIN_STORAGE_TRANSPORT`: over HTTP it calls
 `POST /communities`, and with the EWDS transport it publishes a
 `community.event` and waits until `communities.query` returns the
 community. The orchestrator then queries the same community collection and
-opens the community-aware Spot market whose ID is derived from community UUID,
-market type, and delivery slot.
+creates every market of that community that has not closed on-chain,
+including the current slot's Spot market, which closes 30 minutes after
+delivery start in this setup. The runner waits until the Spot market of the
+current slot is open on-chain (`isMarketOpen`) and stored in off-chain storage
+(`fetch_market`, HTTP or EWDS), and checks that the stored `MarketSchema`
+mirrors the market's `NewMarketCreated` event and the configured
+`MATCHING_ALGORITHM`.
+Because the suite trades the current slot, `docker-compose.e2e-test.yml` sets
+`EXECUTION_ENGINE_OFFSET_MIN` to `0` so the execution engine targets the same
+slot.
 
 Features tagged `@ewds`, such as `events.feature`, only run with
 `OFFCHAIN_STORAGE_TRANSPORT=ewds`; HTTP runs skip them.
@@ -410,3 +418,54 @@ Current e2e suite validates:
 - Distinct Spot market creation for multiple communities in the same delivery
   slot, with end-to-end verification that matching, settlement, indexing, and
   penalties remain isolated per community market.
+
+### DD-423 Order Lifecycle Validation
+
+Run both `pay_as_bid` and `pay_as_clear` with each transport. Leave
+`E2E_FEATURE_PATH` unset and do not supply Cucumber `--name`/`--tags` filters
+for the complete matrix. HTTP runs skip the `@ewds` event scenarios; EWDS
+runs include them in both algorithm folders.
+
+Before running:
+
+- Redeploy the current contracts with `./scripts/contracts.sh local deploy`
+  and use the resulting `contracts-output/addresses.env`. Older deployments
+  do not provide the DD-423 fill, expiry and delivery-verification lifecycle.
+- For EWDS, update the existing `order`/`orderTest` topic schema from
+  `schemas/ewds/intelligent/int.order.event.v1.json`. It must accept both
+  `order.event` and `orderStatus.event`; no new topic is required. Ensure
+  the event publish/subscribe channels include that topic.
+- Keep the normal local E2E role grants: the default test wallet creates an
+  isolated market for cancellation without changing the orchestrator's markets.
+
+Coverage added for DD-423:
+
+- `order_lifecycle.feature` verifies `Submitted` and `Cancelled` on-chain and in
+  storage, including event timestamps. Deterministic contract and listener tests
+  cover expiry at market closure, without advancing the shared E2E chain clock.
+  Full delivery reaches `Executed` for the trade and both consumed orders without
+  a penalty.
+- Existing settlement/residual scenarios check `Filled`/`PartiallyFilled`
+  and independent residual orders. Penalty scenarios now also require the
+  trade and its consumed orders to become `Executed` with the verification
+  block's timestamp.
+- EWDS order scenarios observe `submitted`, `filled` and `executed`
+  notifications with an independent FOS consumer cursor. A closed-market
+  contract rejection must notify `rejected` with a reason but create no
+  on-chain or stored order. Notifications must not be submitted as new orders.
+
+Focused tests additionally cover both residual sides, missing measurements,
+duplicate verification, listener replay, notification snapshots, reverted
+receipts and transport errors. The real-contract integration check requires
+compiled Hardhat artifacts, Anvil and MongoDB:
+
+```bash
+cargo test --locked -p gsy-offchain-storage --test api \
+  delivery_verification_runs_through_real_contracts_engine_and_storage -- --ignored
+```
+
+Deliberate follow-ups: legacy order POST write permissions remain unchanged;
+malformed submissions are logged, not published as rejected order snapshots;
+verification keeps the current single-measurement policy; event publication
+is best effort, without a durable outbox. These limitations are not resolved
+by a passing validation matrix.

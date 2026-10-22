@@ -1,13 +1,20 @@
-use crate::helpers::init_app;
+use crate::helpers::{init_app, stop_app};
 use ethers::{
     prelude::*,
     solc::{Project, ProjectPathsConfig},
     utils::Anvil,
 };
-use gsy_ethers_listener::{GsyEthersListener, GsyEventHandler, ListenerConfig, OrderPlacedFilter};
+use gsy_ethers_listener::{
+    GsyEthersListener, GsyEventHandler, ListenerConfig, NewMarketCreatedFilter,
+    OrderCancelledFilter, OrderPlacedFilter, TradeSettledFilter,
+};
 use gsy_offchain_storage::evm_handler::OffchainStorageEvmHandler;
 use primitives::db_api_schema::ids::IdMappingSchema;
-use primitives::db_api_schema::orders::{EnergyType, OrderEnum};
+use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
+use primitives::db_api_schema::orders::{EnergyType, OrderEnum, OrderStatus};
+use primitives::db_api_schema::trades::TradeStatus;
+use primitives::ewds::dto::EwdsOrderDto;
+use primitives::utils::{bytes16_to_hex, epoch_to_rfc3339};
 use std::{fs::File, io::Write, sync::Arc, time::Duration};
 use tempfile::TempDir;
 
@@ -16,8 +23,132 @@ abigen!(
     r#"[
         event OrderPlaced(bytes16 indexed orderId, bytes16 indexed createdBy, bytes16 indexed marketId, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, uint8 energySourcePreference, uint8 energyType, bool isBid, bytes16 preferredTradingPartner, uint64 preferredEnergyRate)
         function emitOrderPlaced(bytes16 orderId, bytes16 createdBy, uint64 energy, uint64 rate) external
+        function emitNewMarket(uint64 closingTime) external
     ]"#
 );
+
+pub(crate) fn new_market_event() -> NewMarketCreatedFilter {
+    NewMarketCreatedFilter {
+        market_id: [0xcc; 16],
+        community_id: [
+            0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x41, 0x11, 0x81, 0x11, 0x11, 0x11, 0x11, 0x11,
+            0x11, 0x11,
+        ],
+        opening_time: 1_699_998_300,
+        closing_time: 1_700_000_100,
+        delivery_start_time: 1_700_000_100,
+        delivery_end_time: 1_700_001_000,
+        market_type: 1,
+        matching_algorithm: 1,
+        created_at: 1_699_998_301,
+    }
+}
+
+pub(crate) fn expected_market() -> MarketSchema {
+    MarketSchema {
+        market_id: "0xcccccccccccccccccccccccccccccccc".to_string(),
+        community_id: "11111111-1111-4111-8111-111111111111".to_string(),
+        opening_time: "00000000001699998300".to_string(),
+        closing_time: "00000000001700000100".to_string(),
+        delivery_start_time: "00000000001700000100".to_string(),
+        delivery_end_time: "00000000001700001000".to_string(),
+        market_type: MarketType::Flex,
+        matching_algorithm: MatchingAlgorithm::PayAsClear,
+        created_at: "00000000001699998301".to_string(),
+    }
+}
+
+async fn stored_markets(app: &crate::helpers::TestApp) -> Vec<MarketSchema> {
+    app.db_wrapper
+        .markets()
+        .filter(None, None, None, None)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn test_new_market_event_creates_market() {
+    let app = init_app().await;
+    let handler = OffchainStorageEvmHandler {
+        db: app.db_wrapper.clone(),
+        event_publisher: None,
+    };
+
+    handler
+        .handle_new_market_created(new_market_event())
+        .await
+        .unwrap();
+
+    assert_eq!(stored_markets(&app).await, vec![expected_market()]);
+    crate::helpers::stop_app(app).await;
+}
+
+#[tokio::test]
+async fn test_replayed_new_market_event_keeps_one_market() {
+    let app = init_app().await;
+    let handler = OffchainStorageEvmHandler {
+        db: app.db_wrapper.clone(),
+        event_publisher: None,
+    };
+
+    for _ in 0..2 {
+        handler
+            .handle_new_market_created(new_market_event())
+            .await
+            .unwrap();
+    }
+
+    assert_eq!(stored_markets(&app).await, vec![expected_market()]);
+    crate::helpers::stop_app(app).await;
+}
+
+#[tokio::test]
+async fn test_new_market_event_overwrites_a_posted_market() {
+    let app = init_app().await;
+    let handler = OffchainStorageEvmHandler {
+        db: app.db_wrapper.clone(),
+        event_publisher: None,
+    };
+    app.db_wrapper
+        .markets()
+        .upsert(MarketSchema {
+            opening_time: "00000000000000000001".to_string(),
+            market_type: MarketType::Spot,
+            matching_algorithm: MatchingAlgorithm::PayAsBid,
+            ..expected_market()
+        })
+        .await
+        .unwrap();
+
+    handler
+        .handle_new_market_created(new_market_event())
+        .await
+        .unwrap();
+
+    assert_eq!(stored_markets(&app).await, vec![expected_market()]);
+    crate::helpers::stop_app(app).await;
+}
+
+#[tokio::test]
+async fn test_new_market_event_with_unknown_enum_is_rejected() {
+    let app = init_app().await;
+    let handler = OffchainStorageEvmHandler {
+        db: app.db_wrapper.clone(),
+        event_publisher: None,
+    };
+
+    let error = handler
+        .handle_new_market_created(NewMarketCreatedFilter {
+            market_type: 9,
+            ..new_market_event()
+        })
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("Unknown market type 9"));
+    assert!(stored_markets(&app).await.is_empty());
+    crate::helpers::stop_app(app).await;
+}
 
 #[tokio::test]
 async fn test_order_listener_rejects_unknown_partner_mapping() {
@@ -40,7 +171,7 @@ async fn test_order_listener_rejects_unknown_partner_mapping() {
         preferred_trading_partner: [0x11; 16],
         preferred_energy_rate: 4000,
     };
-    let error = handler.handle_order_placed(event).await.unwrap_err();
+    let error = handler.handle_order_placed(event, 950).await.unwrap_err();
     assert!(error.to_string().contains("No facility ID mapping"));
     assert!(app
         .db_wrapper
@@ -89,6 +220,10 @@ async fn test_evm_order_listener_persists_to_db() {
         // SPDX-License-Identifier: MIT
         pragma solidity ^0.8.0;
         contract MockEmitter {
+            event NewMarketCreated(bytes16 indexed marketId, bytes16 indexed communityId, uint64 openingTime, uint64 closingTime, uint64 deliveryStartTime, uint64 deliveryEndTime, uint8 marketType, uint8 matchingAlgorithm, uint64 createdAt);
+            function emitNewMarket(uint64 closingTime) external {
+                emit NewMarketCreated(bytes16(0), bytes16(uint128(1)), uint64(block.timestamp), closingTime, 1000, 1900, 0, 0, uint64(block.timestamp));
+            }
             event OrderPlaced(bytes16 indexed orderId, bytes16 indexed createdBy, bytes16 indexed marketId, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, uint8 energySourcePreference, uint8 energyType, bool isBid, bytes16 preferredTradingPartner, uint64 preferredEnergyRate);
             function emitOrderPlaced(bytes16 orderId, bytes16 createdBy, uint64 energy, uint64 rate) external {
                 // Emit representative order metadata so indexing is verified end-to-end.
@@ -170,7 +305,7 @@ async fn test_evm_order_listener_persists_to_db() {
         node_url: ws_endpoint.clone(),
         order_registry_address: contract_address,
         trade_settlement_address: Address::zero(),
-        market_controller_address: Address::zero(),
+        market_controller_address: contract_address,
     };
 
     let handler = OffchainStorageEvmHandler {
@@ -186,18 +321,42 @@ async fn test_evm_order_listener_persists_to_db() {
     tokio::time::sleep(Duration::from_millis(1000)).await;
 
     let mock_contract = MockEmitter::new(contract_address, client.clone());
-    let order_id = [0xAA; 16];
-    let created_by = [0xBB; 16];
-    let energy_val = 10000; // 1.0 energy scaled
-    let rate_val = 5000; // 0.5 rate scaled
-
-    let _tx = mock_contract
-        .emit_order_placed(order_id, created_by, energy_val, rate_val)
+    let closed_at = client
+        .get_block(BlockNumber::Latest)
+        .await
+        .unwrap()
+        .unwrap()
+        .timestamp
+        .as_u64()
+        + 60;
+    mock_contract
+        .emit_new_market(closed_at)
         .send()
         .await
         .unwrap()
         .await
         .unwrap();
+    let order_id = [0xAA; 16];
+
+    let created_by = [0xBB; 16];
+    let energy_val = 10000; // 1.0 energy scaled
+    let rate_val = 5000; // 0.5 rate scaled
+
+    let receipt = mock_contract
+        .emit_order_placed(order_id, created_by, energy_val, rate_val)
+        .send()
+        .await
+        .unwrap()
+        .await
+        .unwrap()
+        .unwrap();
+    let block_timestamp = client
+        .get_block(receipt.block_hash.unwrap())
+        .await
+        .unwrap()
+        .unwrap()
+        .timestamp
+        .as_u64();
 
     let expected_id = format!("0x{}", hex::encode(order_id));
 
@@ -209,6 +368,8 @@ async fn test_evm_order_listener_persists_to_db() {
             assert_eq!(order.order_type, OrderEnum::Bid);
             assert_eq!(order.energy_kWh, 1.0);
             assert_eq!(order.energy_rate, 0.5);
+            assert_eq!(order.creation_time, 1234567890);
+            assert_eq!(order.status_updated_at, Some(block_timestamp));
             assert_eq!(order.area_uuid, format!("0x{}", hex::encode(created_by)));
             assert_eq!(
                 order
@@ -239,4 +400,419 @@ async fn test_evm_order_listener_persists_to_db() {
     }
 
     assert!(found, "Order was not found in MongoDB after 4 seconds");
+    // No contract event is emitted at closure: an otherwise empty block triggers expiry.
+    client
+        .provider()
+        .request::<_, ()>("evm_setNextBlockTimestamp", [closed_at])
+        .await
+        .unwrap();
+    client
+        .provider()
+        .request::<_, serde_json::Value>("evm_mine", ())
+        .await
+        .unwrap();
+    let order_id = expected_id.into();
+    tokio::time::timeout(Duration::from_secs(4), async {
+        loop {
+            let order = db
+                .orders()
+                .get_order_by_id(&order_id)
+                .await
+                .unwrap()
+                .unwrap();
+            if order.status == OrderStatus::Expired {
+                assert_eq!(order.status_updated_at, Some(closed_at));
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("Market closure did not expire the indexed order");
+    stop_app(app).await;
+}
+
+fn placed_order(order_id: [u8; 16], is_bid: bool, energy: u64) -> OrderPlacedFilter {
+    OrderPlacedFilter {
+        order_id,
+        created_by: if is_bid { [0xaa; 16] } else { [0xbb; 16] },
+        market_id: [0xcc; 16],
+        time_slot: 1000,
+        creation_time: 900,
+        energy,
+        energy_rate: 5000,
+        energy_source_preference: 0,
+        energy_type: 0,
+        is_bid,
+        preferred_trading_partner: [0; 16],
+        preferred_energy_rate: 0,
+    }
+}
+
+#[tokio::test]
+async fn cancellation_uses_block_time_and_preserves_order_metadata() {
+    let app = init_app().await;
+    let handler = OffchainStorageEvmHandler {
+        db: app.db_wrapper.clone(),
+        event_publisher: None,
+    };
+    handler
+        .handle_order_placed(placed_order([1; 16], true, 10000), 950)
+        .await
+        .unwrap();
+    let orders = app.db_wrapper.orders();
+    let order_id = bytes16_to_hex([1; 16]).into();
+    let mut expected = orders.get_order_by_id(&order_id).await.unwrap().unwrap();
+    assert_eq!(expected.status_updated_at, Some(950));
+    expected.status = OrderStatus::Cancelled;
+    expected.status_updated_at = Some(980);
+    // Reprocessing the same event must not replace chain time with wall-clock time.
+    for _ in 0..2 {
+        handler
+            .handle_order_cancelled(OrderCancelledFilter { order_id: [1; 16] }, 980)
+            .await
+            .unwrap();
+        assert_eq!(
+            orders.get_order_by_id(&order_id).await.unwrap().unwrap(),
+            expected
+        );
+    }
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn market_closure_expires_only_submitted_orders_and_preserves_expiry_on_later_blocks() {
+    // Closure, not the delivery slot (1000), determines expiry in both cases.
+    for closed_at in [980, 1020] {
+        let app = init_app().await;
+        let handler = OffchainStorageEvmHandler {
+            db: app.db_wrapper.clone(),
+            event_publisher: None,
+        };
+        let orders = app.db_wrapper.orders();
+        let market_id = [0xcc; 16];
+        let other_market = [0xdd; 16];
+        for (index, status) in [
+            OrderStatus::Submitted,
+            OrderStatus::PartiallyFilled,
+            OrderStatus::Filled,
+            OrderStatus::Cancelled,
+            OrderStatus::Expired,
+            OrderStatus::Executed,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            for (offset, market) in [(0, market_id), (10, other_market)] {
+                for (side, is_bid) in [(0, true), (20, false)] {
+                    let order_id = [(index + offset + side + 1) as u8; 16];
+                    let mut event = placed_order(order_id, is_bid, 10000);
+                    event.market_id = market;
+                    handler.handle_order_placed(event, 950).await.unwrap();
+                    orders
+                        .update_order_status_by_id(
+                            &bytes16_to_hex(order_id).into(),
+                            status.clone(),
+                            950,
+                        )
+                        .await
+                        .unwrap();
+                }
+            }
+        }
+        let before = orders.get_all_orders().await.unwrap();
+        for (id, closing_time) in [(market_id, closed_at), (other_market, closed_at + 100)] {
+            handler
+                .handle_new_market_created(NewMarketCreatedFilter {
+                    market_id: id,
+                    closing_time,
+                    ..new_market_event()
+                })
+                .await
+                .unwrap();
+        }
+        handler.handle_block(closed_at - 1).await.unwrap();
+        for order in &before {
+            assert_eq!(
+                orders
+                    .get_order_by_id(&order.order_id.clone().into())
+                    .await
+                    .unwrap()
+                    .as_ref(),
+                Some(order)
+            );
+        }
+        // Delayed indexing and repeated confirmed blocks retain the scheduled expiry time.
+        for timestamp in [closed_at + 1, closed_at + 2] {
+            handler.handle_block(timestamp).await.unwrap();
+            for order in &before {
+                let mut expected = order.clone();
+                if order.market_id == bytes16_to_hex(market_id)
+                    && order.status == OrderStatus::Submitted
+                {
+                    expected.status = OrderStatus::Expired;
+                    expected.status_updated_at = Some(closed_at);
+                }
+                assert_eq!(
+                    orders
+                        .get_order_by_id(&order.order_id.clone().into())
+                        .await
+                        .unwrap(),
+                    Some(expected)
+                );
+            }
+        }
+        let response = reqwest::Client::new()
+            .get(format!("{}/orders", app.address))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json::<Vec<EwdsOrderDto>>()
+            .await
+            .unwrap();
+        let expired = response
+            .iter()
+            .find(|order| order.order_id == bytes16_to_hex([1; 16]))
+            .unwrap();
+        assert_eq!(expired.order_status, "expired");
+        assert_eq!(expired.updated_at, Some(epoch_to_rfc3339(closed_at)));
+        handler
+            .handle_order_placed(
+                OrderPlacedFilter {
+                    market_id: other_market,
+                    ..placed_order([99; 16], true, 10000)
+                },
+                closed_at + 3,
+            )
+            .await
+            .unwrap();
+        let new_order = orders
+            .get_order_by_id(&bytes16_to_hex([99; 16]).into())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(new_order.status, OrderStatus::Submitted);
+        stop_app(app).await;
+    }
+}
+
+#[tokio::test]
+async fn settlement_indexes_fill_statuses_and_keeps_residuals_independent() {
+    for (partial_bid, partial_offer) in [(false, false), (true, false), (false, true), (true, true)]
+    {
+        let app = init_app().await;
+        let handler = OffchainStorageEvmHandler {
+            db: app.db_wrapper.clone(),
+            event_publisher: None,
+        };
+        let sides = [
+            (true, [1; 16], [3; 16], partial_bid),
+            (false, [2; 16], [4; 16], partial_offer),
+        ];
+        for (is_bid, original, residual, partial) in sides {
+            handler
+                .handle_order_placed(
+                    placed_order(original, is_bid, if partial { 20000 } else { 10000 }),
+                    950,
+                )
+                .await
+                .unwrap();
+            let submitted = app
+                .db_wrapper
+                .orders()
+                .get_order_by_id(&bytes16_to_hex(original).into())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(submitted.status_updated_at, Some(950));
+            assert_eq!(submitted.creation_time, 900);
+            if partial {
+                handler
+                    .handle_order_placed(placed_order(residual, is_bid, 10000), 980)
+                    .await
+                    .unwrap();
+            }
+        }
+        let event = TradeSettledFilter {
+            trade_id: [10; 16],
+            bid_id: [1; 16],
+            offer_id: [2; 16],
+            buyer_id: [0xaa; 16],
+            seller_id: [0xbb; 16],
+            market_id: [0xcc; 16],
+            time_slot: 1000,
+            residual_bid_id: if partial_bid { [3; 16] } else { [0; 16] },
+            residual_offer_id: if partial_offer { [4; 16] } else { [0; 16] },
+            energy: U256::from(10000u64),
+            price: U256::from(5000u64),
+        };
+        handler
+            .handle_trade_settled(event.clone(), 980)
+            .await
+            .unwrap();
+        let orders = app.db_wrapper.orders();
+        let indexed = orders.get_all_orders().await.unwrap();
+        let returned = reqwest::Client::new()
+            .get(format!("{}/orders", app.address))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json::<Vec<EwdsOrderDto>>()
+            .await
+            .unwrap();
+
+        for (is_bid, original, residual, partial) in sides {
+            let original_id = bytes16_to_hex(original);
+            let original_order = indexed
+                .iter()
+                .find(|order| order.order_id == original_id)
+                .unwrap();
+            assert_eq!(
+                original_order.status,
+                if partial {
+                    OrderStatus::PartiallyFilled
+                } else {
+                    OrderStatus::Filled
+                }
+            );
+            assert_eq!(original_order.energy_kWh, if partial { 2.0 } else { 1.0 });
+            assert_eq!(original_order.status_updated_at, Some(980));
+            assert_eq!(original_order.creation_time, 900);
+            let dto = returned
+                .iter()
+                .find(|order| order.order_id == original_id)
+                .unwrap();
+            assert_eq!(dto.updated_at, Some(epoch_to_rfc3339(980)));
+            assert_eq!(
+                dto.order_status,
+                if partial {
+                    "partially_filled"
+                } else {
+                    "filled"
+                }
+            );
+            if !partial {
+                continue;
+            }
+            let residual_id = bytes16_to_hex(residual);
+            let mut expected_residual = original_order.clone();
+            expected_residual.order_id = residual_id.clone();
+            expected_residual.energy_kWh = 1.0;
+            expected_residual.status = OrderStatus::Submitted;
+            assert_eq!(
+                indexed
+                    .iter()
+                    .find(|order| order.order_id == residual_id)
+                    .unwrap(),
+                &expected_residual
+            );
+
+            let counterpart = if is_bid { [5; 16] } else { [6; 16] };
+            handler
+                .handle_order_placed(placed_order(counterpart, !is_bid, 10000), 990)
+                .await
+                .unwrap();
+            handler
+                .handle_trade_settled(
+                    TradeSettledFilter {
+                        trade_id: if is_bid { [11; 16] } else { [12; 16] },
+                        bid_id: if is_bid { residual } else { counterpart },
+                        offer_id: if is_bid { counterpart } else { residual },
+                        residual_bid_id: [0; 16],
+                        residual_offer_id: [0; 16],
+                        ..event.clone()
+                    },
+                    1000,
+                )
+                .await
+                .unwrap();
+
+            expected_residual.status = OrderStatus::Filled;
+            expected_residual.status_updated_at = Some(1000);
+            let stored_residual = orders
+                .get_order_by_id(&residual_id.into())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(stored_residual, expected_residual);
+            let stored_original = orders
+                .get_order_by_id(&original_id.into())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(&stored_original, original_order);
+            let stored_counterpart = orders
+                .get_order_by_id(&bytes16_to_hex(counterpart).into())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(stored_counterpart.status, OrderStatus::Filled);
+            assert_eq!(stored_counterpart.status_updated_at, Some(1000));
+        }
+        let trades = app.db_wrapper.trades().get_all_trades().await.unwrap();
+        assert_eq!(
+            trades.len(),
+            1 + usize::from(partial_bid) + usize::from(partial_offer)
+        );
+        assert!(trades
+            .iter()
+            .all(|trade| trade.status == TradeStatus::Settled));
+        let verification = gsy_ethers_listener::DeliveryVerifiedFilter {
+            trade_id: event.trade_id,
+            bid_id: event.bid_id,
+            offer_id: event.offer_id,
+        };
+        // Parent verification must not complete a residual's later trade.
+        let before = orders.get_all_orders().await.unwrap();
+        for timestamp in [1100, 1101] {
+            handler
+                .handle_delivery_verified(verification.clone(), timestamp)
+                .await
+                .unwrap();
+            for order in &before {
+                let stored = orders
+                    .get_order_by_id(&order.order_id.clone().into())
+                    .await
+                    .unwrap()
+                    .unwrap();
+                let mut expected = order.clone();
+                if [bytes16_to_hex(event.bid_id), bytes16_to_hex(event.offer_id)]
+                    .contains(&order.order_id)
+                {
+                    expected.status = OrderStatus::Executed;
+                    expected.status_updated_at = Some(1100);
+                }
+                assert_eq!(stored, expected);
+            }
+        }
+        let verified = app
+            .db_wrapper
+            .trades()
+            .filter_trades_by_status_change(1100, Some(1101), Some(TradeStatus::Executed))
+            .await
+            .unwrap();
+        assert_eq!(verified.len(), 1);
+        assert_eq!(verified[0].trade_uuid, bytes16_to_hex(event.trade_id));
+        assert_eq!(verified[0].status_updated_at, Some(1100));
+        for invalid in [
+            gsy_ethers_listener::DeliveryVerifiedFilter {
+                trade_id: [99; 16],
+                ..verification.clone()
+            },
+            gsy_ethers_listener::DeliveryVerifiedFilter {
+                bid_id: [99; 16],
+                ..verification
+            },
+        ] {
+            assert!(handler
+                .handle_delivery_verified(invalid, 1200)
+                .await
+                .is_err());
+        }
+        stop_app(app).await;
+    }
 }
