@@ -19,7 +19,6 @@ contract OrderRegistry is Initializable, AccessControlUpgradeable {
         Executed,
         Cancelled,
         Expired,
-        // Append new statuses to preserve existing on-chain enum values.
         PartiallyFilled,
         Filled
     }
@@ -52,7 +51,6 @@ contract OrderRegistry is Initializable, AccessControlUpgradeable {
     // Intelligent Order UUID (bytes16) => Status
     mapping(bytes16 => OrderStatus) private storedOrderStatus;
     mapping(bytes16 => OrderParams) private orders;
-    mapping(bytes16 => uint256) private orderMarketOpeningCount;
 
     event OrderPlaced(
         bytes16 indexed orderId,
@@ -126,8 +124,6 @@ contract OrderRegistry is Initializable, AccessControlUpgradeable {
 
         storedOrderStatus[params.orderId] = OrderStatus.Open;
         orders[params.orderId] = params;
-        orderMarketOpeningCount[params.orderId] = marketController
-            .marketOpeningCount(params.marketId);
 
         emit OrderPlaced(
             params.orderId,
@@ -237,11 +233,7 @@ contract OrderRegistry is Initializable, AccessControlUpgradeable {
         OrderStatus status = storedOrderStatus[orderId];
         if (status == OrderStatus.Open) {
             bytes16 marketId = orders[orderId].marketId;
-            if (
-                !marketController.isMarketOpen(marketId) ||
-                marketController.marketOpeningCount(marketId) >
-                orderMarketOpeningCount[orderId]
-            ) {
+            if (!marketController.isMarketOpen(marketId)) {
                 return OrderStatus.Expired;
             }
         }

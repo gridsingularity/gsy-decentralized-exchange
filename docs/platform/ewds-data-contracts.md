@@ -46,7 +46,6 @@ Primary files:
 - `int.trade.event.v1.json`
 - `int.clearing-result.event.v1.json`
 - `int.market.event.v1.json`
-- `int.market-status.schema.v1.json`
 
 DDHub topic names use camelCase because the Client Gateway UI rejects dots in
 topic names. The schema file names and payload `operation` values keep dotted

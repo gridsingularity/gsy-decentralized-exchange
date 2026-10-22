@@ -1,11 +1,13 @@
-import { loadFixture } from "@nomicfoundation/hardhat-toolbox/network-helpers";
+import { loadFixture, time } from "@nomicfoundation/hardhat-toolbox/network-helpers";
 import { expect } from "chai";
 import { ethers } from "hardhat";
 import {
   bytes16Id,
+  createOpenMarket,
   deployUpgradeableContract,
   ENERGY_TYPE_GREEN,
   ENERGY_TYPE_NONE,
+  OPEN_MARKET_DURATION,
   ORDER_TYPE_BID,
   ORDER_TYPE_ASK,
   ZERO_BYTES16,
@@ -54,7 +56,7 @@ describe("TradeSettlement", function () {
     const buyerActorId = bytes16Id("actor:buyer");
     const sellerActorId = bytes16Id("actor:seller");
     const marketId = bytes16Id("market-1");
-    await controller.setMarketStatus(marketId, true);
+    await createOpenMarket(controller, marketId);
 
     await actorRegistry.registerActor(buyerActorId, buyer.address);
     await actorRegistry.registerActor(sellerActorId, seller.address);
@@ -328,7 +330,7 @@ describe("TradeSettlement", function () {
     }
   });
 
-  it("Should reject settlement after market closure, including after reopening", async function () {
+  it("Should reject settlement after market closure, including after attempted recreation", async function () {
     const { settlement, registry, controller, buyer, seller, operator, bid, offer, marketId } =
       await loadFixture(deploySettlementFixture);
     await registry.connect(buyer).placeOrder(bid);
@@ -338,10 +340,10 @@ describe("TradeSettlement", function () {
       residualBidId: ZERO_BYTES16, residualOfferId: ZERO_BYTES16,
       selectedEnergy: 100, clearingPrice: 45, matchType: 0,
     };
-    await controller.setMarketStatus(marketId, false);
+    await time.increase(OPEN_MARKET_DURATION);
     await expect(settlement.connect(operator).settleBatch(asMarketBatch([matchData])))
       .to.be.revertedWithCustomError(settlement, "OrderNotOpen");
-    await controller.setMarketStatus(marketId, true);
+    await createOpenMarket(controller, marketId);
     await expect(settlement.connect(operator).settleBatch(asMarketBatch([matchData])))
       .to.be.revertedWithCustomError(settlement, "OrderNotOpen");
   });
@@ -684,7 +686,7 @@ describe("TradeSettlement", function () {
       const { settlement, registry, controller, executionEngine, marketId, matchData, buyerActorId, sellerActorId } =
         await loadFixture(settledVerificationFixture);
       // Completion remains valid after the market closes and its residuals expire.
-      await controller.setMarketStatus(marketId, false);
+      await time.increase(OPEN_MARKET_DURATION);
       const verdict = { tradeId: matchData.tradeId, buyerPenaltyEnergy, sellerPenaltyEnergy };
       const tx = settlement.connect(executionEngine).completeDeliveryVerification([verdict, verdict]);
       await expect(tx).to.emit(settlement, "DeliveryVerified")

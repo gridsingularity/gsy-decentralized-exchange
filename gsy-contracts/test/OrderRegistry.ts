@@ -1,12 +1,18 @@
-import { loadFixture } from "@nomicfoundation/hardhat-toolbox/network-helpers";
+import {
+  loadFixture,
+  time,
+} from "@nomicfoundation/hardhat-toolbox/network-helpers";
 import { expect } from "chai";
 import { ethers } from "hardhat";
 import {
   bytes16Id,
+  createOpenMarket,
   deployUpgradeableContract,
   ENERGY_TYPE_GREEN,
   ENERGY_TYPE_NONE,
+  newMarket,
   ORDER_TYPE_BID,
+  OPEN_MARKET_DURATION,
   ZERO_BYTES16,
 } from "./utils";
 
@@ -30,7 +36,7 @@ describe("OrderRegistry", function () {
     const marketId = bytes16Id("market-1");
     const ORCHESTRATOR_ROLE = await controller.ORCHESTRATOR_ROLE();
     await controller.grantRole(ORCHESTRATOR_ROLE, admin.address);
-    await controller.setMarketStatus(marketId, true);
+    await createOpenMarket(controller, marketId);
 
     await actorRegistry.registerActor(actorId, user.address);
     await actorRegistry.connect(user).setProxy(actorId, proxy.address, true);
@@ -96,10 +102,41 @@ describe("OrderRegistry", function () {
   it("Should revert if market is closed", async function () {
     const { registry, controller, user, baseOrder, marketId } =
       await loadFixture(deployRegistryFixture);
-    await controller.setMarketStatus(marketId, false);
+    await time.increase(OPEN_MARKET_DURATION);
 
     await expect(
       registry.connect(user).placeOrder(baseOrder),
+    ).to.be.revertedWithCustomError(registry, "MarketClosed");
+  });
+
+  it("Should revert if market has not opened yet", async function () {
+    const { registry, controller, user, baseOrder } =
+      await loadFixture(deployRegistryFixture);
+    const futureMarketId = bytes16Id("market-future");
+    const latest = await time.latest();
+    await controller.createMarkets([
+      newMarket(futureMarketId, {
+        openingTime: latest + 600,
+        closingTime: latest + 1200,
+      }),
+    ]);
+
+    await expect(
+      registry
+        .connect(user)
+        .placeOrder({ ...baseOrder, marketId: futureMarketId }),
+    ).to.be.revertedWithCustomError(registry, "MarketClosed");
+  });
+
+  it("Should revert if market does not exist", async function () {
+    const { registry, user, baseOrder } = await loadFixture(
+      deployRegistryFixture,
+    );
+
+    await expect(
+      registry
+        .connect(user)
+        .placeOrder({ ...baseOrder, marketId: bytes16Id("unknown-market") }),
     ).to.be.revertedWithCustomError(registry, "MarketClosed");
   });
 
@@ -118,13 +155,13 @@ describe("OrderRegistry", function () {
     const { registry, controller, user, baseOrder, marketId } =
       await loadFixture(deployRegistryFixture);
     const otherOrder = { ...baseOrder, orderId: bytes16Id("other-order"), marketId: bytes16Id("other-market") };
-    await controller.setMarketStatus(otherOrder.marketId, true);
+    await controller.createMarkets([newMarket(otherOrder.marketId, { openingTime: await time.latest(), closingTime: (await time.latest()) + 2 * OPEN_MARKET_DURATION })]);
     await registry.connect(user).placeOrder(baseOrder);
     await registry.connect(user).placeOrder(otherOrder);
     expect((await ethers.provider.getBlock("latest"))!.timestamp).to.be.greaterThan(baseOrder.timeSlot);
     expect(await registry.getStatus(baseOrder.orderId)).to.equal(1); // Open
 
-    await controller.setMarketStatus(marketId, false);
+    await time.increase(OPEN_MARKET_DURATION);
     expect(await registry.getStatus(baseOrder.orderId)).to.equal(4); // Expired
     expect(await registry.orderStatus(baseOrder.orderId)).to.equal(4);
     expect(await registry.getStatus(otherOrder.orderId)).to.equal(1);
@@ -133,26 +170,26 @@ describe("OrderRegistry", function () {
       .to.be.revertedWithCustomError(registry, "OrderNotOpen");
   });
 
-  it("Should keep old orders expired after reopening while accepting new orders", async function () {
+  it("Should not revive expired orders by recreating the same market", async function () {
     const { registry, controller, user, baseOrder, marketId } =
       await loadFixture(deployRegistryFixture);
     await registry.connect(user).placeOrder(baseOrder);
-    await controller.setMarketStatus(marketId, false);
-    await controller.setMarketStatus(marketId, true);
+    await time.increase(OPEN_MARKET_DURATION);
+    await createOpenMarket(controller, marketId);
+    expect(await controller.isMarketOpen(marketId)).to.equal(false);
     expect(await registry.getStatus(baseOrder.orderId)).to.equal(4);
     expect(await registry.orderStatus(baseOrder.orderId)).to.equal(4);
 
     await registry.grantRole(await registry.SETTLEMENT_ROLE(), user.address);
     await expect(registry.connect(user).settleOrder(baseOrder.orderId, baseOrder.energy, ZERO_BYTES16))
       .to.be.revertedWithCustomError(registry, "OrderNotOpen");
-    await expect(registry.connect(user).placeOrder(baseOrder))
-      .to.be.revertedWithCustomError(registry, "OrderAlreadyExists");
-
     const newOrder = { ...baseOrder, orderId: bytes16Id("new-order") };
-    await registry.connect(user).placeOrder(newOrder);
+    await expect(registry.connect(user).placeOrder(newOrder))
+      .to.be.revertedWithCustomError(registry, "MarketClosed");
+    const newMarketId = bytes16Id("new-market");
+    await createOpenMarket(controller, newMarketId);
+    await registry.connect(user).placeOrder({ ...newOrder, marketId: newMarketId });
     expect(await registry.getStatus(newOrder.orderId)).to.equal(1);
-    await controller.setMarketStatus(marketId, false);
-    expect(await registry.getStatus(newOrder.orderId)).to.equal(4);
   });
 
   for (const isBid of [true, false]) {
@@ -170,7 +207,7 @@ describe("OrderRegistry", function () {
       await registry.connect(user).settleOrder(partial.orderId, 40, residualId);
       await registry.connect(user).settleOrder(filled.orderId, 100, ZERO_BYTES16);
       await registry.connect(user).cancelOrder(cancelled);
-      await controller.setMarketStatus(marketId, false);
+      await time.increase(OPEN_MARKET_DURATION);
       expect(await registry.getStatus(partial.orderId)).to.equal(5); // PartiallyFilled
       expect(await registry.getStatus(filled.orderId)).to.equal(6); // Filled
       expect(await registry.getStatus(cancelled.orderId)).to.equal(3); // Cancelled

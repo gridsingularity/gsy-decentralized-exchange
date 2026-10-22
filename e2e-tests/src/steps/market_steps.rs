@@ -1,13 +1,16 @@
+use crate::utils::indexed_bytes16_topic;
 use crate::world::MyWorld;
 use cucumber::{then, when};
 use ethers::prelude::*;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use gsy_community_client::time_utils::{get_current_timestamp_in_secs, get_last_and_next_timeslot};
 use primitives::db_api_schema::grid_topology::{EnergyCommunitySchema, FacilitySchema};
+use primitives::db_api_schema::market::{MarketChainRecord, MarketSchema};
 use primitives::db_api_schema::profiles::ForecastSchema;
 use primitives::ewds::dto::{EwdsCommunityDto, EwdsEventEnvelope};
 use primitives::ewds::{EwdsClient, EwdsEventType, EwdsOperation};
-use primitives::utils::{epoch_to_rfc3339, generate_market_id, parse_uuid_or_hex_bytes16};
+use primitives::offchain_storage::OffchainStorageClient;
+use primitives::utils::{bytes16_to_hex, epoch_to_rfc3339, generate_market_id};
 use primitives::{MarketType, MatchingAlgorithm};
 use serde_json::json;
 use std::env;
@@ -21,14 +24,15 @@ abigen!(
     MarketControllerContract,
     r#"[
         function isMarketOpen(bytes16 marketId) external view returns (bool)
+        event NewMarketCreated(bytes16 indexed marketId, bytes16 indexed communityId, uint64 openingTime, uint64 closingTime, uint64 deliveryStartTime, uint64 deliveryEndTime, uint8 marketType, uint8 matchingAlgorithm, uint64 createdAt)
     ]"#
 );
 
+const MARKET_POLL_ATTEMPTS: usize = 60;
+const MARKET_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const EWDS_COMMUNITY_POLL_ATTEMPTS: usize = 30;
 
-#[when(
-    expr = "the community market and forecasts of {float} energy are submitted by {string}, {string}, and {string}"
-)]
+#[when(expr = "forecasts of {float} energy are submitted by {string}, {string}, and {string}")]
 async fn submit_market_forecasts_three_users(
     world: &mut MyWorld,
     energy: f64,
@@ -60,25 +64,11 @@ async fn submit_market_forecasts_three_users(
     ];
     world.create_facilities(facilities.clone()).await;
 
-    let market = adapter
-        .create_market(
-            world.community_id.clone(),
-            world.target_delivery_time,
-            matching_algorithm_from_env(),
-        )
-        .await
-        .unwrap_or_else(|| {
-            panic!(
-                "market_creation_failed community={} time_slot={} offchain_storage_url={}",
-                world.community_id, world.target_delivery_time, world.offchain_storage_url
-            )
-        });
-
-    let market_id = parse_uuid_or_hex_bytes16(market.market_id.as_str())
-        .expect("Invalid market id in topology");
-
-    world.last_market_id = Some(market_id);
-    world.market_schema = Some(market.clone());
+    // The market comes from the orchestrator via the chain; see wait_for_market.
+    assert!(
+        world.market_schema.is_some(),
+        "No market: the market step must run before forecasts are submitted"
+    );
 
     let mut forecasts = Vec::new();
     for (index, facility) in facilities.iter().enumerate() {
@@ -111,7 +101,7 @@ fn matching_algorithm_from_env() -> MatchingAlgorithm {
         .unwrap_or_else(|error| panic!("Invalid MATCHING_ALGORITHM: {}", error))
 }
 
-#[when(expr = "the community market and forecasts of {float} energy are submitted")]
+#[when(expr = "forecasts of {float} energy are submitted")]
 async fn submit_market_forecasts(world: &mut MyWorld, energy: f64) {
     submit_market_forecasts_three_users(
         world,
@@ -123,48 +113,98 @@ async fn submit_market_forecasts(world: &mut MyWorld, energy: f64) {
     .await;
 }
 
-#[when("the Market Orchestrator opens the Spot market for the next delivery slot")]
+#[when("the Market Orchestrator opens the Spot market for the current delivery slot")]
 async fn wait_for_market_to_open(world: &mut MyWorld) {
     world.community_id = unique_community_id();
     upsert_default_community(world).await;
 
-    let (_, next_timeslot) = get_last_and_next_timeslot();
-    world.target_delivery_time = next_timeslot;
+    // The orchestrator creates every market of a new community that has not
+    // closed. The e2e Spot market closes 30 min after delivery start, so the
+    // current delivery slot's market is still open.
+    let (current_timeslot, _) = get_last_and_next_timeslot();
+    world.target_delivery_time = current_timeslot;
 
     let market_id = generate_market_id(
         world.community_id.as_str(),
         MarketType::Spot,
         world.target_delivery_time,
-    );
-    world.last_market_id = Some(market_id);
+    )
+    .unwrap();
+    let market = wait_for_market(world, market_id).await;
 
+    world.last_market_id = Some(market_id);
+    world.market_schema = Some(market);
+}
+
+/// Waits until the market is open on-chain and stored off-chain, and checks
+/// that the stored market mirrors its `NewMarketCreated` event.
+async fn wait_for_market(world: &MyWorld, market_id: [u8; 16]) -> MarketSchema {
+    let market_id_hex = bytes16_to_hex(market_id);
     info!(
-        "Waiting for MarketController to open market {:?} for timeslot {}",
-        hex::encode(market_id),
-        world.target_delivery_time
+        "Waiting for market {} (timeslot {}) on-chain and in off-chain storage",
+        market_id_hex, world.target_delivery_time
     );
 
     let market_controller =
         MarketControllerContract::new(world.market_controller_address, world.provider.clone());
+    let storage = OffchainStorageClient::from_env("E2E_TESTS_CLIENT_ID", "e2e_tests");
 
-    for attempt in 0..60 {
+    for attempt in 0..MARKET_POLL_ATTEMPTS {
         let is_open = market_controller
             .is_market_open(market_id)
             .call()
             .await
             .expect("Failed to read market status from MarketController");
+        let stored = if is_open {
+            storage
+                .fetch_market(market_id_hex.as_str())
+                .await
+                .expect("Failed to read market from off-chain storage")
+        } else {
+            None
+        };
 
-        if is_open {
-            info!("Spot market opened after {} checks", attempt + 1);
-            return;
+        if let Some(stored) = stored {
+            info!(
+                "Market {} open and stored after {} checks",
+                market_id_hex,
+                attempt + 1
+            );
+            let events = market_controller
+                .event::<NewMarketCreatedFilter>()
+                .from_block(0u64)
+                .topic1(indexed_bytes16_topic(market_id))
+                .query()
+                .await
+                .expect("Failed to query NewMarketCreated events");
+            assert_eq!(events.len(), 1, "Expected one NewMarketCreated event");
+            let event = &events[0];
+            let expected = MarketSchema::try_from(MarketChainRecord {
+                market_id: event.market_id,
+                community_id: event.community_id,
+                opening_time: event.opening_time,
+                closing_time: event.closing_time,
+                delivery_start_time: event.delivery_start_time,
+                delivery_end_time: event.delivery_end_time,
+                market_type: event.market_type,
+                matching_algorithm: event.matching_algorithm,
+                created_at: event.created_at,
+            })
+            .expect("Invalid NewMarketCreated event");
+            assert_eq!(
+                stored, expected,
+                "Stored market differs from the NewMarketCreated event"
+            );
+            assert_eq!(stored.matching_algorithm, matching_algorithm_from_env());
+            return stored;
         }
 
-        sleep(Duration::from_secs(2)).await;
+        sleep(MARKET_POLL_INTERVAL).await;
     }
 
     panic!(
-        "Timeout: Spot market {:?} was not opened by orchestrator",
-        hex::encode(market_id)
+        "Timeout: market {} was not created by the orchestrator",
+        market_id_hex
     );
 }
 
@@ -193,28 +233,8 @@ async fn submit_two_communities(world: &mut MyWorld) {
         upsert_community(world, community).await;
     }
 
-    let (_, next_timeslot) = get_last_and_next_timeslot();
-    world.target_delivery_time = next_timeslot;
-
-    // TODO: This should be removed by DD-439
-    // The Market Orchestrator only opens markets on-chain, so register them in off-chain storage
-    // for the delivery-time filter of GET /trades to resolve them.
-    let adapter = AreaMarketInfoAdapter::new(Some(world.offchain_storage_url.clone()));
-    for community in &communities {
-        adapter
-            .create_market(
-                community.community_id.clone(),
-                world.target_delivery_time,
-                matching_algorithm_from_env(),
-            )
-            .await
-            .unwrap_or_else(|| {
-                panic!(
-                    "market_creation_failed community={} time_slot={}",
-                    community.community_id, world.target_delivery_time
-                )
-            });
-    }
+    let (current_timeslot, _) = get_last_and_next_timeslot();
+    world.target_delivery_time = current_timeslot;
 }
 
 fn unique_community_id() -> String {
@@ -228,12 +248,14 @@ async fn wait_for_two_community_markets(world: &mut MyWorld) {
             world.community_id.as_str(),
             MarketType::Spot,
             world.target_delivery_time,
-        ),
+        )
+        .unwrap(),
         generate_market_id(
             world.secondary_community_id.as_str(),
             MarketType::Spot,
             world.target_delivery_time,
-        ),
+        )
+        .unwrap(),
     ];
 
     assert_ne!(
@@ -241,36 +263,11 @@ async fn wait_for_two_community_markets(world: &mut MyWorld) {
         "Different communities generated the same Spot market id"
     );
 
-    let market_controller =
-        MarketControllerContract::new(world.market_controller_address, world.provider.clone());
-
-    for attempt in 0..60 {
-        let mut all_open = true;
-        for market_id in market_ids {
-            all_open &= market_controller
-                .is_market_open(market_id)
-                .call()
-                .await
-                .expect("Failed to read market status from MarketController");
-        }
-
-        if all_open {
-            info!(
-                "Distinct Spot markets for both communities opened after {} checks",
-                attempt + 1
-            );
-            world.community_market_ids = Some(market_ids);
-            return;
-        }
-
-        sleep(Duration::from_secs(2)).await;
+    for market_id in market_ids {
+        wait_for_market(world, market_id).await;
     }
-
-    panic!(
-        "Timeout: community Spot markets {:?} and {:?} were not both opened",
-        hex::encode(market_ids[0]),
-        hex::encode(market_ids[1])
-    );
+    info!("Distinct Spot markets for both communities are open and stored");
+    world.community_market_ids = Some(market_ids);
 }
 
 async fn upsert_default_community(world: &MyWorld) {

@@ -39,7 +39,7 @@ The off-chain storage publishes these event envelopes on the events channels:
 - `int.order.event.v1.json` (`int.order.schema.v1.json`), with `orderStatus.event`
 - `int.trade.event.v1.json` (`int.trade.schema.v1.json`)
 - `int.clearing-result.event.v1.json` (`int.clearing-result.schema.v1.json`)
-- `int.market.event.v1.json` (`int.market-status.schema.v1.json`)
+- `int.market.event.v1.json` (`int.market.schema.v1.json`)
 
 Notes:
 

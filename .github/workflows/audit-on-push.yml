@@ -39,18 +39,23 @@ jobs:
             RUSTSEC-2026-0099 # rustls-webpki via rustls stacks pulled by ethers / reqwest
             RUSTSEC-2026-0104 # rustls-webpki via rustls stacks pulled by ethers / reqwest
             RUSTSEC-2026-0258 # h2 0.3 via ethers 2.x / reqwest 0.11; no patched 0.3 release
+            # zip 0.6 via ethers-solc 2.x -> svm-rs 0.3. svm-rs is optional (svm-solc feature),
+            # which no crate enables, so zip is only listed in Cargo.lock and never compiled.
+            # svm-rs 0.3.5 is the last release ethers-solc 2.x accepts and it pins zip 0.6.
+            RUSTSEC-2026-0367 # zip extraction preserves SUID/SGID bits
+            RUSTSEC-2026-0368 # zip extraction follows symlinks outside the destination
+            RUSTSEC-2026-0369 # zip extraction applies permissions through symlinks
             # Temporary rustls 0.21 exceptions via ethers / reqwest; no patched 0.21 release.
             # Keep rustls 0.23 patched to >=0.23.46 in Cargo.lock despite these ID-wide ignores.
             # Revisit when migrating the legacy TLS stack or adding custom TLS configuration.
             RUSTSEC-2026-0346 # No custom ClientSessionStore Debug logging; built-in caches redact secrets
             RUSTSEC-2026-0349 # rustls 0.21 supports only classical key exchange, not hybrid post-quantum groups
-            # Temporary zip 0.6 exceptions: locked via optional ethers-solc -> svm-rs 0.3.
-            # svm-solc is disabled; its ZIP extraction is Windows-only. No compatible patch.
-            # The guard below rejects any active ZIP dependency, including tests/all targets.
-            # Remove these exceptions when the legacy compiler dependency is replaced.
-            RUSTSEC-2026-0367 # Extraction preserves SUID/SGID permissions
-            RUSTSEC-2026-0368 # Extraction permits symlinks outside the destination
-            RUSTSEC-2026-0369 # Extraction applies permissions through symlinks
+            # Distrusted emSign intermediates, via the same ethers / reqwest 0.11 TLS stack;
+            # no patched rustls-webpki 0.101 or webpki-roots 0.25 release.
+            # Keep rustls-webpki 0.103 >=0.103.16 and webpki-roots 1.x >=1.0.10 (via mongodb)
+            # patched in Cargo.lock despite these ID-wide ignores.
+            RUSTSEC-2026-0381 # webpki-roots 0.25 via reqwest 0.11 bundles the distrusted roots
+            RUSTSEC-2026-0382 # rustls-webpki 0.101 via rustls 0.21 may accept distrusted intermediates
             RUSTSEC-2026-0097 # rand warning; no direct rand::rng custom logger usage
             RUSTSEC-2024-0442 # wasmtime-jit-debug via Substrate / wasmtime runtime
             RUSTSEC-2025-0055 # tracing-subscriber via transitive logging stacks

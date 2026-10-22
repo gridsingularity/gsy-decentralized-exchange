@@ -1,8 +1,8 @@
 Feature: Confirmed order lifecycle
-  Scenario: Unmatched orders leave the book through cancellation or market closure
+  Scenario: Unmatched orders leave the book through cancellation
     Given the GSY DEX services are running
     And users "alice", "bob", and "charlie" the matching engine operator are registered
-    Then unmatched orders can be cancelled or expire permanently at market closure
+    Then unmatched orders can be cancelled on-chain and in storage
 
   Scenario: Full delivery completes verification without a penalty
     Given the GSY DEX services are running

@@ -108,10 +108,23 @@ Purpose:
 
 Purpose:
 
-- Stores market open/closed state keyed by `marketId`.
-- Exposes `setMarketStatus(bytes16,bool)` and `isMarketOpen(bytes16)`.
-- Restricts updates to `ORCHESTRATOR_ROLE`.
-- Tracks each market opening so orders from a previous opening cannot be reused.
+- Stores one record per `marketId` that mirrors the off-chain `MarketSchema`:
+  community ID, opening/closing time, delivery start/end, market type,
+  matching algorithm and `createdAt` (block timestamp; `0` means missing).
+- `createMarkets(NewMarket[])` (`ORCHESTRATOR_ROLE` only) stores new markets
+  and emits `NewMarketCreated` with every field. Existing markets are skipped
+  without an event. `InvalidMarket` is raised for a zero market or community
+  ID, `closingTime <= openingTime` or `deliveryEndTime <= deliveryStartTime`;
+  one invalid entry reverts the whole batch.
+- There is no open/closed flag and no update function: `isMarketOpen(bytes16)`
+  is true while `openingTime <= block.timestamp < closingTime`.
+- Views: `marketsExist(bytes16[])` (existence of many markets in one call,
+  used by the orchestrator) and `isMarketOpen(bytes16)` (used by
+  `OrderRegistry`). The full record is read from `NewMarketCreated` or from
+  off-chain storage; there is no record getter.
+- Enum values: `MarketType` `Spot=0, Flex=1, Settlement=2`;
+  `MatchingAlgorithm` `PayAsBid=0, PayAsClear=1, Amm=2` (same order as
+  `primitives`).
 
 ### `OrderRegistry`
 
@@ -127,18 +140,19 @@ Purpose:
 - Emits `OrderCancelled` and `OrderStatusUpdated` lifecycle events.
 - `settleOrder` consumes an open order and registers any residual atomically,
   copying stored metadata and reducing only its energy. It requires `SETTLEMENT_ROLE`.
-- Both `getStatus` and `orderStatus` derive `Expired` for an open order whose
-  market is closed or has since reopened. This includes residuals. Settlement
-  and cancellation reject these orders; consumed statuses remain unchanged.
-  Expiry requires no per-order transaction or `OrderStatusUpdated` event:
-  storage indexes it from `MarketStatusUpdated(marketId, false)`.
+- Both `getStatus` and `orderStatus` derive `Expired` for an open order once its
+  market closes. This includes residuals. Settlement and cancellation reject
+  these orders; consumed statuses remain unchanged. Market windows are immutable,
+  so recreating an existing market ID cannot reactivate expired orders.
+- Expiry requires no per-order transaction or `OrderStatusUpdated` event. Storage
+  derives it from confirmed block timestamps and the indexed `NewMarketCreated`
+  closing time, after indexing the block's contract events.
 
-This change appends market/order opening counters and preserves the existing
-storage slots and status getter ABI. Deploy/upgrade `MarketController` before
-`OrderRegistry`, with market/order activity paused during the upgrade. Counters
-start tracking on upgrade; historical closures are not backfilled. Reconcile
-legacy closed-market records before resuming, especially if those markets had
-already reopened before the upgrade.
+DD-439 replaces the old boolean market mapping with full market records. This is
+not a storage-compatible upgrade of the old `MarketController`. Use a fresh,
+coordinated deployment and matching contract addresses for all services, and
+rebuild the corresponding off-chain market projection. Do not upgrade an existing
+boolean-mapping deployment in place without a separately designed migration.
 
 ### `TradeSettlement`
 

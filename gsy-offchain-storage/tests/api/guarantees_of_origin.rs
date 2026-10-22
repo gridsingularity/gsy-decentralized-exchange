@@ -20,7 +20,7 @@ pub const SELLER_FACILITY: &str = "goo-seller";
 const SELLER_OWNER: &str = "goo-owner-seller";
 const BUYER_FACILITY: &str = "goo-buyer";
 const BUYER_OWNER: &str = "goo-owner-buyer";
-const COMMUNITY: &str = "goo-community";
+const COMMUNITY: &str = "60060060-0000-4000-8000-000000000001";
 const EXPORT_POINT: &str = "Measurement:goo-community:goo-seller";
 const MARKET: &str = "0xmarket";
 
