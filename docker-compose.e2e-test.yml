@@ -162,6 +162,7 @@ services:
       SPOT_MARKET_CLOSE_OFFSET_MIN: "30"
       TICK_INTERVAL_SECONDS: "5"
       LOOK_AHEAD_HOURS: "1"
+      MATCHING_ALGORITHM: ${MATCHING_ALGORITHM:-pay_as_bid}
       OFFCHAIN_STORAGE_TRANSPORT: ${OFFCHAIN_STORAGE_TRANSPORT:-http}
       OFFCHAIN_STORAGE_URL: http://gsy-offchain-storage:8080
       EWDS_MARKET_ORCHESTRATOR_CLIENT_ID: ${EWDS_MARKET_ORCHESTRATOR_CLIENT_ID:-gsymarketorchestrator}
@@ -182,7 +183,9 @@ services:
       <<: *gsy-ewds-env
       OFFCHAIN_STORAGE_TRANSPORT: ${OFFCHAIN_STORAGE_TRANSPORT:-http}
       OFFCHAIN_STORAGE_URL: "http://gsy-offchain-storage:8080"
-      EXECUTION_ENGINE_OFFSET_MIN: "-15"
+      # The e2e suite trades the current delivery slot (the orchestrator creates
+      # its markets on start), so the execution engine targets that slot too.
+      EXECUTION_ENGINE_OFFSET_MIN: "0"
       # Trades can settle a few minutes after their delivery slot started, especially over
       # EWDS, so the engine keeps retrying a slot for about 10 cycles after it rolled over.
       EXECUTION_ENGINE_ROLLOVER_RETRY_LIMIT: ${EXECUTION_ENGINE_ROLLOVER_RETRY_LIMIT:-10}

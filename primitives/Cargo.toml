@@ -23,6 +23,7 @@ tracing-bunyan-formatter = "0.3.10"
 tracing-log = "0.2.0"
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 thiserror = "2.0.19"
+uuid = { workspace = true }
 
 [dev-dependencies]
 wiremock = { workspace = true }

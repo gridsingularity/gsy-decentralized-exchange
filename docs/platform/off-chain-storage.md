@@ -13,8 +13,8 @@ Backend: MongoDB (`mongo:5.0`).
    - `OrderPlaced`
    - `OrderCancelled`
    - `TradeSettled`
-   - `DeliveryVerified`
-   - `MarketStatusUpdated`
+   - `NewMarketCreated`
+   - `MarketClearing`
 2. `OffchainStorageEvmHandler` maps event payloads into DB schemas.
 3. `gsy-offchain-storage` updates order/trade records and exposes them via REST APIs.
 
@@ -30,6 +30,12 @@ unchanged; settlement updates are handled by the EVM listener.
 Restricting the order POST endpoints is a separate follow-up, not part of
 DD-423. Until then, listener ownership is the normal lifecycle path, not an
 enforced access-control boundary for those legacy write endpoints.
+
+`NewMarketCreated` carries the full market record. The handler converts it to
+`MarketSchema` (`market_id` as `0x` + 32 hex digits, `community_id` as UUID,
+times as zero-padded epoch seconds) and upserts it by `market_id`, so a
+replayed event is harmless. The chain is the source of markets; no service
+posts them any more.
 
 ## HTTP API Surface
 
@@ -47,7 +53,8 @@ enforced access-control boundary for those legacy write endpoints.
 - `/trades` (`GET`, `POST`); `GET` follows the `trades.query` rules: `market_id` alone is enough, otherwise both `start_time` and `end_time` are required and span at most 1 day (`400` otherwise)
 - `/market` (`GET`) compatibility adapter for EVM JSON callers
 - `/communities` (`GET`, `POST`) for idempotent community query/upsert
-- `/markets` (`GET`, `POST`) for ontology-aligned market-opening records
+- `/markets` (`GET`, `POST`) for ontology-aligned market-opening records;
+  records come from `NewMarketCreated`, `POST` remains for manual use
 - `/clearing-results` (`GET`, `POST`)
 - `/market-roles` (`GET`, `POST`)
 
@@ -85,18 +92,20 @@ the same collections (see
 
 ## Order Expiry
 
-The EVM listener expires `Submitted` orders when it receives a confirmed
-`MarketStatusUpdated(marketId, false)` event. Only that market's orders are
-updated, using the closure block timestamp; the delivery slot does not trigger
-expiry. This includes open residuals, but leaves consumed or cancelled orders
-unchanged. Repeated closure events preserve the original expiry timestamp, and
-reopening a market does not reactivate expired orders.
+The EVM listener expires `Submitted` orders when a confirmed block reaches their
+market's indexed on-chain `closingTime`. It processes that block's contract events
+first, then checks expiry, including blocks with no contract events. Only open
+orders in closed markets are updated, including residuals; consumed and cancelled
+orders remain unchanged. `status_updated_at` is the scheduled closing time, so
+late indexing and repeated blocks preserve the same deadline. Delivery-slot start
+does not trigger expiry. Market windows are immutable and cannot be reopened.
 
 The former wall-clock expiry scheduler and `scheduler_interval` setting have
-been removed. This uses the same listener in HTTP and EWDS mode; market event
-notifications are still published only when the EWDS handler is enabled.
-The listener currently has no historical replay: missed closure events require
-reconciliation/reindexing, as do other missed lifecycle events.
+been removed. HTTP and EWDS use the same listener; order-status notifications
+are published only when EWDS is enabled. The first new confirmed block after startup
+also checks already-indexed markets for expiry. The listener retries failed blocks
+and catches up across reconnects during the same process; it has no persistent
+replay cursor across restarts. Missed market/order events still require reindexing.
 
 ## Data Model Notes
 

@@ -190,13 +190,21 @@ book, the E2E harness first advances local Anvil to the next matching boundary.
 After the order book is indexed, it fast-forwards to the clearing boundary with
 empty-block RPC calls rather than waiting for one transaction per block.
 
-Before waiting for the orchestrator, the E2E runner idempotently stores a
-canonical community using `OFFCHAIN_STORAGE_TRANSPORT`: over HTTP it calls
+Before waiting for the orchestrator, the E2E runner idempotently stores a new
+community using `OFFCHAIN_STORAGE_TRANSPORT`: over HTTP it calls
 `POST /communities`, and with the EWDS transport it publishes a
 `community.event` and waits until `communities.query` returns the
 community. The orchestrator then queries the same community collection and
-opens the community-aware Spot market whose ID is derived from community UUID,
-market type, and delivery slot.
+creates every market of that community that has not closed on-chain,
+including the current slot's Spot market, which closes 30 minutes after
+delivery start in this setup. The runner waits until the Spot market of the
+current slot is open on-chain (`isMarketOpen`) and stored in off-chain storage
+(`fetch_market`, HTTP or EWDS), and checks that the stored `MarketSchema`
+mirrors the market's `NewMarketCreated` event and the configured
+`MATCHING_ALGORITHM`.
+Because the suite trades the current slot, `docker-compose.e2e-test.yml` sets
+`EXECUTION_ENGINE_OFFSET_MIN` to `0` so the execution engine targets the same
+slot.
 
 Features tagged `@ewds`, such as `events.feature`, only run with
 `OFFCHAIN_STORAGE_TRANSPORT=ewds`; HTTP runs skip them.
@@ -434,16 +442,16 @@ Before running:
   `schemas/ewds/intelligent/int.order.event.v1.json`. It must accept both
   `order.event` and `orderStatus.event`; no new topic is required. Ensure
   the event publish/subscribe channels include that topic.
-- Keep the normal local E2E role grants: the default test wallet opens and
-  closes an isolated market to test expiry without waiting for a slot boundary
-  or changing the orchestrator's scheduled markets.
+- Keep the normal local E2E role grants: the default test wallet creates an
+  isolated market for cancellation without changing the orchestrator's markets.
 
 Coverage added for DD-423:
 
-- `order_lifecycle.feature` verifies `Submitted`, `Cancelled` and `Expired`
-  on-chain and in storage, including the event timestamps and permanent expiry
-  after reopening the same market. Full delivery reaches `Executed` for the
-  trade and both consumed orders without a penalty.
+- `order_lifecycle.feature` verifies `Submitted` and `Cancelled` on-chain and in
+  storage, including event timestamps. Deterministic contract and listener tests
+  cover expiry at market closure, without advancing the shared E2E chain clock.
+  Full delivery reaches `Executed` for the trade and both consumed orders without
+  a penalty.
 - Existing settlement/residual scenarios check `Filled`/`PartiallyFilled`
   and independent residual orders. Penalty scenarios now also require the
   trade and its consumed orders to become `Executed` with the verification

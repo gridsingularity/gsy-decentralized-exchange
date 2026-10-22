@@ -5,11 +5,12 @@ use ethers::{
     utils::Anvil,
 };
 use gsy_ethers_listener::{
-    GsyEthersListener, GsyEventHandler, ListenerConfig, MarketStatusUpdatedFilter,
+    GsyEthersListener, GsyEventHandler, ListenerConfig, NewMarketCreatedFilter,
     OrderCancelledFilter, OrderPlacedFilter, PenaltyRecordedFilter, TradeSettledFilter,
 };
 use gsy_offchain_storage::evm_handler::OffchainStorageEvmHandler;
 use primitives::db_api_schema::ids::IdMappingSchema;
+use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
 use primitives::db_api_schema::orders::{EnergyType, OrderEnum, OrderStatus};
 use primitives::db_api_schema::trades::TradeStatus;
 use primitives::ewds::dto::EwdsOrderDto;
@@ -22,9 +23,132 @@ abigen!(
     r#"[
         event OrderPlaced(bytes16 indexed orderId, bytes16 indexed createdBy, bytes16 indexed marketId, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, uint8 energySourcePreference, uint8 energyType, bool isBid, bytes16 preferredTradingPartner, uint64 preferredEnergyRate)
         function emitOrderPlaced(bytes16 orderId, bytes16 createdBy, uint64 energy, uint64 rate) external
-        function emitMarketStatus(bool isOpen) external
+        function emitNewMarket(uint64 closingTime) external
     ]"#
 );
+
+pub(crate) fn new_market_event() -> NewMarketCreatedFilter {
+    NewMarketCreatedFilter {
+        market_id: [0xcc; 16],
+        community_id: [
+            0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x41, 0x11, 0x81, 0x11, 0x11, 0x11, 0x11, 0x11,
+            0x11, 0x11,
+        ],
+        opening_time: 1_699_998_300,
+        closing_time: 1_700_000_100,
+        delivery_start_time: 1_700_000_100,
+        delivery_end_time: 1_700_001_000,
+        market_type: 1,
+        matching_algorithm: 1,
+        created_at: 1_699_998_301,
+    }
+}
+
+pub(crate) fn expected_market() -> MarketSchema {
+    MarketSchema {
+        market_id: "0xcccccccccccccccccccccccccccccccc".to_string(),
+        community_id: "11111111-1111-4111-8111-111111111111".to_string(),
+        opening_time: "00000000001699998300".to_string(),
+        closing_time: "00000000001700000100".to_string(),
+        delivery_start_time: "00000000001700000100".to_string(),
+        delivery_end_time: "00000000001700001000".to_string(),
+        market_type: MarketType::Flex,
+        matching_algorithm: MatchingAlgorithm::PayAsClear,
+        created_at: "00000000001699998301".to_string(),
+    }
+}
+
+async fn stored_markets(app: &crate::helpers::TestApp) -> Vec<MarketSchema> {
+    app.db_wrapper
+        .markets()
+        .filter(None, None, None, None)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn test_new_market_event_creates_market() {
+    let app = init_app().await;
+    let handler = OffchainStorageEvmHandler {
+        db: app.db_wrapper.clone(),
+        event_publisher: None,
+    };
+
+    handler
+        .handle_new_market_created(new_market_event())
+        .await
+        .unwrap();
+
+    assert_eq!(stored_markets(&app).await, vec![expected_market()]);
+    crate::helpers::stop_app(app).await;
+}
+
+#[tokio::test]
+async fn test_replayed_new_market_event_keeps_one_market() {
+    let app = init_app().await;
+    let handler = OffchainStorageEvmHandler {
+        db: app.db_wrapper.clone(),
+        event_publisher: None,
+    };
+
+    for _ in 0..2 {
+        handler
+            .handle_new_market_created(new_market_event())
+            .await
+            .unwrap();
+    }
+
+    assert_eq!(stored_markets(&app).await, vec![expected_market()]);
+    crate::helpers::stop_app(app).await;
+}
+
+#[tokio::test]
+async fn test_new_market_event_overwrites_a_posted_market() {
+    let app = init_app().await;
+    let handler = OffchainStorageEvmHandler {
+        db: app.db_wrapper.clone(),
+        event_publisher: None,
+    };
+    app.db_wrapper
+        .markets()
+        .upsert(MarketSchema {
+            opening_time: "00000000000000000001".to_string(),
+            market_type: MarketType::Spot,
+            matching_algorithm: MatchingAlgorithm::PayAsBid,
+            ..expected_market()
+        })
+        .await
+        .unwrap();
+
+    handler
+        .handle_new_market_created(new_market_event())
+        .await
+        .unwrap();
+
+    assert_eq!(stored_markets(&app).await, vec![expected_market()]);
+    crate::helpers::stop_app(app).await;
+}
+
+#[tokio::test]
+async fn test_new_market_event_with_unknown_enum_is_rejected() {
+    let app = init_app().await;
+    let handler = OffchainStorageEvmHandler {
+        db: app.db_wrapper.clone(),
+        event_publisher: None,
+    };
+
+    let error = handler
+        .handle_new_market_created(NewMarketCreatedFilter {
+            market_type: 9,
+            ..new_market_event()
+        })
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("Unknown market type 9"));
+    assert!(stored_markets(&app).await.is_empty());
+    crate::helpers::stop_app(app).await;
+}
 
 #[tokio::test]
 async fn test_order_listener_rejects_unknown_partner_mapping() {
@@ -96,9 +220,9 @@ async fn test_evm_order_listener_persists_to_db() {
         // SPDX-License-Identifier: MIT
         pragma solidity ^0.8.0;
         contract MockEmitter {
-            event MarketStatusUpdated(bytes16 indexed marketId, bool isOpen);
-            function emitMarketStatus(bool isOpen) external {
-                emit MarketStatusUpdated(bytes16(0), isOpen);
+            event NewMarketCreated(bytes16 indexed marketId, bytes16 indexed communityId, uint64 openingTime, uint64 closingTime, uint64 deliveryStartTime, uint64 deliveryEndTime, uint8 marketType, uint8 matchingAlgorithm, uint64 createdAt);
+            function emitNewMarket(uint64 closingTime) external {
+                emit NewMarketCreated(bytes16(0), bytes16(uint128(1)), uint64(block.timestamp), closingTime, 1000, 1900, 0, 0, uint64(block.timestamp));
             }
             event OrderPlaced(bytes16 indexed orderId, bytes16 indexed createdBy, bytes16 indexed marketId, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, uint8 energySourcePreference, uint8 energyType, bool isBid, bytes16 preferredTradingPartner, uint64 preferredEnergyRate);
             function emitOrderPlaced(bytes16 orderId, bytes16 createdBy, uint64 energy, uint64 rate) external {
@@ -197,7 +321,23 @@ async fn test_evm_order_listener_persists_to_db() {
     tokio::time::sleep(Duration::from_millis(1000)).await;
 
     let mock_contract = MockEmitter::new(contract_address, client.clone());
+    let closed_at = client
+        .get_block(BlockNumber::Latest)
+        .await
+        .unwrap()
+        .unwrap()
+        .timestamp
+        .as_u64()
+        + 60;
+    mock_contract
+        .emit_new_market(closed_at)
+        .send()
+        .await
+        .unwrap()
+        .await
+        .unwrap();
     let order_id = [0xAA; 16];
+
     let created_by = [0xBB; 16];
     let energy_val = 10000; // 1.0 energy scaled
     let rate_val = 5000; // 0.5 rate scaled
@@ -260,21 +400,17 @@ async fn test_evm_order_listener_persists_to_db() {
     }
 
     assert!(found, "Order was not found in MongoDB after 4 seconds");
-    let receipt = mock_contract
-        .emit_market_status(false)
-        .send()
+    // No contract event is emitted at closure: an otherwise empty block triggers expiry.
+    client
+        .provider()
+        .request::<_, ()>("evm_setNextBlockTimestamp", [closed_at])
         .await
-        .unwrap()
-        .await
-        .unwrap()
         .unwrap();
-    let closed_at = client
-        .get_block(receipt.block_hash.unwrap())
+    client
+        .provider()
+        .request::<_, serde_json::Value>("evm_mine", ())
         .await
-        .unwrap()
-        .unwrap()
-        .timestamp
-        .as_u64();
+        .unwrap();
     let order_id = expected_id.into();
     tokio::time::timeout(Duration::from_secs(4), async {
         loop {
@@ -345,7 +481,7 @@ async fn cancellation_uses_block_time_and_preserves_order_metadata() {
 }
 
 #[tokio::test]
-async fn market_closure_expires_only_submitted_orders_and_preserves_expiry_on_reopen() {
+async fn market_closure_expires_only_submitted_orders_and_preserves_expiry_on_later_blocks() {
     // Closure, not the delivery slot (1000), determines expiry in both cases.
     for closed_at in [980, 1020] {
         let app = init_app().await;
@@ -385,16 +521,17 @@ async fn market_closure_expires_only_submitted_orders_and_preserves_expiry_on_re
             }
         }
         let before = orders.get_all_orders().await.unwrap();
-        handler
-            .handle_market_status(
-                MarketStatusUpdatedFilter {
-                    market_id,
-                    is_open: true,
-                },
-                closed_at,
-            )
-            .await
-            .unwrap();
+        for (id, closing_time) in [(market_id, closed_at), (other_market, closed_at + 100)] {
+            handler
+                .handle_new_market_created(NewMarketCreatedFilter {
+                    market_id: id,
+                    closing_time,
+                    ..new_market_event()
+                })
+                .await
+                .unwrap();
+        }
+        handler.handle_block(closed_at - 1).await.unwrap();
         for order in &before {
             assert_eq!(
                 orders
@@ -405,16 +542,9 @@ async fn market_closure_expires_only_submitted_orders_and_preserves_expiry_on_re
                 Some(order)
             );
         }
-        // A repeated close or reopen must not change terminal statuses or their timestamps.
-        for (is_open, timestamp) in [
-            (false, closed_at),
-            (false, closed_at + 1),
-            (true, closed_at + 2),
-        ] {
-            handler
-                .handle_market_status(MarketStatusUpdatedFilter { market_id, is_open }, timestamp)
-                .await
-                .unwrap();
+        // Delayed indexing and repeated confirmed blocks retain the scheduled expiry time.
+        for timestamp in [closed_at + 1, closed_at + 2] {
+            handler.handle_block(timestamp).await.unwrap();
             for order in &before {
                 let mut expected = order.clone();
                 if order.market_id == bytes16_to_hex(market_id)
@@ -449,7 +579,13 @@ async fn market_closure_expires_only_submitted_orders_and_preserves_expiry_on_re
         assert_eq!(expired.order_status, "expired");
         assert_eq!(expired.updated_at, Some(epoch_to_rfc3339(closed_at)));
         handler
-            .handle_order_placed(placed_order([99; 16], true, 10000), closed_at + 3)
+            .handle_order_placed(
+                OrderPlacedFilter {
+                    market_id: other_market,
+                    ..placed_order([99; 16], true, 10000)
+                },
+                closed_at + 3,
+            )
             .await
             .unwrap();
         let new_order = orders

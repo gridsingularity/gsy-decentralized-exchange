@@ -16,15 +16,10 @@ use gsy_offchain_storage::{
 };
 use primitives::{
     db_api_schema::{
-        grid_topology::FacilitySchema,
-        market::{MarketSchema, MarketType, MatchingAlgorithm},
-        orders::OrderStatus,
-        profiles::MeasurementSchema,
+        grid_topology::FacilitySchema, orders::OrderStatus, profiles::MeasurementSchema,
         trades::TradeStatus,
     },
-    utils::{
-        bytes16_to_hex, create_encrypted_bytes16_from_string, timestamp_to_string_with_padding,
-    },
+    utils::{bytes16_to_hex, create_encrypted_bytes16_from_string},
 };
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
@@ -127,23 +122,29 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
     let listener_task = tokio::spawn(async move { listener.run().await });
     tokio::time::sleep(Duration::from_secs(1)).await;
 
-    let market_id = [0x99; 16];
+    let market_id = [0x99u8; 16];
     let slot = 1800u64;
-    send(&controller, "setMarketStatus", (market_id, true)).await?;
-    app.db_wrapper
-        .markets()
-        .upsert(MarketSchema {
-            market_id: bytes16_to_hex(market_id),
-            community_id: "community".into(),
-            opening_time: timestamp_to_string_with_padding(900),
-            closing_time: timestamp_to_string_with_padding(slot),
-            delivery_start_time: timestamp_to_string_with_padding(slot),
-            delivery_end_time: timestamp_to_string_with_padding(slot + 900),
-            market_type: MarketType::Spot,
-            matching_algorithm: MatchingAlgorithm::PayAsBid,
-            created_at: timestamp_to_string_with_padding(900),
-        })
-        .await?;
+    let now = client
+        .get_block(BlockNumber::Latest)
+        .await?
+        .unwrap()
+        .timestamp
+        .as_u64();
+    send(
+        &controller,
+        "createMarkets",
+        (vec![(
+            market_id,
+            [0x77u8; 16],
+            now,
+            now + 3600,
+            slot,
+            slot + 900,
+            0u8,
+            0u8,
+        )],),
+    )
+    .await?;
     let mut measurements = Vec::new();
     for index in 0..3u8 {
         let buyer = format!("buyer-{index}");

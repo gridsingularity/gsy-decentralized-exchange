@@ -44,7 +44,7 @@ fn make_trade(trade_uuid: &str, bid: DbOrderSchema, offer: DbOrderSchema) -> Ewd
 fn make_market(market_id: &str, delivery_start_time: u64) -> MarketSchema {
     MarketSchema {
         market_id: market_id.to_string(),
-        community_id: "community-1".to_string(),
+        community_id: "11111111-1111-4111-8111-111111111111".to_string(),
         opening_time: timestamp_to_string_with_padding(delivery_start_time.saturating_sub(900)),
         closing_time: timestamp_to_string_with_padding(delivery_start_time),
         delivery_start_time: timestamp_to_string_with_padding(delivery_start_time),

@@ -27,7 +27,7 @@ Related participant service:
 ### On-chain Plane
 
 - `anvil` (or target EVM) hosts contracts.
-- `gsy-market-orchestrator` opens/closes markets.
+- `gsy-market-orchestrator` creates markets on-chain.
 - `gsy-community-client` publishes orders.
 - `gsy-matching-engine` settles matched trades.
 - `gsy-execution-engine` submits penalties.
@@ -38,7 +38,8 @@ Related participant service:
 - `gsy-market-orchestrator` fetches communities before each scheduling tick.
 - `gsy-matching-engine` polls `/orders`.
 - `gsy-execution-engine` polls `/trades`, `/measurement-points`, and `/timeseries`.
-- `gsy-community-client` writes to `/measurement-points`, `/timeseries`, and `/markets`.
+- `gsy-community-client` writes to `/measurement-points` and `/timeseries`.
+  Markets reach off-chain storage only through `NewMarketCreated`.
 
 ## Existing Endpoint Inventory and Callers
 
@@ -88,14 +89,14 @@ Each service:
 | `trades.import` over `tradesImport` / `tradesImportResponse` | matching engine | off-chain storage service | off-chain storage service | matching engine | `POST /trades` |
 | `measurements.query` over `measurementsQuery` / `measurementsQueryResponse` | execution engine | off-chain storage service | off-chain storage service | execution engine | `GET /measurement-points` + `GET /timeseries` |
 | `clearing_results.query` over `clearingResultsQuery` / `clearingResultsQueryResponse` | matching/execution engine | off-chain storage service | off-chain storage service | requester | `GET /clearing-results` |
-| `markets.query` over `marketsQuery` / `marketsQueryResponse` | community client | off-chain storage service | off-chain storage service | community client | `GET /markets` |
+| `markets.query` over `marketsQuery` / `marketsQueryResponse` | community client or e2e runner | off-chain storage service | off-chain storage service | requester | `GET /markets` |
 | `ids.query` over `idsQuery` / `idsQueryResponse` | requester service | off-chain storage service | off-chain storage service | requester | `POST /ids` (get-or-create) |
 | `community.event` over `community` | other systems or e2e runner | off-chain storage service | none | none | `POST /communities` |
 | `order.event` over `order` | FOS or e2e runner | community client | none | none | none (the community client calls `OrderRegistry.placeOrder`) |
 | `communities.query` over `communitiesQuery` / `communitiesQueryResponse` | market orchestrator | off-chain storage service | off-chain storage service | market orchestrator | `GET /communities` |
 | `forecasts.upsert` | community client | off-chain storage service | none | none | `POST /measurement-points` + `POST /timeseries` |
 | `measurements.upsert` | community client | off-chain storage service | none | none | `POST /measurement-points` + `POST /timeseries` |
-| `market.upsert` | community client | off-chain storage service | none | none | `POST /markets` |
+| `market.upsert` | manual use only (markets are indexed from `NewMarketCreated`) | off-chain storage service | none | none | `POST /markets` |
 
 > Note: the `*.query` operations above are implemented in the current responder
 > (`EwdsOperation` variants `OrdersQuery`, `TradesQuery`, `MeasurementsQuery`,
@@ -121,22 +122,27 @@ Replays re-read the stored status instead of reusing the incoming payload.
 A Penalized trade remains Penalized after verification; a penalty-free trade becomes Executed.
 It also publishes a `clearingResult.event` on
 `clearingResult` every time it persists a clearing result from an EVM
-`MarketClearing` event, and a `market.event` on
-`market` for every EVM `MarketStatusUpdated` event. The payload is
+`MarketClearing` event, and a `market.event` on `market` every time it persists
+a market from an EVM `NewMarketCreated` event. The payload is
 an event envelope (`eventId`, `eventType`, `occurredAt`, `data`) whose `data` is
-a list of trades, clearing results or market statuses in their `EwdsTradeDto`,
-`EwdsClearingResultDto` or `EwdsMarketStatusDto` (`marketId`, `isOpen`) form,
-so one event can carry several of them. The off-chain storage currently sends
-one item per EVM event. Every event gets a random UUID as `eventId`, which is
-also its DDHub `transactionId`. `occurredAt` is an RFC 3339 timestamp: the time
-of the newest item. For trades it uses the status-change block timestamp, or
-the stored match creation time for Matched records, falling back to creation time for legacy
-records without a status timestamp. The trade DTO's `timestamp` is always its
-creation time. Duplicate notifications are possible on replay; publication is
-best effort and background sends can arrive out of order. Consumers should
-compare `occurredAt` and the lifecycle progression, not arrival order.
-Market status updates are not persisted, so their
-`occurredAt` is the time the off-chain storage received the EVM event.
+a list of trades, clearing results or markets in their `EwdsTradeDto`,
+`EwdsClearingResultDto` or `EwdsMarketDto` form, so one event can carry several
+of them. Markets have the same form as in the `markets.query` response and
+follow `int.market.schema.v1.json`: UUID `marketId` and `communityId`, RFC 3339
+times, `marketType` `spot`, `flex` or `settlement` and `matchingAlgorithm`
+`pay_as_bid`, `pay_as_clear` or `amm`. The `marketId` is the same 16 bytes as the
+`0x…` market ID in `trade.event` and orders, formatted as a UUID. The market
+carries its opening and closing times, so consumers derive whether it is open
+from them. The off-chain storage currently sends one item per EVM event. Every
+event gets a random UUID as `eventId`, which is also its DDHub `transactionId`.
+`occurredAt` is an RFC 3339 timestamp: the time of the newest item, for a
+market its on-chain `createdAt`. For trades it uses the status-change block
+timestamp, or the stored match creation time for Matched records, falling back
+to creation time for legacy records without a status timestamp. The trade DTO's
+`timestamp` is always its creation time. Duplicate notifications are possible
+on replay; publication is best effort and background sends can arrive out of
+order. Consumers should compare `occurredAt` and the lifecycle progression,
+not arrival order.
 
 The same channels also carry the events other systems send to GSY; see
 [Inbound Events](#inbound-events).
@@ -363,6 +369,7 @@ Each `*.query` request payload accepts both snake_case and camelCase keys (via s
 | `orders.query` | `market_id`/`marketId`, `start_time`/`startTime`, `end_time`/`endTime` |
 | `trades.query` | `market_id`/`marketId`, `start_time`/`startTime`, `end_time`/`endTime` (`market_id` alone is enough and takes precedence over the time range; without it, both `start_time` and `end_time` are required, span at most 1 day, and match the market `delivery_start_time`) |
 | `measurements.query` | `start_time`/`startTime`, `end_time`/`endTime`, `facility_id`/`areaUuid` (filters after fetch) |
+| `markets.query` | `market_id`/`marketId` (UUID or `0x…` hex), `community_id`/`communityId`, `start_time`/`startTime`, `end_time`/`endTime` (RFC 3339, match the market `opening_time`) |
 | `ids.query` | `offchain_id`/`offchainId` (required) |
 
 ### Trade Imports
@@ -510,8 +517,8 @@ Validator requirements:
 - Fetch all communities before every scheduling tick through HTTP
   `/communities` or EWDS `communities.query`.
 - Derive each market ID from community UUID, market type, and delivery slot.
-- Open and close the community/market-type permutations through batched contract
-  calls.
+- Create the community/market-type markets before they open through batched
+  `createMarkets` calls, after checking `marketsExist` on-chain in batches.
 - Runtime switch via `OFFCHAIN_STORAGE_TRANSPORT=http|ewds`.
 
 ## Docker and Local Testing Integration

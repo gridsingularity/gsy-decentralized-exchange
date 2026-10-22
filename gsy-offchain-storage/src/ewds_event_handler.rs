@@ -10,8 +10,8 @@ use primitives::db_api_schema::{
     trades::{ClearingResultSchema, DbTradeSchema},
 };
 use primitives::ewds::dto::{
-    EwdsClearingResultDto, EwdsCommunityDto, EwdsEventEnvelope, EwdsMarketStatusDto,
-    EwdsMeasurementDto, EwdsOrderDto, EwdsTradeDto,
+    EwdsClearingResultDto, EwdsCommunityDto, EwdsEventEnvelope, EwdsMarketDto, EwdsMeasurementDto,
+    EwdsOrderDto, EwdsTradeDto,
 };
 use primitives::ewds::{invalid_event, parse_batch, EwdsClient, EwdsClientConfig, EwdsEventType};
 use primitives::utils::epoch_to_rfc3339;
@@ -129,10 +129,10 @@ impl EwdsEventPublisher {
 
     pub fn publish_market_event(
         &self,
-        market_statuses: Vec<EwdsMarketStatusDto>,
+        markets: Vec<EwdsMarketDto>,
         occurred_at: u64,
     ) -> JoinHandle<()> {
-        self.spawn_event(EwdsEventType::Market, occurred_at, market_statuses)
+        self.spawn_event(EwdsEventType::Market, occurred_at, markets)
     }
 
     fn spawn_event<T: Serialize + Send + 'static>(

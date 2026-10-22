@@ -19,7 +19,10 @@ use uuid::Uuid;
 
 abigen!(
     LifecycleMarket,
-    r#"[function setMarketStatus(bytes16 marketId, bool isOpen)]"#
+    r#"[
+        struct NewMarket { bytes16 marketId; bytes16 communityId; uint64 openingTime; uint64 closingTime; uint64 deliveryStartTime; uint64 deliveryEndTime; uint8 marketType; uint8 matchingAlgorithm; }
+        function createMarkets(NewMarket[] newMarkets)
+    ]"#
 );
 abigen!(
     CancellableOrderRegistry,
@@ -82,8 +85,8 @@ async fn assert_order_status(
     .unwrap_or_else(|_| panic!("Timeout waiting for order {id} to become {status:?}"));
 }
 
-#[then("unmatched orders can be cancelled or expire permanently at market closure")]
-async fn verify_cancel_and_expire(world: &mut MyWorld) {
+#[then("unmatched orders can be cancelled on-chain and in storage")]
+async fn verify_cancellation(world: &mut MyWorld) {
     // A dedicated market keeps the orchestrator's normal slot scheduling untouched.
     let market_id = *Uuid::new_v4().as_bytes();
     world.last_market_id = Some(market_id);
@@ -94,13 +97,27 @@ async fn verify_cancel_and_expire(world: &mut MyWorld) {
     ));
     let market = LifecycleMarket::new(world.market_controller_address, signer.clone());
     let registry = CancellableOrderRegistry::new(world.order_registry_address, signer);
-    let call = market.set_market_status(market_id, true);
+    let now = world
+        .provider
+        .get_block(BlockNumber::Latest)
+        .await
+        .unwrap()
+        .unwrap()
+        .timestamp
+        .as_u64();
+    let call = market.create_markets(vec![NewMarket {
+        market_id,
+        community_id: *Uuid::new_v4().as_bytes(),
+        opening_time: now,
+        closing_time: now + 3600,
+        delivery_start_time: world.target_delivery_time,
+        delivery_end_time: world.target_delivery_time + 900,
+        market_type: 0,
+        matching_algorithm: 0,
+    }]);
     receipt_timestamp(world, call.send().await.unwrap().await.unwrap().unwrap()).await;
     let cancelled = place_custom_order(world, "alice", true, 1.0, 20.0, None, None).await;
-    let expired = place_custom_order(world, "alice", true, 1.0, 20.0, None, None).await;
-    for id in [&cancelled, &expired] {
-        assert_order_status(world, id, OrderStatus::Submitted, 1, None).await;
-    }
+    assert_order_status(world, &cancelled, OrderStatus::Submitted, 1, None).await;
     let params = registry
         .get_order(parse_uuid_or_hex_bytes16(&cancelled).unwrap())
         .call()
@@ -130,23 +147,6 @@ async fn verify_cancel_and_expire(world: &mut MyWorld) {
         Some(cancelled_at),
     )
     .await;
-    let call = market.set_market_status(market_id, false);
-    let expired_at =
-        receipt_timestamp(world, call.send().await.unwrap().await.unwrap().unwrap()).await;
-    assert_order_status(world, &expired, OrderStatus::Expired, 4, Some(expired_at)).await;
-    let call = market.set_market_status(market_id, true);
-    receipt_timestamp(world, call.send().await.unwrap().await.unwrap().unwrap()).await;
-    assert_order_status(
-        world,
-        &cancelled,
-        OrderStatus::Cancelled,
-        3,
-        Some(cancelled_at),
-    )
-    .await;
-    assert_order_status(world, &expired, OrderStatus::Expired, 4, Some(expired_at)).await;
-    let call = market.set_market_status(market_id, false);
-    receipt_timestamp(world, call.send().await.unwrap().await.unwrap().unwrap()).await;
 }
 
 pub(crate) async fn trade_status_timestamp(

@@ -6,8 +6,8 @@ use futures::future::join_all;
 use primitives::db_api_schema::profiles::{MeasurementPointType, MeasurementSchema};
 use primitives::db_api_schema::trades::{DbTradeSchema, TradeStatus};
 use primitives::ewds::dto::{
-    EwdsClearingResultDto, EwdsCommunityDto, EwdsErrorPayload, EwdsInboundMessage, EwdsMarketDto,
-    EwdsMeasurementDto, EwdsOrderDto, EwdsRequestEnvelope, EwdsResponseEnvelope,
+    parse_market_id, EwdsClearingResultDto, EwdsCommunityDto, EwdsErrorPayload, EwdsInboundMessage,
+    EwdsMarketDto, EwdsMeasurementDto, EwdsOrderDto, EwdsRequestEnvelope, EwdsResponseEnvelope,
     EwdsSendMessageDto, EwdsTradeDto,
 };
 use primitives::ewds::{
@@ -16,7 +16,9 @@ use primitives::ewds::{
     parse_gateway_delivery_summary, remember_id, EwdsEventTopicConfig, EwdsEventType,
     EwdsOperation, EwdsTopicConfig,
 };
-use primitives::utils::{opt_rfc3339_to_epoch, timestamp_to_string_with_padding};
+use primitives::utils::{
+    bytes16_to_hex, normalize_community_id, opt_rfc3339_to_epoch, timestamp_to_string_with_padding,
+};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -643,19 +645,40 @@ pub async fn handle_request(
                 request_id
             );
 
+            // The request uses the forms of the response (UUID or hex market
+            // and community IDs, RFC 3339 times); markets are stored with a
+            // `0x…` ID, a lowercase UUID community ID and zero-padded epoch
+            // seconds.
+            let market_id = payload
+                .market_id
+                .map(|market_id| parse_market_id(&market_id).map(bytes16_to_hex))
+                .transpose()
+                .map_err(|e| anyhow!("markets.query payload parse error: {}", e))?;
+            let community_id = payload
+                .community_id
+                .as_deref()
+                .map(normalize_community_id)
+                .transpose()
+                .map_err(|e| anyhow!("markets.query payload parse error: {}", e))?;
+            let stored_time = |time: Option<String>| {
+                opt_rfc3339_to_epoch(time.as_deref())
+                    .map(|epoch| epoch.map(timestamp_to_string_with_padding))
+                    .map_err(|e| anyhow!("markets.query payload parse error: {}", e))
+            };
             let data = db
                 .markets()
                 .filter(
-                    payload.market_id,
-                    payload.community_id,
-                    payload.start_time,
-                    payload.end_time,
+                    market_id,
+                    community_id,
+                    stored_time(payload.start_time)?,
+                    stored_time(payload.end_time)?,
                 )
                 .await
                 .map_err(|e| anyhow!("markets.query DB error: {}", e))?
                 .into_iter()
-                .map(EwdsMarketDto::from)
-                .collect::<Vec<_>>();
+                .map(EwdsMarketDto::try_from)
+                .collect::<Result<Vec<_>>>()
+                .map_err(|e| anyhow!("markets.query invalid stored market: {}", e))?;
             info!(
                 "Publishing EWDS markets.query response (request_id={}, markets={})",
                 request_id,

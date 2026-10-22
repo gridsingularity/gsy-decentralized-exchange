@@ -5,11 +5,17 @@ use blake2::Blake2bVar;
 use chrono::{prelude::DateTime, Utc, TimeZone};
 use std::env;
 use std::str::FromStr;
+use uuid::Uuid;
 
 pub const NODE_FLOAT_SCALING_FACTOR: f64 = 10000.0;
 
 pub fn bytes16_to_hex(value: [u8; 16]) -> String {
     format!("0x{}", hex::encode(value))
+}
+
+/// Formats 16 bytes as a lowercase hyphenated UUID (8-4-4-4-12).
+pub fn bytes16_to_uuid_string(value: [u8; 16]) -> String {
+    Uuid::from_bytes(value).to_string()
 }
 
 pub fn parse_uuid_or_hex_bytes16(value: &str) -> Option<[u8; 16]> {
@@ -28,6 +34,20 @@ pub fn parse_uuid_or_hex_bytes16(value: &str) -> Option<[u8; 16]> {
     decoded.try_into().ok()
 }
 
+/// Canonical form of a community ID: the lowercase hyphenated UUID that
+/// chain-sourced markets are stored with. Fails unless the ID is a UUID or
+/// 16-byte hex value.
+pub fn normalize_community_id(value: &str) -> Result<String> {
+    parse_uuid_or_hex_bytes16(value)
+        .map(bytes16_to_uuid_string)
+        .ok_or_else(|| {
+            anyhow!(
+                "community ID '{}' is not a UUID or 16-byte hex value",
+                value
+            )
+        })
+}
+
 pub fn create_encrypted_bytes16_from_string(input_string: &str) -> [u8; 16] {
     let mut hash = [0u8; 16];
     let mut hasher = Blake2bVar::new(16).expect("valid Blake2b output size");
@@ -38,11 +58,15 @@ pub fn create_encrypted_bytes16_from_string(input_string: &str) -> [u8; 16] {
     hash
 }
 
+/// The community ID is normalized first, so every accepted form of one
+/// community ID yields the same market ID. Fails for a community ID that is
+/// not a UUID or 16-byte hex value.
 pub fn generate_market_id(
     community_id: &str,
     market_type: MarketType,
     delivery_timestamp: u64,
-) -> [u8; 16] {
+) -> Result<[u8; 16]> {
+    let community_id = normalize_community_id(community_id)?;
     let mut market_id = [0u8; 16];
     let mut hasher = Blake2bVar::new(market_id.len()).expect("valid market ID output size");
     hasher.update(community_id.as_bytes());
@@ -51,7 +75,7 @@ pub fn generate_market_id(
     hasher
         .finalize_variable(&mut market_id)
         .expect("valid market ID output buffer");
-    market_id
+    Ok(market_id)
 }
 
 pub fn timestamp_to_datetime_string(timestamp: u64) -> String {

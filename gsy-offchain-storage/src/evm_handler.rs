@@ -6,17 +6,21 @@ use ethers::contract::LogMeta;
 use ethers::types::U256;
 use futures::TryStreamExt;
 use gsy_ethers_listener::{
-    DeliveryVerifiedFilter, GsyEventHandler, MarketClearingFilter, MarketStatusUpdatedFilter,
+    DeliveryVerifiedFilter, GsyEventHandler, MarketClearingFilter, NewMarketCreatedFilter,
     OrderCancelledFilter, OrderPlacedFilter, PenaltyRecordedFilter, TradeSettledFilter,
 };
+use mongodb::bson::{self, doc};
 use primitives::db_api_schema::{
+    market::{MarketChainRecord, MarketSchema},
     orders::{
         order_metadata_from_contract, ContractOrderMetadata, DbOrderSchema, OrderEnum, OrderStatus,
     },
     trades::{ClearingResultSchema, ClearingStatus, DbTradeSchema, TradeParameters, TradeStatus},
 };
-use primitives::ewds::dto::EwdsMarketStatusDto;
-use primitives::utils::{bytes16_to_hex, NODE_FLOAT_SCALING_FACTOR};
+use primitives::ewds::dto::EwdsMarketDto;
+use primitives::utils::{
+    bytes16_to_hex, timestamp_to_string_with_padding, NODE_FLOAT_SCALING_FACTOR,
+};
 use tracing::info;
 
 fn scaled_u256_to_f64(value: U256) -> f64 {
@@ -54,6 +58,50 @@ impl OffchainStorageEvmHandler {
 
 #[async_trait]
 impl GsyEventHandler for OffchainStorageEvmHandler {
+    async fn handle_block(&self, block_timestamp: u64) -> Result<()> {
+        let submitted = bson::to_bson(&OrderStatus::Submitted)?;
+        let market_ids = self
+            .db
+            .orders()
+            .distinct("market_id", doc! {"status": &submitted})
+            .await?;
+        if market_ids.is_empty() {
+            return Ok(());
+        }
+        let markets: Vec<MarketSchema> = self
+            .db
+            .markets()
+            .find(doc! {
+                "market_id": {"$in": market_ids},
+                "closing_time": {"$lte": timestamp_to_string_with_padding(block_timestamp)},
+            })
+            .await?
+            .try_collect()
+            .await?;
+        for market in markets {
+            let order_ids = self
+                .db
+                .orders()
+                .distinct(
+                    "order_id",
+                    doc! {
+                        "market_id": &market.market_id, "status": &submitted,
+                    },
+                )
+                .await?
+                .into_iter()
+                .filter_map(|id| id.as_str().map(str::to_owned))
+                .collect::<Vec<_>>();
+            // The deadline is immutable and remains stable even if indexing is delayed.
+            self.db
+                .orders()
+                .expire_market_orders(&market.market_id, market.closing_time.parse()?)
+                .await?;
+            self.publish_order_statuses(&order_ids).await?;
+        }
+        Ok(())
+    }
+
     async fn handle_order_placed(
         &self,
         event: OrderPlacedFilter,
@@ -325,49 +373,33 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         Ok(())
     }
 
-    async fn handle_market_status(
-        &self,
-        event: MarketStatusUpdatedFilter,
-        block_timestamp: u64,
-    ) -> Result<()> {
+    async fn handle_new_market_created(&self, event: NewMarketCreatedFilter) -> Result<()> {
         info!(
-            "Processing EVM MarketStatus: {:?} -> Open? {}",
-            hex::encode(event.market_id),
-            event.is_open
+            "Processing EVM NewMarketCreated: {:?}",
+            hex::encode(event.market_id)
         );
 
-        if !event.is_open {
-            // Capture only orders affected by this closure, not previously expired orders.
-            let order_ids = if self.event_publisher.is_some() {
-                self.db
-                    .orders()
-                    .find(mongodb::bson::doc! {
-                        "market_id": bytes16_to_hex(event.market_id),
-                        "status": mongodb::bson::to_bson(&OrderStatus::Submitted)?,
-                    })
-                    .await?
-                    .map_ok(|order| order.order_id)
-                    .try_collect::<Vec<_>>()
-                    .await?
-            } else {
-                Vec::new()
-            };
-            self.db
-                .orders()
-                .expire_market_orders(&bytes16_to_hex(event.market_id), block_timestamp)
-                .await
-                .context("Failed to expire orders after market closure")?;
-            self.publish_order_statuses(&order_ids).await?;
-        }
+        // Upsert by market_id so a replayed event is harmless.
+        let market = MarketSchema::try_from(MarketChainRecord {
+            market_id: event.market_id,
+            community_id: event.community_id,
+            opening_time: event.opening_time,
+            closing_time: event.closing_time,
+            delivery_start_time: event.delivery_start_time,
+            delivery_end_time: event.delivery_end_time,
+            market_type: event.market_type,
+            matching_algorithm: event.matching_algorithm,
+            created_at: event.created_at,
+        })?;
+        let market = self.db.markets().upsert(market).await?;
 
+        info!("Market persisted.");
+
+        // Publish only once the market is persisted.
         if let Some(publisher) = &self.event_publisher {
-            publisher.publish_market_event(
-                vec![EwdsMarketStatusDto {
-                    market_id: bytes16_to_hex(event.market_id),
-                    is_open: event.is_open,
-                }],
-                block_timestamp,
-            );
+            let market = EwdsMarketDto::try_from(market)
+                .context("Failed to convert the market for its market.event")?;
+            publisher.publish_market_event(vec![market], event.created_at);
         }
 
         Ok(())
