@@ -41,10 +41,11 @@ async fn main() -> Result<(), anyhow::Error> {
     } else {
         None
     };
+    let listener_publisher = event_publisher.clone();
     tokio::task::spawn(async move {
         let handler = OffchainStorageEvmHandler {
             db: db_for_listener,
-            event_publisher,
+            event_publisher: listener_publisher,
         };
         let listener = GsyEthersListener::new(listener_config, handler);
         if let Err(e) = listener.run().await {
@@ -70,5 +71,5 @@ async fn main() -> Result<(), anyhow::Error> {
         "{}:{}",
         configuration.application_host, configuration.application_port
     );
-    start_server(&address, db_connection_wrapper).await
+    start_server(&address, db_connection_wrapper, event_publisher).await
 }

@@ -1,8 +1,9 @@
 use super::trade_steps::{
     delivery_verification_timestamp, place_custom_order, query_market_trades,
     query_orders_for_market, wait_for_order_in_offchain_storage, OrderRegistryContract,
-    TradeSettlementContract,
+    PenaltyRecordedFilter, TradeSettledFilter, TradeSettlementContract,
 };
+use crate::utils::indexed_bytes16_topic;
 use crate::world::MyWorld;
 use cucumber::then;
 use ethers::prelude::*;
@@ -148,7 +149,87 @@ async fn verify_cancel_and_expire(world: &mut MyWorld) {
     receipt_timestamp(world, call.send().await.unwrap().await.unwrap().unwrap()).await;
 }
 
-pub(crate) async fn assert_trade_executed(world: &MyWorld, trade: &DbTradeSchema) {
+pub(crate) async fn trade_status_timestamp(
+    world: &MyWorld,
+    trade: &DbTradeSchema,
+    status: &TradeStatus,
+) -> u64 {
+    let settlement =
+        TradeSettlementContract::new(world.trade_settlement_address, world.provider.clone());
+    let topic = indexed_bytes16_topic(parse_uuid_or_hex_bytes16(&trade.trade_uuid).unwrap());
+    let block_hash = match status {
+        TradeStatus::Matched => return trade.creation_time,
+        TradeStatus::Executed => return delivery_verification_timestamp(world, trade).await,
+        TradeStatus::Settled => {
+            let events = settlement
+                .event::<TradeSettledFilter>()
+                .from_block(0u64)
+                .topic1(topic)
+                .query_with_meta()
+                .await
+                .unwrap();
+            assert_eq!(events.len(), 1, "Trade must settle exactly once");
+            events[0].1.block_hash
+        }
+        TradeStatus::Penalized => {
+            let events = settlement
+                .event::<PenaltyRecordedFilter>()
+                .from_block(0u64)
+                .topic3(topic)
+                .query_with_meta()
+                .await
+                .unwrap();
+            // Both parties can be penalized; the first penalty sets the terminal status.
+            events
+                .iter()
+                .filter(|(event, _)| event.penalty_energy > 0)
+                .min_by_key(|(_, meta)| (meta.block_number, meta.log_index))
+                .expect("Penalized trade has no positive penalty event")
+                .1
+                .block_hash
+        }
+    };
+    world
+        .provider
+        .get_block(block_hash)
+        .await
+        .unwrap()
+        .unwrap()
+        .timestamp
+        .as_u64()
+}
+
+#[then("the trade is Settled before delivery verification")]
+async fn verify_settled_trade(world: &mut MyWorld) {
+    let trade = world.last_trade.as_ref().expect("Missing settled trade");
+    let stored = query_market_trades(world)
+        .await
+        .into_iter()
+        .find(|stored| stored.trade_uuid == trade.trade_uuid)
+        .unwrap();
+    assert_eq!(stored.status, TradeStatus::Settled);
+    let persisted = crate::utils::test_database()
+        .await
+        .collection::<DbTradeSchema>("trades")
+        .find_one(mongodb::bson::doc! {"trade_uuid": &trade.trade_uuid})
+        .await
+        .unwrap()
+        .unwrap();
+    let mut expected = stored;
+    expected.status_updated_at =
+        Some(trade_status_timestamp(world, trade, &TradeStatus::Settled).await);
+    assert_eq!(persisted, expected);
+}
+
+pub(crate) async fn assert_trade_verified(
+    world: &MyWorld,
+    trade: &DbTradeSchema,
+    expected_status: TradeStatus,
+) {
+    assert!(matches!(
+        expected_status,
+        TradeStatus::Executed | TradeStatus::Penalized
+    ));
     let registry = OrderRegistryContract::new(world.order_registry_address, world.provider.clone());
     timeout(Duration::from_secs(360), async {
         loop {
@@ -160,15 +241,15 @@ pub(crate) async fn assert_trade_executed(world: &MyWorld, trade: &DbTradeSchema
             .fetch_trades(Some(&trade.market_id), None, None)
             .await
             .unwrap();
-            let executed_trade = trades.iter().find(|stored| {
-                stored.trade_uuid == trade.trade_uuid && stored.status == TradeStatus::Executed
+            let verified_trade = trades.iter().find(|stored| {
+                stored.trade_uuid == trade.trade_uuid && stored.status == expected_status
             });
             let executed_orders = [&trade.bid_hash, &trade.offer_hash].iter().all(|id| {
                 orders
                     .iter()
                     .any(|order| &order.order_id == *id && order.status == OrderStatus::Executed)
             });
-            if let Some(stored) = executed_trade.filter(|_| executed_orders) {
+            if let Some(stored) = verified_trade.filter(|_| executed_orders) {
                 let timestamp = delivery_verification_timestamp(world, trade).await;
                 // The trade DTO exposes its status, but not the internal verdict timestamp.
                 let persisted = crate::utils::test_database()
@@ -178,8 +259,14 @@ pub(crate) async fn assert_trade_executed(world: &MyWorld, trade: &DbTradeSchema
                     .await
                     .expect("Failed to read the verified trade")
                     .expect("Verified trade is missing from storage");
-                assert_eq!(persisted.status, TradeStatus::Executed);
-                assert_eq!(persisted.status_updated_at, Some(timestamp));
+                let mut expected = trade.clone();
+                expected.status = expected_status.clone();
+                expected.status_updated_at =
+                    Some(trade_status_timestamp(world, trade, &expected_status).await);
+                assert_eq!(
+                    persisted, expected,
+                    "Verification changed trade details or verdict timestamp"
+                );
                 for id in [&trade.bid_hash, &trade.offer_hash] {
                     assert_eq!(
                         registry
@@ -198,6 +285,16 @@ pub(crate) async fn assert_trade_executed(world: &MyWorld, trade: &DbTradeSchema
                         Some(timestamp)
                     );
                 }
+                let settlement = TradeSettlementContract::new(
+                    world.trade_settlement_address,
+                    world.provider.clone(),
+                );
+                let penalty = settlement
+                    .penalty_energy_by_trade(parse_uuid_or_hex_bytes16(&trade.trade_uuid).unwrap())
+                    .call()
+                    .await
+                    .unwrap();
+                assert_eq!(penalty.is_zero(), expected_status == TradeStatus::Executed);
                 return;
             }
             sleep(Duration::from_secs(2)).await;
@@ -215,17 +312,7 @@ pub(crate) async fn assert_trade_executed(world: &MyWorld, trade: &DbTradeSchema
 #[then("delivery verification marks the trade and orders Executed without penalties")]
 async fn verify_full_delivery(world: &mut MyWorld) {
     let trade = world.last_trade.as_ref().expect("Missing settled trade");
-    assert_trade_executed(world, trade).await;
-    let settlement =
-        TradeSettlementContract::new(world.trade_settlement_address, world.provider.clone());
-    assert_eq!(
-        settlement
-            .penalty_energy_by_trade(parse_uuid_or_hex_bytes16(&trade.trade_uuid).unwrap())
-            .call()
-            .await
-            .unwrap(),
-        U256::zero()
-    );
+    assert_trade_verified(world, trade, TradeStatus::Executed).await;
     assert_eq!(
         query_market_trades(world).await.len(),
         1,
@@ -234,4 +321,22 @@ async fn verify_full_delivery(world: &mut MyWorld) {
     let orders =
         query_orders_for_market(world, &bytes16_to_hex(world.last_market_id.unwrap())).await;
     assert_eq!(orders.len(), 2, "Expected exactly the two submitted orders");
+}
+
+#[then(expr = "delivery verification marks the trade {word} and both orders Executed")]
+async fn verify_trade_verdict(world: &mut MyWorld, status: String) {
+    let status = match status.as_str() {
+        "Executed" => TradeStatus::Executed,
+        "Penalized" => TradeStatus::Penalized,
+        _ => panic!("Unexpected delivery verdict: {status}"),
+    };
+    assert_trade_verified(world, world.last_trade.as_ref().unwrap(), status).await;
+    assert_eq!(query_market_trades(world).await.len(), 1);
+    assert_eq!(
+        query_orders_for_market(world, &bytes16_to_hex(world.last_market_id.unwrap()))
+            .await
+            .len(),
+        2,
+        "Status notifications must not submit new orders"
+    );
 }

@@ -7,7 +7,7 @@ use ethers::types::U256;
 use futures::TryStreamExt;
 use gsy_ethers_listener::{
     DeliveryVerifiedFilter, GsyEventHandler, MarketClearingFilter, MarketStatusUpdatedFilter,
-    OrderCancelledFilter, OrderPlacedFilter, TradeSettledFilter,
+    OrderCancelledFilter, OrderPlacedFilter, PenaltyRecordedFilter, TradeSettledFilter,
 };
 use primitives::db_api_schema::{
     orders::{
@@ -212,17 +212,44 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         self.publish_order_statuses(&[trade.bid_hash.clone(), trade.offer_hash.clone()])
             .await?;
         if let Some(publisher) = &self.event_publisher {
-            let trade = self
-                .db
-                .trades()
-                .find_one(mongodb::bson::doc! {"trade_uuid": &trade_hash})
-                .await?
-                .with_context(|| {
-                    format!("Missing trade {} for settlement notification", trade_hash)
-                })?;
-            publisher.publish_trade_event(vec![trade]);
+            publisher
+                .publish_stored_trades(&self.db, &[trade_hash])
+                .await?;
         }
 
+        Ok(())
+    }
+
+    async fn handle_penalty_recorded(
+        &self,
+        event: PenaltyRecordedFilter,
+        block_timestamp: u64,
+    ) -> Result<()> {
+        let trade_id = bytes16_to_hex(event.trade_id);
+        let actor_id = bytes16_to_hex(event.penalized_actor_id);
+        let trade = self
+            .db
+            .trades()
+            .find_one(mongodb::bson::doc! {"trade_uuid": &trade_id})
+            .await?
+            .with_context(|| format!("Penalty received before trade {} was indexed", trade_id))?;
+        anyhow::ensure!(
+            event.penalty_energy > 0
+                && trade.market_id == bytes16_to_hex(event.market_id)
+                && (trade.buyer == actor_id || trade.seller == actor_id),
+            "Penalty does not match trade {}",
+            trade_id
+        );
+        self.db
+            .trades()
+            .mark_penalized(&trade_id, block_timestamp)
+            .await?;
+        info!("Indexed penalty for trade {}", trade_id);
+        if let Some(publisher) = &self.event_publisher {
+            publisher
+                .publish_stored_trades(&self.db, &[trade_id])
+                .await?;
+        }
         Ok(())
     }
 
@@ -252,7 +279,10 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             ));
         }
         anyhow::ensure!(
-            matches!(trade.status, TradeStatus::Settled | TradeStatus::Executed),
+            matches!(
+                trade.status,
+                TradeStatus::Settled | TradeStatus::Executed | TradeStatus::Penalized
+            ),
             "Cannot complete unsettled trade {}",
             trade_id
         );
@@ -287,6 +317,11 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             .await?;
         info!("Indexed delivery verification for trade {}", trade_id);
         self.publish_order_statuses(&[bid_id, offer_id]).await?;
+        if let Some(publisher) = &self.event_publisher {
+            publisher
+                .publish_stored_trades(&self.db, &[trade_id])
+                .await?;
+        }
         Ok(())
     }
 

@@ -46,7 +46,9 @@ pub async fn run_execution_cycle(
         offchain_storage_client.fetch_trades(None, Some(start_time), Some(end_time)),
         offchain_storage_client.fetch_measurements(start_time, end_time),
     )?;
-    trades.retain(|trade| trade.status == TradeStatus::Settled);
+    // A separately recorded penalty does not imply delivery verification is complete.
+    // The contract check below skips trades already verified without resubmitting penalties.
+    trades.retain(|trade| matches!(trade.status, TradeStatus::Settled | TradeStatus::Penalized));
     info!(
         "Fetched {} trades, {} measurements for timeslot {}.",
         trades.len(),

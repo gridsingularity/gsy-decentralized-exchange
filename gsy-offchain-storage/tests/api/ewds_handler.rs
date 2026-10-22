@@ -65,12 +65,16 @@ pub(crate) async fn mock_gateway() -> MockServer {
     server
 }
 
-/// Parse the single captured POST body into the response envelope.
+/// Replies and lifecycle events may share the gateway; select only the reply.
 async fn captured_envelope(server: &MockServer) -> serde_json::Value {
     let requests = server.received_requests().await.unwrap();
-    assert_eq!(requests.len(), 1, "expected exactly one gateway POST");
-    let send_dto: EwdsSendMessageDto = serde_json::from_slice(&requests[0].body).unwrap();
-    serde_json::from_str(&send_dto.payload).unwrap()
+    let replies: Vec<EwdsSendMessageDto> = requests
+        .iter()
+        .map(|request| serde_json::from_slice(&request.body).unwrap())
+        .filter(|message: &EwdsSendMessageDto| message.fqcn == "gsy.responses.pub")
+        .collect();
+    assert_eq!(replies.len(), 1, "expected exactly one reply");
+    serde_json::from_str(&replies[0].payload).unwrap()
 }
 
 /// Parse the single captured POST body into the response envelope's data array.
@@ -228,7 +232,11 @@ async fn trades_import_is_idempotent_and_preserves_later_statuses() {
             json!([matched.trade_uuid, matched.trade_uuid])
         );
         let sent = server.received_requests().await.unwrap();
-        let send: EwdsSendMessageDto = serde_json::from_slice(&sent[0].body).unwrap();
+        let send = sent
+            .iter()
+            .map(|request| serde_json::from_slice::<EwdsSendMessageDto>(&request.body).unwrap())
+            .find(|message| message.fqcn == config.response_fqcn)
+            .unwrap();
         assert_eq!(
             send.topic_name,
             config

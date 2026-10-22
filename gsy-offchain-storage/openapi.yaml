@@ -159,7 +159,11 @@ paths:
   /trades-normalized:
     post:
       tags: [Trades & Market]
-      summary: Insert trades using the DEX-side normalized schema.
+      summary: Import trades (alias of POST /trades).
+      description: |
+        Identical Matched imports are idempotent and preserve later lifecycle statuses.
+        Other statuses remain insert-only. Imports do not update orders.
+        With EWDS enabled, successful Matched imports publish the persisted trade snapshot.
       requestBody:
         required: true
         content:
@@ -177,12 +181,47 @@ paths:
                 $ref: "#/components/schemas/InsertedIds"
         "500":
           $ref: "#/components/responses/InternalError"
+        "400":
+          description: Invalid trade payload or unsupported trade status.
 
   /trades:
+    post:
+      tags: [Trades & Market]
+      summary: Import trades using EWDS JSON.
+      description: |
+        Identical Matched imports are idempotent and preserve later lifecycle statuses.
+        Other statuses remain insert-only. Imports do not update orders.
+        With EWDS enabled, successful Matched imports publish the persisted trade snapshot.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: "#/components/schemas/EwdsTradeDto"
+      responses:
+        "200":
+          description: Inserted or already registered trade IDs.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InsertedIds"
+        "400":
+          description: Invalid trade payload or unsupported trade status.
+        "500":
+          $ref: "#/components/responses/InternalError"
     get:
       tags: [Trades & Market]
-      summary: List trades, optionally filtered by time window.
+      summary: List trade snapshots for a market or delivery time window.
+      description: |
+        Returns all lifecycle statuses using the same DTO as EWDS trades.query.
+        Supply market_id or both start_time and end_time (at most one day).
+        Time ranges filter market delivery start times, not status-change timestamps.
       parameters:
+        - in: query
+          name: market_id
+          schema: { type: string }
         - { $ref: "#/components/parameters/StartTimeQuery" }
         - { $ref: "#/components/parameters/EndTimeQuery" }
       responses:
@@ -196,6 +235,8 @@ paths:
                   $ref: "#/components/schemas/EwdsTradeDto"
         "500":
           $ref: "#/components/responses/InternalError"
+        "400":
+          description: Missing or invalid query range.
 
   /market:
     post:
@@ -814,7 +855,8 @@ components:
     EwdsTradeDto:
       description: |
         EWDS-side trade DTO. Field names are camelCase on the wire.
-        `timestamp` is a Unix epoch integer and carries the trade time slot.
+        `timestamp` is the RFC 3339 creation time, unchanged by lifecycle updates.
+        Trade notifications carry the status-change time in the envelope's `occurredAt`.
       type: object
       required:
         - tradeId
@@ -843,7 +885,7 @@ components:
         tradeStatus: { $ref: "#/components/schemas/TradeStatus" }
         tradeQuantity: { type: number, format: double }
         tradePrice: { type: number, format: double }
-        timestamp: { type: integer, format: int64, minimum: 0 }
+        timestamp: { type: string, format: date-time }
 
     ClearingStatus:
       type: string

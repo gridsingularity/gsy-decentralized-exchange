@@ -279,7 +279,9 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
             let trades = app.db_wrapper.trades().get_all_trades().await.unwrap();
             if trades
                 .iter()
-                .filter(|trade| trade.status == TradeStatus::Executed)
+                .filter(|trade| {
+                    matches!(trade.status, TradeStatus::Executed | TradeStatus::Penalized)
+                })
                 .count()
                 == 2
             {
@@ -296,6 +298,45 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
             .await?,
         5
     ); // still partially filled
+
+    // A penalty submitted separately must not prevent the engine from finishing
+    // verification later, or be counted a second time by that verification.
+    send(
+        &settlement,
+        "submitPenalties",
+        (vec![(
+            create_encrypted_bytes16_from_string("buyer-2"),
+            market_id,
+            [23u8; 16],
+            200u64,
+        )],),
+    )
+    .await?;
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let trade = app
+                .db_wrapper
+                .trades()
+                .find_one(mongodb::bson::doc! {
+                    "trade_uuid": bytes16_to_hex([23; 16])
+                })
+                .await
+                .unwrap()
+                .unwrap();
+            if trade.status == TradeStatus::Penalized {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await?;
+    let pending_order = app
+        .db_wrapper
+        .orders()
+        .get_order_by_id(&bytes16_to_hex([3; 16]).into())
+        .await?
+        .unwrap();
+    assert_eq!(pending_order.status, OrderStatus::PartiallyFilled);
     insert_measurements(&app.db_wrapper, &measurements[2..]).await?;
     assert_eq!(
         run_execution_cycle(
@@ -308,14 +349,16 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
             900
         )
         .await?,
-        1
+        2 // The already verified Penalized trade is skipped on-chain.
     );
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
-            let trades = app.db_wrapper.trades().get_all_trades().await.unwrap();
-            if trades
+            let orders = app.db_wrapper.orders().get_all_orders().await.unwrap();
+            if orders
                 .iter()
-                .all(|trade| trade.status == TradeStatus::Executed)
+                .filter(|order| order.status == OrderStatus::Executed)
+                .count()
+                == 6
             {
                 break;
             }
@@ -339,6 +382,14 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
             .iter()
             .find(|trade| trade.trade_uuid == bytes16_to_hex(trade_id))
             .unwrap();
+        assert_eq!(
+            trade.status,
+            if index == 0 {
+                TradeStatus::Executed
+            } else {
+                TradeStatus::Penalized
+            }
+        );
         let events = settlement
             .event::<gsy_ethers_listener::DeliveryVerifiedFilter>()
             .from_block(0u64)
@@ -354,7 +405,26 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
             .unwrap()
             .timestamp
             .as_u64();
-        assert_eq!(trade.status_updated_at, Some(timestamp));
+        let verdict_timestamp = if index == 0 {
+            timestamp
+        } else {
+            let penalties = settlement
+                .event::<gsy_ethers_listener::PenaltyRecordedFilter>()
+                .from_block(0u64)
+                .query_with_meta()
+                .await?;
+            let (_, penalty_meta) = penalties
+                .iter()
+                .find(|(event, _)| event.trade_id == trade_id)
+                .unwrap();
+            client
+                .get_block(penalty_meta.block_hash)
+                .await?
+                .unwrap()
+                .timestamp
+                .as_u64()
+        };
+        assert_eq!(trade.status_updated_at, Some(verdict_timestamp));
         for id in [[index + 1; 16], [index + 11; 16]] {
             assert_eq!(registry.method::<_, u8>("getStatus", id)?.call().await?, 2);
             let order = app
@@ -389,12 +459,35 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
     );
     assert_eq!(client.get_block_number().await?, before_block); // no duplicate transaction
     assert_eq!(
+        run_execution_cycle(
+            &app.address,
+            &endpoint,
+            &address,
+            &private_key,
+            slot,
+            0.1,
+            900
+        )
+        .await?,
+        2
+    );
+    assert_eq!(client.get_block_number().await?, before_block);
+    assert_eq!(app.db_wrapper.trades().get_all_trades().await?, trades);
+    assert_eq!(
         app.db_wrapper
             .trades()
             .filter_trades_by_status_change(0, None, Some(TradeStatus::Executed))
             .await?
             .len(),
-        3
+        1
+    );
+    assert_eq!(
+        app.db_wrapper
+            .trades()
+            .filter_trades_by_status_change(0, None, Some(TradeStatus::Penalized))
+            .await?
+            .len(),
+        2
     );
     listener_task.abort();
     stop_app(app).await;

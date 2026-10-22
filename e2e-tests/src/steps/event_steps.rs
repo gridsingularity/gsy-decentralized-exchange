@@ -7,7 +7,8 @@ use cucumber::{given, then, when};
 use gsy_community_client::time_utils::{get_current_timestamp_in_secs, get_last_and_next_timeslot};
 use primitives::db_api_schema::grid_topology::{FacilitySchema, SiteSchema};
 use primitives::db_api_schema::profiles::MeasurementSchema;
-use primitives::ewds::dto::{EwdsEventEnvelope, EwdsMeasurementDto, EwdsOrderDto};
+use primitives::db_api_schema::trades::TradeStatus;
+use primitives::ewds::dto::{EwdsEventEnvelope, EwdsMeasurementDto, EwdsOrderDto, EwdsTradeDto};
 use primitives::ewds::{EwdsClient, EwdsClientConfig, EwdsEventType};
 use primitives::utils::{bytes16_to_hex, epoch_to_rfc3339, parse_uuid_or_hex_bytes16};
 use std::time::Duration;
@@ -19,6 +20,94 @@ use tokio::{
 use uuid::Uuid;
 
 const EVENT_POLL_ATTEMPTS: usize = 60;
+
+#[derive(Debug)]
+pub struct TradeStatusObserver {
+    worker: JoinHandle<()>,
+    receiver: mpsc::UnboundedReceiver<(EwdsTradeDto, String)>,
+    received: Vec<(EwdsTradeDto, String)>,
+}
+
+impl Drop for TradeStatusObserver {
+    fn drop(&mut self) {
+        self.worker.abort();
+    }
+}
+
+#[given("FOS listens for trade status notifications")]
+async fn observe_trade_statuses(world: &mut MyWorld) {
+    let mut config = EwdsClientConfig::from_env("EWDS_E2E_CLIENT_ID", "gsye2e", 60_000);
+    config.consumer_client_id = format!("gsye2etrades{}", Uuid::new_v4().simple());
+    let client = EwdsClient::new(config);
+    let (sender, receiver) = mpsc::unbounded_channel();
+    let worker = tokio::spawn(async move {
+        client
+            .run_event_worker(EwdsEventType::Trade, |event| {
+                let sender = sender.clone();
+                async move {
+                    for trade in serde_json::from_value::<Vec<EwdsTradeDto>>(event.data)? {
+                        sender.send((trade, event.occurred_at.clone()))?;
+                    }
+                    Ok(())
+                }
+            })
+            .await;
+    });
+    world.trade_status_observer = Some(TradeStatusObserver {
+        worker,
+        receiver,
+        received: vec![],
+    });
+}
+
+#[then(expr = "FOS receives the {word} trade notification")]
+async fn verify_trade_notification(world: &mut MyWorld, status: String) {
+    let status = match status.as_str() {
+        "Matched" => TradeStatus::Matched,
+        "Settled" => TradeStatus::Settled,
+        "Executed" => TradeStatus::Executed,
+        "Penalized" => TradeStatus::Penalized,
+        _ => panic!("Unexpected trade status: {status}"),
+    };
+    let trade = world.last_trade.as_ref().expect("Missing settled trade");
+    let occurred_at = super::lifecycle_steps::trade_status_timestamp(world, trade, &status).await;
+    let mut expected = trade.clone();
+    expected.status = status;
+    let expected = EwdsTradeDto::from(expected);
+    let observer = world
+        .trade_status_observer
+        .as_mut()
+        .expect("FOS is not listening for trades");
+    timeout(Duration::from_secs(180), async {
+        loop {
+            // Background publication can reorder or duplicate notifications. Match by ID/status.
+            if let Some((actual, timestamp)) = observer.received.iter().find(|(trade, _)| {
+                trade.trade_id == expected.trade_id && trade.trade_status == expected.trade_status
+            }) {
+                assert_eq!(
+                    actual, &expected,
+                    "Lifecycle notification changed trade details"
+                );
+                assert_eq!(timestamp, &epoch_to_rfc3339(occurred_at));
+                return;
+            }
+            observer.received.push(
+                observer
+                    .receiver
+                    .recv()
+                    .await
+                    .expect("Trade observer stopped"),
+            );
+        }
+    })
+    .await
+    .unwrap_or_else(|_| {
+        panic!(
+            "Timeout: no {} notification for trade {}",
+            expected.trade_status, expected.trade_id,
+        )
+    });
+}
 
 #[derive(Debug)]
 pub struct OrderStatusObserver {

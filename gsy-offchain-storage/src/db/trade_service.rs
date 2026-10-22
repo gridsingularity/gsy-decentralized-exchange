@@ -120,6 +120,25 @@ impl TradeService {
         Ok(())
     }
 
+    pub async fn mark_penalized(&self, trade_id: &str, block_timestamp: u64) -> Result<()> {
+        self.0.update_one(
+            doc! {"trade_uuid": trade_id, "status": mongodb::bson::to_bson(&TradeStatus::Settled)?},
+            doc! {"$set": {
+                "status": mongodb::bson::to_bson(&TradeStatus::Penalized)?,
+                "status_updated_at": timestamp_bson(block_timestamp)?,
+            }},
+        )
+        .await?;
+        let trade = self.0.find_one(doc! {"trade_uuid": trade_id}).await?;
+        anyhow::ensure!(
+            trade.is_some_and(|trade| trade.status == TradeStatus::Penalized),
+            "Cannot penalize missing or unsettled trade {}",
+            trade_id
+        );
+        Ok(())
+    }
+
+    /// Verification completes the orders but must not replace a trade's penalty verdict.
     pub async fn mark_executed(&self, trade_id: &str, block_timestamp: u64) -> Result<()> {
         self.0.update_one(
             doc! {"trade_uuid": trade_id, "status": mongodb::bson::to_bson(&TradeStatus::Settled)?},
@@ -131,7 +150,10 @@ impl TradeService {
         .await?;
         let trade = self.0.find_one(doc! {"trade_uuid": trade_id}).await?;
         anyhow::ensure!(
-            trade.is_some_and(|trade| trade.status == TradeStatus::Executed),
+            trade.is_some_and(|trade| matches!(
+                trade.status,
+                TradeStatus::Executed | TradeStatus::Penalized
+            )),
             "Cannot complete missing or unsettled trade {}",
             trade_id
         );

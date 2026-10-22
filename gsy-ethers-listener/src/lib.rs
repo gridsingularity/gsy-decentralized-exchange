@@ -15,6 +15,7 @@ abigen!(
         event OrderStatusUpdated(bytes16 indexed orderId, uint8 status)
         event TradeSettled(bytes16 indexed tradeId, bytes16 indexed bidId, bytes16 indexed offerId, bytes16 buyerId, bytes16 sellerId, bytes16 marketId, uint64 timeSlot, bytes16 residualBidId, bytes16 residualOfferId, uint256 energy, uint256 price)
         event DeliveryVerified(bytes16 indexed tradeId, bytes16 indexed bidId, bytes16 indexed offerId)
+        event PenaltyRecorded(bytes16 indexed penalizedActorId, bytes16 indexed marketId, bytes16 indexed tradeId, uint64 penaltyEnergy)
         event MarketStatusUpdated(bytes16 indexed marketId, bool isOpen)
         event MarketClearing(bytes16 indexed marketId, uint8 clearingStatus, uint256 clearingPrice, uint256 totalSupply, uint256 totalDemand, uint256 tradedQuantity, uint32 numTrades)
     ]"#
@@ -54,6 +55,11 @@ pub trait GsyEventHandler: Send + Sync + 'static {
     async fn handle_delivery_verified(
         &self,
         event: DeliveryVerifiedFilter,
+        block_timestamp: u64,
+    ) -> Result<()>;
+    async fn handle_penalty_recorded(
+        &self,
+        event: PenaltyRecordedFilter,
         block_timestamp: u64,
     ) -> Result<()>;
     async fn handle_market_clearing(
@@ -106,6 +112,7 @@ impl<H: GsyEventHandler> GsyEthersListener<H> {
                 OrderCancelledFilter::signature(),
                 TradeSettledFilter::signature(),
                 DeliveryVerifiedFilter::signature(),
+                PenaltyRecordedFilter::signature(),
                 MarketStatusUpdatedFilter::signature(),
                 MarketClearingFilter::signature(),
             ]);
@@ -168,6 +175,22 @@ impl<H: GsyEventHandler> GsyEthersListener<H> {
                     .await
                     {
                         Ok(timestamp) => self.handler.handle_trade_settled(event, timestamp).await,
+                        Err(error) => Err(error),
+                    }
+                }
+                GsyContractsEvents::PenaltyRecordedFilter(event)
+                    if log.address == self.config.trade_settlement_address =>
+                {
+                    match fetch_block_timestamp(
+                        &provider,
+                        LogMeta::from(&log).block_hash,
+                        &mut last_block_timestamp,
+                    )
+                    .await
+                    {
+                        Ok(timestamp) => {
+                            self.handler.handle_penalty_recorded(event, timestamp).await
+                        }
                         Err(error) => Err(error),
                     }
                 }

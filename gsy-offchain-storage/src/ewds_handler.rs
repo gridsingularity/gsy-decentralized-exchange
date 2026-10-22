@@ -1,9 +1,10 @@
 use crate::certificates::query::{guarantees_of_origin, validate_window};
 use crate::db::DatabaseWrapper;
+use crate::ewds_event_handler::EwdsEventPublisher;
 use anyhow::{anyhow, Result};
 use futures::future::join_all;
 use primitives::db_api_schema::profiles::{MeasurementPointType, MeasurementSchema};
-use primitives::db_api_schema::trades::DbTradeSchema;
+use primitives::db_api_schema::trades::{DbTradeSchema, TradeStatus};
 use primitives::ewds::dto::{
     EwdsClearingResultDto, EwdsCommunityDto, EwdsErrorPayload, EwdsInboundMessage, EwdsMarketDto,
     EwdsMeasurementDto, EwdsOrderDto, EwdsRequestEnvelope, EwdsResponseEnvelope,
@@ -491,9 +492,22 @@ pub async fn handle_request(
                     .await;
                 }
             };
-            let trade_ids = trades.iter().map(|trade| trade.trade_uuid.clone()).collect();
+            let trade_ids = trades
+                .iter()
+                .map(|trade| trade.trade_uuid.clone())
+                .collect();
+            let matched_ids: Vec<_> = trades
+                .iter()
+                .filter(|trade| trade.status == TradeStatus::Matched)
+                .map(|trade| trade.trade_uuid.clone())
+                .collect();
             match db.trades().insert_trades(trades).await {
                 Ok(_) => {
+                    if config.enabled {
+                        EwdsEventPublisher::new(config.clone())
+                            .publish_stored_trades(db, &matched_ids)
+                            .await?;
+                    }
                     send_success_response(
                         client,
                         config,

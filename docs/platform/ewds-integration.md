@@ -115,8 +115,11 @@ Each service:
 
 The events channels carry fire-and-forget domain events rather than
 request/reply traffic. When `EWDS_ENABLE_HANDLER` is on, the off-chain storage
-publishes a `trade.event` on `trade` every time it persists a
-trade from an EVM `TradeSettled` event, a `clearingResult.event` on
+publishes a `trade.event` on `trade` after successful Matched registration
+(HTTP or EWDS) and indexing `TradeSettled`, `PenaltyRecorded` or `DeliveryVerified`.
+Replays re-read the stored status instead of reusing the incoming payload.
+A Penalized trade remains Penalized after verification; a penalty-free trade becomes Executed.
+It also publishes a `clearingResult.event` on
 `clearingResult` every time it persists a clearing result from an EVM
 `MarketClearing` event, and a `market.event` on
 `market` for every EVM `MarketStatusUpdated` event. The payload is
@@ -126,7 +129,13 @@ a list of trades, clearing results or market statuses in their `EwdsTradeDto`,
 so one event can carry several of them. The off-chain storage currently sends
 one item per EVM event. Every event gets a random UUID as `eventId`, which is
 also its DDHub `transactionId`. `occurredAt` is an RFC 3339 timestamp: the time
-of the newest item. Market status updates are not persisted, so their
+of the newest item. For trades it uses the status-change block timestamp, or
+the stored match creation time for Matched records, falling back to creation time for legacy
+records without a status timestamp. The trade DTO's `timestamp` is always its
+creation time. Duplicate notifications are possible on replay; publication is
+best effort and background sends can arrive out of order. Consumers should
+compare `occurredAt` and the lifecycle progression, not arrival order.
+Market status updates are not persisted, so their
 `occurredAt` is the time the off-chain storage received the EVM event.
 
 The same channels also carry the events other systems send to GSY; see

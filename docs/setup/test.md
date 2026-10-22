@@ -201,6 +201,13 @@ market type, and delivery slot.
 Features tagged `@ewds`, such as `events.feature`, only run with
 `OFFCHAIN_STORAGE_TRANSPORT=ewds`; HTTP runs skip them.
 
+The lifecycle assertions wait for settlement rather than treating a `Matched`
+record as confirmed. Full delivery ends in `Executed`; a penalized trade stays
+`Penalized` after verification while its consumed orders become `Executed`.
+EWDS event scenarios cover both outcomes, checking `Matched`, `Settled` and the
+final trade notifications, their payloads and lifecycle timestamps without
+assuming notification arrival order.
+
 The contracts command starts the dedicated local Anvil container, deploys the
 upgradeable contract suite, grants service roles, and writes
 `contracts-output/addresses.env`. Keep that Anvil container running while the

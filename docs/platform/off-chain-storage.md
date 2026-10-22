@@ -104,8 +104,8 @@ reconciliation/reindexing, as do other missed lifecycle events.
   (on-chain match settlement confirmed), then `Executed` (delivery verified
   without penalties) or terminal `Penalized` (a delivery penalty recorded).
   `Settled` does not imply a financial payment, and trades cannot be `Rejected`.
-  DD-453 introduces this status contract first; runtime transitions and
-  notifications are being aligned in subsequent increments.
+  The listener indexes `PenaltyRecorded` as terminal `Penalized` and
+  `DeliveryVerified` as `Executed` only for trades without a penalty.
 - `POST /trades`, `/trades-normalized`, and EWDS `trades.import` accept idempotent `matched` imports:
   the same trade ID and match details preserve the stored status and timestamps,
   including when settlement or verification has already been indexed. Conflicting
@@ -113,6 +113,13 @@ reconciliation/reindexing, as do other missed lifecycle events.
   no trade import updates order statuses. The matching engine registers the exact
   encoded matches before submitting them on-chain; only the listener advances
   these records to `Settled` after confirmed settlement.
+- With `EWDS_ENABLE_HANDLER=true`, successful Matched registrations and indexed
+  settlement, penalty and verification events publish persisted snapshots through
+  `trade.event`. Replays can notify again but preserve stored statuses and timestamps.
+  The event's `occurredAt` uses `status_updated_at`, falling back to creation time
+  for legacy records; the trade DTO's `timestamp` remains its RFC 3339 creation time.
+  HTTP and EWDS queries return the same DTO. HTTP-only operation needs no gateway.
+  Notification delivery remains best effort, without a durable outbox or ordering guarantee.
 - Order IDs and market IDs are stored as hex strings (`0x...`).
 - The preferred trading partner of a bid or an offer is stored in its
   requirements (`requirements.trading_partner_id`) as the original off-chain
@@ -132,8 +139,10 @@ reconciliation/reindexing, as do other missed lifecycle events.
   it later does not change its original's status. Settlement does not mark orders
   `Executed`; the later `DeliveryVerified` event does so for that trade and only
   its two consumed orders, including `PartiallyFilled` originals. Residuals are
-  independent. The verification block timestamp is stored on both the trade and
-  consumed orders; replaying that event preserves the first completion timestamp.
+  independent. Consumed orders use the verification block timestamp. A penalty-free
+  trade uses it too; a Penalized trade keeps its first penalty block timestamp.
+  Replays preserve these timestamps. Separately penalized trades remain eligible
+  for verification; the execution engine skips already verified trades on-chain.
   This also makes verified trades available to the status-time/GoO query.
 - Order placement, cancellation and settlement indexing use the event block's
   timestamp for `status_updated_at` (exposed as `updatedAt` in HTTP/EWDS DTOs),
