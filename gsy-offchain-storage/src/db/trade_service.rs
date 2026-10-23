@@ -1,5 +1,5 @@
 use crate::db::DatabaseWrapper;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use futures::StreamExt;
 use mongodb::bson::{doc, Bson};
 use mongodb::options::IndexOptions;
@@ -12,6 +12,22 @@ use std::ops::Deref;
 
 fn timestamp_bson(value: u64) -> Result<Bson> {
     Ok(Bson::Int64(i64::try_from(value)?))
+}
+
+/// Match details must agree when the on-chain confirmation is replayed.
+fn trade_identity_filter(trade: &DbTradeSchema) -> Result<mongodb::bson::Document> {
+    Ok(doc! {
+        "trade_uuid": &trade.trade_uuid,
+        "seller": &trade.seller,
+        "buyer": &trade.buyer,
+        "market_id": &trade.market_id,
+        "offer_hash": &trade.offer_hash,
+        "bid_hash": &trade.bid_hash,
+        "residual_offer_id": mongodb::bson::to_bson(&trade.residual_offer_id)?,
+        "residual_bid_id": mongodb::bson::to_bson(&trade.residual_bid_id)?,
+        "parameters.selected_energy_kWh": trade.parameters.selected_energy_kWh,
+        "parameters.energy_rate": trade.parameters.energy_rate,
+    })
 }
 
 /// Trade indexes per D3.2 section 5.3: `buyer`, `seller`, `market_id` and
@@ -66,6 +82,74 @@ pub async fn init_market_roles(db: &DatabaseWrapper) -> Result<()> {
 pub struct TradeService(pub Collection<DbTradeSchema>);
 
 impl TradeService {
+    /// Index a confirmed settlement without overwriting match details or later statuses.
+    pub async fn record_settlement(
+        &self,
+        mut trade: DbTradeSchema,
+        block_timestamp: u64,
+    ) -> Result<()> {
+        trade.status = TradeStatus::Matched;
+        trade.status_updated_at = Some(block_timestamp);
+        let identity = trade_identity_filter(&trade)?;
+        // A conflicting snapshot cannot match this filter; the unique trade_uuid
+        // index then rejects its insertion instead of replacing the existing trade.
+        self.0
+            .update_one(
+                identity,
+                doc! {"$setOnInsert": mongodb::bson::to_document(&trade)?},
+            )
+            .upsert(true)
+            .await
+            .with_context(|| {
+                format!(
+                    "Failed to index settlement for trade {} with matching details",
+                    trade.trade_uuid
+                )
+            })?;
+
+        Ok(())
+    }
+
+    pub async fn mark_penalized(&self, trade_id: &str, block_timestamp: u64) -> Result<()> {
+        self.0.update_one(
+            doc! {"trade_uuid": trade_id, "status": mongodb::bson::to_bson(&TradeStatus::Matched)?},
+            doc! {"$set": {
+                "status": mongodb::bson::to_bson(&TradeStatus::Penalized)?,
+                "status_updated_at": timestamp_bson(block_timestamp)?,
+            }},
+        )
+        .await?;
+        let trade = self.0.find_one(doc! {"trade_uuid": trade_id}).await?;
+        anyhow::ensure!(
+            trade.is_some_and(|trade| trade.status == TradeStatus::Penalized),
+            "Cannot penalize missing or unconfirmed trade {}",
+            trade_id
+        );
+        Ok(())
+    }
+
+    /// Verification completes the orders but must not replace a trade's penalty verdict.
+    pub async fn mark_executed(&self, trade_id: &str, block_timestamp: u64) -> Result<()> {
+        self.0.update_one(
+            doc! {"trade_uuid": trade_id, "status": mongodb::bson::to_bson(&TradeStatus::Matched)?},
+            doc! {"$set": {
+                "status": mongodb::bson::to_bson(&TradeStatus::Executed)?,
+                "status_updated_at": timestamp_bson(block_timestamp)?,
+            }},
+        )
+        .await?;
+        let trade = self.0.find_one(doc! {"trade_uuid": trade_id}).await?;
+        anyhow::ensure!(
+            trade.is_some_and(|trade| matches!(
+                trade.status,
+                TradeStatus::Executed | TradeStatus::Penalized
+            )),
+            "Cannot complete missing or unconfirmed trade {}",
+            trade_id
+        );
+        Ok(())
+    }
+
     #[tracing::instrument(name = "Fetching trades from database", skip(self))]
     pub async fn get_all_trades(&self) -> Result<Vec<DbTradeSchema>> {
         let cursor = self.0.find(doc! {}).await?;

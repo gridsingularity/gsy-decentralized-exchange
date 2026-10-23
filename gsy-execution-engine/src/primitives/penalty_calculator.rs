@@ -11,9 +11,16 @@ pub struct Penalty {
     pub penalty_cost: u64,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct DeliveryVerification {
+    pub trade_uuid: String,
+    pub buyer_penalty_cost: u64,
+    pub seller_penalty_cost: u64,
+}
+
 /// Computes penalties for each trade based on the measured energy.
 ///
-/// For each trade, the measurement is looked up (by using the area_uuid and market_id from the Bid).
+/// Measurements are mapped from facility owners to the trade's buyer/seller IDs.
 /// The delta is computed as:
 ///   delta = measured_energy - traded_energy
 /// If delta > 0.0, it indicates under-trading for consumption and the buyer is penalized.
@@ -34,18 +41,56 @@ pub fn compute_penalties(
     facility_owner_mapping: &HashMap<String, String>,
     penalty_rate: f64,
 ) -> Vec<Penalty> {
-    let mut penalties = Vec::new();
+    let verifications =
+        compute_delivery_verifications(trades, measurements, facility_owner_mapping, penalty_rate);
+    let trades_by_id: HashMap<_, _> = trades
+        .iter()
+        .map(|trade| (trade.trade_uuid.as_str(), trade))
+        .collect();
+    verifications
+        .into_iter()
+        .flat_map(|verification| {
+            let trade = trades_by_id[verification.trade_uuid.as_str()];
+            [
+                (trade.buyer.clone(), verification.buyer_penalty_cost),
+                (trade.seller.clone(), verification.seller_penalty_cost),
+            ]
+            .into_iter()
+            .filter(|(_, cost)| *cost > 0)
+            .map(|(account, cost)| Penalty {
+                penalized_account: account,
+                market_id: trade.market_id.clone(),
+                trade_uuid: trade.trade_uuid.clone(),
+                penalty_cost: cost,
+            })
+            .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// A missing measurement is not a successful zero-penalty verification.
+/// Retains the existing buyer-first/seller-fallback policy pending a separate policy review.
+pub fn compute_delivery_verifications(
+    trades: &[DbTradeSchema],
+    measurements: &[MeasurementSchema],
+    facility_owner_mapping: &HashMap<String, String>,
+    penalty_rate: f64,
+) -> Vec<DeliveryVerification> {
+    let mut verifications = Vec::new();
 
     // Map each measurement's facility_id to its owner_id and convert that to the
     // on-chain representation used by the trade's buyer/seller fields.
     let mut measurement_map: HashMap<String, f64> = HashMap::new();
     for meas in measurements {
+        if !meas.energy_kwh.is_finite() {
+            continue;
+        }
         let Some(owner_id) = facility_owner_mapping.get(&meas.facility_id) else {
             warn!("No owner mapping for facility_id={}", meas.facility_id);
             continue;
         };
         measurement_map.insert(
-            bytes16_to_hex(create_encrypted_bytes16_from_string(&owner_id.clone())),
+            bytes16_to_hex(create_encrypted_bytes16_from_string(owner_id)),
             meas.energy_kwh,
         );
     }
@@ -60,36 +105,14 @@ pub fn compute_penalties(
             // Compute delta = measured_energy - traded_energy.
             let delta = measured_energy - traded_energy;
 
-            if delta > 0.0 {
-                // This is a consumption trade: measured energy exceeds traded energy.
-                // Penalize the buyer.
-
-                let raw_penalty = delta * penalty_rate;
-
-                // Scale and convert to u64: apply a scaling factor of 10,000.
-                let penalty_cost = (raw_penalty * 10_000.0).round() as u64;
-
-                penalties.push(Penalty {
-                    penalized_account: trade.buyer.clone(),
-                    market_id: trade.market_id.clone(),
-                    trade_uuid: trade.trade_uuid.clone(),
-                    penalty_cost,
-                });
-            } else if delta < 0.0 {
-                // This is a production trade: measured energy is less than traded energy.
-                // Penalize the seller.
-                let raw_penalty = (-delta) * penalty_rate;
-                let penalty_cost = (raw_penalty * 10_000.0).round() as u64;
-
-                penalties.push(Penalty {
-                    penalized_account: trade.seller.clone(),
-                    market_id: trade.market_id.clone(),
-                    trade_uuid: trade.trade_uuid.clone(),
-                    penalty_cost,
-                });
-            }
+            let penalty_cost = (delta.abs() * penalty_rate * 10_000.0).round() as u64;
+            verifications.push(DeliveryVerification {
+                trade_uuid: trade.trade_uuid.clone(),
+                buyer_penalty_cost: if delta > 0.0 { penalty_cost } else { 0 },
+                seller_penalty_cost: if delta < 0.0 { penalty_cost } else { 0 },
+            });
         }
     }
 
-    penalties
+    verifications
 }

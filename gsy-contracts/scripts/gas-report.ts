@@ -49,6 +49,10 @@ function parseSettleBatchSizes(): number[] {
   return [...new Set(sizes)].sort((left, right) => left - right);
 }
 
+// MarketController.MarketType.Spot and MatchingAlgorithm.PayAsBid.
+const MARKET_TYPE_SPOT = 0;
+const MATCHING_ALGORITHM_PAY_AS_BID = 0;
+
 // Matches primitives::db_api_schema::trades::ClearingStatus::Final.to_evm().
 const CLEARING_STATUS_FINAL = 1;
 
@@ -516,23 +520,65 @@ async function main() {
     "Uses a benchmark delegate distinct from the order signer.",
   );
 
-  await recordTx(
-    "Mutating calls",
-    "setMarketStatus(bytes16,true)",
-    "MarketController",
-    marketControllerContract.setMarketStatus(marketId, true),
+  // Open now: the order placements below need an open market.
+  const newMarket = (id: string, marketType: number) => ({
+    marketId: id,
+    communityId: bytes16Id("gas:community"),
+    openingTime: timeSlot - 3600,
+    closingTime: timeSlot,
+    deliveryStartTime: timeSlot,
+    deliveryEndTime: timeSlot + 900,
+    marketType,
+    matchingAlgorithm: MATCHING_ALGORITHM_PAY_AS_BID,
+  });
+  const batchMarketIds = [0, 1, 2].map((index) =>
+    bytes16Id(`gas:batch-market-${index}`),
   );
   await recordTx(
     "Mutating calls",
-    "setMarketStatus(bytes16,false)",
+    "createMarkets(1 market)",
     "MarketController",
-    marketControllerContract.setMarketStatus(marketId, false),
+    marketControllerContract.createMarkets([
+      newMarket(marketId, MARKET_TYPE_SPOT),
+    ]),
   );
   await recordTx(
     "Mutating calls",
-    "setMarketStatus(bytes16,true) reopen",
+    "createMarkets(3 markets)",
     "MarketController",
-    marketControllerContract.setMarketStatus(marketId, true),
+    marketControllerContract.createMarkets(
+      batchMarketIds.map((id, marketType) => newMarket(id, marketType)),
+    ),
+    "One community's spot, flex and settlement markets for one delivery slot.",
+  );
+  await recordTx(
+    "Mutating calls",
+    "createMarkets(3 markets, all existing)",
+    "MarketController",
+    marketControllerContract.createMarkets(
+      batchMarketIds.map((id, marketType) => newMarket(id, marketType)),
+    ),
+    "Existing markets are skipped; the cost of resending a window.",
+  );
+  const resendMarketIds = Array.from({ length: 50 }, (_, index) =>
+    bytes16Id(`gas:resend-market-${index}`),
+  );
+  await recordTx(
+    "Mutating calls",
+    "createMarkets(50 markets)",
+    "MarketController",
+    marketControllerContract.createMarkets(
+      resendMarketIds.map((id) => newMarket(id, MARKET_TYPE_SPOT)),
+    ),
+  );
+  await recordTx(
+    "Mutating calls",
+    "createMarkets(50 markets, all existing)",
+    "MarketController",
+    marketControllerContract.createMarkets(
+      resendMarketIds.map((id) => newMarket(id, MARKET_TYPE_SPOT)),
+    ),
+    "Existing markets are skipped; the cost of resending a window.",
   );
 
   const bidOrder = {
@@ -767,6 +813,68 @@ async function main() {
     ]),
   );
 
+  // Use fresh trades so verification measures real state changes, not retries.
+  for (const sellerPenaltyEnergy of [0, 12_345]) {
+    const label = sellerPenaltyEnergy === 0 ? "zero penalties" : "seller penalty";
+    const verificationTradeId = bytes16Id(`gas:verification:${label}:trade`);
+    const bid = {
+      ...bidOrder,
+      orderId: bytes16Id(`gas:verification:${label}:bid`),
+    };
+    const offer = {
+      ...offerOrder,
+      orderId: bytes16Id(`gas:verification:${label}:offer`),
+    };
+    for (const order of [bid, offer]) {
+      await recordTx(
+        "Mutating calls",
+        `placeOrder(OrderParams) verification ${label} ${order.isBid ? "bid" : "offer"}`,
+        "OrderRegistry",
+        orderRegistryContract.placeOrder(order),
+        "Prerequisite for delivery verification gas benchmark.",
+      );
+    }
+    const match = buildMatch(
+      verificationTradeId,
+      bid,
+      offer,
+      bytes16Id(`gas:verification:${label}:residual-offer`),
+    );
+    await recordTx(
+      "Mutating calls",
+      `settleBatch(Match[1]) verification ${label}`,
+      "TradeSettlement",
+      tradeSettlementContract.settleBatch([
+        {
+          matches: [match],
+          clearingResult: {
+            marketId,
+            clearingStatus: CLEARING_STATUS_FINAL,
+            clearingPrice: match.clearingPrice,
+            totalSupply: 0,
+            totalDemand: 0,
+            tradedQuantity: match.selectedEnergy,
+            numTrades: 1,
+          },
+        },
+      ]),
+      "Prerequisite for delivery verification gas benchmark.",
+    );
+    await recordTx(
+      "Mutating calls",
+      `completeDeliveryVerification(DeliveryVerification[1]) ${label}`,
+      "TradeSettlement",
+      tradeSettlementContract.completeDeliveryVerification([
+        {
+          tradeId: verificationTradeId,
+          buyerPenaltyEnergy: 0,
+          sellerPenaltyEnergy,
+        },
+      ]),
+      "Fresh settled trade with no existing trade penalties; prerequisite gas is reported separately.",
+    );
+  }
+
   await recordEstimate(
     "View estimates",
     "isAuthorized(bytes16,address)",
@@ -787,6 +895,12 @@ async function main() {
     "isMarketOpen(bytes16)",
     "MarketController",
     marketControllerContract.isMarketOpen.estimateGas(marketId),
+  );
+  await recordEstimate(
+    "View estimates",
+    "marketsExist(3 markets)",
+    "MarketController",
+    marketControllerContract.marketsExist.estimateGas(batchMarketIds),
   );
   await recordEstimate(
     "View estimates",

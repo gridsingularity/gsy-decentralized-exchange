@@ -10,7 +10,7 @@
     "occurredAt": { "type": "string", "format": "date-time" },
     "data": {
       "type": "array",
-      "items": { "$ref": "./int.market-status.schema.v1.json" },
+      "items": { "$ref": "./int.market.schema.v1.json" },
       "minItems": 1
     }
   },

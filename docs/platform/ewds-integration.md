@@ -27,7 +27,7 @@ Related participant service:
 ### On-chain Plane
 
 - `anvil` (or target EVM) hosts contracts.
-- `gsy-market-orchestrator` opens/closes markets.
+- `gsy-market-orchestrator` creates markets on-chain.
 - `gsy-community-client` publishes orders.
 - `gsy-matching-engine` settles matched trades.
 - `gsy-execution-engine` submits penalties.
@@ -38,7 +38,8 @@ Related participant service:
 - `gsy-market-orchestrator` fetches communities before each scheduling tick.
 - `gsy-matching-engine` polls `/orders`.
 - `gsy-execution-engine` polls `/trades`, `/measurement-points`, and `/timeseries`.
-- `gsy-community-client` writes to `/measurement-points`, `/timeseries`, and `/markets`.
+- `gsy-community-client` writes to `/measurement-points` and `/timeseries`.
+  Markets reach off-chain storage only through `NewMarketCreated`.
 
 ## Existing Endpoint Inventory and Callers
 
@@ -48,7 +49,7 @@ Provider: `gsy-offchain-storage` (`gsy-offchain-storage/src/startup.rs`)
 |---|---|---|---|
 | `/health_check` | `GET` | compose healthcheck, tests | `http://gsy-offchain-storage:8080` |
 | `/orders` | `GET` | matching engine, e2e tests | `http://gsy-offchain-storage:8080/orders` |
-| `/orders` | `POST` | e2e tests/internal tooling | `http://gsy-offchain-storage:8080/orders` |
+| `/orders`, `/orders-normalized` | `POST` | API integration tests/manual tooling; not used by E2E scenarios or production order lifecycle | `http://gsy-offchain-storage:8080` |
 | `/trades` | `GET` | execution engine, e2e tests | `http://gsy-offchain-storage:8080/trades` |
 | `/trades` | `POST` | e2e tests/internal tooling | `http://gsy-offchain-storage:8080/trades` |
 | `/communities` | `GET/POST` | market orchestrator, pilot sites, e2e tests | `http://gsy-offchain-storage:8080/communities` |
@@ -87,14 +88,14 @@ Each service:
 | `trades.query` over `tradesQuery` / `tradesQueryResponse` | execution engine | off-chain storage service | off-chain storage service | execution engine | `GET /trades` |
 | `measurements.query` over `measurementsQuery` / `measurementsQueryResponse` | execution engine | off-chain storage service | off-chain storage service | execution engine | `GET /measurement-points` + `GET /timeseries` |
 | `clearing_results.query` over `clearingResultsQuery` / `clearingResultsQueryResponse` | matching/execution engine | off-chain storage service | off-chain storage service | requester | `GET /clearing-results` |
-| `markets.query` over `marketsQuery` / `marketsQueryResponse` | community client | off-chain storage service | off-chain storage service | community client | `GET /markets` |
+| `markets.query` over `marketsQuery` / `marketsQueryResponse` | community client or e2e runner | off-chain storage service | off-chain storage service | requester | `GET /markets` |
 | `ids.query` over `idsQuery` / `idsQueryResponse` | requester service | off-chain storage service | off-chain storage service | requester | `POST /ids` (get-or-create) |
 | `community.event` over `community` | other systems or e2e runner | off-chain storage service | none | none | `POST /communities` |
 | `order.event` over `order` | FOS or e2e runner | community client | none | none | none (the community client calls `OrderRegistry.placeOrder`) |
 | `communities.query` over `communitiesQuery` / `communitiesQueryResponse` | market orchestrator | off-chain storage service | off-chain storage service | market orchestrator | `GET /communities` |
 | `forecasts.upsert` | community client | off-chain storage service | none | none | `POST /measurement-points` + `POST /timeseries` |
 | `measurements.upsert` | community client | off-chain storage service | none | none | `POST /measurement-points` + `POST /timeseries` |
-| `market.upsert` | community client | off-chain storage service | none | none | `POST /markets` |
+| `market.upsert` | manual use only (markets are indexed from `NewMarketCreated`) | off-chain storage service | none | none | `POST /markets` |
 
 > Note: the `*.query` operations above are implemented in the current responder
 > (`EwdsOperation` variants `OrdersQuery`, `TradesQuery`, `MeasurementsQuery`,
@@ -114,19 +115,34 @@ Each service:
 
 The events channels carry fire-and-forget domain events rather than
 request/reply traffic. When `EWDS_ENABLE_HANDLER` is on, the off-chain storage
-publishes a `trade.event` on `trade` every time it persists a
-trade from an EVM `TradeSettled` event, a `clearingResult.event` on
+publishes a `trade.event` on `trade` after indexing `TradeSettled`,
+`PenaltyRecorded` or `DeliveryVerified`. `TradeSettled` creates a `Matched` trade;
+no pre-confirmation trade records or notifications are generated. `Settled` is
+reserved for financial settlement by the partner's future billing integration.
+Replays re-read the stored status instead of reusing the incoming payload.
+A Penalized trade remains Penalized after verification; a penalty-free trade becomes Executed.
+It also publishes a `clearingResult.event` on
 `clearingResult` every time it persists a clearing result from an EVM
-`MarketClearing` event, and a `market.event` on
-`market` for every EVM `MarketStatusUpdated` event. The payload is
+`MarketClearing` event, and a `market.event` on `market` every time it persists
+a market from an EVM `NewMarketCreated` event. The payload is
 an event envelope (`eventId`, `eventType`, `occurredAt`, `data`) whose `data` is
-a list of trades, clearing results or market statuses in their `EwdsTradeDto`,
-`EwdsClearingResultDto` or `EwdsMarketStatusDto` (`marketId`, `isOpen`) form,
-so one event can carry several of them. The off-chain storage currently sends
-one item per EVM event. Every event gets a random UUID as `eventId`, which is
-also its DDHub `transactionId`. `occurredAt` is an RFC 3339 timestamp: the time
-of the newest item. Market status updates are not persisted, so their
-`occurredAt` is the time the off-chain storage received the EVM event.
+a list of trades, clearing results or markets in their `EwdsTradeDto`,
+`EwdsClearingResultDto` or `EwdsMarketDto` form, so one event can carry several
+of them. Markets have the same form as in the `markets.query` response and
+follow `int.market.schema.v1.json`: UUID `marketId` and `communityId`, RFC 3339
+times, `marketType` `spot`, `flex` or `settlement` and `matchingAlgorithm`
+`pay_as_bid`, `pay_as_clear` or `amm`. The `marketId` is the same 16 bytes as the
+`0x…` market ID in `trade.event` and orders, formatted as a UUID. The market
+carries its opening and closing times, so consumers derive whether it is open
+from them. The off-chain storage currently sends one item per EVM event. Every
+event gets a random UUID as `eventId`, which is also its DDHub `transactionId`.
+`occurredAt` is an RFC 3339 timestamp: the time of the newest item, for a
+market its on-chain `createdAt`. For trades it uses the status-change block
+timestamp, falling back to creation time for legacy records without a status timestamp.
+The trade DTO's `timestamp` is always its creation time. Duplicate notifications are possible
+on replay; publication is best effort and background sends can arrive out of
+order. Consumers should compare `occurredAt` and the lifecycle progression,
+not arrival order.
 
 The same channels also carry the events other systems send to GSY; see
 [Inbound Events](#inbound-events).
@@ -261,22 +277,25 @@ returns (`int.order.event.v1.json`):
 | `orderStatus` | Must be `submitted`. |
 | `quantity` | Greater than 0, in kWh. |
 | `priceLimit` | 0 or more, in EUR/kWh. |
-| `preferredTradingPartner` | The partner's off-chain ID, resolved like `createdBy`. A requirement for bids and an attribute for offers. |
+| `preferredTradingPartner` | The partner's off-chain ID, resolved like `createdBy`. Stored in requirements for both bids and offers. |
 | `updatedAt`, `rejectReason` | Ignored. |
 
 Handling rules:
 
 - One invalid order rejects the whole event before anything is sent: parsing,
   the rules above and resolving the IDs all have to pass.
-- The orders are then sent one at a time. The community client doesn't wait
-  for the transactions to be mined:
+- The orders are then sent one at a time. The community client waits for
+  each mined receipt and requires status `1` before confirming placement:
   - An order whose ID is already on-chain (`getStatus`) is skipped.
   - An order the contract would reject (`MarketClosed`, `Unauthorized`,
     `InvalidOrderParams`, `OrderAlreadyExists`) is caught when the node
     estimates gas. It is logged with `eventId`, `orderId` and the reason and
     not sent, and the remaining orders are still sent.
   - A revert that only happens in the mined transaction, e.g. because the
-    market closed in between, is not noticed.
+    market closed in between, is also logged as a rejection. If the order
+    was already placed by an earlier transaction, it is skipped instead.
+  - Missing receipts or receipt status, and RPC failures, are unknown
+    outcomes, not rejections, and follow the existing transport retry path.
   - Transport errors are tried up to three times in a row. If an order still
     can't be sent, the event fails after the other orders were sent, and the
     community client retries it like the off-chain storage retries its events
@@ -287,11 +306,59 @@ Handling rules:
 - Resending an event, even under a new `eventId`, doesn't place an order
   twice. A resend while the first transaction is still pending sends the
   order again, but that duplicate reverts with `OrderAlreadyExists`.
-- FOS gets no feedback on rejected orders. It sees placed orders through
-  `orders.query` and their trades through `trade.event`.
+- Definite contract rejections are reported through `orderStatus.event`.
+  FOS sees placed orders through `orders.query` and `orderStatus.event`, and
+  their trades through `trade.event`.
 - `placeOrder` only accepts an order if the community client's wallet is
   authorized for the actor in the `ActorRegistry`. Registering it is up to
   whoever publishes the orders.
+
+##### Order Status Notification Contract
+
+The same `order` topic (`EWDS_ORDER_EVENT_TOPIC`, `orderTest` in E2E) also
+accepts `orderStatus.event`. Both event types use the existing envelope and
+a list of `EwdsOrderDto` records; no additional topic or direction field is
+needed. Consumers must dispatch by `eventType`, not `orderStatus`:
+
+- `order.event`: FOS submits orders; the community client processes them.
+- `orderStatus.event`: DEX reports statuses to FOS; the community client
+  ignores these messages, including notifications with status `submitted`.
+
+Off-chain storage publishes confirmed `submitted`, `partially_filled`, `filled`,
+`cancelled`, `expired` and `executed` snapshots after the listener's database
+writes succeed. `updatedAt` carries the persisted status-change timestamp;
+`occurredAt` is the latest such timestamp in the batch. A residual is a separate
+`submitted` order, not an update to the consumed order. Market closure notifies
+only orders newly expired in that market. HTTP POST endpoints do not emit these
+notifications. Publication uses the existing `EWDS_ENABLE_HANDLER` gate, so
+HTTP-only operation with the handler disabled remains local.
+
+The existing background publisher retries gateway failures but has no durable
+outbox or delivery-order guarantee. Replayed listener events may notify again;
+consumers must tolerate duplicates and must not assume arrival order. Query
+`orders.query` when reconciling the current state of stored orders.
+
+The community client reports a contract rejection during gas estimation or a
+failed mined receipt as `rejected`, with `rejectReason`. It preserves the
+original submission's IDs and fields; `updatedAt` and `occurredAt` identify when
+the rejection was observed. It does not create a rejected database order.
+Successful placements and `OrderAlreadyExists` produce no rejection; transport
+failures or unknown transaction outcomes remain retryable, not rejected.
+Rejection publication uses the existing EWDS send retries, capped at 60 seconds
+including an unresponsive gateway. A final publication failure is logged, but
+does not itself cause order placement to be retried or prevent the remaining
+orders in the batch from being processed.
+There is no durable rejection outbox, so delivery is best effort.
+
+Validation-error notifications are outside DD-423: malformed submissions
+may lack the fields needed for a valid order-status snapshot. They retain the
+existing batch validation and retry/drop behavior, with errors logged but no
+rejection messages. A separate message-format decision is needed to report them.
+
+FOS must use its own consumer client ID, distinct from the community client.
+Consumers sharing a topic must not share a polling cursor. Before enabling
+publication, update the configured order topic's schema to the expanded
+`int.order.event.v1.json`, which accepts both event types.
 
 ### Query Payload Fields
 
@@ -302,6 +369,7 @@ Each `*.query` request payload accepts both snake_case and camelCase keys (via s
 | `orders.query` | `market_id`/`marketId`, `start_time`/`startTime`, `end_time`/`endTime` |
 | `trades.query` | `market_id`/`marketId`, `start_time`/`startTime`, `end_time`/`endTime` (`market_id` alone is enough and takes precedence over the time range; without it, both `start_time` and `end_time` are required, span at most 1 day, and match the market `delivery_start_time`) |
 | `measurements.query` | `start_time`/`startTime`, `end_time`/`endTime`, `facility_id`/`areaUuid` (filters after fetch) |
+| `markets.query` | `market_id`/`marketId` (UUID or `0x…` hex), `community_id`/`communityId`, `start_time`/`startTime`, `end_time`/`endTime` (RFC 3339, match the market `opening_time`) |
 | `ids.query` | `offchain_id`/`offchainId` (required) |
 
 ## DDHub API Surface Used by Integration
@@ -422,8 +490,8 @@ Validator requirements:
 - Fetch all communities before every scheduling tick through HTTP
   `/communities` or EWDS `communities.query`.
 - Derive each market ID from community UUID, market type, and delivery slot.
-- Open and close the community/market-type permutations through batched contract
-  calls.
+- Create the community/market-type markets before they open through batched
+  `createMarkets` calls, after checking `marketsExist` on-chain in batches.
 - Runtime switch via `OFFCHAIN_STORAGE_TRANSPORT=http|ewds`.
 
 ## Docker and Local Testing Integration
@@ -451,7 +519,8 @@ Channel/topic setup notes:
   `communityTest` and `orderTest` for e2e runs. `scripts/ewds_channel_topic_handler.sh`
   creates all topics and attaches them to the channels.
 - Required topics: `ordersQuery`, `ordersQueryResponse`, `tradesQuery`,
-  `tradesQueryResponse`, `measurementsQuery`, `measurementsQueryResponse`,
+  `tradesQueryResponse`,
+  `measurementsQuery`, `measurementsQueryResponse`,
   `communitiesQuery`, and
   `communitiesQueryResponse`.
 - Topic creation requires `topiccreator`; channel creation requires gateway admin access.

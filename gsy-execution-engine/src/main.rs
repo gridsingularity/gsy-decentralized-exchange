@@ -37,7 +37,7 @@ async fn main() {
 
             if trade_settlement_address == "0x0000000000000000000000000000000000000000" {
                 info!(
-                    "TRADE_SETTLEMENT_ADDRESS is zero; penalty submissions will fail until configured."
+                    "TRADE_SETTLEMENT_ADDRESS is zero; delivery verification will fail until configured."
                 );
             }
             info!("Using off-chain storage URL: {}", offchain_url);
@@ -66,8 +66,8 @@ async fn main() {
                 )
                 .await
                 {
-                    Ok(processed_penalties) => {
-                        timeslot_scheduler.record_cycle(timeslot, processed_penalties);
+                    Ok(verified_trades) => {
+                        timeslot_scheduler.record_cycle(timeslot, verified_trades);
                     }
                     Err(e) => {
                         error!("Cycle failed for {}: {:?}", timeslot, e);

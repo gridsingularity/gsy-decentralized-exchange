@@ -108,9 +108,23 @@ Purpose:
 
 Purpose:
 
-- Stores market open/closed state keyed by `marketId`.
-- Exposes `setMarketStatus(bytes16,bool)` and `isMarketOpen(bytes16)`.
-- Restricts updates to `ORCHESTRATOR_ROLE`.
+- Stores one record per `marketId` that mirrors the off-chain `MarketSchema`:
+  community ID, opening/closing time, delivery start/end, market type,
+  matching algorithm and `createdAt` (block timestamp; `0` means missing).
+- `createMarkets(NewMarket[])` (`ORCHESTRATOR_ROLE` only) stores new markets
+  and emits `NewMarketCreated` with every field. Existing markets are skipped
+  without an event. `InvalidMarket` is raised for a zero market or community
+  ID, `closingTime <= openingTime` or `deliveryEndTime <= deliveryStartTime`;
+  one invalid entry reverts the whole batch.
+- There is no open/closed flag and no update function: `isMarketOpen(bytes16)`
+  is true while `openingTime <= block.timestamp < closingTime`.
+- Views: `marketsExist(bytes16[])` (existence of many markets in one call,
+  used by the orchestrator) and `isMarketOpen(bytes16)` (used by
+  `OrderRegistry`). The full record is read from `NewMarketCreated` or from
+  off-chain storage; there is no record getter.
+- Enum values: `MarketType` `Spot=0, Flex=1, Settlement=2`;
+  `MatchingAlgorithm` `PayAsBid=0, PayAsClear=1, Amm=2` (same order as
+  `primitives`).
 
 ### `OrderRegistry`
 
@@ -126,15 +140,42 @@ Purpose:
 - Emits `OrderCancelled` and `OrderStatusUpdated` lifecycle events.
 - `settleOrder` consumes an open order and registers any residual atomically,
   copying stored metadata and reducing only its energy. It requires `SETTLEMENT_ROLE`.
+- Both `getStatus` and `orderStatus` derive `Expired` for an open order once its
+  market closes. This includes residuals. Settlement and cancellation reject
+  these orders; consumed statuses remain unchanged. Market windows are immutable,
+  so recreating an existing market ID cannot reactivate expired orders.
+- Expiry requires no per-order transaction or `OrderStatusUpdated` event. Storage
+  derives it from confirmed block timestamps and the indexed `NewMarketCreated`
+  closing time, after indexing the block's contract events.
+
+DD-439 replaces the old boolean market mapping with full market records. This is
+not a storage-compatible upgrade of the old `MarketController`. Use a fresh,
+coordinated deployment and matching contract addresses for all services, and
+rebuild the corresponding off-chain market projection. Do not upgrade an existing
+boolean-mapping deployment in place without a separately designed migration.
 
 ### `TradeSettlement`
 
 Purpose:
 
 - Validates and settles matched trades (`settleBatch`).
-- Updates order statuses to executed.
+- Marks consumed orders `Filled` or `PartiallyFilled` and registers residuals as
+  separate `Open` orders. Existing status enum values are preserved; the appended
+  values are `PartiallyFilled = 5` and `Filled = 6`.
 - Emits all settlement data needed by off-chain storage to create a Trade object.
 - Records penalties via `submitPenalties`.
+- Stores the consumed order IDs for each new settlement; trade IDs cannot be reused.
+- Accepts idempotent `completeDeliveryVerification` batches from
+  `EXECUTION_ENGINE_ROLE`. Penalties and `Executed` order statuses are recorded
+  in the same transaction, followed by `DeliveryVerified(tradeId,bidId,offerId)`.
+  It trusts the engine's off-chain measurement verdict; no meter data is verified
+  inside the contract. Residual orders are not completed by their parent's verdict.
+
+Verification storage is appended without changing existing proxy slots. Upgrade
+`OrderRegistry` before `TradeSettlement`, then deploy the updated execution engine
+and listener. Trades settled before this upgrade have no stored order-ID linkage
+and cannot use the new completion call without a separate audited migration.
+No historical records or verdicts are fabricated/backfilled automatically.
 
 `TradeSettlement` does not move funds. Billing and payment are handled by external services.
 
@@ -198,9 +239,10 @@ Deployment script assigns:
 - Each partially filled order has a fresh, non-zero residual ID; a fully filled
   order has no residual. Residual quantity and metadata come from the registry.
 
-If checks pass, settlement marks the consumed orders executed, emits
-`OrderPlaced` for their residuals, and emits `TradeSettled`. Later matches may
-consume those residuals within the same batch or a subsequent transaction.
+If checks pass, settlement marks consumed orders `Filled`/`PartiallyFilled` and
+emits `OrderPlaced` for their residuals and `TradeSettled` for the trade.
+`Executed` is reserved for subsequent delivery verification. Later matches may
+consume residuals within the same batch or a subsequent transaction.
 An invalid match reverts the entire batch, including residual creation.
 
 The operator supplies the match type. These checks validate the claimed layer's
@@ -212,5 +254,9 @@ rules, not global preference priority or optimal matching across the order book.
 
 - `penaltyEnergyByTrade[tradeId]`
 - `penaltyEnergyByActor[actorId]`
+- `penaltyEnergyByTradeAndActor[tradeId][actorId]`
 
-Off-chain execution logic checks existing on-chain penalty values to skip already submitted trades.
+The legacy penalty call remains available but cannot add penalties to verified
+trades. The execution engine now uses atomic verification instead. Verification
+reuses an exactly matching per-actor penalty, rejects conflicting totals, and
+never records penalties twice for a repeated verdict.

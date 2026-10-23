@@ -12,9 +12,11 @@ info:
       * §5.3 Trades and Market Storage
       * §5.4 Order Book Storage
 
-    The SCALE-encoded ingress endpoints used by the GSY node (`POST /orders`
-    and `POST /trades` for byte payloads) are intentionally omitted; consumers
-    that hand-craft payloads should use the `*-normalized` variants.
+    `POST /orders` and `POST /orders-normalized` accept the same EWDS JSON
+    order payload and directly upsert database records. They are not used by
+    the E2E scenarios or production order lifecycle, which submits orders
+    on-chain and indexes the resulting events. Their access policy remains
+    to be clarified. Trade insertion endpoints do not update referenced orders.
   license:
     name: GPL-3.0-or-later
 servers:
@@ -157,7 +159,9 @@ paths:
   /trades-normalized:
     post:
       tags: [Trades & Market]
-      summary: Insert trades using the DEX-side normalized schema.
+      summary: Import trades (alias of POST /trades).
+      description: |
+        Imports are insert-only and do not update orders or publish lifecycle notifications.
       requestBody:
         required: true
         content:
@@ -175,12 +179,45 @@ paths:
                 $ref: "#/components/schemas/InsertedIds"
         "500":
           $ref: "#/components/responses/InternalError"
+        "400":
+          description: Invalid trade payload or unsupported trade status.
 
   /trades:
+    post:
+      tags: [Trades & Market]
+      summary: Import trades using EWDS JSON.
+      description: |
+        Imports are insert-only and do not update orders or publish lifecycle notifications.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: "#/components/schemas/EwdsTradeDto"
+      responses:
+        "200":
+          description: Inserted trade IDs.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InsertedIds"
+        "400":
+          description: Invalid trade payload or unsupported trade status.
+        "500":
+          $ref: "#/components/responses/InternalError"
     get:
       tags: [Trades & Market]
-      summary: List trades, optionally filtered by time window.
+      summary: List trade snapshots for a market or delivery time window.
+      description: |
+        Returns all lifecycle statuses using the same DTO as EWDS trades.query.
+        Supply market_id or both start_time and end_time (at most one day).
+        Time ranges filter market delivery start times, not status-change timestamps.
       parameters:
+        - in: query
+          name: market_id
+          schema: { type: string }
         - { $ref: "#/components/parameters/StartTimeQuery" }
         - { $ref: "#/components/parameters/EndTimeQuery" }
       responses:
@@ -194,6 +231,8 @@ paths:
                   $ref: "#/components/schemas/EwdsTradeDto"
         "500":
           $ref: "#/components/responses/InternalError"
+        "400":
+          description: Missing or invalid query range.
 
   /market:
     post:
@@ -686,8 +725,8 @@ components:
 
     OrderStatus:
       type: string
-      enum: [Open, Executed, Expired, Deleted]
-      default: Open
+      enum: [submitted, partially_filled, filled, cancelled, expired, rejected, executed]
+      default: submitted
 
     EnergyType:
       type: string
@@ -802,12 +841,18 @@ components:
 
     TradeStatus:
       type: string
-      enum: [matched, executed, settled, rejected]
+      description: |
+        matched: the match was confirmed on-chain and indexed by the listener.
+        settled: financial settlement complete; transition awaits the partner billing integration.
+        executed: delivery verification completed without penalties.
+        penalized: a delivery penalty was recorded; this status is terminal.
+      enum: [matched, executed, settled, penalized]
 
     EwdsTradeDto:
       description: |
         EWDS-side trade DTO. Field names are camelCase on the wire.
-        `timestamp` is a Unix epoch integer and carries the trade time slot.
+        `timestamp` is the RFC 3339 creation time, unchanged by lifecycle updates.
+        Trade notifications carry the status-change time in the envelope's `occurredAt`.
       type: object
       required:
         - tradeId
@@ -836,7 +881,7 @@ components:
         tradeStatus: { $ref: "#/components/schemas/TradeStatus" }
         tradeQuantity: { type: number, format: double }
         tradePrice: { type: number, format: double }
-        timestamp: { type: integer, format: int64, minimum: 0 }
+        timestamp: { type: string, format: date-time }
 
     ClearingStatus:
       type: string

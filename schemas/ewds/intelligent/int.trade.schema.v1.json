@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://intelligent-project.eu/ontology/v1.0.0/market/Trade",
   "title": "int:Trade",
-  "description": "A matched and settled energy trade between a buyer and a seller. Subclass of cim:MarketDocument. Mirrors the Rust EwdsTradeDto (camelCase wire form; epoch-integer timestamp).",
+  "description": "An energy trade between a buyer and a seller, from matching through delivery verification. Subclass of cim:MarketDocument. Mirrors the Rust EwdsTradeDto (camelCase wire form; RFC 3339 creation timestamp).",
   "type": "object",
   "properties": {
     "tradeId": {
@@ -46,13 +46,13 @@
       "default": null
     },
     "tradeStatus": {
-      "description": "Trade lifecycle status. IRI: int:tradeStatus.",
+      "description": "Trade lifecycle status: matched when confirmed on-chain, executed after verification without penalties, settled after financial settlement (not yet implemented), or terminal penalized after a delivery penalty. IRI: int:tradeStatus.",
       "type": "string",
       "enum": [
         "matched",
         "executed",
         "settled",
-        "rejected"
+        "penalized"
       ]
     },
     "tradeQuantity": {
@@ -65,7 +65,7 @@
       "type": "number"
     },
     "timestamp": {
-      "description": "Trade time slot / creation timestamp. IRI: int:tradedAt. RFC 3339.",
+      "description": "Trade creation timestamp, unchanged by status updates. IRI: int:tradedAt. RFC 3339. Lifecycle notifications carry the status-change time in the event envelope's occurredAt.",
       "type": "string",
       "format": "date-time"
     }

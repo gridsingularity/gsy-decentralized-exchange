@@ -1,12 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "int.order.event.v1",
-  "title": "order event",
+  "title": "order submission or status event",
+  "description": "Shared order topic: order.event submits orders to GSY; orderStatus.event reports DEX lifecycle statuses to FOS and must never trigger order submission.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
     "eventId": { "type": "string", "minLength": 1 },
-    "eventType": { "const": "order.event" },
+    "eventType": { "enum": ["order.event", "orderStatus.event"] },
     "occurredAt": { "type": "string", "format": "date-time" },
     "data": {
       "type": "array",

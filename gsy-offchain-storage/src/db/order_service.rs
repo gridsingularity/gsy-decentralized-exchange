@@ -214,11 +214,18 @@ impl OrderService {
         &self,
         id: &Bson,
         status: OrderStatus,
+        status_updated_at: u64,
     ) -> Result<UpdateResult> {
         let filter = build_order_identifier_filter(id);
         match self
             .0
-            .update_one(filter, doc! {"$set": {"status": bson::to_bson(&status)?}})
+            .update_one(
+                filter,
+                doc! {"$set": {
+                    "status": bson::to_bson(&status)?,
+                    "status_updated_at": bson::to_bson(&status_updated_at)?,
+                }},
+            )
             .await
         {
             Ok(doc) => Ok(doc),
@@ -229,20 +236,82 @@ impl OrderService {
         }
     }
 
-    #[tracing::instrument(name = "Update expired orders", skip(self))]
-    pub async fn update_expired_orders(
+    /// Record a settlement fill without resetting executed orders or replay timestamps.
+    pub async fn mark_filled(
         &self,
-        now_time_slot: u64,
-        status: OrderStatus,
+        order_id: &str,
+        partially_filled: bool,
+        block_timestamp: u64,
+    ) -> Result<()> {
+        let status = if partially_filled {
+            OrderStatus::PartiallyFilled
+        } else {
+            OrderStatus::Filled
+        };
+        self.0.update_one(
+            doc! {
+                "order_id": order_id,
+                // A delayed settlement event may arrive after market closure.
+                "status": {"$in": [bson::to_bson(&OrderStatus::Submitted)?, bson::to_bson(&OrderStatus::Expired)?]},
+            },
+            doc! {"$set": {
+                "status": bson::to_bson(&status)?,
+                "status_updated_at": bson::to_bson(&block_timestamp)?,
+            }},
+        ).await?;
+        let order = self
+            .get_order_by_id(&Bson::String(order_id.to_string()))
+            .await?;
+        anyhow::ensure!(
+            order.is_some_and(
+                |order| order.status == status || order.status == OrderStatus::Executed
+            ),
+            "Cannot settle missing or conflicting order {}",
+            order_id
+        );
+        Ok(())
+    }
+
+    /// Complete a consumed order only, preserving the timestamp on event retries.
+    pub async fn mark_executed(&self, order_id: &str, block_timestamp: u64) -> Result<()> {
+        self.0.update_one(
+            doc! {
+                "order_id": order_id,
+                "status": {"$in": [bson::to_bson(&OrderStatus::Filled)?, bson::to_bson(&OrderStatus::PartiallyFilled)?]},
+            },
+            doc! {"$set": {
+                "status": bson::to_bson(&OrderStatus::Executed)?,
+                "status_updated_at": bson::to_bson(&block_timestamp)?,
+            }},
+        ).await?;
+        let order = self
+            .get_order_by_id(&Bson::String(order_id.to_string()))
+            .await?;
+        anyhow::ensure!(
+            order.is_some_and(|order| order.status == OrderStatus::Executed),
+            "Cannot complete missing or unfilled order {}",
+            order_id
+        );
+        Ok(())
+    }
+
+    #[tracing::instrument(name = "Expire open orders in closed market", skip(self))]
+    pub async fn expire_market_orders(
+        &self,
+        market_id: &str,
+        block_timestamp: u64,
     ) -> Result<UpdateResult> {
         match self
             .0
             .update_many(
                 doc! {
-                    "time_slot": {"$lt": time_slot_bson(now_time_slot)?},
+                    "market_id": market_id,
                     "status": bson::to_bson(&OrderStatus::Submitted)?,
                 },
-                doc! {"$set": {"status": bson::to_bson(&status)?}},
+                doc! {"$set": {
+                    "status": bson::to_bson(&OrderStatus::Expired)?,
+                    "status_updated_at": bson::to_bson(&block_timestamp)?,
+                }},
             )
             .await
         {
