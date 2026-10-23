@@ -15,4 +15,5 @@ exclude = [
     "gsy-node",
     "primitives",
     "primitives/test-helpers",
+    "launchpad-matching-service",
 ]

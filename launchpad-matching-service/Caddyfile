@@ -4,8 +4,20 @@
 
 localhost {
 
-    # Rate limit: 100 requests per second per client IP
     rate_limit {
+        # Strict limit on /token per client IP: the launchpad backend only
+        # needs a new token about once a day, so more attempts than this are
+        # likely password guessing.
+        zone token_zone {
+            match {
+                path /token
+            }
+            key    {remote.host}
+            events 5
+            window 1m
+        }
+
+        # Rate limit: 100 requests per second per client IP
         zone matching_service_zone {
             key    {remote.host}
             events 100
@@ -13,14 +25,8 @@ localhost {
         }
     }
 
-    header {
-        Access-Control-Allow-Origin  *
-        Access-Control-Allow-Methods "GET, POST, OPTIONS"
-        Access-Control-Allow-Headers "Authorization, Content-Type"
-    }
-
-    @options method OPTIONS
-    respond @options 204
+    # No CORS headers are sent: the service is only called server to server
+    # (by the launchpad backend), never from a browser.
 
     reverse_proxy matching-service:9876
 }
