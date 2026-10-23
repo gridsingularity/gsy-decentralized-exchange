@@ -12,7 +12,7 @@ fn add_already_registered_proxies_should_fail() {
 		assert_ok!(GsyCollateral::register_user(RawOrigin::Root.into(), ALICE));
 		// Register a proxy.
 		assert_ok!(GsyCollateral::register_proxy_account(RawOrigin::Signed(ALICE).into(), BOB));
-		assert_eq!(GsyCollateral::is_registered_proxy_account(&ALICE, BOB), true);
+		assert!(GsyCollateral::is_registered_proxy_account(&ALICE, BOB));
 		assert_noop!(
 			GsyCollateral::register_proxy_account(RawOrigin::Signed(ALICE).into(), BOB),
 			gsy_collateral::Error::<Test>::AlreadyRegisteredProxyAccount
@@ -55,7 +55,7 @@ fn add_proxies_works() {
 		assert_ok!(GsyCollateral::register_user(RawOrigin::Root.into(), ALICE));
 		// Register a proxy.
 		assert_ok!(GsyCollateral::register_proxy_account(RawOrigin::Signed(ALICE).into(), BOB));
-		assert_eq!(GsyCollateral::is_registered_proxy_account(&ALICE, BOB), true);
+		assert!(GsyCollateral::is_registered_proxy_account(&ALICE, BOB));
 	});
 }
 
@@ -253,9 +253,9 @@ fn remove_proxies_works() {
 		assert_ok!(GsyCollateral::register_user(RawOrigin::Root.into(), ALICE));
 		// Register a proxy.
 		assert_ok!(GsyCollateral::register_proxy_account(RawOrigin::Signed(ALICE).into(), BOB));
-		assert_eq!(GsyCollateral::is_registered_proxy_account(&ALICE, BOB), true);
+		assert!(GsyCollateral::is_registered_proxy_account(&ALICE, BOB));
 		// Remove proxies.
 		assert_ok!(GsyCollateral::unregister_proxy_account(RawOrigin::Signed(ALICE).into(), BOB));
-		assert_eq!(GsyCollateral::is_registered_proxy_account(&ALICE, BOB), false);
+		assert!(!GsyCollateral::is_registered_proxy_account(&ALICE, BOB));
 	});
 }

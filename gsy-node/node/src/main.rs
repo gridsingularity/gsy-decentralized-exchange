@@ -1,9 +1,11 @@
 //! GSy Node CLI library.
 #![warn(missing_docs)]
+#![allow(clippy::result_large_err)]
 
 mod chain_spec;
 #[macro_use]
 mod service;
+#[cfg(feature = "runtime-benchmarks")]
 mod benchmarking;
 mod cli;
 mod command;

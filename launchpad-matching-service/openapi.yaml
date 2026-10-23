@@ -1,0 +1,633 @@
+openapi: 3.0.3
+info:
+  title: GSY Matching Service API
+  description: API for matching energy orders and retrieving market statistics.
+  version: 1.0.0
+tags:
+  - name: Auth
+    description: Authentication endpoints
+  - name: Endpoints
+    description: All service endpoints
+servers:
+  - url: https://localhost
+    description: Local server
+
+paths:
+  /health-check:
+    get:
+      tags:
+        - Endpoints
+      summary: Liveness check
+      description: >
+        Returns 200 OK if the service process is running. This is a liveness
+        check only and does not contact MongoDB; use /ready for readiness.
+      responses:
+        '200':
+          description: Service is running
+
+  /ready:
+    get:
+      tags:
+        - Endpoints
+      summary: Readiness check
+      description: >
+        Pings MongoDB through the shared client. Returns 200 OK if the ping
+        succeeds within 5 seconds, 503 otherwise. No authentication required.
+      responses:
+        '200':
+          description: Service is ready and MongoDB is reachable
+        '503':
+          description: MongoDB is not reachable or did not answer within 5 seconds
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: database_unavailable
+                message: The database is not reachable.
+
+  /token:
+    post:
+      tags:
+        - Auth
+      summary: Obtain a JWT access token
+      description: >
+        Authenticates with username and password and returns a Bearer token
+        for use with all protected endpoints. Tokens are signed with HS256
+        and expire after 24 hours.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenRequest'
+      responses:
+        '200':
+          description: Authentication successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          description: Invalid username or password
+        '500':
+          description: Internal server error (database unavailable or token encoding failure)
+
+  /match:
+    post:
+      tags:
+        - Endpoints
+      summary: Process orders for matching
+      description: >
+        Processes a list of bid and offer orders using the Pay-As-Bid algorithm
+        per (market_id, time_slot) and returns the matches found. The response
+        contains the matches of every time slot in the batch and a key for
+        every market in the batch (an empty array if it had no match); within a
+        market, matches are ordered by time_slot ascending. Matches are stored
+        in MongoDB and the market statistics are updated, unless dry_run=true.
+        The request body may be up to json_body_limit bytes (default 16 MiB).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: dry_run
+          in: query
+          required: false
+          description: >
+            With true, the matches are computed and returned in the same shape
+            as a normal run, but nothing is stored: no match is inserted and
+            the market statistics are not updated. The match_id values in a
+            dry-run response are freshly generated and not persisted, so they
+            cannot be looked up later and differ from the ids of a later normal
+            run of the same batch. Values other than true or false return 400.
+          schema:
+            type: boolean
+            default: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrdersToMatch'
+      responses:
+        '200':
+          description: Successful matching result
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/DbBidOfferMatch'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          description: Missing, invalid, or expired Bearer token
+        '413':
+          description: >
+            Request body larger than the JSON body limit (setting
+            json_body_limit, default 16 MiB = 16777216 bytes).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: payload_too_large
+                message: "JSON payload (16777217 bytes) is larger than allowed (limit: 16777216 bytes)."
+        '500':
+          $ref: '#/components/responses/DatabaseError'
+
+  /matches:
+    get:
+      tags:
+        - Endpoints
+      summary: Filter matches
+      description: >
+        Retrieves matches based on user ID, optional market ID, and an inclusive
+        time range on time_slot. Sorted by time_slot and then match_id, both in
+        the `sort` direction, so offset/limit pages are stable (consecutive
+        pages do not overlap and together cover the result). The total for a
+        page count is total_matches of /statistics with the same filters.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: user_id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: market_id
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: start_time
+          in: query
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: end_time
+          in: query
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of matches to return.
+          schema:
+            type: integer
+            format: int64
+        - name: offset
+          in: query
+          required: false
+          description: Number of matches to skip.
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+        - name: sort
+          in: query
+          required: false
+          description: Sort direction on time_slot and then match_id.
+          schema:
+            $ref: '#/components/schemas/SortOrder'
+      responses:
+        '200':
+          description: List of filtered matches
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DbBidOfferMatch'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          description: Missing, invalid, or expired Bearer token
+        '500':
+          $ref: '#/components/responses/DatabaseError'
+
+  /statistics:
+    get:
+      tags:
+        - Endpoints
+      summary: Get market statistics
+      description: >
+        Returns market statistics and energy/trade rate timeseries for a user
+        and an inclusive time range on time_slot. Buckets are computed by
+        MongoDB ($dateTrunc, MongoDB 5.0+) in the time zone `tz`; the time_slot
+        of a point is the bucket start in Unix seconds. Series are sorted by
+        time_slot ascending.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: user_id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: market_id
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: start_time
+          in: query
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: end_time
+          in: query
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: resolution
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/Resolution'
+        - name: tz
+          in: query
+          required: false
+          description: >
+            IANA time zone name for the buckets (case-sensitive), default UTC.
+            Must be 1 to 64 characters of A-Z a-z 0-9 _ + - /. Not used with
+            resolution no_aggregation, so an unknown but well-formed zone is
+            ignored there.
+          schema:
+            type: string
+            default: UTC
+            pattern: '^[A-Za-z0-9_+/-]{1,64}$'
+            example: Europe/Zurich
+      responses:
+        '200':
+          description: Market statistics response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MarketStatisticsResponse'
+        '400':
+          description: >
+            Malformed query string (error invalid_request), or a time zone that
+            is malformed or unknown to MongoDB (error invalid_timezone).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalid_timezone:
+                  value:
+                    error: invalid_timezone
+                    message: Unknown time zone.
+                invalid_request:
+                  value:
+                    error: invalid_request
+                    message: 'unknown variant `week`, expected one of `no_aggregation`, `quarter_hour`, `day`, `month`'
+        '401':
+          description: Missing, invalid, or expired Bearer token
+        '500':
+          $ref: '#/components/responses/DatabaseError'
+
+  /markets:
+    get:
+      tags:
+        - Endpoints
+      summary: Get unique market IDs
+      description: Returns all unique market IDs for a specific user.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: user_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of unique market IDs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          description: Missing, invalid, or expired Bearer token
+        '500':
+          $ref: '#/components/responses/DatabaseError'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  responses:
+    InvalidRequest:
+      description: >
+        Malformed JSON body or query string (missing field, wrong type, unknown
+        enum value). The message is the deserializer's error text.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: invalid_request
+            message: missing field `user_id` at line 1 column 14
+
+    DatabaseError:
+      description: A database operation failed. Details are logged by the service, not returned.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: internal_error
+            message: A database operation failed.
+
+  schemas:
+    Error:
+      type: object
+      required:
+        - error
+        - message
+      properties:
+        error:
+          type: string
+          description: Machine-readable error code.
+          example: internal_error
+        message:
+          type: string
+          description: Human-readable description.
+          example: A database operation failed.
+
+    TokenRequest:
+      type: object
+      required:
+        - username
+        - password
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+
+    TokenResponse:
+      type: object
+      required:
+        - access_token
+        - token_type
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          example: bearer
+
+    OrdersToMatch:
+      type: object
+      required:
+        - user_id
+        - orders
+      properties:
+        user_id:
+          type: string
+        orders:
+          type: array
+          items:
+            $ref: '#/components/schemas/DbOrderSchema'
+
+    DbOrderSchema:
+      type: object
+      required:
+        - _id
+        - status
+        - order
+      properties:
+        _id:
+          type: string
+        status:
+          $ref: '#/components/schemas/OrderStatus'
+        order:
+          $ref: '#/components/schemas/Order'
+
+    OrderStatus:
+      type: string
+      enum: [Open, Executed, Expired, Deleted]
+
+    Order:
+      type: object
+      required:
+        - type
+        - data
+      properties:
+        type:
+          type: string
+          enum: [Bid, Offer]
+        data:
+          oneOf:
+            - $ref: '#/components/schemas/DbBid'
+            - $ref: '#/components/schemas/DbOffer'
+
+    DbBid:
+      type: object
+      required:
+        - buyer
+        - nonce
+        - bid_component
+      properties:
+        buyer:
+          type: string
+        nonce:
+          type: integer
+          format: int32
+        bid_component:
+          $ref: '#/components/schemas/DbOrderComponent'
+
+    DbOffer:
+      type: object
+      required:
+        - seller
+        - nonce
+        - offer_component
+      properties:
+        seller:
+          type: string
+        nonce:
+          type: integer
+          format: int32
+        offer_component:
+          $ref: '#/components/schemas/DbOrderComponent'
+
+    DbOrderComponent:
+      type: object
+      required:
+        - area_uuid
+        - market_id
+        - time_slot
+        - creation_time
+        - energy
+        - energy_rate
+      properties:
+        area_uuid:
+          type: string
+        market_id:
+          type: string
+        time_slot:
+          type: integer
+          format: int64
+        creation_time:
+          type: integer
+          format: int64
+        energy:
+          type: number
+          format: double
+        energy_rate:
+          type: number
+          format: double
+
+    DbBidOfferMatch:
+      type: object
+      required:
+        - match_id
+        - user_id
+        - market_id
+        - time_slot
+        - bid_order_id
+        - offer_order_id
+        - bid
+        - offer
+        - selected_energy
+        - energy_rate
+      properties:
+        match_id:
+          type: string
+          description: Unique id of the match (24-character hex MongoDB ObjectId, time-ordered).
+          example: 6717a8c2e4b0f1a2b3c4d5e6
+        user_id:
+          type: string
+        market_id:
+          type: string
+        time_slot:
+          type: integer
+          format: int64
+        bid_order_id:
+          type: string
+          description: _id of the submitted order the bid came from.
+        offer_order_id:
+          type: string
+          description: _id of the submitted order the offer came from.
+        bid:
+          $ref: '#/components/schemas/DbBid'
+        offer:
+          $ref: '#/components/schemas/DbOffer'
+        residual_bid:
+          nullable: true
+          anyOf:
+            - $ref: '#/components/schemas/DbBid'
+        residual_offer:
+          nullable: true
+          anyOf:
+            - $ref: '#/components/schemas/DbOffer'
+        selected_energy:
+          type: number
+          format: double
+        energy_rate:
+          type: number
+          format: double
+
+    Resolution:
+      type: string
+      enum: [no_aggregation, quarter_hour, day, month]
+      default: no_aggregation
+      description: >
+        no_aggregation: one point per time_slot. quarter_hour: 15-minute
+        buckets at :00, :15, :30, :45 local time. day: calendar days from local
+        midnight in tz. month: calendar months from local midnight of the 1st
+        in tz (previously fixed 30-day buckets from the Unix epoch).
+
+    SortOrder:
+      type: string
+      enum: [asc, desc]
+      default: asc
+
+    MarketStatisticsResponse:
+      type: object
+      required:
+        - average_trade_rate_timeseries
+        - energy_timeseries
+        - total_matches
+        - success_rate
+        - active_traders
+        - markets
+      properties:
+        average_trade_rate_timeseries:
+          type: array
+          description: >
+            Mean energy_rate over all trades in each bucket (a simple mean over
+            trades, not a mean of per-slot means).
+          items:
+            $ref: '#/components/schemas/TimeSeriesPoint'
+        energy_timeseries:
+          type: array
+          description: Matched and unmatched energy summed per bucket.
+          items:
+            $ref: '#/components/schemas/EnergyTimeSeriesPoint'
+        total_matches:
+          type: integer
+          format: int64
+        success_rate:
+          type: number
+          format: double
+          description: matched / (matched + unmatched) energy in the window, 0 when there is no data.
+        active_traders:
+          type: integer
+          format: int64
+          description: >
+            Distinct accounts among bid.buyer and offer.seller of the matches in
+            the window (an account that both bought and sold counts once).
+        markets:
+          type: integer
+          format: int64
+          description: Distinct market_id values in market_data in the window.
+
+    TimeSeriesPoint:
+      type: object
+      required:
+        - time_slot
+        - average_energy_rate
+      properties:
+        time_slot:
+          type: integer
+          format: int64
+        average_energy_rate:
+          type: number
+          format: double
+
+    EnergyTimeSeriesPoint:
+      type: object
+      required:
+        - time_slot
+        - matched_energy_kWh
+        - unmatched_energy_kWh
+      properties:
+        time_slot:
+          type: integer
+          format: int64
+        matched_energy_kWh:
+          type: number
+          format: double
+        unmatched_energy_kWh:
+          type: number
+          format: double

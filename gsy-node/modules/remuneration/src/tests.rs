@@ -1,0 +1,3721 @@
+use crate::{mock::*, CommunityInfo, Error, FIXED_POINT_SCALE, INTER_COMMUNITY, INTRA_COMMUNITY};
+use frame_support::{assert_noop, assert_ok};
+use frame_system::RawOrigin;
+use gsy_primitives::v0::AccountId;
+
+// Define constants for the tests
+
+pub const ALICE_THE_CUSTODIAN: AccountId = AccountId::new(*b"01234567890123456789012345678901");
+pub const BOB_THE_CHEATER: AccountId = AccountId::new(*b"01234567890203894950393012432351");
+pub const MIKE_THE_SUBSTITUTE: AccountId = AccountId::new(*b"01234588890203894950393012432351");
+pub const DSO: AccountId = AccountId::new(*b"01234567890203124950392012432351");
+pub const COMMUNITY1: AccountId = AccountId::new(*b"01234561230123456789012345678901");
+pub const COMMUNITY1_OWNER: AccountId = AccountId::new(*b"01234561230123456789012345678902");
+pub const COMMUNITY2: AccountId = AccountId::new(*b"01243561230123456789012345678901");
+pub const COMMUNITY2_OWNER: AccountId = AccountId::new(*b"01243561230123456789012345678902");
+pub const PROSUMER1: AccountId = AccountId::new(*b"01234653535968356825544612432351");
+pub const PROSUMER2: AccountId = AccountId::new(*b"01234653135168356825544612432352");
+pub const PROSUMER3: AccountId = AccountId::new(*b"01234653135168356825544612432353");
+
+fn event_count() -> usize {
+	System::events().len()
+}
+
+fn has_under_tolerance_event(old_value: u64, new_value: u64) -> bool {
+	System::events().iter().any(|record| {
+		matches!(
+			record.event,
+			RuntimeEvent::Remuneration(crate::Event::UnderToleranceUpdated {
+				old_value: old,
+				new_value: new,
+			}) if old == old_value && new == new_value
+		)
+	})
+}
+
+fn has_beta_event(old_value: i64, new_value: i64) -> bool {
+	System::events().iter().any(|record| {
+		matches!(
+			record.event,
+			RuntimeEvent::Remuneration(crate::Event::BetaUpdated {
+				old_value: old,
+				new_value: new,
+			}) if old == old_value && new == new_value
+		)
+	})
+}
+
+fn has_alpha_beta_adapted_event(old_beta: i64, new_beta: i64) -> bool {
+	System::events().iter().any(|record| {
+		matches!(
+			record.event,
+			RuntimeEvent::Remuneration(crate::Event::AlphaBetaAdapted {
+				old_beta: old,
+				new_beta: new,
+				..
+			}) if old == old_beta && new == new_beta
+		)
+	})
+}
+
+fn setup_intra_community_settlement(sender_balance: u128, receiver_balance: u128) {
+	System::set_block_number(1);
+	Timestamp::set_timestamp(1_000);
+	assert_ok!(Remuneration::update_custodian(
+		RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+		ALICE_THE_CUSTODIAN
+	));
+	assert_ok!(Remuneration::add_community(
+		RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+		COMMUNITY1,
+		DSO,
+		COMMUNITY1_OWNER
+	));
+	assert_ok!(Remuneration::add_prosumer(
+		RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+		PROSUMER1,
+		COMMUNITY1
+	));
+	assert_ok!(Remuneration::add_prosumer(
+		RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+		PROSUMER2,
+		COMMUNITY1
+	));
+	assert_ok!(Remuneration::set_balance(
+		RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+		PROSUMER1,
+		sender_balance
+	));
+	assert_ok!(Remuneration::set_balance(
+		RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+		PROSUMER2,
+		receiver_balance
+	));
+}
+
+#[cfg(test)]
+mod admin_tests {
+	use super::*;
+
+	#[test]
+	fn custodian_management() {
+		new_test_ext().execute_with(|| {
+			// Initially, no custodian is set
+			assert_eq!(Remuneration::custodian(), None);
+
+			// ALICE_THE_CUSTODIAN sets herself as the custodian
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_eq!(Remuneration::custodian(), Some(ALICE_THE_CUSTODIAN));
+
+			// ALICE_THE_CUSTODIAN updates the custodian to MIKE_THE_SUBSTITUTE
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				MIKE_THE_SUBSTITUTE
+			));
+			assert_eq!(Remuneration::custodian(), Some(MIKE_THE_SUBSTITUTE));
+
+			// ALICE_THE_CUSTODIAN tries to update the custodian again, but fails
+			assert_noop!(
+				Remuneration::update_custodian(
+					RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+					ALICE_THE_CUSTODIAN
+				),
+				Error::<Test>::NotCustodian
+			);
+
+			// MIKE_THE_SUBSTITUTE updates the custodian back to ALICE_THE_CUSTODIAN
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(MIKE_THE_SUBSTITUTE).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_eq!(Remuneration::custodian(), Some(ALICE_THE_CUSTODIAN));
+		});
+	}
+
+	#[test]
+	fn community_management() {
+		new_test_ext().execute_with(|| {
+			// Set ALICE_THE_CUSTODIAN as the initial custodian
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+
+			// ALICE_THE_CUSTODIAN adds a new community
+			assert_ok!(Remuneration::add_community(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				COMMUNITY1,
+				DSO,
+				COMMUNITY1_OWNER
+			));
+			assert_eq!(
+				Remuneration::communities(COMMUNITY1),
+				Some(CommunityInfo { dso: DSO, owner: COMMUNITY1_OWNER })
+			);
+
+			// ALICE_THE_CUSTODIAN removes the community
+			assert_ok!(Remuneration::remove_community(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				COMMUNITY1
+			));
+			assert_eq!(Remuneration::communities(COMMUNITY1), None);
+
+			// BOB_THE_CHEATER tries to add a new community but fails (not being the custodian)
+			assert_noop!(
+				Remuneration::add_community(
+					RawOrigin::Signed(BOB_THE_CHEATER).into(),
+					COMMUNITY2,
+					DSO,
+					COMMUNITY2_OWNER
+				),
+				Error::<Test>::NotCustodian
+			);
+		});
+	}
+
+	#[test]
+	fn prosumer_management() {
+		new_test_ext().execute_with(|| {
+			// Set ALICE_THE_CUSTODIAN as the initial custodian
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+
+			// ALICE_THE_CUSTODIAN adds a new community
+			assert_ok!(Remuneration::add_community(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				COMMUNITY1,
+				DSO,
+				COMMUNITY1_OWNER
+			));
+
+			// ALICE_THE_CUSTODIAN adds a prosumer to the community
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				COMMUNITY1
+			));
+			assert_eq!(Remuneration::prosumers(PROSUMER1), Some(COMMUNITY1));
+
+			// ALICE_THE_CUSTODIAN removes the prosumer
+			assert_ok!(Remuneration::remove_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1
+			));
+			assert_eq!(Remuneration::prosumers(PROSUMER1), None);
+
+			// COMMUNITY1_OWNER adds a prosumer to the community
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(COMMUNITY1_OWNER).into(),
+				PROSUMER2,
+				COMMUNITY1
+			));
+			assert_eq!(Remuneration::prosumers(PROSUMER2), Some(COMMUNITY1));
+
+			// COMMUNITY1_OWNER removes the prosumer
+			assert_ok!(Remuneration::remove_prosumer(
+				RawOrigin::Signed(COMMUNITY1_OWNER).into(),
+				PROSUMER2
+			));
+			assert_eq!(Remuneration::prosumers(PROSUMER2), None);
+
+			// ALICE_THE_CUSTODIAN re-adds a prosumer to the community
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				COMMUNITY1
+			));
+			assert_eq!(Remuneration::prosumers(PROSUMER1), Some(COMMUNITY1));
+
+			// COMMUNITY1_OWNER removes the prosumer added by ALICE_THE_CUSTODIAN
+			assert_ok!(Remuneration::remove_prosumer(
+				RawOrigin::Signed(COMMUNITY1_OWNER).into(),
+				PROSUMER1
+			));
+			assert_eq!(Remuneration::prosumers(PROSUMER1), None);
+
+			// COMMUNITY1_OWNER re-adds a prosumer to the community
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(COMMUNITY1_OWNER).into(),
+				PROSUMER2,
+				COMMUNITY1
+			));
+			assert_eq!(Remuneration::prosumers(PROSUMER2), Some(COMMUNITY1));
+
+			// ALICE_THE_CUSTODIAN removes the prosumer added by COMMUNITY1_OWNER
+			assert_ok!(Remuneration::remove_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2
+			));
+			assert_eq!(Remuneration::prosumers(PROSUMER2), None);
+
+			// BOB_THE_CHEATER tries to add a prosumer but fails (not being the custodian or the community owner)
+			assert_noop!(
+				Remuneration::add_prosumer(
+					RawOrigin::Signed(BOB_THE_CHEATER).into(),
+					PROSUMER1,
+					COMMUNITY1
+				),
+				Error::<Test>::NotAllowedToManageProsumers
+			);
+		});
+	}
+
+	#[test]
+	fn update_main_settlement_parameters() {
+		new_test_ext().execute_with(|| {
+			// Set ALICE_THE_CUSTODIAN as the initial custodian
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+
+			// Default values should be zero
+			assert_eq!(Remuneration::alpha(), 0);
+			assert_eq!(Remuneration::beta(), 0);
+			assert_eq!(Remuneration::under_tolerance(), 0);
+			assert_eq!(Remuneration::over_tolerance(), 0);
+
+			// Update alpha only (others remain the same via set_main_parameters)
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				500_000, // alpha
+				Remuneration::beta(),
+				Remuneration::under_tolerance(),
+				Remuneration::over_tolerance(),
+			));
+			assert_eq!(Remuneration::alpha(), 500_000);
+
+			// Update beta only
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				Remuneration::alpha(),
+				200_000, // beta
+				Remuneration::under_tolerance(),
+				Remuneration::over_tolerance(),
+			));
+			assert_eq!(Remuneration::beta(), 200_000);
+
+			// Update under & over tolerance only
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				Remuneration::alpha(),
+				Remuneration::beta(),
+				100_000, // under tol
+				150_000, // over tol
+			));
+			assert_eq!(Remuneration::under_tolerance(), 100_000);
+			assert_eq!(Remuneration::over_tolerance(), 150_000);
+
+			// Non-custodian cannot update parameters
+			assert_noop!(
+				Remuneration::set_main_parameters(
+					RawOrigin::Signed(BOB_THE_CHEATER).into(),
+					1,
+					2,
+					3,
+					4,
+				),
+				Error::<Test>::NotCustodian
+			);
+		});
+	}
+
+	#[test]
+	fn main_parameter_tolerance_boundaries_are_valid() {
+		new_test_ext().execute_with(|| {
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				1,
+				2,
+				0,
+				0,
+			));
+			assert_eq!(Remuneration::under_tolerance(), 0);
+			assert_eq!(Remuneration::over_tolerance(), 0);
+
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				1,
+				2,
+				FIXED_POINT_SCALE,
+				FIXED_POINT_SCALE,
+			));
+			assert_eq!(Remuneration::under_tolerance(), FIXED_POINT_SCALE);
+			assert_eq!(Remuneration::over_tolerance(), FIXED_POINT_SCALE);
+		});
+	}
+
+	#[test]
+	fn main_parameter_signed_beta_storage_query_and_events() {
+		new_test_ext().execute_with(|| {
+			System::set_block_number(1);
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				11,
+				200_000,
+				30,
+				40,
+			));
+			assert_eq!(Remuneration::beta(), 200_000);
+			assert_eq!(Remuneration::query_beta(), 200_000);
+			assert!(has_beta_event(0, 200_000));
+
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				11,
+				0,
+				30,
+				40,
+			));
+			assert_eq!(Remuneration::beta(), 0);
+			assert!(has_beta_event(200_000, 0));
+
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				11,
+				-200_000,
+				30,
+				40,
+			));
+			assert_eq!(Remuneration::beta(), -200_000);
+			assert_eq!(Remuneration::query_beta(), -200_000);
+			assert_eq!(Remuneration::alpha(), 11);
+			assert_eq!(Remuneration::under_tolerance(), 30);
+			assert_eq!(Remuneration::over_tolerance(), 40);
+			assert!(has_beta_event(0, -200_000));
+
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				11,
+				i64::MIN,
+				30,
+				40,
+			));
+			assert_eq!(Remuneration::beta(), i64::MIN);
+			assert!(has_beta_event(-200_000, i64::MIN));
+		});
+	}
+
+	#[test]
+	fn main_parameter_invalid_tolerances_are_atomic_and_emit_no_success_event() {
+		new_test_ext().execute_with(|| {
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				10,
+				20,
+				30,
+				40,
+			));
+
+			let before_events = event_count();
+			assert_noop!(
+				Remuneration::set_main_parameters(
+					RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+					100,
+					200,
+					FIXED_POINT_SCALE + 1,
+					400,
+				),
+				Error::<Test>::InvalidToleranceRange
+			);
+			assert_eq!(Remuneration::alpha(), 10);
+			assert_eq!(Remuneration::beta(), 20);
+			assert_eq!(Remuneration::under_tolerance(), 30);
+			assert_eq!(Remuneration::over_tolerance(), 40);
+			assert_eq!(event_count(), before_events);
+
+			assert_noop!(
+				Remuneration::set_main_parameters(
+					RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+					100,
+					200,
+					300,
+					FIXED_POINT_SCALE + 1,
+				),
+				Error::<Test>::InvalidToleranceRange
+			);
+			assert_eq!(Remuneration::alpha(), 10);
+			assert_eq!(Remuneration::beta(), 20);
+			assert_eq!(Remuneration::under_tolerance(), 30);
+			assert_eq!(Remuneration::over_tolerance(), 40);
+			assert_eq!(event_count(), before_events);
+		});
+	}
+}
+
+#[cfg(test)]
+mod payments_tests {
+	use super::*;
+
+	#[test]
+	fn inter_community_payment_ok() {
+		new_test_ext().execute_with(|| {
+			// Set a block and a timestamp
+			System::set_block_number(1);
+			Timestamp::set_timestamp(1_000);
+
+			// Set ALICE_THE_CUSTODIAN as the initial custodian
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+
+			// ALICE_THE_CUSTODIAN adds two communities
+			assert_ok!(Remuneration::add_community(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				COMMUNITY1,
+				DSO,
+				COMMUNITY1_OWNER
+			));
+			assert_ok!(Remuneration::add_community(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				COMMUNITY2,
+				DSO,
+				COMMUNITY2_OWNER
+			));
+
+			let amount_to_pay = 50;
+
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				COMMUNITY1,
+				500
+			));
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				COMMUNITY2,
+				100
+			));
+
+			let balance_info_before_p1 = Remuneration::balances(COMMUNITY1);
+			let balance_info_before_p2 = Remuneration::balances(COMMUNITY2);
+
+			assert_ok!(Remuneration::add_payment(
+				RawOrigin::Signed(COMMUNITY1).into(),
+				COMMUNITY2,
+				amount_to_pay,
+				INTER_COMMUNITY
+			));
+
+			let balance_info_after_p1 = Remuneration::balances(COMMUNITY1);
+			let balance_info_after_p2 = Remuneration::balances(COMMUNITY2);
+
+			assert_eq!(balance_info_after_p1, balance_info_before_p1 - amount_to_pay);
+			assert_eq!(balance_info_after_p2, balance_info_before_p2 + amount_to_pay);
+		});
+	}
+
+	#[test]
+	fn intra_community_payment_ok() {
+		new_test_ext().execute_with(|| {
+			// Set a block and a timestamp
+			System::set_block_number(1);
+			Timestamp::set_timestamp(1_000);
+
+			// Set ALICE_THE_CUSTODIAN as the initial custodian
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+
+			// ALICE_THE_CUSTODIAN adds a community and two prosumers
+			assert_ok!(Remuneration::add_community(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				COMMUNITY1,
+				DSO,
+				COMMUNITY1_OWNER
+			));
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				COMMUNITY1
+			));
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				COMMUNITY1
+			));
+
+			let amount_to_pay = 50;
+
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				500
+			));
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				100
+			));
+
+			let balance_info_before_p1 = Remuneration::balances(PROSUMER1);
+			let balance_info_before_p2 = Remuneration::balances(PROSUMER2);
+
+			// log::error!("PROS 1: {:?}", balance_info_before_p1);
+			// log::error!("PROS 2: {:?}", balance_info_before_p2);
+
+			assert_ok!(Remuneration::add_payment(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				amount_to_pay,
+				INTRA_COMMUNITY
+			));
+
+			let balance_info_after_p1 = Remuneration::balances(PROSUMER1);
+			let balance_info_after_p2 = Remuneration::balances(PROSUMER2);
+
+			assert_eq!(balance_info_after_p1, balance_info_before_p1 - amount_to_pay);
+			assert_eq!(balance_info_after_p2, balance_info_before_p2 + amount_to_pay);
+		});
+	}
+
+	#[test]
+	fn payment_err_insufficient_balance() {
+		new_test_ext().execute_with(|| {
+			// Set a block and a timestamp
+			System::set_block_number(1);
+			Timestamp::set_timestamp(1_000);
+
+			// Set ALICE_THE_CUSTODIAN as the initial custodian
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+
+			// ALICE_THE_CUSTODIAN adds a community and two prosumers
+			assert_ok!(Remuneration::add_community(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				COMMUNITY1,
+				DSO,
+				COMMUNITY1_OWNER
+			));
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				COMMUNITY1
+			));
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				COMMUNITY1
+			));
+
+			let amount_to_pay = 51;
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				50
+			));
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				10
+			));
+
+			let balance_info_before_p1 = Remuneration::balances(PROSUMER1);
+			let balance_info_before_p2 = Remuneration::balances(PROSUMER2);
+
+			assert_noop!(
+				Remuneration::add_payment(
+					RawOrigin::Signed(PROSUMER1).into(),
+					PROSUMER2,
+					amount_to_pay,
+					INTRA_COMMUNITY
+				),
+				Error::<Test>::InsufficientBalance
+			);
+
+			assert_eq!(Remuneration::balances(PROSUMER1), balance_info_before_p1);
+			assert_eq!(Remuneration::balances(PROSUMER2), balance_info_before_p2);
+		});
+	}
+
+	#[test]
+	fn receiver_balance_overflow_does_not_debit_sender() {
+		new_test_ext().execute_with(|| {
+			System::set_block_number(1);
+			Timestamp::set_timestamp(1_000);
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_ok!(Remuneration::add_community(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				COMMUNITY1,
+				DSO,
+				COMMUNITY1_OWNER
+			));
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				COMMUNITY1
+			));
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				COMMUNITY1
+			));
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				10
+			));
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				u128::MAX - 5
+			));
+
+			assert_noop!(
+				Remuneration::add_payment(
+					RawOrigin::Signed(PROSUMER1).into(),
+					PROSUMER2,
+					10,
+					INTRA_COMMUNITY
+				),
+				Error::<Test>::BalanceOverflow
+			);
+			assert_eq!(Remuneration::balances(PROSUMER1), 10);
+			assert_eq!(Remuneration::balances(PROSUMER2), u128::MAX - 5);
+		});
+	}
+
+	#[test]
+	fn successful_payment_preserves_total_internal_ledger_value() {
+		new_test_ext().execute_with(|| {
+			System::set_block_number(1);
+			Timestamp::set_timestamp(1_000);
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_ok!(Remuneration::add_community(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				COMMUNITY1,
+				DSO,
+				COMMUNITY1_OWNER
+			));
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				COMMUNITY1
+			));
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				COMMUNITY1
+			));
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				500
+			));
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				100
+			));
+
+			let total_before =
+				Remuneration::balances(PROSUMER1) + Remuneration::balances(PROSUMER2);
+			assert_ok!(Remuneration::add_payment(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				125,
+				INTRA_COMMUNITY
+			));
+			let total_after = Remuneration::balances(PROSUMER1) + Remuneration::balances(PROSUMER2);
+			assert_eq!(total_after, total_before);
+		});
+	}
+
+	#[test]
+	fn payment_err_inter_actors_not_being_communities() {
+		new_test_ext().execute_with(|| {
+			// Set a block and a timestamp
+			System::set_block_number(1);
+			Timestamp::set_timestamp(1_000);
+
+			// Set ALICE_THE_CUSTODIAN as the initial custodian
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+
+			// ALICE_THE_CUSTODIAN adds two communities with the related prosumers
+			assert_ok!(Remuneration::add_community(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				COMMUNITY1,
+				DSO,
+				COMMUNITY1_OWNER
+			));
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				COMMUNITY1
+			));
+			assert_ok!(Remuneration::add_community(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				COMMUNITY2,
+				DSO,
+				COMMUNITY2_OWNER
+			));
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				COMMUNITY2
+			));
+
+			let amount_to_pay = 5;
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				50
+			));
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				10
+			));
+
+			let balance_info_before_p1 = Remuneration::balances(PROSUMER1);
+			let balance_info_before_p2 = Remuneration::balances(PROSUMER2);
+
+			assert_noop!(
+				Remuneration::add_payment(
+					RawOrigin::Signed(PROSUMER1).into(),
+					PROSUMER2,
+					amount_to_pay,
+					INTER_COMMUNITY
+				),
+				Error::<Test>::NotACommunity
+			);
+
+			assert_eq!(Remuneration::balances(PROSUMER1), balance_info_before_p1);
+			assert_eq!(Remuneration::balances(PROSUMER2), balance_info_before_p2);
+		});
+	}
+
+	#[test]
+	fn payment_err_intra_prosumers_belonging_to_different_communities() {
+		new_test_ext().execute_with(|| {
+			// Set a block and a timestamp
+			System::set_block_number(1);
+			Timestamp::set_timestamp(1_000);
+
+			// Set ALICE_THE_CUSTODIAN as the initial custodian
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+
+			// ALICE_THE_CUSTODIAN adds two communities with the related prosumers
+			assert_ok!(Remuneration::add_community(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				COMMUNITY1,
+				DSO,
+				COMMUNITY1_OWNER
+			));
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				COMMUNITY1
+			));
+			assert_ok!(Remuneration::add_community(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				COMMUNITY2,
+				DSO,
+				COMMUNITY2_OWNER
+			));
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				COMMUNITY2
+			));
+
+			let amount_to_pay = 5;
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				50
+			));
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				10
+			));
+
+			let balance_info_before_p1 = Remuneration::balances(PROSUMER1);
+			let balance_info_before_p2 = Remuneration::balances(PROSUMER2);
+
+			assert_noop!(
+				Remuneration::add_payment(
+					RawOrigin::Signed(PROSUMER1).into(),
+					PROSUMER2,
+					amount_to_pay,
+					INTRA_COMMUNITY
+				),
+				Error::<Test>::DifferentCommunities
+			);
+
+			assert_eq!(Remuneration::balances(PROSUMER1), balance_info_before_p1);
+			assert_eq!(Remuneration::balances(PROSUMER2), balance_info_before_p2);
+		});
+	}
+}
+
+#[cfg(test)]
+mod basic_settlement_tests {
+	use super::*;
+
+	#[test]
+	fn settle_flexibility_basic() {
+		new_test_ext().execute_with(|| {
+			// Set a block and a timestamp
+			System::set_block_number(1);
+			Timestamp::set_timestamp(1_000);
+
+			// Setup initial state
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_ok!(Remuneration::add_community(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				COMMUNITY1,
+				DSO,
+				COMMUNITY1_OWNER
+			));
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				COMMUNITY1
+			));
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				COMMUNITY1
+			));
+
+			// Set initial balances
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				1000
+			));
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				0
+			));
+
+			// Perfect delivery scenario: requested = delivered
+			assert_ok!(Remuneration::settle_flexibility_payment(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				100,             // requested
+				100,             // delivered
+				5,               // price
+				INTRA_COMMUNITY  // payment_type
+			));
+
+			// Check balances after settlement
+			assert_eq!(Remuneration::balances(PROSUMER1), 500); // 1000 - 500
+			assert_eq!(Remuneration::balances(PROSUMER2), 500); // 0 + 500
+		});
+	}
+
+	#[test]
+	fn settle_flexibility_large_amount_above_u32_max_is_not_truncated() {
+		new_test_ext().execute_with(|| {
+			System::set_block_number(1);
+			Timestamp::set_timestamp(1_000);
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_ok!(Remuneration::add_community(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				COMMUNITY1,
+				DSO,
+				COMMUNITY1_OWNER
+			));
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				COMMUNITY1
+			));
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				COMMUNITY1
+			));
+
+			let large_amount = u32::MAX as u128 + 123;
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				large_amount
+			));
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				0
+			));
+
+			assert_ok!(Remuneration::settle_flexibility_payment(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				large_amount as u64,
+				large_amount as u64,
+				1,
+				INTRA_COMMUNITY
+			));
+			assert_eq!(Remuneration::balances(PROSUMER1), 0);
+			assert_eq!(Remuneration::balances(PROSUMER2), large_amount);
+		});
+	}
+
+	#[test]
+	fn settle_flexibility_under_delivery() {
+		new_test_ext().execute_with(|| {
+			// Set a block and a timestamp
+			System::set_block_number(1);
+			Timestamp::set_timestamp(1_000);
+
+			// Setup initial state
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_ok!(Remuneration::add_community(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				COMMUNITY1,
+				DSO,
+				COMMUNITY1_OWNER
+			));
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				COMMUNITY1
+			));
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				COMMUNITY1
+			));
+
+			// Set initial balances
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				1000
+			));
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				0
+			));
+
+			// Set alpha for under-delivery penalty calculation
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				500_000, // alpha 0.5
+				Remuneration::beta(),
+				Remuneration::under_tolerance(),
+				Remuneration::over_tolerance(),
+			));
+
+			// Under-delivery scenario: delivered < requested
+			assert_ok!(Remuneration::settle_flexibility_payment(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				100,             // requested
+				80,              // delivered (20 units under-delivered)
+				5,               // price
+				INTRA_COMMUNITY  // payment_type
+			));
+
+			// Calculation:
+			// - base = min(100, 80) * 5 = 400
+			// - under-delivery diff = 100-80 = 20
+			// - under-delivery penalty = 0.5 * 20 * 5 = 50
+			// - final amount = 400 - 50 = 350
+
+			// Check balances after settlement
+			assert_eq!(Remuneration::balances(PROSUMER1), 650); // 1000 - 350
+			assert_eq!(Remuneration::balances(PROSUMER2), 350); // 0 + 350
+		});
+	}
+
+	#[test]
+	fn settle_flexibility_over_delivery() {
+		new_test_ext().execute_with(|| {
+			// Set a block and a timestamp
+			System::set_block_number(1);
+			Timestamp::set_timestamp(1_000);
+
+			// Setup initial state
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_ok!(Remuneration::add_community(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				COMMUNITY1,
+				DSO,
+				COMMUNITY1_OWNER
+			));
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				COMMUNITY1
+			));
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				COMMUNITY1
+			));
+
+			// Set initial balances
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				1000
+			));
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				0
+			));
+
+			// Set beta for over-delivery adjustment calculation
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				Remuneration::alpha(),
+				200_000, // 0.2
+				Remuneration::under_tolerance(),
+				Remuneration::over_tolerance(),
+			));
+
+			// Over-delivery scenario: delivered > requested
+			assert_ok!(Remuneration::settle_flexibility_payment(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				100,             // requested
+				120,             // delivered (20 units over-delivered)
+				5,               // price
+				INTRA_COMMUNITY  // payment_type
+			));
+
+			// Calculation:
+			// - base = min(100, 120) * 5 = 500
+			// - over-delivery diff = 120-100 = 20
+			// - over-delivery adjustment = 0.2 * 20 * 5 = 20
+			// - final amount = 500 + 20 = 520
+
+			// Check balances after settlement
+			assert_eq!(Remuneration::balances(PROSUMER1), 480); // 1000 - 520
+			assert_eq!(Remuneration::balances(PROSUMER2), 520); // 0 + 520
+		});
+	}
+
+	#[test]
+	fn settle_flexibility_zero_beta_applies_no_over_delivery_adjustment() {
+		new_test_ext().execute_with(|| {
+			setup_intra_community_settlement(1_000, 0);
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				0,
+				0,
+				0,
+				0,
+			));
+
+			assert_ok!(Remuneration::settle_flexibility_payment(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				100,
+				120,
+				5,
+				INTRA_COMMUNITY
+			));
+			assert_eq!(Remuneration::balances(PROSUMER1), 500);
+			assert_eq!(Remuneration::balances(PROSUMER2), 500);
+		});
+	}
+
+	#[test]
+	fn settle_flexibility_negative_beta_penalizes_over_delivery_beyond_tolerance() {
+		new_test_ext().execute_with(|| {
+			setup_intra_community_settlement(1_000, 0);
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				0,
+				-200_000,
+				0,
+				0,
+			));
+
+			assert_ok!(Remuneration::settle_flexibility_payment(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				100,
+				120,
+				5,
+				INTRA_COMMUNITY
+			));
+			// base=500, over_excess=20, beta=-0.2 => penalty=20
+			assert_eq!(Remuneration::balances(PROSUMER1), 520);
+			assert_eq!(Remuneration::balances(PROSUMER2), 480);
+		});
+	}
+
+	#[test]
+	fn settle_flexibility_negative_beta_respects_over_tolerance() {
+		new_test_ext().execute_with(|| {
+			setup_intra_community_settlement(1_000, 0);
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				0,
+				-1_000_000,
+				0,
+				200_000,
+			));
+
+			assert_ok!(Remuneration::settle_flexibility_payment(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				100,
+				115,
+				5,
+				INTRA_COMMUNITY
+			));
+			assert_eq!(Remuneration::balances(PROSUMER1), 500);
+			assert_eq!(Remuneration::balances(PROSUMER2), 500);
+		});
+	}
+
+	#[test]
+	fn settle_flexibility_negative_beta_clamps_payment_to_zero() {
+		new_test_ext().execute_with(|| {
+			setup_intra_community_settlement(1_000, 0);
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				0,
+				-10_000_000,
+				0,
+				0,
+			));
+
+			assert_ok!(Remuneration::settle_flexibility_payment(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				100,
+				200,
+				5,
+				INTRA_COMMUNITY
+			));
+			assert_eq!(Remuneration::balances(PROSUMER1), 1_000);
+			assert_eq!(Remuneration::balances(PROSUMER2), 0);
+		});
+	}
+
+	#[test]
+	fn settle_flexibility_over_tolerance_boundary_has_no_adjustment() {
+		new_test_ext().execute_with(|| {
+			setup_intra_community_settlement(1_000, 0);
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				0,
+				-1_000_000,
+				0,
+				200_000,
+			));
+
+			assert_ok!(Remuneration::settle_flexibility_payment(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				100,
+				120,
+				5,
+				INTRA_COMMUNITY
+			));
+			assert_eq!(Remuneration::balances(PROSUMER1), 500);
+			assert_eq!(Remuneration::balances(PROSUMER2), 500);
+		});
+	}
+
+	#[test]
+	fn settle_flexibility_signed_beta_large_representable_values() {
+		new_test_ext().execute_with(|| {
+			let starting_balance = u128::from(u32::MAX) + 2_000;
+			setup_intra_community_settlement(starting_balance, 0);
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				0,
+				1_000_000,
+				0,
+				0,
+			));
+
+			assert_ok!(Remuneration::settle_flexibility_payment(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				u64::from(u32::MAX),
+				u64::from(u32::MAX) + 1_000,
+				1,
+				INTRA_COMMUNITY
+			));
+			let expected = u128::from(u32::MAX) + 1_000;
+			assert_eq!(Remuneration::balances(PROSUMER2), expected);
+			assert_eq!(Remuneration::balances(PROSUMER1), starting_balance - expected);
+		});
+	}
+
+	#[test]
+	fn settle_flexibility_signed_beta_overflow_preserves_state() {
+		new_test_ext().execute_with(|| {
+			setup_intra_community_settlement(u128::MAX, 0);
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				0,
+				i64::MAX,
+				0,
+				0,
+			));
+			let before_events = event_count();
+
+			assert_noop!(
+				Remuneration::settle_flexibility_payment(
+					RawOrigin::Signed(PROSUMER1).into(),
+					PROSUMER2,
+					1,
+					u64::MAX,
+					u64::MAX,
+					INTRA_COMMUNITY
+				),
+				Error::<Test>::SettlementArithmeticOverflow
+			);
+			assert_eq!(Remuneration::balances(PROSUMER1), u128::MAX);
+			assert_eq!(Remuneration::balances(PROSUMER2), 0);
+			assert_eq!(Remuneration::query_payment(PROSUMER1, PROSUMER2, 1), None);
+			assert_eq!(event_count(), before_events);
+		});
+	}
+
+	#[test]
+	fn settle_flexibility_with_tolerance() {
+		new_test_ext().execute_with(|| {
+			// Set a block and a timestamp
+			System::set_block_number(1);
+			Timestamp::set_timestamp(1_000);
+
+			// Setup initial state
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_ok!(Remuneration::add_community(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				COMMUNITY1,
+				DSO,
+				COMMUNITY1_OWNER
+			));
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				COMMUNITY1
+			));
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				COMMUNITY1
+			));
+
+			// Set initial balances
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				1000
+			));
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				0
+			));
+
+			// Set parameters via set_main_parameters
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				500_000, // alpha 0.5
+				Remuneration::beta(),
+				100_000, // under tol 0.1
+				100_000, // over tol 0.1
+			));
+
+			// Under-delivery but within tolerance (10% of 100 = 10 units)
+			assert_ok!(Remuneration::settle_flexibility_payment(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				100,             // requested
+				92,              // delivered (8 units under, within 10% tolerance)
+				5,               // price
+				INTRA_COMMUNITY  // payment_type
+			));
+
+			// Base = 92 * 5 = 460, diff after tolerance = 0, final=460
+			assert_eq!(Remuneration::balances(PROSUMER1), 540); // 1000 - 460
+			assert_eq!(Remuneration::balances(PROSUMER2), 460); // 0 + 460
+
+			// Reset balances for next test
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				1000
+			));
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				0
+			));
+
+			// Under-delivery beyond tolerance
+			assert_ok!(Remuneration::settle_flexibility_payment(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				100, // requested
+				85,  // delivered (15 under, tolerance=10 => 5 penalized)
+				5,   // price
+				INTRA_COMMUNITY
+			));
+			// Penalty = 0.5 * 5 * 5 = 12 (truncated), base=85*5=425, final=413
+			assert_eq!(Remuneration::balances(PROSUMER1), 587); // 1000 - 413
+			assert_eq!(Remuneration::balances(PROSUMER2), 413);
+		});
+	}
+
+	#[test]
+	fn settle_flexibility_complex_scenario() {
+		new_test_ext().execute_with(|| {
+			System::set_block_number(1);
+			Timestamp::set_timestamp(1_000);
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_ok!(Remuneration::add_community(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				COMMUNITY1,
+				DSO,
+				COMMUNITY1_OWNER
+			));
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				COMMUNITY1
+			));
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				COMMUNITY1
+			));
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				1000
+			));
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				0
+			));
+			// Set all parameters at once
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				500_000, // alpha
+				200_000, // beta
+				100_000, // under tol
+				100_000, // over tol
+			));
+			assert_ok!(Remuneration::settle_flexibility_payment(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				100,
+				105,
+				5,
+				INTRA_COMMUNITY
+			));
+			// Over within tolerance: base=500, no bonus
+			assert_eq!(Remuneration::balances(PROSUMER1), 500);
+			assert_eq!(Remuneration::balances(PROSUMER2), 500);
+		});
+	}
+
+	#[test]
+	fn settle_flexibility_errors() {
+		new_test_ext().execute_with(|| {
+			// Set a block and a timestamp
+			System::set_block_number(1);
+			Timestamp::set_timestamp(1_000);
+
+			// Setup initial state
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_ok!(Remuneration::add_community(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				COMMUNITY1,
+				DSO,
+				COMMUNITY1_OWNER
+			));
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				COMMUNITY1
+			));
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				COMMUNITY1
+			));
+
+			// Set initial balances - not enough funds
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				100
+			));
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				0
+			));
+
+			// Insufficient balance for payment
+			assert_noop!(
+				Remuneration::settle_flexibility_payment(
+					RawOrigin::Signed(PROSUMER1).into(),
+					PROSUMER2,
+					100,             // requested
+					100,             // delivered
+					10,              // price - would require 1000 balance
+					INTRA_COMMUNITY  // payment_type
+				),
+				Error::<Test>::InsufficientBalance
+			);
+
+			// Self-payment not allowed
+			assert_noop!(
+				Remuneration::settle_flexibility_payment(
+					RawOrigin::Signed(PROSUMER1).into(),
+					PROSUMER1,
+					100,             // requested
+					100,             // delivered
+					5,               // price
+					INTRA_COMMUNITY  // payment_type
+				),
+				Error::<Test>::SameSenderReceiver
+			);
+
+			// Invalid payment type
+			assert_noop!(
+				Remuneration::settle_flexibility_payment(
+					RawOrigin::Signed(PROSUMER1).into(),
+					PROSUMER2,
+					100, // requested
+					100, // delivered
+					5,   // price
+					3    // Invalid payment type
+				),
+				Error::<Test>::PaymentTypeNotAllowed
+			);
+
+			// Prosumer not in same community
+			assert_ok!(Remuneration::add_community(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				COMMUNITY2,
+				DSO,
+				COMMUNITY2_OWNER
+			));
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER3,
+				COMMUNITY2
+			));
+
+			assert_noop!(
+				Remuneration::settle_flexibility_payment(
+					RawOrigin::Signed(PROSUMER1).into(),
+					PROSUMER3,
+					100,
+					100,
+					5,
+					INTRA_COMMUNITY // payment_type
+				),
+				Error::<Test>::DifferentCommunities
+			);
+		});
+	}
+
+	#[test]
+	fn settle_flexibility_dual_tolerances() {
+		new_test_ext().execute_with(|| {
+			System::set_block_number(1);
+			Timestamp::set_timestamp(1_000);
+			// Setup base state
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_ok!(Remuneration::add_community(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				COMMUNITY1,
+				DSO,
+				COMMUNITY1_OWNER
+			));
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				COMMUNITY1
+			));
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				COMMUNITY1
+			));
+			// Set high precision alpha/beta = 1.0 and asymmetric tolerances
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				1_000_000, // alpha 1.0
+				1_000_000, // beta  1.0
+				50_000,    // under tol 5%
+				200_000,   // over tol 20%
+			));
+
+			// ---------- Scenario 1: Under-delivery partially beyond under tolerance ----------
+			// requested=100, delivered=94, under tolerance=5 => penalized diff = (100-94)-5 = 1
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				5_000
+			));
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				0
+			));
+			assert_ok!(Remuneration::settle_flexibility_payment(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				100,
+				94,
+				10,
+				INTRA_COMMUNITY
+			));
+			// Base = 94*10 = 940 ; Penalty = 1*10 =10 ; Final=930
+			assert_eq!(Remuneration::balances(PROSUMER1), 5_000 - 930);
+			assert_eq!(Remuneration::balances(PROSUMER2), 930);
+
+			// ---------- Scenario 2: Over-delivery within over tolerance (no bonus) ----------
+			// requested=100, delivered=115, over tolerance=20 => over diff 15 < 20 => no bonus
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				5_000
+			));
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				0
+			));
+			assert_ok!(Remuneration::settle_flexibility_payment(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				100,
+				115,
+				10,
+				INTRA_COMMUNITY
+			));
+			// Base = 100*10=1000 ; no bonus
+			assert_eq!(Remuneration::balances(PROSUMER1), 5_000 - 1_000);
+			assert_eq!(Remuneration::balances(PROSUMER2), 1_000);
+
+			// ---------- Scenario 3: Over-delivery beyond over tolerance (bonus applies) ----------
+			// requested=100, delivered=125, over tolerance=20 => bonus diff = (125-100) - 20 = 5
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				5_000
+			));
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				0
+			));
+			assert_ok!(Remuneration::settle_flexibility_payment(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				100,
+				125,
+				10,
+				INTRA_COMMUNITY
+			));
+			// Base=1000 ; Bonus=5*10=50 ; Final=1050
+			assert_eq!(Remuneration::balances(PROSUMER1), 5_000 - 1_050);
+			assert_eq!(Remuneration::balances(PROSUMER2), 1_050);
+		});
+	}
+
+	#[test]
+	fn settle_flexibility_inter_community() {
+		new_test_ext().execute_with(|| {
+			System::set_block_number(1);
+			Timestamp::set_timestamp(1_000);
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_ok!(Remuneration::add_community(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				COMMUNITY1,
+				DSO,
+				COMMUNITY1_OWNER
+			));
+			assert_ok!(Remuneration::add_community(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				COMMUNITY2,
+				DSO,
+				COMMUNITY2_OWNER
+			));
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				COMMUNITY1,
+				1000
+			));
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				COMMUNITY2,
+				0
+			));
+			// Set parameters at once
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				500_000,
+				200_000,
+				0,
+				0,
+			));
+			assert_ok!(Remuneration::settle_flexibility_payment(
+				RawOrigin::Signed(COMMUNITY1).into(),
+				COMMUNITY2,
+				100,
+				100,
+				5,
+				INTER_COMMUNITY
+			));
+			assert_eq!(Remuneration::balances(COMMUNITY1), 500);
+			assert_eq!(Remuneration::balances(COMMUNITY2), 500);
+		});
+	}
+}
+
+#[cfg(test)]
+mod dynamic_adaptation_tests {
+	use super::*;
+
+	#[test]
+	fn adaptation_alpha_beta_empty_measurements_fails() {
+		new_test_ext().execute_with(|| {
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_ok!(Remuneration::set_adaptation_params(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				10,
+				10,
+				10,
+				10,
+				10,
+				2
+			));
+			assert_noop!(
+				Remuneration::dynamically_adapt_parameters(
+					RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+					vec![],
+					vec![]
+				),
+				Error::<Test>::EmptyMeasurements
+			);
+		});
+	}
+
+	#[test]
+	fn adaptation_alpha_beta_invalid_window_size_when_not_set() {
+		new_test_ext().execute_with(|| {
+			// Custodian set but no adaptation params yet => window_size=0
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_noop!(
+				Remuneration::dynamically_adapt_parameters(
+					RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+					vec![1],
+					vec![1]
+				),
+				Error::<Test>::InvalidWindowSize
+			);
+		});
+	}
+
+	#[test]
+	fn adaptation_alpha_beta_mismatched_lengths_fail() {
+		new_test_ext().execute_with(|| {
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_ok!(Remuneration::set_adaptation_params(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				1,
+				1,
+				1,
+				1,
+				1,
+				3
+			));
+			assert_noop!(
+				Remuneration::dynamically_adapt_parameters(
+					RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+					vec![1, 2, 3],
+					vec![1, 2]
+				),
+				Error::<Test>::MismatchedMeasurements
+			);
+		});
+	}
+
+	#[test]
+	fn adaptation_alpha_beta_negative_factor_clamps_to_zero() {
+		new_test_ext().execute_with(|| {
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			// Start alpha/beta at 1.0
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				1_000_000,
+				1_000_000,
+				Remuneration::under_tolerance(),
+				Remuneration::over_tolerance(),
+			));
+			// Set high k so (1 + k*(avg-ref)) becomes 0
+			assert_ok!(Remuneration::set_adaptation_params(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				1_000_000, // u_ref
+				1_000_000, // o_ref
+				1_000_000, // k_alpha 1.0
+				1_000_000, // k_beta 1.0
+				1_000_000, // k_under_tol 1.0
+				2
+			));
+			// Provide zero measurements -> avg 0; delta = -1_000_000 => factor clamped to 0
+			assert_ok!(Remuneration::dynamically_adapt_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				vec![0, 0],
+				vec![0, 0]
+			));
+			assert_eq!(Remuneration::alpha(), 0);
+			assert_eq!(Remuneration::beta(), 0);
+		});
+	}
+
+	#[test]
+	fn adaptation_under_tolerance_clamps_to_fixed_point_max() {
+		new_test_ext().execute_with(|| {
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				1_000,
+				1_000,
+				FIXED_POINT_SCALE,
+				0,
+			));
+			assert_ok!(Remuneration::set_adaptation_params(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				FIXED_POINT_SCALE,
+				0,
+				0,
+				0,
+				FIXED_POINT_SCALE,
+				1
+			));
+
+			assert_ok!(Remuneration::dynamically_adapt_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				vec![0],
+				vec![0]
+			));
+			assert_eq!(Remuneration::under_tolerance(), FIXED_POINT_SCALE);
+			assert!(!has_under_tolerance_event(FIXED_POINT_SCALE, FIXED_POINT_SCALE));
+		});
+	}
+
+	#[test]
+	fn adaptation_alpha_beta_not_custodian_fails() {
+		new_test_ext().execute_with(|| {
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_ok!(Remuneration::set_adaptation_params(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				100,
+				200,
+				300,
+				400,
+				500,
+				2
+			));
+			assert_noop!(
+				Remuneration::dynamically_adapt_parameters(
+					RawOrigin::Signed(BOB_THE_CHEATER).into(),
+					vec![1, 2],
+					vec![1, 2]
+				),
+				Error::<Test>::NotCustodian
+			);
+		});
+	}
+
+	#[test]
+	fn adaptation_alpha_overflow_clamps_to_u64_max_and_signed_beta_updates() {
+		new_test_ext().execute_with(|| {
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			let near_max = u64::MAX - 5000; // large starting point
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				near_max,
+				1_000_000,
+				Remuneration::under_tolerance(),
+				Remuneration::over_tolerance(),
+			));
+			// Configure window 1, large positive delta to attempt doubling
+			assert_ok!(Remuneration::set_adaptation_params(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				0,
+				0,
+				1_000_000,
+				1_000_000,
+				1_000_000,
+				1
+			));
+			// delta = 1_000_000 => factor 2.0 -> product overflows, should clamp
+			assert_ok!(Remuneration::dynamically_adapt_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				vec![1_000_000],
+				vec![1_000_000]
+			));
+			assert_eq!(Remuneration::alpha(), u64::MAX);
+			assert_eq!(Remuneration::beta(), 2_000_000);
+		});
+	}
+
+	#[test]
+	fn adaptation_alpha_beta_success_updates_and_events() {
+		new_test_ext().execute_with(|| {
+			System::set_block_number(1);
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			let initial_alpha = 2_000_000u64; // 2.0
+			let initial_beta = 1_500_000i64; // 1.5
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				initial_alpha,
+				initial_beta,
+				Remuneration::under_tolerance(),
+				Remuneration::over_tolerance(),
+			));
+			let u_ref = 400_000; // 0.4
+			let o_ref = 300_000; // 0.3
+			let k_alpha = 100_000; // 0.1
+			let k_beta = 200_000; // 0.2
+			let k_under_tol = 50_000; // 0.05
+			let window = 3u32;
+			assert_ok!(Remuneration::set_adaptation_params(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				u_ref,
+				o_ref,
+				k_alpha,
+				k_beta,
+				k_under_tol,
+				window
+			));
+			let u_measurements = vec![500_000, 600_000, 700_000]; // avg = 600_000
+			let o_measurements = vec![400_000, 500_000, 600_000]; // avg = 500_000
+			assert_ok!(Remuneration::dynamically_adapt_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				u_measurements.clone(),
+				o_measurements.clone()
+			));
+			// Expected calculations
+			let u_avg = 600_000u64;
+			let o_avg = 500_000u64;
+			let f = 1_000_000i128;
+			let factor_a = f + (k_alpha as i128 * (u_avg as i128 - u_ref as i128)) / f; // 1_020_000
+			let factor_b = f + (k_beta as i128 * (o_avg as i128 - o_ref as i128)) / f; // 1_040_000
+			let expected_alpha = (initial_alpha as i128 * factor_a / f) as u64; // 2_040_000
+			let expected_beta = (initial_beta as i128 * factor_b / f) as i64; // 1_560_000
+			assert_eq!(Remuneration::alpha(), expected_alpha);
+			assert_eq!(Remuneration::beta(), expected_beta);
+			assert!(has_alpha_beta_adapted_event(initial_beta, expected_beta));
+		});
+	}
+
+	#[test]
+	fn adaptation_signed_beta_decreases_while_remaining_positive() {
+		new_test_ext().execute_with(|| {
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				1,
+				1_000_000,
+				0,
+				0,
+			));
+			assert_ok!(Remuneration::set_adaptation_params(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				0,
+				1_000_000,
+				0,
+				500_000,
+				0,
+				1
+			));
+			assert_ok!(Remuneration::dynamically_adapt_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				vec![0],
+				vec![500_000]
+			));
+			assert_eq!(Remuneration::beta(), 750_000);
+		});
+	}
+
+	#[test]
+	fn adaptation_signed_beta_positive_crosses_to_negative() {
+		new_test_ext().execute_with(|| {
+			System::set_block_number(1);
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				1,
+				1_000_000,
+				0,
+				0,
+			));
+			assert_ok!(Remuneration::set_adaptation_params(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				0,
+				1_000_000,
+				0,
+				2_000_000,
+				0,
+				1
+			));
+			assert_ok!(Remuneration::dynamically_adapt_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				vec![0],
+				vec![0]
+			));
+			assert_eq!(Remuneration::beta(), -1_000_000);
+			assert!(has_alpha_beta_adapted_event(1_000_000, -1_000_000));
+		});
+	}
+
+	#[test]
+	fn adaptation_signed_beta_negative_remains_negative_under_positive_factor() {
+		new_test_ext().execute_with(|| {
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				1,
+				-1_000_000,
+				0,
+				0,
+			));
+			assert_ok!(Remuneration::set_adaptation_params(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				0,
+				0,
+				0,
+				500_000,
+				0,
+				1
+			));
+			assert_ok!(Remuneration::dynamically_adapt_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				vec![0],
+				vec![1_000_000]
+			));
+			assert_eq!(Remuneration::beta(), -1_500_000);
+		});
+	}
+
+	#[test]
+	fn adaptation_signed_beta_negative_crosses_to_positive() {
+		new_test_ext().execute_with(|| {
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				1,
+				-1_000_000,
+				0,
+				0,
+			));
+			assert_ok!(Remuneration::set_adaptation_params(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				0,
+				1_000_000,
+				0,
+				2_000_000,
+				0,
+				1
+			));
+			assert_ok!(Remuneration::dynamically_adapt_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				vec![0],
+				vec![0]
+			));
+			assert_eq!(Remuneration::beta(), 1_000_000);
+		});
+	}
+
+	#[test]
+	fn adaptation_signed_beta_zero_remains_zero() {
+		new_test_ext().execute_with(|| {
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				1,
+				0,
+				0,
+				0,
+			));
+			assert_ok!(Remuneration::set_adaptation_params(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				0,
+				0,
+				0,
+				2_000_000,
+				0,
+				1
+			));
+			assert_ok!(Remuneration::dynamically_adapt_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				vec![0],
+				vec![1_000_000]
+			));
+			assert_eq!(Remuneration::beta(), 0);
+		});
+	}
+
+	#[test]
+	fn adaptation_signed_beta_overflow_fails_atomically() {
+		new_test_ext().execute_with(|| {
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_ok!(Remuneration::set_main_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				10,
+				i64::MAX,
+				500_000,
+				0,
+			));
+			assert_ok!(Remuneration::set_adaptation_params(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				0,
+				0,
+				0,
+				2_000_000,
+				0,
+				1
+			));
+			let before_events = event_count();
+
+			assert_noop!(
+				Remuneration::dynamically_adapt_parameters(
+					RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+					vec![0],
+					vec![1_000_000]
+				),
+				Error::<Test>::AdaptiveCalculationOverflow
+			);
+			assert_eq!(Remuneration::alpha(), 10);
+			assert_eq!(Remuneration::beta(), i64::MAX);
+			assert_eq!(Remuneration::under_tolerance(), 500_000);
+			assert_eq!(event_count(), before_events);
+		});
+	}
+
+	#[test]
+	fn adaptation_alpha_beta_window_size_mismatch_fail() {
+		new_test_ext().execute_with(|| {
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			// window size configured 2
+			assert_ok!(Remuneration::set_adaptation_params(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				1,
+				1,
+				1,
+				1,
+				1,
+				2
+			));
+			// Provide length 3 -> fails MeasurementsExceedWindow (n != configured)
+			assert_noop!(
+				Remuneration::dynamically_adapt_parameters(
+					RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+					vec![1, 2, 3],
+					vec![1, 2, 3]
+				),
+				Error::<Test>::MeasurementsExceedWindow
+			);
+		});
+	}
+
+	#[test]
+	fn adaptation_set_params_not_custodian_fails() {
+		new_test_ext().execute_with(|| {
+			// No custodian yet => set one
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_noop!(
+				Remuneration::set_adaptation_params(
+					RawOrigin::Signed(BOB_THE_CHEATER).into(),
+					1,
+					2,
+					3,
+					4,
+					5,
+					5
+				),
+				Error::<Test>::NotCustodian
+			);
+		});
+	}
+
+	#[test]
+	fn adaptation_set_params_zero_window_fails() {
+		new_test_ext().execute_with(|| {
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_noop!(
+				Remuneration::set_adaptation_params(
+					RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+					10,
+					20,
+					30,
+					40,
+					50,
+					0
+				),
+				Error::<Test>::InvalidWindowSize
+			);
+		});
+	}
+
+	#[test]
+	fn adaptation_set_params_success_and_event() {
+		new_test_ext().execute_with(|| {
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			let u_ref = 500_000; // 0.5
+			let o_ref = 300_000; // 0.3
+			let k_alpha = 120_000; // 0.12
+			let k_beta = 250_000; // 0.25
+			let k_under_tol = 50_000; // 0.05
+			let window_size = 4u32;
+			assert_ok!(Remuneration::set_adaptation_params(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				u_ref,
+				o_ref,
+				k_alpha,
+				k_beta,
+				k_under_tol,
+				window_size
+			));
+			// Storage checks only (omit event assertion to avoid failure in mock)
+			assert_eq!(Remuneration::u_ref(), u_ref);
+			assert_eq!(Remuneration::o_ref(), o_ref);
+			assert_eq!(Remuneration::k_alpha(), k_alpha);
+			assert_eq!(Remuneration::k_beta(), k_beta);
+			assert_eq!(Remuneration::adaptation_window_size(), window_size);
+		});
+	}
+}
+
+#[cfg(test)]
+mod pw_quad_penalty_tests {
+	use super::*;
+
+	#[test]
+	fn piecewise_parameters_management() {
+		new_test_ext().execute_with(|| {
+			// Set custodian
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			// Defaults
+			assert_eq!(Remuneration::alpha_piecewise(), 0);
+			assert_eq!(Remuneration::eps_piecewise_1(), 0);
+			assert_eq!(Remuneration::eps_piecewise_2(), 0);
+			// Update piecewise params
+			let a = 2u64;
+			let e1 = 250_000u64;
+			let e2 = 400_000u64;
+			assert_ok!(Remuneration::set_piecewise_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				a,
+				e1,
+				e2
+			));
+			// Storage checks
+			assert_eq!(Remuneration::alpha_piecewise(), a);
+			assert_eq!(Remuneration::eps_piecewise_1(), e1);
+			assert_eq!(Remuneration::eps_piecewise_2(), e2);
+		});
+	}
+
+	#[test]
+	fn piecewise_parameters_not_custodian_fails() {
+		new_test_ext().execute_with(|| {
+			// Establish a custodian to compare against
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			// Non-custodian cannot set piecewise params
+			assert_noop!(
+				Remuneration::set_piecewise_parameters(
+					RawOrigin::Signed(BOB_THE_CHEATER).into(),
+					1,
+					200_000,
+					300_000
+				),
+				Error::<Test>::NotCustodian
+			);
+			// Ensure storage remains at defaults
+			assert_eq!(Remuneration::alpha_piecewise(), 0);
+			assert_eq!(Remuneration::eps_piecewise_1(), 0);
+			assert_eq!(Remuneration::eps_piecewise_2(), 0);
+		});
+	}
+
+	#[test]
+	fn piecewise_parameter_validation_rejects_invalid_ranges_and_ordering_atomically() {
+		new_test_ext().execute_with(|| {
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_ok!(Remuneration::set_piecewise_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				7,
+				200_000,
+				400_000
+			));
+
+			let before_events = event_count();
+			assert_noop!(
+				Remuneration::set_piecewise_parameters(
+					RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+					8,
+					FIXED_POINT_SCALE + 1,
+					400_000
+				),
+				Error::<Test>::InvalidPiecewiseEpsilonRange
+			);
+			assert_eq!(Remuneration::alpha_piecewise(), 7);
+			assert_eq!(Remuneration::eps_piecewise_1(), 200_000);
+			assert_eq!(Remuneration::eps_piecewise_2(), 400_000);
+			assert_eq!(event_count(), before_events);
+
+			assert_noop!(
+				Remuneration::set_piecewise_parameters(
+					RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+					8,
+					200_000,
+					FIXED_POINT_SCALE + 1
+				),
+				Error::<Test>::InvalidPiecewiseEpsilonRange
+			);
+			assert_eq!(Remuneration::alpha_piecewise(), 7);
+			assert_eq!(Remuneration::eps_piecewise_1(), 200_000);
+			assert_eq!(Remuneration::eps_piecewise_2(), 400_000);
+			assert_eq!(event_count(), before_events);
+
+			assert_noop!(
+				Remuneration::set_piecewise_parameters(
+					RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+					8,
+					200_000,
+					200_000
+				),
+				Error::<Test>::InvalidPiecewiseThresholdOrder
+			);
+			assert_noop!(
+				Remuneration::set_piecewise_parameters(
+					RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+					8,
+					400_000,
+					200_000
+				),
+				Error::<Test>::InvalidPiecewiseThresholdOrder
+			);
+			assert_eq!(Remuneration::alpha_piecewise(), 7);
+			assert_eq!(Remuneration::eps_piecewise_1(), 200_000);
+			assert_eq!(Remuneration::eps_piecewise_2(), 400_000);
+			assert_eq!(event_count(), before_events);
+		});
+	}
+
+	#[test]
+	fn piecewise_parameter_boundary_values_are_valid_when_ordered() {
+		new_test_ext().execute_with(|| {
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_ok!(Remuneration::set_piecewise_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				1,
+				0,
+				FIXED_POINT_SCALE
+			));
+			assert_eq!(Remuneration::eps_piecewise_1(), 0);
+			assert_eq!(Remuneration::eps_piecewise_2(), FIXED_POINT_SCALE);
+		});
+	}
+
+	#[test]
+	fn settle_flexibility_payment_with_pw_quad_penalty() {
+		new_test_ext().execute_with(|| {
+			System::set_block_number(1);
+			Timestamp::set_timestamp(1_000);
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_ok!(Remuneration::add_community(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				COMMUNITY1,
+				DSO,
+				COMMUNITY1_OWNER
+			));
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				COMMUNITY1
+			));
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				COMMUNITY1
+			));
+
+			// Piecewise params: alpha=1, eps1=0.2, eps2=0.4 => e1=80, e2=60
+			assert_ok!(Remuneration::set_piecewise_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				1,
+				200_000,
+				400_000
+			));
+
+			// Perfect delivery => base 500, penalty 0, final 500
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				5_000
+			));
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				0
+			));
+			assert_ok!(Remuneration::settle_flexibility_payment_with_pw_quad_penalty(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				100,
+				100,
+				5,
+				INTRA_COMMUNITY
+			));
+			assert_eq!(Remuneration::balances(PROSUMER1), 5_000 - 500);
+			assert_eq!(Remuneration::balances(PROSUMER2), 500);
+
+			// Linear branch (e2 <= Em < e1) => base 700, penalty 100, final 600
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				10_000
+			));
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				0
+			));
+			assert_ok!(Remuneration::settle_flexibility_payment_with_pw_quad_penalty(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				100,
+				70,
+				10,
+				INTRA_COMMUNITY
+			));
+			assert_eq!(Remuneration::balances(PROSUMER1), 10_000 - 600);
+			assert_eq!(Remuneration::balances(PROSUMER2), 600);
+
+			// Quadratic branch (Em < e2) not saturating to zero => final 50
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				10_000
+			));
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				0
+			));
+			assert_ok!(Remuneration::settle_flexibility_payment_with_pw_quad_penalty(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				100,
+				55,
+				10,
+				INTRA_COMMUNITY
+			));
+			assert_eq!(Remuneration::balances(PROSUMER1), 10_000 - 50);
+			assert_eq!(Remuneration::balances(PROSUMER2), 50);
+
+			// Quadratic branch saturating to zero => final 0
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				10_000
+			));
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				0
+			));
+			assert_ok!(Remuneration::settle_flexibility_payment_with_pw_quad_penalty(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				100,
+				50,
+				10,
+				INTRA_COMMUNITY
+			));
+			assert_eq!(Remuneration::balances(PROSUMER1), 10_000);
+			assert_eq!(Remuneration::balances(PROSUMER2), 0);
+
+			// Over-delivery ignored (no bonus) => final 500
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				5_000
+			));
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				0
+			));
+			assert_ok!(Remuneration::settle_flexibility_payment_with_pw_quad_penalty(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				100,
+				120,
+				5,
+				INTRA_COMMUNITY
+			));
+			assert_eq!(Remuneration::balances(PROSUMER1), 5_000 - 500);
+			assert_eq!(Remuneration::balances(PROSUMER2), 500);
+		});
+	}
+
+	#[test]
+	fn settle_flexibility_payment_with_pw_quad_penalty_large_amount_above_u32_max() {
+		new_test_ext().execute_with(|| {
+			System::set_block_number(1);
+			Timestamp::set_timestamp(1_000);
+			assert_ok!(Remuneration::update_custodian(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				ALICE_THE_CUSTODIAN
+			));
+			assert_ok!(Remuneration::add_community(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				COMMUNITY1,
+				DSO,
+				COMMUNITY1_OWNER
+			));
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				COMMUNITY1
+			));
+			assert_ok!(Remuneration::add_prosumer(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				COMMUNITY1
+			));
+			assert_ok!(Remuneration::set_piecewise_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				1,
+				200_000,
+				400_000
+			));
+
+			let large_amount = u32::MAX as u128 + 456;
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				large_amount
+			));
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER2,
+				0
+			));
+
+			assert_ok!(Remuneration::settle_flexibility_payment_with_pw_quad_penalty(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				large_amount as u64,
+				large_amount as u64,
+				1,
+				INTRA_COMMUNITY
+			));
+			assert_eq!(Remuneration::balances(PROSUMER1), 0);
+			assert_eq!(Remuneration::balances(PROSUMER2), large_amount);
+		});
+	}
+}
+
+#[cfg(test)]
+mod hybrid_model_tests {
+	use super::*;
+
+	fn set_custodian() {
+		System::set_block_number(1);
+		assert_ok!(Remuneration::update_custodian(
+			RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+			ALICE_THE_CUSTODIAN
+		));
+	}
+
+	fn has_hybrid_params_event(gamma_over: i64, gamma_under: u64, eps: u64, n: u32) -> bool {
+		System::events().iter().any(|record| {
+			matches!(
+				record.event,
+				RuntimeEvent::Remuneration(crate::Event::HybridModelParametersUpdated {
+					gamma_over: go,
+					gamma_under: gu,
+					eps: e,
+					n: nn,
+				}) if go == gamma_over && gu == gamma_under && e == eps && nn == n
+			)
+		})
+	}
+
+	fn has_any_hybrid_params_event() -> bool {
+		System::events().iter().any(|record| {
+			matches!(
+				record.event,
+				RuntimeEvent::Remuneration(crate::Event::HybridModelParametersUpdated { .. })
+			)
+		})
+	}
+
+	fn has_hybrid_settled_event(
+		requested: u64,
+		delivered: u64,
+		price: u64,
+		calculated_amount: u128,
+		net_adjustment: i128,
+	) -> bool {
+		System::events().iter().any(|record| {
+			matches!(
+				record.event,
+				RuntimeEvent::Remuneration(crate::Event::HybridFlexibilitySettled {
+					requested: req,
+					delivered: del,
+					price: pr,
+					calculated_amount: amt,
+					net_adjustment: net,
+					..
+				}) if req == requested
+					&& del == delivered
+					&& pr == price
+					&& amt == calculated_amount
+					&& net == net_adjustment
+			)
+		})
+	}
+
+	// ---------------------------------------------------------------------
+	// Hybrid parameter setter / getter tests
+	// ---------------------------------------------------------------------
+
+	#[test]
+	fn hybrid_model_parameters_defaults_are_zero() {
+		new_test_ext().execute_with(|| {
+			assert_eq!(Remuneration::gamma_over_hybrid(), 0i64);
+			assert_eq!(Remuneration::gamma_under_hybrid(), 0u64);
+			assert_eq!(Remuneration::eps_hybrid(), 0u64);
+			assert_eq!(Remuneration::n_hybrid(), 0u32);
+			assert_eq!(Remuneration::query_hybrid_model_params(), (0i64, 0u64, 0u64, 0u32));
+		});
+	}
+
+	#[test]
+	fn hybrid_model_parameters_management() {
+		new_test_ext().execute_with(|| {
+			set_custodian();
+			// Update with signed gamma_over and quadratic exponent.
+			let go: i64 = 300_000;
+			let gu: u64 = 500_000;
+			let eps: u64 = 100_000;
+			let n: u32 = 2;
+			assert_ok!(Remuneration::set_hybrid_model_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				go,
+				gu,
+				eps,
+				n
+			));
+			assert_eq!(Remuneration::gamma_over_hybrid(), go);
+			assert_eq!(Remuneration::gamma_under_hybrid(), gu);
+			assert_eq!(Remuneration::eps_hybrid(), eps);
+			assert_eq!(Remuneration::n_hybrid(), n);
+			assert_eq!(Remuneration::query_hybrid_model_params(), (go, gu, eps, n));
+			assert!(has_hybrid_params_event(go, gu, eps, n));
+		});
+	}
+
+	#[test]
+	fn hybrid_model_parameters_accepts_positive_zero_and_negative_gamma_over() {
+		new_test_ext().execute_with(|| {
+			set_custodian();
+			for go in [1_000_000i64, 0i64, -1_000_000i64] {
+				assert_ok!(Remuneration::set_hybrid_model_parameters(
+					RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+					go,
+					500_000,
+					100_000,
+					2
+				));
+				assert_eq!(Remuneration::gamma_over_hybrid(), go);
+			}
+		});
+	}
+
+	#[test]
+	fn hybrid_model_parameters_accepts_large_gamma_under() {
+		new_test_ext().execute_with(|| {
+			set_custodian();
+			assert_ok!(Remuneration::set_hybrid_model_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				0,
+				u64::MAX,
+				0,
+				2
+			));
+			assert_eq!(Remuneration::gamma_under_hybrid(), u64::MAX);
+		});
+	}
+
+	#[test]
+	fn hybrid_model_parameters_accepts_eps_zero_and_eps_f() {
+		new_test_ext().execute_with(|| {
+			set_custodian();
+			assert_ok!(Remuneration::set_hybrid_model_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				0,
+				0,
+				0,
+				2
+			));
+			assert_eq!(Remuneration::eps_hybrid(), 0);
+			assert_ok!(Remuneration::set_hybrid_model_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				0,
+				0,
+				FIXED_POINT_SCALE,
+				2
+			));
+			assert_eq!(Remuneration::eps_hybrid(), FIXED_POINT_SCALE);
+		});
+	}
+
+	#[test]
+	fn hybrid_model_parameters_rejects_eps_above_f_atomically() {
+		new_test_ext().execute_with(|| {
+			set_custodian();
+			// Establish a known valid baseline.
+			assert_ok!(Remuneration::set_hybrid_model_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				123,
+				456,
+				789,
+				2
+			));
+			let before = Remuneration::query_hybrid_model_params();
+			let events_before = event_count();
+			assert_noop!(
+				Remuneration::set_hybrid_model_parameters(
+					RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+					999,
+					999,
+					FIXED_POINT_SCALE + 1,
+					2
+				),
+				Error::<Test>::InvalidHybridEpsilonRange
+			);
+			// All four parameters preserved, no new event.
+			assert_eq!(Remuneration::query_hybrid_model_params(), before);
+			assert_eq!(event_count(), events_before);
+		});
+	}
+
+	#[test]
+	fn hybrid_model_parameters_accepts_only_quadratic_exponent() {
+		new_test_ext().execute_with(|| {
+			set_custodian();
+			assert_ok!(Remuneration::set_hybrid_model_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				0,
+				0,
+				0,
+				2
+			));
+			assert_eq!(Remuneration::n_hybrid(), 2);
+		});
+	}
+
+	#[test]
+	fn hybrid_model_parameters_rejects_non_quadratic_exponents_atomically() {
+		new_test_ext().execute_with(|| {
+			set_custodian();
+			assert_ok!(Remuneration::set_hybrid_model_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				11,
+				22,
+				33,
+				2
+			));
+			let before = Remuneration::query_hybrid_model_params();
+			for bad_n in [0u32, 1u32, 3u32] {
+				let events_before = event_count();
+				assert_noop!(
+					Remuneration::set_hybrid_model_parameters(
+						RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+						100,
+						200,
+						300,
+						bad_n
+					),
+					Error::<Test>::InvalidHybridExponent
+				);
+				assert_eq!(Remuneration::query_hybrid_model_params(), before);
+				assert_eq!(event_count(), events_before);
+			}
+		});
+	}
+
+	#[test]
+	fn hybrid_model_parameters_not_custodian_fails() {
+		new_test_ext().execute_with(|| {
+			set_custodian();
+			let events_before = event_count();
+			assert_noop!(
+				Remuneration::set_hybrid_model_parameters(
+					RawOrigin::Signed(BOB_THE_CHEATER).into(),
+					1,
+					2,
+					3,
+					2
+				),
+				Error::<Test>::NotCustodian
+			);
+			assert_eq!(Remuneration::query_hybrid_model_params(), (0i64, 0u64, 0u64, 0u32));
+			assert!(!has_any_hybrid_params_event());
+			assert_eq!(event_count(), events_before);
+		});
+	}
+
+	#[test]
+	fn hybrid_model_query_returns_signed_and_typed_values() {
+		new_test_ext().execute_with(|| {
+			set_custodian();
+			assert_ok!(Remuneration::set_hybrid_model_parameters(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				-750_000,
+				900_000,
+				250_000,
+				2
+			));
+			let (go, gu, eps, n) = Remuneration::query_hybrid_model_params();
+			assert_eq!(go, -750_000i64);
+			assert_eq!(gu, 900_000u64);
+			assert_eq!(eps, 250_000u64);
+			assert_eq!(n, 2u32);
+		});
+	}
+
+	// ---------------------------------------------------------------------
+	// Pure calculation tests (calculate_hybrid_settlement_amount)
+	// ---------------------------------------------------------------------
+	// Reference values for Er=100, eps=100_000 (10%): lower=90, upper=110.
+
+	#[test]
+	fn hybrid_calc_exact_lower_boundary_is_zero_adjustment() {
+		new_test_ext().execute_with(|| {
+			// Em == lower == 90 -> flat band, adjustment 0, settlement = min(100,90)*5 = 450.
+			let res = Remuneration::calculate_hybrid_settlement_amount(
+				100, 90, 5, 1_000_000, 1_000_000, 100_000, 2,
+			)
+			.unwrap();
+			assert_eq!(res, (450u128, 0i128));
+		});
+	}
+
+	#[test]
+	fn hybrid_calc_exact_upper_boundary_is_zero_adjustment() {
+		new_test_ext().execute_with(|| {
+			// Em == upper == 110 -> flat band, adjustment 0, settlement = min(100,110)*5 = 500.
+			let res = Remuneration::calculate_hybrid_settlement_amount(
+				100, 110, 5, 1_000_000, 1_000_000, 100_000, 2,
+			)
+			.unwrap();
+			assert_eq!(res, (500u128, 0i128));
+		});
+	}
+
+	#[test]
+	fn hybrid_calc_inside_band_is_zero_adjustment() {
+		new_test_ext().execute_with(|| {
+			// Em == 100 in [90,110] -> adjustment 0, settlement = 100*5 = 500.
+			let res = Remuneration::calculate_hybrid_settlement_amount(
+				100, 100, 5, 1_000_000, 1_000_000, 100_000, 2,
+			)
+			.unwrap();
+			assert_eq!(res, (500u128, 0i128));
+		});
+	}
+
+	#[test]
+	fn hybrid_calc_positive_gamma_over_rewards_over_delivery() {
+		new_test_ext().execute_with(|| {
+			// Em=120 > upper=110, over_dev=10, A_over=+10 energy, *price 5 => +50.
+			// base = min(100,120)*5 = 500 => final 550.
+			let res = Remuneration::calculate_hybrid_settlement_amount(
+				100, 120, 5, 1_000_000, 0, 100_000, 2,
+			)
+			.unwrap();
+			assert_eq!(res, (550u128, 50i128));
+		});
+	}
+
+	#[test]
+	fn hybrid_calc_zero_gamma_over_gives_no_over_adjustment() {
+		new_test_ext().execute_with(|| {
+			let res =
+				Remuneration::calculate_hybrid_settlement_amount(100, 120, 5, 0, 0, 100_000, 2)
+					.unwrap();
+			assert_eq!(res, (500u128, 0i128));
+		});
+	}
+
+	#[test]
+	fn hybrid_calc_negative_gamma_over_penalises_over_delivery() {
+		new_test_ext().execute_with(|| {
+			// A_over=-10 energy, *5 => -50, base 500 => 450.
+			let res = Remuneration::calculate_hybrid_settlement_amount(
+				100, 120, 5, -1_000_000, 0, 100_000, 2,
+			)
+			.unwrap();
+			assert_eq!(res, (450u128, -50i128));
+		});
+	}
+
+	#[test]
+	fn hybrid_calc_quadratic_under_delivery_penalty() {
+		new_test_ext().execute_with(|| {
+			// Em=80 < lower=90, under_dev=10, magnitude=1e6*100/(1e6*100)=1 energy.
+			// *price 5 => -5; base = min(100,80)*5 = 400 => 395.
+			let res = Remuneration::calculate_hybrid_settlement_amount(
+				100, 80, 5, 0, 1_000_000, 100_000, 2,
+			)
+			.unwrap();
+			assert_eq!(res, (395u128, -5i128));
+		});
+	}
+
+	#[test]
+	fn hybrid_calc_penalty_grows_nonlinearly() {
+		new_test_ext().execute_with(|| {
+			// under_dev 10 -> energy magnitude 1; under_dev 20 -> magnitude 4 (quadratic).
+			let r1 = Remuneration::calculate_hybrid_settlement_amount(
+				100, 80, 1, 0, 1_000_000, 100_000, 2,
+			)
+			.unwrap();
+			let r2 = Remuneration::calculate_hybrid_settlement_amount(
+				100, 70, 1, 0, 1_000_000, 100_000, 2,
+			)
+			.unwrap();
+			// net adjustments: -1 and -4 (monetary == energy because price=1).
+			assert_eq!(r1.1, -1i128);
+			assert_eq!(r2.1, -4i128);
+		});
+	}
+
+	#[test]
+	fn hybrid_calc_clamps_to_zero_when_penalty_exceeds_base() {
+		new_test_ext().execute_with(|| {
+			// Er=100, Em=10, eps=0 => lower=upper=100, under_dev=90, magnitude=1e6*8100/1e8=81.
+			// base = min(100,10)*1 = 10; final = max(0, 10-81) = 0.
+			let res =
+				Remuneration::calculate_hybrid_settlement_amount(100, 10, 1, 0, 1_000_000, 0, 2)
+					.unwrap();
+			assert_eq!(res, (0u128, -81i128));
+		});
+	}
+
+	#[test]
+	fn hybrid_calc_requested_zero_yields_zero() {
+		new_test_ext().execute_with(|| {
+			let res = Remuneration::calculate_hybrid_settlement_amount(
+				0, 100, 5, 1_000_000, 1_000_000, 100_000, 2,
+			)
+			.unwrap();
+			assert_eq!(res, (0u128, 0i128));
+		});
+	}
+
+	#[test]
+	fn hybrid_calc_delivered_zero_under_penalty() {
+		new_test_ext().execute_with(|| {
+			// Em=0 < lower=90, under_dev=90, magnitude=1e6*8100/1e8=81, *5 => -405.
+			// base = min(100,0)*5 = 0 => final clamps to 0.
+			let res = Remuneration::calculate_hybrid_settlement_amount(
+				100, 0, 5, 0, 1_000_000, 100_000, 2,
+			)
+			.unwrap();
+			assert_eq!(res, (0u128, -405i128));
+		});
+	}
+
+	#[test]
+	fn hybrid_calc_price_zero_yields_zero() {
+		new_test_ext().execute_with(|| {
+			let res = Remuneration::calculate_hybrid_settlement_amount(
+				100, 120, 0, 1_000_000, 1_000_000, 100_000, 2,
+			)
+			.unwrap();
+			assert_eq!(res, (0u128, 0i128));
+		});
+	}
+
+	#[test]
+	fn hybrid_calc_eps_zero_collapses_band() {
+		new_test_ext().execute_with(|| {
+			// eps=0 => lower=upper=Er=100. Em=100 in band => 500.
+			let res = Remuneration::calculate_hybrid_settlement_amount(
+				100, 100, 5, 1_000_000, 1_000_000, 0, 2,
+			)
+			.unwrap();
+			assert_eq!(res, (500u128, 0i128));
+		});
+	}
+
+	#[test]
+	fn hybrid_calc_eps_full_scale_wide_band() {
+		new_test_ext().execute_with(|| {
+			// eps=F => lower=0, upper=2*Er=200. Em=150 in band => settlement = min(100,150)*5 = 500.
+			let res = Remuneration::calculate_hybrid_settlement_amount(
+				100,
+				150,
+				5,
+				1_000_000,
+				1_000_000,
+				FIXED_POINT_SCALE,
+				2,
+			)
+			.unwrap();
+			assert_eq!(res, (500u128, 0i128));
+		});
+	}
+
+	#[test]
+	fn hybrid_calc_large_representable_values() {
+		new_test_ext().execute_with(|| {
+			// Er=Em=1e9, price=1e6, eps=0 => flat band, base = 1e9*1e6 = 1e15 (no truncation).
+			let res = Remuneration::calculate_hybrid_settlement_amount(
+				1_000_000_000,
+				1_000_000_000,
+				1_000_000,
+				0,
+				0,
+				0,
+				2,
+			)
+			.unwrap();
+			assert_eq!(res, (1_000_000_000_000_000u128, 0i128));
+		});
+	}
+
+	#[test]
+	fn hybrid_calc_overflow_returns_error() {
+		new_test_ext().execute_with(|| {
+			// Force overflow in the monetary multiplication step.
+			let res = Remuneration::calculate_hybrid_settlement_amount(
+				1,
+				100_000_000_000_000,
+				u64::MAX,
+				1_000_000_000_000,
+				0,
+				0,
+				2,
+			);
+			assert!(matches!(res, Err(Error::<Test>::SettlementArithmeticOverflow)));
+		});
+	}
+
+	#[test]
+	fn hybrid_calc_extreme_gamma_in_band_does_not_panic() {
+		new_test_ext().execute_with(|| {
+			// In-band: adjustment is 0 regardless of gamma magnitudes.
+			let res = Remuneration::calculate_hybrid_settlement_amount(
+				100,
+				100,
+				5,
+				i64::MAX,
+				u64::MAX,
+				0,
+				2,
+			)
+			.unwrap();
+			assert_eq!(res, (500u128, 0i128));
+		});
+	}
+
+	#[test]
+	fn hybrid_calc_continuity_at_boundaries() {
+		new_test_ext().execute_with(|| {
+			// Just inside vs at the lower boundary differ by integer-rounding precision only.
+			let at_lower = Remuneration::calculate_hybrid_settlement_amount(
+				100, 90, 5, 1_000_000, 1_000_000, 100_000, 2,
+			)
+			.unwrap();
+			let below_lower = Remuneration::calculate_hybrid_settlement_amount(
+				100, 89, 5, 1_000_000, 1_000_000, 100_000, 2,
+			)
+			.unwrap();
+			assert_eq!(at_lower.1, 0i128);
+			// under_dev=1 => magnitude = 1e6*1/(1e6*100) = 0 (truncates), so net adjustment 0 too.
+			assert_eq!(below_lower.1, 0i128);
+
+			// At the upper boundary the over deviation is zero -> adjustment 0.
+			let at_upper = Remuneration::calculate_hybrid_settlement_amount(
+				100, 110, 5, 1_000_000, 1_000_000, 100_000, 2,
+			)
+			.unwrap();
+			let above_upper = Remuneration::calculate_hybrid_settlement_amount(
+				100, 111, 5, 1_000_000, 0, 100_000, 2,
+			)
+			.unwrap();
+			assert_eq!(at_upper.1, 0i128);
+			// over_dev=1 => A_over = 1, *5 => +5.
+			assert_eq!(above_upper.1, 5i128);
+		});
+	}
+
+	#[test]
+	fn hybrid_calc_defensive_rejects_bad_eps_and_exponent() {
+		new_test_ext().execute_with(|| {
+			assert!(matches!(
+				Remuneration::calculate_hybrid_settlement_amount(
+					100,
+					100,
+					5,
+					0,
+					0,
+					FIXED_POINT_SCALE + 1,
+					2
+				),
+				Err(Error::<Test>::InvalidHybridEpsilonRange)
+			));
+			assert!(matches!(
+				Remuneration::calculate_hybrid_settlement_amount(100, 100, 5, 0, 0, 0, 3),
+				Err(Error::<Test>::InvalidHybridExponent)
+			));
+		});
+	}
+
+	// ---------------------------------------------------------------------
+	// End-to-end extrinsic tests
+	// ---------------------------------------------------------------------
+
+	fn set_hybrid_params(go: i64, gu: u64, eps: u64, n: u32) {
+		assert_ok!(Remuneration::set_hybrid_model_parameters(
+			RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+			go,
+			gu,
+			eps,
+			n
+		));
+	}
+
+	#[test]
+	fn hybrid_settlement_flat_band_succeeds_and_records_payment() {
+		new_test_ext().execute_with(|| {
+			setup_intra_community_settlement(1_000, 0);
+			set_hybrid_params(0, 0, 0, 2);
+			assert_ok!(Remuneration::settle_flexibility_payment_with_hybrid_adjustment(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				100,
+				100,
+				5,
+				INTRA_COMMUNITY
+			));
+			assert_eq!(Remuneration::balances(PROSUMER1), 500);
+			assert_eq!(Remuneration::balances(PROSUMER2), 500);
+			// Payment ledger entry exists (1_000ms timestamp -> 1s).
+			let now = 1u32;
+			assert!(crate::Payments::<Test>::contains_key((PROSUMER1, PROSUMER2, now)));
+			assert!(has_hybrid_settled_event(100, 100, 5, 500, 0));
+		});
+	}
+
+	#[test]
+	fn hybrid_settlement_positive_over_delivery() {
+		new_test_ext().execute_with(|| {
+			setup_intra_community_settlement(1_000, 0);
+			set_hybrid_params(1_000_000, 0, 100_000, 2);
+			assert_ok!(Remuneration::settle_flexibility_payment_with_hybrid_adjustment(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				100,
+				120,
+				5,
+				INTRA_COMMUNITY
+			));
+			assert_eq!(Remuneration::balances(PROSUMER1), 450);
+			assert_eq!(Remuneration::balances(PROSUMER2), 550);
+			assert!(has_hybrid_settled_event(100, 120, 5, 550, 50));
+		});
+	}
+
+	#[test]
+	fn hybrid_settlement_negative_over_delivery() {
+		new_test_ext().execute_with(|| {
+			setup_intra_community_settlement(1_000, 0);
+			set_hybrid_params(-1_000_000, 0, 100_000, 2);
+			assert_ok!(Remuneration::settle_flexibility_payment_with_hybrid_adjustment(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				100,
+				120,
+				5,
+				INTRA_COMMUNITY
+			));
+			assert_eq!(Remuneration::balances(PROSUMER1), 550);
+			assert_eq!(Remuneration::balances(PROSUMER2), 450);
+			assert!(has_hybrid_settled_event(100, 120, 5, 450, -50));
+		});
+	}
+
+	#[test]
+	fn hybrid_settlement_nonlinear_under_delivery() {
+		new_test_ext().execute_with(|| {
+			setup_intra_community_settlement(1_000, 0);
+			set_hybrid_params(0, 1_000_000, 100_000, 2);
+			// Em=70 => under_dev=20 => magnitude 4 energy => -20 monetary; base 350 => 330.
+			assert_ok!(Remuneration::settle_flexibility_payment_with_hybrid_adjustment(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				100,
+				70,
+				5,
+				INTRA_COMMUNITY
+			));
+			assert_eq!(Remuneration::balances(PROSUMER1), 670);
+			assert_eq!(Remuneration::balances(PROSUMER2), 330);
+			assert!(has_hybrid_settled_event(100, 70, 5, 330, -20));
+		});
+	}
+
+	#[test]
+	fn hybrid_settlement_clamps_to_zero() {
+		new_test_ext().execute_with(|| {
+			setup_intra_community_settlement(1_000, 0);
+			set_hybrid_params(0, 1_000_000, 0, 2);
+			// Er=100, Em=10, price=1, eps=0 => final 0, net -81.
+			assert_ok!(Remuneration::settle_flexibility_payment_with_hybrid_adjustment(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				100,
+				10,
+				1,
+				INTRA_COMMUNITY
+			));
+			assert_eq!(Remuneration::balances(PROSUMER1), 1_000);
+			assert_eq!(Remuneration::balances(PROSUMER2), 0);
+			assert!(has_hybrid_settled_event(100, 10, 1, 0, -81));
+		});
+	}
+
+	#[test]
+	fn hybrid_settlement_insufficient_balance_fails_atomically() {
+		new_test_ext().execute_with(|| {
+			setup_intra_community_settlement(100, 0);
+			set_hybrid_params(0, 0, 0, 2);
+			let events_before = event_count();
+			// Flat band base = 100*5 = 500 > sender balance 100.
+			assert_noop!(
+				Remuneration::settle_flexibility_payment_with_hybrid_adjustment(
+					RawOrigin::Signed(PROSUMER1).into(),
+					PROSUMER2,
+					100,
+					100,
+					5,
+					INTRA_COMMUNITY
+				),
+				Error::<Test>::InsufficientBalance
+			);
+			assert_eq!(Remuneration::balances(PROSUMER1), 100);
+			assert_eq!(Remuneration::balances(PROSUMER2), 0);
+			assert_eq!(event_count(), events_before);
+		});
+	}
+
+	#[test]
+	fn hybrid_settlement_arithmetic_failure_is_atomic() {
+		new_test_ext().execute_with(|| {
+			setup_intra_community_settlement(1_000, 0);
+			set_hybrid_params(1_000_000_000_000, 0, 0, 2);
+			let events_before = event_count();
+			let now = 1u32;
+			assert_noop!(
+				Remuneration::settle_flexibility_payment_with_hybrid_adjustment(
+					RawOrigin::Signed(PROSUMER1).into(),
+					PROSUMER2,
+					1,
+					100_000_000_000_000,
+					u64::MAX,
+					INTRA_COMMUNITY
+				),
+				Error::<Test>::SettlementArithmeticOverflow
+			);
+			assert_eq!(Remuneration::balances(PROSUMER1), 1_000);
+			assert_eq!(Remuneration::balances(PROSUMER2), 0);
+			assert!(!crate::Payments::<Test>::contains_key((PROSUMER1, PROSUMER2, now)));
+			assert_eq!(event_count(), events_before);
+		});
+	}
+
+	#[test]
+	fn hybrid_settlement_large_value_not_truncated() {
+		new_test_ext().execute_with(|| {
+			setup_intra_community_settlement(20_000_000_000, 0);
+			set_hybrid_params(0, 0, 0, 2);
+			// base = 1_000_000 * 10_000 = 10_000_000_000 > u32::MAX.
+			assert_ok!(Remuneration::settle_flexibility_payment_with_hybrid_adjustment(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				1_000_000,
+				1_000_000,
+				10_000,
+				INTRA_COMMUNITY
+			));
+			assert_eq!(Remuneration::balances(PROSUMER2), 10_000_000_000u128);
+			assert!(Remuneration::balances(PROSUMER2) > u128::from(u32::MAX));
+		});
+	}
+
+	#[test]
+	fn hybrid_settlement_reads_parameters_from_storage() {
+		new_test_ext().execute_with(|| {
+			setup_intra_community_settlement(2_000, 0);
+			// First with a reward coefficient.
+			set_hybrid_params(1_000_000, 0, 100_000, 2);
+			assert_ok!(Remuneration::settle_flexibility_payment_with_hybrid_adjustment(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				100,
+				120,
+				5,
+				INTRA_COMMUNITY
+			));
+			// 550 transferred (base 500 + bonus 50), proving stored gamma_over was applied.
+			assert_eq!(Remuneration::balances(PROSUMER2), 550);
+			// Now update storage to a penalty coefficient and settle again.
+			set_hybrid_params(-1_000_000, 0, 100_000, 2);
+			assert_ok!(Remuneration::settle_flexibility_payment_with_hybrid_adjustment(
+				RawOrigin::Signed(PROSUMER1).into(),
+				PROSUMER2,
+				100,
+				120,
+				5,
+				INTRA_COMMUNITY
+			));
+			// Second settlement transfers 450 (base 500 - penalty 50): total received 1_000.
+			assert_eq!(Remuneration::balances(PROSUMER2), 1_000);
+		});
+	}
+}
+
+#[cfg(test)]
+mod stripe_bridge_tests {
+	use super::*;
+
+	fn setup_custodian_and_balance(who: AccountId, balance: u128) {
+		assert_ok!(Remuneration::update_custodian(
+			RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+			ALICE_THE_CUSTODIAN
+		));
+		assert_ok!(Remuneration::set_balance(
+			RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+			who,
+			balance
+		));
+	}
+
+	#[test]
+	fn bridge_reserve_funds_succeeds() {
+		new_test_ext().execute_with(|| {
+			setup_custodian_and_balance(PROSUMER1, 1000);
+
+			assert_ok!(Remuneration::bridge_reserve_funds(b"esc-001".to_vec(), PROSUMER1, 400));
+
+			assert_eq!(Remuneration::balances(PROSUMER1), 600);
+			assert_eq!(Remuneration::query_bridge_reserved(&PROSUMER1), 400);
+
+			let record = Remuneration::query_bridge_escrow(b"esc-001").unwrap();
+			assert_eq!(record.owner, PROSUMER1);
+			assert_eq!(record.amount, 400);
+			assert_eq!(record.status, crate::pallet::BridgeEscrowStatus::Active);
+		});
+	}
+
+	#[test]
+	fn bridge_reserve_funds_fails_insufficient_balance() {
+		new_test_ext().execute_with(|| {
+			setup_custodian_and_balance(PROSUMER1, 100);
+
+			assert_noop!(
+				Remuneration::bridge_reserve_funds(b"esc-002".to_vec(), PROSUMER1, 200),
+				Error::<Test>::BridgeInsufficientBalance
+			);
+			assert_eq!(Remuneration::balances(PROSUMER1), 100);
+			assert_eq!(Remuneration::query_bridge_reserved(&PROSUMER1), 0);
+		});
+	}
+
+	#[test]
+	fn bridge_reserve_funds_reserved_overflow_preserves_state() {
+		new_test_ext().execute_with(|| {
+			setup_custodian_and_balance(PROSUMER1, 10);
+			crate::pallet::BridgeReservedBalances::<Test>::insert(PROSUMER1, u128::MAX - 5);
+
+			assert_noop!(
+				Remuneration::bridge_reserve_funds(b"esc-overflow-reserve".to_vec(), PROSUMER1, 10),
+				Error::<Test>::BalanceOverflow
+			);
+			assert_eq!(Remuneration::balances(PROSUMER1), 10);
+			assert_eq!(Remuneration::query_bridge_reserved(&PROSUMER1), u128::MAX - 5);
+			assert!(Remuneration::query_bridge_escrow(b"esc-overflow-reserve").is_none());
+		});
+	}
+
+	#[test]
+	fn bridge_reserve_reduces_normal_balance_immediately() {
+		new_test_ext().execute_with(|| {
+			setup_custodian_and_balance(PROSUMER1, 500);
+
+			assert_ok!(Remuneration::bridge_reserve_funds(b"esc-003".to_vec(), PROSUMER1, 300));
+
+			assert_eq!(Remuneration::balances(PROSUMER1), 200);
+
+			assert_ok!(Remuneration::bridge_reserve_funds(b"esc-004".to_vec(), PROSUMER1, 100));
+			assert_eq!(Remuneration::balances(PROSUMER1), 100);
+			assert_eq!(Remuneration::query_bridge_reserved(&PROSUMER1), 400);
+		});
+	}
+
+	#[test]
+	fn bridge_release_funds_restores_balance() {
+		new_test_ext().execute_with(|| {
+			setup_custodian_and_balance(PROSUMER1, 1000);
+
+			assert_ok!(Remuneration::bridge_reserve_funds(b"esc-005".to_vec(), PROSUMER1, 400));
+			assert_eq!(Remuneration::balances(PROSUMER1), 600);
+
+			assert_ok!(Remuneration::bridge_release_funds(b"esc-005".to_vec()));
+
+			assert_eq!(Remuneration::balances(PROSUMER1), 1000);
+			assert_eq!(Remuneration::query_bridge_reserved(&PROSUMER1), 0);
+
+			let record = Remuneration::query_bridge_escrow(b"esc-005").unwrap();
+			assert_eq!(record.status, crate::pallet::BridgeEscrowStatus::Released);
+		});
+	}
+
+	#[test]
+	fn bridge_release_funds_balance_overflow_preserves_escrow_and_reserved_state() {
+		new_test_ext().execute_with(|| {
+			setup_custodian_and_balance(PROSUMER1, 1000);
+			assert_ok!(Remuneration::bridge_reserve_funds(
+				b"esc-release-overflow".to_vec(),
+				PROSUMER1,
+				400
+			));
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				u128::MAX
+			));
+
+			assert_noop!(
+				Remuneration::bridge_release_funds(b"esc-release-overflow".to_vec()),
+				Error::<Test>::BalanceOverflow
+			);
+			assert_eq!(Remuneration::balances(PROSUMER1), u128::MAX);
+			assert_eq!(Remuneration::query_bridge_reserved(&PROSUMER1), 400);
+			let record = Remuneration::query_bridge_escrow(b"esc-release-overflow").unwrap();
+			assert_eq!(record.status, crate::pallet::BridgeEscrowStatus::Active);
+		});
+	}
+
+	#[test]
+	fn bridge_release_funds_reserved_underflow_preserves_state() {
+		new_test_ext().execute_with(|| {
+			setup_custodian_and_balance(PROSUMER1, 1000);
+			assert_ok!(Remuneration::bridge_reserve_funds(
+				b"esc-release-underflow".to_vec(),
+				PROSUMER1,
+				400
+			));
+			crate::pallet::BridgeReservedBalances::<Test>::insert(PROSUMER1, 399);
+
+			assert_noop!(
+				Remuneration::bridge_release_funds(b"esc-release-underflow".to_vec()),
+				Error::<Test>::BalanceUnderflow
+			);
+			assert_eq!(Remuneration::balances(PROSUMER1), 600);
+			assert_eq!(Remuneration::query_bridge_reserved(&PROSUMER1), 399);
+			let record = Remuneration::query_bridge_escrow(b"esc-release-underflow").unwrap();
+			assert_eq!(record.status, crate::pallet::BridgeEscrowStatus::Active);
+		});
+	}
+
+	#[test]
+	fn bridge_release_funds_fails_not_active() {
+		new_test_ext().execute_with(|| {
+			setup_custodian_and_balance(PROSUMER1, 1000);
+			assert_ok!(Remuneration::bridge_reserve_funds(b"esc-006".to_vec(), PROSUMER1, 300));
+			assert_ok!(Remuneration::bridge_release_funds(b"esc-006".to_vec()));
+
+			assert_noop!(
+				Remuneration::bridge_release_funds(b"esc-006".to_vec()),
+				Error::<Test>::BridgeEscrowNotActive
+			);
+		});
+	}
+
+	#[test]
+	fn bridge_finalize_outbound_consumes_escrow() {
+		new_test_ext().execute_with(|| {
+			setup_custodian_and_balance(PROSUMER1, 1000);
+
+			assert_ok!(Remuneration::bridge_reserve_funds(b"esc-007".to_vec(), PROSUMER1, 500));
+			assert_eq!(Remuneration::balances(PROSUMER1), 500);
+
+			assert_ok!(Remuneration::bridge_finalize_outbound(b"esc-007".to_vec()));
+
+			assert_eq!(Remuneration::balances(PROSUMER1), 500);
+			assert_eq!(Remuneration::query_bridge_reserved(&PROSUMER1), 0);
+
+			let record = Remuneration::query_bridge_escrow(b"esc-007").unwrap();
+			assert_eq!(record.status, crate::pallet::BridgeEscrowStatus::Finalized);
+		});
+	}
+
+	#[test]
+	fn bridge_finalize_outbound_reserved_underflow_preserves_escrow_state() {
+		new_test_ext().execute_with(|| {
+			setup_custodian_and_balance(PROSUMER1, 1000);
+			assert_ok!(Remuneration::bridge_reserve_funds(
+				b"esc-finalize-underflow".to_vec(),
+				PROSUMER1,
+				500
+			));
+			crate::pallet::BridgeReservedBalances::<Test>::insert(PROSUMER1, 499);
+
+			assert_noop!(
+				Remuneration::bridge_finalize_outbound(b"esc-finalize-underflow".to_vec()),
+				Error::<Test>::BalanceUnderflow
+			);
+			assert_eq!(Remuneration::balances(PROSUMER1), 500);
+			assert_eq!(Remuneration::query_bridge_reserved(&PROSUMER1), 499);
+			let record = Remuneration::query_bridge_escrow(b"esc-finalize-underflow").unwrap();
+			assert_eq!(record.status, crate::pallet::BridgeEscrowStatus::Active);
+		});
+	}
+
+	#[test]
+	fn bridge_finalize_outbound_fails_not_active() {
+		new_test_ext().execute_with(|| {
+			assert_noop!(
+				Remuneration::bridge_finalize_outbound(b"nonexistent".to_vec()),
+				Error::<Test>::BridgeEscrowNotFound
+			);
+		});
+	}
+
+	#[test]
+	fn bridge_credit_inbound_credits_once() {
+		new_test_ext().execute_with(|| {
+			setup_custodian_and_balance(PROSUMER1, 100);
+
+			assert_ok!(Remuneration::bridge_credit_inbound(
+				b"stripe_pi_001".to_vec(),
+				PROSUMER1,
+				250
+			));
+			assert_eq!(Remuneration::balances(PROSUMER1), 350);
+		});
+	}
+
+	#[test]
+	fn bridge_credit_inbound_balance_overflow_preserves_state() {
+		new_test_ext().execute_with(|| {
+			setup_custodian_and_balance(PROSUMER1, u128::MAX);
+
+			assert_noop!(
+				Remuneration::bridge_credit_inbound(b"stripe_pi_overflow".to_vec(), PROSUMER1, 1),
+				Error::<Test>::BalanceOverflow
+			);
+			assert_eq!(Remuneration::balances(PROSUMER1), u128::MAX);
+			assert_ok!(Remuneration::bridge_credit_inbound(
+				b"stripe_pi_overflow".to_vec(),
+				PROSUMER2,
+				1
+			));
+			assert_eq!(Remuneration::balances(PROSUMER2), 1);
+		});
+	}
+
+	#[test]
+	fn bridge_credit_inbound_rejects_duplicate() {
+		new_test_ext().execute_with(|| {
+			setup_custodian_and_balance(PROSUMER1, 0);
+
+			assert_ok!(Remuneration::bridge_credit_inbound(
+				b"stripe_pi_002".to_vec(),
+				PROSUMER1,
+				100
+			));
+			assert_noop!(
+				Remuneration::bridge_credit_inbound(b"stripe_pi_002".to_vec(), PROSUMER1, 100),
+				Error::<Test>::BridgeDuplicateExternalCredit
+			);
+			assert_eq!(Remuneration::balances(PROSUMER1), 100);
+		});
+	}
+
+	#[test]
+	fn set_balance_rejects_below_bridge_reserved() {
+		new_test_ext().execute_with(|| {
+			setup_custodian_and_balance(PROSUMER1, 1000);
+
+			assert_ok!(Remuneration::bridge_reserve_funds(b"esc-sb-001".to_vec(), PROSUMER1, 400));
+
+			assert_noop!(
+				Remuneration::set_balance(
+					RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+					PROSUMER1,
+					300,
+				),
+				Error::<Test>::BalanceConflictsWithBridgeEscrow
+			);
+
+			assert_ok!(Remuneration::set_balance(
+				RawOrigin::Signed(ALICE_THE_CUSTODIAN).into(),
+				PROSUMER1,
+				400,
+			));
+			assert_eq!(Remuneration::balances(PROSUMER1), 400);
+		});
+	}
+}

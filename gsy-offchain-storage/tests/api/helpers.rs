@@ -1,10 +1,8 @@
-use gsy_orderbook_service::configuration::get_configuration;
-use gsy_orderbook_service::db::{init_database, DatabaseWrapper};
-use gsy_orderbook_service::startup::run;
-use gsy_orderbook_service::telemetry::{get_subscriber, init_subscriber};
+use gsy_offchain_storage::db::DatabaseWrapper;
+use gsy_offchain_storage::startup::run;
+use gsy_offchain_storage::telemetry::{get_subscriber, init_subscriber};
 use once_cell::sync::Lazy;
 use std::net::TcpListener;
-use uuid::Uuid;
 
 static TRACING: Lazy<()> = Lazy::new(|| {
     let default_filter_level = "info".to_string();
@@ -21,29 +19,33 @@ static TRACING: Lazy<()> = Lazy::new(|| {
 pub struct TestApp {
     pub address: String,
     pub db_wrapper: DatabaseWrapper,
+    pub api_key: String,
 }
 
-pub async fn init_app() -> TestApp {
+async fn spawn_app(api_key: &str) -> TestApp {
     Lazy::force(&TRACING);
 
     let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind to random port");
     let port = listener.local_addr().unwrap().port();
     let address = format!("http://127.0.0.1:{}", port);
 
-    let mut configuration = get_configuration().expect("Failed to read configuration");
-    configuration.database_name = Uuid::new_v4().to_string();
-
-    let db_wrapper = init_database(
-        configuration.get_connection_string(),
-        configuration.database_name,
-    )
-    .await
-    .unwrap();
-    let server = run(listener, db_wrapper.clone()).expect("Failed to bind address");
+    // Use the in-memory storage backend so the tests run without a MongoDB instance.
+    let db_wrapper = DatabaseWrapper::in_memory();
+    let server =
+        run(listener, db_wrapper.clone(), api_key.to_string()).expect("Failed to bind address");
 
     let _ = tokio::spawn(server);
     TestApp {
         address,
         db_wrapper,
+        api_key: api_key.to_string(),
     }
+}
+
+pub async fn init_app() -> TestApp {
+    spawn_app("").await
+}
+
+pub async fn init_app_with_api_key(api_key: &str) -> TestApp {
+    spawn_app(api_key).await
 }

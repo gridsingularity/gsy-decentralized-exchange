@@ -1,0 +1,10 @@
+{
+  "name": "gsy-demo-bootstrap",
+  "version": "1.0.0",
+  "private": true,
+  "description": "One-shot on-chain registration for the GSY DEX local demo (sudo-registers the trading user and the exchange operator).",
+  "main": "register.js",
+  "dependencies": {
+    "@polkadot/api": "^12.0.0"
+  }
+}
