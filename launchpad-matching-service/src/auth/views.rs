@@ -1,7 +1,9 @@
+use crate::api::views::database_error_response;
 use crate::auth::jwt::{JwtSecret, encode_jwt};
 use crate::auth::model::UserModel;
 use actix_web::{HttpResponse, Responder, post, web};
 use bcrypt::verify;
+use mongodb::Database;
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
@@ -20,16 +22,17 @@ pub struct TokenResponse {
 pub async fn get_token(
     body: web::Json<TokenRequest>,
     jwt_secret: web::Data<JwtSecret>,
+    db: web::Data<Database>,
 ) -> impl Responder {
-    let user_model = match UserModel::new().await {
-        Ok(m) => m,
-        Err(_) => return HttpResponse::InternalServerError().finish(),
-    };
+    let user_model = UserModel::from_database(db.get_ref().clone());
 
     let user = match user_model.find_by_username(&body.username).await {
         Ok(Some(u)) => u,
         Ok(None) => return HttpResponse::Unauthorized().finish(),
-        Err(_) => return HttpResponse::InternalServerError().finish(),
+        Err(e) => {
+            eprintln!("Failed to fetch user from MongoDB: {:?}", e);
+            return database_error_response();
+        }
     };
 
     match verify(&body.password, &user.password_hash) {

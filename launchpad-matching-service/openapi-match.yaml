@@ -16,7 +16,21 @@ paths:
       tags:
         - Endpoints
       summary: Process orders for matching
-      description: Processes a list of bid and offer orders using the Pay-As-Bid algorithm and returns the matches found.
+      description: Processes a list of bid and offer orders using the Pay-As-Bid algorithm and returns the matches found. Matches are stored and the market statistics are updated, unless dry_run=true. The request body may be up to json_body_limit bytes (default 16 MiB); larger bodies return 413.
+      parameters:
+        - name: dry_run
+          in: query
+          required: false
+          description: >
+            With true, the matches are computed and returned in the same shape
+            as a normal run, but nothing is stored: no match is inserted and
+            the market statistics are not updated. The match_id values in a
+            dry-run response are freshly generated and not persisted, so they
+            cannot be looked up later and differ from the ids of a later normal
+            run of the same batch. Values other than true or false return 400.
+          schema:
+            type: boolean
+            default: false
       requestBody:
         required: true
         content:
@@ -34,6 +48,25 @@ paths:
                   type: array
                   items:
                     $ref: '#/components/schemas/DbBidOfferMatch'
+        '413':
+          description: >
+            Request body larger than the JSON body limit (setting
+            json_body_limit, default 16 MiB = 16777216 bytes).
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - error
+                  - message
+                properties:
+                  error:
+                    type: string
+                  message:
+                    type: string
+              example:
+                error: payload_too_large
+                message: "JSON payload (16777217 bytes) is larger than allowed (limit: 16777216 bytes)."
 components:
   schemas:
     OrdersToMatch:

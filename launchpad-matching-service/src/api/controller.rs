@@ -1,12 +1,14 @@
 #![allow(non_snake_case, non_upper_case_globals)]
 
 use crate::api::model;
-use crate::api::types::{DbBidOfferMatch, DbMatchingData, OrdersToMatch};
+use crate::api::types::{
+    DbBidOfferMatch, DbMatchingData, MatchingBid, MatchingOffer, OrdersToMatch,
+};
 use async_trait::async_trait;
 use gsy_offchain_primitives::algorithms::PayAsBid;
-use gsy_offchain_primitives::db_api_schema::orders::{DbBid, DbOffer, DbOrderSchema, Order};
+use gsy_offchain_primitives::db_api_schema::orders::{DbOrderSchema, Order};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct DbMarketData {
@@ -20,76 +22,103 @@ pub struct DbMarketData {
     pub total_unmatched_energy_kWh: f64,
 }
 
+/// Bids and offers of one (market_id, time_slot), in submission order.
+type SlotOrders = (Vec<MatchingBid>, Vec<MatchingOffer>);
+
+/// Matches a batch with Pay-As-Bid per (market_id, time_slot).
+///
+/// The batch is grouped in one pass (each group keeps the submission order
+/// of its orders, which decides ties in `energy_rate`). Returns one entry
+/// per market of the batch, sorted by `market_id`, even for a market without
+/// matches; within a market the matches are ordered by `time_slot`
+/// ascending and then as the algorithm produced them.
+pub fn match_orders(
+    orders: &[DbOrderSchema],
+    user_id: &str,
+) -> Vec<(String, Vec<DbBidOfferMatch>)> {
+    let mut groups: BTreeMap<&str, BTreeMap<u64, SlotOrders>> = BTreeMap::new();
+    for order in orders {
+        match &order.order {
+            Order::Bid(bid) => {
+                let component = &bid.bid_component;
+                groups
+                    .entry(component.market_id.as_str())
+                    .or_default()
+                    .entry(component.time_slot)
+                    .or_default()
+                    .0
+                    .push(MatchingBid {
+                        order_id: order._id.clone(),
+                        bid: bid.clone(),
+                    });
+            }
+            Order::Offer(offer) => {
+                let component = &offer.offer_component;
+                groups
+                    .entry(component.market_id.as_str())
+                    .or_default()
+                    .entry(component.time_slot)
+                    .or_default()
+                    .1
+                    .push(MatchingOffer {
+                        order_id: order._id.clone(),
+                        offer: offer.clone(),
+                    });
+            }
+        }
+    }
+
+    groups
+        .into_iter()
+        .map(|(market_id, slots)| {
+            let mut market_matches = Vec::new();
+            for (_time_slot, (bids, offers)) in slots {
+                if bids.is_empty() || offers.is_empty() {
+                    continue;
+                }
+                let mut matching_data = DbMatchingData {
+                    bids,
+                    offers,
+                    market_id: market_id.to_string(),
+                    user_id: user_id.to_string(),
+                };
+                market_matches.extend(matching_data.pay_as_bid());
+            }
+            (market_id.to_string(), market_matches)
+        })
+        .collect()
+}
+
 #[async_trait]
 pub trait MatchControllerBase: Send + Sync {
+    /// Matches the orders per (market_id, time_slot) with Pay-As-Bid.
+    ///
+    /// With `persist` the matches are inserted into `matches` and the market
+    /// statistics are upserted into `market_data`. Without it (dry run) the
+    /// same matches are returned, including their freshly generated
+    /// `match_id`s, but nothing is written.
     async fn process_market_id_for_pay_as_bid(
         &self,
         orders_obj: OrdersToMatch,
-    ) -> HashMap<String, Vec<DbBidOfferMatch>> {
+        persist: bool,
+    ) -> mongodb::error::Result<HashMap<String, Vec<DbBidOfferMatch>>> {
         let orders = orders_obj.orders;
         let user_id = orders_obj.user_id;
-        let mut matches = HashMap::new();
-        let mut all_matches_to_insert = Vec::new();
+        let matches_per_market = match_orders(&orders, &user_id);
 
-        // Find all market ids in the orders
-        let market_ids: HashSet<String> = orders
-            .iter()
-            .map(|order| match order.order.clone() {
-                Order::Bid(bid) => bid.bid_component.market_id.clone(),
-                Order::Offer(offer) => offer.offer_component.market_id.clone(),
-            })
-            .collect();
-
-        let time_slots: HashSet<u64> = orders
-            .iter()
-            .map(|order| match order.order.clone() {
-                Order::Bid(bid) => bid.bid_component.time_slot.clone(),
-                Order::Offer(offer) => offer.offer_component.time_slot.clone(),
-            })
-            .collect();
-
-        for market_id in market_ids.iter() {
-            for time_slot in time_slots.iter() {
-                let bids_list: Vec<DbBid> = orders
-                    .iter()
-                    .filter_map(|order| match &order.order {
-                        Order::Bid(bid) if
-                                bid.bid_component.market_id == *market_id &&
-                                bid.bid_component.time_slot == *time_slot => {
-                            Some(bid.clone())
-                        }
-                        _ => None,
-                    })
-                    .collect();
-                let offers_list: Vec<DbOffer> = orders
-                    .iter()
-                    .filter_map(|order| match &order.order {
-                        Order::Offer(offer) if
-                                offer.offer_component.market_id == *market_id &&
-                                offer.offer_component.time_slot == *time_slot => {
-                            Some(offer.clone())
-                        }
-                        _ => None,
-                    })
-                    .collect();
-                let mut matching_data = DbMatchingData {
-                    bids: bids_list,
-                    offers: offers_list,
-                    market_id: market_id.clone(),
-                    user_id: user_id.clone(),
-                };
-                let algorithm_result = matching_data.pay_as_bid();
-                all_matches_to_insert.extend(algorithm_result.clone());
-                matches.insert(market_id.clone(), algorithm_result);
-            }
+        if persist {
+            let all_matches_to_insert: Vec<DbBidOfferMatch> = matches_per_market
+                .iter()
+                .flat_map(|(_, market_matches)| market_matches.iter().cloned())
+                .collect();
+            let market_data_map = self
+                .calculate_market_statistics(&orders, &all_matches_to_insert, user_id.clone())
+                .await;
+            self.insert_bid_offer_matches_to_db(all_matches_to_insert)
+                .await?;
+            self.update_market_statistics_to_db(market_data_map).await?;
         }
-        self.insert_bid_offer_matches_to_db(all_matches_to_insert.clone())
-            .await;
-        let market_data_map = self
-            .calculate_market_statistics(&orders, &all_matches_to_insert, user_id.clone())
-            .await;
-        self.update_market_statistics_to_db(market_data_map).await;
-        matches
+        Ok(matches_per_market.into_iter().collect())
     }
 
     async fn calculate_market_statistics(
@@ -179,11 +208,15 @@ pub trait MatchControllerBase: Send + Sync {
         market_data_map
     }
 
-    async fn insert_bid_offer_matches_to_db(&self, matches: Vec<DbBidOfferMatch>);
+    async fn insert_bid_offer_matches_to_db(
+        &self,
+        matches: Vec<DbBidOfferMatch>,
+    ) -> mongodb::error::Result<()>;
     async fn update_market_statistics_to_db(
         &self,
         market_data_map: HashMap<(String, u64), DbMarketData>,
-    );
+    ) -> mongodb::error::Result<()>;
+    #[allow(clippy::too_many_arguments)]
     async fn filter_matches(
         &self,
         user_id: String,
@@ -191,7 +224,9 @@ pub trait MatchControllerBase: Send + Sync {
         start_time: u64,
         end_time: u64,
         limit: Option<i64>,
-    ) -> Vec<DbBidOfferMatch>;
+        offset: Option<u64>,
+        sort: model::SortOrder,
+    ) -> mongodb::error::Result<Vec<DbBidOfferMatch>>;
     async fn get_market_statistics(
         &self,
         user_id: String,
@@ -199,38 +234,35 @@ pub trait MatchControllerBase: Send + Sync {
         start_time: u64,
         end_time: u64,
         resolution: model::Resolution,
-    ) -> model::MarketStatisticsResponse;
-    async fn get_markets(&self, user_id: String) -> Vec<String>;
+        tz: String,
+    ) -> mongodb::error::Result<model::MarketStatisticsResponse>;
+    async fn get_markets(&self, user_id: String) -> mongodb::error::Result<Vec<String>>;
 }
 
-pub struct MatchController {}
+pub struct MatchController {
+    pub db: mongodb::Database,
+}
 
 #[async_trait]
 impl MatchControllerBase for MatchController {
-    async fn insert_bid_offer_matches_to_db(&self, matches: Vec<DbBidOfferMatch>) {
-        if let Ok(model) = model::MatchModel::new().await {
-            if let Err(e) = model.insert_matches(matches).await {
-                eprintln!("Failed to insert matches into MongoDB: {:?}", e);
-            }
-        } else {
-            eprintln!("Failed to connect to MongoDB");
-        }
+    async fn insert_bid_offer_matches_to_db(
+        &self,
+        matches: Vec<DbBidOfferMatch>,
+    ) -> mongodb::error::Result<()> {
+        let model = model::MatchModel::from_database(self.db.clone());
+        model.insert_matches(matches).await
     }
 
     async fn update_market_statistics_to_db(
         &self,
         market_data_map: HashMap<(String, u64), DbMarketData>,
-    ) {
-        if let Ok(model) = model::MatchModel::new().await {
-            let market_data_list: Vec<DbMarketData> = market_data_map.into_values().collect();
-            if let Err(e) = model.upsert_market_data(market_data_list).await {
-                eprintln!("Failed to upsert market data into MongoDB: {:?}", e);
-            }
-        } else {
-            eprintln!("Failed to connect to MongoDB for market data upsert");
-        }
+    ) -> mongodb::error::Result<()> {
+        let model = model::MatchModel::from_database(self.db.clone());
+        let market_data_list: Vec<DbMarketData> = market_data_map.into_values().collect();
+        model.upsert_market_data(market_data_list).await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn filter_matches(
         &self,
         user_id: String,
@@ -238,22 +270,15 @@ impl MatchControllerBase for MatchController {
         start_time: u64,
         end_time: u64,
         limit: Option<i64>,
-    ) -> Vec<DbBidOfferMatch> {
-        if let Ok(model) = model::MatchModel::new().await {
-            match model
-                .get_matches(start_time, end_time, user_id, market_id, limit)
-                .await
-            {
-                Ok(matches) => matches,
-                Err(e) => {
-                    eprintln!("Failed to fetch matches from MongoDB: {:?}", e);
-                    Vec::new()
-                }
-            }
-        } else {
-            eprintln!("Failed to connect to MongoDB for fetching matches");
-            Vec::new()
-        }
+        offset: Option<u64>,
+        sort: model::SortOrder,
+    ) -> mongodb::error::Result<Vec<DbBidOfferMatch>> {
+        let model = model::MatchModel::from_database(self.db.clone());
+        model
+            .get_matches(
+                start_time, end_time, user_id, market_id, limit, offset, sort,
+            )
+            .await
     }
 
     async fn get_market_statistics(
@@ -263,140 +288,59 @@ impl MatchControllerBase for MatchController {
         start_time: u64,
         end_time: u64,
         resolution: model::Resolution,
-    ) -> model::MarketStatisticsResponse {
-        let mut response = model::MarketStatisticsResponse {
-            average_trade_rate_timeseries: Vec::new(),
-            energy_timeseries: Vec::new(),
-            total_matches: 0,
-            success_rate: 0.0,
+        tz: String,
+    ) -> mongodb::error::Result<model::MarketStatisticsResponse> {
+        let model = model::MatchModel::from_database(self.db.clone());
+
+        // Time series, bucketed by MongoDB in the time zone `tz`.
+        let average_trade_rate_timeseries = model
+            .get_average_energy_rate_series(
+                user_id.clone(),
+                market_id.clone(),
+                start_time,
+                end_time,
+                resolution,
+                &tz,
+            )
+            .await?;
+        let energy_timeseries = model
+            .get_energy_series(
+                user_id.clone(),
+                market_id.clone(),
+                start_time,
+                end_time,
+                resolution,
+                &tz,
+            )
+            .await?;
+
+        // Window totals.
+        let totals = model
+            .get_market_data_totals(user_id.clone(), market_id.clone(), start_time, end_time)
+            .await?;
+        let active_traders = model
+            .count_active_traders(user_id, market_id, start_time, end_time)
+            .await?;
+
+        let total_energy = totals.total_matched_energy_kWh + totals.total_unmatched_energy_kWh;
+        let success_rate = if total_energy > 0.0 {
+            totals.total_matched_energy_kWh / total_energy
+        } else {
+            0.0
         };
 
-        if let Ok(model) = model::MatchModel::new().await {
-            // 1. Fetch average trade rate timeseries
-            if let Ok(series) = model
-                .get_average_energy_rate_series(
-                    user_id.clone(),
-                    market_id.clone(),
-                    start_time,
-                    end_time,
-                )
-                .await
-            {
-                response.average_trade_rate_timeseries = series;
-            }
-
-            // 2. Fetch market data for energy timeseries and totals
-            if let Ok(market_data_list) = model
-                .get_market_data(user_id, market_id, start_time, end_time)
-                .await
-            {
-                let mut total_matched_energy = 0.0;
-                let mut total_unmatched_energy = 0.0;
-                let mut total_matches = 0;
-
-                let mut energy_map: HashMap<u64, model::EnergyTimeSeriesPoint> = HashMap::new();
-
-                for data in market_data_list {
-                    let point =
-                        energy_map
-                            .entry(data.time_slot)
-                            .or_insert(model::EnergyTimeSeriesPoint {
-                                time_slot: data.time_slot,
-                                matched_energy_kWh: 0.0,
-                                unmatched_energy_kWh: 0.0,
-                            });
-                    point.matched_energy_kWh += data.total_matched_energy_kWh;
-                    point.unmatched_energy_kWh += data.total_unmatched_energy_kWh;
-
-                    total_matched_energy += data.total_matched_energy_kWh;
-                    total_unmatched_energy += data.total_unmatched_energy_kWh;
-                    total_matches += data.total_matches;
-                }
-
-                let mut energy_timeseries: Vec<model::EnergyTimeSeriesPoint> =
-                    energy_map.into_values().collect();
-                energy_timeseries.sort_by_key(|p| p.time_slot);
-
-                // Apply resolution aggregation if needed
-                match resolution {
-                    model::Resolution::NoAggregation => {
-                        response.energy_timeseries = energy_timeseries;
-                    }
-                    model::Resolution::Day | model::Resolution::Month => {
-                        let seconds_in_period = match resolution {
-                            model::Resolution::Day => 24 * 60 * 60,
-                            model::Resolution::Month => 30 * 24 * 60 * 60, // Approximation
-                            _ => unreachable!(),
-                        };
-
-                        // Aggregate average_trade_rate_timeseries
-                        let mut aggregated_trade_rate: HashMap<u64, (f64, u64)> = HashMap::new();
-                        for point in response.average_trade_rate_timeseries {
-                            let period_start =
-                                (point.time_slot / seconds_in_period) * seconds_in_period;
-                            let entry = aggregated_trade_rate
-                                .entry(period_start)
-                                .or_insert((0.0, 0));
-                            entry.0 += point.average_energy_rate;
-                            entry.1 += 1;
-                        }
-                        let mut new_trade_rate_series: Vec<model::TimeSeriesPoint> =
-                            aggregated_trade_rate
-                                .into_iter()
-                                .map(|(time_slot, (sum, count))| model::TimeSeriesPoint {
-                                    time_slot,
-                                    average_energy_rate: sum / count as f64,
-                                })
-                                .collect();
-                        new_trade_rate_series.sort_by_key(|p| p.time_slot);
-                        response.average_trade_rate_timeseries = new_trade_rate_series;
-
-                        // Aggregate energy_timeseries
-                        let mut aggregated_energy: HashMap<u64, model::EnergyTimeSeriesPoint> =
-                            HashMap::new();
-                        for point in energy_timeseries {
-                            let period_start =
-                                (point.time_slot / seconds_in_period) * seconds_in_period;
-                            let entry = aggregated_energy.entry(period_start).or_insert(
-                                model::EnergyTimeSeriesPoint {
-                                    time_slot: period_start,
-                                    matched_energy_kWh: 0.0,
-                                    unmatched_energy_kWh: 0.0,
-                                },
-                            );
-                            entry.matched_energy_kWh += point.matched_energy_kWh;
-                            entry.unmatched_energy_kWh += point.unmatched_energy_kWh;
-                        }
-                        let mut new_energy_series: Vec<model::EnergyTimeSeriesPoint> =
-                            aggregated_energy.into_values().collect();
-                        new_energy_series.sort_by_key(|p| p.time_slot);
-                        response.energy_timeseries = new_energy_series;
-                    }
-                }
-
-                response.total_matches = total_matches;
-                if total_matched_energy + total_unmatched_energy > 0.0 {
-                    response.success_rate =
-                        total_matched_energy / (total_matched_energy + total_unmatched_energy);
-                }
-            }
-        }
-
-        response
+        Ok(model::MarketStatisticsResponse {
+            average_trade_rate_timeseries,
+            energy_timeseries,
+            total_matches: totals.total_matches,
+            success_rate,
+            active_traders,
+            markets: totals.markets,
+        })
     }
 
-    async fn get_markets(&self, user_id: String) -> Vec<String> {
-        if let Ok(model) = model::MatchModel::new().await {
-            match model.get_markets(user_id).await {
-                Ok(ids) => ids,
-                Err(e) => {
-                    eprintln!("Failed to fetch unique market ids from MongoDB: {:?}", e);
-                    Vec::new()
-                }
-            }
-        } else {
-            eprintln!("Failed to connect to MongoDB for fetching unique market ids");
-            Vec::new()
-        }
+    async fn get_markets(&self, user_id: String) -> mongodb::error::Result<Vec<String>> {
+        let model = model::MatchModel::from_database(self.db.clone());
+        model.get_markets(user_id).await
     }
 }
