@@ -86,7 +86,7 @@ impl EwdsEventPublisher {
         )
     }
 
-    /// Re-read persisted statuses so retries cannot publish stale import or event payloads.
+    /// Re-read persisted statuses so replayed events cannot publish stale payloads.
     pub async fn publish_stored_trades(
         &self,
         db: &DatabaseWrapper,

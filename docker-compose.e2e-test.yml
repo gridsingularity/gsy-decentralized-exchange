@@ -20,8 +20,6 @@ x-gsy-ewds-env: &gsy-ewds-env
   EWDS_ORDERS_RESPONSE_TOPIC: "ordersQueryTestResponse"
   EWDS_TRADES_REQUEST_TOPIC: "tradesQueryTest"
   EWDS_TRADES_RESPONSE_TOPIC: "tradesQueryTestResponse"
-  EWDS_TRADES_IMPORT_REQUEST_TOPIC: "tradesImportTest"
-  EWDS_TRADES_IMPORT_RESPONSE_TOPIC: "tradesImportTestResponse"
   EWDS_CLEARING_RESULTS_REQUEST_TOPIC: "clearingResultsQueryTest"
   EWDS_CLEARING_RESULTS_RESPONSE_TOPIC: "clearingResultsQueryTestResponse"
   EWDS_MARKETS_REQUEST_TOPIC: "marketsQueryTest"

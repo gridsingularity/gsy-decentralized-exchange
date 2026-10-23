@@ -209,10 +209,10 @@ slot.
 Features tagged `@ewds`, such as `events.feature`, only run with
 `OFFCHAIN_STORAGE_TRANSPORT=ewds`; HTTP runs skip them.
 
-The lifecycle assertions wait for settlement rather than treating a `Matched`
-record as confirmed. Full delivery ends in `Executed`; a penalized trade stays
+The lifecycle assertions check that `Matched` records correspond to confirmed
+on-chain matches. Full delivery ends in `Executed`; a penalized trade stays
 `Penalized` after verification while its consumed orders become `Executed`.
-EWDS event scenarios cover both outcomes, checking `Matched`, `Settled` and the
+EWDS event scenarios cover both outcomes, checking `Matched` and the
 final trade notifications, their payloads and lifecycle timestamps without
 assuming notification arrival order.
 

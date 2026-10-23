@@ -161,9 +161,7 @@ paths:
       tags: [Trades & Market]
       summary: Import trades (alias of POST /trades).
       description: |
-        Identical Matched imports are idempotent and preserve later lifecycle statuses.
-        Other statuses remain insert-only. Imports do not update orders.
-        With EWDS enabled, successful Matched imports publish the persisted trade snapshot.
+        Imports are insert-only and do not update orders or publish lifecycle notifications.
       requestBody:
         required: true
         content:
@@ -189,9 +187,7 @@ paths:
       tags: [Trades & Market]
       summary: Import trades using EWDS JSON.
       description: |
-        Identical Matched imports are idempotent and preserve later lifecycle statuses.
-        Other statuses remain insert-only. Imports do not update orders.
-        With EWDS enabled, successful Matched imports publish the persisted trade snapshot.
+        Imports are insert-only and do not update orders or publish lifecycle notifications.
       requestBody:
         required: true
         content:
@@ -202,7 +198,7 @@ paths:
                 $ref: "#/components/schemas/EwdsTradeDto"
       responses:
         "200":
-          description: Inserted or already registered trade IDs.
+          description: Inserted trade IDs.
           content:
             application/json:
               schema:
@@ -846,8 +842,8 @@ components:
     TradeStatus:
       type: string
       description: |
-        matched: the matching engine generated the match.
-        settled: the match settlement transaction was confirmed on-chain; no funds are moved.
+        matched: the match was confirmed on-chain and indexed by the listener.
+        settled: financial settlement complete; transition awaits the partner billing integration.
         executed: delivery verification completed without penalties.
         penalized: a delivery penalty was recorded; this status is terminal.
       enum: [matched, executed, settled, penalized]

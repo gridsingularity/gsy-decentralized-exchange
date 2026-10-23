@@ -20,9 +20,8 @@ Feature: Events over EWDS
     And a bid by "alice" and an offer by "bob" are published on EWDS
     Then the matching engine matches the bid and offer and a trade is settled on-chain
     And the trade has "alice" as buyer and "bob" as seller
-    And the trade is Settled before delivery verification
+    And the trade is Matched before delivery verification
     And FOS receives the Matched trade notification
-    And FOS receives the Settled trade notification
     And FOS receives "submitted" notifications for both traded orders
     And FOS receives "filled" notifications for both traded orders
     When measurements of <energy> energy for facilities are submitted

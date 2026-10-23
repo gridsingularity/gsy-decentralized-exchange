@@ -26,18 +26,14 @@ longer represent one uniform-price auction.
 3. Partition orders by `(market_id, time_slot)`.
 4. Run the configured matching algorithm independently for each partition,
    with preference phase first.
-5. Build the `settleBatch` payload, generating trade IDs once.
-6. Register those matches as `Matched` through `POST /trades` or EWDS `trades.import`.
-7. Submit the same payload with the matching engine signer.
+5. Build the `settleBatch` payload and submit it with the matching engine signer.
+6. The off-chain-storage listener creates `Matched` trades from confirmed
+   `TradeSettled` events. The matching engine does not write trade records or
+   publish trade-status notifications before confirmation.
 
-Registration uses the encoded trade, market, actor, order and residual IDs and
-scaled quantities/rates, so the listener can advance the same records on settlement.
-The initial timestamp records registration time; on-chain indexing sets the
-status-update timestamp. If registration fails, no settlement transaction is sent.
-If settlement fails or is dropped, the records remain `Matched` and the error is
-logged. They are not delivery-verification candidates. A successful receipt does
-not update storage directly: the on-chain listener promotes the records to `Settled`.
-Clearing results without trades still reach the chain without a trade import.
+A failed or dropped transaction creates no trade record. `Settled` is reserved
+for financial settlement by the partner's future billing integration, not the
+on-chain match confirmation.
 
 ## Matching Algorithms
 
@@ -116,7 +112,7 @@ selected the best available counterpart. See
 - CLI: `web3 <offchain_storage_host> <offchain_storage_port> <node_host> <node_port>`
 - Env:
   - `OFFCHAIN_STORAGE_URL` (otherwise the CLI storage host/port)
-  - `OFFCHAIN_STORAGE_TRANSPORT` (`http` or `ewds`; controls trade registration too)
+  - `OFFCHAIN_STORAGE_TRANSPORT` (`http` or `ewds`)
   - `TRADE_SETTLEMENT_ADDRESS`
   - `MATCHING_ENGINE_PRIVATE_KEY`
   - `MATCHING_ALGORITHM` (`pay_as_bid` by default; `pay_as_clear` supported)

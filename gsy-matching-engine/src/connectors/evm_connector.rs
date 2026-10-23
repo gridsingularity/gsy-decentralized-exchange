@@ -1,24 +1,21 @@
 use crate::algorithms::{MatchOrders, PayAsClearPricing};
 use crate::models::{Attributes, BidOfferMatch, MatchType, MatchingData, Order, Requirements};
-use anyhow::{anyhow, Context, Error, Result};
+use anyhow::{anyhow, Error, Result};
 use ethers::prelude::*;
 use ethers::utils::keccak256;
 use primitives::db_api_schema::orders::{
     order_metadata_to_contract, DbOrderSchema, OrderEnum, OrderStatus,
 };
-use primitives::db_api_schema::trades::{ClearingStatus, DbTradeSchema, TradeParameters, TradeStatus};
-use primitives::ewds::dto::{EwdsOrderDto, EwdsTradeDto};
+use primitives::db_api_schema::trades::ClearingStatus;
+use primitives::ewds::dto::EwdsOrderDto;
 use primitives::ewds::{EwdsClient, EwdsOperation};
 use primitives::matching::matching_block_interval;
-use primitives::offchain_storage::{
-    resolve_order_partner_ids, OffchainStorageClient, OffchainStorageTransport,
-};
+use primitives::offchain_storage::{resolve_order_partner_ids, OffchainStorageClient};
 use primitives::utils::{bytes16_to_hex, parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR};
 use primitives::MatchingAlgorithm;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::env;
 use std::str::FromStr;
-use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::time::{sleep, Duration};
 use tracing::{error, info, warn};
 use uuid::Uuid;
@@ -155,19 +152,12 @@ async fn run_matching_cycle(
         matches_per_market.len(),
         matching_algorithm
     );
-    let storage = OffchainStorageClient::new(
-        OffchainStorageTransport::from_env(),
-        reqwest::Url::parse(orderbook_url)?.join(".")?.as_str(),
-        "EWDS_MATCHING_ENGINE_CLIENT_ID",
-        "gsymatchingengine",
-    );
     send_settle_batch_transaction(
         evm_node_url,
         settle_order_batch_address,
         matching_engine_private_key,
         matches_per_market,
         by_order_id,
-        &storage,
     )
     .await?;
     Ok(())
@@ -285,7 +275,6 @@ pub async fn send_settle_batch_transaction(
     matching_engine_private_key: &str,
     matches: Vec<MarketMatches>,
     order_lookup: HashMap<String, DbOrderSchema>,
-    storage: &OffchainStorageClient,
 ) -> Result<()> {
     if matches.is_empty() {
         info!("No matches to settle");
@@ -325,26 +314,11 @@ pub async fn send_settle_batch_transaction(
         );
     }
 
-    // Register the encoded IDs and amounts, including chained residual fills.
-    // Only the on-chain listener advances these records beyond Matched.
-    let created_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-    let trades = matched_trade_dtos(&evm_matches, created_at);
-    storage
-        .import_trades(&trades)
-        .await
-        .context("Failed to register matched trades; settlement was not submitted")?;
-    info!("Registered {} matched trades before settlement", trades.len());
-
-    info!("Submitting {} market batches to settleBatch", evm_matches.len());
+    info!("Submitting {} matches to settleBatch", evm_matches.len());
     let settle_batch_call = settle_order_batch.settle_batch(evm_matches);
-    let pending_tx = settle_batch_call
-        .send()
-        .await
-        .context("settleBatch submission failed; registered trades remain Matched")?;
+    let pending_tx = settle_batch_call.send().await?;
     let tx_hash = pending_tx.tx_hash();
-    let receipt = pending_tx
-        .await
-        .context("settleBatch receipt unavailable; registered trades await on-chain indexing")?;
+    let receipt = pending_tx.await?;
 
     match receipt {
         Some(receipt) => {
@@ -355,7 +329,7 @@ pub async fn send_settle_batch_transaction(
                 != 1
             {
                 return Err(anyhow!(
-                    "settleBatch transaction {:?} reverted with status {:?}; registered trades remain Matched",
+                    "settleBatch transaction {:?} reverted with status {:?}",
                     tx_hash,
                     receipt.status
                 ));
@@ -364,7 +338,7 @@ pub async fn send_settle_batch_transaction(
             Ok(())
         }
         None => Err(anyhow!(
-            "settleBatch transaction {:?} dropped without receipt; registered trades remain Matched",
+            "settleBatch transaction {:?} dropped without receipt",
             tx_hash
         )),
     }
@@ -704,35 +678,6 @@ fn to_evm_matches(
             Ok(MarketSettlement {
                 matches: bid_offer_matches,
                 clearing_result: to_evm_clearing_result(&market.clearing_result)?,
-            })
-        })
-        .collect()
-}
-
-fn matched_trade_dtos(markets: &[MarketSettlement], created_at: u64) -> Vec<EwdsTradeDto> {
-    markets
-        .iter()
-        .flat_map(|market| &market.matches)
-        .map(|item| {
-            EwdsTradeDto::from(DbTradeSchema {
-                trade_uuid: bytes16_to_hex(item.trade_id),
-                status: TradeStatus::Matched,
-                seller: bytes16_to_hex(item.offer.created_by),
-                buyer: bytes16_to_hex(item.bid.created_by),
-                market_id: bytes16_to_hex(item.bid.market_id),
-                creation_time: created_at,
-                offer_hash: bytes16_to_hex(item.offer.order_id),
-                bid_hash: bytes16_to_hex(item.bid.order_id),
-                residual_offer_id: (item.residual_offer_id != [0; 16])
-                    .then(|| bytes16_to_hex(item.residual_offer_id)),
-                residual_bid_id: (item.residual_bid_id != [0; 16])
-                    .then(|| bytes16_to_hex(item.residual_bid_id)),
-                parameters: TradeParameters {
-                    selected_energy_kWh: item.selected_energy.as_u64() as f64
-                        / NODE_FLOAT_SCALING_FACTOR,
-                    energy_rate: item.clearing_price.as_u64() as f64 / NODE_FLOAT_SCALING_FACTOR,
-                },
-                status_updated_at: None,
             })
         })
         .collect()

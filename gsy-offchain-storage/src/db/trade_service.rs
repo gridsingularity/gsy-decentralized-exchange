@@ -14,7 +14,7 @@ fn timestamp_bson(value: u64) -> Result<Bson> {
     Ok(Bson::Int64(i64::try_from(value)?))
 }
 
-/// Match details must agree when either registration or settlement is replayed.
+/// Match details must agree when the on-chain confirmation is replayed.
 fn trade_identity_filter(trade: &DbTradeSchema) -> Result<mongodb::bson::Document> {
     Ok(doc! {
         "trade_uuid": &trade.trade_uuid,
@@ -88,14 +88,14 @@ impl TradeService {
         mut trade: DbTradeSchema,
         block_timestamp: u64,
     ) -> Result<()> {
-        trade.status = TradeStatus::Settled;
+        trade.status = TradeStatus::Matched;
         trade.status_updated_at = Some(block_timestamp);
-        let mut identity = trade_identity_filter(&trade)?;
+        let identity = trade_identity_filter(&trade)?;
         // A conflicting snapshot cannot match this filter; the unique trade_uuid
         // index then rejects its insertion instead of replacing the existing trade.
         self.0
             .update_one(
-                identity.clone(),
+                identity,
                 doc! {"$setOnInsert": mongodb::bson::to_document(&trade)?},
             )
             .upsert(true)
@@ -107,22 +107,12 @@ impl TradeService {
                 )
             })?;
 
-        identity.insert("status", mongodb::bson::to_bson(&TradeStatus::Matched)?);
-        self.0
-            .update_one(
-                identity,
-                doc! {"$set": {
-                    "status": mongodb::bson::to_bson(&TradeStatus::Settled)?,
-                    "status_updated_at": timestamp_bson(block_timestamp)?,
-                }},
-            )
-            .await?;
         Ok(())
     }
 
     pub async fn mark_penalized(&self, trade_id: &str, block_timestamp: u64) -> Result<()> {
         self.0.update_one(
-            doc! {"trade_uuid": trade_id, "status": mongodb::bson::to_bson(&TradeStatus::Settled)?},
+            doc! {"trade_uuid": trade_id, "status": mongodb::bson::to_bson(&TradeStatus::Matched)?},
             doc! {"$set": {
                 "status": mongodb::bson::to_bson(&TradeStatus::Penalized)?,
                 "status_updated_at": timestamp_bson(block_timestamp)?,
@@ -132,7 +122,7 @@ impl TradeService {
         let trade = self.0.find_one(doc! {"trade_uuid": trade_id}).await?;
         anyhow::ensure!(
             trade.is_some_and(|trade| trade.status == TradeStatus::Penalized),
-            "Cannot penalize missing or unsettled trade {}",
+            "Cannot penalize missing or unconfirmed trade {}",
             trade_id
         );
         Ok(())
@@ -141,7 +131,7 @@ impl TradeService {
     /// Verification completes the orders but must not replace a trade's penalty verdict.
     pub async fn mark_executed(&self, trade_id: &str, block_timestamp: u64) -> Result<()> {
         self.0.update_one(
-            doc! {"trade_uuid": trade_id, "status": mongodb::bson::to_bson(&TradeStatus::Settled)?},
+            doc! {"trade_uuid": trade_id, "status": mongodb::bson::to_bson(&TradeStatus::Matched)?},
             doc! {"$set": {
                 "status": mongodb::bson::to_bson(&TradeStatus::Executed)?,
                 "status_updated_at": timestamp_bson(block_timestamp)?,
@@ -154,7 +144,7 @@ impl TradeService {
                 trade.status,
                 TradeStatus::Executed | TradeStatus::Penalized
             )),
-            "Cannot complete missing or unsettled trade {}",
+            "Cannot complete missing or unconfirmed trade {}",
             trade_id
         );
         Ok(())
@@ -175,39 +165,6 @@ impl TradeService {
         &self,
         trade_schema: Vec<DbTradeSchema>,
     ) -> Result<HashMap<usize, Bson>> {
-        if trade_schema
-            .iter()
-            .any(|trade| trade.status == TradeStatus::Matched)
-        {
-            let mut ids = HashMap::new();
-            for (index, mut trade) in trade_schema.into_iter().enumerate() {
-                let id = if trade.status == TradeStatus::Matched {
-                    trade.status_updated_at = Some(trade.creation_time);
-                    // Only insert: a late registration must not downgrade settlement
-                    // or verification. Conflicting details hit the unique trade ID index.
-                    let result = self
-                        .0
-                        .update_one(
-                            trade_identity_filter(&trade)?,
-                            doc! {"$setOnInsert": mongodb::bson::to_document(&trade)?},
-                        )
-                        .upsert(true)
-                        .await
-                        .with_context(|| {
-                            format!("Failed to register matched trade {}", trade.trade_uuid)
-                        })?;
-                    result
-                        .upserted_id
-                        .unwrap_or_else(|| Bson::String(trade.trade_uuid))
-                } else {
-                    // Preserve ordered, insert-only imports for non-Matched records.
-                    self.0.insert_one(trade).await?.inserted_id
-                };
-                ids.insert(index, id);
-            }
-            return Ok(ids);
-        }
-
         match self.0.insert_many(trade_schema).await {
             Ok(db_result) => Ok(db_result.inserted_ids),
             Err(e) => {

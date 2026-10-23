@@ -2,15 +2,16 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Trade lifecycle status. Settlement confirms the match on-chain; it does not move funds.
+/// Trade lifecycle status. On-chain match confirmation does not settle funds.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum TradeStatus {
-    /// The matching engine generated the match.
+    /// The match was confirmed on-chain and indexed by the listener.
     Matched,
     /// Delivery verification completed without penalties.
     Executed,
-    /// The match settlement transaction was confirmed on-chain.
+    /// Financial settlement completed.
+    // TODO(DD-453): implement this transition when the partner's billing service is available.
     Settled,
     /// A delivery penalty was recorded. This status is terminal.
     Penalized,
@@ -37,9 +38,8 @@ pub struct DbTradeSchema {
     #[serde(default)]
     pub residual_bid_id: Option<String>,
     pub parameters: TradeParameters,
-    /// Unix seconds of the last status change (e.g. the verdict that made the trade
-    /// `Executed`). `None` for trades whose status never changed after insertion, including
-    /// every trade written before this field existed.
+    /// Unix seconds of the last status event, including initial match confirmation.
+    /// `None` for legacy records and imports without a known status timestamp.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status_updated_at: Option<u64>,
 }

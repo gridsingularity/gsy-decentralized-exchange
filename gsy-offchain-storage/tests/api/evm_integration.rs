@@ -656,7 +656,7 @@ async fn settlement_indexes_fill_statuses_and_keeps_residuals_independent() {
         }
         let trades = app.db_wrapper.trades().get_all_trades().await.unwrap();
         assert_eq!(trades.len(), 1);
-        assert_eq!(trades[0].status, TradeStatus::Settled);
+        assert_eq!(trades[0].status, TradeStatus::Matched);
         assert_eq!(trades[0].creation_time, 980);
         assert_eq!(trades[0].status_updated_at, Some(980));
         let orders = app.db_wrapper.orders();
@@ -767,7 +767,7 @@ async fn settlement_indexes_fill_statuses_and_keeps_residuals_independent() {
         );
         assert!(trades
             .iter()
-            .all(|trade| trade.status == TradeStatus::Settled));
+            .all(|trade| trade.status == TradeStatus::Matched));
         let verification = gsy_ethers_listener::DeliveryVerifiedFilter {
             trade_id: event.trade_id,
             bid_id: event.bid_id,
@@ -802,47 +802,7 @@ async fn settlement_indexes_fill_statuses_and_keeps_residuals_independent() {
                 .await
                 .is_err());
         }
-        let trades = app.db_wrapper.trades();
-        let identity = mongodb::bson::doc! {"trade_uuid": bytes16_to_hex(event.trade_id)};
-        // Neither a penalty nor verification may complete an unconfirmed match.
-        trades
-            .update_one(
-                identity.clone(),
-                mongodb::bson::doc! {
-                    "$set": {"status": mongodb::bson::to_bson(&TradeStatus::Matched).unwrap()}
-                },
-            )
-            .await
-            .unwrap();
         let before = orders.get_all_orders().await.unwrap();
-        assert!(handler
-            .handle_penalty_recorded(penalty.clone(), 1090)
-            .await
-            .is_err());
-        assert!(handler
-            .handle_delivery_verified(verification.clone(), 1100)
-            .await
-            .is_err());
-        assert_eq!(orders.get_all_orders().await.unwrap(), before);
-        assert_eq!(
-            trades
-                .find_one(identity.clone())
-                .await
-                .unwrap()
-                .unwrap()
-                .status,
-            TradeStatus::Matched
-        );
-        trades
-            .update_one(
-                identity.clone(),
-                mongodb::bson::doc! {
-                    "$set": {"status": mongodb::bson::to_bson(&TradeStatus::Settled).unwrap()}
-                },
-            )
-            .await
-            .unwrap();
-
         let penalized = partial_bid || partial_offer;
         let expected_status = if penalized {
             TradeStatus::Penalized

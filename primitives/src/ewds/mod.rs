@@ -34,8 +34,6 @@ pub enum EwdsOperation {
     OrdersQuery,
     #[serde(rename = "trades.query")]
     TradesQuery,
-    #[serde(rename = "trades.import")]
-    TradesImport,
     #[serde(rename = "measurements.query")]
     MeasurementsQuery,
     #[serde(rename = "communities.query")]
@@ -53,10 +51,9 @@ pub enum EwdsOperation {
 }
 
 impl EwdsOperation {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 9] = [
         Self::OrdersQuery,
         Self::TradesQuery,
-        Self::TradesImport,
         Self::MeasurementsQuery,
         Self::CommunitiesQuery,
         Self::ClearingResultsQuery,
@@ -70,7 +67,6 @@ impl EwdsOperation {
         match self {
             Self::OrdersQuery => "orders.query",
             Self::TradesQuery => "trades.query",
-            Self::TradesImport => "trades.import",
             Self::MeasurementsQuery => "measurements.query",
             Self::CommunitiesQuery => "communities.query",
             Self::IdsQuery => "ids.query",
@@ -85,7 +81,6 @@ impl EwdsOperation {
         match self {
             Self::OrdersQuery => "orders-query",
             Self::TradesQuery => "trades-query",
-            Self::TradesImport => "trades-import",
             Self::MeasurementsQuery => "measurements-query",
             Self::CommunitiesQuery => "communities-query",
             Self::IdsQuery => "ids-query",
@@ -169,7 +164,6 @@ pub struct EwdsTopicPair {
 pub struct EwdsTopicConfig {
     orders: EwdsTopicPair,
     trades: EwdsTopicPair,
-    trades_import: EwdsTopicPair,
     measurements: EwdsTopicPair,
     communities: EwdsTopicPair,
     ids: EwdsTopicPair,
@@ -189,10 +183,6 @@ impl Default for EwdsTopicConfig {
             trades: EwdsTopicPair {
                 request: "tradesQuery".to_string(),
                 response: "tradesQueryResponse".to_string(),
-            },
-            trades_import: EwdsTopicPair {
-                request: "tradesImport".to_string(),
-                response: "tradesImportResponse".to_string(),
             },
             measurements: EwdsTopicPair {
                 request: "measurementsQuery".to_string(),
@@ -248,16 +238,6 @@ impl EwdsTopicConfig {
                 response: env_or(
                     "EWDS_TRADES_RESPONSE_TOPIC",
                     defaults.trades.response.as_str(),
-                ),
-            },
-            trades_import: EwdsTopicPair {
-                request: env_or(
-                    "EWDS_TRADES_IMPORT_REQUEST_TOPIC",
-                    defaults.trades_import.request.as_str(),
-                ),
-                response: env_or(
-                    "EWDS_TRADES_IMPORT_RESPONSE_TOPIC",
-                    defaults.trades_import.response.as_str(),
                 ),
             },
             measurements: EwdsTopicPair {
@@ -331,7 +311,6 @@ impl EwdsTopicConfig {
         match operation {
             EwdsOperation::OrdersQuery => &self.orders,
             EwdsOperation::TradesQuery => &self.trades,
-            EwdsOperation::TradesImport => &self.trades_import,
             EwdsOperation::MeasurementsQuery => &self.measurements,
             EwdsOperation::CommunitiesQuery => &self.communities,
             EwdsOperation::IdsQuery => &self.ids,

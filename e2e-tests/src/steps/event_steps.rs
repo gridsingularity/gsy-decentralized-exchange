@@ -64,7 +64,6 @@ async fn observe_trade_statuses(world: &mut MyWorld) {
 async fn verify_trade_notification(world: &mut MyWorld, status: String) {
     let status = match status.as_str() {
         "Matched" => TradeStatus::Matched,
-        "Settled" => TradeStatus::Settled,
         "Executed" => TradeStatus::Executed,
         "Penalized" => TradeStatus::Penalized,
         _ => panic!("Unexpected trade status: {status}"),

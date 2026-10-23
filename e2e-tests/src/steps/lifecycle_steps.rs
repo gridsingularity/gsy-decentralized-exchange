@@ -158,9 +158,9 @@ pub(crate) async fn trade_status_timestamp(
         TradeSettlementContract::new(world.trade_settlement_address, world.provider.clone());
     let topic = indexed_bytes16_topic(parse_uuid_or_hex_bytes16(&trade.trade_uuid).unwrap());
     let block_hash = match status {
-        TradeStatus::Matched => return trade.creation_time,
+        TradeStatus::Settled => panic!("Financial settlement is not implemented"),
         TradeStatus::Executed => return delivery_verification_timestamp(world, trade).await,
-        TradeStatus::Settled => {
+        TradeStatus::Matched => {
             let events = settlement
                 .event::<TradeSettledFilter>()
                 .from_block(0u64)
@@ -199,15 +199,15 @@ pub(crate) async fn trade_status_timestamp(
         .as_u64()
 }
 
-#[then("the trade is Settled before delivery verification")]
-async fn verify_settled_trade(world: &mut MyWorld) {
+#[then("the trade is Matched before delivery verification")]
+async fn verify_matched_trade(world: &mut MyWorld) {
     let trade = world.last_trade.as_ref().expect("Missing settled trade");
     let stored = query_market_trades(world)
         .await
         .into_iter()
         .find(|stored| stored.trade_uuid == trade.trade_uuid)
         .unwrap();
-    assert_eq!(stored.status, TradeStatus::Settled);
+    assert_eq!(stored.status, TradeStatus::Matched);
     let persisted = crate::utils::test_database()
         .await
         .collection::<DbTradeSchema>("trades")
@@ -217,7 +217,7 @@ async fn verify_settled_trade(world: &mut MyWorld) {
         .unwrap();
     let mut expected = stored;
     expected.status_updated_at =
-        Some(trade_status_timestamp(world, trade, &TradeStatus::Settled).await);
+        Some(trade_status_timestamp(world, trade, &TradeStatus::Matched).await);
     assert_eq!(persisted, expected);
 }
 

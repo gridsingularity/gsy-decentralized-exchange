@@ -2380,7 +2380,6 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid 1.26.0",
- "wiremock",
 ]
 
 [[package]]

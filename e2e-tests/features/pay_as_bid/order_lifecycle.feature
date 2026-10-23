@@ -12,6 +12,6 @@ Feature: Confirmed order lifecycle
     And "alice" submits a bid
     And "bob" submits an offer
     Then the matching engine matches the bid and offer and a trade is settled on-chain
-    And the trade is Settled before delivery verification
+    And the trade is Matched before delivery verification
     When measurements of 10 energy for facilities are submitted
     Then delivery verification marks the trade and orders Executed without penalties

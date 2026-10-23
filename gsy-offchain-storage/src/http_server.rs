@@ -1,5 +1,4 @@
 use crate::db::DatabaseWrapper;
-use crate::ewds_event_handler::EwdsEventPublisher;
 use crate::routes::{
     get_assets, get_clearing_results, get_communities, get_facilities, get_flexibility_orders,
     get_forecasts, get_guarantees_of_origin, get_market, get_market_roles, get_markets,
@@ -21,12 +20,10 @@ use tracing_actix_web::TracingLogger;
 pub fn run_http_server(
     listener: TcpListener,
     db_connection_wrapper: DatabaseWrapper,
-    event_publisher: Option<EwdsEventPublisher>,
 ) -> Result<Server, std::io::Error> {
     let db_connection_wrapper = web::Data::new(db_connection_wrapper);
-    let event_publisher = event_publisher.map(web::Data::new);
     let server = HttpServer::new(move || {
-        let mut app = App::new()
+        App::new()
             .wrap(TracingLogger::default())
             .route("/health_check", web::get().to(health_check))
             // Order Book Storage (D3.2 section 5.4)
@@ -80,11 +77,7 @@ pub fn run_http_server(
             .route("/facilities", web::post().to(post_facility))
             .route("/facilities", web::get().to(get_facilities))
             .route("/ids", web::post().to(get_or_create_ids))
-            .app_data(db_connection_wrapper.clone());
-        if let Some(publisher) = &event_publisher {
-            app = app.app_data(publisher.clone());
-        }
-        app
+            .app_data(db_connection_wrapper.clone())
     })
     .listen(listener)?
     .run();
@@ -96,13 +89,12 @@ pub fn run_http_server(
 pub async fn start_server(
     address: &str,
     db_connection_wrapper: DatabaseWrapper,
-    event_publisher: Option<EwdsEventPublisher>,
 ) -> Result<(), Error> {
     let listener = TcpListener::bind(address).expect("Failed to bind");
 
     info!("Server listening on {}", listener.local_addr().unwrap());
 
-    match run_http_server(listener, db_connection_wrapper, event_publisher)?.await {
+    match run_http_server(listener, db_connection_wrapper)?.await {
         Ok(_) => Ok(()),
         Err(e) => Err(Error::from(e)),
     }

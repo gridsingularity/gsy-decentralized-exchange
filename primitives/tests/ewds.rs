@@ -1068,40 +1068,6 @@ mod tests {
     }
 
     #[test]
-    fn trades_import_operation_and_topics() {
-        let operation = EwdsOperation::TradesImport;
-        assert_eq!(operation.as_str(), "trades.import");
-        assert_eq!(operation.request_id_prefix(), "trades-import");
-        assert_eq!(
-            serde_json::to_value(operation).unwrap(),
-            serde_json::json!("trades.import")
-        );
-        assert_eq!(
-            serde_json::from_str::<EwdsOperation>("\"trades.import\"").unwrap(),
-            operation
-        );
-        assert!(EwdsOperation::ALL.contains(&operation));
-        let defaults = EwdsTopicConfig::default();
-        let topics = defaults.for_operation(operation);
-        assert_eq!(topics.request, "tradesImport");
-        assert_eq!(topics.response, "tradesImportResponse");
-
-        std::env::set_var("EWDS_TRADES_IMPORT_REQUEST_TOPIC", "tradesImportTest");
-        std::env::set_var(
-            "EWDS_TRADES_IMPORT_RESPONSE_TOPIC",
-            "tradesImportTestResponse",
-        );
-        let config = EwdsTopicConfig::from_env();
-        std::env::remove_var("EWDS_TRADES_IMPORT_REQUEST_TOPIC");
-        std::env::remove_var("EWDS_TRADES_IMPORT_RESPONSE_TOPIC");
-        assert_eq!(config.for_operation(operation).request, "tradesImportTest");
-        assert_eq!(
-            config.for_operation(operation).response,
-            "tradesImportTestResponse"
-        );
-    }
-
-    #[test]
     fn every_operation_is_in_all_exactly_once() {
         for operation in EwdsOperation::ALL {
             assert_eq!(

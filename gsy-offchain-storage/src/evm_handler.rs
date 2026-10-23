@@ -214,9 +214,10 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         let offer_hash_str = bytes16_to_hex(event.offer_id);
         let residual_bid_id = bytes16_to_optional_hex(event.residual_bid_id);
         let residual_offer_id = bytes16_to_optional_hex(event.residual_offer_id);
+        // TradeSettled confirms the match on-chain, not financial settlement.
         let trade = DbTradeSchema {
             trade_uuid: trade_hash.clone(),
-            status: TradeStatus::Settled,
+            status: TradeStatus::Matched,
             seller: bytes16_to_hex(event.seller_id),
             buyer: bytes16_to_hex(event.buyer_id),
             market_id: bytes16_to_hex(event.market_id),
@@ -329,9 +330,9 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         anyhow::ensure!(
             matches!(
                 trade.status,
-                TradeStatus::Settled | TradeStatus::Executed | TradeStatus::Penalized
+                TradeStatus::Matched | TradeStatus::Executed | TradeStatus::Penalized
             ),
-            "Cannot complete unsettled trade {}",
+            "Cannot complete unconfirmed trade {}",
             trade_id
         );
         // Check both orders before writing, so malformed or incomplete projections

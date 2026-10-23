@@ -244,6 +244,11 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
         }
     })
     .await?;
+    let confirmed = app.db_wrapper.trades().get_all_trades().await?;
+    assert!(confirmed.iter().all(|trade| {
+        trade.status == TradeStatus::Matched
+            && trade.status_updated_at == Some(trade.creation_time)
+    }));
     let endpoint = anvil.ws_endpoint();
     let address = format!("{:?}", settlement.address());
     // Nothing measured: no completion. Only part measured: complete that part,

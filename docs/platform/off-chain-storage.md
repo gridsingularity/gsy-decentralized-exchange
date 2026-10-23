@@ -109,22 +109,19 @@ replay cursor across restarts. Missed market/order events still require reindexi
 
 ## Data Model Notes
 
-- The agreed trade lifecycle is `Matched` (match generated), then `Settled`
-  (on-chain match settlement confirmed), then `Executed` (delivery verified
-  without penalties) or terminal `Penalized` (a delivery penalty recorded).
-  `Settled` does not imply a financial payment, and trades cannot be `Rejected`.
-  The listener indexes `PenaltyRecorded` as terminal `Penalized` and
-  `DeliveryVerified` as `Executed` only for trades without a penalty.
-- `POST /trades`, `/trades-normalized`, and EWDS `trades.import` accept idempotent `matched` imports:
-  the same trade ID and match details preserve the stored status and timestamps,
-  including when settlement or verification has already been indexed. Conflicting
-  details are rejected. Other statuses retain the existing insert-only behavior;
-  no trade import updates order statuses. The matching engine registers the exact
-  encoded matches before submitting them on-chain; only the listener advances
-  these records to `Settled` after confirmed settlement.
-- With `EWDS_ENABLE_HANDLER=true`, successful Matched registrations and indexed
-  settlement, penalty and verification events publish persisted snapshots through
-  `trade.event`. Replays can notify again but preserve stored statuses and timestamps.
+- The listener creates `Matched` trades after on-chain match confirmation.
+  `DeliveryVerified` advances penalty-free trades to `Executed`;
+  `PenaltyRecorded` sets terminal `Penalized`, which verification does not replace.
+  `Settled` means financial settlement complete. Its transition is not implemented
+  until the partner's billing service is available. Trades cannot be `Rejected`.
+  Records indexed under the former `Settled = on-chain confirmation` convention
+  require reindexing (or a fresh validation database); they are not migrated automatically.
+- Existing `POST /trades` and `/trades-normalized` endpoints retain insert-only
+  import behavior. They do not update orders or publish lifecycle notifications;
+  the matching engine does not use them.
+- With `EWDS_ENABLE_HANDLER=true`, indexed match confirmations, penalties and
+  delivery verifications publish persisted snapshots through `trade.event`.
+  Replays can notify again but preserve stored statuses and timestamps.
   The event's `occurredAt` uses `status_updated_at`, falling back to creation time
   for legacy records; the trade DTO's `timestamp` remains its RFC 3339 creation time.
   HTTP and EWDS queries return the same DTO. HTTP-only operation needs no gateway.

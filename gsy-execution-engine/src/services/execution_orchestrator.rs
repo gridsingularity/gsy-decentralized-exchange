@@ -48,7 +48,7 @@ pub async fn run_execution_cycle(
     )?;
     // A separately recorded penalty does not imply delivery verification is complete.
     // The contract check below skips trades already verified without resubmitting penalties.
-    trades.retain(|trade| matches!(trade.status, TradeStatus::Settled | TradeStatus::Penalized));
+    trades.retain(|trade| matches!(trade.status, TradeStatus::Matched | TradeStatus::Penalized));
     info!(
         "Fetched {} trades, {} measurements for timeslot {}.",
         trades.len(),

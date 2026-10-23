@@ -100,46 +100,6 @@ impl OffchainStorageClient {
         )
     }
 
-    pub async fn import_trades(&self, trades: &[EwdsTradeDto]) -> Result<()> {
-        if trades.is_empty() {
-            return Ok(());
-        }
-        match self.transport {
-            OffchainStorageTransport::Http => {
-                let response = self
-                    .http_client
-                    .post(self.endpoint_url("trades"))
-                    .json(trades)
-                    .send()
-                    .await?;
-                let status = response.status();
-                if !status.is_success() {
-                    let body = response.text().await.unwrap_or_default();
-                    return Err(anyhow!(
-                        "Failed to import trades: HTTP {}{}",
-                        status,
-                        format_response_body(&body)
-                    ));
-                }
-            }
-            OffchainStorageTransport::Ewds => {
-                let imported: Vec<String> = self
-                    .ewds_client()
-                    .query(EwdsOperation::TradesImport, serde_json::to_value(trades)?)
-                    .await?;
-                if !imported
-                    .iter()
-                    .eq(trades.iter().map(|trade| &trade.trade_id))
-                {
-                    return Err(anyhow!(
-                        "EWDS trades.import acknowledgement does not match submitted trade IDs"
-                    ));
-                }
-            }
-        }
-        Ok(())
-    }
-
     async fn fetch_communities_via_http(&self) -> Result<Vec<EnergyCommunitySchema>> {
         let url = self.endpoint_url("communities");
         let response = self.http_client.get(&url).send().await?;

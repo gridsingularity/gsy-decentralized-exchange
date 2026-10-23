@@ -570,9 +570,8 @@ async fn verify_community_market_settlements(world: &mut MyWorld) {
             .await
             .into_iter()
             .filter(|trade| {
-                trade.status != TradeStatus::Matched
-                    && (scenario_order_ids.contains(&trade.bid_hash.to_ascii_lowercase())
-                        || scenario_order_ids.contains(&trade.offer_hash.to_ascii_lowercase()))
+                scenario_order_ids.contains(&trade.bid_hash.to_ascii_lowercase())
+                    || scenario_order_ids.contains(&trade.offer_hash.to_ascii_lowercase())
             })
             .collect::<Vec<_>>();
 
@@ -952,11 +951,6 @@ pub(crate) async fn delivery_verification_timestamp(world: &MyWorld, trade: &DbT
 }
 
 async fn assert_trade_settled_on_chain(world: &MyWorld, trade: &DbTradeSchema) {
-    assert_ne!(
-        trade.status,
-        TradeStatus::Matched,
-        "Trade is not settled yet"
-    );
     let order_registry =
         OrderRegistryContract::new(world.order_registry_address, world.provider.clone());
     let bid_id =
@@ -1062,10 +1056,10 @@ async fn verify_trade_on_chain(world: &mut MyWorld) {
     for attempt in 0..60 {
         let trades = query_market_trades(world).await;
 
-        if let Some(trade) = trades.into_iter().find(|trade| {
-            trade.market_id.to_lowercase() == expected_market_id
-                && trade.status != TradeStatus::Matched
-        }) {
+        if let Some(trade) = trades
+            .into_iter()
+            .find(|trade| trade.market_id.to_lowercase() == expected_market_id)
+        {
             info!("Found settled trade {}", trade.trade_uuid);
             assert_trade_settled_on_chain(world, &trade).await;
             world.last_trade = Some(trade);
@@ -1124,7 +1118,6 @@ async fn verify_partner_trade(
 
         if let Some(trade) = trades.into_iter().find(|trade| {
             trade.market_id.to_lowercase() == expected_market_id
-                && trade.status != TradeStatus::Matched
                 && trade.buyer.eq_ignore_ascii_case(expected_buyer.as_str())
                 && trade.seller.eq_ignore_ascii_case(expected_seller.as_str())
                 && approx_eq(trade.parameters.selected_energy_kWh, energy)
@@ -1223,7 +1216,6 @@ async fn verify_pay_as_clear_result(
             .into_iter()
             .filter(|trade| {
                 trade.market_id.to_lowercase() == expected_market_id
-                    && trade.status != TradeStatus::Matched
                     && expected_order_ids.contains(&trade.bid_hash.to_ascii_lowercase())
                     && expected_order_ids.contains(&trade.offer_hash.to_ascii_lowercase())
             })
@@ -1343,8 +1335,7 @@ async fn verify_combined_preferred_trade(
 
     for attempt in 0..60 {
         let preferred_trade = query_market_trades(world).await.into_iter().find(|trade| {
-            trade.status != TradeStatus::Matched
-                && trade.bid_hash.eq_ignore_ascii_case(preferred_bid_id)
+            trade.bid_hash.eq_ignore_ascii_case(preferred_bid_id)
                 && trade.offer_hash.eq_ignore_ascii_case(preferred_offer_id)
         });
 
@@ -1679,8 +1670,7 @@ async fn verify_residual_lifecycle(world: &mut MyWorld, side: String, consumptio
     for _ in 0..60 {
         let trades = query_market_trades(world).await;
         if let Some(first) = trades.iter().find(|trade| {
-            trade.status != TradeStatus::Matched
-                && trade.bid_hash.eq_ignore_ascii_case(&bid_id)
+            trade.bid_hash.eq_ignore_ascii_case(&bid_id)
                 && trade.offer_hash.eq_ignore_ascii_case(&offer_id)
         }) {
             let residual_id = if is_bid {
@@ -1695,8 +1685,7 @@ async fn verify_residual_lifecycle(world: &mut MyWorld, side: String, consumptio
                     } else {
                         (&trade.offer_hash, &trade.bid_hash)
                     };
-                    trade.status != TradeStatus::Matched
-                        && consumed.eq_ignore_ascii_case(residual_id)
+                    consumed.eq_ignore_ascii_case(residual_id)
                         && counterpart.eq_ignore_ascii_case(&counter_id)
                 }) {
                     chain = Some((first.clone(), second.clone(), residual_id.clone()));

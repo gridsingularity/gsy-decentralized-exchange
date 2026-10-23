@@ -1,6 +1,6 @@
 use crate::evm_integration::{expected_market, new_market_event};
 use crate::ewds_handler::{mock_gateway, test_config};
-use crate::helpers::{init_app, init_app_with_publisher, stop_app};
+use crate::helpers::{init_app, stop_app};
 use ethers::contract::LogMeta;
 use ethers::types::{Address, H256, U256, U64};
 use gsy_ethers_listener::{
@@ -243,7 +243,7 @@ fn log_meta(transaction_hash: H256) -> LogMeta {
 fn trade(trade_uuid: &str, creation_time: u64) -> DbTradeSchema {
     DbTradeSchema {
         trade_uuid: trade_uuid.to_string(),
-        status: TradeStatus::Settled,
+        status: TradeStatus::Matched,
         seller: "seller-1".to_string(),
         buyer: "buyer-1".to_string(),
         market_id: "market-1".to_string(),
@@ -310,115 +310,6 @@ async fn publish_trade_event_sends_several_trades_in_one_event() {
 }
 
 #[tokio::test]
-async fn matched_import_notifications_use_stored_statuses_and_respect_the_overlay() {
-    for transport in ["/trades", "/trades-normalized", "ewds"] {
-        for enabled in [false, true] {
-            let server = mock_gateway().await;
-            let mut config = test_config(server.uri());
-            config.enabled = enabled;
-            let publisher = enabled.then(|| EwdsEventPublisher::new(config.clone()));
-            let app = init_app_with_publisher(publisher).await;
-            let client = reqwest::Client::new();
-            let mut matched = trade("trade-1", 950);
-            matched.status = TradeStatus::Matched;
-            let incoming = EwdsTradeDto::from(matched.clone());
-            let per_import = usize::from(enabled) + usize::from(transport == "ewds");
-            for (index, status) in [
-                TradeStatus::Matched,
-                TradeStatus::Settled,
-                TradeStatus::Executed,
-                TradeStatus::Penalized,
-            ]
-            .into_iter()
-            .enumerate()
-            {
-                let mut expected = matched.clone();
-                expected.status = status.clone();
-                expected.status_updated_at = Some(950 + index as u64 * 100);
-                if index > 0 {
-                    app.db_wrapper
-                        .trades()
-                        .replace_one(
-                            mongodb::bson::doc! {"trade_uuid": &expected.trade_uuid},
-                            &expected,
-                        )
-                        .await
-                        .unwrap();
-                }
-                if transport == "ewds" {
-                    handle_request(
-                        &app.db_wrapper,
-                        &client,
-                        &config,
-                        EwdsRequestEnvelope {
-                            request_id: format!("import-{index}"),
-                            operation: EwdsOperation::TradesImport,
-                            payload: json!([incoming]),
-                        },
-                    )
-                    .await
-                    .unwrap();
-                } else {
-                    client
-                        .post(format!("{}{}", app.address, transport))
-                        .json(&vec![incoming.clone()])
-                        .send()
-                        .await
-                        .unwrap()
-                        .error_for_status()
-                        .unwrap();
-                }
-                assert_eq!(
-                    app.db_wrapper.trades().get_all_trades().await.unwrap(),
-                    vec![expected.clone()]
-                );
-                let messages = wait_for_gateway_messages(&server, (index + 1) * per_import).await;
-                if enabled {
-                    assert_trade_status_event(
-                        &app,
-                        &messages[index * per_import..],
-                        status,
-                        expected.status_updated_at.unwrap(),
-                    )
-                    .await;
-                }
-            }
-            // Conflicting match details must not publish a success notification.
-            let mut conflict = incoming.clone();
-            conflict.trade_price += 1.0;
-            if transport == "ewds" {
-                handle_request(
-                    &app.db_wrapper,
-                    &client,
-                    &config,
-                    EwdsRequestEnvelope {
-                        request_id: "conflicting-import".into(),
-                        operation: EwdsOperation::TradesImport,
-                        payload: json!([conflict]),
-                    },
-                )
-                .await
-                .unwrap();
-            } else {
-                let response = client
-                    .post(format!("{}{}", app.address, transport))
-                    .json(&vec![conflict])
-                    .send()
-                    .await
-                    .unwrap();
-                assert_eq!(response.status().as_u16(), 500);
-            }
-            assert_no_further_gateway_messages(
-                &server,
-                4 * per_import + usize::from(transport == "ewds"),
-            )
-            .await;
-            stop_app(app).await;
-        }
-    }
-}
-
-#[tokio::test]
 async fn verification_notifications_preserve_penalized_status_and_match_query_responses() {
     for penalized in [false, true] {
         let app = init_app().await;
@@ -431,7 +322,7 @@ async fn verification_notifications_preserve_penalized_status_and_match_query_re
             .await
             .unwrap();
         let messages = wait_for_gateway_messages(&server, 2).await;
-        assert_trade_status_event(&app, &messages, TradeStatus::Settled, 1_100).await;
+        assert_trade_status_event(&app, &messages, TradeStatus::Matched, 1_100).await;
         let mut count = 2;
         let mut penalty = PenaltyRecordedFilter {
             trade_id: settlement.trade_id,
@@ -719,7 +610,7 @@ async fn trade_settled_publishes_trade_event() {
         event["data"][0]["offerId"],
         json!(bytes16_to_hex([0x03; 16]))
     );
-    assert_eq!(event["data"][0]["tradeStatus"], json!("settled"));
+    assert_eq!(event["data"][0]["tradeStatus"], json!("matched"));
     assert_eq!(event["data"][0]["residualBidId"], json!(null));
 
     let stored = app.db_wrapper.trades().get_all_trades().await.unwrap();
@@ -794,7 +685,7 @@ async fn trade_settled_rejects_conflicting_details_without_publishing() {
 }
 
 #[tokio::test]
-async fn trade_settled_advances_matched_and_preserves_replayed_statuses() {
+async fn trade_settled_preserves_replayed_statuses() {
     for (status, updated_at) in [
         (TradeStatus::Matched, Some(960)),
         (TradeStatus::Matched, None),
@@ -808,7 +699,7 @@ async fn trade_settled_advances_matched_and_preserves_replayed_statuses() {
         let handler = evm_handler(&app, &server);
         seed_settlement_orders(&app).await;
         let event = trade_settled_event();
-        let mut expected = DbTradeSchema {
+        let expected = DbTradeSchema {
             status: status.clone(),
             status_updated_at: updated_at,
             buyer: bytes16_to_hex(event.buyer_id),
@@ -829,10 +720,6 @@ async fn trade_settled_advances_matched_and_preserves_replayed_statuses() {
                 mongodb::bson::doc! {},
                 mongodb::bson::doc! {"$set": {"status": "executed", "status_updated_at": 1_200i64}},
             ).await.unwrap();
-        }
-        if status == TradeStatus::Matched {
-            expected.status = TradeStatus::Settled;
-            expected.status_updated_at = Some(1_100);
         }
         for (index, timestamp) in [1_100, 1_300].into_iter().enumerate() {
             handler
@@ -897,7 +784,7 @@ async fn trade_settled_replay_completes_a_partially_persisted_fill() {
         .is_err());
     let trades = app.db_wrapper.trades().get_all_trades().await.unwrap();
     assert_eq!(trades.len(), 1);
-    assert_eq!(trades[0].status, TradeStatus::Settled);
+    assert_eq!(trades[0].status, TradeStatus::Matched);
     assert_eq!(trades[0].status_updated_at, Some(1_100));
     assert_no_further_gateway_messages(&server, 0).await;
     let quiet_handler = OffchainStorageEvmHandler {

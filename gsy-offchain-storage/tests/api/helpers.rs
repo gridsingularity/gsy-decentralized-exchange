@@ -1,6 +1,5 @@
 use gsy_offchain_storage::configuration::get_configuration;
 use gsy_offchain_storage::db::{delete_database, init_database, DatabaseWrapper};
-use gsy_offchain_storage::ewds_event_handler::EwdsEventPublisher;
 use gsy_offchain_storage::http_server::run_http_server;
 use once_cell::sync::Lazy;
 use primitives::log::setup_logging;
@@ -24,10 +23,6 @@ static TRACING: Lazy<()> = Lazy::new(|| {
 });
 
 pub async fn init_app() -> TestApp {
-    init_app_with_publisher(None).await
-}
-
-pub async fn init_app_with_publisher(event_publisher: Option<EwdsEventPublisher>) -> TestApp {
     Lazy::force(&TRACING);
 
     let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind to random port");
@@ -43,8 +38,7 @@ pub async fn init_app_with_publisher(event_publisher: Option<EwdsEventPublisher>
     )
     .await
     .unwrap();
-    let server = run_http_server(listener, db_wrapper.clone(), event_publisher)
-        .expect("Failed to bind address");
+    let server = run_http_server(listener, db_wrapper.clone()).expect("Failed to bind address");
     let _ = tokio::spawn(server);
     TestApp {
         address,

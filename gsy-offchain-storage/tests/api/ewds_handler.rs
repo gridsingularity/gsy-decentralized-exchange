@@ -10,7 +10,7 @@ use gsy_offchain_storage::ewds_handler::{
 use primitives::db_api_schema::grid_topology::FacilitySchema;
 use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
 use primitives::db_api_schema::trades::{DbTradeSchema, TradeParameters, TradeStatus};
-use primitives::ewds::dto::{EwdsRequestEnvelope, EwdsSendMessageDto, EwdsTradeDto};
+use primitives::ewds::dto::{EwdsRequestEnvelope, EwdsSendMessageDto};
 use primitives::ewds::{EwdsEventTopicConfig, EwdsOperation, EwdsTopicConfig};
 use primitives::utils::{
     bytes16_to_hex, bytes16_to_uuid_string, create_encrypted_bytes16_from_string, epoch_to_rfc3339,
@@ -65,16 +65,12 @@ pub(crate) async fn mock_gateway() -> MockServer {
     server
 }
 
-/// Replies and lifecycle events may share the gateway; select only the reply.
+/// Parse the single captured POST body into the response envelope.
 async fn captured_envelope(server: &MockServer) -> serde_json::Value {
     let requests = server.received_requests().await.unwrap();
-    let replies: Vec<EwdsSendMessageDto> = requests
-        .iter()
-        .map(|request| serde_json::from_slice(&request.body).unwrap())
-        .filter(|message: &EwdsSendMessageDto| message.fqcn == "gsy.responses.pub")
-        .collect();
-    assert_eq!(replies.len(), 1, "expected exactly one reply");
-    serde_json::from_str(&replies[0].payload).unwrap()
+    assert_eq!(requests.len(), 1, "expected exactly one gateway POST");
+    let send_dto: EwdsSendMessageDto = serde_json::from_slice(&requests[0].body).unwrap();
+    serde_json::from_str(&send_dto.payload).unwrap()
 }
 
 /// Parse the single captured POST body into the response envelope's data array.
@@ -174,203 +170,6 @@ fn make_delivery_market(market_id: &str, delivery_offset: u64) -> MarketSchema {
         matching_algorithm: MatchingAlgorithm::PayAsBid,
         created_at: timestamp_to_string_with_padding(delivery_start_time - 900),
     }
-}
-
-// --- TradesImport ---------------------------------------------------
-
-#[tokio::test]
-async fn trades_import_is_idempotent_and_preserves_later_statuses() {
-    let app = init_app().await;
-    let client = reqwest::Client::new();
-    let mut matched = make_trade("imported-trade", "market-1");
-    matched.status = TradeStatus::Matched;
-    matched.residual_bid_id = Some("residual-bid".into());
-    matched.residual_offer_id = Some("residual-offer".into());
-
-    for (index, status) in [
-        TradeStatus::Matched,
-        TradeStatus::Settled,
-        TradeStatus::Executed,
-        TradeStatus::Penalized,
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let mut expected = matched.clone();
-        expected.status = status;
-        expected.status_updated_at = Some(TRADES_BASE_TIME + index as u64);
-        if index > 0 {
-            app.db_wrapper
-                .trades()
-                .replace_one(
-                    mongodb::bson::doc! {"trade_uuid": &matched.trade_uuid},
-                    &expected,
-                )
-                .await
-                .unwrap();
-        }
-        let server = mock_gateway().await;
-        let config = test_config(server.uri());
-        let mut dto = EwdsTradeDto::from(matched.clone());
-        if index > 0 {
-            dto.timestamp = trades_time(100);
-        }
-        let request_id = format!("import-{index}");
-        handle_request(
-            &app.db_wrapper,
-            &client,
-            &config,
-            envelope(EwdsOperation::TradesImport, &request_id, json!([dto, dto])),
-        )
-        .await
-        .unwrap();
-        let response = captured_envelope(&server).await;
-        assert_eq!(response["requestId"], request_id);
-        assert_eq!(response["success"], true);
-        assert_eq!(
-            response["data"],
-            json!([matched.trade_uuid, matched.trade_uuid])
-        );
-        let sent = server.received_requests().await.unwrap();
-        let send = sent
-            .iter()
-            .map(|request| serde_json::from_slice::<EwdsSendMessageDto>(&request.body).unwrap())
-            .find(|message| message.fqcn == config.response_fqcn)
-            .unwrap();
-        assert_eq!(
-            send.topic_name,
-            config
-                .topics
-                .for_operation(EwdsOperation::TradesImport)
-                .response
-        );
-        assert_eq!(
-            app.db_wrapper.trades().get_all_trades().await.unwrap(),
-            vec![expected]
-        );
-    }
-    assert!(app
-        .db_wrapper
-        .orders()
-        .get_all_orders()
-        .await
-        .unwrap()
-        .is_empty());
-    stop_app(app).await;
-}
-
-#[tokio::test]
-async fn trades_import_returns_error_for_conflicting_details() {
-    let app = init_app().await;
-    let mut original = make_trade("imported-trade", "market-1");
-    original.status = TradeStatus::Matched;
-    app.db_wrapper
-        .trades()
-        .insert_trades(vec![original.clone()])
-        .await
-        .unwrap();
-    let stored = app.db_wrapper.trades().get_all_trades().await.unwrap();
-    let mut conflicting = EwdsTradeDto::from(original);
-    conflicting.trade_price += 1.0;
-    let server = mock_gateway().await;
-    handle_request(
-        &app.db_wrapper,
-        &reqwest::Client::new(),
-        &test_config(server.uri()),
-        envelope(
-            EwdsOperation::TradesImport,
-            "conflicting-import",
-            json!([conflicting]),
-        ),
-    )
-    .await
-    .unwrap();
-    let response = captured_envelope(&server).await;
-    assert_eq!(response["requestId"], "conflicting-import");
-    assert_eq!(response["success"], false);
-    assert_eq!(response["data"], json!([]));
-    assert_eq!(response["error"]["code"], "trade_import_failed");
-    assert_eq!(
-        app.db_wrapper.trades().get_all_trades().await.unwrap(),
-        stored
-    );
-    stop_app(app).await;
-}
-
-#[tokio::test]
-async fn trades_import_rejects_invalid_batches_before_writing() {
-    let app = init_app().await;
-    let valid = EwdsTradeDto::from(make_trade("valid-prefix", "market-1"));
-    let mut bad_status = valid.clone();
-    bad_status.trade_status = "rejected".into();
-    let mut bad_timestamp = valid.clone();
-    bad_timestamp.timestamp = "invalid".into();
-    for payload in [
-        json!({}),
-        json!([]),
-        json!([valid, {}]),
-        json!([valid, bad_status]),
-        json!([valid, bad_timestamp]),
-    ] {
-        let server = mock_gateway().await;
-        handle_request(
-            &app.db_wrapper,
-            &reqwest::Client::new(),
-            &test_config(server.uri()),
-            envelope(EwdsOperation::TradesImport, "invalid-import", payload),
-        )
-        .await
-        .unwrap();
-        let response = captured_envelope(&server).await;
-        assert_eq!(response["requestId"], "invalid-import");
-        assert_eq!(response["success"], false);
-        assert_eq!(response["data"], json!([]));
-        assert_eq!(response["error"]["code"], "invalid_request");
-        assert!(app
-            .db_wrapper
-            .trades()
-            .get_all_trades()
-            .await
-            .unwrap()
-            .is_empty());
-    }
-    stop_app(app).await;
-}
-
-#[tokio::test]
-async fn trades_import_preserves_insert_only_behavior_for_non_matched_records() {
-    let app = init_app().await;
-    let trade = EwdsTradeDto::from(make_trade("settled-import", "market-1"));
-    for success in [true, false] {
-        let server = mock_gateway().await;
-        handle_request(
-            &app.db_wrapper,
-            &reqwest::Client::new(),
-            &test_config(server.uri()),
-            envelope(
-                EwdsOperation::TradesImport,
-                "settled-import",
-                json!([trade]),
-            ),
-        )
-        .await
-        .unwrap();
-        let response = captured_envelope(&server).await;
-        assert_eq!(response["success"], success);
-        if !success {
-            assert_eq!(response["error"]["code"], "trade_import_failed");
-        }
-    }
-    assert_eq!(
-        app.db_wrapper
-            .trades()
-            .get_all_trades()
-            .await
-            .unwrap()
-            .len(),
-        1
-    );
-    stop_app(app).await;
 }
 
 /// Run a trades.query with the given payload against a DB holding one trade

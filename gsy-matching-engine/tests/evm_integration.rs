@@ -8,20 +8,9 @@ use primitives::db_api_schema::orders::{
     DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus,
 };
 use primitives::db_api_schema::trades::ClearingStatus;
-use primitives::ewds::dto::EwdsTradeDto;
-use primitives::offchain_storage::{OffchainStorageClient, OffchainStorageTransport};
-use primitives::utils::{bytes16_to_hex, parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR};
-use serde_json::{json, Value};
-use std::{
-    collections::HashMap,
-    fs::File,
-    io::Write,
-    sync::{Arc, Mutex},
-};
+use primitives::utils::{parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR};
+use std::{collections::HashMap, fs::File, io::Write, sync::Arc};
 use tempfile::TempDir;
-use wiremock::http::Method;
-use wiremock::matchers::{method, path};
-use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
 abigen!(
     MockTradeSettlement,
@@ -36,13 +25,11 @@ abigen!(
         function lastBidPreferredTradingPartner() external view returns (bytes16)
         function lastBidPreferredEnergyRate() external view returns (uint64)
         function matchTypes(uint256 index) external view returns (uint8)
-        function tradeIds(uint256 index) external view returns (bytes16)
-        function setRejectSettlement(bool value) external
     ]"#
 );
 
 #[tokio::test]
-async fn test_settle_batch_registers_matches_before_submitting_to_contract() {
+async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
     let anvil = Anvil::new().spawn();
     let ws_endpoint = anvil.ws_endpoint();
     let wallet: LocalWallet = anvil.keys()[0].clone().into();
@@ -117,12 +104,6 @@ async fn test_settle_batch_registers_matches_before_submitting_to_contract() {
             bytes16 public lastBidPreferredTradingPartner;
             uint64 public lastBidPreferredEnergyRate;
             MatchType[] public matchTypes;
-            bytes16[] public tradeIds;
-            bool private rejectSettlement;
-
-            function setRejectSettlement(bool value) external {
-                rejectSettlement = value;
-            }
 
             constructor() {
                 roles[msg.sender][OPERATOR_ROLE] = true;
@@ -140,7 +121,6 @@ async fn test_settle_batch_registers_matches_before_submitting_to_contract() {
 
             function settleBatch(MarketSettlement[] calldata settlements) external {
                 require(roles[msg.sender][OPERATOR_ROLE], "missing operator role");
-                require(!rejectSettlement, "test settlement failure");
                 for (uint256 m = 0; m < settlements.length; m++) {
                     MarketSettlement calldata settlement = settlements[m];
                     require(
@@ -150,7 +130,6 @@ async fn test_settle_batch_registers_matches_before_submitting_to_contract() {
                     settledCount += settlement.matches.length;
                     for (uint256 i = 0; i < settlement.matches.length; i++) {
                         matchTypes.push(settlement.matches[i].matchType);
-                        tradeIds.push(settlement.matches[i].tradeId);
                     }
                     if (settlement.matches.length > 0) {
                         Match calldata first = settlement.matches[0];
@@ -345,172 +324,37 @@ async fn test_settle_batch_registers_matches_before_submitting_to_contract() {
         second_match,
     ];
 
-    let market_matches = || {
-        vec![MarketMatches {
-            bid_offer_matches: matches.clone(),
-            clearing_result: ClearingResult {
-                market_id: Some(market_id.clone()),
-                clearing_status: ClearingStatus::Final,
-                clearing_price: Some(clearing_price),
-                total_supply: Some((100.0 * NODE_FLOAT_SCALING_FACTOR) as u64),
-                total_demand: Some((100.0 * NODE_FLOAT_SCALING_FACTOR) as u64),
-                traded_quantity: Some((100.0 * NODE_FLOAT_SCALING_FACTOR) as u64),
-                num_trades: Some(2),
-            },
-        }]
+    let clearing_result = ClearingResult {
+        market_id: Some(market_id.clone()),
+        clearing_status: ClearingStatus::Final,
+        clearing_price: Some(clearing_price),
+        total_supply: Some((100.0 * NODE_FLOAT_SCALING_FACTOR) as u64),
+        total_demand: Some((100.0 * NODE_FLOAT_SCALING_FACTOR) as u64),
+        traded_quantity: Some((100.0 * NODE_FLOAT_SCALING_FACTOR) as u64),
+        num_trades: Some(2),
     };
+
+    let market_matches = vec![MarketMatches {
+        bid_offer_matches: matches,
+        clearing_result,
+    }];
 
     let mut lookup = HashMap::new();
     lookup.insert(bid_order_id, bid_db);
     lookup.insert(ask_order_id, ask_db);
     lookup.insert(second_offer_id, second_offer_db);
 
-    let mock_contract = MockTradeSettlement::new(contract_address, client.clone());
-    let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
-    let storage_server = MockServer::start().await;
-    let storage = OffchainStorageClient::new(
-        OffchainStorageTransport::Http,
-        storage_server.uri(),
-        "UNUSED_ENV",
-        "matchingtest",
-    );
-    Mock::given(method("POST"))
-        .and(path("/trades"))
-        .respond_with(ResponseTemplate::new(500))
-        .expect(1)
-        .mount(&storage_server)
-        .await;
-    let nonce = client
-        .get_transaction_count(client.address(), None)
-        .await
-        .unwrap();
-    let error = send_settle_batch_transaction(
-        &ws_endpoint,
-        &format!("{:?}", contract_address),
-        private_key,
-        market_matches(),
-        lookup.clone(),
-        &storage,
-    )
-    .await
-    .unwrap_err();
-    assert!(error.to_string().contains("settlement was not submitted"));
-    assert_eq!(
-        client
-            .get_transaction_count(client.address(), None)
-            .await
-            .unwrap(),
-        nonce
-    );
-    assert_eq!(
-        mock_contract.settled_count().call().await.unwrap(),
-        U256::zero()
-    );
-    storage_server.verify().await;
-    storage_server.reset().await;
-
-    // Even a contract rejection leaves the already registered records Matched.
-    Mock::given(method("POST"))
-        .and(path("/trades"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"0": "db-id"})))
-        .expect(1)
-        .mount(&storage_server)
-        .await;
-    mock_contract
-        .set_reject_settlement(true)
-        .send()
-        .await
-        .unwrap()
-        .await
-        .unwrap();
-    let error = send_settle_batch_transaction(
-        &ws_endpoint,
-        &format!("{:?}", contract_address),
-        private_key,
-        market_matches(),
-        lookup.clone(),
-        &storage,
-    )
-    .await
-    .unwrap_err();
-    assert!(error
-        .to_string()
-        .contains("registered trades remain Matched"));
-    let requests = storage_server.received_requests().await.unwrap();
-    assert_eq!(
-        requests.len(),
-        1,
-        "no status update or deletion on settlement failure"
-    );
-    let registered: Vec<EwdsTradeDto> = serde_json::from_slice(&requests[0].body).unwrap();
-    assert_eq!(registered.len(), 2);
-    assert!(registered
-        .iter()
-        .all(|trade| trade.trade_status == "matched"));
-    assert_eq!(
-        mock_contract.settled_count().call().await.unwrap(),
-        U256::zero()
-    );
-    mock_contract
-        .set_reject_settlement(false)
-        .send()
-        .await
-        .unwrap()
-        .await
-        .unwrap();
-    storage_server.verify().await;
-    storage_server.reset().await;
-
-    Mock::given(method("POST"))
-        .and(path("/trades"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"0": "db-id"})))
-        .expect(1)
-        .mount(&storage_server)
-        .await;
     send_settle_batch_transaction(
         &ws_endpoint,
         &format!("{:?}", contract_address),
-        private_key,
-        market_matches(),
-        lookup.clone(),
-        &storage,
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        market_matches,
+        lookup,
     )
     .await
     .unwrap();
 
-    let requests = storage_server.received_requests().await.unwrap();
-    assert_eq!(
-        requests.len(),
-        1,
-        "successful receipt must not update the stored status"
-    );
-    let registered: Vec<EwdsTradeDto> = serde_json::from_slice(&requests[0].body).unwrap();
-    assert_eq!(registered.len(), 2);
-    for (index, trade) in registered.iter().enumerate() {
-        assert_eq!(
-            trade.trade_id,
-            bytes16_to_hex(
-                mock_contract
-                    .trade_ids(U256::from(index))
-                    .call()
-                    .await
-                    .unwrap()
-            )
-        );
-        assert_eq!(trade.trade_status, "matched");
-        assert_eq!(trade.buyer_id, bid_actor_id);
-        assert_eq!(trade.seller_id, ask_actor_id);
-        assert_eq!(trade.market_id, market_id);
-        assert_eq!(trade.trade_price, 50.0);
-    }
-    assert_eq!(
-        registered[0].residual_bid_id.as_ref(),
-        Some(&registered[1].bid_id)
-    );
-    assert_eq!(registered[0].residual_offer_id, None);
-    assert_eq!(registered[1].residual_bid_id, None);
-    assert_eq!(registered[0].trade_quantity, 80.0);
-    assert_eq!(registered[1].trade_quantity, 20.0);
+    let mock_contract = MockTradeSettlement::new(contract_address, client.clone());
     assert_eq!(
         mock_contract
             .match_types(U256::zero())
@@ -567,119 +411,5 @@ async fn test_settle_batch_registers_matches_before_submitting_to_contract() {
             .await
             .unwrap(),
         (45.0 * NODE_FLOAT_SCALING_FACTOR) as u64
-    );
-
-    // EWDS registers the same payload without posting to the HTTP trade endpoint.
-    let gateway = MockServer::start().await;
-    let response = Arc::new(Mutex::new(Value::Null));
-    let pending_response = response.clone();
-    Mock::given(method("POST"))
-        .and(path("/api/v2/messages"))
-        .respond_with(move |request: &Request| {
-            let message: Value = serde_json::from_slice(&request.body).unwrap();
-            let envelope: Value =
-                serde_json::from_str(message["payload"].as_str().unwrap()).unwrap();
-            assert_eq!(envelope["operation"], "trades.import");
-            let ids: Vec<_> = envelope["payload"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|trade| trade["tradeId"].clone())
-                .collect();
-            *pending_response.lock().unwrap() = json!({
-                "requestId": envelope["requestId"], "success": true, "data": ids,
-            });
-            ResponseTemplate::new(200).set_body_json(json!({
-                "recipients": {"sent": 1, "failed": 0, "total": 1}
-            }))
-        })
-        .expect(1)
-        .mount(&gateway)
-        .await;
-    Mock::given(method("GET"))
-        .and(path("/api/v2/messages"))
-        .respond_with(move |_: &Request| {
-            ResponseTemplate::new(200).set_body_json(json!([
-                {"payload": response.lock().unwrap().to_string()}
-            ]))
-        })
-        .mount(&gateway)
-        .await;
-    std::env::set_var("EWDS_GATEWAY_URL", gateway.uri());
-    std::env::set_var("EWDS_RESPONSE_TIMEOUT_MS", "1000");
-    let ewds_storage = OffchainStorageClient::new(
-        OffchainStorageTransport::Ewds,
-        "http://unused.invalid",
-        "UNUSED_ENV",
-        "matchingtest",
-    );
-    let result = send_settle_batch_transaction(
-        &ws_endpoint,
-        &format!("{:?}", contract_address),
-        private_key,
-        market_matches(),
-        lookup,
-        &ewds_storage,
-    )
-    .await;
-    std::env::remove_var("EWDS_GATEWAY_URL");
-    std::env::remove_var("EWDS_RESPONSE_TIMEOUT_MS");
-    result.unwrap();
-    let requests = gateway.received_requests().await.unwrap();
-    let sent: Vec<_> = requests
-        .iter()
-        .filter(|request| request.method == Method::POST)
-        .collect();
-    assert_eq!(sent.len(), 1);
-    let message: Value = serde_json::from_slice(&sent[0].body).unwrap();
-    let envelope: Value = serde_json::from_str(message["payload"].as_str().unwrap()).unwrap();
-    let registered: Vec<EwdsTradeDto> =
-        serde_json::from_value(envelope["payload"].clone()).unwrap();
-    assert_eq!(registered.len(), 2);
-    for (index, trade) in registered.iter().enumerate() {
-        assert_eq!(
-            trade.trade_id,
-            bytes16_to_hex(
-                mock_contract
-                    .trade_ids(U256::from(index + 2))
-                    .call()
-                    .await
-                    .unwrap()
-            )
-        );
-        assert_eq!(trade.trade_status, "matched");
-    }
-    assert_eq!(
-        registered[0].residual_bid_id.as_ref(),
-        Some(&registered[1].bid_id)
-    );
-
-    // Rejected clearing results still reach the chain without a trade import.
-    storage_server.reset().await;
-    send_settle_batch_transaction(
-        &ws_endpoint,
-        &format!("{:?}", contract_address),
-        private_key,
-        vec![MarketMatches {
-            bid_offer_matches: vec![],
-            clearing_result: ClearingResult {
-                market_id: Some(market_id),
-                clearing_status: ClearingStatus::Rejected,
-                ..Default::default()
-            },
-        }],
-        HashMap::new(),
-        &storage,
-    )
-    .await
-    .unwrap();
-    assert!(storage_server.received_requests().await.unwrap().is_empty());
-    assert_eq!(
-        mock_contract.settled_count().call().await.unwrap(),
-        U256::from(4)
-    );
-    assert_eq!(
-        mock_contract.last_traded_quantity().call().await.unwrap(),
-        U256::zero()
     );
 }
