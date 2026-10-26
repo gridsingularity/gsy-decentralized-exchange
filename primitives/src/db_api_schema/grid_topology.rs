@@ -86,3 +86,29 @@ pub struct FacilitySchema {
     pub site_id: String,
     pub owner_id: String,
 }
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct FacilityMarketValidationRequest {
+    pub facility_id: String,
+    pub market_id: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct FacilityMarketValidationResult {
+    pub facility_id: String,
+    pub market_id: String,
+    pub eligible: bool,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub reason: Option<FacilityMarketValidationReason>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FacilityMarketValidationReason {
+    UnknownMarket,
+    UnknownFacility,
+    UnknownCommunity,
+    UnknownSite,
+    FacilityNotListedInSite,
+    SiteNotInCommunity,
+}
