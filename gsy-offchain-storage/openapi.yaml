@@ -690,6 +690,45 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /facilities/validate:
+    post:
+      tags: [Grid Topology]
+      summary: Validate facility participation in markets without writing records.
+      description: |
+        Requires the facility, its site and the market's community to exist,
+        the site to list the facility and the community to list that site.
+        An ID mapping alone does not establish eligibility. Does not check
+        the market's opening/closing times or contract authorization.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: "#/components/schemas/FacilityMarketValidationRequest"
+      responses:
+        "200":
+          description: One result per pair, preserving input order, duplicates and IDs; an empty request returns an empty array.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FacilityMarketValidationResult"
+        "400":
+          description: Invalid JSON or request shape.
+        "500":
+          description: Storage unavailable or corrupt records; no eligibility results are returned.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, message]
+                properties:
+                  code: { type: string, enum: [VALIDATION_UNAVAILABLE] }
+                  message: { type: string }
+
 components:
   parameters:
     MarketIdQuery:
@@ -713,6 +752,29 @@ components:
       description: Internal server error.
 
   schemas:
+    FacilityMarketValidationRequest:
+      type: object
+      required: [facility_id, market_id]
+      properties:
+        facility_id:
+          type: string
+          description: Original off-chain facility ID, not its owner or on-chain mapping.
+        market_id:
+          type: string
+          description: Market ID as UUID or bytes16 hex, with or without the 0x prefix.
+
+    FacilityMarketValidationResult:
+      type: object
+      required: [facility_id, market_id, eligible]
+      properties:
+        facility_id: { type: string }
+        market_id: { type: string }
+        eligible: { type: boolean }
+        reason:
+          type: string
+          description: Present only for an ineligible pair; not an infrastructure error.
+          enum: [unknown_market, unknown_facility, unknown_community, unknown_site, facility_not_listed_in_site, site_not_in_community]
+
     InsertedIds:
       description: List of identifiers assigned to the inserted documents.
       type: array

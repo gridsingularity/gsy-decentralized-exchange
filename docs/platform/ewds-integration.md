@@ -56,6 +56,7 @@ Provider: `gsy-offchain-storage` (`gsy-offchain-storage/src/startup.rs`)
 | `/markets` | `GET/POST` | ontology-aligned market-opening API | `http://gsy-offchain-storage:8080/markets` |
 | `/clearing-results` | `GET/POST` | clearing-result API | `http://gsy-offchain-storage:8080/clearing-results` |
 | `/ids` | `POST` | offchain↔onchain ID mapping API | `http://gsy-offchain-storage:8080/ids` |
+| `/facilities/validate` | `POST` | shared validation client; submission enforcement follows in DD-457 | `http://gsy-offchain-storage:8080/facilities/validate` |
 | `/measurement-points` | `GET/POST` | ontology-aligned profile metadata API | `http://gsy-offchain-storage:8080/measurement-points` |
 | `/timeseries` | `GET/POST` | ontology-aligned value API | `http://gsy-offchain-storage:8080/timeseries` |
 | `/measurements` | `GET/POST` | EVM JSON compatibility adapter | converts to/from `MeasurementPoint` + `Timeseries` |
@@ -90,6 +91,7 @@ Each service:
 | `clearing_results.query` over `clearingResultsQuery` / `clearingResultsQueryResponse` | matching/execution engine | off-chain storage service | off-chain storage service | requester | `GET /clearing-results` |
 | `markets.query` over `marketsQuery` / `marketsQueryResponse` | community client or e2e runner | off-chain storage service | off-chain storage service | requester | `GET /markets` |
 | `ids.query` over `idsQuery` / `idsQueryResponse` | requester service | off-chain storage service | off-chain storage service | requester | `POST /ids` (get-or-create) |
+| `facilities.validate` over `facilitiesValidate` / `facilitiesValidateResponse` | requester service | off-chain storage service | off-chain storage service | requester | `POST /facilities/validate` (read-only) |
 | `community.event` over `community` | other systems or e2e runner | off-chain storage service | none | none | `POST /communities` |
 | `order.event` over `order` | FOS or e2e runner | community client | none | none | none (the community client calls `OrderRegistry.placeOrder`) |
 | `communities.query` over `communitiesQuery` / `communitiesQueryResponse` | market orchestrator | off-chain storage service | off-chain storage service | market orchestrator | `GET /communities` |
@@ -112,6 +114,35 @@ Each service:
 | `gsy.intelligent.responses.sub` | Subscribe | `ordersQueryResponse`, `tradesQueryResponse`, `measurementsQueryResponse`, `clearingResultsQueryResponse`, `marketsQueryResponse`, `idsQueryResponse`, `communitiesQueryResponse` | `EWDS_RESPONSE_SUBSCRIBE_FQCN` |
 | `gsy.intelligent.events.pub` | Publish | `trade`, `clearingResult`, `market`, `measurements`, `facility`, `site`, `community`, `order` | `EWDS_EVENT_PUBLISH_FQCN` |
 | `gsy.intelligent.events.sub` | Subscribe | `trade`, `clearingResult`, `market`, `measurements`, `facility`, `site`, `community`, `order` | `EWDS_EVENT_SUBSCRIBE_FQCN` |
+
+Facility validation additionally requires `facilitiesValidate` on both request
+channels and `facilitiesValidateResponse` on both response channels, using the
+configured `EWDS_TOPIC_OWNER`. Their topic schemas are
+`int.facilities.validate.request.v1.json` and
+`int.facilities.validate.response.v1.json`. The topic setup script includes
+these names and their test equivalents; register the schemas in the gateway.
+Compose E2E uses `facilitiesValidateTest` / `facilitiesValidateTestResponse`;
+these must also be associated with the corresponding channels before EWDS runs.
+Override names through `EWDS_FACILITIES_VALIDATION_REQUEST_TOPIC` and
+`EWDS_FACILITIES_VALIDATION_RESPONSE_TOPIC` consistently on requester/responder.
+
+The `facilities.validate` request envelope uses the same array as the HTTP body:
+
+```json
+{
+  "requestId": "validation-1",
+  "operation": "facilities.validate",
+  "payload": [{"facility_id": "facility-a", "market_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}]
+}
+```
+
+`success: true` carries one result per pair in `data`, including ineligible
+pairs with their reason (see [facility validation](off-chain-storage.md#facility-participation-validation)).
+`success: false` with empty `data` indicates an invalid request (`invalid_request`)
+or a storage failure (`VALIDATION_UNAVAILABLE`), not a rejected facility.
+HTTP-only clients use `OFFCHAIN_STORAGE_TRANSPORT=http` and need no gateway;
+EWDS uses `OFFCHAIN_STORAGE_TRANSPORT=ewds` and the responder's existing
+`EWDS_ENABLE_HANDLER=true` / `EwdsHandlerConfig` setup.
 
 The events channels carry fire-and-forget domain events rather than
 request/reply traffic. When `EWDS_ENABLE_HANDLER` is on, the off-chain storage

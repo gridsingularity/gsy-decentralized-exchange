@@ -1,4 +1,7 @@
-use primitives::db_api_schema::grid_topology::{EnergyCommunitySchema, FacilitySchema};
+use primitives::db_api_schema::grid_topology::{
+    EnergyCommunitySchema, FacilityMarketValidationRequest, FacilityMarketValidationResult,
+    FacilitySchema,
+};
 use primitives::db_api_schema::ids::IdMappingSchema;
 use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
 use primitives::db_api_schema::orders::{DbOrderSchema, OrderEnum, OrderStatus};
@@ -36,6 +39,15 @@ fn base_facility(facility_id: &str, owner_id: &str) -> FacilitySchema {
 /// Mounts the EWDS gateway's send/poll endpoints on `server`, answering every
 /// `operation` request with `response_data`.
 async fn mount_ewds_query(server: &MockServer, operation: &'static str, response_data: Value) {
+    mount_ewds_reply(
+        server,
+        operation,
+        json!({"success": true, "data": response_data}),
+    )
+    .await;
+}
+
+async fn mount_ewds_reply(server: &MockServer, operation: &'static str, response: Value) {
     let pending = Arc::new(Mutex::new(Value::Null));
     let sent = pending.clone();
     Mock::given(method("POST"))
@@ -44,11 +56,9 @@ async fn mount_ewds_query(server: &MockServer, operation: &'static str, response
             let body: Value = serde_json::from_slice(&request.body).unwrap();
             let envelope: Value = serde_json::from_str(body["payload"].as_str().unwrap()).unwrap();
             assert_eq!(envelope["operation"], operation);
-            *sent.lock().unwrap() = json!({
-                "requestId": envelope["requestId"],
-                "success": true,
-                "data": response_data,
-            });
+            let mut response = response.clone();
+            response["requestId"] = envelope["requestId"].clone();
+            *sent.lock().unwrap() = response;
             ResponseTemplate::new(200).set_body_json(json!({
                 "recipients": {"sent": 1, "failed": 0, "total": 1}
             }))
@@ -76,6 +86,155 @@ fn clear_ewds_env() {
     env::remove_var("OFFCHAIN_STORAGE_TRANSPORT");
     env::remove_var("EWDS_GATEWAY_URL");
     env::remove_var("EWDS_RESPONSE_TIMEOUT_MS");
+}
+
+// -- Facility participation validation --------------------------------------
+
+#[tokio::test]
+async fn facility_validation_uses_the_same_batch_and_results_over_both_transports() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let requests: Vec<FacilityMarketValidationRequest> = serde_json::from_value(json!([
+        {"facility_id": "facility-a", "market_id": "market-a"},
+        {"facility_id": "unknown", "market_id": "market-a"}
+    ]))
+    .unwrap();
+    let results = json!([
+        {"facility_id": "facility-a", "market_id": "market-a", "eligible": true},
+        {"facility_id": "unknown", "market_id": "market-a", "eligible": false, "reason": "unknown_facility"}
+    ]);
+    for transport in [
+        OffchainStorageTransport::Http,
+        OffchainStorageTransport::Ewds,
+    ] {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/facilities/validate"))
+            .and(wiremock::matchers::body_json(&requests))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&results))
+            .mount(&server)
+            .await;
+        mount_ewds_query(&server, "facilities.validate", results.clone()).await;
+        set_ewds_env(&server);
+        let client =
+            OffchainStorageClient::new(transport, server.uri(), "UNUSED_ENV", "validation-test");
+        assert_eq!(
+            client.validate_facility_markets(&requests).await.unwrap(),
+            serde_json::from_value::<Vec<FacilityMarketValidationResult>>(results.clone()).unwrap()
+        );
+        if transport == OffchainStorageTransport::Ewds {
+            let sent = server.received_requests().await.unwrap();
+            let message: Value = serde_json::from_slice(&sent[0].body).unwrap();
+            assert_eq!(message["topicName"], "facilitiesValidate");
+            let envelope: Value =
+                serde_json::from_str(message["payload"].as_str().unwrap()).unwrap();
+            assert_eq!(envelope["payload"], json!(requests));
+            assert!(sent
+                .iter()
+                .any(|request| request.url.query_pairs().any(
+                    |(key, value)| key == "topicName" && value == "facilitiesValidateResponse"
+                )));
+        }
+        clear_ewds_env();
+    }
+}
+
+#[tokio::test]
+async fn facility_validation_rejects_incomplete_or_inconsistent_responses() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let requests = [FacilityMarketValidationRequest {
+        facility_id: "a".into(),
+        market_id: "m".into(),
+    }];
+    for results in [
+        json!([]),
+        json!([{"facility_id": "other", "market_id": "m", "eligible": true}]),
+        json!([{"facility_id": "a", "market_id": "other", "eligible": true}]),
+        json!([{"facility_id": "a", "market_id": "m", "eligible": false}]),
+        json!([{"facility_id": "a", "market_id": "m", "eligible": true, "reason": "unknown_market"}]),
+        json!([{"facility_id": "a", "market_id": "m"}]),
+    ] {
+        for transport in [
+            OffchainStorageTransport::Http,
+            OffchainStorageTransport::Ewds,
+        ] {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/facilities/validate"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(&results))
+                .mount(&server)
+                .await;
+            mount_ewds_query(&server, "facilities.validate", results.clone()).await;
+            set_ewds_env(&server);
+            let client = OffchainStorageClient::new(
+                transport,
+                server.uri(),
+                "UNUSED_ENV",
+                "validation-test",
+            );
+            assert!(
+                client.validate_facility_markets(&requests).await.is_err(),
+                "accepted {results} over {transport:?}"
+            );
+            clear_ewds_env();
+        }
+    }
+}
+
+#[tokio::test]
+async fn facility_validation_propagates_service_errors() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    for transport in [
+        OffchainStorageTransport::Http,
+        OffchainStorageTransport::Ewds,
+    ] {
+        let server = MockServer::start().await;
+        let error = json!({"code": "VALIDATION_UNAVAILABLE", "message": "storage unavailable"});
+        Mock::given(method("POST"))
+            .and(path("/facilities/validate"))
+            .respond_with(ResponseTemplate::new(500).set_body_json(&error))
+            .mount(&server)
+            .await;
+        mount_ewds_reply(
+            &server,
+            "facilities.validate",
+            json!({"success": false, "data": [], "error": error}),
+        )
+        .await;
+        set_ewds_env(&server);
+        let client =
+            OffchainStorageClient::new(transport, server.uri(), "UNUSED_ENV", "validation-test");
+        let error = client
+            .validate_facility_markets(&[FacilityMarketValidationRequest {
+                facility_id: "a".into(),
+                market_id: "m".into(),
+            }])
+            .await
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("VALIDATION_UNAVAILABLE"),
+            "{error:#}"
+        );
+        clear_ewds_env();
+    }
+}
+
+#[tokio::test]
+async fn facility_validation_skips_empty_batches_without_network_requests() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let server = MockServer::start().await;
+    for transport in [
+        OffchainStorageTransport::Http,
+        OffchainStorageTransport::Ewds,
+    ] {
+        let client =
+            OffchainStorageClient::new(transport, server.uri(), "UNUSED_ENV", "validation-test");
+        assert!(client
+            .validate_facility_markets(&[])
+            .await
+            .unwrap()
+            .is_empty());
+    }
+    assert!(server.received_requests().await.unwrap().is_empty());
 }
 
 // -- FacilityOwnerProvider -------------------------------------------------

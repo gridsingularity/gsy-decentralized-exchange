@@ -6,6 +6,39 @@ use primitives::db_api_schema::grid_topology::{
     FacilitySchema, SiteSchema,
 };
 use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
+use primitives::ewds::dto::{EwdsRequestEnvelope, EwdsSendMessageDto};
+use primitives::ewds::EwdsOperation;
+use serde_json::{json, Value};
+
+async fn validate_via_ewds(db: &DatabaseWrapper, payload: Value) -> Value {
+    let gateway = crate::ewds_handler::mock_gateway().await;
+    let config = crate::ewds_handler::test_config(gateway.uri());
+    gsy_offchain_storage::ewds_handler::handle_request(
+        db,
+        &reqwest::Client::new(),
+        &config,
+        EwdsRequestEnvelope {
+            request_id: "validation-test".to_string(),
+            operation: EwdsOperation::FacilitiesValidate,
+            payload,
+        },
+    )
+    .await
+    .unwrap();
+    let sent = gateway.received_requests().await.unwrap();
+    assert_eq!(sent.len(), 1);
+    let message: EwdsSendMessageDto = serde_json::from_slice(&sent[0].body).unwrap();
+    assert_eq!(
+        message.topic_name,
+        config
+            .topics
+            .for_operation(EwdsOperation::FacilitiesValidate)
+            .response
+    );
+    let response: Value = serde_json::from_str(&message.payload).unwrap();
+    assert_eq!(response["requestId"], "validation-test");
+    response
+}
 
 fn pair(facility_id: &str, market_id: &str) -> FacilityMarketValidationRequest {
     FacilityMarketValidationRequest {
@@ -239,4 +272,104 @@ async fn unavailable_database_is_an_error_not_a_rejection() {
         .validate_facility_markets(&[pair("facility-a", "market-a")])
         .await
         .is_err());
+}
+
+#[tokio::test]
+async fn http_and_ewds_return_the_same_bulk_validation_results() {
+    let app = init_app().await;
+    let db = &app.db_wrapper;
+    seed_community(db, "a").await;
+    seed_community(db, "b").await;
+    db.markets()
+        .update_one(
+            doc! {"market_id": "market-a"},
+            doc! {"$set": {"market_id": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
+        )
+        .await
+        .unwrap();
+    let requests = vec![
+        pair("facility-a", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        pair("facility-a", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
+        pair("facility-a", "market-b"),
+        pair("missing", "market-b"),
+        pair("facility-b", "missing"),
+        pair("facility-b", "market-b"),
+        pair("facility-b", "market-b"),
+    ];
+    let expected = db.validate_facility_markets(&requests).await.unwrap();
+    assert!(expected[0].eligible && expected[1].eligible);
+    assert!(!expected[2].eligible && !expected[3].eligible && !expected[4].eligible);
+    for batch in [requests, vec![]] {
+        let expected = if batch.is_empty() {
+            json!([])
+        } else {
+            json!(expected)
+        };
+        let http = reqwest::Client::new()
+            .post(format!("{}/facilities/validate", app.address))
+            .json(&batch)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(http.status(), reqwest::StatusCode::OK);
+        assert_eq!(http.json::<Value>().await.unwrap(), expected);
+        let ewds = validate_via_ewds(db, json!(batch)).await;
+        assert_eq!(ewds["success"], true);
+        assert_eq!(ewds["data"], expected);
+    }
+    assert_eq!(db.ids().count_documents(doc! {}).await.unwrap(), 0);
+    assert_eq!(db.orders().count_documents(doc! {}).await.unwrap(), 0);
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn both_transports_reject_malformed_validation_requests() {
+    let app = init_app().await;
+    for payload in [
+        json!({}),
+        json!([{"facility_id": "a"}]),
+        json!([{"facility_id": 1, "market_id": "a"}]),
+    ] {
+        let http = reqwest::Client::new()
+            .post(format!("{}/facilities/validate", app.address))
+            .json(&payload)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(http.status(), reqwest::StatusCode::BAD_REQUEST);
+        let ewds = validate_via_ewds(&app.db_wrapper, payload).await;
+        assert_eq!(ewds["success"], false);
+        assert_eq!(ewds["data"], json!([]));
+        assert_eq!(ewds["error"]["code"], "invalid_request");
+    }
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn both_transports_report_storage_errors_without_eligibility_results() {
+    let app = init_app().await;
+    seed_community(&app.db_wrapper, "a").await;
+    app.db_wrapper
+        .facilities()
+        .update_one(
+            doc! {"facility_id": "facility-a"},
+            doc! {"$unset": {"site_id": ""}},
+        )
+        .await
+        .unwrap();
+    let payload = json!([pair("facility-a", "market-a")]);
+    let http = reqwest::Client::new()
+        .post(format!("{}/facilities/validate", app.address))
+        .json(&payload)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(http.status(), reqwest::StatusCode::INTERNAL_SERVER_ERROR);
+    let http_error = http.json::<Value>().await.unwrap();
+    let ewds = validate_via_ewds(&app.db_wrapper, payload).await;
+    assert_eq!(ewds["success"], false);
+    assert_eq!(ewds["data"], json!([]));
+    assert_eq!(ewds["error"], http_error);
+    assert_eq!(http_error["code"], "VALIDATION_UNAVAILABLE");
+    stop_app(app).await;
 }

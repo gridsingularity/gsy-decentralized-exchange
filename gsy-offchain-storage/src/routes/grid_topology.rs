@@ -1,7 +1,8 @@
 use crate::db::DbRef;
 use actix_web::{web::Json, web::Query, HttpResponse, Responder};
 use primitives::db_api_schema::grid_topology::{
-    AssetSchema, EnergyCommunitySchema, FacilitySchema, PilotSiteSchema, SiteSchema,
+    AssetSchema, EnergyCommunitySchema, FacilityMarketValidationRequest, FacilitySchema,
+    PilotSiteSchema, SiteSchema,
 };
 use primitives::db_api_schema::tariff::TariffSchema;
 use serde::Deserialize;
@@ -125,6 +126,22 @@ pub async fn get_facilities(db: DbRef) -> impl Responder {
         Err(e) => {
             tracing::error!("Failed to execute query: {:?}", e);
             HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
+pub async fn validate_facility_markets(
+    requests: Json<Vec<FacilityMarketValidationRequest>>,
+    db: DbRef,
+) -> impl Responder {
+    match db.validate_facility_markets(&requests).await {
+        Ok(results) => HttpResponse::Ok().json(results),
+        Err(error) => {
+            tracing::error!("Facility validation failed: {error:#}");
+            HttpResponse::InternalServerError().json(primitives::ewds::dto::EwdsErrorPayload {
+                code: "VALIDATION_UNAVAILABLE".to_string(),
+                message: "Facility validation could not read the stored topology".to_string(),
+            })
         }
     }
 }

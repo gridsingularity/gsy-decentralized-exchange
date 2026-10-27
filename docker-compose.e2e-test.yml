@@ -28,6 +28,8 @@ x-gsy-ewds-env: &gsy-ewds-env
   EWDS_MEASUREMENTS_RESPONSE_TOPIC: "measurementsQueryTestResponse"
   EWDS_FACILITIES_REQUEST_TOPIC: "facilitiesQueryTest"
   EWDS_FACILITIES_RESPONSE_TOPIC: "facilitiesQueryTestResponse"
+  EWDS_FACILITIES_VALIDATION_REQUEST_TOPIC: "facilitiesValidateTest"
+  EWDS_FACILITIES_VALIDATION_RESPONSE_TOPIC: "facilitiesValidateTestResponse"
   EWDS_GUARANTEES_OF_ORIGIN_REQUEST_TOPIC: "guaranteesOfOriginQueryTest"
   EWDS_GUARANTEES_OF_ORIGIN_RESPONSE_TOPIC: "guaranteesOfOriginQueryTestResponse"
   EWDS_IDS_REQUEST_TOPIC: "idsQueryTest"

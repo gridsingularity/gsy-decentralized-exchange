@@ -1,4 +1,7 @@
-use crate::db_api_schema::grid_topology::{EnergyCommunitySchema, FacilitySchema};
+use crate::db_api_schema::grid_topology::{
+    EnergyCommunitySchema, FacilityMarketValidationRequest, FacilityMarketValidationResult,
+    FacilitySchema,
+};
 use crate::db_api_schema::ids::IdMappingSchema;
 use crate::db_api_schema::market::MarketSchema;
 use crate::db_api_schema::orders::{DbOrderSchema, DbRequirements};
@@ -161,6 +164,57 @@ impl OffchainStorageClient {
             .collect();
         info!("returning mapping {:?}", mapping.clone());
         Ok(mapping)
+    }
+
+    /// Eligibility failures are results; unavailable or invalid responses are errors.
+    pub async fn validate_facility_markets(
+        &self,
+        requests: &[FacilityMarketValidationRequest],
+    ) -> Result<Vec<FacilityMarketValidationResult>> {
+        if requests.is_empty() {
+            return Ok(Vec::new());
+        }
+        let results: Vec<FacilityMarketValidationResult> = match self.transport {
+            OffchainStorageTransport::Ewds => {
+                self.ewds_client()
+                    .query(
+                        EwdsOperation::FacilitiesValidate,
+                        serde_json::to_value(requests)?,
+                    )
+                    .await?
+            }
+            OffchainStorageTransport::Http => {
+                let response = self
+                    .http_client
+                    .post(self.endpoint_url("facilities/validate"))
+                    .timeout(std::time::Duration::from_millis(EWDS_TIMEOUT_MS))
+                    .json(requests)
+                    .send()
+                    .await?;
+                let status = response.status();
+                if !status.is_success() {
+                    let body = response.text().await.unwrap_or_default();
+                    return Err(anyhow!(
+                        "Facility validation failed: HTTP {}{}",
+                        status,
+                        format_response_body(&body)
+                    ));
+                }
+                response
+                    .json()
+                    .await
+                    .context("Invalid facility validation response")?
+            }
+        };
+        anyhow::ensure!(
+            results.len() == requests.len() && results.iter().zip(requests).all(|(result, request)| {
+                result.facility_id == request.facility_id
+                    && result.market_id == request.market_id
+                    && result.eligible == result.reason.is_none()
+            }),
+            "Facility validation response does not match the requested pairs or eligibility reasons"
+        );
+        Ok(results)
     }
 
     pub async fn fetch_onchain_id(&self, offchain_id: &str) -> Result<String> {

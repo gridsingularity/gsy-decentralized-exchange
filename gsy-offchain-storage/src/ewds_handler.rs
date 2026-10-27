@@ -2,6 +2,7 @@ use crate::certificates::query::{guarantees_of_origin, validate_window};
 use crate::db::DatabaseWrapper;
 use anyhow::{anyhow, Result};
 use futures::future::join_all;
+use primitives::db_api_schema::grid_topology::FacilityMarketValidationRequest;
 use primitives::db_api_schema::profiles::{MeasurementPointType, MeasurementSchema};
 use primitives::ewds::dto::{
     parse_market_id, EwdsClearingResultDto, EwdsCommunityDto, EwdsErrorPayload, EwdsInboundMessage,
@@ -622,6 +623,53 @@ pub async fn handle_request(
             );
 
             send_success_response(client, config, request_id, response_topic.as_str(), data).await
+        }
+        EwdsOperation::FacilitiesValidate => {
+            let requests = match serde_json::from_value::<Vec<FacilityMarketValidationRequest>>(
+                envelope.payload,
+            ) {
+                Ok(requests) => requests,
+                Err(error) => {
+                    return send_error_response(
+                        client,
+                        config,
+                        envelope.request_id,
+                        &response_topic,
+                        EwdsErrorPayload {
+                            code: INVALID_REQUEST_ERROR_CODE.to_string(),
+                            message: format!("facilities.validate payload parse error: {error}"),
+                        },
+                    )
+                    .await
+                }
+            };
+            match db.validate_facility_markets(&requests).await {
+                Ok(data) => {
+                    send_success_response(
+                        client,
+                        config,
+                        envelope.request_id,
+                        &response_topic,
+                        data,
+                    )
+                    .await
+                }
+                Err(error) => {
+                    error!("Facility validation failed: {error:#}");
+                    send_error_response(
+                        client,
+                        config,
+                        envelope.request_id,
+                        &response_topic,
+                        EwdsErrorPayload {
+                            code: "VALIDATION_UNAVAILABLE".to_string(),
+                            message: "Facility validation could not read the stored topology"
+                                .to_string(),
+                        },
+                    )
+                    .await
+                }
+            }
         }
         EwdsOperation::GuaranteesOfOriginQuery => {
             let request_id = envelope.request_id;

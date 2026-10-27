@@ -7,7 +7,7 @@ use crate::routes::{
     post_clearing_result, post_community, post_facility, post_flexibility_orders, post_forecasts,
     post_market, post_market_role, post_measurement_points, post_measurements,
     post_normalized_orders, post_normalized_trades, post_orders, post_pilot_site, post_site,
-    post_tariff, post_timeseries, post_trades,
+    post_tariff, post_timeseries, post_trades, validate_facility_markets,
 };
 use actix_web::dev::Server;
 use actix_web::{web, App, HttpServer};
@@ -76,6 +76,10 @@ pub fn run_http_server(
             .route("/sites", web::get().to(get_sites))
             .route("/facilities", web::post().to(post_facility))
             .route("/facilities", web::get().to(get_facilities))
+            .route(
+                "/facilities/validate",
+                web::post().to(validate_facility_markets),
+            )
             .route("/ids", web::post().to(get_or_create_ids))
             .app_data(db_connection_wrapper.clone())
     })

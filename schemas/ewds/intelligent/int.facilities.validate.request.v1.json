@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "int.facilities.validate.request.v1",
+  "title": "facilitiesValidate request",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "requestId": { "type": "string", "minLength": 1 },
+    "operation": { "const": "facilities.validate" },
+    "payload": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "facility_id": { "type": "string", "description": "Original off-chain facility ID, not its owner or on-chain mapping." },
+          "market_id": { "type": "string", "description": "Market ID as UUID or bytes16 hex." }
+        },
+        "required": ["facility_id", "market_id"]
+      }
+    }
+  },
+  "required": ["requestId", "operation", "payload"]
+}

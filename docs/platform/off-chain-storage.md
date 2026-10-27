@@ -70,6 +70,34 @@ posts them any more.
 - `/communities` (`GET`, `POST`)
 - `/sites` (`GET`, `POST`)
 - `/facilities` (`GET`, `POST`)
+- `/facilities/validate` (`POST`) for read-only bulk facility/market validation
+
+### Facility Participation Validation
+
+`POST /facilities/validate` accepts an array of
+`{"facility_id": "facility-a", "market_id": "0x..."}` pairs. Facility IDs are
+the original off-chain IDs, not owner IDs or generated on-chain IDs. Market IDs
+accept UUID or bytes16 hex; results echo the supplied IDs.
+
+Each pair requires an existing market and facility, the facility's site to
+exist and list that facility, and the market's community to exist and list
+that site. The lookup uses the latest stored topology; an ID mapping alone
+does not establish participation. This does not validate market opening times
+or wallet permissions.
+
+HTTP 200 returns one `{facility_id, market_id, eligible, reason?}` per pair,
+preserving order and duplicates. Ineligible pairs carry a reason:
+`unknown_market`, `unknown_facility`, `unknown_community`, `unknown_site`,
+`facility_not_listed_in_site` or `site_not_in_community`. Empty requests return
+`[]`. Malformed requests return 400; database/deserialization failures return
+500 with `code: VALIDATION_UNAVAILABLE`, not negative eligibility results.
+
+EWDS exposes the same validation through `facilities.validate` when
+`EWDS_ENABLE_HANDLER=true`. `OffchainStorageClient::validate_facility_markets`
+selects HTTP or EWDS via the client's existing transport configuration and
+rejects incomplete or inconsistent responses. Neither transport writes orders
+or ID mappings. Community-client submission enforcement is a subsequent
+DD-457 step; this endpoint alone does not restrict order submission.
 
 ### ID Mapping
 - `/ids` (`POST`) — get-or-create offchain↔onchain ID mappings
