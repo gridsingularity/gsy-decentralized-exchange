@@ -1,15 +1,17 @@
 mod common;
+#[path = "common/facilities.rs"]
+mod facilities;
 
 use common::compile_and_deploy_contract;
 use ethers::{prelude::*, utils::Anvil};
 use gsy_community_client::node_connector::orders::publish_orders;
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::profiles::ForecastSchema;
-use primitives::utils::{create_encrypted_bytes16_from_string, parse_uuid_or_hex_bytes16};
+use primitives::utils::parse_uuid_or_hex_bytes16;
 use primitives::{MarketType, MatchingAlgorithm};
 use std::sync::Arc;
-use wiremock::matchers::{method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
+use wiremock::matchers::{method, path, query_param};
+use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
 abigen!(
     MockOrderRegistry,
@@ -28,19 +30,7 @@ abigen!(
 const TEST_PRIVATE_KEY: &str = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
 async fn setup_facilities_mock() -> MockServer {
-    let facilities = serde_json::json!([
-        { "facility_id": "area-a", "owner_id": "area-a", "facility_name": "AreaA", "site_id": "1"},
-        { "facility_id": "area-b", "owner_id": "area-b", "facility_name": "AreaA", "site_id": "1" }
-    ]);
-    let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/facilities"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(facilities))
-        .mount(&server)
-        .await;
-    std::env::set_var("OFFCHAIN_STORAGE_URL", server.uri());
-    std::env::remove_var("OFFCHAIN_STORAGE_TRANSPORT"); // force HTTP branch
-    server
+    facilities::setup_facilities_mock(["area-a", "area-b"]).await
 }
 
 fn test_market() -> MarketSchema {
@@ -81,7 +71,7 @@ fn test_forecasts() -> Vec<ForecastSchema> {
 #[tokio::test]
 #[serial_test::serial]
 async fn test_publish_orders_calls_evm_order_registry() {
-    let _facilities_server = setup_facilities_mock().await;
+    let facilities_server = setup_facilities_mock().await;
     let anvil = Anvil::new().spawn();
     let ws_endpoint = anvil.ws_endpoint();
     let wallet: LocalWallet = anvil.keys()[0].clone().into();
@@ -134,10 +124,41 @@ async fn test_publish_orders_calls_evm_order_registry() {
     "#;
     let contract_address =
         compile_and_deploy_contract(client.clone(), source, "MockOrderRegistry").await;
+    let mock_contract = MockOrderRegistry::new(contract_address, client.clone());
+
+    // Validation or ID-service failures must abort preparation before the first transaction.
+    for endpoint in ["/facilities/validate", "/ids"] {
+        let mut failure = Mock::given(method("POST")).and(path(endpoint));
+        if endpoint == "/ids" {
+            failure = failure.and(query_param("offchain_id", "area-b"));
+        }
+        failure
+            .respond_with(ResponseTemplate::new(500))
+            .with_priority(1)
+            .up_to_n_times(1)
+            .mount(&facilities_server)
+            .await;
+        assert!(publish_orders(
+            ws_endpoint.clone(),
+            test_forecasts(),
+            test_market(),
+            format!("{:?}", contract_address),
+            TEST_PRIVATE_KEY.to_string(),
+        )
+        .await
+        .is_err());
+        assert_eq!(
+            mock_contract.placed_count().call().await.unwrap(),
+            U256::zero()
+        );
+    }
 
     let market = test_market();
 
-    let forecasts = test_forecasts();
+    let mut forecasts = test_forecasts();
+    let mut denied = forecasts[0].clone();
+    denied.facility_id = "missing-facility".to_string();
+    forecasts.insert(1, denied);
 
     publish_orders(
         ws_endpoint.clone(),
@@ -149,14 +170,13 @@ async fn test_publish_orders_calls_evm_order_registry() {
     .await
     .unwrap();
 
-    let mock_contract = MockOrderRegistry::new(contract_address, client.clone());
     assert_eq!(
         mock_contract.placed_count().call().await.unwrap(),
         U256::from(2u64)
     );
     assert_eq!(
         mock_contract.last_created_by().call().await.unwrap(),
-        create_encrypted_bytes16_from_string("area-b")
+        parse_uuid_or_hex_bytes16(facilities::FACILITY_2_ONCHAIN).unwrap()
     );
     assert_eq!(
         mock_contract.last_market_id().call().await.unwrap(),
@@ -189,6 +209,46 @@ async fn test_publish_orders_calls_evm_order_registry() {
             .unwrap(),
         0
     );
+
+    // A later cross-community denial must not submit another order, even with an ID mapping.
+    Mock::given(method("POST"))
+        .and(path("/facilities/validate"))
+        .respond_with(|request: &Request| {
+            let pairs: Vec<serde_json::Value> = serde_json::from_slice(&request.body).unwrap();
+            ResponseTemplate::new(200).set_body_json(
+                pairs
+                    .into_iter()
+                    .map(|pair| {
+                        serde_json::json!({
+                            "facility_id": pair["facility_id"], "market_id": pair["market_id"],
+                            "eligible": false, "reason": "site_not_in_community",
+                        })
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .with_priority(1)
+        .mount(&facilities_server)
+        .await;
+    publish_orders(
+        ws_endpoint,
+        test_forecasts(),
+        test_market(),
+        format!("{:?}", contract_address),
+        TEST_PRIVATE_KEY.to_string(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        mock_contract.placed_count().call().await.unwrap(),
+        U256::from(2)
+    );
+    assert!(facilities_server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .all(|request| matches!(request.url.path(), "/facilities/validate" | "/ids")));
 }
 
 #[tokio::test]

@@ -27,10 +27,24 @@ For each forecast:
 
 - Positive `energy_kwh` -> publish bid.
 - Negative `energy_kwh` -> publish offer.
+- Zero energy -> no order and no eligibility query for that forecast.
+
+Before submission, the client validates all non-zero forecasts' facility/market
+pairs through HTTP `/facilities/validate` or EWDS `facilities.validate`.
+Only eligible facilities are resolved through the ID service. `createdBy` uses
+that facility's on-chain ID, not its owner's ID or the submitting wallet.
+Owner relationships remain in the topology and are not used as submission identity.
+
+Ineligible forecasts are skipped and logged. When `EWDS_ENABLE_HANDLER` is enabled,
+they also produce the existing `orderStatus.event` rejection notification with a
+generated order ID, original facility ID and validation reason; no DB order is
+created. HTTP-only runs do not require a gateway. Validation/ID-service errors
+propagate before any order is sent, allowing the caller to retry. All eligible
+orders are prepared before rejection notifications are published. The existing
+forecast quantity/rate calculations and transaction submission loop are unchanged.
 
 Order payload includes:
 
-- `owner`
 - `createdBy` derived from `facilityId`
 - `marketId`
 - `timeSlot`
@@ -111,5 +125,6 @@ order with `Unauthorized`.
 The binary currently runs only the order event subscriber. Without
 `EWDS_ENABLE_HANDLER` it logs that the subscriber is disabled and exits.
 The forecast-based order publication (`publish_orders`) is used by the e2e
-steps. Its validation/identity alignment and service-only contract authorization
-are subsequent DD-457 steps; they are not changed by the event-subscriber preflight.
+steps and now also validates facility participation. Service-only contract
+authorization, downstream facility-identity alignment and the complete E2E fixture
+update remain subsequent DD-457 steps.

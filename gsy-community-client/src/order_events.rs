@@ -192,7 +192,7 @@ impl OrderEventHandler {
                                 "Order {} of EWDS event {} rejected: {}",
                                 submission.order_id, event_id, reason
                             );
-                            self.publish_rejection(submission, reason).await;
+                            publish_rejection(&self.ewds_client, submission, reason).await;
                         }
                         Err(error) => {
                             warn!(
@@ -229,7 +229,7 @@ impl OrderEventHandler {
                     match error {
                         PlaceOrderError::Transport(_) => unsent += 1,
                         PlaceOrderError::Rejected(reason) => {
-                            self.publish_rejection(submission, reason).await;
+                            publish_rejection(&self.ewds_client, submission, reason).await;
                         }
                     }
                 }
@@ -248,34 +248,6 @@ impl OrderEventHandler {
             );
         }
         Ok(())
-    }
-
-    /// Report the original submission, not the ID-resolved contract parameters. No DB order
-    /// is created. Gateway failures must not turn a definite rejection into a placement retry.
-    async fn publish_rejection(&self, mut submission: EwdsOrderDto, reason: String) {
-        let occurred_at = epoch_to_rfc3339(get_current_timestamp_in_secs());
-        submission.order_status = "rejected".to_string();
-        submission.updated_at = Some(occurred_at.clone());
-        submission.reject_reason = Some(reason);
-        let event = EwdsEventEnvelope {
-            event_id: Uuid::new_v4().to_string(),
-            event_type: EwdsEventType::OrderStatus,
-            occurred_at,
-            data: vec![submission],
-        };
-        let result = timeout(
-            Duration::from_millis(EWDS_TIMEOUT_MS),
-            self.ewds_client.publish_event(&event),
-        )
-        .await
-        .context("Timed out publishing order rejection")
-        .and_then(|result| result);
-        if let Err(error) = result {
-            error!(
-                "Failed to publish rejection for order {} (event={}): {:#}",
-                event.data[0].order_id, event.event_id, error
-            );
-        }
     }
 
     /// Replaces the off-chain actor and partner IDs with their on-chain IDs.
@@ -321,6 +293,38 @@ impl OrderEventHandler {
                 Err(error) => return Placement::Failed(error),
             }
         }
+    }
+}
+
+/// Report the original facility IDs, not the ID-resolved contract parameters. No DB order
+/// is created. Gateway failures must not turn a definite rejection into a placement retry.
+pub(crate) async fn publish_rejection(
+    ewds_client: &EwdsClient,
+    mut submission: EwdsOrderDto,
+    reason: String,
+) {
+    let occurred_at = epoch_to_rfc3339(get_current_timestamp_in_secs());
+    submission.order_status = "rejected".to_string();
+    submission.updated_at = Some(occurred_at.clone());
+    submission.reject_reason = Some(reason);
+    let event = EwdsEventEnvelope {
+        event_id: Uuid::new_v4().to_string(),
+        event_type: EwdsEventType::OrderStatus,
+        occurred_at,
+        data: vec![submission],
+    };
+    let result = timeout(
+        Duration::from_millis(EWDS_TIMEOUT_MS),
+        ewds_client.publish_event(&event),
+    )
+    .await
+    .context("Timed out publishing order rejection")
+    .and_then(|result| result);
+    if let Err(error) = result {
+        error!(
+            "Failed to publish rejection for order {} (event={}): {:#}",
+            event.data[0].order_id, event.event_id, error
+        );
     }
 }
 
