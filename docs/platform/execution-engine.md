@@ -9,7 +9,7 @@ records delivery verification in `TradeSettlement`.
 
 Each cycle:
 
-1. Determine target timeslot using configured offset.
+1. Select the current target timeslot or an older slot still within its rollover grace period.
 2. Fetch trades plus measurement points/timeseries for that window from off-chain storage.
 3. Compute verdicts for `Settled` trades with a usable measurement.
 4. Submit `completeDeliveryVerification` and wait for a successful receipt.
@@ -25,10 +25,12 @@ Current penalty calculator logic:
 - `delta < 0`: penalize seller
 - Penalty scaled with `NODE_FLOAT_SCALING_FACTOR` (`10000`)
 
-The existing policy is intentionally unchanged: measurements are mapped by
-facility owner; the buyer's measurement is preferred, with the seller's as a
+Measurements are mapped using each facility's ID-service mapping, the same
+identity used in `OrderParams.createdBy` and the indexed trade parties. Owner
+IDs and service wallets are not measurement identities. The penalty policy is
+unchanged: the buyer's measurement is preferred, with the seller's as a
 fallback. This does not independently verify both sides. Multiple measurements
-for an owner overwrite each other, and allocation across multiple trades is not
+for a facility overwrite each other, and allocation across multiple trades is not
 handled. These policy limitations need separate agreement; `Executed` records
 completion under this current policy, not proof that both meters were checked.
 Missing/unmapped or non-finite measurements produce no verdict, not a zero-penalty
@@ -44,13 +46,30 @@ transaction. A successful receipt is required before reporting progress.
 
 ## Timeslot Rollover
 
-An EWDS request can remain in flight while the configured target delivery slot
-advances. The engine retains the outgoing target slot for a bounded number of
-additional cycles so trades indexed around the boundary are not skipped. It
-stops retrying when all currently fetched settled trades have measurements and
-their verification is confirmed on-chain. Verifying only a subset does not
-release the retained slot. The existing retry limit still applies; durable
-recovery of records arriving after that limit is outside this change.
+Trades or measurements can arrive after the configured target delivery slot
+advances, with either HTTP or EWDS. The engine keeps each outgoing slot eligible
+for `EXECUTION_ENGINE_ROLLOVER_GRACE_SECONDS` after its scheduled target rollover
+(including `EXECUTION_ENGINE_OFFSET_MIN`). The default is 900 seconds; set `0`
+to disable retention. At the deadline the slot is no longer selected, but an
+already-running cycle is allowed to finish.
+
+The scheduler alternates the current target with retained slots, visiting the
+retained slots oldest-first in rotation. A newly advanced target is selected
+first. This prevents an older slot's retries from monopolizing polling cycles.
+Execution and verification submissions remain serial; the polling interval and
+transport latency still determine how often each slot can be checked.
+
+Empty results, failures, and successful submissions do not remove a retained
+slot early: additional records can still arrive. The existing on-chain verification
+check prevents resubmission for trades already processed. The eligible window
+is recalculated from time, including after restart or skipped polling intervals;
+neither restarts nor retries extend the deadline. Records arriving beyond that
+window require separate historical processing, which is not implemented here.
+
+`EXECUTION_ENGINE_ROLLOVER_GRACE_SECONDS` replaces the cycle-count setting
+`EXECUTION_ENGINE_ROLLOVER_RETRY_LIMIT`; update existing environment overrides.
+The old setting is ignored, not converted to seconds. Invalid grace-period
+values fail startup rather than silently falling back to the default.
 
 ## Contract Interaction
 
@@ -84,4 +103,4 @@ zero/non-zero penalties, replay safety, timestamps, and independent residuals.
   - `TRADE_SETTLEMENT_ADDRESS`
   - `EXECUTION_ENGINE_PRIVATE_KEY`
   - `EXECUTION_ENGINE_OFFSET_MIN`
-  - `EXECUTION_ENGINE_ROLLOVER_RETRY_LIMIT` (default `2`; set `0` to disable)
+  - `EXECUTION_ENGINE_ROLLOVER_GRACE_SECONDS` (default `900`; set `0` to disable)

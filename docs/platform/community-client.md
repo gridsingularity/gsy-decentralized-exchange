@@ -128,5 +128,10 @@ actor-wallet registration or delegation grants no order-submission permission.
 The binary currently runs only the order event subscriber. Without
 `EWDS_ENABLE_HANDLER` it logs that the subscriber is disabled and exits.
 The forecast-based order publication (`publish_orders`) is used by the e2e
-steps and now also validates facility participation. Downstream facility-identity
-alignment and the complete E2E fixture update remain subsequent DD-457 steps.
+steps and also validates facility participation. The matching engine compares
+preferred partners against facility IDs and blocks only same-facility trades;
+different facilities with the same owner may trade. Indexed trade parties and
+penalties retain the facility identity, independently of the service wallet.
+Delivery verification resolves measurements through the ID service. Certificate
+lookups also resolve facility mappings, while retaining the facility's owner
+relationship in certificate metadata (the existing hashed owner ID format).

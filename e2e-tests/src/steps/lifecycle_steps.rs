@@ -7,7 +7,6 @@ use crate::utils::indexed_bytes16_topic;
 use crate::world::MyWorld;
 use cucumber::then;
 use ethers::prelude::*;
-use gsy_community_client::time_utils::get_last_and_next_timeslot;
 use primitives::db_api_schema::{
     orders::OrderStatus,
     trades::{DbTradeSchema, TradeStatus},
@@ -15,20 +14,12 @@ use primitives::db_api_schema::{
 use primitives::utils::{bytes16_to_hex, parse_uuid_or_hex_bytes16};
 use std::{sync::Arc, time::Duration};
 use tokio::time::{sleep, timeout};
-use uuid::Uuid;
-
-abigen!(
-    LifecycleMarket,
-    r#"[
-        struct NewMarket { bytes16 marketId; bytes16 communityId; uint64 openingTime; uint64 closingTime; uint64 deliveryStartTime; uint64 deliveryEndTime; uint8 marketType; uint8 matchingAlgorithm; }
-        function createMarkets(NewMarket[] newMarkets)
-    ]"#
-);
 abigen!(
     CancellableOrderRegistry,
     r#"[
         struct OrderParams { bytes16 orderId; bytes16 createdBy; bytes16 marketId; uint64 timeSlot; uint64 creationTime; uint64 energy; uint64 energyRate; uint8 energySourcePreference; uint8 energyType; bool isBid; bytes16 preferredTradingPartner; uint64 preferredEnergyRate; }
         function getOrder(bytes16 orderId) view returns (OrderParams)
+        function placeOrder(OrderParams params)
         function cancelOrder(OrderParams params)
     ]"#
 );
@@ -87,35 +78,11 @@ async fn assert_order_status(
 
 #[then("unmatched orders can be cancelled on-chain and in storage")]
 async fn verify_cancellation(world: &mut MyWorld) {
-    // A dedicated market keeps the orchestrator's normal slot scheduling untouched.
-    let market_id = *Uuid::new_v4().as_bytes();
-    world.last_market_id = Some(market_id);
-    world.target_delivery_time = get_last_and_next_timeslot().1;
     let signer = Arc::new(SignerMiddleware::new(
         world.provider.clone(),
-        world.wallet_for_user("alice"),
+        world.community_client_wallet(),
     ));
-    let market = LifecycleMarket::new(world.market_controller_address, signer.clone());
     let registry = CancellableOrderRegistry::new(world.order_registry_address, signer);
-    let now = world
-        .provider
-        .get_block(BlockNumber::Latest)
-        .await
-        .unwrap()
-        .unwrap()
-        .timestamp
-        .as_u64();
-    let call = market.create_markets(vec![NewMarket {
-        market_id,
-        community_id: *Uuid::new_v4().as_bytes(),
-        opening_time: now,
-        closing_time: now + 3600,
-        delivery_start_time: world.target_delivery_time,
-        delivery_end_time: world.target_delivery_time + 900,
-        market_type: 0,
-        matching_algorithm: 0,
-    }]);
-    receipt_timestamp(world, call.send().await.unwrap().await.unwrap().unwrap()).await;
     let cancelled = place_custom_order(world, "alice", true, 1.0, 20.0, None, None).await;
     assert_order_status(world, &cancelled, OrderStatus::Submitted, 1, None).await;
     let params = registry
@@ -123,7 +90,7 @@ async fn verify_cancellation(world: &mut MyWorld) {
         .call()
         .await
         .unwrap();
-    let call = registry.cancel_order(OrderParams {
+    let params = OrderParams {
         order_id: params.0,
         created_by: params.1,
         market_id: params.2,
@@ -136,7 +103,26 @@ async fn verify_cancellation(world: &mut MyWorld) {
         is_bid: params.9,
         preferred_trading_partner: params.10,
         preferred_energy_rate: params.11,
-    });
+    };
+    // A participant cannot bypass validation by calling the registry directly.
+    let external =
+        CancellableOrderRegistry::new(world.order_registry_address, world.provider.clone());
+    let participant = Address::from([0x55; 20]);
+    for call in [
+        external.place_order(params.clone()),
+        external.cancel_order(params.clone()),
+    ] {
+        let error = call
+            .from(participant)
+            .call()
+            .await
+            .expect_err("Participant wallet must not submit or cancel orders");
+        assert_eq!(
+            error.as_revert().unwrap().as_ref(),
+            &ethers::utils::keccak256("Unauthorized()")[..4]
+        );
+    }
+    let call = registry.cancel_order(params);
     let cancelled_at =
         receipt_timestamp(world, call.send().await.unwrap().await.unwrap().unwrap()).await;
     assert_order_status(

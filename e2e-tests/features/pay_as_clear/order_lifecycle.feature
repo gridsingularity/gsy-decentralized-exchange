@@ -1,12 +1,14 @@
 Feature: Confirmed order lifecycle
   Scenario: Unmatched orders leave the book through cancellation
     Given the GSY DEX services are running
-    And users "alice", "bob", and "charlie" the matching engine operator are registered
+    And the DEX service accounts are authorized
+    When the Market Orchestrator opens the Spot market for the current delivery slot
+    And forecasts of 10 energy are submitted
     Then unmatched orders can be cancelled on-chain and in storage
 
   Scenario: Full delivery completes verification without a penalty
     Given the GSY DEX services are running
-    And users "alice", "bob", and "charlie" the matching engine operator are registered
+    And the DEX service accounts are authorized
     When the Market Orchestrator opens the Spot market for the current delivery slot
     And forecasts of 10 energy are submitted
     And "alice" submits a bid

@@ -3,6 +3,7 @@ use anyhow::Result;
 use primitives::constants::GLOBAL_CONSTANTS;
 use primitives::db_api_schema::trades::TradeStatus;
 use primitives::offchain_storage::{OffchainStorageClient, OffchainStorageTransport};
+use std::collections::HashMap;
 use tracing::info;
 
 use crate::{
@@ -64,22 +65,27 @@ pub async fn run_execution_cycle(
         return Ok(0);
     }
 
-    // 1.2) fetch facility_id>owner_id mapping
-    let facility_owner_mapping = offchain_storage_client
-        .fetch_facility_owner_mapping()
-        .await?;
+    // Resolve each measured facility once, without collapsing facilities by owner.
+    let mut facility_onchain_ids = HashMap::new();
+    for measurement in measurements
+        .iter()
+        .filter(|measurement| measurement.energy_kwh.is_finite())
+    {
+        if !facility_onchain_ids.contains_key(&measurement.facility_id) {
+            let onchain_id = offchain_storage_client
+                .fetch_onchain_id(&measurement.facility_id)
+                .await?;
+            facility_onchain_ids.insert(measurement.facility_id.clone(), onchain_id);
+        }
+    }
 
     anyhow::ensure!(
         penalty_rate.is_finite() && penalty_rate >= 0.0,
         "Invalid penalty rate"
     );
     // A measured zero-penalty trade is complete; an unmeasured one remains pending.
-    let verifications = compute_delivery_verifications(
-        &trades,
-        &measurements,
-        &facility_owner_mapping,
-        penalty_rate,
-    );
+    let verifications =
+        compute_delivery_verifications(&trades, &measurements, &facility_onchain_ids, penalty_rate);
     let all_measured = verifications.len() == trades.len();
     info!("Computed {} delivery verifications", verifications.len());
 

@@ -3,10 +3,8 @@ use cucumber::given;
 use ethers::prelude::*;
 use ethers::utils::keccak256;
 use primitives::MatchingAlgorithm;
-use std::collections::HashSet;
 use std::env;
 use std::str::FromStr;
-use std::sync::Arc;
 
 abigen!(
     MarketControllerContract,
@@ -23,11 +21,8 @@ abigen!(
 );
 
 abigen!(
-    ActorRegistryContract,
-    r#"[
-        function registerActor(bytes16 actorId, address wallet) external
-        function hasRole(bytes32 role, address account) external view returns (bool)
-    ]"#
+    OrderRegistryContract,
+    r#"[function hasRole(bytes32 role, address account) external view returns (bool)]"#
 );
 
 #[given("the GSY DEX services are running")]
@@ -107,78 +102,35 @@ async fn matching_engine_uses_algorithm(_world: &mut MyWorld, expected_algorithm
     );
 }
 
-#[given(
-    regex = r#"users "([^"]*)", "([^"]*)", and "([^"]*)" the matching engine operator are registered"#
-)]
-#[given(regex = r#"users "([^"]*)", "([^"]*)", and "([^"]*)" are registered"#)]
-async fn users_are_registered(
-    world: &mut MyWorld,
-    first_user: String,
-    second_user: String,
-    third_user: String,
-) {
-    let mut seen = HashSet::new();
-    let users = [
-        first_user.as_str(),
-        second_user.as_str(),
-        third_user.as_str(),
-    ];
-
-    let actor_registrar_wallet = std::env::var("ACTOR_REGISTRAR_PRIVATE_KEY")
-        .or_else(|_| std::env::var("ORCHESTRATOR_SIGNER_PRIVATE_KEY"))
-        .unwrap_or_else(|_| world.private_key_for_user("alice"))
-        .parse::<LocalWallet>()
-        .expect("Invalid actor registrar private key")
-        .with_chain_id(world.chain_id);
-    let actor_registrar_signer = Arc::new(SignerMiddleware::new(
-        world.provider.clone(),
-        actor_registrar_wallet.clone(),
-    ));
-    let actor_registry =
-        ActorRegistryContract::new(world.actor_registry_address, actor_registrar_signer.clone());
-    let actor_registrar_role = keccak256("ACTOR_REGISTRAR_ROLE");
-
+#[given("the DEX service accounts are authorized")]
+async fn service_accounts_are_authorized(world: &mut MyWorld) {
+    let registry = OrderRegistryContract::new(world.order_registry_address, world.provider.clone());
     assert!(
-        actor_registry
-            .has_role(actor_registrar_role, actor_registrar_wallet.address())
+        registry
+            .has_role(
+                keccak256("COMMUNITY_CLIENT_ROLE"),
+                world.community_client_wallet().address()
+            )
             .call()
             .await
-            .expect("Failed to check ACTOR_REGISTRAR_ROLE"),
-        "Actor registrar account does not have ACTOR_REGISTRAR_ROLE"
+            .unwrap(),
+        "Community client lacks COMMUNITY_CLIENT_ROLE"
     );
 
-    for user_name in users {
-        let wallet = world.wallet_for_user(user_name);
-        let actor_id = world.actor_id_for_user(user_name).await;
-        if seen.insert(actor_id) {
-            let register_call = actor_registry.register_actor(actor_id, wallet.address());
-            let register_receipt = register_call
-                .send()
-                .await
-                .expect("Failed to submit actor registration transaction")
-                .await
-                .expect("Failed awaiting actor registration receipt");
-            assert!(
-                register_receipt.is_some(),
-                "Actor registration tx was dropped without receipt"
-            );
-        }
-    }
-
     let orchestrator_wallet = std::env::var("ORCHESTRATOR_SIGNER_PRIVATE_KEY")
-        .unwrap_or_else(|_| world.private_key_for_user("alice"))
+        .unwrap_or_else(|_| world.community_client_private_key())
         .parse::<LocalWallet>()
         .expect("Invalid orchestrator private key")
         .with_chain_id(world.chain_id);
 
     let matching_wallet = std::env::var("MATCHING_ENGINE_PRIVATE_KEY")
-        .unwrap_or_else(|_| world.private_key_for_user("alice"))
+        .unwrap_or_else(|_| world.community_client_private_key())
         .parse::<LocalWallet>()
         .expect("Invalid matching engine private key")
         .with_chain_id(world.chain_id);
 
     let execution_wallet = std::env::var("EXECUTION_ENGINE_PRIVATE_KEY")
-        .unwrap_or_else(|_| world.private_key_for_user("alice"))
+        .unwrap_or_else(|_| world.community_client_private_key())
         .parse::<LocalWallet>()
         .expect("Invalid execution engine private key")
         .with_chain_id(world.chain_id);

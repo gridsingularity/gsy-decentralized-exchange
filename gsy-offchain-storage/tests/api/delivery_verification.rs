@@ -143,9 +143,10 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
     let mut measurements = Vec::new();
     for index in 0..3u8 {
         let buyer = format!("buyer-{index}");
-        let seller = format!("seller-{index}");
-        let buyer_id = create_encrypted_bytes16_from_string(&buyer);
-        let seller_id = create_encrypted_bytes16_from_string(&seller);
+        let facility = format!("meter-{index}");
+        let seller_facility = format!("seller-meter-{index}");
+        let buyer_id = create_encrypted_bytes16_from_string(&facility);
+        let seller_id = create_encrypted_bytes16_from_string(&seller_facility);
         let bid = (
             [index + 1; 16],
             buyer_id,
@@ -201,7 +202,6 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
             (vec![(vec![matched], clearing)],),
         )
         .await?;
-        let facility = format!("meter-{index}");
         app.db_wrapper
             .facilities()
             .upsert(FacilitySchema {
@@ -303,7 +303,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
         &settlement,
         "submitPenalties",
         (vec![(
-            create_encrypted_bytes16_from_string("buyer-2"),
+            create_encrypted_bytes16_from_string("meter-2"),
             market_id,
             [23u8; 16],
             200u64,

@@ -1,5 +1,4 @@
 use primitives::db_api_schema::{profiles::MeasurementSchema, trades::DbTradeSchema};
-use primitives::utils::{bytes16_to_hex, create_encrypted_bytes16_from_string};
 use std::collections::HashMap;
 use tracing::warn;
 
@@ -20,7 +19,7 @@ pub struct DeliveryVerification {
 
 /// Computes penalties for each trade based on the measured energy.
 ///
-/// Measurements are mapped from facility owners to the trade's buyer/seller IDs.
+/// Measurements are mapped from facility IDs to the trade's buyer/seller IDs.
 /// The delta is computed as:
 ///   delta = measured_energy - traded_energy
 /// If delta > 0.0, it indicates under-trading for consumption and the buyer is penalized.
@@ -38,11 +37,11 @@ pub struct DeliveryVerification {
 pub fn compute_penalties(
     trades: &[DbTradeSchema],
     measurements: &[MeasurementSchema],
-    facility_owner_mapping: &HashMap<String, String>,
+    facility_onchain_ids: &HashMap<String, String>,
     penalty_rate: f64,
 ) -> Vec<Penalty> {
     let verifications =
-        compute_delivery_verifications(trades, measurements, facility_owner_mapping, penalty_rate);
+        compute_delivery_verifications(trades, measurements, facility_onchain_ids, penalty_rate);
     let trades_by_id: HashMap<_, _> = trades
         .iter()
         .map(|trade| (trade.trade_uuid.as_str(), trade))
@@ -73,26 +72,22 @@ pub fn compute_penalties(
 pub fn compute_delivery_verifications(
     trades: &[DbTradeSchema],
     measurements: &[MeasurementSchema],
-    facility_owner_mapping: &HashMap<String, String>,
+    facility_onchain_ids: &HashMap<String, String>,
     penalty_rate: f64,
 ) -> Vec<DeliveryVerification> {
     let mut verifications = Vec::new();
 
-    // Map each measurement's facility_id to its owner_id and convert that to the
-    // on-chain representation used by the trade's buyer/seller fields.
+    // Use the same facility ID mapping as the submitting community client.
     let mut measurement_map: HashMap<String, f64> = HashMap::new();
     for meas in measurements {
         if !meas.energy_kwh.is_finite() {
             continue;
         }
-        let Some(owner_id) = facility_owner_mapping.get(&meas.facility_id) else {
-            warn!("No owner mapping for facility_id={}", meas.facility_id);
+        let Some(onchain_id) = facility_onchain_ids.get(&meas.facility_id) else {
+            warn!("No on-chain mapping for facility_id={}", meas.facility_id);
             continue;
         };
-        measurement_map.insert(
-            bytes16_to_hex(create_encrypted_bytes16_from_string(owner_id)),
-            meas.energy_kwh,
-        );
+        measurement_map.insert(onchain_id.clone(), meas.energy_kwh);
     }
     // Iterate over each trade and compute the penalty if a measurement exists.
     for trade in trades {

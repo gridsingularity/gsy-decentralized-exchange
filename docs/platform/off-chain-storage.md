@@ -97,9 +97,10 @@ EWDS exposes the same validation through `facilities.validate` when
 selects HTTP or EWDS via the client's existing transport configuration and
 rejects incomplete or inconsistent responses. Neither transport writes orders
 or ID mappings. The community client's EWDS order subscriber validates new
-orders through this API before resolving IDs and submitting them. The forecast
-publication path and service-only contract authorization remain subsequent
-DD-457 steps; this endpoint alone does not restrict direct contract calls.
+orders through this API before resolving IDs and submitting them. Forecast-based
+publication performs the same check. The contract separately requires
+`COMMUNITY_CLIENT_ROLE` for submission and cancellation; eligibility is enforced
+by those trusted services, not by this read-only endpoint or an ID mapping alone.
 
 ### ID Mapping
 - `/ids` (`POST`) — get-or-create offchain↔onchain ID mappings

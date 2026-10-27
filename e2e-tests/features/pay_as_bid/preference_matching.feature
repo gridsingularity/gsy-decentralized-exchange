@@ -2,7 +2,7 @@ Feature: Preference-Based Matching with Dedicated Pricing
 
   Scenario: A bilateral preferred partner trade is matched with its special price
     Given the GSY DEX services are running
-    And users "alice", "bob", and "charlie" are registered
+    And the DEX service accounts are authorized
     When the Market Orchestrator opens the Spot market for the current delivery slot
     And forecasts of 100 energy are submitted by "alice", "bob", and "charlie"
 
@@ -17,7 +17,7 @@ Feature: Preference-Based Matching with Dedicated Pricing
 
   Scenario: A preferred trade records the residual of a partially filled bid
     Given the GSY DEX services are running
-    And users "alice", "bob", and "charlie" are registered
+    And the DEX service accounts are authorized
     When the Market Orchestrator opens the Spot market for the current delivery slot
     And forecasts of 100 energy are submitted by "alice", "bob", and "charlie"
     When "alice" submits a bid for 150 energy with a preferred rate of 12 for partner "bob"

@@ -206,27 +206,71 @@ impl MyWorld {
             .with_chain_id(self.chain_id)
     }
 
-    pub fn private_key_for_user(&self, user_name: &str) -> String {
-        self.users
-            .get(user_name)
-            .unwrap_or_else(|| panic!("Unknown user '{}'", user_name))
-            .private_key
-            .clone()
-    }
-
     pub async fn actor_id_for_user(&self, user_name: &str) -> [u8; 16] {
         if !self.users.contains_key(user_name) {
             panic!("Unknown user '{}'", user_name);
         }
         let onchain_id = OffchainStorageClient::from_env("E2E_TESTS_CLIENT_ID", "e2e_tests")
-            .fetch_onchain_id(user_name)
+            .fetch_onchain_id(&self.facility_id_for_user(user_name))
             .await
             .expect("failed to fetch onchain id");
         parse_uuid_or_hex_bytes16(&onchain_id).expect("failed to parse uuid")
     }
 
+    pub fn facility_id_for_user(&self, user_name: &str) -> String {
+        format!("area{user_name}")
+    }
+
+    pub fn facility_id_for_market_user(&self, market_id: [u8; 16], user_name: &str) -> String {
+        if self
+            .community_market_ids
+            .is_some_and(|ids| market_id == ids[1])
+        {
+            format!("secondary-area{user_name}")
+        } else {
+            self.facility_id_for_user(user_name)
+        }
+    }
+
+    pub fn community_client_private_key(&self) -> String {
+        std::env::var("COMMUNITY_CLIENT_PRIVATE_KEY")
+            .unwrap_or_else(|_| DEFAULT_PRIVATE_KEY.to_string())
+    }
+
+    pub fn community_client_wallet(&self) -> LocalWallet {
+        self.community_client_private_key()
+            .parse::<LocalWallet>()
+            .unwrap()
+            .with_chain_id(self.chain_id)
+    }
+
     pub async fn create_facilities(&self, facilities: Vec<FacilitySchema>) {
         let adapter = AreaMarketInfoAdapter::new(Some(self.offchain_storage_url.clone()));
+        let mut sites: HashMap<String, Vec<String>> = HashMap::new();
+        for facility in &facilities {
+            sites
+                .entry(facility.site_id.clone())
+                .or_default()
+                .push(facility.facility_id.clone());
+        }
+        for (site_name, facilities) in sites {
+            let response = self.http_client
+                .post(format!("{}/sites", self.offchain_storage_url))
+                .json(&SiteSchema {
+                    site_name,
+                    site_description: "E2E site".into(),
+                    facilities,
+                })
+                .send()
+                .await
+                .expect("Failed to submit E2E site");
+            let status = response.status();
+            assert!(
+                status.is_success(),
+                "Site creation failed ({status}): {}",
+                response.text().await.unwrap_or_default()
+            );
+        }
         for facility in facilities.iter() {
             let _ = adapter
                 .forward_facilities(facility.clone())
