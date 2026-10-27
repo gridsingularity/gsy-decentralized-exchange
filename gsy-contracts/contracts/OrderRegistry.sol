@@ -4,7 +4,6 @@ pragma solidity ^0.8.22;
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "./MarketController.sol";
-import "./ActorRegistry.sol";
 
 /**
  * @title OrderRegistry
@@ -12,6 +11,7 @@ import "./ActorRegistry.sol";
  */
 contract OrderRegistry is Initializable, AccessControlUpgradeable {
     bytes32 public constant SETTLEMENT_ROLE = keccak256("SETTLEMENT_ROLE");
+    bytes32 public constant COMMUNITY_CLIENT_ROLE = keccak256("COMMUNITY_CLIENT_ROLE");
 
     enum OrderStatus {
         None,
@@ -24,7 +24,6 @@ contract OrderRegistry is Initializable, AccessControlUpgradeable {
     }
 
     MarketController public marketController;
-    ActorRegistry public actorRegistry;
 
     uint8 public constant ENERGY_TYPE_NONE = 0;
     uint8 public constant ENERGY_TYPE_GREEN = 1;
@@ -82,18 +81,16 @@ contract OrderRegistry is Initializable, AccessControlUpgradeable {
 
     function initialize(
         address admin,
-        address _marketController,
-        address _actorRegistry
+        address _marketController
     ) external initializer {
         __AccessControl_init();
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         marketController = MarketController(_marketController);
-        actorRegistry = ActorRegistry(_actorRegistry);
     }
 
     /**
      * @notice Place an order.
-     * @dev Validates market status and caller authority for the Actor UUID.
+     * @dev The authorized service validates facility/community eligibility off-chain.
      */
     function placeOrder(OrderParams calldata params) external {
         if (
@@ -110,7 +107,7 @@ contract OrderRegistry is Initializable, AccessControlUpgradeable {
             revert MarketClosed();
         }
 
-        if (!actorRegistry.isAuthorized(params.createdBy, msg.sender)) {
+        if (!hasRole(COMMUNITY_CLIENT_ROLE, msg.sender)) {
             revert Unauthorized();
         }
 
@@ -187,7 +184,7 @@ contract OrderRegistry is Initializable, AccessControlUpgradeable {
 
     /**
      * @notice Cancel an order.
-     * @dev Requires the original params to verify actor authorization.
+     * @dev Requires an authorized service and the original facility identity.
      */
     function cancelOrder(OrderParams calldata params) external {
         if (orderStatus(params.orderId) != OrderStatus.Open) {
@@ -199,7 +196,7 @@ contract OrderRegistry is Initializable, AccessControlUpgradeable {
             revert Unauthorized();
         }
 
-        if (!actorRegistry.isAuthorized(storedOrder.createdBy, msg.sender)) {
+        if (!hasRole(COMMUNITY_CLIENT_ROLE, msg.sender)) {
             revert Unauthorized();
         }
 

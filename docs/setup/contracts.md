@@ -60,6 +60,22 @@ docker compose -f docker-compose.contracts.yml \
 
 Add `-v` only when you want to wipe the local Anvil state as well.
 
+## Community-Client Authorization
+
+Deployment grants `OrderRegistry.COMMUNITY_CLIENT_ROLE` to the wallet derived
+from `COMMUNITY_CLIENT_PRIVATE_KEY` (the deployer if unset). Use the same key for
+the corresponding community-client service. DD-457 requires a fresh deployment,
+not an in-place upgrade of the old `OrderRegistry` storage layout.
+
+This bootstrap signer is not a single-client limit. The registry administrator
+can call `grantRole(COMMUNITY_CLIENT_ROLE, clientAddress)` for each additional
+client and `revokeRole(COMMUNITY_CLIENT_ROLE, clientAddress)` to remove access;
+`hasRole` checks current authorization. Revoking one client does not affect others.
+Both placement and cancellation require this role, including for administrators.
+The role is global across communities: authorized clients are trusted to validate
+facility/community eligibility off-chain. Actor wallets and delegates have no
+implicit submission permission. Matching and execution roles remain separate.
+
 ## Local Gas Report
 
 Generate the local gas report:
@@ -183,6 +199,7 @@ consume real EWT on Energy Web Chain.
 | `ORCHESTRATOR_SIGNER_PRIVATE_KEY` | Signer granted `ORCHESTRATOR_ROLE`. Defaults to the local Anvil test key for local deployments. |
 | `MATCHING_ENGINE_PRIVATE_KEY` | Signer granted `OPERATOR_ROLE`. Defaults to the local Anvil test key for local deployments. |
 | `EXECUTION_ENGINE_PRIVATE_KEY` | Signer granted `EXECUTION_ENGINE_ROLE`. Defaults to the local Anvil test key for local deployments. |
+| `COMMUNITY_CLIENT_PRIVATE_KEY` | Bootstrap signer granted `OrderRegistry.COMMUNITY_CLIENT_ROLE`; use the same key for the client service. Defaults to the local Anvil test key locally, or to the deployer when unset. Additional clients are authorized through `grantRole`. |
 | `ACTOR_REGISTRAR_PRIVATE_KEY` | Signer granted `ACTOR_REGISTRAR_ROLE`. Defaults to the local Anvil test key for local deployments. |
 | `PROXY_ADMIN_PRIVATE_KEY` | Owner signer for the generated `ProxyAdmin` contracts. Defaults to the local Anvil test key for local deployments. |
 | `EWC_RPC_URL` | Energy Web Chain RPC override. Defaults to `https://rpc.energyweb.org`. |

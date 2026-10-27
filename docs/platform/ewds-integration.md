@@ -347,9 +347,10 @@ Handling rules:
 - Definite eligibility and contract rejections are reported through `orderStatus.event`.
   FOS sees placed orders through `orders.query` and `orderStatus.event`, and
   their trades through `trade.event`.
-- `placeOrder` only accepts an order if the community client's wallet is
-  authorized for the actor in the `ActorRegistry`. Registering it is up to
-  whoever publishes the orders.
+- `placeOrder` requires the caller to hold `OrderRegistry.COMMUNITY_CLIENT_ROLE`,
+  granted by the administrator. Multiple clients can hold this role; each
+  validates facility/community membership off-chain. FOS publishers and actor
+  wallets cannot submit directly without this service role.
 
 ##### Order Status Notification Contract
 

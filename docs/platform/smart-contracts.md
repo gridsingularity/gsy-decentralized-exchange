@@ -100,7 +100,7 @@ Purpose:
 - Maps Intelligent Actor UUIDs (`bytes16`) to authorized EVM wallets.
 - Supports registrar-managed wallet authorization (`registerActor`, `setActorWallet`).
 - Supports actor-managed delegate/proxy authorization (`setProxy`, `isProxy`).
-- Provides the authorization check used by `OrderRegistry` before accepting actor-owned order actions.
+- Retains actor wallet/delegate mappings, but is no longer consulted by `OrderRegistry`.
 
 `ActorRegistry` does not hold collateral and does not expose deposit/withdraw logic. Billing and payment remain outside the DEX contract suite.
 
@@ -132,7 +132,12 @@ Purpose:
 
 - Records order lifecycle commitments keyed by Intelligent Order UUID.
 - Validates market openness before order acceptance.
-- Accepts the actor wallet or an approved proxy as sender.
+- Requires `COMMUNITY_CLIENT_ROLE` for placement and cancellation. The admin can
+  grant/revoke the role for multiple service wallets; actor registration or proxy
+  delegation alone does not authorize either action.
+- Trusts authorized clients to validate facility/community membership off-chain.
+  The role applies to all communities, not just orders placed by that client.
+  `createdBy` identifies the facility independently of the submitting wallet.
 - Stores order requirements (bids and offers, including the preferred trading
   partner) and offer attributes used by matching.
 - Emits the complete order metadata in `OrderPlaced`, allowing the event
@@ -154,6 +159,10 @@ coordinated deployment and matching contract addresses for all services, and
 rebuild the corresponding off-chain market projection. Do not upgrade an existing
 boolean-mapping deployment in place without a separately designed migration.
 
+DD-457 also requires a fresh `OrderRegistry` deployment: its initializer now
+accepts only `(admin, marketController)`, and removing the `ActorRegistry` storage
+reference shifts subsequent slots. Do not upgrade an existing registry in place.
+
 ### `TradeSettlement`
 
 Purpose:
@@ -171,10 +180,10 @@ Purpose:
   It trusts the engine's off-chain measurement verdict; no meter data is verified
   inside the contract. Residual orders are not completed by their parent's verdict.
 
-Verification storage is appended without changing existing proxy slots. Upgrade
-`OrderRegistry` before `TradeSettlement`, then deploy the updated execution engine
-and listener. Trades settled before this upgrade have no stored order-ID linkage
-and cannot use the new completion call without a separate audited migration.
+The earlier delivery-verification change appended storage without changing existing
+proxy slots; DD-457's registry change requires the fresh deployment noted above.
+Trades settled before delivery verification was introduced have no stored order-ID
+linkage and cannot use the completion call without a separate audited migration.
 No historical records or verdicts are fabricated/backfilled automatically.
 
 `TradeSettlement` does not move funds. Billing and payment are handled by external services.
@@ -205,7 +214,7 @@ and a `ClearingResult`. The contract checks that `tradedQuantity` equals the sum
 of selected energy in that entry and emits `MarketClearing` after its trades.
 Callers must include this per-market envelope as well as each match's type.
 
-Deploy or upgrade the registry and settlement implementations together with the
+Deploy the registry and settlement implementations together with the
 updated matcher. For local validation, run `./scripts/contracts.sh local deploy`
 and restart services using the refreshed `contracts-output/addresses.env`.
 
@@ -216,6 +225,7 @@ Deployment script assigns:
 - Proxy admin ownership -> proxy admin owner signer.
 - `ACTOR_REGISTRAR_ROLE` on `ActorRegistry` -> actor registrar signer.
 - `ORCHESTRATOR_ROLE` on `MarketController` -> orchestrator signer.
+- `COMMUNITY_CLIENT_ROLE` on `OrderRegistry` -> community-client signer.
 - `SETTLEMENT_ROLE` on `OrderRegistry` -> `TradeSettlement`.
 - `OPERATOR_ROLE` on `TradeSettlement` -> matching engine signer.
 - `EXECUTION_ENGINE_ROLE` on `TradeSettlement` -> execution engine signer.

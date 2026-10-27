@@ -85,13 +85,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
     ));
     let admin = client.address();
     let controller = deploy(client.clone(), "MarketController", admin).await?;
-    let actors = deploy(client.clone(), "ActorRegistry", admin).await?;
-    let registry = deploy(
-        client.clone(),
-        "OrderRegistry",
-        (admin, controller.address(), actors.address()),
-    )
-    .await?;
+    let registry = deploy(client.clone(), "OrderRegistry", (admin, controller.address())).await?;
     let settlement = deploy(
         client.clone(),
         "TradeSettlement",
@@ -100,6 +94,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
     .await?;
     for (contract, role, account) in [
         (&controller, "ORCHESTRATOR_ROLE", admin),
+        (&registry, "COMMUNITY_CLIENT_ROLE", admin),
         (&registry, "SETTLEMENT_ROLE", settlement.address()),
         (&settlement, "OPERATOR_ROLE", admin),
         (&settlement, "EXECUTION_ENGINE_ROLE", admin),
@@ -151,9 +146,6 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
         let seller = format!("seller-{index}");
         let buyer_id = create_encrypted_bytes16_from_string(&buyer);
         let seller_id = create_encrypted_bytes16_from_string(&seller);
-        for id in [buyer_id, seller_id] {
-            send(&actors, "registerActor", (id, admin)).await?;
-        }
         let bid = (
             [index + 1; 16],
             buyer_id,

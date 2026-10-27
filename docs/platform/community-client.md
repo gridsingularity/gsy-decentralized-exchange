@@ -98,9 +98,12 @@ Each transaction takes its nonce from the pending transaction count.
 The event contract and all handling rules are in
 [EWDS Integration](ewds-integration.md#order-events).
 
-The community client's wallet must be authorized for every actor it sends
-orders for (`ActorRegistry.isAuthorized`); otherwise the contract rejects the
-order with `Unauthorized`.
+The community client's wallet must hold `OrderRegistry.COMMUNITY_CLIENT_ROLE`;
+otherwise placement and cancellation revert with `Unauthorized`. Administrators
+can authorize multiple clients and revoke each independently. This role is not
+community-scoped: each client validates facility/community membership off-chain.
+The submitting wallet is independent of the facility ID in `createdBy`;
+actor-wallet registration or delegation grants no order-submission permission.
 
 ## Configuration
 
@@ -125,6 +128,5 @@ order with `Unauthorized`.
 The binary currently runs only the order event subscriber. Without
 `EWDS_ENABLE_HANDLER` it logs that the subscriber is disabled and exits.
 The forecast-based order publication (`publish_orders`) is used by the e2e
-steps and now also validates facility participation. Service-only contract
-authorization, downstream facility-identity alignment and the complete E2E fixture
-update remain subsequent DD-457 steps.
+steps and now also validates facility participation. Downstream facility-identity
+alignment and the complete E2E fixture update remain subsequent DD-457 steps.

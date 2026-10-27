@@ -400,11 +400,7 @@ async function main() {
   const orderRegistry = await deployUpgradeableContract(
     "OrderRegistry",
     deployerAddress,
-    [
-      deployerAddress,
-      marketController.proxyAddress,
-      actorRegistry.proxyAddress,
-    ],
+    [deployerAddress, marketController.proxyAddress],
   );
   const tradeSettlement = await deployUpgradeableContract(
     "TradeSettlement",
@@ -419,6 +415,7 @@ async function main() {
 
   const ORCHESTRATOR_ROLE = ethers.id("ORCHESTRATOR_ROLE");
   const SETTLEMENT_ROLE = ethers.id("SETTLEMENT_ROLE");
+  const COMMUNITY_CLIENT_ROLE = ethers.id("COMMUNITY_CLIENT_ROLE");
   const OPERATOR_ROLE = ethers.id("OPERATOR_ROLE");
   const EXECUTION_ENGINE_ROLE = ethers.id("EXECUTION_ENGINE_ROLE");
   const ACTOR_REGISTRAR_ROLE = ethers.id("ACTOR_REGISTRAR_ROLE");
@@ -428,6 +425,12 @@ async function main() {
     "grantRole(ORCHESTRATOR_ROLE)",
     "MarketController",
     marketControllerContract.grantRole(ORCHESTRATOR_ROLE, deployerAddress),
+  );
+  await recordTx(
+    "Role setup",
+    "grantRole(COMMUNITY_CLIENT_ROLE)",
+    "OrderRegistry",
+    orderRegistryContract.grantRole(COMMUNITY_CLIENT_ROLE, deployerAddress),
   );
   await recordTx(
     "Role setup",
