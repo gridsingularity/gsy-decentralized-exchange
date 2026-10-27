@@ -6,6 +6,7 @@ use gsy_community_client::order_events::{
     order_params, start_order_event_subscriber, OrderEventHandler, OrderRegistryClient,
     PlaceOrderError,
 };
+use primitives::db_api_schema::grid_topology::FacilityMarketValidationRequest;
 use primitives::db_api_schema::orders::DbOrderSchema;
 use primitives::ewds::dto::EwdsEventEnvelope;
 use primitives::ewds::dto::{EwdsOrderDto, EwdsSendMessageDto};
@@ -19,7 +20,7 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
 use wiremock::matchers::{method, path, query_param};
-use wiremock::{Mock, MockServer, ResponseTemplate};
+use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
 abigen!(
     MockOrderRegistry,
@@ -136,9 +137,21 @@ async fn deploy_mock_order_registry() -> TestChain {
     }
 }
 
-/// Mocks the ID service and the gateway's outbound messages endpoint on one server.
+/// Mocks eligibility, ID resolution and the gateway's outbound messages on one server.
 async fn mock_id_service() -> MockServer {
     let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/facilities/validate"))
+        .respond_with(|request: &Request| {
+            let pairs: Vec<FacilityMarketValidationRequest> =
+                serde_json::from_slice(&request.body).unwrap();
+            ResponseTemplate::new(200).set_body_json(pairs.into_iter().map(|pair| json!({
+                "facility_id": pair.facility_id, "market_id": pair.market_id, "eligible": true
+            })).collect::<Vec<_>>())
+        })
+        .with_priority(10)
+        .mount(&server)
+        .await;
     for (offchain_id, onchain_id) in [("owner-1", OWNER_1_ONCHAIN), ("owner-2", OWNER_2_ONCHAIN)] {
         Mock::given(method("POST"))
             .and(path("/ids"))
@@ -168,6 +181,14 @@ async fn mock_id_service() -> MockServer {
 }
 
 async fn handler(chain: &TestChain, id_service: &MockServer) -> OrderEventHandler {
+    handler_with_transport(chain, id_service, OffchainStorageTransport::Http).await
+}
+
+async fn handler_with_transport(
+    chain: &TestChain,
+    id_service: &MockServer,
+    transport: OffchainStorageTransport,
+) -> OrderEventHandler {
     let order_registry = OrderRegistryClient::connect(
         chain.ws_endpoint.as_str(),
         format!("{:?}", chain.contract_address).as_str(),
@@ -177,7 +198,7 @@ async fn handler(chain: &TestChain, id_service: &MockServer) -> OrderEventHandle
     .unwrap();
     OrderEventHandler::new(
         OffchainStorageClient::new(
-            OffchainStorageTransport::Http,
+            transport,
             id_service.uri(),
             "EWDS_COMMUNITY_CLIENT_ID",
             "gsycommunityclient",
@@ -213,11 +234,20 @@ async fn rejection_events(server: &MockServer) -> Vec<EwdsEventEnvelope<Vec<Ewds
         .iter()
         .filter_map(|request| {
             // Rejections must never be written to the order database through HTTP.
-            assert!(matches!(request.url.path(), "/ids" | "/api/v2/messages"));
-            if request.url.path() == "/ids" {
+            assert!(matches!(
+                request.url.path(),
+                "/ids" | "/facilities/validate" | "/api/v2/messages"
+            ));
+            if request.url.path() != "/api/v2/messages"
+                || request.method == wiremock::http::Method::GET
+            {
                 return None;
             }
             let sent: EwdsSendMessageDto = serde_json::from_slice(&request.body).unwrap();
+            let payload: Value = serde_json::from_str(&sent.payload).unwrap();
+            if payload.get("operation").is_some() {
+                return None;
+            }
             assert_eq!(sent.fqcn, "gsy.events.pub");
             assert_eq!(sent.topic_name, "order");
             let event: EwdsEventEnvelope<Vec<EwdsOrderDto>> =
@@ -413,6 +443,229 @@ async fn skips_orders_that_are_already_placed() {
 }
 
 #[tokio::test]
+async fn rejects_ineligible_orders_before_id_resolution_and_places_eligible_orders() {
+    let chain = deploy_mock_order_registry().await;
+    let id_service = mock_id_service().await;
+    let handler = handler(&chain, &id_service).await;
+    // owner-1 already has an ID mapping. That alone must not establish eligibility.
+    for (reason, label) in [
+        ("unknown_facility", "UnknownFacility"),
+        ("unknown_market", "UnknownMarket"),
+        ("site_not_in_community", "SiteNotInCommunity"),
+    ] {
+        let validation = Mock::given(method("POST"))
+            .and(path("/facilities/validate"))
+            .respond_with(move |request: &Request| {
+                let pairs: Vec<FacilityMarketValidationRequest> = serde_json::from_slice(&request.body).unwrap();
+                ResponseTemplate::new(200).set_body_json(pairs.into_iter().map(|pair| {
+                    let rejected = pair.facility_id == "owner-1";
+                    json!({"facility_id": pair.facility_id, "market_id": pair.market_id,
+                        "eligible": !rejected, "reason": if rejected { Some(reason) } else { None }})
+                }).collect::<Vec<_>>())
+            })
+            .with_priority(1)
+            .up_to_n_times(1)
+            .mount_as_scoped(&id_service).await;
+        let mut eligible = offer();
+        eligible["preferredTradingPartner"] = Value::Null;
+        handler
+            .handle(event(reason, vec![bid(), eligible]))
+            .await
+            .unwrap();
+        let notifications = rejection_events(&id_service).await;
+        assert_rejection(
+            notifications.last().unwrap(),
+            bid(),
+            &format!("Facility owner-1 cannot participate in market {OPEN_MARKET}: {label}"),
+        );
+        drop(validation);
+    }
+    assert_eq!(placed_orders(&chain).await[0].order_id, bytes16(OFFER_ID));
+    assert_eq!(sent_transactions(&chain).await, 3);
+    let requests = id_service.received_requests().await.unwrap();
+    let batches: Vec<Value> = requests
+        .iter()
+        .filter(|request| request.url.path() == "/facilities/validate")
+        .map(|request| serde_json::from_slice(&request.body).unwrap())
+        .collect();
+    assert_eq!(
+        batches[0],
+        json!([
+            {"facility_id": "owner-1", "market_id": OPEN_MARKET},
+            {"facility_id": "owner-2", "market_id": OPEN_MARKET}
+        ])
+    );
+    assert_eq!(
+        batches[1],
+        json!([{"facility_id": "owner-1", "market_id": OPEN_MARKET}])
+    );
+    assert!(!requests.iter().any(|request| request.url.path() == "/ids"
+        && request
+            .url
+            .query_pairs()
+            .any(|(key, value)| key == "offchain_id" && value == "owner-1")));
+    assert_eq!(rejection_events(&id_service).await.len(), 3);
+}
+
+#[tokio::test]
+async fn validation_failures_remain_retryable_without_submission_or_rejection() {
+    let chain = deploy_mock_order_registry().await;
+    let id_service = mock_id_service().await;
+    let handler = handler(&chain, &id_service).await;
+    for response in [
+        ResponseTemplate::new(500).set_body_json(json!({"code": "VALIDATION_UNAVAILABLE"})),
+        ResponseTemplate::new(200).set_body_string("not json"),
+        ResponseTemplate::new(200).set_body_json(json!([])),
+    ] {
+        let validation = Mock::given(method("POST"))
+            .and(path("/facilities/validate"))
+            .respond_with(response)
+            .with_priority(1)
+            .up_to_n_times(1)
+            .mount_as_scoped(&id_service)
+            .await;
+        let error = handler
+            .handle(event("retry-event", vec![bid(), offer()]))
+            .await
+            .unwrap_err();
+        assert!(!is_invalid_event(&error), "{error:#}");
+        assert!(error
+            .to_string()
+            .contains("Facility participation validation failed"));
+        assert_eq!(sent_transactions(&chain).await, 2);
+        assert!(id_service
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .all(|request| request.url.path() == "/facilities/validate"));
+        drop(validation);
+    }
+    // The same event succeeds after the service recovers.
+    handler
+        .handle(event("retry-event", vec![bid(), offer()]))
+        .await
+        .unwrap();
+    assert_eq!(placed_orders(&chain).await.len(), 2);
+    assert!(rejection_events(&id_service).await.is_empty());
+}
+
+#[tokio::test]
+async fn confirmed_orders_skip_validation_on_retry_after_topology_changes() {
+    let chain = deploy_mock_order_registry().await;
+    let id_service = mock_id_service().await;
+    let handler = handler(&chain, &id_service).await;
+    handler.handle(event("event-1", vec![bid()])).await.unwrap();
+    let validation = Mock::given(method("POST"))
+        .and(path("/facilities/validate"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
+            "facility_id": "owner-1", "market_id": OPEN_MARKET, "eligible": false,
+            "reason": "site_not_in_community"
+        }])))
+        .with_priority(1)
+        .expect(0)
+        .mount_as_scoped(&id_service)
+        .await;
+    handler.handle(event("event-2", vec![bid()])).await.unwrap();
+    assert_eq!(sent_transactions(&chain).await, 3);
+    assert!(rejection_events(&id_service).await.is_empty());
+    drop(validation);
+}
+
+#[tokio::test]
+async fn a_duplicate_ineligible_item_does_not_reject_an_order_placed_earlier_in_the_batch() {
+    let chain = deploy_mock_order_registry().await;
+    let id_service = mock_id_service().await;
+    let mut duplicate = bid();
+    duplicate["createdBy"] = json!("missing-facility");
+    Mock::given(method("POST"))
+        .and(path("/facilities/validate"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+            {"facility_id": "owner-1", "market_id": OPEN_MARKET, "eligible": true},
+            {"facility_id": "missing-facility", "market_id": OPEN_MARKET,
+                "eligible": false, "reason": "unknown_facility"}
+        ])))
+        .with_priority(1)
+        .mount(&id_service)
+        .await;
+    handler(&chain, &id_service)
+        .await
+        .handle(event("event-1", vec![bid(), duplicate]))
+        .await
+        .unwrap();
+    assert_eq!(sent_transactions(&chain).await, 3);
+    assert_eq!(placed_orders(&chain).await.len(), 1);
+    assert!(rejection_events(&id_service).await.is_empty());
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn validates_over_ewds_before_resolving_ids_or_placing_orders() {
+    let chain = deploy_mock_order_registry().await;
+    let gateway = MockServer::start().await;
+    let pending = Arc::new(std::sync::Mutex::new(Value::Null));
+    let sent = pending.clone();
+    Mock::given(method("POST"))
+        .and(path("/api/v2/messages"))
+        .respond_with(move |request: &Request| {
+            let message: EwdsSendMessageDto = serde_json::from_slice(&request.body).unwrap();
+            let payload: Value = serde_json::from_str(&message.payload).unwrap();
+            if let Some(operation) = payload["operation"].as_str() {
+                let data = match operation {
+                    "facilities.validate" => {
+                        assert_eq!(payload["payload"], json!([
+                            {"facility_id": "owner-1", "market_id": OPEN_MARKET},
+                            {"facility_id": "owner-2", "market_id": OPEN_MARKET}
+                        ]));
+                        json!([
+                            {"facility_id": "owner-1", "market_id": OPEN_MARKET, "eligible": false, "reason": "unknown_facility"},
+                            {"facility_id": "owner-2", "market_id": OPEN_MARKET, "eligible": true}
+                        ])
+                    }
+                    "ids.query" => {
+                        assert_eq!(payload["payload"]["offchain_id"], "owner-2");
+                        json!([{"offchain_id": "owner-2", "onchain_id": OWNER_2_ONCHAIN, "creation_time": 0}])
+                    }
+                    other => panic!("unexpected query {other}"),
+                };
+                *sent.lock().unwrap() = json!({"requestId": payload["requestId"], "success": true, "data": data});
+            }
+            ResponseTemplate::new(200).set_body_json(json!({"recipients": {"sent": 1, "failed": 0, "total": 1}}))
+        }).mount(&gateway).await;
+    Mock::given(method("GET"))
+        .and(path("/api/v2/messages"))
+        .respond_with(move |_: &Request| {
+            ResponseTemplate::new(200).set_body_json(json!([
+                {"payload": pending.lock().unwrap().to_string()}
+            ]))
+        })
+        .mount(&gateway)
+        .await;
+    let previous_gateway = std::env::var("EWDS_GATEWAY_URL").ok();
+    std::env::set_var("EWDS_GATEWAY_URL", gateway.uri());
+    let mut eligible = offer();
+    eligible["preferredTradingPartner"] = Value::Null;
+    let result = handler_with_transport(&chain, &gateway, OffchainStorageTransport::Ewds)
+        .await
+        .handle(event("event-1", vec![bid(), eligible]))
+        .await;
+    match previous_gateway {
+        Some(url) => std::env::set_var("EWDS_GATEWAY_URL", url),
+        None => std::env::remove_var("EWDS_GATEWAY_URL"),
+    }
+    result.unwrap();
+    assert_eq!(placed_orders(&chain).await[0].order_id, bytes16(OFFER_ID));
+    assert_eq!(sent_transactions(&chain).await, 3);
+    let notifications = rejection_events(&gateway).await;
+    assert_eq!(notifications.len(), 1);
+    assert_rejection(
+        &notifications[0],
+        bid(),
+        &format!("Facility owner-1 cannot participate in market {OPEN_MARKET}: UnknownFacility"),
+    );
+}
+
+#[tokio::test]
 async fn places_the_other_orders_when_the_contract_rejects_one() {
     let chain = deploy_mock_order_registry().await;
     let id_service = mock_id_service().await;
@@ -459,7 +712,10 @@ async fn fails_the_event_when_the_node_cannot_be_reached() {
 
     // The event worker retries the event, so it must not be marked as invalid.
     assert!(!is_invalid_event(&error));
-    assert!(format!("{error:#}").contains("2 of 2 orders"), "{error:#}");
+    assert!(
+        format!("{error:#}").contains("Could not check existing order"),
+        "{error:#}"
+    );
     assert!(rejection_events(&id_service).await.is_empty());
 }
 
@@ -709,6 +965,7 @@ async fn order_registry_client_reports_why_the_contract_rejected_an_order() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn subscriber_places_submissions_but_not_status_notifications_from_the_order_topic() {
     let chain = deploy_mock_order_registry().await;
     let id_service = mock_id_service().await;
@@ -737,7 +994,7 @@ async fn subscriber_places_submissions_but_not_status_notifications_from_the_ord
         .mount(&gateway)
         .await;
 
-    // The only test in this binary that reads the environment.
+    // Serialize with tests that configure EWDS queries through environment variables.
     for key in [
         "EWDS_EVENT_SUBSCRIBE_FQCN",
         "EWDS_ORDER_EVENT_TOPIC",

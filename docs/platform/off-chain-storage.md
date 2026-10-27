@@ -96,8 +96,10 @@ EWDS exposes the same validation through `facilities.validate` when
 `EWDS_ENABLE_HANDLER=true`. `OffchainStorageClient::validate_facility_markets`
 selects HTTP or EWDS via the client's existing transport configuration and
 rejects incomplete or inconsistent responses. Neither transport writes orders
-or ID mappings. Community-client submission enforcement is a subsequent
-DD-457 step; this endpoint alone does not restrict order submission.
+or ID mappings. The community client's EWDS order subscriber validates new
+orders through this API before resolving IDs and submitting them. The forecast
+publication path and service-only contract authorization remain subsequent
+DD-457 steps; this endpoint alone does not restrict direct contract calls.
 
 ### ID Mapping
 - `/ids` (`POST`) — get-or-create offchain↔onchain ID mappings

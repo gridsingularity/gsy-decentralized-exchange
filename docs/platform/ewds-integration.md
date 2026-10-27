@@ -56,7 +56,7 @@ Provider: `gsy-offchain-storage` (`gsy-offchain-storage/src/startup.rs`)
 | `/markets` | `GET/POST` | ontology-aligned market-opening API | `http://gsy-offchain-storage:8080/markets` |
 | `/clearing-results` | `GET/POST` | clearing-result API | `http://gsy-offchain-storage:8080/clearing-results` |
 | `/ids` | `POST` | offchain↔onchain ID mapping API | `http://gsy-offchain-storage:8080/ids` |
-| `/facilities/validate` | `POST` | shared validation client; submission enforcement follows in DD-457 | `http://gsy-offchain-storage:8080/facilities/validate` |
+| `/facilities/validate` | `POST` | community client's order event subscriber | `http://gsy-offchain-storage:8080/facilities/validate` |
 | `/measurement-points` | `GET/POST` | ontology-aligned profile metadata API | `http://gsy-offchain-storage:8080/measurement-points` |
 | `/timeseries` | `GET/POST` | ontology-aligned value API | `http://gsy-offchain-storage:8080/timeseries` |
 | `/measurements` | `GET/POST` | EVM JSON compatibility adapter | converts to/from `MeasurementPoint` + `Timeseries` |
@@ -290,10 +290,10 @@ returns (`int.order.event.v1.json`):
       "timeSlot": "2026-09-30T10:00:00Z",
       "quantity": 1.5,
       "priceLimit": 0.3,
-      "createdBy": "owner-1",
+      "createdBy": "facility-1",
       "creationTime": "2026-09-30T09:40:12Z",
       "energySourcePreference": "GREEN",
-      "preferredTradingPartner": "owner-2",
+      "preferredTradingPartner": "facility-2",
       "preferredEnergyRate": 0.25
     }
   ]
@@ -303,8 +303,8 @@ returns (`int.order.event.v1.json`):
 | Field | Rule |
 |---|---|
 | `orderId` | A UUID chosen by the publisher. Its 16 bytes become the on-chain order ID, so `orders.query` and the trades' `bidId`/`offerId` return it as `0x` plus 32 hex digits. |
-| `marketId` | The market's hex ID, e.g. from `markets.query`. The market must be open. |
-| `createdBy` | The off-chain actor ID, e.g. the facility owner. The ID service maps it to the on-chain actor ID. |
+| `marketId` | The market's non-zero UUID or bytes16 hex ID, e.g. from `markets.query`. The contract still checks that the market is open. |
+| `createdBy` | The original off-chain facility ID. The subscriber validates its participation in the market before mapping it to an on-chain ID. It is not the owner's ID or the service wallet. |
 | `orderStatus` | Must be `submitted`. |
 | `quantity` | Greater than 0, in kWh. |
 | `priceLimit` | 0 or more, in EUR/kWh. |
@@ -313,8 +313,15 @@ returns (`int.order.event.v1.json`):
 
 Handling rules:
 
-- One invalid order rejects the whole event before anything is sent: parsing,
-  the rules above and resolving the IDs all have to pass.
+- Parsing and field validation must pass for the whole event. Already-confirmed
+  orders are skipped before checking eligibility. The remaining facility/market
+  pairs are validated in one HTTP or EWDS request before resolving any IDs.
+- Ineligible orders are reported through `orderStatus.event` with the reason,
+  without creating DB records or calling `placeOrder`. The client rechecks that
+  the order has not been placed meanwhile before reporting rejection.
+  Eligible orders continue; their IDs must all resolve before submission.
+- Validation-service errors and incomplete/inconsistent responses fail the event
+  without submission or rejection notifications and remain retryable.
 - The orders are then sent one at a time. The community client waits for
   each mined receipt and requires status `1` before confirming placement:
   - An order whose ID is already on-chain (`getStatus`) is skipped.
@@ -337,7 +344,7 @@ Handling rules:
 - Resending an event, even under a new `eventId`, doesn't place an order
   twice. A resend while the first transaction is still pending sends the
   order again, but that duplicate reverts with `OrderAlreadyExists`.
-- Definite contract rejections are reported through `orderStatus.event`.
+- Definite eligibility and contract rejections are reported through `orderStatus.event`.
   FOS sees placed orders through `orders.query` and `orderStatus.event`, and
   their trades through `trade.event`.
 - `placeOrder` only accepts an order if the community client's wallet is
@@ -369,9 +376,10 @@ outbox or delivery-order guarantee. Replayed listener events may notify again;
 consumers must tolerate duplicates and must not assume arrival order. Query
 `orders.query` when reconciling the current state of stored orders.
 
-The community client reports a contract rejection during gas estimation or a
-failed mined receipt as `rejected`, with `rejectReason`. It preserves the
-original submission's IDs and fields; `updatedAt` and `occurredAt` identify when
+The community client reports an ineligible facility/market pair, a contract
+rejection during gas estimation or a failed mined receipt as `rejected`, with
+`rejectReason`. It preserves the original submission's IDs and fields;
+`updatedAt` and `occurredAt` identify when
 the rejection was observed. It does not create a rejected database order.
 Successful placements and `OrderAlreadyExists` produce no rejection; transport
 failures or unknown transaction outcomes remain retryable, not rejected.

@@ -4,6 +4,7 @@ use crate::node_connector::orders::{
 use crate::time_utils::get_current_timestamp_in_secs;
 use anyhow::{anyhow, bail, Context, Error, Result};
 use ethers::prelude::*;
+use primitives::db_api_schema::grid_topology::FacilityMarketValidationRequest;
 use primitives::db_api_schema::orders::{
     order_metadata_to_contract, DbOrderSchema, OrderEnum, OrderStatus,
 };
@@ -106,12 +107,11 @@ impl OrderEventHandler {
 
     /// Sends the orders of an `order.event` to the `OrderRegistry`.
     ///
-    /// The event is rejected before anything is sent if one of its orders is invalid or its IDs
-    /// cannot be resolved. After that every order is sent on its own: one the contract rejects
-    /// is reported to FOS and the others are still sent, because sent orders cannot be rolled
-    /// back. If an order could not be confirmed because the node was unreachable, the event
-    /// fails after the other orders were processed. The event worker retries it, skipping orders
-    /// already placed. A sent order succeeds only after its receipt confirms successful execution.
+    /// Validates new orders' facility/market pairs in bulk before resolving IDs or submitting.
+    /// Invalid input, unavailable validation or unresolved IDs fail the event before submission.
+    /// Ineligible orders and contract rejections are reported to FOS; eligible orders continue.
+    /// Infrastructure failures remain retryable, with confirmed orders skipped on retry.
+    /// A sent order succeeds only after its receipt confirms successful execution.
     pub async fn handle(&self, envelope: EwdsEventEnvelope<Value>) -> Result<()> {
         let event_id = envelope.event_id;
         let orders = parse_batch(envelope.data, |submission: EwdsOrderDto| {
@@ -119,21 +119,92 @@ impl OrderEventHandler {
             Ok((submission, order))
         })?;
 
-        let mut params = Vec::with_capacity(orders.len());
+        let total = orders.len();
+        let mut sent = 0;
+        let mut pending = Vec::with_capacity(total);
         for (index, (submission, order)) in orders.into_iter().enumerate() {
+            // Check before validation: topology changes must not reject an already placed order.
+            let order_id = *Uuid::parse_str(&order.order_id)?.as_bytes();
+            if self
+                .order_registry
+                .is_placed(order_id)
+                .await
+                .map_err(|error| {
+                    anyhow!(
+                        "Could not check existing order {}: {}",
+                        order.order_id,
+                        error
+                    )
+                })?
+            {
+                sent += 1;
+                info!(
+                    "Order {} of EWDS event {} is already placed; skipping it",
+                    order.order_id, event_id
+                );
+                continue;
+            }
+            pending.push((index, submission, order));
+        }
+        let requests: Vec<_> = pending
+            .iter()
+            .map(|(_, _, order)| FacilityMarketValidationRequest {
+                facility_id: order.created_by.clone(),
+                market_id: order.market_id.clone(),
+            })
+            .collect();
+        let validation = self
+            .id_service
+            .validate_facility_markets(&requests)
+            .await
+            .context("Facility participation validation failed")?;
+
+        let mut params = Vec::with_capacity(pending.len());
+        for ((index, submission, order), result) in pending.into_iter().zip(validation) {
+            if let Some(reason) = result.reason {
+                params.push((submission, Err(reason)));
+                continue;
+            }
             let order_id = order.order_id.clone();
             let order = self
                 .resolve_ids(order)
                 .await
                 .and_then(|order| order_params(&order).map_err(invalid_event))
                 .with_context(|| format!("invalid order {} at index {}", order_id, index))?;
-            params.push((submission, order));
+            params.push((submission, Ok(order)));
         }
 
-        let total = params.len();
-        let mut sent = 0;
         let mut unsent = 0;
         for (submission, order) in params {
+            let order = match order {
+                Ok(order) => order,
+                Err(reason) => {
+                    // Another submission (including an earlier item in this batch) may have won.
+                    let order_id = *Uuid::parse_str(&submission.order_id)?.as_bytes();
+                    match self.order_registry.is_placed(order_id).await {
+                        Ok(true) => sent += 1,
+                        Ok(false) => {
+                            let reason = format!(
+                                "Facility {} cannot participate in market {}: {reason:?}",
+                                submission.created_by, submission.market_id
+                            );
+                            warn!(
+                                "Order {} of EWDS event {} rejected: {}",
+                                submission.order_id, event_id, reason
+                            );
+                            self.publish_rejection(submission, reason).await;
+                        }
+                        Err(error) => {
+                            warn!(
+                                "Could not check existing order {} before rejection: {}",
+                                submission.order_id, error
+                            );
+                            unsent += 1;
+                        }
+                    }
+                    continue;
+                }
+            };
             let order_id = &submission.order_id;
             match self.place(order).await {
                 Placement::Confirmed(tx_hash) => {
@@ -434,6 +505,12 @@ pub fn order_params(order: &DbOrderSchema) -> Result<EvmOrderParamsTuple> {
 pub fn validate_order(order: DbOrderSchema) -> Result<DbOrderSchema> {
     Uuid::parse_str(&order.order_id)
         .map_err(|e| anyhow!("orderId '{}' is not a UUID: {}", order.order_id, e))?;
+    if parse_uuid_or_hex_bytes16(&order.market_id).is_none_or(|id| id == [0; 16]) {
+        bail!(
+            "marketId '{}' is not a non-zero 16-byte UUID or hex ID",
+            order.market_id
+        );
+    }
     if order.status != OrderStatus::Submitted {
         bail!("orderStatus must be 'submitted', got {:?}", order.status);
     }
