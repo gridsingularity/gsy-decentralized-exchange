@@ -128,6 +128,12 @@ The script deploys a separate benchmark suite and does not update
 `addresses.env`. Report totals include fixture preparation and every alternative
 benchmark, not one production workflow. Local gas fees are not EWC/Volta quotes.
 
+Benchmark markets open at the latest chain timestamp and close roughly 24 hours
+later so remote runs can cross quarter-hour boundaries. The script manages each
+signer's transaction nonces locally; do not use the same signer concurrently in
+another process. It stops on submission errors rather than automatically replacing
+or resending transactions.
+
 ## Committed Gas Reports
 
 The repository keeps the latest generated Markdown gas reports as reviewable

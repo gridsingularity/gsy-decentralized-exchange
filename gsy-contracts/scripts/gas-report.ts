@@ -1,4 +1,5 @@
 import { ethers } from "hardhat";
+import type { Signer } from "ethers";
 import { mkdirSync, writeFileSync } from "fs";
 import { dirname } from "path";
 
@@ -194,10 +195,11 @@ async function recordEstimate(
 async function deployUpgradeableContract(
   contractName: string,
   proxyAdminOwner: string,
-  initializerArgs: any[] = [],
+  initializerArgs: any[],
+  signer: Signer,
 ): Promise<DeploymentResult> {
   console.log(`Deploying ${contractName} implementation...`);
-  const factory = await ethers.getContractFactory(contractName);
+  const factory = await ethers.getContractFactory(contractName, signer);
   const implementation = await factory.deploy();
   await recordReceipt(
     "Deployment",
@@ -216,6 +218,7 @@ async function deployUpgradeableContract(
   );
   const proxyFactory = await ethers.getContractFactory(
     "TransparentUpgradeableProxy",
+    signer,
   );
   console.log(`Deploying ${contractName} proxy...`);
   const proxy = await proxyFactory.deploy(
@@ -342,14 +345,19 @@ function writeReports(
   );
 }
 
-async function main() {
+export async function main() {
+  entries.length = 0;
   const signers = await ethers.getSigners();
-  const deployer = signers[0];
-  const actorRegistrar = signers[1] ?? deployer;
-
-  if (!deployer) {
+  if (!signers[0]) {
     throw new Error("No deployer signer configured");
   }
+
+  // Keep one nonce sequence across deployments and calls, including the remote
+  // single-account case where the deployer also acts as the registrar.
+  const deployer = new ethers.NonceManager(signers[0]);
+  const actorRegistrar = signers[1]
+    ? new ethers.NonceManager(signers[1])
+    : deployer;
 
   const deployerAddress = await deployer.getAddress();
   const actorRegistrarAddress = await actorRegistrar.getAddress();
@@ -391,21 +399,25 @@ async function main() {
     "ActorRegistry",
     deployerAddress,
     [deployerAddress],
+    deployer,
   );
   const marketController = await deployUpgradeableContract(
     "MarketController",
     deployerAddress,
     [deployerAddress],
+    deployer,
   );
   const orderRegistry = await deployUpgradeableContract(
     "OrderRegistry",
     deployerAddress,
     [deployerAddress, marketController.proxyAddress],
+    deployer,
   );
   const tradeSettlement = await deployUpgradeableContract(
     "TradeSettlement",
     deployerAddress,
     [deployerAddress, orderRegistry.proxyAddress],
+    deployer,
   );
 
   const actorRegistryContract = actorRegistry.contract as any;
@@ -481,8 +493,15 @@ async function main() {
   const statusOrderId = bytes16Id("gas:status-order");
   const tradeId = bytes16Id("gas:trade");
   const residualOfferId = bytes16Id("gas:residual-offer");
-  const now = Math.floor(Date.now() / 1000);
-  const timeSlot = Math.floor(now / 900) * 900 + 900;
+  const block = await withTimeout(
+    "Benchmark timestamp fetch",
+    ethers.provider.getBlock("latest"),
+    RPC_CALL_TIMEOUT_MS,
+  );
+  if (!block) throw new Error("Missing latest block for benchmark timing");
+  const now = block.timestamp;
+  // A remote run sends many transactions; do not close at the next quarter hour.
+  const timeSlot = Math.floor(now / 900) * 900 + 24 * 3600;
 
   await recordTx(
     "Mutating calls",
@@ -527,7 +546,7 @@ async function main() {
   const newMarket = (id: string, marketType: number) => ({
     marketId: id,
     communityId: bytes16Id("gas:community"),
-    openingTime: timeSlot - 3600,
+    openingTime: now,
     closingTime: timeSlot,
     deliveryStartTime: timeSlot,
     deliveryEndTime: timeSlot + 900,
@@ -955,7 +974,9 @@ async function main() {
   console.log(`Gas report JSON written to ${jsonPath}`);
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
+}
