@@ -45,6 +45,13 @@ jobs:
             RUSTSEC-2026-0367 # zip extraction preserves SUID/SGID bits
             RUSTSEC-2026-0368 # zip extraction follows symlinks outside the destination
             RUSTSEC-2026-0369 # zip extraction applies permissions through symlinks
+            # The same inactive zip dependency locks zstd-safe 5.x; keep active versions >=8.2.0.
+            RUSTSEC-2026-0403 # legacy streaming decompression can expose uninitialized memory
+            # Temporary accepted risk: ethers 2.x -> k256 0.13 -> elliptic-curve 0.13 pins
+            # crypto-bigint 0.5. This is ACTIVE in transaction signing, not an unused dependency.
+            # TODO: upgrade/replace the signing stack to use crypto-bigint >=0.7.6 and remove
+            # this exception. Until then, secret-dependent timing remains a known risk.
+            RUSTSEC-2026-0387
             # Temporary rustls 0.21 exceptions via ethers / reqwest; no patched 0.21 release.
             # Keep rustls 0.23 patched to >=0.23.46 in Cargo.lock despite these ID-wide ignores.
             # Revisit when migrating the legacy TLS stack or adding custom TLS configuration.
@@ -90,6 +97,10 @@ jobs:
               dependency_tree="$(cargo tree --locked --workspace --all-features --target all --edges normal,build,dev --prefix none)"
               if grep -q '^zip v' <<< "$dependency_tree"; then
                 echo "ZIP is active in the dependency tree; revisit the temporary audit exceptions."
+                exit 1
+              fi
+              if grep -Eq '^zstd-safe v([0-7]\.|8\.[01]\.)' <<< "$dependency_tree"; then
+                echo "Vulnerable zstd-safe is active; upgrade to >=8.2.0 before using the audit exception."
                 exit 1
               fi
               cargo audit "${audit_args[@]}"
