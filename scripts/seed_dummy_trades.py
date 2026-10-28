@@ -3,10 +3,14 @@
 
 Only the `trades` collection is written (via REST `POST /trades`); cleanup uses
 mongosh inside the Mongo container over SSH. Standard library only.
+These are synthetic imports, not lifecycle events; they do not populate the
+verification timestamp needed by guarantees-of-origin queries.
+Queries use market IDs: time-range queries require stored market records,
+which this trades-only fixture does not create.
 
 Subcommands:
   generate   build the deterministic dataset and write it to --dataset (no network)
-  preflight  EWDS trades.query round-trip on a 1-day window, expecting no dummy trades
+  preflight  EWDS trades.query round-trip for one market, expecting no dummy trades
   seed       POST the dataset in batches (aborts if dummy trades already exist)
   validate   REST full coverage + EWDS tradesQuery/tradesQueryResponse + isolation checks
   cleanup    delete every trade whose trade_uuid starts with the dummy prefix
@@ -35,7 +39,7 @@ from datetime import datetime, timezone
 SLOT_SECS = 900
 DAY_SECS = 86_400
 TRADE_PREFIX = "dummy-trade-"
-COMMUNITY_ID = "intelligent-dummy-community"
+COMMUNITY_ID = "00000000-0000-4000-8000-000000000001"
 MARKET_TYPE = "spot"
 
 PV_SELLERS = ["PV1", "PV2"]
@@ -57,7 +61,7 @@ TRADE_KEYS = {
     "tradeStatus": str,
     "tradeQuantity": (int, float),
     "tradePrice": (int, float),
-    "timestamp": int,
+    "timestamp": str,
 }
 TRADE_REQUIRED = set(TRADE_KEYS) - {"residualBidId", "residualOfferId"}
 
@@ -86,6 +90,19 @@ def fmt_ts(ts):
     return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
 
 
+def wire_ts(ts):
+    return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(timespec="seconds")
+
+
+def parse_ts(value):
+    if not isinstance(value, str):
+        raise ValueError("timestamp must be an RFC 3339 string")
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if "T" not in value or parsed.tzinfo is None or parsed.timestamp() < 0:
+        raise ValueError("timestamp must have a timezone and be at or after the Unix epoch")
+    return int(parsed.timestamp())
+
+
 def market_id_for_slot(slot):
     """Mirrors bytes16_to_hex(generate_market_id(community, MarketType::Spot, slot))."""
     digest = hashlib.blake2b(
@@ -103,7 +120,7 @@ def pick_status(rng, slot, as_of):
         return "settled"
     if r < 0.97:
         return "executed"
-    return "rejected"
+    return "penalized"
 
 
 def pv_quantity(rng, slot):
@@ -161,7 +178,7 @@ def generate_dataset(start, end, per_slot, seed, as_of):
                     "tradeStatus": pick_status(rng, slot, as_of),
                     "tradeQuantity": round(quantity, 4),
                     "tradePrice": round(trade_price(rng, slot), 4),
-                    "timestamp": slot,
+                    "timestamp": wire_ts(slot),
                 }
             )
     return trades
@@ -187,6 +204,9 @@ def dataset_stats(meta, trades):
 def load_dataset(path):
     with open(path) as fh:
         data = json.load(fh)
+    errors = schema_errors({"requestId": "dataset", "success": True, "data": data["trades"]})
+    if data["meta"].get("community_id") != COMMUNITY_ID or errors:
+        sys.exit(f"Dataset {path} uses an incompatible format; rerun 'generate' first. {errors[:3]}")
     return data["meta"], data["trades"]
 
 
@@ -258,8 +278,8 @@ def http(method, url, body=None, timeout=60):
         return err.code, err.read().decode()
 
 
-def rest_get_trades(args, start, end):
-    query = urllib.parse.urlencode({"start_time": start, "end_time": end})
+def rest_get_trades(args, market_id):
+    query = urllib.parse.urlencode({"market_id": market_id})
     status, body = http("GET", f"{args.rest_url}/trades?{query}")
     if status != 200:
         raise RuntimeError(f"GET /trades failed: HTTP {status}: {body[:300]}")
@@ -308,7 +328,7 @@ def backoff(attempt):
     return min(2.0 * (2 ** min(attempt, 4)), 30.0)
 
 
-def ewds_trades_query(args, start, end, timeout=90):
+def ewds_trades_query(args, *, market_id=None, start=None, end=None, timeout=90):
     """Publish a trades.query and wait for the matching tradesQueryResponse envelope.
 
     Returns (envelope, latency_seconds, payload_bytes).
@@ -317,7 +337,8 @@ def ewds_trades_query(args, start, end, timeout=90):
     envelope = {
         "requestId": request_id,
         "operation": "trades.query",
-        "payload": {"startTime": start, "endTime": end},
+        "payload": ({"marketId": market_id} if market_id is not None else
+                    {"startTime": wire_ts(start), "endTime": wire_ts(end)}),
     }
     message = {
         "fqcn": EWDS_REQUEST_FQCN,
@@ -403,8 +424,10 @@ def schema_errors(envelope):
             errors.append(f"{tid}: tradeStatus {item.get('tradeStatus')!r}")
         if not isinstance(item.get("tradeQuantity"), (int, float)) or item["tradeQuantity"] <= 0:
             errors.append(f"{tid}: tradeQuantity not > 0")
-        if not isinstance(item.get("timestamp"), int) or item["timestamp"] < 0:
-            errors.append(f"{tid}: timestamp not an integer >= 0")
+        try:
+            parse_ts(item.get("timestamp"))
+        except ValueError:
+            errors.append(f"{tid}: timestamp is not a valid RFC 3339 value at or after the Unix epoch")
         if len(errors) > 20:
             break
     return errors
@@ -432,8 +455,8 @@ class Report:
         return not failed
 
 
-def expected_in(trades, start, end):
-    return {t["tradeId"]: t for t in trades if start <= t["timestamp"] < end}
+def expected_for_market(trades, market_id):
+    return {t["tradeId"]: t for t in trades if t["marketId"] == market_id}
 
 
 def compare(actual_list, expected):
@@ -454,16 +477,16 @@ def compare(actual_list, expected):
     return problems
 
 
-def ewds_window_check(report, args, trades, label, start, end):
+def ewds_market_check(report, args, trades, label, market_id):
     try:
-        env, latency, size = ewds_trades_query(args, start, end)
+        env, latency, size = ewds_trades_query(args, market_id=market_id)
     except RuntimeError as err:
         return report.check(f"EWDS {label}", False, str(err))
     errors = schema_errors(env)
     report.check(f"EWDS {label} schema", not errors, "; ".join(errors[:5]))
     if not env.get("success"):
         return report.check(f"EWDS {label}", False, f"success=false error={env.get('error')}")
-    problems = compare(env.get("data", []), expected_in(trades, start, end))
+    problems = compare(env.get("data", []), expected_for_market(trades, market_id))
     return report.check(
         f"EWDS {label}",
         not problems,
@@ -472,15 +495,17 @@ def ewds_window_check(report, args, trades, label, start, end):
     )
 
 
-def ewds_rejection_check(report, args, label, start, end, code):
+def ewds_range_check(report, args, label, start, end, code=None):
     try:
-        env, latency, _ = ewds_trades_query(args, start, end)
+        env, latency, _ = ewds_trades_query(args, start=start, end=end)
     except RuntimeError as err:
-        return report.check(f"EWDS reject {label}", False, str(err))
+        return report.check(f"EWDS range {label}", False, str(err))
     err = env.get("error") or {}
-    ok = env.get("success") is False and env.get("data") == [] and err.get("code") == code
+    ok = (env.get("success") is True if code is None else
+          env.get("success") is False and env.get("data") == [] and err.get("code") == code)
+    ok = ok and not schema_errors(env)
     return report.check(
-        f"EWDS reject {label}",
+        f"EWDS range {label}",
         ok,
         f"{latency:.1f}s, success={env.get('success')}, error={err}",
     )
@@ -527,9 +552,10 @@ def cmd_preflight(args):
     report = Report()
     with Tunnel(args):
         start = meta["start"]
-        print(f"EWDS preflight: trades.query {fmt_ts(start)} .. {fmt_ts(start + DAY_SECS)}")
+        market_id = market_id_for_slot(start)
+        print(f"EWDS preflight: trades.query market {market_id}")
         try:
-            env, latency, size = ewds_trades_query(args, start, start + DAY_SECS)
+            env, latency, size = ewds_trades_query(args, market_id=market_id)
         except RuntimeError as err:
             report.check("EWDS preflight round-trip", False, str(err))
             return report.summary()
@@ -548,15 +574,13 @@ def cmd_preflight(args):
 def cmd_seed(args):
     meta, trades = ensure_dataset(args)
     with Tunnel(args):
-        existing = [
-            t
-            for t in rest_get_trades(args, meta["start"], meta["end"])
-            if t["tradeId"].startswith(TRADE_PREFIX)
-        ]
+        existing = int(mongosh(args,
+            f"print(db.trades.countDocuments({{trade_uuid: /^{TRADE_PREFIX}/}}));"
+        ).splitlines()[-1])
         if existing:
             if not args.reset:
-                sys.exit(f"{len(existing)} dummy trades already exist; rerun with --reset")
-            print(f"--reset: removing {len(existing)} existing dummy trades")
+                sys.exit(f"{existing} dummy trades already exist; rerun with --reset")
+            print(f"--reset: removing {existing} existing dummy trades")
             cmd_cleanup(args)
         before = collection_counts(args)
         print(f"Collection counts before seeding: {before}")
@@ -582,30 +606,33 @@ def cmd_validate(args):
     start, end = meta["start"], meta["end"]
     report = Report()
     with Tunnel(args):
-        print("V1 REST full coverage (per day)")
+        print("V1 REST full coverage (per market)")
         rest_all = []
-        day_problems = []
-        for day in range(start, end, DAY_SECS):
-            got = rest_get_trades(args, day, day + DAY_SECS)
+        market_problems = []
+        expected_by_market = defaultdict(dict)
+        for trade in trades:
+            expected_by_market[trade["marketId"]][trade["tradeId"]] = trade
+        for market_id, expected in expected_by_market.items():
+            got = rest_get_trades(args, market_id)
             rest_all.extend(got)
-            problems = compare(got, expected_in(trades, day, day + DAY_SECS))
+            problems = compare(got, expected)
             if problems:
-                day_problems.append(f"{fmt_ts(day)}: {'; '.join(problems)}")
+                market_problems.append(f"{market_id}: {'; '.join(problems)}")
         report.check(
-            "REST per-day equality",
-            not day_problems,
-            f"{len(rest_all)} trades over {(end - start) // DAY_SECS} days"
-            + ("; " + " | ".join(day_problems[:3]) if day_problems else ""),
+            "REST per-market equality",
+            not market_problems,
+            f"{len(rest_all)} trades over {len(expected_by_market)} markets"
+            + ("; " + " | ".join(market_problems[:3]) if market_problems else ""),
         )
         report.check("REST total count", len(rest_all) == len(trades), f"{len(rest_all)}/{len(trades)}")
-        per_slot = Counter(t["timestamp"] for t in rest_all)
+        per_slot = Counter(parse_ts(t["timestamp"]) for t in rest_all)
         bad_slots = [s for s in range(start, end, SLOT_SECS) if per_slot.get(s) != meta["per_slot"]]
         report.check(f"{meta['per_slot']} trades per slot", not bad_slots, f"{len(bad_slots)} bad slots")
         actors = {t["buyerId"] for t in rest_all} | {t["sellerId"] for t in rest_all}
         report.check("actors within roster", actors <= ROSTER, f"{sorted(actors)}")
         self_trades = [t["tradeId"] for t in rest_all if t["buyerId"] == t["sellerId"]]
         report.check("buyer != seller", not self_trades, f"{len(self_trades)} self trades")
-        bad_markets = [t["tradeId"] for t in rest_all if t["marketId"] != market_id_for_slot(t["timestamp"])]
+        bad_markets = [t["tradeId"] for t in rest_all if t["marketId"] != market_id_for_slot(parse_ts(t["timestamp"]))]
         report.check("marketId derivation", not bad_markets, f"{len(bad_markets)} mismatches")
         markets_per_slot = defaultdict(set)
         for t in rest_all:
@@ -618,30 +645,24 @@ def cmd_validate(args):
         print("V2 EWDS tradesQuery -> tradesQueryResponse")
         mid = start + (end - start) // 2
         slot = mid - mid % SLOT_SECS
-        ewds_window_check(report, args, trades, f"slot {fmt_ts(slot)}", slot, slot + SLOT_SECS)
-        ewds_window_check(
-            report, args, trades, f"next slot {fmt_ts(slot + SLOT_SECS)}",
-            slot + SLOT_SECS, slot + 2 * SLOT_SECS,
-        )
-        today = int(time.time()) // DAY_SECS * DAY_SECS
-        days = [start, parse_date("2026-08-31"), parse_date("2026-09-01"),
-                parse_date("2026-09-15"), today, end - DAY_SECS]
+        slots = [start, slot, slot + SLOT_SECS, end - SLOT_SECS]
         if args.exhaustive:
-            days = list(range(start, end, DAY_SECS))
-        for day in sorted({d for d in days if start <= d < end}):
-            ewds_window_check(report, args, trades, f"day {fmt_ts(day)[:10]}", day, day + DAY_SECS)
-        ewds_window_check(
-            report, args, trades, "day before range", start - DAY_SECS, start
+            slots = range(start, end, SLOT_SECS)
+        for slot in sorted({s for s in slots if start <= s < end}):
+            ewds_market_check(report, args, trades, f"slot {fmt_ts(slot)}", market_id_for_slot(slot))
+        ewds_market_check(
+            report, args, trades, "market before range", market_id_for_slot(start - SLOT_SECS)
         )
 
         if args.check_range_limit:
             print("V4/V5 EWDS tradesQuery range limit")
-            ewds_rejection_check(report, args, "86401s span", start, start + DAY_SECS + 1,
-                                 "TIME_RANGE_TOO_LARGE")
-            ewds_rejection_check(report, args, "full range", start, end, "TIME_RANGE_TOO_LARGE")
-            ewds_rejection_check(report, args, "inverted range", start + DAY_SECS, start,
-                                 "INVALID_TIME_RANGE")
-            ewds_window_check(report, args, trades, "exactly 1 day (limit)", start, start + DAY_SECS)
+            ewds_range_check(report, args, "86401s span", start, start + DAY_SECS + 1,
+                             "TIME_RANGE_TOO_LARGE")
+            if end - start > DAY_SECS:
+                ewds_range_check(report, args, "full range", start, end, "TIME_RANGE_TOO_LARGE")
+            ewds_range_check(report, args, "inverted range", start + DAY_SECS, start,
+                             "INVALID_TIME_RANGE")
+            ewds_range_check(report, args, "exactly 1 day (limit)", start, start + DAY_SECS)
 
         print("V3 isolation")
         counts = collection_counts(args)
@@ -672,7 +693,7 @@ def main():
     parser.add_argument("--dataset", default="dummy_trades_dataset.json")
     parser.add_argument("--batch-size", type=int, default=100)
     parser.add_argument("--reset", action="store_true", help="seed: delete existing dummy trades first")
-    parser.add_argument("--exhaustive", action="store_true", help="validate: EWDS query every day")
+    parser.add_argument("--exhaustive", action="store_true", help="validate: EWDS query every market")
     parser.add_argument("--check-range-limit", action="store_true",
                         help="validate: also check the 1-day tradesQuery limit (Part B)")
     parser.add_argument("--ssh-host", default="root@localhost")

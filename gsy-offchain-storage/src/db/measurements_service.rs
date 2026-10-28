@@ -1,6 +1,6 @@
 use crate::db::DatabaseWrapper;
 use anyhow::Result;
-use futures::StreamExt;
+use futures::TryStreamExt;
 use mongodb::bson::{doc, Bson};
 use mongodb::options::IndexOptions;
 use mongodb::{Collection, IndexModel};
@@ -163,16 +163,7 @@ impl MeasurementPointService {
         if let Some(point_type) = point_type {
             filter.insert("type", mongodb::bson::to_bson(&point_type)?);
         }
-        let mut cursor = self.0.find(filter).await?;
-        let mut result = Vec::new();
-        while let Some(doc) = cursor.next().await {
-            if let Ok(document) = doc {
-                result.push(document);
-            } else {
-                break;
-            }
-        }
-        Ok(result)
+        Ok(self.0.find(filter).await?.try_collect().await?)
     }
 }
 
@@ -247,16 +238,7 @@ impl TimeseriesService {
             }
             (None, None) => {}
         }
-        let mut cursor = self.0.find(filter).await?;
-        let mut result = Vec::new();
-        while let Some(doc) = cursor.next().await {
-            if let Ok(document) = doc {
-                result.push(document);
-            } else {
-                break;
-            }
-        }
-        Ok(result)
+        Ok(self.0.find(filter).await?.try_collect().await?)
     }
 }
 

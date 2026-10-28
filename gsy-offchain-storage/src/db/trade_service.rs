@@ -1,9 +1,9 @@
 use crate::db::DatabaseWrapper;
 use anyhow::{Context, Result};
-use futures::StreamExt;
+use futures::TryStreamExt;
 use mongodb::bson::{doc, Bson};
 use mongodb::options::IndexOptions;
-use mongodb::{Collection, Cursor, IndexModel};
+use mongodb::{Collection, IndexModel};
 use primitives::db_api_schema::trades::{
     ClearingResultSchema, DbTradeSchema, MarketRoleSchema, TradeStatus,
 };
@@ -82,7 +82,8 @@ pub async fn init_market_roles(db: &DatabaseWrapper) -> Result<()> {
 pub struct TradeService(pub Collection<DbTradeSchema>);
 
 impl TradeService {
-    /// Index a confirmed settlement without overwriting match details or later statuses.
+    /// Index a match included in a block without overwriting details or later statuses.
+    /// The listener does not wait for a confirmation depth.
     pub async fn record_settlement(
         &self,
         mut trade: DbTradeSchema,
@@ -152,8 +153,7 @@ impl TradeService {
 
     #[tracing::instrument(name = "Fetching trades from database", skip(self))]
     pub async fn get_all_trades(&self) -> Result<Vec<DbTradeSchema>> {
-        let cursor = self.0.find(doc! {}).await?;
-        self.create_vector_from_cursor(cursor).await
+        Ok(self.0.find(doc! {}).await?.try_collect().await?)
     }
 
     #[tracing::instrument(
@@ -172,21 +172,6 @@ impl TradeService {
                 Err(anyhow::Error::from(e))
             }
         }
-    }
-
-    async fn create_vector_from_cursor(
-        &self,
-        mut cursor: Cursor<DbTradeSchema>,
-    ) -> Result<Vec<DbTradeSchema>> {
-        let mut result: Vec<DbTradeSchema> = Vec::new();
-        while let Some(doc) = cursor.next().await {
-            if let Ok(document) = doc {
-                result.push(document);
-            } else {
-                break;
-            }
-        }
-        Ok(result)
     }
 
     /// Trades of `market_id` if set; otherwise trades of the markets whose
@@ -211,7 +196,7 @@ impl TradeService {
         }
 
         match self.0.find(filter_params).await {
-            Ok(cursor) => self.create_vector_from_cursor(cursor).await,
+            Ok(cursor) => Ok(cursor.try_collect().await?),
             Err(e) => {
                 tracing::error!("Failed to execute query: {:?}", e);
                 Err(anyhow::Error::from(e))
@@ -243,7 +228,7 @@ impl TradeService {
         }
 
         match self.0.find(filter_params).await {
-            Ok(cursor) => self.create_vector_from_cursor(cursor).await,
+            Ok(cursor) => Ok(cursor.try_collect().await?),
             Err(e) => {
                 tracing::error!("Failed to execute query: {:?}", e);
                 Err(anyhow::Error::from(e))
@@ -277,16 +262,7 @@ impl ClearingResultService {
 
     #[tracing::instrument(name = "Fetching clearing result by market id", skip(self))]
     pub async fn get_by_market(&self, market_id: &str) -> Result<Vec<ClearingResultSchema>> {
-        let mut cursor = self.0.find(doc! {"market_id": market_id}).await?;
-        let mut result = Vec::new();
-        while let Some(doc) = cursor.next().await {
-            if let Ok(document) = doc {
-                result.push(document);
-            } else {
-                break;
-            }
-        }
-        Ok(result)
+        Ok(self.0.find(doc! {"market_id": market_id}).await?.try_collect().await?)
     }
 }
 
@@ -320,16 +296,7 @@ impl MarketRoleService {
 
     #[tracing::instrument(name = "Fetching all market roles", skip(self))]
     pub async fn get_all(&self) -> Result<Vec<MarketRoleSchema>> {
-        let mut cursor = self.0.find(doc! {}).await?;
-        let mut result = Vec::new();
-        while let Some(doc) = cursor.next().await {
-            if let Ok(document) = doc {
-                result.push(document);
-            } else {
-                break;
-            }
-        }
-        Ok(result)
+        Ok(self.0.find(doc! {}).await?.try_collect().await?)
     }
 }
 

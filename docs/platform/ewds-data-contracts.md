@@ -99,18 +99,24 @@ Used by `measurements.query` responses and `measurements.event` messages.
 
 ### Trade Mapping
 
+DD-453 changes the v1 `tradeStatus` values in place to `matched`, `executed`,
+`settled` and `penalized`; no new schema version was introduced. Consumers must
+use these values and the current lifecycle: listener-indexed block inclusion
+creates `matched`, verification produces `executed` or terminal `penalized`,
+and financial `settled` is reserved for a future integration.
+
 | Ontology property | Schema field | Current runtime source |
 |---|---|---|
 | `int:tradeId` | `tradeId` | `DbTradeSchema.trade_uuid` |
 | `int:bidId` | `bidId` | `DbTradeSchema.bid_hash` |
 | `int:offerId` | `offerId` | `DbTradeSchema.offer_hash` |
-| `int:residualBidId` | `residualBidId` | `DbTradeSchema.residual_bid.order_id` |
-| `int:residualOfferId` | `residualOfferId` | `DbTradeSchema.residual_offer.order_id` |
+| `int:residualBidId` | `residualBidId` | `DbTradeSchema.residual_bid_id` |
+| `int:residualOfferId` | `residualOfferId` | `DbTradeSchema.residual_offer_id` |
 | `int:marketId` | `marketId` | `DbTradeSchema.market_id` |
 | `int:tradeStatus` | `tradeStatus` | `DbTradeSchema.status` |
 | `int:tradeQuantity` | `tradeQuantity` | `DbTradeSchema.parameters.selected_energy_kWh` |
 | `int:tradePrice` | `tradePrice` | `DbTradeSchema.parameters.energy_rate` |
-| `int:tradedAt` | `tradedAt` | `DbTradeSchema.creation_time` |
+| `int:tradedAt` | `timestamp` | `DbTradeSchema.creation_time` (RFC 3339) |
 | `int:buyerId` | `buyerId` | `DbTradeSchema.buyer` |
 | `int:sellerId` | `sellerId` | `DbTradeSchema.seller` |
 

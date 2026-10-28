@@ -147,11 +147,14 @@ EWDS uses `OFFCHAIN_STORAGE_TRANSPORT=ewds` and the responder's existing
 The events channels carry fire-and-forget domain events rather than
 request/reply traffic. When `EWDS_ENABLE_HANDLER` is on, the off-chain storage
 publishes a `trade.event` on `trade` after indexing `TradeSettled`,
-`PenaltyRecorded` or `DeliveryVerified`. `TradeSettled` creates a `Matched` trade;
-no pre-confirmation trade records or notifications are generated. `Settled` is
+`PenaltyRecorded` or a penalty-free `DeliveryVerified`. `TradeSettled` creates
+a `Matched` trade once included in a block indexed by the listener, without
+waiting for confirmation depth. No pre-inclusion trade records or notifications are generated. `Settled` is
 reserved for financial settlement by the partner's future billing integration.
 Replays re-read the stored status instead of reusing the incoming payload.
-A Penalized trade remains Penalized after verification; a penalty-free trade becomes Executed.
+A Penalized trade remains Penalized after verification, with no second trade
+notification; the consumed orders still receive their status notification.
+A penalty-free trade becomes Executed.
 It also publishes a `clearingResult.event` on
 `clearingResult` every time it persists a clearing result from an EVM
 `MarketClearing` event, and a `market.event` on `market` every time it persists
@@ -170,10 +173,21 @@ event gets a random UUID as `eventId`, which is also its DDHub `transactionId`.
 `occurredAt` is an RFC 3339 timestamp: the time of the newest item, for a
 market its on-chain `createdAt`. For trades it uses the status-change block
 timestamp, falling back to creation time for legacy records without a status timestamp.
-The trade DTO's `timestamp` is always its creation time. Duplicate notifications are possible
-on replay; publication is best effort and background sends can arrive out of
-order. Consumers should compare `occurredAt` and the lifecycle progression,
-not arrival order.
+The trade DTO's `timestamp` is always its creation time. Duplicate notifications
+are possible on listener/block replay, on repeated `PenaltyRecorded` logs for
+one trade (including separate `submitPenalties` calls), and on a send retry after
+an ambiguous gateway response. Publication is best effort and background sends
+can arrive out of order. Consumers should compare `occurredAt` and the lifecycle
+progression, not arrival order. The provisional progression is `matched` to
+`executed` or `penalized`; do not regress either verdict to `matched` on a late
+notification. `penalized` is terminal; no transition to financial `settled` is
+implemented yet.
+
+Order, trade and clearing-result queries accept UUID or 16-byte hex market IDs.
+Invalid IDs receive `success: false` with `error.code: invalid_request`.
+Database failures in read queries receive `STORAGE_UNAVAILABLE` and no partial
+data. Sending an error response keeps the rest of the already-polled request
+batch eligible for processing; callers can retry failed queries.
 
 The same channels also carry the events other systems send to GSY; see
 [Inbound Events](#inbound-events).
@@ -569,9 +583,8 @@ Channel/topic setup notes:
 
 Validated e2e status:
 
-- The pay-as-bid Cucumber e2e suite passed with EWDS mode enabled: `3`
-  features, `3` scenarios, and `30` steps passed, including isolated trading
-  and penalty settlement across two community markets.
+- The pay-as-bid Cucumber e2e suite has been validated with EWDS mode enabled,
+  including isolated trading and penalties across two community markets.
 - The validated test command is documented in `docs/setup/test.md`.
 - DDHub delivery is asynchronous; use `EWDS_RESPONSE_TIMEOUT_MS=60000` for
   deterministic e2e runs. The GSY clients and responder apply exponential

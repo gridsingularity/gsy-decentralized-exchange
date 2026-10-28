@@ -9,7 +9,10 @@ use gsy_offchain_storage::ewds_handler::{
 };
 use primitives::db_api_schema::grid_topology::FacilitySchema;
 use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
-use primitives::db_api_schema::trades::{DbTradeSchema, TradeParameters, TradeStatus};
+use primitives::db_api_schema::orders::{DbOrderSchema, OrderEnum, OrderStatus};
+use primitives::db_api_schema::trades::{
+    ClearingResultSchema, ClearingStatus, DbTradeSchema, TradeParameters, TradeStatus,
+};
 use primitives::ewds::dto::{EwdsRequestEnvelope, EwdsSendMessageDto};
 use primitives::ewds::{EwdsEventTopicConfig, EwdsOperation, EwdsTopicConfig};
 use primitives::utils::{
@@ -89,13 +92,10 @@ async fn orders_query_success() {
     let config = test_config(server.uri());
     let client = reqwest::Client::new();
 
-    // seed one order for market "m1" if desired:
-    // app.db_wrapper.orders().insert_orders(vec![sample_order("m1")]).await.unwrap();
-
     let env = envelope(
         EwdsOperation::OrdersQuery,
         "req-orders-1",
-        json!({ "marketId": "m1" }),
+        json!({ "marketId": "0x11111111111141118111111111111111" }),
     );
 
     handle_request(&app.db_wrapper, &client, &config, env)
@@ -120,11 +120,12 @@ async fn orders_query_bad_payload_errors() {
         json!({ "startTime": 0 }),
     );
 
-    let err = handle_request(&app.db_wrapper, &client, &config, env)
+    handle_request(&app.db_wrapper, &client, &config, env)
         .await
-        .unwrap_err();
-    assert!(err.to_string().contains("orders.query payload parse error"));
-    assert!(server.received_requests().await.unwrap().is_empty());
+        .unwrap();
+    let response = captured_envelope(&server).await;
+    assert_eq!(response["success"], false);
+    assert_eq!(response["error"]["code"], "invalid_request");
 
     stop_app(app).await;
 }
@@ -157,6 +158,220 @@ fn make_trade(trade_uuid: &str, market_id: &str) -> DbTradeSchema {
     }
 }
 
+#[tokio::test]
+async fn market_queries_accept_uuid_and_hex_over_http_and_ewds() {
+    let app = init_app().await;
+    let client = reqwest::Client::new();
+    let market_id = bytes16_to_hex([0xab; 16]);
+    for id in [&market_id, &bytes16_to_hex([0xcd; 16])] {
+        app.db_wrapper
+            .orders()
+            .insert_orders(vec![DbOrderSchema {
+                order_id: format!("order-{id}"),
+                status: OrderStatus::Submitted,
+                status_updated_at: None,
+                order_type: OrderEnum::Bid,
+                created_by: "buyer".to_string(),
+                energy_kWh: 1.0,
+                energy_rate: 10.0,
+                area_uuid: "facility".to_string(),
+                market_id: id.clone(),
+                time_slot: TRADES_BASE_TIME,
+                creation_time: TRADES_BASE_TIME,
+                requirements: None,
+                attributes: None,
+            }])
+            .await
+            .unwrap();
+        app.db_wrapper
+            .trades()
+            .insert_trades(vec![make_trade(&format!("trade-{id}"), id)])
+            .await
+            .unwrap();
+        app.db_wrapper
+            .clearing_results()
+            .insert(ClearingResultSchema {
+                market_id: id.clone(),
+                clearing_status: ClearingStatus::Final,
+                no_bid_reason: None,
+                clearing_price: 10.0,
+                total_supply: 1.0,
+                total_demand: 1.0,
+                traded_quantity: 1.0,
+                num_trades: 1,
+                tx_hash: "0xabc".to_string(),
+                clearing_time: TRADES_BASE_TIME,
+            })
+            .await
+            .unwrap();
+    }
+
+    for (endpoint, operation) in [
+        ("orders", EwdsOperation::OrdersQuery),
+        ("trades", EwdsOperation::TradesQuery),
+        ("clearing-results", EwdsOperation::ClearingResultsQuery),
+    ] {
+        let mut expected = None;
+        for query_id in [
+            market_id.clone(),
+            bytes16_to_uuid_string([0xab; 16]),
+            format!("0x{}", "AB".repeat(16)),
+        ] {
+            let response = client
+                .get(format!("{}/{endpoint}", app.address))
+                .query(&[("market_id", &query_id)])
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), reqwest::StatusCode::OK);
+            let http_data: Vec<serde_json::Value> = response.json().await.unwrap();
+            assert_eq!(http_data.len(), 1, "{endpoint}: {query_id}");
+            assert_eq!(http_data[0]["marketId"], market_id);
+            if let Some(ref expected) = expected {
+                assert_eq!(&http_data, expected);
+            }
+            expected = Some(http_data.clone());
+
+            let server = mock_gateway().await;
+            handle_request(
+                &app.db_wrapper,
+                &client,
+                &test_config(server.uri()),
+                envelope(operation, "market-format", json!({"marketId": query_id})),
+            )
+            .await
+            .unwrap();
+            assert_eq!(captured_data(&server).await, http_data);
+        }
+        for query_id in [
+            "garbage",
+            "0x1234",
+            "0x1111111111111111111111111111111111111111111111111111111111111111",
+        ] {
+            let response = client
+                .get(format!("{}/{endpoint}", app.address))
+                .query(&[("market_id", query_id)])
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+            let server = mock_gateway().await;
+            handle_request(
+                &app.db_wrapper,
+                &client,
+                &test_config(server.uri()),
+                envelope(operation, "invalid-market", json!({"marketId": query_id})),
+            )
+            .await
+            .unwrap();
+            let response = captured_envelope(&server).await;
+            assert_eq!(response["requestId"], "invalid-market");
+            assert_eq!(response["success"], false);
+            assert_eq!(response["data"], json!([]));
+            assert_eq!(response["error"]["code"], "invalid_request");
+        }
+    }
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn each_read_query_answers_storage_failures() {
+    let market_id = "0x11111111111141118111111111111111";
+    for (operation, collection) in [
+        (EwdsOperation::OrdersQuery, "orders"),
+        (EwdsOperation::TradesQuery, "trades"),
+        (EwdsOperation::ClearingResultsQuery, "clearing_results"),
+        (EwdsOperation::MarketsQuery, "markets"),
+        (EwdsOperation::MeasurementsQuery, "measurement_points"),
+        (EwdsOperation::CommunitiesQuery, "communities"),
+        (EwdsOperation::FacilitiesQuery, "facilities"),
+        (EwdsOperation::GuaranteesOfOriginQuery, "trades"),
+    ] {
+        let app = init_app().await;
+        // Selectable by the query, but missing fields required for deserialization.
+        app.db_wrapper
+            .collection::<mongodb::bson::Document>(collection)
+            .insert_one(mongodb::bson::doc! {
+                "market_id": market_id,
+                "type": "Measurement",
+                "status": "executed",
+                "status_updated_at": TRADES_BASE_TIME as i64,
+            })
+            .await
+            .unwrap();
+        let payload = if operation == EwdsOperation::GuaranteesOfOriginQuery {
+            json!({"startTime": TRADES_BASE_TIME, "endTime": TRADES_BASE_TIME + 1})
+        } else {
+            json!({"marketId": market_id})
+        };
+        let server = mock_gateway().await;
+        handle_request(
+            &app.db_wrapper,
+            &reqwest::Client::new(),
+            &test_config(server.uri()),
+            envelope(operation, "storage-error", payload),
+        )
+        .await
+        .unwrap();
+        let response = captured_envelope(&server).await;
+        assert_eq!(response["requestId"], "storage-error");
+        assert_eq!(response["success"], false, "{operation:?}");
+        assert_eq!(response["data"], json!([]));
+        assert_eq!(response["error"]["code"], "STORAGE_UNAVAILABLE");
+        stop_app(app).await;
+    }
+}
+
+#[tokio::test]
+async fn malformed_trade_returns_http_and_ewds_errors_instead_of_partial_results() {
+    let app = init_app().await;
+    let market_id = "0x11111111111141118111111111111111";
+    app.db_wrapper
+        .trades()
+        .insert_trades(vec![make_trade("valid", market_id)])
+        .await
+        .unwrap();
+    app.db_wrapper
+        .collection::<mongodb::bson::Document>("trades")
+        .insert_one(mongodb::bson::doc! {"trade_uuid": "invalid", "market_id": market_id})
+        .await
+        .unwrap();
+
+    let client = reqwest::Client::new();
+    let response = client
+        .get(format!("{}/trades", app.address))
+        .query(&[("market_id", market_id)])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        reqwest::StatusCode::INTERNAL_SERVER_ERROR
+    );
+    assert!(app.db_wrapper.trades().get_all_trades().await.is_err());
+
+    let server = mock_gateway().await;
+    let config = test_config(server.uri());
+    handle_request(
+        &app.db_wrapper,
+        &client,
+        &config,
+        envelope(
+            EwdsOperation::TradesQuery,
+            "malformed-trade",
+            json!({"marketId": market_id}),
+        ),
+    )
+    .await
+    .unwrap();
+    let response = captured_envelope(&server).await;
+    assert_eq!(response["requestId"], "malformed-trade");
+    assert_eq!(response["success"], false);
+    assert_eq!(response["data"], json!([]));
+    assert_eq!(response["error"]["code"], "STORAGE_UNAVAILABLE");
+    stop_app(app).await;
+}
+
 fn make_delivery_market(market_id: &str, delivery_offset: u64) -> MarketSchema {
     let delivery_start_time = TRADES_BASE_TIME + delivery_offset;
     MarketSchema {
@@ -182,16 +397,16 @@ async fn run_trades_query(request_id: &str, payload: serde_json::Value) -> serde
     let client = reqwest::Client::new();
 
     for market in [
-        make_delivery_market("market-day-start", 0),
-        make_delivery_market("market-next-day", MAX_TRADES_QUERY_RANGE_SECS),
+        make_delivery_market("0x00000000000000000000000000000001", 0),
+        make_delivery_market("0x00000000000000000000000000000002", MAX_TRADES_QUERY_RANGE_SECS),
     ] {
         app.db_wrapper.markets().upsert(market).await.unwrap();
     }
     app.db_wrapper
         .trades()
         .insert_trades(vec![
-            make_trade("trade-day-start", "market-day-start"),
-            make_trade("trade-next-day", "market-next-day"),
+            make_trade("trade-day-start", "0x00000000000000000000000000000001"),
+            make_trade("trade-next-day", "0x00000000000000000000000000000002"),
         ])
         .await
         .unwrap();
@@ -306,7 +521,7 @@ fn validate_trades_query_range_boundaries() {
 
 #[test]
 fn validate_trades_query_range_needs_no_range_for_a_market() {
-    let market_id = Some("MARKET-EWDS-A");
+    let market_id = Some("0xaaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa");
     assert_eq!(
         validate_trades_query_range(market_id, None, None).unwrap(),
         None
@@ -331,7 +546,7 @@ async fn trades_query_filters_by_market_id() {
     let app = init_app().await;
     let client = reqwest::Client::new();
 
-    for market_id in ["MARKET-EWDS-A", "MARKET-EWDS-B"] {
+    for market_id in ["0xaaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa", "0xbbbbbbbbbbbb4bbb8bbbbbbbbbbbbbbb"] {
         app.db_wrapper
             .markets()
             .upsert(make_delivery_market(market_id, 0))
@@ -341,8 +556,8 @@ async fn trades_query_filters_by_market_id() {
     app.db_wrapper
         .trades()
         .insert_trades(vec![
-            make_trade("TRADE-EWDS-A", "MARKET-EWDS-A"),
-            make_trade("TRADE-EWDS-B", "MARKET-EWDS-B"),
+            make_trade("TRADE-EWDS-A", "0xaaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa"),
+            make_trade("TRADE-EWDS-B", "0xbbbbbbbbbbbb4bbb8bbbbbbbbbbbbbbb"),
         ])
         .await
         .unwrap();
@@ -350,11 +565,11 @@ async fn trades_query_filters_by_market_id() {
     // The time range is optional when a market is given.
     for payload in [
         json!({
-            "marketId": "MARKET-EWDS-A",
+            "marketId": "0xaaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa",
             "startTime": trades_time(0),
             "endTime": trades_time(3_600),
         }),
-        json!({ "marketId": "MARKET-EWDS-A" }),
+        json!({ "marketId": "0xaaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa" }),
     ] {
         let server = mock_gateway().await;
         let config = test_config(server.uri());
@@ -388,11 +603,12 @@ async fn trades_query_bad_payload_errors() {
         json!({ "endTime": 9_999_999_999u64 }),
     );
 
-    let err = handle_request(&app.db_wrapper, &client, &config, env)
+    handle_request(&app.db_wrapper, &client, &config, env)
         .await
-        .unwrap_err();
-    assert!(err.to_string().contains("trades.query payload parse error"));
-    assert!(server.received_requests().await.unwrap().is_empty());
+        .unwrap();
+    let response = captured_envelope(&server).await;
+    assert_eq!(response["success"], false);
+    assert_eq!(response["error"]["code"], "invalid_request");
 
     stop_app(app).await;
 }
@@ -453,13 +669,10 @@ async fn clearing_results_query_success() {
     let config = test_config(server.uri());
     let client = reqwest::Client::new();
 
-    // seed a clearing result for "m1" if desired:
-    // app.db_wrapper.clearing_results().insert(sample_clearing_result("m1")).await.unwrap();
-
     let env = envelope(
         EwdsOperation::ClearingResultsQuery,
         "req-clearing-1",
-        json!({ "marketId": "m1" }),
+        json!({ "marketId": "0x11111111111141118111111111111111" }),
     );
 
     handle_request(&app.db_wrapper, &client, &config, env)
@@ -484,13 +697,12 @@ async fn clearing_results_query_bad_payload_errors() {
         json!({}),
     );
 
-    let err = handle_request(&app.db_wrapper, &client, &config, env)
+    handle_request(&app.db_wrapper, &client, &config, env)
         .await
-        .unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("clearing_results.query payload parse error"));
-    assert!(server.received_requests().await.unwrap().is_empty());
+        .unwrap();
+    let response = captured_envelope(&server).await;
+    assert_eq!(response["success"], false);
+    assert_eq!(response["error"]["code"], "invalid_request");
 
     stop_app(app).await;
 }

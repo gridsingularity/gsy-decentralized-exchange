@@ -1,6 +1,6 @@
 use crate::db::DatabaseWrapper;
 use anyhow::{anyhow, Result};
-use futures::{StreamExt, TryStreamExt};
+use futures::TryStreamExt;
 use mongodb::bson::{self, doc, Bson};
 use mongodb::options::IndexOptions;
 use mongodb::{Collection, IndexModel};
@@ -103,16 +103,7 @@ async fn collect_all<T>(collection: &Collection<T>) -> Result<Vec<T>>
 where
     T: Send + Sync + Unpin + serde::de::DeserializeOwned,
 {
-    let mut cursor = collection.find(doc! {}).await?;
-    let mut result = Vec::new();
-    while let Some(doc) = cursor.next().await {
-        if let Ok(document) = doc {
-            result.push(document);
-        } else {
-            break;
-        }
-    }
-    Ok(result)
+    Ok(collection.find(doc! {}).await?.try_collect().await?)
 }
 
 /// Fails with an error marked by [`invalid_event`] if two of the `(id, name)` pairs share an id
@@ -153,16 +144,7 @@ impl AssetService {
     }
 
     pub async fn get_by_facility(&self, facility_name: &str) -> Result<Vec<AssetSchema>> {
-        let mut cursor = self.0.find(doc! {"facility_name": facility_name}).await?;
-        let mut result = Vec::new();
-        while let Some(doc) = cursor.next().await {
-            if let Ok(document) = doc {
-                result.push(document);
-            } else {
-                break;
-            }
-        }
-        Ok(result)
+        Ok(self.0.find(doc! {"facility_name": facility_name}).await?.try_collect().await?)
     }
 
     pub async fn get_all(&self) -> Result<Vec<AssetSchema>> {

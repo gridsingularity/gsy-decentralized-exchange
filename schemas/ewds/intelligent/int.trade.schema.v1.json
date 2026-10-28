@@ -46,7 +46,7 @@
       "default": null
     },
     "tradeStatus": {
-      "description": "Trade lifecycle status: matched when confirmed on-chain, executed after verification without penalties, settled after financial settlement (not yet implemented), or terminal penalized after a delivery penalty. IRI: int:tradeStatus.",
+      "description": "Trade lifecycle status: matched when included in a block indexed by the listener (no confirmation depth), executed after verification without penalties, settled after financial settlement (not yet implemented), or terminal penalized after a delivery penalty. IRI: int:tradeStatus.",
       "type": "string",
       "enum": [
         "matched",
