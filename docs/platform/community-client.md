@@ -65,7 +65,7 @@ When `EWDS_ENABLE_HANDLER` is on, the binary polls the `order` topic for `order.
 
 1. parses and checks all orders (UUID `orderId`, non-zero UUID/hex `marketId`,
    `orderStatus` `submitted`, `quantity` above 0, `priceLimit` 0 or more);
-2. skips orders already confirmed on-chain, then validates the remaining
+2. skips orders already placed on-chain (latest block), then validates the remaining
    `createdBy` facility IDs against their markets in one bulk request through
    HTTP `/facilities/validate` or EWDS `facilities.validate`;
 3. resolves IDs only for eligible orders. `createdBy` is the original facility
@@ -86,10 +86,14 @@ service can't be reached, is retried with a growing delay
 (`EWDS_EVENT_HANDLE_ATTEMPTS`, `EWDS_EVENT_RETRY_DELAY_MS`), and later events
 wait for it.
 
-Confirmed orders are excluded before validation on retry, so a topology change
+Already placed orders are excluded before validation on retry, so a topology change
 cannot turn them into rejected orders. Before publishing an eligibility
 rejection, the client rechecks the chain in case a competing submission or an
-earlier item in the batch already placed that order.
+eligible item in the batch already placed that order. Eligible items are processed
+before rejection candidates, regardless of their input order. A failed status RPC
+leaves only that order pending for retry; other orders can still be processed.
+Eligibility reasons use API snake_case names such as `unknown_facility`; unknown
+future reasons are reported as `unknown`, not treated as eligibility.
 
 Only a receipt with status `1` confirms placement. A missing receipt or an
 RPC failure is an unknown outcome and remains retryable, not a rejection.
@@ -104,6 +108,13 @@ can authorize multiple clients and revoke each independently. This role is not
 community-scoped: each client validates facility/community membership off-chain.
 The submitting wallet is independent of the facility ID in `createdBy`;
 actor-wallet registration or delegation grants no order-submission permission.
+With the subscriber enabled, startup checks this role and fails if it is missing,
+unreadable, or no registry is deployed at the configured address. Runtime health
+checks log missing authorization without stopping the worker or discarding its
+in-memory queue. A definite `Unauthorized` revert is not retried: FOS receives
+`service_unauthorized: the community client is not authorized; resubmit later`.
+This reports a service configuration failure, not invalid facility input. After
+the role is restored, FOS can resubmit the same order ID; no rejected DB order exists.
 
 ## Configuration
 
@@ -132,6 +143,9 @@ steps and also validates facility participation. The matching engine compares
 preferred partners against facility IDs and blocks only same-facility trades;
 different facilities with the same owner may trade. Indexed trade parties and
 penalties retain the facility identity, independently of the service wallet.
-Delivery verification resolves measurements through the ID service. Certificate
+Delivery verification derives measurement facility IDs locally with the same
+Blake2b-16 function as the ID service, without creating mappings. Certificate
 lookups also resolve facility mappings, while retaining the facility's owner
-relationship in certificate metadata (the existing hashed owner ID format).
+relationship in certificate metadata (`owner_id` hashes the facility's current
+owner, not necessarily its owner at trade time; historical ownership policy is a
+separate follow-up).

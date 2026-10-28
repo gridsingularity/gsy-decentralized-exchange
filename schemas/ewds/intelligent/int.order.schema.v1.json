@@ -84,7 +84,7 @@
       "default": "NONE"
     },
     "createdBy": {
-      "description": "FK to Actor who submitted. IRI: int:createdby.",
+      "description": "Facility identity represented by the order, not its owner or submitting service wallet. The community client resolves this facility ID to its on-chain ID. IRI: int:createdby.",
       "type": "string"
     },
     "creationTime": {

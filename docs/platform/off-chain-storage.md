@@ -74,6 +74,18 @@ posts them any more.
 - `/facilities` (`GET`, `POST`)
 - `/facilities/validate` (`POST`) for read-only bulk facility/market validation
 
+Community writes through HTTP and EWDS accept UUID or 16-byte hex IDs and store
+lowercase hyphenated UUIDs. `GET /communities` and `communities.query` return that
+canonical form. Invalid IDs return HTTP 400 or cause the EWDS event to be dropped
+as invalid; they are not retried as storage failures.
+
+`POST /sites` and `/facilities` create or replace records by `site_name` and
+`facility_id`, respectively, matching the EWDS upsert behavior. Send complete
+records: replacing a site's facility list removes omitted memberships and can
+make those facilities ineligible. A facility name assigned to another ID returns
+409. These topology writes remain unauthenticated; restricting that write surface
+is a separate access-control follow-up.
+
 ### Facility Participation Validation
 
 `POST /facilities/validate` accepts an array of
@@ -105,6 +117,10 @@ publication performs the same check. The contract separately requires
 by those trusted services, not by this read-only endpoint or an ID mapping alone.
 
 ### ID Mapping
+- The ID service, execution engine and certificate metadata share the deterministic
+  Blake2b-16 derivation. Verification derives IDs locally and never creates mappings.
+  Certificate `owner_id` hashes the facility's current stored owner; historical
+  ownership policy remains a separate follow-up.
 - `/ids` (`POST`) — get-or-create offchain↔onchain ID mappings
 
 Compatibility adapters for EVM JSON callers:

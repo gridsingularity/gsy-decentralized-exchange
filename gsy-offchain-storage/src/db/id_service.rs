@@ -7,7 +7,7 @@ use mongodb::options::IndexOptions;
 use mongodb::options::ReturnDocument;
 use mongodb::{Collection, IndexModel};
 use primitives::db_api_schema::ids::IdMappingSchema;
-use primitives::utils::{bytes16_to_hex, create_encrypted_bytes16_from_string};
+use primitives::utils::derive_onchain_id;
 use std::ops::Deref;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -69,7 +69,7 @@ impl IdService {
             .find_one_and_update(
                 doc! {"offchain_id": &offchain_id},
                 doc! {"$setOnInsert": {
-                "onchain_id": bytes16_to_hex(create_encrypted_bytes16_from_string(&offchain_id)),
+                "onchain_id": derive_onchain_id(&offchain_id),
                 "creation_time": SystemTime::now()
                     .duration_since(UNIX_EPOCH)?
                     .as_secs() as i64

@@ -1,6 +1,6 @@
 use primitives::db_api_schema::{profiles::MeasurementSchema, trades::DbTradeSchema};
 use std::collections::HashMap;
-use tracing::warn;
+use tracing::debug;
 
 #[derive(Debug)]
 pub struct Penalty {
@@ -84,7 +84,7 @@ pub fn compute_delivery_verifications(
             continue;
         }
         let Some(onchain_id) = facility_onchain_ids.get(&meas.facility_id) else {
-            warn!("No on-chain mapping for facility_id={}", meas.facility_id);
+            debug!("No derived identity supplied for facility_id={}", meas.facility_id);
             continue;
         };
         measurement_map.insert(onchain_id.clone(), meas.energy_kwh);

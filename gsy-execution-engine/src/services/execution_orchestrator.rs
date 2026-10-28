@@ -1,4 +1,4 @@
-use ::primitives::utils::timestamp_to_datetime_string;
+use ::primitives::utils::{derive_onchain_id, timestamp_to_datetime_string};
 use anyhow::Result;
 use primitives::constants::GLOBAL_CONSTANTS;
 use primitives::db_api_schema::trades::TradeStatus;
@@ -65,18 +65,15 @@ pub async fn run_execution_cycle(
         return Ok(0);
     }
 
-    // Resolve each measured facility once, without collapsing facilities by owner.
+    // Derive the same IDs as the ID service without creating mappings during verification.
     let mut facility_onchain_ids = HashMap::new();
     for measurement in measurements
         .iter()
         .filter(|measurement| measurement.energy_kwh.is_finite())
     {
-        if !facility_onchain_ids.contains_key(&measurement.facility_id) {
-            let onchain_id = offchain_storage_client
-                .fetch_onchain_id(&measurement.facility_id)
-                .await?;
-            facility_onchain_ids.insert(measurement.facility_id.clone(), onchain_id);
-        }
+        facility_onchain_ids
+            .entry(measurement.facility_id.clone())
+            .or_insert_with(|| derive_onchain_id(&measurement.facility_id));
     }
 
     anyhow::ensure!(

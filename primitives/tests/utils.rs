@@ -4,6 +4,18 @@ use primitives::MarketType;
 const COMMUNITY_ID: &str = "11111111-1111-4111-8111-111111111111";
 
 #[test]
+fn onchain_identity_derivation_is_pinned_to_blake2b_16() {
+    assert_eq!(
+        primitives::utils::derive_onchain_id("facility-a"),
+        "0x6bcb5f7af93a900ac5c3f27259bccc63"
+    );
+    assert_ne!(
+        primitives::utils::derive_onchain_id("facility-a"),
+        primitives::utils::derive_onchain_id("Facility-a")
+    );
+}
+
+#[test]
 fn market_id_normalizes_uuid_and_hex_forms_to_lowercase_hex() {
     let canonical = "0x3f2504e04f8941d39a0c0305e82c3301";
     for id in [

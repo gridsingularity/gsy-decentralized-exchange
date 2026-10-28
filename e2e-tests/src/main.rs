@@ -21,8 +21,15 @@ pub async fn delete_database() -> Result<()> {
     let db_name = std::env::var("DATABASE_NAME").unwrap_or_else(|_| "offchain_storage".to_string());
     let options = ClientOptions::parse(&db_url).await?;
     let client = mongodb::Client::with_options(options)?;
-    client.database(db_name.as_str()).drop().await?;
-    info!("Deleted test database");
+    let db = client.database(db_name.as_str());
+    for name in db.list_collection_names().await? {
+        if !name.starts_with("system.") {
+            db.collection::<mongodb::bson::Document>(&name)
+                .delete_many(mongodb::bson::doc! {})
+                .await?;
+        }
+    }
+    info!("Cleared test collections, preserving indexes");
     Ok(())
 }
 
@@ -101,7 +108,9 @@ async fn main() {
         .max_concurrent_scenarios(1)
         .after(|_feature, _rule, _scenario, _ev, _world| {
             Box::pin(async move {
-                delete_database().await.ok();
+                delete_database()
+                    .await
+                    .expect("Failed to clear E2E records between scenarios");
             })
         })
         .filter_run_and_exit(feature_path, move |feature, _rule, scenario| {

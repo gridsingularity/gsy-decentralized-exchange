@@ -600,7 +600,8 @@ paths:
   /communities:
     post:
       tags: [Grid Topology]
-      summary: Register an energy community.
+      summary: Create or replace an energy community by canonical community ID.
+      description: Accepts UUID or 16-byte hex IDs and returns lowercase hyphenated UUIDs.
       requestBody:
         required: true
         content:
@@ -614,6 +615,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/EnergyCommunitySchema"
+        "400":
+          description: Invalid community ID; expected a UUID or 16-byte hex value.
         "500":
           $ref: "#/components/responses/InternalError"
     get:
@@ -634,7 +637,8 @@ paths:
   /sites:
     post:
       tags: [Grid Topology]
-      summary: Register a site.
+      summary: Create or replace a site by site_name.
+      description: Send the complete facilities list. Omitted facilities lose their site membership.
       requestBody:
         required: true
         content:
@@ -668,7 +672,8 @@ paths:
   /facilities:
     post:
       tags: [Grid Topology]
-      summary: Register a facility.
+      summary: Create or replace a facility by facility_id.
+      description: Replaces its topology fields; facility_name must remain unique across facility IDs.
       requestBody:
         required: true
         content:
@@ -682,6 +687,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/FacilitySchema"
+        "409":
+          description: The facility name already belongs to a different facility ID.
         "500":
           $ref: "#/components/responses/InternalError"
     get:
@@ -1175,7 +1182,9 @@ components:
       type: object
       required: [community_id, community_name, sites]
       properties:
-        community_id: { type: string, format: uuid }
+        community_id:
+          type: string
+          description: UUID or 16-byte hex on input; canonical lowercase hyphenated UUID on output.
         community_name: { type: string }
         sites:
           type: array

@@ -8,6 +8,7 @@ use primitives::db_api_schema::grid_topology::{
     AssetSchema, EnergyCommunitySchema, FacilitySchema, PilotSiteSchema, SiteSchema,
 };
 use primitives::ewds::invalid_event;
+use primitives::utils::normalize_community_id;
 use std::collections::HashMap;
 use std::ops::Deref;
 
@@ -200,7 +201,8 @@ impl Deref for PilotSiteService {
 pub struct EnergyCommunityService(pub Collection<EnergyCommunitySchema>);
 
 impl EnergyCommunityService {
-    pub async fn insert(&self, community: EnergyCommunitySchema) -> Result<EnergyCommunitySchema> {
+    pub async fn insert(&self, mut community: EnergyCommunitySchema) -> Result<EnergyCommunitySchema> {
+        community.community_id = normalize_community_id(&community.community_id)?;
         self.0.insert_one(community.clone()).await?;
         Ok(community)
     }
@@ -243,7 +245,8 @@ impl EnergyCommunityService {
         )
     }
 
-    pub async fn upsert(&self, community: EnergyCommunitySchema) -> Result<EnergyCommunitySchema> {
+    pub async fn upsert(&self, mut community: EnergyCommunitySchema) -> Result<EnergyCommunitySchema> {
+        community.community_id = normalize_community_id(&community.community_id)?;
         let community_doc = bson::to_document(&community)?;
         self.0
             .update_one(

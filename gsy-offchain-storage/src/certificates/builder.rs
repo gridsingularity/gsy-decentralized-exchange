@@ -48,9 +48,7 @@ use primitives::db_api_schema::profiles::{
     FlowDirection as PointDirection, MeasurementPointSchema, MeasurementPointType, TimeseriesSchema,
 };
 use primitives::db_api_schema::trades::{DbTradeSchema, TradeStatus};
-use primitives::utils::{
-    bytes16_to_hex, create_encrypted_bytes16_from_string, string_to_timestamp,
-};
+use primitives::utils::string_to_timestamp;
 
 use crate::certificates::config::PILOT;
 
@@ -81,9 +79,7 @@ fn delivery_slots<'a>(markets: &'a [MarketSchema]) -> HashMap<&'a str, u64> {
 
 /// Legacy owner/community identifier used in certificate metadata.
 /// Facility trade parties are resolved through the ID service's stored mappings.
-pub fn party_hash(offchain_id: &str) -> String {
-    bytes16_to_hex(create_encrypted_bytes16_from_string(offchain_id))
-}
+pub use primitives::utils::derive_onchain_id as party_hash;
 
 /// Facilities and communities indexed the ways the builder looks them up.
 struct Topology<'a> {

@@ -30,6 +30,8 @@ abigen!(
         function placedOrder(uint256 index) external view returns (OrderParams)
         function setClosedMarket(bytes16 marketId) external
         function closedMarketId() external view returns (bytes16)
+        function setAuthorized(bool authorized) external
+        function setStatusFailure(bytes16 orderId) external
     ]"#
 );
 
@@ -57,8 +59,11 @@ const MOCK_ORDER_REGISTRY: &str = r#"
 
         error MarketClosed();
         error OrderAlreadyExists();
+        error Unauthorized();
 
         bytes16 public closedMarketId;
+        bool private authorized = true;
+        bytes16 private statusFailure;
         mapping(bytes16 => uint8) private orderStatus;
         OrderParams[] private placed;
 
@@ -67,6 +72,7 @@ const MOCK_ORDER_REGISTRY: &str = r#"
         }
 
         function placeOrder(OrderParams calldata params) external {
+            if (!authorized) revert Unauthorized();
             if (params.marketId == closedMarketId) revert MarketClosed();
             if (orderStatus[params.orderId] != 0) revert OrderAlreadyExists();
             orderStatus[params.orderId] = 1;
@@ -74,8 +80,15 @@ const MOCK_ORDER_REGISTRY: &str = r#"
         }
 
         function getStatus(bytes16 orderId) external view returns (uint8) {
+            require(orderId != statusFailure, "status RPC failed");
             return orderStatus[orderId];
         }
+
+        function setAuthorized(bool value) external { authorized = value; }
+        function hasRole(bytes32 role, address) external view returns (bool) {
+            return role == keccak256("COMMUNITY_CLIENT_ROLE") && authorized;
+        }
+        function setStatusFailure(bytes16 orderId) external { statusFailure = orderId; }
 
         function placedCount() external view returns (uint256) {
             return placed.length;
@@ -449,9 +462,9 @@ async fn rejects_ineligible_orders_before_id_resolution_and_places_eligible_orde
     let handler = handler(&chain, &id_service).await;
     // owner-1 already has an ID mapping. That alone must not establish eligibility.
     for (reason, label) in [
-        ("unknown_facility", "UnknownFacility"),
-        ("unknown_market", "UnknownMarket"),
-        ("site_not_in_community", "SiteNotInCommunity"),
+        ("unknown_facility", "unknown_facility"),
+        ("unknown_market", "unknown_market"),
+        ("site_not_in_community", "site_not_in_community"),
     ] {
         let validation = Mock::given(method("POST"))
             .and(path("/facilities/validate"))
@@ -574,28 +587,151 @@ async fn confirmed_orders_skip_validation_on_retry_after_topology_changes() {
 
 #[tokio::test]
 async fn a_duplicate_ineligible_item_does_not_reject_an_order_placed_earlier_in_the_batch() {
+    for rejected_first in [false, true] {
+        let chain = deploy_mock_order_registry().await;
+        let id_service = mock_id_service().await;
+        let mut duplicate = bid();
+        duplicate["createdBy"] = json!("missing-facility");
+        Mock::given(method("POST"))
+            .and(path("/facilities/validate"))
+            .respond_with(|request: &Request| {
+                let pairs: Vec<FacilityMarketValidationRequest> =
+                    serde_json::from_slice(&request.body).unwrap();
+                let results: Vec<_> = pairs.into_iter().map(|pair| {
+                    let eligible = pair.facility_id == "owner-1";
+                    json!({"facility_id": pair.facility_id, "market_id": pair.market_id,
+                        "eligible": eligible, "reason": if eligible { None } else { Some("unknown_facility") }})
+                }).collect();
+                ResponseTemplate::new(200).set_body_json(results)
+            })
+            .with_priority(1)
+            .mount(&id_service)
+            .await;
+        let orders = if rejected_first {
+            vec![duplicate, bid()]
+        } else {
+            vec![bid(), duplicate]
+        };
+        handler(&chain, &id_service)
+            .await
+            .handle(event("event-1", orders))
+            .await
+            .unwrap();
+        assert_eq!(sent_transactions(&chain).await, 3);
+        assert_eq!(placed_orders(&chain).await.len(), 1);
+        assert!(rejection_events(&id_service).await.is_empty());
+    }
+}
+
+#[tokio::test]
+async fn a_failed_status_query_does_not_block_other_orders_and_is_retried() {
     let chain = deploy_mock_order_registry().await;
-    let id_service = mock_id_service().await;
-    let mut duplicate = bid();
-    duplicate["createdBy"] = json!("missing-facility");
-    Mock::given(method("POST"))
-        .and(path("/facilities/validate"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-            {"facility_id": "owner-1", "market_id": OPEN_MARKET, "eligible": true},
-            {"facility_id": "missing-facility", "market_id": OPEN_MARKET,
-                "eligible": false, "reason": "unknown_facility"}
-        ])))
-        .with_priority(1)
-        .mount(&id_service)
-        .await;
-    handler(&chain, &id_service)
+    let server = mock_id_service().await;
+    let handler = handler(&chain, &server).await;
+    chain
+        .contract
+        .set_status_failure(bytes16(BID_ID))
+        .send()
         .await
-        .handle(event("event-1", vec![bid(), duplicate]))
+        .unwrap()
         .await
         .unwrap();
-    assert_eq!(sent_transactions(&chain).await, 3);
+    let error = handler
+        .handle(event("partial", vec![bid(), offer()]))
+        .await
+        .unwrap_err();
+    assert!(!is_invalid_event(&error));
+    assert_eq!(placed_orders(&chain).await[0].order_id, bytes16(OFFER_ID));
+    assert!(rejection_events(&server).await.is_empty());
+    chain
+        .contract
+        .set_status_failure([0; 16])
+        .send()
+        .await
+        .unwrap()
+        .await
+        .unwrap();
+    handler
+        .handle(event("partial", vec![bid(), offer()]))
+        .await
+        .unwrap();
+    assert_eq!(placed_orders(&chain).await.len(), 2);
+}
+
+#[tokio::test]
+async fn revoked_authorization_reports_a_service_rejection_without_submission() {
+    let chain = deploy_mock_order_registry().await;
+    let server = mock_id_service().await;
+    let handler = handler(&chain, &server).await;
+    chain
+        .contract
+        .set_authorized(false)
+        .send()
+        .await
+        .unwrap()
+        .await
+        .unwrap();
+    let before = sent_transactions(&chain).await;
+    handler.handle(event("revoked", vec![bid()])).await.unwrap();
+    assert_eq!(sent_transactions(&chain).await, before);
+    assert!(placed_orders(&chain).await.is_empty());
+    let events = rejection_events(&server).await;
+    assert_eq!(events.len(), 1);
+    assert_rejection(
+        &events[0],
+        bid(),
+        "service_unauthorized: the community client is not authorized; resubmit later",
+    );
+    chain
+        .contract
+        .set_authorized(true)
+        .send()
+        .await
+        .unwrap()
+        .await
+        .unwrap();
+    handler
+        .handle(event("resubmitted", vec![bid()]))
+        .await
+        .unwrap();
     assert_eq!(placed_orders(&chain).await.len(), 1);
-    assert!(rejection_events(&id_service).await.is_empty());
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn subscriber_refuses_to_start_without_the_service_role() {
+    let chain = deploy_mock_order_registry().await;
+    chain
+        .contract
+        .set_authorized(false)
+        .send()
+        .await
+        .unwrap()
+        .await
+        .unwrap();
+    let settings = [
+        ("EVM_NODE_URL", chain.ws_endpoint.clone()),
+        (
+            "ORDER_REGISTRY_ADDRESS",
+            format!("{:?}", chain.contract_address),
+        ),
+        ("COMMUNITY_CLIENT_PRIVATE_KEY", TEST_PRIVATE_KEY.to_string()),
+    ];
+    let previous: Vec<_> = settings
+        .iter()
+        .map(|(key, _)| std::env::var(key).ok())
+        .collect();
+    for (key, value) in &settings {
+        std::env::set_var(key, value);
+    }
+    let result = start_order_event_subscriber().await;
+    for ((key, _), value) in settings.iter().zip(previous) {
+        match value {
+            Some(value) => std::env::set_var(key, value),
+            None => std::env::remove_var(key),
+        }
+    }
+    assert!(format!("{:#}", result.unwrap_err()).contains("lacks COMMUNITY_CLIENT_ROLE"));
 }
 
 #[tokio::test]
@@ -661,7 +797,7 @@ async fn validates_over_ewds_before_resolving_ids_or_placing_orders() {
     assert_rejection(
         &notifications[0],
         bid(),
-        &format!("Facility owner-1 cannot participate in market {OPEN_MARKET}: UnknownFacility"),
+        &format!("Facility owner-1 cannot participate in market {OPEN_MARKET}: unknown_facility"),
     );
 }
 
@@ -713,7 +849,7 @@ async fn fails_the_event_when_the_node_cannot_be_reached() {
     // The event worker retries the event, so it must not be marked as invalid.
     assert!(!is_invalid_event(&error));
     assert!(
-        format!("{error:#}").contains("Could not check existing order"),
+        format!("{error:#}").contains("2 of 2 orders of EWDS event event-1 could not be confirmed"),
         "{error:#}"
     );
     assert!(rejection_events(&id_service).await.is_empty());

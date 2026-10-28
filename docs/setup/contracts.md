@@ -19,7 +19,8 @@ does not persist its replay cursor across restarts.
 | `volta` | Energy Web Volta Testnet | `https://volta-rpc.energyweb.org` | `73799` | VT |
 | `ewc` | Energy Web Chain | `https://rpc.energyweb.org` | `246` | EWT |
 
-Remote deployments require `DEPLOYER_PRIVATE_KEY`. Energy Web Chain mainnet
+Remote deployments require `DEPLOYER_PRIVATE_KEY` and an explicit
+`COMMUNITY_CLIENT_PRIVATE_KEY`. Energy Web Chain mainnet
 deployment also requires the explicit safety flag
 `ALLOW_EWC_MAINNET_DEPLOY=true`.
 
@@ -70,7 +71,9 @@ Add `-v` only when you want to wipe the local Anvil state as well.
 ## Community-Client Authorization
 
 Deployment grants `OrderRegistry.COMMUNITY_CLIENT_ROLE` to the wallet derived
-from `COMMUNITY_CLIENT_PRIVATE_KEY` (the deployer if unset). Use the same key for
+from `COMMUNITY_CLIENT_PRIVATE_KEY` (the deployer if unset on local chains only,
+chain IDs 31337 or 1337). Non-local deployments fail before deploying contracts
+if this key is missing. Use the same key for
 the corresponding community-client service. DD-457 requires a fresh deployment,
 not an in-place upgrade of the old `OrderRegistry` storage layout.
 

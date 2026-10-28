@@ -26,7 +26,8 @@ Current penalty calculator logic:
 - `delta < 0`: penalize seller
 - Penalty scaled with `NODE_FLOAT_SCALING_FACTOR` (`10000`)
 
-Measurements are mapped using each facility's ID-service mapping, the same
+Measurement identities are derived locally with the ID service's shared
+Blake2b-16 helper, without querying or writing ID mappings. This is the same
 identity used in `OrderParams.createdBy` and the indexed trade parties. Owner
 IDs and service wallets are not measurement identities. The penalty policy is
 unchanged: the buyer's measurement is preferred, with the seller's as a

@@ -44,6 +44,11 @@ pub async fn start_order_event_subscriber() -> Result<()> {
     )
     .await
     .with_context(|| format!("Failed to connect to the EVM node at {}", evm_node_url))?;
+    anyhow::ensure!(
+        order_registry.has_submission_role().await?,
+        "Community client signer lacks COMMUNITY_CLIENT_ROLE on {}",
+        order_registry_address
+    );
     let ewds_client = EwdsClient::from_env(
         CONSUMER_CLIENT_ID_ENV,
         CONSUMER_CLIENT_ID_DEFAULT,
@@ -75,6 +80,13 @@ async fn watch_node(order_registry: &OrderRegistryClient) -> Error {
         sleep(Duration::from_millis(NODE_HEALTH_CHECK_INTERVAL_MS)).await;
         if let Err(error) = order_registry.check_connection().await {
             return error.context("Lost the connection to the EVM node");
+        }
+        match order_registry.has_submission_role().await {
+            Ok(false) => error!(
+                "Community client signer lacks COMMUNITY_CLIENT_ROLE; order submissions will be rejected"
+            ),
+            Err(error) => warn!("Could not check COMMUNITY_CLIENT_ROLE: {error:#}"),
+            Ok(true) => {}
         }
     }
 }
@@ -121,22 +133,20 @@ impl OrderEventHandler {
 
         let total = orders.len();
         let mut sent = 0;
+        let mut unsent = 0;
         let mut pending = Vec::with_capacity(total);
         for (index, (submission, order)) in orders.into_iter().enumerate() {
             // Check before validation: topology changes must not reject an already placed order.
             let order_id = *Uuid::parse_str(&order.order_id)?.as_bytes();
-            if self
-                .order_registry
-                .is_placed(order_id)
-                .await
-                .map_err(|error| {
-                    anyhow!(
-                        "Could not check existing order {}: {}",
-                        order.order_id,
-                        error
-                    )
-                })?
-            {
+            let already_placed = match self.order_registry.is_placed(order_id).await {
+                Ok(placed) => placed,
+                Err(error) => {
+                    warn!("Could not check existing order {}: {}", order.order_id, error);
+                    unsent += 1;
+                    continue;
+                }
+            };
+            if already_placed {
                 sent += 1;
                 info!(
                     "Order {} of EWDS event {} is already placed; skipping it",
@@ -174,7 +184,8 @@ impl OrderEventHandler {
             params.push((submission, Ok(order)));
         }
 
-        let mut unsent = 0;
+        // Place eligible copies first so duplicate IDs cannot be rejected then submitted.
+        params.sort_by_key(|(_, order)| order.is_err());
         for (submission, order) in params {
             let order = match order {
                 Ok(order) => order,
@@ -185,8 +196,10 @@ impl OrderEventHandler {
                         Ok(true) => sent += 1,
                         Ok(false) => {
                             let reason = format!(
-                                "Facility {} cannot participate in market {}: {reason:?}",
-                                submission.created_by, submission.market_id
+                                "Facility {} cannot participate in market {}: {}",
+                                submission.created_by,
+                                submission.market_id,
+                                reason.as_str()
                             );
                             warn!(
                                 "Order {} of EWDS event {} rejected: {}",
@@ -250,7 +263,7 @@ impl OrderEventHandler {
         Ok(())
     }
 
-    /// Replaces the off-chain actor and partner IDs with their on-chain IDs.
+    /// Replaces the off-chain facility and partner IDs with their on-chain IDs.
     async fn resolve_ids(&self, mut order: DbOrderSchema) -> Result<DbOrderSchema> {
         order.created_by = self
             .id_service
@@ -394,6 +407,21 @@ impl OrderRegistryClient {
         Ok(())
     }
 
+    pub async fn has_submission_role(&self) -> Result<bool> {
+        timeout(
+            Duration::from_millis(NODE_HEALTH_CHECK_TIMEOUT_MS),
+            self.contract
+                .has_role(
+                    ethers::utils::keccak256("COMMUNITY_CLIENT_ROLE"),
+                    self.contract.client().address(),
+                )
+                .call(),
+        )
+        .await
+        .context("Timed out checking COMMUNITY_CLIENT_ROLE")?
+        .context("Could not read COMMUNITY_CLIENT_ROLE from OrderRegistry")
+    }
+
     /// Whether an order with this ID was ever placed, whatever its status is now.
     pub async fn is_placed(&self, order_id: [u8; 16]) -> Result<bool, PlaceOrderError> {
         let status = self
@@ -455,7 +483,10 @@ fn classify_contract_error(error: ContractError<OrderRegistrySigner>) -> PlaceOr
     }
     let reason = match error.decode_contract_revert::<OrderRegistryContractErrors>() {
         Some(OrderRegistryContractErrors::MarketClosed(_)) => "MarketClosed".to_string(),
-        Some(OrderRegistryContractErrors::Unauthorized(_)) => "Unauthorized".to_string(),
+        Some(OrderRegistryContractErrors::Unauthorized(_)) => {
+            error!("Community client is not authorized to submit orders: COMMUNITY_CLIENT_ROLE is missing or revoked");
+            "service_unauthorized: the community client is not authorized; resubmit later".to_string()
+        }
         Some(OrderRegistryContractErrors::InvalidOrderParams(_)) => {
             "InvalidOrderParams".to_string()
         }

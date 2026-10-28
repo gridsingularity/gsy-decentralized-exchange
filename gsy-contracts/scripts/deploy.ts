@@ -159,6 +159,10 @@ async function main() {
   const deployer = await waitForRpcAndGetDeployer();
   const deployerAddress = await deployer.getAddress();
   const network = await ethers.provider.getNetwork();
+  const isLocal = network.chainId === 31337n || network.chainId === 1337n;
+  if (!isLocal && !process.env.COMMUNITY_CLIENT_PRIVATE_KEY?.trim()) {
+    throw new Error("COMMUNITY_CLIENT_PRIVATE_KEY must be set for non-local deployments");
+  }
 
   if (
     network.chainId === 246n &&

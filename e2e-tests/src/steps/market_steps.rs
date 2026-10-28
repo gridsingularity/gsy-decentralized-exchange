@@ -291,7 +291,7 @@ async fn upsert_default_community(world: &MyWorld) {
     upsert_community(world, &community).await;
 }
 
-async fn upsert_community(world: &MyWorld, community: &EnergyCommunitySchema) {
+pub(crate) async fn upsert_community(world: &MyWorld, community: &EnergyCommunitySchema) {
     let transport = env::var("OFFCHAIN_STORAGE_TRANSPORT")
         .unwrap_or_else(|_| "http".to_string())
         .to_ascii_lowercase();

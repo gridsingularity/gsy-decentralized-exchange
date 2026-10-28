@@ -90,6 +90,17 @@ fn clear_ewds_env() {
 
 // -- Facility participation validation --------------------------------------
 
+#[test]
+fn unknown_facility_validation_reasons_remain_denials() {
+    let result: FacilityMarketValidationResult = serde_json::from_value(json!({
+        "facility_id": "facility-a", "market_id": "market-a", "eligible": false,
+        "reason": "new_storage_reason"
+    }))
+    .unwrap();
+    assert!(!result.eligible);
+    assert_eq!(result.reason.unwrap().as_str(), "unknown");
+}
+
 #[tokio::test]
 async fn facility_validation_uses_the_same_batch_and_results_over_both_transports() {
     let _guard = ENV_LOCK.lock().unwrap();

@@ -111,4 +111,20 @@ pub enum FacilityMarketValidationReason {
     UnknownSite,
     FacilityNotListedInSite,
     SiteNotInCommunity,
+    #[serde(other)]
+    Unknown,
+}
+
+impl FacilityMarketValidationReason {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::UnknownMarket => "unknown_market",
+            Self::UnknownFacility => "unknown_facility",
+            Self::UnknownCommunity => "unknown_community",
+            Self::UnknownSite => "unknown_site",
+            Self::FacilityNotListedInSite => "facility_not_listed_in_site",
+            Self::SiteNotInCommunity => "site_not_in_community",
+            Self::Unknown => "unknown",
+        }
+    }
 }

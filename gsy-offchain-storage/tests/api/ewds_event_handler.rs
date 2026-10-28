@@ -1232,7 +1232,7 @@ async fn handle_event_saves_facilities_sites_and_communities() {
             EwdsEventType::Community,
             "community-event",
             json!([{
-                "communityId": "community-1",
+                "communityId": "11111111-1111-4111-8111-111111111111",
                 "communityName": "Community 1",
                 "sites": ["site-1"],
             }]),
@@ -1261,7 +1261,7 @@ async fn handle_event_saves_facilities_sites_and_communities() {
     assert_eq!(
         db.communities().get_all().await.unwrap(),
         vec![EnergyCommunitySchema {
-            community_id: "community-1".to_string(),
+            community_id: "11111111-1111-4111-8111-111111111111".to_string(),
             community_name: "Community 1".to_string(),
             sites: vec!["site-1".to_string()],
         }]
@@ -1286,24 +1286,40 @@ async fn assert_conflicting_batches_are_rejected<F, G>(
     let batch = |records: &[(&str, &str)]| {
         Value::Array(records.iter().map(|(id, name)| record(id, name)).collect())
     };
-    let initial = vec![("id-1".to_string(), "name-1".to_string())];
+    let initial = vec![(
+        "00000000-0000-4000-8000-000000000001".to_string(),
+        "name-1".to_string(),
+    )];
 
     handle_event(
         db,
-        event(event_type, "initial", batch(&[("id-1", "name-1")])),
+        event(
+            event_type,
+            "initial",
+            batch(&[("00000000-0000-4000-8000-000000000001", "name-1")]),
+        ),
     )
     .await
     .unwrap();
 
     let conflicting: [&[(&str, &str)]; 4] = [
         // A stored id under another name.
-        &[("id-1", "name-2")],
+        &[("00000000-0000-4000-8000-000000000001", "name-2")],
         // A stored name under another id, after a valid record that must not be written.
-        &[("id-3", "name-3"), ("id-2", "name-1")],
+        &[
+            ("00000000-0000-4000-8000-000000000003", "name-3"),
+            ("00000000-0000-4000-8000-000000000002", "name-1"),
+        ],
         // One id with two names in the batch.
-        &[("id-4", "name-4"), ("id-4", "name-5")],
+        &[
+            ("00000000-0000-4000-8000-000000000004", "name-4"),
+            ("00000000-0000-4000-8000-000000000004", "name-5"),
+        ],
         // One name with two ids in the batch.
-        &[("id-5", "name-6"), ("id-6", "name-6")],
+        &[
+            ("00000000-0000-4000-8000-000000000005", "name-6"),
+            ("00000000-0000-4000-8000-000000000006", "name-6"),
+        ],
     ];
     for (index, records) in conflicting.into_iter().enumerate() {
         let error = handle_event(
@@ -1319,7 +1335,11 @@ async fn assert_conflicting_batches_are_rejected<F, G>(
     // Sending a stored record again is fine.
     handle_event(
         db,
-        event(event_type, "repeat", batch(&[("id-1", "name-1")])),
+        event(
+            event_type,
+            "repeat",
+            batch(&[("00000000-0000-4000-8000-000000000001", "name-1")]),
+        ),
     )
     .await
     .unwrap();
@@ -1365,6 +1385,44 @@ async fn handle_event_rejects_communities_that_conflict_with_stored_ids_or_names
         },
     )
     .await;
+}
+
+#[tokio::test]
+async fn community_events_normalize_ids_and_drop_invalid_batches() {
+    let app = init_app().await;
+    for id in [
+        "ABCDEFAB-1234-1234-1234-ABCDEFABCDEF",
+        "0xabcdefab123412341234abcdefabcdef",
+    ] {
+        handle_event(
+            &app.db_wrapper,
+            event(
+                EwdsEventType::Community,
+                "canonical",
+                json!([
+                    {"communityId": id, "communityName": "Canonical", "sites": []}
+                ]),
+            ),
+        )
+        .await
+        .unwrap();
+    }
+    let communities = app.db_wrapper.communities().get_all().await.unwrap();
+    assert_eq!(communities.len(), 1);
+    assert_eq!(
+        communities[0].community_id,
+        "abcdefab-1234-1234-1234-abcdefabcdef"
+    );
+    let error = handle_event(&app.db_wrapper, event(EwdsEventType::Community, "invalid", json!([
+        {"communityId": "22222222-2222-4222-8222-222222222222", "communityName": "Not stored", "sites": []},
+        {"communityId": "invalid", "communityName": "Invalid", "sites": []}
+    ]))).await.unwrap_err();
+    assert!(is_invalid_event(&error));
+    assert_eq!(
+        app.db_wrapper.communities().get_all().await.unwrap(),
+        communities
+    );
+    stop_app(app).await;
 }
 
 #[tokio::test]

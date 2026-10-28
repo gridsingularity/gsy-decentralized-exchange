@@ -237,6 +237,11 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
     })
     .await?;
     let confirmed = app.db_wrapper.trades().get_all_trades().await?;
+    let mapping_count = app
+        .db_wrapper
+        .ids()
+        .count_documents(mongodb::bson::doc! {})
+        .await?;
     assert!(confirmed.iter().all(|trade| {
         trade.status == TradeStatus::Matched
             && trade.status_updated_at == Some(trade.creation_time)
@@ -335,6 +340,11 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
         .await?
         .unwrap();
     assert_eq!(pending_order.status, OrderStatus::PartiallyFilled);
+    assert_eq!(
+        app.db_wrapper.ids().count_documents(mongodb::bson::doc! {}).await?,
+        mapping_count,
+        "Execution cycles must not create facility ID mappings"
+    );
     insert_measurements(&app.db_wrapper, &measurements[2..]).await?;
     assert_eq!(
         run_execution_cycle(

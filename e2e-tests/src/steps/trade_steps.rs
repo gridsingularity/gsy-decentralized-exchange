@@ -955,6 +955,25 @@ pub(crate) async fn submit_measurements_with_energy(world: &mut MyWorld, energy:
         .expect("Failed to submit measurements");
 }
 
+#[when(expr = "measurements of {float} energy for only {string}'s facility are submitted")]
+async fn submit_single_facility_measurement(world: &mut MyWorld, energy: f64, user: String) {
+    let facility_id = world.facility_id_for_user(&user);
+    assert!(world
+        .facilities_topology
+        .iter()
+        .any(|facility| facility.facility_id == facility_id));
+    AreaMarketInfoAdapter::new(Some(world.offchain_storage_url.clone()))
+        .forward_measurement(vec![MeasurementSchema {
+            facility_id,
+            community_uuid: world.community_id.clone(),
+            energy_kwh: energy,
+            time_slot: world.target_delivery_time,
+            creation_time: 1,
+        }])
+        .await
+        .expect("Failed to submit the single-facility measurement");
+}
+
 pub(crate) async fn delivery_verification_timestamp(world: &MyWorld, trade: &DbTradeSchema) -> u64 {
     let settlement = TradeSettlementContract::new(world.trade_settlement_address, world.provider.clone());
     let events = settlement.event::<DeliveryVerifiedFilter>()

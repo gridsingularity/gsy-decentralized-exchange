@@ -65,6 +65,11 @@ pub fn create_encrypted_bytes16_from_string(input_string: &str) -> [u8; 16] {
     hash
 }
 
+/// The ID service's deterministic, case-sensitive mapping from an off-chain identity.
+pub fn derive_onchain_id(offchain_id: &str) -> String {
+    bytes16_to_hex(create_encrypted_bytes16_from_string(offchain_id))
+}
+
 /// The community ID is normalized first, so every accepted form of one
 /// community ID yields the same market ID. Fails for a community ID that is
 /// not a UUID or 16-byte hex value.

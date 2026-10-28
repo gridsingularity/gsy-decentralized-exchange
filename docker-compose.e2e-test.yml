@@ -236,6 +236,8 @@ services:
       PAY_AS_CLEAR_PRICING: ${PAY_AS_CLEAR_PRICING:-max_offer}
       MATCHING_ENGINE_BLOCK_INTERVAL: ${MATCHING_ENGINE_BLOCK_INTERVAL:-}
       EWDS_E2E_CLIENT_ID: ${EWDS_E2E_CLIENT_ID:-gsye2e}
+      EWDS_COMMUNITY_CLIENT_ID: gsye2ecommunityclient
+      COMMUNITY_CLIENT_PRIVATE_KEY: ${COMMUNITY_CLIENT_PRIVATE_KEY:-0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80}
       MONGO_URL: mongodb://gsy:gsy@mongodb:27017/?retryWrites=true&w=majority
     networks:
       - default

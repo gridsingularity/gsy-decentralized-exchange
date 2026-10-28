@@ -141,6 +141,13 @@ abigen!(
             "inputs": [{"name": "orderId", "type": "bytes16"}],
             "outputs": [{"name": "", "type": "uint8"}]
         },
+        {
+            "type": "function",
+            "name": "hasRole",
+            "stateMutability": "view",
+            "inputs": [{"name": "role", "type": "bytes32"}, {"name": "account", "type": "address"}],
+            "outputs": [{"name": "", "type": "bool"}]
+        },
         {"type": "error", "name": "MarketClosed", "inputs": []},
         {"type": "error", "name": "Unauthorized", "inputs": []},
         {"type": "error", "name": "InvalidOrderParams", "inputs": []},
@@ -211,8 +218,8 @@ pub async fn create_input_orders(
     for (forecast, result) in forecasts.into_iter().zip(validation) {
         if let Some(reason) = result.reason {
             let reason = format!(
-                "Facility {} cannot participate in market {}: {reason:?}",
-                forecast.facility_id, market.market_id
+                "Facility {} cannot participate in market {}: {}",
+                forecast.facility_id, market.market_id, reason.as_str()
             );
             warn!("{}", reason);
             rejected.push((forecast, reason));

@@ -2,7 +2,7 @@ use crate::helpers::{init_app, stop_app};
 use gsy_offchain_storage::db::id_service::init_ids;
 use mongodb::bson::doc;
 use primitives::db_api_schema::ids::IdMappingSchema;
-use primitives::utils::{bytes16_to_hex, create_encrypted_bytes16_from_string};
+use primitives::utils::{bytes16_to_hex, create_encrypted_bytes16_from_string, derive_onchain_id};
 
 #[tokio::test]
 async fn filter_by_onchain_id_returns_original_facility_id() {
@@ -54,6 +54,11 @@ async fn post_ids_creates_new_mapping() {
     assert_eq!(body.offchain_id, offchain);
     let expected = bytes16_to_hex(create_encrypted_bytes16_from_string(offchain));
     assert_eq!(body.onchain_id, expected);
+    assert_eq!(body.onchain_id, derive_onchain_id(offchain));
+    assert_eq!(
+        body.onchain_id,
+        gsy_offchain_storage::certificates::builder::party_hash(offchain)
+    );
 
     stop_app(app).await;
 }

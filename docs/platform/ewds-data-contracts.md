@@ -143,7 +143,7 @@ For an `order.event`, the community client builds the
 | Contract parameter | From |
 |---|---|
 | `orderId` | the 16 bytes of the `orderId` UUID |
-| `createdBy` | `createdBy`, mapped to the on-chain actor ID by the ID service |
+| `createdBy` | Facility ID, mapped to its on-chain ID by the ID service; not the owner ID or service wallet |
 | `marketId` | the 16 bytes of `marketId` |
 | `timeSlot`, `creationTime` | `timeSlot`, `creationTime` as epoch seconds |
 | `energy`, `energyRate` | `quantity`, `priceLimit` × 10 000, rounded |

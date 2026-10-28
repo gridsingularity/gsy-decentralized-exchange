@@ -438,7 +438,7 @@ async fn forecast_validation_and_rejection_notifications_work_over_ewds() {
             "bid",
             5.0,
             1.5,
-            "UnknownFacility",
+            "unknown_facility",
         ),
         (
             &notifications[1],
@@ -446,7 +446,7 @@ async fn forecast_validation_and_rejection_notifications_work_over_ewds() {
             "offer",
             2.0,
             0.14,
-            "SiteNotInCommunity",
+            "site_not_in_community",
         ),
     ] {
         let order = &notification["data"][0];
