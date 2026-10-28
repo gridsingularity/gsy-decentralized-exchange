@@ -214,7 +214,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         let offer_hash_str = bytes16_to_hex(event.offer_id);
         let residual_bid_id = bytes16_to_optional_hex(event.residual_bid_id);
         let residual_offer_id = bytes16_to_optional_hex(event.residual_offer_id);
-        // TradeSettled confirms the match on-chain, not financial settlement.
+        // TradeSettled indexes block inclusion, not finality or financial settlement.
         let trade = DbTradeSchema {
             trade_uuid: trade_hash.clone(),
             status: TradeStatus::Matched,
@@ -366,10 +366,13 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             .await?;
         info!("Indexed delivery verification for trade {}", trade_id);
         self.publish_order_statuses(&[bid_id, offer_id]).await?;
-        if let Some(publisher) = &self.event_publisher {
-            publisher
-                .publish_stored_trades(&self.db, &[trade_id])
-                .await?;
+        // PenaltyRecorded already published this trade's terminal verdict.
+        if trade.status != TradeStatus::Penalized {
+            if let Some(publisher) = &self.event_publisher {
+                publisher
+                    .publish_stored_trades(&self.db, &[trade_id])
+                    .await?;
+            }
         }
         Ok(())
     }

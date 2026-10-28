@@ -1,6 +1,6 @@
 use crate::db::DatabaseWrapper;
 use anyhow::Result;
-use futures::StreamExt;
+use futures::TryStreamExt;
 use mongodb::bson::{doc, Bson};
 use mongodb::options::IndexOptions;
 use mongodb::results::UpdateResult;
@@ -79,18 +79,7 @@ pub struct OrderService(pub Collection<DbOrderSchema>);
 impl OrderService {
     #[tracing::instrument(name = "Fetching orders from database", skip(self))]
     pub async fn get_all_orders(&self) -> Result<Vec<DbOrderSchema>> {
-        let mut cursor = self.0.find(doc! {}).await?;
-        let mut result: Vec<DbOrderSchema> = Vec::new();
-        while let Some(doc) = cursor.next().await {
-            match doc {
-                Ok(document) => result.push(document),
-                Err(err) => {
-                    tracing::error!("Error while fetching orders: {}", err);
-                    break;
-                }
-            }
-        }
-        Ok(result)
+        Ok(self.0.find(doc! {}).await?.try_collect().await?)
     }
 
     #[tracing::instrument(name = "Filter orders from database", skip(self))]
@@ -120,16 +109,7 @@ impl OrderService {
             (None, None) => {}
         }
 
-        let mut cursor = self.0.find(filter_params).await?;
-        let mut result: Vec<DbOrderSchema> = Vec::new();
-        while let Some(doc) = cursor.next().await {
-            if let Ok(document) = doc {
-                result.push(document);
-            } else {
-                break;
-            }
-        }
-        Ok(result)
+        Ok(self.0.find(filter_params).await?.try_collect().await?)
     }
 
     #[tracing::instrument(
@@ -351,16 +331,7 @@ impl FlexibilityOrderService {
 
     #[tracing::instrument(name = "Fetching all flexibility orders", skip(self))]
     pub async fn get_all_orders(&self) -> Result<Vec<FlexibilityOrderSchema>> {
-        let mut cursor = self.0.find(doc! {}).await?;
-        let mut result = Vec::new();
-        while let Some(doc) = cursor.next().await {
-            if let Ok(document) = doc {
-                result.push(document);
-            } else {
-                break;
-            }
-        }
-        Ok(result)
+        Ok(self.0.find(doc! {}).await?.try_collect().await?)
     }
 }
 
@@ -389,16 +360,7 @@ impl TariffService {
 
     #[tracing::instrument(name = "Fetching all tariffs", skip(self))]
     pub async fn get_all(&self) -> Result<Vec<TariffSchema>> {
-        let mut cursor = self.0.find(doc! {}).await?;
-        let mut result = Vec::new();
-        while let Some(doc) = cursor.next().await {
-            if let Ok(document) = doc {
-                result.push(document);
-            } else {
-                break;
-            }
-        }
-        Ok(result)
+        Ok(self.0.find(doc! {}).await?.try_collect().await?)
     }
 }
 

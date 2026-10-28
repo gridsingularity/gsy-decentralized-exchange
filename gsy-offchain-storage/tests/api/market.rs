@@ -200,7 +200,7 @@ async fn post_and_get_clearing_result() {
     let app = init_app().await;
     let address = app.address.clone();
     let clearing_result = EwdsClearingResultDto {
-        market_id: "DEX-SPOT-0001".to_string(),
+        market_id: "0x00000000000000000000000000000001".to_string(),
         clearing_status: "final".to_string(),
         no_bid_reason: None,
         clearing_price: 0.213,
@@ -223,7 +223,7 @@ async fn post_and_get_clearing_result() {
 
     let resp = client
         .get(&format!(
-            "{}/clearing-results?market_id=DEX-SPOT-0001",
+            "{}/clearing-results?market_id=0x00000000000000000000000000000001",
             &address
         ))
         .send()

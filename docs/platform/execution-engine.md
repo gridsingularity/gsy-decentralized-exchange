@@ -11,7 +11,8 @@ Each cycle:
 
 1. Determine target timeslot using configured offset.
 2. Fetch trades plus measurement points/timeseries for that window from off-chain storage.
-3. Compute verdicts for `Settled` trades with a usable measurement.
+3. Compute verdicts for `Matched` or `Penalized` trades with a usable measurement,
+   excluding trades whose on-chain verification is already complete.
 4. Submit `completeDeliveryVerification` and wait for a successful receipt.
    Penalties (if any) and completion are recorded atomically. Fully delivered
    trades also complete, without a separate penalty transaction.
@@ -59,8 +60,9 @@ recovery of records arriving after that limit is outside this change.
 - Success criteria: transaction receipt status is `1`
 
 The engine does not write lifecycle statuses through HTTP/EWDS. The off-chain
-storage listener indexes `DeliveryVerified` as `Executed` for the trade and its
-two consumed orders. Residual order IDs remain independent.
+storage listener indexes `DeliveryVerified` as `Executed` for the two consumed
+orders and for penalty-free trades. A penalized trade remains `Penalized`.
+Residual order IDs remain independent.
 
 ## Focused Lifecycle Test
 

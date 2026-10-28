@@ -359,18 +359,23 @@ async fn verification_notifications_preserve_penalized_status_and_match_query_re
                 )
                 .await
                 .unwrap();
-            let messages = wait_for_gateway_messages(&server, count + 2).await;
-            assert_trade_status_event(
-                &app,
-                &messages[count..],
-                if penalized {
-                    TradeStatus::Penalized
-                } else {
-                    TradeStatus::Executed
-                },
-                if penalized { 1_200 } else { 1_250 },
-            )
-            .await;
+            let notification_count = if penalized { 1 } else { 2 };
+            let messages = wait_for_gateway_messages(&server, count + notification_count).await;
+            if penalized {
+                let stored = app.db_wrapper.trades()
+                    .find_one(mongodb::bson::doc! {"trade_uuid": bytes16_to_hex(settlement.trade_id)})
+                    .await.unwrap().unwrap();
+                assert_eq!(stored.status, TradeStatus::Penalized);
+                assert_eq!(stored.status_updated_at, Some(1_200));
+            } else {
+                assert_trade_status_event(
+                    &app,
+                    &messages[count..],
+                    TradeStatus::Executed,
+                    1_250,
+                )
+                .await;
+            }
             assert_order_status_event(
                 &app,
                 &messages[count..],
@@ -381,7 +386,7 @@ async fn verification_notifications_preserve_penalized_status_and_match_query_re
                 1_250,
             )
             .await;
-            count += 2;
+            count += notification_count;
         }
         assert_no_further_gateway_messages(&server, count).await;
         stop_app(app).await;

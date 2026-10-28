@@ -209,8 +209,8 @@ slot.
 Features tagged `@ewds`, such as `events.feature`, only run with
 `OFFCHAIN_STORAGE_TRANSPORT=ewds`; HTTP runs skip them.
 
-The lifecycle assertions check that `Matched` records correspond to confirmed
-on-chain matches. Full delivery ends in `Executed`; a penalized trade stays
+The lifecycle assertions check that `Matched` records correspond to matches
+included in a block indexed by the listener (no confirmation depth). Full delivery ends in `Executed`; a penalized trade stays
 `Penalized` after verification while its consumed orders become `Executed`.
 EWDS event scenarios cover both outcomes, checking `Matched` and the
 final trade notifications, their payloads and lifecycle timestamps without
@@ -322,42 +322,44 @@ docker compose --env-file .env.ewds.local \
   e2e-tests
 ```
 
-This sequence was validated with the local DDHub Client Gateway connected to the
-EWF-hosted broker and the following local channels/topics:
+Configure the channels and topics from
+`scripts/ewds_channel_topic_handler.sh` before running the EWDS matrix:
 
 - `gsy.intelligent.requests.pub` / `gsy.intelligent.requests.sub`
 - `gsy.intelligent.responses.pub` / `gsy.intelligent.responses.sub`
-- `ordersQuery` / `ordersQueryResponse`
-- `tradesQuery` / `tradesQueryResponse`
-- `measurementsQuery` / `measurementsQueryResponse`
-- `communitiesQuery` / `communitiesQueryResponse`
+- `gsy.intelligent.events.pub` / `gsy.intelligent.events.sub`
 
-The community setup and the `@ewds` events feature also need
-`gsy.intelligent.events.pub` / `gsy.intelligent.events.sub` with the
-`communityTest`, `siteTest`, `facilityTest`,
-`measurementsTest` and `orderTest` topics. The events
-feature adds one feature, two scenarios and ten steps to the pay-as-bid
-summary below. Its order scenario needs the community client's order event
-subscriber, which `EWDS_ENABLE_HANDLER=true` in `.env.ewds.local` starts.
+Request/response topic pairs (including the E2E variants):
 
-Expected passing summary:
+| Request | Response | E2E request | E2E response |
+|---|---|---|---|
+| `ordersQuery` | `ordersQueryResponse` | `ordersQueryTest` | `ordersQueryTestResponse` |
+| `tradesQuery` | `tradesQueryResponse` | `tradesQueryTest` | `tradesQueryTestResponse` |
+| `measurementsQuery` | `measurementsQueryResponse` | `measurementsQueryTest` | `measurementsQueryTestResponse` |
+| `clearingResultsQuery` | `clearingResultsQueryResponse` | `clearingResultsQueryTest` | `clearingResultsQueryTestResponse` |
+| `marketsQuery` | `marketsQueryResponse` | `marketsQueryTest` | `marketsQueryTestResponse` |
+| `facilitiesQuery` | `facilitiesQueryResponse` | `facilitiesQueryTest` | `facilitiesQueryTestResponse` |
+| `guaranteesOfOriginQuery` | `guaranteesOfOriginQueryResponse` | `guaranteesOfOriginQueryTest` | `guaranteesOfOriginQueryTestResponse` |
+| `idsQuery` | `idsQueryResponse` | `idsQueryTest` | `idsQueryTestResponse` |
+| `communitiesQuery` | `communitiesQueryResponse` | `communitiesQueryTest` | `communitiesQueryTestResponse` |
 
-```text
-3 features
-3 scenarios (3 passed)
-30 steps (30 passed)
-```
+Event topics:
 
-The pay-as-clear run has this expected summary:
+| Topic | E2E topic |
+|---|---|
+| `trade` | `tradeTest` |
+| `clearingResult` | `clearingResultTest` |
+| `market` | `marketTest` |
+| `measurements` | `measurementsTest` |
+| `facility` | `facilityTest` |
+| `site` | `siteTest` |
+| `community` | `communityTest` |
+| `order` | `orderTest` |
 
-```text
-1 feature
-2 scenarios (2 passed)
-23 steps (23 passed)
-```
-
-The pay-as-clear command runs one dedicated feature with a standard clearing
-scenario and a combined preference-plus-standard scenario.
+The order event scenarios require the community client's subscriber, enabled by
+`EWDS_ENABLE_HANDLER=true`. Feature/scenario counts depend on the selected
+algorithm, transport and filters; require no failed or undefined steps rather
+than a fixed count. Both algorithms also run the shared matching scenarios.
 
 If the Client Gateway returns HTTP `400` with a nested broker `status code 429`,
 the request was rate-limited before it reached the matching algorithm. Validate

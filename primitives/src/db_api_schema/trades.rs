@@ -2,16 +2,16 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Trade lifecycle status. On-chain match confirmation does not settle funds.
+/// Trade lifecycle status. On-chain match indexing does not settle funds.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum TradeStatus {
-    /// The match was confirmed on-chain and indexed by the listener.
+    /// The match is in a block indexed by the listener (no confirmation depth).
     Matched,
     /// Delivery verification completed without penalties.
     Executed,
     /// Financial settlement completed.
-    // TODO(DD-453): implement this transition when the partner's billing service is available.
+    // TODO: implement this transition when the partner's billing service is available.
     Settled,
     /// A delivery penalty was recorded. This status is terminal.
     Penalized,
