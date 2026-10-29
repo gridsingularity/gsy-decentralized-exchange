@@ -209,6 +209,13 @@ slot.
 Features tagged `@ewds`, such as `events.feature`, only run with
 `OFFCHAIN_STORAGE_TRANSPORT=ewds`; HTTP runs skip them.
 
+The lifecycle assertions check that `Matched` records correspond to matches
+included in a block indexed by the listener (no confirmation depth). Full delivery ends in `Executed`; a penalized trade stays
+`Penalized` after verification while its consumed orders become `Executed`.
+EWDS event scenarios cover both outcomes, checking `Matched` and the
+final trade notifications, their payloads and lifecycle timestamps without
+assuming notification arrival order.
+
 The contracts command starts the dedicated local Anvil container, deploys the
 upgradeable contract suite, grants service roles, and writes
 `contracts-output/addresses.env`. Keep that Anvil container running while the
@@ -315,42 +322,44 @@ docker compose --env-file .env.ewds.local \
   e2e-tests
 ```
 
-This sequence was validated with the local DDHub Client Gateway connected to the
-EWF-hosted broker and the following local channels/topics:
+Configure the channels and topics from
+`scripts/ewds_channel_topic_handler.sh` before running the EWDS matrix:
 
 - `gsy.intelligent.requests.pub` / `gsy.intelligent.requests.sub`
 - `gsy.intelligent.responses.pub` / `gsy.intelligent.responses.sub`
-- `ordersQuery` / `ordersQueryResponse`
-- `tradesQuery` / `tradesQueryResponse`
-- `measurementsQuery` / `measurementsQueryResponse`
-- `communitiesQuery` / `communitiesQueryResponse`
+- `gsy.intelligent.events.pub` / `gsy.intelligent.events.sub`
 
-The community setup and the `@ewds` events feature also need
-`gsy.intelligent.events.pub` / `gsy.intelligent.events.sub` with the
-`communityTest`, `siteTest`, `facilityTest`,
-`measurementsTest` and `orderTest` topics. The events
-feature adds one feature, two scenarios and ten steps to the pay-as-bid
-summary below. Its order scenario needs the community client's order event
-subscriber, which `EWDS_ENABLE_HANDLER=true` in `.env.ewds.local` starts.
+Request/response topic pairs (including the E2E variants):
 
-Expected passing summary:
+| Request | Response | E2E request | E2E response |
+|---|---|---|---|
+| `ordersQuery` | `ordersQueryResponse` | `ordersQueryTest` | `ordersQueryTestResponse` |
+| `tradesQuery` | `tradesQueryResponse` | `tradesQueryTest` | `tradesQueryTestResponse` |
+| `measurementsQuery` | `measurementsQueryResponse` | `measurementsQueryTest` | `measurementsQueryTestResponse` |
+| `clearingResultsQuery` | `clearingResultsQueryResponse` | `clearingResultsQueryTest` | `clearingResultsQueryTestResponse` |
+| `marketsQuery` | `marketsQueryResponse` | `marketsQueryTest` | `marketsQueryTestResponse` |
+| `facilitiesQuery` | `facilitiesQueryResponse` | `facilitiesQueryTest` | `facilitiesQueryTestResponse` |
+| `guaranteesOfOriginQuery` | `guaranteesOfOriginQueryResponse` | `guaranteesOfOriginQueryTest` | `guaranteesOfOriginQueryTestResponse` |
+| `idsQuery` | `idsQueryResponse` | `idsQueryTest` | `idsQueryTestResponse` |
+| `communitiesQuery` | `communitiesQueryResponse` | `communitiesQueryTest` | `communitiesQueryTestResponse` |
 
-```text
-3 features
-3 scenarios (3 passed)
-30 steps (30 passed)
-```
+Event topics:
 
-The pay-as-clear run has this expected summary:
+| Topic | E2E topic |
+|---|---|
+| `trade` | `tradeTest` |
+| `clearingResult` | `clearingResultTest` |
+| `market` | `marketTest` |
+| `measurements` | `measurementsTest` |
+| `facility` | `facilityTest` |
+| `site` | `siteTest` |
+| `community` | `communityTest` |
+| `order` | `orderTest` |
 
-```text
-1 feature
-2 scenarios (2 passed)
-23 steps (23 passed)
-```
-
-The pay-as-clear command runs one dedicated feature with a standard clearing
-scenario and a combined preference-plus-standard scenario.
+The order event scenarios require the community client's subscriber, enabled by
+`EWDS_ENABLE_HANDLER=true`. Feature/scenario counts depend on the selected
+algorithm, transport and filters; require no failed or undefined steps rather
+than a fixed count. Both algorithms also run the shared matching scenarios.
 
 If the Client Gateway returns HTTP `400` with a nested broker `status code 429`,
 the request was rate-limited before it reached the matching algorithm. Validate
@@ -418,3 +427,54 @@ Current e2e suite validates:
 - Distinct Spot market creation for multiple communities in the same delivery
   slot, with end-to-end verification that matching, settlement, indexing, and
   penalties remain isolated per community market.
+
+### DD-423 Order Lifecycle Validation
+
+Run both `pay_as_bid` and `pay_as_clear` with each transport. Leave
+`E2E_FEATURE_PATH` unset and do not supply Cucumber `--name`/`--tags` filters
+for the complete matrix. HTTP runs skip the `@ewds` event scenarios; EWDS
+runs include them in both algorithm folders.
+
+Before running:
+
+- Redeploy the current contracts with `./scripts/contracts.sh local deploy`
+  and use the resulting `contracts-output/addresses.env`. Older deployments
+  do not provide the DD-423 fill, expiry and delivery-verification lifecycle.
+- For EWDS, update the existing `order`/`orderTest` topic schema from
+  `schemas/ewds/intelligent/int.order.event.v1.json`. It must accept both
+  `order.event` and `orderStatus.event`; no new topic is required. Ensure
+  the event publish/subscribe channels include that topic.
+- Keep the normal local E2E role grants: the default test wallet creates an
+  isolated market for cancellation without changing the orchestrator's markets.
+
+Coverage added for DD-423:
+
+- `order_lifecycle.feature` verifies `Submitted` and `Cancelled` on-chain and in
+  storage, including event timestamps. Deterministic contract and listener tests
+  cover expiry at market closure, without advancing the shared E2E chain clock.
+  Full delivery reaches `Executed` for the trade and both consumed orders without
+  a penalty.
+- Existing settlement/residual scenarios check `Filled`/`PartiallyFilled`
+  and independent residual orders. Penalty scenarios now also require the
+  trade and its consumed orders to become `Executed` with the verification
+  block's timestamp.
+- EWDS order scenarios observe `submitted`, `filled` and `executed`
+  notifications with an independent FOS consumer cursor. A closed-market
+  contract rejection must notify `rejected` with a reason but create no
+  on-chain or stored order. Notifications must not be submitted as new orders.
+
+Focused tests additionally cover both residual sides, missing measurements,
+duplicate verification, listener replay, notification snapshots, reverted
+receipts and transport errors. The real-contract integration check requires
+compiled Hardhat artifacts, Anvil and MongoDB:
+
+```bash
+cargo test --locked -p gsy-offchain-storage --test api \
+  delivery_verification_runs_through_real_contracts_engine_and_storage -- --ignored
+```
+
+Deliberate follow-ups: legacy order POST write permissions remain unchanged;
+malformed submissions are logged, not published as rejected order snapshots;
+verification keeps the current single-measurement policy; event publication
+is best effort, without a durable outbox. These limitations are not resolved
+by a passing validation matrix.

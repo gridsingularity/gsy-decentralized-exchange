@@ -5,7 +5,7 @@
 `gsy-offchain-storage` is the off-chain state API and persistence layer.
 It stores indexed on-chain events plus ontology-aligned market and profile data.
 
-Backend: MongoDB (`mongo:5.0`).
+Backend: MongoDB (version pinned in the Compose files).
 
 ## Event Indexing Path
 
@@ -13,6 +13,8 @@ Backend: MongoDB (`mongo:5.0`).
    - `OrderPlaced`
    - `OrderCancelled`
    - `TradeSettled`
+   - `PenaltyRecorded`
+   - `DeliveryVerified`
    - `NewMarketCreated`
    - `MarketClearing`
 2. `OffchainStorageEvmHandler` maps event payloads into DB schemas.
@@ -20,7 +22,16 @@ Backend: MongoDB (`mongo:5.0`).
 
 `OrderPlaced` contains the optional order requirements (bids and offers) and
 offer attributes, so the indexed order is complete without a follow-up
-`/orders` write.
+`/orders` write. `POST /orders` and `POST /orders-normalized` remain available as
+direct database upserts, but neither is used by the E2E scenarios or production
+order lifecycle. Orders are submitted through `placeOrder` (directly or through
+the community client's EWDS subscriber), then indexed by the EVM listener.
+The POST endpoints still accept caller-supplied statuses; their ownership and
+access policy remain to be clarified. Posting trades leaves referenced orders
+unchanged; settlement updates are handled by the EVM listener.
+Restricting the order POST endpoints is a separate follow-up, not part of
+DD-423. Until then, listener ownership is the normal lifecycle path, not an
+enforced access-control boundary for those legacy write endpoints.
 
 `NewMarketCreated` carries the full market record. The handler converts it to
 `MarketSchema` (`market_id` as `0x` + 32 hex digits, `community_id` as UUID,
@@ -81,13 +92,54 @@ communities that other systems publish on the EWDS events channel, in
 the same collections (see
 [Inbound Events](ewds-integration.md#inbound-events)).
 
-## Scheduler Behavior
+## Order Expiry
 
-`expire_orders_scheduler` periodically marks stale open orders as `Expired` using `time_slot` and current time.
+The EVM listener expires `Submitted` orders when a confirmed block reaches their
+market's indexed on-chain `closingTime`. It processes that block's contract events
+first, then checks expiry, including blocks with no contract events. Only open
+orders in closed markets are updated, including residuals; consumed and cancelled
+orders remain unchanged. `status_updated_at` is the scheduled closing time, so
+late indexing and repeated blocks preserve the same deadline. Delivery-slot start
+does not trigger expiry. Market windows are immutable and cannot be reopened.
+
+The former wall-clock expiry scheduler and `scheduler_interval` setting have
+been removed. HTTP and EWDS use the same listener; order-status notifications
+are published only when EWDS is enabled. The first new confirmed block after startup
+also checks already-indexed markets for expiry. The listener retries failed blocks
+and catches up across reconnects during the same process; it has no persisted
+cursor across restarts and starts at the next block on startup. There is no
+reindexing tool. See the [fresh-deployment requirements](../setup/contracts.md#fresh-deployments).
 
 ## Data Model Notes
 
+- The listener creates `Matched` trades when the match is included in a block
+  indexed by the listener (no confirmation depth).
+  `DeliveryVerified` advances penalty-free trades to `Executed`;
+  `PenaltyRecorded` sets terminal `Penalized`, which verification does not replace.
+  `Settled` means financial settlement complete. Its transition is not implemented
+  until the partner's billing service is available. Trades cannot be `Rejected`.
+  This lifecycle targets fresh deployments; no data migration is provided.
+- Existing `POST /trades` and `/trades-normalized` endpoints retain insert-only
+  import behavior. They do not update orders or publish lifecycle notifications;
+  the matching engine does not use them.
+  These and the legacy order POST routes store market IDs as supplied. Imports
+  must use lowercase `0x` + 32 hex digits: query normalization does not rewrite
+  non-canonical stored IDs. Import validation is a separate follow-up.
+- With `EWDS_ENABLE_HANDLER=true`, indexed match confirmations, penalties and
+  penalty-free delivery verifications publish persisted snapshots through `trade.event`.
+  Penalized verification publishes only the consumed orders' status updates,
+  since `PenaltyRecorded` already published the trade verdict.
+  Replays can notify again but preserve stored statuses and timestamps.
+  The event's `occurredAt` uses `status_updated_at`, falling back to creation time
+  for legacy records; the trade DTO's `timestamp` remains its RFC 3339 creation time.
+  HTTP and EWDS queries return the same DTO. HTTP-only operation needs no gateway.
+  Notification delivery remains best effort, without a durable outbox or ordering guarantee.
 - Order IDs and market IDs are stored as hex strings (`0x...`).
+  Trade, order and clearing-result queries accept market IDs as UUID or 16-byte
+  hex and normalize them to lowercase `0x` hex. Invalid IDs return HTTP 400 or
+  EWDS `invalid_request`. Storage read failures return HTTP 500 or EWDS
+  `STORAGE_UNAVAILABLE`, never a partial list. A malformed stored document blocks
+  queries that select it until corrected; the error is logged with query context.
 - The preferred trading partner of a bid or an offer is stored in its
   requirements (`requirements.trading_partner_id`) as the original off-chain
   partner facility ID; attributes carry no partner.
@@ -96,13 +148,24 @@ the same collections (see
   facility IDs; the matcher resolves them back before comparing on-chain actors.
   UUID-shaped facility IDs are mapping inputs, not already-encoded on-chain IDs.
   Missing reverse mappings cause an indexing error rather than fabricating an ID.
-  The listener logs handler errors without replaying failed events, so mappings
-  must exist before order submission; restoring them requires explicit reindexing.
-  Existing records with on-chain partner IDs must be migrated using the mapping
-  collection (or reindexed after mappings are restored); they must not be used
-  as off-chain inputs to create new mappings.
-- Settlement events transition order statuses to `Executed`.
-- Trade records include both order payload snapshots and selected settlement parameters.
+  Mappings must exist before order submission. A missing mapping fails the block;
+  the listener logs the error and retries that block instead of skipping it.
+- Settlement events mark consumed orders `Filled`, or `PartiallyFilled` when a
+  residual ID is emitted. Each residual is a separate `Submitted` order; filling
+  it later does not change its original's status. Settlement does not mark orders
+  `Executed`; the later `DeliveryVerified` event does so for that trade and only
+  its two consumed orders, including `PartiallyFilled` originals. Residuals are
+  independent. Consumed orders use the verification block timestamp. A penalty-free
+  trade uses it too; a Penalized trade keeps its first penalty block timestamp.
+  Replays preserve these timestamps. Separately penalized trades remain eligible
+  for verification; the execution engine skips already verified trades on-chain.
+  Verified, penalty-free trades are eligible for the status-time/GoO query.
+- Order placement, cancellation and settlement indexing use the event block's
+  timestamp for `status_updated_at` (exposed as `updatedAt` in HTTP/EWDS DTOs),
+  not the indexing time. Status and timestamp are updated together. Residual
+  orders have independent status timestamps; `creation_time` remains unchanged.
+  Existing records without a status timestamp are not backfilled by this change.
+- Trade records include order IDs, residual IDs and selected settlement parameters.
 
 ## Operational Configuration
 
@@ -113,7 +176,6 @@ Key env variables:
 - `CONTRACT_TRADE_SETTLEMENT`
 - `CONTRACT_MARKET_CONTROLLER`
 - `DATABASE_*`
-- `SCHEDULER_INTERVAL`
 - `EWDS_ENABLE_HANDLER`
 - `EWDS_COMMUNITIES_REQUEST_TOPIC`
 - `EWDS_EVENT_PUBLISH_FQCN`, `EWDS_EVENT_SUBSCRIBE_FQCN`

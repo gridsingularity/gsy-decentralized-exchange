@@ -1,7 +1,33 @@
-use primitives::utils::{generate_market_id, normalize_community_id};
+use primitives::utils::{generate_market_id, normalize_community_id, normalize_market_id};
 use primitives::MarketType;
 
 const COMMUNITY_ID: &str = "11111111-1111-4111-8111-111111111111";
+
+#[test]
+fn market_id_normalizes_uuid_and_hex_forms_to_lowercase_hex() {
+    let canonical = "0x3f2504e04f8941d39a0c0305e82c3301";
+    for id in [
+        canonical,
+        "3F2504E0-4F89-41D3-9A0C-0305E82C3301",
+        "0x3F2504E04F8941D39A0C0305E82C3301",
+        "3F2504E04F8941D39A0C0305E82C3301",
+    ] {
+        assert_eq!(normalize_market_id(id).unwrap(), canonical);
+    }
+}
+
+#[test]
+fn market_id_normalization_rejects_invalid_values() {
+    for id in [
+        "",
+        "MARKET-1",
+        "0x1234",
+        "0xgggggggggggggggggggggggggggggggg",
+        "0x1111111111111111111111111111111111111111111111111111111111111111",
+    ] {
+        assert!(normalize_market_id(id).is_err(), "{id}");
+    }
+}
 
 #[test]
 fn market_id_is_deterministic_for_the_same_seed() {
