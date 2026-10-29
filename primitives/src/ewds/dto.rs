@@ -11,7 +11,7 @@ use crate::db_api_schema::{
 };
 
 use crate::utils::{
-    bytes16_to_hex, bytes16_to_uuid_string, epoch_to_rfc3339, parse_uuid_or_hex_bytes16,
+    bytes16_to_hex, bytes16_to_uuid_string, epoch_to_rfc3339, opt_rfc3339_to_epoch, parse_uuid_or_hex_bytes16,
     rfc3339_to_epoch, string_to_timestamp, timestamp_to_string_with_padding,
 };
 use anyhow::{anyhow, Context, Result};
@@ -173,7 +173,7 @@ impl From<DbOrderSchema> for EwdsOrderDto {
                 .map(|a| energy_type_to_ewds(&a.energy_type).to_string()),
             created_by: order.created_by,
             creation_time: epoch_to_rfc3339(order.creation_time),
-            updated_at: Some(epoch_to_rfc3339(order.creation_time)),
+            updated_at: order.status_updated_at.map(epoch_to_rfc3339),
             reject_reason: None,
             preferred_trading_partner,
             preferred_energy_rate: order
@@ -216,6 +216,7 @@ impl TryFrom<EwdsOrderDto> for DbOrderSchema {
         Ok(Self {
             order_id: order.order_id,
             status: order_status_from_ewds(order.order_status.as_str())?,
+            status_updated_at: opt_rfc3339_to_epoch(order.updated_at.as_deref())?,
             order_type,
             area_uuid: order.created_by.clone(),
             market_id: order.market_id,

@@ -56,7 +56,7 @@ impl TimeslotScheduler {
             .unwrap_or(current_target_timeslot)
     }
 
-    pub fn record_cycle(&mut self, timeslot: u64, processed_penalties: usize) {
+    pub fn record_cycle(&mut self, timeslot: u64, verified_trades: usize) {
         let Some(pending) = self.pending_timeslot.as_mut() else {
             return;
         };
@@ -64,10 +64,10 @@ impl TimeslotScheduler {
             return;
         }
 
-        if processed_penalties > 0 {
+        if verified_trades > 0 {
             info!(
-                "Finished retained timeslot {} after processing {} penalties",
-                timeslot, processed_penalties
+                "Finished retained timeslot {} after verifying {} trades",
+                timeslot, verified_trades
             );
             self.pending_timeslot = None;
         } else if pending.retries_remaining <= 1 {

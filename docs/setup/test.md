@@ -418,3 +418,54 @@ Current e2e suite validates:
 - Distinct Spot market creation for multiple communities in the same delivery
   slot, with end-to-end verification that matching, settlement, indexing, and
   penalties remain isolated per community market.
+
+### DD-423 Order Lifecycle Validation
+
+Run both `pay_as_bid` and `pay_as_clear` with each transport. Leave
+`E2E_FEATURE_PATH` unset and do not supply Cucumber `--name`/`--tags` filters
+for the complete matrix. HTTP runs skip the `@ewds` event scenarios; EWDS
+runs include them in both algorithm folders.
+
+Before running:
+
+- Redeploy the current contracts with `./scripts/contracts.sh local deploy`
+  and use the resulting `contracts-output/addresses.env`. Older deployments
+  do not provide the DD-423 fill, expiry and delivery-verification lifecycle.
+- For EWDS, update the existing `order`/`orderTest` topic schema from
+  `schemas/ewds/intelligent/int.order.event.v1.json`. It must accept both
+  `order.event` and `orderStatus.event`; no new topic is required. Ensure
+  the event publish/subscribe channels include that topic.
+- Keep the normal local E2E role grants: the default test wallet creates an
+  isolated market for cancellation without changing the orchestrator's markets.
+
+Coverage added for DD-423:
+
+- `order_lifecycle.feature` verifies `Submitted` and `Cancelled` on-chain and in
+  storage, including event timestamps. Deterministic contract and listener tests
+  cover expiry at market closure, without advancing the shared E2E chain clock.
+  Full delivery reaches `Executed` for the trade and both consumed orders without
+  a penalty.
+- Existing settlement/residual scenarios check `Filled`/`PartiallyFilled`
+  and independent residual orders. Penalty scenarios now also require the
+  trade and its consumed orders to become `Executed` with the verification
+  block's timestamp.
+- EWDS order scenarios observe `submitted`, `filled` and `executed`
+  notifications with an independent FOS consumer cursor. A closed-market
+  contract rejection must notify `rejected` with a reason but create no
+  on-chain or stored order. Notifications must not be submitted as new orders.
+
+Focused tests additionally cover both residual sides, missing measurements,
+duplicate verification, listener replay, notification snapshots, reverted
+receipts and transport errors. The real-contract integration check requires
+compiled Hardhat artifacts, Anvil and MongoDB:
+
+```bash
+cargo test --locked -p gsy-offchain-storage --test api \
+  delivery_verification_runs_through_real_contracts_engine_and_storage -- --ignored
+```
+
+Deliberate follow-ups: legacy order POST write permissions remain unchanged;
+malformed submissions are logged, not published as rejected order snapshots;
+verification keeps the current single-measurement policy; event publication
+is best effort, without a durable outbox. These limitations are not resolved
+by a passing validation matrix.

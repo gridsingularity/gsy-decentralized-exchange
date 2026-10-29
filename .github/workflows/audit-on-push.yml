@@ -85,6 +85,14 @@ jobs:
           for lockfile in "${lockfiles[@]}"; do
             crate_dir="$(dirname "$lockfile")"
             echo "::group::cargo audit ${crate_dir}"
-            (cd "$crate_dir" && cargo audit "${audit_args[@]}")
+            (
+              cd "$crate_dir"
+              dependency_tree="$(cargo tree --locked --workspace --all-features --target all --edges normal,build,dev --prefix none)"
+              if grep -q '^zip v' <<< "$dependency_tree"; then
+                echo "ZIP is active in the dependency tree; revisit the temporary audit exceptions."
+                exit 1
+              fi
+              cargo audit "${audit_args[@]}"
+            )
             echo "::endgroup::"
           done
