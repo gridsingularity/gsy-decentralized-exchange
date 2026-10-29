@@ -10,8 +10,11 @@ use crate::db_api_schema::{
     },
 };
 
-use crate::utils::{epoch_to_rfc3339, rfc3339_to_epoch};
-use anyhow::{anyhow, Result};
+use crate::utils::{
+    bytes16_to_hex, bytes16_to_uuid_string, epoch_to_rfc3339, parse_uuid_or_hex_bytes16,
+    rfc3339_to_epoch, string_to_timestamp, timestamp_to_string_with_padding,
+};
+use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::str::FromStr;
@@ -373,13 +376,6 @@ impl TryFrom<EwdsTradeDto> for DbTradeSchema {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-pub struct EwdsMarketStatusDto {
-    pub market_id: String,
-    pub is_open: bool,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub struct EwdsClearingResultDto {
     pub market_id: String,
     pub clearing_status: String,
@@ -489,6 +485,9 @@ impl TryFrom<EwdsClearingResultDto> for ClearingResultSchema {
     }
 }
 
+/// A market in the form of `int.market.schema.v1.json`, as returned by
+/// `markets.query` and published in `market.event`: UUID market ID and
+/// RFC 3339 times. The market ID is the same 16 bytes as the stored `0x…` ID.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct EwdsMarketDto {
@@ -503,35 +502,51 @@ pub struct EwdsMarketDto {
     pub created_at: String,
 }
 
-impl From<MarketSchema> for EwdsMarketDto {
-    fn from(m: MarketSchema) -> Self {
-        EwdsMarketDto {
-            market_id: m.market_id,
+/// Parses a market ID given as a UUID or as 16 hex bytes.
+pub fn parse_market_id(value: &str) -> Result<[u8; 16]> {
+    parse_uuid_or_hex_bytes16(value)
+        .ok_or_else(|| anyhow!("market ID '{}' is not a UUID or 16-byte hex value", value))
+}
+
+impl TryFrom<MarketSchema> for EwdsMarketDto {
+    type Error = anyhow::Error;
+
+    fn try_from(m: MarketSchema) -> Result<Self> {
+        let time = |name: &str, value: &str| {
+            string_to_timestamp(value)
+                .map(epoch_to_rfc3339)
+                .with_context(|| format!("{} '{}' is not an epoch timestamp", name, value))
+        };
+        Ok(EwdsMarketDto {
+            market_id: bytes16_to_uuid_string(parse_market_id(&m.market_id)?),
             community_id: m.community_id,
-            opening_time: m.opening_time,
-            closing_time: m.closing_time,
-            delivery_start_time: m.delivery_start_time,
-            delivery_end_time: m.delivery_end_time,
+            opening_time: time("opening_time", &m.opening_time)?,
+            closing_time: time("closing_time", &m.closing_time)?,
+            delivery_start_time: time("delivery_start_time", &m.delivery_start_time)?,
+            delivery_end_time: time("delivery_end_time", &m.delivery_end_time)?,
             market_type: m.market_type,
             matching_algorithm: m.matching_algorithm,
-            created_at: m.created_at,
-        }
+            created_at: time("created_at", &m.created_at)?,
+        })
     }
 }
 
-impl From<EwdsMarketDto> for MarketSchema {
-    fn from(d: EwdsMarketDto) -> Self {
-        MarketSchema {
-            market_id: d.market_id,
+impl TryFrom<EwdsMarketDto> for MarketSchema {
+    type Error = anyhow::Error;
+
+    fn try_from(d: EwdsMarketDto) -> Result<Self> {
+        let time = |value: &str| rfc3339_to_epoch(value).map(timestamp_to_string_with_padding);
+        Ok(MarketSchema {
+            market_id: bytes16_to_hex(parse_market_id(&d.market_id)?),
             community_id: d.community_id,
-            opening_time: d.opening_time,
-            closing_time: d.closing_time,
-            delivery_start_time: d.delivery_start_time,
-            delivery_end_time: d.delivery_end_time,
+            opening_time: time(&d.opening_time)?,
+            closing_time: time(&d.closing_time)?,
+            delivery_start_time: time(&d.delivery_start_time)?,
+            delivery_end_time: time(&d.delivery_end_time)?,
             market_type: d.market_type,
             matching_algorithm: d.matching_algorithm,
-            created_at: d.created_at,
-        }
+            created_at: time(&d.created_at)?,
+        })
     }
 }
 

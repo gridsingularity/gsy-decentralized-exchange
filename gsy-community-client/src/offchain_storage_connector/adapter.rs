@@ -1,20 +1,15 @@
-use crate::time_utils::get_current_timestamp_in_secs;
 use primitives::db_api_schema::grid_topology::FacilitySchema;
-use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::profiles::{
     FlowDirection, ForecastSchema, MeasurementPointSchema, MeasurementPointType, MeasurementSchema,
     TimeseriesSchema,
 };
-use primitives::utils::{bytes16_to_hex, generate_market_id, timestamp_to_string_with_padding};
-use primitives::{MarketType, MatchingAlgorithm};
+use primitives::utils::timestamp_to_string_with_padding;
 use reqwest::Client;
 use std::env;
-use tracing::info;
 
 #[derive(Clone)]
 pub struct AreaMarketInfoAdapter {
     client: Client,
-    internal_markets_url: String,
     internal_measurement_points_url: String,
     internal_timeseries_url: String,
     internal_facilities_url: String,
@@ -29,7 +24,6 @@ impl AreaMarketInfoAdapter {
         let base_url = hostname.trim_end_matches('/').to_string();
         AreaMarketInfoAdapter {
             client: Client::new(),
-            internal_markets_url: base_url.clone() + "/markets",
             internal_measurement_points_url: base_url.clone() + "/measurement-points",
             internal_timeseries_url: base_url.clone() + "/timeseries",
             internal_facilities_url: base_url.clone() + "/facilities",
@@ -121,49 +115,6 @@ impl AreaMarketInfoAdapter {
         measurement.energy_kwh > 0.0 && measurement.time_slot <= seconds_since_epoch
     }
 
-    pub async fn create_market(
-        &self,
-        community_uuid: String,
-        time_slot: u64,
-        matching_algorithm: MatchingAlgorithm,
-    ) -> Option<MarketSchema> {
-        let creation_time = get_current_timestamp_in_secs();
-        let market_schema = MarketSchema {
-            market_id: bytes16_to_hex(generate_market_id(
-                community_uuid.as_str(),
-                MarketType::Spot,
-                time_slot,
-            )),
-            community_id: community_uuid,
-            opening_time: timestamp_to_string_with_padding(creation_time),
-            closing_time: timestamp_to_string_with_padding(time_slot),
-            delivery_start_time: timestamp_to_string_with_padding(time_slot),
-            delivery_end_time: timestamp_to_string_with_padding(time_slot + 900),
-            market_type: MarketType::Spot,
-            matching_algorithm,
-            created_at: timestamp_to_string_with_padding(creation_time),
-        };
-
-        match self
-            .client
-            .post(&self.internal_markets_url)
-            .json(&market_schema)
-            .send()
-            .await
-        {
-            Ok(response) if response.status().is_success() => Some(market_schema),
-            Ok(response) => {
-                let status = response.status();
-                let body = response.text().await.unwrap_or_default();
-                info!("Market upsert failed with status {}: {}", status, body);
-                None
-            }
-            Err(error) => {
-                info!("Market upsert failed with error: {}", error);
-                None
-            }
-        }
-    }
     pub async fn forward_facilities(&self, facilities: FacilitySchema) -> anyhow::Result<()> {
         let resp = self
             .client
