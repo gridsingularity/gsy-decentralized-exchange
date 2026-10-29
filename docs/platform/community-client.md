@@ -9,7 +9,6 @@ publication.
 
 - Pull external community facility topology, forecasts, and measurements.
 - Normalize profile data into ontology `MeasurementPoint` and `Timeseries` records.
-- Forward market openings as ontology `Market` records.
 - Publish bid/offer orders on-chain via `OrderRegistry.placeOrder`.
 - Send the orders FOS publishes as EWDS `order.event` messages to
   `OrderRegistry.placeOrder`.
@@ -17,9 +16,10 @@ publication.
 ## Facility Topology and Market Coupling
 
 The client uses the external facility topology to validate forecast and
-measurement facility IDs, then stores the market opening in off-chain storage
-for the target timeslot.
-Market IDs are generated with the same deterministic scheme used by orchestrator.
+measurement facility IDs. It does not create markets: the orchestrator creates
+them on-chain and off-chain storage indexes them from `NewMarketCreated`. The
+client reads the market for a timeslot from off-chain storage; market IDs use
+the same deterministic scheme as the orchestrator.
 
 ## Order Publication Logic
 

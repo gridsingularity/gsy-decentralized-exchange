@@ -5,7 +5,7 @@ use mongodb::bson::doc;
 use mongodb::options::IndexOptions;
 use mongodb::{bson, Collection, IndexModel};
 use primitives::db_api_schema::market::MarketSchema;
-use primitives::utils::timestamp_to_string_with_padding;
+use primitives::utils::{normalize_community_id, timestamp_to_string_with_padding};
 use std::ops::Deref;
 
 pub async fn init_markets(db: &DatabaseWrapper) -> Result<()> {
@@ -51,7 +51,7 @@ impl MarketService {
             filter_params.insert("market_id", market_id);
         }
         if let Some(community_id) = community_id {
-            filter_params.insert("community_id", community_id);
+            filter_params.insert("community_id", normalize_community_id(&community_id)?);
         }
         match (start_time, end_time) {
             (Some(start), Some(end)) => {
@@ -118,7 +118,8 @@ impl MarketService {
     }
 
     #[tracing::instrument(name = "Saving market", skip(self, market), fields(market = ?market))]
-    pub async fn upsert(&self, market: MarketSchema) -> Result<MarketSchema> {
+    pub async fn upsert(&self, mut market: MarketSchema) -> Result<MarketSchema> {
+        market.community_id = normalize_community_id(&market.community_id)?;
         let market_doc = bson::to_document(&market)?;
         match self
             .0

@@ -13,13 +13,20 @@ Backend: MongoDB (`mongo:5.0`).
    - `OrderPlaced`
    - `OrderCancelled`
    - `TradeSettled`
-   - `MarketStatusUpdated`
+   - `NewMarketCreated`
+   - `MarketClearing`
 2. `OffchainStorageEvmHandler` maps event payloads into DB schemas.
 3. `gsy-offchain-storage` updates order/trade records and exposes them via REST APIs.
 
 `OrderPlaced` contains the optional order requirements (bids and offers) and
 offer attributes, so the indexed order is complete without a follow-up
 `/orders` write.
+
+`NewMarketCreated` carries the full market record. The handler converts it to
+`MarketSchema` (`market_id` as `0x` + 32 hex digits, `community_id` as UUID,
+times as zero-padded epoch seconds) and upserts it by `market_id`, so a
+replayed event is harmless. The chain is the source of markets; no service
+posts them any more.
 
 ## HTTP API Surface
 
@@ -37,7 +44,8 @@ offer attributes, so the indexed order is complete without a follow-up
 - `/trades` (`GET`, `POST`); `GET` follows the `trades.query` rules: `market_id` alone is enough, otherwise both `start_time` and `end_time` are required and span at most 1 day (`400` otherwise)
 - `/market` (`GET`) compatibility adapter for EVM JSON callers
 - `/communities` (`GET`, `POST`) for idempotent community query/upsert
-- `/markets` (`GET`, `POST`) for ontology-aligned market-opening records
+- `/markets` (`GET`, `POST`) for ontology-aligned market-opening records;
+  records come from `NewMarketCreated`, `POST` remains for manual use
 - `/clearing-results` (`GET`, `POST`)
 - `/market-roles` (`GET`, `POST`)
 

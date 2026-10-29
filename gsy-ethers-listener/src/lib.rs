@@ -14,7 +14,7 @@ abigen!(
         event OrderCancelled(bytes16 indexed orderId)
         event OrderStatusUpdated(bytes16 indexed orderId, uint8 status)
         event TradeSettled(bytes16 indexed tradeId, bytes16 indexed bidId, bytes16 indexed offerId, bytes16 buyerId, bytes16 sellerId, bytes16 marketId, uint64 timeSlot, bytes16 residualBidId, bytes16 residualOfferId, uint256 energy, uint256 price)
-        event MarketStatusUpdated(bytes16 indexed marketId, bool isOpen)
+        event NewMarketCreated(bytes16 indexed marketId, bytes16 indexed communityId, uint64 openingTime, uint64 closingTime, uint64 deliveryStartTime, uint64 deliveryEndTime, uint8 marketType, uint8 matchingAlgorithm, uint64 createdAt)
         event MarketClearing(bytes16 indexed marketId, uint8 clearingStatus, uint256 clearingPrice, uint256 totalSupply, uint256 totalDemand, uint256 tradedQuantity, uint32 numTrades)
     ]"#
 );
@@ -33,7 +33,7 @@ pub trait GsyEventHandler: Send + Sync + 'static {
     async fn handle_order_placed(&self, event: OrderPlacedFilter) -> Result<()>;
     async fn handle_order_cancelled(&self, event: OrderCancelledFilter) -> Result<()>;
     async fn handle_trade_settled(&self, event: TradeSettledFilter) -> Result<()>;
-    async fn handle_market_status(&self, event: MarketStatusUpdatedFilter) -> Result<()>;
+    async fn handle_new_market_created(&self, event: NewMarketCreatedFilter) -> Result<()>;
     async fn handle_market_clearing(
         &self,
         event: MarketClearingFilter,
@@ -83,7 +83,7 @@ impl<H: GsyEventHandler> GsyEthersListener<H> {
                 OrderPlacedFilter::signature(),
                 OrderCancelledFilter::signature(),
                 TradeSettledFilter::signature(),
-                MarketStatusUpdatedFilter::signature(),
+                NewMarketCreatedFilter::signature(),
                 MarketClearingFilter::signature(),
             ]);
         let mut stream = provider.subscribe_logs(&filter).await?;
@@ -119,14 +119,14 @@ impl<H: GsyEventHandler> GsyEthersListener<H> {
                     info!("Detected TradeSettled: {:?}", hex::encode(event.trade_id));
                     self.handler.handle_trade_settled(event).await
                 }
-                GsyContractsEvents::MarketStatusUpdatedFilter(event)
+                GsyContractsEvents::NewMarketCreatedFilter(event)
                     if log.address == self.config.market_controller_address =>
                 {
                     info!(
-                        "Detected MarketStatusUpdated: {:?}",
+                        "Detected NewMarketCreated: {:?}",
                         hex::encode(event.market_id)
                     );
-                    self.handler.handle_market_status(event).await
+                    self.handler.handle_new_market_created(event).await
                 }
                 GsyContractsEvents::MarketClearingFilter(event)
                     if log.address == self.config.trade_settlement_address =>
