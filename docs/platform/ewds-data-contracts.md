@@ -66,6 +66,7 @@ operation names for readability and service routing:
 | `site` | `site.event` | `int.site.event.v1.json` |
 | `community` | `community.event` | `int.community.event.v1.json` |
 | `order` | `order.event` | `int.order.event.v1.json` |
+| `order` | `orderStatus.event` | `int.order.event.v1.json` |
 | `trade` | `trade.event` | `int.trade.event.v1.json` |
 | `clearingResult` | `clearingResult.event` | `int.clearing-result.event.v1.json` |
 | `market` | `market.event` | `int.market.event.v1.json` |
@@ -98,18 +99,24 @@ Used by `measurements.query` responses and `measurements.event` messages.
 
 ### Trade Mapping
 
+DD-453 changes the v1 `tradeStatus` values in place to `matched`, `executed`,
+`settled` and `penalized`; no new schema version was introduced. Consumers must
+use these values and the current lifecycle: listener-indexed block inclusion
+creates `matched`, verification produces `executed` or terminal `penalized`,
+and financial `settled` is reserved for a future integration.
+
 | Ontology property | Schema field | Current runtime source |
 |---|---|---|
 | `int:tradeId` | `tradeId` | `DbTradeSchema.trade_uuid` |
 | `int:bidId` | `bidId` | `DbTradeSchema.bid_hash` |
 | `int:offerId` | `offerId` | `DbTradeSchema.offer_hash` |
-| `int:residualBidId` | `residualBidId` | `DbTradeSchema.residual_bid.order_id` |
-| `int:residualOfferId` | `residualOfferId` | `DbTradeSchema.residual_offer.order_id` |
+| `int:residualBidId` | `residualBidId` | `DbTradeSchema.residual_bid_id` |
+| `int:residualOfferId` | `residualOfferId` | `DbTradeSchema.residual_offer_id` |
 | `int:marketId` | `marketId` | `DbTradeSchema.market_id` |
 | `int:tradeStatus` | `tradeStatus` | `DbTradeSchema.status` |
 | `int:tradeQuantity` | `tradeQuantity` | `DbTradeSchema.parameters.selected_energy_kWh` |
 | `int:tradePrice` | `tradePrice` | `DbTradeSchema.parameters.energy_rate` |
-| `int:tradedAt` | `tradedAt` | `DbTradeSchema.creation_time` |
+| `int:tradedAt` | `timestamp` | `DbTradeSchema.creation_time` (RFC 3339) |
 | `int:buyerId` | `buyerId` | `DbTradeSchema.buyer` |
 | `int:sellerId` | `sellerId` | `DbTradeSchema.seller` |
 
@@ -136,7 +143,7 @@ For an `order.event`, the community client builds the
 | Contract parameter | From |
 |---|---|
 | `orderId` | the 16 bytes of the `orderId` UUID |
-| `createdBy` | `createdBy`, mapped to the on-chain actor ID by the ID service |
+| `createdBy` | Facility ID, mapped to its on-chain ID by the ID service; not the owner ID or service wallet |
 | `marketId` | the 16 bytes of `marketId` |
 | `timeSlot`, `creationTime` | `timeSlot`, `creationTime` as epoch seconds |
 | `energy`, `energyRate` | `quantity`, `priceLimit` × 10 000, rounded |

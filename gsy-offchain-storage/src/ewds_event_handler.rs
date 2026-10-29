@@ -1,16 +1,17 @@
 use crate::db::measurements_service::insert_measurements;
 use crate::db::DatabaseWrapper;
 use crate::ewds_handler::{send_message_with_fqcn, EwdsHandlerConfig};
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use futures::future::join_all;
 use primitives::db_api_schema::{
     grid_topology::{EnergyCommunitySchema, FacilitySchema, SiteSchema},
+    orders::DbOrderSchema,
     profiles::MeasurementSchema,
     trades::{ClearingResultSchema, DbTradeSchema},
 };
 use primitives::ewds::dto::{
     EwdsClearingResultDto, EwdsCommunityDto, EwdsEventEnvelope, EwdsMarketDto, EwdsMeasurementDto,
-    EwdsTradeDto,
+    EwdsOrderDto, EwdsTradeDto,
 };
 use primitives::ewds::{invalid_event, parse_batch, EwdsClient, EwdsClientConfig, EwdsEventType};
 use primitives::utils::epoch_to_rfc3339;
@@ -53,10 +54,26 @@ impl EwdsEventPublisher {
         }
     }
 
+    pub fn publish_order_status_event(&self, orders: Vec<DbOrderSchema>) -> JoinHandle<()> {
+        let occurred_at = orders
+            .iter()
+            .filter_map(|order| order.status_updated_at)
+            .max()
+            .unwrap_or_default();
+        self.spawn_event(
+            EwdsEventType::OrderStatus,
+            occurred_at,
+            orders
+                .into_iter()
+                .map(EwdsOrderDto::from)
+                .collect::<Vec<_>>(),
+        )
+    }
+
     pub fn publish_trade_event(&self, trades: Vec<DbTradeSchema>) -> JoinHandle<()> {
         let occurred_at = trades
             .iter()
-            .map(|trade| trade.creation_time)
+            .map(|trade| trade.status_updated_at.unwrap_or(trade.creation_time))
             .max()
             .unwrap_or_default();
         self.spawn_event(
@@ -67,6 +84,28 @@ impl EwdsEventPublisher {
                 .map(EwdsTradeDto::from)
                 .collect::<Vec<_>>(),
         )
+    }
+
+    /// Re-read persisted statuses so replayed events cannot publish stale payloads.
+    pub async fn publish_stored_trades(
+        &self,
+        db: &DatabaseWrapper,
+        trade_ids: &[String],
+    ) -> Result<()> {
+        if !self.config.enabled || trade_ids.is_empty() {
+            return Ok(());
+        }
+        let mut trades = Vec::with_capacity(trade_ids.len());
+        for trade_id in trade_ids {
+            let trade = db
+                .trades()
+                .find_one(mongodb::bson::doc! {"trade_uuid": trade_id})
+                .await?
+                .with_context(|| format!("Missing trade {} for status notification", trade_id))?;
+            trades.push(trade);
+        }
+        self.publish_trade_event(trades);
+        Ok(())
     }
 
     pub fn publish_clearing_result_event(
@@ -214,7 +253,10 @@ pub async fn handle_event(db: &DatabaseWrapper, envelope: EwdsEventEnvelope<Valu
         }
         EwdsEventType::Community => {
             let communities = parse_batch(envelope.data, |community: EwdsCommunityDto| {
-                Ok(EnergyCommunitySchema::from(community))
+                let mut community = EnergyCommunitySchema::from(community);
+                community.community_id =
+                    primitives::utils::normalize_community_id(&community.community_id)?;
+                Ok(community)
             })?;
             db.communities().check_for_duplicates(&communities).await?;
             for community in communities {

@@ -5,13 +5,12 @@
 //!
 //! # Identification
 //!
-//! * A trade party (`seller` / `buyer`) is the on-chain owner hash
-//!   `bytes16_to_hex(create_encrypted_bytes16_from_string(owner_id))`, resolved to the
-//!   owner's facility (one facility per owner, DD-409).
+//! * A trade party (`seller` / `buyer`) is the facility's on-chain ID from the ID service.
+//!   Owners remain separate metadata; multiple facilities may share an owner.
 //! * A measurement point's `asset_name` names a **facility**. It is matched against
 //!   `FacilitySchema::facility_id` first — that is what the community client and the
 //!   `/measurements` compatibility route write into `asset_name`, and what the execution
-//!   engine's `facility_owner_mapping` keys on — and against `facility_name` as a fallback.
+//!   engine keys on — and against `facility_name` as a fallback.
 //! * An asset's `facility_name` is matched the same way (id first, then name), because
 //!   ontology imports populate it with the facility's name while other writers use the id.
 //!
@@ -43,14 +42,13 @@ use primitives::certificates::{
 use primitives::db_api_schema::grid_topology::{
     AssetSchema, AssetType, EnergyCommunitySchema, FacilitySchema,
 };
+use primitives::db_api_schema::ids::IdMappingSchema;
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::profiles::{
     FlowDirection as PointDirection, MeasurementPointSchema, MeasurementPointType, TimeseriesSchema,
 };
 use primitives::db_api_schema::trades::{DbTradeSchema, TradeStatus};
-use primitives::utils::{
-    bytes16_to_hex, create_encrypted_bytes16_from_string, string_to_timestamp,
-};
+use primitives::utils::string_to_timestamp;
 
 use crate::certificates::config::PILOT;
 
@@ -58,6 +56,7 @@ use crate::certificates::config::PILOT;
 #[derive(Debug, Default, Clone, Copy)]
 pub struct CertificateInputs<'a> {
     pub facilities: &'a [FacilitySchema],
+    pub facility_ids: &'a [IdMappingSchema],
     pub communities: &'a [EnergyCommunitySchema],
     pub assets: &'a [AssetSchema],
     pub measurement_points: &'a [MeasurementPointSchema],
@@ -78,16 +77,13 @@ fn delivery_slots<'a>(markets: &'a [MarketSchema]) -> HashMap<&'a str, u64> {
         .collect()
 }
 
-/// The on-chain party hash of an off-chain id, as written into `DbTradeSchema::seller` /
-/// `buyer` (and, for a community acting as a party, its `community_id`).
-pub fn party_hash(offchain_id: &str) -> String {
-    bytes16_to_hex(create_encrypted_bytes16_from_string(offchain_id))
-}
+/// Legacy owner/community identifier used in certificate metadata.
+/// Facility trade parties are resolved through the ID service's stored mappings.
+pub use primitives::utils::derive_onchain_id as party_hash;
 
 /// Facilities and communities indexed the ways the builder looks them up.
 struct Topology<'a> {
-    /// Owner hash → facility (DD-409: one facility per owner; the lowest `facility_id` wins
-    /// should that ever be violated, so the choice is deterministic).
+    /// On-chain facility ID → facility, independent of its owner.
     facility_by_party: HashMap<String, &'a FacilitySchema>,
     /// `facility_id` and `facility_name` → facility; ids take precedence over names.
     facility_by_alias: HashMap<&'a str, &'a FacilitySchema>,
@@ -105,11 +101,16 @@ impl<'a> Topology<'a> {
         facilities.sort_by(|a, b| a.facility_id.cmp(&b.facility_id));
 
         let mut facility_by_party = HashMap::new();
+        let facility_ids: HashMap<_, _> = inputs
+            .facility_ids
+            .iter()
+            .map(|mapping| (mapping.offchain_id.as_str(), mapping.onchain_id.as_str()))
+            .collect();
         let mut facility_by_alias = HashMap::new();
         for facility in &facilities {
-            facility_by_party
-                .entry(party_hash(&facility.owner_id))
-                .or_insert(*facility);
+            if let Some(onchain_id) = facility_ids.get(facility.facility_id.as_str()) {
+                facility_by_party.insert((*onchain_id).to_string(), *facility);
+            }
             facility_by_alias
                 .entry(facility.facility_id.as_str())
                 .or_insert(*facility);
@@ -552,7 +553,7 @@ pub fn build_local_origin_records_with_allocation(
                 storage_mediated_flag: false,
             },
             beneficiary_and_claim: BeneficiaryAndClaim {
-                owner_id: trade.seller.clone(),
+                owner_id: party_hash(&seller_facility.owner_id),
                 consumption_metering_point_id: buyer_facility
                     .map(|facility| facility.facility_id.clone()),
                 facility_id: Some(seller_facility.facility_id.clone()),

@@ -14,6 +14,8 @@ abigen!(
         event OrderCancelled(bytes16 indexed orderId)
         event OrderStatusUpdated(bytes16 indexed orderId, uint8 status)
         event TradeSettled(bytes16 indexed tradeId, bytes16 indexed bidId, bytes16 indexed offerId, bytes16 buyerId, bytes16 sellerId, bytes16 marketId, uint64 timeSlot, bytes16 residualBidId, bytes16 residualOfferId, uint256 energy, uint256 price)
+        event DeliveryVerified(bytes16 indexed tradeId, bytes16 indexed bidId, bytes16 indexed offerId)
+        event PenaltyRecorded(bytes16 indexed penalizedActorId, bytes16 indexed marketId, bytes16 indexed tradeId, uint64 penaltyEnergy)
         event NewMarketCreated(bytes16 indexed marketId, bytes16 indexed communityId, uint64 openingTime, uint64 closingTime, uint64 deliveryStartTime, uint64 deliveryEndTime, uint8 marketType, uint8 matchingAlgorithm, uint64 createdAt)
         event MarketClearing(bytes16 indexed marketId, uint8 clearingStatus, uint256 clearingPrice, uint256 totalSupply, uint256 totalDemand, uint256 tradedQuantity, uint32 numTrades)
     ]"#
@@ -30,10 +32,37 @@ pub struct ListenerConfig {
 #[async_trait]
 pub trait GsyEventHandler: Send + Sync + 'static {
     // *Filter types are automatically generated from the ABI based on the event name.
-    async fn handle_order_placed(&self, event: OrderPlacedFilter) -> Result<()>;
-    async fn handle_order_cancelled(&self, event: OrderCancelledFilter) -> Result<()>;
-    async fn handle_trade_settled(&self, event: TradeSettledFilter) -> Result<()>;
+    async fn handle_order_placed(
+        &self,
+        event: OrderPlacedFilter,
+        block_timestamp: u64,
+    ) -> Result<()>;
+    async fn handle_order_cancelled(
+        &self,
+        event: OrderCancelledFilter,
+        block_timestamp: u64,
+    ) -> Result<()>;
+    async fn handle_trade_settled(
+        &self,
+        event: TradeSettledFilter,
+        block_timestamp: u64,
+    ) -> Result<()>;
+    /// Called after all contract events in a confirmed block have been indexed.
+    async fn handle_block(&self, _block_timestamp: u64) -> Result<()> {
+        Ok(())
+    }
+
     async fn handle_new_market_created(&self, event: NewMarketCreatedFilter) -> Result<()>;
+    async fn handle_delivery_verified(
+        &self,
+        event: DeliveryVerifiedFilter,
+        block_timestamp: u64,
+    ) -> Result<()>;
+    async fn handle_penalty_recorded(
+        &self,
+        event: PenaltyRecordedFilter,
+        block_timestamp: u64,
+    ) -> Result<()>;
     async fn handle_market_clearing(
         &self,
         event: MarketClearingFilter,
@@ -56,8 +85,9 @@ impl<H: GsyEventHandler> GsyEthersListener<H> {
     }
 
     pub async fn run(&self) -> Result<()> {
+        let mut next_block = None;
         loop {
-            if let Err(error) = self.run_once().await {
+            if let Err(error) = self.run_once(&mut next_block).await {
                 error!(
                     "GSy Ethers Listener connection failed or stopped: {:?}. Reconnecting in {:?}...",
                     error, RECONNECT_DELAY
@@ -68,11 +98,11 @@ impl<H: GsyEventHandler> GsyEthersListener<H> {
         }
     }
 
-    async fn run_once(&self) -> Result<()> {
+    async fn run_once(&self, next_block: &mut Option<u64>) -> Result<()> {
         info!("Connecting to EVM Node at {}", self.config.node_url);
 
         let provider = Provider::<Ws>::connect(&self.config.node_url).await?;
-        // One subscription preserves log order across registry and settlement events.
+        // Fetch one block at a time so expiry cannot overtake settlement events.
         let filter = Filter::new()
             .address(vec![
                 self.config.order_registry_address,
@@ -83,86 +113,102 @@ impl<H: GsyEventHandler> GsyEthersListener<H> {
                 OrderPlacedFilter::signature(),
                 OrderCancelledFilter::signature(),
                 TradeSettledFilter::signature(),
+                DeliveryVerifiedFilter::signature(),
+                PenaltyRecordedFilter::signature(),
                 NewMarketCreatedFilter::signature(),
                 MarketClearingFilter::signature(),
             ]);
-        let mut stream = provider.subscribe_logs(&filter).await?;
-
-        // All clearing events in one block share its timestamp.
-        let mut last_block_timestamp: Option<(H256, u64)> = None;
-
-        info!("GSy Ethers Listener started. Waiting for events...");
-
-        while let Some(log) = stream.next().await {
-            let raw = ethers::abi::RawLog {
-                topics: log.topics.clone(),
-                data: log.data.to_vec(),
-            };
-            let event = <GsyContractsEvents as ethers::contract::EthLogDecode>::decode_log(&raw)
-                .map_err(|error| anyhow!("Contract event decode error: {:?}", error))?;
-            let result = match event {
-                GsyContractsEvents::OrderPlacedFilter(event)
-                    if log.address == self.config.order_registry_address =>
-                {
-                    info!("Detected OrderPlaced: {:?}", hex::encode(event.order_id));
-                    self.handler.handle_order_placed(event).await
-                }
-                GsyContractsEvents::OrderCancelledFilter(event)
-                    if log.address == self.config.order_registry_address =>
-                {
-                    info!("Detected OrderCancelled: {:?}", hex::encode(event.order_id));
-                    self.handler.handle_order_cancelled(event).await
-                }
-                GsyContractsEvents::TradeSettledFilter(event)
-                    if log.address == self.config.trade_settlement_address =>
-                {
-                    info!("Detected TradeSettled: {:?}", hex::encode(event.trade_id));
-                    self.handler.handle_trade_settled(event).await
-                }
-                GsyContractsEvents::NewMarketCreatedFilter(event)
-                    if log.address == self.config.market_controller_address =>
-                {
-                    info!(
-                        "Detected NewMarketCreated: {:?}",
-                        hex::encode(event.market_id)
-                    );
-                    self.handler.handle_new_market_created(event).await
-                }
-                GsyContractsEvents::MarketClearingFilter(event)
-                    if log.address == self.config.trade_settlement_address =>
-                {
-                    info!("Detected MarketClearing: {:?}", hex::encode(event.market_id));
-                    let meta = LogMeta::from(&log);
-                    let block_timestamp = match last_block_timestamp {
-                        Some((block_hash, timestamp)) if block_hash == meta.block_hash => {
-                            Ok(timestamp)
-                        }
-                        _ => fetch_block_timestamp(&provider, meta.block_hash).await,
-                    };
-                    match block_timestamp {
-                        Ok(timestamp) => {
-                            last_block_timestamp = Some((meta.block_hash, timestamp));
-                            self.handler
-                                .handle_market_clearing(event, meta, timestamp)
-                                .await
-                        }
-                        Err(error) => Err(error),
-                    }
-                }
-                _ => continue,
-            };
-            if let Err(error) = result {
-                error!("Error handling contract event: {:?}", error);
-            }
+        // Preserve the live-only startup boundary; replay needs a persistent cursor.
+        // Record it before subscribing, then fetch any blocks mined during setup.
+        if next_block.is_none() {
+            *next_block = Some(provider.get_block_number().await?.as_u64() + 1);
         }
-        Err(anyhow!("Contract event stream ended"))
-    }
-}
+        let mut stream = provider.subscribe_blocks().await?;
+        let mut head = provider.get_block_number().await?.as_u64();
+        let mut number = next_block.expect("Listener start block initialized");
+        info!("GSy Ethers Listener started. Waiting for blocks...");
 
-async fn fetch_block_timestamp(client: &Provider<Ws>, block_hash: H256) -> Result<u64> {
-    let block = client
-        .get_block(block_hash)
-        .await?
-        .ok_or_else(|| anyhow!("Block {:?} not found", block_hash))?;
-    Ok(block.timestamp.as_u64())
+        loop {
+            while number <= head {
+                // Retain the failed block across reconnects instead of skipping its events.
+                *next_block = Some(number);
+                let block = provider
+                    .get_block(number)
+                    .await?
+                    .ok_or_else(|| anyhow!("Block {} not found", number))?;
+                let hash = block
+                    .hash
+                    .ok_or_else(|| anyhow!("Block {} has no hash", number))?;
+                let timestamp = block.timestamp.as_u64();
+                let mut logs = provider
+                    .get_logs(&filter.clone().at_block_hash(hash))
+                    .await?;
+                logs.sort_by_key(|log| log.log_index);
+                for log in logs {
+                    self.handle_log(log, timestamp).await?;
+                }
+                self.handler.handle_block(timestamp).await?;
+                number += 1;
+                *next_block = Some(number);
+            }
+            head = stream
+                .next()
+                .await
+                .ok_or_else(|| anyhow!("Contract block stream ended"))?
+                .number
+                .ok_or_else(|| anyhow!("Block notification has no number"))?
+                .as_u64();
+        }
+    }
+
+    async fn handle_log(&self, log: Log, timestamp: u64) -> Result<()> {
+        let raw = ethers::abi::RawLog {
+            topics: log.topics.clone(),
+            data: log.data.to_vec(),
+        };
+        let event = <GsyContractsEvents as ethers::contract::EthLogDecode>::decode_log(&raw)
+            .map_err(|error| anyhow!("Contract event decode error: {:?}", error))?;
+        match event {
+            GsyContractsEvents::OrderPlacedFilter(event)
+                if log.address == self.config.order_registry_address =>
+            {
+                self.handler.handle_order_placed(event, timestamp).await
+            }
+            GsyContractsEvents::OrderCancelledFilter(event)
+                if log.address == self.config.order_registry_address =>
+            {
+                self.handler.handle_order_cancelled(event, timestamp).await
+            }
+            GsyContractsEvents::TradeSettledFilter(event)
+                if log.address == self.config.trade_settlement_address =>
+            {
+                self.handler.handle_trade_settled(event, timestamp).await
+            }
+            GsyContractsEvents::PenaltyRecordedFilter(event)
+                if log.address == self.config.trade_settlement_address =>
+            {
+                self.handler.handle_penalty_recorded(event, timestamp).await
+            }
+            GsyContractsEvents::DeliveryVerifiedFilter(event)
+                if log.address == self.config.trade_settlement_address =>
+            {
+                self.handler
+                    .handle_delivery_verified(event, timestamp)
+                    .await
+            }
+            GsyContractsEvents::NewMarketCreatedFilter(event)
+                if log.address == self.config.market_controller_address =>
+            {
+                self.handler.handle_new_market_created(event).await
+            }
+            GsyContractsEvents::MarketClearingFilter(event)
+                if log.address == self.config.trade_settlement_address =>
+            {
+                self.handler
+                    .handle_market_clearing(event, LogMeta::from(&log), timestamp)
+                    .await
+            }
+            _ => Ok(()),
+        }
+    }
 }

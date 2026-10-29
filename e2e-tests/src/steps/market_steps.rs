@@ -217,21 +217,32 @@ async fn submit_two_communities(world: &mut MyWorld) {
         EnergyCommunitySchema {
             community_id: world.community_id.clone(),
             community_name: format!("E2E Community {}", world.community_id),
-            sites: vec![format!("E2E Site {}", world.community_id)],
+            sites: vec!["site-12345".to_string()],
         },
         EnergyCommunitySchema {
             community_id: world.secondary_community_id.clone(),
             community_name: format!("E2E Secondary Community {}", world.secondary_community_id),
-            sites: vec![format!(
-                "E2E Secondary Site {}",
-                world.secondary_community_id
-            )],
+            sites: vec!["site-12346".to_string()],
         },
     ];
 
     for community in &communities {
         upsert_community(world, community).await;
     }
+    let facilities = ["alice", "bob", "charlie"]
+        .into_iter()
+        .flat_map(|user| {
+            [("", "site-12345"), ("secondary-", "site-12346")]
+                .into_iter()
+                .map(move |(prefix, site)| FacilitySchema {
+                    facility_id: format!("{prefix}area{user}"),
+                    facility_name: format!("{prefix}area{user}"),
+                    site_id: site.to_string(),
+                    owner_id: user.to_string(),
+                })
+        })
+        .collect();
+    world.create_facilities(facilities).await;
 
     let (current_timeslot, _) = get_last_and_next_timeslot();
     world.target_delivery_time = current_timeslot;
@@ -274,13 +285,13 @@ async fn upsert_default_community(world: &MyWorld) {
     let community = EnergyCommunitySchema {
         community_id: world.community_id.clone(),
         community_name: format!("E2E Community {}", world.community_id),
-        sites: vec!["E2E Site".to_string()],
+        sites: vec!["site-12345".to_string()],
     };
 
     upsert_community(world, &community).await;
 }
 
-async fn upsert_community(world: &MyWorld, community: &EnergyCommunitySchema) {
+pub(crate) async fn upsert_community(world: &MyWorld, community: &EnergyCommunitySchema) {
     let transport = env::var("OFFCHAIN_STORAGE_TRANSPORT")
         .unwrap_or_else(|_| "http".to_string())
         .to_ascii_lowercase();

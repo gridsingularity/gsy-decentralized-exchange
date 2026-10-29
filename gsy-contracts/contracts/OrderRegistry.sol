@@ -4,7 +4,6 @@ pragma solidity ^0.8.22;
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "./MarketController.sol";
-import "./ActorRegistry.sol";
 
 /**
  * @title OrderRegistry
@@ -12,17 +11,19 @@ import "./ActorRegistry.sol";
  */
 contract OrderRegistry is Initializable, AccessControlUpgradeable {
     bytes32 public constant SETTLEMENT_ROLE = keccak256("SETTLEMENT_ROLE");
+    bytes32 public constant COMMUNITY_CLIENT_ROLE = keccak256("COMMUNITY_CLIENT_ROLE");
 
     enum OrderStatus {
         None,
         Open,
         Executed,
         Cancelled,
-        Expired
+        Expired,
+        PartiallyFilled,
+        Filled
     }
 
     MarketController public marketController;
-    ActorRegistry public actorRegistry;
 
     uint8 public constant ENERGY_TYPE_NONE = 0;
     uint8 public constant ENERGY_TYPE_GREEN = 1;
@@ -47,7 +48,7 @@ contract OrderRegistry is Initializable, AccessControlUpgradeable {
     }
 
     // Intelligent Order UUID (bytes16) => Status
-    mapping(bytes16 => OrderStatus) public orderStatus;
+    mapping(bytes16 => OrderStatus) private storedOrderStatus;
     mapping(bytes16 => OrderParams) private orders;
 
     event OrderPlaced(
@@ -72,6 +73,7 @@ contract OrderRegistry is Initializable, AccessControlUpgradeable {
     error InvalidOrderParams();
     error OrderNotOpen();
     error OrderAlreadyExists();
+    error OrderNotFilled();
 
     constructor() {
         _disableInitializers();
@@ -79,18 +81,16 @@ contract OrderRegistry is Initializable, AccessControlUpgradeable {
 
     function initialize(
         address admin,
-        address _marketController,
-        address _actorRegistry
+        address _marketController
     ) external initializer {
         __AccessControl_init();
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         marketController = MarketController(_marketController);
-        actorRegistry = ActorRegistry(_actorRegistry);
     }
 
     /**
      * @notice Place an order.
-     * @dev Validates market status and caller authority for the Actor UUID.
+     * @dev The authorized service validates facility/community eligibility off-chain.
      */
     function placeOrder(OrderParams calldata params) external {
         if (
@@ -107,7 +107,7 @@ contract OrderRegistry is Initializable, AccessControlUpgradeable {
             revert MarketClosed();
         }
 
-        if (!actorRegistry.isAuthorized(params.createdBy, msg.sender)) {
+        if (!hasRole(COMMUNITY_CLIENT_ROLE, msg.sender)) {
             revert Unauthorized();
         }
 
@@ -115,11 +115,11 @@ contract OrderRegistry is Initializable, AccessControlUpgradeable {
     }
 
     function _storeOrder(OrderParams memory params) internal {
-        if (orderStatus[params.orderId] != OrderStatus.None) {
+        if (storedOrderStatus[params.orderId] != OrderStatus.None) {
             revert OrderAlreadyExists();
         }
 
-        orderStatus[params.orderId] = OrderStatus.Open;
+        storedOrderStatus[params.orderId] = OrderStatus.Open;
         orders[params.orderId] = params;
 
         emit OrderPlaced(
@@ -147,7 +147,7 @@ contract OrderRegistry is Initializable, AccessControlUpgradeable {
         uint64 selectedEnergy,
         bytes16 residualOrderId
     ) external onlyRole(SETTLEMENT_ROLE) {
-        if (orderStatus[orderId] != OrderStatus.Open) {
+        if (orderStatus(orderId) != OrderStatus.Open) {
             revert OrderNotOpen();
         }
 
@@ -160,8 +160,11 @@ contract OrderRegistry is Initializable, AccessControlUpgradeable {
             revert InvalidOrderParams();
         }
 
-        orderStatus[orderId] = OrderStatus.Executed;
-        emit OrderStatusUpdated(orderId, OrderStatus.Executed);
+        OrderStatus status = residual.energy == 0
+            ? OrderStatus.Filled
+            : OrderStatus.PartiallyFilled;
+        storedOrderStatus[orderId] = status;
+        emit OrderStatusUpdated(orderId, status);
 
         if (residual.energy > 0) {
             residual.orderId = residualOrderId;
@@ -169,12 +172,22 @@ contract OrderRegistry is Initializable, AccessControlUpgradeable {
         }
     }
 
+    /// @notice Complete only the consumed quantity; residual order IDs remain independent.
+    function markExecuted(bytes16 orderId) external onlyRole(SETTLEMENT_ROLE) {
+        OrderStatus status = storedOrderStatus[orderId];
+        if (status != OrderStatus.Filled && status != OrderStatus.PartiallyFilled) {
+            revert OrderNotFilled();
+        }
+        storedOrderStatus[orderId] = OrderStatus.Executed;
+        emit OrderStatusUpdated(orderId, OrderStatus.Executed);
+    }
+
     /**
      * @notice Cancel an order.
-     * @dev Requires the original params to verify actor authorization.
+     * @dev Requires an authorized service and the original facility identity.
      */
     function cancelOrder(OrderParams calldata params) external {
-        if (orderStatus[params.orderId] != OrderStatus.Open) {
+        if (orderStatus(params.orderId) != OrderStatus.Open) {
             revert OrderNotOpen();
         }
 
@@ -183,11 +196,11 @@ contract OrderRegistry is Initializable, AccessControlUpgradeable {
             revert Unauthorized();
         }
 
-        if (!actorRegistry.isAuthorized(storedOrder.createdBy, msg.sender)) {
+        if (!hasRole(COMMUNITY_CLIENT_ROLE, msg.sender)) {
             revert Unauthorized();
         }
 
-        orderStatus[params.orderId] = OrderStatus.Cancelled;
+        storedOrderStatus[params.orderId] = OrderStatus.Cancelled;
         emit OrderCancelled(params.orderId);
     }
 
@@ -198,7 +211,7 @@ contract OrderRegistry is Initializable, AccessControlUpgradeable {
         bytes16 orderId,
         OrderStatus status
     ) external onlyRole(SETTLEMENT_ROLE) {
-        orderStatus[orderId] = status;
+        storedOrderStatus[orderId] = status;
         emit OrderStatusUpdated(orderId, status);
     }
 
@@ -206,7 +219,22 @@ contract OrderRegistry is Initializable, AccessControlUpgradeable {
      * @notice Helper to check status.
      */
     function getStatus(bytes16 orderId) external view returns (OrderStatus) {
-        return orderStatus[orderId];
+        return orderStatus(orderId);
+    }
+
+    /**
+     * @notice Return the effective status, including expiry after market closure.
+     * @dev Preserves the original mapping getter ABI without per-order expiry writes.
+     */
+    function orderStatus(bytes16 orderId) public view returns (OrderStatus) {
+        OrderStatus status = storedOrderStatus[orderId];
+        if (status == OrderStatus.Open) {
+            bytes16 marketId = orders[orderId].marketId;
+            if (!marketController.isMarketOpen(marketId)) {
+                return OrderStatus.Expired;
+            }
+        }
+        return status;
     }
 
     function getOrder(bytes16 orderId) external view returns (OrderParams memory) {

@@ -2,9 +2,9 @@ Feature: Preference settlement policy
 
   Scenario Outline: Preference policy - <case>
     Given the GSY DEX services are running
-    And users "alice", "bob", and "charlie" are registered
-    When the Market Orchestrator opens the Spot market for the next delivery slot
-    And the community market and forecasts of 10 energy are submitted
+    And the DEX service accounts are authorized
+    When the Market Orchestrator opens the Spot market for the current delivery slot
+    And forecasts of 10 energy are submitted
     When a bid at <bid> preferring "<buyer_partner>" at <buyer_preferred> and an offer at <offer> preferring "<seller_partner>" at <seller_preferred> are submitted
     Then the pair settles as "<type>" at <pay_as_bid> for pay-as-bid or max_offer <max_offer>, min_bid <min_bid>, midpoint <midpoint> for pay-as-clear
 

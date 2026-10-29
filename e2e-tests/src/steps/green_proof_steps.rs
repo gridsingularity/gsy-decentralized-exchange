@@ -4,17 +4,16 @@
 //! `http`, `guarantees_of_origin.query` for `ewds`. That the two return the same records is
 //! covered by offchain-storage's API tests.
 //!
-//! No verdict pipeline marks trades `Executed` yet, so the scenarios seed the topology,
-//! measurements and an already-`Executed` trade directly into Mongo. Every id is unique per
+//! These API scenarios isolate certificate generation from delivery verification by seeding
+//! topology, measurements and an already-`Executed` trade into Mongo. Every id is unique per
 //! scenario run; the seeded documents are deleted by the last step (and the whole database
 //! is dropped after every scenario by `main.rs` anyway).
 
+use crate::utils::test_database as database;
 use crate::world::{GreenProofSeed, MyWorld};
 use cucumber::{given, then, when};
 use gsy_community_client::time_utils::get_current_timestamp_in_secs;
 use mongodb::bson::{doc, Document};
-use mongodb::options::ClientOptions;
-use mongodb::Database;
 use primitives::certificates::{
     AssetClass, DeliveryScope, FlowDirection as CertificateFlowDirection, LocalOriginRecord,
     RecordType, TradeStatusAtIssuance,
@@ -22,6 +21,7 @@ use primitives::certificates::{
 use primitives::db_api_schema::grid_topology::{
     AssetSchema, AssetType, EnergyCommunitySchema, FacilitySchema, SiteSchema,
 };
+use primitives::db_api_schema::ids::IdMappingSchema;
 use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
 use primitives::db_api_schema::profiles::{
     FlowDirection, MeasurementPointSchema, MeasurementPointType, TimeseriesSchema,
@@ -47,22 +47,9 @@ const QUERY_RETRY_BUDGET: Duration = Duration::from_secs(60);
 const QUERY_RETRY_INTERVAL: Duration = Duration::from_secs(3);
 const REST_PATH: &str = "guarantees-of-origin";
 
-async fn database() -> Database {
-    let db_url = std::env::var("MONGO_URL").unwrap_or_else(|_| {
-        "mongodb://gsy:gsy@mongodb:27017/?retryWrites=true&w=majority".to_string()
-    });
-    let db_name = std::env::var("DATABASE_NAME").unwrap_or_else(|_| "offchain_storage".to_string());
-    let options = ClientOptions::parse(&db_url)
-        .await
-        .expect("Invalid MONGO_URL");
-    mongodb::Client::with_options(options)
-        .expect("Failed to create the Mongo client")
-        .database(db_name.as_str())
-}
-
-/// The on-chain party hash of an off-chain owner id, as stored in `DbTradeSchema::seller`.
-fn party_hash(owner_id: &str) -> String {
-    bytes16_to_hex(create_encrypted_bytes16_from_string(owner_id))
+/// The on-chain party hash of an off-chain facility id, as stored in `DbTradeSchema::seller`.
+fn party_hash(facility_id: &str) -> String {
+    bytes16_to_hex(create_encrypted_bytes16_from_string(facility_id))
 }
 
 /// `2026-05-14T10:30:00+00:00`, the format of `interval_start` / `interval_end`
@@ -164,6 +151,16 @@ async fn seed_executed_pv_sale(world: &mut MyWorld, energy_kwh: f64, export_kwh:
         .insert_many(facilities)
         .await
         .expect("Failed to seed the facilities");
+    db.collection::<IdMappingSchema>("id_mapping")
+        .insert_many(
+            [&seed.seller_facility_id, &seed.buyer_facility_id].map(|id| IdMappingSchema {
+                offchain_id: id.clone(),
+                onchain_id: party_hash(id),
+                creation_time: now,
+            }),
+        )
+        .await
+        .expect("Failed to seed facility ID mappings");
 
     db.collection::<AssetSchema>("assets")
         .insert_one(AssetSchema {
@@ -234,8 +231,8 @@ async fn seed_executed_pv_sale(world: &mut MyWorld, energy_kwh: f64, export_kwh:
         .insert_one(DbTradeSchema {
             trade_uuid: seed.trade_uuid.clone(),
             status: TradeStatus::Executed,
-            seller: party_hash(&seed.seller_owner_id),
-            buyer: party_hash(&seed.buyer_owner_id),
+            seller: party_hash(&seed.seller_facility_id),
+            buyer: party_hash(&seed.buyer_facility_id),
             market_id: seed.market_id.clone(),
             creation_time: time_slot - SLOT_S,
             offer_hash: format!("{}-offer", seed.trade_uuid),
@@ -499,6 +496,10 @@ async fn delete_seeded_documents(world: &mut MyWorld) {
     let mut deletions: Vec<(&str, Document)> = vec![
         ("trades", doc! {"trade_uuid": &seed.trade_uuid}),
         ("markets", doc! {"market_id": &seed.market_id}),
+        (
+            "id_mapping",
+            doc! {"offchain_id": {"$in": [&seed.seller_facility_id, &seed.buyer_facility_id]}},
+        ),
         (
             "facilities",
             doc! {"facility_id": {"$in": [&seed.seller_facility_id, &seed.buyer_facility_id]}},

@@ -22,7 +22,7 @@
       ]
     },
     "orderStatus": {
-      "description": "Lifecycle status of this order submission. IRI: int:orderStatus. Producers emit 'submitted'/'executed'/'cancelled'/'expired'; consumers additionally accept 'partially_filled', 'filled' and 'rejected' inbound.",
+      "description": "Lifecycle status of this order. IRI: int:orderStatus. Incoming order.event submissions must be submitted; orderStatus.event notifications can report any listed status. Rejected submissions are notified without storing a rejected order.",
       "type": "string",
       "enum": [
         "submitted",
@@ -84,7 +84,7 @@
       "default": "NONE"
     },
     "createdBy": {
-      "description": "FK to Actor who submitted. IRI: int:createdby.",
+      "description": "Facility identity represented by the order, not its owner or submitting service wallet. The community client resolves this facility ID to its on-chain ID. IRI: int:createdby.",
       "type": "string"
     },
     "creationTime": {

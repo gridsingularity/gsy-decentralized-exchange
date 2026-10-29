@@ -3,6 +3,8 @@
 //! deterministic ordering around the pure builder.
 
 use anyhow::Result;
+use futures::TryStreamExt;
+use mongodb::bson::doc;
 use primitives::certificates::LocalOriginRecord;
 use primitives::db_api_schema::profiles::MeasurementPointType;
 use primitives::db_api_schema::trades::{DbTradeSchema, TradeStatus};
@@ -109,6 +111,9 @@ pub async fn guarantees_of_origin(
 
     let markets = db.markets().get_by_ids(market_ids(&slot_executed)).await?;
     let facilities = db.facilities().get_all().await?;
+    let facility_ids = db.ids().find(doc! {
+        "offchain_id": {"$in": facilities.iter().map(|facility| &facility.facility_id).collect::<Vec<_>>()}
+    }).await?.try_collect::<Vec<_>>().await?;
     let communities = db.communities().get_all().await?;
     let assets = db.assets().get_all().await?;
     let measurement_points = db
@@ -126,6 +131,7 @@ pub async fn guarantees_of_origin(
 
     let inputs = CertificateInputs {
         facilities: &facilities,
+        facility_ids: &facility_ids,
         communities: &communities,
         assets: &assets,
         measurement_points: &measurement_points,

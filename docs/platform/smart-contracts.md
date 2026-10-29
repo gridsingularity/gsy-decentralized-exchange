@@ -100,7 +100,7 @@ Purpose:
 - Maps Intelligent Actor UUIDs (`bytes16`) to authorized EVM wallets.
 - Supports registrar-managed wallet authorization (`registerActor`, `setActorWallet`).
 - Supports actor-managed delegate/proxy authorization (`setProxy`, `isProxy`).
-- Provides the authorization check used by `OrderRegistry` before accepting actor-owned order actions.
+- Retains actor wallet/delegate mappings, but is no longer consulted by `OrderRegistry`.
 
 `ActorRegistry` does not hold collateral and does not expose deposit/withdraw logic. Billing and payment remain outside the DEX contract suite.
 
@@ -132,7 +132,12 @@ Purpose:
 
 - Records order lifecycle commitments keyed by Intelligent Order UUID.
 - Validates market openness before order acceptance.
-- Accepts the actor wallet or an approved proxy as sender.
+- Requires `COMMUNITY_CLIENT_ROLE` for placement and cancellation. The admin can
+  grant/revoke the role for multiple service wallets; actor registration or proxy
+  delegation alone does not authorize either action.
+- Trusts authorized clients to validate facility/community membership off-chain.
+  The role applies to all communities, not just orders placed by that client.
+  `createdBy` identifies the facility independently of the submitting wallet.
 - Stores order requirements (bids and offers, including the preferred trading
   partner) and offer attributes used by matching.
 - Emits the complete order metadata in `OrderPlaced`, allowing the event
@@ -140,15 +145,46 @@ Purpose:
 - Emits `OrderCancelled` and `OrderStatusUpdated` lifecycle events.
 - `settleOrder` consumes an open order and registers any residual atomically,
   copying stored metadata and reducing only its energy. It requires `SETTLEMENT_ROLE`.
+- Both `getStatus` and `orderStatus` derive `Expired` for an open order once its
+  market closes. This includes residuals. Settlement and cancellation reject
+  these orders; consumed statuses remain unchanged. Market windows are immutable,
+  so recreating an existing market ID cannot reactivate expired orders.
+- Expiry requires no per-order transaction or `OrderStatusUpdated` event. Storage
+  derives it from confirmed block timestamps and the indexed `NewMarketCreated`
+  closing time, after indexing the block's contract events.
+
+DD-439 replaces the old boolean market mapping with full market records. This is
+not a storage-compatible upgrade of the old `MarketController`. Use a fresh,
+coordinated deployment and matching contract addresses for all services, and
+rebuild the corresponding off-chain market projection. Do not upgrade an existing
+boolean-mapping deployment in place without a separately designed migration.
+
+DD-457 also requires a fresh `OrderRegistry` deployment: its initializer now
+accepts only `(admin, marketController)`, and removing the `ActorRegistry` storage
+reference shifts subsequent slots. Do not upgrade an existing registry in place.
 
 ### `TradeSettlement`
 
 Purpose:
 
 - Validates and settles matched trades (`settleBatch`).
-- Updates order statuses to executed.
+- Marks consumed orders `Filled` or `PartiallyFilled` and registers residuals as
+  separate `Open` orders. Existing status enum values are preserved; the appended
+  values are `PartiallyFilled = 5` and `Filled = 6`.
 - Emits all settlement data needed by off-chain storage to create a Trade object.
 - Records penalties via `submitPenalties`.
+- Stores the consumed order IDs for each new settlement; trade IDs cannot be reused.
+- Accepts idempotent `completeDeliveryVerification` batches from
+  `EXECUTION_ENGINE_ROLE`. Penalties and `Executed` order statuses are recorded
+  in the same transaction, followed by `DeliveryVerified(tradeId,bidId,offerId)`.
+  It trusts the engine's off-chain measurement verdict; no meter data is verified
+  inside the contract. Residual orders are not completed by their parent's verdict.
+
+The earlier delivery-verification change appended storage without changing existing
+proxy slots; DD-457's registry change requires the fresh deployment noted above.
+Trades settled before delivery verification was introduced have no stored order-ID
+linkage and cannot use the completion call without a separate audited migration.
+No historical records or verdicts are fabricated/backfilled automatically.
 
 `TradeSettlement` does not move funds. Billing and payment are handled by external services.
 
@@ -178,7 +214,7 @@ and a `ClearingResult`. The contract checks that `tradedQuantity` equals the sum
 of selected energy in that entry and emits `MarketClearing` after its trades.
 Callers must include this per-market envelope as well as each match's type.
 
-Deploy or upgrade the registry and settlement implementations together with the
+Deploy the registry and settlement implementations together with the
 updated matcher. For local validation, run `./scripts/contracts.sh local deploy`
 and restart services using the refreshed `contracts-output/addresses.env`.
 
@@ -189,6 +225,7 @@ Deployment script assigns:
 - Proxy admin ownership -> proxy admin owner signer.
 - `ACTOR_REGISTRAR_ROLE` on `ActorRegistry` -> actor registrar signer.
 - `ORCHESTRATOR_ROLE` on `MarketController` -> orchestrator signer.
+- `COMMUNITY_CLIENT_ROLE` on `OrderRegistry` -> community-client signer.
 - `SETTLEMENT_ROLE` on `OrderRegistry` -> `TradeSettlement`.
 - `OPERATOR_ROLE` on `TradeSettlement` -> matching engine signer.
 - `EXECUTION_ENGINE_ROLE` on `TradeSettlement` -> execution engine signer.
@@ -212,9 +249,10 @@ Deployment script assigns:
 - Each partially filled order has a fresh, non-zero residual ID; a fully filled
   order has no residual. Residual quantity and metadata come from the registry.
 
-If checks pass, settlement marks the consumed orders executed, emits
-`OrderPlaced` for their residuals, and emits `TradeSettled`. Later matches may
-consume those residuals within the same batch or a subsequent transaction.
+If checks pass, settlement marks consumed orders `Filled`/`PartiallyFilled` and
+emits `OrderPlaced` for their residuals and `TradeSettled` for the trade.
+`Executed` is reserved for subsequent delivery verification. Later matches may
+consume residuals within the same batch or a subsequent transaction.
 An invalid match reverts the entire batch, including residual creation.
 
 The operator supplies the match type. These checks validate the claimed layer's
@@ -226,5 +264,9 @@ rules, not global preference priority or optimal matching across the order book.
 
 - `penaltyEnergyByTrade[tradeId]`
 - `penaltyEnergyByActor[actorId]`
+- `penaltyEnergyByTradeAndActor[tradeId][actorId]`
 
-Off-chain execution logic checks existing on-chain penalty values to skip already submitted trades.
+The legacy penalty call remains available but cannot add penalties to verified
+trades. The execution engine now uses atomic verification instead. Verification
+reuses an exactly matching per-actor penalty, rejects conflicting totals, and
+never records penalties twice for a repeated verdict.

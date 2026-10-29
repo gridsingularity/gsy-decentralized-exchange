@@ -28,6 +28,8 @@ x-gsy-ewds-env: &gsy-ewds-env
   EWDS_MEASUREMENTS_RESPONSE_TOPIC: "measurementsQueryTestResponse"
   EWDS_FACILITIES_REQUEST_TOPIC: "facilitiesQueryTest"
   EWDS_FACILITIES_RESPONSE_TOPIC: "facilitiesQueryTestResponse"
+  EWDS_FACILITIES_VALIDATION_REQUEST_TOPIC: "facilitiesValidateTest"
+  EWDS_FACILITIES_VALIDATION_RESPONSE_TOPIC: "facilitiesValidateTestResponse"
   EWDS_GUARANTEES_OF_ORIGIN_REQUEST_TOPIC: "guaranteesOfOriginQueryTest"
   EWDS_GUARANTEES_OF_ORIGIN_RESPONSE_TOPIC: "guaranteesOfOriginQueryTestResponse"
   EWDS_IDS_REQUEST_TOPIC: "idsQueryTest"
@@ -76,7 +78,6 @@ services:
       DATABASE_URL_SCHEME: mongodb
       DATABASE_USERNAME: gsy
       DATABASE_PASSWORD: gsy
-      SCHEDULER_INTERVAL: "900"
       EVM_NODE_URL: ${EVM_NODE_URL:-ws://anvil:8545}
       CONTRACT_ORDER_REGISTRY: ${ORDER_REGISTRY_ADDRESS:-0x5FC8d32690cc91D4c39d9d3abcBD16989F875707}
       CONTRACT_TRADE_SETTLEMENT: ${TRADE_SETTLEMENT_ADDRESS:-0xa513E6E4b8f2a923D98304ec87F64353C4D5C853}
@@ -139,7 +140,7 @@ services:
       OFFCHAIN_STORAGE_URL: "http://gsy-offchain-storage:8080"
       EVM_NODE_URL: ${EVM_NODE_URL:-ws://anvil:8545}
       ORDER_REGISTRY_ADDRESS: ${ORDER_REGISTRY_ADDRESS:-0x5FC8d32690cc91D4c39d9d3abcBD16989F875707}
-      COMMUNITY_CLIENT_PRIVATE_KEY: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+      COMMUNITY_CLIENT_PRIVATE_KEY: ${COMMUNITY_CLIENT_PRIVATE_KEY:-0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80}
       EWDS_ENABLE_HANDLER: "${EWDS_ENABLE_HANDLER:-false}"
       EWDS_COMMUNITY_CLIENT_ID: ${EWDS_COMMUNITY_CLIENT_ID:-gsycommunityclient}
       MATCHING_ALGORITHM: ${MATCHING_ALGORITHM:-pay_as_bid}
@@ -185,9 +186,7 @@ services:
       # The e2e suite trades the current delivery slot (the orchestrator creates
       # its markets on start), so the execution engine targets that slot too.
       EXECUTION_ENGINE_OFFSET_MIN: "0"
-      # Trades can settle a few minutes after their delivery slot started, especially over
-      # EWDS, so the engine keeps retrying a slot for about 10 cycles after it rolled over.
-      EXECUTION_ENGINE_ROLLOVER_RETRY_LIMIT: ${EXECUTION_ENGINE_ROLLOVER_RETRY_LIMIT:-10}
+      EXECUTION_ENGINE_ROLLOVER_GRACE_SECONDS: ${EXECUTION_ENGINE_ROLLOVER_GRACE_SECONDS:-900}
       TRADE_SETTLEMENT_ADDRESS: ${TRADE_SETTLEMENT_ADDRESS:-0xa513E6E4b8f2a923D98304ec87F64353C4D5C853}
       EXECUTION_ENGINE_PRIVATE_KEY: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
       EWDS_EXECUTION_ENGINE_CLIENT_ID: ${EWDS_EXECUTION_ENGINE_CLIENT_ID:-gsyexecutionengine}
@@ -237,6 +236,8 @@ services:
       PAY_AS_CLEAR_PRICING: ${PAY_AS_CLEAR_PRICING:-max_offer}
       MATCHING_ENGINE_BLOCK_INTERVAL: ${MATCHING_ENGINE_BLOCK_INTERVAL:-}
       EWDS_E2E_CLIENT_ID: ${EWDS_E2E_CLIENT_ID:-gsye2e}
+      EWDS_COMMUNITY_CLIENT_ID: gsye2ecommunityclient
+      COMMUNITY_CLIENT_PRIVATE_KEY: ${COMMUNITY_CLIENT_PRIVATE_KEY:-0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80}
       MONGO_URL: mongodb://gsy:gsy@mongodb:27017/?retryWrites=true&w=majority
     networks:
       - default

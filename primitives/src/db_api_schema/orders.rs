@@ -25,6 +25,9 @@ pub type OrderType = OrderEnum;
 pub struct DbOrderSchema {
     pub order_id: String,
     pub status: OrderStatus,
+    /// Unix seconds of the last known status update; absent for legacy records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_updated_at: Option<u64>,
     pub order_type: OrderEnum,
     pub area_uuid: String,
     pub market_id: String,

@@ -1,9 +1,11 @@
 use crate::db::DbRef;
 use actix_web::{web::Json, web::Query, HttpResponse, Responder};
 use primitives::db_api_schema::grid_topology::{
-    AssetSchema, EnergyCommunitySchema, FacilitySchema, PilotSiteSchema, SiteSchema,
+    AssetSchema, EnergyCommunitySchema, FacilityMarketValidationRequest, FacilitySchema,
+    PilotSiteSchema, SiteSchema,
 };
 use primitives::db_api_schema::tariff::TariffSchema;
+use primitives::utils::normalize_community_id;
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -67,10 +69,15 @@ pub async fn get_pilot_sites(db: DbRef) -> impl Responder {
 }
 
 pub async fn post_community(community: Json<EnergyCommunitySchema>, db: DbRef) -> impl Responder {
+    let mut community = community.into_inner();
+    community.community_id = match normalize_community_id(&community.community_id) {
+        Ok(id) => id,
+        Err(error) => return HttpResponse::BadRequest().body(error.to_string()),
+    };
     match db
         .get_ref()
         .communities()
-        .upsert(community.to_owned())
+        .upsert(community)
         .await
     {
         Ok(saved) => HttpResponse::Ok().json(saved),
@@ -89,9 +96,15 @@ pub async fn get_communities(db: DbRef) -> impl Responder {
 }
 
 pub async fn post_site(site: Json<SiteSchema>, db: DbRef) -> impl Responder {
-    match db.get_ref().sites().insert(site.to_owned()).await {
+    match db.get_ref().sites().upsert(site.to_owned()).await {
         Ok(saved) => HttpResponse::Ok().json(saved),
-        Err(_) => HttpResponse::InternalServerError().finish(),
+        Err(error) => {
+            tracing::error!("Site upsert failed: {error:#}");
+            HttpResponse::InternalServerError().json(primitives::ewds::dto::EwdsErrorPayload {
+                code: "STORAGE_UNAVAILABLE".to_string(),
+                message: "Site could not be saved".to_string(),
+            })
+        }
     }
 }
 
@@ -106,13 +119,13 @@ pub async fn get_sites(db: DbRef) -> impl Responder {
 }
 
 pub async fn post_facility(facility: Json<FacilitySchema>, db: DbRef) -> impl Responder {
-    match db.get_ref().facilities().insert(facility.to_owned()).await {
+    match db.get_ref().facilities().upsert(facility.to_owned()).await {
         Ok(saved) => HttpResponse::Ok().json(saved),
         Err(e) => {
             if e.to_string().contains("E11000") || format!("{e:#}").contains("E11000") {
                 HttpResponse::Conflict().body("facility already exists")
             } else {
-                tracing::error!("insert failed: {e:#}");
+                tracing::error!("Facility upsert failed: {e:#}");
                 HttpResponse::InternalServerError().finish()
             }
         }
@@ -125,6 +138,22 @@ pub async fn get_facilities(db: DbRef) -> impl Responder {
         Err(e) => {
             tracing::error!("Failed to execute query: {:?}", e);
             HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
+pub async fn validate_facility_markets(
+    requests: Json<Vec<FacilityMarketValidationRequest>>,
+    db: DbRef,
+) -> impl Responder {
+    match db.validate_facility_markets(&requests).await {
+        Ok(results) => HttpResponse::Ok().json(results),
+        Err(error) => {
+            tracing::error!("Facility validation failed: {error:#}");
+            HttpResponse::InternalServerError().json(primitives::ewds::dto::EwdsErrorPayload {
+                code: "VALIDATION_UNAVAILABLE".to_string(),
+                message: "Facility validation could not read the stored topology".to_string(),
+            })
         }
     }
 }

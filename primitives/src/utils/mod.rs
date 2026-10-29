@@ -48,6 +48,13 @@ pub fn normalize_community_id(value: &str) -> Result<String> {
         })
 }
 
+/// Canonical stored market ID: lowercase `0x` hex for a UUID or 16-byte hex value.
+pub fn normalize_market_id(value: &str) -> Result<String> {
+    parse_uuid_or_hex_bytes16(value)
+        .map(bytes16_to_hex)
+        .ok_or_else(|| anyhow!("market ID '{}' is not a UUID or 16-byte hex value", value))
+}
+
 pub fn create_encrypted_bytes16_from_string(input_string: &str) -> [u8; 16] {
     let mut hash = [0u8; 16];
     let mut hasher = Blake2bVar::new(16).expect("valid Blake2b output size");
@@ -56,6 +63,11 @@ pub fn create_encrypted_bytes16_from_string(input_string: &str) -> [u8; 16] {
         .finalize_variable(&mut hash)
         .expect("valid Blake2b output buffer");
     hash
+}
+
+/// The ID service's deterministic, case-sensitive mapping from an off-chain identity.
+pub fn derive_onchain_id(offchain_id: &str) -> String {
+    bytes16_to_hex(create_encrypted_bytes16_from_string(offchain_id))
 }
 
 /// The community ID is normalized first, so every accepted form of one

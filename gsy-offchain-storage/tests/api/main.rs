@@ -1,6 +1,8 @@
 mod evm_integration;
+mod delivery_verification;
 mod ewds_event_handler;
 mod ewds_handler;
+mod facility_validation;
 mod grid_topology;
 mod guarantees_of_origin;
 mod health_check;

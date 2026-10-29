@@ -2,7 +2,9 @@ use crate::helpers::{init_app, stop_app};
 use gsy_offchain_storage::db::id_service::init_ids;
 use mongodb::bson::doc;
 use primitives::db_api_schema::ids::IdMappingSchema;
-use primitives::utils::{bytes16_to_hex, create_encrypted_bytes16_from_string};
+use primitives::utils::{bytes16_to_hex, create_encrypted_bytes16_from_string, derive_onchain_id};
+use std::sync::Arc;
+use tokio::sync::Barrier;
 
 #[tokio::test]
 async fn filter_by_onchain_id_returns_original_facility_id() {
@@ -54,6 +56,11 @@ async fn post_ids_creates_new_mapping() {
     assert_eq!(body.offchain_id, offchain);
     let expected = bytes16_to_hex(create_encrypted_bytes16_from_string(offchain));
     assert_eq!(body.onchain_id, expected);
+    assert_eq!(body.onchain_id, derive_onchain_id(offchain));
+    assert_eq!(
+        body.onchain_id,
+        gsy_offchain_storage::certificates::builder::party_hash(offchain)
+    );
 
     stop_app(app).await;
 }
@@ -146,6 +153,7 @@ async fn post_ids_concurrent_same_id_yields_single_mapping() {
     let client = reqwest::Client::new();
     let offchain = "actor-concurrent";
     let url = format!("{}/ids", app.address);
+    let barrier = Arc::new(Barrier::new(8));
 
     // Fire several requests for the same offchain_id at once. The unique index
     // is what keeps this from producing duplicate documents under the race.
@@ -153,13 +161,17 @@ async fn post_ids_concurrent_same_id_yields_single_mapping() {
     for _ in 0..8 {
         let client = client.clone();
         let url = url.clone();
+        let barrier = barrier.clone();
         handles.push(tokio::spawn(async move {
+            barrier.wait().await;
             client
                 .post(&url)
                 .query(&[("offchain_id", offchain)])
                 .send()
                 .await
                 .expect("Failed to execute concurrent request")
+                .error_for_status()
+                .expect("Concurrent ID creation must succeed")
                 .json::<IdMappingSchema>()
                 .await
                 .expect("Failed to parse concurrent body")
@@ -172,9 +184,8 @@ async fn post_ids_concurrent_same_id_yields_single_mapping() {
     }
 
     // Every response must describe the same mapping.
-    let onchain = &results[0].onchain_id;
     for r in &results {
-        assert_eq!(&r.onchain_id, onchain);
+        assert_eq!(r, &results[0]);
     }
 
     // And exactly one document exists in the collection.
@@ -186,6 +197,40 @@ async fn post_ids_concurrent_same_id_yields_single_mapping() {
         .expect("Failed to count documents");
     assert_eq!(count, 1, "concurrent inserts must collapse to one mapping");
 
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn post_ids_does_not_reuse_another_offchain_ids_mapping() {
+    let app = init_app().await;
+    init_ids(&app.db_wrapper).await.unwrap();
+    let offchain_id = "actor-collision";
+    let existing = IdMappingSchema {
+        offchain_id: "another-actor".to_string(),
+        onchain_id: derive_onchain_id(offchain_id),
+        creation_time: 1,
+    };
+    app.db_wrapper.ids().insert_one(&existing).await.unwrap();
+
+    let response = reqwest::Client::new()
+        .post(format!("{}/ids", app.address))
+        .query(&[("offchain_id", offchain_id)])
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status().as_u16(), 500);
+    let mappings = app
+        .db_wrapper
+        .ids()
+        .filter(Some(existing.onchain_id.clone()), None)
+        .await
+        .unwrap();
+    assert_eq!(mappings, vec![existing]);
+    assert_eq!(
+        app.db_wrapper.ids().count_documents(doc! {}).await.unwrap(),
+        1
+    );
     stop_app(app).await;
 }
 

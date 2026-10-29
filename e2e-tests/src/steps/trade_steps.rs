@@ -5,25 +5,21 @@ use ethers::abi::AbiDecode;
 use ethers::prelude::*;
 use gsy_community_client::node_connector::orders::publish_orders;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
-use primitives::db_api_schema::grid_topology::FacilitySchema;
+use primitives::db_api_schema::grid_topology::FacilityMarketValidationRequest;
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::orders::{
     order_metadata_to_contract, DbAttributes, DbOrderSchema, DbRequirements, EnergyType,
     OrderStatus,
 };
 use primitives::db_api_schema::profiles::MeasurementSchema;
-use primitives::db_api_schema::trades::DbTradeSchema;
+use primitives::db_api_schema::trades::{DbTradeSchema, TradeStatus};
 use primitives::matching::matching_block_interval;
 use primitives::offchain_storage::{
     resolve_order_partner_ids, OffchainStorageClient, OffchainStorageTransport,
 };
 use primitives::utils::{
-    bytes16_to_hex,
-    create_encrypted_bytes16_from_string,
-    NODE_FLOAT_SCALING_FACTOR,
-    parse_uuid_or_hex_bytes16,
-    rfc3339_to_epoch,
-    timestamp_to_string_with_padding
+    bytes16_to_hex, create_encrypted_bytes16_from_string, parse_uuid_or_hex_bytes16,
+    rfc3339_to_epoch, timestamp_to_string_with_padding, NODE_FLOAT_SCALING_FACTOR,
 };
 use std::collections::HashSet;
 use std::env;
@@ -37,6 +33,9 @@ const COMMUNITY_TRADE_POLL_ATTEMPTS: usize = 180;
 const COMMUNITY_MATCHING_RETRIGGER_INTERVAL: usize = 30;
 const HTTP_PENALTY_POLL_ATTEMPTS: usize = 60;
 const EWDS_PENALTY_POLL_ATTEMPTS: usize = 180;
+const ORDER_STATUS_PARTIALLY_FILLED: u8 = 5;
+const ORDER_STATUS_FILLED: u8 = 6;
+const ORDER_STATUS_EXECUTED: u8 = 2;
 
 type EvmOrderParamsTuple = (
     [u8; 16],
@@ -130,6 +129,8 @@ abigen!(
     r#"[
         function penaltyEnergyByTrade(bytes16 tradeId) external view returns (uint256)
         event TradeSettled(bytes16 indexed tradeId, bytes16 indexed bidId, bytes16 indexed offerId, bytes16 buyerId, bytes16 sellerId, bytes16 marketId, uint64 timeSlot, bytes16 residualBidId, bytes16 residualOfferId, uint256 energy, uint256 price)
+        event DeliveryVerified(bytes16 indexed tradeId, bytes16 indexed bidId, bytes16 indexed offerId)
+        event PenaltyRecorded(bytes16 indexed penalizedActorId, bytes16 indexed marketId, bytes16 indexed tradeId, uint64 penaltyEnergy)
     ]"#
 );
 
@@ -232,7 +233,7 @@ fn offchain_storage_client(world: &MyWorld) -> OffchainStorageClient {
     )
 }
 
-async fn query_orders_for_market(world: &MyWorld, market_id: &str) -> Vec<DbOrderSchema> {
+pub(crate) async fn query_orders_for_market(world: &MyWorld, market_id: &str) -> Vec<DbOrderSchema> {
     let (start_time, end_time) = market_window(world);
     offchain_storage_client(world)
         .fetch_orders(market_id, start_time, end_time)
@@ -262,7 +263,7 @@ async fn query_market(world: &MyWorld, market_id: &str) -> MarketSchema {
         .expect("Failed to parse market response")
 }
 
-async fn query_market_trades(world: &MyWorld) -> Vec<DbTradeSchema> {
+pub(crate) async fn query_market_trades(world: &MyWorld) -> Vec<DbTradeSchema> {
     offchain_storage_client(world)
         .fetch_trades(Some(&market_id_as_hex(world)), None, None)
         .await
@@ -307,7 +308,7 @@ async fn wait_for_order_in_market(
     );
 }
 
-async fn place_custom_order(
+pub(crate) async fn place_custom_order(
     world: &MyWorld,
     user_name: &str,
     is_bid: bool,
@@ -339,7 +340,7 @@ async fn place_custom_order_for_market(
     requirements: Option<DbRequirements>,
     attributes: Option<DbAttributes>,
 ) -> String {
-    let wallet = world.wallet_for_user(user_name);
+    let wallet = world.community_client_wallet();
     let signer = Arc::new(SignerMiddleware::new(
         world.provider.clone(),
         wallet.clone(),
@@ -351,11 +352,39 @@ async fn place_custom_order_for_market(
         .expect("System clock before UNIX_EPOCH");
     let creation_time = now.as_secs();
 
-    let actor_id = world.actor_id_for_user(user_name).await;
+    let id_mapping_source = OffchainStorageClient::from_env("EWDS_E2E_CLIENT_ID", "gsye2e");
+    let facility_id = world.facility_id_for_market_user(market_id, user_name);
+    let validation = id_mapping_source
+        .validate_facility_markets(&[FacilityMarketValidationRequest {
+            facility_id: facility_id.clone(),
+            market_id: bytes16_to_hex(market_id),
+        }])
+        .await
+        .expect("Facility validation unavailable");
+    assert!(
+        validation[0].eligible,
+        "Ineligible E2E order: {:?}",
+        validation[0]
+    );
+    let actor_id = parse_uuid_or_hex_bytes16(
+        &id_mapping_source
+            .fetch_onchain_id(&facility_id)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
     let order_id = Uuid::new_v4().to_string();
     let order_id_bytes = create_encrypted_bytes16_from_string(&order_id);
+    let mut requirements = requirements;
+    if let Some(partner) = requirements
+        .as_mut()
+        .and_then(|r| r.trading_partner_id.as_mut())
+    {
+        if world.users.contains_key(partner.as_str()) {
+            *partner = world.facility_id_for_market_user(market_id, partner);
+        }
+    }
     let mut resolved_requirements = requirements.clone();
-    let id_mapping_source = OffchainStorageClient::from_env("EWDS_E2E_CLIENT_ID", "gsye2e");
     resolve_order_partner_ids(&mut resolved_requirements, &id_mapping_source)
         .await
         .expect("Failed to resolve order partner IDs");
@@ -631,36 +660,20 @@ async fn verify_community_market_settlements(world: &mut MyWorld) {
 async fn submit_community_market_measurements(world: &mut MyWorld) {
     let measurements = vec![
         MeasurementSchema {
-            facility_id: "alice".to_string(),
+            facility_id: world.facility_id_for_user("alice"),
             community_uuid: world.community_id.clone(),
             time_slot: world.target_delivery_time,
             creation_time: 1,
             energy_kwh: 3.0,
         },
         MeasurementSchema {
-            facility_id: "bob".to_string(),
+            facility_id: "secondary-areabob".to_string(),
             community_uuid: world.secondary_community_id.clone(),
             time_slot: world.target_delivery_time,
             creation_time: 1,
             energy_kwh: 3.0,
         },
     ];
-
-    let facilities = vec![
-        FacilitySchema {
-            facility_id: "alice".to_string(),
-            facility_name: "alice".to_string(),
-            site_id: "site-12345".to_string(),
-            owner_id: "alice".to_string(),
-        },
-        FacilitySchema {
-            facility_id: "bob".to_string(),
-            facility_name: "bob".to_string(),
-            site_id: "site-12346".to_string(),
-            owner_id: "bob".to_string(),
-        },
-    ];
-    world.create_facilities(facilities).await;
 
     AreaMarketInfoAdapter::new(Some(world.offchain_storage_url.clone()))
         .forward_measurement(measurements)
@@ -670,12 +683,13 @@ async fn submit_community_market_measurements(world: &mut MyWorld) {
 
 #[when(expr = "{string} submits a bid")]
 async fn submit_bid(world: &mut MyWorld, user_name: String) {
+    assert_eq!(world.bid_forecast.as_ref().unwrap().facility_id, world.facility_id_for_user(&user_name));
     publish_orders(
         world.evm_node_url.clone(),
         vec![world.bid_forecast.clone().expect("Missing bid forecast")],
         world.market_schema.clone().expect("Missing market schema"),
         address_to_full_hex(world.order_registry_address),
-        world.private_key_for_user(user_name.as_str()),
+        world.community_client_private_key(),
     )
     .await
     .expect("Failed to publish bid order");
@@ -711,6 +725,7 @@ async fn submit_preferred_partner_bid(
 
 #[when(expr = "{string} submits an offer")]
 async fn submit_offer(world: &mut MyWorld, user_name: String) {
+    assert_eq!(world.offer_forecast.as_ref().unwrap().facility_id, world.facility_id_for_user(&user_name));
     publish_orders(
         world.evm_node_url.clone(),
         vec![world
@@ -719,14 +734,14 @@ async fn submit_offer(world: &mut MyWorld, user_name: String) {
             .expect("Missing offer forecast")],
         world.market_schema.clone().expect("Missing market schema"),
         address_to_full_hex(world.order_registry_address),
-        world.private_key_for_user(user_name.as_str()),
+        world.community_client_private_key(),
     )
     .await
     .expect("Failed to publish offer order");
 
     // Matching runs on block boundaries. Fast-forward local Anvil after both
     // orders are present in the registry.
-    mine_until_matching_block(world, 12).await;
+    mine_until_matching_block(world, matching_block_interval() as usize + 1).await;
 }
 
 // Offers name their preferred partner the same way bids do: in requirements.
@@ -766,7 +781,14 @@ async fn submit_preferred_partner_offer(
             .requirements
             .as_ref()
             .and_then(|requirements| requirements.trading_partner_id.as_deref()),
-        Some(partner_name.as_str()),
+        Some(
+            world
+                .facility_id_for_market_user(
+                    world.last_market_id.expect("Missing market id"),
+                    &partner_name,
+                )
+                .as_str(),
+        ),
         "Offer {} lost its preferred partner in requirements",
         order_id
     );
@@ -909,13 +931,18 @@ async fn submit_combined_pay_as_clear_order_book(world: &mut MyWorld) {
 
 #[when(expr = "measurements for facilities are submitted")]
 async fn submit_measurements(world: &mut MyWorld) {
+    submit_measurements_with_energy(world, 12.0).await;
+}
+
+#[when(expr = "measurements of {float} energy for facilities are submitted")]
+pub(crate) async fn submit_measurements_with_energy(world: &mut MyWorld, energy: f64) {
     let adapter = AreaMarketInfoAdapter::new(Some(world.offchain_storage_url.clone()));
     let mut measurements = vec![];
     for facility in world.facilities_topology.iter() {
         measurements.push(MeasurementSchema {
             facility_id: facility.facility_id.clone(),
             community_uuid: world.community_id.clone(),
-            energy_kwh: 12.0,
+            energy_kwh: energy,
             time_slot: world.target_delivery_time,
             creation_time: 1,
         })
@@ -926,6 +953,37 @@ async fn submit_measurements(world: &mut MyWorld) {
         .forward_measurement(measurements)
         .await
         .expect("Failed to submit measurements");
+}
+
+#[when(expr = "measurements of {float} energy for only {string}'s facility are submitted")]
+async fn submit_single_facility_measurement(world: &mut MyWorld, energy: f64, user: String) {
+    let facility_id = world.facility_id_for_user(&user);
+    assert!(world
+        .facilities_topology
+        .iter()
+        .any(|facility| facility.facility_id == facility_id));
+    AreaMarketInfoAdapter::new(Some(world.offchain_storage_url.clone()))
+        .forward_measurement(vec![MeasurementSchema {
+            facility_id,
+            community_uuid: world.community_id.clone(),
+            energy_kwh: energy,
+            time_slot: world.target_delivery_time,
+            creation_time: 1,
+        }])
+        .await
+        .expect("Failed to submit the single-facility measurement");
+}
+
+pub(crate) async fn delivery_verification_timestamp(world: &MyWorld, trade: &DbTradeSchema) -> u64 {
+    let settlement = TradeSettlementContract::new(world.trade_settlement_address, world.provider.clone());
+    let events = settlement.event::<DeliveryVerifiedFilter>()
+        .from_block(0u64)
+        .topic1(indexed_bytes16_topic(parse_uuid_or_hex_bytes16(&trade.trade_uuid).unwrap()))
+        .query_with_meta().await.expect("Failed to query delivery verification");
+    assert_eq!(events.len(), 1, "Executed orders require exactly one verification event");
+    assert_eq!(events[0].0.bid_id, parse_uuid_or_hex_bytes16(&trade.bid_hash).unwrap());
+    assert_eq!(events[0].0.offer_id, parse_uuid_or_hex_bytes16(&trade.offer_hash).unwrap());
+    world.provider.get_block(events[0].1.block_hash).await.unwrap().unwrap().timestamp.as_u64()
 }
 
 async fn assert_trade_settled_on_chain(world: &MyWorld, trade: &DbTradeSchema) {
@@ -946,23 +1004,57 @@ async fn assert_trade_settled_on_chain(world: &MyWorld, trade: &DbTradeSchema) {
         .await
         .expect("Failed to read offer status from contract");
 
-    assert_eq!(bid_status, 2u8, "Bid order is not Executed on-chain");
-    assert_eq!(offer_status, 2u8, "Offer order is not Executed on-chain");
+    assert!(
+        bid_status == ORDER_STATUS_EXECUTED || bid_status == if trade.residual_bid_id.is_some() {
+            ORDER_STATUS_PARTIALLY_FILLED
+        } else {
+            ORDER_STATUS_FILLED
+        },
+        "Unexpected settled bid status on-chain"
+    );
+    assert!(
+        offer_status == ORDER_STATUS_EXECUTED || offer_status == if trade.residual_offer_id.is_some() {
+            ORDER_STATUS_PARTIALLY_FILLED
+        } else {
+            ORDER_STATUS_FILLED
+        },
+        "Unexpected settled offer status on-chain"
+    );
+    if bid_status == ORDER_STATUS_EXECUTED || offer_status == ORDER_STATUS_EXECUTED {
+        delivery_verification_timestamp(world, trade).await;
+    }
 
+    let expected_bid_status = if trade.residual_bid_id.is_some() {
+        OrderStatus::PartiallyFilled
+    } else {
+        OrderStatus::Filled
+    };
+    let expected_offer_status = if trade.residual_offer_id.is_some() {
+        OrderStatus::PartiallyFilled
+    } else {
+        OrderStatus::Filled
+    };
     for attempt in 0..40 {
         let orders = query_orders_for_market(world, trade.market_id.as_str()).await;
-        let bid_executed = orders.iter().any(|order| {
+        let bid_settled = orders.iter().any(|order| {
             order.order_id.eq_ignore_ascii_case(trade.bid_hash.as_str())
-                && order.status == OrderStatus::Executed
+                && (order.status == expected_bid_status || order.status == OrderStatus::Executed)
         });
-        let offer_executed = orders.iter().any(|order| {
+        let offer_settled = orders.iter().any(|order| {
             order
                 .order_id
                 .eq_ignore_ascii_case(trade.offer_hash.as_str())
-                && order.status == OrderStatus::Executed
+                && (order.status == expected_offer_status || order.status == OrderStatus::Executed)
         });
 
-        if bid_executed && offer_executed {
+        if bid_settled && offer_settled {
+            for order in orders.iter().filter(|order| {
+                order.status == OrderStatus::Executed
+                    && (order.order_id.eq_ignore_ascii_case(&trade.bid_hash)
+                        || order.order_id.eq_ignore_ascii_case(&trade.offer_hash))
+            }) {
+                assert_eq!(order.status_updated_at, Some(delivery_verification_timestamp(world, trade).await));
+            }
             return;
         }
 
@@ -1084,8 +1176,24 @@ async fn verify_partner_trade(
                 .await
                 .expect("Failed to read offer status from contract");
 
-            assert_eq!(bid_status, 2u8, "Bid order is not Executed on-chain");
-            assert_eq!(offer_status, 2u8, "Offer order is not Executed on-chain");
+            assert_eq!(
+                bid_status,
+                if trade.residual_bid_id.is_some() {
+                    ORDER_STATUS_PARTIALLY_FILLED
+                } else {
+                    ORDER_STATUS_FILLED
+                },
+                "Unexpected settled bid status on-chain"
+            );
+            assert_eq!(
+                offer_status,
+                if trade.residual_offer_id.is_some() {
+                    ORDER_STATUS_PARTIALLY_FILLED
+                } else {
+                    ORDER_STATUS_FILLED
+                },
+                "Unexpected settled offer status on-chain"
+            );
             return;
         }
 
@@ -1637,11 +1745,7 @@ async fn verify_residual_lifecycle(world: &mut MyWorld, side: String, consumptio
     let mut expected = parent;
     expected.order_id = residual_id.clone();
     expected.energy_kWh = 4.0;
-    expected.status = OrderStatus::Executed;
-    assert_eq!(
-        residual, expected,
-        "Residual metadata or indexed status changed"
-    );
+    expected.status = OrderStatus::Filled;
     let residual_bytes = parse_uuid_or_hex_bytes16(&residual_id).unwrap();
     expected_params.0 = residual_bytes;
     expected_params.5 = (4.0 * NODE_FLOAT_SCALING_FACTOR) as u64;
@@ -1689,8 +1793,26 @@ async fn verify_residual_lifecycle(world: &mut MyWorld, side: String, consumptio
         };
         assert_eq!(event.residual_bid_id, expected_bid);
         assert_eq!(event.residual_offer_id, expected_offer);
+        if trade.trade_uuid == second.trade_uuid {
+            expected.status_updated_at = Some(
+                world.provider
+                    .get_block(events[0].1.block_hash)
+                    .await
+                    .expect("Failed to fetch residual settlement block")
+                    .expect("Missing residual settlement block")
+                    .timestamp.as_u64(),
+            );
+        }
         transaction_hashes.push(events[0].1.transaction_hash);
     }
+    if residual.status == OrderStatus::Executed {
+        expected.status = OrderStatus::Executed;
+        expected.status_updated_at = Some(delivery_verification_timestamp(world, &second).await);
+    }
+    assert_eq!(
+        residual, expected,
+        "Residual metadata, indexed status or settlement timestamp changed"
+    );
     assert_eq!(
         transaction_hashes[0] == transaction_hashes[1],
         !later,
@@ -1784,6 +1906,10 @@ async fn verify_penalties_on_chain(world: &mut MyWorld) {
         }
 
         if recorded_trade_ids.len() == trades.len() {
+            for trade in &trades {
+                super::lifecycle_steps::assert_trade_verified(world, trade, TradeStatus::Penalized)
+                    .await;
+            }
             return;
         }
 

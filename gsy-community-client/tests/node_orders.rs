@@ -1,33 +1,22 @@
+#[path = "common/facilities.rs"]
+mod facilities;
+
+use facilities::{FACILITY_1_ONCHAIN, FACILITY_2_ONCHAIN};
 use gsy_community_client::node_connector::orders::create_input_orders;
 use gsy_community_client::time_utils::get_current_timestamp_in_secs;
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::profiles::ForecastSchema;
-use primitives::utils::{
-    create_encrypted_bytes16_from_string, parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR,
-};
+use primitives::ewds::dto::EwdsSendMessageDto;
+use primitives::utils::{parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR};
 use primitives::{MarketType, MatchingAlgorithm};
+use serde_json::{json, Value};
 use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
 use wiremock::matchers::{method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
+use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
-/// Stands up a mock `/facilities` endpoint mapping each facility_id to an owner_id
-/// and points `create_input_orders`' fetch at it via `OFFCHAIN_STORAGE_URL`.
-/// Keep the returned `MockServer` bound for the lifetime of the test (a bare
-/// `let _ =` would drop it immediately and shut the server down).
 async fn setup_facilities_mock() -> MockServer {
-    let facilities = serde_json::json!([
-        { "facility_id": "area1", "owner_id": "area1", "facility_name": "Area1", "site_id": "1" },
-        { "facility_id": "area2", "owner_id": "area2", "facility_name": "Area2", "site_id": "1" }
-    ]);
-    let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/facilities"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(facilities))
-        .mount(&server)
-        .await;
-    std::env::set_var("OFFCHAIN_STORAGE_URL", server.uri());
-    std::env::remove_var("OFFCHAIN_STORAGE_TRANSPORT"); // force HTTP branch
-    server
+    facilities::setup_facilities_mock(["area1", "area2"]).await
 }
 
 fn test_market() -> MarketSchema {
@@ -92,7 +81,7 @@ async fn test_orders_to_evm_params_are_created_correctly() {
     ) = input_orders[0];
     assert_eq!(
         bid_created_by,
-        create_encrypted_bytes16_from_string("area1")
+        parse_uuid_or_hex_bytes16(FACILITY_1_ONCHAIN).unwrap()
     );
     assert_eq!(
         bid_market,
@@ -123,7 +112,7 @@ async fn test_orders_to_evm_params_are_created_correctly() {
     ) = input_orders[1];
     assert_eq!(
         offer_created_by,
-        create_encrypted_bytes16_from_string("area2")
+        parse_uuid_or_hex_bytes16(FACILITY_2_ONCHAIN).unwrap()
     );
     assert_eq!(
         offer_market,
@@ -245,4 +234,230 @@ async fn test_create_input_orders_assigns_unique_order_ids_and_stable_side_mappi
 
     let order_ids: HashSet<[u8; 16]> = orders.iter().map(|order| order.0).collect();
     assert_eq!(order_ids.len(), orders.len());
+}
+
+fn forecast(facility_id: &str, energy_kwh: f64) -> ForecastSchema {
+    ForecastSchema {
+        facility_id: facility_id.to_string(),
+        creation_time: 1,
+        time_slot: 456_456,
+        energy_kwh,
+        community_uuid: "community-1".to_string(),
+        confidence: 0.9,
+    }
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn empty_or_zero_forecasts_do_not_query_storage() {
+    let server = setup_facilities_mock().await;
+    for forecasts in [vec![], vec![forecast("area1", 0.0)]] {
+        assert!(create_input_orders(forecasts, test_market())
+            .await
+            .unwrap()
+            .is_empty());
+    }
+    assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn ineligible_forecasts_do_not_resolve_ids_or_contact_ewds_in_http_mode() {
+    let server = setup_facilities_mock().await;
+    for reason in [
+        "unknown_market",
+        "unknown_facility",
+        "unknown_community",
+        "unknown_site",
+        "facility_not_listed_in_site",
+        "site_not_in_community",
+    ] {
+        Mock::given(method("POST"))
+            .and(path("/facilities/validate"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
+                "facility_id": "area1", "market_id": test_market().market_id,
+                "eligible": false, "reason": reason,
+            }])))
+            .with_priority(1)
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        assert!(
+            create_input_orders(vec![forecast("area1", 5.0)], test_market())
+                .await
+                .unwrap()
+                .is_empty(),
+            "{reason}"
+        );
+    }
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 6);
+    assert!(requests
+        .iter()
+        .all(|request| request.url.path() == "/facilities/validate"));
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn validation_errors_fail_before_id_resolution_and_can_be_retried() {
+    let server = setup_facilities_mock().await;
+    let previous_gateway = std::env::var("EWDS_GATEWAY_URL").ok();
+    std::env::set_var("EWDS_GATEWAY_URL", server.uri());
+    std::env::set_var("EWDS_ENABLE_HANDLER", "true");
+    for response in [
+        ResponseTemplate::new(500),
+        ResponseTemplate::new(200).set_body_string("not JSON"),
+        ResponseTemplate::new(200).set_body_json(json!([])),
+        ResponseTemplate::new(200).set_body_json(json!([{
+            "facility_id": "another-facility", "market_id": test_market().market_id,
+            "eligible": true,
+        }])),
+    ] {
+        Mock::given(method("POST"))
+            .and(path("/facilities/validate"))
+            .respond_with(response)
+            .with_priority(1)
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        let error = create_input_orders(vec![forecast("area1", 5.0)], test_market())
+            .await
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("Facility participation validation failed"));
+    }
+    assert!(server
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .all(|request| request.url.path() == "/facilities/validate"));
+    let orders = create_input_orders(vec![forecast("area1", 5.0)], test_market())
+        .await
+        .unwrap();
+    assert_eq!(orders.len(), 1);
+    assert_eq!(
+        orders[0].1,
+        parse_uuid_or_hex_bytes16(FACILITY_1_ONCHAIN).unwrap()
+    );
+    std::env::set_var("EWDS_ENABLE_HANDLER", "false");
+    match previous_gateway {
+        Some(url) => std::env::set_var("EWDS_GATEWAY_URL", url),
+        None => std::env::remove_var("EWDS_GATEWAY_URL"),
+    }
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn forecast_validation_and_rejection_notifications_work_over_ewds() {
+    let gateway = setup_facilities_mock().await;
+    let pending = Arc::new(Mutex::new(Value::Null));
+    let response = pending.clone();
+    Mock::given(method("POST"))
+        .and(path("/api/v2/messages"))
+        .respond_with(move |request: &Request| {
+            let message: EwdsSendMessageDto = serde_json::from_slice(&request.body).unwrap();
+            let payload: Value = serde_json::from_str(&message.payload).unwrap();
+            if let Some(operation) = payload["operation"].as_str() {
+                let data = match operation {
+                    "facilities.validate" => {
+                        assert_eq!(payload["payload"], json!([
+                            {"facility_id": "missing-facility", "market_id": test_market().market_id},
+                            {"facility_id": "area1", "market_id": test_market().market_id},
+                            {"facility_id": "area2", "market_id": test_market().market_id},
+                        ]));
+                        json!([
+                            {"facility_id": "missing-facility", "market_id": test_market().market_id,
+                                "eligible": false, "reason": "unknown_facility"},
+                            {"facility_id": "area1", "market_id": test_market().market_id,
+                                "eligible": false, "reason": "site_not_in_community"},
+                            {"facility_id": "area2", "market_id": test_market().market_id, "eligible": true},
+                        ])
+                    }
+                    "ids.query" => {
+                        assert_eq!(payload["payload"]["offchain_id"], "area2");
+                        json!([{"offchain_id": "area2", "onchain_id": FACILITY_2_ONCHAIN, "creation_time": 0}])
+                    }
+                    other => panic!("unexpected query {other}"),
+                };
+                *response.lock().unwrap() = json!({"requestId": payload["requestId"], "success": true, "data": data});
+            }
+            ResponseTemplate::new(200).set_body_json(json!({"recipients": {"sent": 1, "failed": 0, "total": 1}}))
+        }).mount(&gateway).await;
+    Mock::given(method("GET"))
+        .and(path("/api/v2/messages"))
+        .respond_with(move |_: &Request| {
+            ResponseTemplate::new(200).set_body_json(json!([
+                {"payload": pending.lock().unwrap().to_string()}
+            ]))
+        })
+        .mount(&gateway)
+        .await;
+    let previous_gateway = std::env::var("EWDS_GATEWAY_URL").ok();
+    std::env::set_var("EWDS_GATEWAY_URL", gateway.uri());
+    std::env::set_var("OFFCHAIN_STORAGE_TRANSPORT", "ewds");
+    std::env::set_var("EWDS_ENABLE_HANDLER", "true");
+    let result = create_input_orders(
+        vec![
+            forecast("missing-facility", 5.0),
+            forecast("area1", -2.0),
+            forecast("area2", -3.0),
+        ],
+        test_market(),
+    )
+    .await;
+    std::env::set_var("OFFCHAIN_STORAGE_TRANSPORT", "http");
+    std::env::set_var("EWDS_ENABLE_HANDLER", "false");
+    match previous_gateway {
+        Some(url) => std::env::set_var("EWDS_GATEWAY_URL", url),
+        None => std::env::remove_var("EWDS_GATEWAY_URL"),
+    }
+    let orders = result.unwrap();
+    assert_eq!(orders.len(), 1);
+    assert_eq!(
+        orders[0].1,
+        parse_uuid_or_hex_bytes16(FACILITY_2_ONCHAIN).unwrap()
+    );
+    let requests = gateway.received_requests().await.unwrap();
+    assert!(requests
+        .iter()
+        .all(|request| request.url.path() == "/api/v2/messages"));
+    let notifications: Vec<Value> = requests
+        .iter()
+        .filter(|request| request.method == "POST")
+        .map(|request| serde_json::from_slice::<EwdsSendMessageDto>(&request.body).unwrap())
+        .map(|message| serde_json::from_str::<Value>(&message.payload).unwrap())
+        .filter(|payload| payload["eventType"] == "orderStatus.event")
+        .collect();
+    assert_eq!(notifications.len(), 2);
+    for (notification, facility_id, order_type, energy, rate, reason) in [
+        (
+            &notifications[0],
+            "missing-facility",
+            "bid",
+            5.0,
+            1.5,
+            "unknown_facility",
+        ),
+        (
+            &notifications[1],
+            "area1",
+            "offer",
+            2.0,
+            0.14,
+            "site_not_in_community",
+        ),
+    ] {
+        let order = &notification["data"][0];
+        assert_eq!(order["createdBy"], facility_id);
+        assert_eq!(order["marketId"], test_market().market_id);
+        assert_eq!(order["orderStatus"], "rejected");
+        assert_eq!(order["orderType"], order_type);
+        assert_eq!(order["quantity"], energy);
+        assert_eq!(order["priceLimit"], rate);
+        assert!(order["rejectReason"].as_str().unwrap().contains(reason));
+        assert!(order["updatedAt"].is_string());
+        uuid::Uuid::parse_str(order["orderId"].as_str().unwrap()).unwrap();
+    }
 }

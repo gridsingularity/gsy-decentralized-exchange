@@ -37,8 +37,8 @@ pub fn trade(
     DbTradeSchema {
         trade_uuid: trade_uuid.to_string(),
         status,
-        seller: hash(SELLER_OWNER),
-        buyer: hash(BUYER_OWNER),
+        seller: hash(SELLER_FACILITY),
+        buyer: hash(BUYER_FACILITY),
         market_id: MARKET.to_string(),
         creation_time: SLOT - 600,
         offer_hash: format!("{trade_uuid}-offer"),
@@ -74,6 +74,10 @@ pub async fn seed_topology(db: &DatabaseWrapper, export_kwh: f64) {
         (SELLER_FACILITY, SELLER_OWNER),
         (BUYER_FACILITY, BUYER_OWNER),
     ] {
+        db.ids()
+            .get_or_create(facility_id.to_string())
+            .await
+            .unwrap();
         db.facilities()
             .insert(FacilitySchema {
                 facility_id: facility_id.to_string(),

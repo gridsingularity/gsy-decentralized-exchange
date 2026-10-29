@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "int.facilities.validate.response.v1",
+  "title": "facilitiesValidateResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "requestId": { "type": "string", "minLength": 1 },
+    "success": { "type": "boolean" },
+    "data": {
+      "type": "array",
+      "description": "One result per input pair, preserving input order, duplicates and supplied IDs. Empty on request/storage errors.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "facility_id": { "type": "string" },
+          "market_id": { "type": "string" },
+          "eligible": { "type": "boolean" },
+          "reason": {
+            "enum": [null, "unknown_market", "unknown_facility", "unknown_community", "unknown_site", "facility_not_listed_in_site", "site_not_in_community"]
+          }
+        },
+        "required": ["facility_id", "market_id", "eligible"],
+        "if": { "properties": { "eligible": { "const": true } } },
+        "then": { "properties": { "reason": { "type": "null" } } },
+        "else": { "required": ["reason"], "properties": { "reason": { "type": "string" } } }
+      }
+    },
+    "error": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "code": { "type": "string" },
+        "message": { "type": "string" }
+      },
+      "required": ["code", "message"]
+    }
+  },
+  "required": ["requestId", "success", "data"],
+  "if": { "properties": { "success": { "const": false } } },
+  "then": {
+    "required": ["error"],
+    "properties": { "data": { "maxItems": 0 }, "error": { "type": "object" } }
+  },
+  "else": { "properties": { "error": { "type": "null" } } }
+}
