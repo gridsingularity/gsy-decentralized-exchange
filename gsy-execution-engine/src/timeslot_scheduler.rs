@@ -1,94 +1,78 @@
-use chrono::{Duration, Utc};
+use anyhow::{Context, Result};
+use chrono::{DateTime, Duration, Utc};
 use primitives::constants::GLOBAL_CONSTANTS;
-use tracing::info;
+use std::env;
+use tracing::{info, warn};
 
-pub const DEFAULT_ROLLOVER_RETRY_LIMIT: u32 = 2;
-
-#[derive(Debug)]
-struct PendingTimeslot {
-    timeslot: u64,
-    retries_remaining: u32,
-}
+pub const DEFAULT_ROLLOVER_GRACE_SECONDS: u64 = 900;
 
 #[derive(Debug)]
 pub struct TimeslotScheduler {
-    latest_target_timeslot: u64,
-    pending_timeslot: Option<PendingTimeslot>,
-    rollover_retry_limit: u32,
+    latest_target_timeslot: Option<u64>,
+    next_retained_timeslot: Option<u64>,
+    retained_turn: bool,
+    rollover_grace_seconds: u64,
 }
 
 impl TimeslotScheduler {
-    pub fn new(rollover_retry_limit: u32) -> Self {
-        Self::with_initial_timeslot(generate_target_timeslot(), rollover_retry_limit)
+    pub fn new(rollover_grace_seconds: u64) -> Self {
+        Self {
+            latest_target_timeslot: None,
+            next_retained_timeslot: None,
+            retained_turn: false,
+            rollover_grace_seconds,
+        }
     }
 
-    pub fn with_initial_timeslot(initial_timeslot: u64, rollover_retry_limit: u32) -> Self {
-        Self {
-            latest_target_timeslot: initial_timeslot,
-            pending_timeslot: None,
-            rollover_retry_limit,
+    pub fn from_env() -> Result<Self> {
+        let grace_seconds = match env::var("EXECUTION_ENGINE_ROLLOVER_GRACE_SECONDS") {
+            Ok(value) => value.parse::<u64>().context(
+                "EXECUTION_ENGINE_ROLLOVER_GRACE_SECONDS must be a non-negative integer",
+            )?,
+            Err(env::VarError::NotPresent) => DEFAULT_ROLLOVER_GRACE_SECONDS,
+            Err(error) => return Err(error.into()),
+        };
+        if env::var_os("EXECUTION_ENGINE_ROLLOVER_RETRY_LIMIT").is_some() {
+            warn!(
+                "EXECUTION_ENGINE_ROLLOVER_RETRY_LIMIT is ignored; use EXECUTION_ENGINE_ROLLOVER_GRACE_SECONDS instead"
+            );
         }
+        info!("Execution rollover grace period: {} seconds", grace_seconds);
+        Ok(Self::new(grace_seconds))
     }
 
     pub fn calculate_timeslot(&mut self) -> u64 {
-        let current_target_timeslot = generate_target_timeslot();
-
-        if current_target_timeslot != self.latest_target_timeslot {
-            if self.rollover_retry_limit > 0 {
-                info!(
-                    "Target timeslot advanced from {} to {}; retaining {} for up to {} retries",
-                    self.latest_target_timeslot,
-                    current_target_timeslot,
-                    self.latest_target_timeslot,
-                    self.rollover_retry_limit
-                );
-                self.pending_timeslot = Some(PendingTimeslot {
-                    timeslot: self.latest_target_timeslot,
-                    retries_remaining: self.rollover_retry_limit,
-                });
-            }
-            self.latest_target_timeslot = current_target_timeslot;
-        }
-
-        self.pending_timeslot
-            .as_ref()
-            .map(|pending| pending.timeslot)
-            .unwrap_or(current_target_timeslot)
+        self.calculate_timeslot_at(Utc::now())
     }
 
-    pub fn record_cycle(&mut self, timeslot: u64, processed_penalties: usize) {
-        let Some(pending) = self.pending_timeslot.as_mut() else {
-            return;
-        };
-        if pending.timeslot != timeslot {
-            return;
+    /// Select a slot at an explicit time, allowing rollover tests without sleeping.
+    pub fn calculate_timeslot_at(&mut self, now: DateTime<Utc>) -> u64 {
+        let target_time = now - Duration::minutes(GLOBAL_CONSTANTS.execution_engine_offset_min);
+        let target_timestamp = target_time.timestamp().max(0) as u64;
+        let slot_duration = GLOBAL_CONSTANTS.time_slot_sec;
+        let current_target = (target_timestamp / slot_duration) * slot_duration;
+
+        // A slot remains eligible until its rollover + grace. Derive the window
+        // from time so restarts and delayed polling cannot extend the deadline.
+        let oldest_eligible = (target_timestamp.saturating_sub(self.rollover_grace_seconds)
+            / slot_duration)
+            * slot_duration;
+
+        if self.latest_target_timeslot != Some(current_target)
+            || !self.retained_turn
+            || oldest_eligible == current_target
+        {
+            self.latest_target_timeslot = Some(current_target);
+            self.retained_turn = true;
+            return current_target;
         }
 
-        if processed_penalties > 0 {
-            info!(
-                "Finished retained timeslot {} after processing {} penalties",
-                timeslot, processed_penalties
-            );
-            self.pending_timeslot = None;
-        } else if pending.retries_remaining <= 1 {
-            info!(
-                "Finished retained timeslot {} after exhausting rollover retries",
-                timeslot
-            );
-            self.pending_timeslot = None;
-        } else {
-            pending.retries_remaining -= 1;
-            info!(
-                "Retained timeslot {} has {} retries remaining",
-                timeslot, pending.retries_remaining
-            );
-        }
+        let retained = self
+            .next_retained_timeslot
+            .filter(|slot| *slot >= oldest_eligible && *slot < current_target)
+            .unwrap_or(oldest_eligible);
+        self.next_retained_timeslot = Some(retained + slot_duration);
+        self.retained_turn = false;
+        retained
     }
-}
-
-fn generate_target_timeslot() -> u64 {
-    let now = Utc::now();
-    let previous = now - Duration::minutes(GLOBAL_CONSTANTS.execution_engine_offset_min);
-
-    (previous.timestamp() as u64 / GLOBAL_CONSTANTS.time_slot_sec) * GLOBAL_CONSTANTS.time_slot_sec
 }
