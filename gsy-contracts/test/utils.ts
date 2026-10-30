@@ -40,7 +40,11 @@ export const OPEN_MARKET_DURATION = 3600;
 
 // Creates a market that is open from the latest block for OPEN_MARKET_DURATION.
 // The caller of the controller must hold ORCHESTRATOR_ROLE.
-export async function createOpenMarket(controller: any, marketId: string) {
+export async function createOpenMarket(
+  controller: any,
+  marketId: string,
+  overrides: any = {},
+) {
   const latest = (await ethers.provider.getBlock("latest"))!.timestamp;
   await controller.createMarkets([
     newMarket(marketId, {
@@ -48,6 +52,7 @@ export async function createOpenMarket(controller: any, marketId: string) {
       closingTime: latest + OPEN_MARKET_DURATION,
       deliveryStartTime: latest + OPEN_MARKET_DURATION,
       deliveryEndTime: latest + OPEN_MARKET_DURATION + 900,
+      ...overrides,
     }),
   ]);
 }

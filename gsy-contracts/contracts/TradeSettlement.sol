@@ -37,6 +37,7 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
         uint64 penaltyEnergy
     );
     event PenaltiesSubmitted(uint256 count);
+    event PriceBoundsUpdated(uint64 priceFloor, uint64 priceCap);
 
     error InvalidOrderParams();
     error OrderNotOpen();
@@ -45,6 +46,9 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
     error EnergyMismatch();
     error InvalidPenalty();
     error TradedQuantityMismatch();
+    error NonUniformClearingPrice();
+    error InvalidPriceBounds();
+    error PriceOutOfBounds();
 
     constructor() {
         _disableInitializers();
@@ -106,6 +110,28 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
     mapping(bytes16 => uint256) public penaltyEnergyByTrade;
     mapping(bytes16 => uint256) public penaltyEnergyByActor;
 
+    /// @notice Lowest price any match may settle at. `0` means no floor.
+    uint64 public priceFloor;
+    /// @notice Highest price any match may settle at. `0` means no cap.
+    uint64 public priceCap;
+
+    /**
+     * @notice Configure the price band every settled match must fall within.
+     * @dev Prices are the scaled integer rates used on-chain. A cap of `0`
+     *      disables the cap; a floor of `0` disables the floor.
+     */
+    function setPriceBounds(
+        uint64 _priceFloor,
+        uint64 _priceCap
+    ) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (_priceCap != 0 && _priceFloor > _priceCap) {
+            revert InvalidPriceBounds();
+        }
+        priceFloor = _priceFloor;
+        priceCap = _priceCap;
+        emit PriceBoundsUpdated(_priceFloor, _priceCap);
+    }
+
     /**
      * @notice Settle a batch of matched trades.
      * @dev Only callable by the Matching Engine (Operator).
@@ -120,8 +146,26 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
                 revert TradedQuantityMismatch();
             }
 
+            // Uniform pricing (pay-as-clear markets): every Standard match of
+            // the settlement must carry one and the same price. Preferred
+            // matches are bilateral and settle at their own negotiated rate.
+            bool uniform = registry.marketController().getMatchingAlgorithm(
+                settlement.clearingResult.marketId
+            ) == MarketController.MatchingAlgorithm.PayAsClear;
+            bool uniformPriceSet;
+            uint256 uniformPrice;
+
             for (uint256 i = 0; i < settlement.matches.length; i++) {
-                _settleTrade(settlement.matches[i]);
+                Match calldata trade = settlement.matches[i];
+                if (uniform && trade.matchType == MatchType.Standard) {
+                    if (!uniformPriceSet) {
+                        uniformPrice = trade.clearingPrice;
+                        uniformPriceSet = true;
+                    } else if (trade.clearingPrice != uniformPrice) {
+                        revert NonUniformClearingPrice();
+                    }
+                }
+                _settleTrade(trade);
             }
 
             emit MarketClearing(
@@ -206,6 +250,7 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
         );
 
         _validateMatch(trade);
+        _validatePriceBounds(trade.clearingPrice);
 
         if (
             trade.selectedEnergy == 0 ||
@@ -266,6 +311,12 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
             trade.clearingPrice < offerRate
         ) {
             revert PriceMismatch();
+        }
+    }
+
+    function _validatePriceBounds(uint256 price) internal view {
+        if (price < priceFloor || (priceCap != 0 && price > priceCap)) {
+            revert PriceOutOfBounds();
         }
     }
 

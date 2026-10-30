@@ -183,6 +183,8 @@ consume real EWT on Energy Web Chain.
 | `EXECUTION_ENGINE_PRIVATE_KEY` | Signer granted `EXECUTION_ENGINE_ROLE`. Defaults to the local Anvil test key for local deployments. |
 | `ACTOR_REGISTRAR_PRIVATE_KEY` | Signer granted `ACTOR_REGISTRAR_ROLE`. Defaults to the local Anvil test key for local deployments. |
 | `PROXY_ADMIN_PRIVATE_KEY` | Owner signer for the generated `ProxyAdmin` contracts. Defaults to the local Anvil test key for local deployments. |
+| `TRADE_SETTLEMENT_PRICE_FLOOR` | Optional. Lowest price (scaled integer rate) any match may settle at. Unset or `0` means no floor. |
+| `TRADE_SETTLEMENT_PRICE_CAP` | Optional. Highest price (scaled integer rate) any match may settle at. Unset or `0` means no cap. Both are applied with `TradeSettlement.setPriceBounds` after deployment and can be changed later by the admin. |
 | `EWC_RPC_URL` | Energy Web Chain RPC override. Defaults to `https://rpc.energyweb.org`. |
 | `VOLTA_RPC_URL` | Volta RPC override. Defaults to `https://volta-rpc.energyweb.org`. |
 | `ALLOW_EWC_MAINNET_DEPLOY` | Required safety flag for EWC mainnet deployment. |
