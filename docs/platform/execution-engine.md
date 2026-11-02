@@ -11,7 +11,7 @@ Each cycle:
 
 1. Select the current target timeslot or an older slot still within its rollover grace period.
 2. Fetch trades plus measurement points/timeseries for that window from off-chain storage.
-3. Compute verdicts for `Matched` or `Penalized` trades with a usable measurement,
+3. Compute verdicts for `Matched` or `Penalized` trades with usable measurements for both parties,
    excluding trades whose on-chain verification is already complete.
 4. Submit `completeDeliveryVerification` and wait for a successful receipt.
    Penalties (if any) and completion are recorded atomically. Fully delivered
@@ -21,11 +21,13 @@ Each cycle:
 
 Current penalty calculator logic:
 
-- `delta = measured_energy - traded_energy`
+- Check each party independently against the traded energy: the buyer's consumption
+  and the seller's production. Measurements are signed: consumption is positive,
+  production negative, so the seller's reading is negated before comparison.
 - No penalty when measured energy is within the configured tolerance of traded
   energy, including the boundaries. The default is 5%.
-- `delta > 0`: penalize buyer
-- `delta < 0`: penalize seller
+- Penalize the buyer for either overconsumption or underconsumption.
+- Penalize the seller for either overproduction or underproduction.
 - Penalty scaled with `NODE_FLOAT_SCALING_FACTOR` (`10000`)
 
 Outside the tolerance band, the existing `penalty_rate` applies to the **full**
@@ -36,14 +38,17 @@ is independent of `penalty_rate` (`0.10` means 10% of the deviation).
 Measurement identities are derived locally with the ID service's shared
 Blake2b-16 helper, without querying or writing ID mappings. This is the same
 identity used in `OrderParams.createdBy` and the indexed trade parties. Owner
-IDs and service wallets are not measurement identities. Measurement selection is
-unchanged: the buyer's measurement is preferred, with the seller's as a
-fallback. This does not independently verify both sides. Multiple measurements
-for a facility overwrite each other, and allocation across multiple trades is not
-handled. These policy limitations need separate agreement; `Executed` records
-completion under this current policy, not proof that both meters were checked.
-Missing/unmapped or non-finite measurements produce no verdict, not a zero-penalty
-success. HTTP and EWDS use the same calculation and on-chain completion path.
+IDs and service wallets are not measurement identities. Missing/unmapped or
+non-finite measurements on either side leave the trade pending; they do not
+produce a zero-penalty success. Both readings are required before atomic completion.
+HTTP and EWDS normalize direction-labelled export magnitudes to negative energy;
+compatibility profiles retain their original signed values, including when a
+point's direction has changed in a later slot. Both transports use the same
+calculation and on-chain completion path.
+
+The calculator still compares each trade individually. Multiple measurements
+for a facility overwrite each other, and allocation across multiple trades is
+not handled yet; facility/slot aggregation is the next DD-455 increment.
 
 ## Duplicate Submission Protection
 

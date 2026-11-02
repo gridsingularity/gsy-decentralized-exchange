@@ -141,6 +141,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
     )
     .await?;
     let mut measurements = Vec::new();
+    let mut seller_measurements = Vec::new();
     for index in 0..3u8 {
         let buyer = format!("buyer-{index}");
         let facility = format!("meter-{index}");
@@ -216,7 +217,14 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
             community_uuid: "community".into(),
             time_slot: slot,
             creation_time: slot,
-            energy_kwh: [1.0, 0.8, 1.2][index as usize],
+            energy_kwh: [1.0, 1.0, 1.2][index as usize],
+        });
+        seller_measurements.push(MeasurementSchema {
+            facility_id: seller_facility,
+            community_uuid: "community".into(),
+            time_slot: slot,
+            creation_time: slot,
+            energy_kwh: [-1.0, -0.8, -1.0][index as usize],
         });
     }
     tokio::time::timeout(Duration::from_secs(10), async {
@@ -265,6 +273,25 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
         0
     );
     insert_measurements(&app.db_wrapper, &measurements[..2]).await?;
+    // Buyers alone cannot complete either side of a trade.
+    run_execution_cycle(
+        &app.address, &endpoint, &address, &private_key, slot, 0.1, 900, 5.0,
+    )
+    .await?;
+    assert!(app
+        .db_wrapper
+        .trades()
+        .get_all_trades()
+        .await?
+        .iter()
+        .all(|trade| trade.status == TradeStatus::Matched));
+    assert!(settlement
+        .event::<gsy_ethers_listener::DeliveryVerifiedFilter>()
+        .from_block(0u64)
+        .query()
+        .await?
+        .is_empty());
+    insert_measurements(&app.db_wrapper, &seller_measurements[..2]).await?;
     assert_eq!(
         run_execution_cycle(
             &app.address,
@@ -348,6 +375,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
         "Execution cycles must not create facility ID mappings"
     );
     insert_measurements(&app.db_wrapper, &measurements[2..]).await?;
+    insert_measurements(&app.db_wrapper, &seller_measurements[2..]).await?;
     assert_eq!(
         run_execution_cycle(
             &app.address,

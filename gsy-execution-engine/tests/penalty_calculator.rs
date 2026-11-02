@@ -41,7 +41,7 @@ fn trade() -> DbTradeSchema {
     let offer = order("offer-1", "bob", false);
     DbTradeSchema {
         trade_uuid: "trade-1".to_string(),
-        status: TradeStatus::Settled,
+        status: TradeStatus::Matched,
         seller: offer.created_by.clone(),
         buyer: bid.created_by.clone(),
         market_id: "market-1".to_string(),
@@ -58,18 +58,28 @@ fn trade() -> DbTradeSchema {
     }
 }
 
-#[test]
-fn compute_penalties_matches_facility_measurements_to_onchain_ids() {
-    let measurements = vec![MeasurementSchema {
-        facility_id: "areaalice".to_string(),
+fn measurement(facility_id: &str, energy_kwh: f64) -> MeasurementSchema {
+    MeasurementSchema {
+        facility_id: facility_id.to_string(),
         community_uuid: "community1".to_string(),
         time_slot: 1_000,
         creation_time: 1_000,
-        energy_kwh: 12.0,
-    }];
+        energy_kwh,
+    }
+}
+
+#[test]
+fn compute_penalties_matches_facility_measurements_to_onchain_ids() {
+    let measurements = vec![
+        measurement("areaalice", 12.0),
+        measurement("areabob", -10.0),
+    ];
 
     // The mapping comes from the same ID service used by the community client.
-    let facility_onchain_ids = HashMap::from([("areaalice".to_string(), onchain_id("alice"))]);
+    let facility_onchain_ids = HashMap::from([
+        ("areaalice".to_string(), onchain_id("alice")),
+        ("areabob".to_string(), onchain_id("bob")),
+    ]);
 
     let penalties = compute_penalties(&[trade()], &measurements, &facility_onchain_ids, 0.10, 5.0);
 
@@ -83,85 +93,109 @@ fn compute_penalties_matches_facility_measurements_to_onchain_ids() {
 
 #[test]
 fn verification_distinguishes_missing_measurements_from_zero_penalties() {
-    let mapping = HashMap::from([("meter".to_string(), onchain_id("alice"))]);
-    let measurement = MeasurementSchema {
-        facility_id: "meter".to_string(),
-        community_uuid: "community1".to_string(),
-        time_slot: 1000,
-        creation_time: 1000,
-        energy_kwh: 10.0,
-    };
+    let mapping = HashMap::from([
+        ("buyer-meter".to_string(), onchain_id("alice")),
+        ("seller-meter".to_string(), onchain_id("bob")),
+    ]);
+    let buyer = measurement("buyer-meter", 10.0);
+    let seller = measurement("seller-meter", -10.0);
     assert!(compute_delivery_verifications(&[trade()], &[], &mapping, 0.1, 5.0).is_empty());
-    assert!(compute_delivery_verifications(
-        &[trade()],
-        &[measurement.clone()],
-        &HashMap::new(),
-        0.1,
-        5.0
-    )
-    .is_empty());
-    let verdicts = compute_delivery_verifications(&[trade()], &[measurement], &mapping, 0.1, 5.0);
+    for only_one in [buyer.clone(), seller.clone()] {
+        assert!(
+            compute_delivery_verifications(&[trade()], &[only_one], &mapping, 0.1, 5.0).is_empty()
+        );
+    }
+    let measurements = [buyer, seller];
+    assert!(
+        compute_delivery_verifications(&[trade()], &measurements, &HashMap::new(), 0.1, 5.0)
+            .is_empty()
+    );
+    let verdicts = compute_delivery_verifications(&[trade()], &measurements, &mapping, 0.1, 5.0);
     assert_eq!(verdicts.len(), 1);
     assert_eq!(verdicts[0].buyer_penalty_cost, 0);
     assert_eq!(verdicts[0].seller_penalty_cost, 0);
 }
 
 #[test]
-fn verification_preserves_buyer_first_and_seller_fallback_policy() {
+fn verification_penalizes_each_partys_own_deviation_in_both_directions() {
     let mapping = HashMap::from([
         ("buyer-meter".to_string(), onchain_id("alice")),
         ("seller-meter".to_string(), onchain_id("bob")),
     ]);
-    let buyer = MeasurementSchema {
-        facility_id: "buyer-meter".to_string(),
-        community_uuid: "community1".to_string(),
-        time_slot: 1000,
-        creation_time: 1000,
-        energy_kwh: 12.0,
-    };
-    let seller = MeasurementSchema {
-        facility_id: "seller-meter".to_string(),
-        energy_kwh: 8.0,
-        ..buyer.clone()
-    };
-    let both =
-        compute_delivery_verifications(&[trade()], &[buyer, seller.clone()], &mapping, 0.1, 5.0);
-    assert_eq!(
-        (both[0].buyer_penalty_cost, both[0].seller_penalty_cost),
-        (2000, 0)
-    );
-    let fallback = compute_delivery_verifications(&[trade()], &[seller], &mapping, 0.1, 5.0);
-    assert_eq!(
-        (
-            fallback[0].buyer_penalty_cost,
-            fallback[0].seller_penalty_cost
-        ),
-        (0, 2000)
-    );
+    for (buyer, seller, expected_buyer, expected_seller) in [
+        (12.0, -10.0, 2_000, 0),
+        (8.0, -10.0, 2_000, 0),
+        (10.0, -12.0, 0, 2_000),
+        (10.0, -8.0, 0, 2_000),
+        (12.0, -8.0, 2_000, 2_000),
+        (8.0, -12.0, 2_000, 2_000),
+        (0.0, -10.0, 10_000, 0),
+        (10.0, 0.0, 0, 10_000),
+        (-10.0, -10.0, 20_000, 0),
+        (10.0, 10.0, 0, 20_000),
+    ] {
+        let measurements = [
+            measurement("buyer-meter", buyer),
+            measurement("seller-meter", seller),
+        ];
+        let trades = [trade()];
+        let verdicts = compute_delivery_verifications(&trades, &measurements, &mapping, 0.1, 5.0);
+        assert_eq!(verdicts.len(), 1);
+        assert_eq!(
+            (
+                verdicts[0].buyer_penalty_cost,
+                verdicts[0].seller_penalty_cost
+            ),
+            (expected_buyer, expected_seller),
+            "buyer={buyer}, seller={seller}"
+        );
+        let penalties = compute_penalties(&trades, &measurements, &mapping, 0.1, 5.0);
+        for (party, cost) in [("alice", expected_buyer), ("bob", expected_seller)] {
+            let penalty = penalties
+                .iter()
+                .find(|penalty| penalty.penalized_account == onchain_id(party));
+            assert_eq!(
+                penalty.map(|penalty| penalty.penalty_cost),
+                (cost > 0).then_some(cost)
+            );
+        }
+    }
 }
 
 #[test]
 fn verification_ignores_unrelated_or_invalid_measurements() {
-    let mapping = HashMap::from([("meter".to_string(), onchain_id("charlie"))]);
-    let measurement = MeasurementSchema {
-        facility_id: "meter".to_string(),
-        community_uuid: "community1".to_string(),
-        time_slot: 1000,
-        creation_time: 1000,
-        energy_kwh: 10.0,
-    };
-    assert!(
-        compute_delivery_verifications(&[trade()], &[measurement.clone()], &mapping, 0.1, 5.0)
-            .is_empty()
-    );
-    let mapping = HashMap::from([("meter".to_string(), onchain_id("alice"))]);
-    let measurement = MeasurementSchema {
-        energy_kwh: f64::NAN,
-        ..measurement
-    };
-    assert!(
-        compute_delivery_verifications(&[trade()], &[measurement], &mapping, 0.1, 5.0).is_empty()
-    );
+    let mapping = HashMap::from([
+        ("buyer-meter".to_string(), onchain_id("alice")),
+        ("seller-meter".to_string(), onchain_id("bob")),
+        ("other-meter".to_string(), onchain_id("charlie")),
+    ]);
+    for measurements in [
+        vec![
+            measurement("buyer-meter", 10.0),
+            measurement("other-meter", -10.0),
+        ],
+        vec![
+            measurement("unknown-meter", 10.0),
+            measurement("seller-meter", -10.0),
+        ],
+    ] {
+        assert!(
+            compute_delivery_verifications(&[trade()], &measurements, &mapping, 0.1, 5.0)
+                .is_empty()
+        );
+    }
+    for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        for (buyer, seller) in [(invalid, -10.0), (10.0, invalid)] {
+            let measurements = [
+                measurement("buyer-meter", buyer),
+                measurement("seller-meter", seller),
+            ];
+            assert!(
+                compute_delivery_verifications(&[trade()], &measurements, &mapping, 0.1, 5.0)
+                    .is_empty()
+            );
+        }
+    }
 }
 
 #[test]
@@ -172,21 +206,18 @@ fn verification_keeps_distinct_facilities_separate_and_uses_stored_ids() {
     let mapping = HashMap::from([
         ("first-meter".into(), first_id.into()),
         ("second-meter".into(), second_id.into()),
+        ("seller-meter".into(), onchain_id("bob")),
     ]);
     let mut first = trade();
     first.buyer = first_id.into();
     let mut second = first.clone();
     second.trade_uuid = "trade-2".into();
     second.buyer = second_id.into();
-    let measurement = MeasurementSchema {
-        facility_id: "first-meter".into(),
-        community_uuid: "community1".into(),
-        time_slot: 1000,
-        creation_time: 1000,
-        energy_kwh: 12.0,
-    };
     let trades = [first, second];
-    let measurements = [measurement];
+    let measurements = [
+        measurement("first-meter", 12.0),
+        measurement("seller-meter", -10.0),
+    ];
     let verifications = compute_delivery_verifications(&trades, &measurements, &mapping, 0.1, 5.0);
     assert_eq!(verifications.len(), 1);
     assert_eq!(verifications[0].trade_uuid, "trade-1");
@@ -197,7 +228,10 @@ fn verification_keeps_distinct_facilities_separate_and_uses_stored_ids() {
 
 #[test]
 fn tolerance_is_inclusive_and_penalties_use_the_full_deviation() {
-    let mapping = HashMap::from([("meter".to_string(), onchain_id("alice"))]);
+    let mapping = HashMap::from([
+        ("buyer-meter".to_string(), onchain_id("alice")),
+        ("seller-meter".to_string(), onchain_id("bob")),
+    ]);
     for (traded, measured, tolerance, expected_cost) in [
         (100.0, 100.0, 5.0, 0),
         (100.0, 96.0, 5.0, 0),
@@ -225,33 +259,32 @@ fn tolerance_is_inclusive_and_penalties_use_the_full_deviation() {
         let mut trade = trade();
         trade.parameters.selected_energy_kWh = traded;
         let trades = [trade];
-        let measurements = [MeasurementSchema {
-            facility_id: "meter".to_string(),
-            community_uuid: "community1".to_string(),
-            time_slot: 1_000,
-            creation_time: 1_000,
-            energy_kwh: measured,
-        }];
-        let verifications =
-            compute_delivery_verifications(&trades, &measurements, &mapping, 0.1, tolerance);
-        assert_eq!(
-            verifications.len(),
-            1,
-            "Measured trades must still complete"
-        );
-        assert_eq!(
-            verifications[0].buyer_penalty_cost + verifications[0].seller_penalty_cost,
-            expected_cost,
-            "traded={traded}, measured={measured}, tolerance={tolerance}"
-        );
-        let penalties = compute_penalties(&trades, &measurements, &mapping, 0.1, tolerance);
-        assert_eq!(penalties.len(), usize::from(expected_cost > 0));
-        assert_eq!(
-            penalties
-                .iter()
-                .map(|penalty| penalty.penalty_cost)
-                .sum::<u64>(),
-            expected_cost
-        );
+        for (buyer, seller) in [(measured, -traded), (traded, -measured)] {
+            let measurements = [
+                measurement("buyer-meter", buyer),
+                measurement("seller-meter", seller),
+            ];
+            let verifications =
+                compute_delivery_verifications(&trades, &measurements, &mapping, 0.1, tolerance);
+            assert_eq!(
+                verifications.len(),
+                1,
+                "Measured trades must still complete"
+            );
+            assert_eq!(
+                verifications[0].buyer_penalty_cost + verifications[0].seller_penalty_cost,
+                expected_cost,
+                "traded={traded}, measured={measured}, tolerance={tolerance}"
+            );
+            let penalties = compute_penalties(&trades, &measurements, &mapping, 0.1, tolerance);
+            assert_eq!(penalties.len(), usize::from(expected_cost > 0));
+            assert_eq!(
+                penalties
+                    .iter()
+                    .map(|penalty| penalty.penalty_cost)
+                    .sum::<u64>(),
+                expected_cost
+            );
+        }
     }
 }

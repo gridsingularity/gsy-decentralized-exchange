@@ -505,7 +505,7 @@ impl OffchainStorageClient {
                     community_uuid: point.datasource_name.clone().unwrap_or_default(),
                     time_slot,
                     creation_time: time_slot,
-                    energy_kwh: value.value,
+                    energy_kwh: point.signed_energy_kwh(value.value),
                 })
             })
             .collect())

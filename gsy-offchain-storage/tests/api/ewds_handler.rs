@@ -10,11 +10,15 @@ use gsy_offchain_storage::ewds_handler::{
 use primitives::db_api_schema::grid_topology::FacilitySchema;
 use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
 use primitives::db_api_schema::orders::{DbOrderSchema, OrderEnum, OrderStatus};
+use primitives::db_api_schema::profiles::{
+    FlowDirection, MeasurementPointSchema, MeasurementPointType, MeasurementSchema, TimeseriesSchema,
+};
 use primitives::db_api_schema::trades::{
     ClearingResultSchema, ClearingStatus, DbTradeSchema, TradeParameters, TradeStatus,
 };
-use primitives::ewds::dto::{EwdsRequestEnvelope, EwdsSendMessageDto};
+use primitives::ewds::dto::{EwdsMeasurementDto, EwdsRequestEnvelope, EwdsSendMessageDto};
 use primitives::ewds::{EwdsEventTopicConfig, EwdsOperation, EwdsTopicConfig};
+use primitives::offchain_storage::{OffchainStorageClient, OffchainStorageTransport};
 use primitives::utils::{
     bytes16_to_hex, bytes16_to_uuid_string, create_encrypted_bytes16_from_string, epoch_to_rfc3339,
     rfc3339_to_epoch, timestamp_to_string_with_padding,
@@ -633,6 +637,96 @@ async fn measurements_query_success() {
         .unwrap();
     let _data = captured_data(&server).await;
 
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn measurement_queries_preserve_signed_energy_over_http_and_ewds() {
+    let app = init_app().await;
+    let server = mock_gateway().await;
+    let cases = [
+        ("active_energy", FlowDirection::Import, 1.5, 1.5),
+        ("active_energy", FlowDirection::Export, 1.5, -1.5),
+        ("active_energy", FlowDirection::Export, -1.5, -1.5),
+        ("active_energy", FlowDirection::Import, -1.5, -1.5),
+        ("energy_measured", FlowDirection::Import, 1.5, 1.5),
+        ("energy_measured", FlowDirection::Export, -1.5, -1.5),
+        // A compatibility point's direction may have changed since this slot.
+        ("energy_measured", FlowDirection::Export, 1.5, 1.5),
+        ("energy_measured", FlowDirection::Import, -1.5, -1.5),
+    ];
+    for (index, (property, direction, value, _)) in cases.iter().enumerate() {
+        let id = format!("meter-{index}");
+        app.db_wrapper
+            .measurement_points()
+            .insert_points(vec![MeasurementPointSchema {
+                point_type: MeasurementPointType::Measurement,
+                measurement_id: id.clone(),
+                property_measured: (*property).into(),
+                unit: "kWh".into(),
+                direction: direction.clone(),
+                energy_accumulated: false,
+                time_resolution: "PT15M".into(),
+                phase: 0,
+                asset_name: id.clone(),
+                datasource_name: Some("community".into()),
+            }])
+            .await
+            .unwrap();
+        app.db_wrapper
+            .timeseries()
+            .insert_values(vec![TimeseriesSchema {
+                measurement_point: id,
+                timestamp: timestamp_to_string_with_padding(TRADES_BASE_TIME),
+                value: *value,
+            }])
+            .await
+            .unwrap();
+    }
+    let http = OffchainStorageClient::new(
+        OffchainStorageTransport::Http,
+        &app.address,
+        "TEST_CLIENT_ID",
+        "test",
+    )
+    .fetch_measurements(TRADES_BASE_TIME, TRADES_BASE_TIME + 900)
+    .await
+    .unwrap();
+    handle_request(
+        &app.db_wrapper,
+        &reqwest::Client::new(),
+        &test_config(server.uri()),
+        envelope(
+            EwdsOperation::MeasurementsQuery,
+            "signed-measurements",
+            json!({
+                "startTime": trades_time(0), "endTime": trades_time(900)
+            }),
+        ),
+    )
+    .await
+    .unwrap();
+    let ewds = captured_data(&server)
+        .await
+        .into_iter()
+        .map(|value| {
+            MeasurementSchema::try_from(
+                serde_json::from_value::<EwdsMeasurementDto>(value).unwrap(),
+            )
+            .unwrap()
+        })
+        .collect::<Vec<_>>();
+    for measurements in [http, ewds] {
+        assert_eq!(measurements.len(), cases.len());
+        for (index, (_, _, _, expected)) in cases.iter().enumerate() {
+            let measurement = measurements
+                .iter()
+                .find(|m| m.facility_id == format!("meter-{index}"))
+                .unwrap();
+            assert_eq!(measurement.energy_kwh, *expected);
+            assert_eq!(measurement.time_slot, TRADES_BASE_TIME);
+        }
+    }
     stop_app(app).await;
 }
 

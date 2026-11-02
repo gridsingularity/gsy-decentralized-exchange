@@ -20,10 +20,9 @@ pub struct DeliveryVerification {
 /// Computes penalties for each trade based on the measured energy.
 ///
 /// Measurements are mapped from facility IDs to the trade's buyer/seller IDs.
-/// The delta is computed as:
-///   delta = measured_energy - traded_energy
-/// If delta > 0.0, it indicates under-trading for consumption and the buyer is penalized.
-/// If delta < 0.0, it indicates under-trading for production and the seller is penalized.
+/// Each party is penalized for its own deviation in either direction. Measurements
+/// are signed: positive consumption for buyers, negative production for sellers.
+/// Both measurements must be available before completing a trade.
 ///
 /// # Arguments
 ///
@@ -75,8 +74,7 @@ pub fn compute_penalties(
         .collect()
 }
 
-/// A missing measurement is not a successful zero-penalty verification.
-/// Retains the existing buyer-first/seller-fallback policy pending a separate policy review.
+/// Missing, unmapped or non-finite measurements on either side leave a trade pending.
 pub fn compute_delivery_verifications(
     trades: &[DbTradeSchema],
     measurements: &[MeasurementSchema],
@@ -101,34 +99,46 @@ pub fn compute_delivery_verifications(
         };
         measurement_map.insert(onchain_id.clone(), meas.energy_kwh);
     }
-    // Iterate over each trade and compute the penalty if a measurement exists.
+    // Completion is atomic for both parties, so neither side can be a fallback.
     for trade in trades {
-        if let Some(&measured_energy) = measurement_map
-            .get(&trade.buyer)
-            .or_else(|| measurement_map.get(&trade.seller))
-        {
-            let traded_energy = trade.parameters.selected_energy_kWh;
-
-            // Compute delta = measured_energy - traded_energy.
-            let delta = measured_energy - traded_energy;
-
-            let tolerance = traded_energy * penalty_tolerance_percent / 100.0;
-            // Compare energy bounds so subtraction round-off at the boundary
-            // (e.g. 1.05 - 1.0) does not turn an allowed deviation into a penalty.
-            let within_tolerance =
-                (traded_energy - tolerance..=traded_energy + tolerance).contains(&measured_energy);
-            let penalty_cost = if within_tolerance {
-                0
-            } else {
-                (delta.abs() * penalty_rate * 10_000.0).round() as u64
-            };
-            verifications.push(DeliveryVerification {
-                trade_uuid: trade.trade_uuid.clone(),
-                buyer_penalty_cost: if delta > 0.0 { penalty_cost } else { 0 },
-                seller_penalty_cost: if delta < 0.0 { penalty_cost } else { 0 },
-            });
-        }
+        let (Some(&buyer_energy), Some(&seller_energy)) = (
+            measurement_map.get(&trade.buyer),
+            measurement_map.get(&trade.seller),
+        ) else {
+            continue;
+        };
+        let traded_energy = trade.parameters.selected_energy_kWh;
+        verifications.push(DeliveryVerification {
+            trade_uuid: trade.trade_uuid.clone(),
+            buyer_penalty_cost: penalty_cost(
+                traded_energy,
+                buyer_energy,
+                penalty_rate,
+                penalty_tolerance_percent,
+            ),
+            seller_penalty_cost: penalty_cost(
+                traded_energy,
+                -seller_energy,
+                penalty_rate,
+                penalty_tolerance_percent,
+            ),
+        });
     }
 
     verifications
+}
+
+fn penalty_cost(
+    traded_energy: f64,
+    measured_energy: f64,
+    rate: f64,
+    tolerance_percent: f64,
+) -> u64 {
+    let tolerance = traded_energy * tolerance_percent / 100.0;
+    // Compare energy bounds to avoid subtraction round-off at the boundary.
+    if (traded_energy - tolerance..=traded_energy + tolerance).contains(&measured_energy) {
+        0
+    } else {
+        ((measured_energy - traded_energy).abs() * rate * 10_000.0).round() as u64
+    }
 }
