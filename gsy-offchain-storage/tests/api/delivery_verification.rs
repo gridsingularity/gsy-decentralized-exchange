@@ -128,23 +128,32 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
     send(
         &controller,
         "createMarkets",
-        (vec![(
-            market_id,
-            [0x77u8; 16],
-            now,
-            now + 3600,
-            slot,
-            slot + 900,
-            0u8,
-            0u8,
-        )],),
+        ((0..2u8)
+            .map(|index| {
+                (
+                    [0x99 + index; 16],
+                    [0x77u8; 16],
+                    now,
+                    now + 3600,
+                    slot + u64::from(index) * 900,
+                    slot + u64::from(index + 1) * 900,
+                    0u8,
+                    0u8,
+                )
+            })
+            .collect::<Vec<_>>(),),
     )
     .await?;
     let mut measurements = Vec::new();
     let mut seller_measurements = Vec::new();
     for index in 0..3u8 {
-        let buyer = format!("buyer-{index}");
-        let facility = format!("meter-{index}");
+        // Reuse one buyer across two slots. A broad query must not combine their
+        // traded totals or let the earlier meter reading verify the later trade.
+        let buyer_index = if index == 2 { 0 } else { index };
+        let buyer = format!("buyer-{buyer_index}");
+        let facility = format!("meter-{buyer_index}");
+        let market_id = if index == 2 { [0x9a; 16] } else { market_id };
+        let slot = if index == 2 { slot + 900 } else { slot };
         let seller_facility = format!("seller-meter-{index}");
         let buyer_id = create_encrypted_bytes16_from_string(&facility);
         let seller_id = create_encrypted_bytes16_from_string(&seller_facility);
@@ -266,7 +275,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
             &private_key,
             slot,
             0.1,
-            900,
+            1800,
             5.0
         )
         .await?,
@@ -275,7 +284,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
     insert_measurements(&app.db_wrapper, &measurements[..2]).await?;
     // Buyers alone cannot complete either side of a trade.
     run_execution_cycle(
-        &app.address, &endpoint, &address, &private_key, slot, 0.1, 900, 5.0,
+        &app.address, &endpoint, &address, &private_key, slot, 0.1, 1800, 5.0,
     )
     .await?;
     assert!(app
@@ -300,7 +309,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
             &private_key,
             slot,
             0.1,
-            900,
+            1800,
             5.0
         )
         .await?,
@@ -323,6 +332,16 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
         }
     })
     .await?;
+    // The later seller is measured, but this buyer's earlier-slot reading must
+    // not substitute for its still-missing later-slot reading.
+    insert_measurements(&app.db_wrapper, &seller_measurements[2..]).await?;
+    assert_eq!(
+        run_execution_cycle(
+            &app.address, &endpoint, &address, &private_key, slot, 0.1, 1800, 5.0,
+        )
+        .await?,
+        0
+    );
     assert_eq!(
         registry
             .method::<_, u8>("getStatus", [3u8; 16])?
@@ -337,8 +356,8 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
         &settlement,
         "submitPenalties",
         (vec![(
-            create_encrypted_bytes16_from_string("meter-2"),
-            market_id,
+            create_encrypted_bytes16_from_string("meter-0"),
+            [0x9au8; 16],
             [23u8; 16],
             200u64,
         )],),
@@ -375,7 +394,6 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
         "Execution cycles must not create facility ID mappings"
     );
     insert_measurements(&app.db_wrapper, &measurements[2..]).await?;
-    insert_measurements(&app.db_wrapper, &seller_measurements[2..]).await?;
     assert_eq!(
         run_execution_cycle(
             &app.address,
@@ -384,7 +402,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
             &private_key,
             slot,
             0.1,
-            900,
+            1800,
             5.0
         )
         .await?,
@@ -505,7 +523,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
             &private_key,
             slot,
             0.1,
-            900,
+            1800,
             5.0
         )
         .await?,

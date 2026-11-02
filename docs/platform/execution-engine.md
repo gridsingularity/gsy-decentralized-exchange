@@ -10,9 +10,14 @@ records delivery verification in `TradeSettlement`.
 Each cycle:
 
 1. Select the current target timeslot or an older slot still within its rollover grace period.
-2. Fetch trades plus measurement points/timeseries for that window from off-chain storage.
-3. Compute verdicts for `Matched` or `Penalized` trades with usable measurements for both parties,
-   excluding trades whose on-chain verification is already complete.
+2. Fetch trades plus measurement points/timeseries for that delivery window from
+   off-chain storage. Resolve each distinct market once through the existing
+   HTTP/EWDS market lookup and group trades by its `delivery_start_time`, not
+   trade creation or settlement time.
+3. Compute facility totals and penalty allocations separately for each slot,
+   including `Executed` and `Settled` trades in the baseline. Only `Matched` or
+   `Penalized` trades with usable readings for both parties receive verdicts;
+   the connector skips trades whose on-chain verification is already complete.
 4. Submit `completeDeliveryVerification` and wait for a successful receipt.
    Penalties (if any) and completion are recorded atomically. Fully delivered
    trades also complete, without a separate penalty transaction.
@@ -21,34 +26,56 @@ Each cycle:
 
 Current penalty calculator logic:
 
-- Check each party independently against the traded energy: the buyer's consumption
-  and the seller's production. Measurements are signed: consumption is positive,
-  production negative, so the seller's reading is negated before comparison.
-- No penalty when measured energy is within the configured tolerance of traded
-  energy, including the boundaries. The default is 5%.
+- For each facility and delivery slot, sum all its indexed purchases and sales,
+  across markets: `net_traded_energy = purchases - sales`. Measurements are
+  signed: consumption is positive and production negative. A facility that buys
+  10 kWh and sells 4 kWh is expected to consume 6 kWh net.
+- Select only readings whose `time_slot` equals the market's delivery start.
+  Readings from another slot never substitute for a missing one.
+- No penalty within `abs(net_traded_energy) * tolerance_percent / 100` of the
+  signed net baseline, including the boundaries. The default is 5%. A zero-net
+  position has zero tolerance; a nonzero meter reading is a deviation.
 - Penalize the buyer for either overconsumption or underconsumption.
 - Penalize the seller for either overproduction or underproduction.
 - Penalty scaled with `NODE_FLOAT_SCALING_FACTOR` (`10000`)
+- Allocate that facility's penalty to its trades in proportion to each trade's
+  quantity divided by all its purchases plus sales (not the net quantity).
+  This includes both buyer and seller roles, residual trades, and trades already
+  verified. Round the total once, then allocate integer units by largest remainder;
+  ties use trade ID order. Allocations sum exactly to the facility penalty and
+  do not depend on the order of query results.
 
 Outside the tolerance band, the existing `penalty_rate` applies to the **full**
 deviation, not only the excess beyond the band. For 100 kWh traded with 5%
 tolerance, 105 kWh incurs no penalty; 106 kWh incurs a penalty on 6 kWh. Tolerance
 is independent of `penalty_rate` (`0.10` means 10% of the deviation).
+For purchases of 4 and 6 kWh and consumption of 12 kWh, the 2 kWh deviation
+produces a 2,000-unit penalty at rate 0.10, allocated as 800 and 1,200 units.
 
 Measurement identities are derived locally with the ID service's shared
 Blake2b-16 helper, without querying or writing ID mappings. This is the same
 identity used in `OrderParams.createdBy` and the indexed trade parties. Owner
-IDs and service wallets are not measurement identities. Missing/unmapped or
-non-finite measurements on either side leave the trade pending; they do not
-produce a zero-penalty success. Both readings are required before atomic completion.
+IDs and service wallets are not measurement identities. Missing/unmapped,
+non-finite, or conflicting readings for a facility/slot leave its trades pending;
+they do not produce a zero-penalty success. Identical readings are not counted
+twice. Multiple distinct readings are not summed or arbitrarily selected: they
+need an unambiguous net measurement before verification. Both parties' readings
+are required before atomic completion.
 HTTP and EWDS normalize direction-labelled export magnitudes to negative energy;
 compatibility profiles retain their original signed values, including when a
 point's direction has changed in a later slot. Both transports use the same
 calculation and on-chain completion path.
 
-The calculator still compares each trade individually. Multiple measurements
-for a facility overwrite each other, and allocation across multiple trades is
-not handled yet; facility/slot aggregation is the next DD-455 increment.
+Each trade keeps its own buyer/seller penalty on-chain. A missing counterparty
+reading does not remove that trade from the other facility's totals, and completing
+one trade does not shrink the baseline or redistribute its share onto pending trades.
+
+Totals reflect the currently indexed trade set. There is no slot-finalization
+snapshot or correction/reconciliation mechanism: a subsequently indexed trade
+or corrected reading can change calculated allocations, but verification cannot
+revise amounts already recorded on-chain. Defining finalization and handling such
+late changes remain follow-up work; slot-specific measurement selection alone
+does not solve this limitation.
 
 ## Duplicate Submission Protection
 
