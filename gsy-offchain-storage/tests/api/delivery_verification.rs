@@ -258,7 +258,8 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
             &private_key,
             slot,
             0.1,
-            900
+            900,
+            5.0
         )
         .await?,
         0
@@ -272,7 +273,8 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
             &private_key,
             slot,
             0.1,
-            900
+            900,
+            5.0
         )
         .await?,
         0
@@ -354,7 +356,8 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
             &private_key,
             slot,
             0.1,
-            900
+            900,
+            5.0
         )
         .await?,
         2 // The already verified Penalized trade is skipped on-chain.
@@ -474,7 +477,8 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
             &private_key,
             slot,
             0.1,
-            900
+            900,
+            5.0
         )
         .await?,
         2

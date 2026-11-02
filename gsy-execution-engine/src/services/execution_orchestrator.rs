@@ -33,7 +33,12 @@ pub async fn run_execution_cycle(
     timeslot: u64,
     penalty_rate: f64,
     market_duration: u64,
+    penalty_tolerance_percent: f64,
 ) -> Result<usize> {
+    anyhow::ensure!(
+        penalty_tolerance_percent.is_finite() && (0.0..=100.0).contains(&penalty_tolerance_percent),
+        "Invalid penalty tolerance percentage"
+    );
     let offchain_storage_client = OffchainStorageClient::new(
         OffchainStorageTransport::from_env(),
         offchain_url,
@@ -81,8 +86,13 @@ pub async fn run_execution_cycle(
         "Invalid penalty rate"
     );
     // A measured zero-penalty trade is complete; an unmeasured one remains pending.
-    let verifications =
-        compute_delivery_verifications(&trades, &measurements, &facility_onchain_ids, penalty_rate);
+    let verifications = compute_delivery_verifications(
+        &trades,
+        &measurements,
+        &facility_onchain_ids,
+        penalty_rate,
+        penalty_tolerance_percent,
+    );
     let all_measured = verifications.len() == trades.len();
     info!("Computed {} delivery verifications", verifications.len());
 

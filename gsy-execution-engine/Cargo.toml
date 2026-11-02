@@ -9,7 +9,7 @@ description = "Execution Engine for the Grid Singularity Energy Exchange"
 primitives = { workspace = true }
 anyhow = { workspace = true }
 chrono = { workspace = true }
-clap = { workspace = true }
+clap = { workspace = true, features = ["env"] }
 ethers = { workspace = true, features = ["ws", "rustls"] }
 reqwest = { workspace = true }
 serde = { workspace = true }

@@ -22,14 +22,21 @@ Each cycle:
 Current penalty calculator logic:
 
 - `delta = measured_energy - traded_energy`
+- No penalty when measured energy is within the configured tolerance of traded
+  energy, including the boundaries. The default is 5%.
 - `delta > 0`: penalize buyer
 - `delta < 0`: penalize seller
 - Penalty scaled with `NODE_FLOAT_SCALING_FACTOR` (`10000`)
 
+Outside the tolerance band, the existing `penalty_rate` applies to the **full**
+deviation, not only the excess beyond the band. For 100 kWh traded with 5%
+tolerance, 105 kWh incurs no penalty; 106 kWh incurs a penalty on 6 kWh. Tolerance
+is independent of `penalty_rate` (`0.10` means 10% of the deviation).
+
 Measurement identities are derived locally with the ID service's shared
 Blake2b-16 helper, without querying or writing ID mappings. This is the same
 identity used in `OrderParams.createdBy` and the indexed trade parties. Owner
-IDs and service wallets are not measurement identities. The penalty policy is
+IDs and service wallets are not measurement identities. Measurement selection is
 unchanged: the buyer's measurement is preferred, with the seller's as a
 fallback. This does not independently verify both sides. Multiple measurements
 for a facility overwrite each other, and allocation across multiple trades is not
@@ -101,9 +108,13 @@ zero/non-zero penalties, replay safety, timestamps, and independent residuals.
 
 ## Key Config
 
-- CLI: `web3 <offchain_host> <offchain_port> <node_host> <node_port> <polling_interval> <market_duration> <penalty_rate>`
+- CLI: `web3 <offchain_host> <offchain_port> <node_host> <node_port> <polling_interval> <market_duration> <penalty_rate> [--penalty-tolerance-percent <percent>]`
 - Env:
   - `TRADE_SETTLEMENT_ADDRESS`
   - `EXECUTION_ENGINE_PRIVATE_KEY`
   - `EXECUTION_ENGINE_OFFSET_MIN`
   - `EXECUTION_ENGINE_ROLLOVER_GRACE_SECONDS` (default `900`; set `0` to disable)
+  - `EXECUTION_ENGINE_PENALTY_TOLERANCE_PERCENT` (default `5`; set `0` for strict comparison)
+
+Penalty tolerance must be a finite percentage between 0 and 100. Invalid values
+fail startup. The CLI option takes precedence over the environment variable.

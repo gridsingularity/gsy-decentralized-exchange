@@ -28,8 +28,24 @@ pub enum Commands {
         #[clap(default_value_t = 900)]
         market_duration: u64,
 
-        /// Penalty rate (e.g., 10 for 10%)
+        /// Penalty rate (e.g., 0.10 for 10%)
         #[clap(default_value_t = 0.10)]
         penalty_rate: f64,
+
+        /// Allowed deviation as a percentage of traded energy (0 disables tolerance).
+        #[clap(
+            long,
+            env = "EXECUTION_ENGINE_PENALTY_TOLERANCE_PERCENT",
+            default_value_t = 5.0,
+            value_parser = parse_penalty_tolerance_percent
+        )]
+        penalty_tolerance_percent: f64,
     },
+}
+
+fn parse_penalty_tolerance_percent(value: &str) -> Result<f64, String> {
+    match value.parse::<f64>() {
+        Ok(value) if value.is_finite() && (0.0..=100.0).contains(&value) => Ok(value),
+        _ => Err("penalty tolerance must be a finite percentage between 0 and 100".to_string()),
+    }
 }

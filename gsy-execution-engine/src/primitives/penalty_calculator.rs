@@ -30,6 +30,8 @@ pub struct DeliveryVerification {
 /// * `trades` - A slice of DbTradeSchema records.
 /// * `measurements` - A slice of MeasurementSchema records.
 /// * `penalty_rate` - The penalty rate as a f64 (e.g., 0.10 for 10%).
+/// * `penalty_tolerance_percent` - Allowed deviation, inclusive (e.g., 5.0 for 5%).
+///   Beyond this band, the penalty rate applies to the full deviation.
 ///
 /// # Returns
 ///
@@ -39,9 +41,15 @@ pub fn compute_penalties(
     measurements: &[MeasurementSchema],
     facility_onchain_ids: &HashMap<String, String>,
     penalty_rate: f64,
+    penalty_tolerance_percent: f64,
 ) -> Vec<Penalty> {
-    let verifications =
-        compute_delivery_verifications(trades, measurements, facility_onchain_ids, penalty_rate);
+    let verifications = compute_delivery_verifications(
+        trades,
+        measurements,
+        facility_onchain_ids,
+        penalty_rate,
+        penalty_tolerance_percent,
+    );
     let trades_by_id: HashMap<_, _> = trades
         .iter()
         .map(|trade| (trade.trade_uuid.as_str(), trade))
@@ -74,6 +82,7 @@ pub fn compute_delivery_verifications(
     measurements: &[MeasurementSchema],
     facility_onchain_ids: &HashMap<String, String>,
     penalty_rate: f64,
+    penalty_tolerance_percent: f64,
 ) -> Vec<DeliveryVerification> {
     let mut verifications = Vec::new();
 
@@ -84,7 +93,10 @@ pub fn compute_delivery_verifications(
             continue;
         }
         let Some(onchain_id) = facility_onchain_ids.get(&meas.facility_id) else {
-            debug!("No derived identity supplied for facility_id={}", meas.facility_id);
+            debug!(
+                "No derived identity supplied for facility_id={}",
+                meas.facility_id
+            );
             continue;
         };
         measurement_map.insert(onchain_id.clone(), meas.energy_kwh);
@@ -100,7 +112,16 @@ pub fn compute_delivery_verifications(
             // Compute delta = measured_energy - traded_energy.
             let delta = measured_energy - traded_energy;
 
-            let penalty_cost = (delta.abs() * penalty_rate * 10_000.0).round() as u64;
+            let tolerance = traded_energy * penalty_tolerance_percent / 100.0;
+            // Compare energy bounds so subtraction round-off at the boundary
+            // (e.g. 1.05 - 1.0) does not turn an allowed deviation into a penalty.
+            let within_tolerance =
+                (traded_energy - tolerance..=traded_energy + tolerance).contains(&measured_energy);
+            let penalty_cost = if within_tolerance {
+                0
+            } else {
+                (delta.abs() * penalty_rate * 10_000.0).round() as u64
+            };
             verifications.push(DeliveryVerification {
                 trade_uuid: trade.trade_uuid.clone(),
                 buyer_penalty_cost: if delta > 0.0 { penalty_cost } else { 0 },
