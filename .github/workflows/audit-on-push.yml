@@ -45,6 +45,7 @@ jobs:
             RUSTSEC-2026-0367 # zip extraction preserves SUID/SGID bits
             RUSTSEC-2026-0368 # zip extraction follows symlinks outside the destination
             RUSTSEC-2026-0369 # zip extraction applies permissions through symlinks
+            RUSTSEC-2026-0429 # zip symlink extraction can abort on an oversized allocation
             # The same inactive zip dependency locks zstd-safe 5.x; keep active versions >=8.2.0.
             RUSTSEC-2026-0403 # legacy streaming decompression can expose uninitialized memory
             # Temporary accepted risk: ethers 2.x -> k256 0.13 -> elliptic-curve 0.13 pins
