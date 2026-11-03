@@ -125,7 +125,7 @@ Residual order IDs remain independent.
 
 ## Focused Lifecycle Test
 
-The real-contract test is opt-in because it needs compiled Hardhat artifacts,
+The real-contract tests are opt-in because they need compiled Hardhat artifacts,
 Anvil on `PATH`, and MongoDB (`DATABASE_*`). After compiling `gsy-contracts` with
 `npx hardhat compile`, run from the workspace root:
 
@@ -135,8 +135,13 @@ OFFCHAIN_STORAGE_TRANSPORT=http cargo test --locked -p gsy-offchain-storage \
 ```
 
 `GSY_CONTRACT_ARTIFACTS` can point to artifacts compiled in another container.
-The test deploys isolated proxies and exercises missing/late measurements,
+The tests deploy isolated proxies and exercise missing/late measurements,
 zero/non-zero penalties, replay safety, timestamps, and independent residuals.
+They also verify exact allocations across several trades sharing a facility,
+including buying and selling in the same slot, and retain completed trades in
+the baseline when later counterparty readings arrive. Shared E2E coverage in
+`matching_algorithms/delivery_deviations.feature` checks the tolerance boundary
+and both directions of deviation over HTTP/EWDS with either matching algorithm.
 
 ## Key Config
 
