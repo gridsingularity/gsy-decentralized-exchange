@@ -147,9 +147,11 @@ struct TimeRangePayload {
     #[serde(alias = "endTime")]
     #[serde(default)]
     end_time: Option<String>,
-    #[serde(alias = "areaUuid")]
+    #[serde(alias = "areaUuid", alias = "facilityId")]
     #[serde(default)]
     facility_id: Option<String>,
+    #[serde(alias = "communityUuid", default)]
+    community_uuid: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -500,9 +502,14 @@ pub async fn handle_request(
                         .as_deref()
                         .map(normalize_offchain_id)
                         .transpose()?,
+                    payload
+                        .community_uuid
+                        .as_deref()
+                        .map(normalize_community_id)
+                        .transpose()?,
                 ))
             })();
-            let (start_time, end_time, facility_id) = match query {
+            let (start_time, end_time, facility_id, community_uuid) = match query {
                 Ok(query) => query,
                 Err(error) => {
                     return send_invalid_request_response(
@@ -528,6 +535,11 @@ pub async fn handle_request(
                         .filter(|measurement| match facility_id.as_ref() {
                             Some(facility_id) => measurement.facility_id == *facility_id,
                             None => true,
+                        })
+                        .filter(|measurement| {
+                            community_uuid
+                                .as_ref()
+                                .map_or(true, |id| measurement.community_uuid == *id)
                         })
                         .map(EwdsMeasurementDto::from)
                         .collect::<Vec<_>>()

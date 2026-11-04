@@ -13,10 +13,14 @@
       "properties": {
         "startTime": { "type": "string", "format": "date-time", "description": "Inclusive range start, RFC 3339." },
         "endTime": { "type": "string", "format": "date-time", "description": "Inclusive range end, RFC 3339." },
-        "facilityId": { "type": "string" },
-        "communityUuid": { "type": "string" }
-      },
-      "required": ["startTime", "endTime"]
+        "start_time": { "$ref": "#/properties/payload/properties/startTime" },
+        "end_time": { "$ref": "#/properties/payload/properties/endTime" },
+        "facilityId": { "$ref": "./int.facility.schema.v1.json#/properties/facility_id" },
+        "facility_id": { "$ref": "./int.facility.schema.v1.json#/properties/facility_id" },
+        "areaUuid": { "$ref": "./int.facility.schema.v1.json#/properties/facility_id" },
+        "communityUuid": { "$ref": "./int.community.schema.v1.json#/properties/communityId" },
+        "community_uuid": { "$ref": "./int.community.schema.v1.json#/properties/communityId" }
+      }
     }
   },
   "required": ["requestId", "operation", "payload"]

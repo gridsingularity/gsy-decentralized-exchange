@@ -23,14 +23,25 @@ Backend: MongoDB (version pinned in the Compose files).
 `OrderPlaced` contains the optional order requirements (bids and offers) and
 offer attributes, so the indexed order is complete without a follow-up
 `/orders` write. `POST /orders` and `POST /orders-normalized` remain available as
-direct database upserts, but neither is used by the E2E scenarios or production
+insert-only imports, but neither is used by the E2E scenarios or production
 order lifecycle. Orders are submitted through `placeOrder` (directly or through
 the community client's EWDS subscriber), then indexed by the EVM listener.
-The POST endpoints still accept caller-supplied statuses; their ownership and
-access policy remain to be clarified. Posting trades leaves referenced orders
+Imports validate the whole payload and canonicalize order IDs, market IDs and
+the already-resolved `createdBy` facility hash to lowercase `0x` bytes16. Each
+must be nonzero. `area_uuid` uses the same hash; the optional preferred partner
+remains an off-chain identity (UUID spelling lowercased, opaque strings preserved).
+Unlike `order.event`, these routes do not resolve facility IDs or place orders.
+Invalid identifiers return 400. Duplicate canonical IDs within the batch or
+already in storage return 409 before writes. Unique indexes also prevent
+concurrent imports from replacing records. A later `OrderPlaced` replaces an
+import with authoritative chain data, and listener upserts remain replayable.
+Import batches are not transactional: a concurrent conflict or database failure
+can leave earlier inserts in place. Imports do not publish status notifications.
+The POST endpoints still accept caller-supplied statuses for new IDs; their
+ownership and access policy remain to be clarified. Posting trades leaves referenced orders
 unchanged; settlement updates are handled by the EVM listener.
-Restricting the order POST endpoints is a separate follow-up, not part of
-DD-423. Until then, listener ownership is the normal lifecycle path, not an
+Access control for the order POST endpoints remains a separate follow-up.
+Until then, listener ownership is the normal lifecycle path, not an
 enforced access-control boundary for those legacy write endpoints.
 
 `NewMarketCreated` carries the full market record. The handler converts it to
@@ -158,9 +169,25 @@ Compatibility adapters for EVM JSON callers:
 These adapters do not own separate collections. They read and write the same
 `markets`, `measurement_points`, and `timeseries` records as the canonical API.
 Measurement/forecast ingest and facility filters use the same facility rule.
-Generated profile IDs include the canonical facility ID. Direct
-`/measurement-points` writes lowercase UUID-shaped `asset_name` references only;
-other labels, caller-supplied point IDs and datasource names are left unchanged.
+Typed profile ingestion also requires a nonzero community UUID or 16-byte hex ID,
+stored as a lowercase hyphenated UUID. Generated profile IDs include both canonical
+community and facility IDs. Invalid IDs reject the whole batch before writes
+(HTTP 400 or an invalid EWDS measurement event). The community-client adapter
+applies the same checks before forwarding points and values.
+
+`GET /measurements` and `GET /forecasts` accept optional `facility_id` and
+`community_uuid` filters, individually or together, plus inclusive `start_time`
+and `end_time`. Aliases are `facilityId`/`areaUuid`, `communityUuid`, and
+`startTime`/`endTime`. Times are RFC 3339; community filters accept UUID or hex.
+Invalid identifiers return HTTP 400. `measurements.query` applies the same
+filters and aliases, returning `invalid_request` rather than timing out.
+Specify each field only once, not together with one of its aliases.
+
+Direct `/measurement-points` writes lowercase strict UUID-shaped `asset_name`
+and `datasource_name` references. Other labels (including hex-shaped labels),
+missing datasource metadata and caller-supplied point IDs are preserved.
+Unfiltered profile reads still return these records; a community filter selects
+only matching community metadata. Shared read conversions do not validate it.
 
 When `EWDS_ENABLE_HANDLER=true`, the same community collection is available
 through the `communities.query` request/reply operation.
@@ -199,9 +226,9 @@ reindexing tool. See the [fresh-deployment requirements](../setup/contracts.md#f
 - Existing `POST /trades` and `/trades-normalized` endpoints retain insert-only
   import behavior. They do not update orders or publish lifecycle notifications;
   the matching engine does not use them.
-  These and the legacy order POST routes store market IDs as supplied. Imports
+  Trade POST routes still store market IDs as supplied. Trade imports
   must use lowercase `0x` + 32 hex digits: query normalization does not rewrite
-  non-canonical stored IDs. Import validation is a separate follow-up.
+  non-canonical stored IDs. Trade import validation is a separate follow-up.
 - With `EWDS_ENABLE_HANDLER=true`, indexed match confirmations, penalties and
   penalty-free delivery verifications publish persisted snapshots through `trade.event`.
   Penalized verification publishes only the consumed orders' status updates,

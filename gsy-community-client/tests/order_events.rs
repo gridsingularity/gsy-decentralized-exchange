@@ -445,19 +445,31 @@ async fn uuid_parties_resolve_canonically_and_rejections_echo_original_ids() {
             }))).mount(&server).await;
     }
     let mut rejected = bid();
+    rejected["orderId"] = json!(BID_ID.to_uppercase());
     rejected["createdBy"] = json!(buyer.to_uppercase());
     rejected["preferredTradingPartner"] = json!(seller.to_uppercase());
-    rejected["marketId"] = json!(CLOSED_MARKET);
+    rejected["marketId"] = json!(uuid::Uuid::from_bytes(bytes16(CLOSED_MARKET))
+        .to_string()
+        .to_uppercase());
     let mut accepted = offer();
+    accepted["orderId"] = json!(format!("0x{}", OFFER_ID.replace('-', "").to_uppercase()));
+    accepted["marketId"] = json!(uuid::Uuid::from_bytes(bytes16(OPEN_MARKET))
+        .to_string()
+        .to_uppercase());
     accepted["createdBy"] = json!(seller.to_uppercase());
     accepted["preferredTradingPartner"] = json!(buyer.to_uppercase());
     handler(&chain, &server)
         .await
-        .handle(event("uuid-parties", vec![rejected.clone(), accepted]))
+        .handle(event(
+            "uuid-parties",
+            vec![rejected.clone(), accepted.clone()],
+        ))
         .await
         .unwrap();
     let orders = placed_orders(&chain).await;
     assert_eq!(orders.len(), 1);
+    assert_eq!(orders[0].order_id, bytes16(OFFER_ID));
+    assert_eq!(orders[0].market_id, bytes16(OPEN_MARKET));
     assert_eq!(
         orders[0].created_by,
         bytes16(&primitives::utils::derive_onchain_id(seller))
@@ -478,6 +490,24 @@ async fn uuid_parties_resolve_canonically_and_rejections_echo_original_ids() {
         serde_json::from_slice(&validation.body).unwrap();
     assert_eq!(pairs[0].facility_id, buyer);
     assert_eq!(pairs[1].facility_id, seller);
+    assert_eq!(
+        pairs[0].market_id,
+        primitives::utils::bytes16_to_hex(bytes16(CLOSED_MARKET))
+    );
+    assert_eq!(
+        pairs[1].market_id,
+        primitives::utils::bytes16_to_hex(bytes16(OPEN_MARKET))
+    );
+
+    // A retry with another spelling still identifies the already placed order.
+    accepted["orderId"] = json!(OFFER_ID.replace('-', ""));
+    handler(&chain, &server)
+        .await
+        .handle(event("retry", vec![accepted]))
+        .await
+        .unwrap();
+    assert_eq!(placed_orders(&chain).await.len(), 1);
+    assert_eq!(rejection_events(&server).await.len(), 1);
 }
 
 #[tokio::test]
@@ -938,6 +968,7 @@ async fn rejects_the_whole_event_when_one_order_is_invalid() {
         ("energyType", json!("COAL"), "COAL", true),
         ("createdBy", json!(""), "createdBy", true),
         ("createdBy", json!(" owner-1"), "createdBy", true),
+        ("createdBy", json!(" \t"), "createdBy", true),
         (
             "preferredTradingPartner",
             json!(""),
@@ -958,6 +989,12 @@ async fn rejects_the_whole_event_when_one_order_is_invalid() {
             false,
         ),
         ("marketId", json!("market-1"), "marketId", true),
+        (
+            "marketId",
+            json!("00000000-0000-0000-0000-000000000000"),
+            "marketId",
+            true,
+        ),
     ] {
         let mut invalid = offer();
         invalid[field] = value;
@@ -1280,7 +1317,9 @@ mod validate_order {
 
     #[test]
     fn accepts_a_valid_order() {
-        assert_eq!(validate_order(order()).unwrap(), order());
+        let mut expected = order();
+        expected.order_id = primitives::utils::bytes16_to_hex(bytes16(&expected.order_id));
+        assert_eq!(validate_order(order()).unwrap(), expected);
     }
 
     #[test]
@@ -1314,14 +1353,12 @@ mod validate_order {
             "0x3F2C6D1E8A4B4C7D9E2F1A5B6C7D8E9F",
             "3f2c6d1e8a4b4c7d9e2f1a5b6c7d8e9f",
         ] {
-            assert!(
-                validate_order(DbOrderSchema {
-                    order_id: id.into(),
-                    ..order()
-                })
-                .is_ok(),
-                "{id}"
-            );
+            let normalized = validate_order(DbOrderSchema {
+                order_id: id.into(),
+                ..order()
+            })
+            .unwrap();
+            assert_eq!(normalized.order_id, "0x3f2c6d1e8a4b4c7d9e2f1a5b6c7d8e9f");
         }
     }
 

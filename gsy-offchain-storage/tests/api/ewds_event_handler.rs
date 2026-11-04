@@ -1164,7 +1164,7 @@ fn facility(facility_id: &str, owner_id: &str) -> FacilitySchema {
 fn measurement_data(facility_id: &str, time_slot: u64, energy_kwh: f64) -> Value {
     json!({
         "facilityId": facility_id,
-        "communityUuid": "community-1",
+        "communityUuid": "abcdefab-1234-1234-1234-abcdefabcdef",
         "timeSlot": epoch_to_rfc3339(time_slot),
         "creationTime": epoch_to_rfc3339(time_slot + 10),
         "energyKwh": energy_kwh,
@@ -1188,7 +1188,10 @@ async fn stored_values(app: &crate::helpers::TestApp) -> Vec<(String, String, f6
 
 fn value(facility_id: &str, time_slot: u64, energy_kwh: f64) -> (String, String, f64) {
     (
-        format!("measurement:community-1:{}", facility_id),
+        format!(
+            "measurement:abcdefab-1234-1234-1234-abcdefabcdef:{}",
+            facility_id
+        ),
         timestamp_to_string_with_padding(time_slot),
         energy_kwh,
     )
@@ -1199,16 +1202,23 @@ async fn measurement_events_canonicalize_facilities_before_writing_the_batch() {
     let app = init_app().await;
     let canonical = "abcdefab-abcd-abcd-abcd-abcdefabcdef";
     for id in [canonical.to_uppercase(), canonical.to_string()] {
-        handle_event(
-            &app.db_wrapper,
-            event(
-                EwdsEventType::Measurements,
-                "case-test",
-                json!([measurement_data(&id, TIMESLOT, 2.0)]),
-            ),
-        )
-        .await
-        .unwrap();
+        for community in [
+            "ABCDEFAB-1234-1234-1234-ABCDEFABCDEF",
+            "0xabcdefab123412341234abcdefabcdef",
+        ] {
+            let mut measurement = measurement_data(&id, TIMESLOT, 2.0);
+            measurement["communityUuid"] = json!(community);
+            handle_event(
+                &app.db_wrapper,
+                event(
+                    EwdsEventType::Measurements,
+                    "case-test",
+                    json!([measurement]),
+                ),
+            )
+            .await
+            .unwrap();
+        }
     }
     assert_eq!(
         stored_values(&app).await,
@@ -1222,6 +1232,10 @@ async fn measurement_events_canonicalize_facilities_before_writing_the_batch() {
         .unwrap();
     assert_eq!(points.len(), 1);
     assert_eq!(points[0].asset_name, canonical);
+    assert_eq!(
+        points[0].datasource_name.as_deref(),
+        Some("abcdefab-1234-1234-1234-abcdefabcdef")
+    );
     let error = handle_event(
         &app.db_wrapper,
         event(
@@ -1513,8 +1527,8 @@ async fn handle_event_saves_a_measurement_batch_across_facilities_and_slots() {
     assert_eq!(
         point_ids,
         vec![
-            "measurement:community-1:facility-1",
-            "measurement:community-1:facility-2",
+            "measurement:abcdefab-1234-1234-1234-abcdefabcdef:facility-1",
+            "measurement:abcdefab-1234-1234-1234-abcdefabcdef:facility-2",
         ]
     );
     assert_eq!(
@@ -1532,31 +1546,41 @@ async fn handle_event_saves_a_measurement_batch_across_facilities_and_slots() {
 #[tokio::test]
 async fn handle_event_stores_nothing_from_a_batch_with_an_invalid_measurement() {
     let app = init_app().await;
-    let mut invalid = measurement_data("facility-1", TIMESLOT + 900, 2.0);
-    invalid["timeSlot"] = json!(TIMESLOT + 900);
-
-    let error = handle_event(
-        &app.db_wrapper,
-        event(
-            EwdsEventType::Measurements,
-            "measurements-event",
-            json!([measurement_data("facility-1", TIMESLOT, 1.5), invalid]),
+    for (field, invalid_value) in [
+        ("timeSlot", json!(TIMESLOT + 900)),
+        ("communityUuid", json!("community-1")),
+        ("communityUuid", json!("")),
+        (
+            "communityUuid",
+            json!("00000000-0000-0000-0000-000000000000"),
         ),
-    )
-    .await
-    .unwrap_err();
+    ] {
+        let mut invalid = measurement_data("facility-1", TIMESLOT + 900, 2.0);
+        invalid[field] = invalid_value;
 
-    assert!(format!("{error:#}").contains("index 1"), "{error:#}");
-    // Invalid data is not retried by the event worker.
-    assert!(is_invalid_event(&error));
-    assert!(stored_values(&app).await.is_empty());
-    assert!(app
-        .db_wrapper
-        .measurement_points()
-        .filter_points(None, None)
+        let error = handle_event(
+            &app.db_wrapper,
+            event(
+                EwdsEventType::Measurements,
+                "measurements-event",
+                json!([measurement_data("facility-1", TIMESLOT, 1.5), invalid]),
+            ),
+        )
         .await
-        .unwrap()
-        .is_empty());
+        .unwrap_err();
+
+        assert!(format!("{error:#}").contains("index 1"), "{error:#}");
+        // Invalid data is not retried by the event worker.
+        assert!(is_invalid_event(&error));
+        assert!(stored_values(&app).await.is_empty());
+        assert!(app
+            .db_wrapper
+            .measurement_points()
+            .filter_points(None, None)
+            .await
+            .unwrap()
+            .is_empty());
+    }
 
     stop_app(app).await;
 }

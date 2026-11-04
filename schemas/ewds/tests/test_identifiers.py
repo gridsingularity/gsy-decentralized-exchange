@@ -41,6 +41,38 @@ def order(identifier):
 
 
 class IdentifierSchemas(unittest.TestCase):
+    def test_profile_ingress_community_ids_and_lossless_responses(self):
+        event = validator("int.measurements.event.v1.json")
+        response = validator("int.measurements.query.response.v1.json")
+        forecast = validator("int.forecast.schema.v1.json")
+        for identifier in VALID + INVALID + NIL + ["DS-1-MQTT"]:
+            measurement = {
+                "facilityId": "facility-a", "communityUuid": identifier,
+                "timeSlot": "2026-11-04T10:00:00Z", "creationTime": "2026-11-04T10:01:00Z",
+                "energyKwh": -1,
+            }
+            with self.subTest(identifier=identifier):
+                self.assertEqual(event.is_valid({
+                    "eventId": "profile-event", "eventType": "measurements.event",
+                    "occurredAt": "2026-11-04T10:01:00Z", "data": [measurement],
+                }), identifier in VALID)
+                self.assertEqual(forecast.is_valid({**measurement, "creationTime": 1, "confidence": 1}), identifier in VALID)
+                response.validate({"requestId": "profile-query", "success": True, "data": [measurement]})
+
+    def test_measurement_query_filters_and_aliases(self):
+        query = validator("int.measurements.query.request.v1.json")
+        for key in ["communityUuid", "community_uuid"]:
+            for identifier in VALID + INVALID + NIL:
+                with self.subTest(key=key, identifier=identifier):
+                    self.assertEqual(query.is_valid({
+                        "requestId": "query", "operation": "measurements.query", "payload": {key: identifier},
+                    }), identifier in VALID)
+        for key in ["facilityId", "facility_id", "areaUuid"]:
+            query.validate({"requestId": "query", "operation": "measurements.query", "payload": {
+                key: UUID, "communityUuid": "0x" + HEX,
+                "start_time": "2026-11-04T10:00:00Z", "end_time": "2026-11-04T10:01:00Z",
+            }})
+
     def test_offchain_identity_fields(self):
         fields = [
             ("int.order.schema.v1.json", "createdBy"),

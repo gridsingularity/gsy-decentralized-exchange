@@ -94,6 +94,12 @@ before any storage calls or submissions and is logged without a rejection
 notification. In particular, empty/padded `createdBy` no longer produces a
 per-order eligibility rejection while other orders proceed. Actual eligibility
 and contract rejections still echo the original submitted identifiers.
+Order and market IDs are canonicalized to lowercase `0x` bytes16 before
+eligibility checks. Duplicate/retry checks use their bytes, so UUID and hex
+spellings of the same order cannot cause a second submission. Lifecycle status
+notifications use canonical hex IDs; FOS must correlate them with the submission
+by ID bytes rather than by exact text. Rejection notifications preserve the
+original order, market, facility and preferred-partner spellings.
 
 Already placed orders are excluded before validation on retry, so a topology change
 cannot turn them into rejected orders. Before publishing an eligibility

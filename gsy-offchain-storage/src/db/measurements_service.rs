@@ -37,7 +37,7 @@ fn measurement_point_from_measurement(measurement: &MeasurementSchema) -> Measur
         time_resolution: "PT15M".to_string(),
         phase: 0,
         asset_name: canonical_offchain_id(&measurement.facility_id),
-        datasource_name: Some(measurement.community_uuid.clone()),
+        datasource_name: Some(canonical_offchain_id(&measurement.community_uuid)),
     }
 }
 

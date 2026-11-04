@@ -12,7 +12,7 @@ use primitives::ewds::dto::{EwdsEventEnvelope, EwdsOrderDto};
 use primitives::ewds::{env_var, invalid_event, parse_batch, EwdsClient, EwdsEventType};
 use primitives::offchain_storage::{resolve_order_partner_ids, OffchainStorageClient};
 use primitives::utils::{
-    epoch_to_rfc3339, normalize_offchain_id, parse_nonzero_uuid_or_hex_bytes16,
+    bytes16_to_hex, epoch_to_rfc3339, normalize_offchain_id, parse_nonzero_uuid_or_hex_bytes16,
     NODE_FLOAT_SCALING_FACTOR,
 };
 use serde_json::Value;
@@ -551,18 +551,22 @@ pub fn validate_order(mut order: DbOrderSchema) -> Result<DbOrderSchema> {
     {
         *partner = normalize_offchain_id(partner).context("Invalid preferredTradingPartner")?;
     }
-    parse_nonzero_uuid_or_hex_bytes16(&order.order_id).ok_or_else(|| {
-        anyhow!(
-            "orderId '{}' is not a non-zero UUID or bytes16 hex ID",
-            order.order_id
-        )
-    })?;
-    if parse_nonzero_uuid_or_hex_bytes16(&order.market_id).is_none() {
-        bail!(
-            "marketId '{}' is not a non-zero 16-byte UUID or hex ID",
-            order.market_id
-        );
-    }
+    order.order_id = bytes16_to_hex(
+        parse_nonzero_uuid_or_hex_bytes16(&order.order_id).ok_or_else(|| {
+            anyhow!(
+                "orderId '{}' is not a non-zero UUID or bytes16 hex ID",
+                order.order_id
+            )
+        })?,
+    );
+    order.market_id = bytes16_to_hex(
+        parse_nonzero_uuid_or_hex_bytes16(&order.market_id).ok_or_else(|| {
+            anyhow!(
+                "marketId '{}' is not a non-zero 16-byte UUID or hex ID",
+                order.market_id
+            )
+        })?,
+    );
     if order.status != OrderStatus::Submitted {
         bail!("orderStatus must be 'submitted', got {:?}", order.status);
     }

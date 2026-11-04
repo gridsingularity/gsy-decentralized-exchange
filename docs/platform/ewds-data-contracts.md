@@ -110,6 +110,19 @@ Used by `measurements.query` responses and `measurements.event` messages.
 | `creationTime` | `MeasurementSchema.creation_time` (RFC 3339) |
 | `energyKwh` | `MeasurementSchema.energy_kwh` |
 
+Inbound measurement events require a nonzero `communityUuid` as UUID or bytes16
+hex; storage normalizes it to a lowercase hyphenated UUID before generating the
+profile-point ID. This is an ingress restriction, not a shared DTO conversion
+rule: query responses can still carry an empty community or a datasource label
+from generic measurement points. The event schema adds the restriction separately
+from the shared measurement schema.
+
+`measurements.query` supports optional `facilityId` and `communityUuid` filters,
+combined with inclusive RFC 3339 `startTime`/`endTime` bounds. Existing snake_case
+names and `areaUuid` remain accepted. Invalid filters receive `invalid_request`;
+specify only one spelling per field. Community UUID/hex variants address the same
+canonical community; facility IDs follow the off-chain identity rule above.
+
 ### Facility and Site Mapping
 
 `facility.event` and `site.event` messages carry lists of
@@ -178,11 +191,10 @@ For an `order.event`, the community client builds the
 | `energySourcePreference`, `preferredTradingPartner`, `preferredEnergyRate` | requirements for bids and offers (`energySourcePreference`, `preferredTradingPartner` mapped by the ID service, `preferredEnergyRate` × 10 000) |
 | `energyType` | the offer attributes (`energyType`) |
 
-Runtime-only fields not represented in the agreed Intelligent `Order` schema:
-
-- `facilityId`
-- EVM bytes32 `orderId` / `marketId` hash format
-- EVM account address in `createdBy`
+Order and market IDs represent bytes16, not bytes32. Lifecycle `createdBy` is
+the bytes16 facility hash, not an EVM wallet address. The shared order DTO also
+serves legacy HTTP imports, which require this already-resolved facility hash;
+`order.event` submissions instead carry the off-chain facility identity.
 
 ## Validation Rules Applied from CSV
 

@@ -120,7 +120,8 @@ pub fn profile_measurement_id(
         MeasurementPointType::Forecast => "forecast",
     };
     format!(
-        "{prefix}:{community_uuid}:{}",
+        "{prefix}:{}:{}",
+        canonical_offchain_id(community_uuid),
         canonical_offchain_id(facility_id)
     )
 }

@@ -228,7 +228,7 @@ The envelope is the one GSY uses for its own events:
   "data": [
     {
       "facilityId": "facility-1",
-      "communityUuid": "community-1",
+      "communityUuid": "abcdefab-1234-1234-1234-abcdefabcdef",
       "timeSlot": "2026-09-29T10:00:00Z",
       "creationTime": "2026-09-29T10:15:30Z",
       "energyKwh": 1.25
@@ -242,6 +242,11 @@ The envelope is the one GSY uses for its own events:
 - Measurements use camelCase fields with RFC 3339 times. `timeSlot` is the
   start of the 15-minute slot, and `energyKwh` is positive for consumed and
   negative for produced energy. A batch can mix facilities and slots.
+  `communityUuid` must be a nonzero UUID or bytes16 hex and is normalized to a
+  lowercase hyphenated UUID. Invalid identifiers drop the whole event before
+  any records are written. Query filters `facilityId` and `communityUuid` are
+  applied together when both are supplied; malformed filters receive an
+  `invalid_request` response.
 - Facilities and sites use the snake_case fields of `FacilitySchema`
   (`facility_id`, `facility_name`, `site_id`, `owner_id`) and `SiteSchema`
   (`site_name`, `site_description`, `facilities`), the same form

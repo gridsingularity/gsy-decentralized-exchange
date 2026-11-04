@@ -4,7 +4,8 @@ use primitives::db_api_schema::profiles::{
     TimeseriesSchema,
 };
 use primitives::utils::{
-    normalize_offchain_id, profile_measurement_id, timestamp_to_string_with_padding,
+    normalize_community_id, normalize_offchain_id, profile_measurement_id,
+    timestamp_to_string_with_padding,
 };
 use reqwest::Client;
 use std::env;
@@ -35,6 +36,7 @@ impl AreaMarketInfoAdapter {
     pub async fn forward_forecast(&self, mut forecasts: Vec<ForecastSchema>) -> anyhow::Result<()> {
         for forecast in &mut forecasts {
             forecast.facility_id = normalize_offchain_id(&forecast.facility_id)?;
+            forecast.community_uuid = normalize_community_id(&forecast.community_uuid)?;
         }
         let measurement_points = forecasts
             .iter()
@@ -74,6 +76,7 @@ impl AreaMarketInfoAdapter {
     ) -> anyhow::Result<()> {
         for measurement in &mut measurements {
             measurement.facility_id = normalize_offchain_id(&measurement.facility_id)?;
+            measurement.community_uuid = normalize_community_id(&measurement.community_uuid)?;
         }
         let measurement_points = measurements
             .iter()

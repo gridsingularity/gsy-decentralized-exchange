@@ -42,6 +42,22 @@ fn identity_derivation_canonicalizes_uuids_but_preserves_opaque_ids() {
 }
 
 #[test]
+fn profile_ids_canonicalize_uuid_community_references() {
+    use primitives::db_api_schema::profiles::MeasurementPointType;
+    use primitives::utils::profile_measurement_id;
+    let community = "abcdefab-1234-1234-1234-abcdefabcdef";
+    for kind in [
+        MeasurementPointType::Measurement,
+        MeasurementPointType::Forecast,
+    ] {
+        assert_eq!(
+            profile_measurement_id(kind.clone(), community, "facility-a"),
+            profile_measurement_id(kind, &community.to_uppercase(), "facility-a")
+        );
+    }
+}
+
+#[test]
 fn onchain_identity_derivation_is_pinned_to_blake2b_16() {
     assert_eq!(
         primitives::utils::derive_onchain_id("facility-a"),

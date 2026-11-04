@@ -13,13 +13,15 @@ info:
       * §5.4 Order Book Storage
 
     `POST /orders` and `POST /orders-normalized` accept the same EWDS JSON
-    order payload and directly upsert database records. They are not used by
+    order payload and insert new database records without replacing existing IDs. They are not used by
     the E2E scenarios or production order lifecycle, which submits orders
     on-chain and indexes the resulting events. Their access policy remains
     to be clarified. Trade insertion endpoints do not update referenced orders.
-    Legacy order/trade imports must supply lowercase 0x-prefixed 16-byte market
-    IDs. The write routes do not normalize them; normalized queries will not
-    match non-canonical stored IDs.
+    Order imports normalize nonzero order, market and already-resolved createdBy
+    IDs (UUID or bytes16 hex) to lowercase 0x hex. Invalid IDs return 400; duplicate
+    IDs in the batch or storage return 409. Batches are not transactional under
+    concurrent writes. Listener events remain authoritative and can replace imports.
+    Trade imports still require canonical lowercase 0x-prefixed 16-byte market IDs.
   license:
     name: GPL-3.0-or-later
 servers:
@@ -50,7 +52,12 @@ paths:
   /orders-normalized:
     post:
       tags: [Order Book]
-      summary: Insert orders using the DEX-side normalized schema.
+      summary: Import new orders without replacing existing records.
+      description: |
+        Alias of POST /orders. Requires already-resolved on-chain facility IDs in
+        createdBy; does not resolve identities or submit on-chain. Preferred partners
+        remain off-chain IDs. Validation and known-conflict checks precede writes,
+        but batches are not transactional. New records retain caller-supplied statuses.
       requestBody:
         required: true
         content:
@@ -66,10 +73,28 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/InsertedIds"
+        "400":
+          description: Invalid order payload or identifier.
+        "409":
+          description: Duplicate canonical order ID in the batch or existing storage.
         "500":
           $ref: "#/components/responses/InternalError"
 
   /orders:
+    post:
+      tags: [Order Book]
+      summary: Import new orders without replacing existing records.
+      requestBody:
+        $ref: "#/paths/~1orders-normalized/post/requestBody"
+      responses:
+        "200":
+          $ref: "#/paths/~1orders-normalized/post/responses/200"
+        "400":
+          $ref: "#/paths/~1orders-normalized/post/responses/400"
+        "409":
+          $ref: "#/paths/~1orders-normalized/post/responses/409"
+        "500":
+          $ref: "#/components/responses/InternalError"
     get:
       tags: [Order Book]
       summary: List orders, optionally filtered by market and time window.
@@ -396,7 +421,7 @@ paths:
     post:
       tags: [Measurements]
       summary: Register measurement / forecast points.
-      description: UUID-shaped asset_name references are lowercased; other labels and client-supplied measurement_id values are preserved.
+      description: Strict UUID-shaped asset_name and datasource_name references are lowercased; other labels, missing datasource metadata and client-supplied measurement_id values are preserved.
       requestBody:
         required: true
         content:
@@ -857,11 +882,11 @@ components:
         - createdBy
         - creationTime
       properties:
-        orderId: { type: string }
-        marketId: { type: string }
+        orderId: { type: string, description: "Nonzero UUID or bytes16 hex; stored and returned as lowercase 0x hex." }
+        marketId: { type: string, description: "Nonzero UUID or bytes16 hex; stored and returned as lowercase 0x hex." }
         orderType: { $ref: "#/components/schemas/OrderType" }
         orderStatus: { $ref: "#/components/schemas/OrderStatus" }
-        timeSlot: { type: integer, format: int64, minimum: 0 }
+        timeSlot: { type: string, format: date-time }
         quantity: { type: number, format: double }
         priceLimit: { type: number, format: double }
         energySourcePreference:
@@ -870,12 +895,11 @@ components:
         energyType:
           $ref: "#/components/schemas/EnergyType"
           nullable: true
-        createdBy: { type: string }
-        creationTime: { type: integer, format: int64, minimum: 0 }
+        createdBy: { type: string, description: "For HTTP imports/reads, the nonzero on-chain bytes16 facility hash, not a wallet address. UUID/hex imports are canonicalized to lowercase 0x hex." }
+        creationTime: { type: string, format: date-time }
         updatedAt:
-          type: integer
-          format: int64
-          minimum: 0
+          type: string
+          format: date-time
           nullable: true
         rejectReason:
           type: string
@@ -883,7 +907,7 @@ components:
         preferredTradingPartner:
           type: string
           nullable: true
-          description: Bid requirement or offer attribute, depending on orderType.
+          description: Optional off-chain preferred facility identity for bids and offers. Must be nonempty and unpadded; strict UUIDs are lowercased and opaque IDs stay case-sensitive.
         preferredEnergyRate:
           type: number
           format: double
@@ -1106,6 +1130,7 @@ components:
         datasource_name:
           type: string
           nullable: true
+          description: Strict UUID-shaped community references are lowercased on ingest. Other labels are preserved; absent metadata remains readable without a community filter.
 
     TimeseriesSchema:
       type: object
