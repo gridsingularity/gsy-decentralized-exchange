@@ -13,9 +13,9 @@
     },
     "site_description": { "type": "string" },
     "facilities": {
-      "description": "Identifiers of the facilities at the site.",
+      "description": "Off-chain facility IDs: strict hyphenated UUIDs are lowercased; other unpadded identities remain case-sensitive. Equivalent references are deduplicated.",
       "type": "array",
-      "items": { "type": "string", "minLength": 1 },
+      "items": { "type": "string", "pattern": "^\\S(?:[\\s\\S]*\\S)?(?![\\s\\S])" },
       "uniqueItems": true
     }
   },

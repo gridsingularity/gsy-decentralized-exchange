@@ -1195,6 +1195,55 @@ fn value(facility_id: &str, time_slot: u64, energy_kwh: f64) -> (String, String,
 }
 
 #[tokio::test]
+async fn measurement_events_canonicalize_facilities_before_writing_the_batch() {
+    let app = init_app().await;
+    let canonical = "abcdefab-abcd-abcd-abcd-abcdefabcdef";
+    for id in [canonical.to_uppercase(), canonical.to_string()] {
+        handle_event(
+            &app.db_wrapper,
+            event(
+                EwdsEventType::Measurements,
+                "case-test",
+                json!([measurement_data(&id, TIMESLOT, 2.0)]),
+            ),
+        )
+        .await
+        .unwrap();
+    }
+    assert_eq!(
+        stored_values(&app).await,
+        vec![value(canonical, TIMESLOT, 2.0)]
+    );
+    let points = app
+        .db_wrapper
+        .measurement_points()
+        .filter_points(None, None)
+        .await
+        .unwrap();
+    assert_eq!(points.len(), 1);
+    assert_eq!(points[0].asset_name, canonical);
+    let error = handle_event(
+        &app.db_wrapper,
+        event(
+            EwdsEventType::Measurements,
+            "invalid-test",
+            json!([
+                measurement_data("new-facility", TIMESLOT, 3.0),
+                measurement_data(" padded ", TIMESLOT, 4.0)
+            ]),
+        ),
+    )
+    .await
+    .unwrap_err();
+    assert!(is_invalid_event(&error));
+    assert_eq!(
+        stored_values(&app).await,
+        vec![value(canonical, TIMESLOT, 2.0)]
+    );
+    stop_app(app).await;
+}
+
+#[tokio::test]
 async fn handle_event_saves_facilities_sites_and_communities() {
     let app = init_app().await;
     let db = &app.db_wrapper;
@@ -1310,10 +1359,10 @@ async fn assert_conflicting_batches_are_rejected<F, G>(
             ("00000000-0000-4000-8000-000000000003", "name-3"),
             ("00000000-0000-4000-8000-000000000002", "name-1"),
         ],
-        // One id with two names in the batch.
+        // Equivalent UUID spellings with two names in the batch.
         &[
-            ("00000000-0000-4000-8000-000000000004", "name-4"),
-            ("00000000-0000-4000-8000-000000000004", "name-5"),
+            ("ABCDEFAB-ABCD-ABCD-ABCD-ABCDEFABCDEF", "name-4"),
+            ("abcdefab-abcd-abcd-abcd-abcdefabcdef", "name-5"),
         ],
         // One name with two ids in the batch.
         &[

@@ -3,7 +3,9 @@ use primitives::db_api_schema::profiles::{
     FlowDirection, ForecastSchema, MeasurementPointSchema, MeasurementPointType, MeasurementSchema,
     TimeseriesSchema,
 };
-use primitives::utils::timestamp_to_string_with_padding;
+use primitives::utils::{
+    normalize_offchain_id, profile_measurement_id, timestamp_to_string_with_padding,
+};
 use reqwest::Client;
 use std::env;
 
@@ -30,10 +32,10 @@ impl AreaMarketInfoAdapter {
         }
     }
 
-    pub async fn forward_forecast(
-        &self,
-        forecasts: Vec<ForecastSchema>,
-    ) -> Result<(), reqwest::Error> {
+    pub async fn forward_forecast(&self, mut forecasts: Vec<ForecastSchema>) -> anyhow::Result<()> {
+        for forecast in &mut forecasts {
+            forecast.facility_id = normalize_offchain_id(&forecast.facility_id)?;
+        }
         let measurement_points = forecasts
             .iter()
             .map(forecast_measurement_point)
@@ -68,8 +70,11 @@ impl AreaMarketInfoAdapter {
 
     pub async fn forward_measurement(
         &self,
-        measurements: Vec<MeasurementSchema>,
-    ) -> Result<(), reqwest::Error> {
+        mut measurements: Vec<MeasurementSchema>,
+    ) -> anyhow::Result<()> {
+        for measurement in &mut measurements {
+            measurement.facility_id = normalize_offchain_id(&measurement.facility_id)?;
+        }
         let measurement_points = measurements
             .iter()
             .map(measurement_point)
@@ -130,18 +135,6 @@ impl AreaMarketInfoAdapter {
         }
         Ok(())
     }
-}
-
-fn profile_measurement_id(
-    point_type: MeasurementPointType,
-    community_uuid: &str,
-    facility_id: &str,
-) -> String {
-    let prefix = match point_type {
-        MeasurementPointType::Measurement => "measurement",
-        MeasurementPointType::Forecast => "forecast",
-    };
-    format!("{prefix}:{community_uuid}:{facility_id}")
 }
 
 fn forecast_measurement_point(forecast: &ForecastSchema) -> MeasurementPointSchema {

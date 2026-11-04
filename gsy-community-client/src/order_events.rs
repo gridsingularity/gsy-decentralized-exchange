@@ -12,7 +12,8 @@ use primitives::ewds::dto::{EwdsEventEnvelope, EwdsOrderDto};
 use primitives::ewds::{env_var, invalid_event, parse_batch, EwdsClient, EwdsEventType};
 use primitives::offchain_storage::{resolve_order_partner_ids, OffchainStorageClient};
 use primitives::utils::{
-    epoch_to_rfc3339, parse_nonzero_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR,
+    epoch_to_rfc3339, normalize_offchain_id, parse_nonzero_uuid_or_hex_bytes16,
+    NODE_FLOAT_SCALING_FACTOR,
 };
 use serde_json::Value;
 use std::str::FromStr;
@@ -540,7 +541,16 @@ pub fn order_params(order: &DbOrderSchema) -> Result<EvmOrderParamsTuple> {
 }
 
 /// The field rules an order from EWDS has to meet before it is placed.
-pub fn validate_order(order: DbOrderSchema) -> Result<DbOrderSchema> {
+pub fn validate_order(mut order: DbOrderSchema) -> Result<DbOrderSchema> {
+    order.created_by = normalize_offchain_id(&order.created_by).context("Invalid createdBy")?;
+    order.area_uuid = order.created_by.clone();
+    if let Some(partner) = order
+        .requirements
+        .as_mut()
+        .and_then(|requirements| requirements.trading_partner_id.as_mut())
+    {
+        *partner = normalize_offchain_id(partner).context("Invalid preferredTradingPartner")?;
+    }
     parse_nonzero_uuid_or_hex_bytes16(&order.order_id).ok_or_else(|| {
         anyhow!(
             "orderId '{}' is not a non-zero UUID or bytes16 hex ID",

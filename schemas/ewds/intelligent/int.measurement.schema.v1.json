@@ -5,7 +5,7 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "facilityId": { "type": "string", "minLength": 1 },
+    "facilityId": { "type": "string", "pattern": "^\\S(?:[\\s\\S]*\\S)?(?![\\s\\S])", "description": "Off-chain facility ID: strict hyphenated UUIDs are lowercased; other unpadded identities remain case-sensitive." },
     "communityUuid": { "type": "string", "minLength": 1 },
     "timeSlot": { "type": "string", "format": "date-time" },
     "creationTime": { "type": "string", "format": "date-time" },

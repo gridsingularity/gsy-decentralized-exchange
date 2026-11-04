@@ -87,6 +87,28 @@ pub struct FacilitySchema {
     pub owner_id: String,
 }
 
+impl FacilitySchema {
+    /// Validate and canonicalize identities at ingress, without changing names or site keys.
+    pub fn normalize_ids(mut self) -> anyhow::Result<Self> {
+        self.facility_id = crate::utils::normalize_offchain_id(&self.facility_id)?;
+        self.owner_id = crate::utils::normalize_offchain_id(&self.owner_id)?;
+        Ok(self)
+    }
+}
+
+impl SiteSchema {
+    pub fn normalize_ids(mut self) -> anyhow::Result<Self> {
+        self.facilities = self
+            .facilities
+            .iter()
+            .map(|id| crate::utils::normalize_offchain_id(id))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        let mut seen = std::collections::HashSet::new();
+        self.facilities.retain(|id| seen.insert(id.clone()));
+        Ok(self)
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct FacilityMarketValidationRequest {
     pub facility_id: String,

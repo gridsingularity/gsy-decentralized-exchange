@@ -41,6 +41,25 @@ def order(identifier):
 
 
 class IdentifierSchemas(unittest.TestCase):
+    def test_offchain_identity_fields(self):
+        fields = [
+            ("int.order.schema.v1.json", "createdBy"),
+            ("int.order.schema.v1.json", "preferredTradingPartner"),
+            ("int.facility.schema.v1.json", "facility_id"),
+            ("int.facility.schema.v1.json", "owner_id"),
+            ("int.measurement.schema.v1.json", "facilityId"),
+            ("int.forecast.schema.v1.json", "facilityId"),
+        ]
+        schemas = [validator(file).schema["properties"][field] for file, field in fields]
+        schemas.append(validator("int.site.schema.v1.json").schema["properties"]["facilities"]["items"])
+        for schema in schemas:
+            check = Draft202012Validator(schema)
+            for identity in VALID + ["facility-a", "Facility A", "0X" + HEX]:
+                with self.subTest(identity=identity, schema=schema):
+                    check.validate(identity)
+            for identity in ["", " ", " padded", "padded ", "padded\n"]:
+                self.assertFalse(check.is_valid(identity))
+
     def test_order_submission_lifecycle_and_rejection_forms(self):
         check = validator("int.order.event.v1.json")
         for identifier in VALID:

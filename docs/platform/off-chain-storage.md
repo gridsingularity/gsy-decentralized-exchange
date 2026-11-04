@@ -96,12 +96,24 @@ make those facilities ineligible. A facility name assigned to another ID returns
 409. These topology writes remain unauthenticated; restricting that write surface
 is a separate access-control follow-up.
 
+Facility IDs, owner IDs and site facility references lowercase strict hyphenated
+UUIDs (8-4-4-4-12). Other nonempty, unpadded identities remain case-sensitive,
+including bare or `0x` hex strings; they are not interpreted as resolved IDs.
+Empty or padded identities return HTTP 400 or invalidate the entire inbound EWDS
+event before any writes. Site facility lists are deduplicated after normalization.
+Names, site keys and arbitrary asset IDs are unchanged.
+This normalization targets fresh deployments with storage and consumers built
+from the same revision.
+
 ### Facility Participation Validation
 
 `POST /facilities/validate` accepts an array of
 `{"facility_id": "facility-a", "market_id": "0x..."}` pairs. Facility IDs are
 the original off-chain IDs, not owner IDs or generated on-chain IDs. Market IDs
 accept UUID or bytes16 hex; results echo the supplied IDs.
+Facility lookup uses the canonical off-chain identity, but responses preserve
+the requested spelling. Empty or padded facility IDs yield `unknown_facility`
+for that pair, without failing the other pairs.
 
 Each pair requires an existing market and facility, the facility's site to
 exist and list that facility, and the market's community to exist and list
@@ -129,6 +141,10 @@ by those trusted services, not by this read-only endpoint or an ID mapping alone
 ### ID Mapping
 - The ID service, execution engine and certificate metadata share the deterministic
   Blake2b-16 derivation. Verification derives IDs locally and never creates mappings.
+  The helper canonicalizes strict hyphenated UUIDs before hashing; opaque IDs
+  retain their original hashes. ID-service lookup, insertion and reverse lookup
+  use the canonical off-chain spelling. `/ids` rejects empty/padded inputs with
+  HTTP 400; `ids.query` responds with `invalid_request`.
   Certificate `owner_id` hashes the facility's current stored owner; historical
   ownership policy remains a separate follow-up.
 - `/ids` (`POST`) — get-or-create offchain↔onchain ID mappings
@@ -141,6 +157,10 @@ Compatibility adapters for EVM JSON callers:
 
 These adapters do not own separate collections. They read and write the same
 `markets`, `measurement_points`, and `timeseries` records as the canonical API.
+Measurement/forecast ingest and facility filters use the same facility rule.
+Generated profile IDs include the canonical facility ID. Direct
+`/measurement-points` writes lowercase UUID-shaped `asset_name` references only;
+other labels, caller-supplied point IDs and datasource names are left unchanged.
 
 When `EWDS_ENABLE_HANDLER=true`, the same community collection is available
 through the `communities.query` request/reply operation.

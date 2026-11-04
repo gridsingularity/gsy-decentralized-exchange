@@ -1351,7 +1351,7 @@ async fn ids_query_get_or_create_is_idempotent() {
         envelope(
             EwdsOperation::IdsQuery,
             "req-ids-create",
-            json!({ "offchainId": "offchain-idem" }),
+            json!({ "offchainId": "00112233-4455-6677-8899-AABBCCDDEEFF" }),
         ),
     )
     .await
@@ -1363,6 +1363,10 @@ async fn ids_query_get_or_create_is_idempotent() {
         "expected an onchain_id in the first response"
     );
     let first_onchain = first[0]["onchain_id"].clone();
+    assert_eq!(
+        first[0]["offchain_id"],
+        "00112233-4455-6677-8899-aabbccddeeff"
+    );
 
     // A fresh server, so received_requests() counts only the second call.
     let server2 = mock_gateway().await;
@@ -1376,7 +1380,7 @@ async fn ids_query_get_or_create_is_idempotent() {
         envelope(
             EwdsOperation::IdsQuery,
             "req-ids-again",
-            json!({ "offchainId": "offchain-idem" }),
+            json!({ "offchainId": "00112233-4455-6677-8899-aabbccddeeff" }),
         ),
     )
     .await
@@ -1391,17 +1395,20 @@ async fn ids_query_get_or_create_is_idempotent() {
 #[tokio::test]
 async fn ids_query_bad_payload_errors() {
     let app = init_app().await;
-    let server = mock_gateway().await;
-    let config = test_config(server.uri());
     let client = reqwest::Client::new();
-
-    // offchain_id is required -> missing field errors
-    let env = envelope(EwdsOperation::IdsQuery, "req-ids-bad", json!({}));
-
-    handle_request(&app.db_wrapper, &client, &config, env)
-        .await
-        .unwrap();
-    assert_invalid_request(&server, "req-ids-bad").await;
+    for payload in [
+        json!({}),
+        json!({"offchainId": ""}),
+        json!({"offchainId": " padded "}),
+    ] {
+        let server = mock_gateway().await;
+        let config = test_config(server.uri());
+        let env = envelope(EwdsOperation::IdsQuery, "req-ids-bad", payload);
+        handle_request(&app.db_wrapper, &client, &config, env)
+            .await
+            .unwrap();
+        assert_invalid_request(&server, "req-ids-bad").await;
+    }
 
     stop_app(app).await;
 }

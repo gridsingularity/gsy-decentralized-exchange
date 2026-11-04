@@ -96,7 +96,11 @@ pub async fn get_communities(db: DbRef) -> impl Responder {
 }
 
 pub async fn post_site(site: Json<SiteSchema>, db: DbRef) -> impl Responder {
-    match db.get_ref().sites().upsert(site.to_owned()).await {
+    let site = match site.into_inner().normalize_ids() {
+        Ok(site) => site,
+        Err(error) => return HttpResponse::BadRequest().body(error.to_string()),
+    };
+    match db.get_ref().sites().upsert(site).await {
         Ok(saved) => HttpResponse::Ok().json(saved),
         Err(error) => {
             tracing::error!("Site upsert failed: {error:#}");
@@ -119,7 +123,11 @@ pub async fn get_sites(db: DbRef) -> impl Responder {
 }
 
 pub async fn post_facility(facility: Json<FacilitySchema>, db: DbRef) -> impl Responder {
-    match db.get_ref().facilities().upsert(facility.to_owned()).await {
+    let facility = match facility.into_inner().normalize_ids() {
+        Ok(facility) => facility,
+        Err(error) => return HttpResponse::BadRequest().body(error.to_string()),
+    };
+    match db.get_ref().facilities().upsert(facility).await {
         Ok(saved) => HttpResponse::Ok().json(saved),
         Err(e) => {
             if e.to_string().contains("E11000") || format!("{e:#}").contains("E11000") {

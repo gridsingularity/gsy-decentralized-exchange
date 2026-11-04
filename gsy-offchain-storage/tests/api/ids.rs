@@ -151,22 +151,27 @@ async fn post_ids_concurrent_same_id_yields_single_mapping() {
         .await
         .expect("Failed to init id mapping indexes");
     let client = reqwest::Client::new();
-    let offchain = "actor-concurrent";
+    let offchain = "abcdefab-1234-1234-1234-abcdefabcdef";
     let url = format!("{}/ids", app.address);
     let barrier = Arc::new(Barrier::new(8));
 
     // Fire several requests for the same offchain_id at once. The unique index
     // is what keeps this from producing duplicate documents under the race.
     let mut handles = Vec::new();
-    for _ in 0..8 {
+    for index in 0..8 {
         let client = client.clone();
         let url = url.clone();
         let barrier = barrier.clone();
+        let submitted = if index % 2 == 0 {
+            offchain.to_uppercase()
+        } else {
+            offchain.to_string()
+        };
         handles.push(tokio::spawn(async move {
             barrier.wait().await;
             let response = client
                 .post(&url)
-                .query(&[("offchain_id", offchain)])
+                .query(&[("offchain_id", &submitted)])
                 .send()
                 .await
                 .expect("Failed to execute concurrent request");
@@ -190,6 +195,39 @@ async fn post_ids_concurrent_same_id_yields_single_mapping() {
         assert_eq!(r, &results[0]);
         assert_eq!(r.offchain_id, offchain);
     }
+    assert_eq!(results[0].onchain_id, derive_onchain_id(offchain));
+    let storage = primitives::offchain_storage::OffchainStorageClient::new(
+        primitives::offchain_storage::OffchainStorageTransport::Http,
+        app.address.clone(),
+        "UNUSED",
+        "test",
+    );
+    assert_eq!(
+        storage
+            .fetch_onchain_id(&offchain.to_uppercase())
+            .await
+            .unwrap(),
+        results[0].onchain_id
+    );
+    let onchain_uuid = primitives::utils::bytes16_to_uuid_string(
+        primitives::utils::parse_uuid_or_hex_bytes16(&results[0].onchain_id).unwrap(),
+    );
+    assert_eq!(
+        app.db_wrapper
+            .ids()
+            .filter(Some(onchain_uuid.to_uppercase()), None)
+            .await
+            .unwrap(),
+        vec![results[0].clone()]
+    );
+    assert_eq!(
+        app.db_wrapper
+            .ids()
+            .filter(None, Some(offchain.to_uppercase()))
+            .await
+            .unwrap(),
+        vec![results[0].clone()]
+    );
 
     // And exactly one document exists in the collection.
     let count = app
@@ -253,6 +291,23 @@ async fn post_ids_missing_param_is_rejected() {
 
     // Query<IdsParams> extraction fails when offchain_id is absent -> 400.
     assert_eq!(response.status().as_u16(), 400);
+
+    for invalid in ["", " ", "\t\n", " facility-a", "facility-a "] {
+        assert_eq!(
+            client
+                .post(format!("{}/ids", app.address))
+                .query(&[("offchain_id", invalid)])
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            400
+        );
+    }
+    assert_eq!(
+        app.db_wrapper.ids().count_documents(doc! {}).await.unwrap(),
+        0
+    );
 
     stop_app(app).await;
 }

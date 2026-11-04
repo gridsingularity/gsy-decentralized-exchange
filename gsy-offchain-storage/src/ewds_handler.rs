@@ -16,7 +16,7 @@ use primitives::ewds::{
     EwdsOperation, EwdsTopicConfig,
 };
 use primitives::utils::{
-    normalize_community_id, normalize_market_id, opt_rfc3339_to_epoch,
+    normalize_community_id, normalize_market_id, normalize_offchain_id, opt_rfc3339_to_epoch,
     timestamp_to_string_with_padding,
 };
 use reqwest::Client;
@@ -495,7 +495,11 @@ pub async fn handle_request(
                 Ok((
                     opt_rfc3339_to_epoch(payload.start_time.as_deref())?,
                     opt_rfc3339_to_epoch(payload.end_time.as_deref())?,
-                    payload.facility_id,
+                    payload
+                        .facility_id
+                        .as_deref()
+                        .map(normalize_offchain_id)
+                        .transpose()?,
                 ))
             })();
             let (start_time, end_time, facility_id) = match query {
@@ -549,15 +553,19 @@ pub async fn handle_request(
         }
         EwdsOperation::IdsQuery => {
             let request_id = envelope.request_id;
-            let payload = match serde_json::from_value::<IdsQueryPayload>(envelope.payload) {
-                Ok(payload) => payload,
+            let query = (|| -> Result<_> {
+                let payload: IdsQueryPayload = serde_json::from_value(envelope.payload)?;
+                normalize_offchain_id(&payload.offchain_id)
+            })();
+            let offchain_id = match query {
+                Ok(id) => id,
                 Err(error) => {
                     return send_invalid_request_response(
                         client,
                         config,
                         request_id,
                         &response_topic,
-                        error.into(),
+                        error,
                     )
                     .await;
                 }
@@ -568,11 +576,7 @@ pub async fn handle_request(
                 request_id
             );
 
-            let data = db
-                .ids()
-                .get_or_create(payload.offchain_id)
-                .await
-                .map(|id| vec![id]);
+            let data = db.ids().get_or_create(offchain_id).await.map(|id| vec![id]);
             send_query_response(client, config, request_id, &response_topic, data).await
         }
         EwdsOperation::ClearingResultsQuery => {

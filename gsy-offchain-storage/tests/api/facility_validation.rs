@@ -98,6 +98,143 @@ async fn seed_community(db: &DatabaseWrapper, id: &str) {
 }
 
 #[tokio::test]
+async fn facility_ingress_canonicalizes_ids_and_validation_echoes_each_request() {
+    use gsy_offchain_storage::ewds_event_handler::handle_event;
+    use primitives::ewds::{dto::EwdsEventEnvelope, EwdsEventType};
+
+    let facility_id = "abcdefab-abcd-abcd-abcd-abcdefabcdef";
+    let owner_id = "fedcbafe-dcba-dcba-dcba-fedcbafedcba";
+    for ewds in [false, true] {
+        let app = init_app().await;
+        seed_community(&app.db_wrapper, "a").await;
+        let client = reqwest::Client::new();
+        for id in [facility_id.to_uppercase(), facility_id.to_string()] {
+            let facility = json!({"facility_id": id, "owner_id": owner_id.to_uppercase(),
+                "facility_name": "UUID facility", "site_id": "site-a"});
+            let site = json!({"site_name": "site-a", "site_description": "Unchanged name",
+                "facilities": ["facility-a", facility_id.to_uppercase(), facility_id]});
+            for (route, event_type, data) in [
+                ("facilities", EwdsEventType::Facility, facility),
+                ("sites", EwdsEventType::Site, site),
+            ] {
+                if ewds {
+                    handle_event(
+                        &app.db_wrapper,
+                        EwdsEventEnvelope {
+                            event_id: "topology-test".into(),
+                            event_type,
+                            occurred_at: "2026-11-04T10:00:00Z".into(),
+                            data: json!([data]),
+                        },
+                    )
+                    .await
+                    .unwrap();
+                } else {
+                    let response = client
+                        .post(format!("{}/{route}", app.address))
+                        .json(&data)
+                        .send()
+                        .await
+                        .unwrap();
+                    assert_eq!(response.status(), reqwest::StatusCode::OK);
+                }
+            }
+        }
+        let facility = app
+            .db_wrapper
+            .facilities()
+            .find_one(doc! {"facility_id": facility_id})
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(facility.owner_id, owner_id);
+        assert_eq!(
+            app.db_wrapper
+                .facilities()
+                .count_documents(doc! {})
+                .await
+                .unwrap(),
+            2
+        );
+        let site = app
+            .db_wrapper
+            .sites()
+            .find_one(doc! {"site_name": "site-a"})
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(site.facilities, vec!["facility-a", facility_id]);
+        let requests = [
+            pair(&facility_id.to_uppercase(), &market_id("a")),
+            pair(" padded ", &market_id("a")),
+            pair(facility_id, &market_id("a")),
+        ];
+        let response: Value = client
+            .post(format!("{}/facilities/validate", app.address))
+            .json(&requests)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let ewds_response = validate_via_ewds(&app.db_wrapper, json!(requests)).await;
+        assert_eq!(response, ewds_response["data"]);
+        assert_eq!(response.as_array().unwrap().len(), requests.len());
+        for (i, request) in requests.iter().enumerate() {
+            assert_eq!(response[i]["facility_id"], request.facility_id);
+            assert_eq!(response[i]["market_id"], request.market_id);
+            assert_eq!(response[i]["eligible"], i != 1);
+        }
+        assert_eq!(response[1]["reason"], "unknown_facility");
+        for (route, event_type, data) in [
+            (
+                "facilities",
+                EwdsEventType::Facility,
+                json!({"facility_id": "bad ",
+                "owner_id": owner_id, "facility_name": "Invalid", "site_id": "site-a"}),
+            ),
+            (
+                "facilities",
+                EwdsEventType::Facility,
+                json!({"facility_id": "valid",
+                "owner_id": "", "facility_name": "Invalid", "site_id": "site-a"}),
+            ),
+            (
+                "sites",
+                EwdsEventType::Site,
+                json!({"site_name": "site-a",
+                "site_description": "Invalid", "facilities": [" "]}),
+            ),
+        ] {
+            assert_eq!(
+                client
+                    .post(format!("{}/{route}", app.address))
+                    .json(&data)
+                    .send()
+                    .await
+                    .unwrap()
+                    .status(),
+                reqwest::StatusCode::BAD_REQUEST
+            );
+            let error = handle_event(
+                &app.db_wrapper,
+                EwdsEventEnvelope {
+                    event_id: "invalid-test".into(),
+                    event_type,
+                    occurred_at: "2026-11-04T10:00:00Z".into(),
+                    data: json!([data]),
+                },
+            )
+            .await
+            .unwrap_err();
+            assert!(primitives::ewds::is_invalid_event(&error));
+        }
+        stop_app(app).await;
+    }
+}
+
+#[tokio::test]
 async fn http_community_ids_are_canonical_and_remain_eligible() {
     let app = init_app().await;
     seed_community(&app.db_wrapper, "a").await;

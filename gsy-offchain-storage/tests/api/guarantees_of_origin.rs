@@ -259,6 +259,94 @@ async fn get_goo(address: &str, query: &[(&str, String)]) -> reqwest::Response {
 }
 
 #[tokio::test]
+async fn certificates_join_canonical_facilities_mappings_and_meter_references() {
+    use mongodb::bson::doc;
+    use primitives::offchain_storage::{
+        OffchainStorageClient, OffchainStorageTransport,
+    };
+    use primitives::utils::derive_onchain_id;
+
+    let app = init_app().await;
+    let db = &app.db_wrapper;
+    seed_topology(db, 3.0).await;
+    let seller = "abcdefab-abcd-abcd-abcd-abcdefabcdef";
+    let owner = "fedcbafe-dcba-dcba-dcba-fedcbafedcba";
+    db.facilities()
+        .delete_one(doc! {"facility_id": SELLER_FACILITY})
+        .await
+        .unwrap();
+    let http = reqwest::Client::new();
+    for (id, name) in [
+        (seller.to_uppercase(), SELLER_FACILITY),
+        (BUYER_FACILITY.to_string(), BUYER_FACILITY),
+    ] {
+        let response = http
+            .post(format!("{}/facilities", app.address))
+            .json(&FacilitySchema {
+                facility_id: id,
+                facility_name: format!("{name}-name"),
+                site_id: "goo-site".into(),
+                owner_id: owner.to_uppercase(),
+            })
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status().as_u16(), 200);
+    }
+    let client = OffchainStorageClient::new(
+        OffchainStorageTransport::Http,
+        app.address.clone(),
+        "UNUSED",
+        "unused",
+    );
+    let party = client
+        .fetch_onchain_id(&seller.to_uppercase())
+        .await
+        .unwrap();
+    assert_eq!(party, derive_onchain_id(seller));
+    let mut point = db
+        .measurement_points()
+        .find_one(doc! {"measurement_id": EXPORT_POINT})
+        .await
+        .unwrap()
+        .unwrap();
+    point.asset_name = seller.to_uppercase();
+    assert_eq!(
+        http.post(format!("{}/measurement-points", app.address))
+            .json(&vec![point])
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .as_u16(),
+        200
+    );
+    let mut sale = trade(
+        "case-normalized-sale",
+        TradeStatus::Executed,
+        Some(VERDICT_AT),
+    );
+    sale.seller = party;
+    db.trades().insert_trades(vec![sale]).await.unwrap();
+    let response = get_goo(
+        &app.address,
+        &[
+            ("start_time", VERDICT_AT.to_string()),
+            ("end_time", (VERDICT_AT + 1).to_string()),
+        ],
+    )
+    .await;
+    assert_eq!(response.status().as_u16(), 200);
+    let records: Vec<LocalOriginRecord> = response.json().await.unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(
+        records[0].beneficiary_and_claim.owner_id,
+        derive_onchain_id(owner)
+    );
+    stop_app(app).await;
+}
+
+#[tokio::test]
 async fn rest_rejects_an_invalid_window_with_400() {
     let app = init_app().await;
 

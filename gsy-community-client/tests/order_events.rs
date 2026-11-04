@@ -432,6 +432,55 @@ async fn places_a_bid_and_an_offer_with_their_contract_params() {
 }
 
 #[tokio::test]
+async fn uuid_parties_resolve_canonically_and_rejections_echo_original_ids() {
+    let chain = deploy_mock_order_registry().await;
+    let server = mock_id_service().await;
+    let buyer = "abcdefab-abcd-abcd-abcd-abcdefabcdef";
+    let seller = "fedcbafe-dcba-dcba-dcba-fedcbafedcba";
+    for id in [buyer, seller] {
+        Mock::given(method("POST")).and(path("/ids"))
+            .and(query_param("offchain_id", id))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "offchain_id": id, "onchain_id": primitives::utils::derive_onchain_id(id), "creation_time": 0
+            }))).mount(&server).await;
+    }
+    let mut rejected = bid();
+    rejected["createdBy"] = json!(buyer.to_uppercase());
+    rejected["preferredTradingPartner"] = json!(seller.to_uppercase());
+    rejected["marketId"] = json!(CLOSED_MARKET);
+    let mut accepted = offer();
+    accepted["createdBy"] = json!(seller.to_uppercase());
+    accepted["preferredTradingPartner"] = json!(buyer.to_uppercase());
+    handler(&chain, &server)
+        .await
+        .handle(event("uuid-parties", vec![rejected.clone(), accepted]))
+        .await
+        .unwrap();
+    let orders = placed_orders(&chain).await;
+    assert_eq!(orders.len(), 1);
+    assert_eq!(
+        orders[0].created_by,
+        bytes16(&primitives::utils::derive_onchain_id(seller))
+    );
+    assert_eq!(
+        orders[0].preferred_trading_partner,
+        bytes16(&primitives::utils::derive_onchain_id(buyer))
+    );
+    let rejections = rejection_events(&server).await;
+    assert_eq!(rejections.len(), 1);
+    assert_rejection(&rejections[0], rejected, "MarketClosed");
+    let requests = server.received_requests().await.unwrap();
+    let validation = requests
+        .iter()
+        .find(|request| request.url.path() == "/facilities/validate")
+        .unwrap();
+    let pairs: Vec<FacilityMarketValidationRequest> =
+        serde_json::from_slice(&validation.body).unwrap();
+    assert_eq!(pairs[0].facility_id, buyer);
+    assert_eq!(pairs[1].facility_id, seller);
+}
+
+#[tokio::test]
 async fn skips_orders_that_are_already_placed() {
     let chain = deploy_mock_order_registry().await;
     let id_service = mock_id_service().await;
@@ -887,6 +936,20 @@ async fn rejects_the_whole_event_when_one_order_is_invalid() {
         ("quantity", json!(-1.0), "quantity", true),
         ("priceLimit", json!(-0.1), "priceLimit", true),
         ("energyType", json!("COAL"), "COAL", true),
+        ("createdBy", json!(""), "createdBy", true),
+        ("createdBy", json!(" owner-1"), "createdBy", true),
+        (
+            "preferredTradingPartner",
+            json!(""),
+            "preferredTradingPartner",
+            true,
+        ),
+        (
+            "preferredTradingPartner",
+            json!("owner-1 "),
+            "preferredTradingPartner",
+            true,
+        ),
         ("createdBy", json!("unknown-owner"), "createdBy", false),
         (
             "preferredTradingPartner",
@@ -899,12 +962,20 @@ async fn rejects_the_whole_event_when_one_order_is_invalid() {
         let mut invalid = offer();
         invalid[field] = value;
 
+        let requests_before = id_service.received_requests().await.unwrap().len();
+
         let error = handler
             .handle(event("event-1", vec![bid(), invalid]))
             .await
             .unwrap_err();
 
         assert_eq!(is_invalid_event(&error), invalid_data, "{field}: {error:#}");
+        if invalid_data {
+            assert_eq!(
+                id_service.received_requests().await.unwrap().len(),
+                requests_before
+            );
+        }
         let error = format!("{error:#}");
         assert!(error.contains("index 1"), "{field}: {error}");
         assert!(error.contains(expected), "{field}: {error}");
@@ -1210,6 +1281,30 @@ mod validate_order {
     #[test]
     fn accepts_a_valid_order() {
         assert_eq!(validate_order(order()).unwrap(), order());
+    }
+
+    #[test]
+    fn canonicalizes_facility_and_partner_without_changing_the_submission() {
+        let mut submission = bid();
+        submission["createdBy"] = json!("ABCDEFAB-1234-1234-1234-ABCDEFABCDEF");
+        submission["preferredTradingPartner"] = json!("ABCDEFAB-1234-1234-1234-ABCDEFABCDE0");
+        let order = validate_order(
+            DbOrderSchema::try_from(
+                serde_json::from_value::<EwdsOrderDto>(submission.clone()).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(order.created_by, "abcdefab-1234-1234-1234-abcdefabcdef");
+        assert_eq!(order.area_uuid, order.created_by);
+        assert_eq!(
+            order.requirements.unwrap().trading_partner_id.as_deref(),
+            Some("abcdefab-1234-1234-1234-abcdefabcde0")
+        );
+        assert_eq!(
+            submission["createdBy"],
+            "ABCDEFAB-1234-1234-1234-ABCDEFABCDEF"
+        );
     }
 
     #[test]

@@ -1,6 +1,4 @@
-use crate::db::measurements_service::{
-    flow_direction, insert_measurements, profile_measurement_id,
-};
+use crate::db::measurements_service::{flow_direction, insert_measurements};
 use crate::db::DbRef;
 use crate::routes::parse_time_range;
 use actix_web::{web::Json, web::Query, HttpResponse, Responder};
@@ -9,7 +7,10 @@ use primitives::db_api_schema::profiles::{
     ForecastSchema, MeasurementPointSchema, MeasurementPointType, MeasurementSchema,
     TimeseriesSchema,
 };
-use primitives::utils::timestamp_to_string_with_padding;
+use primitives::utils::{
+    canonical_offchain_id, normalize_offchain_id, profile_measurement_id,
+    timestamp_to_string_with_padding,
+};
 use serde::Deserialize;
 use std::collections::HashMap;
 
@@ -93,6 +94,13 @@ pub async fn post_measurements(
     measurements: Json<Vec<MeasurementSchema>>,
     db: DbRef,
 ) -> impl Responder {
+    let mut measurements = measurements.into_inner();
+    for measurement in &mut measurements {
+        measurement.facility_id = match normalize_offchain_id(&measurement.facility_id) {
+            Ok(id) => id,
+            Err(error) => return HttpResponse::BadRequest().body(error.to_string()),
+        };
+    }
     match insert_measurements(db.get_ref(), &measurements).await {
         Ok(ids) => HttpResponse::Ok().json(ids),
         Err(_) => HttpResponse::InternalServerError().finish(),
@@ -103,6 +111,15 @@ pub async fn get_measurements(
     db: DbRef,
     query_params: Query<ProfilesParameters>,
 ) -> impl Responder {
+    let facility_id = match query_params
+        .facility_id
+        .as_deref()
+        .map(normalize_offchain_id)
+        .transpose()
+    {
+        Ok(id) => id,
+        Err(error) => return HttpResponse::BadRequest().body(error.to_string()),
+    };
     let (start_time, end_time) = match parse_time_range(
         query_params.start_time.as_deref(),
         query_params.end_time.as_deref(),
@@ -113,7 +130,7 @@ pub async fn get_measurements(
     match fetch_profile_values(
         db.get_ref(),
         MeasurementPointType::Measurement,
-        query_params.facility_id.clone(),
+        facility_id,
         start_time,
         end_time,
     )
@@ -142,6 +159,13 @@ pub async fn get_measurements(
 }
 
 pub async fn post_forecasts(forecasts: Json<Vec<ForecastSchema>>, db: DbRef) -> impl Responder {
+    let mut forecasts = forecasts.into_inner();
+    for forecast in &mut forecasts {
+        forecast.facility_id = match normalize_offchain_id(&forecast.facility_id) {
+            Ok(id) => id,
+            Err(error) => return HttpResponse::BadRequest().body(error.to_string()),
+        };
+    }
     let points = forecasts
         .iter()
         .map(measurement_point_from_forecast)
@@ -167,6 +191,15 @@ pub async fn post_forecasts(forecasts: Json<Vec<ForecastSchema>>, db: DbRef) -> 
 }
 
 pub async fn get_forecasts(db: DbRef, query_params: Query<ProfilesParameters>) -> impl Responder {
+    let facility_id = match query_params
+        .facility_id
+        .as_deref()
+        .map(normalize_offchain_id)
+        .transpose()
+    {
+        Ok(id) => id,
+        Err(error) => return HttpResponse::BadRequest().body(error.to_string()),
+    };
     let (start_time, end_time) = match parse_time_range(
         query_params.start_time.as_deref(),
         query_params.end_time.as_deref(),
@@ -177,7 +210,7 @@ pub async fn get_forecasts(db: DbRef, query_params: Query<ProfilesParameters>) -
     match fetch_profile_values(
         db.get_ref(),
         MeasurementPointType::Forecast,
-        query_params.facility_id.clone(),
+        facility_id,
         start_time,
         end_time,
     )
@@ -217,10 +250,14 @@ pub async fn post_measurement_points(
     points: Json<Vec<MeasurementPointSchema>>,
     db: DbRef,
 ) -> impl Responder {
+    let mut points = points.into_inner();
+    for point in &mut points {
+        point.asset_name = canonical_offchain_id(&point.asset_name);
+    }
     match db
         .get_ref()
         .measurement_points()
-        .insert_points(points.to_vec())
+        .insert_points(points)
         .await
     {
         Ok(ids) => HttpResponse::Ok().json(ids),

@@ -41,6 +41,101 @@ fn make_measurement_point(measurement_id: &str, asset_name: &str) -> Measurement
 }
 
 #[tokio::test]
+async fn profile_ingress_and_filters_share_canonical_facility_ids() {
+    let app = init_app().await;
+    let client = reqwest::Client::new();
+    let canonical = "abcdefab-abcd-abcd-abcd-abcdefabcdef";
+    for route in ["measurements", "forecasts"] {
+        for id in [canonical.to_uppercase(), canonical.to_string()] {
+            let payload = if route == "measurements" {
+                serde_json::to_value(vec![make_measurement(&id, 1_900_000_000, 4.2)]).unwrap()
+            } else {
+                serde_json::to_value(vec![make_forecast(&id, 1_900_000_000, 4.2)]).unwrap()
+            };
+            assert_eq!(
+                client
+                    .post(format!("{}/{route}", app.address))
+                    .json(&payload)
+                    .send()
+                    .await
+                    .unwrap()
+                    .status()
+                    .as_u16(),
+                200
+            );
+            let rows: serde_json::Value = client
+                .get(format!("{}/{route}", app.address))
+                .query(&[("facility_id", &id)])
+                .send()
+                .await
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            assert_eq!(rows.as_array().unwrap().len(), 1);
+            assert_eq!(rows[0]["facility_id"], canonical);
+        }
+        let mut valid =
+            serde_json::to_value(make_forecast("new-facility", 1_900_000_000, 4.2)).unwrap();
+        if route == "measurements" {
+            valid.as_object_mut().unwrap().remove("confidence");
+        }
+        let mut invalid = valid.clone();
+        invalid["facility_id"] = serde_json::json!(" padded ");
+        assert_eq!(
+            client
+                .post(format!("{}/{route}", app.address))
+                .json(&vec![valid, invalid])
+                .send()
+                .await
+                .unwrap()
+                .status()
+                .as_u16(),
+            400
+        );
+        let rows: serde_json::Value = client
+            .get(format!("{}/{route}", app.address))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(
+            rows.as_array().unwrap().len(),
+            1,
+            "invalid batch must not be partly written"
+        );
+    }
+    let points = vec![make_measurement_point(
+        "Custom-Point-ID",
+        &canonical.to_uppercase(),
+    )];
+    assert_eq!(
+        client
+            .post(format!("{}/measurement-points", app.address))
+            .json(&points)
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .as_u16(),
+        200
+    );
+    let stored = app
+        .db_wrapper
+        .measurement_points()
+        .find_one(mongodb::bson::doc! {"measurement_id": "Custom-Point-ID"})
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.asset_name, canonical);
+    assert_eq!(stored.datasource_name.as_deref(), Some("DS-1-MQTT"));
+    assert_eq!(stored.measurement_id, "Custom-Point-ID");
+    stop_app(app).await;
+}
+
+#[tokio::test]
 async fn post_and_filter_measurements() {
     let app = init_app().await;
     let address = app.address.clone();

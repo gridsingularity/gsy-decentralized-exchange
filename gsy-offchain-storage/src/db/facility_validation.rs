@@ -7,7 +7,7 @@ use primitives::db_api_schema::grid_topology::{
     FacilityMarketValidationResult, FacilitySchema, SiteSchema,
 };
 use primitives::db_api_schema::market::MarketSchema;
-use primitives::utils::normalize_market_id;
+use primitives::utils::{normalize_market_id, normalize_offchain_id};
 use std::collections::HashMap;
 
 impl DatabaseWrapper {
@@ -26,9 +26,9 @@ impl DatabaseWrapper {
             .iter()
             .map(|pair| normalize_market_id(&pair.market_id).ok())
             .collect();
-        let facility_ids: Vec<&str> = requests
+        let facility_ids: Vec<String> = requests
             .iter()
-            .map(|pair| pair.facility_id.as_str())
+            .filter_map(|pair| normalize_offchain_id(&pair.facility_id).ok())
             .collect();
         let markets: Vec<MarketSchema> = self
             .markets()
@@ -87,7 +87,9 @@ impl DatabaseWrapper {
             let market = markets
                 .get(market_id.as_ref().ok_or(UnknownMarket)?)
                 .ok_or(UnknownMarket)?;
-            let facility = facilities.get(&pair.facility_id).ok_or(UnknownFacility)?;
+            let facility_id =
+                normalize_offchain_id(&pair.facility_id).map_err(|_| UnknownFacility)?;
+            let facility = facilities.get(&facility_id).ok_or(UnknownFacility)?;
             let community = communities
                 .get(&market.community_id)
                 .ok_or(UnknownCommunity)?;

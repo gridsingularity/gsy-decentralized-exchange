@@ -6,14 +6,14 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "facility_id": { "type": "string", "minLength": 1 },
+    "facility_id": { "type": "string", "pattern": "^\\S(?:[\\s\\S]*\\S)?(?![\\s\\S])", "description": "Strict hyphenated UUIDs are lowercased; other unpadded identities remain case-sensitive, including hex-shaped strings." },
     "facility_name": { "type": "string", "minLength": 1 },
     "site_id": {
       "description": "The site_name of the site the facility belongs to.",
       "type": "string",
       "minLength": 1
     },
-    "owner_id": { "type": "string", "minLength": 1 }
+    "owner_id": { "type": "string", "pattern": "^\\S(?:[\\s\\S]*\\S)?(?![\\s\\S])", "description": "Uses the same off-chain identity normalization as facility_id." }
   },
   "required": ["facility_id", "facility_name", "site_id", "owner_id"]
 }

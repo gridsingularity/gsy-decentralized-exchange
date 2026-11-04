@@ -25,9 +25,16 @@ hashes in `createdBy`; rejections retain the submitted identifiers. FOS must
 correlate equivalent order IDs by their 16 bytes, not their spelling.
 `preferredTradingPartner` remains an off-chain identity, even when hex-shaped.
 
-Off-chain facility IDs are not required to be UUIDs. The UUID-only off-chain
-canonicalization helpers are defined in primitives but are not yet enabled
-across storage and consumers; that rollout is a separate DD-459 increment.
+Off-chain facility and owner IDs are not required to be UUIDs. Strict hyphenated
+UUIDs are lowercased; other nonempty, unpadded strings remain case-sensitive,
+including bare/`0x` hex strings. This rule applies to topology, site facility
+references, ID mappings, order participants/preferences and measurement/forecast
+facility references. Stored entity reads return the canonical spelling;
+`facilities.validate` still echoes each requested pair exactly and reports invalid
+facility identities as `unknown_facility` per pair. Other invalid typed identities
+produce HTTP 400, `invalid_request` for queries, or invalidate the whole inbound
+event before writes/submissions (logged, without a new notification).
+Names and correlation IDs are not normalized.
 
 ## Schema Package Location
 

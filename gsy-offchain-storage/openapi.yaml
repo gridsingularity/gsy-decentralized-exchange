@@ -396,6 +396,7 @@ paths:
     post:
       tags: [Measurements]
       summary: Register measurement / forecast points.
+      description: UUID-shaped asset_name references are lowercased; other labels and client-supplied measurement_id values are preserved.
       requestBody:
         required: true
         content:
@@ -650,7 +651,7 @@ paths:
     post:
       tags: [Grid Topology]
       summary: Create or replace a site by site_name.
-      description: Send the complete facilities list. Omitted facilities lose their site membership.
+      description: Send the complete facilities list. Omitted facilities lose their site membership. Facility UUIDs are lowercased and equivalent references deduplicated; other unpadded identities remain case-sensitive.
       requestBody:
         required: true
         content:
@@ -664,6 +665,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SiteSchema"
+        "400":
+          description: Empty or padded facility reference.
         "500":
           $ref: "#/components/responses/InternalError"
     get:
@@ -685,7 +688,7 @@ paths:
     post:
       tags: [Grid Topology]
       summary: Create or replace a facility by facility_id.
-      description: Replaces its topology fields; facility_name must remain unique across facility IDs.
+      description: Replaces its topology fields; facility_name must remain unique across facility IDs. Facility and owner UUIDs are lowercased; other unpadded identities remain case-sensitive.
       requestBody:
         required: true
         content:
@@ -699,6 +702,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/FacilitySchema"
+        "400":
+          description: Empty or padded facility or owner identity.
         "409":
           description: The facility name already belongs to a different facility ID.
         "500":
@@ -727,6 +732,9 @@ paths:
         the site to list the facility and the community to list that site.
         An ID mapping alone does not establish eligibility. Does not check
         the market's opening/closing times or contract authorization.
+        Facility UUID lookup is case-insensitive, but each result echoes its
+        requested identifiers exactly. Invalid facility identities return
+        unknown_facility for that pair rather than failing the batch.
       requestBody:
         required: true
         content:
@@ -1208,6 +1216,7 @@ components:
 
     SiteSchema:
       type: object
+      description: Facility references lowercase strict hyphenated UUIDs; other unpadded identities remain case-sensitive. Equivalent references are deduplicated.
       required: [site_name, site_description, facilities]
       properties:
         site_name: { type: string }
@@ -1218,6 +1227,7 @@ components:
 
     FacilitySchema:
       type: object
+      description: Facility and owner IDs lowercase strict hyphenated UUIDs. Other nonempty, unpadded identities remain case-sensitive, including bare or 0x hex strings. Names and site keys are unchanged.
       required:
         - facility_id
         - facility_name

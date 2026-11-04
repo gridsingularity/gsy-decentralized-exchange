@@ -37,18 +37,23 @@ async fn test_forward_measurement_uses_facility_profile_endpoints() {
     let server = MockServer::start();
 
     let measurement_points_request = server.mock(|when, then| {
-        when.method(POST).path("/measurement-points");
+        when.method(POST)
+            .path("/measurement-points")
+            .body_includes("measurement:comm_uuid:abcdefab-abcd-abcd-abcd-abcdefabcdef")
+            .body_includes("\"asset_name\":\"abcdefab-abcd-abcd-abcd-abcdefabcdef\"");
         then.status(200);
     });
     let timeseries_request = server.mock(|when, then| {
-        when.method(POST).path("/timeseries");
+        when.method(POST)
+            .path("/timeseries")
+            .body_includes("measurement:comm_uuid:abcdefab-abcd-abcd-abcd-abcdefabcdef");
         then.status(200);
     });
 
     let adapter = AreaMarketInfoAdapter::new(Some(server.base_url()));
     adapter
         .forward_measurement(vec![MeasurementSchema {
-            facility_id: "facility_uuid".to_string(),
+            facility_id: "ABCDEFAB-ABCD-ABCD-ABCD-ABCDEFABCDEF".to_string(),
             community_uuid: "comm_uuid".to_string(),
             time_slot: 123123,
             creation_time: 456456,

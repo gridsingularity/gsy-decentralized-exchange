@@ -53,7 +53,9 @@ For purchases of 4 and 6 kWh and consumption of 12 kWh, the 2 kWh deviation
 produces a 2,000-unit penalty at rate 0.10, allocated as 800 and 1,200 units.
 
 Measurement identities are derived locally with the ID service's shared
-Blake2b-16 helper, without querying or writing ID mappings. This is the same
+Blake2b-16 helper, without querying or writing ID mappings. It lowercases strict
+hyphenated UUID facility IDs before hashing and leaves opaque IDs case-sensitive.
+This is the same
 identity used in `OrderParams.createdBy` and the indexed trade parties. Owner
 IDs and service wallets are not measurement identities. Missing/unmapped,
 non-finite, or conflicting readings for a facility/slot leave its trades pending;

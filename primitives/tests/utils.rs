@@ -8,6 +8,40 @@ use primitives::MarketType;
 const COMMUNITY_ID: &str = "11111111-1111-4111-8111-111111111111";
 
 #[test]
+fn identity_derivation_canonicalizes_uuids_but_preserves_opaque_ids() {
+    let lower = "abcdefab-1234-1234-1234-abcdefabcdef";
+    assert_eq!(
+        derive_onchain_id(&lower.to_uppercase()),
+        derive_onchain_id(lower)
+    );
+    assert_eq!(
+        derive_onchain_id(lower),
+        bytes16_to_hex(primitives::utils::create_encrypted_bytes16_from_string(
+            lower
+        ))
+    );
+    for opaque in [
+        "Facility-A",
+        "0xABCDEFAB123412341234ABCDEFABCDEF",
+        "ABCDEFAB123412341234ABCDEFABCDEF",
+    ] {
+        assert_ne!(
+            derive_onchain_id(opaque),
+            derive_onchain_id(&opaque.to_lowercase())
+        );
+    }
+    for kind in [
+        primitives::db_api_schema::profiles::MeasurementPointType::Measurement,
+        primitives::db_api_schema::profiles::MeasurementPointType::Forecast,
+    ] {
+        assert_eq!(
+            primitives::utils::profile_measurement_id(kind.clone(), "community", lower),
+            primitives::utils::profile_measurement_id(kind, "community", &lower.to_uppercase())
+        );
+    }
+}
+
+#[test]
 fn onchain_identity_derivation_is_pinned_to_blake2b_16() {
     assert_eq!(
         primitives::utils::derive_onchain_id("facility-a"),

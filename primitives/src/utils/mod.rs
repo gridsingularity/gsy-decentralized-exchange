@@ -102,9 +102,27 @@ pub fn create_encrypted_bytes16_from_string(input_string: &str) -> [u8; 16] {
     hash
 }
 
-/// The ID service's deterministic, case-sensitive mapping from an off-chain identity.
+/// The ID service's deterministic mapping: UUID spelling is canonicalized; opaque IDs stay case-sensitive.
 pub fn derive_onchain_id(offchain_id: &str) -> String {
-    bytes16_to_hex(create_encrypted_bytes16_from_string(offchain_id))
+    bytes16_to_hex(create_encrypted_bytes16_from_string(
+        &canonical_offchain_id(offchain_id),
+    ))
+}
+
+pub fn profile_measurement_id(
+    point_type: crate::db_api_schema::profiles::MeasurementPointType,
+    community_uuid: &str,
+    facility_id: &str,
+) -> String {
+    use crate::db_api_schema::profiles::MeasurementPointType;
+    let prefix = match point_type {
+        MeasurementPointType::Measurement => "measurement",
+        MeasurementPointType::Forecast => "forecast",
+    };
+    format!(
+        "{prefix}:{community_uuid}:{}",
+        canonical_offchain_id(facility_id)
+    )
 }
 
 /// The community ID is normalized first, so every accepted form of one

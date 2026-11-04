@@ -88,8 +88,9 @@
       "default": "NONE"
     },
     "createdBy": {
-      "description": "Facility identity, not its owner or submitting service wallet. Submissions and rejection echoes use the off-chain identity; indexed lifecycle notifications use its lowercase 0x bytes16 hash. IRI: int:createdby.",
-      "type": "string"
+      "description": "Facility identity, not its owner or submitting service wallet. Submissions use an unpadded off-chain identity: strict hyphenated UUIDs are lowercased, other strings stay case-sensitive. Rejections echo the input; indexed lifecycle notifications use its lowercase 0x bytes16 hash. IRI: int:createdby.",
+      "type": "string",
+      "pattern": "^\\S(?:[\\s\\S]*\\S)?(?![\\s\\S])"
     },
     "creationTime": {
       "description": "Order creation datetime. IRI: int:createdAt. RFC 3339 with timezone.",
@@ -114,12 +115,13 @@
       "default": null
     },
     "preferredTradingPartner": {
-      "description": "Off-chain facility identity of the preferred counterparty of a bid or offer, taken from the requirements. Hex-shaped strings are still off-chain identities, not resolved hashes. IRI: int:preferredTradingPartner. Nullable.",
+      "description": "Off-chain facility identity of the preferred counterparty of a bid or offer. Strict hyphenated UUIDs are lowercased; other unpadded strings stay case-sensitive. Hex-shaped strings are off-chain identities, not resolved hashes. Rejections echo the input. IRI: int:preferredTradingPartner. Nullable.",
       "type": [
         "string",
         "null"
       ],
-      "default": null
+      "default": null,
+      "pattern": "^\\S(?:[\\s\\S]*\\S)?(?![\\s\\S])"
     },
     "preferredEnergyRate": {
       "description": "Preferred bilateral energy rate in EUR/kWh. IRI: int:preferredEnergyRate. Nullable.",
