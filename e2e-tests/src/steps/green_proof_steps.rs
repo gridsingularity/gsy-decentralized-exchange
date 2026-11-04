@@ -104,7 +104,7 @@ async fn seed_executed_pv_sale(world: &mut MyWorld, energy_kwh: f64, export_kwh:
         measurement_id: export_kwh
             .map(|_| format!("Measurement:{community_id}:{seller_facility_id}")),
         trade_uuid: Uuid::new_v4().to_string(),
-        market_id: format!("0xgooe2e{run}"),
+        market_id: primitives::utils::bytes16_to_hex(*Uuid::new_v4().as_bytes()),
         time_slot,
         status_updated_at: now,
         energy_kwh,

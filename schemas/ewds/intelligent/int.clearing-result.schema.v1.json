@@ -6,8 +6,10 @@
   "type": "object",
   "properties": {
     "marketId": {
-      "description": "FK to cleared Market. Primary key. IRI: int:marketId.",
-      "type": "string"
+      "description": "Nonzero market ID as UUID, 0x-prefixed or bare bytes16 hex. Stored and returned as lowercase 0x hex. IRI: int:marketId.",
+      "type": "string",
+      "pattern": "^(?:(?:0x)?[a-fA-F0-9]{32}|[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12})(?![\\s\\S])",
+      "not": { "enum": ["00000000-0000-0000-0000-000000000000","0x00000000000000000000000000000000","00000000000000000000000000000000"] }
     },
     "clearingStatus": {
       "description": "EMS outcome status for this clearing event. IRI: int:clearingStatus.",

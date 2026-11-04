@@ -434,10 +434,16 @@ async fn creates_markets_opening_up_to_and_including_the_window_end() {
 }
 
 #[tokio::test]
-async fn skips_communities_with_unparsable_ids() {
+async fn skips_invalid_and_nil_communities_without_blocking_valid_markets() {
     let config = test_config(1);
     let client = MockChainClient::default();
-    let communities = vec![community_with_id("not-a-uuid"), community()];
+    let communities = vec![
+        community_with_id("not-a-uuid"),
+        community_with_id("00000000-0000-0000-0000-000000000000"),
+        community_with_id("0x00000000000000000000000000000000"),
+        community_with_id("00000000000000000000000000000000"),
+        community(),
+    ];
 
     orchestrate_markets_at(&config, &client, communities.as_slice(), NOW)
         .await

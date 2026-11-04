@@ -93,6 +93,9 @@ fn required_ids_reject_zero_without_breaking_optional_sentinels() {
     ] {
         assert_eq!(parse_uuid_or_hex_bytes16(value), Some([0; 16]));
         assert_eq!(parse_nonzero_uuid_or_hex_bytes16(value), None);
+        assert!(normalize_community_id(value).is_err());
+        assert!(normalize_market_id(value).is_err());
+        assert!(generate_market_id(value, MarketType::Spot, 1_700_000_000).is_err());
     }
 }
 

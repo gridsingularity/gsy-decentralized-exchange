@@ -980,13 +980,14 @@ async fn markets_query_filters_by_opening_time_window() {
 #[tokio::test]
 async fn markets_query_filters_by_market_id_as_uuid_or_hex() {
     for market_id in [
-        bytes16_to_uuid_string([0x02; 16]),
-        bytes16_to_hex([0x02; 16]),
+        bytes16_to_uuid_string([0xab; 16]).to_uppercase(),
+        format!("0x{}", "AB".repeat(16)),
+        "ab".repeat(16),
     ] {
         let data = run_markets_query(
             vec![
                 make_market(0x01, COMMUNITY_1, "2026-03-27T18:00:00Z"),
-                make_market(0x02, COMMUNITY_1, "2026-03-27T19:00:00Z"),
+                make_market(0xab, COMMUNITY_1, "2026-03-27T19:00:00Z"),
             ],
             json!({ "marketId": market_id }),
         )
@@ -995,7 +996,7 @@ async fn markets_query_filters_by_market_id_as_uuid_or_hex() {
         assert_eq!(data.len(), 1, "{market_id}");
         assert_eq!(
             data[0]["marketId"],
-            json!(bytes16_to_uuid_string([0x02; 16]))
+            json!(bytes16_to_uuid_string([0xab; 16]))
         );
     }
 }
@@ -1062,6 +1063,14 @@ async fn markets_query_bad_payload_errors() {
         // market_id is a string field -> a number errors
         ("number market id", json!({ "marketId": 5 })),
         ("invalid market id", json!({ "marketId": "market-1" })),
+        (
+            "nil market id",
+            json!({ "marketId": "00000000-0000-0000-0000-000000000000" }),
+        ),
+        (
+            "nil community id",
+            json!({ "communityId": "0x00000000000000000000000000000000" }),
+        ),
         (
             "epoch start time",
             json!({ "startTime": "00000000001774605600" }),

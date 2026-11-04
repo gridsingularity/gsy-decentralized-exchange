@@ -67,24 +67,29 @@ pub fn normalize_offchain_id(value: &str) -> Result<String> {
 }
 
 /// Canonical form of a community ID: the lowercase hyphenated UUID that
-/// chain-sourced markets are stored with. Fails unless the ID is a UUID or
+/// chain-sourced markets are stored with. Fails unless the ID is a nonzero UUID or
 /// 16-byte hex value.
 pub fn normalize_community_id(value: &str) -> Result<String> {
-    parse_uuid_or_hex_bytes16(value)
+    parse_nonzero_uuid_or_hex_bytes16(value)
         .map(bytes16_to_uuid_string)
         .ok_or_else(|| {
             anyhow!(
-                "community ID '{}' is not a UUID or 16-byte hex value",
+                "community ID '{}' is not a nonzero UUID or 16-byte hex value",
                 value
             )
         })
 }
 
-/// Canonical stored market ID: lowercase `0x` hex for a UUID or 16-byte hex value.
+/// Canonical stored market ID: lowercase `0x` hex for a nonzero UUID or bytes16 value.
 pub fn normalize_market_id(value: &str) -> Result<String> {
-    parse_uuid_or_hex_bytes16(value)
+    parse_nonzero_uuid_or_hex_bytes16(value)
         .map(bytes16_to_hex)
-        .ok_or_else(|| anyhow!("market ID '{}' is not a UUID or 16-byte hex value", value))
+        .ok_or_else(|| {
+            anyhow!(
+                "market ID '{}' is not a nonzero UUID or 16-byte hex value",
+                value
+            )
+        })
 }
 
 pub fn create_encrypted_bytes16_from_string(input_string: &str) -> [u8; 16] {
@@ -104,7 +109,7 @@ pub fn derive_onchain_id(offchain_id: &str) -> String {
 
 /// The community ID is normalized first, so every accepted form of one
 /// community ID yields the same market ID. Fails for a community ID that is
-/// not a UUID or 16-byte hex value.
+/// not a nonzero UUID or 16-byte hex value.
 pub fn generate_market_id(
     community_id: &str,
     market_type: MarketType,

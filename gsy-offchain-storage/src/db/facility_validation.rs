@@ -7,7 +7,7 @@ use primitives::db_api_schema::grid_topology::{
     FacilityMarketValidationResult, FacilitySchema, SiteSchema,
 };
 use primitives::db_api_schema::market::MarketSchema;
-use primitives::utils::{bytes16_to_hex, parse_uuid_or_hex_bytes16};
+use primitives::utils::normalize_market_id;
 use std::collections::HashMap;
 
 impl DatabaseWrapper {
@@ -22,13 +22,9 @@ impl DatabaseWrapper {
             return Ok(Vec::new());
         }
 
-        let market_ids: Vec<String> = requests
+        let market_ids: Vec<Option<String>> = requests
             .iter()
-            .map(|pair| {
-                parse_uuid_or_hex_bytes16(&pair.market_id)
-                    .map(bytes16_to_hex)
-                    .unwrap_or_else(|| pair.market_id.clone())
-            })
+            .map(|pair| normalize_market_id(&pair.market_id).ok())
             .collect();
         let facility_ids: Vec<&str> = requests
             .iter()
@@ -36,7 +32,7 @@ impl DatabaseWrapper {
             .collect();
         let markets: Vec<MarketSchema> = self
             .markets()
-            .find(doc! {"market_id": {"$in": &market_ids}})
+            .find(doc! {"market_id": {"$in": market_ids.iter().flatten().collect::<Vec<_>>()}})
             .await?
             .try_collect()
             .await
@@ -86,9 +82,11 @@ impl DatabaseWrapper {
             .collect();
         let sites: HashMap<_, _> = sites.iter().map(|site| (&site.site_name, site)).collect();
 
-        let validate_pair = |pair: &FacilityMarketValidationRequest, market_id: &String| {
+        let validate_pair = |pair: &FacilityMarketValidationRequest, market_id: &Option<String>| {
             use FacilityMarketValidationReason::*;
-            let market = markets.get(market_id).ok_or(UnknownMarket)?;
+            let market = markets
+                .get(market_id.as_ref().ok_or(UnknownMarket)?)
+                .ok_or(UnknownMarket)?;
             let facility = facilities.get(&pair.facility_id).ok_or(UnknownFacility)?;
             let community = communities
                 .get(&market.community_id)

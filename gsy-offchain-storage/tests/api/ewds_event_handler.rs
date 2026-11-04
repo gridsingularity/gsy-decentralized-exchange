@@ -1413,11 +1413,18 @@ async fn community_events_normalize_ids_and_drop_invalid_batches() {
         communities[0].community_id,
         "abcdefab-1234-1234-1234-abcdefabcdef"
     );
-    let error = handle_event(&app.db_wrapper, event(EwdsEventType::Community, "invalid", json!([
+    for id in [
+        "invalid",
+        "00000000-0000-0000-0000-000000000000",
+        "0x00000000000000000000000000000000",
+        "00000000000000000000000000000000",
+    ] {
+        let error = handle_event(&app.db_wrapper, event(EwdsEventType::Community, "invalid", json!([
         {"communityId": "22222222-2222-4222-8222-222222222222", "communityName": "Not stored", "sites": []},
-        {"communityId": "invalid", "communityName": "Invalid", "sites": []}
+        {"communityId": id, "communityName": "Invalid", "sites": []}
     ]))).await.unwrap_err();
-    assert!(is_invalid_event(&error));
+        assert!(is_invalid_event(&error));
+    }
     assert_eq!(
         app.db_wrapper.communities().get_all().await.unwrap(),
         communities

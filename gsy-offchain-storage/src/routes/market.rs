@@ -20,10 +20,14 @@ pub struct MarketQuery {
 }
 
 pub async fn get_market(db: DbRef, params: Query<MarketQuery>) -> impl Responder {
+    let market_id = match normalize_market_id(&params.market_id) {
+        Ok(id) => id,
+        Err(error) => return HttpResponse::BadRequest().body(error.to_string()),
+    };
     match db
         .get_ref()
         .markets()
-        .filter(Some(params.market_id.clone()), None, None, None)
+        .filter(Some(market_id), None, None, None)
         .await
     {
         Ok(markets) => get_only_one_market(
@@ -55,6 +59,15 @@ fn get_only_one_market(markets: Vec<MarketSchema>, tracing_description: String) 
 }
 
 pub async fn get_markets(db: DbRef, params: Query<MarketsQuery>) -> impl Responder {
+    let market_id = match params
+        .market_id
+        .as_deref()
+        .map(normalize_market_id)
+        .transpose()
+    {
+        Ok(id) => id,
+        Err(error) => return HttpResponse::BadRequest().body(error.to_string()),
+    };
     let community_id = match params
         .community_id
         .as_deref()
@@ -71,7 +84,7 @@ pub async fn get_markets(db: DbRef, params: Query<MarketsQuery>) -> impl Respond
         .get_ref()
         .markets()
         .filter(
-            params.market_id.clone(),
+            market_id,
             community_id,
             params.start_time.clone(),
             params.end_time.clone(),
@@ -88,6 +101,9 @@ pub async fn get_markets(db: DbRef, params: Query<MarketsQuery>) -> impl Respond
 }
 
 pub async fn post_market(market: Json<MarketSchema>, db: DbRef) -> impl Responder {
+    if let Err(error) = normalize_market_id(&market.market_id) {
+        return HttpResponse::BadRequest().body(error.to_string());
+    }
     if let Err(e) = normalize_community_id(&market.community_id) {
         tracing::error!("Invalid market: {:?}", e);
         return HttpResponse::BadRequest().finish();
@@ -105,7 +121,12 @@ pub async fn post_clearing_result(
     result: Json<EwdsClearingResultDto>,
     db: DbRef,
 ) -> impl Responder {
-    let db_result: ClearingResultSchema = match result.into_inner().try_into() {
+    let mut result = result.into_inner();
+    result.market_id = match normalize_market_id(&result.market_id) {
+        Ok(id) => id,
+        Err(error) => return HttpResponse::BadRequest().body(error.to_string()),
+    };
+    let db_result: ClearingResultSchema = match result.try_into() {
         Ok(r) => r,
         Err(e) => {
             tracing::error!("Failed to convert EWDS clearing result: {:?}", e);

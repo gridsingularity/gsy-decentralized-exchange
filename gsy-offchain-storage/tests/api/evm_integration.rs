@@ -222,7 +222,7 @@ async fn test_evm_order_listener_persists_to_db() {
         contract MockEmitter {
             event NewMarketCreated(bytes16 indexed marketId, bytes16 indexed communityId, uint64 openingTime, uint64 closingTime, uint64 deliveryStartTime, uint64 deliveryEndTime, uint8 marketType, uint8 matchingAlgorithm, uint64 createdAt);
             function emitNewMarket(uint64 closingTime) external {
-                emit NewMarketCreated(bytes16(0), bytes16(uint128(1)), uint64(block.timestamp), closingTime, 1000, 1900, 0, 0, uint64(block.timestamp));
+                emit NewMarketCreated(bytes16(uint128(1)), bytes16(uint128(1)), uint64(block.timestamp), closingTime, 1000, 1900, 0, 0, uint64(block.timestamp));
             }
             event OrderPlaced(bytes16 indexed orderId, bytes16 indexed createdBy, bytes16 indexed marketId, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, uint8 energySourcePreference, uint8 energyType, bool isBid, bytes16 preferredTradingPartner, uint64 preferredEnergyRate);
             function emitOrderPlaced(bytes16 orderId, bytes16 createdBy, uint64 energy, uint64 rate) external {
@@ -230,7 +230,7 @@ async fn test_evm_order_listener_persists_to_db() {
                 emit OrderPlaced(
                     orderId,
                     createdBy,
-                    bytes16(0),
+                    bytes16(uint128(1)),
                     1000,
                     1234567890,
                     energy,

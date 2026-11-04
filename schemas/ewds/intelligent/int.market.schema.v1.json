@@ -6,14 +6,16 @@
   "type": "object",
   "properties": {
     "marketId": {
-      "description": "Primary identifier. IRI: int:marketId. UUID v4.",
+      "description": "Nonzero market ID returned as a lowercase UUID; generated hashes have no UUID version constraint. IRI: int:marketId.",
       "type": "string",
-      "format": "uuid"
+      "format": "uuid",
+      "not": { "const": "00000000-0000-0000-0000-000000000000" }
     },
     "communityId": {
-      "description": "FK to Community. IRI: int:communityId. UUID v4.",
+      "description": "Nonzero community ID returned as a lowercase UUID. IRI: int:communityId.",
       "type": "string",
-      "format": "uuid"
+      "format": "uuid",
+      "not": { "const": "00000000-0000-0000-0000-000000000000" }
     },
     "openingTime": {
       "description": "Market opens for order submission. IRI: int:openingTime. ISO 8601 with timezone. Must be < closingTime.",

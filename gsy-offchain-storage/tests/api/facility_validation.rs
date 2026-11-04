@@ -51,10 +51,14 @@ fn community_id(id: &str) -> String {
     uuid::Uuid::from_bytes(primitives::utils::create_encrypted_bytes16_from_string(id)).to_string()
 }
 
+fn market_id(id: &str) -> String {
+    primitives::utils::derive_onchain_id(&format!("market-{id}"))
+}
+
 async fn seed_community(db: &DatabaseWrapper, id: &str) {
     db.markets()
         .insert_one(MarketSchema {
-            market_id: format!("market-{id}"),
+            market_id: market_id(id),
             community_id: community_id(id),
             opening_time: "100".to_string(),
             closing_time: "200".to_string(),
@@ -121,8 +125,11 @@ async fn http_community_ids_are_canonical_and_remain_eligible() {
                 .community_id,
             canonical
         );
-        let result =
-            validate_via_ewds(&app.db_wrapper, json!([pair("facility-a", "market-a")])).await;
+        let result = validate_via_ewds(
+            &app.db_wrapper,
+            json!([pair("facility-a", &market_id("a"))]),
+        )
+        .await;
         assert_eq!(result["data"][0]["eligible"], true);
     }
     assert_eq!(
@@ -169,8 +176,8 @@ async fn http_topology_replacements_update_eligibility_and_preserve_name_conflic
         );
     }
     let requests = [
-        pair("facility-new", "market-a"),
-        pair("facility-a", "market-a"),
+        pair("facility-new", &market_id("a")),
+        pair("facility-a", &market_id("a")),
     ];
     assert!(
         !app.db_wrapper
@@ -231,13 +238,21 @@ async fn validates_mixed_pairs_in_input_order_without_writes() {
     // An existing ID mapping is not evidence that the facility exists.
     db.ids().get_or_create("missing".to_string()).await.unwrap();
     let requests = vec![
-        pair("facility-a", "market-a"),
-        pair("facility-a", "market-b"),
-        pair("missing", "market-a"),
+        pair("facility-a", &market_id("a")),
+        pair("facility-a", &market_id("b")),
+        pair("missing", &market_id("a")),
         pair("facility-b", "missing"),
-        pair("facility-b", "market-b"),
-        pair("owner-a", "market-a"),
-        pair("facility-a", "market-a"),
+        pair("facility-b", &market_id("b")),
+        pair("owner-a", &market_id("a")),
+        pair("facility-a", &market_id("a")),
+        pair("facility-a", "00000000-0000-0000-0000-000000000000"),
+        pair(
+            "facility-a",
+            &primitives::utils::bytes16_to_uuid_string(
+                primitives::utils::parse_uuid_or_hex_bytes16(&market_id("a")).unwrap(),
+            )
+            .to_uppercase(),
+        ),
     ];
     let results = db.validate_facility_markets(&requests).await.unwrap();
     assert_eq!(results.len(), requests.len());
@@ -248,6 +263,8 @@ async fn validates_mixed_pairs_in_input_order_without_writes() {
         Some(UnknownMarket),
         None,
         Some(UnknownFacility),
+        None,
+        Some(UnknownMarket),
         None,
     ]) {
         assert_eq!(result.facility_id, request.facility_id);
@@ -326,7 +343,7 @@ async fn requires_every_link_in_the_topology_chain() {
                 .unwrap();
         }
         let results = db
-            .validate_facility_markets(&[pair(&format!("facility-{id}"), &format!("market-{id}"))])
+            .validate_facility_markets(&[pair(&format!("facility-{id}"), &market_id(id))])
             .await
             .unwrap();
         assert!(!results[0].eligible);
@@ -339,7 +356,7 @@ async fn requires_every_link_in_the_topology_chain() {
 async fn sees_topology_updates_between_calls() {
     let app = init_app().await;
     let db = &app.db_wrapper;
-    let requests = [pair("facility-a", "market-a")];
+    let requests = [pair("facility-a", &market_id("a"))];
     assert!(!db.validate_facility_markets(&requests).await.unwrap()[0].eligible);
     seed_community(db, "a").await;
     assert!(db.validate_facility_markets(&requests).await.unwrap()[0].eligible);
@@ -382,6 +399,8 @@ async fn malformed_database_records_are_errors_not_rejections() {
         seed_community(db, id).await;
         let value = if key == "community_id" {
             community_id(value)
+        } else if key == "market_id" {
+            market_id(id)
         } else {
             value.to_string()
         };
@@ -390,12 +409,9 @@ async fn malformed_database_records_are_errors_not_rejections() {
             .await
             .unwrap();
         assert!(
-            db.validate_facility_markets(&[pair(
-                &format!("facility-{id}"),
-                &format!("market-{id}")
-            )])
-            .await
-            .is_err(),
+            db.validate_facility_markets(&[pair(&format!("facility-{id}"), &market_id(id))])
+                .await
+                .is_err(),
             "malformed {collection} record was treated as ineligible"
         );
     }
@@ -411,7 +427,7 @@ async fn unavailable_database_is_an_error_not_a_rejection() {
     .unwrap();
     let db = DatabaseWrapper(client.database("facility_validation"));
     assert!(db
-        .validate_facility_markets(&[pair("facility-a", "market-a")])
+        .validate_facility_markets(&[pair("facility-a", &market_id("a"))])
         .await
         .is_err());
 }
@@ -424,7 +440,7 @@ async fn http_and_ewds_return_the_same_bulk_validation_results() {
     seed_community(db, "b").await;
     db.markets()
         .update_one(
-            doc! {"market_id": "market-a"},
+            doc! {"market_id": &market_id("a")},
             doc! {"$set": {"market_id": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
         )
         .await
@@ -432,11 +448,11 @@ async fn http_and_ewds_return_the_same_bulk_validation_results() {
     let requests = vec![
         pair("facility-a", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
         pair("facility-a", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
-        pair("facility-a", "market-b"),
-        pair("missing", "market-b"),
+        pair("facility-a", &market_id("b")),
+        pair("missing", &market_id("b")),
         pair("facility-b", "missing"),
-        pair("facility-b", "market-b"),
-        pair("facility-b", "market-b"),
+        pair("facility-b", &market_id("b")),
+        pair("facility-b", &market_id("b")),
     ];
     let expected = db.validate_facility_markets(&requests).await.unwrap();
     assert!(expected[0].eligible && expected[1].eligible);
@@ -499,7 +515,7 @@ async fn both_transports_report_storage_errors_without_eligibility_results() {
         )
         .await
         .unwrap();
-    let payload = json!([pair("facility-a", "market-a")]);
+    let payload = json!([pair("facility-a", &market_id("a"))]);
     let http = reqwest::Client::new()
         .post(format!("{}/facilities/validate", app.address))
         .json(&payload)

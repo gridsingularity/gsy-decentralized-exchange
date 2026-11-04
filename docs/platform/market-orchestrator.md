@@ -28,8 +28,9 @@ closing time, so there is no open/close step.
    `MARKET_CREATION_BATCH_SIZE` markets. The contract skips markets that
    already exist, so a race with a pending transaction does not revert a batch.
 
-A community whose ID is neither a UUID nor a 16-byte hex value is skipped and
-logged.
+A community whose ID is malformed or all-zero is skipped and logged, without
+blocking market creation for valid communities. The filter uses the same
+validation as market-ID generation.
 
 Communities are fetched on every tick so pilot-site updates are observed without
 restarting the orchestrator. A tick is skipped when no communities exist.
@@ -38,9 +39,9 @@ restarting the orchestrator. A tick is skipped when no communities exist.
 
 `marketId` is generated from:
 
-- Community UUID string
-- `MarketType` string (`Spot`, `Flexibility`, `Settlement`)
-- Delivery timestamp (`u64`)
+- Community ID normalized to a lowercase hyphenated UUID (UTF-8)
+- `MarketType` string (`spot`, `flex`, `settlement`, UTF-8)
+- Delivery timestamp (`u64`, big-endian bytes)
 - Blake2b hash, 16-byte output
 
 The shared generator lives in `primitives::utils::generate_market_id`, allowing

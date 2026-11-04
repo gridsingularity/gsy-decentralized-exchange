@@ -335,7 +335,7 @@ async fn filter_trades_time_boundaries_are_inclusive_start_exclusive_end() {
             OrderEnum::Offer,
         );
         let mut trade = make_trade(&format!("TRADE-BORDER-{:04}", idx), bid, offer);
-        trade.market_id = format!("0x{:032x}", idx);
+        trade.market_id = format!("0x{:032x}", idx + 1);
         trade.timestamp = epoch_to_rfc3339(*ts);
         db.get_ref()
             .markets()
@@ -403,7 +403,7 @@ async fn filter_trades_time_boundaries_are_inclusive_start_exclusive_end() {
     // market_id takes precedence: the range [20, 30) is ignored, so the trade of the market
     // delivering at 19 is returned.
     let by_market = trades_svc()
-        .filter_trades(Some("0x00000000000000000000000000000000".to_string()), Some(20), Some(30))
+        .filter_trades(Some("0x00000000000000000000000000000001".to_string()), Some(20), Some(30))
         .await
         .unwrap();
     assert_eq!(by_market.len(), 1);

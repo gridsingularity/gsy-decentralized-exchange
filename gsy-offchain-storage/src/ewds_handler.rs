@@ -5,8 +5,8 @@ use futures::future::join_all;
 use primitives::db_api_schema::grid_topology::FacilityMarketValidationRequest;
 use primitives::db_api_schema::profiles::{MeasurementPointType, MeasurementSchema};
 use primitives::ewds::dto::{
-    parse_market_id, EwdsClearingResultDto, EwdsCommunityDto, EwdsErrorPayload, EwdsInboundMessage,
-    EwdsMarketDto, EwdsMeasurementDto, EwdsOrderDto, EwdsRequestEnvelope, EwdsResponseEnvelope,
+    EwdsClearingResultDto, EwdsCommunityDto, EwdsErrorPayload, EwdsInboundMessage, EwdsMarketDto,
+    EwdsMeasurementDto, EwdsOrderDto, EwdsRequestEnvelope, EwdsResponseEnvelope,
     EwdsSendMessageDto, EwdsTradeDto,
 };
 use primitives::ewds::{
@@ -16,7 +16,7 @@ use primitives::ewds::{
     EwdsOperation, EwdsTopicConfig,
 };
 use primitives::utils::{
-    bytes16_to_hex, normalize_community_id, normalize_market_id, opt_rfc3339_to_epoch,
+    normalize_community_id, normalize_market_id, opt_rfc3339_to_epoch,
     timestamp_to_string_with_padding,
 };
 use reqwest::Client;
@@ -622,7 +622,8 @@ pub async fn handle_request(
                 let payload: MarketsQueryPayload = serde_json::from_value(envelope.payload)?;
                 let market_id = payload
                     .market_id
-                    .map(|market_id| parse_market_id(&market_id).map(bytes16_to_hex))
+                    .as_deref()
+                    .map(normalize_market_id)
                     .transpose()
                     .map_err(|e| anyhow!("markets.query payload parse error: {}", e))?;
                 let community_id = payload

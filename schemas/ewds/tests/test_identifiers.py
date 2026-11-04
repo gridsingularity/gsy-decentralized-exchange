@@ -11,6 +11,7 @@ SCHEMAS = Path(__file__).resolve().parents[1] / "intelligent"
 UUID = "ABABABAB-ABAB-ABAB-ABAB-ABABABABABAB"
 HEX = UUID.replace("-", "")
 VALID = [UUID, UUID.lower(), HEX, "0x" + HEX, "0x" + HEX.lower()]
+NIL = ["0" * 32, "0x" + "0" * 32, "00000000-0000-0000-0000-000000000000"]
 INVALID = [
     "", "0x1234", "0X" + HEX, " " + UUID, UUID + "\n", UUID + " ",
     "{" + UUID + "}", "urn:uuid:" + UUID, "0x" + UUID,
@@ -63,12 +64,48 @@ class IdentifierSchemas(unittest.TestCase):
                     self.assertFalse(check.is_valid(payload))
 
     def test_query_market_identifiers(self):
-        for operation in ["orders.query", "trades.query"]:
+        for operation in ["orders.query", "trades.query", "markets.query"]:
             check = validator(f"int.{operation}.request.v1.json")
-            for identifier in VALID + INVALID:
+            for identifier in VALID + INVALID + NIL:
                 with self.subTest(operation=operation, identifier=identifier):
                     payload = {"requestId": "opaque-request", "operation": operation, "payload": {"marketId": identifier}}
                     self.assertEqual(check.is_valid(payload), identifier in VALID)
+
+    def test_community_event_and_query_identifiers(self):
+        event = validator("int.community.event.v1.json")
+        query = validator("int.markets.query.request.v1.json")
+        for identifier in VALID + INVALID + NIL:
+            with self.subTest(identifier=identifier):
+                self.assertEqual(event.is_valid({
+                    "eventId": "opaque-event-id", "eventType": "community.event",
+                    "occurredAt": "2026-11-04T10:01:00Z",
+                    "data": [{"communityId": identifier, "communityName": "Test", "sites": []}],
+                }), identifier in VALID)
+                self.assertEqual(query.is_valid({
+                    "requestId": "opaque-request", "operation": "markets.query",
+                    "payload": {"communityId": identifier},
+                }), identifier in VALID)
+
+    def test_market_output_accepts_hash_uuids_and_rejects_nil(self):
+        check = validator("int.market.schema.v1.json")
+        payload = {
+            "marketId": "808f0603-acbe-6696-4d3d-a1cd0cb3f5f4",
+            "communityId": UUID.lower(), "marketType": "spot",
+            "matchingAlgorithm": "pay_as_bid",
+            **{field: "2026-11-04T10:00:00Z" for field in [
+                "openingTime", "closingTime", "deliveryStartTime", "deliveryEndTime", "createdAt",
+            ]},
+        }
+        check.validate(payload)
+        for field in ["marketId", "communityId"]:
+            self.assertFalse(check.is_valid({**payload, field: NIL[2]}))
+
+    def test_clearing_result_market_identifier(self):
+        schema = validator("int.clearing-result.schema.v1.json").schema["properties"]["marketId"]
+        check = Draft202012Validator(schema)
+        for identifier in VALID + INVALID + NIL:
+            with self.subTest(identifier=identifier):
+                self.assertEqual(check.is_valid(identifier), identifier in VALID)
 
 
 if __name__ == "__main__":

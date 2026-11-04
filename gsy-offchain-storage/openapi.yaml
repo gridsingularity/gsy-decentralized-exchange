@@ -222,7 +222,7 @@ paths:
       parameters:
         - in: query
           name: market_id
-          description: Market ID as UUID or 0x-prefixed 16-byte hex.
+          description: Nonzero market ID as UUID, 0x-prefixed or bare bytes16 hex; no surrounding whitespace.
           schema: { type: string }
         - { $ref: "#/components/parameters/StartTimeQuery" }
         - { $ref: "#/components/parameters/EndTimeQuery" }
@@ -241,9 +241,33 @@ paths:
           description: Missing or invalid query range.
 
   /market:
+    get:
+      tags: [Trades & Market]
+      summary: Look up a market by ID.
+      parameters:
+        - in: query
+          name: market_id
+          required: true
+          description: Nonzero UUID, 0x-prefixed or bare bytes16 hex; no surrounding whitespace.
+          schema: { type: string }
+      responses:
+        "200":
+          description: Market matching the given ID, with a lowercase 0x market_id.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketSchema"
+        "400":
+          description: Invalid or nil market ID.
+        "404":
+          description: No matching market.
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /markets:
     post:
       tags: [Trades & Market]
-      summary: Persist a market opening.
+      summary: Create or update a market by its canonical ID.
       requestBody:
         required: true
         content:
@@ -252,55 +276,40 @@ paths:
               $ref: "#/components/schemas/MarketSchema"
       responses:
         "200":
-          description: Saved market.
+          description: Saved market, with canonical market and community IDs.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/MarketSchema"
+        "400":
+          description: Invalid or nil market or community ID.
         "500":
           $ref: "#/components/responses/InternalError"
     get:
       tags: [Trades & Market]
-      summary: Look up a market by ID.
+      summary: List markets by market ID, community ID or opening time.
       parameters:
-        - in: query
-          name: market_id
-          required: true
-          schema: { type: string }
-      responses:
-        "200":
-          description: Markets matching the given ID.
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/MarketSchema"
-        "404":
-          description: No matching market.
-        "500":
-          $ref: "#/components/responses/InternalError"
-
-  /community-market:
-    get:
-      tags: [Trades & Market]
-      summary: Look up markets opened for a given community.
-      parameters:
+        - { $ref: "#/components/parameters/MarketIdQuery" }
         - in: query
           name: community_id
-          required: true
+          required: false
+          description: Nonzero UUID, 0x-prefixed or bare bytes16 hex; no surrounding whitespace.
           schema: { type: string }
         - { $ref: "#/components/parameters/StartTimeQuery" }
         - { $ref: "#/components/parameters/EndTimeQuery" }
       responses:
         "200":
-          description: Markets for the community.
+          description: Matching markets with canonical IDs.
           content:
             application/json:
               schema:
                 type: array
                 items:
                   $ref: "#/components/schemas/MarketSchema"
+        "400":
+          description: Invalid or nil market or community ID.
+        "404":
+          description: No matching markets.
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -308,6 +317,7 @@ paths:
     post:
       tags: [Trades & Market]
       summary: Persist a clearing result for a market.
+      description: Normalizes marketId to lowercase 0x bytes16; accepts nonzero UUID, 0x-prefixed or bare hex.
       requestBody:
         required: true
         content:
@@ -321,6 +331,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/EwdsClearingResultDto"
+        "400":
+          description: Invalid clearing result or malformed/nil market ID.
         "500":
           $ref: "#/components/responses/InternalError"
     get:
@@ -330,7 +342,7 @@ paths:
         - in: query
           name: market_id
           required: true
-          description: Market ID as UUID or 0x-prefixed 16-byte hex.
+          description: Nonzero market ID as UUID, 0x-prefixed or bare bytes16 hex; no surrounding whitespace.
           schema: { type: string }
       responses:
         "200":
@@ -751,7 +763,7 @@ components:
       in: query
       name: market_id
       required: false
-      description: Market ID as UUID or 0x-prefixed 16-byte hex for order queries.
+      description: Nonzero market ID as UUID, 0x-prefixed or bare 16-byte hex; no surrounding whitespace.
       schema: { type: string }
     StartTimeQuery:
       in: query
@@ -1041,8 +1053,12 @@ components:
         - delivery_end_time
         - market_type
       properties:
-        market_id: { type: string }
-        community_id: { type: string }
+        market_id:
+          type: string
+          description: Nonzero UUID, 0x-prefixed or bare bytes16 hex on input; lowercase 0x hex on output.
+        community_id:
+          type: string
+          description: Nonzero UUID, 0x-prefixed or bare bytes16 hex on input; lowercase hyphenated UUID on output.
         opening_time: { type: string }
         closing_time: { type: string }
         delivery_start_time: { type: string }
@@ -1184,7 +1200,7 @@ components:
       properties:
         community_id:
           type: string
-          description: UUID or 16-byte hex on input; canonical lowercase hyphenated UUID on output.
+          description: Nonzero UUID, 0x-prefixed or bare bytes16 hex on input; canonical lowercase hyphenated UUID on output.
         community_name: { type: string }
         sites:
           type: array

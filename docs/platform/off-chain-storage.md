@@ -74,10 +74,20 @@ posts them any more.
 - `/facilities` (`GET`, `POST`)
 - `/facilities/validate` (`POST`) for read-only bulk facility/market validation
 
-Community writes through HTTP and EWDS accept UUID or 16-byte hex IDs and store
+Community writes through HTTP and EWDS accept nonzero UUID or 16-byte hex IDs and store
 lowercase hyphenated UUIDs. `GET /communities` and `communities.query` return that
 canonical form. Invalid IDs return HTTP 400 or cause the EWDS event to be dropped
 as invalid; they are not retried as storage failures.
+
+`GET /market`, `GET /markets`, `markets.query`, `POST /markets`, and
+`POST /clearing-results` normalize market IDs to lowercase `0x` bytes16.
+UUIDs, lowercase `0x`-prefixed hex and bare hex are accepted, with hexadecimal
+digits in either case. Whitespace, malformed IDs and all-zero IDs are rejected
+with HTTP 400 or EWDS `invalid_request`. Market writes also normalize community
+IDs. HTTP market reads return stored hex market IDs; EWDS market reads and
+events continue returning UUID market IDs. Neither format implies UUID v4.
+Facility-validation responses still echo each requested pair exactly and report
+an invalid market ID as `unknown_market` for that pair only.
 
 `POST /sites` and `/facilities` create or replace records by `site_name` and
 `facility_id`, respectively, matching the EWDS upsert behavior. Send complete
@@ -182,7 +192,7 @@ reindexing tool. See the [fresh-deployment requirements](../setup/contracts.md#f
   HTTP and EWDS queries return the same DTO. HTTP-only operation needs no gateway.
   Notification delivery remains best effort, without a durable outbox or ordering guarantee.
 - Order IDs and market IDs are stored as hex strings (`0x...`).
-  Trade, order and clearing-result queries accept market IDs as UUID or 16-byte
+  Market, trade, order and clearing-result queries accept nonzero market IDs as UUID or 16-byte
   hex and normalize them to lowercase `0x` hex. Invalid IDs return HTTP 400 or
   EWDS `invalid_request`. Storage read failures return HTTP 500 or EWDS
   `STORAGE_UNAVAILABLE`, never a partial list. A malformed stored document blocks

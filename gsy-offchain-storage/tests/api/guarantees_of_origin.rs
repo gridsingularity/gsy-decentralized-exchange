@@ -22,7 +22,7 @@ const BUYER_FACILITY: &str = "goo-buyer";
 const BUYER_OWNER: &str = "goo-owner-buyer";
 const COMMUNITY: &str = "60060060-0000-4000-8000-000000000001";
 const EXPORT_POINT: &str = "Measurement:goo-community:goo-seller";
-const MARKET: &str = "0xmarket";
+const MARKET: &str = "0x60060060000040008000000000000001";
 
 fn hash(offchain_id: &str) -> String {
     bytes16_to_hex(create_encrypted_bytes16_from_string(offchain_id))

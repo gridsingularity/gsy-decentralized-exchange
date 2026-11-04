@@ -25,6 +25,9 @@ Additional local message contracts wrap these entities for the current
 request/reply topics:
 
 - query request/reply envelopes for orders, trades, measurements, and communities
+- `int.markets.query.request.v1.json` for market/community filters; malformed or
+  nil IDs receive `invalid_request`. Market responses and events use UUID IDs,
+  without enforcing a UUID version. Stored market IDs use lowercase `0x` hex.
 - `int.facilities.validate.request.v1.json` / `int.facilities.validate.response.v1.json`
   for read-only facility/market eligibility (`facilitiesValidate` / `facilitiesValidateResponse`)
 - upsert request envelopes for forecasts, measurements, and markets
