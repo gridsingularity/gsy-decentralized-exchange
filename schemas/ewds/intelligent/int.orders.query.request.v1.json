@@ -11,7 +11,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "marketId": { "type": "string", "pattern": "^(?:0x[a-fA-F0-9]{32}|[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12})$", "description": "Market ID as UUID or 0x-prefixed 16-byte hex." },
+        "marketId": { "type": "string", "pattern": "^(?:(?:0x)?[a-fA-F0-9]{32}|[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12})(?![\\s\\S])", "description": "Market ID as UUID, 0x-prefixed or bare 16-byte hex; no surrounding whitespace." },
         "startTime": { "type": "string", "format": "date-time", "description": "Inclusive range start, RFC 3339." },
         "endTime": { "type": "string", "format": "date-time", "description": "Exclusive range end, RFC 3339." }
       }

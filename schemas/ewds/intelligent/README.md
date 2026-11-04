@@ -3,6 +3,15 @@
 This folder contains JSON Schemas for GSY DEX off-chain communication over
 EWDS.
 
+Identifier and order-event schema regression tests run in Docker:
+
+```bash
+docker run --rm -v "$PWD":/work -w /work python:3.12-slim \
+  sh -c 'pip install --quiet jsonschema==4.25.1 && python -m unittest discover -s schemas/ewds/tests -v'
+```
+
+These validate local schemas, not the schema version installed in a gateway.
+
 The market-domain entity schemas are aligned with the Energy Web Intelligent
 schemas under `schemas/v1.0.0/market`:
 

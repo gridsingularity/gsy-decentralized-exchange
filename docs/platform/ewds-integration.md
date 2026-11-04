@@ -188,6 +188,9 @@ Invalid IDs receive `success: false` with `error.code: invalid_request`.
 Database failures in read queries receive `STORAGE_UNAVAILABLE` and no partial
 data. Sending an error response keeps the rest of the already-polled request
 batch eligible for processing; callers can retry failed queries.
+This includes malformed `ids.query`, `markets.query` and `measurements.query`
+payloads and query timestamps. ID get-or-create failures also receive
+`STORAGE_UNAVAILABLE`, rather than leaving the requester waiting for a timeout.
 
 The same channels also carry the events other systems send to GSY; see
 [Inbound Events](#inbound-events).
@@ -316,7 +319,7 @@ returns (`int.order.event.v1.json`):
 
 | Field | Rule |
 |---|---|
-| `orderId` | A UUID chosen by the publisher. Its 16 bytes become the on-chain order ID, so `orders.query` and the trades' `bidId`/`offerId` return it as `0x` plus 32 hex digits. |
+| `orderId` | A non-zero bytes16 ID chosen by the publisher, as a hyphenated UUID, `0x` plus 32 hex digits, or bare 32 hex digits. Its bytes become the on-chain order ID; queries and lifecycle notifications use lowercase `0x` hex. Rejections echo the submitted spelling. |
 | `marketId` | The market's non-zero UUID or bytes16 hex ID, e.g. from `markets.query`. The contract still checks that the market is open. |
 | `createdBy` | The original off-chain facility ID. The subscriber validates its participation in the market before mapping it to an on-chain ID. It is not the owner's ID or the service wallet. |
 | `orderStatus` | Must be `submitted`. |

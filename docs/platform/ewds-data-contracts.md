@@ -9,6 +9,26 @@ Source input: Energy Web Intelligent schemas and the agreed ontology workbook,
 including `Community`, `Market`, `MarketTimeSeries`, `Order`, `Trade`, and
 `ClearingResult`.
 
+## Identifier Syntax
+
+The shared bytes16 parser accepts hyphenated UUIDs with the exact 8-4-4-4-12
+structure, `0x` followed by 32 hex digits, or bare 32 hex digits. Hex digits may
+be upper- or lowercase. Whitespace, uppercase `0X`, braces, `urn:uuid:` notation,
+misplaced hyphens and `0x`-prefixed hyphenated UUIDs are rejected. UUID version
+and variant bits are unrestricted: market IDs are hashes, not necessarily v4.
+Order submissions require non-zero order and market IDs. The raw byte parser
+still accepts zero for optional contract sentinels.
+
+The shared order schema serves both submissions and status notifications.
+Lifecycle notifications contain lowercase `0x` order IDs and on-chain facility
+hashes in `createdBy`; rejections retain the submitted identifiers. FOS must
+correlate equivalent order IDs by their 16 bytes, not their spelling.
+`preferredTradingPartner` remains an off-chain identity, even when hex-shaped.
+
+Off-chain facility IDs are not required to be UUIDs. The UUID-only off-chain
+canonicalization helpers are defined in primitives but are not yet enabled
+across storage and consumers; that rollout is a separate DD-459 increment.
+
 ## Schema Package Location
 
 Schema files are versioned in:

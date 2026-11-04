@@ -1,4 +1,8 @@
-use primitives::utils::{generate_market_id, normalize_community_id, normalize_market_id};
+use primitives::utils::{
+    bytes16_to_hex, bytes16_to_uuid_string, canonical_offchain_id, derive_onchain_id,
+    generate_market_id, normalize_community_id, normalize_market_id, normalize_offchain_id,
+    parse_nonzero_uuid_or_hex_bytes16, parse_uuid_or_hex_bytes16,
+};
 use primitives::MarketType;
 
 const COMMUNITY_ID: &str = "11111111-1111-4111-8111-111111111111";
@@ -47,6 +51,100 @@ fn market_id_is_deterministic_for_the_same_seed() {
     let second = generate_market_id(COMMUNITY_ID, MarketType::Spot, 1_700_000_000).unwrap();
 
     assert_eq!(first, second);
+    assert_eq!(bytes16_to_hex(first), "0x808f0603acbe66964d3da1cd0cb3f5f4");
+}
+
+#[test]
+fn bytes16_parser_accepts_only_the_explicit_grammar() {
+    let expected = [0xab; 16];
+    for value in [
+        "abababab-abab-abab-abab-abababababab",
+        "ABABABAB-ABAB-ABAB-ABAB-ABABABABABAB",
+        "0xABABABABABABABABABABABABABABABAB",
+        "abababababababababababababababab",
+    ] {
+        assert_eq!(parse_uuid_or_hex_bytes16(value), Some(expected), "{value}");
+    }
+    for value in [
+        "",
+        "0xab",
+        "0xgggggggggggggggggggggggggggggggg",
+        "0Xabababababababababababababababab",
+        " abababab-abab-abab-abab-abababababab",
+        "abababab-abab-abab-abab-abababababab\n",
+        "\tabababababababababababababababab",
+        "{abababab-abab-abab-abab-abababababab}",
+        "urn:uuid:abababab-abab-abab-abab-abababababab",
+        "0xabababab-abab-abab-abab-abababababab",
+        "abababababab-abab-abab-abab-abababab",
+        "abababababababababababababababab----",
+        "\u{e9}abababababababababababababababa",
+    ] {
+        assert_eq!(parse_uuid_or_hex_bytes16(value), None, "{value:?}");
+    }
+}
+
+#[test]
+fn required_ids_reject_zero_without_breaking_optional_sentinels() {
+    for value in [
+        "00000000-0000-0000-0000-000000000000",
+        "0x00000000000000000000000000000000",
+        "00000000000000000000000000000000",
+    ] {
+        assert_eq!(parse_uuid_or_hex_bytes16(value), Some([0; 16]));
+        assert_eq!(parse_nonzero_uuid_or_hex_bytes16(value), None);
+    }
+}
+
+#[test]
+fn offchain_normalization_preserves_opaque_and_hex_shaped_identities() {
+    let uuid = "ABABABAB-ABAB-ABAB-ABAB-ABABABABABAB";
+    assert_eq!(
+        normalize_offchain_id(uuid).unwrap(),
+        uuid.to_ascii_lowercase()
+    );
+    for value in [
+        "facility-a",
+        "Facility-A",
+        "0xABABABABABABABABABABABABABABABAB",
+        "ABABABABABABABABABABABABABABABAB",
+        "DS-1-MQTT",
+    ] {
+        assert_eq!(normalize_offchain_id(value).unwrap(), value);
+    }
+    for value in [
+        "",
+        " ",
+        "\t\n",
+        " facility-a",
+        "facility-a\n",
+        "facility-a\u{a0}",
+    ] {
+        assert!(normalize_offchain_id(value).is_err(), "{value:?}");
+        assert_eq!(canonical_offchain_id(value), value);
+    }
+}
+
+#[test]
+fn canonical_outputs_round_trip_in_their_identifier_domains() {
+    let market = generate_market_id(COMMUNITY_ID, MarketType::Spot, 1_700_000_000).unwrap();
+    let facility = parse_uuid_or_hex_bytes16(&derive_onchain_id("facility-a")).unwrap();
+    for bytes in [
+        market,
+        facility,
+        [0xff; 16],
+        *uuid::Uuid::new_v4().as_bytes(),
+    ] {
+        for value in [bytes16_to_hex(bytes), bytes16_to_uuid_string(bytes)] {
+            assert_eq!(parse_nonzero_uuid_or_hex_bytes16(&value), Some(bytes));
+            let market = normalize_market_id(&value).unwrap();
+            assert_eq!(normalize_market_id(&market).unwrap(), market);
+            let community = normalize_community_id(&value).unwrap();
+            assert_eq!(normalize_community_id(&community).unwrap(), community);
+            let offchain = normalize_offchain_id(&value).unwrap();
+            assert_eq!(normalize_offchain_id(&offchain).unwrap(), offchain);
+        }
+    }
 }
 
 #[test]

@@ -18,20 +18,52 @@ pub fn bytes16_to_uuid_string(value: [u8; 16]) -> String {
     Uuid::from_bytes(value).to_string()
 }
 
+/// Accepts UUID (8-4-4-4-12), lowercase `0x`-prefixed hex, or bare bytes16 hex.
+/// Does not trim, impose a UUID version, or reject optional all-zero sentinels.
 pub fn parse_uuid_or_hex_bytes16(value: &str) -> Option<[u8; 16]> {
-    let trimmed = value.trim();
-    let hex_value = if let Some(stripped) = trimmed.strip_prefix("0x") {
-        stripped.to_string()
+    let value = if is_hyphenated_uuid(value) {
+        value.replace('-', "")
     } else {
-        trimmed.replace('-', "")
+        value.strip_prefix("0x").unwrap_or(value).to_string()
     };
+    let mut bytes = [0; 16];
+    hex::decode_to_slice(value, &mut bytes).ok()?;
+    Some(bytes)
+}
 
-    if hex_value.len() != 32 || !hex_value.chars().all(|c| c.is_ascii_hexdigit()) {
-        return None;
+fn is_hyphenated_uuid(value: &str) -> bool {
+    value.len() == 36
+        && value.bytes().enumerate().all(|(index, byte)| {
+            if matches!(index, 8 | 13 | 18 | 23) {
+                byte == b'-'
+            } else {
+                byte.is_ascii_hexdigit()
+            }
+        })
+}
+
+/// Parses a required bytes16 identity, excluding the optional all-zero sentinel.
+pub fn parse_nonzero_uuid_or_hex_bytes16(value: &str) -> Option<[u8; 16]> {
+    parse_uuid_or_hex_bytes16(value).filter(|bytes| *bytes != [0; 16])
+}
+
+/// Lowercases only strict hyphenated UUIDs; opaque identities remain byte-for-byte unchanged.
+pub fn canonical_offchain_id(value: &str) -> String {
+    if is_hyphenated_uuid(value) {
+        value.to_ascii_lowercase()
+    } else {
+        value.to_string()
     }
+}
 
-    let decoded = hex::decode(hex_value).ok()?;
-    decoded.try_into().ok()
+/// Validates an incoming off-chain identity before applying UUID-only canonicalization.
+pub fn normalize_offchain_id(value: &str) -> Result<String> {
+    if value.is_empty() || value.trim() != value {
+        return Err(anyhow!(
+            "off-chain ID must be nonempty and have no surrounding whitespace"
+        ));
+    }
+    Ok(canonical_offchain_id(value))
 }
 
 /// Canonical form of a community ID: the lowercase hyphenated UUID that

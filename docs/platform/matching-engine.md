@@ -31,6 +31,14 @@ longer represent one uniform-price auction.
    `TradeSettled` events. The matching engine does not write trade records or
    publish trade-status notifications before confirmation.
 
+Known non-Submitted orders are ignored before full conversion. A malformed
+Submitted order (or an unknown status) excludes its entire market/time-slot
+book, including otherwise valid orders; an unreadable slot excludes the whole
+market. No matches or clearing results are emitted for excluded books, while
+other books can proceed. An unidentifiable market, failed storage response or
+ID-service failure aborts the cycle. This isolation applies to orders decoded
+from the response, not to unreadable MongoDB records or response envelopes.
+
 A failed or dropped transaction creates no trade record. `Settled` is reserved
 for financial settlement by the partner's future billing integration, not the
 on-chain match confirmation.
