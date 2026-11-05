@@ -10,7 +10,8 @@ concurrency:
 
 jobs:
   integration:
-    runs-on: ubuntu-latest
+    # MongoDB 8.3.9 rejects newer Ubuntu kernels; revisit after SERVER-131779 ships in 8.3.14.
+    runs-on: ubuntu-22.04
     permissions:
       contents: read
       packages: read
