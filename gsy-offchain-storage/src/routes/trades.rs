@@ -3,28 +3,84 @@ use crate::ewds_handler::validate_trades_query_range;
 use crate::routes::parse_time_range;
 use actix_web::web::Query;
 use actix_web::{web::Json, HttpResponse, Responder};
+use anyhow::{Context, Result};
+use mongodb::bson::doc;
 use primitives::db_api_schema::trades::DbTradeSchema;
 use primitives::ewds::dto::EwdsTradeDto;
-use primitives::utils::normalize_market_id;
+use primitives::utils::{
+    bytes16_to_hex, normalize_market_id, parse_nonzero_uuid_or_hex_bytes16,
+    parse_uuid_or_hex_bytes16,
+};
 use serde::Deserialize;
+use std::collections::HashSet;
+
+fn normalize_imported_trade(mut trade: DbTradeSchema) -> Result<DbTradeSchema> {
+    for (name, id) in [
+        ("tradeId", &mut trade.trade_uuid),
+        ("marketId", &mut trade.market_id),
+        ("bidId", &mut trade.bid_hash),
+        ("offerId", &mut trade.offer_hash),
+        ("buyerId", &mut trade.buyer),
+        ("sellerId", &mut trade.seller),
+    ] {
+        *id = bytes16_to_hex(parse_nonzero_uuid_or_hex_bytes16(id).with_context(|| {
+            format!("Invalid {name}: expected a nonzero UUID or bytes16 hex ID")
+        })?);
+    }
+    for (name, residual) in [
+        ("residualBidId", &mut trade.residual_bid_id),
+        ("residualOfferId", &mut trade.residual_offer_id),
+    ] {
+        *residual = residual
+            .as_deref()
+            .filter(|id| !id.is_empty())
+            .map(|id| parse_uuid_or_hex_bytes16(id).with_context(|| format!("Invalid {name}")))
+            .transpose()?
+            .filter(|id| *id != [0; 16])
+            .map(bytes16_to_hex);
+    }
+    Ok(trade)
+}
 
 #[tracing::instrument(name = "Adding new trades", skip(db), fields(trades = ?trades))]
 pub async fn post_trades(trades: Json<Vec<EwdsTradeDto>>, db: DbRef) -> impl Responder {
     let db_trades: Vec<DbTradeSchema> = match trades
         .into_inner()
         .into_iter()
-        .map(DbTradeSchema::try_from)
+        .map(|trade| DbTradeSchema::try_from(trade).and_then(normalize_imported_trade))
         .collect::<Result<Vec<_>, _>>()
     {
         Ok(v) => v,
         Err(e) => {
             tracing::error!("Failed to convert EWDS trade: {:?}", e);
-            return HttpResponse::BadRequest().finish();
+            return HttpResponse::BadRequest().body(e.to_string());
         }
     };
 
+    let mut ids = HashSet::new();
+    if db_trades
+        .iter()
+        .any(|trade| !ids.insert(trade.trade_uuid.clone()))
+    {
+        return HttpResponse::Conflict().body("Duplicate tradeId in import batch");
+    }
+    match db
+        .trades()
+        .count_documents(doc! {"trade_uuid": {"$in": ids.into_iter().collect::<Vec<_>>()}})
+        .await
+    {
+        Ok(0) => {}
+        Ok(_) => return HttpResponse::Conflict().body("Trade already exists"),
+        Err(error) => {
+            tracing::error!("Failed to check trade import conflicts: {error}");
+            return HttpResponse::InternalServerError().finish();
+        }
+    }
     match db.get_ref().trades().insert_trades(db_trades).await {
         Ok(ids) => HttpResponse::Ok().json(ids),
+        Err(error) if format!("{error:#}").contains("E11000") => {
+            HttpResponse::Conflict().body("Trade already exists")
+        }
         Err(_) => HttpResponse::InternalServerError().finish(),
     }
 }

@@ -44,19 +44,19 @@ async fn submit_market_forecasts_three_users(
 
     let facilities = vec![
         FacilitySchema {
-            facility_id: format!("area{}", user1.clone()),
+            facility_id: world.facility_id_for_user(&user1),
             facility_name: format!("area{}", user1.clone()),
             site_id: "site-12345".to_string(),
             owner_id: user1.clone(),
         },
         FacilitySchema {
-            facility_id: format!("area{}", user2.clone()),
+            facility_id: world.facility_id_for_user(&user2),
             facility_name: format!("area{}", user2.clone()),
             site_id: "site-12345".to_string(),
             owner_id: user2.clone(),
         },
         FacilitySchema {
-            facility_id: format!("area{}", user3.clone()),
+            facility_id: world.facility_id_for_user(&user3),
             facility_name: format!("area{}", user3.clone()),
             site_id: "site-12345".to_string(),
             owner_id: user3.clone(),
@@ -99,6 +99,27 @@ fn matching_algorithm_from_env() -> MatchingAlgorithm {
         env::var("MATCHING_ALGORITHM").unwrap_or_else(|_| MatchingAlgorithm::default().to_string());
     MatchingAlgorithm::from_str(configured_value.as_str())
         .unwrap_or_else(|error| panic!("Invalid MATCHING_ALGORITHM: {}", error))
+}
+
+#[when("forecasts use facilities registered with uppercase UUIDs")]
+async fn submit_uuid_facility_forecasts(world: &mut MyWorld) {
+    world.facilities_topology = ["alice", "bob", "charlie"]
+        .into_iter()
+        .enumerate()
+        .map(|(index, user)| FacilitySchema {
+            facility_id: format!("ABCDEFAB-ABCD-ABCD-ABCD-{:012X}", index + 1),
+            facility_name: format!("area{user}"),
+            site_id: "site-12345".into(),
+            owner_id: user.into(),
+        })
+        .collect();
+    submit_market_forecasts(world, 2.0).await;
+    // Submit orders using a different spelling from the registered topology/profiles.
+    for facility in &mut world.facilities_topology {
+        facility.facility_id.make_ascii_lowercase();
+    }
+    world.bid_forecast.as_mut().unwrap().facility_id.make_ascii_lowercase();
+    world.offer_forecast.as_mut().unwrap().facility_id.make_ascii_lowercase();
 }
 
 #[when(expr = "forecasts of {float} energy are submitted")]
@@ -334,6 +355,10 @@ async fn publish_community_via_ewds(community: &EnergyCommunitySchema) {
         .publish_event(&event)
         .await
         .expect("Failed to publish E2E community through EWDS");
+
+    let mut community = community;
+    community.community_id =
+        primitives::utils::normalize_community_id(&community.community_id).unwrap();
 
     // Events get no reply, so wait until the off-chain storage has stored the community.
     for _ in 0..EWDS_COMMUNITY_POLL_ATTEMPTS {

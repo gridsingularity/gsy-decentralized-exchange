@@ -218,7 +218,11 @@ impl MyWorld {
     }
 
     pub fn facility_id_for_user(&self, user_name: &str) -> String {
-        format!("area{user_name}")
+        self.facilities_topology
+            .iter()
+            .find(|facility| facility.owner_id == user_name && facility.site_id == "site-12345")
+            .map(|facility| facility.facility_id.clone())
+            .unwrap_or_else(|| format!("area{user_name}"))
     }
 
     pub fn facility_id_for_market_user(&self, market_id: [u8; 16], user_name: &str) -> String {

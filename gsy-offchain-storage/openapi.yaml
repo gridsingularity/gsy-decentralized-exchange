@@ -21,7 +21,9 @@ info:
     IDs (UUID or bytes16 hex) to lowercase 0x hex. Invalid IDs return 400; duplicate
     IDs in the batch or storage return 409. Batches are not transactional under
     concurrent writes. Listener events remain authoritative and can replace imports.
-    Trade imports still require canonical lowercase 0x-prefixed 16-byte market IDs.
+    Trade imports normalize all required IDs and parties by the same bytes16 rule;
+    empty or zero residual IDs become null. They reject invalid IDs with 400 and
+    duplicate canonical trade IDs with 409, without updating orders or emitting events.
   license:
     name: GPL-3.0-or-later
 servers:
@@ -192,6 +194,8 @@ paths:
       summary: Import trades (alias of POST /trades).
       description: |
         Imports are insert-only and do not update orders or publish lifecycle notifications.
+        IDs accept UUID or bytes16 hex and are stored as lowercase 0x hex. All input is
+        validated before writes; known duplicates return 409. Concurrent batches are not transactional.
       requestBody:
         required: true
         content:
@@ -211,6 +215,8 @@ paths:
           $ref: "#/components/responses/InternalError"
         "400":
           description: Invalid trade payload or unsupported trade status.
+        "409":
+          description: Duplicate canonical trade ID in the batch or existing storage.
 
   /trades:
     post:
@@ -218,6 +224,8 @@ paths:
       summary: Import trades using EWDS JSON.
       description: |
         Imports are insert-only and do not update orders or publish lifecycle notifications.
+        IDs accept UUID or bytes16 hex and are stored as lowercase 0x hex. All input is
+        validated before writes; known duplicates return 409. Concurrent batches are not transactional.
       requestBody:
         required: true
         content:
@@ -235,6 +243,8 @@ paths:
                 $ref: "#/components/schemas/InsertedIds"
         "400":
           description: Invalid trade payload or unsupported trade status.
+        "409":
+          description: Duplicate canonical trade ID in the batch or existing storage.
         "500":
           $ref: "#/components/responses/InternalError"
     get:
@@ -748,6 +758,120 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /ids:
+    post:
+      tags: [Grid Topology]
+      summary: Get or create an off-chain to on-chain identity mapping.
+      description: |
+        Strict hyphenated UUIDs are lowercased before lookup and hashing; other
+        nonempty, unpadded identities remain case-sensitive, including hex-shaped
+        strings. A mapping does not establish facility existence or eligibility.
+      parameters:
+        - in: query
+          name: offchain_id
+          required: true
+          schema: { type: string, minLength: 1 }
+      responses:
+        "200":
+          description: Canonical off-chain identity and its bytes16 hash.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [offchain_id, onchain_id, creation_time]
+                properties:
+                  offchain_id: { type: string }
+                  onchain_id: { type: string, pattern: '^0x[0-9a-f]{32}$' }
+                  creation_time: { type: integer, format: uint64 }
+        "400": { description: Empty or whitespace-padded identity. }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /measurements:
+    post:
+      tags: [Measurements]
+      summary: Upsert measurement profiles and their values.
+      description: |
+        Facility identities follow the off-chain identity rule. Community IDs must
+        be nonzero UUID/bytes16 values and are stored as lowercase hyphenated UUIDs.
+        The whole payload is validated before writing; writes are not transactional.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: "#/components/schemas/MeasurementProfile" }
+      responses:
+        "200":
+          description: Written timeseries IDs.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InsertedIds" }
+        "400": { description: Invalid profile or identifier. }
+        "500": { $ref: "#/components/responses/InternalError" }
+    get:
+      tags: [Measurements]
+      summary: Read measurement profiles using canonical identity filters.
+      description: |
+        Filters combine. Aliases facilityId/areaUuid, communityUuid, startTime and
+        endTime are supported; send only one spelling per field. Stored points
+        without datasource metadata return an empty community_uuid.
+      parameters:
+        - { in: query, name: facility_id, schema: { type: string } }
+        - { in: query, name: community_uuid, schema: { type: string }, description: Nonzero UUID or bytes16 hex. }
+        - { in: query, name: start_time, schema: { type: string, format: date-time } }
+        - { in: query, name: end_time, schema: { type: string, format: date-time } }
+      responses:
+        "200":
+          description: Matching measurements; creation_time is reconstructed from the timeseries timestamp.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/MeasurementProfile" }
+        "400": { description: Invalid filter or time range. }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /forecasts:
+    post:
+      tags: [Measurements]
+      summary: Upsert forecast profiles and their values.
+      description: Uses the same identifier validation and non-transactional write behavior as POST /measurements.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: "#/components/schemas/ForecastProfile" }
+      responses:
+        "200":
+          description: Written timeseries IDs.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InsertedIds" }
+        "400": { description: Invalid profile or identifier. }
+        "500": { $ref: "#/components/responses/InternalError" }
+    get:
+      tags: [Measurements]
+      summary: Read forecast profiles using canonical identity filters.
+      description: Same filters and aliases as GET /measurements; reconstructed confidence is 1.0.
+      parameters:
+        - { in: query, name: facility_id, schema: { type: string } }
+        - { in: query, name: community_uuid, schema: { type: string }, description: Nonzero UUID or bytes16 hex. }
+        - { in: query, name: start_time, schema: { type: string, format: date-time } }
+        - { in: query, name: end_time, schema: { type: string, format: date-time } }
+      responses:
+        "200":
+          description: Matching forecasts.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ForecastProfile" }
+        "400": { description: Invalid filter or time range. }
+        "500": { $ref: "#/components/responses/InternalError" }
+
   /facilities/validate:
     post:
       tags: [Grid Topology]
@@ -980,11 +1104,33 @@ components:
         penalized: a delivery penalty was recorded; this status is terminal.
       enum: [matched, executed, settled, penalized]
 
+    MeasurementProfile:
+      type: object
+      required: [facility_id, community_uuid, time_slot, creation_time, energy_kwh]
+      properties:
+        facility_id: { type: string, description: Canonical off-chain facility identity. }
+        community_uuid: { type: string, description: Nonzero UUID/hex on ingress; lowercase UUID on typed-profile reads. Direct measurement points may carry free-text datasource labels or no metadata. }
+        time_slot: { type: integer, format: uint64, description: Unix seconds. }
+        creation_time: { type: integer, format: uint64, description: Unix seconds. }
+        energy_kwh: { type: number, format: double }
+
+    ForecastProfile:
+      allOf:
+        - { $ref: "#/components/schemas/MeasurementProfile" }
+        - type: object
+          required: [confidence]
+          properties:
+            confidence: { type: number, format: double }
+
     EwdsTradeDto:
       description: |
         EWDS-side trade DTO. Field names are camelCase on the wire.
         `timestamp` is the RFC 3339 creation time, unchanged by lifecycle updates.
         Trade notifications carry the status-change time in the envelope's `occurredAt`.
+        Required IDs accept nonzero UUID or bytes16 hex on import; reads and events
+        use lowercase 0x hex. buyerId/sellerId are on-chain facility hashes, not wallet
+        addresses or off-chain names. Optional residual IDs accept null, empty or
+        all-zero values for absence and return null; nonzero values use the same ID rule.
       type: object
       required:
         - tradeId

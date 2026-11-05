@@ -321,13 +321,27 @@ async fn certificates_join_canonical_facilities_mappings_and_meter_references() 
             .as_u16(),
         200
     );
-    let mut sale = trade(
-        "case-normalized-sale",
-        TradeStatus::Executed,
-        Some(VERDICT_AT),
-    );
+    let id = bytes16_to_hex([0xab; 16]);
+    let mut sale = trade(&id, TradeStatus::Matched, None);
     sale.seller = party;
-    db.trades().insert_trades(vec![sale]).await.unwrap();
+    sale.bid_hash = bytes16_to_hex([0xbc; 16]);
+    sale.offer_hash = bytes16_to_hex([0xcd; 16]);
+    let mut imported = primitives::ewds::dto::EwdsTradeDto::from(sale);
+    imported.trade_id = uuid::Uuid::from_bytes([0xab; 16])
+        .to_string()
+        .to_uppercase();
+    imported.seller_id = format!("0x{}", imported.seller_id[2..].to_uppercase());
+    assert_eq!(
+        http.post(format!("{}/trades", app.address))
+            .json(&vec![imported])
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    // Imports do not invent a verification timestamp; the lifecycle supplies it.
+    db.trades().mark_executed(&id, VERDICT_AT).await.unwrap();
     let response = get_goo(
         &app.address,
         &[

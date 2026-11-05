@@ -6,42 +6,42 @@
   "type": "object",
   "properties": {
     "tradeId": {
-      "description": "Primary identifier. IRI: int:tradeId.",
-      "type": "string"
+      "description": "Nonzero bytes16 trade ID. Imports accept UUID or hex; reads/events use lowercase 0x hex. IRI: int:tradeId.",
+      "$ref": "./int.order.schema.v1.json#/properties/orderId"
     },
     "marketId": {
       "description": "FK to Market. IRI: int:marketId.",
-      "type": "string"
+      "$ref": "./int.order.schema.v1.json#/properties/marketId"
     },
     "bidId": {
       "description": "FK to bid Order. IRI: int:bidId.",
-      "type": "string"
+      "$ref": "./int.order.schema.v1.json#/properties/orderId"
     },
     "buyerId": {
-      "description": "FK to buying Actor. IRI: int:buyerId.",
-      "type": "string"
+      "description": "Nonzero on-chain bytes16 hash of the buying facility, not its owner or wallet. IRI: int:buyerId.",
+      "$ref": "./int.order.schema.v1.json#/properties/orderId"
     },
     "residualBidId": {
-      "description": "FK to residual bid Order. IRI: int:residualBidId. Nullable.",
-      "type": [
-        "string",
-        "null"
+      "description": "Residual bid ID; null, empty or all-zero inputs mean absence and are returned as null.",
+      "anyOf": [
+        { "$ref": "./int.order.schema.v1.json#/properties/orderId" },
+        { "enum": [null, "", "00000000000000000000000000000000", "0x00000000000000000000000000000000", "00000000-0000-0000-0000-000000000000"] }
       ],
       "default": null
     },
     "offerId": {
       "description": "FK to offer Order. IRI: int:offerId.",
-      "type": "string"
+      "$ref": "./int.order.schema.v1.json#/properties/orderId"
     },
     "sellerId": {
-      "description": "FK to selling Actor. IRI: int:sellerId.",
-      "type": "string"
+      "description": "Nonzero on-chain bytes16 hash of the selling facility, not its owner or wallet. IRI: int:sellerId.",
+      "$ref": "./int.order.schema.v1.json#/properties/orderId"
     },
     "residualOfferId": {
-      "description": "FK to residual offer Order. IRI: int:residualOfferId. Nullable.",
-      "type": [
-        "string",
-        "null"
+      "description": "Residual offer ID; null, empty or all-zero inputs mean absence and are returned as null.",
+      "anyOf": [
+        { "$ref": "./int.order.schema.v1.json#/properties/orderId" },
+        { "enum": [null, "", "00000000000000000000000000000000", "0x00000000000000000000000000000000", "00000000-0000-0000-0000-000000000000"] }
       ],
       "default": null
     },

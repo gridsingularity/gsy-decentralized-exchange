@@ -226,9 +226,14 @@ reindexing tool. See the [fresh-deployment requirements](../setup/contracts.md#f
 - Existing `POST /trades` and `/trades-normalized` endpoints retain insert-only
   import behavior. They do not update orders or publish lifecycle notifications;
   the matching engine does not use them.
-  Trade POST routes still store market IDs as supplied. Trade imports
-  must use lowercase `0x` + 32 hex digits: query normalization does not rewrite
-  non-canonical stored IDs. Trade import validation is a separate follow-up.
+  Imports accept nonzero UUID or bytes16 hex for trade, market, bid/offer and
+  buyer/seller IDs, storing lowercase `0x` hex. Parties must already be resolved
+  on-chain facility hashes. Empty/zero residual IDs become null. All identifiers
+  are validated before writing (400); duplicate canonical trade IDs in the batch
+  or storage return 409. Unique indexes guard concurrent duplicates, but a
+  concurrent conflict can still leave a batch partially inserted. No transaction
+  or migration is introduced. The seed script uses valid deterministic IDs and
+  deletes only the exact IDs listed in its dataset, not a prefix-wide selection.
 - With `EWDS_ENABLE_HANDLER=true`, indexed match confirmations, penalties and
   penalty-free delivery verifications publish persisted snapshots through `trade.event`.
   Penalized verification publishes only the consumed orders' status updates,

@@ -41,6 +41,27 @@ def order(identifier):
 
 
 class IdentifierSchemas(unittest.TestCase):
+    def test_trade_import_ids_and_optional_residuals(self):
+        check = validator("int.trade.schema.v1.json")
+        required = ["tradeId", "marketId", "bidId", "offerId", "buyerId", "sellerId"]
+        trade = {key: UUID for key in required}
+        trade.update(tradeStatus="matched", tradeQuantity=1, tradePrice=10,
+                     timestamp="2026-11-04T10:00:00Z")
+        for key in required + ["residualBidId", "residualOfferId"]:
+            for value in VALID + INVALID + NIL + [None]:
+                with self.subTest(key=key, value=value):
+                    optional = key.startswith("residual") and value in NIL + ["", None]
+                    self.assertEqual(check.is_valid({**trade, key: value}), value in VALID or optional)
+
+    def test_id_mapping_requests(self):
+        check = validator("int.ids.query.request.v1.json")
+        for key in ["offchainId", "offchain_id"]:
+            for value in VALID + ["facility-a", "0X" + HEX, "", " ", " padded", "padded\n"]:
+                with self.subTest(key=key, value=value):
+                    self.assertEqual(check.is_valid({
+                        "requestId": "mapping", "operation": "ids.query", "payload": {key: value},
+                    }), bool(value) and value == value.strip())
+
     def test_profile_ingress_community_ids_and_lossless_responses(self):
         event = validator("int.measurements.event.v1.json")
         response = validator("int.measurements.query.response.v1.json")
@@ -115,7 +136,7 @@ class IdentifierSchemas(unittest.TestCase):
                     self.assertFalse(check.is_valid(payload))
 
     def test_query_market_identifiers(self):
-        for operation in ["orders.query", "trades.query", "markets.query"]:
+        for operation in ["orders.query", "trades.query", "markets.query", "clearing_results.query"]:
             check = validator(f"int.{operation}.request.v1.json")
             for identifier in VALID + INVALID + NIL:
                 with self.subTest(operation=operation, identifier=identifier):

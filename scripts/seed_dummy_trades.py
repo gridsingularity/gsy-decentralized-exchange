@@ -13,7 +13,7 @@ Subcommands:
   preflight  EWDS trades.query round-trip for one market, expecting no dummy trades
   seed       POST the dataset in batches (aborts if dummy trades already exist)
   validate   REST full coverage + EWDS tradesQuery/tradesQueryResponse + isolation checks
-  cleanup    delete every trade whose trade_uuid starts with the dummy prefix
+  cleanup    delete only the exact trade IDs in --dataset
   counts     print document counts of every collection
 
 Unless --rest-url/--gateway-url are given, an SSH tunnel to --ssh-host is opened
@@ -25,6 +25,7 @@ import hashlib
 import json
 import math
 import random
+import re
 import shlex
 import socket
 import subprocess
@@ -38,7 +39,6 @@ from datetime import datetime, timezone
 
 SLOT_SECS = 900
 DAY_SECS = 86_400
-TRADE_PREFIX = "dummy-trade-"
 COMMUNITY_ID = "00000000-0000-4000-8000-000000000001"
 MARKET_TYPE = "spot"
 
@@ -112,6 +112,16 @@ def market_id_for_slot(slot):
     return "0x" + digest
 
 
+def bytes16_id(value):
+    return "0x" + hashlib.blake2b(value.encode(), digest_size=16).hexdigest()
+
+
+def dataset_filters(trades):
+    # Keep SSH/mongosh arguments bounded even for month-long datasets.
+    for start in range(0, len(trades), 500):
+        yield json.dumps({"trade_uuid": {"$in": [t["tradeId"] for t in trades[start:start + 500]]}})
+
+
 def pick_status(rng, slot, as_of):
     if slot + SLOT_SECS > as_of:
         return "matched"
@@ -158,22 +168,22 @@ def generate_dataset(start, end, per_slot, seed, as_of):
                 seller = BATTERY
                 quantity = rng.uniform(0.1, 2.0)
             assert buyer != seller
-            num = f"{counter:06d}"
+            num = f"{seed}:{slot}:{counter}"
             residual_bid = residual_offer = None
             if rng.random() < 0.10:
                 if rng.random() < 0.5:
-                    residual_bid = f"dummy-bid-{num}-r"
+                    residual_bid = bytes16_id(f"dummy-bid-{num}-r")
                 else:
-                    residual_offer = f"dummy-offer-{num}-r"
+                    residual_offer = bytes16_id(f"dummy-offer-{num}-r")
             trades.append(
                 {
-                    "tradeId": f"{TRADE_PREFIX}{num}",
+                    "tradeId": bytes16_id(f"dummy-trade-{num}"),
                     "marketId": market_id,
-                    "bidId": f"dummy-bid-{num}",
-                    "buyerId": buyer,
+                    "bidId": bytes16_id(f"dummy-bid-{num}"),
+                    "buyerId": bytes16_id(buyer),
                     "residualBidId": residual_bid,
-                    "offerId": f"dummy-offer-{num}",
-                    "sellerId": seller,
+                    "offerId": bytes16_id(f"dummy-offer-{num}"),
+                    "sellerId": bytes16_id(seller),
                     "residualOfferId": residual_offer,
                     "tradeStatus": pick_status(rng, slot, as_of),
                     "tradeQuantity": round(quantity, 4),
@@ -422,6 +432,12 @@ def schema_errors(envelope):
                 errors.append(f"{tid}: {key} has type {type(item[key]).__name__}")
         if item.get("tradeStatus") not in TRADE_STATUSES:
             errors.append(f"{tid}: tradeStatus {item.get('tradeStatus')!r}")
+        for key in ("tradeId", "marketId", "bidId", "offerId", "buyerId", "sellerId", "residualBidId", "residualOfferId"):
+            value = item.get(key)
+            if key in ("residualBidId", "residualOfferId") and value is None:
+                continue
+            if not isinstance(value, str) or not re.fullmatch(r"0x[0-9a-f]{32}", value) or int(value[2:], 16) == 0:
+                errors.append(f"{tid}: {key} is not canonical nonzero bytes16 hex")
         if not isinstance(item.get("tradeQuantity"), (int, float)) or item["tradeQuantity"] <= 0:
             errors.append(f"{tid}: tradeQuantity not > 0")
         try:
@@ -540,15 +556,15 @@ def cmd_counts(args):
 
 
 def cmd_cleanup(args):
-    script = (
-        f"const r=db.trades.deleteMany({{trade_uuid: /^{TRADE_PREFIX}/}});"
-        "print(JSON.stringify({deleted: r.deletedCount}));"
-    )
-    print(mongosh(args, script).splitlines()[-1])
+    _, trades = load_dataset(args.dataset)
+    deleted = sum(int(mongosh(args, f"print(db.trades.deleteMany({query}).deletedCount);")
+                      .splitlines()[-1]) for query in dataset_filters(trades))
+    print(json.dumps({"deleted": deleted}))
 
 
 def cmd_preflight(args):
-    meta, _ = ensure_dataset(args)
+    meta, trades = ensure_dataset(args)
+    trade_ids = {trade["tradeId"] for trade in trades}
     report = Report()
     with Tunnel(args):
         start = meta["start"]
@@ -561,7 +577,7 @@ def cmd_preflight(args):
             return report.summary()
         errors = schema_errors(env)
         report.check("EWDS preflight schema", not errors, "; ".join(errors[:5]))
-        dummies = [t for t in env.get("data", []) if t.get("tradeId", "").startswith(TRADE_PREFIX)]
+        dummies = [t for t in env.get("data", []) if t.get("tradeId") in trade_ids]
         report.check(
             "EWDS preflight round-trip",
             env.get("success") is True and not dummies,
@@ -574,9 +590,8 @@ def cmd_preflight(args):
 def cmd_seed(args):
     meta, trades = ensure_dataset(args)
     with Tunnel(args):
-        existing = int(mongosh(args,
-            f"print(db.trades.countDocuments({{trade_uuid: /^{TRADE_PREFIX}/}}));"
-        ).splitlines()[-1])
+        existing = sum(int(mongosh(args, f"print(db.trades.countDocuments({query}));")
+                           .splitlines()[-1]) for query in dataset_filters(trades))
         if existing:
             if not args.reset:
                 sys.exit(f"{existing} dummy trades already exist; rerun with --reset")
@@ -629,7 +644,7 @@ def cmd_validate(args):
         bad_slots = [s for s in range(start, end, SLOT_SECS) if per_slot.get(s) != meta["per_slot"]]
         report.check(f"{meta['per_slot']} trades per slot", not bad_slots, f"{len(bad_slots)} bad slots")
         actors = {t["buyerId"] for t in rest_all} | {t["sellerId"] for t in rest_all}
-        report.check("actors within roster", actors <= ROSTER, f"{sorted(actors)}")
+        report.check("actors within roster", actors <= {bytes16_id(name) for name in ROSTER}, f"{sorted(actors)}")
         self_trades = [t["tradeId"] for t in rest_all if t["buyerId"] == t["sellerId"]]
         report.check("buyer != seller", not self_trades, f"{len(self_trades)} self trades")
         bad_markets = [t["tradeId"] for t in rest_all if t["marketId"] != market_id_for_slot(parse_ts(t["timestamp"]))]

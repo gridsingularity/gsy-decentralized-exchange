@@ -30,6 +30,17 @@ fn each_algorithm_parses_its_own_features_and_the_shared_policy_once() {
             .collect::<Vec<_>>();
         assert_eq!(policies.len(), 1);
         assert_eq!(policies[0].scenarios.len(), 9);
+        let identifiers = features
+            .iter()
+            .filter(|feature| {
+                feature.name == "Canonical facility identities across the order lifecycle"
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(identifiers.len(), 1);
+        assert!(identifiers[0].tags.is_empty());
+        assert_eq!(identifiers[0].scenarios.len(), 2);
+        assert!(identifiers[0].scenarios[0].tags.is_empty());
+        assert_eq!(identifiers[0].scenarios[1].tags, ["ewds"]);
     }
 }
 

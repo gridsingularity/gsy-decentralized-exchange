@@ -36,6 +36,21 @@ produce HTTP 400, `invalid_request` for queries, or invalidate the whole inbound
 event before writes/submissions (logged, without a new notification).
 Names and correlation IDs are not normalized.
 
+| Message/read | Identity representation |
+|---|---|
+| `market.event`, `markets.query` | Market/community IDs as lowercase hyphenated UUIDs |
+| `order.event` | UUID/hex order and market IDs; off-chain facility identity and preferred partner |
+| `orderStatus.event` lifecycle | Lowercase `0x` order/market IDs and facility hash; off-chain preferred partner |
+| `orderStatus.event` rejection | Submitted identifiers echoed without rewriting |
+| `trade.event`, `trades.query` | Lowercase `0x` trade/market/order IDs and facility hashes; absent residuals are null |
+| `clearingResult.event`, `clearing_results.query` | Lowercase `0x` market ID |
+| `ids.query` | Canonical off-chain identity and lowercase `0x` facility hash |
+| `facilities.validate` | Exact request pairs, preserving order and cardinality |
+
+Deploy all services from the same DD-459 commit into a fresh environment. The
+ID service returns canonical identities and clients compare canonical forms.
+This does not migrate old mappings or relabel persisted records.
+
 ## Schema Package Location
 
 Schema files are versioned in:
@@ -56,6 +71,9 @@ Primary files:
 - `int.orders.query.response.v1.json`
 - `int.trades.query.request.v1.json`
 - `int.trades.query.response.v1.json`
+- `int.markets.query.request.v1.json`
+- `int.ids.query.request.v1.json`
+- `int.clearing_results.query.request.v1.json`
 - `int.measurements.query.request.v1.json`
 - `int.measurements.query.response.v1.json`
 - `int.forecasts.upsert.request.v1.json`
@@ -74,6 +92,10 @@ Primary files:
 - `int.clearing-result.event.v1.json`
 - `int.market.event.v1.json`
 
+The three `*.upsert.request` schemas above are historical contracts without
+active request handlers. They do not enable EWDS writes; use HTTP profile/market
+routes or supported inbound events instead.
+
 DDHub topic names use camelCase because the Client Gateway UI rejects dots in
 topic names. The schema file names and payload `operation` values keep dotted
 operation names for readability and service routing:
@@ -84,6 +106,9 @@ operation names for readability and service routing:
 | `ordersQueryResponse` | response envelope | `int.orders.query.response.v1.json` |
 | `tradesQuery` | `trades.query` | `int.trades.query.request.v1.json` |
 | `tradesQueryResponse` | response envelope | `int.trades.query.response.v1.json` |
+| `marketsQuery` | `markets.query` | `int.markets.query.request.v1.json` |
+| `idsQuery` | `ids.query` | `int.ids.query.request.v1.json` |
+| `clearingResultsQuery` | `clearing_results.query` | `int.clearing_results.query.request.v1.json` |
 | `measurementsQuery` | `measurements.query` | `int.measurements.query.request.v1.json` |
 | `measurementsQueryResponse` | response envelope | `int.measurements.query.response.v1.json` |
 | `communitiesQuery` | `communities.query` | `int.communities.query.request.v1.json` |

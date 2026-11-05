@@ -7,7 +7,7 @@
 //! These API scenarios isolate certificate generation from delivery verification by seeding
 //! topology, measurements and an already-`Executed` trade into Mongo. Every id is unique per
 //! scenario run; the seeded documents are deleted by the last step (and the whole database
-//! is dropped after every scenario by `main.rs` anyway).
+//! is cleared after every scenario by `main.rs`, preserving its indexes).
 
 use crate::utils::test_database as database;
 use crate::world::{GreenProofSeed, MyWorld};
@@ -29,7 +29,7 @@ use primitives::db_api_schema::profiles::{
 use primitives::db_api_schema::trades::{DbTradeSchema, TradeParameters, TradeStatus};
 use primitives::ewds::{EwdsClient, EwdsOperation};
 use primitives::utils::{
-    bytes16_to_hex, create_encrypted_bytes16_from_string, timestamp_to_datetime_string,
+    bytes16_to_hex, derive_onchain_id, timestamp_to_datetime_string,
     timestamp_to_string_with_padding,
 };
 use serde_json::json;
@@ -49,7 +49,7 @@ const REST_PATH: &str = "guarantees-of-origin";
 
 /// The on-chain party hash of an off-chain facility id, as stored in `DbTradeSchema::seller`.
 fn party_hash(facility_id: &str) -> String {
-    bytes16_to_hex(create_encrypted_bytes16_from_string(facility_id))
+    derive_onchain_id(facility_id)
 }
 
 /// `2026-05-14T10:30:00+00:00`, the format of `interval_start` / `interval_end`
@@ -103,7 +103,7 @@ async fn seed_executed_pv_sale(world: &mut MyWorld, energy_kwh: f64, export_kwh:
         pv_asset_uuid: format!("goo-e2e-pv-{run}"),
         measurement_id: export_kwh
             .map(|_| format!("Measurement:{community_id}:{seller_facility_id}")),
-        trade_uuid: Uuid::new_v4().to_string(),
+        trade_uuid: bytes16_to_hex(*Uuid::new_v4().as_bytes()),
         market_id: primitives::utils::bytes16_to_hex(*Uuid::new_v4().as_bytes()),
         time_slot,
         status_updated_at: now,
@@ -235,8 +235,8 @@ async fn seed_executed_pv_sale(world: &mut MyWorld, energy_kwh: f64, export_kwh:
             buyer: party_hash(&seed.buyer_facility_id),
             market_id: seed.market_id.clone(),
             creation_time: time_slot - SLOT_S,
-            offer_hash: format!("{}-offer", seed.trade_uuid),
-            bid_hash: format!("{}-bid", seed.trade_uuid),
+            offer_hash: bytes16_to_hex(*Uuid::new_v4().as_bytes()),
+            bid_hash: bytes16_to_hex(*Uuid::new_v4().as_bytes()),
             residual_offer_id: None,
             residual_bid_id: None,
             parameters: TradeParameters {

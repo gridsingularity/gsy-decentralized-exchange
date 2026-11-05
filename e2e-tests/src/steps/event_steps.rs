@@ -193,6 +193,10 @@ async fn verify_order_notifications(world: &mut MyWorld, status: String) {
             .wait_for(id, &status)
             .await;
         assert_eq!(notification.market_id, trade.market_id);
+        assert_eq!(
+            &notification.order_id, id,
+            "Lifecycle order IDs must be canonical hex"
+        );
         assert!(notification.reject_reason.is_none());
         if status == "executed" {
             let timestamp =
@@ -225,6 +229,7 @@ async fn verify_rejection_notification(world: &mut MyWorld) {
     let mut unknown_market = order_dto(world, "alice", true, 1.0, 20.0);
     unknown_market.market_id = bytes16_to_hex(*Uuid::new_v4().as_bytes());
     let mut unknown_facility = order_dto(world, "alice", true, 1.0, 20.0);
+    unknown_facility.order_id.make_ascii_uppercase();
     unknown_facility.created_by = "unknown-facility".into();
     let mut cross_community = order_dto(world, "alice", true, 1.0, 20.0);
     cross_community.created_by = foreign_facility;
@@ -370,6 +375,29 @@ fn order_dto(
 async fn publish_order_event(world: &mut MyWorld, buyer_name: String, seller_name: String) {
     let bid = order_dto(world, buyer_name.as_str(), true, 2.0, 20.0);
     let offer = order_dto(world, seller_name.as_str(), false, 2.0, 5.0);
+    publish_order_pair(world, bid, offer).await;
+}
+
+#[when("orders with equivalent UUID and hex spellings are published on EWDS")]
+async fn publish_uuid_orders(world: &mut MyWorld) {
+    let mut bid = order_dto(world, "alice", true, 2.0, 20.0);
+    let mut offer = order_dto(world, "bob", false, 2.0, 5.0);
+    bid.order_id.make_ascii_uppercase();
+    offer.order_id = bytes16_to_hex(parse_uuid_or_hex_bytes16(&offer.order_id).unwrap());
+    for order in [&mut bid, &mut offer] {
+        order.market_id = Uuid::from_bytes(parse_uuid_or_hex_bytes16(&order.market_id).unwrap())
+            .to_string()
+            .to_uppercase();
+        order.created_by.make_ascii_uppercase();
+    }
+    bid.preferred_trading_partner = Some(world.facility_id_for_user("bob"));
+    offer.preferred_trading_partner = Some(world.facility_id_for_user("alice").to_uppercase());
+    bid.preferred_energy_rate = Some(15.0);
+    offer.preferred_energy_rate = Some(12.0);
+    publish_order_pair(world, bid, offer).await;
+}
+
+async fn publish_order_pair(world: &mut MyWorld, bid: EwdsOrderDto, offer: EwdsOrderDto) {
     // Both orders take one block each, and must land in the same matching interval.
     align_to_matching_window(world, 2).await;
 
@@ -387,7 +415,15 @@ async fn publish_order_event(world: &mut MyWorld, buyer_name: String, seller_nam
         let onchain_order_id = bytes16_to_hex(
             parse_uuid_or_hex_bytes16(order.order_id.as_str()).expect("order IDs are UUIDs"),
         );
-        wait_for_order_in_offchain_storage(world, onchain_order_id.as_str()).await;
+        let stored = wait_for_order_in_offchain_storage(world, onchain_order_id.as_str()).await;
+        assert_eq!(
+            stored.created_by,
+            primitives::utils::derive_onchain_id(&order.created_by)
+        );
+        assert_eq!(
+            stored.requirements.as_ref().and_then(|value| value.trading_partner_id.clone()),
+            order.preferred_trading_partner.as_deref().map(primitives::utils::canonical_offchain_id)
+        );
     }
 
     mine_until_matching_block(
