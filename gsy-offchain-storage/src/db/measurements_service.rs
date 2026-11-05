@@ -8,21 +8,11 @@ use primitives::db_api_schema::profiles::{
     FlowDirection, MeasurementPointSchema, MeasurementPointType, MeasurementSchema,
     TimeseriesSchema,
 };
-use primitives::utils::timestamp_to_string_with_padding;
+use primitives::utils::{
+    canonical_offchain_id, profile_measurement_id, timestamp_to_string_with_padding,
+};
 use std::collections::HashMap;
 use std::ops::Deref;
-
-pub(crate) fn profile_measurement_id(
-    point_type: MeasurementPointType,
-    community_uuid: &str,
-    facility_id: &str,
-) -> String {
-    let prefix = match point_type {
-        MeasurementPointType::Measurement => "measurement",
-        MeasurementPointType::Forecast => "forecast",
-    };
-    format!("{prefix}:{community_uuid}:{facility_id}")
-}
 
 pub(crate) fn flow_direction(value: f64) -> FlowDirection {
     if value >= 0.0 {
@@ -46,8 +36,8 @@ fn measurement_point_from_measurement(measurement: &MeasurementSchema) -> Measur
         energy_accumulated: false,
         time_resolution: "PT15M".to_string(),
         phase: 0,
-        asset_name: measurement.facility_id.clone(),
-        datasource_name: Some(measurement.community_uuid.clone()),
+        asset_name: canonical_offchain_id(&measurement.facility_id),
+        datasource_name: Some(canonical_offchain_id(&measurement.community_uuid)),
     }
 }
 
@@ -158,7 +148,7 @@ impl MeasurementPointService {
     ) -> Result<Vec<MeasurementPointSchema>> {
         let mut filter = doc! {};
         if let Some(asset_name) = asset_name {
-            filter.insert("asset_name", asset_name);
+            filter.insert("asset_name", canonical_offchain_id(&asset_name));
         }
         if let Some(point_type) = point_type {
             filter.insert("type", mongodb::bson::to_bson(&point_type)?);

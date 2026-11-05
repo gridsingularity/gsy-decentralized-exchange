@@ -77,6 +77,18 @@ pub async fn init_tariffs(db: &DatabaseWrapper) -> Result<()> {
 pub struct OrderService(pub Collection<DbOrderSchema>);
 
 impl OrderService {
+    /// Legacy imports may create records, but must never replace listener-owned state.
+    pub async fn import_orders(
+        &self,
+        orders: Vec<DbOrderSchema>,
+    ) -> mongodb::error::Result<HashMap<usize, Bson>> {
+        let mut inserted_ids = HashMap::new();
+        for (index, order) in orders.into_iter().enumerate() {
+            inserted_ids.insert(index, self.0.insert_one(order).await?.inserted_id);
+        }
+        Ok(inserted_ids)
+    }
+
     #[tracing::instrument(name = "Fetching orders from database", skip(self))]
     pub async fn get_all_orders(&self) -> Result<Vec<DbOrderSchema>> {
         Ok(self.0.find(doc! {}).await?.try_collect().await?)

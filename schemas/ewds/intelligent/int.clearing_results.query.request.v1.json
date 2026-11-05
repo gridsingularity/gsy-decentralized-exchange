@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "int.clearing_results.query.request.v1",
+  "title": "clearingResultsQuery request",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "requestId": { "type": "string", "minLength": 1 },
+    "operation": { "const": "clearing_results.query" },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "marketId": { "$ref": "./int.order.schema.v1.json#/properties/marketId" },
+        "market_id": { "$ref": "./int.order.schema.v1.json#/properties/marketId" }
+      },
+      "oneOf": [{ "required": ["marketId"] }, { "required": ["market_id"] }]
+    }
+  },
+  "required": ["requestId", "operation", "payload"]
+}

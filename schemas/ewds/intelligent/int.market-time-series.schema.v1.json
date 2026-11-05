@@ -6,12 +6,12 @@
   "type": "object",
   "properties": {
     "communityId": {
-      "description": "FK to Community. IRI: int:communityId. UUID v4.",
+      "description": "FK to Community. IRI: int:communityId. Lowercase hyphenated UUID; no version constraint.",
       "type": "string",
       "format": "uuid"
     },
     "marketIds": {
-      "description": "List of market IDs recorded in this time series. IRI: int:marketIds. UUID v4 array.",
+      "description": "List of market IDs recorded in this time series. IRI: int:marketIds. Hash-derived UUIDs, with no version constraint.",
       "type": [
         "array",
         "null"

@@ -222,7 +222,7 @@ async fn test_evm_order_listener_persists_to_db() {
         contract MockEmitter {
             event NewMarketCreated(bytes16 indexed marketId, bytes16 indexed communityId, uint64 openingTime, uint64 closingTime, uint64 deliveryStartTime, uint64 deliveryEndTime, uint8 marketType, uint8 matchingAlgorithm, uint64 createdAt);
             function emitNewMarket(uint64 closingTime) external {
-                emit NewMarketCreated(bytes16(0), bytes16(uint128(1)), uint64(block.timestamp), closingTime, 1000, 1900, 0, 0, uint64(block.timestamp));
+                emit NewMarketCreated(bytes16(uint128(1)), bytes16(uint128(1)), uint64(block.timestamp), closingTime, 1000, 1900, 0, 0, uint64(block.timestamp));
             }
             event OrderPlaced(bytes16 indexed orderId, bytes16 indexed createdBy, bytes16 indexed marketId, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, uint8 energySourcePreference, uint8 energyType, bool isBid, bytes16 preferredTradingPartner, uint64 preferredEnergyRate);
             function emitOrderPlaced(bytes16 orderId, bytes16 createdBy, uint64 energy, uint64 rate) external {
@@ -230,7 +230,7 @@ async fn test_evm_order_listener_persists_to_db() {
                 emit OrderPlaced(
                     orderId,
                     createdBy,
-                    bytes16(0),
+                    bytes16(uint128(1)),
                     1000,
                     1234567890,
                     energy,
@@ -447,6 +447,61 @@ fn placed_order(order_id: [u8; 16], is_bid: bool, energy: u64) -> OrderPlacedFil
         preferred_trading_partner: [0; 16],
         preferred_energy_rate: 0,
     }
+}
+
+#[tokio::test]
+async fn order_placed_replaces_an_import_and_remains_replayable() {
+    let app = init_app().await;
+    let handler = OffchainStorageEvmHandler {
+        db: app.db_wrapper.clone(),
+        event_publisher: None,
+    };
+    let event = placed_order([0xab; 16], true, 10000);
+    handler
+        .handle_order_placed(event.clone(), 950)
+        .await
+        .unwrap();
+    let expected = app
+        .db_wrapper
+        .orders()
+        .get_all_orders()
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+    // Seed the legacy path with the same ID but different state before indexing.
+    app.db_wrapper
+        .orders()
+        .delete_many(mongodb::bson::doc! {})
+        .await
+        .unwrap();
+    let mut import = EwdsOrderDto::from(expected.clone());
+    import.order_id = uuid::Uuid::from_bytes(event.order_id)
+        .to_string()
+        .to_uppercase();
+    import.order_status = "cancelled".into();
+    import.quantity = 200.0;
+    assert_eq!(
+        reqwest::Client::new()
+            .post(format!("{}/orders", app.address))
+            .json(&vec![import])
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    for _ in 0..2 {
+        handler
+            .handle_order_placed(event.clone(), 950)
+            .await
+            .unwrap();
+        assert_eq!(
+            app.db_wrapper.orders().get_all_orders().await.unwrap(),
+            vec![expected.clone()]
+        );
+    }
+    stop_app(app).await;
 }
 
 #[tokio::test]
@@ -768,6 +823,31 @@ async fn settlement_indexes_fill_statuses_and_keeps_residuals_independent() {
         assert!(trades
             .iter()
             .all(|trade| trade.status == TradeStatus::Matched));
+        // Imports must not reset consumed orders before their delivery verification.
+        for (index, original) in [[1; 16], [2; 16]].into_iter().enumerate() {
+            let dto = returned
+                .iter()
+                .find(|order| order.order_id == bytes16_to_hex(original))
+                .unwrap();
+            let mut overwrite = dto.clone();
+            overwrite.order_id = uuid::Uuid::from_bytes(original).to_string().to_uppercase();
+            overwrite.order_status = "submitted".into();
+            let route = if index == 0 {
+                "orders"
+            } else {
+                "orders-normalized"
+            };
+            assert_eq!(
+                reqwest::Client::new()
+                    .post(format!("{}/{route}", app.address))
+                    .json(&vec![overwrite])
+                    .send()
+                    .await
+                    .unwrap()
+                    .status(),
+                409
+            );
+        }
         let verification = gsy_ethers_listener::DeliveryVerifiedFilter {
             trade_id: event.trade_id,
             bid_id: event.bid_id,

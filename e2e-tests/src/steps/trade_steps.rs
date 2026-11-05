@@ -290,12 +290,14 @@ async fn wait_for_order_in_market(
     market_id: &str,
     order_id: &str,
 ) -> DbOrderSchema {
+    let expected_id = parse_uuid_or_hex_bytes16(order_id).expect("Invalid expected order ID");
     for _ in 0..40 {
         let orders = query_orders_for_market(world, market_id).await;
         if let Some(order) = orders
             .into_iter()
-            .find(|order| order.order_id.eq_ignore_ascii_case(order_id))
+            .find(|order| parse_uuid_or_hex_bytes16(&order.order_id) == Some(expected_id))
         {
+            assert_eq!(order.order_id, bytes16_to_hex(expected_id));
             return order;
         }
 
@@ -997,6 +999,24 @@ async fn submit_single_facility_measurement(world: &mut MyWorld, energy: f64, us
         .expect("Failed to submit the single-facility measurement");
 }
 
+#[when("matching measurements use uppercase UUID references")]
+async fn submit_uuid_measurements(world: &mut MyWorld) {
+    let measurements = [("alice", 2.0), ("bob", -2.0)]
+        .into_iter()
+        .map(|(user, energy_kwh)| MeasurementSchema {
+            facility_id: world.facility_id_for_user(user).to_uppercase(),
+            community_uuid: world.community_id.to_uppercase(),
+            energy_kwh,
+            time_slot: world.target_delivery_time,
+            creation_time: 1,
+        })
+        .collect();
+    AreaMarketInfoAdapter::new(Some(world.offchain_storage_url.clone()))
+        .forward_measurement(measurements)
+        .await
+        .expect("Failed to submit UUID measurements");
+}
+
 pub(crate) async fn delivery_verification_timestamp(world: &MyWorld, trade: &DbTradeSchema) -> u64 {
     let settlement = TradeSettlementContract::new(world.trade_settlement_address, world.provider.clone());
     let events = settlement.event::<DeliveryVerifiedFilter>()
@@ -1110,14 +1130,14 @@ async fn verify_trade_on_chain(world: &mut MyWorld) {
         return;
     }
 
-    let expected_market_id = market_id_as_hex(world).to_lowercase();
+    let expected_market_id = market_id_as_hex(world);
 
     for attempt in 0..60 {
         let trades = query_market_trades(world).await;
 
         if let Some(trade) = trades
             .into_iter()
-            .find(|trade| trade.market_id.to_lowercase() == expected_market_id)
+            .find(|trade| trade.market_id == expected_market_id)
         {
             info!("Found settled trade {}", trade.trade_uuid);
             assert_trade_settled_on_chain(world, &trade).await;
@@ -1142,7 +1162,7 @@ async fn verify_trade_parties(world: &mut MyWorld, buyer_name: String, seller_na
     let expected_seller = actor_id_as_hex(world, &seller_name).await;
 
     assert!(
-        trade.buyer.eq_ignore_ascii_case(expected_buyer.as_str()),
+        trade.buyer == expected_buyer,
         "Trade {} has buyer {}, expected {} ({})",
         trade.trade_uuid,
         trade.buyer,
@@ -1150,7 +1170,7 @@ async fn verify_trade_parties(world: &mut MyWorld, buyer_name: String, seller_na
         expected_buyer
     );
     assert!(
-        trade.seller.eq_ignore_ascii_case(expected_seller.as_str()),
+        trade.seller == expected_seller,
         "Trade {} has seller {}, expected {} ({})",
         trade.trade_uuid,
         trade.seller,

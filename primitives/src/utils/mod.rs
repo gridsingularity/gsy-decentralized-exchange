@@ -18,41 +18,78 @@ pub fn bytes16_to_uuid_string(value: [u8; 16]) -> String {
     Uuid::from_bytes(value).to_string()
 }
 
+/// Accepts UUID (8-4-4-4-12), lowercase `0x`-prefixed hex, or bare bytes16 hex.
+/// Does not trim, impose a UUID version, or reject optional all-zero sentinels.
 pub fn parse_uuid_or_hex_bytes16(value: &str) -> Option<[u8; 16]> {
-    let trimmed = value.trim();
-    let hex_value = if let Some(stripped) = trimmed.strip_prefix("0x") {
-        stripped.to_string()
+    let value = if is_hyphenated_uuid(value) {
+        value.replace('-', "")
     } else {
-        trimmed.replace('-', "")
+        value.strip_prefix("0x").unwrap_or(value).to_string()
     };
+    let mut bytes = [0; 16];
+    hex::decode_to_slice(value, &mut bytes).ok()?;
+    Some(bytes)
+}
 
-    if hex_value.len() != 32 || !hex_value.chars().all(|c| c.is_ascii_hexdigit()) {
-        return None;
+fn is_hyphenated_uuid(value: &str) -> bool {
+    value.len() == 36
+        && value.bytes().enumerate().all(|(index, byte)| {
+            if matches!(index, 8 | 13 | 18 | 23) {
+                byte == b'-'
+            } else {
+                byte.is_ascii_hexdigit()
+            }
+        })
+}
+
+/// Parses a required bytes16 identity, excluding the optional all-zero sentinel.
+pub fn parse_nonzero_uuid_or_hex_bytes16(value: &str) -> Option<[u8; 16]> {
+    parse_uuid_or_hex_bytes16(value).filter(|bytes| *bytes != [0; 16])
+}
+
+/// Lowercases only strict hyphenated UUIDs; opaque identities remain byte-for-byte unchanged.
+pub fn canonical_offchain_id(value: &str) -> String {
+    if is_hyphenated_uuid(value) {
+        value.to_ascii_lowercase()
+    } else {
+        value.to_string()
     }
+}
 
-    let decoded = hex::decode(hex_value).ok()?;
-    decoded.try_into().ok()
+/// Validates an incoming off-chain identity before applying UUID-only canonicalization.
+pub fn normalize_offchain_id(value: &str) -> Result<String> {
+    if value.is_empty() || value.trim() != value {
+        return Err(anyhow!(
+            "off-chain ID must be nonempty and have no surrounding whitespace"
+        ));
+    }
+    Ok(canonical_offchain_id(value))
 }
 
 /// Canonical form of a community ID: the lowercase hyphenated UUID that
-/// chain-sourced markets are stored with. Fails unless the ID is a UUID or
+/// chain-sourced markets are stored with. Fails unless the ID is a nonzero UUID or
 /// 16-byte hex value.
 pub fn normalize_community_id(value: &str) -> Result<String> {
-    parse_uuid_or_hex_bytes16(value)
+    parse_nonzero_uuid_or_hex_bytes16(value)
         .map(bytes16_to_uuid_string)
         .ok_or_else(|| {
             anyhow!(
-                "community ID '{}' is not a UUID or 16-byte hex value",
+                "community ID '{}' is not a nonzero UUID or 16-byte hex value",
                 value
             )
         })
 }
 
-/// Canonical stored market ID: lowercase `0x` hex for a UUID or 16-byte hex value.
+/// Canonical stored market ID: lowercase `0x` hex for a nonzero UUID or bytes16 value.
 pub fn normalize_market_id(value: &str) -> Result<String> {
-    parse_uuid_or_hex_bytes16(value)
+    parse_nonzero_uuid_or_hex_bytes16(value)
         .map(bytes16_to_hex)
-        .ok_or_else(|| anyhow!("market ID '{}' is not a UUID or 16-byte hex value", value))
+        .ok_or_else(|| {
+            anyhow!(
+                "market ID '{}' is not a nonzero UUID or 16-byte hex value",
+                value
+            )
+        })
 }
 
 pub fn create_encrypted_bytes16_from_string(input_string: &str) -> [u8; 16] {
@@ -65,14 +102,33 @@ pub fn create_encrypted_bytes16_from_string(input_string: &str) -> [u8; 16] {
     hash
 }
 
-/// The ID service's deterministic, case-sensitive mapping from an off-chain identity.
+/// The ID service's deterministic mapping: UUID spelling is canonicalized; opaque IDs stay case-sensitive.
 pub fn derive_onchain_id(offchain_id: &str) -> String {
-    bytes16_to_hex(create_encrypted_bytes16_from_string(offchain_id))
+    bytes16_to_hex(create_encrypted_bytes16_from_string(
+        &canonical_offchain_id(offchain_id),
+    ))
+}
+
+pub fn profile_measurement_id(
+    point_type: crate::db_api_schema::profiles::MeasurementPointType,
+    community_uuid: &str,
+    facility_id: &str,
+) -> String {
+    use crate::db_api_schema::profiles::MeasurementPointType;
+    let prefix = match point_type {
+        MeasurementPointType::Measurement => "measurement",
+        MeasurementPointType::Forecast => "forecast",
+    };
+    format!(
+        "{prefix}:{}:{}",
+        canonical_offchain_id(community_uuid),
+        canonical_offchain_id(facility_id)
+    )
 }
 
 /// The community ID is normalized first, so every accepted form of one
 /// community ID yields the same market ID. Fails for a community ID that is
-/// not a UUID or 16-byte hex value.
+/// not a nonzero UUID or 16-byte hex value.
 pub fn generate_market_id(
     community_id: &str,
     market_type: MarketType,

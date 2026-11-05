@@ -181,6 +181,44 @@ pass it explicitly to the runner container, for example through `docker compose 
 A focused selection is not a replacement for the HTTP/EWDS x pay-as-bid/pay-as-clear
 regression matrix, and that default matrix does not cover the opt-in green-proof tests.
 
+### DD-459 Identifier Validation
+
+Deploy all services from the same commit into a fresh environment. The default
+HTTP/EWDS x pay-as-bid/pay-as-clear matrix includes the shared
+`identifier_normalization.feature`: facilities registered as uppercase UUIDs
+are ordered with another spelling and metered through the adapter's direct
+measurement-point path. Preferred matching and delivery verification must still
+join the same facilities. Its `@ewds` scenario also checks canonical lifecycle
+IDs after mixed UUID/hex submissions; existing rejection checks require exact
+echoes of submitted IDs. Opaque-ID scenarios remain in both algorithm suites.
+
+Run GreenProof explicitly for both transports as well. With the corresponding
+stack configured and started, pass the feature selection into the runner:
+
+```bash
+# HTTP; use the same MATCHING_ALGORITHM value as the running stack.
+OFFCHAIN_STORAGE_TRANSPORT=http EWDS_ENABLE_HANDLER=false MATCHING_ALGORITHM=pay_as_bid \
+docker compose --env-file contracts-output/addresses.env -f docker-compose.e2e-test.yml \
+  run --rm -e E2E_FEATURE_PATH=features/green_proofs e2e-tests
+
+# EWDS; requires the local gateway and the configured test topics.
+OFFCHAIN_STORAGE_TRANSPORT=ewds EWDS_ENABLE_HANDLER=true MATCHING_ALGORITHM=pay_as_bid \
+docker compose --env-file .env.ewds.local --env-file contracts-output/addresses.env \
+  -f docker-compose.e2e-test.yml run --rm -e E2E_FEATURE_PATH=features/green_proofs e2e-tests
+```
+
+These certificate API scenarios seed canonical records directly; they do not
+replace the lifecycle matrix. Update affected gateway schemas from
+`schemas/ewds/intelligent/` before EWDS runs. Local schema validation does not
+update the gateway. The retained trade seed script has offline tests:
+
+```bash
+docker run --rm -e PYTHONDONTWRITEBYTECODE=1 -v "$PWD":/work:ro -w /work python:3.12-slim \
+  python -m unittest discover -s scripts/tests -v
+```
+
+### Matching Interval
+
 `pay_as_clear` defaults to a `64`-block matching interval so all scenario
 orders are collected before one clearing cycle. Override it with a positive
 `MATCHING_ENGINE_BLOCK_INTERVAL` value only when both the matching engine and

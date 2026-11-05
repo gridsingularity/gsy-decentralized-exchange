@@ -432,16 +432,99 @@ async fn places_a_bid_and_an_offer_with_their_contract_params() {
 }
 
 #[tokio::test]
+async fn uuid_parties_resolve_canonically_and_rejections_echo_original_ids() {
+    let chain = deploy_mock_order_registry().await;
+    let server = mock_id_service().await;
+    let buyer = "abcdefab-abcd-abcd-abcd-abcdefabcdef";
+    let seller = "fedcbafe-dcba-dcba-dcba-fedcbafedcba";
+    for id in [buyer, seller] {
+        Mock::given(method("POST")).and(path("/ids"))
+            .and(query_param("offchain_id", id))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "offchain_id": id, "onchain_id": primitives::utils::derive_onchain_id(id), "creation_time": 0
+            }))).mount(&server).await;
+    }
+    let mut rejected = bid();
+    rejected["orderId"] = json!(BID_ID.to_uppercase());
+    rejected["createdBy"] = json!(buyer.to_uppercase());
+    rejected["preferredTradingPartner"] = json!(seller.to_uppercase());
+    rejected["marketId"] = json!(uuid::Uuid::from_bytes(bytes16(CLOSED_MARKET))
+        .to_string()
+        .to_uppercase());
+    let mut accepted = offer();
+    accepted["orderId"] = json!(format!("0x{}", OFFER_ID.replace('-', "").to_uppercase()));
+    accepted["marketId"] = json!(uuid::Uuid::from_bytes(bytes16(OPEN_MARKET))
+        .to_string()
+        .to_uppercase());
+    accepted["createdBy"] = json!(seller.to_uppercase());
+    accepted["preferredTradingPartner"] = json!(buyer.to_uppercase());
+    handler(&chain, &server)
+        .await
+        .handle(event(
+            "uuid-parties",
+            vec![rejected.clone(), accepted.clone()],
+        ))
+        .await
+        .unwrap();
+    let orders = placed_orders(&chain).await;
+    assert_eq!(orders.len(), 1);
+    assert_eq!(orders[0].order_id, bytes16(OFFER_ID));
+    assert_eq!(orders[0].market_id, bytes16(OPEN_MARKET));
+    assert_eq!(
+        orders[0].created_by,
+        bytes16(&primitives::utils::derive_onchain_id(seller))
+    );
+    assert_eq!(
+        orders[0].preferred_trading_partner,
+        bytes16(&primitives::utils::derive_onchain_id(buyer))
+    );
+    let rejections = rejection_events(&server).await;
+    assert_eq!(rejections.len(), 1);
+    assert_rejection(&rejections[0], rejected, "MarketClosed");
+    let requests = server.received_requests().await.unwrap();
+    let validation = requests
+        .iter()
+        .find(|request| request.url.path() == "/facilities/validate")
+        .unwrap();
+    let pairs: Vec<FacilityMarketValidationRequest> =
+        serde_json::from_slice(&validation.body).unwrap();
+    assert_eq!(pairs[0].facility_id, buyer);
+    assert_eq!(pairs[1].facility_id, seller);
+    assert_eq!(
+        pairs[0].market_id,
+        primitives::utils::bytes16_to_hex(bytes16(CLOSED_MARKET))
+    );
+    assert_eq!(
+        pairs[1].market_id,
+        primitives::utils::bytes16_to_hex(bytes16(OPEN_MARKET))
+    );
+
+    // A retry with another spelling still identifies the already placed order.
+    accepted["orderId"] = json!(OFFER_ID.replace('-', ""));
+    handler(&chain, &server)
+        .await
+        .handle(event("retry", vec![accepted]))
+        .await
+        .unwrap();
+    assert_eq!(placed_orders(&chain).await.len(), 1);
+    assert_eq!(rejection_events(&server).await.len(), 1);
+}
+
+#[tokio::test]
 async fn skips_orders_that_are_already_placed() {
     let chain = deploy_mock_order_registry().await;
     let id_service = mock_id_service().await;
     let handler = handler(&chain, &id_service).await;
 
-    handler.handle(event("event-1", vec![bid()])).await.unwrap();
+    let mut first = bid();
+    first["orderId"] = json!(primitives::utils::bytes16_to_hex(bytes16(BID_ID)));
+    handler.handle(event("event-1", vec![first])).await.unwrap();
     wait_for_placed_orders(&chain, 1).await;
     // A resend under a new event ID sends only the new order.
+    let mut second = offer();
+    second["orderId"] = json!(OFFER_ID.replace('-', "").to_uppercase());
     handler
-        .handle(event("event-2", vec![bid(), offer()]))
+        .handle(event("event-2", vec![bid(), second]))
         .await
         .unwrap();
 
@@ -864,12 +947,40 @@ async fn rejects_the_whole_event_when_one_order_is_invalid() {
     // An ID the ID service doesn't know yet may be registered later, so that event is retried;
     // invalid data is not.
     for (field, value, expected, invalid_data) in [
-        ("orderId", json!("order-1"), "is not a UUID", true),
+        ("orderId", json!("order-1"), "is not a non-zero UUID", true),
+        (
+            "orderId",
+            json!("00000000-0000-0000-0000-000000000000"),
+            "orderId",
+            true,
+        ),
+        ("orderId", json!(format!("{{{OFFER_ID}}}")), "orderId", true),
+        (
+            "orderId",
+            json!(format!("urn:uuid:{OFFER_ID}")),
+            "orderId",
+            true,
+        ),
         ("orderStatus", json!("cancelled"), "orderStatus", true),
         ("quantity", json!(0.0), "quantity", true),
         ("quantity", json!(-1.0), "quantity", true),
         ("priceLimit", json!(-0.1), "priceLimit", true),
         ("energyType", json!("COAL"), "COAL", true),
+        ("createdBy", json!(""), "createdBy", true),
+        ("createdBy", json!(" owner-1"), "createdBy", true),
+        ("createdBy", json!(" \t"), "createdBy", true),
+        (
+            "preferredTradingPartner",
+            json!(""),
+            "preferredTradingPartner",
+            true,
+        ),
+        (
+            "preferredTradingPartner",
+            json!("owner-1 "),
+            "preferredTradingPartner",
+            true,
+        ),
         ("createdBy", json!("unknown-owner"), "createdBy", false),
         (
             "preferredTradingPartner",
@@ -878,9 +989,17 @@ async fn rejects_the_whole_event_when_one_order_is_invalid() {
             false,
         ),
         ("marketId", json!("market-1"), "marketId", true),
+        (
+            "marketId",
+            json!("00000000-0000-0000-0000-000000000000"),
+            "marketId",
+            true,
+        ),
     ] {
         let mut invalid = offer();
         invalid[field] = value;
+
+        let requests_before = id_service.received_requests().await.unwrap().len();
 
         let error = handler
             .handle(event("event-1", vec![bid(), invalid]))
@@ -888,6 +1007,12 @@ async fn rejects_the_whole_event_when_one_order_is_invalid() {
             .unwrap_err();
 
         assert_eq!(is_invalid_event(&error), invalid_data, "{field}: {error:#}");
+        if invalid_data {
+            assert_eq!(
+                id_service.received_requests().await.unwrap().len(),
+                requests_before
+            );
+        }
         let error = format!("{error:#}");
         assert!(error.contains("index 1"), "{field}: {error}");
         assert!(error.contains(expected), "{field}: {error}");
@@ -1192,7 +1317,71 @@ mod validate_order {
 
     #[test]
     fn accepts_a_valid_order() {
-        assert_eq!(validate_order(order()).unwrap(), order());
+        let mut expected = order();
+        expected.order_id = primitives::utils::bytes16_to_hex(bytes16(&expected.order_id));
+        assert_eq!(validate_order(order()).unwrap(), expected);
+    }
+
+    #[test]
+    fn canonicalizes_facility_and_partner_without_changing_the_submission() {
+        let mut submission = bid();
+        submission["createdBy"] = json!("ABCDEFAB-1234-1234-1234-ABCDEFABCDEF");
+        submission["preferredTradingPartner"] = json!("ABCDEFAB-1234-1234-1234-ABCDEFABCDE0");
+        let order = validate_order(
+            DbOrderSchema::try_from(
+                serde_json::from_value::<EwdsOrderDto>(submission.clone()).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(order.created_by, "abcdefab-1234-1234-1234-abcdefabcdef");
+        assert_eq!(order.area_uuid, order.created_by);
+        assert_eq!(
+            order.requirements.unwrap().trading_partner_id.as_deref(),
+            Some("abcdefab-1234-1234-1234-abcdefabcde0")
+        );
+        assert_eq!(
+            submission["createdBy"],
+            "ABCDEFAB-1234-1234-1234-ABCDEFABCDEF"
+        );
+    }
+
+    #[test]
+    fn accepts_all_supported_order_id_spellings() {
+        for id in [
+            "3F2C6D1E-8A4B-4C7D-9E2F-1A5B6C7D8E9F",
+            "0x3F2C6D1E8A4B4C7D9E2F1A5B6C7D8E9F",
+            "3f2c6d1e8a4b4c7d9e2f1a5b6c7d8e9f",
+        ] {
+            let normalized = validate_order(DbOrderSchema {
+                order_id: id.into(),
+                ..order()
+            })
+            .unwrap();
+            assert_eq!(normalized.order_id, "0x3f2c6d1e8a4b4c7d9e2f1a5b6c7d8e9f");
+        }
+    }
+
+    #[test]
+    fn rejects_unsupported_and_nil_order_ids() {
+        for id in [
+            "{3f2c6d1e-8a4b-4c7d-9e2f-1a5b6c7d8e9f}",
+            "urn:uuid:3f2c6d1e-8a4b-4c7d-9e2f-1a5b6c7d8e9f",
+            "3f2c6d1e8a4b4c7d9e2f1a5b6c7d8e9f ",
+            "0X3f2c6d1e8a4b4c7d9e2f1a5b6c7d8e9f",
+            "00000000-0000-0000-0000-000000000000",
+            "00000000000000000000000000000000",
+            "0x00000000000000000000000000000000",
+        ] {
+            assert!(
+                validate_order(DbOrderSchema {
+                    order_id: id.into(),
+                    ..order()
+                })
+                .is_err(),
+                "{id}"
+            );
+        }
     }
 
     #[test]
@@ -1212,7 +1401,7 @@ mod validate_order {
                     order_id: "order-1".to_string(),
                     ..order()
                 },
-                "is not a UUID",
+                "is not a non-zero UUID",
             ),
             (
                 DbOrderSchema {

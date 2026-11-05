@@ -13,7 +13,8 @@ use crate::ewds::dto::{
 };
 use crate::ewds::{format_response_body, EwdsClient, EwdsOperation};
 use crate::utils::{
-    bytes16_to_hex, epoch_to_rfc3339, parse_uuid_or_hex_bytes16, timestamp_to_string_with_padding,
+    bytes16_to_hex, epoch_to_rfc3339, normalize_offchain_id, parse_uuid_or_hex_bytes16,
+    timestamp_to_string_with_padding,
 };
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
@@ -218,6 +219,7 @@ impl OffchainStorageClient {
     }
 
     pub async fn fetch_onchain_id(&self, offchain_id: &str) -> Result<String> {
+        let offchain_id = normalize_offchain_id(offchain_id)?;
         let mapping: IdMappingSchema = match self.transport {
             OffchainStorageTransport::Ewds => {
                 info!("Fetching onchain_id via EWDS transport");
@@ -237,7 +239,7 @@ impl OffchainStorageClient {
                 let response = self
                     .http_client
                     .post(&url)
-                    .query(&[("offchain_id", offchain_id)])
+                    .query(&[("offchain_id", &offchain_id)])
                     .send()
                     .await?;
                 if !response.status().is_success() {
@@ -250,7 +252,7 @@ impl OffchainStorageClient {
             }
         };
 
-        if mapping.offchain_id != offchain_id {
+        if normalize_offchain_id(&mapping.offchain_id)? != offchain_id {
             return Err(anyhow!(
                 "ID service returned a mapping for a different facility"
             ));

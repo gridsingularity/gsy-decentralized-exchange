@@ -3,6 +3,15 @@
 This folder contains JSON Schemas for GSY DEX off-chain communication over
 EWDS.
 
+Identifier and order-event schema regression tests run in Docker:
+
+```bash
+docker run --rm -v "$PWD":/work -w /work python:3.12-slim \
+  sh -c 'pip install --quiet jsonschema==4.25.1 && python -m unittest discover -s schemas/ewds/tests -v'
+```
+
+These validate local schemas, not the schema version installed in a gateway.
+
 The market-domain entity schemas are aligned with the Energy Web Intelligent
 schemas under `schemas/v1.0.0/market`:
 
@@ -16,9 +25,16 @@ Additional local message contracts wrap these entities for the current
 request/reply topics:
 
 - query request/reply envelopes for orders, trades, measurements, and communities
+- `int.markets.query.request.v1.json` for market/community filters; malformed or
+  nil IDs receive `invalid_request`. Market responses and events use UUID IDs,
+  without enforcing a UUID version. Stored market IDs use lowercase `0x` hex.
 - `int.facilities.validate.request.v1.json` / `int.facilities.validate.response.v1.json`
   for read-only facility/market eligibility (`facilitiesValidate` / `facilitiesValidateResponse`)
-- upsert request envelopes for forecasts, measurements, and markets
+- `int.ids.query.request.v1.json` and `int.clearing_results.query.request.v1.json`
+  for get-or-create ID mappings and clearing-result reads
+- Historical upsert envelopes for forecasts, measurements, and markets have no
+  active EWDS request handler. Use the documented HTTP routes or supported events;
+  registering a schema alone does not enable an operation.
 
 Event envelopes wrap a non-empty list of the entities that other systems send
 to GSY on the events channels, one per topic:
@@ -50,7 +66,8 @@ Notes:
   `market_id` names; these are validation records, not ontology entity DTOs.
 - Runtime service fields from GSY DEX are mapped in `docs/platform/ewds-data-contracts.md`.
 - The agreed Intelligent schemas use UUID identifiers and ISO 8601 timestamps.
-- The active DEX EVM settlement path still uses separate runtime DTOs for
-  bytes32 hashes, area UUID hashes, and unix timeslots.
+- The active DEX EVM settlement path uses bytes16 IDs and facility hashes, and
+  Unix timeslots. On-chain IDs are not EVM wallet addresses. Market events expose
+  UUIDs; order lifecycle, trade and clearing events expose lowercase `0x` bytes16.
 - These schemas are versioned as `v1` and should be registered as EWDS topic
   schemas when the corresponding topics are managed with `topiccreator`.

@@ -11,7 +11,10 @@ use primitives::db_api_schema::orders::{
 use primitives::ewds::dto::{EwdsEventEnvelope, EwdsOrderDto};
 use primitives::ewds::{env_var, invalid_event, parse_batch, EwdsClient, EwdsEventType};
 use primitives::offchain_storage::{resolve_order_partner_ids, OffchainStorageClient};
-use primitives::utils::{epoch_to_rfc3339, parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR};
+use primitives::utils::{
+    bytes16_to_hex, epoch_to_rfc3339, normalize_offchain_id, parse_nonzero_uuid_or_hex_bytes16,
+    NODE_FLOAT_SCALING_FACTOR,
+};
 use serde_json::Value;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -137,7 +140,8 @@ impl OrderEventHandler {
         let mut pending = Vec::with_capacity(total);
         for (index, (submission, order)) in orders.into_iter().enumerate() {
             // Check before validation: topology changes must not reject an already placed order.
-            let order_id = *Uuid::parse_str(&order.order_id)?.as_bytes();
+            let order_id = parse_nonzero_uuid_or_hex_bytes16(&order.order_id)
+                .context("orderId must be a non-zero UUID or bytes16 hex ID")?;
             let already_placed = match self.order_registry.is_placed(order_id).await {
                 Ok(placed) => placed,
                 Err(error) => {
@@ -191,7 +195,8 @@ impl OrderEventHandler {
                 Ok(order) => order,
                 Err(reason) => {
                     // Another submission (including an earlier item in this batch) may have won.
-                    let order_id = *Uuid::parse_str(&submission.order_id)?.as_bytes();
+                    let order_id = parse_nonzero_uuid_or_hex_bytes16(&submission.order_id)
+                        .context("orderId must be a non-zero UUID or bytes16 hex ID")?;
                     match self.order_registry.is_placed(order_id).await {
                         Ok(true) => sent += 1,
                         Ok(false) => {
@@ -513,8 +518,7 @@ pub const ORDER_ALREADY_EXISTS: &str = "OrderAlreadyExists";
 /// on-chain IDs.
 pub fn order_params(order: &DbOrderSchema) -> Result<EvmOrderParamsTuple> {
     let onchain_id = |name: &str, value: &str| {
-        parse_uuid_or_hex_bytes16(value)
-            .filter(|bytes| *bytes != [0; 16])
+        parse_nonzero_uuid_or_hex_bytes16(value)
             .ok_or_else(|| anyhow!("{} '{}' is not a 16-byte UUID or hex ID", name, value))
     };
     let metadata =
@@ -537,15 +541,32 @@ pub fn order_params(order: &DbOrderSchema) -> Result<EvmOrderParamsTuple> {
 }
 
 /// The field rules an order from EWDS has to meet before it is placed.
-pub fn validate_order(order: DbOrderSchema) -> Result<DbOrderSchema> {
-    Uuid::parse_str(&order.order_id)
-        .map_err(|e| anyhow!("orderId '{}' is not a UUID: {}", order.order_id, e))?;
-    if parse_uuid_or_hex_bytes16(&order.market_id).is_none_or(|id| id == [0; 16]) {
-        bail!(
-            "marketId '{}' is not a non-zero 16-byte UUID or hex ID",
-            order.market_id
-        );
+pub fn validate_order(mut order: DbOrderSchema) -> Result<DbOrderSchema> {
+    order.created_by = normalize_offchain_id(&order.created_by).context("Invalid createdBy")?;
+    order.area_uuid = order.created_by.clone();
+    if let Some(partner) = order
+        .requirements
+        .as_mut()
+        .and_then(|requirements| requirements.trading_partner_id.as_mut())
+    {
+        *partner = normalize_offchain_id(partner).context("Invalid preferredTradingPartner")?;
     }
+    order.order_id = bytes16_to_hex(
+        parse_nonzero_uuid_or_hex_bytes16(&order.order_id).ok_or_else(|| {
+            anyhow!(
+                "orderId '{}' is not a non-zero UUID or bytes16 hex ID",
+                order.order_id
+            )
+        })?,
+    );
+    order.market_id = bytes16_to_hex(
+        parse_nonzero_uuid_or_hex_bytes16(&order.market_id).ok_or_else(|| {
+            anyhow!(
+                "marketId '{}' is not a non-zero 16-byte UUID or hex ID",
+                order.market_id
+            )
+        })?,
+    );
     if order.status != OrderStatus::Submitted {
         bail!("orderStatus must be 'submitted', got {:?}", order.status);
     }

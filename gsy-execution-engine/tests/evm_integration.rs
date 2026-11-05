@@ -235,13 +235,19 @@ async fn test_submit_penalties_persists_to_trade_settlement_contract() {
     );
 }
 
+fn facility_id(party: &str, id: u8) -> String {
+    primitives::utils::bytes16_to_uuid_string(
+        parse_uuid_or_hex_bytes16(&derive_onchain_id(&format!("facility-{party}-{id}"))).unwrap(),
+    )
+}
+
 fn late_trade(id: u8, market: u8, creation_time: u64) -> DbTradeSchema {
     DbTradeSchema {
         trade_uuid: bytes16_to_hex([id; 16]),
         status: TradeStatus::Matched,
         status_updated_at: None,
-        seller: derive_onchain_id(&format!("facility-bob-{id}")),
-        buyer: derive_onchain_id(&format!("facility-alice-{id}")),
+        seller: derive_onchain_id(&facility_id("bob", id)),
+        buyer: derive_onchain_id(&facility_id("alice", id)),
         market_id: bytes16_to_hex([market; 16]),
         creation_time,
         offer_hash: bytes16_to_hex([id + 10; 16]),
@@ -400,7 +406,7 @@ async fn late_records_after_rollover_are_processed_once_without_blocking_the_cur
                     (1..=3)
                         .flat_map(|id| {
                             ["alice", "bob"].map(|party| {
-                                let facility = format!("facility-{party}-{id}");
+                                let facility = facility_id(party, id).to_uppercase();
                                 json!({
                                     "type": "Measurement",
                                     "measurement_id": derive_onchain_id(&facility),
@@ -489,8 +495,7 @@ async fn late_records_after_rollover_are_processed_once_without_blocking_the_cur
         }
         for (id, expected) in [(1, first_penalty), (2, second_penalty), (3, 5_000)] {
             let actor_id =
-                parse_uuid_or_hex_bytes16(&derive_onchain_id(&format!("facility-alice-{id}")))
-                    .unwrap();
+                parse_uuid_or_hex_bytes16(&derive_onchain_id(&facility_id("alice", id))).unwrap();
             assert_eq!(
                 contract
                     .penalty_energy_by_actor(actor_id)

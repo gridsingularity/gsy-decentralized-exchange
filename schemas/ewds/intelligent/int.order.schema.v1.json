@@ -6,12 +6,16 @@
   "type": "object",
   "properties": {
     "orderId": {
-      "description": "Primary identifier. IRI: int:orderId.",
-      "type": "string"
+      "description": "Non-zero bytes16 as UUID, 0x-prefixed hex or bare hex. Lifecycle notifications use lowercase 0x hex; rejections echo the submission. IRI: int:orderId.",
+      "type": "string",
+      "pattern": "^(?:(?:0x)?[a-fA-F0-9]{32}|[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12})(?![\\s\\S])",
+      "not": { "enum": ["00000000-0000-0000-0000-000000000000", "0x00000000000000000000000000000000", "00000000000000000000000000000000"] }
     },
     "marketId": {
-      "description": "FK to Market. IRI: int:marketId.",
-      "type": "string"
+      "description": "Non-zero market ID as UUID, 0x-prefixed hex or bare hex. IRI: int:marketId.",
+      "type": "string",
+      "pattern": "^(?:(?:0x)?[a-fA-F0-9]{32}|[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12})(?![\\s\\S])",
+      "not": { "enum": ["00000000-0000-0000-0000-000000000000", "0x00000000000000000000000000000000", "00000000000000000000000000000000"] }
     },
     "orderType": {
       "description": "Buy or sell order. IRI: int:orderType.",
@@ -84,8 +88,9 @@
       "default": "NONE"
     },
     "createdBy": {
-      "description": "Facility identity represented by the order, not its owner or submitting service wallet. The community client resolves this facility ID to its on-chain ID. IRI: int:createdby.",
-      "type": "string"
+      "description": "Facility identity, not its owner or submitting service wallet. Submissions use an unpadded off-chain identity: strict hyphenated UUIDs are lowercased, other strings stay case-sensitive. Rejections echo the input; indexed lifecycle notifications use its lowercase 0x bytes16 hash. IRI: int:createdby.",
+      "type": "string",
+      "pattern": "^\\S(?:[\\s\\S]*\\S)?(?![\\s\\S])"
     },
     "creationTime": {
       "description": "Order creation datetime. IRI: int:createdAt. RFC 3339 with timezone.",
@@ -110,12 +115,13 @@
       "default": null
     },
     "preferredTradingPartner": {
-      "description": "Preferred counterparty of a bid or an offer, taken from the order requirements. IRI: int:preferredTradingPartner. Nullable.",
+      "description": "Off-chain facility identity of the preferred counterparty of a bid or offer. Strict hyphenated UUIDs are lowercased; other unpadded strings stay case-sensitive. Hex-shaped strings are off-chain identities, not resolved hashes. Rejections echo the input. IRI: int:preferredTradingPartner. Nullable.",
       "type": [
         "string",
         "null"
       ],
-      "default": null
+      "default": null,
+      "pattern": "^\\S(?:[\\s\\S]*\\S)?(?![\\s\\S])"
     },
     "preferredEnergyRate": {
       "description": "Preferred bilateral energy rate in EUR/kWh. IRI: int:preferredEnergyRate. Nullable.",

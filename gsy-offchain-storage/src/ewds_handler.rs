@@ -5,8 +5,8 @@ use futures::future::join_all;
 use primitives::db_api_schema::grid_topology::FacilityMarketValidationRequest;
 use primitives::db_api_schema::profiles::{MeasurementPointType, MeasurementSchema};
 use primitives::ewds::dto::{
-    parse_market_id, EwdsClearingResultDto, EwdsCommunityDto, EwdsErrorPayload, EwdsInboundMessage,
-    EwdsMarketDto, EwdsMeasurementDto, EwdsOrderDto, EwdsRequestEnvelope, EwdsResponseEnvelope,
+    EwdsClearingResultDto, EwdsCommunityDto, EwdsErrorPayload, EwdsInboundMessage, EwdsMarketDto,
+    EwdsMeasurementDto, EwdsOrderDto, EwdsRequestEnvelope, EwdsResponseEnvelope,
     EwdsSendMessageDto, EwdsTradeDto,
 };
 use primitives::ewds::{
@@ -16,7 +16,7 @@ use primitives::ewds::{
     EwdsOperation, EwdsTopicConfig,
 };
 use primitives::utils::{
-    bytes16_to_hex, normalize_community_id, normalize_market_id, opt_rfc3339_to_epoch,
+    normalize_community_id, normalize_market_id, normalize_offchain_id, opt_rfc3339_to_epoch,
     timestamp_to_string_with_padding,
 };
 use reqwest::Client;
@@ -147,9 +147,11 @@ struct TimeRangePayload {
     #[serde(alias = "endTime")]
     #[serde(default)]
     end_time: Option<String>,
-    #[serde(alias = "areaUuid")]
+    #[serde(alias = "areaUuid", alias = "facilityId")]
     #[serde(default)]
     facility_id: Option<String>,
+    #[serde(alias = "communityUuid", default)]
+    community_uuid: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -489,30 +491,59 @@ pub async fn handle_request(
             send_query_response(client, config, request_id, response_topic.as_str(), data).await
         }
         EwdsOperation::MeasurementsQuery => {
-            let payload = serde_json::from_value::<TimeRangePayload>(envelope.payload.clone())
-                .map_err(|e| anyhow!("measurements.query payload parse error: {}", e))?;
             let request_id = envelope.request_id;
+            let query = (|| -> Result<_> {
+                let payload: TimeRangePayload = serde_json::from_value(envelope.payload)?;
+                Ok((
+                    opt_rfc3339_to_epoch(payload.start_time.as_deref())?,
+                    opt_rfc3339_to_epoch(payload.end_time.as_deref())?,
+                    payload
+                        .facility_id
+                        .as_deref()
+                        .map(normalize_offchain_id)
+                        .transpose()?,
+                    payload
+                        .community_uuid
+                        .as_deref()
+                        .map(normalize_community_id)
+                        .transpose()?,
+                ))
+            })();
+            let (start_time, end_time, facility_id, community_uuid) = match query {
+                Ok(query) => query,
+                Err(error) => {
+                    return send_invalid_request_response(
+                        client,
+                        config,
+                        request_id,
+                        &response_topic,
+                        error,
+                    )
+                    .await;
+                }
+            };
 
             info!(
                 "Handling EWDS measurements.query request (request_id={})",
                 request_id
             );
 
-            let data = fetch_measurements_from_timeseries(
-                db,
-                opt_rfc3339_to_epoch(payload.start_time.as_deref())?,
-                opt_rfc3339_to_epoch(payload.end_time.as_deref())?,
-            )
-            .await
-            .map(|rows| {
-                rows.into_iter()
-                    .filter(|measurement| match payload.facility_id.as_ref() {
-                        Some(facility_id) => measurement.facility_id == *facility_id,
-                        None => true,
-                    })
-                    .map(EwdsMeasurementDto::from)
-                    .collect::<Vec<_>>()
-            });
+            let data = fetch_measurements_from_timeseries(db, start_time, end_time)
+                .await
+                .map(|rows| {
+                    rows.into_iter()
+                        .filter(|measurement| match facility_id.as_ref() {
+                            Some(facility_id) => measurement.facility_id == *facility_id,
+                            None => true,
+                        })
+                        .filter(|measurement| {
+                            community_uuid
+                                .as_ref()
+                                .map_or(true, |id| measurement.community_uuid == *id)
+                        })
+                        .map(EwdsMeasurementDto::from)
+                        .collect::<Vec<_>>()
+                });
 
             send_query_response(client, config, request_id, response_topic.as_str(), data).await
         }
@@ -533,24 +564,32 @@ pub async fn handle_request(
             send_query_response(client, config, request_id, response_topic.as_str(), data).await
         }
         EwdsOperation::IdsQuery => {
-            let payload = serde_json::from_value::<IdsQueryPayload>(envelope.payload.clone())
-                .map_err(|e| anyhow!("id.query payload parse error: {}", e))?;
             let request_id = envelope.request_id;
+            let query = (|| -> Result<_> {
+                let payload: IdsQueryPayload = serde_json::from_value(envelope.payload)?;
+                normalize_offchain_id(&payload.offchain_id)
+            })();
+            let offchain_id = match query {
+                Ok(id) => id,
+                Err(error) => {
+                    return send_invalid_request_response(
+                        client,
+                        config,
+                        request_id,
+                        &response_topic,
+                        error,
+                    )
+                    .await;
+                }
+            };
 
             info!(
                 "Handling EWDS ids.query request (request_id={})",
                 request_id
             );
 
-            let data = db.ids().get_or_create(payload.offchain_id).await?;
-            send_success_response(
-                client,
-                config,
-                request_id,
-                response_topic.as_str(),
-                vec![data],
-            )
-            .await
+            let data = db.ids().get_or_create(offchain_id).await.map(|id| vec![id]);
+            send_query_response(client, config, request_id, &response_topic, data).await
         }
         EwdsOperation::ClearingResultsQuery => {
             let request_id = envelope.request_id;
@@ -584,8 +623,6 @@ pub async fn handle_request(
             send_query_response(client, config, request_id, response_topic.as_str(), data).await
         }
         EwdsOperation::MarketsQuery => {
-            let payload = serde_json::from_value::<MarketsQueryPayload>(envelope.payload.clone())
-                .map_err(|e| anyhow!("markets.query payload parse error: {}", e))?;
             let request_id = envelope.request_id;
 
             info!(
@@ -597,30 +634,48 @@ pub async fn handle_request(
             // and community IDs, RFC 3339 times); markets are stored with a
             // `0x…` ID, a lowercase UUID community ID and zero-padded epoch
             // seconds.
-            let market_id = payload
-                .market_id
-                .map(|market_id| parse_market_id(&market_id).map(bytes16_to_hex))
-                .transpose()
-                .map_err(|e| anyhow!("markets.query payload parse error: {}", e))?;
-            let community_id = payload
-                .community_id
-                .as_deref()
-                .map(normalize_community_id)
-                .transpose()
-                .map_err(|e| anyhow!("markets.query payload parse error: {}", e))?;
-            let stored_time = |time: Option<String>| {
-                opt_rfc3339_to_epoch(time.as_deref())
-                    .map(|epoch| epoch.map(timestamp_to_string_with_padding))
-                    .map_err(|e| anyhow!("markets.query payload parse error: {}", e))
-            };
-            let data = db
-                .markets()
-                .filter(
+            let query = (|| -> Result<_> {
+                let payload: MarketsQueryPayload = serde_json::from_value(envelope.payload)?;
+                let market_id = payload
+                    .market_id
+                    .as_deref()
+                    .map(normalize_market_id)
+                    .transpose()
+                    .map_err(|e| anyhow!("markets.query payload parse error: {}", e))?;
+                let community_id = payload
+                    .community_id
+                    .as_deref()
+                    .map(normalize_community_id)
+                    .transpose()
+                    .map_err(|e| anyhow!("markets.query payload parse error: {}", e))?;
+                let stored_time = |time: Option<String>| {
+                    opt_rfc3339_to_epoch(time.as_deref())
+                        .map(|epoch| epoch.map(timestamp_to_string_with_padding))
+                        .map_err(|e| anyhow!("markets.query payload parse error: {}", e))
+                };
+                Ok((
                     market_id,
                     community_id,
                     stored_time(payload.start_time)?,
                     stored_time(payload.end_time)?,
-                )
+                ))
+            })();
+            let (market_id, community_id, start_time, end_time) = match query {
+                Ok(query) => query,
+                Err(error) => {
+                    return send_invalid_request_response(
+                        client,
+                        config,
+                        request_id,
+                        &response_topic,
+                        error,
+                    )
+                    .await;
+                }
+            };
+            let data = db
+                .markets()
+                .filter(market_id, community_id, start_time, end_time)
                 .await
                 .and_then(|rows| rows.into_iter().map(EwdsMarketDto::try_from).collect());
 

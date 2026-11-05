@@ -5,7 +5,8 @@ use primitives::offchain_storage::CommunityProvider;
 use primitives::{
     constants::GLOBAL_CONSTANTS,
     utils::{
-        bytes16_to_hex, generate_market_id, parse_uuid_or_hex_bytes16, timestamp_to_datetime_string,
+        bytes16_to_hex, generate_market_id, normalize_community_id, parse_uuid_or_hex_bytes16,
+        timestamp_to_datetime_string,
     },
 };
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -99,13 +100,10 @@ where
     let communities = communities
         .iter()
         .filter_map(
-            |community| match parse_uuid_or_hex_bytes16(community.community_id.as_str()) {
-                Some(community_bytes) => Some((community, community_bytes)),
-                None => {
-                    warn!(
-                        "Skipping community '{}': its ID is not a UUID or 16-byte hex value",
-                        community.community_id
-                    );
+            |community| match normalize_community_id(&community.community_id) {
+                Ok(id) => parse_uuid_or_hex_bytes16(&id).map(|bytes| (community, bytes)),
+                Err(error) => {
+                    warn!("Skipping community '{}': {}", community.community_id, error);
                     None
                 }
             },

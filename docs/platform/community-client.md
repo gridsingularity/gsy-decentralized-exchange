@@ -63,7 +63,7 @@ When `EWDS_ENABLE_HANDLER` is on, the binary polls the `order` topic for `order.
 (`EWDS_ORDER_EVENT_TOPIC`, default `order`) on
 `EWDS_EVENT_SUBSCRIBE_FQCN`, and no other topic. For every event it:
 
-1. parses and checks all orders (UUID `orderId`, non-zero UUID/hex `marketId`,
+1. parses and checks all orders (non-zero UUID/hex `orderId` and `marketId`,
    `orderStatus` `submitted`, `quantity` above 0, `priceLimit` 0 or more);
 2. skips orders already placed on-chain (latest block), then validates the remaining
    `createdBy` facility IDs against their markets in one bulk request through
@@ -85,6 +85,21 @@ reason than invalid data, e.g. because the node, validation service or ID
 service can't be reached, is retried with a growing delay
 (`EWDS_EVENT_HANDLE_ATTEMPTS`, `EWDS_EVENT_RETRY_DELAY_MS`), and later events
 wait for it.
+
+`createdBy` and an explicitly supplied `preferredTradingPartner` must be nonempty
+and unpadded. Strict hyphenated UUID identities are lowercased before eligibility
+and ID lookup; opaque IDs (including hex-shaped strings) remain case-sensitive.
+An absent partner is allowed. A malformed identity invalidates the whole batch
+before any storage calls or submissions and is logged without a rejection
+notification. In particular, empty/padded `createdBy` no longer produces a
+per-order eligibility rejection while other orders proceed. Actual eligibility
+and contract rejections still echo the original submitted identifiers.
+Order and market IDs are canonicalized to lowercase `0x` bytes16 before
+eligibility checks. Duplicate/retry checks use their bytes, so UUID and hex
+spellings of the same order cannot cause a second submission. Lifecycle status
+notifications use canonical hex IDs; FOS must correlate them with the submission
+by ID bytes rather than by exact text. Rejection notifications preserve the
+original order, market, facility and preferred-partner spellings.
 
 Already placed orders are excluded before validation on retry, so a topology change
 cannot turn them into rejected orders. Before publishing an eligibility

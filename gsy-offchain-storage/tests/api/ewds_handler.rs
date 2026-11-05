@@ -4,14 +4,15 @@ use crate::guarantees_of_origin::{
 };
 use crate::helpers::{init_app, stop_app};
 use gsy_offchain_storage::ewds_handler::{
-    handle_request, validate_trades_query_range, EwdsHandlerConfig, INVALID_TIME_RANGE,
-    MAX_TRADES_QUERY_RANGE_SECS, TIME_RANGE_TOO_LARGE,
+    handle_request, start_ewds_request_handler, validate_trades_query_range, EwdsHandlerConfig,
+    INVALID_TIME_RANGE, MAX_TRADES_QUERY_RANGE_SECS, TIME_RANGE_TOO_LARGE,
 };
 use primitives::db_api_schema::grid_topology::FacilitySchema;
 use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
 use primitives::db_api_schema::orders::{DbOrderSchema, OrderEnum, OrderStatus};
 use primitives::db_api_schema::profiles::{
-    FlowDirection, MeasurementPointSchema, MeasurementPointType, MeasurementSchema, TimeseriesSchema,
+    FlowDirection, MeasurementPointSchema, MeasurementPointType, MeasurementSchema,
+    TimeseriesSchema,
 };
 use primitives::db_api_schema::trades::{
     ClearingResultSchema, ClearingStatus, DbTradeSchema, TradeParameters, TradeStatus,
@@ -24,7 +25,7 @@ use primitives::utils::{
     rfc3339_to_epoch, timestamp_to_string_with_padding,
 };
 use serde_json::json;
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 // --- Test helpers ---------------------------------------------------
 
@@ -85,6 +86,85 @@ async fn captured_data(server: &MockServer) -> Vec<serde_json::Value> {
     let envelope = captured_envelope(server).await;
     assert_eq!(envelope["success"], json!(true));
     envelope["data"].as_array().unwrap().clone()
+}
+
+async fn assert_invalid_request(server: &MockServer, request_id: &str) {
+    let response = captured_envelope(server).await;
+    assert_eq!(response["requestId"], request_id);
+    assert_eq!(response["success"], false);
+    assert_eq!(response["data"], json!([]));
+    assert_eq!(response["error"]["code"], "invalid_request");
+}
+
+#[tokio::test]
+async fn invalid_request_does_not_discard_the_rest_of_a_polled_batch() {
+    let app = init_app().await;
+    let server = mock_gateway().await;
+    let config = test_config(server.uri());
+    let requests = [
+        envelope(EwdsOperation::IdsQuery, "invalid", json!({})),
+        envelope(
+            EwdsOperation::IdsQuery,
+            "valid",
+            json!({"offchainId": "facility-a"}),
+        ),
+    ];
+    Mock::given(method("GET"))
+        .and(path("/api/v2/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v2/messages"))
+        .and(query_param(
+            "topicName",
+            config
+                .topics
+                .for_operation(EwdsOperation::IdsQuery)
+                .request
+                .as_str(),
+        ))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(
+                requests
+                    .iter()
+                    .map(|request| json!({"payload": serde_json::to_string(request).unwrap()}))
+                    .collect::<Vec<_>>(),
+            ),
+        )
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    let worker = tokio::spawn(start_ewds_request_handler(app.db_wrapper.clone(), config));
+    let responses = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let responses: Vec<serde_json::Value> = server
+                .received_requests()
+                .await
+                .unwrap()
+                .iter()
+                .filter(|request| request.method == "POST")
+                .map(|request| {
+                    let send: EwdsSendMessageDto = serde_json::from_slice(&request.body).unwrap();
+                    serde_json::from_str(&send.payload).unwrap()
+                })
+                .collect();
+            if responses.len() == 2 {
+                break responses;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await;
+    worker.abort();
+    let _ = worker.await;
+    let responses = responses.expect("both requests must receive a response");
+    assert_eq!(responses[0]["requestId"], "invalid");
+    assert_eq!(responses[0]["error"]["code"], "invalid_request");
+    assert_eq!(responses[1]["requestId"], "valid");
+    assert_eq!(responses[1]["success"], true);
+    stop_app(app).await;
 }
 
 // --- OrdersQuery ----------------------------------------------------
@@ -289,6 +369,7 @@ async fn each_read_query_answers_storage_failures() {
         (EwdsOperation::MeasurementsQuery, "measurement_points"),
         (EwdsOperation::CommunitiesQuery, "communities"),
         (EwdsOperation::FacilitiesQuery, "facilities"),
+        (EwdsOperation::IdsQuery, "id_mapping"),
         (EwdsOperation::GuaranteesOfOriginQuery, "trades"),
     ] {
         let app = init_app().await;
@@ -300,10 +381,13 @@ async fn each_read_query_answers_storage_failures() {
                 "type": "Measurement",
                 "status": "executed",
                 "status_updated_at": TRADES_BASE_TIME as i64,
+                "offchain_id": "facility-a",
             })
             .await
             .unwrap();
-        let payload = if operation == EwdsOperation::GuaranteesOfOriginQuery {
+        let payload = if operation == EwdsOperation::IdsQuery {
+            json!({"offchainId": "facility-a"})
+        } else if operation == EwdsOperation::GuaranteesOfOriginQuery {
             json!({"startTime": TRADES_BASE_TIME, "endTime": TRADES_BASE_TIME + 1})
         } else {
             json!({"marketId": market_id})
@@ -402,7 +486,10 @@ async fn run_trades_query(request_id: &str, payload: serde_json::Value) -> serde
 
     for market in [
         make_delivery_market("0x00000000000000000000000000000001", 0),
-        make_delivery_market("0x00000000000000000000000000000002", MAX_TRADES_QUERY_RANGE_SECS),
+        make_delivery_market(
+            "0x00000000000000000000000000000002",
+            MAX_TRADES_QUERY_RANGE_SECS,
+        ),
     ] {
         app.db_wrapper.markets().upsert(market).await.unwrap();
     }
@@ -550,7 +637,10 @@ async fn trades_query_filters_by_market_id() {
     let app = init_app().await;
     let client = reqwest::Client::new();
 
-    for market_id in ["0xaaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa", "0xbbbbbbbbbbbb4bbb8bbbbbbbbbbbbbbb"] {
+    for market_id in [
+        "0xaaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa",
+        "0xbbbbbbbbbbbb4bbb8bbbbbbbbbbbbbbb",
+    ] {
         app.db_wrapper
             .markets()
             .upsert(make_delivery_market(market_id, 0))
@@ -743,13 +833,10 @@ async fn measurements_query_bad_payload_errors() {
         json!({ "startTime": 0 }),
     );
 
-    let err = handle_request(&app.db_wrapper, &client, &config, env)
+    handle_request(&app.db_wrapper, &client, &config, env)
         .await
-        .unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("measurements.query payload parse error"));
-    assert!(server.received_requests().await.unwrap().is_empty());
+        .unwrap();
+    assert_invalid_request(&server, "req-meas-bad").await;
 
     stop_app(app).await;
 }
@@ -893,13 +980,14 @@ async fn markets_query_filters_by_opening_time_window() {
 #[tokio::test]
 async fn markets_query_filters_by_market_id_as_uuid_or_hex() {
     for market_id in [
-        bytes16_to_uuid_string([0x02; 16]),
-        bytes16_to_hex([0x02; 16]),
+        bytes16_to_uuid_string([0xab; 16]).to_uppercase(),
+        format!("0x{}", "AB".repeat(16)),
+        "ab".repeat(16),
     ] {
         let data = run_markets_query(
             vec![
                 make_market(0x01, COMMUNITY_1, "2026-03-27T18:00:00Z"),
-                make_market(0x02, COMMUNITY_1, "2026-03-27T19:00:00Z"),
+                make_market(0xab, COMMUNITY_1, "2026-03-27T19:00:00Z"),
             ],
             json!({ "marketId": market_id }),
         )
@@ -908,7 +996,7 @@ async fn markets_query_filters_by_market_id_as_uuid_or_hex() {
         assert_eq!(data.len(), 1, "{market_id}");
         assert_eq!(
             data[0]["marketId"],
-            json!(bytes16_to_uuid_string([0x02; 16]))
+            json!(bytes16_to_uuid_string([0xab; 16]))
         );
     }
 }
@@ -947,13 +1035,10 @@ async fn markets_query_rejects_a_non_uuid_community_id() {
         json!({ "communityId": "community1" }),
     );
 
-    let err = handle_request(&app.db_wrapper, &client, &config, env)
+    handle_request(&app.db_wrapper, &client, &config, env)
         .await
-        .unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("markets.query payload parse error"));
-    assert!(server.received_requests().await.unwrap().is_empty());
+        .unwrap();
+    assert_invalid_request(&server, "req-markets-bad").await;
 
     stop_app(app).await;
 }
@@ -974,10 +1059,18 @@ async fn markets_query_without_filters_returns_all() {
 
 #[tokio::test]
 async fn markets_query_bad_payload_errors() {
-    for (name, payload) in [
+    for (_name, payload) in [
         // market_id is a string field -> a number errors
         ("number market id", json!({ "marketId": 5 })),
         ("invalid market id", json!({ "marketId": "market-1" })),
+        (
+            "nil market id",
+            json!({ "marketId": "00000000-0000-0000-0000-000000000000" }),
+        ),
+        (
+            "nil community id",
+            json!({ "communityId": "0x00000000000000000000000000000000" }),
+        ),
         (
             "epoch start time",
             json!({ "startTime": "00000000001774605600" }),
@@ -990,15 +1083,10 @@ async fn markets_query_bad_payload_errors() {
 
         let env = envelope(EwdsOperation::MarketsQuery, "req-markets-bad", payload);
 
-        let err = handle_request(&app.db_wrapper, &client, &config, env)
+        handle_request(&app.db_wrapper, &client, &config, env)
             .await
-            .unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("markets.query payload parse error"),
-            "{name}: {err}"
-        );
-        assert!(server.received_requests().await.unwrap().is_empty());
+            .unwrap();
+        assert_invalid_request(&server, "req-markets-bad").await;
 
         stop_app(app).await;
     }
@@ -1263,7 +1351,7 @@ async fn ids_query_get_or_create_is_idempotent() {
         envelope(
             EwdsOperation::IdsQuery,
             "req-ids-create",
-            json!({ "offchainId": "offchain-idem" }),
+            json!({ "offchainId": "00112233-4455-6677-8899-AABBCCDDEEFF" }),
         ),
     )
     .await
@@ -1275,6 +1363,10 @@ async fn ids_query_get_or_create_is_idempotent() {
         "expected an onchain_id in the first response"
     );
     let first_onchain = first[0]["onchain_id"].clone();
+    assert_eq!(
+        first[0]["offchain_id"],
+        "00112233-4455-6677-8899-aabbccddeeff"
+    );
 
     // A fresh server, so received_requests() counts only the second call.
     let server2 = mock_gateway().await;
@@ -1288,7 +1380,7 @@ async fn ids_query_get_or_create_is_idempotent() {
         envelope(
             EwdsOperation::IdsQuery,
             "req-ids-again",
-            json!({ "offchainId": "offchain-idem" }),
+            json!({ "offchainId": "00112233-4455-6677-8899-aabbccddeeff" }),
         ),
     )
     .await
@@ -1303,18 +1395,20 @@ async fn ids_query_get_or_create_is_idempotent() {
 #[tokio::test]
 async fn ids_query_bad_payload_errors() {
     let app = init_app().await;
-    let server = mock_gateway().await;
-    let config = test_config(server.uri());
     let client = reqwest::Client::new();
-
-    // offchain_id is required -> missing field errors
-    let env = envelope(EwdsOperation::IdsQuery, "req-ids-bad", json!({}));
-
-    let err = handle_request(&app.db_wrapper, &client, &config, env)
-        .await
-        .unwrap_err();
-    assert!(err.to_string().contains("id.query payload parse error"));
-    assert!(server.received_requests().await.unwrap().is_empty());
+    for payload in [
+        json!({}),
+        json!({"offchainId": ""}),
+        json!({"offchainId": " padded "}),
+    ] {
+        let server = mock_gateway().await;
+        let config = test_config(server.uri());
+        let env = envelope(EwdsOperation::IdsQuery, "req-ids-bad", payload);
+        handle_request(&app.db_wrapper, &client, &config, env)
+            .await
+            .unwrap();
+        assert_invalid_request(&server, "req-ids-bad").await;
+    }
 
     stop_app(app).await;
 }

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "int.ids.query.request.v1",
+  "title": "idsQuery request",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "requestId": { "type": "string", "minLength": 1 },
+    "operation": { "const": "ids.query" },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "offchainId": { "$ref": "./int.order.schema.v1.json#/properties/createdBy" },
+        "offchain_id": { "$ref": "./int.order.schema.v1.json#/properties/createdBy" }
+      },
+      "oneOf": [{ "required": ["offchainId"] }, { "required": ["offchain_id"] }]
+    }
+  },
+  "required": ["requestId", "operation", "payload"]
+}

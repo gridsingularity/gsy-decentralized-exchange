@@ -143,19 +143,34 @@ async fn community_writes_normalize_ids_and_reject_invalid_values() {
             .unwrap(),
         saved
     );
-    community.community_id = "invalid".into();
-    assert!(app
-        .db_wrapper
-        .communities()
-        .insert(community.clone())
-        .await
-        .is_err());
-    assert!(app
-        .db_wrapper
-        .communities()
-        .upsert(community)
-        .await
-        .is_err());
+    let client = reqwest::Client::new();
+    for id in [
+        "invalid",
+        "00000000-0000-0000-0000-000000000000",
+        "0x00000000000000000000000000000000",
+        "00000000000000000000000000000000",
+    ] {
+        community.community_id = id.into();
+        let response = client
+            .post(format!("{}/communities", app.address))
+            .json(&community)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 400, "{id}");
+        assert!(app
+            .db_wrapper
+            .communities()
+            .insert(community.clone())
+            .await
+            .is_err());
+        assert!(app
+            .db_wrapper
+            .communities()
+            .upsert(community.clone())
+            .await
+            .is_err());
+    }
     assert_eq!(
         app.db_wrapper.communities().get_all().await.unwrap(),
         vec![saved]

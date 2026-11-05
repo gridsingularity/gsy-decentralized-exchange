@@ -8,7 +8,9 @@ use mongodb::options::IndexOptions;
 use mongodb::options::ReturnDocument;
 use mongodb::{Collection, IndexModel};
 use primitives::db_api_schema::ids::IdMappingSchema;
-use primitives::utils::derive_onchain_id;
+use primitives::utils::{
+    bytes16_to_hex, derive_onchain_id, normalize_offchain_id, parse_nonzero_uuid_or_hex_bytes16,
+};
 use std::ops::Deref;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -48,10 +50,12 @@ impl IdService {
             bail!("onchain_id and offchain_id are mutually exclusive");
         }
         if let Some(onchain_id) = onchain_id {
-            filter_params.insert("onchain_id", onchain_id);
+            let onchain_id =
+                parse_nonzero_uuid_or_hex_bytes16(&onchain_id).context("Invalid on-chain ID")?;
+            filter_params.insert("onchain_id", bytes16_to_hex(onchain_id));
         }
         if let Some(offchain_id) = offchain_id {
-            filter_params.insert("offchain_id", offchain_id);
+            filter_params.insert("offchain_id", normalize_offchain_id(&offchain_id)?);
         }
         if filter_params.is_empty() {
             bail!("at least one filter field must be provided");
@@ -65,6 +69,7 @@ impl IdService {
         fields(offchain_id = %offchain_id)
     )]
     pub async fn get_or_create(&self, offchain_id: String) -> Result<IdMappingSchema> {
+        let offchain_id = normalize_offchain_id(&offchain_id)?;
         let result = self
             .0
             .find_one_and_update(

@@ -390,11 +390,15 @@ async fn fetches_onchain_id_over_http() {
         "unused-default",
     );
     let onchain_id = client
-        .fetch_onchain_id("00112233-4455-6677-8899-aabbccddeeff")
+        .fetch_onchain_id("00112233-4455-6677-8899-AABBCCDDEEFF")
         .await
         .unwrap();
 
     assert_eq!(onchain_id, "0x11111111111111111111111111111111");
+    for id in ["", " ", " facility-a", "facility-a "] {
+        assert!(client.fetch_onchain_id(id).await.is_err());
+    }
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
 }
 
 #[tokio::test]
@@ -442,7 +446,7 @@ async fn fetches_onchain_id_over_ewds() {
         "testids",
     );
     let onchain_id = client
-        .fetch_onchain_id("00112233-4455-6677-8899-aabbccddeeff")
+        .fetch_onchain_id("00112233-4455-6677-8899-AABBCCDDEEFF")
         .await
         .unwrap();
 

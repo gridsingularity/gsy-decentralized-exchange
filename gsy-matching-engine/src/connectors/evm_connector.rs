@@ -7,11 +7,14 @@ use primitives::db_api_schema::orders::{
     order_metadata_to_contract, DbOrderSchema, OrderEnum, OrderStatus,
 };
 use primitives::db_api_schema::trades::ClearingStatus;
-use primitives::ewds::dto::EwdsOrderDto;
+use primitives::ewds::dto::{order_status_from_ewds, EwdsOrderDto};
 use primitives::ewds::{EwdsClient, EwdsOperation};
 use primitives::matching::matching_block_interval;
 use primitives::offchain_storage::{resolve_order_partner_ids, OffchainStorageClient};
-use primitives::utils::{bytes16_to_hex, parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR};
+use primitives::utils::{
+    bytes16_to_hex, parse_nonzero_uuid_or_hex_bytes16, parse_uuid_or_hex_bytes16, rfc3339_to_epoch,
+    NODE_FLOAT_SCALING_FACTOR,
+};
 use primitives::MatchingAlgorithm;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::env;
@@ -345,31 +348,76 @@ pub async fn send_settle_batch_transaction(
 }
 
 async fn fetch_market_orders(body: Vec<EwdsOrderDto>) -> Result<PreparedOrders> {
-    let mut open_bids: Vec<Order> = Vec::new();
-    let mut open_offers: Vec<Order> = Vec::new();
-    let orders: Vec<DbOrderSchema> = body
-        .into_iter()
-        .map(|o| DbOrderSchema::try_from(o).expect("invalid EwdsOrderDto"))
-        .collect();
-    let mut by_order_id: HashMap<String, DbOrderSchema> = HashMap::new();
     let id_mapping_source =
         OffchainStorageClient::from_env("EWDS_MATCHING_ENGINE_CLIENT_ID", "gsymatchingengine");
+    prepare_market_orders(body, &id_mapping_source).await
+}
 
-    for mut db_order_schema in orders
-        .into_iter()
-        .filter(|order| order.status == OrderStatus::Submitted)
-    {
-        resolve_order_partner_ids(&mut db_order_schema.requirements, &id_mapping_source).await?;
-        match convert_db_order_to_canonical(&db_order_schema) {
-            Ok(order) => {
-                by_order_id.insert(order.order_id.clone(), db_order_schema);
-                match order.order_type {
-                    OrderEnum::Bid => open_bids.push(order),
-                    OrderEnum::Offer => open_offers.push(order),
+async fn prepare_market_orders(
+    body: Vec<EwdsOrderDto>,
+    id_mapping_source: &OffchainStorageClient,
+) -> Result<PreparedOrders> {
+    let mut open_bids: Vec<Order> = Vec::new();
+    let mut open_offers: Vec<Order> = Vec::new();
+    let mut books: BTreeMap<(String, u64), Vec<DbOrderSchema>> = BTreeMap::new();
+    let mut excluded = HashSet::new();
+    for dto in body {
+        if matches!(order_status_from_ewds(&dto.order_status), Ok(status) if status != OrderStatus::Submitted)
+        {
+            continue;
+        }
+        // An unknown market cannot safely be isolated from the other books.
+        let market_id = parse_nonzero_uuid_or_hex_bytes16(&dto.market_id)
+            .map(bytes16_to_hex)
+            .ok_or_else(|| {
+                anyhow!(
+                    "Cannot identify market for order {}: {}",
+                    dto.order_id,
+                    dto.market_id
+                )
+            })?;
+        let time_slot = rfc3339_to_epoch(&dto.time_slot).ok();
+        let order_id = dto.order_id.clone();
+        match DbOrderSchema::try_from(dto) {
+            Ok(mut order) => {
+                order.market_id = market_id.clone();
+                books
+                    .entry((market_id, order.time_slot))
+                    .or_default()
+                    .push(order);
+            }
+            Err(error) => {
+                error!(%order_id, %market_id, ?time_slot, %error, "Excluding invalid order's book; unreadable slot excludes the entire market");
+                excluded.insert((market_id, time_slot));
+            }
+        }
+    }
+    let mut by_order_id: HashMap<String, DbOrderSchema> = HashMap::new();
+
+    for ((market_id, time_slot), orders) in books {
+        if excluded.contains(&(market_id.clone(), None))
+            || excluded.contains(&(market_id.clone(), Some(time_slot)))
+        {
+            continue;
+        }
+        // Publish a book only after every active order has converted successfully.
+        let mut converted = Vec::with_capacity(orders.len());
+        for mut db_order in orders {
+            resolve_order_partner_ids(&mut db_order.requirements, id_mapping_source).await?;
+            match convert_db_order_to_canonical(&db_order) {
+                Ok(order) => converted.push((order, db_order)),
+                Err(error) => {
+                    error!(order_id = %db_order.order_id, %market_id, time_slot, %error, "Excluding book with invalid canonical order");
+                    converted.clear();
+                    break;
                 }
             }
-            Err(e) => {
-                error!("Failed to convert DB order to canonical: {:?}", e);
+        }
+        for (order, db_order) in converted {
+            by_order_id.insert(order.order_id.clone(), db_order);
+            match order.order_type {
+                OrderEnum::Bid => open_bids.push(order),
+                OrderEnum::Offer => open_offers.push(order),
             }
         }
     }
@@ -390,7 +438,7 @@ async fn fetch_open_orders_from_orderbook_service(url: String) -> Result<Prepare
         return fetch_open_orders_via_ewds(url).await;
     }
 
-    let res = reqwest::get(url).await?;
+    let res = reqwest::get(url).await?.error_for_status()?;
     info!("Response: {:?} {}", res.version(), res.status());
     info!("Headers: {:#?}\n", res.headers());
 
@@ -436,8 +484,8 @@ fn parse_query_params_from_url(url: &str) -> serde_json::Value {
 }
 
 fn parse_bytes16_field(field_name: &str, value: &str) -> Result<[u8; 16]> {
-    parse_uuid_or_hex_bytes16(value)
-        .ok_or_else(|| anyhow!("{} must be a UUID or 0x-prefixed 16-byte hex", field_name))
+    parse_nonzero_uuid_or_hex_bytes16(value)
+        .ok_or_else(|| anyhow!("{} must be a non-zero UUID or 16-byte hex ID", field_name))
 }
 
 fn normalize_bytes16_field(field_name: &str, value: &str) -> Result<String> {
@@ -713,3 +761,7 @@ fn register_residual(
 #[cfg(test)]
 #[path = "../../tests/connectors/residual_conversion.rs"]
 mod residual_conversion_tests;
+
+#[cfg(test)]
+#[path = "../../tests/connectors/order_books.rs"]
+mod order_book_tests;

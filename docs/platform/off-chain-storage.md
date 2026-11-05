@@ -23,14 +23,25 @@ Backend: MongoDB (version pinned in the Compose files).
 `OrderPlaced` contains the optional order requirements (bids and offers) and
 offer attributes, so the indexed order is complete without a follow-up
 `/orders` write. `POST /orders` and `POST /orders-normalized` remain available as
-direct database upserts, but neither is used by the E2E scenarios or production
+insert-only imports, but neither is used by the E2E scenarios or production
 order lifecycle. Orders are submitted through `placeOrder` (directly or through
 the community client's EWDS subscriber), then indexed by the EVM listener.
-The POST endpoints still accept caller-supplied statuses; their ownership and
-access policy remain to be clarified. Posting trades leaves referenced orders
+Imports validate the whole payload and canonicalize order IDs, market IDs and
+the already-resolved `createdBy` facility hash to lowercase `0x` bytes16. Each
+must be nonzero. `area_uuid` uses the same hash; the optional preferred partner
+remains an off-chain identity (UUID spelling lowercased, opaque strings preserved).
+Unlike `order.event`, these routes do not resolve facility IDs or place orders.
+Invalid identifiers return 400. Duplicate canonical IDs within the batch or
+already in storage return 409 before writes. Unique indexes also prevent
+concurrent imports from replacing records. A later `OrderPlaced` replaces an
+import with authoritative chain data, and listener upserts remain replayable.
+Import batches are not transactional: a concurrent conflict or database failure
+can leave earlier inserts in place. Imports do not publish status notifications.
+The POST endpoints still accept caller-supplied statuses for new IDs; their
+ownership and access policy remain to be clarified. Posting trades leaves referenced orders
 unchanged; settlement updates are handled by the EVM listener.
-Restricting the order POST endpoints is a separate follow-up, not part of
-DD-423. Until then, listener ownership is the normal lifecycle path, not an
+Access control for the order POST endpoints remains a separate follow-up.
+Until then, listener ownership is the normal lifecycle path, not an
 enforced access-control boundary for those legacy write endpoints.
 
 `NewMarketCreated` carries the full market record. The handler converts it to
@@ -74,10 +85,20 @@ posts them any more.
 - `/facilities` (`GET`, `POST`)
 - `/facilities/validate` (`POST`) for read-only bulk facility/market validation
 
-Community writes through HTTP and EWDS accept UUID or 16-byte hex IDs and store
+Community writes through HTTP and EWDS accept nonzero UUID or 16-byte hex IDs and store
 lowercase hyphenated UUIDs. `GET /communities` and `communities.query` return that
 canonical form. Invalid IDs return HTTP 400 or cause the EWDS event to be dropped
 as invalid; they are not retried as storage failures.
+
+`GET /market`, `GET /markets`, `markets.query`, `POST /markets`, and
+`POST /clearing-results` normalize market IDs to lowercase `0x` bytes16.
+UUIDs, lowercase `0x`-prefixed hex and bare hex are accepted, with hexadecimal
+digits in either case. Whitespace, malformed IDs and all-zero IDs are rejected
+with HTTP 400 or EWDS `invalid_request`. Market writes also normalize community
+IDs. HTTP market reads return stored hex market IDs; EWDS market reads and
+events continue returning UUID market IDs. Neither format implies UUID v4.
+Facility-validation responses still echo each requested pair exactly and report
+an invalid market ID as `unknown_market` for that pair only.
 
 `POST /sites` and `/facilities` create or replace records by `site_name` and
 `facility_id`, respectively, matching the EWDS upsert behavior. Send complete
@@ -86,12 +107,24 @@ make those facilities ineligible. A facility name assigned to another ID returns
 409. These topology writes remain unauthenticated; restricting that write surface
 is a separate access-control follow-up.
 
+Facility IDs, owner IDs and site facility references lowercase strict hyphenated
+UUIDs (8-4-4-4-12). Other nonempty, unpadded identities remain case-sensitive,
+including bare or `0x` hex strings; they are not interpreted as resolved IDs.
+Empty or padded identities return HTTP 400 or invalidate the entire inbound EWDS
+event before any writes. Site facility lists are deduplicated after normalization.
+Names, site keys and arbitrary asset IDs are unchanged.
+This normalization targets fresh deployments with storage and consumers built
+from the same revision.
+
 ### Facility Participation Validation
 
 `POST /facilities/validate` accepts an array of
 `{"facility_id": "facility-a", "market_id": "0x..."}` pairs. Facility IDs are
 the original off-chain IDs, not owner IDs or generated on-chain IDs. Market IDs
 accept UUID or bytes16 hex; results echo the supplied IDs.
+Facility lookup uses the canonical off-chain identity, but responses preserve
+the requested spelling. Empty or padded facility IDs yield `unknown_facility`
+for that pair, without failing the other pairs.
 
 Each pair requires an existing market and facility, the facility's site to
 exist and list that facility, and the market's community to exist and list
@@ -119,6 +152,10 @@ by those trusted services, not by this read-only endpoint or an ID mapping alone
 ### ID Mapping
 - The ID service, execution engine and certificate metadata share the deterministic
   Blake2b-16 derivation. Verification derives IDs locally and never creates mappings.
+  The helper canonicalizes strict hyphenated UUIDs before hashing; opaque IDs
+  retain their original hashes. ID-service lookup, insertion and reverse lookup
+  use the canonical off-chain spelling. `/ids` rejects empty/padded inputs with
+  HTTP 400; `ids.query` responds with `invalid_request`.
   Certificate `owner_id` hashes the facility's current stored owner; historical
   ownership policy remains a separate follow-up.
 - `/ids` (`POST`) — get-or-create offchain↔onchain ID mappings
@@ -131,6 +168,26 @@ Compatibility adapters for EVM JSON callers:
 
 These adapters do not own separate collections. They read and write the same
 `markets`, `measurement_points`, and `timeseries` records as the canonical API.
+Measurement/forecast ingest and facility filters use the same facility rule.
+Typed profile ingestion also requires a nonzero community UUID or 16-byte hex ID,
+stored as a lowercase hyphenated UUID. Generated profile IDs include both canonical
+community and facility IDs. Invalid IDs reject the whole batch before writes
+(HTTP 400 or an invalid EWDS measurement event). The community-client adapter
+applies the same checks before forwarding points and values.
+
+`GET /measurements` and `GET /forecasts` accept optional `facility_id` and
+`community_uuid` filters, individually or together, plus inclusive `start_time`
+and `end_time`. Aliases are `facilityId`/`areaUuid`, `communityUuid`, and
+`startTime`/`endTime`. Times are RFC 3339; community filters accept UUID or hex.
+Invalid identifiers return HTTP 400. `measurements.query` applies the same
+filters and aliases, returning `invalid_request` rather than timing out.
+Specify each field only once, not together with one of its aliases.
+
+Direct `/measurement-points` writes lowercase strict UUID-shaped `asset_name`
+and `datasource_name` references. Other labels (including hex-shaped labels),
+missing datasource metadata and caller-supplied point IDs are preserved.
+Unfiltered profile reads still return these records; a community filter selects
+only matching community metadata. Shared read conversions do not validate it.
 
 When `EWDS_ENABLE_HANDLER=true`, the same community collection is available
 through the `communities.query` request/reply operation.
@@ -169,9 +226,14 @@ reindexing tool. See the [fresh-deployment requirements](../setup/contracts.md#f
 - Existing `POST /trades` and `/trades-normalized` endpoints retain insert-only
   import behavior. They do not update orders or publish lifecycle notifications;
   the matching engine does not use them.
-  These and the legacy order POST routes store market IDs as supplied. Imports
-  must use lowercase `0x` + 32 hex digits: query normalization does not rewrite
-  non-canonical stored IDs. Import validation is a separate follow-up.
+  Imports accept nonzero UUID or bytes16 hex for trade, market, bid/offer and
+  buyer/seller IDs, storing lowercase `0x` hex. Parties must already be resolved
+  on-chain facility hashes. Empty/zero residual IDs become null. All identifiers
+  are validated before writing (400); duplicate canonical trade IDs in the batch
+  or storage return 409. Unique indexes guard concurrent duplicates, but a
+  concurrent conflict can still leave a batch partially inserted. No transaction
+  or migration is introduced. The seed script uses valid deterministic IDs and
+  deletes only the exact IDs listed in its dataset, not a prefix-wide selection.
 - With `EWDS_ENABLE_HANDLER=true`, indexed match confirmations, penalties and
   penalty-free delivery verifications publish persisted snapshots through `trade.event`.
   Penalized verification publishes only the consumed orders' status updates,
@@ -182,7 +244,7 @@ reindexing tool. See the [fresh-deployment requirements](../setup/contracts.md#f
   HTTP and EWDS queries return the same DTO. HTTP-only operation needs no gateway.
   Notification delivery remains best effort, without a durable outbox or ordering guarantee.
 - Order IDs and market IDs are stored as hex strings (`0x...`).
-  Trade, order and clearing-result queries accept market IDs as UUID or 16-byte
+  Market, trade, order and clearing-result queries accept nonzero market IDs as UUID or 16-byte
   hex and normalize them to lowercase `0x` hex. Invalid IDs return HTTP 400 or
   EWDS `invalid_request`. Storage read failures return HTTP 500 or EWDS
   `STORAGE_UNAVAILABLE`, never a partial list. A malformed stored document blocks

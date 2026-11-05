@@ -22,7 +22,7 @@ const BUYER_FACILITY: &str = "goo-buyer";
 const BUYER_OWNER: &str = "goo-owner-buyer";
 const COMMUNITY: &str = "60060060-0000-4000-8000-000000000001";
 const EXPORT_POINT: &str = "Measurement:goo-community:goo-seller";
-const MARKET: &str = "0xmarket";
+const MARKET: &str = "0x60060060000040008000000000000001";
 
 fn hash(offchain_id: &str) -> String {
     bytes16_to_hex(create_encrypted_bytes16_from_string(offchain_id))
@@ -256,6 +256,108 @@ async fn get_goo(address: &str, query: &[(&str, String)]) -> reqwest::Response {
         .send()
         .await
         .unwrap()
+}
+
+#[tokio::test]
+async fn certificates_join_canonical_facilities_mappings_and_meter_references() {
+    use mongodb::bson::doc;
+    use primitives::offchain_storage::{
+        OffchainStorageClient, OffchainStorageTransport,
+    };
+    use primitives::utils::derive_onchain_id;
+
+    let app = init_app().await;
+    let db = &app.db_wrapper;
+    seed_topology(db, 3.0).await;
+    let seller = "abcdefab-abcd-abcd-abcd-abcdefabcdef";
+    let owner = "fedcbafe-dcba-dcba-dcba-fedcbafedcba";
+    db.facilities()
+        .delete_one(doc! {"facility_id": SELLER_FACILITY})
+        .await
+        .unwrap();
+    let http = reqwest::Client::new();
+    for (id, name) in [
+        (seller.to_uppercase(), SELLER_FACILITY),
+        (BUYER_FACILITY.to_string(), BUYER_FACILITY),
+    ] {
+        let response = http
+            .post(format!("{}/facilities", app.address))
+            .json(&FacilitySchema {
+                facility_id: id,
+                facility_name: format!("{name}-name"),
+                site_id: "goo-site".into(),
+                owner_id: owner.to_uppercase(),
+            })
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status().as_u16(), 200);
+    }
+    let client = OffchainStorageClient::new(
+        OffchainStorageTransport::Http,
+        app.address.clone(),
+        "UNUSED",
+        "unused",
+    );
+    let party = client
+        .fetch_onchain_id(&seller.to_uppercase())
+        .await
+        .unwrap();
+    assert_eq!(party, derive_onchain_id(seller));
+    let mut point = db
+        .measurement_points()
+        .find_one(doc! {"measurement_id": EXPORT_POINT})
+        .await
+        .unwrap()
+        .unwrap();
+    point.asset_name = seller.to_uppercase();
+    assert_eq!(
+        http.post(format!("{}/measurement-points", app.address))
+            .json(&vec![point])
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .as_u16(),
+        200
+    );
+    let id = bytes16_to_hex([0xab; 16]);
+    let mut sale = trade(&id, TradeStatus::Matched, None);
+    sale.seller = party;
+    sale.bid_hash = bytes16_to_hex([0xbc; 16]);
+    sale.offer_hash = bytes16_to_hex([0xcd; 16]);
+    let mut imported = primitives::ewds::dto::EwdsTradeDto::from(sale);
+    imported.trade_id = uuid::Uuid::from_bytes([0xab; 16])
+        .to_string()
+        .to_uppercase();
+    imported.seller_id = format!("0x{}", imported.seller_id[2..].to_uppercase());
+    assert_eq!(
+        http.post(format!("{}/trades", app.address))
+            .json(&vec![imported])
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    // Imports do not invent a verification timestamp; the lifecycle supplies it.
+    db.trades().mark_executed(&id, VERDICT_AT).await.unwrap();
+    let response = get_goo(
+        &app.address,
+        &[
+            ("start_time", VERDICT_AT.to_string()),
+            ("end_time", (VERDICT_AT + 1).to_string()),
+        ],
+    )
+    .await;
+    assert_eq!(response.status().as_u16(), 200);
+    let records: Vec<LocalOriginRecord> = response.json().await.unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(
+        records[0].beneficiary_and_claim.owner_id,
+        derive_onchain_id(owner)
+    );
+    stop_app(app).await;
 }
 
 #[tokio::test]

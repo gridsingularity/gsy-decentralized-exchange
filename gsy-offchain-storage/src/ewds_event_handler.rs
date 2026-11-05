@@ -226,12 +226,17 @@ pub async fn handle_event(db: &DatabaseWrapper, envelope: EwdsEventEnvelope<Valu
     match envelope.event_type {
         EwdsEventType::Measurements => {
             let measurements = parse_batch(envelope.data, |measurement: EwdsMeasurementDto| {
-                MeasurementSchema::try_from(measurement)
+                let mut measurement = MeasurementSchema::try_from(measurement)?;
+                measurement.facility_id =
+                    primitives::utils::normalize_offchain_id(&measurement.facility_id)?;
+                measurement.community_uuid =
+                    primitives::utils::normalize_community_id(&measurement.community_uuid)?;
+                Ok(measurement)
             })?;
             retry_db_write(|| insert_measurements(db, &measurements)).await?;
         }
         EwdsEventType::Facility => {
-            let facilities = parse_batch(envelope.data, |facility: FacilitySchema| Ok(facility))?;
+            let facilities = parse_batch(envelope.data, FacilitySchema::normalize_ids)?;
             db.facilities().check_for_duplicates(&facilities).await?;
             for facility in facilities {
                 retry_db_write(|| {
@@ -242,7 +247,7 @@ pub async fn handle_event(db: &DatabaseWrapper, envelope: EwdsEventEnvelope<Valu
             }
         }
         EwdsEventType::Site => {
-            let sites = parse_batch(envelope.data, |site: SiteSchema| Ok(site))?;
+            let sites = parse_batch(envelope.data, SiteSchema::normalize_ids)?;
             for site in sites {
                 retry_db_write(|| {
                     let site = site.clone();

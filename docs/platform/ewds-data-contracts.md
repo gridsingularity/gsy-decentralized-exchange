@@ -9,6 +9,48 @@ Source input: Energy Web Intelligent schemas and the agreed ontology workbook,
 including `Community`, `Market`, `MarketTimeSeries`, `Order`, `Trade`, and
 `ClearingResult`.
 
+## Identifier Syntax
+
+The shared bytes16 parser accepts hyphenated UUIDs with the exact 8-4-4-4-12
+structure, `0x` followed by 32 hex digits, or bare 32 hex digits. Hex digits may
+be upper- or lowercase. Whitespace, uppercase `0X`, braces, `urn:uuid:` notation,
+misplaced hyphens and `0x`-prefixed hyphenated UUIDs are rejected. UUID version
+and variant bits are unrestricted: market IDs are hashes, not necessarily v4.
+Order submissions require non-zero order and market IDs. The raw byte parser
+still accepts zero for optional contract sentinels.
+
+The shared order schema serves both submissions and status notifications.
+Lifecycle notifications contain lowercase `0x` order IDs and on-chain facility
+hashes in `createdBy`; rejections retain the submitted identifiers. FOS must
+correlate equivalent order IDs by their 16 bytes, not their spelling.
+`preferredTradingPartner` remains an off-chain identity, even when hex-shaped.
+
+Off-chain facility and owner IDs are not required to be UUIDs. Strict hyphenated
+UUIDs are lowercased; other nonempty, unpadded strings remain case-sensitive,
+including bare/`0x` hex strings. This rule applies to topology, site facility
+references, ID mappings, order participants/preferences and measurement/forecast
+facility references. Stored entity reads return the canonical spelling;
+`facilities.validate` still echoes each requested pair exactly and reports invalid
+facility identities as `unknown_facility` per pair. Other invalid typed identities
+produce HTTP 400, `invalid_request` for queries, or invalidate the whole inbound
+event before writes/submissions (logged, without a new notification).
+Names and correlation IDs are not normalized.
+
+| Message/read | Identity representation |
+|---|---|
+| `market.event`, `markets.query` | Market/community IDs as lowercase hyphenated UUIDs |
+| `order.event` | UUID/hex order and market IDs; off-chain facility identity and preferred partner |
+| `orderStatus.event` lifecycle | Lowercase `0x` order/market IDs and facility hash; off-chain preferred partner |
+| `orderStatus.event` rejection | Submitted identifiers echoed without rewriting |
+| `trade.event`, `trades.query` | Lowercase `0x` trade/market/order IDs and facility hashes; absent residuals are null |
+| `clearingResult.event`, `clearing_results.query` | Lowercase `0x` market ID |
+| `ids.query` | Canonical off-chain identity and lowercase `0x` facility hash |
+| `facilities.validate` | Exact request pairs, preserving order and cardinality |
+
+Deploy all services from the same DD-459 commit into a fresh environment. The
+ID service returns canonical identities and clients compare canonical forms.
+This does not migrate old mappings or relabel persisted records.
+
 ## Schema Package Location
 
 Schema files are versioned in:
@@ -29,6 +71,9 @@ Primary files:
 - `int.orders.query.response.v1.json`
 - `int.trades.query.request.v1.json`
 - `int.trades.query.response.v1.json`
+- `int.markets.query.request.v1.json`
+- `int.ids.query.request.v1.json`
+- `int.clearing_results.query.request.v1.json`
 - `int.measurements.query.request.v1.json`
 - `int.measurements.query.response.v1.json`
 - `int.forecasts.upsert.request.v1.json`
@@ -47,6 +92,10 @@ Primary files:
 - `int.clearing-result.event.v1.json`
 - `int.market.event.v1.json`
 
+The three `*.upsert.request` schemas above are historical contracts without
+active request handlers. They do not enable EWDS writes; use HTTP profile/market
+routes or supported inbound events instead.
+
 DDHub topic names use camelCase because the Client Gateway UI rejects dots in
 topic names. The schema file names and payload `operation` values keep dotted
 operation names for readability and service routing:
@@ -57,6 +106,9 @@ operation names for readability and service routing:
 | `ordersQueryResponse` | response envelope | `int.orders.query.response.v1.json` |
 | `tradesQuery` | `trades.query` | `int.trades.query.request.v1.json` |
 | `tradesQueryResponse` | response envelope | `int.trades.query.response.v1.json` |
+| `marketsQuery` | `markets.query` | `int.markets.query.request.v1.json` |
+| `idsQuery` | `ids.query` | `int.ids.query.request.v1.json` |
+| `clearingResultsQuery` | `clearing_results.query` | `int.clearing_results.query.request.v1.json` |
 | `measurementsQuery` | `measurements.query` | `int.measurements.query.request.v1.json` |
 | `measurementsQueryResponse` | response envelope | `int.measurements.query.response.v1.json` |
 | `communitiesQuery` | `communities.query` | `int.communities.query.request.v1.json` |
@@ -82,6 +134,19 @@ Used by `measurements.query` responses and `measurements.event` messages.
 | `timeSlot` | `MeasurementSchema.time_slot` (RFC 3339) |
 | `creationTime` | `MeasurementSchema.creation_time` (RFC 3339) |
 | `energyKwh` | `MeasurementSchema.energy_kwh` |
+
+Inbound measurement events require a nonzero `communityUuid` as UUID or bytes16
+hex; storage normalizes it to a lowercase hyphenated UUID before generating the
+profile-point ID. This is an ingress restriction, not a shared DTO conversion
+rule: query responses can still carry an empty community or a datasource label
+from generic measurement points. The event schema adds the restriction separately
+from the shared measurement schema.
+
+`measurements.query` supports optional `facilityId` and `communityUuid` filters,
+combined with inclusive RFC 3339 `startTime`/`endTime` bounds. Existing snake_case
+names and `areaUuid` remain accepted. Invalid filters receive `invalid_request`;
+specify only one spelling per field. Community UUID/hex variants address the same
+canonical community; facility IDs follow the off-chain identity rule above.
 
 ### Facility and Site Mapping
 
@@ -151,11 +216,10 @@ For an `order.event`, the community client builds the
 | `energySourcePreference`, `preferredTradingPartner`, `preferredEnergyRate` | requirements for bids and offers (`energySourcePreference`, `preferredTradingPartner` mapped by the ID service, `preferredEnergyRate` × 10 000) |
 | `energyType` | the offer attributes (`energyType`) |
 
-Runtime-only fields not represented in the agreed Intelligent `Order` schema:
-
-- `facilityId`
-- EVM bytes32 `orderId` / `marketId` hash format
-- EVM account address in `createdBy`
+Order and market IDs represent bytes16, not bytes32. Lifecycle `createdBy` is
+the bytes16 facility hash, not an EVM wallet address. The shared order DTO also
+serves legacy HTTP imports, which require this already-resolved facility hash;
+`order.event` submissions instead carry the off-chain facility identity.
 
 ## Validation Rules Applied from CSV
 
