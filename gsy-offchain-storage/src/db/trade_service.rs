@@ -4,12 +4,19 @@ use futures::StreamExt;
 use mongodb::bson::{doc, Bson};
 use mongodb::options::IndexOptions;
 use mongodb::{Collection, Cursor, IndexModel};
-use primitives::db_api_schema::trades::{ClearingResultSchema, DbTradeSchema, MarketRoleSchema};
+use primitives::db_api_schema::trades::{
+    ClearingResultSchema, DbTradeSchema, MarketRoleSchema, TradeStatus,
+};
 use std::collections::HashMap;
 use std::ops::Deref;
 
+fn timestamp_bson(value: u64) -> Result<Bson> {
+    Ok(Bson::Int64(i64::try_from(value)?))
+}
+
 /// Trade indexes per D3.2 section 5.3: `buyer`, `seller`, `market_id` and
-/// `creation_time` accelerate per-asset / per-market / time-range lookups.
+/// `creation_time` accelerate per-asset / per-market / time-range lookups;
+/// `status_updated_at` backs the verdict-time window of the guarantees-of-origin query.
 pub async fn init_trades(db: &DatabaseWrapper) -> Result<()> {
     let controller = db.trades();
     controller
@@ -20,7 +27,13 @@ pub async fn init_trades(db: &DatabaseWrapper) -> Result<()> {
                 .build(),
         )
         .await?;
-    for key in ["buyer", "seller", "market_id", "creation_time"] {
+    for key in [
+        "buyer",
+        "seller",
+        "market_id",
+        "creation_time",
+        "status_updated_at",
+    ] {
         controller
             .create_index(IndexModel::builder().keys(doc! {key: 1}).build())
             .await?;
@@ -111,6 +124,38 @@ impl TradeService {
                 .market_ids_by_delivery_start(start_time, end_time)
                 .await?;
             filter_params.insert("market_id", doc! {"$in": market_ids});
+        }
+
+        match self.0.find(filter_params).await {
+            Ok(cursor) => self.create_vector_from_cursor(cursor).await,
+            Err(e) => {
+                tracing::error!("Failed to execute query: {:?}", e);
+                Err(anyhow::Error::from(e))
+            }
+        }
+    }
+
+    /// Trades whose status last changed within `[start_time, end_time)` (unix seconds, end
+    /// exclusive; no upper bound when `end_time` is `None`), optionally restricted to `status`.
+    ///
+    /// This windows on `status_updated_at` rather than the market's delivery slot: that says
+    /// when the energy flowed, while the verdict arrives later and by a variable delay.
+    /// Trades with no `status_updated_at` are excluded, which is every trade that never
+    /// changed status after insertion, including all trades written before the field existed.
+    #[tracing::instrument(name = "Filter trades by status change time", skip(self))]
+    pub async fn filter_trades_by_status_change(
+        &self,
+        start_time: u64,
+        end_time: Option<u64>,
+        status: Option<TradeStatus>,
+    ) -> Result<Vec<DbTradeSchema>> {
+        let mut bounds = doc! {"$gte": timestamp_bson(start_time)?};
+        if let Some(end_time) = end_time {
+            bounds.insert("$lt", timestamp_bson(end_time)?);
+        }
+        let mut filter_params = doc! {"status_updated_at": bounds};
+        if let Some(status) = &status {
+            filter_params.insert("status", mongodb::bson::to_bson(status)?);
         }
 
         match self.0.find(filter_params).await {

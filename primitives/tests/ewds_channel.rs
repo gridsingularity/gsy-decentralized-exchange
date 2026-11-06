@@ -291,7 +291,7 @@ fn messages_without_a_topic_are_routed_by_their_event_type() {
     let mut facilities = poller.route("facility");
     let event = EwdsEventEnvelope {
         event_id: "event-1".to_string(),
-        event_type: EwdsEventType::FacilitySubmitted,
+        event_type: EwdsEventType::Facility,
         occurred_at: "2026-10-08T10:00:00Z".to_string(),
         data: json!([]),
     };

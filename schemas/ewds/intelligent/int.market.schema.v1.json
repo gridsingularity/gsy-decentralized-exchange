@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://intelligent-project.eu/ontology/v1.0.0/market/Market",
   "title": "int:Market",
-  "description": "A single energy market slot defining the trading window and delivery period. Subclass of cim:MarketDocument.",
+  "description": "A single energy market slot defining the trading window and delivery period. Subclass of cim:MarketDocument. Mirrors the Rust EwdsMarketDto (camelCase wire form).",
   "type": "object",
   "properties": {
     "marketId": {
@@ -36,23 +36,23 @@
       "format": "date-time"
     },
     "marketType": {
-      "description": "Type of market. IRI: int:marketType.",
+      "description": "Type of market. IRI: int:marketType. Mirrors the Rust primitives::MarketType.",
       "type": "string",
       "enum": [
-        "local_spot",
+        "spot",
         "flex",
-        "local_settlement"
+        "settlement"
       ]
     },
     "matchingAlgorithm": {
-      "description": "Market clearing algorithm applied to this slot. IRI: int:matchingAlgorithm.",
+      "description": "Market clearing algorithm applied to this slot. IRI: int:matchingAlgorithm. Mirrors the Rust primitives::MatchingAlgorithm.",
       "type": "string",
       "enum": [
-        "PayAsBid",
-        "PayAsClear",
-        "AMM"
+        "pay_as_bid",
+        "pay_as_clear",
+        "amm"
       ],
-      "default": "PayAsBid"
+      "default": "pay_as_bid"
     },
     "createdAt": {
       "description": "Record creation timestamp. IRI: int:createdAt. ISO 8601 with timezone.",

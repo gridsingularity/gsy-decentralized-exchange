@@ -1,16 +1,16 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "int.facility.submitted.event.v1",
-  "title": "facility event",
+  "$id": "int.clearing-result.event.v1",
+  "title": "clearing result event",
   "type": "object",
   "additionalProperties": false,
   "properties": {
     "eventId": { "type": "string", "minLength": 1 },
-    "eventType": { "const": "facility.submitted" },
+    "eventType": { "const": "clearingResult.event" },
     "occurredAt": { "type": "string", "format": "date-time" },
     "data": {
       "type": "array",
-      "items": { "$ref": "./int.facility.schema.v1.json" },
+      "items": { "$ref": "./int.clearing-result.schema.v1.json" },
       "minItems": 1
     }
   },

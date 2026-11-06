@@ -140,7 +140,7 @@ async fn publish_event_uses_the_events_channel_and_the_topic_of_its_type() {
         .await;
     let event = EwdsEventEnvelope {
         event_id: "event-4".to_string(),
-        event_type: EwdsEventType::CommunitySubmitted,
+        event_type: EwdsEventType::Community,
         occurred_at: "2026-09-29T10:16:02+00:00".to_string(),
         data: json!({"communityId": "community-1"}),
     };
@@ -161,7 +161,7 @@ async fn publish_event_uses_the_events_channel_and_the_topic_of_its_type() {
 fn order_event(event_id: &str) -> EwdsEventEnvelope<Value> {
     EwdsEventEnvelope {
         event_id: event_id.to_string(),
-        event_type: EwdsEventType::OrderSubmitted,
+        event_type: EwdsEventType::Order,
         occurred_at: "2026-09-30T09:40:13Z".to_string(),
         data: json!([]),
     }
@@ -181,7 +181,7 @@ async fn run_order_event_worker(
     let worker_handled = handled.clone();
     let worker = tokio::spawn(async move {
         worker_client
-            .run_event_subscriber(&[EwdsEventType::OrderSubmitted], |envelope| {
+            .run_event_subscriber(&[EwdsEventType::Order], |envelope| {
                 let handled = worker_handled.clone();
                 async move {
                     let mut handled = handled.lock().unwrap();
@@ -247,7 +247,7 @@ async fn event_subscriber_polls_the_whole_events_channel() {
                 "topicName": "trade",
                 "topicOwner": "test.owner",
                 "payload": serde_json::to_string(&EwdsEventEnvelope {
-                    event_type: EwdsEventType::TradeCreated,
+                    event_type: EwdsEventType::Trade,
                     ..order_event("trade-event")
                 }).unwrap(),
             },
@@ -275,7 +275,7 @@ async fn event_subscriber_polls_the_whole_events_channel() {
 async fn event_subscriber_skips_bad_and_seen_messages() {
     let server = MockServer::start().await;
     let wrong_type_event = EwdsEventEnvelope {
-        event_type: EwdsEventType::SiteSubmitted,
+        event_type: EwdsEventType::Site,
         ..order_event("site-event")
     };
     Mock::given(method("GET"))
@@ -377,7 +377,7 @@ async fn event_subscriber_keeps_polling_after_a_failed_poll() {
 async fn event_subscriber_keeps_other_topics_going_while_one_waits_for_a_retry() {
     let server = MockServer::start().await;
     let site_event = EwdsEventEnvelope {
-        event_type: EwdsEventType::SiteSubmitted,
+        event_type: EwdsEventType::Site,
         ..order_event("site-event")
     };
     Mock::given(method("GET"))
@@ -407,7 +407,7 @@ async fn event_subscriber_keeps_other_topics_going_while_one_waits_for_a_retry()
     let subscriber = tokio::spawn(async move {
         subscriber_client
             .run_event_subscriber(
-                &[EwdsEventType::OrderSubmitted, EwdsEventType::SiteSubmitted],
+                &[EwdsEventType::Order, EwdsEventType::Site],
                 |envelope| {
                     let handled = subscriber_handled.clone();
                     async move {

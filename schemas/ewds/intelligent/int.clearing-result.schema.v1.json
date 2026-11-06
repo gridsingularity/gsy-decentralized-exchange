@@ -65,9 +65,9 @@
       "maxLength": 128
     },
     "createdAt": {
-      "description": "Datetime when clearing result was recorded. IRI: int:createdAt. Unix epoch (seconds).",
-      "type": "integer",
-      "minimum": 0
+      "description": "Datetime when clearing result was recorded. IRI: int:createdAt. RFC 3339.",
+      "type": "string",
+      "format": "date-time"
     }
   },
   "required": [

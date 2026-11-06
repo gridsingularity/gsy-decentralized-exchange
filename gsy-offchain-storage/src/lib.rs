@@ -1,3 +1,4 @@
+pub mod certificates;
 pub mod configuration;
 pub mod db;
 pub mod evm_handler;

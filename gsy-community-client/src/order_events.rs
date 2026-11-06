@@ -13,7 +13,7 @@ use primitives::utils::{parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR};
 use serde_json::Value;
 use std::str::FromStr;
 use std::sync::Arc;
-use tokio::time::{sleep, Duration};
+use tokio::time::{sleep, timeout, Duration};
 use tracing::{info, warn};
 use uuid::Uuid;
 
@@ -22,9 +22,12 @@ const CONSUMER_CLIENT_ID_DEFAULT: &str = "gsycommunityclient";
 const EWDS_TIMEOUT_MS: u64 = 60_000;
 const PLACE_ORDER_ATTEMPTS: u32 = 3;
 const PLACE_ORDER_RETRY_DELAY_MS: u64 = 1_000;
+const NODE_HEALTH_CHECK_INTERVAL_MS: u64 = 30_000;
+const NODE_HEALTH_CHECK_TIMEOUT_MS: u64 = 10_000;
 
-/// Polls `order.submitted` events from EWDS and sends their orders to the `OrderRegistry`. Runs until the
-/// task is dropped, and only returns early if the node or the configuration is unusable.
+/// Polls `order.event` messages from EWDS and sends their orders to the `OrderRegistry`. Runs until the
+/// task is dropped, and only returns early if the node or the configuration is unusable, or the
+/// connection to the node is lost for good.
 pub async fn start_order_event_subscriber() -> Result<()> {
     let evm_node_url = env_var("EVM_NODE_URL").unwrap_or_else(|| "ws://anvil:8545".to_string());
     let order_registry_address =
@@ -53,12 +56,24 @@ pub async fn start_order_event_subscriber() -> Result<()> {
         "Starting EWDS order event subscriber (order_registry={})",
         order_registry_address
     );
-    ewds_client
-        .run_event_subscriber(&[EwdsEventType::OrderSubmitted], |envelope| {
+    tokio::select! {
+        _ = ewds_client.run_event_subscriber(&[EwdsEventType::Order], |envelope| {
             handler.handle(envelope)
-        })
-        .await;
-    Ok(())
+        }) => Ok(()),
+        error = watch_node(&handler.order_registry) => Err(error),
+    }
+}
+
+/// Checks the connection to the node periodically and returns once a check fails. The websocket
+/// provider does not report when it gives up reconnecting, and never recovers from it; every
+/// request fails from then on, so the subscriber has to stop and be restarted.
+async fn watch_node(order_registry: &OrderRegistryClient) -> Error {
+    loop {
+        sleep(Duration::from_millis(NODE_HEALTH_CHECK_INTERVAL_MS)).await;
+        if let Err(error) = order_registry.check_connection().await {
+            return error.context("Lost the connection to the EVM node");
+        }
+    }
 }
 
 /// What happened to one order of an event.
@@ -81,7 +96,7 @@ impl OrderEventHandler {
         }
     }
 
-    /// Sends the orders of an `order.submitted` event to the `OrderRegistry`.
+    /// Sends the orders of an `order.event` to the `OrderRegistry`.
     ///
     /// The event is rejected before anything is sent if one of its orders is invalid or its IDs
     /// cannot be resolved. After that every order is sent on its own: one the contract rejects
@@ -253,6 +268,17 @@ impl OrderRegistryClient {
         })
     }
 
+    /// Fails if the node does not answer in time, e.g. because the provider gave up reconnecting.
+    pub async fn check_connection(&self) -> Result<()> {
+        timeout(
+            Duration::from_millis(NODE_HEALTH_CHECK_TIMEOUT_MS),
+            self.contract.client().get_block_number(),
+        )
+        .await
+        .context("The EVM node did not answer in time")??;
+        Ok(())
+    }
+
     /// Whether an order with this ID was ever placed, whatever its status is now.
     pub async fn is_placed(&self, order_id: [u8; 16]) -> Result<bool, PlaceOrderError> {
         let status = self
@@ -343,7 +369,7 @@ pub fn order_params(order: &DbOrderSchema) -> Result<EvmOrderParamsTuple> {
 }
 
 /// The field rules an order from EWDS has to meet before it is placed.
-fn validate_order(order: DbOrderSchema) -> Result<DbOrderSchema> {
+pub fn validate_order(order: DbOrderSchema) -> Result<DbOrderSchema> {
     Uuid::parse_str(&order.order_id)
         .map_err(|e| anyhow!("orderId '{}' is not a UUID: {}", order.order_id, e))?;
     if order.status != OrderStatus::Submitted {
@@ -356,164 +382,4 @@ fn validate_order(order: DbOrderSchema) -> Result<DbOrderSchema> {
         bail!("priceLimit must be 0 or more, got {}", order.energy_rate);
     }
     Ok(order)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn order() -> DbOrderSchema {
-        DbOrderSchema {
-            order_id: "3f2c6d1e-8a4b-4c7d-9e2f-1a5b6c7d8e9f".to_string(),
-            status: OrderStatus::Submitted,
-            order_type: OrderEnum::Bid,
-            area_uuid: "owner-1".to_string(),
-            market_id: format!("0x{}", "11".repeat(16)),
-            time_slot: 1_790_762_400,
-            creation_time: 1_790_761_212,
-            energy_kWh: 1.5,
-            energy_rate: 0.3,
-            created_by: "owner-1".to_string(),
-            requirements: None,
-            attributes: None,
-        }
-    }
-
-    #[test]
-    fn accepts_a_valid_order() {
-        assert_eq!(validate_order(order()).unwrap(), order());
-    }
-
-    #[test]
-    fn accepts_a_price_limit_of_zero() {
-        assert!(validate_order(DbOrderSchema {
-            energy_rate: 0.0,
-            ..order()
-        })
-        .is_ok());
-    }
-
-    #[test]
-    fn rejects_invalid_orders() {
-        for (invalid, expected) in [
-            (
-                DbOrderSchema {
-                    order_id: "order-1".to_string(),
-                    ..order()
-                },
-                "is not a UUID",
-            ),
-            (
-                DbOrderSchema {
-                    status: OrderStatus::Cancelled,
-                    ..order()
-                },
-                "orderStatus",
-            ),
-            (
-                DbOrderSchema {
-                    energy_kWh: 0.0,
-                    ..order()
-                },
-                "quantity",
-            ),
-            (
-                DbOrderSchema {
-                    energy_kWh: -1.0,
-                    ..order()
-                },
-                "quantity",
-            ),
-            (
-                DbOrderSchema {
-                    energy_rate: -0.1,
-                    ..order()
-                },
-                "priceLimit",
-            ),
-        ] {
-            let error = validate_order(invalid).unwrap_err().to_string();
-            assert!(error.contains(expected), "{error}");
-        }
-    }
-}
-
-#[cfg(test)]
-mod order_params_tests {
-    use super::*;
-    use primitives::db_api_schema::orders::{DbAttributes, DbRequirements, EnergyType};
-    use primitives::utils::bytes16_to_hex;
-
-    fn order() -> DbOrderSchema {
-        DbOrderSchema {
-            order_id: "3f2c6d1e-8a4b-4c7d-9e2f-1a5b6c7d8e9f".to_string(),
-            status: OrderStatus::Submitted,
-            order_type: OrderEnum::Offer,
-            area_uuid: format!("0x{}", "aa".repeat(16)),
-            market_id: format!("0x{}", "11".repeat(16)),
-            time_slot: 1_790_762_400,
-            creation_time: 1_790_761_212,
-            energy_kWh: 0.30005,
-            energy_rate: 0.07,
-            created_by: format!("0x{}", "aa".repeat(16)),
-            requirements: None,
-            attributes: Some(DbAttributes {
-                energy_type: EnergyType::Battery,
-            }),
-        }
-    }
-
-    #[test]
-    fn order_params_keeps_the_uuid_bytes_and_scales_energy_and_rate() {
-        let params = order_params(&order()).unwrap();
-
-        assert_eq!(
-            bytes16_to_hex(params.0),
-            "0x3f2c6d1e8a4b4c7d9e2f1a5b6c7d8e9f"
-        );
-        assert_eq!(params.1, [0xaa; 16]);
-        assert_eq!(params.2, [0x11; 16]);
-        assert_eq!((params.3, params.4), (1_790_762_400, 1_790_761_212));
-        // Rounded, not truncated.
-        assert_eq!((params.5, params.6), (3_001, 700));
-        assert_eq!((params.7, params.8), (0, 5));
-        assert!(!params.9);
-        assert_eq!((params.10, params.11), ([0; 16], 0));
-    }
-
-    #[test]
-    fn order_params_rejects_ids_that_are_not_on_chain_ids() {
-        for (invalid, expected) in [
-            (
-                DbOrderSchema {
-                    created_by: "owner-1".to_string(),
-                    ..order()
-                },
-                "createdBy",
-            ),
-            (
-                DbOrderSchema {
-                    market_id: format!("0x{}", "00".repeat(16)),
-                    ..order()
-                },
-                "marketId",
-            ),
-            (
-                DbOrderSchema {
-                    order_type: OrderEnum::Bid,
-                    requirements: Some(DbRequirements {
-                        trading_partner_id: Some("owner-2".to_string()),
-                        energy_type: None,
-                        preferred_energy_rate: None,
-                    }),
-                    attributes: None,
-                    ..order()
-                },
-                "resolved through the ID service",
-            ),
-        ] {
-            let error = order_params(&invalid).err().unwrap().to_string();
-            assert!(error.contains(expected), "{error}");
-        }
-    }
 }

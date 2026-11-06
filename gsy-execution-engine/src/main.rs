@@ -2,14 +2,14 @@ use ::primitives::{log::setup_logging, utils::timestamp_to_datetime_string};
 use clap::Parser;
 use gsy_execution_engine::{
     services::execution_orchestrator::run_execution_cycle,
-    timeslot_scheduler::{TimeslotScheduler, DEFAULT_ROLLOVER_RETRY_LIMIT},
+    timeslot_scheduler::TimeslotScheduler,
     utils::cli::{Cli, Commands},
 };
 use std::env;
 use tracing::{error, info};
 
 #[tokio::main]
-async fn main() {
+async fn main() -> anyhow::Result<()> {
     setup_logging("gsy-execution-engine", "info");
 
     let cli = Cli::parse();
@@ -42,11 +42,7 @@ async fn main() {
             }
             info!("Using off-chain storage URL: {}", offchain_url);
 
-            let rollover_retry_limit = env::var("EXECUTION_ENGINE_ROLLOVER_RETRY_LIMIT")
-                .ok()
-                .and_then(|value| value.parse::<u32>().ok())
-                .unwrap_or(DEFAULT_ROLLOVER_RETRY_LIMIT);
-            let mut timeslot_scheduler = TimeslotScheduler::new(rollover_retry_limit);
+            let mut timeslot_scheduler = TimeslotScheduler::from_env()?;
 
             loop {
                 let timeslot = timeslot_scheduler.calculate_timeslot();
@@ -55,7 +51,7 @@ async fn main() {
                     timestamp_to_datetime_string(timeslot),
                     timeslot
                 );
-                match run_execution_cycle(
+                if let Err(e) = run_execution_cycle(
                     &offchain_url,
                     &evm_node_url,
                     &trade_settlement_address,
@@ -66,13 +62,7 @@ async fn main() {
                 )
                 .await
                 {
-                    Ok(processed_penalties) => {
-                        timeslot_scheduler.record_cycle(timeslot, processed_penalties);
-                    }
-                    Err(e) => {
-                        error!("Cycle failed for {}: {:?}", timeslot, e);
-                        timeslot_scheduler.record_cycle(timeslot, 0);
-                    }
+                    error!("Cycle failed for {}: {:?}", timeslot, e);
                 }
                 info!("Sleeping for {}s...", polling_interval);
                 tokio::time::sleep(std::time::Duration::from_secs(polling_interval)).await;

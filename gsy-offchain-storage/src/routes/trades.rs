@@ -1,4 +1,5 @@
 use crate::db::DbRef;
+use crate::ewds_handler::validate_trades_query_range;
 use crate::routes::parse_time_range;
 use actix_web::web::Query;
 use actix_web::{web::Json, HttpResponse, Responder};
@@ -64,10 +65,25 @@ pub async fn get_trades(db: DbRef, query_params: Query<GetTradesParams>) -> impl
         Ok(range) => range,
         Err(response) => return response,
     };
+    // Same rules as the EWDS `trades.query` operation.
+    let range = match validate_trades_query_range(
+        query_params.market_id.as_deref(),
+        start_time,
+        end_time,
+    ) {
+        Ok(range) => range,
+        Err(error) => {
+            return HttpResponse::BadRequest().body(format!("{}: {}", error.code, error.message))
+        }
+    };
     match db
         .get_ref()
         .trades()
-        .filter_trades(query_params.market_id.clone(), start_time, end_time)
+        .filter_trades(
+            query_params.market_id.clone(),
+            range.map(|(start, _)| start),
+            range.map(|(_, end)| end),
+        )
         .await
     {
         Ok(trades) => {

@@ -5,16 +5,17 @@ use async_trait::async_trait;
 use ethers::contract::LogMeta;
 use ethers::types::U256;
 use gsy_ethers_listener::{
-    GsyEventHandler, MarketClearingFilter, MarketStatusUpdatedFilter, OrderCancelledFilter,
+    GsyEventHandler, MarketClearingFilter, NewMarketCreatedFilter, OrderCancelledFilter,
     OrderPlacedFilter, TradeSettledFilter,
 };
 use primitives::db_api_schema::{
+    market::{MarketChainRecord, MarketSchema},
     orders::{
         order_metadata_from_contract, ContractOrderMetadata, DbOrderSchema, OrderEnum, OrderStatus,
     },
     trades::{ClearingResultSchema, ClearingStatus, DbTradeSchema, TradeParameters, TradeStatus},
 };
-use primitives::ewds::dto::EwdsMarketStatusDto;
+use primitives::ewds::dto::EwdsMarketDto;
 use primitives::utils::{bytes16_to_hex, NODE_FLOAT_SCALING_FACTOR};
 use tracing::{error, info};
 
@@ -141,6 +142,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
                 selected_energy_kWh: energy_f64,
                 energy_rate: price_f64,
             },
+            status_updated_at: None,
         };
 
         self.db
@@ -174,27 +176,39 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
 
         // Publish only once the trade and both order status updates are persisted.
         if let Some(publisher) = &self.event_publisher {
-            publisher.publish_trades_created(vec![trade]);
+            publisher.publish_trade_event(vec![trade]);
         }
 
         Ok(())
     }
 
-    async fn handle_market_status(&self, event: MarketStatusUpdatedFilter) -> Result<()> {
+    async fn handle_new_market_created(&self, event: NewMarketCreatedFilter) -> Result<()> {
         info!(
-            "Processing EVM MarketStatus: {:?} -> Open? {}",
-            hex::encode(event.market_id),
-            event.is_open
+            "Processing EVM NewMarketCreated: {:?}",
+            hex::encode(event.market_id)
         );
 
+        // Upsert by market_id so a replayed event is harmless.
+        let market = MarketSchema::try_from(MarketChainRecord {
+            market_id: event.market_id,
+            community_id: event.community_id,
+            opening_time: event.opening_time,
+            closing_time: event.closing_time,
+            delivery_start_time: event.delivery_start_time,
+            delivery_end_time: event.delivery_end_time,
+            market_type: event.market_type,
+            matching_algorithm: event.matching_algorithm,
+            created_at: event.created_at,
+        })?;
+        let market = self.db.markets().upsert(market).await?;
+
+        info!("Market persisted.");
+
+        // Publish only once the market is persisted.
         if let Some(publisher) = &self.event_publisher {
-            publisher.publish_market_statuses_updated(
-                vec![EwdsMarketStatusDto {
-                    market_id: bytes16_to_hex(event.market_id),
-                    is_open: event.is_open,
-                }],
-                chrono::Utc::now().timestamp() as u64,
-            );
+            let market = EwdsMarketDto::try_from(market)
+                .context("Failed to convert the market for its market.event")?;
+            publisher.publish_market_event(vec![market], event.created_at);
         }
 
         Ok(())
@@ -243,7 +257,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         info!("Market clearing result saved.");
 
         if let Some(publisher) = &self.event_publisher {
-            publisher.publish_clearing_results_created(vec![clearing_result]);
+            publisher.publish_clearing_result_event(vec![clearing_result]);
         }
         Ok(())
     }

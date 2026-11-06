@@ -11,6 +11,8 @@ async fn main() -> Result<()> {
 
     info!("Starting GSY Market Orchestrator...");
     let config = config::get_config()?;
+    // Resolve the rules now so an invalid MATCHING_ALGORITHM fails at startup.
+    info!("Market rules: {:?}", *config::MARKET_RULES);
     let client = chain_connector::GsyMarketOrchestratorNodeClient::new(&config).await?;
     let community_source = OffchainStorageClient::new(
         config.offchain_storage_transport,

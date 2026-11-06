@@ -4,6 +4,8 @@ use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgori
 use primitives::db_api_schema::trades::MarketRoleSchema;
 use primitives::ewds::dto::EwdsClearingResultDto;
 
+const COMMUNITY_ID: &str = "11111111-1111-4111-8111-111111111111";
+
 fn make_market(market_id: &str, community_id: &str, opening_time: &str) -> MarketSchema {
     MarketSchema {
         market_id: market_id.to_string(),
@@ -22,7 +24,7 @@ fn make_market(market_id: &str, community_id: &str, opening_time: &str) -> Marke
 async fn post_market_succeeds() {
     let app = init_app().await;
     let address = app.address.clone();
-    let market = make_market("my_market", "community1", "2026-03-27T18:00:00Z");
+    let market = make_market("my_market", COMMUNITY_ID, "2026-03-27T18:00:00Z");
 
     let client = reqwest::Client::new();
     let response = client
@@ -44,7 +46,7 @@ async fn get_market_succeeds() {
     let app = init_app().await;
     let address = app.address.clone();
 
-    let market1 = make_market("my_market", "community1", "2026-03-27T18:00:00Z");
+    let market1 = make_market("my_market", COMMUNITY_ID, "2026-03-27T18:00:00Z");
     let market2 = make_market("my_market2", "community2", "2026-03-27T19:00:00Z");
 
     let db = web::Data::new(app.db_wrapper.clone());
@@ -71,14 +73,17 @@ async fn get_market_from_community_succeeds() {
     let app = init_app().await;
     let address = app.address.clone();
 
-    let market1 = make_market("my_market", "communityhash", "2026-03-27T18:00:00Z");
+    let market1 = make_market("my_market", COMMUNITY_ID, "2026-03-27T18:00:00Z");
     let db = web::Data::new(app.db_wrapper.clone());
     let market_ref = db.get_ref().markets();
     market_ref.insert_one(market1).await.unwrap();
 
     let client = reqwest::Client::new();
     let resp = client
-        .get(&format!("{}/markets?community_id=communityhash", &address))
+        .get(&format!(
+            "{}/markets?community_id={}",
+            &address, COMMUNITY_ID
+        ))
         .send()
         .await
         .unwrap();
@@ -87,6 +92,91 @@ async fn get_market_from_community_succeeds() {
     let resp_json: Vec<MarketSchema> = resp.json().await.unwrap();
     assert_eq!(resp_json.len(), 1);
     assert_eq!(resp_json[0].market_id, "my_market");
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn get_markets_matches_any_form_of_a_uuid_community_id() {
+    let app = init_app().await;
+    let address = app.address.clone();
+    let client = reqwest::Client::new();
+
+    let market = make_market(
+        "my_market",
+        "3F2504E0-4F89-41D3-9A0C-0305E82C3301",
+        "2026-03-27T18:00:00Z",
+    );
+    let saved: MarketSchema = client
+        .post(&format!("{}/markets", &address))
+        .json(&market)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(saved.community_id, "3f2504e0-4f89-41d3-9a0c-0305e82c3301");
+
+    for community_id in [
+        "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+        "3F2504E0-4F89-41D3-9A0C-0305E82C3301",
+        "0x3f2504e04f8941d39a0c0305e82c3301",
+    ] {
+        let resp = client
+            .get(&format!(
+                "{}/markets?community_id={}",
+                &address, community_id
+            ))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(200, resp.status().as_u16(), "{community_id}");
+        let resp_json: Vec<MarketSchema> = resp.json().await.unwrap();
+        assert_eq!(resp_json.len(), 1, "{community_id}");
+        assert_eq!(resp_json[0].market_id, "my_market");
+    }
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn post_market_rejects_a_non_uuid_community_id() {
+    let app = init_app().await;
+    let address = app.address.clone();
+    let market = make_market("my_market", "community1", "2026-03-27T18:00:00Z");
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post(&format!("{}/markets", &address))
+        .json(&market)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(400, response.status().as_u16());
+    let stored = app
+        .db_wrapper
+        .markets()
+        .filter(Some("my_market".to_string()), None, None, None)
+        .await
+        .unwrap();
+    assert!(stored.is_empty());
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn get_markets_rejects_a_non_uuid_community_id() {
+    let app = init_app().await;
+    let address = app.address.clone();
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(&format!("{}/markets?community_id=community1", &address))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(400, resp.status().as_u16());
     stop_app(app).await;
 }
 

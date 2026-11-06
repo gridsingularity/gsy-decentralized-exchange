@@ -8,8 +8,8 @@ use primitives::db_api_schema::{
     trades::{ClearingResultSchema, DbTradeSchema},
 };
 use primitives::ewds::dto::{
-    EwdsClearingResultDto, EwdsCommunityDto, EwdsEventEnvelope, EwdsMarketStatusDto,
-    EwdsMeasurementDto, EwdsTradeDto,
+    EwdsClearingResultDto, EwdsCommunityDto, EwdsEventEnvelope, EwdsMarketDto, EwdsMeasurementDto,
+    EwdsTradeDto,
 };
 use primitives::ewds::{invalid_event, parse_batch, EwdsClient, EwdsClientConfig, EwdsEventType};
 use primitives::utils::epoch_to_rfc3339;
@@ -24,10 +24,10 @@ use uuid::Uuid;
 
 /// The events other systems send to GSY. Each is polled on its own topic.
 const SUBSCRIBED_EVENT_TYPES: [EwdsEventType; 4] = [
-    EwdsEventType::MeasurementsSubmitted,
-    EwdsEventType::FacilitySubmitted,
-    EwdsEventType::SiteSubmitted,
-    EwdsEventType::CommunitySubmitted,
+    EwdsEventType::Measurements,
+    EwdsEventType::Facility,
+    EwdsEventType::Site,
+    EwdsEventType::Community,
 ];
 
 const DB_WRITE_ATTEMPTS: u32 = 3;
@@ -52,14 +52,14 @@ impl EwdsEventPublisher {
         }
     }
 
-    pub fn publish_trades_created(&self, trades: Vec<DbTradeSchema>) -> JoinHandle<()> {
+    pub fn publish_trade_event(&self, trades: Vec<DbTradeSchema>) -> JoinHandle<()> {
         let occurred_at = trades
             .iter()
             .map(|trade| trade.creation_time)
             .max()
             .unwrap_or_default();
         self.spawn_event(
-            EwdsEventType::TradeCreated,
+            EwdsEventType::Trade,
             occurred_at,
             trades
                 .into_iter()
@@ -68,7 +68,7 @@ impl EwdsEventPublisher {
         )
     }
 
-    pub fn publish_clearing_results_created(
+    pub fn publish_clearing_result_event(
         &self,
         clearing_results: Vec<ClearingResultSchema>,
     ) -> JoinHandle<()> {
@@ -78,7 +78,7 @@ impl EwdsEventPublisher {
             .max()
             .unwrap_or_default();
         self.spawn_event(
-            EwdsEventType::ClearingResultCreated,
+            EwdsEventType::ClearingResult,
             occurred_at,
             clearing_results
                 .into_iter()
@@ -87,16 +87,12 @@ impl EwdsEventPublisher {
         )
     }
 
-    pub fn publish_market_statuses_updated(
+    pub fn publish_market_event(
         &self,
-        market_statuses: Vec<EwdsMarketStatusDto>,
+        markets: Vec<EwdsMarketDto>,
         occurred_at: u64,
     ) -> JoinHandle<()> {
-        self.spawn_event(
-            EwdsEventType::MarketStatusUpdated,
-            occurred_at,
-            market_statuses,
-        )
+        self.spawn_event(EwdsEventType::Market, occurred_at, markets)
     }
 
     fn spawn_event<T: Serialize + Send + 'static>(
@@ -189,14 +185,15 @@ fn event_client(config: &EwdsHandlerConfig) -> EwdsClient {
 
 pub async fn handle_event(db: &DatabaseWrapper, envelope: EwdsEventEnvelope<Value>) -> Result<()> {
     match envelope.event_type {
-        EwdsEventType::MeasurementsSubmitted => {
+        EwdsEventType::Measurements => {
             let measurements = parse_batch(envelope.data, |measurement: EwdsMeasurementDto| {
                 MeasurementSchema::try_from(measurement)
             })?;
             retry_db_write(|| insert_measurements(db, &measurements)).await?;
         }
-        EwdsEventType::FacilitySubmitted => {
+        EwdsEventType::Facility => {
             let facilities = parse_batch(envelope.data, |facility: FacilitySchema| Ok(facility))?;
+            db.facilities().check_for_duplicates(&facilities).await?;
             for facility in facilities {
                 retry_db_write(|| {
                     let facility = facility.clone();
@@ -205,7 +202,7 @@ pub async fn handle_event(db: &DatabaseWrapper, envelope: EwdsEventEnvelope<Valu
                 .await?;
             }
         }
-        EwdsEventType::SiteSubmitted => {
+        EwdsEventType::Site => {
             let sites = parse_batch(envelope.data, |site: SiteSchema| Ok(site))?;
             for site in sites {
                 retry_db_write(|| {
@@ -215,10 +212,11 @@ pub async fn handle_event(db: &DatabaseWrapper, envelope: EwdsEventEnvelope<Valu
                 .await?;
             }
         }
-        EwdsEventType::CommunitySubmitted => {
+        EwdsEventType::Community => {
             let communities = parse_batch(envelope.data, |community: EwdsCommunityDto| {
                 Ok(EnergyCommunitySchema::from(community))
             })?;
+            db.communities().check_for_duplicates(&communities).await?;
             for community in communities {
                 retry_db_write(|| {
                     let community = community.clone();

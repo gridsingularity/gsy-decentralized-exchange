@@ -1,16 +1,16 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "int.order.submitted.event.v1",
-  "title": "order event",
+  "$id": "int.site.event.v1",
+  "title": "site event",
   "type": "object",
   "additionalProperties": false,
   "properties": {
     "eventId": { "type": "string", "minLength": 1 },
-    "eventType": { "const": "order.submitted" },
+    "eventType": { "const": "site.event" },
     "occurredAt": { "type": "string", "format": "date-time" },
     "data": {
       "type": "array",
-      "items": { "$ref": "./int.order.schema.v1.json" },
+      "items": { "$ref": "./int.site.schema.v1.json" },
       "minItems": 1
     }
   },

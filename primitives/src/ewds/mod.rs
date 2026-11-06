@@ -50,10 +50,12 @@ pub enum EwdsOperation {
     MarketsQuery,
     #[serde(rename = "facilities.query")]
     FacilitiesQuery,
+    #[serde(rename = "guarantees_of_origin.query")]
+    GuaranteesOfOriginQuery,
 }
 
 impl EwdsOperation {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::OrdersQuery,
         Self::TradesQuery,
         Self::MeasurementsQuery,
@@ -62,6 +64,7 @@ impl EwdsOperation {
         Self::MarketsQuery,
         Self::FacilitiesQuery,
         Self::IdsQuery,
+        Self::GuaranteesOfOriginQuery,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -74,6 +77,7 @@ impl EwdsOperation {
             Self::ClearingResultsQuery => "clearing_results.query",
             Self::MarketsQuery => "markets.query",
             Self::FacilitiesQuery => "facilities.query",
+            Self::GuaranteesOfOriginQuery => "guarantees_of_origin.query",
         }
     }
 
@@ -87,6 +91,7 @@ impl EwdsOperation {
             Self::ClearingResultsQuery => "clearing_results-query",
             Self::MarketsQuery => "markets-query",
             Self::FacilitiesQuery => "facilities-query",
+            Self::GuaranteesOfOriginQuery => "guarantees_of_origin-query",
         }
     }
 }
@@ -99,46 +104,46 @@ impl fmt::Display for EwdsOperation {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EwdsEventType {
-    #[serde(rename = "trade.created")]
-    TradeCreated,
-    #[serde(rename = "clearing_result.created")]
-    ClearingResultCreated,
-    #[serde(rename = "market_status.updated")]
-    MarketStatusUpdated,
-    #[serde(rename = "measurements.submitted")]
-    MeasurementsSubmitted,
-    #[serde(rename = "facility.submitted")]
-    FacilitySubmitted,
-    #[serde(rename = "site.submitted")]
-    SiteSubmitted,
-    #[serde(rename = "community.submitted")]
-    CommunitySubmitted,
-    #[serde(rename = "order.submitted")]
-    OrderSubmitted,
+    #[serde(rename = "trade.event")]
+    Trade,
+    #[serde(rename = "clearingResult.event")]
+    ClearingResult,
+    #[serde(rename = "market.event")]
+    Market,
+    #[serde(rename = "measurements.event")]
+    Measurements,
+    #[serde(rename = "facility.event")]
+    Facility,
+    #[serde(rename = "site.event")]
+    Site,
+    #[serde(rename = "community.event")]
+    Community,
+    #[serde(rename = "order.event")]
+    Order,
 }
 
 impl EwdsEventType {
     pub const ALL: [Self; 8] = [
-        Self::TradeCreated,
-        Self::ClearingResultCreated,
-        Self::MarketStatusUpdated,
-        Self::MeasurementsSubmitted,
-        Self::FacilitySubmitted,
-        Self::SiteSubmitted,
-        Self::CommunitySubmitted,
-        Self::OrderSubmitted,
+        Self::Trade,
+        Self::ClearingResult,
+        Self::Market,
+        Self::Measurements,
+        Self::Facility,
+        Self::Site,
+        Self::Community,
+        Self::Order,
     ];
 
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::TradeCreated => "trade.created",
-            Self::ClearingResultCreated => "clearing_result.created",
-            Self::MarketStatusUpdated => "market_status.updated",
-            Self::MeasurementsSubmitted => "measurements.submitted",
-            Self::FacilitySubmitted => "facility.submitted",
-            Self::SiteSubmitted => "site.submitted",
-            Self::CommunitySubmitted => "community.submitted",
-            Self::OrderSubmitted => "order.submitted",
+            Self::Trade => "trade.event",
+            Self::ClearingResult => "clearingResult.event",
+            Self::Market => "market.event",
+            Self::Measurements => "measurements.event",
+            Self::Facility => "facility.event",
+            Self::Site => "site.event",
+            Self::Community => "community.event",
+            Self::Order => "order.event",
         }
     }
 }
@@ -165,6 +170,7 @@ pub struct EwdsTopicConfig {
     clearing_results: EwdsTopicPair,
     markets: EwdsTopicPair,
     facilities: EwdsTopicPair,
+    guarantees_of_origin: EwdsTopicPair,
 }
 
 impl Default for EwdsTopicConfig {
@@ -201,6 +207,10 @@ impl Default for EwdsTopicConfig {
             facilities: EwdsTopicPair {
                 request: "facilitiesQuery".to_string(),
                 response: "facilitiesQueryResponse".to_string(),
+            },
+            guarantees_of_origin: EwdsTopicPair {
+                request: "guaranteesOfOriginQuery".to_string(),
+                response: "guaranteesOfOriginQueryResponse".to_string(),
             },
         }
     }
@@ -284,6 +294,16 @@ impl EwdsTopicConfig {
                     defaults.facilities.response.as_str(),
                 ),
             },
+            guarantees_of_origin: EwdsTopicPair {
+                request: env_or(
+                    "EWDS_GUARANTEES_OF_ORIGIN_REQUEST_TOPIC",
+                    defaults.guarantees_of_origin.request.as_str(),
+                ),
+                response: env_or(
+                    "EWDS_GUARANTEES_OF_ORIGIN_RESPONSE_TOPIC",
+                    defaults.guarantees_of_origin.response.as_str(),
+                ),
+            },
         }
     }
 
@@ -297,6 +317,7 @@ impl EwdsTopicConfig {
             EwdsOperation::ClearingResultsQuery => &self.clearing_results,
             EwdsOperation::MarketsQuery => &self.markets,
             EwdsOperation::FacilitiesQuery => &self.facilities,
+            EwdsOperation::GuaranteesOfOriginQuery => &self.guarantees_of_origin,
         }
     }
 }
@@ -357,14 +378,14 @@ impl EwdsEventTopicConfig {
 
     pub fn for_event_type(&self, event_type: EwdsEventType) -> &str {
         match event_type {
-            EwdsEventType::TradeCreated => &self.trade_event,
-            EwdsEventType::ClearingResultCreated => &self.clearing_result_event,
-            EwdsEventType::MarketStatusUpdated => &self.market_event,
-            EwdsEventType::MeasurementsSubmitted => &self.measurements_event,
-            EwdsEventType::FacilitySubmitted => &self.facility_event,
-            EwdsEventType::SiteSubmitted => &self.site_event,
-            EwdsEventType::CommunitySubmitted => &self.community_event,
-            EwdsEventType::OrderSubmitted => &self.order_event,
+            EwdsEventType::Trade => &self.trade_event,
+            EwdsEventType::ClearingResult => &self.clearing_result_event,
+            EwdsEventType::Market => &self.market_event,
+            EwdsEventType::Measurements => &self.measurements_event,
+            EwdsEventType::Facility => &self.facility_event,
+            EwdsEventType::Site => &self.site_event,
+            EwdsEventType::Community => &self.community_event,
+            EwdsEventType::Order => &self.order_event,
         }
     }
 }

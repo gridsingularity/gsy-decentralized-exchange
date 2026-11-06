@@ -1,3 +1,4 @@
+use crate::certificates::query::{guarantees_of_origin, validate_window};
 use crate::db::DatabaseWrapper;
 use anyhow::{anyhow, Result};
 use futures::future::{join, join_all};
@@ -6,8 +7,8 @@ use primitives::ewds::channel::{
     route_request_by_operation, EwdsChannelPoller, EwdsChannelPollerConfig,
 };
 use primitives::ewds::dto::{
-    EwdsClearingResultDto, EwdsCommunityDto, EwdsErrorPayload, EwdsInboundMessage, EwdsMarketDto,
-    EwdsMeasurementDto, EwdsOrderDto, EwdsRequestEnvelope, EwdsResponseEnvelope,
+    parse_market_id, EwdsClearingResultDto, EwdsCommunityDto, EwdsErrorPayload, EwdsInboundMessage,
+    EwdsMarketDto, EwdsMeasurementDto, EwdsOrderDto, EwdsRequestEnvelope, EwdsResponseEnvelope,
     EwdsSendMessageDto, EwdsTradeDto,
 };
 use primitives::ewds::{
@@ -15,7 +16,9 @@ use primitives::ewds::{
     is_rate_limited_response, is_transient_gateway_response, parse_gateway_delivery_summary,
     remember_id, EwdsEventTopicConfig, EwdsEventType, EwdsOperation, EwdsTopicConfig,
 };
-use primitives::utils::{opt_rfc3339_to_epoch, timestamp_to_string_with_padding};
+use primitives::utils::{
+    bytes16_to_hex, normalize_community_id, opt_rfc3339_to_epoch, timestamp_to_string_with_padding,
+};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -157,6 +160,19 @@ struct TimeRangePayload {
     facility_id: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct GuaranteesOfOriginPayload {
+    #[serde(alias = "startTime")]
+    #[serde(default)]
+    start_time: Option<u64>,
+    #[serde(alias = "endTime")]
+    #[serde(default)]
+    end_time: Option<u64>,
+}
+
+/// `code` of the error payload sent for a request rejected before it reaches storage.
+const INVALID_REQUEST_ERROR_CODE: &str = "invalid_request";
+
 /// Maximum span of a `trades.query` range. The whole result is published as a
 /// single EWDS message, so the range is capped to keep that message small.
 pub const MAX_TRADES_QUERY_RANGE_SECS: u64 = 86_400;
@@ -164,17 +180,21 @@ pub const TIME_RANGE_TOO_LARGE: &str = "TIME_RANGE_TOO_LARGE";
 pub const INVALID_TIME_RANGE: &str = "INVALID_TIME_RANGE";
 
 /// Validates a `trades.query` range (`endTime` is exclusive), returning the
-/// bounds or the error to publish back to the requester.
+/// bounds or the error to publish back to the requester. A query for one market
+/// needs no range, since the market already limits the result; any other query
+/// needs both bounds.
 pub fn validate_trades_query_range(
+    market_id: Option<&str>,
     start_time: Option<u64>,
     end_time: Option<u64>,
-) -> std::result::Result<(u64, u64), EwdsErrorPayload> {
+) -> std::result::Result<Option<(u64, u64)>, EwdsErrorPayload> {
     let (start, end) = match (start_time, end_time) {
         (Some(start), Some(end)) => (start, end),
+        (None, None) if market_id.is_some() => return Ok(None),
         _ => {
             return Err(EwdsErrorPayload {
                 code: INVALID_TIME_RANGE.to_string(),
-                message: "trades.query requires both startTime and endTime".to_string(),
+                message: "trades.query requires marketId or both startTime and endTime".to_string(),
             })
         }
     };
@@ -197,7 +217,7 @@ pub fn validate_trades_query_range(
             ),
         });
     }
-    Ok((start, end))
+    Ok(Some((start, end)))
 }
 
 #[derive(Deserialize)]
@@ -415,28 +435,35 @@ pub async fn handle_request(
 
             let payload_start_time = opt_rfc3339_to_epoch(payload.start_time.as_deref())?;
             let payload_end_time = opt_rfc3339_to_epoch(payload.end_time.as_deref())?;
-            let (start_time, end_time) =
-                match validate_trades_query_range(payload_start_time, payload_end_time) {
-                    Ok(range) => range,
-                    Err(error) => {
-                        warn!(
-                            "Rejecting EWDS trades.query request (request_id={}): {}: {}",
-                            request_id, error.code, error.message
-                        );
-                        return send_error_response(
-                            client,
-                            config,
-                            request_id,
-                            response_topic.as_str(),
-                            error,
-                        )
-                        .await;
-                    }
-                };
+            let range = match validate_trades_query_range(
+                payload.market_id.as_deref(),
+                payload_start_time,
+                payload_end_time,
+            ) {
+                Ok(range) => range,
+                Err(error) => {
+                    warn!(
+                        "Rejecting EWDS trades.query request (request_id={}): {}: {}",
+                        request_id, error.code, error.message
+                    );
+                    return send_error_response(
+                        client,
+                        config,
+                        request_id,
+                        response_topic.as_str(),
+                        error,
+                    )
+                    .await;
+                }
+            };
 
             let data = db
                 .trades()
-                .filter_trades(payload.market_id, Some(start_time), Some(end_time))
+                .filter_trades(
+                    payload.market_id,
+                    range.map(|(start, _)| start),
+                    range.map(|(_, end)| end),
+                )
                 .await?
                 .into_iter()
                 .map(EwdsTradeDto::from)
@@ -556,19 +583,40 @@ pub async fn handle_request(
                 request_id
             );
 
+            // The request uses the forms of the response (UUID or hex market
+            // and community IDs, RFC 3339 times); markets are stored with a
+            // `0x…` ID, a lowercase UUID community ID and zero-padded epoch
+            // seconds.
+            let market_id = payload
+                .market_id
+                .map(|market_id| parse_market_id(&market_id).map(bytes16_to_hex))
+                .transpose()
+                .map_err(|e| anyhow!("markets.query payload parse error: {}", e))?;
+            let community_id = payload
+                .community_id
+                .as_deref()
+                .map(normalize_community_id)
+                .transpose()
+                .map_err(|e| anyhow!("markets.query payload parse error: {}", e))?;
+            let stored_time = |time: Option<String>| {
+                opt_rfc3339_to_epoch(time.as_deref())
+                    .map(|epoch| epoch.map(timestamp_to_string_with_padding))
+                    .map_err(|e| anyhow!("markets.query payload parse error: {}", e))
+            };
             let data = db
                 .markets()
                 .filter(
-                    payload.market_id,
-                    payload.community_id,
-                    payload.start_time,
-                    payload.end_time,
+                    market_id,
+                    community_id,
+                    stored_time(payload.start_time)?,
+                    stored_time(payload.end_time)?,
                 )
                 .await
                 .map_err(|e| anyhow!("markets.query DB error: {}", e))?
                 .into_iter()
-                .map(EwdsMarketDto::from)
-                .collect::<Vec<_>>();
+                .map(EwdsMarketDto::try_from)
+                .collect::<Result<Vec<_>>>()
+                .map_err(|e| anyhow!("markets.query invalid stored market: {}", e))?;
             info!(
                 "Publishing EWDS markets.query response (request_id={}, markets={})",
                 request_id,
@@ -582,6 +630,49 @@ pub async fn handle_request(
             let data = db.facilities().get_all().await?;
             info!(
                 "Publishing EWDS facilities.query response (request_id={}, facilities={})",
+                request_id,
+                data.len()
+            );
+
+            send_success_response(client, config, request_id, response_topic.as_str(), data).await
+        }
+        EwdsOperation::GuaranteesOfOriginQuery => {
+            let request_id = envelope.request_id;
+
+            info!(
+                "Handling EWDS guarantees_of_origin.query request (request_id={})",
+                request_id
+            );
+
+            // An invalid request is answered with `success: false` rather than returned as an
+            // error: an erroring worker re-polls the same message forever.
+            let window = match serde_json::from_value::<GuaranteesOfOriginPayload>(envelope.payload)
+                .map_err(|e| format!("guarantees_of_origin.query payload parse error: {}", e))
+                .and_then(|payload| validate_window(payload.start_time, payload.end_time))
+            {
+                Ok(window) => window,
+                Err(reason) => {
+                    warn!(
+                        "Rejecting EWDS guarantees_of_origin.query request (request_id={}): {}",
+                        request_id, reason
+                    );
+                    return send_error_response(
+                        client,
+                        config,
+                        request_id,
+                        response_topic.as_str(),
+                        EwdsErrorPayload {
+                            code: INVALID_REQUEST_ERROR_CODE.to_string(),
+                            message: reason,
+                        },
+                    )
+                    .await;
+                }
+            };
+
+            let data = guarantees_of_origin(db, window).await?;
+            info!(
+                "Publishing EWDS guarantees_of_origin.query response (request_id={}, records={})",
                 request_id,
                 data.len()
             );

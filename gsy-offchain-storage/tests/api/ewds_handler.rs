@@ -1,3 +1,7 @@
+use crate::guarantees_of_origin::{
+    seed_certifiable_trade, SELLER_FACILITY as GOO_SELLER_FACILITY, SLOT as GOO_SLOT,
+    VERDICT_AT as GOO_VERDICT_AT,
+};
 use crate::helpers::{init_app, stop_app};
 use gsy_offchain_storage::ewds_handler::{
     handle_request, start_ewds_request_handler, validate_trades_query_range, EwdsHandlerConfig,
@@ -10,8 +14,8 @@ use primitives::db_api_schema::trades::{DbTradeSchema, TradeParameters, TradeSta
 use primitives::ewds::dto::{EwdsRequestEnvelope, EwdsSendMessageDto};
 use primitives::ewds::{EwdsEventTopicConfig, EwdsOperation, EwdsTopicConfig};
 use primitives::utils::{
-    bytes16_to_hex, create_encrypted_bytes16_from_string, epoch_to_rfc3339,
-    timestamp_to_string_with_padding,
+    bytes16_to_hex, bytes16_to_uuid_string, create_encrypted_bytes16_from_string, epoch_to_rfc3339,
+    rfc3339_to_epoch, timestamp_to_string_with_padding,
 };
 use serde_json::json;
 use std::time::Duration;
@@ -152,6 +156,7 @@ fn make_trade(trade_uuid: &str, market_id: &str) -> DbTradeSchema {
             selected_energy_kWh: 1.0,
             energy_rate: 10.0,
         },
+        status_updated_at: None,
     }
 }
 
@@ -159,7 +164,7 @@ fn make_delivery_market(market_id: &str, delivery_offset: u64) -> MarketSchema {
     let delivery_start_time = TRADES_BASE_TIME + delivery_offset;
     MarketSchema {
         market_id: market_id.to_string(),
-        community_id: "community-1".to_string(),
+        community_id: COMMUNITY_1.to_string(),
         opening_time: timestamp_to_string_with_padding(delivery_start_time - 900),
         closing_time: timestamp_to_string_with_padding(delivery_start_time),
         delivery_start_time: timestamp_to_string_with_padding(delivery_start_time),
@@ -271,19 +276,19 @@ async fn trades_query_inverted_range_publishes_error() {
 fn validate_trades_query_range_boundaries() {
     let day = MAX_TRADES_QUERY_RANGE_SECS;
     assert_eq!(
-        validate_trades_query_range(Some(0), Some(0)).unwrap(),
-        (0, 0)
+        validate_trades_query_range(None, Some(0), Some(0)).unwrap(),
+        Some((0, 0))
     );
     assert_eq!(
-        validate_trades_query_range(Some(10), Some(10 + day - 1)).unwrap(),
-        (10, 10 + day - 1)
+        validate_trades_query_range(None, Some(10), Some(10 + day - 1)).unwrap(),
+        Some((10, 10 + day - 1))
     );
     assert_eq!(
-        validate_trades_query_range(Some(10), Some(10 + day)).unwrap(),
-        (10, 10 + day)
+        validate_trades_query_range(None, Some(10), Some(10 + day)).unwrap(),
+        Some((10, 10 + day))
     );
 
-    let too_large = validate_trades_query_range(Some(10), Some(10 + day + 1)).unwrap_err();
+    let too_large = validate_trades_query_range(None, Some(10), Some(10 + day + 1)).unwrap_err();
     assert_eq!(too_large.code, TIME_RANGE_TOO_LARGE);
     assert!(too_large.message.contains("86401s"));
 
@@ -293,7 +298,29 @@ fn validate_trades_query_range_boundaries() {
         (Some(10), None),
         (None, None),
     ] {
-        let error = validate_trades_query_range(start, end).unwrap_err();
+        let error = validate_trades_query_range(None, start, end).unwrap_err();
+        assert_eq!(
+            error.code, INVALID_TIME_RANGE,
+            "start={:?} end={:?}",
+            start, end
+        );
+    }
+}
+
+#[test]
+fn validate_trades_query_range_needs_no_range_for_a_market() {
+    let market_id = Some("MARKET-EWDS-A");
+    assert_eq!(
+        validate_trades_query_range(market_id, None, None).unwrap(),
+        None
+    );
+    // A range sent with a market is still checked.
+    assert_eq!(
+        validate_trades_query_range(market_id, Some(10), Some(20)).unwrap(),
+        Some((10, 20))
+    );
+    for (start, end) in [(Some(11), Some(10)), (None, Some(10)), (Some(10), None)] {
+        let error = validate_trades_query_range(market_id, start, end).unwrap_err();
         assert_eq!(
             error.code, INVALID_TIME_RANGE,
             "start={:?} end={:?}",
@@ -305,8 +332,6 @@ fn validate_trades_query_range_boundaries() {
 #[tokio::test]
 async fn trades_query_filters_by_market_id() {
     let app = init_app().await;
-    let server = mock_gateway().await;
-    let config = test_config(server.uri());
     let client = reqwest::Client::new();
 
     for market_id in ["MARKET-EWDS-A", "MARKET-EWDS-B"] {
@@ -325,22 +350,30 @@ async fn trades_query_filters_by_market_id() {
         .await
         .unwrap();
 
-    let env = envelope(
-        EwdsOperation::TradesQuery,
-        "req-trades-market",
+    // The time range is optional when a market is given.
+    for payload in [
         json!({
             "marketId": "MARKET-EWDS-A",
             "startTime": trades_time(0),
             "endTime": trades_time(3_600),
         }),
-    );
+        json!({ "marketId": "MARKET-EWDS-A" }),
+    ] {
+        let server = mock_gateway().await;
+        let config = test_config(server.uri());
+        let env = envelope(
+            EwdsOperation::TradesQuery,
+            "req-trades-market",
+            payload.clone(),
+        );
 
-    handle_request(&app.db_wrapper, &client, &config, env)
-        .await
-        .unwrap();
-    let data = captured_data(&server).await;
-    assert_eq!(data.len(), 1);
-    assert_eq!(data[0]["tradeId"], json!("TRADE-EWDS-A"));
+        handle_request(&app.db_wrapper, &client, &config, env)
+            .await
+            .unwrap();
+        let data = captured_data(&server).await;
+        assert_eq!(data.len(), 1, "{payload}");
+        assert_eq!(data[0]["tradeId"], json!("TRADE-EWDS-A"), "{payload}");
+    }
 
     stop_app(app).await;
 }
@@ -465,133 +498,150 @@ async fn clearing_results_query_bad_payload_errors() {
     stop_app(app).await;
 }
 
-fn make_market(market_id: &str, community_id: &str, opening_time: &str) -> MarketSchema {
+/// A market as stored from `NewMarketCreated`: `0x…` ID and zero-padded epoch
+/// seconds, delivering on 2026-03-28 at 10:00 UTC.
+const COMMUNITY_1: &str = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
+const COMMUNITY_2: &str = "9b2c1f7a-5d3e-4c8b-a6f1-2e7d0c4b8a91";
+
+fn make_market(id_byte: u8, community_id: &str, opening_time: &str) -> MarketSchema {
+    let epoch = |time: &str| timestamp_to_string_with_padding(rfc3339_to_epoch(time).unwrap());
     MarketSchema {
-        market_id: market_id.to_string(),
+        market_id: bytes16_to_hex([id_byte; 16]),
         community_id: community_id.to_string(),
-        opening_time: opening_time.to_string(),
-        closing_time: "2026-03-28T09:45:00Z".to_string(),
-        delivery_start_time: "2026-03-28T10:00:00Z".to_string(),
-        delivery_end_time: "2026-03-28T10:15:00Z".to_string(),
+        opening_time: epoch(opening_time),
+        closing_time: epoch("2026-03-28T09:45:00Z"),
+        delivery_start_time: epoch("2026-03-28T10:00:00Z"),
+        delivery_end_time: epoch("2026-03-28T10:15:00Z"),
         market_type: MarketType::Spot,
         matching_algorithm: MatchingAlgorithm::PayAsBid,
-        created_at: "2026-03-28T09:45:00Z".to_string(),
+        created_at: epoch(opening_time),
     }
+}
+
+/// Stores the markets and returns the data of a markets.query with the payload.
+async fn run_markets_query(
+    markets: Vec<MarketSchema>,
+    payload: serde_json::Value,
+) -> Vec<serde_json::Value> {
+    let app = init_app().await;
+    let server = mock_gateway().await;
+    let config = test_config(server.uri());
+    let client = reqwest::Client::new();
+    for market in markets {
+        app.db_wrapper.markets().upsert(market).await.unwrap();
+    }
+
+    let env = envelope(EwdsOperation::MarketsQuery, "req-markets", payload);
+    handle_request(&app.db_wrapper, &client, &config, env)
+        .await
+        .unwrap();
+    let data = captured_data(&server).await;
+
+    stop_app(app).await;
+    data
 }
 
 #[tokio::test]
 async fn markets_query_filters_by_community_and_serialises_camel_case() {
-    let app = init_app().await;
-    let server = mock_gateway().await;
-    let config = test_config(server.uri());
-    let client = reqwest::Client::new();
+    let data = run_markets_query(
+        vec![
+            make_market(0x01, COMMUNITY_1, "2026-03-27T18:00:00Z"),
+            make_market(0x02, COMMUNITY_2, "2026-03-27T19:00:00Z"),
+        ],
+        json!({ "communityId": COMMUNITY_1 }),
+    )
+    .await;
 
-    let markets = app.db_wrapper.markets();
-    markets
-        .upsert(make_market("m1", "community1", "2026-03-27T18:00:00Z"))
-        .await
-        .unwrap();
-    markets
-        .upsert(make_market("m2", "community2", "2026-03-27T19:00:00Z"))
-        .await
-        .unwrap();
-
-    let env = envelope(
-        EwdsOperation::MarketsQuery,
-        "req-markets-1",
-        json!({ "communityId": "community1" }),
-    );
-
-    handle_request(&app.db_wrapper, &client, &config, env)
-        .await
-        .unwrap();
-
-    let data = captured_data(&server).await;
     assert_eq!(data.len(), 1);
-    assert_eq!(data[0]["marketId"], json!("m1"));
-    assert_eq!(data[0]["communityId"], json!("community1"));
-    assert_eq!(data[0]["deliveryStartTime"], json!("2026-03-28T10:00:00Z"));
-    assert_eq!(data[0]["marketType"], json!("spot"));
-    assert_eq!(data[0]["matchingAlgorithm"], json!("pay_as_bid"));
-
-    stop_app(app).await;
+    assert_eq!(
+        data[0],
+        json!({
+            "marketId": bytes16_to_uuid_string([0x01; 16]),
+            "communityId": COMMUNITY_1,
+            "openingTime": "2026-03-27T18:00:00+00:00",
+            "closingTime": "2026-03-28T09:45:00+00:00",
+            "deliveryStartTime": "2026-03-28T10:00:00+00:00",
+            "deliveryEndTime": "2026-03-28T10:15:00+00:00",
+            "marketType": "spot",
+            "matchingAlgorithm": "pay_as_bid",
+            "createdAt": "2026-03-27T18:00:00+00:00",
+        })
+    );
 }
 
 #[tokio::test]
 async fn markets_query_filters_by_opening_time_window() {
-    let app = init_app().await;
-    let server = mock_gateway().await;
-    let config = test_config(server.uri());
-    let client = reqwest::Client::new();
-
-    let markets = app.db_wrapper.markets();
-    markets
-        .upsert(make_market("early", "community1", "2026-03-27T18:00:00Z"))
-        .await
-        .unwrap();
-    markets
-        .upsert(make_market("late", "community1", "2026-03-27T22:00:00Z"))
-        .await
-        .unwrap();
-
-    let env = envelope(
-        EwdsOperation::MarketsQuery,
-        "req-markets-window",
+    let data = run_markets_query(
+        vec![
+            make_market(0x01, COMMUNITY_1, "2026-03-27T18:00:00Z"),
+            make_market(0x02, COMMUNITY_1, "2026-03-27T22:00:00Z"),
+        ],
         json!({ "startTime": "2026-03-27T20:00:00Z", "endTime": "2026-03-27T23:00:00Z" }),
-    );
+    )
+    .await;
 
-    handle_request(&app.db_wrapper, &client, &config, env)
-        .await
-        .unwrap();
-
-    let data = captured_data(&server).await;
     assert_eq!(data.len(), 1);
-    assert_eq!(data[0]["marketId"], json!("late"));
-
-    stop_app(app).await;
+    assert_eq!(
+        data[0]["marketId"],
+        json!(bytes16_to_uuid_string([0x02; 16]))
+    );
 }
 
 #[tokio::test]
-async fn markets_query_without_filters_returns_all() {
+async fn markets_query_filters_by_market_id_as_uuid_or_hex() {
+    for market_id in [
+        bytes16_to_uuid_string([0x02; 16]),
+        bytes16_to_hex([0x02; 16]),
+    ] {
+        let data = run_markets_query(
+            vec![
+                make_market(0x01, COMMUNITY_1, "2026-03-27T18:00:00Z"),
+                make_market(0x02, COMMUNITY_1, "2026-03-27T19:00:00Z"),
+            ],
+            json!({ "marketId": market_id }),
+        )
+        .await;
+
+        assert_eq!(data.len(), 1, "{market_id}");
+        assert_eq!(
+            data[0]["marketId"],
+            json!(bytes16_to_uuid_string([0x02; 16]))
+        );
+    }
+}
+
+#[tokio::test]
+async fn markets_query_filters_by_community_id_as_uuid_or_hex() {
+    for query_id in [
+        COMMUNITY_1,
+        "3F2504E0-4F89-41D3-9A0C-0305E82C3301",
+        "0x3f2504e04f8941d39a0c0305e82c3301",
+    ] {
+        let data = run_markets_query(
+            vec![
+                make_market(0x01, COMMUNITY_1, "2026-03-27T18:00:00Z"),
+                make_market(0x02, COMMUNITY_2, "2026-03-27T19:00:00Z"),
+            ],
+            json!({ "communityId": query_id }),
+        )
+        .await;
+
+        assert_eq!(data.len(), 1, "{query_id}");
+        assert_eq!(data[0]["communityId"], json!(COMMUNITY_1));
+    }
+}
+
+#[tokio::test]
+async fn markets_query_rejects_a_non_uuid_community_id() {
     let app = init_app().await;
     let server = mock_gateway().await;
     let config = test_config(server.uri());
     let client = reqwest::Client::new();
 
-    let markets = app.db_wrapper.markets();
-    markets
-        .upsert(make_market("m1", "community1", "2026-03-27T18:00:00Z"))
-        .await
-        .unwrap();
-    markets
-        .upsert(make_market("m2", "community2", "2026-03-27T19:00:00Z"))
-        .await
-        .unwrap();
-
-    let env = envelope(EwdsOperation::MarketsQuery, "req-markets-all", json!({}));
-
-    handle_request(&app.db_wrapper, &client, &config, env)
-        .await
-        .unwrap();
-
-    let data = captured_data(&server).await;
-    assert_eq!(data.len(), 2);
-
-    stop_app(app).await;
-}
-
-#[tokio::test]
-async fn markets_query_bad_payload_errors() {
-    let app = init_app().await;
-    let server = mock_gateway().await;
-    let config = test_config(server.uri());
-    let client = reqwest::Client::new();
-
-    // market_id is a string field -> a number errors
     let env = envelope(
         EwdsOperation::MarketsQuery,
         "req-markets-bad",
-        json!({ "marketId": 5 }),
+        json!({ "communityId": "community1" }),
     );
 
     let err = handle_request(&app.db_wrapper, &client, &config, env)
@@ -603,6 +653,52 @@ async fn markets_query_bad_payload_errors() {
     assert!(server.received_requests().await.unwrap().is_empty());
 
     stop_app(app).await;
+}
+
+#[tokio::test]
+async fn markets_query_without_filters_returns_all() {
+    let data = run_markets_query(
+        vec![
+            make_market(0x01, COMMUNITY_1, "2026-03-27T18:00:00Z"),
+            make_market(0x02, COMMUNITY_2, "2026-03-27T19:00:00Z"),
+        ],
+        json!({}),
+    )
+    .await;
+
+    assert_eq!(data.len(), 2);
+}
+
+#[tokio::test]
+async fn markets_query_bad_payload_errors() {
+    for (name, payload) in [
+        // market_id is a string field -> a number errors
+        ("number market id", json!({ "marketId": 5 })),
+        ("invalid market id", json!({ "marketId": "market-1" })),
+        (
+            "epoch start time",
+            json!({ "startTime": "00000000001774605600" }),
+        ),
+    ] {
+        let app = init_app().await;
+        let server = mock_gateway().await;
+        let config = test_config(server.uri());
+        let client = reqwest::Client::new();
+
+        let env = envelope(EwdsOperation::MarketsQuery, "req-markets-bad", payload);
+
+        let err = handle_request(&app.db_wrapper, &client, &config, env)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("markets.query payload parse error"),
+            "{name}: {err}"
+        );
+        assert!(server.received_requests().await.unwrap().is_empty());
+
+        stop_app(app).await;
+    }
 }
 
 // --- FacilitiesQuery ------------------------------------------------
@@ -675,6 +771,144 @@ async fn facilities_query_empty_returns_empty() {
 
     let data = captured_data(&server).await;
     assert!(data.is_empty());
+
+    stop_app(app).await;
+}
+
+// --- GuaranteesOfOriginQuery ----------------------------------------
+
+/// Parse the single captured POST body into the full response envelope, asserting the GoO response topic.
+async fn captured_goo_envelope(server: &MockServer) -> serde_json::Value {
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 1, "expected exactly one gateway POST");
+    let send_dto: EwdsSendMessageDto = serde_json::from_slice(&requests[0].body).unwrap();
+    assert_eq!(send_dto.topic_name, "guaranteesOfOriginQueryResponse");
+    serde_json::from_str(&send_dto.payload).unwrap()
+}
+
+#[tokio::test]
+async fn guarantees_of_origin_query_success() {
+    let app = init_app().await;
+    let server = mock_gateway().await;
+    let config = test_config(server.uri());
+    let client = reqwest::Client::new();
+    seed_certifiable_trade(&app.db_wrapper, "goo-ewds-trade-1").await;
+
+    let env = envelope(
+        EwdsOperation::GuaranteesOfOriginQuery,
+        "req-goo-1",
+        json!({ "startTime": GOO_VERDICT_AT - 450, "endTime": GOO_VERDICT_AT + 450 }),
+    );
+    handle_request(&app.db_wrapper, &client, &config, env)
+        .await
+        .unwrap();
+
+    let data = captured_data(&server).await;
+    assert_eq!(data.len(), 1);
+    assert_eq!(
+        data[0]["identity"]["record_type"],
+        json!("local_origin_record")
+    );
+    assert_eq!(
+        data[0]["trade_and_delivery"]["trade_reference"],
+        json!(["goo-ewds-trade-1"])
+    );
+    assert_eq!(
+        data[0]["trade_and_delivery"]["trade_status_at_issuance"],
+        json!("delivery_verified")
+    );
+    assert_eq!(
+        data[0]["production_asset"]["production_asset_id"],
+        json!(GOO_SELLER_FACILITY)
+    );
+    assert_eq!(
+        data[0]["time_and_quantity"]["source_slot_timestamp"],
+        json!(GOO_SLOT)
+    );
+    assert!(data[0]["production_asset"]["rated_power"].is_null());
+
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn guarantees_of_origin_query_accepts_snake_case_and_default_end() {
+    let app = init_app().await;
+    let server = mock_gateway().await;
+    let config = test_config(server.uri());
+    let client = reqwest::Client::new();
+    seed_certifiable_trade(&app.db_wrapper, "goo-ewds-trade-2").await;
+
+    // end_time defaults to start_time + 900.
+    let env = envelope(
+        EwdsOperation::GuaranteesOfOriginQuery,
+        "req-goo-snake",
+        json!({ "start_time": GOO_VERDICT_AT - 450 }),
+    );
+    handle_request(&app.db_wrapper, &client, &config, env)
+        .await
+        .unwrap();
+
+    let data = captured_data(&server).await;
+    assert_eq!(data.len(), 1);
+
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn guarantees_of_origin_query_empty_returns_empty() {
+    let app = init_app().await;
+    let server = mock_gateway().await;
+    let config = test_config(server.uri());
+    let client = reqwest::Client::new();
+
+    let env = envelope(
+        EwdsOperation::GuaranteesOfOriginQuery,
+        "req-goo-empty",
+        json!({ "startTime": 1_000 }),
+    );
+    handle_request(&app.db_wrapper, &client, &config, env)
+        .await
+        .unwrap();
+
+    let data = captured_data(&server).await;
+    assert!(data.is_empty());
+
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn guarantees_of_origin_query_invalid_window_replies_with_an_error() {
+    let app = init_app().await;
+    let client = reqwest::Client::new();
+
+    for (request_id, payload) in [
+        ("req-goo-no-start", json!({})),
+        (
+            "req-goo-reversed",
+            json!({ "startTime": 1_000, "endTime": 999 }),
+        ),
+        (
+            "req-goo-too-wide",
+            json!({ "startTime": 1_000, "endTime": 1_901 }),
+        ),
+        ("req-goo-bad-type", json!({ "startTime": "soon" })),
+    ] {
+        let server = mock_gateway().await;
+        let config = test_config(server.uri());
+        let env = envelope(EwdsOperation::GuaranteesOfOriginQuery, request_id, payload);
+
+        // Answered, not errored: an erroring worker would re-poll the message forever.
+        handle_request(&app.db_wrapper, &client, &config, env)
+            .await
+            .unwrap();
+
+        let envelope = captured_goo_envelope(&server).await;
+        assert_eq!(envelope["requestId"], json!(request_id));
+        assert_eq!(envelope["success"], json!(false), "{request_id}");
+        assert_eq!(envelope["data"], json!([]));
+        assert_eq!(envelope["error"]["code"], json!("invalid_request"));
+        assert!(!envelope["error"]["message"].as_str().unwrap().is_empty());
+    }
 
     stop_app(app).await;
 }

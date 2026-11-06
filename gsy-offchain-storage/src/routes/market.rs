@@ -3,6 +3,7 @@ use actix_web::{web::Json, web::Query, HttpResponse, Responder};
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::trades::{ClearingResultSchema, MarketRoleSchema};
 use primitives::ewds::dto::EwdsClearingResultDto;
+use primitives::utils::normalize_community_id;
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -54,12 +55,24 @@ fn get_only_one_market(markets: Vec<MarketSchema>, tracing_description: String) 
 }
 
 pub async fn get_markets(db: DbRef, params: Query<MarketsQuery>) -> impl Responder {
+    let community_id = match params
+        .community_id
+        .as_deref()
+        .map(normalize_community_id)
+        .transpose()
+    {
+        Ok(community_id) => community_id,
+        Err(e) => {
+            tracing::error!("Invalid markets query: {:?}", e);
+            return HttpResponse::BadRequest().finish();
+        }
+    };
     match db
         .get_ref()
         .markets()
         .filter(
             params.market_id.clone(),
-            params.community_id.clone(),
+            community_id,
             params.start_time.clone(),
             params.end_time.clone(),
         )
@@ -75,6 +88,10 @@ pub async fn get_markets(db: DbRef, params: Query<MarketsQuery>) -> impl Respond
 }
 
 pub async fn post_market(market: Json<MarketSchema>, db: DbRef) -> impl Responder {
+    if let Err(e) = normalize_community_id(&market.community_id) {
+        tracing::error!("Invalid market: {:?}", e);
+        return HttpResponse::BadRequest().finish();
+    }
     match db.get_ref().markets().upsert(market.to_owned()).await {
         Ok(saved) => HttpResponse::Ok().json(saved),
         Err(e) => {

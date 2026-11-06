@@ -150,6 +150,52 @@ mod tests {
     }
 
     #[test]
+    fn preferred_partner_without_preferred_rate_round_trips_through_ewds_dto() {
+        let mut expected = order();
+        expected.order_type = OrderEnum::Offer;
+        expected.requirements = Some(DbRequirements {
+            trading_partner_id: Some("partner-id".to_string()),
+            energy_type: None,
+            preferred_energy_rate: None,
+        });
+
+        let dto = EwdsOrderDto::from(expected.clone());
+        assert_eq!(dto.preferred_energy_rate, None);
+
+        let actual = DbOrderSchema::try_from(dto).expect("EWDS offer should convert to DB schema");
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn order_preferences_round_trip_without_inventing_rates() {
+        for order_type in [OrderEnum::Bid, OrderEnum::Offer] {
+            for partner in [None, Some("partner-id".to_string())] {
+                for rate in [None, Some(12.0)] {
+                    let mut expected = order();
+                    expected.order_type = order_type.clone();
+                    expected.requirements = if partner.is_some() || rate.is_some() {
+                        Some(DbRequirements {
+                            trading_partner_id: partner.clone(),
+                            energy_type: None,
+                            preferred_energy_rate: rate,
+                        })
+                    } else {
+                        None
+                    };
+
+                    let json = serde_json::to_value(EwdsOrderDto::from(expected.clone())).unwrap();
+                    assert_eq!(json["preferredTradingPartner"], serde_json::json!(partner));
+                    assert_eq!(json.get("preferredEnergyRate").is_some(), rate.is_some());
+                    let dto: EwdsOrderDto = serde_json::from_value(json).unwrap();
+                    let actual = DbOrderSchema::try_from(dto).unwrap();
+
+                    assert_eq!(actual, expected);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn energy_type_round_trips() {
         for et in [
             EnergyType::Green,
@@ -185,6 +231,7 @@ mod tests {
                 selected_energy_kWh: 4.5,
                 energy_rate: 12.0,
             },
+            status_updated_at: None,
         }
     }
 
@@ -282,7 +329,7 @@ mod tests {
     fn event_envelope_parses_a_measurement_batch() {
         let event: EwdsEventEnvelope<Vec<EwdsMeasurementDto>> = serde_json::from_value(json!({
             "eventId": "7d3f7a52-0c5e-4a8e-9a57-2b8f5f3f7e10",
-            "eventType": "measurements.submitted",
+            "eventType": "measurements.event",
             "occurredAt": "2026-09-29T10:16:02Z",
             "data": [{
                 "facilityId": "facility-id",
@@ -295,7 +342,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(event.event_id, "7d3f7a52-0c5e-4a8e-9a57-2b8f5f3f7e10");
-        assert_eq!(event.event_type, EwdsEventType::MeasurementsSubmitted);
+        assert_eq!(event.event_type, EwdsEventType::Measurements);
         assert_eq!(event.occurred_at, "2026-09-29T10:16:02Z");
         let measurements = event
             .data
@@ -311,7 +358,7 @@ mod tests {
         let facility_event: EwdsEventEnvelope<Vec<FacilitySchema>> =
             serde_json::from_value(json!({
                 "eventId": "facility-event",
-                "eventType": "facility.submitted",
+                "eventType": "facility.event",
                 "occurredAt": "2026-09-29T10:16:02Z",
                 "data": [{
                     "facility_id": "facility-id",
@@ -321,7 +368,7 @@ mod tests {
                 }],
             }))
             .unwrap();
-        assert_eq!(facility_event.event_type, EwdsEventType::FacilitySubmitted);
+        assert_eq!(facility_event.event_type, EwdsEventType::Facility);
         assert_eq!(
             facility_event.data,
             vec![FacilitySchema {
@@ -334,7 +381,7 @@ mod tests {
 
         let site_event: EwdsEventEnvelope<Vec<SiteSchema>> = serde_json::from_value(json!({
             "eventId": "site-event",
-            "eventType": "site.submitted",
+            "eventType": "site.event",
             "occurredAt": "2026-09-29T10:16:02Z",
             "data": [{
                 "site_name": "site-name",
@@ -343,7 +390,7 @@ mod tests {
             }],
         }))
         .unwrap();
-        assert_eq!(site_event.event_type, EwdsEventType::SiteSubmitted);
+        assert_eq!(site_event.event_type, EwdsEventType::Site);
         assert_eq!(
             site_event.data,
             vec![SiteSchema {
@@ -358,7 +405,7 @@ mod tests {
     fn event_envelope_parses_an_order_batch() {
         let event: EwdsEventEnvelope<Vec<EwdsOrderDto>> = serde_json::from_value(json!({
             "eventId": "order-event",
-            "eventType": "order.submitted",
+            "eventType": "order.event",
             "occurredAt": "2026-09-30T09:40:13Z",
             "data": [
                 {
@@ -390,7 +437,7 @@ mod tests {
         }))
         .unwrap();
 
-        assert_eq!(event.event_type, EwdsEventType::OrderSubmitted);
+        assert_eq!(event.event_type, EwdsEventType::Order);
         let orders = event
             .data
             .into_iter()
@@ -545,59 +592,82 @@ mod tests {
         assert!(NoBidReason::from_str("gremlins").is_err());
     }
 
+    /// A market as the off-chain storage stores it: `0x…` market ID and
+    /// zero-padded epoch seconds.
     fn market() -> MarketSchema {
         MarketSchema {
-            market_id: "market-id".to_string(),
-            community_id: "community-id".to_string(),
+            market_id: "0xcccccccccccccccccccccccccccccccc".to_string(),
+            community_id: "11111111-1111-4111-8111-111111111111".to_string(),
             opening_time: "00000000001700000000".to_string(),
             closing_time: "00000000001700001800".to_string(),
             delivery_start_time: "00000000001700001800".to_string(),
             delivery_end_time: "00000000001700002700".to_string(),
-            market_type: MarketType::Spot,
-            matching_algorithm: MatchingAlgorithm::PayAsBid,
+            market_type: MarketType::Settlement,
+            matching_algorithm: MatchingAlgorithm::PayAsClear,
             created_at: "00000000001699999000".to_string(),
         }
     }
 
     #[test]
-    fn market_db_to_ewds_maps_fields() {
-        let dto = EwdsMarketDto::from(market());
+    fn market_dto_uses_a_uuid_market_id_and_rfc3339_times() {
+        let json = serde_json::to_value(EwdsMarketDto::try_from(market()).unwrap()).unwrap();
 
-        assert_eq!(dto.market_id, "market-id");
-        assert_eq!(dto.community_id, "community-id");
-        assert_eq!(dto.opening_time, "00000000001700000000");
-        assert_eq!(dto.closing_time, "00000000001700001800");
-        assert_eq!(dto.delivery_start_time, "00000000001700001800");
-        assert_eq!(dto.delivery_end_time, "00000000001700002700");
-        assert_eq!(dto.market_type, MarketType::Spot);
-        assert_eq!(dto.matching_algorithm, MatchingAlgorithm::PayAsBid);
-        assert_eq!(dto.created_at, "00000000001699999000");
+        assert_eq!(
+            json,
+            json!({
+                "marketId": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+                "communityId": "11111111-1111-4111-8111-111111111111",
+                "openingTime": epoch_to_rfc3339(1_700_000_000),
+                "closingTime": epoch_to_rfc3339(1_700_001_800),
+                "deliveryStartTime": epoch_to_rfc3339(1_700_001_800),
+                "deliveryEndTime": epoch_to_rfc3339(1_700_002_700),
+                "marketType": "settlement",
+                "matchingAlgorithm": "pay_as_clear",
+                "createdAt": epoch_to_rfc3339(1_699_999_000),
+            })
+        );
     }
 
     #[test]
     fn market_round_trip_preserves_schema() {
         let src = market();
-        let back = MarketSchema::from(EwdsMarketDto::from(src.clone()));
+        let back = MarketSchema::try_from(EwdsMarketDto::try_from(src.clone()).unwrap()).unwrap();
         assert_eq!(back, src);
     }
 
     #[test]
-    fn market_dto_serialises_camel_case_with_wire_enums() {
-        let json = serde_json::to_value(EwdsMarketDto::from(market())).unwrap();
+    fn market_dto_accepts_a_hex_market_id() {
+        let dto = EwdsMarketDto {
+            market_id: "0xcccccccccccccccccccccccccccccccc".to_string(),
+            ..EwdsMarketDto::try_from(market()).unwrap()
+        };
+        assert_eq!(MarketSchema::try_from(dto).unwrap(), market());
+    }
 
-        assert_eq!(json["marketId"], serde_json::json!("market-id"));
-        assert_eq!(json["communityId"], serde_json::json!("community-id"));
-        assert_eq!(
-            json["openingTime"],
-            serde_json::json!("00000000001700000000")
-        );
-        assert_eq!(
-            json["deliveryStartTime"],
-            serde_json::json!("00000000001700001800")
-        );
-        assert_eq!(json["marketType"], serde_json::json!("spot"));
-        assert_eq!(json["matchingAlgorithm"], serde_json::json!("pay_as_bid"));
-        assert_eq!(json["createdAt"], serde_json::json!("00000000001699999000"));
+    #[test]
+    fn market_dto_rejects_invalid_ids_and_times() {
+        let invalid_id = MarketSchema {
+            market_id: "market-id".to_string(),
+            ..market()
+        };
+        assert!(EwdsMarketDto::try_from(invalid_id).is_err());
+        let invalid_stored_time = MarketSchema {
+            opening_time: "2023-11-14T22:13:20Z".to_string(),
+            ..market()
+        };
+        assert!(EwdsMarketDto::try_from(invalid_stored_time).is_err());
+
+        let dto = EwdsMarketDto::try_from(market()).unwrap();
+        let invalid_dto_id = EwdsMarketDto {
+            market_id: "market-id".to_string(),
+            ..dto.clone()
+        };
+        assert!(MarketSchema::try_from(invalid_dto_id).is_err());
+        let epoch_dto_time = EwdsMarketDto {
+            opening_time: "00000000001700000000".to_string(),
+            ..dto
+        };
+        assert!(MarketSchema::try_from(epoch_dto_time).is_err());
     }
 
     #[test]
@@ -666,14 +736,14 @@ mod tests {
     #[test]
     fn event_types_serialize_to_their_wire_names() {
         let wire_names = [
-            "trade.created",
-            "clearing_result.created",
-            "market_status.updated",
-            "measurements.submitted",
-            "facility.submitted",
-            "site.submitted",
-            "community.submitted",
-            "order.submitted",
+            "trade.event",
+            "clearingResult.event",
+            "market.event",
+            "measurements.event",
+            "facility.event",
+            "site.event",
+            "community.event",
+            "order.event",
         ];
         assert_eq!(EwdsEventType::ALL.len(), wire_names.len());
         for (event_type, wire_name) in EwdsEventType::ALL.into_iter().zip(wire_names) {
@@ -816,5 +886,86 @@ mod tests {
         })
         .unwrap_err();
         assert!(is_invalid_event(&error));
+    }
+
+    #[test]
+    fn guarantees_of_origin_query_operation_wire_name_and_prefix() {
+        let operation = EwdsOperation::GuaranteesOfOriginQuery;
+        assert_eq!(operation.as_str(), "guarantees_of_origin.query");
+        assert_eq!(operation.request_id_prefix(), "guarantees_of_origin-query");
+        assert_eq!(
+            serde_json::to_value(operation).unwrap(),
+            serde_json::json!("guarantees_of_origin.query")
+        );
+        assert_eq!(
+            serde_json::from_value::<EwdsOperation>(serde_json::json!(
+                "guarantees_of_origin.query"
+            ))
+            .unwrap(),
+            operation
+        );
+        assert!(EwdsOperation::ALL.contains(&operation));
+    }
+
+    #[test]
+    fn every_operation_is_in_all_exactly_once() {
+        for operation in EwdsOperation::ALL {
+            assert_eq!(
+                EwdsOperation::ALL
+                    .iter()
+                    .filter(|candidate| **candidate == operation)
+                    .count(),
+                1,
+                "{} listed more than once",
+                operation
+            );
+        }
+    }
+
+    #[test]
+    fn guarantees_of_origin_default_topics() {
+        let topics = EwdsTopicConfig::default();
+        let pair = topics.for_operation(EwdsOperation::GuaranteesOfOriginQuery);
+        assert_eq!(pair.request, "guaranteesOfOriginQuery");
+        assert_eq!(pair.response, "guaranteesOfOriginQueryResponse");
+    }
+
+    #[test]
+    fn guarantees_of_origin_topics_follow_env() {
+        std::env::set_var(
+            "EWDS_GUARANTEES_OF_ORIGIN_REQUEST_TOPIC",
+            "guaranteesOfOriginQueryTest",
+        );
+        std::env::set_var(
+            "EWDS_GUARANTEES_OF_ORIGIN_RESPONSE_TOPIC",
+            "guaranteesOfOriginQueryTestResponse",
+        );
+        let topics = EwdsTopicConfig::from_env();
+        std::env::remove_var("EWDS_GUARANTEES_OF_ORIGIN_REQUEST_TOPIC");
+        std::env::remove_var("EWDS_GUARANTEES_OF_ORIGIN_RESPONSE_TOPIC");
+
+        let pair = topics.for_operation(EwdsOperation::GuaranteesOfOriginQuery);
+        assert_eq!(pair.request, "guaranteesOfOriginQueryTest");
+        assert_eq!(pair.response, "guaranteesOfOriginQueryTestResponse");
+    }
+
+    #[test]
+    fn trade_status_updated_at_is_optional_in_storage() {
+        // Omitted when unset.
+        let db_json = serde_json::to_value(trade()).unwrap();
+        assert!(db_json.get("status_updated_at").is_none());
+
+        // A pre-existing document without the field still deserializes.
+        let db: DbTradeSchema = serde_json::from_value(db_json).unwrap();
+        assert_eq!(db.status_updated_at, None);
+
+        // A set value round-trips under its snake_case storage name.
+        let mut executed = trade();
+        executed.status = TradeStatus::Executed;
+        executed.status_updated_at = Some(1_234);
+        let json = serde_json::to_value(&executed).unwrap();
+        assert_eq!(json["status_updated_at"], serde_json::json!(1_234));
+        let parsed: DbTradeSchema = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed.status_updated_at, Some(1_234));
     }
 }
