@@ -18,9 +18,7 @@ use primitives::db_api_schema::{
     trades::{ClearingResultSchema, ClearingStatus, DbTradeSchema, TradeParameters, TradeStatus},
 };
 use primitives::ewds::dto::EwdsMarketDto;
-use primitives::utils::{
-    bytes16_to_hex, timestamp_to_string_with_padding, NODE_FLOAT_SCALING_FACTOR,
-};
+use primitives::utils::{bytes16_to_hex, timestamp_to_string_with_padding, NODE_FLOAT_SCALING_FACTOR};
 use tracing::info;
 
 fn scaled_u256_to_f64(value: U256) -> f64 {
@@ -58,6 +56,33 @@ impl OffchainStorageEvmHandler {
 
 #[async_trait]
 impl GsyEventHandler for OffchainStorageEvmHandler {
+    async fn start_block(&self, stream_id: &str, live_start: u64) -> Result<u64> {
+        let cursor = self
+            .db
+            .collection::<bson::Document>("evm_listener_cursors")
+            .find_one_and_update(
+                doc! {"_id": stream_id},
+                doc! {"$setOnInsert": {"next_block": i64::try_from(live_start)?}},
+            )
+            .upsert(true)
+            .return_document(mongodb::options::ReturnDocument::After)
+            .await?
+            .context("Missing EVM listener cursor")?;
+        Ok(u64::try_from(cursor.get_i64("next_block")?)?)
+    }
+
+    async fn checkpoint(&self, stream_id: &str, next_block: u64) -> Result<()> {
+        self.db
+            .collection::<bson::Document>("evm_listener_cursors")
+            .update_one(
+                doc! {"_id": stream_id},
+                doc! {"$max": {"next_block": i64::try_from(next_block)?}},
+            )
+            .upsert(true)
+            .await?;
+        Ok(())
+    }
+
     async fn handle_block(&self, block_timestamp: u64) -> Result<()> {
         let submitted = bson::to_bson(&OrderStatus::Submitted)?;
         let market_ids = self
@@ -162,7 +187,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
 
         self.db
             .orders()
-            .insert_orders(vec![schema])
+            .record_placement(&schema)
             .await
             .with_context(|| format!("Failed to insert order {} into DB", order_id_str))?;
 
@@ -214,19 +239,6 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         let offer_hash_str = bytes16_to_hex(event.offer_id);
         let residual_bid_id = bytes16_to_optional_hex(event.residual_bid_id);
         let residual_offer_id = bytes16_to_optional_hex(event.residual_offer_id);
-        let bid_status = if residual_bid_id.is_some() {
-            OrderStatus::PartiallyFilled
-        } else {
-            OrderStatus::Filled
-        };
-        let offer_status = if residual_offer_id.is_some() {
-            OrderStatus::PartiallyFilled
-        } else {
-            OrderStatus::Filled
-        };
-
-        let bid_bson = mongodb::bson::to_bson(&bid_hash_str).unwrap();
-        let offer_bson = mongodb::bson::to_bson(&offer_hash_str).unwrap();
 
         let trade = DbTradeSchema {
             trade_uuid: trade_hash.clone(),
@@ -234,7 +246,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             seller: bytes16_to_hex(event.seller_id),
             buyer: bytes16_to_hex(event.buyer_id),
             market_id: bytes16_to_hex(event.market_id),
-            creation_time: chrono::Utc::now().timestamp() as u64,
+            creation_time: block_timestamp,
             offer_hash: offer_hash_str,
             bid_hash: bid_hash_str,
             residual_offer_id,
@@ -246,32 +258,25 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             status_updated_at: None,
         };
 
-        self.db
+        let trade = self
+            .db
             .trades()
-            .insert_trades(vec![trade.clone()])
+            .record_settlement(&trade)
             .await
-            .with_context(|| format!("Failed to insert trade {} into DB", trade_hash))?;
+            .with_context(|| format!("Failed to index settlement for trade {}", trade_hash))?;
 
-        self.db
-            .orders()
-            .update_order_status_by_id(&bid_bson, bid_status, block_timestamp)
-            .await
-            .with_context(|| {
-                format!(
-                    "Failed to update bid {} after settlement of trade {}",
-                    bid_bson, trade_hash
-                )
-            })?;
-        self.db
-            .orders()
-            .update_order_status_by_id(&offer_bson, offer_status, block_timestamp)
-            .await
-            .with_context(|| {
-                format!(
-                    "Failed to update offer {} after settlement of trade {}",
-                    offer_bson, trade_hash
-                )
-            })?;
+        for (id, partial) in [
+            (&trade.bid_hash, trade.residual_bid_id.is_some()),
+            (&trade.offer_hash, trade.residual_offer_id.is_some()),
+        ] {
+            self.db
+                .orders()
+                .mark_filled(id, partial, block_timestamp)
+                .await
+                .with_context(|| {
+                    format!("Failed to update order {} for trade {}", id, trade_hash)
+                })?;
+        }
 
         info!("Trade persisted and orders updated.");
 
@@ -408,16 +413,19 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             clearing_time: block_timestamp,
         };
 
-        let market_id = clearing_result.market_id.clone();
-        let clearing_result = self
-            .db
+        // A settlement transaction can emit several clearing logs, even for the same market.
+        self.db
             .clearing_results()
-            .insert(clearing_result)
+            .update_one(
+                doc! {"_id": format!("{:?}:{}", meta.transaction_hash, meta.log_index)},
+                doc! {"$setOnInsert": bson::to_document(&clearing_result)?},
+            )
+            .upsert(true)
             .await
             .with_context(|| {
                 format!(
-                    "Failed to insert clearing result for market {} into DB",
-                    market_id
+                    "Failed to index clearing result for market {}",
+                    clearing_result.market_id
                 )
             })?;
 

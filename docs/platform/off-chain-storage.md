@@ -103,9 +103,12 @@ does not trigger expiry. Market windows are immutable and cannot be reopened.
 The former wall-clock expiry scheduler and `scheduler_interval` setting have
 been removed. HTTP and EWDS use the same listener; order-status notifications
 are published only when EWDS is enabled. The first new confirmed block after startup
-also checks already-indexed markets for expiry. The listener retries failed blocks
-and catches up across reconnects during the same process; it has no persistent
-replay cursor across restarts. Missed market/order events still require reindexing.
+also checks already-indexed markets for expiry. On first start for a chain and
+contract set, the listener records the current head + 1 in MongoDB, without
+backfilling older events. It advances this cursor only after all logs and expiry
+checks for a block succeed. After a reconnect or restart it resumes at the first
+unfinished block. Replays preserve lifecycle states and separate clearing logs;
+EWDS notifications can repeat. The cursor is not a chain-reorg recovery mechanism.
 
 ## Data Model Notes
 
@@ -118,8 +121,8 @@ replay cursor across restarts. Missed market/order events still require reindexi
   facility IDs; the matcher resolves them back before comparing on-chain actors.
   UUID-shaped facility IDs are mapping inputs, not already-encoded on-chain IDs.
   Missing reverse mappings cause an indexing error rather than fabricating an ID.
-  The listener logs handler errors without replaying failed events, so mappings
-  must exist before order submission; restoring them requires explicit reindexing.
+  The listener retries the failed block, so a missing mapping must be restored
+  before indexing can continue.
   Existing records with on-chain partner IDs must be migrated using the mapping
   collection (or reindexed after mappings are restored); they must not be used
   as off-chain inputs to create new mappings.
@@ -131,10 +134,11 @@ replay cursor across restarts. Missed market/order events still require reindexi
   independent. The verification block timestamp is stored on both the trade and
   consumed orders; replaying that event preserves the first completion timestamp.
   This also makes verified trades available to the status-time/GoO query.
-- Order placement, cancellation and settlement indexing use the event block's
-  timestamp for `status_updated_at` (exposed as `updatedAt` in HTTP/EWDS DTOs),
-  not the indexing time. Status and timestamp are updated together. Residual
-  orders have independent status timestamps; `creation_time` remains unchanged.
+- Order placement, cancellation and settlement use the event block's timestamp
+  for the order's `status_updated_at` (`updatedAt` over HTTP/EWDS). Residual
+  orders have independent status timestamps; their original creation time does
+  not change. A trade's `creation_time` is the settlement block's timestamp,
+  not the wall-clock time of indexing or replay.
   Existing records without a status timestamp are not backfilled by this change.
 - Trade records include both order payload snapshots and selected settlement parameters.
 

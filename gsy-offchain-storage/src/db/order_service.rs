@@ -77,6 +77,54 @@ pub async fn init_tariffs(db: &DatabaseWrapper) -> Result<()> {
 pub struct OrderService(pub Collection<DbOrderSchema>);
 
 impl OrderService {
+    /// The first chain placement supersedes an import. Replays must not rewind lifecycle state.
+    pub async fn record_placement(&self, order: &DbOrderSchema) -> Result<()> {
+        let mut placement = bson::to_document(order)?;
+        placement.insert("indexed_placement", true);
+        self.0
+            .update_one(
+                doc! {"order_id": &order.order_id},
+                vec![doc! {"$replaceWith": {"$cond": [
+                    {"$eq": ["$indexed_placement", true]}, "$$ROOT",
+                    {"$mergeObjects": ["$$ROOT", {"$literal": placement}]}
+                ]}}],
+            )
+            .upsert(true)
+            .await?;
+        Ok(())
+    }
+
+    /// Record a settlement fill without resetting executed orders or replay timestamps.
+    pub async fn mark_filled(
+        &self,
+        order_id: &str,
+        partially_filled: bool,
+        timestamp: u64,
+    ) -> Result<()> {
+        let status = if partially_filled {
+            OrderStatus::PartiallyFilled
+        } else {
+            OrderStatus::Filled
+        };
+        self.0.update_one(
+            doc! {"order_id": order_id, "status": {"$in": [
+                bson::to_bson(&OrderStatus::Submitted)?, bson::to_bson(&OrderStatus::Expired)?
+            ]}},
+            doc! {"$set": {"status": bson::to_bson(&status)?, "status_updated_at": bson::to_bson(&timestamp)?}},
+        ).await?;
+        let stored = self
+            .get_order_by_id(&Bson::String(order_id.to_owned()))
+            .await?;
+        anyhow::ensure!(
+            stored.is_some_and(
+                |order| order.status == status || order.status == OrderStatus::Executed
+            ),
+            "Cannot settle missing or conflicting order {}",
+            order_id
+        );
+        Ok(())
+    }
+
     #[tracing::instrument(name = "Fetching orders from database", skip(self))]
     pub async fn get_all_orders(&self) -> Result<Vec<DbOrderSchema>> {
         let mut cursor = self.0.find(doc! {}).await?;

@@ -15,8 +15,10 @@ use ethers::{
 };
 use ethers_solc::{artifacts::Severity, Project, ProjectPathsConfig};
 use gsy_execution_engine::{
-    connectors::evm_connector::submit_penalties, primitives::penalty_calculator::Penalty,
-    services::execution_orchestrator::run_execution_cycle, timeslot_scheduler::TimeslotScheduler,
+    connectors::evm_connector::{complete_delivery_verification, submit_penalties},
+    primitives::penalty_calculator::{DeliveryVerification, Penalty},
+    services::execution_orchestrator::run_execution_cycle,
+    timeslot_scheduler::TimeslotScheduler,
 };
 use serde_json::json;
 use std::{fs::File, io::Write, sync::Arc};
@@ -301,6 +303,47 @@ async fn mount_slot_records(
         .respond_with(ResponseTemplate::new(200).set_body_json(timeseries))
         .mount(server)
         .await;
+}
+
+#[tokio::test]
+async fn unknown_trade_does_not_block_or_count_as_verified() {
+    let (anvil, contract) = deploy_trade_settlement().await;
+    contract
+        .register_trade([1; 16], [2; 16], [3; 16], [4; 16], [5; 16])
+        .send()
+        .await
+        .unwrap()
+        .await
+        .unwrap()
+        .unwrap();
+    let verdicts = [9, 1].map(|id| DeliveryVerification {
+        trade_uuid: bytes16_to_hex([id; 16]),
+        buyer_penalty_cost: 5,
+        seller_penalty_cost: 0,
+    });
+    for _ in 0..2 {
+        assert_eq!(
+            complete_delivery_verification(
+                &anvil.ws_endpoint(),
+                &format!("{:?}", contract.address()),
+                PRIVATE_KEY,
+                verdicts.to_vec()
+            )
+            .await
+            .unwrap(),
+            1
+        );
+    }
+    assert!(contract.settled_trades([1; 16]).call().await.unwrap().2);
+    assert!(!contract.settled_trades([9; 16]).call().await.unwrap().2);
+    assert_eq!(
+        contract
+            .penalty_energy_by_trade([1; 16])
+            .call()
+            .await
+            .unwrap(),
+        U256::from(5)
+    );
 }
 
 #[tokio::test]

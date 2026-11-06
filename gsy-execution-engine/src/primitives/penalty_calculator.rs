@@ -1,5 +1,7 @@
 use primitives::db_api_schema::{profiles::MeasurementSchema, trades::DbTradeSchema};
-use primitives::utils::{bytes16_to_hex, create_encrypted_bytes16_from_string};
+use primitives::utils::{
+    bytes16_to_hex, create_encrypted_bytes16_from_string, NODE_FLOAT_SCALING_FACTOR,
+};
 use std::collections::HashMap;
 use tracing::warn;
 
@@ -94,7 +96,7 @@ pub fn compute_delivery_verifications(
             meas.energy_kwh,
         );
     }
-    // Iterate over each trade and compute the penalty if a measurement exists.
+    // TODO(DD-456): reconcile residual fills against the slot total; see DD-455's allocation.
     for trade in trades {
         if let Some(&measured_energy) = measurement_map
             .get(&trade.buyer)
@@ -105,7 +107,8 @@ pub fn compute_delivery_verifications(
             // Compute delta = measured_energy - traded_energy.
             let delta = measured_energy - traded_energy;
 
-            let penalty_cost = (delta.abs() * penalty_rate * 10_000.0).round() as u64;
+            let penalty_cost =
+                (delta.abs() * penalty_rate * NODE_FLOAT_SCALING_FACTOR).round() as u64;
             verifications.push(DeliveryVerification {
                 trade_uuid: trade.trade_uuid.clone(),
                 buyer_penalty_cost: if delta > 0.0 { penalty_cost } else { 0 },

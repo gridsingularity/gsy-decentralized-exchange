@@ -9,7 +9,7 @@
 //! scenario run; the seeded documents are deleted by the last step (and the whole database
 //! is dropped after every scenario by `main.rs` anyway).
 
-use crate::utils::test_database as database;
+use crate::utils::test_database;
 use crate::world::{GreenProofSeed, MyWorld};
 use cucumber::{given, then, when};
 use gsy_community_client::time_utils::get_current_timestamp_in_secs;
@@ -111,7 +111,7 @@ async fn seed_executed_pv_sale(world: &mut MyWorld, energy_kwh: f64, export_kwh:
         seller_facility_id,
     };
 
-    let db = database().await;
+    let db = test_database().await;
 
     db.collection::<EnergyCommunitySchema>("communities")
         .insert_one(EnergyCommunitySchema {
@@ -481,7 +481,7 @@ async fn delete_seeded_documents(world: &mut MyWorld) {
     let Some(seed) = world.green_proof.seed.take() else {
         return;
     };
-    let db = database().await;
+    let db = test_database().await;
     let mut deletions: Vec<(&str, Document)> = vec![
         ("trades", doc! {"trade_uuid": &seed.trade_uuid}),
         ("markets", doc! {"market_id": &seed.market_id}),

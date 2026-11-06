@@ -37,7 +37,9 @@ success. HTTP and EWDS use the same calculation and on-chain completion path.
 ## Duplicate Submission Protection
 
 Before submitting, the engine checks `settledTrades(tradeId).verified` and skips
-completed trades. The contract also ignores repeated verdicts, so receipt loss
+completed trades. An invalid or unregistered trade ID is logged and excluded from
+that cycle, not counted as verified. An RPC error instead fails the cycle.
+The contract also ignores repeated verdicts, so receipt loss
 or concurrent submissions cannot duplicate penalties or completion events.
 Matching pre-recorded penalties are reused; conflicting amounts reject the
 transaction. A successful receipt is required before reporting progress.

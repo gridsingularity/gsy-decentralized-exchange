@@ -2,7 +2,7 @@ use crate::db::DatabaseWrapper;
 use anyhow::Result;
 use futures::StreamExt;
 use mongodb::bson::{doc, Bson};
-use mongodb::options::IndexOptions;
+use mongodb::options::{IndexOptions, ReturnDocument};
 use mongodb::{Collection, Cursor, IndexModel};
 use primitives::db_api_schema::trades::{
     ClearingResultSchema, DbTradeSchema, MarketRoleSchema, TradeStatus,
@@ -66,6 +66,23 @@ pub async fn init_market_roles(db: &DatabaseWrapper) -> Result<()> {
 pub struct TradeService(pub Collection<DbTradeSchema>);
 
 impl TradeService {
+    /// Match immutable fields as well as the ID: conflicting records must not pass as replays.
+    pub async fn record_settlement(&self, trade: &DbTradeSchema) -> Result<DbTradeSchema> {
+        let snapshot = mongodb::bson::to_document(trade)?;
+        let mut identity = snapshot.clone();
+        identity.remove("status_updated_at");
+        identity.remove("creation_time");
+        identity.insert("status", doc! {"$in": [
+            mongodb::bson::to_bson(&TradeStatus::Settled)?, mongodb::bson::to_bson(&TradeStatus::Executed)?
+        ]});
+        self.0
+            .find_one_and_update(identity, doc! {"$setOnInsert": snapshot})
+            .upsert(true)
+            .return_document(ReturnDocument::After)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Settlement was not stored for {}", trade.trade_uuid))
+    }
+
     pub async fn mark_executed(&self, trade_id: &str, block_timestamp: u64) -> Result<()> {
         self.0.update_one(
             doc! {"trade_uuid": trade_id, "status": mongodb::bson::to_bson(&TradeStatus::Settled)?},

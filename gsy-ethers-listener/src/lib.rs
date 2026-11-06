@@ -30,6 +30,15 @@ pub struct ListenerConfig {
 
 #[async_trait]
 pub trait GsyEventHandler: Send + Sync + 'static {
+    /// Resume this chain/contract set, or initialize its first live-only boundary.
+    async fn start_block(&self, _stream_id: &str, live_start: u64) -> Result<u64> {
+        Ok(live_start)
+    }
+
+    async fn checkpoint(&self, _stream_id: &str, _next_block: u64) -> Result<()> {
+        Ok(())
+    }
+
     // *Filter types are automatically generated from the ABI based on the event name.
     async fn handle_order_placed(
         &self,
@@ -111,10 +120,16 @@ impl<H: GsyEventHandler> GsyEthersListener<H> {
                 NewMarketCreatedFilter::signature(),
                 MarketClearingFilter::signature(),
             ]);
-        // Preserve the live-only startup boundary; replay needs a persistent cursor.
-        // Record it before subscribing, then fetch any blocks mined during setup.
+        let stream_id = format!(
+            "{}:{:?}:{:?}:{:?}",
+            provider.get_chainid().await?,
+            self.config.order_registry_address,
+            self.config.trade_settlement_address,
+            self.config.market_controller_address
+        );
         if next_block.is_none() {
-            *next_block = Some(provider.get_block_number().await?.as_u64() + 1);
+            let live_start = provider.get_block_number().await?.as_u64() + 1;
+            *next_block = Some(self.handler.start_block(&stream_id, live_start).await?);
         }
         let mut stream = provider.subscribe_blocks().await?;
         let mut head = provider.get_block_number().await?.as_u64();
@@ -141,6 +156,7 @@ impl<H: GsyEventHandler> GsyEthersListener<H> {
                     self.handle_log(log, timestamp).await?;
                 }
                 self.handler.handle_block(timestamp).await?;
+                self.handler.checkpoint(&stream_id, number + 1).await?;
                 number += 1;
                 *next_block = Some(number);
             }
