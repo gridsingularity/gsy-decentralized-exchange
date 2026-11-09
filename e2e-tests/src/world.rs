@@ -99,6 +99,7 @@ pub struct MyWorld {
     pub submitted_site: Option<SiteSchema>,
     pub submitted_facility: Option<FacilitySchema>,
     pub submitted_measurements: Vec<MeasurementSchema>,
+    pub order_status_observer: Option<crate::steps::event_steps::OrderStatusObserver>,
     pub green_proof: GreenProofState,
 }
 
@@ -171,6 +172,7 @@ impl MyWorld {
             submitted_site: None,
             submitted_facility: None,
             submitted_measurements: vec![],
+            order_status_observer: None,
             green_proof: GreenProofState::default(),
         })
     }

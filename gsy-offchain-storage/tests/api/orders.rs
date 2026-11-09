@@ -64,7 +64,7 @@ async fn post_orders_persists_order_to_the_db() {
     let update_result = db
         .get_ref()
         .orders()
-        .update_order_status_by_id(&saved_id, OrderStatus::Executed)
+        .update_order_status_by_id(&saved_id, OrderStatus::Executed, 1_100)
         .await
         .unwrap();
     assert_eq!(update_result.modified_count, 1);
@@ -77,6 +77,7 @@ async fn post_orders_persists_order_to_the_db() {
         .unwrap()
         .unwrap();
     assert_eq!(updated.status, OrderStatus::Executed);
+    assert_eq!(updated.status_updated_at, Some(1_100));
     stop_app(app).await;
 }
 

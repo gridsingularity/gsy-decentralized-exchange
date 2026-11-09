@@ -116,10 +116,12 @@ pub enum EwdsEventType {
     Community,
     #[serde(rename = "order.event")]
     Order,
+    #[serde(rename = "orderStatus.event")]
+    OrderStatus,
 }
 
 impl EwdsEventType {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Trade,
         Self::ClearingResult,
         Self::Market,
@@ -128,6 +130,7 @@ impl EwdsEventType {
         Self::Site,
         Self::Community,
         Self::Order,
+        Self::OrderStatus,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -140,6 +143,7 @@ impl EwdsEventType {
             Self::Site => "site.event",
             Self::Community => "community.event",
             Self::Order => "order.event",
+            Self::OrderStatus => "orderStatus.event",
         }
     }
 }
@@ -381,7 +385,7 @@ impl EwdsEventTopicConfig {
             EwdsEventType::Facility => &self.facility_event,
             EwdsEventType::Site => &self.site_event,
             EwdsEventType::Community => &self.community_event,
-            EwdsEventType::Order => &self.order_event,
+            EwdsEventType::Order | EwdsEventType::OrderStatus => &self.order_event,
         }
     }
 }
@@ -622,10 +626,13 @@ impl EwdsClient {
                 }
             };
             if envelope.event_type != event_type {
-                warn!(
-                    "Skipping EWDS {} event {} on topic '{}', which carries {} events",
-                    envelope.event_type, envelope.event_id, topic_name, event_type
-                );
+                // Submissions and status notifications intentionally share the order topic.
+                if self.config.event_topics.for_event_type(envelope.event_type) != topic_name {
+                    warn!(
+                        "Skipping EWDS {} event {} on topic '{}', which carries {} events",
+                        envelope.event_type, envelope.event_id, topic_name, event_type
+                    );
+                }
                 continue;
             }
             if seen_event_ids.contains(&envelope.event_id)

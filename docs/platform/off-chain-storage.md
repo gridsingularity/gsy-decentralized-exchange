@@ -20,7 +20,16 @@ Backend: MongoDB (`mongo:5.0`).
 
 `OrderPlaced` contains the optional order requirements (bids and offers) and
 offer attributes, so the indexed order is complete without a follow-up
-`/orders` write.
+`/orders` write. `POST /orders` and `POST /orders-normalized` remain available as
+direct database upserts, but neither is used by the E2E scenarios or production
+order lifecycle. Orders are submitted through `placeOrder` (directly or through
+the community client's EWDS subscriber), then indexed by the EVM listener.
+The POST endpoints still accept caller-supplied statuses; their ownership and
+access policy remain to be clarified. Posting trades leaves referenced orders
+unchanged; settlement updates are handled by the EVM listener.
+Restricting the order POST endpoints is a separate follow-up, not part of
+DD-423. Until then, listener ownership is the normal lifecycle path, not an
+enforced access-control boundary for those legacy write endpoints.
 
 `NewMarketCreated` carries the full market record. The handler converts it to
 `MarketSchema` (`market_id` as `0x` + 32 hex digits, `community_id` as UUID,
@@ -81,9 +90,25 @@ communities that other systems publish on the EWDS events channel, in
 the same collections (see
 [Inbound Events](ewds-integration.md#inbound-events)).
 
-## Scheduler Behavior
+## Order Expiry
 
-`expire_orders_scheduler` periodically marks stale open orders as `Expired` using `time_slot` and current time.
+The EVM listener expires `Submitted` orders when a confirmed block reaches their
+market's indexed on-chain `closingTime`. It processes that block's contract events
+first, then checks expiry, including blocks with no contract events. Only open
+orders in closed markets are updated, including residuals; consumed and cancelled
+orders remain unchanged. `status_updated_at` is the scheduled closing time, so
+late indexing and repeated blocks preserve the same deadline. Delivery-slot start
+does not trigger expiry. Market windows are immutable and cannot be reopened.
+
+The former wall-clock expiry scheduler and `scheduler_interval` setting have
+been removed. HTTP and EWDS use the same listener; order-status notifications
+are published only when EWDS is enabled. The first new confirmed block after startup
+also checks already-indexed markets for expiry. On first start for a chain and
+contract set, the listener records the current head + 1 in MongoDB, without
+backfilling older events. It advances this cursor only after all logs and expiry
+checks for a block succeed. After a reconnect or restart it resumes at the first
+unfinished block. Replays preserve lifecycle states and separate clearing logs;
+EWDS notifications can repeat. The cursor is not a chain-reorg recovery mechanism.
 
 ## Data Model Notes
 
@@ -96,12 +121,25 @@ the same collections (see
   facility IDs; the matcher resolves them back before comparing on-chain actors.
   UUID-shaped facility IDs are mapping inputs, not already-encoded on-chain IDs.
   Missing reverse mappings cause an indexing error rather than fabricating an ID.
-  The listener logs handler errors without replaying failed events, so mappings
-  must exist before order submission; restoring them requires explicit reindexing.
+  The listener retries the failed block, so a missing mapping must be restored
+  before indexing can continue.
   Existing records with on-chain partner IDs must be migrated using the mapping
   collection (or reindexed after mappings are restored); they must not be used
   as off-chain inputs to create new mappings.
-- Settlement events transition order statuses to `Executed`.
+- Settlement events mark consumed orders `Filled`, or `PartiallyFilled` when a
+  residual ID is emitted. Each residual is a separate `Submitted` order; filling
+  it later does not change its original's status. Settlement does not mark orders
+  `Executed`; the later `DeliveryVerified` event does so for that trade and only
+  its two consumed orders, including `PartiallyFilled` originals. Residuals are
+  independent. The verification block timestamp is stored on both the trade and
+  consumed orders; replaying that event preserves the first completion timestamp.
+  This also makes verified trades available to the status-time/GoO query.
+- Order placement, cancellation and settlement use the event block's timestamp
+  for the order's `status_updated_at` (`updatedAt` over HTTP/EWDS). Residual
+  orders have independent status timestamps; their original creation time does
+  not change. A trade's `creation_time` is the settlement block's timestamp,
+  not the wall-clock time of indexing or replay.
+  Existing records without a status timestamp are not backfilled by this change.
 - Trade records include both order payload snapshots and selected settlement parameters.
 
 ## Operational Configuration
@@ -113,7 +151,6 @@ Key env variables:
 - `CONTRACT_TRADE_SETTLEMENT`
 - `CONTRACT_MARKET_CONTROLLER`
 - `DATABASE_*`
-- `SCHEDULER_INTERVAL`
 - `EWDS_ENABLE_HANDLER`
 - `EWDS_COMMUNITIES_REQUEST_TOPIC`
 - `EWDS_EVENT_PUBLISH_FQCN`, `EWDS_EVENT_SUBSCRIBE_FQCN`

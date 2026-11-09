@@ -1,14 +1,12 @@
-use actix_web::web;
 use anyhow::Result;
 use gsy_ethers_listener::{GsyEthersListener, ListenerConfig};
 use gsy_offchain_storage::certificates::config::PILOT;
 use gsy_offchain_storage::configuration::get_configuration;
-use gsy_offchain_storage::db::{init_database, DbRef};
+use gsy_offchain_storage::db::init_database;
 use gsy_offchain_storage::evm_handler::OffchainStorageEvmHandler;
 use gsy_offchain_storage::ewds_event_handler::{start_ewds_event_subscriber, EwdsEventPublisher};
 use gsy_offchain_storage::ewds_handler::{start_ewds_request_handler, EwdsHandlerConfig};
 use gsy_offchain_storage::http_server::start_server;
-use gsy_offchain_storage::update_db::expire_orders_scheduler;
 use primitives::log::setup_logging;
 use std::sync::LazyLock;
 use tracing::info;
@@ -23,11 +21,9 @@ async fn main() -> Result<(), anyhow::Error> {
     // Validate the guarantees-of-origin pilot config now, not on the first request.
     LazyLock::force(&PILOT);
     let db_connection_string = configuration.get_connection_string();
-    let update_interval = configuration.get_scheduler_interval();
 
     let db_connection_wrapper =
         init_database(db_connection_string, configuration.database_name).await?;
-    let db: DbRef = web::Data::new(db_connection_wrapper.clone());
 
     let ewds_config = EwdsHandlerConfig::from_env();
 
@@ -54,10 +50,6 @@ async fn main() -> Result<(), anyhow::Error> {
         if let Err(e) = listener.run().await {
             tracing::error!("EVM Listener crashed: {:?}", e);
         }
-    });
-
-    tokio::task::spawn(async move {
-        expire_orders_scheduler(db, update_interval).await;
     });
 
     if ewds_config.enabled {

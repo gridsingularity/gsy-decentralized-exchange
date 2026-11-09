@@ -37,7 +37,7 @@ async fn main() -> anyhow::Result<()> {
 
             if trade_settlement_address == "0x0000000000000000000000000000000000000000" {
                 info!(
-                    "TRADE_SETTLEMENT_ADDRESS is zero; penalty submissions will fail until configured."
+                    "TRADE_SETTLEMENT_ADDRESS is zero; delivery verification will fail until configured."
                 );
             }
             info!("Using off-chain storage URL: {}", offchain_url);

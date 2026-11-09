@@ -22,15 +22,22 @@ struct MockHandler {
 
 #[async_trait]
 impl GsyEventHandler for MockHandler {
-    async fn handle_order_placed(&self, event: OrderPlacedFilter) -> Result<()> {
+    async fn handle_delivery_verified(
+        &self,
+        _: gsy_ethers_listener::DeliveryVerifiedFilter,
+        _: u64,
+    ) -> Result<()> {
+        Ok(())
+    }
+    async fn handle_order_placed(&self, event: OrderPlacedFilter, _: u64) -> Result<()> {
         let mut store = self.received_hashes.lock().unwrap();
         store.push(event.order_id);
         Ok(())
     }
-    async fn handle_order_cancelled(&self, _: OrderCancelledFilter) -> Result<()> {
+    async fn handle_order_cancelled(&self, _: OrderCancelledFilter, _: u64) -> Result<()> {
         Ok(())
     }
-    async fn handle_trade_settled(&self, _: TradeSettledFilter) -> Result<()> {
+    async fn handle_trade_settled(&self, _: TradeSettledFilter, _: u64) -> Result<()> {
         Ok(())
     }
     async fn handle_new_market_created(&self, _: NewMarketCreatedFilter) -> Result<()> {

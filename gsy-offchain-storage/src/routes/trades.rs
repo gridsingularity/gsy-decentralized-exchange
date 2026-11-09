@@ -3,8 +3,6 @@ use crate::ewds_handler::validate_trades_query_range;
 use crate::routes::parse_time_range;
 use actix_web::web::Query;
 use actix_web::{web::Json, HttpResponse, Responder};
-use mongodb::bson::Bson;
-use primitives::db_api_schema::orders::OrderStatus;
 use primitives::db_api_schema::trades::DbTradeSchema;
 use primitives::ewds::dto::EwdsTradeDto;
 use serde::Deserialize;
@@ -23,21 +21,6 @@ pub async fn post_trades(trades: Json<Vec<EwdsTradeDto>>, db: DbRef) -> impl Res
             return HttpResponse::BadRequest().finish();
         }
     };
-
-    for trade in db_trades.iter() {
-        let bid_id = Bson::String(trade.bid_hash.clone());
-        let offer_id = Bson::String(trade.offer_hash.clone());
-        let _ = db
-            .get_ref()
-            .orders()
-            .update_order_status_by_id(&bid_id, OrderStatus::Executed)
-            .await;
-        let _ = db
-            .get_ref()
-            .orders()
-            .update_order_status_by_id(&offer_id, OrderStatus::Executed)
-            .await;
-    }
 
     match db.get_ref().trades().insert_trades(db_trades).await {
         Ok(ids) => HttpResponse::Ok().json(ids),

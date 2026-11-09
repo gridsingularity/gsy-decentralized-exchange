@@ -15,8 +15,10 @@ use ethers::{
 };
 use ethers_solc::{artifacts::Severity, Project, ProjectPathsConfig};
 use gsy_execution_engine::{
-    connectors::evm_connector::submit_penalties, primitives::penalty_calculator::Penalty,
-    services::execution_orchestrator::run_execution_cycle, timeslot_scheduler::TimeslotScheduler,
+    connectors::evm_connector::{complete_delivery_verification, submit_penalties},
+    primitives::penalty_calculator::{DeliveryVerification, Penalty},
+    services::execution_orchestrator::run_execution_cycle,
+    timeslot_scheduler::TimeslotScheduler,
 };
 use serde_json::json;
 use std::{fs::File, io::Write, sync::Arc};
@@ -33,6 +35,8 @@ abigen!(
     r#"[
         function penaltyEnergyByTrade(bytes16 tradeId) external view returns (uint256)
         function penaltyEnergyByActor(bytes16 actorId) external view returns (uint256)
+        function settledTrades(bytes16 tradeId) external view returns (bytes16 bidId, bytes16 offerId, bool verified)
+        function registerTrade(bytes16 tradeId, bytes16 bidId, bytes16 offerId, bytes16 buyer, bytes16 seller) external
     ]"#
 );
 
@@ -59,6 +63,41 @@ async fn deploy_trade_settlement() -> (AnvilInstance, MockTradeSettlement<TestCl
             mapping(address => mapping(bytes32 => bool)) private roles;
             mapping(bytes16 => uint256) public penaltyEnergyByTrade;
             mapping(bytes16 => uint256) public penaltyEnergyByActor;
+
+            struct SettledTrade {
+                bytes16 bidId;
+                bytes16 offerId;
+                bool verified;
+            }
+            struct DeliveryVerification {
+                bytes16 tradeId;
+                uint64 buyerPenaltyEnergy;
+                uint64 sellerPenaltyEnergy;
+            }
+            mapping(bytes16 => SettledTrade) public settledTrades;
+            mapping(bytes16 => bytes16) private buyers;
+            mapping(bytes16 => bytes16) private sellers;
+
+            function registerTrade(bytes16 tradeId, bytes16 bidId, bytes16 offerId, bytes16 buyer, bytes16 seller) external {
+                settledTrades[tradeId] = SettledTrade(bidId, offerId, false);
+                buyers[tradeId] = buyer;
+                sellers[tradeId] = seller;
+            }
+
+            function completeDeliveryVerification(DeliveryVerification[] calldata verifications) external {
+                require(roles[msg.sender][EXECUTION_ENGINE_ROLE], "missing execution engine role");
+                for (uint256 i = 0; i < verifications.length; i++) {
+                    DeliveryVerification calldata verification = verifications[i];
+                    SettledTrade storage trade = settledTrades[verification.tradeId];
+                    require(trade.bidId != bytes16(0), "unknown trade");
+                    if (trade.verified) continue;
+                    trade.verified = true;
+                    penaltyEnergyByTrade[verification.tradeId] +=
+                        uint256(verification.buyerPenaltyEnergy) + verification.sellerPenaltyEnergy;
+                    penaltyEnergyByActor[buyers[verification.tradeId]] += verification.buyerPenaltyEnergy;
+                    penaltyEnergyByActor[sellers[verification.tradeId]] += verification.sellerPenaltyEnergy;
+                }
+            }
 
             struct TradePenalty {
                 bytes16 penalizedActorId;
@@ -267,6 +306,47 @@ async fn mount_slot_records(
 }
 
 #[tokio::test]
+async fn unknown_trade_does_not_block_or_count_as_verified() {
+    let (anvil, contract) = deploy_trade_settlement().await;
+    contract
+        .register_trade([1; 16], [2; 16], [3; 16], [4; 16], [5; 16])
+        .send()
+        .await
+        .unwrap()
+        .await
+        .unwrap()
+        .unwrap();
+    let verdicts = [9, 1].map(|id| DeliveryVerification {
+        trade_uuid: bytes16_to_hex([id; 16]),
+        buyer_penalty_cost: 5,
+        seller_penalty_cost: 0,
+    });
+    for _ in 0..2 {
+        assert_eq!(
+            complete_delivery_verification(
+                &anvil.ws_endpoint(),
+                &format!("{:?}", contract.address()),
+                PRIVATE_KEY,
+                verdicts.to_vec()
+            )
+            .await
+            .unwrap(),
+            1
+        );
+    }
+    assert!(contract.settled_trades([1; 16]).call().await.unwrap().2);
+    assert!(!contract.settled_trades([9; 16]).call().await.unwrap().2);
+    assert_eq!(
+        contract
+            .penalty_energy_by_trade([1; 16])
+            .call()
+            .await
+            .unwrap(),
+        U256::from(5)
+    );
+}
+
+#[tokio::test]
 async fn late_records_after_rollover_are_processed_once_without_blocking_the_current_slot() {
     assert_eq!(
         OffchainStorageTransport::from_env(),
@@ -275,10 +355,6 @@ async fn late_records_after_rollover_are_processed_once_without_blocking_the_cur
     );
     let (anvil, contract) = deploy_trade_settlement().await;
     let client = contract.client();
-    let initial_nonce = client
-        .get_transaction_count(client.address(), None)
-        .await
-        .unwrap();
     let server = MockServer::start().await;
     let slot_duration = GLOBAL_CONSTANTS.time_slot_sec;
     let current = (1_800_000_000 / slot_duration) * slot_duration;
@@ -294,10 +370,30 @@ async fn late_records_after_rollover_are_processed_once_without_blocking_the_cur
     let actor_id = create_encrypted_bytes16_from_string("alice");
     let current_trade = late_trade(3, 11, current);
     // The retained-slot trades are created after rollover, not inside their delivery window.
-    let retained_trades = [
-        late_trade(1, 10, current + 3),
-        late_trade(2, 10, current + 5),
-    ];
+    let mut fully_delivered = late_trade(2, 10, current + 5);
+    fully_delivered.parameters.selected_energy_kWh = 12.0;
+    let retained_trades = [late_trade(1, 10, current + 3), fully_delivered];
+    for trade in std::iter::once(&current_trade).chain(&retained_trades) {
+        let receipt = contract
+            .register_trade(
+                parse_uuid_or_hex_bytes16(&trade.trade_uuid).unwrap(),
+                parse_uuid_or_hex_bytes16(&trade.bid_hash).unwrap(),
+                parse_uuid_or_hex_bytes16(&trade.offer_hash).unwrap(),
+                parse_uuid_or_hex_bytes16(&trade.buyer).unwrap(),
+                parse_uuid_or_hex_bytes16(&trade.seller).unwrap(),
+            )
+            .send()
+            .await
+            .unwrap()
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(receipt.status, Some(1u64.into()));
+    }
+    let initial_nonce = client
+        .get_transaction_count(client.address(), None)
+        .await
+        .unwrap();
 
     // No wall-clock sleeps: control availability and the scheduler's clock independently.
     for (elapsed, trade_count, has_measurement, fail_query) in [
@@ -380,7 +476,7 @@ async fn late_records_after_rollover_are_processed_once_without_blocking_the_cur
                 } else {
                     0
                 };
-                // The result counts existing on-chain penalties as well as newly submitted ones.
+                // Both newly submitted and previously verified trades count as complete.
                 assert_eq!(result.unwrap(), expected_count);
             }
             assert_eq!(
@@ -395,8 +491,7 @@ async fn late_records_after_rollover_are_processed_once_without_blocking_the_cur
         }
 
         let first_penalty = if elapsed >= 4 { 2_000u64 } else { 0 };
-        let second_penalty = if elapsed >= 5 { 2_000u64 } else { 0 };
-        for (id, expected) in [(1, first_penalty), (2, second_penalty)] {
+        for (id, expected, verified) in [(1, first_penalty, elapsed >= 4), (2, 0, elapsed >= 5)] {
             assert_eq!(
                 contract
                     .penalty_energy_by_trade([id; 16])
@@ -405,6 +500,11 @@ async fn late_records_after_rollover_are_processed_once_without_blocking_the_cur
                     .unwrap(),
                 U256::from(expected)
             );
+            assert_eq!(
+                contract.settled_trades([id; 16]).call().await.unwrap().2,
+                verified,
+                "Zero-penalty trades must also be verified exactly once"
+            );
         }
         assert_eq!(
             contract
@@ -412,7 +512,7 @@ async fn late_records_after_rollover_are_processed_once_without_blocking_the_cur
                 .call()
                 .await
                 .unwrap(),
-            U256::from(5_000 + first_penalty + second_penalty),
+            U256::from(5_000 + first_penalty),
             "Repeated polls and restart must not charge an actor twice"
         );
         let expected_transactions = 1u64 + u64::from(elapsed >= 4) + u64::from(elapsed >= 5);
@@ -422,7 +522,7 @@ async fn late_records_after_rollover_are_processed_once_without_blocking_the_cur
                 .await
                 .unwrap(),
             initial_nonce + U256::from(expected_transactions),
-            "Already-recorded penalties must not generate another transaction"
+            "Already-verified trades must not generate another transaction"
         );
     }
 

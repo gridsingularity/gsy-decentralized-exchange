@@ -84,7 +84,9 @@ The report deploys a benchmark-only contract suite and records gas for:
   and resending existing markets).
 - `OrderRegistry` mutating calls: `placeOrder`, `cancelOrder`, `updateStatus`,
   and direct `settleOrder` partial-fill/residual-consumption benchmarks.
-- `TradeSettlement` mutating calls: `settleBatch`, `submitPenalties`.
+- `TradeSettlement` mutating calls: `settleBatch`, `submitPenalties`,
+  `completeDeliveryVerification` (zero penalties and a new seller penalty on
+  separate settled trades; prerequisite transactions are reported separately).
 - View-call `estimateGas` values for the read functions used by services.
 
 View functions do not consume gas when called off-chain; they are included as

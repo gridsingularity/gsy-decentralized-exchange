@@ -3,19 +3,24 @@ use crate::ewds_handler::{mock_gateway, test_config};
 use crate::helpers::{init_app, stop_app};
 use ethers::contract::LogMeta;
 use ethers::types::{Address, H256, U256, U64};
-use gsy_ethers_listener::{GsyEventHandler, MarketClearingFilter, TradeSettledFilter};
+use gsy_ethers_listener::{
+    DeliveryVerifiedFilter, GsyEventHandler, MarketClearingFilter, NewMarketCreatedFilter,
+    OrderCancelledFilter, OrderPlacedFilter, TradeSettledFilter,
+};
 use gsy_offchain_storage::db::DatabaseWrapper;
 use gsy_offchain_storage::evm_handler::OffchainStorageEvmHandler;
 use gsy_offchain_storage::ewds_event_handler::{
     handle_event, start_ewds_event_subscriber, EwdsEventPublisher,
 };
 use gsy_offchain_storage::ewds_handler::EwdsHandlerConfig;
+use mongodb::bson::doc;
 use primitives::db_api_schema::grid_topology::{EnergyCommunitySchema, FacilitySchema, SiteSchema};
+use primitives::db_api_schema::orders::OrderStatus;
 use primitives::db_api_schema::profiles::MeasurementPointType;
 use primitives::db_api_schema::trades::{
     ClearingResultSchema, ClearingStatus, DbTradeSchema, TradeParameters, TradeStatus,
 };
-use primitives::ewds::dto::{EwdsEventEnvelope, EwdsMarketDto, EwdsSendMessageDto};
+use primitives::ewds::dto::{EwdsEventEnvelope, EwdsMarketDto, EwdsOrderDto, EwdsSendMessageDto};
 use primitives::ewds::{is_invalid_event, EwdsEventType};
 use primitives::utils::{bytes16_to_hex, epoch_to_rfc3339, timestamp_to_string_with_padding};
 use serde_json::{json, Value};
@@ -90,6 +95,72 @@ fn trade_settled_event() -> TradeSettledFilter {
         residual_offer_id: [0; 16],
         energy: U256::from(20_000u64),
         price: U256::from(3_000u64),
+    }
+}
+
+fn order_placed_event(order_id: [u8; 16], is_bid: bool) -> OrderPlacedFilter {
+    OrderPlacedFilter {
+        order_id,
+        created_by: if is_bid { [0x04; 16] } else { [0x05; 16] },
+        market_id: [0x06; 16],
+        time_slot: 1_000,
+        creation_time: 900,
+        energy: 20_000,
+        energy_rate: 3_000,
+        energy_source_preference: 0,
+        energy_type: 0,
+        is_bid,
+        preferred_trading_partner: [0; 16],
+        preferred_energy_rate: 0,
+    }
+}
+
+async fn seed_settlement_orders(app: &crate::helpers::TestApp) {
+    let handler = OffchainStorageEvmHandler {
+        db: app.db_wrapper.clone(),
+        event_publisher: None,
+    };
+    for (id, is_bid) in [([0x02; 16], true), ([0x03; 16], false)] {
+        handler
+            .handle_order_placed(order_placed_event(id, is_bid), 950)
+            .await
+            .unwrap();
+    }
+}
+
+async fn assert_order_status_event(
+    app: &crate::helpers::TestApp,
+    messages: &[EwdsSendMessageDto],
+    expected: &[([u8; 16], OrderStatus)],
+    timestamp: u64,
+) {
+    let message = messages
+        .iter()
+        .find(|message| event_payload(message)["eventType"] == EwdsEventType::OrderStatus.as_str())
+        .expect("missing order-status event");
+    assert_eq!(message.topic_name, "order");
+    assert_eq!(message.fqcn, "gsy.events.pub");
+    let envelope = event_payload(message);
+    assert_event_id(message, &envelope);
+    assert_eq!(envelope["occurredAt"], epoch_to_rfc3339(timestamp));
+    let data = envelope["data"].as_array().unwrap();
+    assert_eq!(data.len(), expected.len());
+    for (id, status) in expected {
+        let id = bytes16_to_hex(*id);
+        let stored = app
+            .db_wrapper
+            .orders()
+            .get_order_by_id(&id.clone().into())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(&stored.status, status);
+        assert_eq!(stored.status_updated_at, Some(timestamp));
+        let snapshot = data.iter().find(|order| order["orderId"] == id).unwrap();
+        assert_eq!(
+            *snapshot,
+            serde_json::to_value(EwdsOrderDto::from(stored)).unwrap()
+        );
     }
 }
 
@@ -371,18 +442,32 @@ async fn trade_settled_publishes_trade_event() {
     let app = init_app().await;
     let server = mock_gateway().await;
     let handler = evm_handler(&app, &server);
+    seed_settlement_orders(&app).await;
 
     handler
-        .handle_trade_settled(trade_settled_event())
+        .handle_trade_settled(trade_settled_event(), 1_100)
         .await
         .unwrap();
 
-    let messages = wait_for_gateway_messages(&server, 1).await;
+    let messages = wait_for_gateway_messages(&server, 2).await;
+    assert_order_status_event(
+        &app,
+        &messages,
+        &[
+            ([0x02; 16], OrderStatus::Filled),
+            ([0x03; 16], OrderStatus::Filled),
+        ],
+        1_100,
+    )
+    .await;
+    let message = messages
+        .iter()
+        .find(|message| message.topic_name == "trade")
+        .unwrap();
     let trade_id = bytes16_to_hex([0x01; 16]);
-    assert_eq!(messages[0].topic_name, "trade");
-    let event = event_payload(&messages[0]);
+    let event = event_payload(message);
     assert_eq!(event["eventType"], json!(EwdsEventType::Trade.as_str()));
-    assert_event_id(&messages[0], &event);
+    assert_event_id(message, &event);
     assert_eq!(event["data"].as_array().unwrap().len(), 1);
     assert_eq!(event["data"][0]["tradeId"], json!(trade_id));
     assert_eq!(event["data"][0]["bidId"], json!(bytes16_to_hex([0x02; 16])));
@@ -394,6 +479,7 @@ async fn trade_settled_publishes_trade_event() {
     assert_eq!(event["data"][0]["residualBidId"], json!(null));
 
     let stored = app.db_wrapper.trades().get_all_trades().await.unwrap();
+    assert_eq!(stored[0].creation_time, 1_100);
     assert_eq!(
         event["occurredAt"],
         json!(epoch_to_rfc3339(stored[0].creation_time))
@@ -407,20 +493,23 @@ async fn trade_settled_does_not_publish_when_trade_is_not_persisted() {
     let app = init_app().await;
     let server = mock_gateway().await;
     let handler = evm_handler(&app, &server);
+    seed_settlement_orders(&app).await;
 
     handler
-        .handle_trade_settled(trade_settled_event())
+        .handle_trade_settled(trade_settled_event(), 1_100)
         .await
         .unwrap();
-    wait_for_gateway_messages(&server, 1).await;
+    wait_for_gateway_messages(&server, 2).await;
 
-    // The unique trade_uuid index rejects the duplicate, so no second event may be sent.
+    // The same trade ID with different immutable details is not a replay.
+    let mut conflict = trade_settled_event();
+    conflict.price += U256::one();
     let error = handler
-        .handle_trade_settled(trade_settled_event())
+        .handle_trade_settled(conflict, 1_100)
         .await
         .unwrap_err();
-    assert!(error.to_string().contains("Failed to insert trade"));
-    assert_no_further_gateway_messages(&server, 1).await;
+    assert!(error.to_string().contains("Failed to index settlement"));
+    assert_no_further_gateway_messages(&server, 2).await;
 
     stop_app(app).await;
 }
@@ -453,6 +542,98 @@ async fn market_clearing_publishes_clearing_result_event() {
     assert_eq!(event["data"][0]["numTrades"], json!(2));
     assert_eq!(event["data"][0]["txHash"], json!(tx_hash));
 
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn replay_recovers_partial_settlement_without_rewinding_verified_orders() {
+    let app = init_app().await;
+    let handler = OffchainStorageEvmHandler {
+        db: app.db_wrapper.clone(),
+        event_publisher: None,
+    };
+    let event = trade_settled_event();
+    let bid = order_placed_event(event.bid_id, true);
+    handler.handle_order_placed(bid.clone(), 950).await.unwrap();
+    // Fail after writing the trade and bid, then make the missing offer available.
+    assert!(handler
+        .handle_trade_settled(event.clone(), 1_100)
+        .await
+        .is_err());
+    assert_eq!(
+        app.db_wrapper
+            .trades()
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        1
+    );
+    // Even if a legacy import has claimed that ID, its first chain placement is authoritative.
+    let orders = app.db_wrapper.orders();
+    let mut imported = orders
+        .get_order_by_id(&bytes16_to_hex(event.bid_id).into())
+        .await
+        .unwrap()
+        .unwrap();
+    imported.order_id = bytes16_to_hex(event.offer_id);
+    imported.status = OrderStatus::Cancelled;
+    orders.insert_orders(vec![imported]).await.unwrap();
+    handler
+        .handle_order_placed(order_placed_event(event.offer_id, false), 950)
+        .await
+        .unwrap();
+    handler
+        .handle_trade_settled(event.clone(), 1_100)
+        .await
+        .unwrap();
+    handler
+        .handle_delivery_verified(
+            DeliveryVerifiedFilter {
+                trade_id: event.trade_id,
+                bid_id: event.bid_id,
+                offer_id: event.offer_id,
+            },
+            1_200,
+        )
+        .await
+        .unwrap();
+    handler.handle_order_placed(bid, 950).await.unwrap();
+    handler.handle_trade_settled(event, 1_100).await.unwrap();
+    let orders = app.db_wrapper.orders().get_all_orders().await.unwrap();
+    assert_eq!(orders.len(), 2);
+    assert!(orders
+        .iter()
+        .all(|o| o.status == OrderStatus::Executed && o.status_updated_at == Some(1_200)));
+    let trades = app.db_wrapper.trades().get_all_trades().await.unwrap();
+    assert_eq!(trades.len(), 1);
+    assert_eq!(trades[0].status, TradeStatus::Executed);
+    assert_eq!(trades[0].status_updated_at, Some(1_200));
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn clearing_replay_preserves_distinct_logs_from_one_transaction() {
+    let app = init_app().await;
+    let handler = OffchainStorageEvmHandler {
+        db: app.db_wrapper.clone(),
+        event_publisher: None,
+    };
+    for index in [0u64, 1, 0, 1] {
+        let mut meta = log_meta(H256::repeat_byte(0xab));
+        meta.log_index = index.into();
+        handler
+            .handle_market_clearing(market_clearing_event(1), meta, 1_100)
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        app.db_wrapper
+            .clearing_results()
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        2
+    );
     stop_app(app).await;
 }
 
@@ -508,9 +689,242 @@ fn handler_config_maps_event_types_to_their_topics() {
         (EwdsEventType::Site, "site"),
         (EwdsEventType::Community, "community"),
         (EwdsEventType::Order, "order"),
+        (EwdsEventType::OrderStatus, "order"),
     ] {
         assert_eq!(config.event_topic(event_type), topic);
     }
+}
+
+#[tokio::test]
+async fn order_status_notifications_follow_consumed_orders_and_independent_residuals() {
+    for residual_is_bid in [true, false] {
+        let app = init_app().await;
+        let server = mock_gateway().await;
+        let handler = evm_handler(&app, &server);
+        let parent_id = if residual_is_bid {
+            [0x02; 16]
+        } else {
+            [0x03; 16]
+        };
+        let other_id = if residual_is_bid {
+            [0x03; 16]
+        } else {
+            [0x02; 16]
+        };
+        let silent = OffchainStorageEvmHandler {
+            db: app.db_wrapper.clone(),
+            event_publisher: None,
+        };
+        silent
+            .handle_order_placed(order_placed_event(other_id, !residual_is_bid), 950)
+            .await
+            .unwrap();
+        let mut parent = order_placed_event(parent_id, residual_is_bid);
+        parent.energy = 30_000;
+        handler.handle_order_placed(parent, 960).await.unwrap();
+        let messages = wait_for_gateway_messages(&server, 1).await;
+        assert_order_status_event(&app, &messages, &[(parent_id, OrderStatus::Submitted)], 960)
+            .await;
+
+        let mut settled = trade_settled_event();
+        if residual_is_bid {
+            settled.residual_bid_id = [0x07; 16];
+        } else {
+            settled.residual_offer_id = [0x07; 16];
+        }
+        handler.handle_trade_settled(settled, 1_100).await.unwrap();
+        let messages = wait_for_gateway_messages(&server, 3).await;
+        let bid_status = if residual_is_bid {
+            OrderStatus::PartiallyFilled
+        } else {
+            OrderStatus::Filled
+        };
+        let offer_status = if residual_is_bid {
+            OrderStatus::Filled
+        } else {
+            OrderStatus::PartiallyFilled
+        };
+        assert_order_status_event(
+            &app,
+            &messages[1..],
+            &[([0x02; 16], bid_status), ([0x03; 16], offer_status)],
+            1_100,
+        )
+        .await;
+
+        let mut residual = order_placed_event([0x07; 16], residual_is_bid);
+        residual.energy = 10_000;
+        handler.handle_order_placed(residual, 1_100).await.unwrap();
+        let messages = wait_for_gateway_messages(&server, 4).await;
+        assert_order_status_event(
+            &app,
+            &messages[3..],
+            &[([0x07; 16], OrderStatus::Submitted)],
+            1_100,
+        )
+        .await;
+
+        // A replay may notify again, but keeps the original persisted status timestamp.
+        for (index, timestamp) in [1_200, 1_201].into_iter().enumerate() {
+            handler
+                .handle_delivery_verified(
+                    DeliveryVerifiedFilter {
+                        trade_id: [0x01; 16],
+                        bid_id: [0x02; 16],
+                        offer_id: [0x03; 16],
+                    },
+                    timestamp,
+                )
+                .await
+                .unwrap();
+            let messages = wait_for_gateway_messages(&server, 5 + index).await;
+            assert_order_status_event(
+                &app,
+                &messages[4 + index..],
+                &[
+                    ([0x02; 16], OrderStatus::Executed),
+                    ([0x03; 16], OrderStatus::Executed),
+                ],
+                1_200,
+            )
+            .await;
+            let trades = app.db_wrapper.trades().get_all_trades().await.unwrap();
+            assert_eq!(trades[0].status, TradeStatus::Executed);
+            assert_eq!(trades[0].status_updated_at, Some(1_200));
+            let residual = app
+                .db_wrapper
+                .orders()
+                .get_order_by_id(&bytes16_to_hex([0x07; 16]).into())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(residual.status, OrderStatus::Submitted);
+            assert_eq!(residual.energy_kWh, 1.0);
+        }
+
+        handler
+            .handle_order_cancelled(
+                OrderCancelledFilter {
+                    order_id: [0x07; 16],
+                },
+                1_300,
+            )
+            .await
+            .unwrap();
+        let messages = wait_for_gateway_messages(&server, 7).await;
+        assert_order_status_event(
+            &app,
+            &messages[6..],
+            &[([0x07; 16], OrderStatus::Cancelled)],
+            1_300,
+        )
+        .await;
+        assert_no_further_gateway_messages(&server, 7).await;
+        stop_app(app).await;
+    }
+}
+
+#[tokio::test]
+async fn market_closure_notifies_only_newly_expired_orders_in_that_market() {
+    let app = init_app().await;
+    let server = mock_gateway().await;
+    let handler = evm_handler(&app, &server);
+    let quiet_handler = OffchainStorageEvmHandler {
+        db: app.db_wrapper.clone(),
+        event_publisher: None,
+    };
+    let statuses = [
+        OrderStatus::Submitted,
+        OrderStatus::Submitted,
+        OrderStatus::Filled,
+        OrderStatus::PartiallyFilled,
+        OrderStatus::Cancelled,
+        OrderStatus::Expired,
+        OrderStatus::Executed,
+    ];
+    for (index, status) in statuses.iter().enumerate() {
+        let id = [index as u8 + 1; 16];
+        let mut placed = order_placed_event(id, true);
+        if index == 1 {
+            placed.market_id = [0x09; 16];
+        }
+        quiet_handler
+            .handle_order_placed(placed, 950)
+            .await
+            .unwrap();
+        app.db_wrapper
+            .orders()
+            .update_order_status_by_id(&bytes16_to_hex(id).into(), status.clone(), 950)
+            .await
+            .unwrap();
+    }
+
+    quiet_handler
+        .handle_new_market_created(NewMarketCreatedFilter {
+            market_id: [0x06; 16],
+            closing_time: 1_100,
+            ..new_market_event()
+        })
+        .await
+        .unwrap();
+    handler.handle_block(1_099).await.unwrap();
+    assert_no_further_gateway_messages(&server, 0).await;
+    handler.handle_block(1_100).await.unwrap();
+    let messages = wait_for_gateway_messages(&server, 1).await;
+    assert_order_status_event(&app, &messages, &[([1; 16], OrderStatus::Expired)], 1_100).await;
+    handler.handle_block(1_101).await.unwrap();
+    assert_no_further_gateway_messages(&server, 1).await;
+    for (index, status) in statuses.iter().enumerate() {
+        let stored = app
+            .db_wrapper
+            .orders()
+            .get_order_by_id(&bytes16_to_hex([index as u8 + 1; 16]).into())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            &stored.status,
+            if index == 0 {
+                &OrderStatus::Expired
+            } else {
+                status
+            }
+        );
+        assert_eq!(
+            stored.status_updated_at,
+            Some(if index == 0 { 1_100 } else { 950 })
+        );
+    }
+    assert_no_further_gateway_messages(&server, 1).await;
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn failed_order_indexing_does_not_publish_status_notifications() {
+    let app = init_app().await;
+    let server = mock_gateway().await;
+    let handler = evm_handler(&app, &server);
+    let mut placed = order_placed_event([0x02; 16], true);
+    placed.preferred_trading_partner = [0x99; 16];
+    assert!(handler.handle_order_placed(placed, 950).await.is_err());
+    assert!(handler
+        .handle_order_cancelled(
+            OrderCancelledFilter {
+                order_id: [0x02; 16]
+            },
+            960
+        )
+        .await
+        .is_err());
+    assert!(app
+        .db_wrapper
+        .orders()
+        .get_all_orders()
+        .await
+        .unwrap()
+        .is_empty());
+    assert_no_further_gateway_messages(&server, 0).await;
+    stop_app(app).await;
 }
 
 // --- Event subscriber -----------------------------------------------
