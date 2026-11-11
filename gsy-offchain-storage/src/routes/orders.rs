@@ -4,6 +4,7 @@ use actix_web::{web::Json, web::Query, HttpResponse, Responder};
 use anyhow::{Error, Result};
 use primitives::db_api_schema::orders::{DbOrderSchema, FlexibilityOrderSchema};
 use primitives::ewds::dto::EwdsOrderDto;
+use primitives::utils::normalize_market_id;
 use serde::Deserialize;
 
 pub async fn post_orders(orders: Json<Vec<EwdsOrderDto>>, db: DbRef) -> impl Responder {
@@ -64,7 +65,15 @@ pub async fn get_orders(db: DbRef, orders_parameters: Query<OrdersParameters>) -
         Err(response) => return response,
     };
 
-    let market_id = orders_parameters.into_inner().market_id;
+    let market_id = match orders_parameters
+        .market_id
+        .as_deref()
+        .map(normalize_market_id)
+        .transpose()
+    {
+        Ok(id) => id,
+        Err(error) => return HttpResponse::BadRequest().body(error.to_string()),
+    };
     match filter_orders_from_db(db, market_id, start_time, end_time).await {
         Ok(orders) => HttpResponse::Ok().json(
             orders

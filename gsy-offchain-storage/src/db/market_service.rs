@@ -1,6 +1,6 @@
 use crate::db::DatabaseWrapper;
 use anyhow::{bail, Result};
-use futures::StreamExt;
+use futures::TryStreamExt;
 use mongodb::bson::doc;
 use mongodb::options::IndexOptions;
 use mongodb::{bson, Collection, IndexModel};
@@ -66,30 +66,12 @@ impl MarketService {
             (None, None) => {}
         }
 
-        let mut cursor = self.0.find(filter_params).await?;
-        let mut result = Vec::new();
-        while let Some(doc) = cursor.next().await {
-            if let Ok(document) = doc {
-                result.push(document);
-            } else {
-                break;
-            }
-        }
-        Ok(result)
+        Ok(self.0.find(filter_params).await?.try_collect().await?)
     }
 
     #[tracing::instrument(name = "Fetching markets by ids", skip(self))]
     pub async fn get_by_ids(&self, market_ids: Vec<String>) -> Result<Vec<MarketSchema>> {
-        let mut cursor = self.0.find(doc! {"market_id": {"$in": market_ids}}).await?;
-        let mut result = Vec::new();
-        while let Some(doc) = cursor.next().await {
-            if let Ok(document) = doc {
-                result.push(document);
-            } else {
-                break;
-            }
-        }
-        Ok(result)
+        Ok(self.0.find(doc! {"market_id": {"$in": market_ids}}).await?.try_collect().await?)
     }
 
     /// IDs of the markets whose `delivery_start_time` lies in `[start_time, end_time)`.

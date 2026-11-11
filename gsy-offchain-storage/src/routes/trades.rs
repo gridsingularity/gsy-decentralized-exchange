@@ -5,6 +5,7 @@ use actix_web::web::Query;
 use actix_web::{web::Json, HttpResponse, Responder};
 use primitives::db_api_schema::trades::DbTradeSchema;
 use primitives::ewds::dto::EwdsTradeDto;
+use primitives::utils::normalize_market_id;
 use serde::Deserialize;
 
 #[tracing::instrument(name = "Adding new trades", skip(db), fields(trades = ?trades))]
@@ -48,12 +49,17 @@ pub async fn get_trades(db: DbRef, query_params: Query<GetTradesParams>) -> impl
         Ok(range) => range,
         Err(response) => return response,
     };
+    let market_id = match query_params
+        .market_id
+        .as_deref()
+        .map(normalize_market_id)
+        .transpose()
+    {
+        Ok(id) => id,
+        Err(error) => return HttpResponse::BadRequest().body(error.to_string()),
+    };
     // Same rules as the EWDS `trades.query` operation.
-    let range = match validate_trades_query_range(
-        query_params.market_id.as_deref(),
-        start_time,
-        end_time,
-    ) {
+    let range = match validate_trades_query_range(market_id.as_deref(), start_time, end_time) {
         Ok(range) => range,
         Err(error) => {
             return HttpResponse::BadRequest().body(format!("{}: {}", error.code, error.message))
@@ -63,7 +69,7 @@ pub async fn get_trades(db: DbRef, query_params: Query<GetTradesParams>) -> impl
         .get_ref()
         .trades()
         .filter_trades(
-            query_params.market_id.clone(),
+            market_id,
             range.map(|(start, _)| start),
             range.map(|(_, end)| end),
         )

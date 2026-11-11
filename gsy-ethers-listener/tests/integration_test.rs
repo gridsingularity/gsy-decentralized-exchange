@@ -22,6 +22,13 @@ struct MockHandler {
 
 #[async_trait]
 impl GsyEventHandler for MockHandler {
+    async fn handle_penalty_recorded(
+        &self,
+        _: gsy_ethers_listener::PenaltyRecordedFilter,
+        _: u64,
+    ) -> Result<()> {
+        Ok(())
+    }
     async fn handle_delivery_verified(
         &self,
         _: gsy_ethers_listener::DeliveryVerifiedFilter,

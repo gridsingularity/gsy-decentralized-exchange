@@ -27,6 +27,7 @@ mod mock_contract {
             function emitFollowup(bool residualIsBid) external
             function emitNewMarket() external
             function emitCancellation(bytes16 orderId) external
+            function emitVerification(bool penalized) external
         ]"#
     );
 }
@@ -47,6 +48,20 @@ struct OrderedHandler(Arc<Mutex<Projection>>);
 
 #[async_trait]
 impl GsyEventHandler for OrderedHandler {
+    async fn handle_penalty_recorded(
+        &self,
+        event: gsy_ethers_listener::PenaltyRecordedFilter,
+        timestamp: u64,
+    ) -> Result<()> {
+        assert_eq!(event.penalized_actor_id, id(100));
+        assert_eq!(event.market_id, id(99));
+        assert_eq!(event.penalty_energy, 10);
+        let mut state = self.0.lock().unwrap();
+        state.events.push(("penalized", event.trade_id));
+        state.order_event_timestamps.push(timestamp);
+        Ok(())
+    }
+
     async fn handle_block(&self, timestamp: u64) -> Result<()> {
         let mut state = self.0.lock().unwrap();
         let count = state.events.len();
@@ -56,9 +71,12 @@ impl GsyEventHandler for OrderedHandler {
 
     async fn handle_delivery_verified(
         &self,
-        _: gsy_ethers_listener::DeliveryVerifiedFilter,
-        _: u64,
+        event: gsy_ethers_listener::DeliveryVerifiedFilter,
+        timestamp: u64,
     ) -> Result<()> {
+        let mut state = self.0.lock().unwrap();
+        state.events.push(("verified", event.trade_id));
+        state.order_event_timestamps.push(timestamp);
         Ok(())
     }
     async fn handle_market_clearing(
@@ -299,6 +317,34 @@ async fn residual_events_are_processed_in_chain_order_from_the_correct_contracts
             created_at: 900,
         }]
     );
+    for penalized in [false, true] {
+        *state.lock().unwrap() = Projection::default();
+        registry.emit_verification(penalized).send().await?.await?;
+        let receipt = settlement
+            .emit_verification(penalized)
+            .send()
+            .await?
+            .await?
+            .unwrap();
+        let timestamp = client
+            .get_block(receipt.block_hash.unwrap())
+            .await?
+            .unwrap()
+            .timestamp
+            .as_u64();
+        let expected = if penalized {
+            vec![("penalized", id(5)), ("verified", id(5))]
+        } else {
+            vec![("verified", id(5))]
+        };
+        wait_for_events(&state, expected.len()).await;
+        let snapshot = state.lock().unwrap();
+        assert_eq!(snapshot.events, expected);
+        assert_eq!(
+            snapshot.order_event_timestamps,
+            vec![timestamp; expected.len()]
+        );
+    }
     handle.abort();
     Ok(())
 }
@@ -319,6 +365,12 @@ async fn deploy_emitter(
             event TradeSettled(bytes16 indexed tradeId, bytes16 indexed bidId, bytes16 indexed offerId, bytes16 buyerId, bytes16 sellerId, bytes16 marketId, uint64 timeSlot, bytes16 residualBidId, bytes16 residualOfferId, uint256 energy, uint256 price);
             event NewMarketCreated(bytes16 indexed marketId, bytes16 indexed communityId, uint64 openingTime, uint64 closingTime, uint64 deliveryStartTime, uint64 deliveryEndTime, uint8 marketType, uint8 matchingAlgorithm, uint64 createdAt);
             event OrderCancelled(bytes16 indexed orderId);
+            event PenaltyRecorded(bytes16 indexed penalizedActorId, bytes16 indexed marketId, bytes16 indexed tradeId, uint64 penaltyEnergy);
+            event DeliveryVerified(bytes16 indexed tradeId, bytes16 indexed bidId, bytes16 indexed offerId);
+            function emitVerification(bool penalized) external {
+                if (penalized) emit PenaltyRecorded(bytes16(uint128(100)), bytes16(uint128(99)), bytes16(uint128(5)), 10);
+                emit DeliveryVerified(bytes16(uint128(5)), bytes16(uint128(1)), bytes16(uint128(2)));
+            }
             function emitOrderPlaced(bytes16 orderId, bytes16 createdBy) external {
                 emit OrderPlaced(orderId, createdBy, bytes16(0), 100, 100, 1000, 50, 1, 0, true, bytes16(0), 0);
             }

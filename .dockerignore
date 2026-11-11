@@ -23,8 +23,9 @@ gsy-contracts
 metadata
 proxy-config
 schemas
-# Embedded by the primitives order-topic contract test.
+# Embedded by the primitives schema contract tests.
 !schemas/ewds/intelligent/int.order.event.v1.json
+!schemas/ewds/intelligent/int.trade.schema.v1.json
 scripts
 vault-config
 docker-compose*.yml

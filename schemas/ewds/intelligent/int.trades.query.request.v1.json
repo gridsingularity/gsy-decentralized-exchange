@@ -12,7 +12,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "marketId": { "type": "string", "minLength": 1, "description": "Market whose trades are returned. Takes precedence over the time range." },
+        "marketId": { "type": "string", "minLength": 1, "description": "Market ID as UUID or 0x-prefixed 16-byte hex. Takes precedence over the time range." },
         "startTime": { "type": "string", "format": "date-time", "description": "Inclusive range start, RFC 3339." },
         "endTime": { "type": "string", "format": "date-time", "description": "Exclusive range end, RFC 3339. At most 1 day after startTime." }
       },

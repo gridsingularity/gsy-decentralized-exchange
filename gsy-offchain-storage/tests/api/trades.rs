@@ -15,7 +15,7 @@ fn make_order(order_id: &str, order_type: OrderEnum) -> DbOrderSchema {
         energy_kWh: 100.0,
         energy_rate: 10.0,
         area_uuid: "0x0000000000000000000000000000000000000000000000000000000000000abc".to_string(),
-        market_id: "0x0000000000000000000000000000000000000000000000000000000000000def".to_string(),
+        market_id: "0x00000000000000000000000000000def".to_string(),
         time_slot: 1,
         creation_time: 1_677_453_190,
         requirements: None,
@@ -84,6 +84,10 @@ async fn post_trade_requests_persist_trades_without_updating_orders() {
             .unwrap();
 
         assert_eq!(200, resp.status().as_u16());
+        let inserted: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(inserted.as_object().unwrap().len(), 1);
+        let object_id = inserted["0"]["$oid"].as_str().unwrap();
+        mongodb::bson::oid::ObjectId::parse_str(object_id).unwrap();
 
         let saved = db.get_ref().trades().get_all_trades().await.unwrap();
         assert_eq!(saved.len(), index + 1);
@@ -247,7 +251,7 @@ async fn get_trades_returns_400_without_market_id_or_full_range() {
         &[("start_time", "2026-01-01T00:00:00Z")],
         &[("end_time", "2026-01-01T00:00:00Z")],
         &[
-            ("market_id", "MARKET-1"),
+            ("market_id", "0x00000000000000000000000000000001"),
             ("start_time", "2026-01-01T00:00:00Z"),
         ],
     ];
@@ -331,7 +335,7 @@ async fn filter_trades_time_boundaries_are_inclusive_start_exclusive_end() {
             OrderEnum::Offer,
         );
         let mut trade = make_trade(&format!("TRADE-BORDER-{:04}", idx), bid, offer);
-        trade.market_id = format!("MARKET-BORDER-{:04}", idx);
+        trade.market_id = format!("0x{:032x}", idx);
         trade.timestamp = epoch_to_rfc3339(*ts);
         db.get_ref()
             .markets()
@@ -399,7 +403,7 @@ async fn filter_trades_time_boundaries_are_inclusive_start_exclusive_end() {
     // market_id takes precedence: the range [20, 30) is ignored, so the trade of the market
     // delivering at 19 is returned.
     let by_market = trades_svc()
-        .filter_trades(Some("MARKET-BORDER-0000".to_string()), Some(20), Some(30))
+        .filter_trades(Some("0x00000000000000000000000000000000".to_string()), Some(20), Some(30))
         .await
         .unwrap();
     assert_eq!(by_market.len(), 1);

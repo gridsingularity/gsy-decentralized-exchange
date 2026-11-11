@@ -6,7 +6,7 @@ use ethers::{
 };
 use gsy_ethers_listener::{
     GsyEthersListener, GsyEventHandler, ListenerConfig, NewMarketCreatedFilter,
-    OrderCancelledFilter, OrderPlacedFilter, TradeSettledFilter,
+    OrderCancelledFilter, OrderPlacedFilter, PenaltyRecordedFilter, TradeSettledFilter,
 };
 use gsy_offchain_storage::evm_handler::OffchainStorageEvmHandler;
 use primitives::db_api_schema::ids::IdMappingSchema;
@@ -686,10 +686,17 @@ async fn settlement_indexes_fill_statuses_and_keeps_residuals_independent() {
             energy: U256::from(10000u64),
             price: U256::from(5000u64),
         };
-        handler
-            .handle_trade_settled(event.clone(), 980)
-            .await
-            .unwrap();
+        for timestamp in [980, 981] {
+            handler
+                .handle_trade_settled(event.clone(), timestamp)
+                .await
+                .unwrap();
+        }
+        let trades = app.db_wrapper.trades().get_all_trades().await.unwrap();
+        assert_eq!(trades.len(), 1);
+        assert_eq!(trades[0].status, TradeStatus::Matched);
+        assert_eq!(trades[0].creation_time, 980);
+        assert_eq!(trades[0].status_updated_at, Some(980));
         let orders = app.db_wrapper.orders();
         let indexed = orders.get_all_orders().await.unwrap();
         let returned = reqwest::Client::new()
@@ -798,14 +805,72 @@ async fn settlement_indexes_fill_statuses_and_keeps_residuals_independent() {
         );
         assert!(trades
             .iter()
-            .all(|trade| trade.status == TradeStatus::Settled));
+            .all(|trade| trade.status == TradeStatus::Matched));
         let verification = gsy_ethers_listener::DeliveryVerifiedFilter {
             trade_id: event.trade_id,
             bid_id: event.bid_id,
             offer_id: event.offer_id,
         };
+        let penalty = PenaltyRecordedFilter {
+            trade_id: event.trade_id,
+            market_id: event.market_id,
+            penalized_actor_id: event.buyer_id,
+            penalty_energy: 10,
+        };
+        for invalid in [
+            PenaltyRecordedFilter {
+                trade_id: [99; 16],
+                ..penalty.clone()
+            },
+            PenaltyRecordedFilter {
+                market_id: [99; 16],
+                ..penalty.clone()
+            },
+            PenaltyRecordedFilter {
+                penalized_actor_id: [99; 16],
+                ..penalty.clone()
+            },
+            PenaltyRecordedFilter {
+                penalty_energy: 0,
+                ..penalty.clone()
+            },
+        ] {
+            assert!(handler
+                .handle_penalty_recorded(invalid, 1090)
+                .await
+                .is_err());
+        }
+        let before = orders.get_all_orders().await.unwrap();
+        let penalized = partial_bid || partial_offer;
+        let expected_status = if penalized {
+            TradeStatus::Penalized
+        } else {
+            TradeStatus::Executed
+        };
+        let expected_timestamp = if penalized { 1090 } else { 1100 };
+        if penalized {
+            for (actor, timestamp) in [(event.buyer_id, 1090), (event.seller_id, 1091)] {
+                handler
+                    .handle_penalty_recorded(
+                        PenaltyRecordedFilter {
+                            penalized_actor_id: actor,
+                            ..penalty.clone()
+                        },
+                        timestamp,
+                    )
+                    .await
+                    .unwrap();
+            }
+            // Recording a penalty alone must not complete any orders.
+            assert_eq!(orders.get_all_orders().await.unwrap(), before);
+        }
         // Parent verification must not complete a residual's later trade.
         let before = orders.get_all_orders().await.unwrap();
+        // Simulate retrying after the first order write, before trade completion.
+        orders
+            .mark_executed(&bytes16_to_hex(event.bid_id), 1100)
+            .await
+            .unwrap();
         for timestamp in [1100, 1101] {
             handler
                 .handle_delivery_verified(verification.clone(), timestamp)
@@ -827,15 +892,32 @@ async fn settlement_indexes_fill_statuses_and_keeps_residuals_independent() {
                 assert_eq!(stored, expected);
             }
         }
+        if penalized {
+            handler
+                .handle_penalty_recorded(penalty, 1200)
+                .await
+                .unwrap();
+        } else {
+            assert!(handler
+                .handle_penalty_recorded(penalty, 1200)
+                .await
+                .is_err());
+        }
+        let completed_orders = orders.get_all_orders().await.unwrap();
+        handler
+            .handle_trade_settled(event.clone(), 1_300)
+            .await
+            .unwrap();
+        assert_eq!(orders.get_all_orders().await.unwrap(), completed_orders);
         let verified = app
             .db_wrapper
             .trades()
-            .filter_trades_by_status_change(1100, Some(1101), Some(TradeStatus::Executed))
+            .filter_trades_by_status_change(expected_timestamp, Some(1201), Some(expected_status))
             .await
             .unwrap();
         assert_eq!(verified.len(), 1);
         assert_eq!(verified[0].trade_uuid, bytes16_to_hex(event.trade_id));
-        assert_eq!(verified[0].status_updated_at, Some(1100));
+        assert_eq!(verified[0].status_updated_at, Some(expected_timestamp));
         for invalid in [
             gsy_ethers_listener::DeliveryVerifiedFilter {
                 trade_id: [99; 16],
