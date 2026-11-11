@@ -121,7 +121,7 @@ impl OrderEventHandler {
     ///
     /// Validates new orders' facility/market pairs in bulk before resolving IDs or submitting.
     /// Invalid input, unavailable validation or unresolved IDs fail the event before submission.
-    /// Ineligible orders and contract rejections are reported to FOS; eligible orders continue.
+    /// Ineligible orders and contract rejections are reported to the EWDS; eligible orders continue.
     /// Infrastructure failures remain retryable, with confirmed orders skipped on retry.
     /// A sent order succeeds only after its receipt confirms successful execution.
     pub async fn handle(&self, envelope: EwdsEventEnvelope<Value>) -> Result<()> {
