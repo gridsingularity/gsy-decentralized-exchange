@@ -4,9 +4,9 @@ use anyhow::{anyhow, Result};
 use futures::future::join_all;
 use primitives::db_api_schema::profiles::{MeasurementPointType, MeasurementSchema};
 use primitives::ewds::dto::{
-    parse_market_id, EwdsClearingResultDto, EwdsCommunityDto, EwdsErrorPayload, EwdsInboundMessage,
-    EwdsMarketDto, EwdsMeasurementDto, EwdsOrderDto, EwdsRequestEnvelope, EwdsResponseEnvelope,
-    EwdsSendMessageDto, EwdsTradeDto,
+    parse_market_id, EwdsClearingResultDto, EwdsCommunityDto, EwdsErrorPayload, EwdsFacilityDto,
+    EwdsInboundMessage, EwdsMarketDto, EwdsMeasurementDto, EwdsOrderDto, EwdsRequestEnvelope,
+    EwdsResponseEnvelope, EwdsSendMessageDto, EwdsTradeDto,
 };
 use primitives::ewds::{
     client_id_for_suffix, env_var, ewds_rate_limit_backoff_ms, format_response_body,
@@ -504,7 +504,7 @@ pub async fn handle_request(
 
             let data = db
                 .communities()
-                .get_all()
+                .get()
                 .await?
                 .into_iter()
                 .map(EwdsCommunityDto::from)
@@ -614,7 +614,13 @@ pub async fn handle_request(
         }
         EwdsOperation::FacilitiesQuery => {
             let request_id = envelope.request_id;
-            let data = db.facilities().get_all().await?;
+            let data = db
+                .facilities()
+                .get()
+                .await?
+                .into_iter()
+                .map(EwdsFacilityDto::from)
+                .collect::<Vec<_>>();
             info!(
                 "Publishing EWDS facilities.query response (request_id={}, facilities={})",
                 request_id,

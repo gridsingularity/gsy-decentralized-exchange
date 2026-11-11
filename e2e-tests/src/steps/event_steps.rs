@@ -7,9 +7,13 @@ use cucumber::{given, then, when};
 use gsy_community_client::time_utils::{get_current_timestamp_in_secs, get_last_and_next_timeslot};
 use primitives::db_api_schema::grid_topology::{FacilitySchema, SiteSchema};
 use primitives::db_api_schema::profiles::MeasurementSchema;
-use primitives::ewds::dto::{EwdsEventEnvelope, EwdsMeasurementDto, EwdsOrderDto};
+use primitives::ewds::dto::{
+    EwdsEventEnvelope, EwdsFacilityDto, EwdsMeasurementDto, EwdsOrderDto, EwdsSiteDto,
+};
 use primitives::ewds::{EwdsClient, EwdsClientConfig, EwdsEventType};
-use primitives::utils::{bytes16_to_hex, epoch_to_rfc3339, parse_uuid_or_hex_bytes16};
+use primitives::utils::{
+    bytes16_to_hex, epoch_to_rfc3339, parse_uuid_or_hex_bytes16, EPOCH_RFC3339,
+};
 use std::time::Duration;
 use tokio::{
     sync::mpsc,
@@ -173,15 +177,20 @@ async fn publish_events(world: &mut MyWorld) {
     let suffix = Uuid::new_v4();
     let facility_id = format!("e2e-event-facility-{}", suffix);
     let site = SiteSchema {
+        site_id: format!("e2e-event-site-{}", suffix),
         site_name: format!("E2E Event Site {}", suffix),
         site_description: "Site sent by the events scenario".to_string(),
         facilities: vec![facility_id.clone()],
+        valid_from: EPOCH_RFC3339.to_string(),
+        valid_until: None,
     };
     let facility = FacilitySchema {
         facility_id: facility_id.clone(),
         facility_name: format!("E2E Event Facility {}", suffix),
-        site_id: site.site_name.clone(),
+        site_id: site.site_id.clone(),
         owner_id: "alice".to_string(),
+        valid_from: EPOCH_RFC3339.to_string(),
+        valid_until: None,
     };
     let (last_timeslot, _) = get_last_and_next_timeslot();
     let measurements = [(last_timeslot - 900, 1.5), (last_timeslot, -0.5)]
@@ -197,11 +206,17 @@ async fn publish_events(world: &mut MyWorld) {
 
     let client = EwdsClient::from_env("EWDS_E2E_CLIENT_ID", "gsye2e", 60_000);
     client
-        .publish_event(&event(EwdsEventType::Site, vec![&site]))
+        .publish_event(&event(
+            EwdsEventType::Site,
+            vec![EwdsSiteDto::from(site.clone())],
+        ))
         .await
         .expect("Failed to publish the site event");
     client
-        .publish_event(&event(EwdsEventType::Facility, vec![&facility]))
+        .publish_event(&event(
+            EwdsEventType::Facility,
+            vec![EwdsFacilityDto::from(facility.clone())],
+        ))
         .await
         .expect("Failed to publish the facility event");
     let batch = measurements
@@ -293,18 +308,30 @@ async fn verify_site_and_facility(world: &mut MyWorld) {
             .send()
             .await
             .expect("Failed to fetch sites")
-            .json::<Vec<SiteSchema>>()
+            .json::<Vec<EwdsSiteDto>>()
             .await
-            .expect("Failed to parse sites");
+            .expect("Failed to parse sites")
+            .into_iter()
+            .map(|dto| SiteSchema {
+                valid_from: EPOCH_RFC3339.to_string(),
+                ..SiteSchema::try_from(dto).expect("Invalid site")
+            })
+            .collect::<Vec<_>>();
         let facilities = world
             .http_client
             .get(format!("{}/facilities", world.offchain_storage_url))
             .send()
             .await
             .expect("Failed to fetch facilities")
-            .json::<Vec<FacilitySchema>>()
+            .json::<Vec<EwdsFacilityDto>>()
             .await
-            .expect("Failed to parse facilities");
+            .expect("Failed to parse facilities")
+            .into_iter()
+            .map(|dto| FacilitySchema {
+                valid_from: EPOCH_RFC3339.to_string(),
+                ..FacilitySchema::try_from(dto).expect("Invalid facility")
+            })
+            .collect::<Vec<_>>();
         if sites.contains(&site) && facilities.contains(&facility) {
             return;
         }

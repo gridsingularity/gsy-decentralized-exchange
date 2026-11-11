@@ -24,6 +24,16 @@
         "minLength": 1
       },
       "uniqueItems": true
+    },
+    "validFrom": {
+      "description": "When GSY received this version of the entry, in UTC (RFC 3339, whole seconds). Set by the off-chain storage: a value sent with an event is ignored.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "validUntil": {
+      "description": "From when the entry counts as deleted (RFC 3339, any offset, stored in UTC). Leave it out to keep the entry valid. Send the full entry with this field to delete it, and again without it to bring it back.",
+      "type": "string",
+      "format": "date-time"
     }
   },
   "required": ["communityId", "communityName", "sites"]

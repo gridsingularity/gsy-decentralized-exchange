@@ -4,8 +4,9 @@ info:
   version: "2.0.0"
   description: |
     REST API of the GSY DEX Off-Chain Storage service. The schemas mirror the
-    Rust types defined in `primitives/src/db_api_schema/` and are
-    grouped by the storage areas of D3.2:
+    Rust types defined in `primitives/src/db_api_schema/`, except for
+    communities, sites and facilities, which use the DTOs in
+    `primitives/src/ewds/dto.rs`. They are grouped by the storage areas of D3.2:
 
       * §5.1 Grid Topology and Market Storage
       * §5.2 Measurements Storage
@@ -554,102 +555,143 @@ paths:
   /communities:
     post:
       tags: [Grid Topology]
-      summary: Register an energy community.
+      summary: Store a version of a energy community.
+      description: |
+        Stores the energy community as a new version, unless it equals the latest version of its
+        `communityId` apart from `validFrom`. Older versions are kept for audit only.
+        `validFrom` is set to the time the request arrives; a value sent is ignored.
+        Send the full energy community with `validUntil` to delete it from that time on, and again
+        without `validUntil` to bring it back.
+        Deleting it does not delete its sites; delete each of them too. Also available over EWDS as
+        `community.event`.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/EnergyCommunitySchema"
+              $ref: "#/components/schemas/EwdsCommunityDto"
       responses:
         "200":
-          description: Saved community.
+          description: The stored version, or the latest one if nothing changed.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/EnergyCommunitySchema"
+                $ref: "#/components/schemas/EwdsCommunityDto"
+        "400":
+          description: An invalid body, `validFrom` or `validUntil`.
+        "409":
+          description: A valid energy community with another `communityId` already uses `communityName`.
         "500":
           $ref: "#/components/responses/InternalError"
     get:
       tags: [Grid Topology]
-      summary: List all energy communities.
+      summary: List the energy communities.
+      description: |
+        The latest version of each energy community, ordered by `communityId`, without deleted ones.
       responses:
         "200":
-          description: All communities.
+          description: The latest energy communities.
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/EnergyCommunitySchema"
+                  $ref: "#/components/schemas/EwdsCommunityDto"
         "500":
           $ref: "#/components/responses/InternalError"
 
   /sites:
     post:
       tags: [Grid Topology]
-      summary: Register a site.
+      summary: Store a version of a site.
+      description: |
+        Stores the site as a new version, unless it equals the latest version of its
+        `site_id` apart from `valid_from`. Older versions are kept for audit only.
+        `valid_from` is set to the time the request arrives; a value sent is ignored.
+        Send the full site with `valid_until` to delete it from that time on, and again
+        without `valid_until` to bring it back.
+        Deleting it does not delete its facilities; delete each of them too. Also available over EWDS as
+        `site.event`.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/SiteSchema"
+              $ref: "#/components/schemas/EwdsSiteDto"
       responses:
         "200":
-          description: Saved site.
+          description: The stored version, or the latest one if nothing changed.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SiteSchema"
+                $ref: "#/components/schemas/EwdsSiteDto"
+        "400":
+          description: An invalid body, `valid_from` or `valid_until`.
+        "409":
+          description: A valid site with another `site_id` already uses `site_name`.
         "500":
           $ref: "#/components/responses/InternalError"
     get:
       tags: [Grid Topology]
-      summary: List all sites.
+      summary: List the sites.
+      description: |
+        The latest version of each site, ordered by `site_id`, without deleted ones.
       responses:
         "200":
-          description: All sites.
+          description: The latest sites.
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/SiteSchema"
+                  $ref: "#/components/schemas/EwdsSiteDto"
         "500":
           $ref: "#/components/responses/InternalError"
 
   /facilities:
     post:
       tags: [Grid Topology]
-      summary: Register a facility.
+      summary: Store a version of a facility.
+      description: |
+        Stores the facility as a new version, unless it equals the latest version of its
+        `facility_id` apart from `valid_from`. Older versions are kept for audit only.
+        `valid_from` is set to the time the request arrives; a value sent is ignored.
+        Send the full facility with `valid_until` to delete it from that time on, and again
+        without `valid_until` to bring it back. Also available over EWDS as
+        `facility.event`.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/FacilitySchema"
+              $ref: "#/components/schemas/EwdsFacilityDto"
       responses:
         "200":
-          description: Saved facility.
+          description: The stored version, or the latest one if nothing changed.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/FacilitySchema"
+                $ref: "#/components/schemas/EwdsFacilityDto"
+        "400":
+          description: An invalid body, `valid_from` or `valid_until`.
+        "409":
+          description: A valid facility with another `facility_id` already uses `facility_name`.
         "500":
           $ref: "#/components/responses/InternalError"
     get:
       tags: [Grid Topology]
-      summary: List all facilities.
+      summary: List the facilities.
+      description: |
+        The latest version of each facility, ordered by `facility_id`, without deleted ones.
       responses:
         "200":
-          description: All facilities.
+          description: The latest facilities.
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/FacilitySchema"
+                  $ref: "#/components/schemas/EwdsFacilityDto"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -1047,27 +1089,32 @@ components:
           type: array
           items: { type: string }
 
-    EnergyCommunitySchema:
+    EwdsCommunityDto:
       type: object
-      required: [community_id, community_name, sites]
+      required: [communityId, communityName, sites]
       properties:
-        community_id: { type: string, format: uuid }
-        community_name: { type: string }
+        communityId: { type: string, format: uuid }
+        communityName: { type: string }
         sites:
           type: array
           items: { type: string }
+        validFrom: { $ref: "#/components/schemas/ValidFrom" }
+        validUntil: { $ref: "#/components/schemas/ValidUntil" }
 
-    SiteSchema:
+    EwdsSiteDto:
       type: object
-      required: [site_name, site_description, facilities]
+      required: [site_id, site_name, site_description, facilities]
       properties:
+        site_id: { type: string }
         site_name: { type: string }
         site_description: { type: string }
         facilities:
           type: array
           items: { type: string }
+        valid_from: { $ref: "#/components/schemas/ValidFrom" }
+        valid_until: { $ref: "#/components/schemas/ValidUntil" }
 
-    FacilitySchema:
+    EwdsFacilityDto:
       type: object
       required:
         - facility_id
@@ -1077,8 +1124,27 @@ components:
       properties:
         facility_id: { type: string }
         facility_name: { type: string }
-        site_id: { type: string }
+        site_id:
+          type: string
+          description: The `site_id` of the facility's site.
         owner_id: { type: string }
+        valid_from: { $ref: "#/components/schemas/ValidFrom" }
+        valid_until: { $ref: "#/components/schemas/ValidUntil" }
+
+    ValidFrom:
+      type: string
+      format: date-time
+      description: |
+        When the off-chain storage received this version, in UTC with whole seconds,
+        e.g. `2026-12-01T00:00:00+00:00`. Set by the server; a value sent is ignored.
+
+    ValidUntil:
+      type: string
+      format: date-time
+      description: |
+        From when the entry counts as deleted. Any RFC 3339 offset is accepted, and the
+        time is stored and returned in UTC with whole seconds. Leave it out to keep the
+        entry valid.
 
     LocalOriginRecord:
       description: |

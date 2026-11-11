@@ -70,13 +70,20 @@ pub struct EnergyCommunitySchema {
     pub community_id: String,
     pub community_name: String,
     pub sites: Vec<String>,
+    pub valid_from: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valid_until: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct SiteSchema {
+    pub site_id: String,
     pub site_name: String,
     pub site_description: String,
     pub facilities: Vec<String>,
+    pub valid_from: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valid_until: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -85,4 +92,7 @@ pub struct FacilitySchema {
     pub facility_name: String,
     pub site_id: String,
     pub owner_id: String,
+    pub valid_from: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valid_until: Option<String>,
 }

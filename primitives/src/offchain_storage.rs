@@ -1,12 +1,12 @@
-use crate::db_api_schema::grid_topology::{EnergyCommunitySchema, FacilitySchema};
+use crate::db_api_schema::grid_topology::EnergyCommunitySchema;
 use crate::db_api_schema::ids::IdMappingSchema;
 use crate::db_api_schema::market::MarketSchema;
 use crate::db_api_schema::orders::{DbOrderSchema, DbRequirements};
 use crate::db_api_schema::profiles::{MeasurementPointSchema, MeasurementSchema, TimeseriesSchema};
 use crate::db_api_schema::trades::DbTradeSchema;
 use crate::ewds::dto::{
-    EwdsClearingResultDto, EwdsCommunityDto, EwdsMarketDto, EwdsMeasurementDto, EwdsOrderDto,
-    EwdsTradeDto,
+    EwdsClearingResultDto, EwdsCommunityDto, EwdsFacilityDto, EwdsMarketDto, EwdsMeasurementDto,
+    EwdsOrderDto, EwdsTradeDto,
 };
 use crate::ewds::{format_response_body, EwdsClient, EwdsOperation};
 use crate::utils::{
@@ -115,9 +115,12 @@ impl OffchainStorageClient {
         }
 
         response
-            .json::<Vec<EnergyCommunitySchema>>()
+            .json::<Vec<EwdsCommunityDto>>()
             .await
-            .with_context(|| format!("Failed to deserialize communities from '{}'", url))
+            .with_context(|| format!("Failed to deserialize communities from '{}'", url))?
+            .into_iter()
+            .map(EnergyCommunitySchema::try_from)
+            .collect()
     }
 
     async fn fetch_communities_via_ewds(&self) -> Result<Vec<EnergyCommunitySchema>> {
@@ -126,14 +129,14 @@ impl OffchainStorageClient {
             .query(EwdsOperation::CommunitiesQuery, serde_json::json!({}))
             .await?;
 
-        Ok(communities
+        communities
             .into_iter()
-            .map(EnergyCommunitySchema::from)
-            .collect())
+            .map(EnergyCommunitySchema::try_from)
+            .collect()
     }
 
     pub async fn fetch_facility_owner_mapping(&self) -> Result<HashMap<String, String>> {
-        let facilities: Vec<FacilitySchema> = match self.transport {
+        let facilities: Vec<EwdsFacilityDto> = match self.transport {
             OffchainStorageTransport::Ewds => {
                 info!("Fetching facilities via EWDS transport");
                 self.ewds_client()

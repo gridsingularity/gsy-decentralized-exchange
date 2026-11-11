@@ -14,6 +14,7 @@ use gsy_execution_engine::{
 use gsy_offchain_storage::{
     db::measurements_service::insert_measurements, evm_handler::OffchainStorageEvmHandler,
 };
+use primitives::utils::EPOCH_RFC3339;
 use primitives::{
     db_api_schema::{
         grid_topology::FacilitySchema, orders::OrderStatus, profiles::MeasurementSchema,
@@ -212,11 +213,13 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
         let facility = format!("meter-{index}");
         app.db_wrapper
             .facilities()
-            .upsert(FacilitySchema {
+            .insert_one(FacilitySchema {
                 facility_id: facility.clone(),
                 facility_name: facility.clone(),
                 site_id: "site".into(),
                 owner_id: buyer,
+                valid_from: EPOCH_RFC3339.to_string(),
+                valid_until: None,
             })
             .await?;
         measurements.push(MeasurementSchema {

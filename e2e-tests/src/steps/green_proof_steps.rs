@@ -29,7 +29,7 @@ use primitives::db_api_schema::trades::{DbTradeSchema, TradeParameters, TradeSta
 use primitives::ewds::{EwdsClient, EwdsOperation};
 use primitives::utils::{
     bytes16_to_hex, create_encrypted_bytes16_from_string, timestamp_to_datetime_string,
-    timestamp_to_string_with_padding,
+    timestamp_to_string_with_padding, EPOCH_RFC3339,
 };
 use serde_json::json;
 use std::env;
@@ -118,18 +118,23 @@ async fn seed_executed_pv_sale(world: &mut MyWorld, energy_kwh: f64, export_kwh:
             community_id: seed.community_id.clone(),
             community_name: format!("GoO E2E Community {run}"),
             sites: vec![seed.site_id.clone()],
+            valid_from: EPOCH_RFC3339.to_string(),
+            valid_until: None,
         })
         .await
         .expect("Failed to seed the community");
 
     db.collection::<SiteSchema>("sites")
         .insert_one(SiteSchema {
+            site_id: seed.site_id.clone(),
             site_name: seed.site_id.clone(),
             site_description: "Guarantees-of-origin e2e site".to_string(),
             facilities: vec![
                 seed.seller_facility_id.clone(),
                 seed.buyer_facility_id.clone(),
             ],
+            valid_from: EPOCH_RFC3339.to_string(),
+            valid_until: None,
         })
         .await
         .expect("Failed to seed the site");
@@ -144,6 +149,8 @@ async fn seed_executed_pv_sale(world: &mut MyWorld, energy_kwh: f64, export_kwh:
         facility_name: format!("{facility_id}-name"),
         site_id: seed.site_id.clone(),
         owner_id: owner_id.clone(),
+        valid_from: EPOCH_RFC3339.to_string(),
+        valid_until: None,
     })
     .collect::<Vec<_>>();
     db.collection::<FacilitySchema>("facilities")

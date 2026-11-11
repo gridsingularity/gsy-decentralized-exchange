@@ -156,9 +156,9 @@ REST API uses. New orders go to the community client instead; see
 | Topic | `eventType` | `data` | Stored with |
 |---|---|---|---|
 | `measurements` | `measurements.event` | array of 1..N measurements (`EwdsMeasurementDto`) | measurement points and timeseries, upserted by point and timestamp |
-| `facility` | `facility.event` | array of 1..N facilities (`FacilitySchema`) | upserted by `facility_id`; the whole batch is dropped if it would give a stored `facility_id` another name or a stored name another `facility_id` |
-| `site` | `site.event` | array of 1..N sites (`SiteSchema`) | upserted by `site_name` |
-| `community` | `community.event` | array of 1..N communities (`EwdsCommunityDto`) | upserted by `communityId`; the whole batch is dropped if it would give a stored `communityId` another name or a stored name another `communityId` |
+| `facility` | `facility.event` | array of 1..N facilities (`EwdsFacilityDto`) | a new version per changed `facility_id`, see [Versions and Deletion](#versions-and-deletion) |
+| `site` | `site.event` | array of 1..N sites (`EwdsSiteDto`) | a new version per changed `site_id` |
+| `community` | `community.event` | array of 1..N communities (`EwdsCommunityDto`) | a new version per changed `communityId` |
 
 The envelope is the one GSY uses for its own events:
 
@@ -184,25 +184,29 @@ The envelope is the one GSY uses for its own events:
 - Measurements use camelCase fields with RFC 3339 times. `timeSlot` is the
   start of the 15-minute slot, and `energyKwh` is positive for consumed and
   negative for produced energy. A batch can mix facilities and slots.
-- Facilities and sites use the snake_case fields of `FacilitySchema`
-  (`facility_id`, `facility_name`, `site_id`, `owner_id`) and `SiteSchema`
-  (`site_name`, `site_description`, `facilities`), the same form
-  `facilities.query` returns. A facility's `site_id` refers to a `site_name`.
+- Facilities and sites use the snake_case fields of `EwdsFacilityDto`
+  (`facility_id`, `facility_name`, `site_id`, `owner_id`) and `EwdsSiteDto`
+  (`site_id`, `site_name`, `site_description`, `facilities`), the same form
+  `facilities.query` returns. A facility's `site_id` refers to a site's
+  `site_id`.
 - Communities use the camelCase fields of `EwdsCommunityDto` (`communityId`,
   `communityName`, `sites`), the same form `communities.query` returns.
+- Facilities, sites and communities may also carry `valid_until`
+  (`validUntil` for communities) to delete the entry.
 
 Handling rules:
 
 - `eventId` identifies an event. A re-sent event must keep its `eventId`; the
-  off-chain storage drops IDs it has already handled. Because all writes are
-  upserts, an event that arrives again only updates its record.
+  off-chain storage drops IDs it has already handled. Measurements are
+  upserted, and a facility, site or community equal to its latest version is
+  not stored again, so an event that arrives again changes nothing.
 - Events whose `eventType` doesn't match their topic, malformed messages and
   invalid data are logged and skipped, and the next message is still handled.
   One invalid item rejects the whole event, so nothing of it is stored; a
   corrected event needs a new `eventId`.
-- A failed database write is tried up to three times in a row. A duplicate
-  key, such as a facility or community name that is already taken, counts as
-  invalid data and is not retried.
+- A failed database write is tried up to three times in a row. Invalid data
+  is not retried: a duplicate key, or a name that another valid facility, site
+  or community already uses.
 - The gateway acknowledges a message when it is polled, so it never delivers a
   failed event again. The subscriber therefore keeps a failed event and
   retries it, up to `EWDS_EVENT_HANDLE_ATTEMPTS` (default 8) attempts in
@@ -211,10 +215,38 @@ Handling rules:
   cover an outage of about 4 minutes. Then the event is logged and dropped.
 - Events of one topic are handled in the order they arrive. While a failed
   event waits for its retry, the later events of its topic wait too, so an
-  older event never overwrites the data of a newer one. Failed events are only
+  older event is never stored after a newer one. Failed events are only
   kept in memory and are lost if the service restarts.
 - The broker keeps messages for 24 hours, so events sent while the off-chain
   storage is down for longer are lost.
+
+#### Versions and Deletion
+
+Facilities, sites and communities keep their history. Every change is stored as
+a new version of the entry, and reads (`facilities.query`, `communities.query`,
+`GET /facilities`, `GET /sites`, `GET /communities` and the guarantees of
+origin) use only the latest version of each entry. Older versions are kept for
+audit.
+
+- `valid_from` is the time the off-chain storage stored the version. It sets
+  the value itself; one in the event is ignored. A failed event that is retried
+  gets the time of the retry.
+- A version equal to the latest one apart from `valid_from` is not stored
+  again, so resending the whole ontology stores only what changed.
+- An entry may get a new name, and two entries can swap their names in one
+  event. The whole event is dropped if another valid entry of the same type
+  already uses one of its names, or if it repeats an id or a name.
+- To delete an entry, send it in full with `valid_until`. It is hidden from that
+  time on, so a future time announces a deletion. Send it again without
+  `valid_until` to cancel the deletion or to bring the entry back.
+- Deleting a community or a site does not delete its sites or facilities.
+  Delete each of them as well.
+- Times may have any RFC 3339 offset. They are stored and returned in UTC with
+  whole seconds, e.g. `2026-12-01T00:00:00+00:00`.
+
+`POST /communities`, `POST /sites` and `POST /facilities` follow the same
+rules for one entry. They answer `409` when another valid entry uses the name,
+and `400` for an invalid time.
 
 The event schemas are `int.<eventType>.event.v1.json` in
 `schemas/ewds/intelligent/`, e.g. `int.facility.event.v1.json`. The

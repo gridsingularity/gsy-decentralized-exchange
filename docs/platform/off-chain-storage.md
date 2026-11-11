@@ -5,7 +5,8 @@
 `gsy-offchain-storage` is the off-chain state API and persistence layer.
 It stores indexed on-chain events plus ontology-aligned market and profile data.
 
-Backend: MongoDB (`mongo:5.0`).
+Backend: MongoDB 8.3 (`mongo:8.3.9`). Reading communities, sites and facilities
+needs MongoDB 5.2 or later, for the `$top` accumulator.
 
 ## Event Indexing Path
 
@@ -52,7 +53,7 @@ posts them any more.
 - `/trades-normalized` (`POST`)
 - `/trades` (`GET`, `POST`); `GET` follows the `trades.query` rules: `market_id` alone is enough, otherwise both `start_time` and `end_time` are required and span at most 1 day (`400` otherwise)
 - `/market` (`GET`) compatibility adapter for EVM JSON callers
-- `/communities` (`GET`, `POST`) for idempotent community query/upsert
+- `/communities` (`GET`, `POST`) for versioned communities (see Grid Topology)
 - `/markets` (`GET`, `POST`) for ontology-aligned market-opening records;
   records come from `NewMarketCreated`, `POST` remains for manual use
 - `/clearing-results` (`GET`, `POST`)
@@ -70,6 +71,14 @@ posts them any more.
 - `/communities` (`GET`, `POST`)
 - `/sites` (`GET`, `POST`)
 - `/facilities` (`GET`, `POST`)
+
+The `communities`, `sites` and `facilities` collections keep one document per
+version of an entry. `POST` stores a new version unless it equals the latest
+one, and `GET` returns the latest version of each entry without the deleted
+ones; see [Versions and Deletion](ewds-integration.md#versions-and-deletion).
+On startup the service drops the old unique indexes on ids and names, sets a
+missing `valid_from` to `1970-01-01T00:00:00+00:00`, and indexes each
+collection on its id and `valid_from`.
 
 ### ID Mapping
 - `/ids` (`POST`) — get-or-create offchain↔onchain ID mappings
