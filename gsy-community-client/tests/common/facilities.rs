@@ -1,4 +1,4 @@
-use primitives::db_api_schema::grid_topology::FacilityMarketValidationRequest;
+use primitives::ewds::dto::FacilityMarketValidationRequest;
 use serde_json::json;
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};

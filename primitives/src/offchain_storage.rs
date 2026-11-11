@@ -1,7 +1,4 @@
-use crate::db_api_schema::grid_topology::{
-    EnergyCommunitySchema, FacilityMarketValidationRequest, FacilityMarketValidationResult,
-    FacilitySchema,
-};
+use crate::db_api_schema::grid_topology::{EnergyCommunitySchema, FacilitySchema};
 use crate::db_api_schema::ids::IdMappingSchema;
 use crate::db_api_schema::market::MarketSchema;
 use crate::db_api_schema::orders::{DbOrderSchema, DbRequirements};
@@ -9,7 +6,7 @@ use crate::db_api_schema::profiles::{MeasurementPointSchema, MeasurementSchema, 
 use crate::db_api_schema::trades::DbTradeSchema;
 use crate::ewds::dto::{
     EwdsClearingResultDto, EwdsCommunityDto, EwdsMarketDto, EwdsMeasurementDto, EwdsOrderDto,
-    EwdsTradeDto,
+    EwdsTradeDto, FacilityMarketValidationRequest, FacilityMarketValidationResult,
 };
 use crate::ewds::{format_response_body, EwdsClient, EwdsOperation};
 use crate::utils::{

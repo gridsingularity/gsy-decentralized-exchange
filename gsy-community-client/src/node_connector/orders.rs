@@ -2,11 +2,10 @@ use crate::order_events::publish_rejection;
 use crate::time_utils::get_current_timestamp_in_secs;
 use anyhow::{Context, Error, Result};
 use ethers::prelude::*;
-use primitives::db_api_schema::grid_topology::FacilityMarketValidationRequest;
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::orders::order_metadata_to_contract;
 use primitives::db_api_schema::profiles::ForecastSchema;
-use primitives::ewds::dto::EwdsOrderDto;
+use primitives::ewds::dto::{EwdsOrderDto, FacilityMarketValidationRequest};
 use primitives::ewds::{env_var, EwdsClient};
 use primitives::offchain_storage::OffchainStorageClient;
 use primitives::utils::{

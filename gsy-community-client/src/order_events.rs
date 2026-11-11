@@ -4,11 +4,10 @@ use crate::node_connector::orders::{
 use crate::time_utils::get_current_timestamp_in_secs;
 use anyhow::{anyhow, bail, Context, Error, Result};
 use ethers::prelude::*;
-use primitives::db_api_schema::grid_topology::FacilityMarketValidationRequest;
 use primitives::db_api_schema::orders::{
     order_metadata_to_contract, DbOrderSchema, OrderEnum, OrderStatus,
 };
-use primitives::ewds::dto::{EwdsEventEnvelope, EwdsOrderDto};
+use primitives::ewds::dto::{EwdsEventEnvelope, EwdsOrderDto, FacilityMarketValidationRequest};
 use primitives::ewds::{env_var, invalid_event, parse_batch, EwdsClient, EwdsEventType};
 use primitives::offchain_storage::{resolve_order_partner_ids, OffchainStorageClient};
 use primitives::utils::{epoch_to_rfc3339, parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR};
@@ -99,19 +98,19 @@ enum Placement {
 }
 
 pub struct OrderEventHandler {
-    id_service: OffchainStorageClient,
+    offchain_storage_client: OffchainStorageClient,
     order_registry: OrderRegistryClient,
     ewds_client: EwdsClient,
 }
 
 impl OrderEventHandler {
     pub fn new(
-        id_service: OffchainStorageClient,
+        offchain_storage_client: OffchainStorageClient,
         order_registry: OrderRegistryClient,
         ewds_client: EwdsClient,
     ) -> Self {
         Self {
-            id_service,
+            offchain_storage_client,
             order_registry,
             ewds_client,
         }
@@ -164,7 +163,7 @@ impl OrderEventHandler {
             })
             .collect();
         let validation = self
-            .id_service
+            .offchain_storage_client
             .validate_facility_markets(&requests)
             .await
             .context("Facility participation validation failed")?;
@@ -267,12 +266,12 @@ impl OrderEventHandler {
     /// Replaces the off-chain facility and partner IDs with their on-chain IDs.
     async fn resolve_ids(&self, mut order: DbOrderSchema) -> Result<DbOrderSchema> {
         order.created_by = self
-            .id_service
+            .offchain_storage_client
             .fetch_onchain_id(&order.created_by)
             .await
             .with_context(|| format!("createdBy '{}' could not be resolved", order.created_by))?;
         order.area_uuid = order.created_by.clone();
-        resolve_order_partner_ids(&mut order.requirements, &self.id_service)
+        resolve_order_partner_ids(&mut order.requirements, &self.offchain_storage_client)
             .await
             .context("preferredTradingPartner could not be resolved")?;
         Ok(order)

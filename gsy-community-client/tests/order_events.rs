@@ -6,10 +6,9 @@ use gsy_community_client::order_events::{
     order_params, start_order_event_subscriber, OrderEventHandler, OrderRegistryClient,
     PlaceOrderError,
 };
-use primitives::db_api_schema::grid_topology::FacilityMarketValidationRequest;
 use primitives::db_api_schema::orders::DbOrderSchema;
 use primitives::ewds::dto::EwdsEventEnvelope;
-use primitives::ewds::dto::{EwdsOrderDto, EwdsSendMessageDto};
+use primitives::ewds::dto::{EwdsOrderDto, EwdsSendMessageDto, FacilityMarketValidationRequest};
 use primitives::ewds::{
     is_invalid_event, EwdsClient, EwdsClientConfig, EwdsEventTopicConfig, EwdsEventType,
     EwdsTopicConfig,
