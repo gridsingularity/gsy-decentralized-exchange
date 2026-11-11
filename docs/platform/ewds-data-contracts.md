@@ -103,7 +103,8 @@ DD-453 changes the v1 `tradeStatus` values in place to `matched`, `executed`,
 `settled` and `penalized`; no new schema version was introduced. Consumers must
 use these values and the current lifecycle: listener-indexed block inclusion
 creates `matched`, verification produces `executed` or terminal `penalized`,
-and financial `settled` is reserved for a future integration.
+and `settled` means the trade has been processed in the Settlement market.
+The transition to `settled` is not yet implemented.
 
 | Ontology property | Schema field | Current runtime source |
 |---|---|---|

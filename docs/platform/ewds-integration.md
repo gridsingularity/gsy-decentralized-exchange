@@ -150,7 +150,8 @@ publishes a `trade.event` on `trade` after indexing `TradeSettled`,
 `PenaltyRecorded` or a penalty-free `DeliveryVerified`. `TradeSettled` creates
 a `Matched` trade once included in a block indexed by the listener, without
 waiting for confirmation depth. No pre-inclusion trade records or notifications are generated. `Settled` is
-reserved for financial settlement by the partner's future billing integration.
+reserved for the time the trade has been processed in the Settlement market.
+This transition is not yet implemented.
 Replays re-read the stored status instead of reusing the incoming payload.
 A Penalized trade remains Penalized after verification, with no second trade
 notification; the consumed orders still receive their status notification.
@@ -180,7 +181,7 @@ an ambiguous gateway response. Publication is best effort and background sends
 can arrive out of order. Consumers should compare `occurredAt` and the lifecycle
 progression, not arrival order. The provisional progression is `matched` to
 `executed` or `penalized`; do not regress either verdict to `matched` on a late
-notification. `penalized` is terminal; no transition to financial `settled` is
+notification. `penalized` is terminal; no transition to `settled` is
 implemented yet.
 
 Order, trade and clearing-result queries accept UUID or 16-byte hex market IDs.

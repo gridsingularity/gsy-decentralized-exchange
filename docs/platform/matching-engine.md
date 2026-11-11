@@ -32,8 +32,8 @@ longer represent one uniform-price auction.
    publish trade-status notifications before confirmation.
 
 A failed or dropped transaction creates no trade record. `Settled` is reserved
-for financial settlement by the partner's future billing integration, not the
-on-chain match confirmation.
+for the time the trade has been processed in the Settlement market, not the
+on-chain match confirmation. This transition is not yet implemented.
 
 ## Matching Algorithms
 

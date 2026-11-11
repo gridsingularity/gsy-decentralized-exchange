@@ -167,8 +167,8 @@ There is no reindexing tool. See the
   indexed by the listener (no confirmation depth).
   `DeliveryVerified` advances penalty-free trades to `Executed`;
   `PenaltyRecorded` sets terminal `Penalized`, which verification does not replace.
-  `Settled` means financial settlement complete. Its transition is not implemented
-  until the partner's billing service is available. Trades cannot be `Rejected`.
+  `Settled` means the trade has been processed in the Settlement market.
+  This transition is not yet implemented. Trades cannot be `Rejected`.
   This lifecycle targets fresh deployments; no data migration is provided.
 - Existing `POST /trades` and `/trades-normalized` endpoints retain insert-only
   import behavior. They do not update orders or publish lifecycle notifications;
