@@ -3,10 +3,9 @@ use crate::ewds_handler::validate_trades_query_range;
 use crate::routes::parse_time_range;
 use actix_web::web::Query;
 use actix_web::{web::Json, HttpResponse, Responder};
-use mongodb::bson::Bson;
-use primitives::db_api_schema::orders::OrderStatus;
 use primitives::db_api_schema::trades::DbTradeSchema;
 use primitives::ewds::dto::EwdsTradeDto;
+use primitives::utils::normalize_market_id;
 use serde::Deserialize;
 
 #[tracing::instrument(name = "Adding new trades", skip(db), fields(trades = ?trades))]
@@ -23,21 +22,6 @@ pub async fn post_trades(trades: Json<Vec<EwdsTradeDto>>, db: DbRef) -> impl Res
             return HttpResponse::BadRequest().finish();
         }
     };
-
-    for trade in db_trades.iter() {
-        let bid_id = Bson::String(trade.bid_hash.clone());
-        let offer_id = Bson::String(trade.offer_hash.clone());
-        let _ = db
-            .get_ref()
-            .orders()
-            .update_order_status_by_id(&bid_id, OrderStatus::Executed)
-            .await;
-        let _ = db
-            .get_ref()
-            .orders()
-            .update_order_status_by_id(&offer_id, OrderStatus::Executed)
-            .await;
-    }
 
     match db.get_ref().trades().insert_trades(db_trades).await {
         Ok(ids) => HttpResponse::Ok().json(ids),
@@ -65,12 +49,17 @@ pub async fn get_trades(db: DbRef, query_params: Query<GetTradesParams>) -> impl
         Ok(range) => range,
         Err(response) => return response,
     };
+    let market_id = match query_params
+        .market_id
+        .as_deref()
+        .map(normalize_market_id)
+        .transpose()
+    {
+        Ok(id) => id,
+        Err(error) => return HttpResponse::BadRequest().body(error.to_string()),
+    };
     // Same rules as the EWDS `trades.query` operation.
-    let range = match validate_trades_query_range(
-        query_params.market_id.as_deref(),
-        start_time,
-        end_time,
-    ) {
+    let range = match validate_trades_query_range(market_id.as_deref(), start_time, end_time) {
         Ok(range) => range,
         Err(error) => {
             return HttpResponse::BadRequest().body(format!("{}: {}", error.code, error.message))
@@ -80,7 +69,7 @@ pub async fn get_trades(db: DbRef, query_params: Query<GetTradesParams>) -> impl
         .get_ref()
         .trades()
         .filter_trades(
-            query_params.market_id.clone(),
+            market_id,
             range.map(|(start, _)| start),
             range.map(|(_, end)| end),
         )

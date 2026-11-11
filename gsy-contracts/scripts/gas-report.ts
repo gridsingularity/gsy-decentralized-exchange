@@ -813,6 +813,68 @@ async function main() {
     ]),
   );
 
+  // Use fresh trades so verification measures real state changes, not retries.
+  for (const sellerPenaltyEnergy of [0, 12_345]) {
+    const label = sellerPenaltyEnergy === 0 ? "zero penalties" : "seller penalty";
+    const verificationTradeId = bytes16Id(`gas:verification:${label}:trade`);
+    const bid = {
+      ...bidOrder,
+      orderId: bytes16Id(`gas:verification:${label}:bid`),
+    };
+    const offer = {
+      ...offerOrder,
+      orderId: bytes16Id(`gas:verification:${label}:offer`),
+    };
+    for (const order of [bid, offer]) {
+      await recordTx(
+        "Mutating calls",
+        `placeOrder(OrderParams) verification ${label} ${order.isBid ? "bid" : "offer"}`,
+        "OrderRegistry",
+        orderRegistryContract.placeOrder(order),
+        "Prerequisite for delivery verification gas benchmark.",
+      );
+    }
+    const match = buildMatch(
+      verificationTradeId,
+      bid,
+      offer,
+      bytes16Id(`gas:verification:${label}:residual-offer`),
+    );
+    await recordTx(
+      "Mutating calls",
+      `settleBatch(Match[1]) verification ${label}`,
+      "TradeSettlement",
+      tradeSettlementContract.settleBatch([
+        {
+          matches: [match],
+          clearingResult: {
+            marketId,
+            clearingStatus: CLEARING_STATUS_FINAL,
+            clearingPrice: match.clearingPrice,
+            totalSupply: 0,
+            totalDemand: 0,
+            tradedQuantity: match.selectedEnergy,
+            numTrades: 1,
+          },
+        },
+      ]),
+      "Prerequisite for delivery verification gas benchmark.",
+    );
+    await recordTx(
+      "Mutating calls",
+      `completeDeliveryVerification(DeliveryVerification[1]) ${label}`,
+      "TradeSettlement",
+      tradeSettlementContract.completeDeliveryVerification([
+        {
+          tradeId: verificationTradeId,
+          buyerPenaltyEnergy: 0,
+          sellerPenaltyEnergy,
+        },
+      ]),
+      "Fresh settled trade with no existing trade penalties; prerequisite gas is reported separately.",
+    );
+  }
+
   await recordEstimate(
     "View estimates",
     "isAuthorized(bytes16,address)",

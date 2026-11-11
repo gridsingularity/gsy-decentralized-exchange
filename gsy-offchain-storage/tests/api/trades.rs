@@ -8,13 +8,14 @@ use primitives::utils::{epoch_to_rfc3339, timestamp_to_string_with_padding};
 fn make_order(order_id: &str, order_type: OrderEnum) -> DbOrderSchema {
     DbOrderSchema {
         status: OrderStatus::Submitted,
+        status_updated_at: None,
         order_id: order_id.to_string(),
         order_type,
         created_by: "0x0000000000000000000000000000000000000abc".to_string(),
         energy_kWh: 100.0,
         energy_rate: 10.0,
         area_uuid: "0x0000000000000000000000000000000000000000000000000000000000000abc".to_string(),
-        market_id: "0x0000000000000000000000000000000000000000000000000000000000000def".to_string(),
+        market_id: "0x00000000000000000000000000000def".to_string(),
         time_slot: 1,
         creation_time: 1_677_453_190,
         requirements: None,
@@ -54,7 +55,7 @@ fn make_market(market_id: &str, delivery_start_time: u64) -> MarketSchema {
 }
 
 #[tokio::test]
-async fn post_trade_request_writes_trades_to_the_db() {
+async fn post_trade_requests_persist_trades_without_updating_orders() {
     let app = init_app().await;
     let address = app.address.clone();
     let bid = make_order(
@@ -65,8 +66,6 @@ async fn post_trade_request_writes_trades_to_the_db() {
         "0x0000000000000000000000000000000000000000000000000000000000000a5c",
         OrderEnum::Offer,
     );
-    let trade = make_trade("trade_id", bid.clone(), offer.clone());
-
     let db = web::Data::new(app.db_wrapper.clone());
     db.get_ref()
         .orders()
@@ -75,28 +74,37 @@ async fn post_trade_request_writes_trades_to_the_db() {
         .unwrap();
 
     let client = reqwest::Client::new();
-    let resp = client
-        .post(&format!("{}/trades", &address))
-        .json(&vec![trade.clone()])
-        .send()
-        .await
-        .unwrap();
+    for (index, endpoint) in ["/trades", "/trades-normalized"].into_iter().enumerate() {
+        let trade = make_trade(&format!("trade_{index}"), bid.clone(), offer.clone());
+        let resp = client
+            .post(format!("{address}{endpoint}"))
+            .json(&vec![trade.clone()])
+            .send()
+            .await
+            .unwrap();
 
-    assert_eq!(200, resp.status().as_u16());
+        assert_eq!(200, resp.status().as_u16());
+        let inserted: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(inserted.as_object().unwrap().len(), 1);
+        let object_id = inserted["0"]["$oid"].as_str().unwrap();
+        mongodb::bson::oid::ObjectId::parse_str(object_id).unwrap();
 
-    let saved = db.get_ref().trades().get_all_trades().await.unwrap();
-    let result_trade = saved.first().unwrap();
-    assert_eq!(result_trade.trade_uuid, "trade_id".to_string());
+        let saved = db.get_ref().trades().get_all_trades().await.unwrap();
+        assert_eq!(saved.len(), index + 1);
+        assert!(saved.iter().any(|stored| stored.trade_uuid == trade.trade_id));
 
-    let bid_bson = mongodb::bson::to_bson(&bid.order_id).unwrap();
-    let bid_after = db
-        .get_ref()
-        .orders()
-        .get_order_by_id(&bid_bson)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(bid_after.status, OrderStatus::Executed);
+        for order in [&bid, &offer] {
+            let id = mongodb::bson::to_bson(&order.order_id).unwrap();
+            let stored = db
+                .get_ref()
+                .orders()
+                .get_order_by_id(&id)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(&stored, order);
+        }
+    }
     stop_app(app).await;
 }
 
@@ -243,7 +251,7 @@ async fn get_trades_returns_400_without_market_id_or_full_range() {
         &[("start_time", "2026-01-01T00:00:00Z")],
         &[("end_time", "2026-01-01T00:00:00Z")],
         &[
-            ("market_id", "MARKET-1"),
+            ("market_id", "0x00000000000000000000000000000001"),
             ("start_time", "2026-01-01T00:00:00Z"),
         ],
     ];
@@ -327,7 +335,7 @@ async fn filter_trades_time_boundaries_are_inclusive_start_exclusive_end() {
             OrderEnum::Offer,
         );
         let mut trade = make_trade(&format!("TRADE-BORDER-{:04}", idx), bid, offer);
-        trade.market_id = format!("MARKET-BORDER-{:04}", idx);
+        trade.market_id = format!("0x{:032x}", idx);
         trade.timestamp = epoch_to_rfc3339(*ts);
         db.get_ref()
             .markets()
@@ -395,7 +403,7 @@ async fn filter_trades_time_boundaries_are_inclusive_start_exclusive_end() {
     // market_id takes precedence: the range [20, 30) is ignored, so the trade of the market
     // delivering at 19 is returned.
     let by_market = trades_svc()
-        .filter_trades(Some("MARKET-BORDER-0000".to_string()), Some(20), Some(30))
+        .filter_trades(Some("0x00000000000000000000000000000000".to_string()), Some(20), Some(30))
         .await
         .unwrap();
     assert_eq!(by_market.len(), 1);

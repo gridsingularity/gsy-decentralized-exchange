@@ -26,10 +26,17 @@ to GSY on the events channels, one per topic:
 - `int.site.event.v1.json` (`int.site.schema.v1.json`)
 - `int.community.event.v1.json` (`int.community.schema.v1.json`)
 - `int.order.event.v1.json` (`int.order.schema.v1.json`), consumed
-  by the community client rather than the off-chain storage
+  by the community client for `order.event` submissions. The same schema and
+  topic also accept `orderStatus.event` notifications for FOS, which the
+  community client ignores. Off-chain storage publishes confirmed lifecycle
+  updates after indexing when the EWDS handler is enabled. The community client
+  reports definite contract rejections on the same topic without storing orders;
+  notifications for malformed submissions are outside DD-423; those errors
+  remain in logs pending a separate message-format decision.
 
 The off-chain storage publishes these event envelopes on the events channels:
 
+- `int.order.event.v1.json` (`int.order.schema.v1.json`), with `orderStatus.event`
 - `int.trade.event.v1.json` (`int.trade.schema.v1.json`)
 - `int.clearing-result.event.v1.json` (`int.clearing-result.schema.v1.json`)
 - `int.market.event.v1.json` (`int.market.schema.v1.json`)

@@ -2,8 +2,8 @@
 
 ## Role in the System
 
-`gsy-execution-engine` computes imbalance penalties after trade settlement and submits
-penalty batches to `TradeSettlement`.
+`gsy-execution-engine` computes imbalance penalties after trade settlement and
+records delivery verification in `TradeSettlement`.
 
 ## Execution Cycle
 
@@ -11,8 +11,11 @@ Each cycle:
 
 1. Select the current target timeslot or an older slot still within its rollover grace period.
 2. Fetch trades plus measurement points/timeseries for that window from off-chain storage.
-3. Compute penalties from traded vs measured energy delta.
-4. Submit penalties to EVM.
+3. Compute verdicts for `Matched` or `Penalized` trades with a usable measurement,
+   excluding trades whose on-chain verification is already complete.
+4. Submit `completeDeliveryVerification` and wait for a successful receipt.
+   Penalties (if any) and completion are recorded atomically. Fully delivered
+   trades also complete, without a separate penalty transaction.
 
 ## Penalty Computation
 
@@ -23,14 +26,24 @@ Current penalty calculator logic:
 - `delta < 0`: penalize seller
 - Penalty scaled with `NODE_FLOAT_SCALING_FACTOR` (`10000`)
 
+The existing policy is intentionally unchanged: measurements are mapped by
+facility owner; the buyer's measurement is preferred, with the seller's as a
+fallback. This does not independently verify both sides. Multiple measurements
+for an owner overwrite each other, and allocation across multiple trades is not
+handled. These policy limitations need separate agreement; `Executed` records
+completion under this current policy, not proof that both meters were checked.
+Missing/unmapped or non-finite measurements produce no verdict, not a zero-penalty
+success. HTTP and EWDS use the same calculation and on-chain completion path.
+
 ## Duplicate Submission Protection
 
-Before submitting, the engine checks on-chain `penaltyEnergyByTrade(tradeId)`:
-
-- If value is non-zero, that trade penalty is skipped.
-- Only new penalties are submitted in the transaction.
-
-This prevents repeated submission across recurring execution cycles.
+Before submitting, the engine checks `settledTrades(tradeId).verified` and skips
+completed trades. An invalid or unregistered trade ID is logged and excluded from
+that cycle, not counted as verified. An RPC error instead fails the cycle.
+The contract also ignores repeated verdicts, so receipt loss
+or concurrent submissions cannot duplicate penalties or completion events.
+Matching pre-recorded penalties are reused; conflicting amounts reject the
+transaction. A successful receipt is required before reporting progress.
 
 ## Timeslot Rollover
 
@@ -44,13 +57,13 @@ already-running cycle is allowed to finish.
 The scheduler alternates the current target with retained slots, visiting the
 retained slots oldest-first in rotation. A newly advanced target is selected
 first. This prevents an older slot's retries from monopolizing polling cycles.
-Execution and penalty submissions remain serial; the polling interval and
-transport latency still determine how often each slot can be checked.
+Execution and delivery-verification submissions remain serial; the polling
+interval and transport latency still determine how often each slot can be checked.
 
 Empty results, failures, and successful submissions do not remove a retained
-slot early: additional records can still arrive. The existing on-chain penalty
-check prevents resubmission for trades already processed. The eligible window
-is recalculated from time, including after restart or skipped polling intervals;
+slot early: additional records can still arrive. The on-chain `verified` flag
+prevents resubmission for trades already processed, including zero-penalty trades.
+The eligible window is recalculated from time, including after restart or skipped polling intervals;
 neither restarts nor retries extend the deadline. Records arriving beyond that
 window require separate historical processing, which is not implemented here.
 
@@ -61,9 +74,29 @@ values fail startup rather than silently falling back to the default.
 
 ## Contract Interaction
 
-- Role check: `hasRole(EXECUTION_ENGINE_ROLE, signer)`
-- Submission call: `submitPenalties(tuple[])`
+- Required role: `EXECUTION_ENGINE_ROLE`
+- Submission call: `completeDeliveryVerification(tuple[])`
 - Success criteria: transaction receipt status is `1`
+
+The engine does not write lifecycle statuses through HTTP/EWDS. The off-chain
+storage listener indexes `DeliveryVerified` as `Executed` for the two consumed
+orders and for penalty-free trades. A penalized trade remains `Penalized`.
+Residual order IDs remain independent.
+
+## Focused Lifecycle Test
+
+The real-contract test is opt-in because it needs compiled Hardhat artifacts,
+Anvil on `PATH`, and MongoDB (`DATABASE_*`). After compiling `gsy-contracts` with
+`npx hardhat compile`, run from the workspace root:
+
+```bash
+OFFCHAIN_STORAGE_TRANSPORT=http cargo test --locked -p gsy-offchain-storage \
+  --test api delivery_verification -- --ignored --test-threads=1
+```
+
+`GSY_CONTRACT_ARTIFACTS` can point to artifacts compiled in another container.
+The test deploys isolated proxies and exercises missing/late measurements,
+zero/non-zero penalties, replay safety, timestamps, and independent residuals.
 
 ## Key Config
 

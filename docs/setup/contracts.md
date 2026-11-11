@@ -4,6 +4,13 @@ The contract stack is isolated from the application and e2e compose files. Run
 contract deployment first, keep the target chain available, then start the GSY
 services with the generated proxy addresses.
 
+## Fresh Deployments
+
+The DD-453 trade lifecycle targets fresh contract deployments and an empty
+off-chain database. Start the listener before submitting orders. No migration
+or reindexing tool is provided for older lifecycle records, and the listener
+does not persist its replay cursor across restarts.
+
 ## Supported Networks
 
 | Target | Network | RPC URL | Chain ID | Currency |
@@ -84,7 +91,9 @@ The report deploys a benchmark-only contract suite and records gas for:
   and resending existing markets).
 - `OrderRegistry` mutating calls: `placeOrder`, `cancelOrder`, `updateStatus`,
   and direct `settleOrder` partial-fill/residual-consumption benchmarks.
-- `TradeSettlement` mutating calls: `settleBatch`, `submitPenalties`.
+- `TradeSettlement` mutating calls: `settleBatch`, `submitPenalties`,
+  `completeDeliveryVerification` (zero penalties and a new seller penalty on
+  separate settled trades; prerequisite transactions are reported separately).
 - View-call `estimateGas` values for the read functions used by services.
 
 View functions do not consume gas when called off-chain; they are included as

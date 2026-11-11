@@ -120,10 +120,12 @@ pub enum EwdsEventType {
     Community,
     #[serde(rename = "order.event")]
     Order,
+    #[serde(rename = "orderStatus.event")]
+    OrderStatus,
 }
 
 impl EwdsEventType {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Trade,
         Self::ClearingResult,
         Self::Market,
@@ -132,6 +134,7 @@ impl EwdsEventType {
         Self::Site,
         Self::Community,
         Self::Order,
+        Self::OrderStatus,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -144,6 +147,7 @@ impl EwdsEventType {
             Self::Site => "site.event",
             Self::Community => "community.event",
             Self::Order => "order.event",
+            Self::OrderStatus => "orderStatus.event",
         }
     }
 }
@@ -385,7 +389,7 @@ impl EwdsEventTopicConfig {
             EwdsEventType::Facility => &self.facility_event,
             EwdsEventType::Site => &self.site_event,
             EwdsEventType::Community => &self.community_event,
-            EwdsEventType::Order => &self.order_event,
+            EwdsEventType::Order | EwdsEventType::OrderStatus => &self.order_event,
         }
     }
 }
@@ -601,14 +605,19 @@ impl EwdsClient {
         F: Fn(EwdsEventEnvelope<Value>) -> Fut,
         Fut: Future<Output = Result<()>>,
     {
-        let topic_name = self.config.event_topics.for_event_type(event_type);
         let mut queue: VecDeque<QueuedEvent> = VecDeque::new();
         let mut seen_event_ids: HashSet<String> = HashSet::new();
         let mut seen_queue: VecDeque<String> = VecDeque::new();
 
         loop {
             while let Ok(message) = messages.try_recv() {
-                enqueue_event(event_type, topic_name, message, &mut queue, &seen_event_ids);
+                enqueue_event(
+                    event_type,
+                    &self.config.event_topics,
+                    message,
+                    &mut queue,
+                    &seen_event_ids,
+                );
             }
 
             self.handle_queued_events(
@@ -632,9 +641,13 @@ impl EwdsClient {
                 None => messages.recv().await,
             };
             match next {
-                Some(message) => {
-                    enqueue_event(event_type, topic_name, message, &mut queue, &seen_event_ids)
-                }
+                Some(message) => enqueue_event(
+                    event_type,
+                    &self.config.event_topics,
+                    message,
+                    &mut queue,
+                    &seen_event_ids,
+                ),
                 None if queue.is_empty() => return,
                 // The poller stopped; finish the queued events before returning.
                 None => {
@@ -952,11 +965,12 @@ impl EwdsClient {
 /// Queues `message` if it is a new event of `event_type`.
 fn enqueue_event(
     event_type: EwdsEventType,
-    topic_name: &str,
+    event_topics: &EwdsEventTopicConfig,
     message: EwdsInboundMessage,
     queue: &mut VecDeque<QueuedEvent>,
     seen_event_ids: &HashSet<String>,
 ) {
+    let topic_name = event_topics.for_event_type(event_type);
     let envelope = match serde_json::from_str::<EwdsEventEnvelope<Value>>(&message.payload) {
         Ok(envelope) => envelope,
         Err(error) => {
@@ -968,10 +982,13 @@ fn enqueue_event(
         }
     };
     if envelope.event_type != event_type {
-        warn!(
-            "Skipping EWDS {} event {} on topic '{}', which carries {} events",
-            envelope.event_type, envelope.event_id, topic_name, event_type
-        );
+        // Submissions and status notifications intentionally share the order topic.
+        if event_topics.for_event_type(envelope.event_type) != topic_name {
+            warn!(
+                "Skipping EWDS {} event {} on topic '{}', which carries {} events",
+                envelope.event_type, envelope.event_id, topic_name, event_type
+            );
+        }
         return;
     }
     if seen_event_ids.contains(&envelope.event_id)
