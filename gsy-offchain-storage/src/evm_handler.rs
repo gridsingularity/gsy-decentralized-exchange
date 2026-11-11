@@ -239,7 +239,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         let offer_hash_str = bytes16_to_hex(event.offer_id);
         let residual_bid_id = bytes16_to_optional_hex(event.residual_bid_id);
         let residual_offer_id = bytes16_to_optional_hex(event.residual_offer_id);
-        // TradeSettled indexes block inclusion, not finality or financial settlement.
+        // TradeSettled indexes match inclusion, not finality or Settlement market completion.
         let trade = DbTradeSchema {
             trade_uuid: trade_hash.clone(),
             status: TradeStatus::Matched,

@@ -158,7 +158,7 @@ pub(crate) async fn trade_status_timestamp(
         TradeSettlementContract::new(world.trade_settlement_address, world.provider.clone());
     let topic = indexed_bytes16_topic(parse_uuid_or_hex_bytes16(&trade.trade_uuid).unwrap());
     let block_hash = match status {
-        TradeStatus::Settled => panic!("Financial settlement is not implemented"),
+        TradeStatus::Settled => panic!("The Settled status transition is not implemented"),
         TradeStatus::Executed => return delivery_verification_timestamp(world, trade).await,
         TradeStatus::Matched => {
             let events = settlement
