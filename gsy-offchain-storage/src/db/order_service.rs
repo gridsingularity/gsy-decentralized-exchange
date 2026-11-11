@@ -77,6 +77,23 @@ pub async fn init_tariffs(db: &DatabaseWrapper) -> Result<()> {
 pub struct OrderService(pub Collection<DbOrderSchema>);
 
 impl OrderService {
+    /// The first chain placement supersedes an import. Replays must not rewind lifecycle state.
+    pub async fn record_placement(&self, order: &DbOrderSchema) -> Result<()> {
+        let mut placement = bson::to_document(order)?;
+        placement.insert("indexed_placement", true);
+        self.0
+            .update_one(
+                doc! {"order_id": &order.order_id},
+                vec![doc! {"$replaceWith": {"$cond": [
+                    {"$eq": ["$indexed_placement", true]}, "$$ROOT",
+                    {"$mergeObjects": ["$$ROOT", {"$literal": placement}]}
+                ]}}],
+            )
+            .upsert(true)
+            .await?;
+        Ok(())
+    }
+
     #[tracing::instrument(name = "Fetching orders from database", skip(self))]
     pub async fn get_all_orders(&self) -> Result<Vec<DbOrderSchema>> {
         Ok(self.0.find(doc! {}).await?.try_collect().await?)

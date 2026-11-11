@@ -127,6 +127,7 @@ impl OrderEventHandler {
                 .await
                 .and_then(|order| order_params(&order).map_err(invalid_event))
                 .with_context(|| format!("invalid order {} at index {}", order_id, index))?;
+            // Keep the submitted IDs so a rejection can echo the original order to FOS.
             params.push((submission, order));
         }
 

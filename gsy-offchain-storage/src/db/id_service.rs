@@ -3,6 +3,7 @@ use anyhow::Context;
 use anyhow::{bail, Result};
 use futures::TryStreamExt;
 use mongodb::bson::doc;
+use mongodb::error::{ErrorKind, WriteFailure};
 use mongodb::options::IndexOptions;
 use mongodb::options::ReturnDocument;
 use mongodb::{Collection, IndexModel};
@@ -77,7 +78,23 @@ impl IdService {
             )
             .upsert(true)
             .return_document(ReturnDocument::After)
-            .await?;
+            .await;
+
+        let result = match result {
+            Ok(result) => result,
+            Err(error)
+                if matches!(error.kind.as_ref(), ErrorKind::Command(e) if e.code == 11000)
+                    || matches!(error.kind.as_ref(), ErrorKind::Write(WriteFailure::WriteError(e)) if e.code == 11000) =>
+            {
+                // A concurrent upsert may win either unique index. Only recover
+                // the same offchain ID; a collision with another ID is still an error.
+                match self.0.find_one(doc! {"offchain_id": &offchain_id}).await? {
+                    Some(mapping) => return Ok(mapping),
+                    None => return Err(error.into()),
+                }
+            }
+            Err(error) => return Err(error.into()),
+        };
 
         Ok(result.context("upsert returned no document")?)
     }
