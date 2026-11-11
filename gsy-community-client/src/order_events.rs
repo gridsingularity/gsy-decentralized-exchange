@@ -59,7 +59,7 @@ pub async fn start_order_event_subscriber() -> Result<()> {
         order_registry_address
     );
     tokio::select! {
-        _ = handler.ewds_client.run_event_worker(EwdsEventType::Order, |envelope| {
+        _ = handler.ewds_client.run_event_subscriber(&[EwdsEventType::Order], |envelope| {
             handler.handle(envelope)
         }) => Ok(()),
         error = watch_node(&handler.order_registry) => Err(error),

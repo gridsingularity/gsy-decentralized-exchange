@@ -1,0 +1,62 @@
+[
+  {
+    "id": "6ac64b5f116b157d60fdcd5a",
+    "topicVersion": "1.0.0",
+    "topicName": "idsQueryTestResponse",
+    "topicOwner": "integration.apps.intelligent.auth.ewc",
+    "topicSchemaType": "JSD7",
+    "payload": "{\"requestId\":\"ids-query-1791380305812-1\",\"success\":true,\"data\":[],\"error\":null}",
+    "signature": "0xcec8d549554962cd…",
+    "sender": "did:ethr:ewc:0x2Cb2Ea6add86E0D53fD8c5B65AF1c4Eca5377275",
+    "timestampNanos": 1791380319730000000,
+    "timestampISO": "2026-10-07T13:38:39.729+00:00",
+    "transactionId": "ids-query-1791380305812-1",
+    "payloadEncryption": false,
+    "clientGatewayMessageId": "29fca466-13a3-439a-88ea-9256c8cd7a92",
+    "topicId": "6aa9329b23afa50dafef3b4c",
+    "signatureValid": "SUCCESS",
+    "decryption": {
+      "status": "NOT_REQUIRED"
+    }
+  },
+  {
+    "id": "6ac64b86116b157d60fdcd6f",
+    "topicVersion": "1.0.0",
+    "topicName": "tradesQueryTestResponse",
+    "topicOwner": "integration.apps.intelligent.auth.ewc",
+    "topicSchemaType": "JSD7",
+    "payload": "{\"requestId\":\"trades-query-1791380345914-1\",\"success\":true,\"data\":[],\"error\":null}",
+    "signature": "0xcd6ce002373fb1c0…",
+    "sender": "did:ethr:ewc:0x2Cb2Ea6add86E0D53fD8c5B65AF1c4Eca5377275",
+    "timestampNanos": 1791380358326000000,
+    "timestampISO": "2026-10-07T13:39:18.326+00:00",
+    "transactionId": "trades-query-1791380345914-1",
+    "payloadEncryption": false,
+    "clientGatewayMessageId": "8113f61f-bed4-4fff-a862-9c0e798826e1",
+    "topicId": "6a86cb40fe7dd416fb2efe05",
+    "signatureValid": "SUCCESS",
+    "decryption": {
+      "status": "NOT_REQUIRED"
+    }
+  },
+  {
+    "id": "6ac64b91116b157d60fdcd81",
+    "topicVersion": "1.0.0",
+    "topicName": "communityUpsertTestResponse",
+    "topicOwner": "integration.apps.intelligent.auth.ewc",
+    "topicSchemaType": "JSD7",
+    "payload": "{\"requestId\":\"community-upsert-1791380359912-1\",\"success\":true,\"data\":[],\"error\":null}",
+    "signature": "0xfbf2b2856c8e26c6…",
+    "sender": "did:ethr:ewc:0x2Cb2Ea6add86E0D53fD8c5B65AF1c4Eca5377275",
+    "timestampNanos": 1791380369065000000,
+    "timestampISO": "2026-10-07T13:39:29.065+00:00",
+    "transactionId": "community-upsert-1791380359912-1",
+    "payloadEncryption": false,
+    "clientGatewayMessageId": "9865cb95-ca56-49fe-8acb-0f24704267c9",
+    "topicId": "6a8fe98a5b4f4c422f79e7f0",
+    "signatureValid": "SUCCESS",
+    "decryption": {
+      "status": "NOT_REQUIRED"
+    }
+  }
+]

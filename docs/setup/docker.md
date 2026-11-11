@@ -170,14 +170,17 @@ Useful runtime overrides:
 - `EWDS_TRADES_REQUEST_TOPIC` / `EWDS_TRADES_RESPONSE_TOPIC`
 - `EWDS_MEASUREMENTS_REQUEST_TOPIC` / `EWDS_MEASUREMENTS_RESPONSE_TOPIC`
 - `EWDS_ENABLE_HANDLER=true` (enables EWDS query responder in `gsy-offchain-storage`)
-- `EWDS_HANDLER_POLL_INTERVAL_MS` / `EWDS_HANDLER_BATCH_SIZE`
-- `EWDS_EVENT_POLL_INTERVAL_MS` (default `60000`): how often the off-chain
-  storage and the community client poll the inbound event topics. The e2e
-  compose sets `1000`.
+- `EWDS_HANDLER_POLL_INTERVAL_MS` (default `1000`) / `EWDS_HANDLER_BATCH_SIZE`
+- `EWDS_EVENT_POLL_INTERVAL_MS` (default `1000`): how often the off-chain
+  storage and the community client poll the events channel.
+- The client ID variables are bases: a service polls the requests and events
+  channels as `<id>requests` / `<id>events`, and each query response topic as
+  `<id><responseTopic>`. See
+  [Polling](../platform/ewds-integration.md#polling).
 - `EWDS_EVENT_HANDLE_ATTEMPTS` (default `8`) / `EWDS_EVENT_RETRY_DELAY_MS`
   (default `2000`): how often a failed inbound event is tried and how long the
   first retry waits; the delay doubles with every attempt, up to 5 minutes.
-- `EWDS_RESPONSE_TIMEOUT_MS` / `EWDS_RESPONSE_POLL_INTERVAL_MS`
+- `EWDS_RESPONSE_TIMEOUT_MS` / `EWDS_RESPONSE_POLL_INTERVAL_MS` (default `1000`)
 - `EWDS_EMPTY_RESPONSE_GRACE_MS` controls how long a query waits for a
   non-empty reply after receiving an empty reply with the same request ID.
 - `EWDS_RATE_LIMIT_BACKOFF_MS` / `EWDS_RATE_LIMIT_MAX_BACKOFF_MS`
@@ -199,14 +202,14 @@ curl -G -i 'http://localhost:3009/api/v2/topics/count' \
   --data-urlencode 'owner[]=integration.apps.intelligent.auth.ewc'
 ```
 
-3. Prime the receive cursor for an existing smoke-test subscribe channel and topic:
+3. Prime the receive cursor for an existing smoke-test subscribe channel. Like
+   the GSY services, poll the whole channel, without `topicName` and
+   `topicOwner`:
 
 ```bash
 curl -G -i 'http://localhost:3009/api/v2/messages' \
   --data-urlencode 'fqcn=gsy.intelligent.hello.sub' \
   --data-urlencode 'amount=10' \
-  --data-urlencode 'topicName=helloWorld' \
-  --data-urlencode 'topicOwner=integration.apps.intelligent.auth.ewc' \
   --data-urlencode 'clientId=gsysmoketest'
 ```
 
@@ -232,8 +235,6 @@ curl -i -X POST 'http://localhost:3009/api/v2/messages' \
 curl -G -i 'http://localhost:3009/api/v2/messages' \
   --data-urlencode 'fqcn=gsy.intelligent.hello.sub' \
   --data-urlencode 'amount=10' \
-  --data-urlencode 'topicName=helloWorld' \
-  --data-urlencode 'topicOwner=integration.apps.intelligent.auth.ewc' \
   --data-urlencode 'clientId=gsysmoketest'
 ```
 

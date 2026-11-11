@@ -42,7 +42,7 @@ async fn observe_trade_statuses(world: &mut MyWorld) {
     let (sender, receiver) = mpsc::unbounded_channel();
     let worker = tokio::spawn(async move {
         client
-            .run_event_worker(EwdsEventType::Trade, |event| {
+            .run_event_subscriber(&[EwdsEventType::Trade], |event| {
                 let sender = sender.clone();
                 async move {
                     for trade in serde_json::from_value::<Vec<EwdsTradeDto>>(event.data)? {
@@ -160,7 +160,7 @@ async fn observe_order_statuses(world: &mut MyWorld) {
     let (sender, receiver) = mpsc::unbounded_channel();
     let worker = tokio::spawn(async move {
         client
-            .run_event_worker(EwdsEventType::OrderStatus, |event| {
+            .run_event_subscriber(&[EwdsEventType::OrderStatus], |event| {
                 let sender = sender.clone();
                 async move {
                     for order in serde_json::from_value::<Vec<EwdsOrderDto>>(event.data)? {

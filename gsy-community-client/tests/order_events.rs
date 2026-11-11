@@ -18,7 +18,7 @@ use primitives::utils::{parse_uuid_or_hex_bytes16, rfc3339_to_epoch};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
-use wiremock::matchers::{method, path, query_param};
+use wiremock::matchers::{method, path, query_param, query_param_is_missing};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 abigen!(
@@ -709,7 +709,7 @@ async fn order_registry_client_reports_why_the_contract_rejected_an_order() {
 }
 
 #[tokio::test]
-async fn subscriber_places_submissions_but_not_status_notifications_from_the_order_topic() {
+async fn subscriber_places_submissions_but_not_status_notifications_from_the_events_channel() {
     let chain = deploy_mock_order_registry().await;
     let id_service = mock_id_service().await;
     let gateway = MockServer::start().await;
@@ -722,11 +722,17 @@ async fn subscriber_places_submissions_but_not_status_notifications_from_the_ord
     Mock::given(method("GET"))
         .and(path("/api/v2/messages"))
         .and(query_param("fqcn", "gsy.intelligent.events.sub"))
-        .and(query_param("topicName", "order"))
-        .and(query_param("clientId", "gsycommunityclientorder"))
+        .and(query_param_is_missing("topicName"))
+        .and(query_param("clientId", "gsycommunityclientevents"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-            {"payload": serde_json::to_string(&notification).unwrap()},
-            {"payload": serde_json::to_string(&event("event-1", vec![bid()])).unwrap()},
+            {
+                "topicName": "order",
+                "payload": serde_json::to_string(&notification).unwrap(),
+            },
+            {
+                "topicName": "order",
+                "payload": serde_json::to_string(&event("event-1", vec![bid()])).unwrap(),
+            },
         ])))
         .mount(&gateway)
         .await;

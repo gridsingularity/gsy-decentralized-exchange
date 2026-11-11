@@ -12,12 +12,13 @@ anyhow = { workspace = true }
 async-trait = { workspace = true }
 blake2 = "0.10"
 chrono = { workspace = true }
+futures = "0.3.30"
 hex = { workspace = true }
 once_cell = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-tokio = { workspace = true, features = ["time"] }
+tokio = { workspace = true, features = ["sync", "time"] }
 tracing = { workspace = true }
 tracing-bunyan-formatter = "0.3.10"
 tracing-log = "0.2.0"
