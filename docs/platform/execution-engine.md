@@ -41,7 +41,9 @@ success. HTTP and EWDS use the same calculation and on-chain completion path.
 ## Duplicate Submission Protection
 
 Before submitting, the engine checks `settledTrades(tradeId).verified` and skips
-completed trades. The contract also ignores repeated verdicts, so receipt loss
+completed trades. An invalid or unregistered trade ID is logged and excluded from
+that cycle, not counted as verified. An RPC error instead fails the cycle.
+The contract also ignores repeated verdicts, so receipt loss
 or concurrent submissions cannot duplicate penalties or completion events.
 Matching pre-recorded penalties are reused; conflicting amounts reject the
 transaction. A successful receipt is required before reporting progress.
@@ -58,13 +60,13 @@ already-running cycle is allowed to finish.
 The scheduler alternates the current target with retained slots, visiting the
 retained slots oldest-first in rotation. A newly advanced target is selected
 first. This prevents an older slot's retries from monopolizing polling cycles.
-Execution and verification submissions remain serial; the polling interval and
-transport latency still determine how often each slot can be checked.
+Execution and delivery-verification submissions remain serial; the polling
+interval and transport latency still determine how often each slot can be checked.
 
 Empty results, failures, and successful submissions do not remove a retained
-slot early: additional records can still arrive. The existing on-chain verification
-check prevents resubmission for trades already processed. The eligible window
-is recalculated from time, including after restart or skipped polling intervals;
+slot early: additional records can still arrive. The on-chain `verified` flag
+prevents resubmission for trades already processed, including zero-penalty trades.
+The eligible window is recalculated from time, including after restart or skipped polling intervals;
 neither restarts nor retries extend the deadline. Records arriving beyond that
 window require separate historical processing, which is not implemented here.
 

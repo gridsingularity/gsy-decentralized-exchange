@@ -152,10 +152,14 @@ does not trigger expiry. Market windows are immutable and cannot be reopened.
 The former wall-clock expiry scheduler and `scheduler_interval` setting have
 been removed. HTTP and EWDS use the same listener; order-status notifications
 are published only when EWDS is enabled. The first new confirmed block after startup
-also checks already-indexed markets for expiry. The listener retries failed blocks
-and catches up across reconnects during the same process; it has no persisted
-cursor across restarts and starts at the next block on startup. There is no
-reindexing tool. See the [fresh-deployment requirements](../setup/contracts.md#fresh-deployments).
+also checks already-indexed markets for expiry. On first start for a chain and
+contract set, the listener records the current head + 1 in MongoDB, without
+backfilling older events. It advances this cursor only after all logs and expiry
+checks for a block succeed. After a reconnect or restart it resumes at the first
+unfinished block. Replays preserve lifecycle states and separate clearing logs;
+EWDS notifications can repeat. The cursor is not a chain-reorg recovery mechanism.
+There is no reindexing tool. See the
+[fresh-deployment requirements](../setup/contracts.md#fresh-deployments).
 
 ## Data Model Notes
 
@@ -210,7 +214,9 @@ reindexing tool. See the [fresh-deployment requirements](../setup/contracts.md#f
 - Order placement, cancellation and settlement indexing use the event block's
   timestamp for `status_updated_at` (exposed as `updatedAt` in HTTP/EWDS DTOs),
   not the indexing time. Status and timestamp are updated together. Residual
-  orders have independent status timestamps; `creation_time` remains unchanged.
+  orders have independent status timestamps; their original creation time does
+  not change. A trade's `creation_time` is the settlement block's timestamp,
+  not the wall-clock time of indexing or replay.
   Existing records without a status timestamp are not backfilled by this change.
 - Trade records include order IDs, residual IDs and selected settlement parameters.
 

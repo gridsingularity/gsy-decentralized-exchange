@@ -164,17 +164,19 @@ async fn post_ids_concurrent_same_id_yields_single_mapping() {
         let barrier = barrier.clone();
         handles.push(tokio::spawn(async move {
             barrier.wait().await;
-            client
+            let response = client
                 .post(&url)
                 .query(&[("offchain_id", offchain)])
                 .send()
                 .await
-                .expect("Failed to execute concurrent request")
-                .error_for_status()
-                .expect("Concurrent ID creation must succeed")
-                .json::<IdMappingSchema>()
+                .expect("Failed to execute concurrent request");
+            let status = response.status();
+            let body = response
+                .text()
                 .await
-                .expect("Failed to parse concurrent body")
+                .expect("Failed to read concurrent body");
+            assert_eq!(status.as_u16(), 200, "Concurrent ID request failed: {body}");
+            serde_json::from_str::<IdMappingSchema>(&body).expect("Failed to parse concurrent body")
         }));
     }
 
@@ -186,6 +188,7 @@ async fn post_ids_concurrent_same_id_yields_single_mapping() {
     // Every response must describe the same mapping.
     for r in &results {
         assert_eq!(r, &results[0]);
+        assert_eq!(r.offchain_id, offchain);
     }
 
     // And exactly one document exists in the collection.

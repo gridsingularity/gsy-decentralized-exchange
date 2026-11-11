@@ -312,13 +312,24 @@ async fn test_evm_order_listener_persists_to_db() {
         db: db.clone(),
         event_publisher: None,
     };
-    let listener = GsyEthersListener::new(config, handler);
-
-    tokio::spawn(async move {
+    let listener = GsyEthersListener::new(config.clone(), handler);
+    let task = tokio::spawn(async move {
         listener.run().await.unwrap();
     });
 
-    tokio::time::sleep(Duration::from_millis(1000)).await;
+    let cursors = db.collection::<mongodb::bson::Document>("evm_listener_cursors");
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while cursors
+            .count_documents(mongodb::bson::doc! {})
+            .await
+            .unwrap()
+            == 0
+        {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("Listener did not initialize its cursor");
 
     let mock_contract = MockEmitter::new(contract_address, client.clone());
     let closed_at = client
@@ -329,14 +340,32 @@ async fn test_evm_order_listener_persists_to_db() {
         .timestamp
         .as_u64()
         + 60;
-    mock_contract
+    let market_receipt = mock_contract
         .emit_new_market(closed_at)
         .send()
         .await
         .unwrap()
         .await
+        .unwrap()
         .unwrap();
     let order_id = [0xAA; 16];
+
+    // Stop after indexing the market. Miss the placement, then recover it from Mongo.
+    let next_block = market_receipt.block_number.unwrap().as_u64() as i64 + 1;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while cursors
+            .count_documents(mongodb::bson::doc! {"next_block": next_block})
+            .await
+            .unwrap()
+            == 0
+        {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("Market block was not checkpointed");
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
 
     let created_by = [0xBB; 16];
     let energy_val = 10000; // 1.0 energy scaled
@@ -359,6 +388,13 @@ async fn test_evm_order_listener_persists_to_db() {
         .as_u64();
 
     let expected_id = format!("0x{}", hex::encode(order_id));
+
+    let handler = OffchainStorageEvmHandler {
+        db: db.clone(),
+        event_publisher: None,
+    };
+    let listener = GsyEthersListener::new(config, handler);
+    let task = tokio::spawn(async move { listener.run().await.unwrap() });
 
     let mut found = false;
     for _ in 0..20 {
@@ -429,6 +465,8 @@ async fn test_evm_order_listener_persists_to_db() {
     })
     .await
     .expect("Market closure did not expire the indexed order");
+    task.abort();
+    let _ = task.await;
     stop_app(app).await;
 }
 
