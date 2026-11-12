@@ -205,6 +205,7 @@ async fn verify_order_notifications(world: &mut MyWorld, status: String) {
 #[then("FOS receives rejections for unknown facilities, markets and cross-community orders without storing them")]
 async fn verify_rejection_notification(world: &mut MyWorld) {
     let foreign_facility = format!("foreign-{}", Uuid::new_v4());
+    let foreign_owner = format!("owner-{foreign_facility}");
     super::market_steps::upsert_community(
         world,
         &EnergyCommunitySchema {
@@ -219,7 +220,7 @@ async fn verify_rejection_notification(world: &mut MyWorld) {
             facility_id: foreign_facility.clone(),
             facility_name: foreign_facility.clone(),
             site_id: "site-12346".into(),
-            owner_id: "alice".into(),
+            owner_id: foreign_owner.clone(),
         }])
         .await;
     let mut unknown_market = order_dto(world, "alice", true, 1.0, 20.0);
@@ -227,7 +228,7 @@ async fn verify_rejection_notification(world: &mut MyWorld) {
     let mut unknown_facility = order_dto(world, "alice", true, 1.0, 20.0);
     unknown_facility.created_by = "unknown-facility".into();
     let mut cross_community = order_dto(world, "alice", true, 1.0, 20.0);
-    cross_community.created_by = foreign_facility;
+    cross_community.created_by = foreign_owner;
     let orders = [unknown_market, unknown_facility, cross_community];
     EwdsClient::from_env("EWDS_E2E_CLIENT_ID", "gsye2e", 60_000)
         .publish_event(&event(EwdsEventType::Order, orders.clone()))
@@ -300,7 +301,7 @@ async fn publish_events(world: &mut MyWorld) {
         facility_id: facility_id.clone(),
         facility_name: format!("E2E Event Facility {}", suffix),
         site_id: site.site_name.clone(),
-        owner_id: "alice".to_string(),
+        owner_id: format!("e2e-event-owner-{}", suffix),
     };
     let (last_timeslot, _) = get_last_and_next_timeslot();
     let measurements = [(last_timeslot - 900, 1.5), (last_timeslot, -0.5)]
@@ -355,7 +356,7 @@ fn order_dto(
         price_limit,
         energy_source_preference: None,
         energy_type: None,
-        created_by: world.facility_id_for_user(user_name),
+        created_by: user_name.to_string(),
         creation_time: epoch_to_rfc3339(get_current_timestamp_in_secs()),
         updated_at: None,
         reject_reason: None,

@@ -1,7 +1,7 @@
 use primitives::db_api_schema::{profiles::MeasurementSchema, trades::DbTradeSchema};
-use primitives::utils::NODE_FLOAT_SCALING_FACTOR;
+use primitives::utils::{derive_onchain_id, NODE_FLOAT_SCALING_FACTOR};
 use std::collections::HashMap;
-use tracing::debug;
+use tracing::warn;
 
 #[derive(Debug)]
 pub struct Penalty {
@@ -20,7 +20,7 @@ pub struct DeliveryVerification {
 
 /// Computes penalties for each trade based on the measured energy.
 ///
-/// Measurements are mapped from facility IDs to the trade's buyer/seller IDs.
+/// Measurements are mapped through facility owners to the trade's buyer/seller IDs.
 /// The delta is computed as:
 ///   delta = measured_energy - traded_energy
 /// If delta > 0.0, it indicates under-trading for consumption and the buyer is penalized.
@@ -38,11 +38,11 @@ pub struct DeliveryVerification {
 pub fn compute_penalties(
     trades: &[DbTradeSchema],
     measurements: &[MeasurementSchema],
-    facility_onchain_ids: &HashMap<String, String>,
+    facility_owner_mapping: &HashMap<String, String>,
     penalty_rate: f64,
 ) -> Vec<Penalty> {
     let verifications =
-        compute_delivery_verifications(trades, measurements, facility_onchain_ids, penalty_rate);
+        compute_delivery_verifications(trades, measurements, facility_owner_mapping, penalty_rate);
     let trades_by_id: HashMap<_, _> = trades
         .iter()
         .map(|trade| (trade.trade_uuid.as_str(), trade))
@@ -73,22 +73,22 @@ pub fn compute_penalties(
 pub fn compute_delivery_verifications(
     trades: &[DbTradeSchema],
     measurements: &[MeasurementSchema],
-    facility_onchain_ids: &HashMap<String, String>,
+    facility_owner_mapping: &HashMap<String, String>,
     penalty_rate: f64,
 ) -> Vec<DeliveryVerification> {
     let mut verifications = Vec::new();
 
-    // Use the same facility ID mapping as the submitting community client.
+    // Measurements identify facilities; trades identify their owners (one facility per owner).
     let mut measurement_map: HashMap<String, f64> = HashMap::new();
     for meas in measurements {
         if !meas.energy_kwh.is_finite() {
             continue;
         }
-        let Some(onchain_id) = facility_onchain_ids.get(&meas.facility_id) else {
-            debug!("No derived identity supplied for facility_id={}", meas.facility_id);
+        let Some(owner_id) = facility_owner_mapping.get(&meas.facility_id) else {
+            warn!("No owner mapping for facility_id={}", meas.facility_id);
             continue;
         };
-        measurement_map.insert(onchain_id.clone(), meas.energy_kwh);
+        measurement_map.insert(derive_onchain_id(owner_id), meas.energy_kwh);
     }
     // TODO(DD-456): reconcile residual fills against the slot total; see DD-455's allocation.
     for trade in trades {

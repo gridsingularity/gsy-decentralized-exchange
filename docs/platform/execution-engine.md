@@ -26,10 +26,11 @@ Current penalty calculator logic:
 - `delta < 0`: penalize seller
 - Penalty scaled with `NODE_FLOAT_SCALING_FACTOR` (`10000`)
 
-Measurement identities are derived locally with the ID service's shared
-Blake2b-16 helper, without querying or writing ID mappings. This is the same
-identity used in `OrderParams.createdBy` and the indexed trade parties. Owner
-IDs and service wallets are not measurement identities. The penalty policy is
+Measurements identify facilities. The engine reads the facility-to-owner mapping
+from off-chain storage and derives each owner's on-chain ID with the ID service's
+shared Blake2b-16 helper, without writing ID mappings. That owner ID is used in
+`OrderParams.createdBy` and the indexed trade parties; the submitting service
+wallet is separate. This deployment guarantees one facility per owner. The penalty policy is
 unchanged: the buyer's measurement is preferred, with the seller's as a
 fallback. This does not independently verify both sides. Multiple measurements
 for a facility overwrite each other, and allocation across multiple trades is not

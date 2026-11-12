@@ -519,7 +519,7 @@ impl CommunityProvider for OffchainStorageClient {
     }
 }
 
-/// Resolve off-chain facility IDs before converting metadata or matching actor IDs.
+/// Resolve off-chain owner IDs before converting metadata or matching actor IDs.
 /// Input identifiers are always off-chain IDs, including UUID and hex-shaped strings.
 pub async fn resolve_order_partner_ids(
     requirements: &mut Option<DbRequirements>,

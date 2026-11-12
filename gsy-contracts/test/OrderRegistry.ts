@@ -31,7 +31,7 @@ describe("OrderRegistry", function () {
       await controller.getAddress(),
     ]);
 
-    const actorId = bytes16Id("facility:user");
+    const actorId = bytes16Id("owner:user");
     const marketId = bytes16Id("market-1");
     const ORCHESTRATOR_ROLE = await controller.ORCHESTRATOR_ROLE();
     await controller.grantRole(ORCHESTRATOR_ROLE, admin.address);
@@ -167,7 +167,7 @@ describe("OrderRegistry", function () {
     const secondOrder = {
       ...baseOrder,
       orderId: bytes16Id("second-order"),
-      createdBy: bytes16Id("second-facility"),
+      createdBy: bytes16Id("second-owner"),
       marketId: bytes16Id("second-market"),
     };
     const now = await time.latest();
@@ -333,7 +333,7 @@ describe("OrderRegistry", function () {
     expect(await registry.getStatus(baseOrder.orderId)).to.equal(3); // Cancelled
   });
 
-  it("Should reject cancellation with mismatched facility details", async function () {
+  it("Should reject cancellation with mismatched owner details", async function () {
     const { registry, communityClient, baseOrder } = await loadFixture(
       deployRegistryFixture,
     );

@@ -238,7 +238,7 @@ async fn submit_two_communities(world: &mut MyWorld) {
                     facility_id: format!("{prefix}area{user}"),
                     facility_name: format!("{prefix}area{user}"),
                     site_id: site.to_string(),
-                    owner_id: user.to_string(),
+                    owner_id: format!("{prefix}{user}"),
                 })
         })
         .collect();

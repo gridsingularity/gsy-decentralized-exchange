@@ -119,7 +119,7 @@ by those trusted services, not by this read-only endpoint or an ID mapping alone
 ### ID Mapping
 - The ID service, execution engine and certificate metadata share the deterministic
   Blake2b-16 derivation. Verification derives IDs locally and never creates mappings.
-  Certificate `owner_id` hashes the facility's current stored owner; historical
+  Certificate `owner_id` is the trade seller's owner hash; historical
   ownership policy remains a separate follow-up.
 - `/ids` (`POST`) — get-or-create offchain↔onchain ID mappings
 
@@ -193,11 +193,11 @@ There is no reindexing tool. See the
   queries that select it until corrected; the error is logged with query context.
 - The preferred trading partner of a bid or an offer is stored in its
   requirements (`requirements.trading_partner_id`) as the original off-chain
-  partner facility ID; attributes carry no partner.
+  partner owner ID; attributes carry no partner.
   Callers resolve these through `POST /ids` or EWDS `ids.query` before contract
   submission. The event indexer uses the ID mapping collection to recover the
-  facility IDs; the matcher resolves them back before comparing on-chain actors.
-  UUID-shaped facility IDs are mapping inputs, not already-encoded on-chain IDs.
+  owner IDs; the matcher resolves them back before comparing on-chain actors.
+  UUID-shaped owner IDs are mapping inputs, not already-encoded on-chain IDs.
   Missing reverse mappings cause an indexing error rather than fabricating an ID.
   Mappings must exist before order submission. A missing mapping fails the block;
   the listener logs the error and retries that block instead of skipping it.

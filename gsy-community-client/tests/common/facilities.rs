@@ -4,12 +4,22 @@ use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
 // Deliberately different from locally hashed IDs: callers must use the ID service's result.
-pub const FACILITY_1_ONCHAIN: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-pub const FACILITY_2_ONCHAIN: &str = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+pub const OWNER_1_ONCHAIN: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+pub const OWNER_2_ONCHAIN: &str = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
 pub async fn setup_facilities_mock(facility_ids: [&str; 2]) -> MockServer {
     let server = MockServer::start().await;
     let known_ids = facility_ids.map(str::to_string);
+    Mock::given(method("GET"))
+        .and(path("/facilities"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            facility_ids.iter().enumerate().map(|(index, facility_id)| json!({
+                "facility_id": facility_id, "facility_name": facility_id,
+                "site_id": "site-1", "owner_id": format!("owner-{}", index + 1)
+            })).collect::<Vec<_>>(),
+        ))
+        .mount(&server)
+        .await;
     Mock::given(method("POST"))
         .and(path("/facilities/validate"))
         .respond_with(move |request: &Request| {
@@ -32,15 +42,13 @@ pub async fn setup_facilities_mock(facility_ids: [&str; 2]) -> MockServer {
         .with_priority(10)
         .mount(&server)
         .await;
-    for (facility_id, onchain_id) in facility_ids
-        .into_iter()
-        .zip([FACILITY_1_ONCHAIN, FACILITY_2_ONCHAIN])
+    for (owner_id, onchain_id) in [("owner-1", OWNER_1_ONCHAIN), ("owner-2", OWNER_2_ONCHAIN)]
     {
         Mock::given(method("POST"))
             .and(path("/ids"))
-            .and(query_param("offchain_id", facility_id))
+            .and(query_param("offchain_id", owner_id))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "offchain_id": facility_id, "onchain_id": onchain_id, "creation_time": 0
+                "offchain_id": owner_id, "onchain_id": onchain_id, "creation_time": 0
             })))
             .mount(&server)
             .await;

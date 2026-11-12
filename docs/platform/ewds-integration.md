@@ -305,10 +305,10 @@ returns (`int.order.event.v1.json`):
       "timeSlot": "2026-09-30T10:00:00Z",
       "quantity": 1.5,
       "priceLimit": 0.3,
-      "createdBy": "facility-1",
+      "createdBy": "owner-1",
       "creationTime": "2026-09-30T09:40:12Z",
       "energySourcePreference": "GREEN",
-      "preferredTradingPartner": "facility-2",
+      "preferredTradingPartner": "owner-2",
       "preferredEnergyRate": 0.25
     }
   ]
@@ -319,11 +319,11 @@ returns (`int.order.event.v1.json`):
 |---|---|
 | `orderId` | A UUID chosen by the publisher. Its 16 bytes become the on-chain order ID, so `orders.query` and the trades' `bidId`/`offerId` return it as `0x` plus 32 hex digits. |
 | `marketId` | The market's non-zero UUID or bytes16 hex ID, e.g. from `markets.query`. The contract still checks that the market is open. |
-| `createdBy` | The original off-chain facility ID. The subscriber validates its participation in the market before mapping it to an on-chain ID. It is not the owner's ID or the service wallet. |
+| `createdBy` | The original off-chain owner ID. The subscriber resolves its facility and validates that facility's market participation before mapping the owner to an on-chain ID. It is not the facility ID or service wallet. This deployment guarantees one facility per owner. |
 | `orderStatus` | Must be `submitted`. |
 | `quantity` | Greater than 0, in kWh. |
 | `priceLimit` | 0 or more, in EUR/kWh. |
-| `preferredTradingPartner` | The partner's off-chain ID, resolved like `createdBy`. Stored in requirements for both bids and offers. |
+| `preferredTradingPartner` | The partner's off-chain owner ID, resolved like `createdBy`. Stored in requirements for both bids and offers. |
 | `updatedAt`, `rejectReason` | Ignored. |
 
 Handling rules:

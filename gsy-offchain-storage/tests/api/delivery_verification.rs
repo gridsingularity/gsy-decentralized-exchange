@@ -144,9 +144,9 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
     for index in 0..3u8 {
         let buyer = format!("buyer-{index}");
         let facility = format!("meter-{index}");
-        let seller_facility = format!("seller-meter-{index}");
-        let buyer_id = create_encrypted_bytes16_from_string(&facility);
-        let seller_id = create_encrypted_bytes16_from_string(&seller_facility);
+        let seller = format!("seller-{index}");
+        let buyer_id = create_encrypted_bytes16_from_string(&buyer);
+        let seller_id = create_encrypted_bytes16_from_string(&seller);
         let bid = (
             [index + 1; 16],
             buyer_id,
@@ -308,7 +308,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
         &settlement,
         "submitPenalties",
         (vec![(
-            create_encrypted_bytes16_from_string("meter-2"),
+            create_encrypted_bytes16_from_string("buyer-2"),
             market_id,
             [23u8; 16],
             200u64,
@@ -343,7 +343,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
     assert_eq!(
         app.db_wrapper.ids().count_documents(mongodb::bson::doc! {}).await?,
         mapping_count,
-        "Execution cycles must not create facility ID mappings"
+        "Execution cycles must not create ID mappings"
     );
     insert_measurements(&app.db_wrapper, &measurements[2..]).await?;
     assert_eq!(
