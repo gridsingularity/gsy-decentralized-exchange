@@ -46,6 +46,11 @@ Notes:
 - Intelligent ontology property names are kept in camelCase (`tradeId`, `marketId`).
 - Runtime service fields from GSY DEX are mapped in `docs/platform/ewds-data-contracts.md`.
 - The agreed Intelligent schemas use UUID identifiers and ISO 8601 timestamps.
+- Communities, sites and facilities carry `valid_from` and `valid_until`
+  (`validFrom` and `validUntil` for communities) as RFC 3339 strings in UTC.
+  The off-chain storage sets `valid_from` to the time it received the entry. A
+  sender sets `valid_until` to delete an entry from that time on. Sites are
+  identified by `site_id`, which a facility's `site_id` refers to.
 - The active DEX EVM settlement path still uses separate runtime DTOs for
   bytes32 hashes, area UUID hashes, and unix timeslots.
 - These schemas are versioned as `v1` and should be registered as EWDS topic

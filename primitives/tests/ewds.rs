@@ -1,5 +1,5 @@
 use primitives::db_api_schema::{
-    grid_topology::{EnergyCommunitySchema, FacilitySchema, SiteSchema},
+    grid_topology::EnergyCommunitySchema,
     market::{MarketSchema, MarketType, MatchingAlgorithm},
     orders::{DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus},
     profiles::MeasurementSchema,
@@ -10,8 +10,8 @@ use primitives::db_api_schema::{
 };
 use primitives::ewds::dto::{
     energy_type_from_ewds, energy_type_to_ewds, EwdsClearingResultDto, EwdsCommunityDto,
-    EwdsEventEnvelope, EwdsMarketDto, EwdsMeasurementDto, EwdsOrderDto, EwdsRequestEnvelope,
-    EwdsTradeDto,
+    EwdsEventEnvelope, EwdsFacilityDto, EwdsMarketDto, EwdsMeasurementDto, EwdsOrderDto,
+    EwdsRequestEnvelope, EwdsSiteDto, EwdsTradeDto,
 };
 use primitives::ewds::{
     empty_response_grace_elapsed, event_retry_delay_ms, invalid_event, is_invalid_event,
@@ -19,7 +19,7 @@ use primitives::ewds::{
     parse_gateway_delivery_summary, select_response_data, EwdsEventTopicConfig, EwdsEventType,
     EwdsOperation, EwdsTopicConfig, EwdsTopicPair,
 };
-use primitives::utils::epoch_to_rfc3339;
+use primitives::utils::{epoch_to_rfc3339, EPOCH_RFC3339};
 use serde_json::{json, Value};
 use std::str::FromStr;
 use std::time::Instant;
@@ -34,6 +34,8 @@ mod tests {
             community_id: "a5657b6e-b0b2-46ee-87d6-1e29470339a7".to_string(),
             community_name: "Test community".to_string(),
             sites: vec!["site-id".to_string()],
+            valid_from: EPOCH_RFC3339.to_string(),
+            valid_until: None,
         };
 
         let dto = EwdsCommunityDto::from(expected.clone());
@@ -43,7 +45,7 @@ mod tests {
             serialized.get("communityId").and_then(Value::as_str),
             Some(expected.community_id.as_str())
         );
-        assert_eq!(EnergyCommunitySchema::from(dto), expected);
+        assert_eq!(EnergyCommunitySchema::try_from(dto).unwrap(), expected);
     }
 
     fn order() -> DbOrderSchema {
@@ -512,8 +514,8 @@ mod tests {
     }
 
     #[test]
-    fn event_envelopes_carry_facility_and_site_schemas() {
-        let facility_event: EwdsEventEnvelope<Vec<FacilitySchema>> =
+    fn event_envelopes_carry_facility_and_site_dtos() {
+        let facility_event: EwdsEventEnvelope<Vec<EwdsFacilityDto>> =
             serde_json::from_value(json!({
                 "eventId": "facility-event",
                 "eventType": "facility.event",
@@ -529,19 +531,22 @@ mod tests {
         assert_eq!(facility_event.event_type, EwdsEventType::Facility);
         assert_eq!(
             facility_event.data,
-            vec![FacilitySchema {
+            vec![EwdsFacilityDto {
                 facility_id: "facility-id".to_string(),
                 facility_name: "Facility".to_string(),
                 site_id: "site-name".to_string(),
                 owner_id: "owner-id".to_string(),
+                valid_from: None,
+                valid_until: None,
             }]
         );
 
-        let site_event: EwdsEventEnvelope<Vec<SiteSchema>> = serde_json::from_value(json!({
+        let site_event: EwdsEventEnvelope<Vec<EwdsSiteDto>> = serde_json::from_value(json!({
             "eventId": "site-event",
             "eventType": "site.event",
             "occurredAt": "2026-09-29T10:16:02Z",
             "data": [{
+                "site_id": "site-id",
                 "site_name": "site-name",
                 "site_description": "Main building",
                 "facilities": ["facility-id"],
@@ -551,10 +556,13 @@ mod tests {
         assert_eq!(site_event.event_type, EwdsEventType::Site);
         assert_eq!(
             site_event.data,
-            vec![SiteSchema {
+            vec![EwdsSiteDto {
+                site_id: "site-id".to_string(),
                 site_name: "site-name".to_string(),
                 site_description: "Main building".to_string(),
                 facilities: vec!["facility-id".to_string()],
+                valid_from: None,
+                valid_until: None,
             }]
         );
     }

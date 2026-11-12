@@ -1,10 +1,14 @@
+use crate::db::grid_topology_service::{NameConflict, TopologyEntry, TopologyService};
 use crate::db::DbRef;
 use actix_web::{web::Json, web::Query, HttpResponse, Responder};
+use anyhow::Result;
 use primitives::db_api_schema::grid_topology::{
     AssetSchema, EnergyCommunitySchema, FacilitySchema, PilotSiteSchema, SiteSchema,
 };
 use primitives::db_api_schema::tariff::TariffSchema;
-use serde::Deserialize;
+use primitives::ewds::dto::{EwdsCommunityDto, EwdsFacilityDto, EwdsSiteDto};
+use primitives::ewds::is_invalid_event;
+use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
 pub struct AssetQuery {
@@ -66,62 +70,79 @@ pub async fn get_pilot_sites(db: DbRef) -> impl Responder {
     }
 }
 
-pub async fn post_community(community: Json<EnergyCommunitySchema>, db: DbRef) -> impl Responder {
-    match db
-        .get_ref()
-        .communities()
-        .upsert(community.to_owned())
-        .await
-    {
-        Ok(saved) => HttpResponse::Ok().json(saved),
-        Err(_) => HttpResponse::InternalServerError().finish(),
+pub async fn post_community(community: Json<EwdsCommunityDto>, db: DbRef) -> impl Responder {
+    match EnergyCommunitySchema::try_from(community.into_inner()) {
+        Ok(community) => store_response(
+            db.get_ref().communities().store(vec![community]).await,
+            EwdsCommunityDto::from,
+        ),
+        Err(error) => HttpResponse::BadRequest().body(format!("{error:#}")),
     }
 }
 
 pub async fn get_communities(db: DbRef) -> impl Responder {
-    match db.get_ref().communities().get_all().await {
-        Ok(communities) => HttpResponse::Ok().json(communities),
-        Err(e) => {
-            tracing::error!("Failed to execute query: {:?}", e);
-            HttpResponse::InternalServerError().finish()
-        }
-    }
+    latest_response(db.get_ref().communities(), EwdsCommunityDto::from).await
 }
 
-pub async fn post_site(site: Json<SiteSchema>, db: DbRef) -> impl Responder {
-    match db.get_ref().sites().insert(site.to_owned()).await {
-        Ok(saved) => HttpResponse::Ok().json(saved),
-        Err(_) => HttpResponse::InternalServerError().finish(),
+pub async fn post_site(site: Json<EwdsSiteDto>, db: DbRef) -> impl Responder {
+    match SiteSchema::try_from(site.into_inner()) {
+        Ok(site) => store_response(
+            db.get_ref().sites().store(vec![site]).await,
+            EwdsSiteDto::from,
+        ),
+        Err(error) => HttpResponse::BadRequest().body(format!("{error:#}")),
     }
 }
 
 pub async fn get_sites(db: DbRef) -> impl Responder {
-    match db.get_ref().sites().get_all().await {
-        Ok(sites) => HttpResponse::Ok().json(sites),
-        Err(e) => {
-            tracing::error!("Failed to execute query: {:?}", e);
+    latest_response(db.get_ref().sites(), EwdsSiteDto::from).await
+}
+
+pub async fn post_facility(facility: Json<EwdsFacilityDto>, db: DbRef) -> impl Responder {
+    match FacilitySchema::try_from(facility.into_inner()) {
+        Ok(facility) => store_response(
+            db.get_ref().facilities().store(vec![facility]).await,
+            EwdsFacilityDto::from,
+        ),
+        Err(error) => HttpResponse::BadRequest().body(format!("{error:#}")),
+    }
+}
+
+pub async fn get_facilities(db: DbRef) -> impl Responder {
+    latest_response(db.get_ref().facilities(), EwdsFacilityDto::from).await
+}
+
+/// 200 with the stored entry, 409 for a name that another entry uses, 400 for other invalid
+/// data, and 500 otherwise.
+fn store_response<T, D: Serialize>(
+    result: Result<Vec<T>>,
+    to_dto: impl Fn(T) -> D,
+) -> HttpResponse {
+    match result {
+        Ok(stored) => match stored.into_iter().next() {
+            Some(entry) => HttpResponse::Ok().json(to_dto(entry)),
+            None => HttpResponse::InternalServerError().finish(),
+        },
+        Err(error) if error.downcast_ref::<NameConflict>().is_some() => {
+            HttpResponse::Conflict().body(format!("{error:#}"))
+        }
+        Err(error) if is_invalid_event(&error) => {
+            HttpResponse::BadRequest().body(format!("{error:#}"))
+        }
+        Err(error) => {
+            tracing::error!("Failed to store: {error:#}");
             HttpResponse::InternalServerError().finish()
         }
     }
 }
 
-pub async fn post_facility(facility: Json<FacilitySchema>, db: DbRef) -> impl Responder {
-    match db.get_ref().facilities().insert(facility.to_owned()).await {
-        Ok(saved) => HttpResponse::Ok().json(saved),
-        Err(e) => {
-            if e.to_string().contains("E11000") || format!("{e:#}").contains("E11000") {
-                HttpResponse::Conflict().body("facility already exists")
-            } else {
-                tracing::error!("insert failed: {e:#}");
-                HttpResponse::InternalServerError().finish()
-            }
-        }
-    }
-}
-
-pub async fn get_facilities(db: DbRef) -> impl Responder {
-    match db.get_ref().facilities().get_all().await {
-        Ok(facilities) => HttpResponse::Ok().json(facilities),
+/// 200 with the latest entries of `service`.
+async fn latest_response<T: TopologyEntry, D: Serialize>(
+    service: TopologyService<T>,
+    to_dto: impl Fn(T) -> D,
+) -> HttpResponse {
+    match service.get().await {
+        Ok(entries) => HttpResponse::Ok().json(entries.into_iter().map(to_dto).collect::<Vec<_>>()),
         Err(e) => {
             tracing::error!("Failed to execute query: {:?}", e);
             HttpResponse::InternalServerError().finish()

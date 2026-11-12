@@ -7,7 +7,7 @@ use gsy_offchain_storage::ewds_handler::{
     handle_request, validate_trades_query_range, EwdsHandlerConfig, INVALID_TIME_RANGE,
     MAX_TRADES_QUERY_RANGE_SECS, TIME_RANGE_TOO_LARGE,
 };
-use primitives::db_api_schema::grid_topology::FacilitySchema;
+use primitives::db_api_schema::grid_topology::{EnergyCommunitySchema, FacilitySchema};
 use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
 use primitives::db_api_schema::orders::{DbOrderSchema, OrderEnum, OrderStatus};
 use primitives::db_api_schema::trades::{
@@ -17,7 +17,7 @@ use primitives::ewds::dto::{EwdsRequestEnvelope, EwdsSendMessageDto};
 use primitives::ewds::{EwdsEventTopicConfig, EwdsOperation, EwdsTopicConfig};
 use primitives::utils::{
     bytes16_to_hex, bytes16_to_uuid_string, create_encrypted_bytes16_from_string, epoch_to_rfc3339,
-    rfc3339_to_epoch, timestamp_to_string_with_padding,
+    now_epoch_secs, rfc3339_to_epoch, timestamp_to_string_with_padding, EPOCH_RFC3339,
 };
 use serde_json::json;
 use wiremock::matchers::{method, path};
@@ -918,6 +918,8 @@ fn make_facility(facility_id: &str, facility_name: &str) -> FacilitySchema {
         facility_name: facility_name.to_string(),
         site_id: "site-1".to_string(),
         owner_id: "owner-1".to_string(),
+        valid_from: EPOCH_RFC3339.to_string(),
+        valid_until: None,
     }
 }
 
@@ -930,11 +932,11 @@ async fn facilities_query_returns_all() {
 
     let facilities = app.db_wrapper.facilities();
     facilities
-        .insert(make_facility("f1", "facility-1"))
+        .insert_one(make_facility("f1", "facility-1"))
         .await
         .unwrap();
     facilities
-        .insert(make_facility("f2", "facility-2"))
+        .insert_one(make_facility("f2", "facility-2"))
         .await
         .unwrap();
 
@@ -980,6 +982,99 @@ async fn facilities_query_empty_returns_empty() {
 
     let data = captured_data(&server).await;
     assert!(data.is_empty());
+
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn facilities_query_returns_only_the_latest_entries() {
+    let app = init_app().await;
+    let server = mock_gateway().await;
+    let config = test_config(server.uri());
+    let client = reqwest::Client::new();
+
+    let facilities = app.db_wrapper.facilities();
+    facilities
+        .store(vec![
+            make_facility("f1", "facility-1"),
+            make_facility("f2", "facility-2"),
+        ])
+        .await
+        .unwrap();
+    // f1 gets another owner, f2 is deleted.
+    let mut changed = make_facility("f1", "facility-1");
+    changed.owner_id = "owner-2".to_string();
+    let mut gone = make_facility("f2", "facility-2");
+    gone.valid_until = Some(epoch_to_rfc3339(now_epoch_secs()));
+    facilities.store(vec![changed, gone]).await.unwrap();
+
+    let env = envelope(
+        EwdsOperation::FacilitiesQuery,
+        "req-facilities-latest",
+        json!({}),
+    );
+    handle_request(&app.db_wrapper, &client, &config, env)
+        .await
+        .unwrap();
+
+    let data = captured_data(&server).await;
+    assert_eq!(data.len(), 1, "{data:?}");
+    assert_eq!(data[0]["facility_id"], "f1");
+    assert_eq!(data[0]["owner_id"], "owner-2");
+
+    stop_app(app).await;
+}
+
+// --- CommunitiesQuery -----------------------------------------------
+
+fn make_community(community_id: &str, community_name: &str) -> EnergyCommunitySchema {
+    EnergyCommunitySchema {
+        community_id: community_id.to_string(),
+        community_name: community_name.to_string(),
+        sites: vec!["site-1".to_string()],
+        valid_from: EPOCH_RFC3339.to_string(),
+        valid_until: None,
+    }
+}
+
+#[tokio::test]
+async fn communities_query_returns_only_the_latest_entries() {
+    let app = init_app().await;
+    let server = mock_gateway().await;
+    let config = test_config(server.uri());
+    let client = reqwest::Client::new();
+    let first = "70070070-0000-4000-8000-000000000001";
+    let second = "70070070-0000-4000-8000-000000000002";
+
+    let communities = app.db_wrapper.communities();
+    communities
+        .store(vec![
+            make_community(first, "Community 1"),
+            make_community(second, "Community 2"),
+        ])
+        .await
+        .unwrap();
+    // The first is renamed, the second is deleted.
+    let mut gone = make_community(second, "Community 2");
+    gone.valid_until = Some(epoch_to_rfc3339(now_epoch_secs()));
+    communities
+        .store(vec![make_community(first, "Community 1 renamed"), gone])
+        .await
+        .unwrap();
+
+    let env = envelope(
+        EwdsOperation::CommunitiesQuery,
+        "req-communities-latest",
+        json!({}),
+    );
+    handle_request(&app.db_wrapper, &client, &config, env)
+        .await
+        .unwrap();
+
+    let data = captured_data(&server).await;
+    assert_eq!(data.len(), 1, "{data:?}");
+    assert_eq!(data[0]["communityId"], first);
+    assert_eq!(data[0]["communityName"], "Community 1 renamed");
 
     stop_app(app).await;
 }

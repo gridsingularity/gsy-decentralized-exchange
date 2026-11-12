@@ -107,7 +107,7 @@ pub fn string_to_timestamp(timestamp_string: &str) -> Result<u64> {
     Ok(ts)
 }
 
-/// Format epoch seconds as an ISO 8601 / RFC 3339 string with timezone (UTC, `Z`).
+/// Format epoch seconds as an ISO 8601 / RFC 3339 string with timezone (UTC, `+00:00`).
 pub fn epoch_to_rfc3339(epoch_secs: u64) -> String {
     Utc.timestamp_opt(epoch_secs as i64, 0)
         .single()
@@ -123,3 +123,12 @@ pub fn rfc3339_to_epoch(value: &str) -> Result<u64> {
 pub fn opt_rfc3339_to_epoch(value: Option<&str>) -> Result<Option<u64>> {
     value.map(rfc3339_to_epoch).transpose()
 }
+
+/// The current time in unix seconds.
+pub fn now_epoch_secs() -> u64 {
+    Utc::now().timestamp().max(0) as u64
+}
+
+/// `valid_from` of an entry whose receive time is unknown: `epoch_to_rfc3339(0)`, the oldest
+/// possible.
+pub const EPOCH_RFC3339: &str = "1970-01-01T00:00:00+00:00";

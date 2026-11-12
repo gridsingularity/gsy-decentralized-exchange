@@ -23,7 +23,8 @@ use primitives::utils::{
     NODE_FLOAT_SCALING_FACTOR,
     parse_uuid_or_hex_bytes16,
     rfc3339_to_epoch,
-    timestamp_to_string_with_padding
+    timestamp_to_string_with_padding,
+    EPOCH_RFC3339,
 };
 use std::collections::HashSet;
 use std::env;
@@ -657,12 +658,16 @@ async fn submit_community_market_measurements(world: &mut MyWorld) {
             facility_name: "alice".to_string(),
             site_id: "site-12345".to_string(),
             owner_id: "alice".to_string(),
+            valid_from: EPOCH_RFC3339.to_string(),
+            valid_until: None,
         },
         FacilitySchema {
             facility_id: "bob".to_string(),
             facility_name: "bob".to_string(),
             site_id: "site-12346".to_string(),
             owner_id: "bob".to_string(),
+            valid_from: EPOCH_RFC3339.to_string(),
+            valid_until: None,
         },
     ];
     world.create_facilities(facilities).await;

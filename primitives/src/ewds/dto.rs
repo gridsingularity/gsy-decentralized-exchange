@@ -1,6 +1,6 @@
 use super::{EwdsEventType, EwdsOperation};
 use crate::db_api_schema::{
-    grid_topology::EnergyCommunitySchema,
+    grid_topology::{EnergyCommunitySchema, FacilitySchema, SiteSchema},
     market::{MarketSchema, MarketType, MatchingAlgorithm},
     orders::{DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus},
     profiles::MeasurementSchema,
@@ -11,8 +11,9 @@ use crate::db_api_schema::{
 };
 
 use crate::utils::{
-    bytes16_to_hex, bytes16_to_uuid_string, epoch_to_rfc3339, opt_rfc3339_to_epoch, parse_uuid_or_hex_bytes16,
-    rfc3339_to_epoch, string_to_timestamp, timestamp_to_string_with_padding,
+    bytes16_to_hex, bytes16_to_uuid_string, epoch_to_rfc3339, opt_rfc3339_to_epoch,
+    parse_uuid_or_hex_bytes16, rfc3339_to_epoch, string_to_timestamp,
+    timestamp_to_string_with_padding, EPOCH_RFC3339,
 };
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -119,12 +120,60 @@ pub struct EwdsOrderDto {
     pub preferred_energy_rate: Option<f64>,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+/// The wire form of a community, on EWDS and REST, in camelCase. `validFrom` and `validUntil` are RFC 3339
+/// strings. A `validFrom` sent to GSY is ignored: GSY sets it to the time it receives the entry.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct EwdsCommunityDto {
     pub community_id: String,
     pub community_name: String,
     pub sites: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valid_from: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valid_until: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct EwdsSiteDto {
+    pub site_id: String,
+    pub site_name: String,
+    pub site_description: String,
+    pub facilities: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valid_from: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valid_until: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct EwdsFacilityDto {
+    pub facility_id: String,
+    pub facility_name: String,
+    pub site_id: String,
+    pub owner_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valid_from: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valid_until: Option<String>,
+}
+
+fn validate_times(
+    valid_from: Option<String>,
+    valid_until: Option<String>,
+) -> Result<(String, Option<String>)> {
+    // Written back in UTC like every stored time, so that MongoDB compares them as strings.
+    let stored = |time: &str| rfc3339_to_epoch(time).map(epoch_to_rfc3339);
+    let valid_from = match valid_from {
+        Some(valid_from) => stored(&valid_from).context("invalid valid_from")?,
+        None => EPOCH_RFC3339.to_string(),
+    };
+    let valid_until = valid_until
+        .as_deref()
+        .map(stored)
+        .transpose()
+        .context("invalid valid_until")?;
+    Ok((valid_from, valid_until))
 }
 
 impl From<EnergyCommunitySchema> for EwdsCommunityDto {
@@ -133,17 +182,83 @@ impl From<EnergyCommunitySchema> for EwdsCommunityDto {
             community_id: community.community_id,
             community_name: community.community_name,
             sites: community.sites,
+            valid_from: Some(community.valid_from),
+            valid_until: community.valid_until,
         }
     }
 }
 
-impl From<EwdsCommunityDto> for EnergyCommunitySchema {
-    fn from(community: EwdsCommunityDto) -> Self {
-        Self {
+impl TryFrom<EwdsCommunityDto> for EnergyCommunitySchema {
+    type Error = anyhow::Error;
+
+    fn try_from(community: EwdsCommunityDto) -> Result<Self> {
+        let (valid_from, valid_until) =
+            validate_times(community.valid_from, community.valid_until)?;
+        Ok(Self {
             community_id: community.community_id,
             community_name: community.community_name,
             sites: community.sites,
+            valid_from,
+            valid_until,
+        })
+    }
+}
+
+impl From<SiteSchema> for EwdsSiteDto {
+    fn from(site: SiteSchema) -> Self {
+        Self {
+            site_id: site.site_id,
+            site_name: site.site_name,
+            site_description: site.site_description,
+            facilities: site.facilities,
+            valid_from: Some(site.valid_from),
+            valid_until: site.valid_until,
         }
+    }
+}
+
+impl TryFrom<EwdsSiteDto> for SiteSchema {
+    type Error = anyhow::Error;
+
+    fn try_from(site: EwdsSiteDto) -> Result<Self> {
+        let (valid_from, valid_until) = validate_times(site.valid_from, site.valid_until)?;
+        Ok(Self {
+            site_id: site.site_id,
+            site_name: site.site_name,
+            site_description: site.site_description,
+            facilities: site.facilities,
+            valid_from,
+            valid_until,
+        })
+    }
+}
+
+impl From<FacilitySchema> for EwdsFacilityDto {
+    fn from(facility: FacilitySchema) -> Self {
+        Self {
+            facility_id: facility.facility_id,
+            facility_name: facility.facility_name,
+            site_id: facility.site_id,
+            owner_id: facility.owner_id,
+            valid_from: Some(facility.valid_from),
+            valid_until: facility.valid_until,
+        }
+    }
+}
+
+impl TryFrom<EwdsFacilityDto> for FacilitySchema {
+    type Error = anyhow::Error;
+
+    fn try_from(facility: EwdsFacilityDto) -> Result<Self> {
+        let (valid_from, valid_until) = validate_times(facility.valid_from, facility.valid_until)?;
+        Ok(Self {
+            facility_id: facility.facility_id,
+            facility_name: facility.facility_name,
+            site_id: facility.site_id,
+            owner_id: facility.owner_id,
+            valid_from,
+            valid_until,
+        })
     }
 }
 

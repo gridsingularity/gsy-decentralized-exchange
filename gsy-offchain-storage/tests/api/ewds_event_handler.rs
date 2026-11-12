@@ -1,6 +1,6 @@
 use crate::evm_integration::{expected_market, new_market_event};
 use crate::ewds_handler::{mock_gateway, test_config};
-use crate::helpers::{init_app, stop_app};
+use crate::helpers::{init_app, stop_app, stored};
 use ethers::contract::LogMeta;
 use ethers::types::{Address, H256, U256, U64};
 use gsy_ethers_listener::{
@@ -21,11 +21,13 @@ use primitives::db_api_schema::trades::{
     ClearingResultSchema, ClearingStatus, DbTradeSchema, TradeParameters, TradeStatus,
 };
 use primitives::ewds::dto::{
-    EwdsEventEnvelope, EwdsMarketDto, EwdsOrderDto, EwdsRequestEnvelope, EwdsSendMessageDto,
-    EwdsTradeDto,
+    EwdsEventEnvelope, EwdsFacilityDto, EwdsMarketDto, EwdsOrderDto, EwdsRequestEnvelope,
+    EwdsSendMessageDto, EwdsTradeDto,
 };
 use primitives::ewds::{is_invalid_event, EwdsEventType, EwdsOperation};
-use primitives::utils::{bytes16_to_hex, epoch_to_rfc3339, timestamp_to_string_with_padding};
+use primitives::utils::{
+    bytes16_to_hex, epoch_to_rfc3339, timestamp_to_string_with_padding, EPOCH_RFC3339,
+};
 use serde_json::{json, Value};
 use std::time::Duration;
 use uuid::Uuid;
@@ -1264,7 +1266,14 @@ fn facility(facility_id: &str, owner_id: &str) -> FacilitySchema {
         facility_name: format!("Facility {}", facility_id),
         site_id: "site-1".to_string(),
         owner_id: owner_id.to_string(),
+        valid_from: EPOCH_RFC3339.to_string(),
+        valid_until: None,
     }
+}
+
+/// `facility` as a `facility.event` carries it.
+fn facility_json(facility_id: &str, owner_id: &str) -> Value {
+    json!(EwdsFacilityDto::from(facility(facility_id, owner_id)))
 }
 
 fn measurement_data(facility_id: &str, time_slot: u64, energy_kwh: f64) -> Value {
@@ -1311,8 +1320,8 @@ async fn handle_event_saves_facilities_sites_and_communities() {
             EwdsEventType::Facility,
             "facility-event",
             json!([
-                facility("facility-1", "owner-1"),
-                facility("facility-2", "owner-2")
+                facility_json("facility-1", "owner-1"),
+                facility_json("facility-2", "owner-2")
             ]),
         ),
     )
@@ -1324,6 +1333,7 @@ async fn handle_event_saves_facilities_sites_and_communities() {
             EwdsEventType::Site,
             "site-event",
             json!([{
+                "site_id": "site-1",
                 "site_name": "site-1",
                 "site_description": "Main building",
                 "facilities": ["facility-1", "facility-2"],
@@ -1347,7 +1357,7 @@ async fn handle_event_saves_facilities_sites_and_communities() {
     .await
     .unwrap();
 
-    let mut facilities = db.facilities().get_all().await.unwrap();
+    let mut facilities = stored(db.facilities()).await;
     facilities.sort_by(|a, b| a.facility_id.cmp(&b.facility_id));
     assert_eq!(
         facilities,
@@ -1357,28 +1367,34 @@ async fn handle_event_saves_facilities_sites_and_communities() {
         ]
     );
     assert_eq!(
-        db.sites().get_all().await.unwrap(),
+        stored(db.sites()).await,
         vec![SiteSchema {
+            site_id: "site-1".to_string(),
             site_name: "site-1".to_string(),
             site_description: "Main building".to_string(),
             facilities: vec!["facility-1".to_string(), "facility-2".to_string()],
+            valid_from: EPOCH_RFC3339.to_string(),
+            valid_until: None,
         }]
     );
     assert_eq!(
-        db.communities().get_all().await.unwrap(),
+        stored(db.communities()).await,
         vec![EnergyCommunitySchema {
             community_id: "community-1".to_string(),
             community_name: "Community 1".to_string(),
             sites: vec!["site-1".to_string()],
+            valid_from: EPOCH_RFC3339.to_string(),
+            valid_until: None,
         }]
     );
 
     stop_app(app).await;
 }
 
-/// Sends batches of `(id, name)` records as `event_type` events and returns the `(id, name)`
-/// pairs stored afterwards. The first batch is stored; every later one conflicts with it or
-/// with itself, so it must be rejected without writing anything.
+/// Sends batches of `(id, name)` records as `event_type` events and checks the `(id, name)`
+/// pairs stored afterwards. The first batch is stored. The next ones use the name of another
+/// latest entry, or repeat an id or a name, so they must be rejected without writing anything.
+/// Then a rename is stored, after which the old name is free for another id.
 async fn assert_conflicting_batches_are_rejected<F, G>(
     event_type: EwdsEventType,
     record: F,
@@ -1401,9 +1417,7 @@ async fn assert_conflicting_batches_are_rejected<F, G>(
     .await
     .unwrap();
 
-    let conflicting: [&[(&str, &str)]; 4] = [
-        // A stored id under another name.
-        &[("id-1", "name-2")],
+    let conflicting: [&[(&str, &str)]; 3] = [
         // A stored name under another id, after a valid record that must not be written.
         &[("id-3", "name-3"), ("id-2", "name-1")],
         // One id with two names in the batch.
@@ -1431,21 +1445,39 @@ async fn assert_conflicting_batches_are_rejected<F, G>(
     .unwrap();
     assert_eq!(stored(db.clone()).await, initial);
 
+    // A rename is fine, and frees the old name.
+    handle_event(
+        db,
+        event(event_type, "rename", batch(&[("id-1", "name-1b")])),
+    )
+    .await
+    .unwrap();
+    handle_event(db, event(event_type, "reuse", batch(&[("id-2", "name-1")])))
+        .await
+        .unwrap();
+    assert_eq!(
+        stored(db.clone()).await,
+        vec![
+            ("id-1".to_string(), "name-1b".to_string()),
+            ("id-2".to_string(), "name-1".to_string()),
+        ]
+    );
+
     stop_app(app).await;
 }
 
 #[tokio::test]
-async fn handle_event_rejects_facilities_that_conflict_with_stored_ids_or_names() {
+async fn handle_event_rejects_facilities_with_names_of_other_entries_and_accepts_renames() {
     assert_conflicting_batches_are_rejected(
         EwdsEventType::Facility,
         |id, name| {
-            json!(FacilitySchema {
+            json!(EwdsFacilityDto::from(FacilitySchema {
                 facility_name: name.to_string(),
                 ..facility(id, "owner-1")
-            })
+            }))
         },
         |db| async move {
-            let mut facilities = db.facilities().get_all().await.unwrap();
+            let mut facilities = stored(db.facilities()).await;
             facilities.sort_by(|a, b| a.facility_id.cmp(&b.facility_id));
             facilities
                 .into_iter()
@@ -1457,12 +1489,12 @@ async fn handle_event_rejects_facilities_that_conflict_with_stored_ids_or_names(
 }
 
 #[tokio::test]
-async fn handle_event_rejects_communities_that_conflict_with_stored_ids_or_names() {
+async fn handle_event_rejects_communities_with_names_of_other_entries_and_accepts_renames() {
     assert_conflicting_batches_are_rejected(
         EwdsEventType::Community,
         |id, name| json!({"communityId": id, "communityName": name, "sites": []}),
         |db| async move {
-            let mut communities = db.communities().get_all().await.unwrap();
+            let mut communities = stored(db.communities()).await;
             communities.sort_by(|a, b| a.community_id.cmp(&b.community_id));
             communities
                 .into_iter()
@@ -1563,7 +1595,7 @@ async fn handle_event_stores_nothing_from_a_batch_with_an_invalid_facility() {
             EwdsEventType::Facility,
             "facility-event",
             json!([
-                facility("facility-1", "owner-1"),
+                facility_json("facility-1", "owner-1"),
                 {"facility_id": "facility-2"}
             ]),
         ),
@@ -1573,13 +1605,7 @@ async fn handle_event_stores_nothing_from_a_batch_with_an_invalid_facility() {
 
     assert!(format!("{error:#}").contains("index 1"), "{error:#}");
     assert!(is_invalid_event(&error));
-    assert!(app
-        .db_wrapper
-        .facilities()
-        .get_all()
-        .await
-        .unwrap()
-        .is_empty());
+    assert!(stored(app.db_wrapper.facilities()).await.is_empty());
 
     stop_app(app).await;
 }
@@ -1595,7 +1621,7 @@ async fn handle_event_updates_the_record_when_an_event_arrives_again() {
             event(
                 EwdsEventType::Facility,
                 "facility-event",
-                json!([facility("facility-1", owner_id)]),
+                json!([facility_json("facility-1", owner_id)]),
             ),
         )
         .await
@@ -1615,7 +1641,7 @@ async fn handle_event_updates_the_record_when_an_event_arrives_again() {
     }
 
     assert_eq!(
-        db.facilities().get_all().await.unwrap(),
+        stored(db.facilities()).await,
         vec![facility("facility-1", "owner-2")]
     );
     assert_eq!(
@@ -1636,7 +1662,7 @@ async fn handle_event_rejects_invalid_data_and_events_gsy_publishes() {
         event(
             EwdsEventType::Facility,
             "facility-event",
-            json!(facility("facility-1", "owner-1")),
+            facility_json("facility-1", "owner-1"),
         ),
     )
     .await
@@ -1652,7 +1678,7 @@ async fn handle_event_rejects_invalid_data_and_events_gsy_publishes() {
             .await
             .is_err()
     );
-    assert!(db.facilities().get_all().await.unwrap().is_empty());
+    assert!(stored(db.facilities()).await.is_empty());
 
     stop_app(app).await;
 }
@@ -1665,12 +1691,12 @@ async fn event_subscriber_skips_bad_messages_and_saves_the_next_one() {
     let wrong_topic_event = event(
         EwdsEventType::Site,
         "site-event",
-        json!([{"site_name": "wrong-topic-site", "site_description": "", "facilities": []}]),
+        json!([{"site_id": "wrong-topic-site", "site_name": "wrong-topic-site", "site_description": "", "facilities": []}]),
     );
     let facility_event = event(
         EwdsEventType::Facility,
         "facility-event",
-        json!([facility("facility-1", "owner-1")]),
+        json!([facility_json("facility-1", "owner-1")]),
     );
     Mock::given(method("GET"))
         .and(path("/api/v2/messages"))
@@ -1696,7 +1722,7 @@ async fn event_subscriber_skips_bad_messages_and_saves_the_next_one() {
     ));
     let mut facilities = Vec::new();
     for _ in 0..100 {
-        facilities = app.db_wrapper.facilities().get_all().await.unwrap();
+        facilities = stored(app.db_wrapper.facilities()).await;
         if !facilities.is_empty() {
             break;
         }
@@ -1705,7 +1731,7 @@ async fn event_subscriber_skips_bad_messages_and_saves_the_next_one() {
     subscriber.abort();
 
     assert_eq!(facilities, vec![facility("facility-1", "owner-1")]);
-    assert!(app.db_wrapper.sites().get_all().await.unwrap().is_empty());
+    assert!(stored(app.db_wrapper.sites()).await.is_empty());
 
     stop_app(app).await;
 }
