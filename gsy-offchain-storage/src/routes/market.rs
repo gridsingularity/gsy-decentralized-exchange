@@ -3,7 +3,7 @@ use actix_web::{web::Json, web::Query, HttpResponse, Responder};
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::trades::{ClearingResultSchema, MarketRoleSchema};
 use primitives::ewds::dto::EwdsClearingResultDto;
-use primitives::utils::normalize_community_id;
+use primitives::utils::{normalize_community_id, normalize_market_id};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -125,10 +125,14 @@ pub struct ClearingResultQuery {
 }
 
 pub async fn get_clearing_results(db: DbRef, params: Query<ClearingResultQuery>) -> impl Responder {
+    let market_id = match normalize_market_id(&params.market_id) {
+        Ok(id) => id,
+        Err(error) => return HttpResponse::BadRequest().body(error.to_string()),
+    };
     match db
         .get_ref()
         .clearing_results()
-        .get_by_market(&params.market_id)
+        .get_by_market(&market_id)
         .await
     {
         Ok(results) => {

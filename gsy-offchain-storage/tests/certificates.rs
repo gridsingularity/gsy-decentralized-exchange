@@ -389,7 +389,7 @@ fn only_executed_trades_yield_records() {
     for status in [
         TradeStatus::Settled,
         TradeStatus::Matched,
-        TradeStatus::Rejected,
+        TradeStatus::Penalized,
     ] {
         let t = trade(
             "trade-1",

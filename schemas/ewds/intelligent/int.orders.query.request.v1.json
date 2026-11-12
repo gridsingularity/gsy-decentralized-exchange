@@ -11,7 +11,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "marketId": { "type": "string", "pattern": "^0x[a-fA-F0-9]{64}$" },
+        "marketId": { "type": "string", "pattern": "^(?:0x[a-fA-F0-9]{32}|[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12})$", "description": "Market ID as UUID or 0x-prefixed 16-byte hex." },
         "startTime": { "type": "string", "format": "date-time", "description": "Inclusive range start, RFC 3339." },
         "endTime": { "type": "string", "format": "date-time", "description": "Exclusive range end, RFC 3339." }
       }

@@ -4,6 +4,13 @@ The contract stack is isolated from the application and e2e compose files. Run
 contract deployment first, keep the target chain available, then start the GSY
 services with the generated proxy addresses.
 
+## Fresh Deployments
+
+The DD-453 trade lifecycle targets fresh contract deployments and an empty
+off-chain database. Start the listener before submitting orders. No migration
+or reindexing tool is provided for older lifecycle records, and the listener
+does not persist its replay cursor across restarts.
+
 ## Supported Networks
 
 | Target | Network | RPC URL | Chain ID | Currency |

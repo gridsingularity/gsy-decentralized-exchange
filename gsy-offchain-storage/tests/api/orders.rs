@@ -32,7 +32,7 @@ async fn post_orders_persists_order_to_the_db() {
     let address = app.address.clone();
     let order = make_order(
         "0x0000000000000000000000000000000000000000000000000000000000000123",
-        "0x0000000000000000000000000000000000000000000000000000000000000456",
+        "0x00000000000000000000000000000456",
         OrderEnum::Bid,
     );
     let orderlist = vec![order.clone()];
@@ -85,7 +85,7 @@ async fn post_orders_persists_order_to_the_db() {
 async fn post_normalized_order_round_trips() {
     let app = init_app().await;
     let address = app.address.clone();
-    let market_id = "0x00000000000000000000000000000000000000000000000000000000d0e50001";
+    let market_id = "0x000000000000000000000000d0e50001";
     let order = make_order(
         "0x00000000000000000000000000000000000000000000000000000000d0e50002",
         market_id,
@@ -139,8 +139,8 @@ async fn filter_orders_by_market_and_time_range() {
     let app = init_app().await;
     let address = app.address.clone();
 
-    let market_a = "0x00000000000000000000000000000000000000000000000000000000d0e5aaaa";
-    let market_b = "0x00000000000000000000000000000000000000000000000000000000d0e5bbbb";
+    let market_a = "0x000000000000000000000000d0e5aaaa";
+    let market_b = "0x000000000000000000000000d0e5bbbb";
 
     // Three orders in market_a at time_slots 10, 20, 30; one in market_b at 20.
     let mut orders = Vec::new();

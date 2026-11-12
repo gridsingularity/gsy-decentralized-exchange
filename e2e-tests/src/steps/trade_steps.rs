@@ -12,7 +12,7 @@ use primitives::db_api_schema::orders::{
     OrderStatus,
 };
 use primitives::db_api_schema::profiles::MeasurementSchema;
-use primitives::db_api_schema::trades::DbTradeSchema;
+use primitives::db_api_schema::trades::{DbTradeSchema, TradeStatus};
 use primitives::matching::matching_block_interval;
 use primitives::offchain_storage::{
     resolve_order_partner_ids, OffchainStorageClient, OffchainStorageTransport,
@@ -135,6 +135,7 @@ abigen!(
         function penaltyEnergyByTrade(bytes16 tradeId) external view returns (uint256)
         event TradeSettled(bytes16 indexed tradeId, bytes16 indexed bidId, bytes16 indexed offerId, bytes16 buyerId, bytes16 sellerId, bytes16 marketId, uint64 timeSlot, bytes16 residualBidId, bytes16 residualOfferId, uint256 energy, uint256 price)
         event DeliveryVerified(bytes16 indexed tradeId, bytes16 indexed bidId, bytes16 indexed offerId)
+        event PenaltyRecorded(bytes16 indexed penalizedActorId, bytes16 indexed marketId, bytes16 indexed tradeId, uint64 penaltyEnergy)
     ]"#
 );
 
@@ -1875,7 +1876,8 @@ async fn verify_penalties_on_chain(world: &mut MyWorld) {
 
         if recorded_trade_ids.len() == trades.len() {
             for trade in &trades {
-                super::lifecycle_steps::assert_trade_executed(world, trade).await;
+                super::lifecycle_steps::assert_trade_verified(world, trade, TradeStatus::Penalized)
+                    .await;
             }
             return;
         }

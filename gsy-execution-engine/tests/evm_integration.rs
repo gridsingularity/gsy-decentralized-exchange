@@ -237,7 +237,7 @@ async fn test_submit_penalties_persists_to_trade_settlement_contract() {
 fn late_trade(id: u8, market: u8, creation_time: u64) -> DbTradeSchema {
     DbTradeSchema {
         trade_uuid: bytes16_to_hex([id; 16]),
-        status: TradeStatus::Settled,
+        status: TradeStatus::Matched,
         status_updated_at: None,
         seller: bytes16_to_hex(create_encrypted_bytes16_from_string("bob")),
         buyer: bytes16_to_hex(create_encrypted_bytes16_from_string("alice")),
