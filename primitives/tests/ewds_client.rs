@@ -163,6 +163,49 @@ fn order_event(event_id: &str) -> EwdsEventEnvelope<Value> {
     }
 }
 
+fn order_status_event(status: &str) -> EwdsEventEnvelope<Value> {
+    EwdsEventEnvelope {
+        event_id: format!("status-{}", status),
+        event_type: EwdsEventType::OrderStatus,
+        occurred_at: "2026-09-30T09:40:13Z".to_string(),
+        data: json!([{
+            "orderId": "3f2c6d1e-8a4b-4c7d-9e2f-1a5b6c7d8e9f",
+            "marketId": "0x11111111111111111111111111111111",
+            "orderType": "bid",
+            "orderStatus": status,
+            "timeSlot": "2026-09-30T10:00:00Z",
+            "quantity": 1.5,
+            "priceLimit": 0.3,
+            "createdBy": "owner-1",
+            "creationTime": "2026-09-30T09:40:12Z",
+            "updatedAt": "2026-09-30T09:40:13Z",
+        }]),
+    }
+}
+
+#[tokio::test]
+async fn status_notifications_publish_on_the_existing_order_topic() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v2/messages"))
+        .respond_with(delivered())
+        .expect(1)
+        .mount(&server)
+        .await;
+    let event = order_status_event("submitted");
+    client(&server).publish_event(&event).await.unwrap();
+
+    let requests = server.received_requests().await.unwrap();
+    let sent: EwdsSendMessageDto = serde_json::from_slice(&requests[0].body).unwrap();
+    assert_eq!(sent.fqcn, "gsy.events.pub");
+    assert_eq!(sent.topic_name, "order");
+    assert_eq!(sent.transaction_id, event.event_id);
+    assert_eq!(
+        serde_json::from_str::<Value>(&sent.payload).unwrap(),
+        serde_json::to_value(event).unwrap()
+    );
+}
+
 /// Runs the order event worker against `server` until `expected` events were handled, then
 /// gives it a few more polls and returns the IDs of all handled events, one per attempt.
 /// `outcome` gets the event ID and how often the event was handled before and decides the
@@ -271,6 +314,34 @@ async fn event_worker_skips_bad_and_seen_messages() {
     let handled = run_order_event_worker(&server, 1, succeeds).await;
 
     assert_eq!(handled, vec!["order-event"]);
+}
+
+#[tokio::test]
+async fn order_submission_worker_ignores_every_status_notification() {
+    let server = MockServer::start().await;
+    let mut messages: Vec<Value> = [
+        "submitted",
+        "partially_filled",
+        "filled",
+        "cancelled",
+        "expired",
+        "rejected",
+        "executed",
+    ]
+    .into_iter()
+    .map(|status| json!({"payload": serde_json::to_string(&order_status_event(status)).unwrap()}))
+    .collect();
+    messages.push(json!({"payload": serde_json::to_string(&order_event("submission")).unwrap()}));
+    Mock::given(method("GET"))
+        .and(path("/api/v2/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(messages))
+        .mount(&server)
+        .await;
+
+    assert_eq!(
+        run_order_event_worker(&server, 1, succeeds).await,
+        vec!["submission"]
+    );
 }
 
 #[tokio::test]

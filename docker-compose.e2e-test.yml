@@ -76,7 +76,6 @@ services:
       DATABASE_URL_SCHEME: mongodb
       DATABASE_USERNAME: gsy
       DATABASE_PASSWORD: gsy
-      SCHEDULER_INTERVAL: "900"
       EVM_NODE_URL: ${EVM_NODE_URL:-ws://anvil:8545}
       CONTRACT_ORDER_REGISTRY: ${ORDER_REGISTRY_ADDRESS:-0x5FC8d32690cc91D4c39d9d3abcBD16989F875707}
       CONTRACT_TRADE_SETTLEMENT: ${TRADE_SETTLEMENT_ADDRESS:-0xa513E6E4b8f2a923D98304ec87F64353C4D5C853}
@@ -185,9 +184,7 @@ services:
       # The e2e suite trades the current delivery slot (the orchestrator creates
       # its markets on start), so the execution engine targets that slot too.
       EXECUTION_ENGINE_OFFSET_MIN: "0"
-      # Trades can settle a few minutes after their delivery slot started, especially over
-      # EWDS, so the engine keeps retrying a slot for about 10 cycles after it rolled over.
-      EXECUTION_ENGINE_ROLLOVER_RETRY_LIMIT: ${EXECUTION_ENGINE_ROLLOVER_RETRY_LIMIT:-10}
+      EXECUTION_ENGINE_ROLLOVER_GRACE_SECONDS: ${EXECUTION_ENGINE_ROLLOVER_GRACE_SECONDS:-900}
       TRADE_SETTLEMENT_ADDRESS: ${TRADE_SETTLEMENT_ADDRESS:-0xa513E6E4b8f2a923D98304ec87F64353C4D5C853}
       EXECUTION_ENGINE_PRIVATE_KEY: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
       EWDS_EXECUTION_ENGINE_CLIENT_ID: ${EWDS_EXECUTION_ENGINE_CLIENT_ID:-gsyexecutionengine}

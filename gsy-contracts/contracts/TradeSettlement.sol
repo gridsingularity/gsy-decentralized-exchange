@@ -38,6 +38,7 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
     );
     event PenaltiesSubmitted(uint256 count);
     event PriceBoundsUpdated(uint64 priceFloor, uint64 priceCap);
+    event DeliveryVerified(bytes16 indexed tradeId, bytes16 indexed bidId, bytes16 indexed offerId);
 
     error InvalidOrderParams();
     error OrderNotOpen();
@@ -49,6 +50,8 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
     error NonUniformClearingPrice();
     error InvalidPriceBounds();
     error PriceOutOfBounds();
+    error TradeAlreadySettled();
+    error UnknownTrade();
 
     constructor() {
         _disableInitializers();
@@ -132,6 +135,22 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
         emit PriceBoundsUpdated(_priceFloor, _priceCap);
     }
 
+    struct SettledTrade {
+        bytes16 bidId;
+        bytes16 offerId;
+        bool verified;
+    }
+
+    struct DeliveryVerification {
+        bytes16 tradeId;
+        uint64 buyerPenaltyEnergy;
+        uint64 sellerPenaltyEnergy;
+    }
+
+    // Appended storage: existing proxy slots remain unchanged.
+    mapping(bytes16 => SettledTrade) public settledTrades;
+    mapping(bytes16 => mapping(bytes16 => uint256)) public penaltyEnergyByTradeAndActor;
+
     /**
      * @notice Settle a batch of matched trades.
      * @dev Only callable by the Matching Engine (Operator).
@@ -206,19 +225,59 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
                 revert InvalidPenalty();
             }
 
-            penaltyEnergyByTrade[penalty.tradeId] += penalty.penaltyEnergy;
-            penaltyEnergyByActor[penalty.penalizedActorId] += penalty
-                .penaltyEnergy;
-
-            emit PenaltyRecorded(
-                penalty.penalizedActorId,
-                penalty.marketId,
-                penalty.tradeId,
-                penalty.penaltyEnergy
-            );
+            if (settledTrades[penalty.tradeId].verified) revert InvalidPenalty();
+            _recordPenalty(penalty.penalizedActorId, penalty.marketId, penalty.tradeId, penalty.penaltyEnergy);
         }
 
         emit PenaltiesSubmitted(penalties.length);
+    }
+
+    /**
+     * @notice Record the execution engine's delivery verdict and any penalties atomically.
+     * @dev Meter verification is off-chain. Repeated verdicts have no effect; residuals
+     * are separate orders and are not completed with their consumed parent.
+     */
+    function completeDeliveryVerification(
+        DeliveryVerification[] calldata verifications
+    ) external onlyRole(EXECUTION_ENGINE_ROLE) {
+        for (uint256 i = 0; i < verifications.length; i++) {
+            DeliveryVerification calldata verification = verifications[i];
+            SettledTrade storage trade = settledTrades[verification.tradeId];
+            if (trade.bidId == bytes16(0)) revert UnknownTrade();
+            if (trade.verified) continue;
+
+            OrderRegistry.OrderParams memory bid = registry.getOrder(trade.bidId);
+            OrderRegistry.OrderParams memory offer = registry.getOrder(trade.offerId);
+            if (bid.createdBy == offer.createdBy) revert InvalidOrderParams();
+            _ensurePenaltyRecorded(bid.createdBy, bid.marketId, verification.tradeId, verification.buyerPenaltyEnergy);
+            _ensurePenaltyRecorded(offer.createdBy, offer.marketId, verification.tradeId, verification.sellerPenaltyEnergy);
+            // Widen before addition: two uint64 penalties can exceed uint64.
+            if (penaltyEnergyByTrade[verification.tradeId] !=
+                uint256(verification.buyerPenaltyEnergy) + verification.sellerPenaltyEnergy) {
+                revert InvalidPenalty();
+            }
+
+            registry.markExecuted(trade.bidId);
+            registry.markExecuted(trade.offerId);
+            trade.verified = true;
+            emit DeliveryVerified(verification.tradeId, trade.bidId, trade.offerId);
+        }
+    }
+
+    function _ensurePenaltyRecorded(bytes16 actorId, bytes16 marketId, bytes16 tradeId, uint64 energy) internal {
+        uint256 recorded = penaltyEnergyByTradeAndActor[tradeId][actorId];
+        if (recorded == 0 && energy > 0) {
+            _recordPenalty(actorId, marketId, tradeId, energy);
+        } else if (recorded != energy) {
+            revert InvalidPenalty();
+        }
+    }
+
+    function _recordPenalty(bytes16 actorId, bytes16 marketId, bytes16 tradeId, uint64 energy) internal {
+        penaltyEnergyByTrade[tradeId] += energy;
+        penaltyEnergyByActor[actorId] += energy;
+        penaltyEnergyByTradeAndActor[tradeId][actorId] += energy;
+        emit PenaltyRecorded(actorId, marketId, tradeId, energy);
     }
 
     function _settleTrade(Match calldata trade) internal {
@@ -249,6 +308,8 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
             false
         );
 
+        if (settledTrades[trade.tradeId].bidId != bytes16(0)) revert TradeAlreadySettled();
+
         _validateMatch(trade);
         _validatePriceBounds(trade.clearingPrice);
 
@@ -262,6 +323,8 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
 
         registry.settleOrder(trade.bid.orderId, uint64(trade.selectedEnergy), trade.residualBidId);
         registry.settleOrder(trade.offer.orderId, uint64(trade.selectedEnergy), trade.residualOfferId);
+
+        settledTrades[trade.tradeId] = SettledTrade(trade.bid.orderId, trade.offer.orderId, false);
 
         emit TradeSettled(
             trade.tradeId,

@@ -11,7 +11,6 @@ pub struct Settings {
     pub database_url_scheme: String,
     pub application_host: String,
     pub application_port: u16,
-    pub scheduler_interval: u32,
 
     #[serde(default = "default_evm_url")]
     pub evm_node_url: String,
@@ -40,9 +39,6 @@ impl Settings {
             self.database_password,
             self.database_host
         )
-    }
-    pub fn get_scheduler_interval(&self) -> u32 {
-        self.scheduler_interval
     }
 }
 

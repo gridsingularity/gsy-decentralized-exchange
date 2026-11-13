@@ -6,4 +6,3 @@ pub mod ewds_event_handler;
 pub mod ewds_handler;
 pub mod http_server;
 pub mod routes;
-pub mod update_db;

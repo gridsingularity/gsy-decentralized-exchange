@@ -1,12 +1,13 @@
 use ::primitives::utils::timestamp_to_datetime_string;
 use anyhow::Result;
 use primitives::constants::GLOBAL_CONSTANTS;
+use primitives::db_api_schema::trades::TradeStatus;
 use primitives::offchain_storage::{OffchainStorageClient, OffchainStorageTransport};
 use tracing::info;
 
 use crate::{
-    connectors::evm_connector::submit_penalties,
-    primitives::penalty_calculator::{compute_penalties, Penalty},
+    connectors::evm_connector::complete_delivery_verification,
+    primitives::penalty_calculator::compute_delivery_verifications,
 };
 
 /// The window of trade creation and measurement times checked for `timeslot`.
@@ -21,8 +22,8 @@ fn timeslot_window(timeslot: u64, market_duration: u64) -> (u64, u64) {
 
 /// Higher-level function that does the repeated/polling logic
 /// 1) fetch trades/measurements
-/// 2) compute penalties
-/// 3) submit them
+/// 2) calculate verdicts for trades with available measurements
+/// 3) atomically record penalties and verification on-chain
 pub async fn run_execution_cycle(
     offchain_url: &str,
     evm_node_url: &str,
@@ -41,10 +42,13 @@ pub async fn run_execution_cycle(
 
     // 1) fetch trades/measurements
     let (start_time, end_time) = timeslot_window(timeslot, market_duration);
-    let (trades, measurements) = tokio::try_join!(
+    let (mut trades, measurements) = tokio::try_join!(
         offchain_storage_client.fetch_trades(None, Some(start_time), Some(end_time)),
         offchain_storage_client.fetch_measurements(start_time, end_time),
     )?;
+    // A separately recorded penalty does not imply delivery verification is complete.
+    // The contract check below skips trades already verified without resubmitting penalties.
+    trades.retain(|trade| matches!(trade.status, TradeStatus::Matched | TradeStatus::Penalized));
     info!(
         "Fetched {} trades, {} measurements for timeslot {}.",
         trades.len(),
@@ -65,22 +69,27 @@ pub async fn run_execution_cycle(
         .fetch_facility_owner_mapping()
         .await?;
 
-    // 2) compute penalties
-    let penalties: Vec<Penalty> = compute_penalties(
+    anyhow::ensure!(
+        penalty_rate.is_finite() && penalty_rate >= 0.0,
+        "Invalid penalty rate"
+    );
+    // A measured zero-penalty trade is complete; an unmeasured one remains pending.
+    let verifications = compute_delivery_verifications(
         &trades,
         &measurements,
         &facility_owner_mapping,
         penalty_rate,
     );
-    info!("Computed {} penalties", penalties.len());
+    let all_measured = verifications.len() == trades.len();
+    info!("Computed {} delivery verifications", verifications.len());
 
-    // 3) submit penalties
-    let processed_penalties = submit_penalties(
+    let processed = complete_delivery_verification(
         evm_node_url,
         trade_settlement_address,
         execution_engine_private_key,
-        penalties,
+        verifications,
     )
     .await?;
-    Ok(processed_penalties)
+    // Do not release a retained slot just because a subset was verified.
+    Ok(if all_measured { processed } else { 0 })
 }

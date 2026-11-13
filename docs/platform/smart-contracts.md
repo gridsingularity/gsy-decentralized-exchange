@@ -148,7 +148,9 @@ Purpose:
 Purpose:
 
 - Validates and settles matched trades (`settleBatch`).
-- Updates order statuses to executed.
+- Marks consumed orders `Filled` or `PartiallyFilled` and registers residuals as
+  separate `Open` orders. Existing status enum values are preserved; the appended
+  values are `PartiallyFilled = 5` and `Filled = 6`.
 - Emits all settlement data needed by off-chain storage to create a Trade object.
 - Records penalties via `submitPenalties`.
 - Holds an optional market-wide price band (`priceFloor`, `priceCap`) that
@@ -156,6 +158,18 @@ Purpose:
   `setPriceBounds(floor, cap)`; `0` disables the respective bound, and
   `PriceBoundsUpdated` is emitted on every change. Values are the scaled
   integer rates used on-chain.
+- Stores the consumed order IDs for each new settlement; trade IDs cannot be reused.
+- Accepts idempotent `completeDeliveryVerification` batches from
+  `EXECUTION_ENGINE_ROLE`. Penalties and `Executed` order statuses are recorded
+  in the same transaction, followed by `DeliveryVerified(tradeId,bidId,offerId)`.
+  It trusts the engine's off-chain measurement verdict; no meter data is verified
+  inside the contract. Residual orders are not completed by their parent's verdict.
+
+Verification storage is appended without changing existing proxy slots. Upgrade
+`OrderRegistry` before `TradeSettlement`, then deploy the updated execution engine
+and listener. Trades settled before this upgrade have no stored order-ID linkage
+and cannot use the new completion call without a separate audited migration.
+No historical records or verdicts are fabricated/backfilled automatically.
 
 `TradeSettlement` does not move funds. Billing and payment are handled by external services.
 
@@ -229,9 +243,10 @@ Deployment script assigns:
   check applies regardless of how the matching engine was configured. It does
   not compare the match price with `ClearingResult.clearingPrice`.
 
-If checks pass, settlement marks the consumed orders executed, emits
-`OrderPlaced` for their residuals, and emits `TradeSettled`. Later matches may
-consume those residuals within the same batch or a subsequent transaction.
+If checks pass, settlement marks consumed orders `Filled`/`PartiallyFilled` and
+emits `OrderPlaced` for their residuals and `TradeSettled` for the trade.
+`Executed` is reserved for subsequent delivery verification. Later matches may
+consume residuals within the same batch or a subsequent transaction.
 An invalid match reverts the entire batch, including residual creation.
 
 The operator supplies the match type. These checks validate the claimed layer's
@@ -243,5 +258,9 @@ rules, not global preference priority or optimal matching across the order book.
 
 - `penaltyEnergyByTrade[tradeId]`
 - `penaltyEnergyByActor[actorId]`
+- `penaltyEnergyByTradeAndActor[tradeId][actorId]`
 
-Off-chain execution logic checks existing on-chain penalty values to skip already submitted trades.
+The legacy penalty call remains available but cannot add penalties to verified
+trades. The execution engine now uses atomic verification instead. Verification
+reuses an exactly matching per-actor penalty, rejects conflicting totals, and
+never records penalties twice for a repeated verdict.

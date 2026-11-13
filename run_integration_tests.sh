@@ -55,6 +55,12 @@ for svc in "${SERVICES[@]}"; do
     passed+=("$svc $((SECONDS - start))s")
   else
     failed+=("$svc $((SECONDS - start))s")
+    docker compose -f "$COMPOSE_FILE" ps -a
+    docker compose -f "$COMPOSE_FILE" logs --no-color --tail 100 mongodb
+    mongodb_id="$(docker compose -f "$COMPOSE_FILE" ps -a -q mongodb)"
+    if [ -n "$mongodb_id" ]; then
+      docker inspect --format '{{json .State}}' "$mongodb_id"
+    fi
   fi
 done
 

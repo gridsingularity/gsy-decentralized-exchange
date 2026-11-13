@@ -8,6 +8,19 @@ services:
     environment:
       - MONGO_INITDB_ROOT_USERNAME=gsy
       - MONGO_INITDB_ROOT_PASSWORD=gsy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          mongosh --quiet --host mongodb
+          --username "$$MONGO_INITDB_ROOT_USERNAME"
+          --password "$$MONGO_INITDB_ROOT_PASSWORD"
+          --authenticationDatabase admin
+          --eval 'quit(db.adminCommand({ping: 1}).ok ? 0 : 1)'
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
   gsy-primitives-integration-test:
     container_name: gsy-primitives-integration-test
@@ -52,7 +65,7 @@ services:
     working_dir: /var/www/gsy-offchain-storage
     depends_on:
       mongodb:
-        condition: service_started
+        condition: service_healthy
     environment:
       - RUST_BACKTRACE=1
       - RUST_LOG=info
@@ -63,7 +76,6 @@ services:
       - DATABASE_URL_SCHEME=mongodb
       - APPLICATION_HOST=0.0.0.0
       - APPLICATION_PORT=8080
-      - SCHEDULER_INTERVAL=900
       - EVM_NODE_URL=ws://localhost:8545
 
   gsy-market-orchestrator-integration-test:

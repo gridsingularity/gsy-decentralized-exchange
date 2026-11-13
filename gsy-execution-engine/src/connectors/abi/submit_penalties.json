@@ -1,6 +1,28 @@
 [
   {
     "type": "function",
+    "name": "completeDeliveryVerification",
+    "stateMutability": "nonpayable",
+    "inputs": [{"name": "verifications", "type": "tuple[]", "components": [
+      {"name": "tradeId", "type": "bytes16"},
+      {"name": "buyerPenaltyEnergy", "type": "uint64"},
+      {"name": "sellerPenaltyEnergy", "type": "uint64"}
+    ]}],
+    "outputs": []
+  },
+  {
+    "type": "function",
+    "name": "settledTrades",
+    "stateMutability": "view",
+    "inputs": [{"name": "tradeId", "type": "bytes16"}],
+    "outputs": [
+      {"name": "bidId", "type": "bytes16"},
+      {"name": "offerId", "type": "bytes16"},
+      {"name": "verified", "type": "bool"}
+    ]
+  },
+  {
+    "type": "function",
     "name": "hasRole",
     "stateMutability": "view",
     "inputs": [
