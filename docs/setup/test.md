@@ -468,8 +468,8 @@ Coverage added for DD-423:
   Full delivery reaches `Executed` for the trade and both consumed orders without
   a penalty.
 - Existing settlement/residual scenarios check `Filled`/`PartiallyFilled`
-  and independent residual orders. Penalty scenarios now also require the
-  trade and its consumed orders to become `Executed` with the verification
+  and independent residual orders. Penalty scenarios require the trade to remain
+  `Penalized` and its consumed orders to become `Executed` with the verification
   block's timestamp.
 - EWDS order scenarios observe `submitted`, `filled` and `executed`
   notifications with an independent FOS consumer cursor. A closed-market
@@ -483,11 +483,30 @@ compiled Hardhat artifacts, Anvil and MongoDB:
 
 ```bash
 cargo test --locked -p gsy-offchain-storage --test api \
-  delivery_verification_runs_through_real_contracts_engine_and_storage -- --ignored
+  delivery_verification -- --ignored --test-threads=1
 ```
 
 Deliberate follow-ups: legacy order POST write permissions remain unchanged;
 malformed submissions are logged, not published as rejected order snapshots;
-verification keeps the current single-measurement policy; event publication
-is best effort, without a durable outbox. These limitations are not resolved
-by a passing validation matrix.
+event publication is best effort, without a durable outbox. These limitations
+are not resolved by a passing validation matrix.
+
+### DD-455 Delivery Deviation Validation
+
+The shared `matching_algorithms/delivery_deviations.feature` runs with both
+matching algorithms and transports. Use the default
+`EXECUTION_ENGINE_PENALTY_TOLERANCE_PERCENT=5` and the E2E Compose penalty rate
+`0.10`. For a 10 kWh trade, exactly 5% deviation is not penalized; a 1 kWh
+deviation costs 1,000 contract units (0.1 at scale 10,000). The scenarios check
+both parties' exact penalty events, trade totals and final lifecycle statuses,
+including buyer underconsumption and seller overproduction.
+
+The focused real-contract tests cover shared-facility trades, netting purchases
+against sales, integer allocation/rounding, delayed counterparty readings,
+completed trades retained in the baseline, delivery-slot isolation and retries
+without duplicate penalties. These deterministic cases need not be repeated as
+slow EWDS scenarios. The engine tests cover invalid/conflicting readings and
+the remaining allocation and tolerance edge cases.
+
+Late-indexed trades or corrected readings after verification remain a separate
+finalization-policy limitation; DD-455 does not revise recorded penalties.

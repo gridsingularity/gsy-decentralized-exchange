@@ -684,6 +684,20 @@ async fn submit_community_market_measurements(world: &mut MyWorld) {
             creation_time: 1,
             energy_kwh: 3.0,
         },
+        MeasurementSchema {
+            facility_id: world.facility_id_for_user("charlie"),
+            community_uuid: world.community_id.clone(),
+            time_slot: world.target_delivery_time,
+            creation_time: 1,
+            energy_kwh: -2.0,
+        },
+        MeasurementSchema {
+            facility_id: "secondary-areacharlie".to_string(),
+            community_uuid: world.secondary_community_id.clone(),
+            time_slot: world.target_delivery_time,
+            creation_time: 1,
+            energy_kwh: -2.0,
+        },
     ];
 
     AreaMarketInfoAdapter::new(Some(world.offchain_storage_url.clone()))
@@ -941,12 +955,21 @@ async fn submit_measurements(world: &mut MyWorld) {
 #[when(expr = "measurements of {float} energy for facilities are submitted")]
 pub(crate) async fn submit_measurements_with_energy(world: &mut MyWorld, energy: f64) {
     let adapter = AreaMarketInfoAdapter::new(Some(world.offchain_storage_url.clone()));
+    let buyer_facility = &world
+        .bid_forecast
+        .as_ref()
+        .expect("Missing bid forecast")
+        .facility_id;
     let mut measurements = vec![];
     for facility in world.facilities_topology.iter() {
         measurements.push(MeasurementSchema {
             facility_id: facility.facility_id.clone(),
             community_uuid: world.community_id.clone(),
-            energy_kwh: energy,
+            energy_kwh: if &facility.facility_id == buyer_facility {
+                energy
+            } else {
+                -energy
+            },
             time_slot: world.target_delivery_time,
             creation_time: 1,
         })

@@ -129,6 +129,19 @@ pub struct MeasurementPointSchema {
     pub datasource_name: Option<String>,
 }
 
+impl MeasurementPointSchema {
+    /// Positive consumption and negative production for the execution engine.
+    pub fn signed_energy_kwh(&self, value: f64) -> f64 {
+        // Compatibility profiles already store signed values; their point's
+        // direction reflects the latest write and may differ from an older slot.
+        if self.property_measured == "energy_measured" || self.direction == FlowDirection::Import {
+            value
+        } else {
+            -value.abs()
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct TimeseriesSchema {
     pub measurement_point: String,

@@ -58,13 +58,6 @@ jobs:
             # Revisit when migrating the legacy TLS stack or adding custom TLS configuration.
             RUSTSEC-2026-0346 # No custom ClientSessionStore Debug logging; built-in caches redact secrets
             RUSTSEC-2026-0349 # rustls 0.21 supports only classical key exchange, not hybrid post-quantum groups
-            # Temporary zip 0.6 exceptions: locked via optional ethers-solc -> svm-rs 0.3.
-            # svm-solc is disabled; its ZIP extraction is Windows-only. No compatible patch.
-            # The guard below rejects any active ZIP dependency, including tests/all targets.
-            # Remove these exceptions when the legacy compiler dependency is replaced.
-            RUSTSEC-2026-0367 # Extraction preserves SUID/SGID permissions
-            RUSTSEC-2026-0368 # Extraction permits symlinks outside the destination
-            RUSTSEC-2026-0369 # Extraction applies permissions through symlinks
             # Distrusted emSign intermediates, via the same ethers / reqwest 0.11 TLS stack;
             # no patched rustls-webpki 0.101 or webpki-roots 0.25 release.
             # Keep rustls-webpki 0.103 >=0.103.16 and webpki-roots 1.x >=1.0.10 (via mongodb)
