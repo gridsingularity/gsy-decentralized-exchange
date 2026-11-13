@@ -119,9 +119,11 @@ Purpose:
 - There is no open/closed flag and no update function: `isMarketOpen(bytes16)`
   is true while `openingTime <= block.timestamp < closingTime`.
 - Views: `marketsExist(bytes16[])` (existence of many markets in one call,
-  used by the orchestrator) and `isMarketOpen(bytes16)` (used by
-  `OrderRegistry`). The full record is read from `NewMarketCreated` or from
-  off-chain storage; there is no record getter.
+  used by the orchestrator), `isMarketOpen(bytes16)` (used by
+  `OrderRegistry`) and `getMatchingAlgorithm(bytes16)` (used by
+  `TradeSettlement` to decide whether a settlement must be uniformly priced;
+  a missing market reports `PayAsBid`). The full record is read from
+  `NewMarketCreated` or from off-chain storage; there is no record getter.
 - Enum values: `MarketType` `Spot=0, Flex=1, Settlement=2`;
   `MatchingAlgorithm` `PayAsBid=0, PayAsClear=1, Amm=2` (same order as
   `primitives`).
@@ -140,19 +142,6 @@ Purpose:
 - Emits `OrderCancelled` and `OrderStatusUpdated` lifecycle events.
 - `settleOrder` consumes an open order and registers any residual atomically,
   copying stored metadata and reducing only its energy. It requires `SETTLEMENT_ROLE`.
-- Both `getStatus` and `orderStatus` derive `Expired` for an open order once its
-  market closes. This includes residuals. Settlement and cancellation reject
-  these orders; consumed statuses remain unchanged. Market windows are immutable,
-  so recreating an existing market ID cannot reactivate expired orders.
-- Expiry requires no per-order transaction or `OrderStatusUpdated` event. Storage
-  derives it from confirmed block timestamps and the indexed `NewMarketCreated`
-  closing time, after indexing the block's contract events.
-
-DD-439 replaces the old boolean market mapping with full market records. This is
-not a storage-compatible upgrade of the old `MarketController`. Use a fresh,
-coordinated deployment and matching contract addresses for all services, and
-rebuild the corresponding off-chain market projection. Do not upgrade an existing
-boolean-mapping deployment in place without a separately designed migration.
 
 ### `TradeSettlement`
 
@@ -164,6 +153,11 @@ Purpose:
   values are `PartiallyFilled = 5` and `Filled = 6`.
 - Emits all settlement data needed by off-chain storage to create a Trade object.
 - Records penalties via `submitPenalties`.
+- Holds an optional market-wide price band (`priceFloor`, `priceCap`) that
+  every settled match must fall within. The admin sets it with
+  `setPriceBounds(floor, cap)`; `0` disables the respective bound, and
+  `PriceBoundsUpdated` is emitted on every change. Values are the scaled
+  integer rates used on-chain.
 - Stores the consumed order IDs for each new settlement; trade IDs cannot be reused.
 - Accepts idempotent `completeDeliveryVerification` batches from
   `EXECUTION_ENGINE_ROLE`. Penalties and `Executed` order statuses are recorded
@@ -238,6 +232,16 @@ Deployment script assigns:
 - Selected energy is positive and does not exceed either order's energy.
 - Each partially filled order has a fresh, non-zero residual ID; a fully filled
   order has no residual. Residual quantity and metadata come from the registry.
+- The match price lies within the configured price band
+  (`priceFloor <= clearingPrice <= priceCap`, each bound ignored when `0`),
+  for `Standard` and `Preferred` matches alike; otherwise `PriceOutOfBounds`.
+- Uniform pricing: when the settlement's market was created with
+  `MatchingAlgorithm.PayAsClear`, every `Standard` match in that settlement
+  must carry the same `clearingPrice`; otherwise `NonUniformClearingPrice`.
+  `Preferred` matches are bilateral and keep their own rate. The contract
+  reads the algorithm from `MarketController.getMatchingAlgorithm`, so the
+  check applies regardless of how the matching engine was configured. It does
+  not compare the match price with `ClearingResult.clearingPrice`.
 
 If checks pass, settlement marks consumed orders `Filled`/`PartiallyFilled` and
 emits `OrderPlaced` for their residuals and `TradeSettled` for the trade.
