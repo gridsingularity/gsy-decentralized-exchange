@@ -5,7 +5,7 @@ use crate::steps::trade_steps::{
 use crate::world::MyWorld;
 use cucumber::{given, then, when};
 use gsy_community_client::time_utils::{get_current_timestamp_in_secs, get_last_and_next_timeslot};
-use primitives::db_api_schema::grid_topology::{FacilitySchema, SiteSchema};
+use primitives::db_api_schema::grid_topology::{EnergyCommunitySchema, FacilitySchema, SiteSchema};
 use primitives::db_api_schema::profiles::MeasurementSchema;
 use primitives::db_api_schema::trades::TradeStatus;
 use primitives::ewds::dto::{EwdsEventEnvelope, EwdsMeasurementDto, EwdsOrderDto, EwdsTradeDto};
@@ -202,49 +202,81 @@ async fn verify_order_notifications(world: &mut MyWorld, status: String) {
     }
 }
 
-#[then("FOS receives a rejection for an order in a closed market without storing it")]
+#[then("FOS receives rejections for unknown facilities, markets and cross-community orders without storing them")]
 async fn verify_rejection_notification(world: &mut MyWorld) {
-    let mut order = order_dto(world, "alice", true, 1.0, 20.0);
-    // A fresh, never-opened market guarantees a contract rejection, not a timing race.
-    order.market_id = bytes16_to_hex(*Uuid::new_v4().as_bytes());
+    let foreign_facility = format!("foreign-{}", Uuid::new_v4());
+    let foreign_owner = format!("owner-{foreign_facility}");
+    super::market_steps::upsert_community(
+        world,
+        &EnergyCommunitySchema {
+            community_id: world.secondary_community_id.clone(),
+            community_name: format!("E2E Secondary Community {}", world.secondary_community_id),
+            sites: vec!["site-12346".into()],
+        },
+    )
+    .await;
+    world
+        .create_facilities(vec![FacilitySchema {
+            facility_id: foreign_facility.clone(),
+            facility_name: foreign_facility.clone(),
+            site_id: "site-12346".into(),
+            owner_id: foreign_owner.clone(),
+        }])
+        .await;
+    let mut unknown_market = order_dto(world, "alice", true, 1.0, 20.0);
+    unknown_market.market_id = bytes16_to_hex(*Uuid::new_v4().as_bytes());
+    let mut unknown_facility = order_dto(world, "alice", true, 1.0, 20.0);
+    unknown_facility.created_by = "unknown-facility".into();
+    let mut cross_community = order_dto(world, "alice", true, 1.0, 20.0);
+    cross_community.created_by = foreign_owner;
+    let orders = [unknown_market, unknown_facility, cross_community];
     EwdsClient::from_env("EWDS_E2E_CLIENT_ID", "gsye2e", 60_000)
-        .publish_event(&event(EwdsEventType::Order, vec![order.clone()]))
+        .publish_event(&event(EwdsEventType::Order, orders.clone()))
         .await
         .unwrap();
-    let rejected = world
-        .order_status_observer
-        .as_mut()
-        .expect("FOS is not listening")
-        .wait_for(&order.order_id, "rejected")
-        .await;
-    assert!(!rejected
-        .reject_reason
-        .as_deref()
-        .unwrap_or_default()
-        .is_empty());
-    let mut expected = order.clone();
-    expected.order_status = "rejected".into();
-    expected.updated_at = rejected.updated_at.clone();
-    expected.reject_reason = rejected.reject_reason.clone();
-    assert_eq!(
-        serde_json::to_value(rejected).unwrap(),
-        serde_json::to_value(expected).unwrap()
-    );
-    let registry = OrderRegistryContract::new(world.order_registry_address, world.provider.clone());
-    assert_eq!(
-        registry
-            .get_status(parse_uuid_or_hex_bytes16(&order.order_id).unwrap())
-            .call()
-            .await
-            .unwrap(),
-        0
-    );
-    assert!(
-        query_orders_for_market(world, &order.market_id)
-            .await
-            .is_empty(),
-        "Rejected orders must not be stored"
-    );
+    for (order, reason) in
+        orders
+            .into_iter()
+            .zip(["unknown_market", "unknown_facility", "site_not_in_community"])
+    {
+        let rejected = world
+            .order_status_observer
+            .as_mut()
+            .expect("FOS is not listening")
+            .wait_for(&order.order_id, "rejected")
+            .await;
+        assert!(rejected
+            .reject_reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains(reason));
+        let mut expected = order.clone();
+        expected.order_status = "rejected".into();
+        expected.updated_at = rejected.updated_at.clone();
+        expected.reject_reason = rejected.reject_reason.clone();
+        assert_eq!(
+            serde_json::to_value(rejected).unwrap(),
+            serde_json::to_value(expected).unwrap()
+        );
+        let registry =
+            OrderRegistryContract::new(world.order_registry_address, world.provider.clone());
+        assert_eq!(
+            registry
+                .get_status(parse_uuid_or_hex_bytes16(&order.order_id).unwrap())
+                .call()
+                .await
+                .unwrap(),
+            0
+        );
+        assert!(
+            query_orders_for_market(world, &order.market_id)
+                .await
+                .iter()
+                .all(|stored| stored.order_id
+                    != bytes16_to_hex(parse_uuid_or_hex_bytes16(&order.order_id).unwrap())),
+            "Rejected orders must not be stored"
+        );
+    }
 }
 
 fn event<T>(event_type: EwdsEventType, data: T) -> EwdsEventEnvelope<T> {
@@ -269,7 +301,7 @@ async fn publish_events(world: &mut MyWorld) {
         facility_id: facility_id.clone(),
         facility_name: format!("E2E Event Facility {}", suffix),
         site_id: site.site_name.clone(),
-        owner_id: "alice".to_string(),
+        owner_id: format!("e2e-event-owner-{}", suffix),
     };
     let (last_timeslot, _) = get_last_and_next_timeslot();
     let measurements = [(last_timeslot - 900, 1.5), (last_timeslot, -0.5)]

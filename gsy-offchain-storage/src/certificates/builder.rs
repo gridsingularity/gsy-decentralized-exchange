@@ -5,13 +5,12 @@
 //!
 //! # Identification
 //!
-//! * A trade party (`seller` / `buyer`) is the on-chain owner hash
-//!   `bytes16_to_hex(create_encrypted_bytes16_from_string(owner_id))`, resolved to the
-//!   owner's facility (one facility per owner, DD-409).
+//! * A trade party (`seller` / `buyer`) is the on-chain owner hash, resolved to the
+//!   owner's facility. This deployment guarantees one facility per owner.
 //! * A measurement point's `asset_name` names a **facility**. It is matched against
 //!   `FacilitySchema::facility_id` first — that is what the community client and the
 //!   `/measurements` compatibility route write into `asset_name`, and what the execution
-//!   engine's `facility_owner_mapping` keys on — and against `facility_name` as a fallback.
+//!   engine keys on — and against `facility_name` as a fallback.
 //! * An asset's `facility_name` is matched the same way (id first, then name), because
 //!   ontology imports populate it with the facility's name while other writers use the id.
 //!
@@ -48,9 +47,7 @@ use primitives::db_api_schema::profiles::{
     FlowDirection as PointDirection, MeasurementPointSchema, MeasurementPointType, TimeseriesSchema,
 };
 use primitives::db_api_schema::trades::{DbTradeSchema, TradeStatus};
-use primitives::utils::{
-    bytes16_to_hex, create_encrypted_bytes16_from_string, string_to_timestamp,
-};
+use primitives::utils::string_to_timestamp;
 
 use crate::certificates::config::PILOT;
 
@@ -78,16 +75,12 @@ fn delivery_slots<'a>(markets: &'a [MarketSchema]) -> HashMap<&'a str, u64> {
         .collect()
 }
 
-/// The on-chain party hash of an off-chain id, as written into `DbTradeSchema::seller` /
-/// `buyer` (and, for a community acting as a party, its `community_id`).
-pub fn party_hash(offchain_id: &str) -> String {
-    bytes16_to_hex(create_encrypted_bytes16_from_string(offchain_id))
-}
+/// On-chain owner/community identifier, using the same derivation as the ID service.
+pub use primitives::utils::derive_onchain_id as party_hash;
 
 /// Facilities and communities indexed the ways the builder looks them up.
 struct Topology<'a> {
-    /// Owner hash → facility (DD-409: one facility per owner; the lowest `facility_id` wins
-    /// should that ever be violated, so the choice is deterministic).
+    /// On-chain owner ID → facility (one facility per owner).
     facility_by_party: HashMap<String, &'a FacilitySchema>,
     /// `facility_id` and `facility_name` → facility; ids take precedence over names.
     facility_by_alias: HashMap<&'a str, &'a FacilitySchema>,

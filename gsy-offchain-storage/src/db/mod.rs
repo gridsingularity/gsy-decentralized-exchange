@@ -1,4 +1,5 @@
 mod connection;
+mod facility_validation;
 pub mod grid_topology_service;
 pub mod id_service;
 pub mod market_service;

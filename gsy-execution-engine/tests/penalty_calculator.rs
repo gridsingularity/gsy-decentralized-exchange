@@ -9,8 +9,12 @@ use primitives::db_api_schema::{
 use primitives::utils::{bytes16_to_hex, create_encrypted_bytes16_from_string};
 use std::collections::HashMap;
 
-fn order(order_id: &str, facility_id: &str, is_bid: bool) -> DbOrderSchema {
-    let actor_id = bytes16_to_hex(create_encrypted_bytes16_from_string(facility_id));
+fn onchain_id(id: &str) -> String {
+    bytes16_to_hex(create_encrypted_bytes16_from_string(id))
+}
+
+fn order(order_id: &str, owner_id: &str, is_bid: bool) -> DbOrderSchema {
+    let actor_id = bytes16_to_hex(create_encrypted_bytes16_from_string(owner_id));
     DbOrderSchema {
         order_id: order_id.to_string(),
         status: OrderStatus::Executed,
@@ -55,7 +59,7 @@ fn trade() -> DbTradeSchema {
 }
 
 #[test]
-fn compute_penalties_matches_facility_measurements_to_evm_actor_ids() {
+fn compute_penalties_matches_facility_measurements_to_owner_ids() {
     let measurements = vec![MeasurementSchema {
         facility_id: "areaalice".to_string(),
         community_uuid: "community1".to_string(),
@@ -64,8 +68,7 @@ fn compute_penalties_matches_facility_measurements_to_evm_actor_ids() {
         energy_kwh: 12.0,
     }];
 
-    // The mapping holds plain owner ids; compute_penalties converts them to
-    // the on-chain representation, mirroring the community client's orders.
+    // The facility-to-owner mapping comes from stored topology.
     let facility_owner_mapping = HashMap::from([("areaalice".to_string(), "alice".to_string())]);
 
     let penalties = compute_penalties(&[trade()], &measurements, &facility_owner_mapping, 0.10);
@@ -155,4 +158,35 @@ fn verification_ignores_unrelated_or_invalid_measurements() {
         ..measurement
     };
     assert!(compute_delivery_verifications(&[trade()], &[measurement], &mapping, 0.1).is_empty());
+}
+
+#[test]
+fn verification_keeps_distinct_owners_measurements_separate() {
+    // Each facility belongs to a different owner; only the measured owner is verified.
+    let first_id = onchain_id("owner-1");
+    let second_id = onchain_id("owner-2");
+    let mapping = HashMap::from([
+        ("first-meter".into(), "owner-1".into()),
+        ("second-meter".into(), "owner-2".into()),
+    ]);
+    let mut first = trade();
+    first.buyer = first_id.clone();
+    let mut second = first.clone();
+    second.trade_uuid = "trade-2".into();
+    second.buyer = second_id.into();
+    let measurement = MeasurementSchema {
+        facility_id: "first-meter".into(),
+        community_uuid: "community1".into(),
+        time_slot: 1000,
+        creation_time: 1000,
+        energy_kwh: 12.0,
+    };
+    let trades = [first, second];
+    let measurements = [measurement];
+    let verifications = compute_delivery_verifications(&trades, &measurements, &mapping, 0.1);
+    assert_eq!(verifications.len(), 1);
+    assert_eq!(verifications[0].trade_uuid, "trade-1");
+    let penalties = compute_penalties(&trades, &measurements, &mapping, 0.1);
+    assert_eq!(penalties.len(), 1);
+    assert_eq!(penalties[0].penalized_account, first_id);
 }

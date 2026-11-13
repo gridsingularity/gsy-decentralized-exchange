@@ -165,7 +165,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
                 .filter(Some(partner.clone()), None)
                 .await?
                 .pop()
-                .with_context(|| format!("No facility ID mapping for on-chain ID {}", partner))?
+                .with_context(|| format!("No owner ID mapping for on-chain ID {}", partner))?
                 .offchain_id;
         }
 

@@ -26,10 +26,14 @@ Current penalty calculator logic:
 - `delta < 0`: penalize seller
 - Penalty scaled with `NODE_FLOAT_SCALING_FACTOR` (`10000`)
 
-The existing policy is intentionally unchanged: measurements are mapped by
-facility owner; the buyer's measurement is preferred, with the seller's as a
+Measurements identify facilities. The engine reads the facility-to-owner mapping
+from off-chain storage and derives each owner's on-chain ID with the ID service's
+shared Blake2b-16 helper, without writing ID mappings. That owner ID is used in
+`OrderParams.createdBy` and the indexed trade parties; the submitting service
+wallet is separate. This deployment guarantees one facility per owner. The penalty policy is
+unchanged: the buyer's measurement is preferred, with the seller's as a
 fallback. This does not independently verify both sides. Multiple measurements
-for an owner overwrite each other, and allocation across multiple trades is not
+for a facility overwrite each other, and allocation across multiple trades is not
 handled. These policy limitations need separate agreement; `Executed` records
 completion under this current policy, not proof that both meters were checked.
 Missing/unmapped or non-finite measurements produce no verdict, not a zero-penalty

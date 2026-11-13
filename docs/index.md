@@ -26,7 +26,6 @@ The domain boundaries are preserved, but implementation responsibilities are now
 ```mermaid
 flowchart LR
     CC["Community Client"] --> OR["OrderRegistry"]
-    AR["ActorRegistry"] --> OR
     MO["Market Orchestrator"] --> MC["MarketController"]
     ME["Matching Engine"] --> TS["TradeSettlement"]
     EE["Execution Engine"] --> TS

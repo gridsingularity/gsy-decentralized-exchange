@@ -85,13 +85,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
     ));
     let admin = client.address();
     let controller = deploy(client.clone(), "MarketController", admin).await?;
-    let actors = deploy(client.clone(), "ActorRegistry", admin).await?;
-    let registry = deploy(
-        client.clone(),
-        "OrderRegistry",
-        (admin, controller.address(), actors.address()),
-    )
-    .await?;
+    let registry = deploy(client.clone(), "OrderRegistry", (admin, controller.address())).await?;
     let settlement = deploy(
         client.clone(),
         "TradeSettlement",
@@ -100,6 +94,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
     .await?;
     for (contract, role, account) in [
         (&controller, "ORCHESTRATOR_ROLE", admin),
+        (&registry, "COMMUNITY_CLIENT_ROLE", admin),
         (&registry, "SETTLEMENT_ROLE", settlement.address()),
         (&settlement, "OPERATOR_ROLE", admin),
         (&settlement, "EXECUTION_ENGINE_ROLE", admin),
@@ -148,12 +143,10 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
     let mut measurements = Vec::new();
     for index in 0..3u8 {
         let buyer = format!("buyer-{index}");
+        let facility = format!("meter-{index}");
         let seller = format!("seller-{index}");
         let buyer_id = create_encrypted_bytes16_from_string(&buyer);
         let seller_id = create_encrypted_bytes16_from_string(&seller);
-        for id in [buyer_id, seller_id] {
-            send(&actors, "registerActor", (id, admin)).await?;
-        }
         let bid = (
             [index + 1; 16],
             buyer_id,
@@ -209,7 +202,6 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
             (vec![(vec![matched], clearing)],),
         )
         .await?;
-        let facility = format!("meter-{index}");
         app.db_wrapper
             .facilities()
             .upsert(FacilitySchema {
@@ -245,6 +237,11 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
     })
     .await?;
     let confirmed = app.db_wrapper.trades().get_all_trades().await?;
+    let mapping_count = app
+        .db_wrapper
+        .ids()
+        .count_documents(mongodb::bson::doc! {})
+        .await?;
     assert!(confirmed.iter().all(|trade| {
         trade.status == TradeStatus::Matched
             && trade.status_updated_at == Some(trade.creation_time)
@@ -343,6 +340,11 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
         .await?
         .unwrap();
     assert_eq!(pending_order.status, OrderStatus::PartiallyFilled);
+    assert_eq!(
+        app.db_wrapper.ids().count_documents(mongodb::bson::doc! {}).await?,
+        mapping_count,
+        "Execution cycles must not create ID mappings"
+    );
     insert_measurements(&app.db_wrapper, &measurements[2..]).await?;
     assert_eq!(
         run_execution_cycle(

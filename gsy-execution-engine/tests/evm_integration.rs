@@ -4,7 +4,7 @@ use ::primitives::{
     ewds::dto::EwdsTradeDto,
     offchain_storage::OffchainStorageTransport,
     utils::{
-        bytes16_to_hex, create_encrypted_bytes16_from_string, epoch_to_rfc3339,
+        bytes16_to_hex, derive_onchain_id, epoch_to_rfc3339,
         parse_uuid_or_hex_bytes16, timestamp_to_string_with_padding,
     },
 };
@@ -239,8 +239,8 @@ fn late_trade(id: u8, market: u8, creation_time: u64) -> DbTradeSchema {
         trade_uuid: bytes16_to_hex([id; 16]),
         status: TradeStatus::Matched,
         status_updated_at: None,
-        seller: bytes16_to_hex(create_encrypted_bytes16_from_string("bob")),
-        buyer: bytes16_to_hex(create_encrypted_bytes16_from_string("alice")),
+        seller: derive_onchain_id("bob"),
+        buyer: derive_onchain_id("alice"),
         market_id: bytes16_to_hex([market; 16]),
         creation_time,
         offer_hash: bytes16_to_hex([id + 10; 16]),
@@ -367,7 +367,7 @@ async fn late_records_after_rollover_are_processed_once_without_blocking_the_cur
         scheduler.calculate_timeslot_at(rollover - Duration::seconds(1)),
         retained
     );
-    let actor_id = create_encrypted_bytes16_from_string("alice");
+    let actor_id = parse_uuid_or_hex_bytes16(&derive_onchain_id("alice")).unwrap();
     let current_trade = late_trade(3, 11, current);
     // The retained-slot trades are created after rollover, not inside their delivery window.
     let mut fully_delivered = late_trade(2, 10, current + 5);
@@ -428,12 +428,10 @@ async fn late_records_after_rollover_are_processed_once_without_blocking_the_cur
             .await;
         Mock::given(method("GET"))
             .and(path("/facilities"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
-                "facility_id": "facility-alice",
-                "facility_name": "Alice",
-                "site_id": "site-1",
-                "owner_id": "alice",
-            }])))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                {"facility_id": "facility-alice", "facility_name": "Alice meter", "site_id": "site-1", "owner_id": "alice"},
+                {"facility_id": "facility-bob", "facility_name": "Bob meter", "site_id": "site-1", "owner_id": "bob"}
+            ])))
             .mount(&server)
             .await;
         mount_slot_records(

@@ -5,7 +5,7 @@ Feature: Community-Aware Market Orchestration
 
   Scenario: Two communities trade only within their own Spot markets
     Given the GSY DEX services are running
-    And users "alice", "bob", and "charlie" the matching engine operator are registered
+    And the DEX service accounts are authorized
     When two communities are submitted to off-chain storage
     Then the Market Orchestrator opens a distinct Spot market for each community
     When compatible orders are submitted to different community markets

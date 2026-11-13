@@ -1,7 +1,5 @@
 use primitives::db_api_schema::{profiles::MeasurementSchema, trades::DbTradeSchema};
-use primitives::utils::{
-    bytes16_to_hex, create_encrypted_bytes16_from_string, NODE_FLOAT_SCALING_FACTOR,
-};
+use primitives::utils::{derive_onchain_id, NODE_FLOAT_SCALING_FACTOR};
 use std::collections::HashMap;
 use tracing::warn;
 
@@ -22,7 +20,7 @@ pub struct DeliveryVerification {
 
 /// Computes penalties for each trade based on the measured energy.
 ///
-/// Measurements are mapped from facility owners to the trade's buyer/seller IDs.
+/// Measurements are mapped through facility owners to the trade's buyer/seller IDs.
 /// The delta is computed as:
 ///   delta = measured_energy - traded_energy
 /// If delta > 0.0, it indicates under-trading for consumption and the buyer is penalized.
@@ -80,8 +78,7 @@ pub fn compute_delivery_verifications(
 ) -> Vec<DeliveryVerification> {
     let mut verifications = Vec::new();
 
-    // Map each measurement's facility_id to its owner_id and convert that to the
-    // on-chain representation used by the trade's buyer/seller fields.
+    // Measurements identify facilities; trades identify their owners (one facility per owner).
     let mut measurement_map: HashMap<String, f64> = HashMap::new();
     for meas in measurements {
         if !meas.energy_kwh.is_finite() {
@@ -91,10 +88,7 @@ pub fn compute_delivery_verifications(
             warn!("No owner mapping for facility_id={}", meas.facility_id);
             continue;
         };
-        measurement_map.insert(
-            bytes16_to_hex(create_encrypted_bytes16_from_string(owner_id)),
-            meas.energy_kwh,
-        );
+        measurement_map.insert(derive_onchain_id(owner_id), meas.energy_kwh);
     }
     // TODO(DD-456): reconcile residual fills against the slot total; see DD-455's allocation.
     for trade in trades {

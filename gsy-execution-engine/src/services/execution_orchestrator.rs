@@ -64,7 +64,6 @@ pub async fn run_execution_cycle(
         return Ok(0);
     }
 
-    // 1.2) fetch facility_id>owner_id mapping
     let facility_owner_mapping = offchain_storage_client
         .fetch_facility_owner_mapping()
         .await?;
@@ -74,12 +73,8 @@ pub async fn run_execution_cycle(
         "Invalid penalty rate"
     );
     // A measured zero-penalty trade is complete; an unmeasured one remains pending.
-    let verifications = compute_delivery_verifications(
-        &trades,
-        &measurements,
-        &facility_owner_mapping,
-        penalty_rate,
-    );
+    let verifications =
+        compute_delivery_verifications(&trades, &measurements, &facility_owner_mapping, penalty_rate);
     let all_measured = verifications.len() == trades.len();
     info!("Computed {} delivery verifications", verifications.len());
 

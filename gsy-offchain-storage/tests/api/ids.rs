@@ -2,7 +2,7 @@ use crate::helpers::{init_app, stop_app};
 use gsy_offchain_storage::db::id_service::init_ids;
 use mongodb::bson::doc;
 use primitives::db_api_schema::ids::IdMappingSchema;
-use primitives::utils::{bytes16_to_hex, create_encrypted_bytes16_from_string};
+use primitives::utils::{bytes16_to_hex, create_encrypted_bytes16_from_string, derive_onchain_id};
 use std::sync::Arc;
 use tokio::sync::Barrier;
 
@@ -56,6 +56,11 @@ async fn post_ids_creates_new_mapping() {
     assert_eq!(body.offchain_id, offchain);
     let expected = bytes16_to_hex(create_encrypted_bytes16_from_string(offchain));
     assert_eq!(body.onchain_id, expected);
+    assert_eq!(body.onchain_id, derive_onchain_id(offchain));
+    assert_eq!(
+        body.onchain_id,
+        gsy_offchain_storage::certificates::builder::party_hash(offchain)
+    );
 
     stop_app(app).await;
 }
@@ -148,11 +153,11 @@ async fn post_ids_concurrent_same_id_yields_single_mapping() {
     let client = reqwest::Client::new();
     let offchain = "actor-concurrent";
     let url = format!("{}/ids", app.address);
+    let barrier = Arc::new(Barrier::new(8));
 
     // Fire several requests for the same offchain_id at once. The unique index
     // is what keeps this from producing duplicate documents under the race.
     let mut handles = Vec::new();
-    let barrier = Arc::new(Barrier::new(8));
     for _ in 0..8 {
         let client = client.clone();
         let url = url.clone();
@@ -199,22 +204,23 @@ async fn post_ids_concurrent_same_id_yields_single_mapping() {
 }
 
 #[tokio::test]
-async fn post_ids_rejects_onchain_id_collision_with_another_offchain_id() {
+async fn post_ids_does_not_reuse_another_offchain_ids_mapping() {
     let app = init_app().await;
-    let offchain = "actor-collision";
+    init_ids(&app.db_wrapper).await.unwrap();
+    let offchain_id = "actor-collision";
     let existing = IdMappingSchema {
         offchain_id: "another-actor".to_string(),
-        onchain_id: bytes16_to_hex(create_encrypted_bytes16_from_string(offchain)),
+        onchain_id: derive_onchain_id(offchain_id),
         creation_time: 1,
     };
     app.db_wrapper.ids().insert_one(&existing).await.unwrap();
 
     let response = reqwest::Client::new()
         .post(format!("{}/ids", app.address))
-        .query(&[("offchain_id", offchain)])
+        .query(&[("offchain_id", offchain_id)])
         .send()
         .await
-        .expect("Failed to execute collision request");
+        .unwrap();
 
     assert_eq!(response.status().as_u16(), 500);
     let mappings = app
@@ -228,7 +234,6 @@ async fn post_ids_rejects_onchain_id_collision_with_another_offchain_id() {
         app.db_wrapper.ids().count_documents(doc! {}).await.unwrap(),
         1
     );
-
     stop_app(app).await;
 }
 

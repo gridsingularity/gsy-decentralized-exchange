@@ -1068,6 +1068,44 @@ mod tests {
     }
 
     #[test]
+    fn facility_validation_operation_and_default_topics() {
+        let operation = EwdsOperation::FacilitiesValidate;
+        assert_eq!(operation.as_str(), "facilities.validate");
+        assert_eq!(operation.request_id_prefix(), "facilities-validate");
+        assert_eq!(
+            serde_json::to_value(operation).unwrap(),
+            json!("facilities.validate")
+        );
+        assert_eq!(
+            serde_json::from_value::<EwdsOperation>(json!("facilities.validate")).unwrap(),
+            operation
+        );
+        assert!(EwdsOperation::ALL.contains(&operation));
+        let topics = EwdsTopicConfig::default();
+        let pair = topics.for_operation(operation);
+        assert_eq!(pair.request, "facilitiesValidate");
+        assert_eq!(pair.response, "facilitiesValidateResponse");
+    }
+
+    #[test]
+    fn facility_validation_topics_follow_env() {
+        std::env::set_var(
+            "EWDS_FACILITIES_VALIDATION_REQUEST_TOPIC",
+            "facilitiesValidateTest",
+        );
+        std::env::set_var(
+            "EWDS_FACILITIES_VALIDATION_RESPONSE_TOPIC",
+            "facilitiesValidateTestResponse",
+        );
+        let topics = EwdsTopicConfig::from_env();
+        std::env::remove_var("EWDS_FACILITIES_VALIDATION_REQUEST_TOPIC");
+        std::env::remove_var("EWDS_FACILITIES_VALIDATION_RESPONSE_TOPIC");
+        let pair = topics.for_operation(EwdsOperation::FacilitiesValidate);
+        assert_eq!(pair.request, "facilitiesValidateTest");
+        assert_eq!(pair.response, "facilitiesValidateTestResponse");
+    }
+
+    #[test]
     fn every_operation_is_in_all_exactly_once() {
         for operation in EwdsOperation::ALL {
             assert_eq!(

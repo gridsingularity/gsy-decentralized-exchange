@@ -600,7 +600,8 @@ paths:
   /communities:
     post:
       tags: [Grid Topology]
-      summary: Register an energy community.
+      summary: Create or replace an energy community by canonical community ID.
+      description: Accepts UUID or 16-byte hex IDs and returns lowercase hyphenated UUIDs.
       requestBody:
         required: true
         content:
@@ -614,6 +615,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/EnergyCommunitySchema"
+        "400":
+          description: Invalid community ID; expected a UUID or 16-byte hex value.
         "500":
           $ref: "#/components/responses/InternalError"
     get:
@@ -634,7 +637,8 @@ paths:
   /sites:
     post:
       tags: [Grid Topology]
-      summary: Register a site.
+      summary: Create or replace a site by site_name.
+      description: Send the complete facilities list. Omitted facilities lose their site membership.
       requestBody:
         required: true
         content:
@@ -668,7 +672,8 @@ paths:
   /facilities:
     post:
       tags: [Grid Topology]
-      summary: Register a facility.
+      summary: Create or replace a facility by facility_id.
+      description: Replaces its topology fields; facility_name must remain unique across facility IDs.
       requestBody:
         required: true
         content:
@@ -682,6 +687,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/FacilitySchema"
+        "409":
+          description: The facility name already belongs to a different facility ID.
         "500":
           $ref: "#/components/responses/InternalError"
     get:
@@ -698,6 +705,45 @@ paths:
                   $ref: "#/components/schemas/FacilitySchema"
         "500":
           $ref: "#/components/responses/InternalError"
+
+  /facilities/validate:
+    post:
+      tags: [Grid Topology]
+      summary: Validate facility participation in markets without writing records.
+      description: |
+        Requires the facility, its site and the market's community to exist,
+        the site to list the facility and the community to list that site.
+        An ID mapping alone does not establish eligibility. Does not check
+        the market's opening/closing times or contract authorization.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: "#/components/schemas/FacilityMarketValidationRequest"
+      responses:
+        "200":
+          description: One result per pair, preserving input order, duplicates and IDs; an empty request returns an empty array.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FacilityMarketValidationResult"
+        "400":
+          description: Invalid JSON or request shape.
+        "500":
+          description: Storage unavailable or corrupt records; no eligibility results are returned.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, message]
+                properties:
+                  code: { type: string, enum: [VALIDATION_UNAVAILABLE] }
+                  message: { type: string }
 
 components:
   parameters:
@@ -723,6 +769,29 @@ components:
       description: Internal server error.
 
   schemas:
+    FacilityMarketValidationRequest:
+      type: object
+      required: [facility_id, market_id]
+      properties:
+        facility_id:
+          type: string
+          description: Original off-chain facility ID, not its owner or on-chain mapping.
+        market_id:
+          type: string
+          description: Market ID as UUID or bytes16 hex, with or without the 0x prefix.
+
+    FacilityMarketValidationResult:
+      type: object
+      required: [facility_id, market_id, eligible]
+      properties:
+        facility_id: { type: string }
+        market_id: { type: string }
+        eligible: { type: boolean }
+        reason:
+          type: string
+          description: Present only for an ineligible pair; not an infrastructure error.
+          enum: [unknown_market, unknown_facility, unknown_community, unknown_site, facility_not_listed_in_site, site_not_in_community]
+
     InsertedIds:
       description: |
         Map from input index to the inserted MongoDB ObjectId, serialized as
@@ -1113,7 +1182,9 @@ components:
       type: object
       required: [community_id, community_name, sites]
       properties:
-        community_id: { type: string, format: uuid }
+        community_id:
+          type: string
+          description: UUID or 16-byte hex on input; canonical lowercase hyphenated UUID on output.
         community_name: { type: string }
         sites:
           type: array

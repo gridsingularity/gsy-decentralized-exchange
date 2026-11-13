@@ -16,6 +16,8 @@ Additional local message contracts wrap these entities for the current
 request/reply topics:
 
 - query request/reply envelopes for orders, trades, measurements, and communities
+- `int.facilities.validate.request.v1.json` / `int.facilities.validate.response.v1.json`
+  for read-only facility/market eligibility (`facilitiesValidate` / `facilitiesValidateResponse`)
 - upsert request envelopes for forecasts, measurements, and markets
 
 Event envelopes wrap a non-empty list of the entities that other systems send
@@ -44,6 +46,8 @@ The off-chain storage publishes these event envelopes on the events channels:
 Notes:
 
 - Intelligent ontology property names are kept in camelCase (`tradeId`, `marketId`).
+- Facility-validation pairs/results use the shared HTTP API's `facility_id` and
+  `market_id` names; these are validation records, not ontology entity DTOs.
 - Runtime service fields from GSY DEX are mapped in `docs/platform/ewds-data-contracts.md`.
 - The agreed Intelligent schemas use UUID identifiers and ISO 8601 timestamps.
 - The active DEX EVM settlement path still uses separate runtime DTOs for

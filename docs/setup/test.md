@@ -339,6 +339,7 @@ Request/response topic pairs (including the E2E variants):
 | `clearingResultsQuery` | `clearingResultsQueryResponse` | `clearingResultsQueryTest` | `clearingResultsQueryTestResponse` |
 | `marketsQuery` | `marketsQueryResponse` | `marketsQueryTest` | `marketsQueryTestResponse` |
 | `facilitiesQuery` | `facilitiesQueryResponse` | `facilitiesQueryTest` | `facilitiesQueryTestResponse` |
+| `facilitiesValidate` | `facilitiesValidateResponse` | `facilitiesValidateTest` | `facilitiesValidateTestResponse` |
 | `guaranteesOfOriginQuery` | `guaranteesOfOriginQueryResponse` | `guaranteesOfOriginQueryTest` | `guaranteesOfOriginQueryTestResponse` |
 | `idsQuery` | `idsQueryResponse` | `idsQueryTest` | `idsQueryTestResponse` |
 | `communitiesQuery` | `communitiesQueryResponse` | `communitiesQueryTest` | `communitiesQueryTestResponse` |
@@ -360,6 +361,18 @@ The order event scenarios require the community client's subscriber, enabled by
 `EWDS_ENABLE_HANDLER=true`. Feature/scenario counts depend on the selected
 algorithm, transport and filters; require no failed or undefined steps rather
 than a fixed count. Both algorithms also run the shared matching scenarios.
+
+HTTP scenarios submit orders from the E2E runner using `COMMUNITY_CLIENT_PRIVATE_KEY`,
+the same service key provisioned by deployment. The community-client binary only
+runs its EWDS subscriber. The runner uses `gsye2ecommunityclient` for community-client
+EWDS queries, separately from the live subscriber's consumer ID; the local gateway
+must accept that client ID on the response channels.
+
+Between scenarios, the runner clears collection contents without dropping unique
+indexes. Lifecycle examples measure only the buyer's facility or only the seller's
+facility to test both identity paths independently. Eligibility rejection is covered
+end-to-end; a real `MarketClosed` contract revert is covered by the client tests,
+not by a closed-market E2E scenario (an unknown market is rejected before submission).
 
 If the Client Gateway returns HTTP `400` with a nested broker `status code 429`,
 the request was rate-limited before it reached the matching algorithm. Validate

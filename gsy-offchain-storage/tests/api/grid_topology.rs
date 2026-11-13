@@ -120,6 +120,50 @@ async fn post_and_get_pilot_site() {
 }
 
 #[tokio::test]
+async fn community_writes_normalize_ids_and_reject_invalid_values() {
+    let app = init_app().await;
+    let mut community = EnergyCommunitySchema {
+        community_id: "ABCDEFAB-1234-1234-1234-ABCDEFABCDEF".into(),
+        community_name: "Canonical".into(),
+        sites: vec![],
+    };
+    let saved = app
+        .db_wrapper
+        .communities()
+        .insert(community.clone())
+        .await
+        .unwrap();
+    assert_eq!(saved.community_id, "abcdefab-1234-1234-1234-abcdefabcdef");
+    community.community_id = "0xabcdefab123412341234abcdefabcdef".into();
+    assert_eq!(
+        app.db_wrapper
+            .communities()
+            .upsert(community.clone())
+            .await
+            .unwrap(),
+        saved
+    );
+    community.community_id = "invalid".into();
+    assert!(app
+        .db_wrapper
+        .communities()
+        .insert(community.clone())
+        .await
+        .is_err());
+    assert!(app
+        .db_wrapper
+        .communities()
+        .upsert(community)
+        .await
+        .is_err());
+    assert_eq!(
+        app.db_wrapper.communities().get_all().await.unwrap(),
+        vec![saved]
+    );
+    stop_app(app).await;
+}
+
+#[tokio::test]
 async fn post_and_get_communities() {
     let app = init_app().await;
     let address = app.address.clone();
