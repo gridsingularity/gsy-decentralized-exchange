@@ -156,37 +156,13 @@ impl OrderEventHandler {
             }
             pending.push((index, submission, order));
         }
-        let mut owner_facilities = HashMap::new();
-        if !pending.is_empty() {
-            for (facility_id, owner_id) in self
-                .offchain_storage_client
-                .fetch_facility_owner_mapping()
-                .await?
-            {
-                anyhow::ensure!(
-                    owner_facilities.insert(owner_id.clone(), facility_id).is_none(),
-                    "Owner {} is associated with multiple facilities",
-                    owner_id
-                );
-            }
-        }
         let mut params = Vec::with_capacity(pending.len());
-        let pending: Vec<_> = pending
-            .into_iter()
-            .filter_map(|(index, submission, order)| {
-                match owner_facilities.get(&order.created_by) {
-                    Some(facility_id) => Some((index, submission, order, facility_id.clone())),
-                    None => {
-                        let reason = format!(
-                            "Owner {} has no associated facility: unknown_facility",
-                            order.created_by
-                        );
-                        params.push((submission, Err(reason)));
-                        None
-                    }
-                }
-            })
-            .collect();
+        let (pending, rejected) = self.validate_owner_facilities(pending).await?;
+        params.extend(
+            rejected
+                .into_iter()
+                .map(|(submission, reason)| (submission, Err(reason))),
+        );
         let requests: Vec<_> = pending
             .iter()
             .map(|(_, _, order, facility_id)| FacilityMarketValidationRequest {
@@ -290,6 +266,49 @@ impl OrderEventHandler {
             );
         }
         Ok(())
+    }
+
+    /// Resolves pending orders to their owners' facilities and separates rejection candidates.
+    /// Missing facilities are rejected; unavailable or ambiguous ownership remains retryable.
+    async fn validate_owner_facilities(
+        &self,
+        pending: Vec<(usize, EwdsOrderDto, DbOrderSchema)>,
+    ) -> Result<(
+        Vec<(usize, EwdsOrderDto, DbOrderSchema, String)>,
+        Vec<(EwdsOrderDto, String)>,
+    )> {
+        let mut owner_facilities = HashMap::new();
+        if !pending.is_empty() {
+            for (facility_id, owner_id) in self
+                .offchain_storage_client
+                .fetch_facility_owner_mapping()
+                .await?
+            {
+                anyhow::ensure!(
+                    owner_facilities.insert(owner_id.clone(), facility_id).is_none(),
+                    "Owner {} is associated with multiple facilities",
+                    owner_id
+                );
+            }
+        }
+        let mut rejected = Vec::new();
+        let pending = pending
+            .into_iter()
+            .filter_map(|(index, submission, order)| {
+                match owner_facilities.get(&order.created_by) {
+                    Some(facility_id) => Some((index, submission, order, facility_id.clone())),
+                    None => {
+                        let reason = format!(
+                            "Owner {} has no associated facility: unknown_facility",
+                            order.created_by
+                        );
+                        rejected.push((submission, reason));
+                        None
+                    }
+                }
+            })
+            .collect();
+        Ok((pending, rejected))
     }
 
     /// Replaces the off-chain owner and preferred-owner IDs with their on-chain IDs.
