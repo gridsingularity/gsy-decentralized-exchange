@@ -84,7 +84,7 @@
       "default": "NONE"
     },
     "createdBy": {
-      "description": "Facility identity represented by the order, not its owner or submitting service wallet. The community client resolves this facility ID to its on-chain ID. IRI: int:createdby.",
+      "description": "Owner identity represented by the order, not its facility or submitting service wallet. The community client validates the owner's facility and resolves the owner ID to its on-chain ID. IRI: int:createdby.",
       "type": "string"
     },
     "creationTime": {
@@ -110,7 +110,7 @@
       "default": null
     },
     "preferredTradingPartner": {
-      "description": "Preferred counterparty of a bid or an offer, taken from the order requirements. IRI: int:preferredTradingPartner. Nullable.",
+      "description": "Preferred counterparty owner of a bid or an offer, taken from the order requirements. IRI: int:preferredTradingPartner. Nullable.",
       "type": [
         "string",
         "null"

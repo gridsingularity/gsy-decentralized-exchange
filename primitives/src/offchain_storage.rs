@@ -1,7 +1,4 @@
-use crate::db_api_schema::grid_topology::{
-    EnergyCommunitySchema, FacilityMarketValidationRequest, FacilityMarketValidationResult,
-    FacilitySchema,
-};
+use crate::db_api_schema::grid_topology::{EnergyCommunitySchema, FacilitySchema};
 use crate::db_api_schema::ids::IdMappingSchema;
 use crate::db_api_schema::market::MarketSchema;
 use crate::db_api_schema::orders::{DbOrderSchema, DbRequirements};
@@ -9,7 +6,7 @@ use crate::db_api_schema::profiles::{MeasurementPointSchema, MeasurementSchema, 
 use crate::db_api_schema::trades::DbTradeSchema;
 use crate::ewds::dto::{
     EwdsClearingResultDto, EwdsCommunityDto, EwdsMarketDto, EwdsMeasurementDto, EwdsOrderDto,
-    EwdsTradeDto,
+    EwdsTradeDto, FacilityMarketValidationRequest, FacilityMarketValidationResult,
 };
 use crate::ewds::{format_response_body, EwdsClient, EwdsOperation};
 use crate::utils::{
@@ -522,7 +519,7 @@ impl CommunityProvider for OffchainStorageClient {
     }
 }
 
-/// Resolve off-chain facility IDs before converting metadata or matching actor IDs.
+/// Resolve off-chain owner IDs before converting metadata or matching actor IDs.
 /// Input identifiers are always off-chain IDs, including UUID and hex-shaped strings.
 pub async fn resolve_order_partner_ids(
     requirements: &mut Option<DbRequirements>,

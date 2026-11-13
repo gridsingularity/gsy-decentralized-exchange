@@ -9,7 +9,7 @@
 //! scenario run; the seeded documents are deleted by the last step (and the whole database
 //! is dropped after every scenario by `main.rs` anyway).
 
-use crate::utils::test_database as database;
+use crate::utils::test_database;
 use crate::world::{GreenProofSeed, MyWorld};
 use cucumber::{given, then, when};
 use gsy_community_client::time_utils::get_current_timestamp_in_secs;
@@ -21,7 +21,6 @@ use primitives::certificates::{
 use primitives::db_api_schema::grid_topology::{
     AssetSchema, AssetType, EnergyCommunitySchema, FacilitySchema, SiteSchema,
 };
-use primitives::db_api_schema::ids::IdMappingSchema;
 use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
 use primitives::db_api_schema::profiles::{
     FlowDirection, MeasurementPointSchema, MeasurementPointType, TimeseriesSchema,
@@ -47,9 +46,9 @@ const QUERY_RETRY_BUDGET: Duration = Duration::from_secs(60);
 const QUERY_RETRY_INTERVAL: Duration = Duration::from_secs(3);
 const REST_PATH: &str = "guarantees-of-origin";
 
-/// The on-chain party hash of an off-chain facility id, as stored in `DbTradeSchema::seller`.
-fn party_hash(facility_id: &str) -> String {
-    bytes16_to_hex(create_encrypted_bytes16_from_string(facility_id))
+/// The on-chain party hash of an off-chain owner id, as stored in `DbTradeSchema::seller`.
+fn party_hash(owner_id: &str) -> String {
+    bytes16_to_hex(create_encrypted_bytes16_from_string(owner_id))
 }
 
 /// `2026-05-14T10:30:00+00:00`, the format of `interval_start` / `interval_end`
@@ -112,7 +111,7 @@ async fn seed_executed_pv_sale(world: &mut MyWorld, energy_kwh: f64, export_kwh:
         seller_facility_id,
     };
 
-    let db = database().await;
+    let db = test_database().await;
 
     db.collection::<EnergyCommunitySchema>("communities")
         .insert_one(EnergyCommunitySchema {
@@ -151,16 +150,6 @@ async fn seed_executed_pv_sale(world: &mut MyWorld, energy_kwh: f64, export_kwh:
         .insert_many(facilities)
         .await
         .expect("Failed to seed the facilities");
-    db.collection::<IdMappingSchema>("id_mapping")
-        .insert_many(
-            [&seed.seller_facility_id, &seed.buyer_facility_id].map(|id| IdMappingSchema {
-                offchain_id: id.clone(),
-                onchain_id: party_hash(id),
-                creation_time: now,
-            }),
-        )
-        .await
-        .expect("Failed to seed facility ID mappings");
 
     db.collection::<AssetSchema>("assets")
         .insert_one(AssetSchema {
@@ -231,8 +220,8 @@ async fn seed_executed_pv_sale(world: &mut MyWorld, energy_kwh: f64, export_kwh:
         .insert_one(DbTradeSchema {
             trade_uuid: seed.trade_uuid.clone(),
             status: TradeStatus::Executed,
-            seller: party_hash(&seed.seller_facility_id),
-            buyer: party_hash(&seed.buyer_facility_id),
+            seller: party_hash(&seed.seller_owner_id),
+            buyer: party_hash(&seed.buyer_owner_id),
             market_id: seed.market_id.clone(),
             creation_time: time_slot - SLOT_S,
             offer_hash: format!("{}-offer", seed.trade_uuid),
@@ -492,14 +481,10 @@ async fn delete_seeded_documents(world: &mut MyWorld) {
     let Some(seed) = world.green_proof.seed.take() else {
         return;
     };
-    let db = database().await;
+    let db = test_database().await;
     let mut deletions: Vec<(&str, Document)> = vec![
         ("trades", doc! {"trade_uuid": &seed.trade_uuid}),
         ("markets", doc! {"market_id": &seed.market_id}),
-        (
-            "id_mapping",
-            doc! {"offchain_id": {"$in": [&seed.seller_facility_id, &seed.buyer_facility_id]}},
-        ),
         (
             "facilities",
             doc! {"facility_id": {"$in": [&seed.seller_facility_id, &seed.buyer_facility_id]}},

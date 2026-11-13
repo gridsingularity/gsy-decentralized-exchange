@@ -211,7 +211,7 @@ impl MyWorld {
             panic!("Unknown user '{}'", user_name);
         }
         let onchain_id = OffchainStorageClient::from_env("E2E_TESTS_CLIENT_ID", "e2e_tests")
-            .fetch_onchain_id(&self.facility_id_for_user(user_name))
+            .fetch_onchain_id(user_name)
             .await
             .expect("failed to fetch onchain id");
         parse_uuid_or_hex_bytes16(&onchain_id).expect("failed to parse uuid")

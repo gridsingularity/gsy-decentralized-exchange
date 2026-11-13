@@ -18,7 +18,8 @@ use ethers::{
 };
 use ethers_solc::{artifacts::Severity, Project, ProjectPathsConfig};
 use gsy_execution_engine::{
-    connectors::evm_connector::submit_penalties, primitives::penalty_calculator::Penalty,
+    connectors::evm_connector::{complete_delivery_verification, submit_penalties},
+    primitives::penalty_calculator::{DeliveryVerification, Penalty},
     services::execution_orchestrator::run_execution_cycle, timeslot_scheduler::TimeslotScheduler,
 };
 use serde_json::json;
@@ -36,7 +37,7 @@ abigen!(
     r#"[
         function penaltyEnergyByTrade(bytes16 tradeId) external view returns (uint256)
         function penaltyEnergyByActor(bytes16 actorId) external view returns (uint256)
-        function registerTrade(bytes16 tradeId, bytes16 buyer, bytes16 seller) external
+        function registerTrade(bytes16 tradeId, bytes16 bidId, bytes16 offerId, bytes16 buyer, bytes16 seller) external
         function settledTrades(bytes16 tradeId) external view returns (bytes16, bytes16, bool)
     ]"#
 );
@@ -94,8 +95,8 @@ async fn deploy_trade_settlement() -> (AnvilInstance, MockTradeSettlement<TestCl
                 return roles[account][role];
             }
 
-            function registerTrade(bytes16 tradeId, bytes16 buyer, bytes16 seller) external {
-                settledTrades[tradeId] = SettledTrade(tradeId, tradeId, false);
+            function registerTrade(bytes16 tradeId, bytes16 bidId, bytes16 offerId, bytes16 buyer, bytes16 seller) external {
+                settledTrades[tradeId] = SettledTrade(bidId, offerId, false);
                 buyers[tradeId] = buyer;
                 sellers[tradeId] = seller;
             }
@@ -240,8 +241,8 @@ fn late_trade(id: u8, market: u8, creation_time: u64) -> DbTradeSchema {
         trade_uuid: bytes16_to_hex([id; 16]),
         status: TradeStatus::Matched,
         status_updated_at: None,
-        seller: derive_onchain_id(&format!("facility-bob-{id}")),
-        buyer: derive_onchain_id(&format!("facility-alice-{id}")),
+        seller: derive_onchain_id(&format!("bob-{id}")),
+        buyer: derive_onchain_id(&format!("alice-{id}")),
         market_id: bytes16_to_hex([market; 16]),
         creation_time,
         offer_hash: bytes16_to_hex([id + 10; 16]),
@@ -285,7 +286,11 @@ async fn mount_slot_records(
         .into_iter()
         .flat_map(|value| {
             trades.iter().flat_map(move |trade| {
-                [(&trade.buyer, value), (&trade.seller, -10.0)].map(|(party, reading)| {
+                [
+                    (&trade.buyer, value),
+                    (&trade.seller, -trade.parameters.selected_energy_kWh),
+                ]
+                .map(|(party, reading)| {
                     json!({
                         "measurement_point": party,
                         "timestamp": timestamp_to_string_with_padding(slot),
@@ -332,6 +337,47 @@ async fn mount_slot_records(
 }
 
 #[tokio::test]
+async fn unknown_trade_does_not_block_or_count_as_verified() {
+    let (anvil, contract) = deploy_trade_settlement().await;
+    contract
+        .register_trade([1; 16], [2; 16], [3; 16], [4; 16], [5; 16])
+        .send()
+        .await
+        .unwrap()
+        .await
+        .unwrap()
+        .unwrap();
+    let verdicts = [9, 1].map(|id| DeliveryVerification {
+        trade_uuid: bytes16_to_hex([id; 16]),
+        buyer_penalty_cost: 5,
+        seller_penalty_cost: 0,
+    });
+    for _ in 0..2 {
+        assert_eq!(
+            complete_delivery_verification(
+                &anvil.ws_endpoint(),
+                &format!("{:?}", contract.address()),
+                PRIVATE_KEY,
+                verdicts.to_vec()
+            )
+            .await
+            .unwrap(),
+            1
+        );
+    }
+    assert!(contract.settled_trades([1; 16]).call().await.unwrap().2);
+    assert!(!contract.settled_trades([9; 16]).call().await.unwrap().2);
+    assert_eq!(
+        contract
+            .penalty_energy_by_trade([1; 16])
+            .call()
+            .await
+            .unwrap(),
+        U256::from(5)
+    );
+}
+
+#[tokio::test]
 async fn late_records_after_rollover_are_processed_once_without_blocking_the_current_slot() {
     assert_eq!(
         OffchainStorageTransport::from_env(),
@@ -355,14 +401,18 @@ async fn late_records_after_rollover_are_processed_once_without_blocking_the_cur
     let current_trade = late_trade(3, 11, current);
     // The retained-slot trades are created after rollover, not inside their delivery window.
     // Use distinct facilities so late indexing does not change an already verified baseline.
-    let retained_trades = [
+    let mut retained_trades = [
         late_trade(1, 10, current + 3),
         late_trade(2, 10, current + 5),
     ];
+    // A zero-penalty trade must also be finalized only once.
+    retained_trades[1].parameters.selected_energy_kWh = 12.0;
     for trade in [&current_trade, &retained_trades[0], &retained_trades[1]] {
         contract
             .register_trade(
                 parse_uuid_or_hex_bytes16(&trade.trade_uuid).unwrap(),
+                parse_uuid_or_hex_bytes16(&trade.bid_hash).unwrap(),
+                parse_uuid_or_hex_bytes16(&trade.offer_hash).unwrap(),
                 parse_uuid_or_hex_bytes16(&trade.buyer).unwrap(),
                 parse_uuid_or_hex_bytes16(&trade.seller).unwrap(),
             )
@@ -403,7 +453,7 @@ async fn late_records_after_rollover_are_processed_once_without_blocking_the_cur
                                 let facility = format!("facility-{party}-{id}");
                                 json!({
                                     "type": "Measurement",
-                                    "measurement_id": derive_onchain_id(&facility),
+                                    "measurement_id": derive_onchain_id(&format!("{party}-{id}")),
                                     "property_measured": "energy_measured",
                                     "unit": "kWh",
                                     "direction": "Import",
@@ -418,6 +468,24 @@ async fn late_records_after_rollover_are_processed_once_without_blocking_the_cur
                         .collect::<Vec<_>>(),
                 ),
             )
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/facilities"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                (1..=3)
+                    .flat_map(|id| {
+                        ["alice", "bob"].map(|party| {
+                            json!({
+                                "facility_id": format!("facility-{party}-{id}"),
+                                "facility_name": format!("facility-{party}-{id}"),
+                                "site_id": "site",
+                                "owner_id": format!("{party}-{id}"),
+                            })
+                        })
+                    })
+                    .collect::<Vec<_>>(),
+            ))
             .mount(&server)
             .await;
         mount_slot_records(
@@ -476,7 +544,7 @@ async fn late_records_after_rollover_are_processed_once_without_blocking_the_cur
         }
 
         let first_penalty = if elapsed >= 4 { 2_000u64 } else { 0 };
-        let second_penalty = if elapsed >= 5 { 2_000u64 } else { 0 };
+        let second_penalty = 0u64;
         for (id, expected) in [(1, first_penalty), (2, second_penalty)] {
             assert_eq!(
                 contract
@@ -489,8 +557,7 @@ async fn late_records_after_rollover_are_processed_once_without_blocking_the_cur
         }
         for (id, expected) in [(1, first_penalty), (2, second_penalty), (3, 5_000)] {
             let actor_id =
-                parse_uuid_or_hex_bytes16(&derive_onchain_id(&format!("facility-alice-{id}")))
-                    .unwrap();
+                parse_uuid_or_hex_bytes16(&derive_onchain_id(&format!("alice-{id}"))).unwrap();
             assert_eq!(
                 contract
                     .penalty_energy_by_actor(actor_id)
@@ -498,11 +565,11 @@ async fn late_records_after_rollover_are_processed_once_without_blocking_the_cur
                     .await
                     .unwrap(),
                 U256::from(expected),
-                "Repeated polls and restart must not charge a facility twice"
+                "Repeated polls and restart must not charge an owner twice"
             );
             assert_eq!(
                 contract.settled_trades([id; 16]).call().await.unwrap().2,
-                expected > 0,
+                id == 3 || (id == 1 && elapsed >= 4) || (id == 2 && elapsed >= 5),
             );
         }
         let expected_transactions = 1u64 + u64::from(elapsed >= 4) + u64::from(elapsed >= 5);

@@ -130,7 +130,7 @@ async fn test_publish_orders_calls_evm_order_registry() {
     for endpoint in ["/facilities/validate", "/ids"] {
         let mut failure = Mock::given(method("POST")).and(path(endpoint));
         if endpoint == "/ids" {
-            failure = failure.and(query_param("offchain_id", "area-b"));
+            failure = failure.and(query_param("offchain_id", "owner-2"));
         }
         failure
             .respond_with(ResponseTemplate::new(500))
@@ -176,7 +176,7 @@ async fn test_publish_orders_calls_evm_order_registry() {
     );
     assert_eq!(
         mock_contract.last_created_by().call().await.unwrap(),
-        parse_uuid_or_hex_bytes16(facilities::FACILITY_2_ONCHAIN).unwrap()
+        parse_uuid_or_hex_bytes16(facilities::OWNER_2_ONCHAIN).unwrap()
     );
     assert_eq!(
         mock_contract.last_market_id().call().await.unwrap(),
@@ -248,7 +248,7 @@ async fn test_publish_orders_calls_evm_order_registry() {
         .await
         .unwrap()
         .iter()
-        .all(|request| matches!(request.url.path(), "/facilities/validate" | "/ids")));
+        .all(|request| matches!(request.url.path(), "/facilities" | "/facilities/validate" | "/ids")));
 }
 
 #[tokio::test]

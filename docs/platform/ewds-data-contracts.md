@@ -103,7 +103,8 @@ DD-453 changes the v1 `tradeStatus` values in place to `matched`, `executed`,
 `settled` and `penalized`; no new schema version was introduced. Consumers must
 use these values and the current lifecycle: listener-indexed block inclusion
 creates `matched`, verification produces `executed` or terminal `penalized`,
-and financial `settled` is reserved for a future integration.
+and `settled` means the trade has been processed in the Settlement market.
+The transition to `settled` is not yet implemented.
 
 | Ontology property | Schema field | Current runtime source |
 |---|---|---|
@@ -143,7 +144,7 @@ For an `order.event`, the community client builds the
 | Contract parameter | From |
 |---|---|
 | `orderId` | the 16 bytes of the `orderId` UUID |
-| `createdBy` | Facility ID, mapped to its on-chain ID by the ID service; not the owner ID or service wallet |
+| `createdBy` | Facility owner ID, mapped to its on-chain ID by the ID service; not the facility ID or service wallet |
 | `marketId` | the 16 bytes of `marketId` |
 | `timeSlot`, `creationTime` | `timeSlot`, `creationTime` as epoch seconds |
 | `energy`, `energyRate` | `quantity`, `priceLimit` × 10 000, rounded |

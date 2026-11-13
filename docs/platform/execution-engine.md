@@ -52,11 +52,12 @@ is independent of `penalty_rate` (`0.10` means 10% of the deviation).
 For purchases of 4 and 6 kWh and consumption of 12 kWh, the 2 kWh deviation
 produces a 2,000-unit penalty at rate 0.10, allocated as 800 and 1,200 units.
 
-Measurement identities are derived locally with the ID service's shared
-Blake2b-16 helper, without querying or writing ID mappings. This is the same
-identity used in `OrderParams.createdBy` and the indexed trade parties. Owner
-IDs and service wallets are not measurement identities. Missing/unmapped,
-non-finite, or conflicting readings for a facility/slot leave its trades pending;
+Measurements identify facilities. The engine reads the facility-to-owner mapping
+from off-chain storage and derives each owner's on-chain ID with the ID service's
+shared Blake2b-16 helper, without writing ID mappings. That owner ID is used in
+`OrderParams.createdBy` and the indexed trade parties; the submitting service
+wallet is separate. This deployment guarantees one facility per owner.
+Missing/unmapped, non-finite, or conflicting readings for a facility/slot leave its trades pending;
 they do not produce a zero-penalty success. Identical readings are not counted
 twice. Multiple distinct readings are not summed or arbitrarily selected: they
 need an unambiguous net measurement before verification. Both parties' readings
@@ -97,13 +98,13 @@ already-running cycle is allowed to finish.
 The scheduler alternates the current target with retained slots, visiting the
 retained slots oldest-first in rotation. A newly advanced target is selected
 first. This prevents an older slot's retries from monopolizing polling cycles.
-Execution and verification submissions remain serial; the polling interval and
-transport latency still determine how often each slot can be checked.
+Execution and delivery-verification submissions remain serial; the polling
+interval and transport latency still determine how often each slot can be checked.
 
 Empty results, failures, and successful submissions do not remove a retained
-slot early: additional records can still arrive. The existing on-chain verification
-check prevents resubmission for trades already processed. The eligible window
-is recalculated from time, including after restart or skipped polling intervals;
+slot early: additional records can still arrive. The on-chain `verified` flag
+prevents resubmission for trades already processed, including zero-penalty trades.
+The eligible window is recalculated from time, including after restart or skipped polling intervals;
 neither restarts nor retries extend the deadline. Records arriving beyond that
 window require separate historical processing, which is not implemented here.
 

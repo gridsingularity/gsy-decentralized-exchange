@@ -3,9 +3,9 @@ use primitives::db_api_schema::{
     profiles::MeasurementSchema,
     trades::{DbTradeSchema, TradeStatus},
 };
-use primitives::utils::NODE_FLOAT_SCALING_FACTOR;
+use primitives::utils::{derive_onchain_id, NODE_FLOAT_SCALING_FACTOR};
 use std::collections::{HashMap, HashSet};
-use tracing::{debug, warn};
+use tracing::warn;
 
 #[derive(Debug)]
 pub struct Penalty {
@@ -24,7 +24,7 @@ pub struct DeliveryVerification {
 
 /// Allocates each facility's delivery-slot penalty across its trades.
 ///
-/// Measurements are mapped from facility IDs to the trade's buyer/seller IDs.
+/// Measurements are mapped from facility IDs to the trade's buyer/seller owner IDs.
 /// Compare signed measurements against purchases minus sales, across all indexed
 /// trades in this slot (including completed trades). Allocate by absolute traded
 /// quantity. Both parties need a usable reading before their trade can complete.
@@ -44,7 +44,7 @@ pub struct DeliveryVerification {
 pub fn compute_penalties(
     trades: &[DbTradeSchema],
     measurements: &[MeasurementSchema],
-    facility_onchain_ids: &HashMap<String, String>,
+    facility_owner_mapping: &HashMap<String, String>,
     delivery_slot: u64,
     penalty_rate: f64,
     penalty_tolerance_percent: f64,
@@ -52,7 +52,7 @@ pub fn compute_penalties(
     let verifications = compute_delivery_verifications(
         trades,
         measurements,
-        facility_onchain_ids,
+        facility_owner_mapping,
         delivery_slot,
         penalty_rate,
         penalty_tolerance_percent,
@@ -95,7 +95,7 @@ struct FacilityTrades<'a> {
 pub fn compute_delivery_verifications(
     trades: &[DbTradeSchema],
     measurements: &[MeasurementSchema],
-    facility_onchain_ids: &HashMap<String, String>,
+    facility_owner_mapping: &HashMap<String, String>,
     delivery_slot: u64,
     penalty_rate: f64,
     penalty_tolerance_percent: f64,
@@ -136,22 +136,22 @@ pub fn compute_delivery_verifications(
         seller.quantities.push((&trade.trade_uuid, energy));
     }
 
-    // Use the same facility ID mapping as the submitting community client.
-    let mut measurement_map: HashMap<&str, Option<f64>> = HashMap::new();
+    // This deployment guarantees one facility per owner; trade parties identify owners.
+    let mut measurement_map: HashMap<String, Option<f64>> = HashMap::new();
     for meas in measurements
         .iter()
         .filter(|meas| meas.time_slot == delivery_slot)
     {
-        let Some(onchain_id) = facility_onchain_ids.get(&meas.facility_id) else {
-            debug!(
-                "No derived identity supplied for facility_id={}",
+        let Some(owner_id) = facility_owner_mapping.get(&meas.facility_id) else {
+            warn!(
+                "No owner mapping supplied for facility_id={}",
                 meas.facility_id
             );
             continue;
         };
         let energy = meas.energy_kwh.is_finite().then_some(meas.energy_kwh);
         measurement_map
-            .entry(onchain_id)
+            .entry(derive_onchain_id(owner_id))
             .and_modify(|previous| {
                 if *previous != energy {
                     *previous = None;
@@ -167,7 +167,7 @@ pub fn compute_delivery_verifications(
         };
         let Some(measured) = measured else {
             warn!(
-                "Invalid or conflicting measurements for facility {} in slot {}",
+                "Invalid or conflicting measurements for owner {} in slot {}",
                 facility, delivery_slot
             );
             continue;

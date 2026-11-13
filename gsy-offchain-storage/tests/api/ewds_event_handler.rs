@@ -13,6 +13,7 @@ use gsy_offchain_storage::ewds_event_handler::{
     handle_event, start_ewds_event_subscriber, EwdsEventPublisher,
 };
 use gsy_offchain_storage::ewds_handler::{handle_request, EwdsHandlerConfig};
+use mongodb::bson::doc;
 use primitives::db_api_schema::grid_topology::{EnergyCommunitySchema, FacilitySchema, SiteSchema};
 use primitives::db_api_schema::orders::OrderStatus;
 use primitives::db_api_schema::profiles::MeasurementPointType;
@@ -619,6 +620,7 @@ async fn trade_settled_publishes_trade_event() {
     assert_eq!(event["data"][0]["residualBidId"], json!(null));
 
     let stored = app.db_wrapper.trades().get_all_trades().await.unwrap();
+    assert_eq!(stored[0].creation_time, 1_100);
     assert_eq!(
         event["occurredAt"],
         json!(epoch_to_rfc3339(stored[0].creation_time))
@@ -862,6 +864,98 @@ async fn market_clearing_publishes_clearing_result_event() {
 }
 
 #[tokio::test]
+async fn replay_recovers_partial_settlement_without_rewinding_verified_orders() {
+    let app = init_app().await;
+    let handler = OffchainStorageEvmHandler {
+        db: app.db_wrapper.clone(),
+        event_publisher: None,
+    };
+    let event = trade_settled_event();
+    let bid = order_placed_event(event.bid_id, true);
+    handler.handle_order_placed(bid.clone(), 950).await.unwrap();
+    // Fail after writing the trade and bid, then make the missing offer available.
+    assert!(handler
+        .handle_trade_settled(event.clone(), 1_100)
+        .await
+        .is_err());
+    assert_eq!(
+        app.db_wrapper
+            .trades()
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        1
+    );
+    // Even if a legacy import has claimed that ID, its first chain placement is authoritative.
+    let orders = app.db_wrapper.orders();
+    let mut imported = orders
+        .get_order_by_id(&bytes16_to_hex(event.bid_id).into())
+        .await
+        .unwrap()
+        .unwrap();
+    imported.order_id = bytes16_to_hex(event.offer_id);
+    imported.status = OrderStatus::Cancelled;
+    orders.insert_orders(vec![imported]).await.unwrap();
+    handler
+        .handle_order_placed(order_placed_event(event.offer_id, false), 950)
+        .await
+        .unwrap();
+    handler
+        .handle_trade_settled(event.clone(), 1_100)
+        .await
+        .unwrap();
+    handler
+        .handle_delivery_verified(
+            DeliveryVerifiedFilter {
+                trade_id: event.trade_id,
+                bid_id: event.bid_id,
+                offer_id: event.offer_id,
+            },
+            1_200,
+        )
+        .await
+        .unwrap();
+    handler.handle_order_placed(bid, 950).await.unwrap();
+    handler.handle_trade_settled(event, 1_100).await.unwrap();
+    let orders = app.db_wrapper.orders().get_all_orders().await.unwrap();
+    assert_eq!(orders.len(), 2);
+    assert!(orders
+        .iter()
+        .all(|o| o.status == OrderStatus::Executed && o.status_updated_at == Some(1_200)));
+    let trades = app.db_wrapper.trades().get_all_trades().await.unwrap();
+    assert_eq!(trades.len(), 1);
+    assert_eq!(trades[0].status, TradeStatus::Executed);
+    assert_eq!(trades[0].status_updated_at, Some(1_200));
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn clearing_replay_preserves_distinct_logs_from_one_transaction() {
+    let app = init_app().await;
+    let handler = OffchainStorageEvmHandler {
+        db: app.db_wrapper.clone(),
+        event_publisher: None,
+    };
+    for index in [0u64, 1, 0, 1] {
+        let mut meta = log_meta(H256::repeat_byte(0xab));
+        meta.log_index = index.into();
+        handler
+            .handle_market_clearing(market_clearing_event(1), meta, 1_100)
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        app.db_wrapper
+            .clearing_results()
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        2
+    );
+    stop_app(app).await;
+}
+
+#[tokio::test]
 async fn market_clearing_does_not_publish_for_invalid_clearing_status() {
     let app = init_app().await;
     let server = mock_gateway().await;
@@ -925,12 +1019,24 @@ async fn order_status_notifications_follow_consumed_orders_and_independent_resid
         let app = init_app().await;
         let server = mock_gateway().await;
         let handler = evm_handler(&app, &server);
-        seed_settlement_orders(&app).await;
         let parent_id = if residual_is_bid {
             [0x02; 16]
         } else {
             [0x03; 16]
         };
+        let other_id = if residual_is_bid {
+            [0x03; 16]
+        } else {
+            [0x02; 16]
+        };
+        let silent = OffchainStorageEvmHandler {
+            db: app.db_wrapper.clone(),
+            event_publisher: None,
+        };
+        silent
+            .handle_order_placed(order_placed_event(other_id, !residual_is_bid), 950)
+            .await
+            .unwrap();
         let mut parent = order_placed_event(parent_id, residual_is_bid);
         parent.energy = 30_000;
         handler.handle_order_placed(parent, 960).await.unwrap();

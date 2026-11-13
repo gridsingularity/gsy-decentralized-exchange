@@ -162,8 +162,8 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
         let market_id = if index == 2 { [0x9a; 16] } else { market_id };
         let slot = if index == 2 { slot + 900 } else { slot };
         let seller_facility = format!("seller-meter-{index}");
-        let buyer_id = create_encrypted_bytes16_from_string(&facility);
-        let seller_id = create_encrypted_bytes16_from_string(&seller_facility);
+        let buyer_id = create_encrypted_bytes16_from_string(&buyer);
+        let seller_id = create_encrypted_bytes16_from_string(&format!("seller-{index}"));
         let bid = (
             [index + 1; 16],
             buyer_id,
@@ -235,6 +235,15 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
             creation_time: slot,
             energy_kwh: [1.0, 1.0, 1.2][index as usize],
         });
+        app.db_wrapper
+            .facilities()
+            .upsert(FacilitySchema {
+                facility_id: seller_facility.clone(),
+                facility_name: seller_facility.clone(),
+                site_id: "site".into(),
+                owner_id: format!("seller-{index}"),
+            })
+            .await?;
         seller_measurements.push(MeasurementSchema {
             facility_id: seller_facility,
             community_uuid: "community".into(),
@@ -363,7 +372,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
         &settlement,
         "submitPenalties",
         (vec![(
-            create_encrypted_bytes16_from_string("meter-0"),
+            create_encrypted_bytes16_from_string("buyer-0"),
             [0x9au8; 16],
             [23u8; 16],
             200u64,
@@ -398,7 +407,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
     assert_eq!(
         app.db_wrapper.ids().count_documents(mongodb::bson::doc! {}).await?,
         mapping_count,
-        "Execution cycles must not create facility ID mappings"
+        "Execution cycles must not create ID mappings"
     );
     insert_measurements(&app.db_wrapper, &measurements[2..]).await?;
     assert_eq!(
@@ -693,8 +702,19 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
             }
         })
         .await?;
-        let measurement = |facility: &str, energy| MeasurementSchema {
-            facility_id: facility.into(),
+        for owner in ["a", "b", "c", "d"] {
+            app.db_wrapper
+                .facilities()
+                .upsert(FacilitySchema {
+                    facility_id: format!("meter-{owner}"),
+                    facility_name: format!("meter-{owner}"),
+                    site_id: "site".into(),
+                    owner_id: owner.into(),
+                })
+                .await?;
+        }
+        let measurement = |owner: &str, energy| MeasurementSchema {
+            facility_id: format!("meter-{owner}"),
             community_uuid: "community".into(),
             time_slot: slot,
             creation_time: slot,

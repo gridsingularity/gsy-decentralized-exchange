@@ -2,12 +2,11 @@ use crate::certificates::query::{guarantees_of_origin, validate_window};
 use crate::db::DatabaseWrapper;
 use anyhow::{anyhow, Result};
 use futures::future::join_all;
-use primitives::db_api_schema::grid_topology::FacilityMarketValidationRequest;
 use primitives::db_api_schema::profiles::{MeasurementPointType, MeasurementSchema};
 use primitives::ewds::dto::{
     parse_market_id, EwdsClearingResultDto, EwdsCommunityDto, EwdsErrorPayload, EwdsInboundMessage,
     EwdsMarketDto, EwdsMeasurementDto, EwdsOrderDto, EwdsRequestEnvelope, EwdsResponseEnvelope,
-    EwdsSendMessageDto, EwdsTradeDto,
+    EwdsSendMessageDto, EwdsTradeDto, FacilityMarketValidationRequest,
 };
 use primitives::ewds::{
     client_id_for_suffix, env_var, ewds_rate_limit_backoff_ms, format_response_body,

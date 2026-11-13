@@ -31,21 +31,24 @@ For each forecast:
 
 Before submission, the client validates all non-zero forecasts' facility/market
 pairs through HTTP `/facilities/validate` or EWDS `facilities.validate`.
-Only eligible facilities are resolved through the ID service. `createdBy` uses
-that facility's on-chain ID, not its owner's ID or the submitting wallet.
-Owner relationships remain in the topology and are not used as submission identity.
+The client reads the facility-to-owner mapping from stored topology. Only eligible
+facilities' owners are resolved through the ID service. `createdBy` uses that
+owner's on-chain ID, independently of the submitting service wallet.
+This deployment guarantees one facility per owner and one owner per facility.
 
 Ineligible forecasts are skipped and logged. When `EWDS_ENABLE_HANDLER` is enabled,
 they also produce the existing `orderStatus.event` rejection notification with a
-generated order ID, original facility ID and validation reason; no DB order is
-created. HTTP-only runs do not require a gateway. Validation/ID-service errors
+generated order ID, original owner ID and validation reason; no DB order is
+created. A forecast without a facility-to-owner mapping is only logged and skipped,
+because no owner identity is available for its notification.
+HTTP-only runs do not require a gateway. Topology/validation/ID-service errors
 propagate before any order is sent, allowing the caller to retry. All eligible
 orders are prepared before rejection notifications are published. The existing
 forecast quantity/rate calculations and transaction submission loop are unchanged.
 
 Order payload includes:
 
-- `createdBy` derived from `facilityId`
+- `createdBy` derived from the facility's `owner_id`
 - `marketId`
 - `timeSlot`
 - `creationTime`
@@ -65,11 +68,11 @@ When `EWDS_ENABLE_HANDLER` is on, the binary polls the `order` topic for `order.
 
 1. parses and checks all orders (UUID `orderId`, non-zero UUID/hex `marketId`,
    `orderStatus` `submitted`, `quantity` above 0, `priceLimit` 0 or more);
-2. skips orders already placed on-chain (latest block), then validates the remaining
-   `createdBy` facility IDs against their markets in one bulk request through
+2. skips orders already placed on-chain (latest block), resolves each remaining
+   `createdBy` owner to its facility, then validates those facility/market pairs through
    HTTP `/facilities/validate` or EWDS `facilities.validate`;
-3. resolves IDs only for eligible orders. `createdBy` is the original facility
-   ID, not its owner's ID or the submitting wallet. Having an ID mapping does
+3. resolves IDs only for eligible orders. `createdBy` is the original owner
+   ID, not the facility ID or the submitting wallet. Having an ID mapping does
    not establish eligibility. Ineligible orders receive a `rejected`
    `orderStatus.event` notification with the validation reason, without a DB
    order or a `placeOrder` call; eligible orders in the batch can continue;
@@ -77,6 +80,10 @@ When `EWDS_ENABLE_HANDLER` is on, the binary polls the `order` topic for `order.
    orders that are already on-chain, and waits for each mined receipt.
    Rejections during gas estimation and mined reverts are logged; the other
    orders are still processed.
+
+An owner without an associated facility receives an `unknown_facility` rejection.
+Unavailable topology or multiple facilities for one owner fail the event before
+submission, without rejecting individual orders; the event remains retryable.
 
 Malformed input or unresolved eligible-order IDs fail the event before any
 submission. Unavailable validation or incomplete/inconsistent responses do
@@ -106,7 +113,7 @@ The community client's wallet must hold `OrderRegistry.COMMUNITY_CLIENT_ROLE`;
 otherwise placement and cancellation revert with `Unauthorized`. Administrators
 can authorize multiple clients and revoke each independently. This role is not
 community-scoped: each client validates facility/community membership off-chain.
-The submitting wallet is independent of the facility ID in `createdBy`;
+The submitting wallet is independent of the owner ID in `createdBy`;
 actor-wallet registration or delegation grants no order-submission permission.
 With the subscriber enabled, startup checks this role and fails if it is missing,
 unreadable, or no registry is deployed at the configured address. Runtime health
@@ -140,12 +147,12 @@ The binary currently runs only the order event subscriber. Without
 `EWDS_ENABLE_HANDLER` it logs that the subscriber is disabled and exits.
 The forecast-based order publication (`publish_orders`) is used by the e2e
 steps and also validates facility participation. The matching engine compares
-preferred partners against facility IDs and blocks only same-facility trades;
-different facilities with the same owner may trade. Indexed trade parties and
-penalties retain the facility identity, independently of the service wallet.
-Delivery verification derives measurement facility IDs locally with the same
-Blake2b-16 function as the ID service, without creating mappings. Certificate
-lookups also resolve facility mappings, while retaining the facility's owner
-relationship in certificate metadata (`owner_id` hashes the facility's current
-owner, not necessarily its owner at trade time; historical ownership policy is a
-separate follow-up).
+preferred partners against owner IDs and blocks same-owner trades.
+Indexed trade parties and penalties retain the owner identity, independently
+of the service wallet. Delivery verification reads the facility-to-owner mapping
+and derives owner IDs with the ID service's shared Blake2b-16 helper, without
+creating ID mappings. Certificate lookups resolve owner hashes to facilities
+under the one-facility-per-owner guarantee. Certificate `owner_id` retains the
+trade's owner hash, while `facility_id` identifies the associated facility.
+Ownership history is not tracked; historical ownership changes remain a separate
+follow-up.

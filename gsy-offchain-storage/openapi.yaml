@@ -931,7 +931,7 @@ components:
       type: string
       description: |
         matched: the match is included in a block indexed by the listener (no confirmation depth).
-        settled: financial settlement complete; transition awaits the partner billing integration.
+        settled: the trade has been processed in the Settlement market; transition not yet implemented.
         executed: delivery verification completed without penalties.
         penalized: a delivery penalty was recorded; this status is terminal.
       enum: [matched, executed, settled, penalized]

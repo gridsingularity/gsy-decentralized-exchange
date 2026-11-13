@@ -5,7 +5,6 @@ use ethers::abi::AbiDecode;
 use ethers::prelude::*;
 use gsy_community_client::node_connector::orders::publish_orders;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
-use primitives::db_api_schema::grid_topology::FacilityMarketValidationRequest;
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::orders::{
     order_metadata_to_contract, DbAttributes, DbOrderSchema, DbRequirements, EnergyType,
@@ -13,6 +12,7 @@ use primitives::db_api_schema::orders::{
 };
 use primitives::db_api_schema::profiles::MeasurementSchema;
 use primitives::db_api_schema::trades::{DbTradeSchema, TradeStatus};
+use primitives::ewds::dto::FacilityMarketValidationRequest;
 use primitives::matching::matching_block_interval;
 use primitives::offchain_storage::{
     resolve_order_partner_ids, OffchainStorageClient, OffchainStorageTransport,
@@ -366,9 +366,16 @@ async fn place_custom_order_for_market(
         "Ineligible E2E order: {:?}",
         validation[0]
     );
+    let facility_owner_mapping = id_mapping_source
+        .fetch_facility_owner_mapping()
+        .await
+        .unwrap();
+    let owner_id = facility_owner_mapping
+        .get(&facility_id)
+        .expect("Missing facility owner");
     let actor_id = parse_uuid_or_hex_bytes16(
         &id_mapping_source
-            .fetch_onchain_id(&facility_id)
+            .fetch_onchain_id(owner_id)
             .await
             .unwrap(),
     )
@@ -381,7 +388,11 @@ async fn place_custom_order_for_market(
         .and_then(|r| r.trading_partner_id.as_mut())
     {
         if world.users.contains_key(partner.as_str()) {
-            *partner = world.facility_id_for_market_user(market_id, partner);
+            let partner_facility = world.facility_id_for_market_user(market_id, partner);
+            *partner = facility_owner_mapping
+                .get(&partner_facility)
+                .expect("Missing preferred facility owner")
+                .clone();
         }
     }
     let mut resolved_requirements = requirements.clone();
@@ -795,14 +806,7 @@ async fn submit_preferred_partner_offer(
             .requirements
             .as_ref()
             .and_then(|requirements| requirements.trading_partner_id.as_deref()),
-        Some(
-            world
-                .facility_id_for_market_user(
-                    world.last_market_id.expect("Missing market id"),
-                    &partner_name,
-                )
-                .as_str(),
-        ),
+        Some(partner_name.as_str()),
         "Offer {} lost its preferred partner in requirements",
         order_id
     );

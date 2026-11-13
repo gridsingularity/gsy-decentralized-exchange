@@ -13,8 +13,8 @@ fn onchain_id(id: &str) -> String {
     bytes16_to_hex(create_encrypted_bytes16_from_string(id))
 }
 
-fn order(order_id: &str, facility_id: &str, is_bid: bool) -> DbOrderSchema {
-    let actor_id = bytes16_to_hex(create_encrypted_bytes16_from_string(facility_id));
+fn order(order_id: &str, owner_id: &str, is_bid: bool) -> DbOrderSchema {
+    let actor_id = bytes16_to_hex(create_encrypted_bytes16_from_string(owner_id));
     DbOrderSchema {
         order_id: order_id.to_string(),
         status: OrderStatus::Executed,
@@ -69,22 +69,22 @@ fn measurement(facility_id: &str, energy_kwh: f64) -> MeasurementSchema {
 }
 
 #[test]
-fn compute_penalties_matches_facility_measurements_to_onchain_ids() {
+fn compute_penalties_matches_facility_measurements_to_owner_ids() {
     let measurements = vec![
         measurement("areaalice", 12.0),
         measurement("areabob", -10.0),
     ];
 
-    // The mapping comes from the same ID service used by the community client.
-    let facility_onchain_ids = HashMap::from([
-        ("areaalice".to_string(), onchain_id("alice")),
-        ("areabob".to_string(), onchain_id("bob")),
+    // Facility records link each meter to the owner used in order creation.
+    let facility_owner_mapping = HashMap::from([
+        ("areaalice".to_string(), "alice".to_string()),
+        ("areabob".to_string(), "bob".to_string()),
     ]);
 
     let penalties = compute_penalties(
         &[trade()],
         &measurements,
-        &facility_onchain_ids,
+        &facility_owner_mapping,
         1_000,
         0.10,
         5.0,
@@ -102,8 +102,8 @@ fn compute_penalties_matches_facility_measurements_to_onchain_ids() {
 #[test]
 fn verification_distinguishes_missing_measurements_from_zero_penalties() {
     let mapping = HashMap::from([
-        ("buyer-meter".to_string(), onchain_id("alice")),
-        ("seller-meter".to_string(), onchain_id("bob")),
+        ("buyer-meter".to_string(), "alice".to_string()),
+        ("seller-meter".to_string(), "bob".to_string()),
     ]);
     let buyer = measurement("buyer-meter", 10.0);
     let seller = measurement("seller-meter", -10.0);
@@ -141,8 +141,8 @@ fn verification_distinguishes_missing_measurements_from_zero_penalties() {
 #[test]
 fn verification_penalizes_each_partys_own_deviation_in_both_directions() {
     let mapping = HashMap::from([
-        ("buyer-meter".to_string(), onchain_id("alice")),
-        ("seller-meter".to_string(), onchain_id("bob")),
+        ("buyer-meter".to_string(), "alice".to_string()),
+        ("seller-meter".to_string(), "bob".to_string()),
     ]);
     for (buyer, seller, expected_buyer, expected_seller) in [
         (12.0, -10.0, 2_000, 0),
@@ -190,9 +190,9 @@ fn verification_penalizes_each_partys_own_deviation_in_both_directions() {
 #[test]
 fn verification_ignores_unrelated_or_invalid_measurements() {
     let mapping = HashMap::from([
-        ("buyer-meter".to_string(), onchain_id("alice")),
-        ("seller-meter".to_string(), onchain_id("bob")),
-        ("other-meter".to_string(), onchain_id("charlie")),
+        ("buyer-meter".to_string(), "alice".to_string()),
+        ("seller-meter".to_string(), "bob".to_string()),
+        ("other-meter".to_string(), "charlie".to_string()),
     ]);
     for measurements in [
         vec![
@@ -236,20 +236,20 @@ fn verification_ignores_unrelated_or_invalid_measurements() {
 }
 
 #[test]
-fn verification_keeps_distinct_facilities_separate_and_uses_stored_ids() {
-    // Two facilities may share an owner; only their mapped facility IDs identify trades.
-    let first_id = "0x11111111111111111111111111111111";
-    let second_id = "0x22222222222222222222222222222222";
+fn verification_keeps_distinct_owners_measurements_separate() {
+    // Each facility maps to one distinct owner in this deployment.
+    let first_id = onchain_id("owner-1");
+    let second_id = onchain_id("owner-2");
     let mapping = HashMap::from([
-        ("first-meter".into(), first_id.into()),
-        ("second-meter".into(), second_id.into()),
-        ("seller-meter".into(), onchain_id("bob")),
+        ("first-meter".into(), "owner-1".into()),
+        ("second-meter".into(), "owner-2".into()),
+        ("seller-meter".into(), "bob".to_string()),
     ]);
     let mut first = trade();
-    first.buyer = first_id.into();
+    first.buyer = first_id.clone();
     let mut second = first.clone();
     second.trade_uuid = "trade-2".into();
-    second.buyer = second_id.into();
+    second.buyer = second_id;
     let trades = [first, second];
     let measurements = [
         measurement("first-meter", 12.0),
@@ -281,7 +281,7 @@ fn readings(values: &[(&str, f64)]) -> (Vec<MeasurementSchema>, HashMap<String, 
             .collect(),
         values
             .iter()
-            .map(|(id, _)| ((*id).into(), onchain_id(id)))
+            .map(|(id, _)| ((*id).into(), (*id).into()))
             .collect(),
     )
 }
@@ -545,8 +545,8 @@ fn invalid_trade_quantities_and_duplicates_fail_instead_of_shrinking_the_baselin
 #[test]
 fn tolerance_is_inclusive_and_penalties_use_the_full_deviation() {
     let mapping = HashMap::from([
-        ("buyer-meter".to_string(), onchain_id("alice")),
-        ("seller-meter".to_string(), onchain_id("bob")),
+        ("buyer-meter".to_string(), "alice".to_string()),
+        ("seller-meter".to_string(), "bob".to_string()),
     ]);
     for (traded, measured, tolerance, expected_cost) in [
         (100.0, 100.0, 5.0, 0),

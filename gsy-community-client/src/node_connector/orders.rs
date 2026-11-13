@@ -2,11 +2,10 @@ use crate::order_events::publish_rejection;
 use crate::time_utils::get_current_timestamp_in_secs;
 use anyhow::{Context, Error, Result};
 use ethers::prelude::*;
-use primitives::db_api_schema::grid_topology::FacilityMarketValidationRequest;
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::orders::order_metadata_to_contract;
 use primitives::db_api_schema::profiles::ForecastSchema;
-use primitives::ewds::dto::EwdsOrderDto;
+use primitives::ewds::dto::{EwdsOrderDto, FacilityMarketValidationRequest};
 use primitives::ewds::{env_var, EwdsClient};
 use primitives::offchain_storage::OffchainStorageClient;
 use primitives::utils::{
@@ -158,6 +157,7 @@ abigen!(
 
 async fn build_order_param(
     forecast: &ForecastSchema,
+    owner_id: &str,
     storage: &OffchainStorageClient,
     market: &MarketSchema,
     now: u64,
@@ -167,14 +167,14 @@ async fn build_order_param(
     let metadata = order_metadata_to_contract(None, None)?;
     let offchain_order_id = Uuid::new_v4().to_string();
     let onchain_order_id = create_encrypted_bytes16_from_string(&offchain_order_id);
-    let facility_id = storage.fetch_onchain_id(&forecast.facility_id).await?;
-    let onchain_facility_id =
-        parse_uuid_or_hex_bytes16(&facility_id).context("Invalid on-chain facility ID")?;
+    let owner_id = storage.fetch_onchain_id(owner_id).await?;
+    let onchain_owner_id =
+        parse_uuid_or_hex_bytes16(&owner_id).context("Invalid on-chain owner ID")?;
     let delivery_start: u64 =
         string_to_timestamp(&market.delivery_start_time).expect("invalid delivery_start_time");
     Ok((
         onchain_order_id,
-        onchain_facility_id,
+        onchain_owner_id,
         parse_uuid_or_hex_bytes16(market.market_id.as_str())
             .expect("could not convert hex to bytes"),
         delivery_start,
@@ -189,7 +189,7 @@ async fn build_order_param(
     ))
 }
 
-/// Validate non-zero forecasts before resolving facility IDs or submitting any orders.
+/// Validate non-zero forecasts before resolving owner IDs or submitting any orders.
 /// Denials are skipped and reported when EWDS is enabled; infrastructure errors propagate.
 pub async fn create_input_orders(
     forecasts: Vec<ForecastSchema>,
@@ -202,6 +202,10 @@ pub async fn create_input_orders(
         .into_iter()
         .filter(|forecast| forecast.energy_kwh > 0.0 || forecast.energy_kwh < 0.0)
         .collect();
+    if forecasts.is_empty() {
+        return Ok(Vec::new());
+    }
+    let facility_owner_mapping = storage.fetch_facility_owner_mapping().await?;
     let requests: Vec<_> = forecasts
         .iter()
         .map(|forecast| FacilityMarketValidationRequest {
@@ -216,17 +220,29 @@ pub async fn create_input_orders(
     let mut input_orders = Vec::new();
     let mut rejected = Vec::new();
     for (forecast, result) in forecasts.into_iter().zip(validation) {
+        let Some(owner_id) = facility_owner_mapping.get(&forecast.facility_id) else {
+            // No owner identity is available to construct an order or rejection notification.
+            warn!("No owner mapping for facility_id={}", forecast.facility_id);
+            continue;
+        };
         if let Some(reason) = result.reason {
             let reason = format!(
                 "Facility {} cannot participate in market {}: {}",
                 forecast.facility_id, market.market_id, reason.as_str()
             );
             warn!("{}", reason);
-            rejected.push((forecast, reason));
+            rejected.push((forecast, owner_id.clone(), reason));
         } else {
             input_orders.push(
-                build_order_param(&forecast, &storage, &market, now, forecast.energy_kwh > 0.0)
-                    .await?,
+                build_order_param(
+                    &forecast,
+                    owner_id,
+                    &storage,
+                    &market,
+                    now,
+                    forecast.energy_kwh > 0.0,
+                )
+                .await?,
             );
         }
     }
@@ -240,7 +256,7 @@ pub async fn create_input_orders(
         let ewds = EwdsClient::from_env("EWDS_COMMUNITY_CLIENT_ID", "gsycommunityclient", 60_000);
         let delivery_start = string_to_timestamp(&market.delivery_start_time)
             .context("Invalid delivery_start_time")?;
-        for (forecast, reason) in rejected {
+        for (forecast, owner_id, reason) in rejected {
             let is_bid = forecast.energy_kwh > 0.0;
             let submission = EwdsOrderDto {
                 order_id: Uuid::new_v4().to_string(),
@@ -250,7 +266,7 @@ pub async fn create_input_orders(
                 time_slot: epoch_to_rfc3339(delivery_start),
                 quantity: forecast.energy_kwh.abs(),
                 price_limit: forecast.energy_kwh.abs() * if is_bid { BID_RATE } else { OFFER_RATE },
-                created_by: forecast.facility_id,
+                created_by: owner_id,
                 creation_time: epoch_to_rfc3339(now),
                 energy_source_preference: None,
                 energy_type: None,

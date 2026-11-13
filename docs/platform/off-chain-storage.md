@@ -119,7 +119,7 @@ by those trusted services, not by this read-only endpoint or an ID mapping alone
 ### ID Mapping
 - The ID service, execution engine and certificate metadata share the deterministic
   Blake2b-16 derivation. Verification derives IDs locally and never creates mappings.
-  Certificate `owner_id` hashes the facility's current stored owner; historical
+  Certificate `owner_id` is the trade seller's owner hash; historical
   ownership policy remains a separate follow-up.
 - `/ids` (`POST`) — get-or-create offchain↔onchain ID mappings
 
@@ -152,10 +152,14 @@ does not trigger expiry. Market windows are immutable and cannot be reopened.
 The former wall-clock expiry scheduler and `scheduler_interval` setting have
 been removed. HTTP and EWDS use the same listener; order-status notifications
 are published only when EWDS is enabled. The first new confirmed block after startup
-also checks already-indexed markets for expiry. The listener retries failed blocks
-and catches up across reconnects during the same process; it has no persisted
-cursor across restarts and starts at the next block on startup. There is no
-reindexing tool. See the [fresh-deployment requirements](../setup/contracts.md#fresh-deployments).
+also checks already-indexed markets for expiry. On first start for a chain and
+contract set, the listener records the current head + 1 in MongoDB, without
+backfilling older events. It advances this cursor only after all logs and expiry
+checks for a block succeed. After a reconnect or restart it resumes at the first
+unfinished block. Replays preserve lifecycle states and separate clearing logs;
+EWDS notifications can repeat. The cursor is not a chain-reorg recovery mechanism.
+There is no reindexing tool. See the
+[fresh-deployment requirements](../setup/contracts.md#fresh-deployments).
 
 ## Data Model Notes
 
@@ -163,8 +167,8 @@ reindexing tool. See the [fresh-deployment requirements](../setup/contracts.md#f
   indexed by the listener (no confirmation depth).
   `DeliveryVerified` advances penalty-free trades to `Executed`;
   `PenaltyRecorded` sets terminal `Penalized`, which verification does not replace.
-  `Settled` means financial settlement complete. Its transition is not implemented
-  until the partner's billing service is available. Trades cannot be `Rejected`.
+  `Settled` means the trade has been processed in the Settlement market.
+  This transition is not yet implemented. Trades cannot be `Rejected`.
   This lifecycle targets fresh deployments; no data migration is provided.
 - Existing `POST /trades` and `/trades-normalized` endpoints retain insert-only
   import behavior. They do not update orders or publish lifecycle notifications;
@@ -189,11 +193,11 @@ reindexing tool. See the [fresh-deployment requirements](../setup/contracts.md#f
   queries that select it until corrected; the error is logged with query context.
 - The preferred trading partner of a bid or an offer is stored in its
   requirements (`requirements.trading_partner_id`) as the original off-chain
-  partner facility ID; attributes carry no partner.
+  partner owner ID; attributes carry no partner.
   Callers resolve these through `POST /ids` or EWDS `ids.query` before contract
   submission. The event indexer uses the ID mapping collection to recover the
-  facility IDs; the matcher resolves them back before comparing on-chain actors.
-  UUID-shaped facility IDs are mapping inputs, not already-encoded on-chain IDs.
+  owner IDs; the matcher resolves them back before comparing on-chain actors.
+  UUID-shaped owner IDs are mapping inputs, not already-encoded on-chain IDs.
   Missing reverse mappings cause an indexing error rather than fabricating an ID.
   Mappings must exist before order submission. A missing mapping fails the block;
   the listener logs the error and retries that block instead of skipping it.
@@ -210,7 +214,9 @@ reindexing tool. See the [fresh-deployment requirements](../setup/contracts.md#f
 - Order placement, cancellation and settlement indexing use the event block's
   timestamp for `status_updated_at` (exposed as `updatedAt` in HTTP/EWDS DTOs),
   not the indexing time. Status and timestamp are updated together. Residual
-  orders have independent status timestamps; `creation_time` remains unchanged.
+  orders have independent status timestamps; their original creation time does
+  not change. A trade's `creation_time` is the settlement block's timestamp,
+  not the wall-clock time of indexing or replay.
   Existing records without a status timestamp are not backfilled by this change.
 - Trade records include order IDs, residual IDs and selected settlement parameters.
 

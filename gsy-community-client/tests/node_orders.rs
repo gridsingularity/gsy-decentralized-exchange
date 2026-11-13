@@ -1,7 +1,7 @@
 #[path = "common/facilities.rs"]
 mod facilities;
 
-use facilities::{FACILITY_1_ONCHAIN, FACILITY_2_ONCHAIN};
+use facilities::{OWNER_1_ONCHAIN, OWNER_2_ONCHAIN};
 use gsy_community_client::node_connector::orders::create_input_orders;
 use gsy_community_client::time_utils::get_current_timestamp_in_secs;
 use primitives::db_api_schema::market::MarketSchema;
@@ -81,7 +81,7 @@ async fn test_orders_to_evm_params_are_created_correctly() {
     ) = input_orders[0];
     assert_eq!(
         bid_created_by,
-        parse_uuid_or_hex_bytes16(FACILITY_1_ONCHAIN).unwrap()
+        parse_uuid_or_hex_bytes16(OWNER_1_ONCHAIN).unwrap()
     );
     assert_eq!(
         bid_market,
@@ -112,7 +112,7 @@ async fn test_orders_to_evm_params_are_created_correctly() {
     ) = input_orders[1];
     assert_eq!(
         offer_created_by,
-        parse_uuid_or_hex_bytes16(FACILITY_2_ONCHAIN).unwrap()
+        parse_uuid_or_hex_bytes16(OWNER_2_ONCHAIN).unwrap()
     );
     assert_eq!(
         offer_market,
@@ -291,10 +291,10 @@ async fn ineligible_forecasts_do_not_resolve_ids_or_contact_ewds_in_http_mode() 
         );
     }
     let requests = server.received_requests().await.unwrap();
-    assert_eq!(requests.len(), 6);
+    assert_eq!(requests.len(), 12);
     assert!(requests
         .iter()
-        .all(|request| request.url.path() == "/facilities/validate"));
+        .all(|request| matches!(request.url.path(), "/facilities" | "/facilities/validate")));
 }
 
 #[tokio::test]
@@ -332,14 +332,14 @@ async fn validation_errors_fail_before_id_resolution_and_can_be_retried() {
         .await
         .unwrap()
         .iter()
-        .all(|request| request.url.path() == "/facilities/validate"));
+        .all(|request| matches!(request.url.path(), "/facilities" | "/facilities/validate")));
     let orders = create_input_orders(vec![forecast("area1", 5.0)], test_market())
         .await
         .unwrap();
     assert_eq!(orders.len(), 1);
     assert_eq!(
         orders[0].1,
-        parse_uuid_or_hex_bytes16(FACILITY_1_ONCHAIN).unwrap()
+        parse_uuid_or_hex_bytes16(OWNER_1_ONCHAIN).unwrap()
     );
     std::env::set_var("EWDS_ENABLE_HANDLER", "false");
     match previous_gateway {
@@ -361,6 +361,10 @@ async fn forecast_validation_and_rejection_notifications_work_over_ewds() {
             let payload: Value = serde_json::from_str(&message.payload).unwrap();
             if let Some(operation) = payload["operation"].as_str() {
                 let data = match operation {
+                    "facilities.query" => json!([
+                        {"facility_id": "area1", "facility_name": "area1", "site_id": "site-1", "owner_id": "owner-1"},
+                        {"facility_id": "area2", "facility_name": "area2", "site_id": "site-1", "owner_id": "owner-2"}
+                    ]),
                     "facilities.validate" => {
                         assert_eq!(payload["payload"], json!([
                             {"facility_id": "missing-facility", "market_id": test_market().market_id},
@@ -376,8 +380,8 @@ async fn forecast_validation_and_rejection_notifications_work_over_ewds() {
                         ])
                     }
                     "ids.query" => {
-                        assert_eq!(payload["payload"]["offchain_id"], "area2");
-                        json!([{"offchain_id": "area2", "onchain_id": FACILITY_2_ONCHAIN, "creation_time": 0}])
+                        assert_eq!(payload["payload"]["offchain_id"], "owner-2");
+                        json!([{"offchain_id": "owner-2", "onchain_id": OWNER_2_ONCHAIN, "creation_time": 0}])
                     }
                     other => panic!("unexpected query {other}"),
                 };
@@ -417,7 +421,7 @@ async fn forecast_validation_and_rejection_notifications_work_over_ewds() {
     assert_eq!(orders.len(), 1);
     assert_eq!(
         orders[0].1,
-        parse_uuid_or_hex_bytes16(FACILITY_2_ONCHAIN).unwrap()
+        parse_uuid_or_hex_bytes16(OWNER_2_ONCHAIN).unwrap()
     );
     let requests = gateway.received_requests().await.unwrap();
     assert!(requests
@@ -430,34 +434,16 @@ async fn forecast_validation_and_rejection_notifications_work_over_ewds() {
         .map(|message| serde_json::from_str::<Value>(&message.payload).unwrap())
         .filter(|payload| payload["eventType"] == "orderStatus.event")
         .collect();
-    assert_eq!(notifications.len(), 2);
-    for (notification, facility_id, order_type, energy, rate, reason) in [
-        (
-            &notifications[0],
-            "missing-facility",
-            "bid",
-            5.0,
-            1.5,
-            "unknown_facility",
-        ),
-        (
-            &notifications[1],
-            "area1",
-            "offer",
-            2.0,
-            0.14,
-            "site_not_in_community",
-        ),
-    ] {
-        let order = &notification["data"][0];
-        assert_eq!(order["createdBy"], facility_id);
-        assert_eq!(order["marketId"], test_market().market_id);
-        assert_eq!(order["orderStatus"], "rejected");
-        assert_eq!(order["orderType"], order_type);
-        assert_eq!(order["quantity"], energy);
-        assert_eq!(order["priceLimit"], rate);
-        assert!(order["rejectReason"].as_str().unwrap().contains(reason));
-        assert!(order["updatedAt"].is_string());
-        uuid::Uuid::parse_str(order["orderId"].as_str().unwrap()).unwrap();
-    }
+    // An unknown facility has no owner identity to include in an order notification.
+    assert_eq!(notifications.len(), 1);
+    let order = &notifications[0]["data"][0];
+    assert_eq!(order["createdBy"], "owner-1");
+    assert_eq!(order["marketId"], test_market().market_id);
+    assert_eq!(order["orderStatus"], "rejected");
+    assert_eq!(order["orderType"], "offer");
+    assert_eq!(order["quantity"], 2.0);
+    assert_eq!(order["priceLimit"], 0.14);
+    assert!(order["rejectReason"].as_str().unwrap().contains("site_not_in_community"));
+    assert!(order["updatedAt"].is_string());
+    uuid::Uuid::parse_str(order["orderId"].as_str().unwrap()).unwrap();
 }

@@ -86,7 +86,7 @@ impl IdService {
                 if matches!(error.kind.as_ref(), ErrorKind::Command(command) if command.code == 11000)
                     || matches!(error.kind.as_ref(), ErrorKind::Write(WriteFailure::WriteError(write)) if write.code == 11000) =>
             {
-                // A concurrent upsert may win either unique index.
+                // A concurrent upsert can win either unique index race.
                 // Only recover the requested mapping, never another ID's collision.
                 self.0
                     .find_one(doc! {"offchain_id": &offchain_id})
