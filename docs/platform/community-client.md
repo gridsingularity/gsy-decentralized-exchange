@@ -79,6 +79,8 @@ order with `Unauthorized`.
 - `EVM_NODE_URL` (default `ws://anvil:8545`)
 - `ORDER_REGISTRY_ADDRESS` (required for order events)
 - `COMMUNITY_CLIENT_PRIVATE_KEY` (required for order events)
+- `ONCHAIN_ID_HASH_KEY` (optional secret): key of the on-chain ID hash, the
+  same value as in off-chain storage and the execution engine
 - `EWDS_ENABLE_HANDLER`: starts the order event subscriber
 - `EWDS_COMMUNITY_CLIENT_ID` (default `gsycommunityclient`): EWDS client ID,
   also used for ID service queries over EWDS

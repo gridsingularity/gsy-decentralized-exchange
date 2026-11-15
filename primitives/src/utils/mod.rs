@@ -1,8 +1,10 @@
 use crate::MarketType;
 use anyhow::{Result, anyhow};
-use blake2::digest::{Update, VariableOutput};
-use blake2::Blake2bVar;
+use blake2::digest::consts::U16;
+use blake2::digest::{Mac, Update, VariableOutput};
+use blake2::{Blake2bMac, Blake2bVar};
 use chrono::{prelude::DateTime, Utc, TimeZone};
+use once_cell::sync::Lazy;
 use std::env;
 use std::str::FromStr;
 use uuid::Uuid;
@@ -55,14 +57,50 @@ pub fn normalize_market_id(value: &str) -> Result<String> {
         .ok_or_else(|| anyhow!("market ID '{}' is not a UUID or 16-byte hex value", value))
 }
 
+/// Environment variable holding the secret key of the on-chain ID hash.
+pub const ONCHAIN_ID_HASH_KEY_ENV: &str = "ONCHAIN_ID_HASH_KEY";
+
+static ONCHAIN_ID_HASH_KEY: Lazy<Vec<u8>> = Lazy::new(|| {
+    let key = env::var(ONCHAIN_ID_HASH_KEY_ENV)
+        .unwrap_or_default()
+        .into_bytes();
+    if key.len() > BLAKE2B_MAX_KEY_BYTES {
+        panic!(
+            "Invalid {}: the key is {} bytes, the maximum is {}",
+            ONCHAIN_ID_HASH_KEY_ENV,
+            key.len(),
+            BLAKE2B_MAX_KEY_BYTES
+        );
+    }
+    key
+});
+
+pub const BLAKE2B_MAX_KEY_BYTES: usize = 64;
+
 pub fn create_encrypted_bytes16_from_string(input_string: &str) -> [u8; 16] {
-    let mut hash = [0u8; 16];
-    let mut hasher = Blake2bVar::new(16).expect("valid Blake2b output size");
-    hasher.update(input_string.as_bytes());
-    hasher
-        .finalize_variable(&mut hash)
-        .expect("valid Blake2b output buffer");
-    hash
+    create_keyed_bytes16_from_string(input_string, &ONCHAIN_ID_HASH_KEY)
+        .expect("on-chain ID hash key length is validated on first use")
+}
+
+pub fn create_keyed_bytes16_from_string(input_string: &str, key: &[u8]) -> Result<[u8; 16]> {
+    if key.is_empty() {
+        let mut hash = [0u8; 16];
+        let mut hasher = Blake2bVar::new(16).expect("valid Blake2b output size");
+        hasher.update(input_string.as_bytes());
+        hasher
+            .finalize_variable(&mut hash)
+            .expect("valid Blake2b output buffer");
+        return Ok(hash);
+    }
+    let mut hasher = Blake2bMac::<U16>::new_from_slice(key).map_err(|_| {
+        anyhow!(
+            "on-chain ID hash key is {} bytes, the maximum is {}",
+            key.len(),
+            BLAKE2B_MAX_KEY_BYTES
+        )
+    })?;
+    Mac::update(&mut hasher, input_string.as_bytes());
+    Ok(hasher.finalize().into_bytes().into())
 }
 
 /// The community ID is normalized first, so every accepted form of one

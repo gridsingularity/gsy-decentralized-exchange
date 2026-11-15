@@ -1,4 +1,7 @@
-use primitives::utils::{generate_market_id, normalize_community_id, normalize_market_id};
+use primitives::utils::{
+    create_keyed_bytes16_from_string, generate_market_id, normalize_community_id,
+    normalize_market_id,
+};
 use primitives::MarketType;
 
 const COMMUNITY_ID: &str = "11111111-1111-4111-8111-111111111111";
@@ -100,4 +103,36 @@ fn market_id_is_the_same_for_every_form_of_a_community_id() {
 #[test]
 fn market_id_rejects_a_non_uuid_community_id() {
     assert!(generate_market_id("community1", MarketType::Spot, 1_700_000_000).is_err());
+}
+
+#[test]
+fn onchain_id_hash_matches_blake2b_reference_values() {
+    assert_eq!(
+        hex::encode(create_keyed_bytes16_from_string("alice", b"").unwrap()),
+        "69b5957599f918e276a3d2428acdc997"
+    );
+    assert_eq!(
+        hex::encode(create_keyed_bytes16_from_string("alice", b"secret").unwrap()),
+        "f6c160d806e38ed85a928457476e94cc"
+    );
+}
+
+#[test]
+fn onchain_id_hash_depends_on_the_key() {
+    let unkeyed = create_keyed_bytes16_from_string("alice", b"").unwrap();
+    let first = create_keyed_bytes16_from_string("alice", b"key-one").unwrap();
+    let second = create_keyed_bytes16_from_string("alice", b"key-two").unwrap();
+
+    assert_ne!(unkeyed, first);
+    assert_ne!(first, second);
+    assert_eq!(
+        first,
+        create_keyed_bytes16_from_string("alice", b"key-one").unwrap()
+    );
+}
+
+#[test]
+fn onchain_id_hash_rejects_a_key_above_64_bytes() {
+    assert!(create_keyed_bytes16_from_string("alice", &[7u8; 64]).is_ok());
+    assert!(create_keyed_bytes16_from_string("alice", &[7u8; 65]).is_err());
 }

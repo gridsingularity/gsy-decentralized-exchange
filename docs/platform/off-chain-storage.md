@@ -76,6 +76,15 @@ posts them any more.
 ### ID Mapping
 - `/ids` (`POST`) — get-or-create offchain↔onchain ID mappings
 
+The on-chain ID is the 16-byte Blake2b hash of the off-chain ID, keyed with
+`ONCHAIN_ID_HASH_KEY` when that variable is set. With a key, the on-chain ID
+cannot be recomputed from a known or guessed off-chain ID without the key. The
+community client and the execution engine derive the same hash themselves, so
+all three services must share one key. Unset or empty means an unkeyed hash.
+The key is at most 64 bytes (for example `openssl rand -hex 32`), and changing
+it changes every derived ID, so existing mappings and on-chain records no
+longer match.
+
 Compatibility adapters for EVM JSON callers:
 
 - `/measurements` (`GET`, `POST`) converts to/from `MeasurementPoint` + `Timeseries`
@@ -182,6 +191,7 @@ Key env variables:
 - `CONTRACT_TRADE_SETTLEMENT`
 - `CONTRACT_MARKET_CONTROLLER`
 - `DATABASE_*`
+- `ONCHAIN_ID_HASH_KEY` (optional secret, see [ID Mapping](#id-mapping))
 - `EWDS_ENABLE_HANDLER`
 - `EWDS_COMMUNITIES_REQUEST_TOPIC`
 - `EWDS_EVENT_PUBLISH_FQCN`, `EWDS_EVENT_SUBSCRIBE_FQCN`

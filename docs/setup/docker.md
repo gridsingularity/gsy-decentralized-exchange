@@ -342,3 +342,8 @@ In default local setup, they are provisioned by `./scripts/contracts.sh local
 deploy` and injected with `--env-file contracts-output/addresses.env`. These
 are proxy addresses. The deployment script also writes implementation and
 `ProxyAdmin` addresses for inspection and upgrade operations.
+
+`ONCHAIN_ID_HASH_KEY` is an optional secret that keys the Blake2b hash from
+off-chain IDs to on-chain IDs. The compose files pass one value to off-chain
+storage, the community client, the execution engine and the e2e runner. Leave
+it empty for an unkeyed hash.

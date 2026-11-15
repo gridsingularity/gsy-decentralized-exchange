@@ -104,5 +104,7 @@ zero/non-zero penalties, replay safety, timestamps, and independent residuals.
 - Env:
   - `TRADE_SETTLEMENT_ADDRESS`
   - `EXECUTION_ENGINE_PRIVATE_KEY`
+  - `ONCHAIN_ID_HASH_KEY` (optional secret): key of the on-chain ID hash, the
+    same value as in off-chain storage and the community client
   - `EXECUTION_ENGINE_OFFSET_MIN`
   - `EXECUTION_ENGINE_ROLLOVER_GRACE_SECONDS` (default `900`; set `0` to disable)
