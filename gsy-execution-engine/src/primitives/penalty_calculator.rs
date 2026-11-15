@@ -172,11 +172,7 @@ pub fn compute_delivery_verifications(
             );
             continue;
         };
-        let net = if totals.bought >= totals.sold {
-            (totals.bought - totals.sold) as f64
-        } else {
-            -((totals.sold - totals.bought) as f64)
-        } / NODE_FLOAT_SCALING_FACTOR;
+        let net = i128::try_from(totals.bought)? - i128::try_from(totals.sold)?;
         let cost = penalty_cost(net, *measured, penalty_rate, penalty_tolerance_percent)?;
         for (trade_id, cost) in allocate_penalty(cost, &totals.quantities) {
             allocations.insert((facility, trade_id), cost);
@@ -230,19 +226,32 @@ fn allocate_penalty<'a>(cost: u64, quantities: &[(&'a str, u64)]) -> Vec<(&'a st
         .collect()
 }
 
+const TOLERANCE_PERCENT_SCALING_FACTOR: f64 = 10_000.0;
+
 fn penalty_cost(
-    traded_energy: f64,
+    traded_energy: i128,
     measured_energy: f64,
     rate: f64,
     tolerance_percent: f64,
 ) -> Result<u64> {
-    let tolerance = traded_energy.abs() * tolerance_percent / 100.0;
-    // Compare energy bounds to avoid subtraction round-off at the boundary.
-    if (traded_energy - tolerance..=traded_energy + tolerance).contains(&measured_energy) {
+    let measured_energy = (measured_energy * NODE_FLOAT_SCALING_FACTOR).round();
+    ensure!(
+        measured_energy.is_finite() && measured_energy.abs() < u64::MAX as f64,
+        "Measured energy exceeds on-chain range"
+    );
+    let deviation = (measured_energy as i128 - traded_energy).unsigned_abs();
+    let tolerance_percent = (tolerance_percent * TOLERANCE_PERCENT_SCALING_FACTOR).round() as u128;
+    let within_band = deviation
+        .checked_mul(100 * TOLERANCE_PERCENT_SCALING_FACTOR as u128)
+        .zip(traded_energy.unsigned_abs().checked_mul(tolerance_percent))
+        .map(|(deviation, band)| deviation <= band);
+    let Some(within_band) = within_band else {
+        anyhow::bail!("Energy exceeds the range of the tolerance comparison");
+    };
+    if within_band {
         Ok(0)
     } else {
-        let cost =
-            ((measured_energy - traded_energy).abs() * rate * NODE_FLOAT_SCALING_FACTOR).round();
+        let cost = (deviation as f64 * rate).round();
         ensure!(
             cost.is_finite() && cost < u64::MAX as f64,
             "Penalty exceeds on-chain range"

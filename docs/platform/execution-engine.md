@@ -49,6 +49,10 @@ Outside the tolerance band, the existing `penalty_rate` applies to the **full**
 deviation, not only the excess beyond the band. For 100 kWh traded with 5%
 tolerance, 105 kWh incurs no penalty; 106 kWh incurs a penalty on 6 kWh. Tolerance
 is independent of `penalty_rate` (`0.10` means 10% of the deviation).
+The band is compared in integer on-chain units: the reading is rounded to
+0.0001 kWh and the tolerance percentage to 0.0001 percent, so a reading exactly
+on the inclusive limit (for example 1.995 kWh against 1.9 kWh traded at 5%) is
+not penalised through floating-point round-off.
 For purchases of 4 and 6 kWh and consumption of 12 kWh, the 2 kWh deviation
 produces a 2,000-unit penalty at rate 0.10, allocated as 800 and 1,200 units.
 
