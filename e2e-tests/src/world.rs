@@ -9,6 +9,7 @@ use primitives::db_api_schema::profiles::{ForecastSchema, MeasurementSchema};
 use primitives::db_api_schema::trades::DbTradeSchema;
 use primitives::offchain_storage::OffchainStorageClient;
 use primitives::utils::parse_uuid_or_hex_bytes16;
+use primitives::MatchingAlgorithm;
 use reqwest::Client;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -82,6 +83,9 @@ pub struct MyWorld {
     pub actor_registry_address: Address,
     pub last_market_id: Option<[u8; 16]>,
     pub target_delivery_time: u64,
+    /// Algorithm of the scenario's markets; the matching engine clears each
+    /// market with the algorithm of its market record.
+    pub matching_algorithm: MatchingAlgorithm,
     pub bid_forecast: Option<ForecastSchema>,
     pub offer_forecast: Option<ForecastSchema>,
     pub last_trade: Option<DbTradeSchema>,
@@ -156,6 +160,7 @@ impl MyWorld {
             actor_registry_address,
             last_market_id: None,
             target_delivery_time: 0,
+            matching_algorithm: MatchingAlgorithm::default(),
             bid_forecast: None,
             offer_forecast: None,
             last_trade: None,

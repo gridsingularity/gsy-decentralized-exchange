@@ -391,7 +391,7 @@ async fn publish_order_event(world: &mut MyWorld, buyer_name: String, seller_nam
         wait_for_order_in_offchain_storage(world, onchain_order_id.as_str()).await;
     }
 
-    mine_until_matching_block(world, matching_block_interval() as usize + 1).await;
+    mine_until_matching_block(world, matching_block_interval(world) as usize + 1).await;
 }
 
 #[then("the off-chain storage stores the site and the facility")]

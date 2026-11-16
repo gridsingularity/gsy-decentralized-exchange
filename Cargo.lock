@@ -1470,6 +1470,7 @@ dependencies = [
  "cucumber",
  "ethers",
  "gsy-community-client",
+ "gsy-market-orchestrator",
  "hex",
  "mongodb",
  "primitives",
