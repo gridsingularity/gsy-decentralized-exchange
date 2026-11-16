@@ -1,0 +1,60 @@
+use primitives::ewds::dto::FacilityMarketValidationRequest;
+use serde_json::json;
+use wiremock::matchers::{method, path, query_param};
+use wiremock::{Mock, MockServer, Request, ResponseTemplate};
+
+// Deliberately different from locally hashed IDs: callers must use the ID service's result.
+pub const OWNER_1_ONCHAIN: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+pub const OWNER_2_ONCHAIN: &str = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+pub async fn setup_facilities_mock(facility_ids: [&str; 2]) -> MockServer {
+    let server = MockServer::start().await;
+    let known_ids = facility_ids.map(str::to_string);
+    Mock::given(method("GET"))
+        .and(path("/facilities"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            facility_ids.iter().enumerate().map(|(index, facility_id)| json!({
+                "facility_id": facility_id, "facility_name": facility_id,
+                "site_id": "site-1", "owner_id": format!("owner-{}", index + 1)
+            })).collect::<Vec<_>>(),
+        ))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/facilities/validate"))
+        .respond_with(move |request: &Request| {
+            let pairs: Vec<FacilityMarketValidationRequest> =
+                serde_json::from_slice(&request.body).unwrap();
+            ResponseTemplate::new(200).set_body_json(
+                pairs
+                    .into_iter()
+                    .map(|pair| {
+                        let eligible = known_ids.contains(&pair.facility_id);
+                        json!({
+                            "facility_id": pair.facility_id, "market_id": pair.market_id,
+                            "eligible": eligible,
+                            "reason": if eligible { None } else { Some("unknown_facility") }
+                        })
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .with_priority(10)
+        .mount(&server)
+        .await;
+    for (owner_id, onchain_id) in [("owner-1", OWNER_1_ONCHAIN), ("owner-2", OWNER_2_ONCHAIN)]
+    {
+        Mock::given(method("POST"))
+            .and(path("/ids"))
+            .and(query_param("offchain_id", owner_id))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "offchain_id": owner_id, "onchain_id": onchain_id, "creation_time": 0
+            })))
+            .mount(&server)
+            .await;
+    }
+    std::env::set_var("OFFCHAIN_STORAGE_URL", server.uri());
+    std::env::set_var("OFFCHAIN_STORAGE_TRANSPORT", "http");
+    std::env::set_var("EWDS_ENABLE_HANDLER", "false");
+    server
+}

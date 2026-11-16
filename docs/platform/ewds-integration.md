@@ -56,6 +56,7 @@ Provider: `gsy-offchain-storage` (`gsy-offchain-storage/src/startup.rs`)
 | `/markets` | `GET/POST` | ontology-aligned market-opening API | `http://gsy-offchain-storage:8080/markets` |
 | `/clearing-results` | `GET/POST` | clearing-result API | `http://gsy-offchain-storage:8080/clearing-results` |
 | `/ids` | `POST` | offchain↔onchain ID mapping API | `http://gsy-offchain-storage:8080/ids` |
+| `/facilities/validate` | `POST` | community client's order event subscriber | `http://gsy-offchain-storage:8080/facilities/validate` |
 | `/measurement-points` | `GET/POST` | ontology-aligned profile metadata API | `http://gsy-offchain-storage:8080/measurement-points` |
 | `/timeseries` | `GET/POST` | ontology-aligned value API | `http://gsy-offchain-storage:8080/timeseries` |
 | `/measurements` | `GET/POST` | EVM JSON compatibility adapter | converts to/from `MeasurementPoint` + `Timeseries` |
@@ -90,6 +91,7 @@ Each service:
 | `clearing_results.query` over `clearingResultsQuery` / `clearingResultsQueryResponse` | matching/execution engine | off-chain storage service | off-chain storage service | requester | `GET /clearing-results` |
 | `markets.query` over `marketsQuery` / `marketsQueryResponse` | community client or e2e runner | off-chain storage service | off-chain storage service | requester | `GET /markets` |
 | `ids.query` over `idsQuery` / `idsQueryResponse` | requester service | off-chain storage service | off-chain storage service | requester | `POST /ids` (get-or-create) |
+| `facilities.validate` over `facilitiesValidate` / `facilitiesValidateResponse` | requester service | off-chain storage service | off-chain storage service | requester | `POST /facilities/validate` (read-only) |
 | `community.event` over `community` | other systems or e2e runner | off-chain storage service | none | none | `POST /communities` |
 | `order.event` over `order` | FOS or e2e runner | community client | none | none | none (the community client calls `OrderRegistry.placeOrder`) |
 | `communities.query` over `communitiesQuery` / `communitiesQueryResponse` | market orchestrator | off-chain storage service | off-chain storage service | market orchestrator | `GET /communities` |
@@ -112,6 +114,35 @@ Each service:
 | `gsy.intelligent.responses.sub` | Subscribe | `ordersQueryResponse`, `tradesQueryResponse`, `measurementsQueryResponse`, `clearingResultsQueryResponse`, `marketsQueryResponse`, `idsQueryResponse`, `communitiesQueryResponse` | `EWDS_RESPONSE_SUBSCRIBE_FQCN` |
 | `gsy.intelligent.events.pub` | Publish | `trade`, `clearingResult`, `market`, `measurements`, `facility`, `site`, `community`, `order` | `EWDS_EVENT_PUBLISH_FQCN` |
 | `gsy.intelligent.events.sub` | Subscribe | `trade`, `clearingResult`, `market`, `measurements`, `facility`, `site`, `community`, `order` | `EWDS_EVENT_SUBSCRIBE_FQCN` |
+
+Facility validation additionally requires `facilitiesValidate` on both request
+channels and `facilitiesValidateResponse` on both response channels, using the
+configured `EWDS_TOPIC_OWNER`. Their topic schemas are
+`int.facilities.validate.request.v1.json` and
+`int.facilities.validate.response.v1.json`. The topic setup script includes
+these names and their test equivalents; register the schemas in the gateway.
+Compose E2E uses `facilitiesValidateTest` / `facilitiesValidateTestResponse`;
+these must also be associated with the corresponding channels before EWDS runs.
+Override names through `EWDS_FACILITIES_VALIDATION_REQUEST_TOPIC` and
+`EWDS_FACILITIES_VALIDATION_RESPONSE_TOPIC` consistently on requester/responder.
+
+The `facilities.validate` request envelope uses the same array as the HTTP body:
+
+```json
+{
+  "requestId": "validation-1",
+  "operation": "facilities.validate",
+  "payload": [{"facility_id": "facility-a", "market_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}]
+}
+```
+
+`success: true` carries one result per pair in `data`, including ineligible
+pairs with their reason (see [facility validation](off-chain-storage.md#facility-participation-validation)).
+`success: false` with empty `data` indicates an invalid request (`invalid_request`)
+or a storage failure (`VALIDATION_UNAVAILABLE`), not a rejected facility.
+HTTP-only clients use `OFFCHAIN_STORAGE_TRANSPORT=http` and need no gateway;
+EWDS uses `OFFCHAIN_STORAGE_TRANSPORT=ewds` and the responder's existing
+`EWDS_ENABLE_HANDLER=true` / `EwdsHandlerConfig` setup.
 
 The events channels carry fire-and-forget domain events rather than
 request/reply traffic. When `EWDS_ENABLE_HANDLER` is on, the off-chain storage
@@ -287,18 +318,25 @@ returns (`int.order.event.v1.json`):
 | Field | Rule |
 |---|---|
 | `orderId` | A UUID chosen by the publisher. Its 16 bytes become the on-chain order ID, so `orders.query` and the trades' `bidId`/`offerId` return it as `0x` plus 32 hex digits. |
-| `marketId` | The market's hex ID, e.g. from `markets.query`. The market must be open. |
-| `createdBy` | The off-chain actor ID, e.g. the facility owner. The ID service maps it to the on-chain actor ID. |
+| `marketId` | The market's non-zero UUID or bytes16 hex ID, e.g. from `markets.query`. The contract still checks that the market is open. |
+| `createdBy` | The original off-chain owner ID. The subscriber resolves its facility and validates that facility's market participation before mapping the owner to an on-chain ID. It is not the facility ID or service wallet. This deployment guarantees one facility per owner. |
 | `orderStatus` | Must be `submitted`. |
 | `quantity` | Greater than 0, in kWh. |
 | `priceLimit` | 0 or more, in EUR/kWh. |
-| `preferredTradingPartner` | The partner's off-chain ID, resolved like `createdBy`. Stored in requirements for both bids and offers. |
+| `preferredTradingPartner` | The partner's off-chain owner ID, resolved like `createdBy`. Stored in requirements for both bids and offers. |
 | `updatedAt`, `rejectReason` | Ignored. |
 
 Handling rules:
 
-- One invalid order rejects the whole event before anything is sent: parsing,
-  the rules above and resolving the IDs all have to pass.
+- Parsing and field validation must pass for the whole event. Already-confirmed
+  orders are skipped before checking eligibility. The remaining facility/market
+  pairs are validated in one HTTP or EWDS request before resolving any IDs.
+- Ineligible orders are reported through `orderStatus.event` with the reason,
+  without creating DB records or calling `placeOrder`. The client rechecks that
+  the order has not been placed meanwhile before reporting rejection.
+  Eligible orders continue; their IDs must all resolve before submission.
+- Validation-service errors and incomplete/inconsistent responses fail the event
+  without submission or rejection notifications and remain retryable.
 - The orders are then sent one at a time. The community client waits for
   each mined receipt and requires status `1` before confirming placement:
   - An order whose ID is already on-chain (`getStatus`) is skipped.
@@ -321,12 +359,13 @@ Handling rules:
 - Resending an event, even under a new `eventId`, doesn't place an order
   twice. A resend while the first transaction is still pending sends the
   order again, but that duplicate reverts with `OrderAlreadyExists`.
-- Definite contract rejections are reported through `orderStatus.event`.
+- Definite eligibility and contract rejections are reported through `orderStatus.event`.
   FOS sees placed orders through `orders.query` and `orderStatus.event`, and
   their trades through `trade.event`.
-- `placeOrder` only accepts an order if the community client's wallet is
-  authorized for the actor in the `ActorRegistry`. Registering it is up to
-  whoever publishes the orders.
+- `placeOrder` requires the caller to hold `OrderRegistry.COMMUNITY_CLIENT_ROLE`,
+  granted by the administrator. Multiple clients can hold this role; each
+  validates facility/community membership off-chain. FOS publishers and actor
+  wallets cannot submit directly without this service role.
 
 ##### Order Status Notification Contract
 
@@ -353,9 +392,10 @@ outbox or delivery-order guarantee. Replayed listener events may notify again;
 consumers must tolerate duplicates and must not assume arrival order. Query
 `orders.query` when reconciling the current state of stored orders.
 
-The community client reports a contract rejection during gas estimation or a
-failed mined receipt as `rejected`, with `rejectReason`. It preserves the
-original submission's IDs and fields; `updatedAt` and `occurredAt` identify when
+The community client reports an ineligible facility/market pair, a contract
+rejection during gas estimation or a failed mined receipt as `rejected`, with
+`rejectReason`. It preserves the original submission's IDs and fields;
+`updatedAt` and `occurredAt` identify when
 the rejection was observed. It does not create a rejected database order.
 Successful placements and `OrderAlreadyExists` produce no rejection; transport
 failures or unknown transaction outcomes remain retryable, not rejected.

@@ -253,7 +253,10 @@ pub async fn handle_event(db: &DatabaseWrapper, envelope: EwdsEventEnvelope<Valu
         }
         EwdsEventType::Community => {
             let communities = parse_batch(envelope.data, |community: EwdsCommunityDto| {
-                Ok(EnergyCommunitySchema::from(community))
+                let mut community = EnergyCommunitySchema::from(community);
+                community.community_id =
+                    primitives::utils::normalize_community_id(&community.community_id)?;
+                Ok(community)
             })?;
             db.communities().check_for_duplicates(&communities).await?;
             for community in communities {

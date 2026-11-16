@@ -5,7 +5,6 @@ use ethers::abi::AbiDecode;
 use ethers::prelude::*;
 use gsy_community_client::node_connector::orders::publish_orders;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
-use primitives::db_api_schema::grid_topology::FacilitySchema;
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::orders::{
     order_metadata_to_contract, DbAttributes, DbOrderSchema, DbRequirements, EnergyType,
@@ -13,17 +12,14 @@ use primitives::db_api_schema::orders::{
 };
 use primitives::db_api_schema::profiles::MeasurementSchema;
 use primitives::db_api_schema::trades::{DbTradeSchema, TradeStatus};
+use primitives::ewds::dto::FacilityMarketValidationRequest;
 use primitives::matching::matching_block_interval;
 use primitives::offchain_storage::{
     resolve_order_partner_ids, OffchainStorageClient, OffchainStorageTransport,
 };
 use primitives::utils::{
-    bytes16_to_hex,
-    create_encrypted_bytes16_from_string,
-    NODE_FLOAT_SCALING_FACTOR,
-    parse_uuid_or_hex_bytes16,
-    rfc3339_to_epoch,
-    timestamp_to_string_with_padding
+    bytes16_to_hex, create_encrypted_bytes16_from_string, parse_uuid_or_hex_bytes16,
+    rfc3339_to_epoch, timestamp_to_string_with_padding, NODE_FLOAT_SCALING_FACTOR,
 };
 use std::collections::HashSet;
 use std::env;
@@ -344,7 +340,7 @@ async fn place_custom_order_for_market(
     requirements: Option<DbRequirements>,
     attributes: Option<DbAttributes>,
 ) -> String {
-    let wallet = world.wallet_for_user(user_name);
+    let wallet = world.community_client_wallet();
     let signer = Arc::new(SignerMiddleware::new(
         world.provider.clone(),
         wallet.clone(),
@@ -356,11 +352,50 @@ async fn place_custom_order_for_market(
         .expect("System clock before UNIX_EPOCH");
     let creation_time = now.as_secs();
 
-    let actor_id = world.actor_id_for_user(user_name).await;
+    let id_mapping_source = OffchainStorageClient::from_env("EWDS_E2E_CLIENT_ID", "gsye2e");
+    let facility_id = world.facility_id_for_market_user(market_id, user_name);
+    let validation = id_mapping_source
+        .validate_facility_markets(&[FacilityMarketValidationRequest {
+            facility_id: facility_id.clone(),
+            market_id: bytes16_to_hex(market_id),
+        }])
+        .await
+        .expect("Facility validation unavailable");
+    assert!(
+        validation[0].eligible,
+        "Ineligible E2E order: {:?}",
+        validation[0]
+    );
+    let facility_owner_mapping = id_mapping_source
+        .fetch_facility_owner_mapping()
+        .await
+        .unwrap();
+    let owner_id = facility_owner_mapping
+        .get(&facility_id)
+        .expect("Missing facility owner");
+    let actor_id = parse_uuid_or_hex_bytes16(
+        &id_mapping_source
+            .fetch_onchain_id(owner_id)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
     let order_id = Uuid::new_v4().to_string();
     let order_id_bytes = create_encrypted_bytes16_from_string(&order_id);
+    let mut requirements = requirements;
+    if let Some(partner) = requirements
+        .as_mut()
+        .and_then(|r| r.trading_partner_id.as_mut())
+    {
+        if world.users.contains_key(partner.as_str()) {
+            let partner_facility = world.facility_id_for_market_user(market_id, partner);
+            *partner = facility_owner_mapping
+                .get(&partner_facility)
+                .expect("Missing preferred facility owner")
+                .clone();
+        }
+    }
     let mut resolved_requirements = requirements.clone();
-    let id_mapping_source = OffchainStorageClient::from_env("EWDS_E2E_CLIENT_ID", "gsye2e");
     resolve_order_partner_ids(&mut resolved_requirements, &id_mapping_source)
         .await
         .expect("Failed to resolve order partner IDs");
@@ -636,36 +671,20 @@ async fn verify_community_market_settlements(world: &mut MyWorld) {
 async fn submit_community_market_measurements(world: &mut MyWorld) {
     let measurements = vec![
         MeasurementSchema {
-            facility_id: "alice".to_string(),
+            facility_id: world.facility_id_for_user("alice"),
             community_uuid: world.community_id.clone(),
             time_slot: world.target_delivery_time,
             creation_time: 1,
             energy_kwh: 3.0,
         },
         MeasurementSchema {
-            facility_id: "bob".to_string(),
+            facility_id: "secondary-areabob".to_string(),
             community_uuid: world.secondary_community_id.clone(),
             time_slot: world.target_delivery_time,
             creation_time: 1,
             energy_kwh: 3.0,
         },
     ];
-
-    let facilities = vec![
-        FacilitySchema {
-            facility_id: "alice".to_string(),
-            facility_name: "alice".to_string(),
-            site_id: "site-12345".to_string(),
-            owner_id: "alice".to_string(),
-        },
-        FacilitySchema {
-            facility_id: "bob".to_string(),
-            facility_name: "bob".to_string(),
-            site_id: "site-12346".to_string(),
-            owner_id: "bob".to_string(),
-        },
-    ];
-    world.create_facilities(facilities).await;
 
     AreaMarketInfoAdapter::new(Some(world.offchain_storage_url.clone()))
         .forward_measurement(measurements)
@@ -675,12 +694,13 @@ async fn submit_community_market_measurements(world: &mut MyWorld) {
 
 #[when(expr = "{string} submits a bid")]
 async fn submit_bid(world: &mut MyWorld, user_name: String) {
+    assert_eq!(world.bid_forecast.as_ref().unwrap().facility_id, world.facility_id_for_user(&user_name));
     publish_orders(
         world.evm_node_url.clone(),
         vec![world.bid_forecast.clone().expect("Missing bid forecast")],
         world.market_schema.clone().expect("Missing market schema"),
         address_to_full_hex(world.order_registry_address),
-        world.private_key_for_user(user_name.as_str()),
+        world.community_client_private_key(),
     )
     .await
     .expect("Failed to publish bid order");
@@ -716,6 +736,7 @@ async fn submit_preferred_partner_bid(
 
 #[when(expr = "{string} submits an offer")]
 async fn submit_offer(world: &mut MyWorld, user_name: String) {
+    assert_eq!(world.offer_forecast.as_ref().unwrap().facility_id, world.facility_id_for_user(&user_name));
     publish_orders(
         world.evm_node_url.clone(),
         vec![world
@@ -724,7 +745,7 @@ async fn submit_offer(world: &mut MyWorld, user_name: String) {
             .expect("Missing offer forecast")],
         world.market_schema.clone().expect("Missing market schema"),
         address_to_full_hex(world.order_registry_address),
-        world.private_key_for_user(user_name.as_str()),
+        world.community_client_private_key(),
     )
     .await
     .expect("Failed to publish offer order");
@@ -936,6 +957,25 @@ pub(crate) async fn submit_measurements_with_energy(world: &mut MyWorld, energy:
         .forward_measurement(measurements)
         .await
         .expect("Failed to submit measurements");
+}
+
+#[when(expr = "measurements of {float} energy for only {string}'s facility are submitted")]
+async fn submit_single_facility_measurement(world: &mut MyWorld, energy: f64, user: String) {
+    let facility_id = world.facility_id_for_user(&user);
+    assert!(world
+        .facilities_topology
+        .iter()
+        .any(|facility| facility.facility_id == facility_id));
+    AreaMarketInfoAdapter::new(Some(world.offchain_storage_url.clone()))
+        .forward_measurement(vec![MeasurementSchema {
+            facility_id,
+            community_uuid: world.community_id.clone(),
+            energy_kwh: energy,
+            time_slot: world.target_delivery_time,
+            creation_time: 1,
+        }])
+        .await
+        .expect("Failed to submit the single-facility measurement");
 }
 
 pub(crate) async fn delivery_verification_timestamp(world: &MyWorld, trade: &DbTradeSchema) -> u64 {
