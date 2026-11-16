@@ -109,8 +109,28 @@ Empty results, failures, and successful submissions do not remove a retained
 slot early: additional records can still arrive. The on-chain `verified` flag
 prevents resubmission for trades already processed, including zero-penalty trades.
 The eligible window is recalculated from time, including after restart or skipped polling intervals;
-neither restarts nor retries extend the deadline. Records arriving beyond that
-window require separate historical processing, which is not implemented here.
+neither restarts nor retries extend the deadline.
+
+### Finalization after the grace period
+
+Once a slot's grace period is over, the engine closes the trades of that slot
+that are still pending: every one of them receives a verdict. A party that still
+has no usable reading (missing, conflicting or non-finite) is treated as having
+delivered nothing and is penalized on its whole net traded position; its
+counterparties are charged from their own readings, so a missing reading of one
+party no longer postpones or waives the penalty of the other.
+
+The slot finalized is the one whose grace period ended most recently, provided
+its delivery also ended at least one grace period ago by the wall clock (this
+matters for a negative `EXECUTION_ENGINE_OFFSET_MIN`, where the target runs ahead
+of the clock). Finalization is retried on every polling cycle until all pending
+trades of the slot are verified on-chain, for as long as it remains the latest
+expired slot, i.e. for one slot duration. Only that single slot is finalized,
+regardless of the market duration. If the engine is not running during that time,
+the slot is not finalized.
+
+Records arriving after finalization are ignored: the trades are already verified
+on-chain and the slot is no longer selected.
 
 `EXECUTION_ENGINE_ROLLOVER_GRACE_SECONDS` replaces the cycle-count setting
 `EXECUTION_ENGINE_ROLLOVER_RETRY_LIMIT`; update existing environment overrides.

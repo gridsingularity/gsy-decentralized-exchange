@@ -27,7 +27,8 @@ pub struct DeliveryVerification {
 /// Measurements are mapped from facility IDs to the trade's buyer/seller owner IDs.
 /// Compare signed measurements against purchases minus sales, across all indexed
 /// trades in this slot (including completed trades). Allocate by absolute traded
-/// quantity. Both parties need a usable reading before their trade can complete.
+/// quantity. Both parties need a usable reading before their trade can complete,
+/// until the slot's grace period is over (see `compute_final_delivery_verifications`).
 ///
 /// # Arguments
 ///
@@ -100,6 +101,49 @@ pub fn compute_delivery_verifications(
     penalty_rate: f64,
     penalty_tolerance_percent: f64,
 ) -> Result<Vec<DeliveryVerification>> {
+    delivery_verifications(
+        trades,
+        measurements,
+        facility_owner_mapping,
+        delivery_slot,
+        penalty_rate,
+        penalty_tolerance_percent,
+        false,
+    )
+}
+
+/// Final calculation for a slot whose grace period is over: every pending trade
+/// receives a verdict. A party still without a usable reading (missing, conflicting
+/// or non-finite) is treated as having delivered nothing, so it is penalized on its
+/// whole net traded position, and its counterparties are charged from their own readings.
+pub fn compute_final_delivery_verifications(
+    trades: &[DbTradeSchema],
+    measurements: &[MeasurementSchema],
+    facility_owner_mapping: &HashMap<String, String>,
+    delivery_slot: u64,
+    penalty_rate: f64,
+    penalty_tolerance_percent: f64,
+) -> Result<Vec<DeliveryVerification>> {
+    delivery_verifications(
+        trades,
+        measurements,
+        facility_owner_mapping,
+        delivery_slot,
+        penalty_rate,
+        penalty_tolerance_percent,
+        true,
+    )
+}
+
+fn delivery_verifications(
+    trades: &[DbTradeSchema],
+    measurements: &[MeasurementSchema],
+    facility_owner_mapping: &HashMap<String, String>,
+    delivery_slot: u64,
+    penalty_rate: f64,
+    penalty_tolerance_percent: f64,
+    grace_period_over: bool,
+) -> Result<Vec<DeliveryVerification>> {
     ensure!(
         penalty_rate.is_finite() && penalty_rate >= 0.0,
         "Invalid penalty rate"
@@ -162,18 +206,27 @@ pub fn compute_delivery_verifications(
 
     let mut allocations = HashMap::new();
     for (facility, totals) in facilities {
-        let Some(measured) = measurement_map.get(facility) else {
-            continue;
-        };
-        let Some(measured) = measured else {
+        let reading = measurement_map.get(facility).copied();
+        if reading == Some(None) {
             warn!(
                 "Invalid or conflicting measurements for owner {} in slot {}",
                 facility, delivery_slot
             );
-            continue;
+        }
+        let measured = match reading.flatten() {
+            Some(measured) => measured,
+            None if grace_period_over => {
+                warn!(
+                    "No usable measurement for owner {} in slot {} after its grace period; \
+                     penalizing its whole net traded position",
+                    facility, delivery_slot
+                );
+                0.0
+            }
+            None => continue,
         };
         let net = i128::try_from(totals.bought)? - i128::try_from(totals.sold)?;
-        let cost = penalty_cost(net, *measured, penalty_rate, penalty_tolerance_percent)?;
+        let cost = penalty_cost(net, measured, penalty_rate, penalty_tolerance_percent)?;
         for (trade_id, cost) in allocate_penalty(cost, &totals.quantities) {
             allocations.insert((facility, trade_id), cost);
         }

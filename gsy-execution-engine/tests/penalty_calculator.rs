@@ -1,5 +1,5 @@
 use gsy_execution_engine::primitives::penalty_calculator::{
-    compute_delivery_verifications, compute_penalties,
+    compute_delivery_verifications, compute_final_delivery_verifications, compute_penalties,
 };
 use primitives::db_api_schema::{
     orders::{DbOrderSchema, OrderEnum, OrderStatus},
@@ -619,4 +619,88 @@ fn tolerance_is_inclusive_and_penalties_use_the_full_deviation() {
             );
         }
     }
+}
+
+#[test]
+fn after_the_grace_period_a_missing_reading_is_penalized_on_the_whole_net_position() {
+    let mapping = HashMap::from([
+        ("buyer-meter".to_string(), "alice".to_string()),
+        ("seller-meter".to_string(), "bob".to_string()),
+    ]);
+    let buyer = measurement("buyer-meter", 10.0);
+    let seller = measurement("seller-meter", -10.0);
+    let verdict = |measurements: &[MeasurementSchema]| {
+        let verdicts = compute_final_delivery_verifications(
+            &[trade()],
+            measurements,
+            &mapping,
+            1_000,
+            0.1,
+            5.0,
+        )
+        .unwrap();
+        assert_eq!(verdicts.len(), 1);
+        (
+            verdicts[0].buyer_penalty_cost,
+            verdicts[0].seller_penalty_cost,
+        )
+    };
+    // 10 kWh traded, nothing delivered: 10 * 0.1 * 10,000 on-chain units.
+    assert_eq!(verdict(&[]), (10_000, 10_000));
+    assert_eq!(verdict(std::slice::from_ref(&buyer)), (0, 10_000));
+    assert_eq!(verdict(std::slice::from_ref(&seller)), (10_000, 0));
+    assert_eq!(verdict(&[buyer.clone(), seller.clone()]), (0, 0));
+    // Conflicting and non-finite readings are not usable either.
+    let conflicting = measurement("seller-meter", -9.0);
+    assert_eq!(verdict(&[buyer.clone(), seller, conflicting]), (0, 10_000));
+    assert_eq!(
+        verdict(&[buyer, measurement("seller-meter", f64::NAN)]),
+        (0, 10_000)
+    );
+}
+
+#[test]
+fn after_the_grace_period_the_counterparty_is_charged_its_full_penalty() {
+    // P1 sells 3 to C1 and 1 to C3; P2 sells 2 to C2. C3 has no reading.
+    let trades = vec![
+        matched("t1", "c1", "p1", 3.0),
+        matched("t2", "c2", "p2", 2.0),
+        matched("t3", "c3", "p1", 1.0),
+    ];
+    let (measurements, mut mapping) =
+        readings(&[("c1", 3.6), ("c2", 2.1), ("p2", -1.5), ("p1", -4.5)]);
+    mapping.insert("c3".into(), "c3".into());
+    let costs = |verdicts: Vec<_>| {
+        let mut costs = verdicts
+            .into_iter()
+            .map(
+                |v: gsy_execution_engine::primitives::penalty_calculator::DeliveryVerification| {
+                    (v.trade_uuid, v.buyer_penalty_cost, v.seller_penalty_cost)
+                },
+            )
+            .collect::<Vec<_>>();
+        costs.sort();
+        costs
+    };
+
+    // Inside the grace period T3 waits for C3, so P1 is charged 375 of its 500.
+    assert_eq!(
+        costs(
+            compute_delivery_verifications(&trades, &measurements, &mapping, 1_000, 0.1, 5.0)
+                .unwrap()
+        ),
+        [("t1".to_string(), 600, 375), ("t2".to_string(), 0, 500)]
+    );
+    // Afterwards T3 completes: C3 pays for its whole 1 kWh and P1 its remaining 125.
+    assert_eq!(
+        costs(
+            compute_final_delivery_verifications(&trades, &measurements, &mapping, 1_000, 0.1, 5.0)
+                .unwrap()
+        ),
+        [
+            ("t1".to_string(), 600, 375),
+            ("t2".to_string(), 0, 500),
+            ("t3".to_string(), 1_000, 125)
+        ]
+    );
 }
