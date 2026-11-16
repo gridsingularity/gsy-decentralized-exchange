@@ -13,7 +13,6 @@ use primitives::db_api_schema::orders::{
 };
 use primitives::db_api_schema::profiles::MeasurementSchema;
 use primitives::db_api_schema::trades::{DbTradeSchema, TradeStatus};
-use primitives::matching::matching_block_interval;
 use primitives::offchain_storage::{
     resolve_order_partner_ids, OffchainStorageClient, OffchainStorageTransport,
 };
@@ -146,6 +145,16 @@ async fn mine_empty_blocks(world: &MyWorld, count: usize) {
             .await
             .expect("Failed to mine an empty Anvil block");
     }
+}
+
+/// Block interval of the matching algorithm configured for this E2E run
+/// (`MATCHING_ALGORITHM`, default `pay_as_bid`).
+pub(crate) fn matching_block_interval() -> u64 {
+    let algorithm = env::var("MATCHING_ALGORITHM")
+        .unwrap_or_else(|_| primitives::MatchingAlgorithm::default().to_string())
+        .parse::<primitives::MatchingAlgorithm>()
+        .unwrap_or_else(|error| panic!("Invalid MATCHING_ALGORITHM: {}", error));
+    primitives::matching::matching_block_interval(algorithm)
 }
 
 pub(crate) async fn mine_until_matching_block(world: &MyWorld, max_blocks: usize) {

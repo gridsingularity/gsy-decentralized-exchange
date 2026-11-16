@@ -9,7 +9,7 @@ use primitives::constants::GLOBAL_CONSTANTS;
 use primitives::db_api_schema::grid_topology::EnergyCommunitySchema;
 use primitives::offchain_storage::CommunityProvider;
 use primitives::utils::{generate_market_id, parse_uuid_or_hex_bytes16};
-use primitives::MarketType;
+use primitives::{MarketType, MatchingAlgorithm};
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
@@ -291,6 +291,23 @@ async fn creates_every_market_of_the_look_ahead_window() {
     let expected = expected_markets(&communities, config.look_ahead_hours);
     assert!(expected.len() > communities.len() * MARKET_RULES.len());
     assert_eq!(client.batches(), vec![expected]);
+}
+
+#[test]
+fn spot_markets_clear_pay_as_clear_and_the_others_pay_as_bid() {
+    let algorithms = MARKET_RULES
+        .iter()
+        .map(|rule| (rule.market_type.clone(), rule.matching_algorithm))
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        algorithms,
+        [
+            (MarketType::Spot, MatchingAlgorithm::PayAsClear),
+            (MarketType::Flex, MatchingAlgorithm::PayAsBid),
+            (MarketType::Settlement, MatchingAlgorithm::PayAsBid),
+        ]
+    );
 }
 
 #[tokio::test]

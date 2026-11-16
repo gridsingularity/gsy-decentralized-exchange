@@ -20,7 +20,10 @@ closing time, so there is no open/close step.
 5. For each selected slot and community, compute the deterministic `marketId`
    and build the full record: community UUID (as `bytes16`), opening/closing
    time from the market-type offsets, delivery start and end
-   (`+ TIME_SLOT_SEC`), market type and matching algorithm.
+   (`+ TIME_SLOT_SEC`), market type and matching algorithm. The algorithm is
+   fixed per market type in `MARKET_RULES`: Spot markets use `pay_as_clear`,
+   Flex and Settlement markets use `pay_as_bid`. The matching engine clears
+   each market with the algorithm of its record.
 6. Ask `MarketController.marketsExist` which of these candidates exist, with
    one `eth_call` per 500 IDs instead of one call per market. The chain is the
    single source of truth; the orchestrator keeps no state between ticks.
@@ -54,9 +57,6 @@ all services to derive the same contract-compatible identifier.
 - `TICK_INTERVAL_SECONDS`
 - `LOOK_AHEAD_HOURS`: how far ahead opening times are considered
 - `MARKET_CREATION_BATCH_SIZE` (default `50`, must be greater than `0`)
-- `MATCHING_ALGORITHM` (default `pay_as_bid`): written into every market
-  record; set it to the value the matching engine uses. It is held per
-  market type in `MARKET_RULES` and is the same for all types today.
 - `OFFCHAIN_STORAGE_TRANSPORT` (`http` or `ewds`)
 - `OFFCHAIN_STORAGE_URL`
 - `EWDS_MARKET_ORCHESTRATOR_CLIENT_ID`

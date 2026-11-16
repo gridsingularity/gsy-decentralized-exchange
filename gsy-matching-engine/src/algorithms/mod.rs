@@ -31,6 +31,10 @@ pub trait MatchOrders {
     ) -> Result<Vec<BidOfferMatch>, String>;
 }
 
+/// The algorithms this engine implements; `amm` is not one of them.
+pub const MATCHABLE_ALGORITHMS: [MatchingAlgorithm; 2] =
+    [MatchingAlgorithm::PayAsBid, MatchingAlgorithm::PayAsClear];
+
 impl MatchOrders for MatchingAlgorithm {
     fn match_orders_with_pricing(
         &self,

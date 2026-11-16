@@ -1,4 +1,5 @@
-use crate::algorithms::{MatchOrders, PayAsClearPricing};
+use crate::algorithms::{MatchOrders, PayAsClearPricing, MATCHABLE_ALGORITHMS};
+use crate::markets::{group_by_matching_algorithm, MarketCache, MarketSource};
 use crate::models::{Attributes, BidOfferMatch, MatchType, MatchingData, Order, Requirements};
 use anyhow::{anyhow, Error, Result};
 use ethers::prelude::*;
@@ -9,12 +10,13 @@ use primitives::db_api_schema::orders::{
 use primitives::db_api_schema::trades::ClearingStatus;
 use primitives::ewds::dto::EwdsOrderDto;
 use primitives::ewds::{EwdsClient, EwdsOperation};
-use primitives::matching::matching_block_interval;
+use primitives::matching::{is_matching_due, matching_block_interval};
 use primitives::offchain_storage::{resolve_order_partner_ids, OffchainStorageClient};
 use primitives::utils::{bytes16_to_hex, parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR};
 use primitives::MatchingAlgorithm;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::env;
+use std::ops::RangeInclusive;
 use std::str::FromStr;
 use tokio::time::{sleep, Duration};
 use tracing::{error, info, warn};
@@ -50,53 +52,47 @@ pub struct MarketMatches {
     pub clearing_result: ClearingResult,
 }
 
-pub async fn evm_subscribe(
+pub async fn evm_subscribe<S: MarketSource>(
     orderbook_url: String,
     node_url: String,
     settle_order_batch_address: String,
     matching_engine_private_key: String,
-    matching_algorithm: MatchingAlgorithm,
+    markets: &mut MarketCache<S>,
     pay_as_clear_pricing: PayAsClearPricing,
 ) -> Result<(), Error> {
     info!("Connecting to EVM node {}", node_url);
     let provider = Provider::<Ws>::connect(node_url.as_str()).await?;
-    let matching_block_interval = matching_block_interval();
-    info!(
-        "Using {}-block matching interval for {}",
-        matching_block_interval, matching_algorithm
-    );
-    let mut last_processed_block = provider.get_block_number().await?;
-    // Keep track of which trigger "bucket" was already processed, so we do not
-    // miss matches when multiple blocks are mined between polling iterations.
-    let mut last_processed_trigger_bucket =
-        last_processed_block.as_u64().saturating_sub(1) / matching_block_interval;
+    for algorithm in MATCHABLE_ALGORITHMS {
+        info!(
+            "Using {}-block matching interval for {}",
+            matching_block_interval(algorithm),
+            algorithm
+        );
+    }
+    // The current block is checked too, so a matching boundary at startup is not skipped.
+    let mut last_processed_block = provider
+        .get_block_number()
+        .await?
+        .as_u64()
+        .saturating_sub(1);
 
     loop {
-        let block_number = provider.get_block_number().await?;
+        let block_number = provider.get_block_number().await?.as_u64();
         if block_number > last_processed_block {
             info!("Block {} observed", block_number);
 
-            let current_trigger_bucket = block_number.as_u64() / matching_block_interval;
-            if current_trigger_bucket > last_processed_trigger_bucket {
-                info!(
-                    "Matching trigger reached (bucket {} -> {}) at block {}",
-                    last_processed_trigger_bucket, current_trigger_bucket, block_number
-                );
-
-                if let Err(error) = run_matching_cycle(
-                    orderbook_url.as_str(),
-                    node_url.as_str(),
-                    settle_order_batch_address.as_str(),
-                    matching_engine_private_key.as_str(),
-                    &matching_algorithm,
-                    pay_as_clear_pricing,
-                )
-                .await
-                {
-                    error!("Matching cycle failed: {:?}", error);
-                }
-
-                last_processed_trigger_bucket = current_trigger_bucket;
+            if let Err(error) = run_matching_cycle(
+                orderbook_url.as_str(),
+                node_url.as_str(),
+                settle_order_batch_address.as_str(),
+                matching_engine_private_key.as_str(),
+                last_processed_block + 1..=block_number,
+                markets,
+                pay_as_clear_pricing,
+            )
+            .await
+            {
+                error!("Matching cycle failed: {:?}", error);
             }
 
             last_processed_block = block_number;
@@ -106,15 +102,31 @@ pub async fn evm_subscribe(
     }
 }
 
-async fn run_matching_cycle(
+/// Matches the markets whose matching algorithm is due after `new_blocks`,
+/// grouped by the algorithm of their market record. Does nothing if no
+/// algorithm is due.
+async fn run_matching_cycle<S: MarketSource>(
     orderbook_url: &str,
     evm_node_url: &str,
     settle_order_batch_address: &str,
     matching_engine_private_key: &str,
-    matching_algorithm: &MatchingAlgorithm,
+    new_blocks: RangeInclusive<u64>,
+    markets: &mut MarketCache<S>,
     pay_as_clear_pricing: PayAsClearPricing,
 ) -> Result<()> {
-    info!("Starting matching cycle");
+    let due_algorithms: Vec<MatchingAlgorithm> = MATCHABLE_ALGORITHMS
+        .into_iter()
+        .filter(|algorithm| is_matching_due(*algorithm, &new_blocks))
+        .collect();
+    if due_algorithms.is_empty() {
+        return Ok(());
+    }
+
+    info!(
+        "Starting matching cycle at block {} for {:?} markets",
+        new_blocks.end(),
+        due_algorithms
+    );
     info!("Fetching open orders from {}", orderbook_url);
 
     let prepared_orders =
@@ -140,18 +152,30 @@ async fn run_matching_cycle(
         order_books.len()
     );
 
-    let matches_per_market =
-        match_order_books(order_books, matching_algorithm, pay_as_clear_pricing)?;
+    let market_ids: BTreeSet<String> = order_books
+        .iter()
+        .map(|order_book| order_book.market_id().to_string())
+        .collect();
+    let mut order_books_by_algorithm =
+        group_by_matching_algorithm(order_books, markets.resolve(&market_ids).await);
+
+    let mut matches_per_market = Vec::new();
+    for algorithm in due_algorithms {
+        if let Some(order_books) = order_books_by_algorithm.remove(&algorithm) {
+            matches_per_market.extend(match_order_books(
+                order_books,
+                &algorithm,
+                pay_as_clear_pricing,
+            )?);
+        }
+    }
+
     if matches_per_market.is_empty() {
-        info!("No matches generated by {} algorithm", matching_algorithm);
+        info!("No matches generated in this cycle");
         return Ok(());
     }
 
-    info!(
-        "Generated matches for {} markets using {}",
-        matches_per_market.len(),
-        matching_algorithm
-    );
+    info!("Generated matches for {} markets", matches_per_market.len());
     send_settle_batch_transaction(
         evm_node_url,
         settle_order_batch_address,

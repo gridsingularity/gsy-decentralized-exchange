@@ -50,7 +50,7 @@ impl MarketType {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MatchingAlgorithm {
     #[serde(rename = "pay_as_bid")]
     PayAsBid,
