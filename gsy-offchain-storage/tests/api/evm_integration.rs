@@ -172,7 +172,7 @@ async fn test_order_listener_rejects_unknown_partner_mapping() {
         preferred_energy_rate: 4000,
     };
     let error = handler.handle_order_placed(event, 950).await.unwrap_err();
-    assert!(error.to_string().contains("No facility ID mapping"));
+    assert!(error.to_string().contains("No owner ID mapping"));
     assert!(app
         .db_wrapper
         .orders()
@@ -187,7 +187,7 @@ async fn test_order_listener_rejects_unknown_partner_mapping() {
 async fn test_evm_order_listener_persists_to_db() {
     let app = init_app().await;
     let db = app.db_wrapper.clone();
-    // Register external facility IDs independently of their on-chain representation.
+    // Register external owner IDs independently of their on-chain representation.
     for (offchain_id, onchain_id) in [(
         "00112233-4455-6677-8899-aabbccddeeff",
         "0x11111111111111111111111111111111",

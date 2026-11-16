@@ -159,6 +159,10 @@ async function main() {
   const deployer = await waitForRpcAndGetDeployer();
   const deployerAddress = await deployer.getAddress();
   const network = await ethers.provider.getNetwork();
+  const isLocal = network.chainId === 31337n || network.chainId === 1337n;
+  if (!isLocal && !process.env.COMMUNITY_CLIENT_PRIVATE_KEY?.trim()) {
+    throw new Error("COMMUNITY_CLIENT_PRIVATE_KEY must be set for non-local deployments");
+  }
 
   if (
     network.chainId === 246n &&
@@ -179,6 +183,10 @@ async function main() {
   );
   const executionEngineAddress = getAddressFromPrivateKey(
     process.env.EXECUTION_ENGINE_PRIVATE_KEY,
+    deployerAddress,
+  );
+  const communityClientAddress = getAddressFromPrivateKey(
+    process.env.COMMUNITY_CLIENT_PRIVATE_KEY,
     deployerAddress,
   );
   const actorRegistrarAddress = getAddressFromPrivateKey(
@@ -218,7 +226,7 @@ async function main() {
   ] = await deployUpgradeableContract(
     "OrderRegistry",
     proxyAdminOwnerAddress,
-    [deployerAddress, marketControllerAddress, actorRegistryAddress],
+    [deployerAddress, marketControllerAddress],
   );
   const [
     tradeSettlement,
@@ -233,6 +241,7 @@ async function main() {
 
   const ORCHESTRATOR_ROLE = ethers.id("ORCHESTRATOR_ROLE");
   const SETTLEMENT_ROLE = ethers.id("SETTLEMENT_ROLE");
+  const COMMUNITY_CLIENT_ROLE = ethers.id("COMMUNITY_CLIENT_ROLE");
   const OPERATOR_ROLE = ethers.id("OPERATOR_ROLE");
   const EXECUTION_ENGINE_ROLE = ethers.id("EXECUTION_ENGINE_ROLE");
   const ACTOR_REGISTRAR_ROLE = ethers.id("ACTOR_REGISTRAR_ROLE");
@@ -240,6 +249,10 @@ async function main() {
   await waitForTransaction(
     "Grant MarketController.ORCHESTRATOR_ROLE",
     await marketController.grantRole(ORCHESTRATOR_ROLE, orchestratorAddress),
+  );
+  await waitForTransaction(
+    "Grant OrderRegistry.COMMUNITY_CLIENT_ROLE",
+    await orderRegistry.grantRole(COMMUNITY_CLIENT_ROLE, communityClientAddress),
   );
   await waitForTransaction(
     "Grant OrderRegistry.SETTLEMENT_ROLE",
@@ -280,6 +293,7 @@ async function main() {
     `TRADE_SETTLEMENT_PROXY_ADMIN_ADDRESS=${tradeSettlementProxyAdminAddress}`,
     `CONTRACT_TRADE_SETTLEMENT=${tradeSettlementAddress}`,
     `ACTOR_REGISTRAR_ADDRESS=${actorRegistrarAddress}`,
+    `COMMUNITY_CLIENT_ADDRESS=${communityClientAddress}`,
     `PROXY_ADMIN_OWNER_ADDRESS=${proxyAdminOwnerAddress}`,
     "",
   ].join("\n");
@@ -306,6 +320,7 @@ async function main() {
   console.log(`  orchestratorRole       ${orchestratorAddress}`);
   console.log(`  operatorRole           ${matchingEngineAddress}`);
   console.log(`  executionEngineRole    ${executionEngineAddress}`);
+  console.log(`  communityClientRole    ${communityClientAddress}`);
   console.log(`  actorRegistrarRole     ${actorRegistrarAddress}`);
   console.log(`  envFile                ${envFilePath}`);
 }

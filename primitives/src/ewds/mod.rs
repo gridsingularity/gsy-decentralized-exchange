@@ -46,12 +46,14 @@ pub enum EwdsOperation {
     MarketsQuery,
     #[serde(rename = "facilities.query")]
     FacilitiesQuery,
+    #[serde(rename = "facilities.validate")]
+    FacilitiesValidate,
     #[serde(rename = "guarantees_of_origin.query")]
     GuaranteesOfOriginQuery,
 }
 
 impl EwdsOperation {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::OrdersQuery,
         Self::TradesQuery,
         Self::MeasurementsQuery,
@@ -59,6 +61,7 @@ impl EwdsOperation {
         Self::ClearingResultsQuery,
         Self::MarketsQuery,
         Self::FacilitiesQuery,
+        Self::FacilitiesValidate,
         Self::IdsQuery,
         Self::GuaranteesOfOriginQuery,
     ];
@@ -73,6 +76,7 @@ impl EwdsOperation {
             Self::ClearingResultsQuery => "clearing_results.query",
             Self::MarketsQuery => "markets.query",
             Self::FacilitiesQuery => "facilities.query",
+            Self::FacilitiesValidate => "facilities.validate",
             Self::GuaranteesOfOriginQuery => "guarantees_of_origin.query",
         }
     }
@@ -87,6 +91,7 @@ impl EwdsOperation {
             Self::ClearingResultsQuery => "clearing_results-query",
             Self::MarketsQuery => "markets-query",
             Self::FacilitiesQuery => "facilities-query",
+            Self::FacilitiesValidate => "facilities-validate",
             Self::GuaranteesOfOriginQuery => "guarantees_of_origin-query",
         }
     }
@@ -170,6 +175,7 @@ pub struct EwdsTopicConfig {
     clearing_results: EwdsTopicPair,
     markets: EwdsTopicPair,
     facilities: EwdsTopicPair,
+    facility_validation: EwdsTopicPair,
     guarantees_of_origin: EwdsTopicPair,
 }
 
@@ -207,6 +213,10 @@ impl Default for EwdsTopicConfig {
             facilities: EwdsTopicPair {
                 request: "facilitiesQuery".to_string(),
                 response: "facilitiesQueryResponse".to_string(),
+            },
+            facility_validation: EwdsTopicPair {
+                request: "facilitiesValidate".to_string(),
+                response: "facilitiesValidateResponse".to_string(),
             },
             guarantees_of_origin: EwdsTopicPair {
                 request: "guaranteesOfOriginQuery".to_string(),
@@ -294,6 +304,16 @@ impl EwdsTopicConfig {
                     defaults.facilities.response.as_str(),
                 ),
             },
+            facility_validation: EwdsTopicPair {
+                request: env_or(
+                    "EWDS_FACILITIES_VALIDATION_REQUEST_TOPIC",
+                    defaults.facility_validation.request.as_str(),
+                ),
+                response: env_or(
+                    "EWDS_FACILITIES_VALIDATION_RESPONSE_TOPIC",
+                    defaults.facility_validation.response.as_str(),
+                ),
+            },
             guarantees_of_origin: EwdsTopicPair {
                 request: env_or(
                     "EWDS_GUARANTEES_OF_ORIGIN_REQUEST_TOPIC",
@@ -317,6 +337,7 @@ impl EwdsTopicConfig {
             EwdsOperation::ClearingResultsQuery => &self.clearing_results,
             EwdsOperation::MarketsQuery => &self.markets,
             EwdsOperation::FacilitiesQuery => &self.facilities,
+            EwdsOperation::FacilitiesValidate => &self.facility_validation,
             EwdsOperation::GuaranteesOfOriginQuery => &self.guarantees_of_origin,
         }
     }
