@@ -18,11 +18,38 @@ use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::str::FromStr;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-#[derive(Deserialize)]
+/// A message as the gateway returns it from `GET /api/v2/messages`. Only `payload` is
+/// guaranteed; the metadata is optional so that a gateway which leaves it out still parses.
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EwdsInboundMessage {
     pub payload: String,
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub topic_name: Option<String>,
+    #[serde(default)]
+    pub topic_owner: Option<String>,
+    #[serde(default)]
+    pub topic_version: Option<String>,
+    #[serde(default)]
+    pub transaction_id: Option<String>,
+    #[serde(default)]
+    pub sender: Option<String>,
+    /// When the sender published the message, in nanoseconds since the Unix epoch.
+    #[serde(default)]
+    pub timestamp_nanos: Option<u64>,
+}
+
+impl EwdsInboundMessage {
+    /// How long before `now` the message was published, if the gateway returned its timestamp.
+    /// A timestamp after `now`, e.g. from clock skew, counts as zero.
+    pub fn age_at(&self, now: SystemTime) -> Option<Duration> {
+        let published = UNIX_EPOCH + Duration::from_nanos(self.timestamp_nanos?);
+        Some(now.duration_since(published).unwrap_or_default())
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -58,12 +85,6 @@ pub struct EwdsDeliverySummary {
     pub total: u32,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EwdsMessageDto {
-    pub payload: String,
-}
-
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EwdsResponseEnvelope<T> {
@@ -96,6 +117,48 @@ pub struct EwdsQueryResponse<T> {
 pub struct EwdsErrorPayload {
     pub code: String,
     pub message: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct FacilityMarketValidationRequest {
+    pub facility_id: String,
+    pub market_id: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct FacilityMarketValidationResult {
+    pub facility_id: String,
+    pub market_id: String,
+    pub eligible: bool,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub reason: Option<FacilityMarketValidationReason>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FacilityMarketValidationReason {
+    UnknownMarket,
+    UnknownFacility,
+    UnknownCommunity,
+    UnknownSite,
+    FacilityNotListedInSite,
+    SiteNotInCommunity,
+    #[serde(other)]
+    Unknown,
+}
+
+impl FacilityMarketValidationReason {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::UnknownMarket => "unknown_market",
+            Self::UnknownFacility => "unknown_facility",
+            Self::UnknownCommunity => "unknown_community",
+            Self::UnknownSite => "unknown_site",
+            Self::FacilityNotListedInSite => "facility_not_listed_in_site",
+            Self::SiteNotInCommunity => "site_not_in_community",
+            Self::Unknown => "unknown",
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

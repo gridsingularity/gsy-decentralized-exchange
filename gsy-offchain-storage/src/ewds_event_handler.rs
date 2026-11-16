@@ -2,7 +2,6 @@ use crate::db::measurements_service::insert_measurements;
 use crate::db::DatabaseWrapper;
 use crate::ewds_handler::{send_message_with_fqcn, EwdsHandlerConfig};
 use anyhow::{anyhow, Context, Result};
-use futures::future::join_all;
 use primitives::db_api_schema::{
     grid_topology::{EnergyCommunitySchema, FacilitySchema, SiteSchema},
     orders::DbOrderSchema,
@@ -195,10 +194,11 @@ pub async fn start_ewds_event_subscriber(db: DatabaseWrapper, config: EwdsHandle
 
     let client = event_client(&config);
     let db = &db;
-    let workers = SUBSCRIBED_EVENT_TYPES.into_iter().map(|event_type| {
-        client.run_event_worker(event_type, move |envelope| handle_event(db, envelope))
-    });
-    join_all(workers).await;
+    client
+        .run_event_subscriber(&SUBSCRIBED_EVENT_TYPES, |envelope| {
+            handle_event(db, envelope)
+        })
+        .await;
 }
 
 /// The client the subscriber polls events with. It only polls, so the query settings keep their
@@ -253,7 +253,10 @@ pub async fn handle_event(db: &DatabaseWrapper, envelope: EwdsEventEnvelope<Valu
         }
         EwdsEventType::Community => {
             let communities = parse_batch(envelope.data, |community: EwdsCommunityDto| {
-                Ok(EnergyCommunitySchema::from(community))
+                let mut community = EnergyCommunitySchema::from(community);
+                community.community_id =
+                    primitives::utils::normalize_community_id(&community.community_id)?;
+                Ok(community)
             })?;
             db.communities().check_for_duplicates(&communities).await?;
             for community in communities {

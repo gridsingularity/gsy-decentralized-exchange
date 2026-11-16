@@ -8,7 +8,7 @@ use mongodb::options::IndexOptions;
 use mongodb::options::ReturnDocument;
 use mongodb::{Collection, IndexModel};
 use primitives::db_api_schema::ids::IdMappingSchema;
-use primitives::utils::{bytes16_to_hex, create_encrypted_bytes16_from_string};
+use primitives::utils::derive_onchain_id;
 use std::ops::Deref;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -70,7 +70,7 @@ impl IdService {
             .find_one_and_update(
                 doc! {"offchain_id": &offchain_id},
                 doc! {"$setOnInsert": {
-                "onchain_id": bytes16_to_hex(create_encrypted_bytes16_from_string(&offchain_id)),
+                "onchain_id": derive_onchain_id(&offchain_id),
                 "creation_time": SystemTime::now()
                     .duration_since(UNIX_EPOCH)?
                     .as_secs() as i64
@@ -80,23 +80,21 @@ impl IdService {
             .return_document(ReturnDocument::After)
             .await;
 
-        let result = match result {
-            Ok(result) => result,
+        match result {
+            Ok(mapping) => mapping.context("upsert returned no document"),
             Err(error)
-                if matches!(error.kind.as_ref(), ErrorKind::Command(e) if e.code == 11000)
-                    || matches!(error.kind.as_ref(), ErrorKind::Write(WriteFailure::WriteError(e)) if e.code == 11000) =>
+                if matches!(error.kind.as_ref(), ErrorKind::Command(command) if command.code == 11000)
+                    || matches!(error.kind.as_ref(), ErrorKind::Write(WriteFailure::WriteError(write)) if write.code == 11000) =>
             {
-                // A concurrent upsert may win either unique index. Only recover
-                // the same offchain ID; a collision with another ID is still an error.
-                match self.0.find_one(doc! {"offchain_id": &offchain_id}).await? {
-                    Some(mapping) => return Ok(mapping),
-                    None => return Err(error.into()),
-                }
+                // A concurrent upsert can win either unique index race.
+                // Only recover the requested mapping, never another ID's collision.
+                self.0
+                    .find_one(doc! {"offchain_id": &offchain_id})
+                    .await?
+                    .ok_or_else(|| error.into())
             }
-            Err(error) => return Err(error.into()),
-        };
-
-        Ok(result.context("upsert returned no document")?)
+            Err(error) => Err(error.into()),
+        }
     }
 }
 

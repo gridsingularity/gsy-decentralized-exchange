@@ -27,13 +27,9 @@ describe("TradeSettlement", function () {
     const controller = await deployUpgradeableContract("MarketController", [
       admin.address,
     ]);
-    const actorRegistry = await deployUpgradeableContract("ActorRegistry", [
-      admin.address,
-    ]);
     const registry = await deployUpgradeableContract("OrderRegistry", [
       admin.address,
       await controller.getAddress(),
-      await actorRegistry.getAddress(),
     ]);
     const settlement = await deployUpgradeableContract("TradeSettlement", [
       admin.address,
@@ -64,8 +60,9 @@ describe("TradeSettlement", function () {
       matchingAlgorithm: MATCHING_ALGORITHM_PAY_AS_CLEAR,
     });
 
-    await actorRegistry.registerActor(buyerActorId, buyer.address);
-    await actorRegistry.registerActor(sellerActorId, seller.address);
+    // These fixture signers act as submission services; participant IDs remain independent.
+    await registry.grantRole(await registry.COMMUNITY_CLIENT_ROLE(), buyer.address);
+    await registry.grantRole(await registry.COMMUNITY_CLIENT_ROLE(), seller.address);
 
     const bid = {
       orderId: bytes16Id("bid-1"),
