@@ -274,6 +274,30 @@ fn keys_of(value: &serde_json::Value) -> HashSet<String> {
     value.as_object().unwrap().keys().cloned().collect()
 }
 
+#[test]
+fn owner_party_resolves_the_facility_without_id_mapping_records() {
+    let fixture = Fixture::exporting(4.0, 0.0);
+    let mut trade = sale("trade-1", 3.0, 100);
+    trade.seller = hash(SELLER_OWNER);
+    let records = fixture.build(vec![trade.clone()]);
+    assert_eq!(records.len(), 1);
+    assert_eq!(
+        records[0].beneficiary_and_claim.owner_id,
+        hash(SELLER_OWNER)
+    );
+    trade.seller = hash(SELLER_FACILITY);
+    assert!(fixture.build(vec![trade]).is_empty());
+}
+
+#[test]
+fn another_owners_facility_does_not_supply_export_or_assets() {
+    let fixture = Fixture::exporting(4.0, 0.0);
+    assert_eq!(fixture.build(vec![sale("trade-1", 3.0, 100)]).len(), 1);
+    let mut other_sale = sale("trade-2", 3.0, 101);
+    other_sale.seller = hash(REMOTE_OWNER);
+    assert!(fixture.build(vec![other_sale]).is_empty());
+}
+
 fn key_set(keys: &[&str]) -> HashSet<String> {
     keys.iter().map(|k| k.to_string()).collect()
 }

@@ -7,11 +7,12 @@ use ethers::prelude::*;
 use primitives::db_api_schema::orders::{
     order_metadata_to_contract, DbOrderSchema, OrderEnum, OrderStatus,
 };
-use primitives::ewds::dto::{EwdsEventEnvelope, EwdsOrderDto};
+use primitives::ewds::dto::{EwdsEventEnvelope, EwdsOrderDto, FacilityMarketValidationRequest};
 use primitives::ewds::{env_var, invalid_event, parse_batch, EwdsClient, EwdsEventType};
 use primitives::offchain_storage::{resolve_order_partner_ids, OffchainStorageClient};
 use primitives::utils::{epoch_to_rfc3339, parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::time::{sleep, timeout, Duration};
@@ -43,6 +44,11 @@ pub async fn start_order_event_subscriber() -> Result<()> {
     )
     .await
     .with_context(|| format!("Failed to connect to the EVM node at {}", evm_node_url))?;
+    anyhow::ensure!(
+        order_registry.has_submission_role().await?,
+        "Community client signer lacks COMMUNITY_CLIENT_ROLE on {}",
+        order_registry_address
+    );
     let ewds_client = EwdsClient::from_env(
         CONSUMER_CLIENT_ID_ENV,
         CONSUMER_CLIENT_ID_DEFAULT,
@@ -75,6 +81,13 @@ async fn watch_node(order_registry: &OrderRegistryClient) -> Error {
         if let Err(error) = order_registry.check_connection().await {
             return error.context("Lost the connection to the EVM node");
         }
+        match order_registry.has_submission_role().await {
+            Ok(false) => error!(
+                "Community client signer lacks COMMUNITY_CLIENT_ROLE; order submissions will be rejected"
+            ),
+            Err(error) => warn!("Could not check COMMUNITY_CLIENT_ROLE: {error:#}"),
+            Ok(true) => {}
+        }
     }
 }
 
@@ -86,19 +99,19 @@ enum Placement {
 }
 
 pub struct OrderEventHandler {
-    id_service: OffchainStorageClient,
+    offchain_storage_client: OffchainStorageClient,
     order_registry: OrderRegistryClient,
     ewds_client: EwdsClient,
 }
 
 impl OrderEventHandler {
     pub fn new(
-        id_service: OffchainStorageClient,
+        offchain_storage_client: OffchainStorageClient,
         order_registry: OrderRegistryClient,
         ewds_client: EwdsClient,
     ) -> Self {
         Self {
-            id_service,
+            offchain_storage_client,
             order_registry,
             ewds_client,
         }
@@ -106,12 +119,11 @@ impl OrderEventHandler {
 
     /// Sends the orders of an `order.event` to the `OrderRegistry`.
     ///
-    /// The event is rejected before anything is sent if one of its orders is invalid or its IDs
-    /// cannot be resolved. After that every order is sent on its own: one the contract rejects
-    /// is reported to FOS and the others are still sent, because sent orders cannot be rolled
-    /// back. If an order could not be confirmed because the node was unreachable, the event
-    /// fails after the other orders were processed. The event worker retries it, skipping orders
-    /// already placed. A sent order succeeds only after its receipt confirms successful execution.
+    /// Resolves owners to facilities and validates their market participation before submission.
+    /// Invalid input, unavailable validation or unresolved IDs fail the event before submission.
+    /// Ineligible orders and contract rejections are reported to the EWDS; eligible orders continue.
+    /// Infrastructure failures remain retryable, with confirmed orders skipped on retry.
+    /// A sent order succeeds only after its receipt confirms successful execution.
     pub async fn handle(&self, envelope: EwdsEventEnvelope<Value>) -> Result<()> {
         let event_id = envelope.event_id;
         let orders = parse_batch(envelope.data, |submission: EwdsOrderDto| {
@@ -119,8 +131,60 @@ impl OrderEventHandler {
             Ok((submission, order))
         })?;
 
-        let mut params = Vec::with_capacity(orders.len());
+        let total = orders.len();
+        let mut sent = 0;
+        let mut unsent = 0;
+        let mut pending = Vec::with_capacity(total);
         for (index, (submission, order)) in orders.into_iter().enumerate() {
+            // Check before validation: topology changes must not reject an already placed order.
+            let order_id = *Uuid::parse_str(&order.order_id)?.as_bytes();
+            let already_placed = match self.order_registry.is_placed(order_id).await {
+                Ok(placed) => placed,
+                Err(error) => {
+                    warn!("Could not check existing order {}: {}", order.order_id, error);
+                    unsent += 1;
+                    continue;
+                }
+            };
+            if already_placed {
+                sent += 1;
+                info!(
+                    "Order {} of EWDS event {} is already placed; skipping it",
+                    order.order_id, event_id
+                );
+                continue;
+            }
+            pending.push((index, submission, order));
+        }
+        let mut params = Vec::with_capacity(pending.len());
+        let (pending, rejected) = self.validate_owner_facilities(pending).await?;
+        params.extend(
+            rejected
+                .into_iter()
+                .map(|(submission, reason)| (submission, Err(reason))),
+        );
+        let requests: Vec<_> = pending
+            .iter()
+            .map(|(_, _, order, facility_id)| FacilityMarketValidationRequest {
+                facility_id: facility_id.clone(),
+                market_id: order.market_id.clone(),
+            })
+            .collect();
+        let validation = self
+            .offchain_storage_client
+            .validate_facility_markets(&requests)
+            .await
+            .context("Facility participation validation failed")?;
+
+        for ((index, submission, order, facility_id), result) in pending.into_iter().zip(validation) {
+            if let Some(reason) = result.reason {
+                let reason = format!(
+                    "Facility {} of owner {} cannot participate in market {}: {}",
+                    facility_id, order.created_by, order.market_id, reason.as_str()
+                );
+                params.push((submission, Err(reason)));
+                continue;
+            }
             let order_id = order.order_id.clone();
             let order = self
                 .resolve_ids(order)
@@ -128,13 +192,37 @@ impl OrderEventHandler {
                 .and_then(|order| order_params(&order).map_err(invalid_event))
                 .with_context(|| format!("invalid order {} at index {}", order_id, index))?;
             // Keep the submitted IDs so a rejection can echo the original order to FOS.
-            params.push((submission, order));
+            params.push((submission, Ok(order)));
         }
 
-        let total = params.len();
-        let mut sent = 0;
-        let mut unsent = 0;
+        // Place eligible copies first so duplicate IDs cannot be rejected then submitted.
+        params.sort_by_key(|(_, order)| order.is_err());
         for (submission, order) in params {
+            let order = match order {
+                Ok(order) => order,
+                Err(reason) => {
+                    // Another submission (including an earlier item in this batch) may have won.
+                    let order_id = *Uuid::parse_str(&submission.order_id)?.as_bytes();
+                    match self.order_registry.is_placed(order_id).await {
+                        Ok(true) => sent += 1,
+                        Ok(false) => {
+                            warn!(
+                                "Order {} of EWDS event {} rejected: {}",
+                                submission.order_id, event_id, reason
+                            );
+                            publish_rejection(&self.ewds_client, submission, reason).await;
+                        }
+                        Err(error) => {
+                            warn!(
+                                "Could not check existing order {} before rejection: {}",
+                                submission.order_id, error
+                            );
+                            unsent += 1;
+                        }
+                    }
+                    continue;
+                }
+            };
             let order_id = &submission.order_id;
             match self.place(order).await {
                 Placement::Confirmed(tx_hash) => {
@@ -159,7 +247,7 @@ impl OrderEventHandler {
                     match error {
                         PlaceOrderError::Transport(_) => unsent += 1,
                         PlaceOrderError::Rejected(reason) => {
-                            self.publish_rejection(submission, reason).await;
+                            publish_rejection(&self.ewds_client, submission, reason).await;
                         }
                     }
                 }
@@ -180,43 +268,58 @@ impl OrderEventHandler {
         Ok(())
     }
 
-    /// Report the original submission, not the ID-resolved contract parameters. No DB order
-    /// is created. Gateway failures must not turn a definite rejection into a placement retry.
-    async fn publish_rejection(&self, mut submission: EwdsOrderDto, reason: String) {
-        let occurred_at = epoch_to_rfc3339(get_current_timestamp_in_secs());
-        submission.order_status = "rejected".to_string();
-        submission.updated_at = Some(occurred_at.clone());
-        submission.reject_reason = Some(reason);
-        let event = EwdsEventEnvelope {
-            event_id: Uuid::new_v4().to_string(),
-            event_type: EwdsEventType::OrderStatus,
-            occurred_at,
-            data: vec![submission],
-        };
-        let result = timeout(
-            Duration::from_millis(EWDS_TIMEOUT_MS),
-            self.ewds_client.publish_event(&event),
-        )
-        .await
-        .context("Timed out publishing order rejection")
-        .and_then(|result| result);
-        if let Err(error) = result {
-            error!(
-                "Failed to publish rejection for order {} (event={}): {:#}",
-                event.data[0].order_id, event.event_id, error
-            );
+    /// Resolves pending orders to their owners' facilities and separates rejection candidates.
+    /// Missing facilities are rejected; unavailable or ambiguous ownership remains retryable.
+    async fn validate_owner_facilities(
+        &self,
+        pending: Vec<(usize, EwdsOrderDto, DbOrderSchema)>,
+    ) -> Result<(
+        Vec<(usize, EwdsOrderDto, DbOrderSchema, String)>,
+        Vec<(EwdsOrderDto, String)>,
+    )> {
+        let mut owner_facilities = HashMap::new();
+        if !pending.is_empty() {
+            for (facility_id, owner_id) in self
+                .offchain_storage_client
+                .fetch_facility_owner_mapping()
+                .await?
+            {
+                anyhow::ensure!(
+                    owner_facilities.insert(owner_id.clone(), facility_id).is_none(),
+                    "Owner {} is associated with multiple facilities",
+                    owner_id
+                );
+            }
         }
+        let mut rejected = Vec::new();
+        let pending = pending
+            .into_iter()
+            .filter_map(|(index, submission, order)| {
+                match owner_facilities.get(&order.created_by) {
+                    Some(facility_id) => Some((index, submission, order, facility_id.clone())),
+                    None => {
+                        let reason = format!(
+                            "Owner {} has no associated facility: unknown_facility",
+                            order.created_by
+                        );
+                        rejected.push((submission, reason));
+                        None
+                    }
+                }
+            })
+            .collect();
+        Ok((pending, rejected))
     }
 
-    /// Replaces the off-chain actor and partner IDs with their on-chain IDs.
+    /// Replaces the off-chain owner and preferred-owner IDs with their on-chain IDs.
     async fn resolve_ids(&self, mut order: DbOrderSchema) -> Result<DbOrderSchema> {
         order.created_by = self
-            .id_service
+            .offchain_storage_client
             .fetch_onchain_id(&order.created_by)
             .await
             .with_context(|| format!("createdBy '{}' could not be resolved", order.created_by))?;
         order.area_uuid = order.created_by.clone();
-        resolve_order_partner_ids(&mut order.requirements, &self.id_service)
+        resolve_order_partner_ids(&mut order.requirements, &self.offchain_storage_client)
             .await
             .context("preferredTradingPartner could not be resolved")?;
         Ok(order)
@@ -251,6 +354,38 @@ impl OrderEventHandler {
                 Err(error) => return Placement::Failed(error),
             }
         }
+    }
+}
+
+/// Report the original owner IDs, not the ID-resolved contract parameters. No DB order
+/// is created. Gateway failures must not turn a definite rejection into a placement retry.
+pub(crate) async fn publish_rejection(
+    ewds_client: &EwdsClient,
+    mut submission: EwdsOrderDto,
+    reason: String,
+) {
+    let occurred_at = epoch_to_rfc3339(get_current_timestamp_in_secs());
+    submission.order_status = "rejected".to_string();
+    submission.updated_at = Some(occurred_at.clone());
+    submission.reject_reason = Some(reason);
+    let event = EwdsEventEnvelope {
+        event_id: Uuid::new_v4().to_string(),
+        event_type: EwdsEventType::OrderStatus,
+        occurred_at,
+        data: vec![submission],
+    };
+    let result = timeout(
+        Duration::from_millis(EWDS_TIMEOUT_MS),
+        ewds_client.publish_event(&event),
+    )
+    .await
+    .context("Timed out publishing order rejection")
+    .and_then(|result| result);
+    if let Err(error) = result {
+        error!(
+            "Failed to publish rejection for order {} (event={}): {:#}",
+            event.data[0].order_id, event.event_id, error
+        );
     }
 }
 
@@ -320,6 +455,21 @@ impl OrderRegistryClient {
         Ok(())
     }
 
+    pub async fn has_submission_role(&self) -> Result<bool> {
+        timeout(
+            Duration::from_millis(NODE_HEALTH_CHECK_TIMEOUT_MS),
+            self.contract
+                .has_role(
+                    ethers::utils::keccak256("COMMUNITY_CLIENT_ROLE"),
+                    self.contract.client().address(),
+                )
+                .call(),
+        )
+        .await
+        .context("Timed out checking COMMUNITY_CLIENT_ROLE")?
+        .context("Could not read COMMUNITY_CLIENT_ROLE from OrderRegistry")
+    }
+
     /// Whether an order with this ID was ever placed, whatever its status is now.
     pub async fn is_placed(&self, order_id: [u8; 16]) -> Result<bool, PlaceOrderError> {
         let status = self
@@ -381,7 +531,10 @@ fn classify_contract_error(error: ContractError<OrderRegistrySigner>) -> PlaceOr
     }
     let reason = match error.decode_contract_revert::<OrderRegistryContractErrors>() {
         Some(OrderRegistryContractErrors::MarketClosed(_)) => "MarketClosed".to_string(),
-        Some(OrderRegistryContractErrors::Unauthorized(_)) => "Unauthorized".to_string(),
+        Some(OrderRegistryContractErrors::Unauthorized(_)) => {
+            error!("Community client is not authorized to submit orders: COMMUNITY_CLIENT_ROLE is missing or revoked");
+            "service_unauthorized: the community client is not authorized; resubmit later".to_string()
+        }
         Some(OrderRegistryContractErrors::InvalidOrderParams(_)) => {
             "InvalidOrderParams".to_string()
         }
@@ -435,6 +588,12 @@ pub fn order_params(order: &DbOrderSchema) -> Result<EvmOrderParamsTuple> {
 pub fn validate_order(order: DbOrderSchema) -> Result<DbOrderSchema> {
     Uuid::parse_str(&order.order_id)
         .map_err(|e| anyhow!("orderId '{}' is not a UUID: {}", order.order_id, e))?;
+    if parse_uuid_or_hex_bytes16(&order.market_id).is_none_or(|id| id == [0; 16]) {
+        bail!(
+            "marketId '{}' is not a non-zero 16-byte UUID or hex ID",
+            order.market_id
+        );
+    }
     if order.status != OrderStatus::Submitted {
         bail!("orderStatus must be 'submitted', got {:?}", order.status);
     }

@@ -7,9 +7,9 @@
   "additionalProperties": false,
   "properties": {
     "communityId": {
-      "description": "Primary community identifier. IRI: int:communityId. UUID v4.",
+      "description": "Primary community identifier as UUID or 16-byte hex. Stored and returned as a lowercase hyphenated UUID. IRI: int:communityId.",
       "type": "string",
-      "format": "uuid"
+      "pattern": "^(?:(?:0x)?[a-fA-F0-9]{32}|[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12})$"
     },
     "communityName": {
       "description": "Human-readable community name. IRI: int:communityName.",

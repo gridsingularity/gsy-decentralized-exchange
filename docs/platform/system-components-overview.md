@@ -31,11 +31,12 @@ When EWDS integration is enabled:
 
 - `MarketController.ORCHESTRATOR_ROLE` is held by orchestrator signer.
 - `ActorRegistry.ACTOR_REGISTRAR_ROLE` is held by the actor registrar signer.
+- `OrderRegistry.COMMUNITY_CLIENT_ROLE` authorizes service wallets to submit/cancel orders; facility/community eligibility is validated off-chain.
 - `TradeSettlement.OPERATOR_ROLE` is held by matching engine signer.
 - `TradeSettlement.EXECUTION_ENGINE_ROLE` is held by execution engine signer.
 - `OrderRegistry.SETTLEMENT_ROLE` is granted to settlement contract.
 
-This ensures only dedicated components can register actor wallets, create markets, settle matches, or submit penalties.
+This ensures only dedicated components can register actor wallets, submit/cancel orders, create markets, settle matches, or submit penalties.
 
 ## Data Planes
 

@@ -72,8 +72,55 @@ posts them any more.
 - `/communities` (`GET`, `POST`)
 - `/sites` (`GET`, `POST`)
 - `/facilities` (`GET`, `POST`)
+- `/facilities/validate` (`POST`) for read-only bulk facility/market validation
+
+Community writes through HTTP and EWDS accept UUID or 16-byte hex IDs and store
+lowercase hyphenated UUIDs. `GET /communities` and `communities.query` return that
+canonical form. Invalid IDs return HTTP 400 or cause the EWDS event to be dropped
+as invalid; they are not retried as storage failures.
+
+`POST /sites` and `/facilities` create or replace records by `site_name` and
+`facility_id`, respectively, matching the EWDS upsert behavior. Send complete
+records: replacing a site's facility list removes omitted memberships and can
+make those facilities ineligible. A facility name assigned to another ID returns
+409. These topology writes remain unauthenticated; restricting that write surface
+is a separate access-control follow-up.
+
+### Facility Participation Validation
+
+`POST /facilities/validate` accepts an array of
+`{"facility_id": "facility-a", "market_id": "0x..."}` pairs. Facility IDs are
+the original off-chain IDs, not owner IDs or generated on-chain IDs. Market IDs
+accept UUID or bytes16 hex; results echo the supplied IDs.
+
+Each pair requires an existing market and facility, the facility's site to
+exist and list that facility, and the market's community to exist and list
+that site. The lookup uses the latest stored topology; an ID mapping alone
+does not establish participation. This does not validate market opening times
+or wallet permissions.
+
+HTTP 200 returns one `{facility_id, market_id, eligible, reason?}` per pair,
+preserving order and duplicates. Ineligible pairs carry a reason:
+`unknown_market`, `unknown_facility`, `unknown_community`, `unknown_site`,
+`facility_not_listed_in_site` or `site_not_in_community`. Empty requests return
+`[]`. Malformed requests return 400; database/deserialization failures return
+500 with `code: VALIDATION_UNAVAILABLE`, not negative eligibility results.
+
+EWDS exposes the same validation through `facilities.validate` when
+`EWDS_ENABLE_HANDLER=true`. `OffchainStorageClient::validate_facility_markets`
+selects HTTP or EWDS via the client's existing transport configuration and
+rejects incomplete or inconsistent responses. Neither transport writes orders
+or ID mappings. The community client's EWDS order subscriber validates new
+orders through this API before resolving IDs and submitting them. Forecast-based
+publication performs the same check. The contract separately requires
+`COMMUNITY_CLIENT_ROLE` for submission and cancellation; eligibility is enforced
+by those trusted services, not by this read-only endpoint or an ID mapping alone.
 
 ### ID Mapping
+- The ID service, execution engine and certificate metadata share the deterministic
+  Blake2b-16 derivation. Verification derives IDs locally and never creates mappings.
+  Certificate `owner_id` is the trade seller's owner hash; historical
+  ownership policy remains a separate follow-up.
 - `/ids` (`POST`) — get-or-create offchain↔onchain ID mappings
 
 Compatibility adapters for EVM JSON callers:
@@ -146,11 +193,11 @@ There is no reindexing tool. See the
   queries that select it until corrected; the error is logged with query context.
 - The preferred trading partner of a bid or an offer is stored in its
   requirements (`requirements.trading_partner_id`) as the original off-chain
-  partner facility ID; attributes carry no partner.
+  partner owner ID; attributes carry no partner.
   Callers resolve these through `POST /ids` or EWDS `ids.query` before contract
   submission. The event indexer uses the ID mapping collection to recover the
-  facility IDs; the matcher resolves them back before comparing on-chain actors.
-  UUID-shaped facility IDs are mapping inputs, not already-encoded on-chain IDs.
+  owner IDs; the matcher resolves them back before comparing on-chain actors.
+  UUID-shaped owner IDs are mapping inputs, not already-encoded on-chain IDs.
   Missing reverse mappings cause an indexing error rather than fabricating an ID.
   Mappings must exist before order submission. A missing mapping fails the block;
   the listener logs the error and retries that block instead of skipping it.
