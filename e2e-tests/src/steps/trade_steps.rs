@@ -13,7 +13,9 @@ use primitives::db_api_schema::orders::{
 use primitives::db_api_schema::profiles::MeasurementSchema;
 use primitives::db_api_schema::trades::{DbTradeSchema, TradeStatus};
 use primitives::ewds::dto::FacilityMarketValidationRequest;
-use primitives::matching::matching_block_interval;
+use primitives::constants::GLOBAL_CONSTANTS;
+use primitives::matching::{current_unix_time, matching_block_interval, ClearingSchedule};
+use primitives::MatchingAlgorithm;
 use primitives::offchain_storage::{
     resolve_order_partner_ids, OffchainStorageClient, OffchainStorageTransport,
 };
@@ -144,7 +146,58 @@ async fn mine_empty_blocks(world: &MyWorld, count: usize) {
     }
 }
 
+/// Seconds between two clearings of a spot market, when the stack runs
+/// pay-as-clear. The matching engine then clears on this schedule and not on
+/// block boundaries.
+///
+/// The spot markets open on the quarter hours, so with an interval that
+/// divides the market window and the quarter hour, every multiple of the
+/// interval is a clearing time of every open market.
+fn pay_as_clear_clearing_interval() -> Option<u64> {
+    let matching_algorithm = env::var("MATCHING_ALGORITHM")
+        .ok()
+        .and_then(|value| value.parse::<MatchingAlgorithm>().ok())
+        .unwrap_or_default();
+    if !matches!(matching_algorithm, MatchingAlgorithm::PayAsClear) {
+        return None;
+    }
+
+    let schedule = ClearingSchedule::from_env().expect("Invalid clearing schedule");
+    let window_seconds = ((GLOBAL_CONSTANTS.spot_market_close_offset_min
+        - GLOBAL_CONSTANTS.spot_market_open_offset_min)
+        * 60) as u64;
+    let interval = window_seconds / schedule.clearings_per_market;
+    assert!(
+        interval > 0
+            && window_seconds % schedule.clearings_per_market == 0
+            && GLOBAL_CONSTANTS.time_slot_sec % interval == 0,
+        "{} clearings in a {} s spot market window do not fall on a regular wall-clock interval",
+        schedule.clearings_per_market,
+        window_seconds
+    );
+    Some(interval)
+}
+
+/// Seconds the matching engine gets to clear and settle after a clearing time.
+const CLEARING_MARGIN_SECONDS: u64 = 5;
+/// Seconds one order needs to reach the off-chain storage.
+const ORDER_SUBMISSION_SECONDS: u64 = 3;
+
+async fn wait_for_next_clearing(interval: u64) {
+    let now = current_unix_time();
+    let wait = interval - now % interval + CLEARING_MARGIN_SECONDS;
+    info!("Waiting {} s for the next pay-as-clear clearing", wait);
+    sleep(Duration::from_secs(wait)).await;
+}
+
+/// Triggers a matching run: mines up to the next matching block for
+/// pay-as-bid, waits for the next clearing time for pay-as-clear.
 pub(crate) async fn mine_until_matching_block(world: &MyWorld, max_blocks: usize) {
+    if let Some(interval) = pay_as_clear_clearing_interval() {
+        wait_for_next_clearing(interval).await;
+        return;
+    }
+
     let matching_block_interval = matching_block_interval();
     for _ in 0..max_blocks {
         mine_empty_blocks(world, 1).await;
@@ -168,7 +221,23 @@ pub(crate) async fn mine_until_matching_block(world: &MyWorld, max_blocks: usize
     );
 }
 
+/// Makes sure that an order book of `required_blocks` orders (one block each)
+/// can be submitted before the next matching run.
 pub(crate) async fn align_to_matching_window(world: &MyWorld, required_blocks: u64) {
+    if let Some(interval) = pay_as_clear_clearing_interval() {
+        let required_seconds = required_blocks * ORDER_SUBMISSION_SECONDS;
+        assert!(
+            required_seconds < interval,
+            "A {}-order submission cannot fit in a {} s clearing interval",
+            required_blocks,
+            interval
+        );
+        if interval - current_unix_time() % interval <= required_seconds {
+            wait_for_next_clearing(interval).await;
+        }
+        return;
+    }
+
     let matching_block_interval = matching_block_interval();
     assert!(
         required_blocks < matching_block_interval,
