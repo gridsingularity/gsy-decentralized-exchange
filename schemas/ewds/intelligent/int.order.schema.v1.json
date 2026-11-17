@@ -88,7 +88,7 @@
       "default": "NONE"
     },
     "createdBy": {
-      "description": "Facility identity, not its owner or submitting service wallet. Submissions use an unpadded off-chain identity: strict hyphenated UUIDs are lowercased, other strings stay case-sensitive. Rejections echo the input; indexed lifecycle notifications use its lowercase 0x bytes16 hash. IRI: int:createdby.",
+      "description": "Owner identity, not its facility or submitting service wallet. The community client validates the owner's facility before submission. Submissions use an unpadded off-chain identity: strict hyphenated UUIDs are lowercased, other strings stay case-sensitive. Rejections echo the input; indexed lifecycle notifications use its lowercase 0x bytes16 hash. IRI: int:createdby.",
       "type": "string",
       "pattern": "^\\S(?:[\\s\\S]*\\S)?(?![\\s\\S])"
     },
@@ -115,7 +115,7 @@
       "default": null
     },
     "preferredTradingPartner": {
-      "description": "Off-chain facility identity of the preferred counterparty of a bid or offer. Strict hyphenated UUIDs are lowercased; other unpadded strings stay case-sensitive. Hex-shaped strings are off-chain identities, not resolved hashes. Rejections echo the input. IRI: int:preferredTradingPartner. Nullable.",
+      "description": "Off-chain owner identity of the preferred counterparty of a bid or offer. Strict hyphenated UUIDs are lowercased; other unpadded strings stay case-sensitive. Hex-shaped strings are off-chain identities, not resolved hashes. Rejections echo the input. IRI: int:preferredTradingPartner. Nullable.",
       "type": [
         "string",
         "null"

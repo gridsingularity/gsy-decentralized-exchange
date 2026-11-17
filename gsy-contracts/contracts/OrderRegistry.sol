@@ -184,7 +184,7 @@ contract OrderRegistry is Initializable, AccessControlUpgradeable {
 
     /**
      * @notice Cancel an order.
-     * @dev Requires an authorized service and the original facility identity.
+     * @dev Requires an authorized service and the original owner identity.
      */
     function cancelOrder(OrderParams calldata params) external {
         if (orderStatus(params.orderId) != OrderStatus.Open) {

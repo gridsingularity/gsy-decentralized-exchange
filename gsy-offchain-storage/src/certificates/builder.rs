@@ -5,8 +5,8 @@
 //!
 //! # Identification
 //!
-//! * A trade party (`seller` / `buyer`) is the facility's on-chain ID from the ID service.
-//!   Owners remain separate metadata; multiple facilities may share an owner.
+//! * A trade party (`seller` / `buyer`) is the on-chain owner hash, resolved to the
+//!   owner's facility. This deployment guarantees one facility per owner.
 //! * A measurement point's `asset_name` names a **facility**. It is matched against
 //!   `FacilitySchema::facility_id` first — that is what the community client and the
 //!   `/measurements` compatibility route write into `asset_name`, and what the execution
@@ -42,7 +42,6 @@ use primitives::certificates::{
 use primitives::db_api_schema::grid_topology::{
     AssetSchema, AssetType, EnergyCommunitySchema, FacilitySchema,
 };
-use primitives::db_api_schema::ids::IdMappingSchema;
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::profiles::{
     FlowDirection as PointDirection, MeasurementPointSchema, MeasurementPointType, TimeseriesSchema,
@@ -56,7 +55,6 @@ use crate::certificates::config::PILOT;
 #[derive(Debug, Default, Clone, Copy)]
 pub struct CertificateInputs<'a> {
     pub facilities: &'a [FacilitySchema],
-    pub facility_ids: &'a [IdMappingSchema],
     pub communities: &'a [EnergyCommunitySchema],
     pub assets: &'a [AssetSchema],
     pub measurement_points: &'a [MeasurementPointSchema],
@@ -77,13 +75,12 @@ fn delivery_slots<'a>(markets: &'a [MarketSchema]) -> HashMap<&'a str, u64> {
         .collect()
 }
 
-/// Legacy owner/community identifier used in certificate metadata.
-/// Facility trade parties are resolved through the ID service's stored mappings.
+/// On-chain owner/community identifier, using the same derivation as the ID service.
 pub use primitives::utils::derive_onchain_id as party_hash;
 
 /// Facilities and communities indexed the ways the builder looks them up.
 struct Topology<'a> {
-    /// On-chain facility ID → facility, independent of its owner.
+    /// On-chain owner ID → facility (one facility per owner).
     facility_by_party: HashMap<String, &'a FacilitySchema>,
     /// `facility_id` and `facility_name` → facility; ids take precedence over names.
     facility_by_alias: HashMap<&'a str, &'a FacilitySchema>,
@@ -101,16 +98,11 @@ impl<'a> Topology<'a> {
         facilities.sort_by(|a, b| a.facility_id.cmp(&b.facility_id));
 
         let mut facility_by_party = HashMap::new();
-        let facility_ids: HashMap<_, _> = inputs
-            .facility_ids
-            .iter()
-            .map(|mapping| (mapping.offchain_id.as_str(), mapping.onchain_id.as_str()))
-            .collect();
         let mut facility_by_alias = HashMap::new();
         for facility in &facilities {
-            if let Some(onchain_id) = facility_ids.get(facility.facility_id.as_str()) {
-                facility_by_party.insert((*onchain_id).to_string(), *facility);
-            }
+            facility_by_party
+                .entry(party_hash(&facility.owner_id))
+                .or_insert(*facility);
             facility_by_alias
                 .entry(facility.facility_id.as_str())
                 .or_insert(*facility);
@@ -553,7 +545,7 @@ pub fn build_local_origin_records_with_allocation(
                 storage_mediated_flag: false,
             },
             beneficiary_and_claim: BeneficiaryAndClaim {
-                owner_id: party_hash(&seller_facility.owner_id),
+                owner_id: trade.seller.clone(),
                 consumption_metering_point_id: buyer_facility
                     .map(|facility| facility.facility_id.clone()),
                 facility_id: Some(seller_facility.facility_id.clone()),

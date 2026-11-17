@@ -2,11 +2,13 @@ use crate::helpers::{init_app, stop_app};
 use gsy_offchain_storage::db::DatabaseWrapper;
 use mongodb::{bson::doc, Client};
 use primitives::db_api_schema::grid_topology::{
-    EnergyCommunitySchema, FacilityMarketValidationReason, FacilityMarketValidationRequest,
-    FacilitySchema, SiteSchema,
+    EnergyCommunitySchema, FacilitySchema, SiteSchema,
 };
 use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
-use primitives::ewds::dto::{EwdsRequestEnvelope, EwdsSendMessageDto};
+use primitives::ewds::dto::{
+    EwdsRequestEnvelope, EwdsSendMessageDto, FacilityMarketValidationReason,
+    FacilityMarketValidationRequest,
+};
 use primitives::ewds::EwdsOperation;
 use serde_json::{json, Value};
 

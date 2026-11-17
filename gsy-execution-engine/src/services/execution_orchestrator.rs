@@ -1,4 +1,4 @@
-use ::primitives::utils::{derive_onchain_id, timestamp_to_datetime_string};
+use ::primitives::utils::timestamp_to_datetime_string;
 use anyhow::{ensure, Context, Result};
 use primitives::constants::GLOBAL_CONSTANTS;
 use primitives::db_api_schema::trades::TradeStatus;
@@ -86,16 +86,10 @@ pub async fn run_execution_cycle(
         return Ok(0);
     }
 
-    // Derive the same IDs as the ID service without creating mappings during verification.
-    let mut facility_onchain_ids = HashMap::new();
-    for measurement in measurements
-        .iter()
-        .filter(|measurement| measurement.energy_kwh.is_finite())
-    {
-        facility_onchain_ids
-            .entry(measurement.facility_id.clone())
-            .or_insert_with(|| derive_onchain_id(&measurement.facility_id));
-    }
+    // Measurements identify facilities; trade parties identify their owners.
+    let facility_owner_mapping = offchain_storage_client
+        .fetch_facility_owner_mapping()
+        .await?;
 
     // Resolve each market once, then isolate slots even when the query window
     // spans several slots. Creation times must never select a meter reading.
@@ -135,7 +129,7 @@ pub async fn run_execution_cycle(
         verifications.extend(compute_delivery_verifications(
             &trades,
             &measurements,
-            &facility_onchain_ids,
+            &facility_owner_mapping,
             slot,
             penalty_rate,
             penalty_tolerance_percent,

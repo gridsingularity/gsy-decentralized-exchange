@@ -37,8 +37,8 @@ pub fn trade(
     DbTradeSchema {
         trade_uuid: trade_uuid.to_string(),
         status,
-        seller: hash(SELLER_FACILITY),
-        buyer: hash(BUYER_FACILITY),
+        seller: hash(SELLER_OWNER),
+        buyer: hash(BUYER_OWNER),
         market_id: MARKET.to_string(),
         creation_time: SLOT - 600,
         offer_hash: format!("{trade_uuid}-offer"),
@@ -74,10 +74,6 @@ pub async fn seed_topology(db: &DatabaseWrapper, export_kwh: f64) {
         (SELLER_FACILITY, SELLER_OWNER),
         (BUYER_FACILITY, BUYER_OWNER),
     ] {
-        db.ids()
-            .get_or_create(facility_id.to_string())
-            .await
-            .unwrap();
         db.facilities()
             .insert(FacilitySchema {
                 facility_id: facility_id.to_string(),
@@ -276,9 +272,9 @@ async fn certificates_join_canonical_facilities_mappings_and_meter_references() 
         .await
         .unwrap();
     let http = reqwest::Client::new();
-    for (id, name) in [
-        (seller.to_uppercase(), SELLER_FACILITY),
-        (BUYER_FACILITY.to_string(), BUYER_FACILITY),
+    for (id, name, owner_id) in [
+        (seller.to_uppercase(), SELLER_FACILITY, owner.to_uppercase()),
+        (BUYER_FACILITY.to_string(), BUYER_FACILITY, BUYER_OWNER.to_string()),
     ] {
         let response = http
             .post(format!("{}/facilities", app.address))
@@ -286,7 +282,7 @@ async fn certificates_join_canonical_facilities_mappings_and_meter_references() 
                 facility_id: id,
                 facility_name: format!("{name}-name"),
                 site_id: "goo-site".into(),
-                owner_id: owner.to_uppercase(),
+                owner_id,
             })
             .send()
             .await
@@ -300,10 +296,10 @@ async fn certificates_join_canonical_facilities_mappings_and_meter_references() 
         "unused",
     );
     let party = client
-        .fetch_onchain_id(&seller.to_uppercase())
+        .fetch_onchain_id(&owner.to_uppercase())
         .await
         .unwrap();
-    assert_eq!(party, derive_onchain_id(seller));
+    assert_eq!(party, derive_onchain_id(owner));
     let mut point = db
         .measurement_points()
         .find_one(doc! {"measurement_id": EXPORT_POINT})

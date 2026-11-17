@@ -6,10 +6,9 @@ use gsy_community_client::order_events::{
     order_params, start_order_event_subscriber, OrderEventHandler, OrderRegistryClient,
     PlaceOrderError,
 };
-use primitives::db_api_schema::grid_topology::FacilityMarketValidationRequest;
 use primitives::db_api_schema::orders::DbOrderSchema;
 use primitives::ewds::dto::EwdsEventEnvelope;
-use primitives::ewds::dto::{EwdsOrderDto, EwdsSendMessageDto};
+use primitives::ewds::dto::{EwdsOrderDto, EwdsSendMessageDto, FacilityMarketValidationRequest};
 use primitives::ewds::{
     is_invalid_event, EwdsClient, EwdsClientConfig, EwdsEventTopicConfig, EwdsEventType,
     EwdsTopicConfig,
@@ -19,7 +18,7 @@ use primitives::utils::{parse_uuid_or_hex_bytes16, rfc3339_to_epoch};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
-use wiremock::matchers::{method, path, query_param};
+use wiremock::matchers::{method, path, query_param, query_param_is_missing};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
 abigen!(
@@ -150,9 +149,22 @@ async fn deploy_mock_order_registry() -> TestChain {
     }
 }
 
-/// Mocks eligibility, ID resolution and the gateway's outbound messages on one server.
+fn facilities() -> Value {
+    json!([
+        {"facility_id": "facility-1", "facility_name": "first", "site_id": "site-1", "owner_id": "owner-1"},
+        {"facility_id": "facility-2", "facility_name": "second", "site_id": "site-1", "owner_id": "owner-2"}
+    ])
+}
+
+/// Mocks ownership, eligibility, ID resolution and the gateway's outbound messages.
 async fn mock_id_service() -> MockServer {
     let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/facilities"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(facilities()))
+        .with_priority(10)
+        .mount(&server)
+        .await;
     Mock::given(method("POST"))
         .and(path("/facilities/validate"))
         .respond_with(|request: &Request| {
@@ -249,7 +261,7 @@ async fn rejection_events(server: &MockServer) -> Vec<EwdsEventEnvelope<Vec<Ewds
             // Rejections must never be written to the order database through HTTP.
             assert!(matches!(
                 request.url.path(),
-                "/ids" | "/facilities/validate" | "/api/v2/messages"
+                "/ids" | "/facilities" | "/facilities/validate" | "/api/v2/messages"
             ));
             if request.url.path() != "/api/v2/messages"
                 || request.method == wiremock::http::Method::GET
@@ -437,6 +449,17 @@ async fn uuid_parties_resolve_canonically_and_rejections_echo_original_ids() {
     let server = mock_id_service().await;
     let buyer = "abcdefab-abcd-abcd-abcd-abcdefabcdef";
     let seller = "fedcbafe-dcba-dcba-dcba-fedcbafedcba";
+    Mock::given(method("GET"))
+        .and(path("/facilities"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            [("facility-buyer", buyer), ("facility-seller", seller)]
+                .map(|(facility, owner)| json!({
+                    "facility_id": facility, "facility_name": facility,
+                    "site_id": "site-1", "owner_id": owner.to_uppercase()
+                })),
+        ))
+        .mount(&server)
+        .await;
     for id in [buyer, seller] {
         Mock::given(method("POST")).and(path("/ids"))
             .and(query_param("offchain_id", id))
@@ -488,8 +511,8 @@ async fn uuid_parties_resolve_canonically_and_rejections_echo_original_ids() {
         .unwrap();
     let pairs: Vec<FacilityMarketValidationRequest> =
         serde_json::from_slice(&validation.body).unwrap();
-    assert_eq!(pairs[0].facility_id, buyer);
-    assert_eq!(pairs[1].facility_id, seller);
+    assert_eq!(pairs[0].facility_id, "facility-buyer");
+    assert_eq!(pairs[1].facility_id, "facility-seller");
     assert_eq!(
         pairs[0].market_id,
         primitives::utils::bytes16_to_hex(bytes16(CLOSED_MARKET))
@@ -554,7 +577,7 @@ async fn rejects_ineligible_orders_before_id_resolution_and_places_eligible_orde
             .respond_with(move |request: &Request| {
                 let pairs: Vec<FacilityMarketValidationRequest> = serde_json::from_slice(&request.body).unwrap();
                 ResponseTemplate::new(200).set_body_json(pairs.into_iter().map(|pair| {
-                    let rejected = pair.facility_id == "owner-1";
+                    let rejected = pair.facility_id == "facility-1";
                     json!({"facility_id": pair.facility_id, "market_id": pair.market_id,
                         "eligible": !rejected, "reason": if rejected { Some(reason) } else { None }})
                 }).collect::<Vec<_>>())
@@ -572,7 +595,7 @@ async fn rejects_ineligible_orders_before_id_resolution_and_places_eligible_orde
         assert_rejection(
             notifications.last().unwrap(),
             bid(),
-            &format!("Facility owner-1 cannot participate in market {OPEN_MARKET}: {label}"),
+            &format!("Facility facility-1 of owner owner-1 cannot participate in market {OPEN_MARKET}: {label}"),
         );
         drop(validation);
     }
@@ -587,13 +610,13 @@ async fn rejects_ineligible_orders_before_id_resolution_and_places_eligible_orde
     assert_eq!(
         batches[0],
         json!([
-            {"facility_id": "owner-1", "market_id": OPEN_MARKET},
-            {"facility_id": "owner-2", "market_id": OPEN_MARKET}
+            {"facility_id": "facility-1", "market_id": OPEN_MARKET},
+            {"facility_id": "facility-2", "market_id": OPEN_MARKET}
         ])
     );
     assert_eq!(
         batches[1],
-        json!([{"facility_id": "owner-1", "market_id": OPEN_MARKET}])
+        json!([{"facility_id": "facility-1", "market_id": OPEN_MARKET}])
     );
     assert!(!requests.iter().any(|request| request.url.path() == "/ids"
         && request
@@ -634,7 +657,7 @@ async fn validation_failures_remain_retryable_without_submission_or_rejection() 
             .await
             .unwrap()
             .iter()
-            .all(|request| request.url.path() == "/facilities/validate"));
+            .all(|request| matches!(request.url.path(), "/facilities" | "/facilities/validate")));
         drop(validation);
     }
     // The same event succeeds after the service recovers.
@@ -647,6 +670,78 @@ async fn validation_failures_remain_retryable_without_submission_or_rejection() 
 }
 
 #[tokio::test]
+async fn an_owner_mapping_without_a_facility_is_rejected_before_id_resolution() {
+    let chain = deploy_mock_order_registry().await;
+    let server = mock_id_service().await;
+    // The ID service still knows owner-1, but topology no longer has its facility.
+    Mock::given(method("GET"))
+        .and(path("/facilities"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+
+    handler(&chain, &server)
+        .await
+        .handle(event("missing-owner-facility", vec![bid()]))
+        .await
+        .unwrap();
+
+    assert_eq!(sent_transactions(&chain).await, 2);
+    let notifications = rejection_events(&server).await;
+    assert_eq!(notifications.len(), 1);
+    assert_rejection(
+        &notifications[0],
+        bid(),
+        "Owner owner-1 has no associated facility: unknown_facility",
+    );
+    assert!(server.received_requests().await.unwrap().iter().all(|request| {
+        matches!(request.url.path(), "/facilities" | "/api/v2/messages")
+    }));
+}
+
+#[tokio::test]
+async fn unavailable_or_ambiguous_ownership_is_retryable_without_placing_or_rejecting() {
+    let chain = deploy_mock_order_registry().await;
+    let server = mock_id_service().await;
+    let handler = handler(&chain, &server).await;
+    let mut ambiguous = facilities();
+    ambiguous[1]["owner_id"] = json!("owner-1");
+    for (response, expected) in [
+        (ResponseTemplate::new(500), "Failed to fetch facilities"),
+        (
+            ResponseTemplate::new(200).set_body_json(ambiguous),
+            "Owner owner-1 is associated with multiple facilities",
+        ),
+    ] {
+        let topology = Mock::given(method("GET"))
+            .and(path("/facilities"))
+            .respond_with(response)
+            .with_priority(1)
+            .up_to_n_times(1)
+            .mount_as_scoped(&server)
+            .await;
+        let error = handler
+            .handle(event("retry-ownership", vec![bid(), offer()]))
+            .await
+            .unwrap_err();
+        assert!(!is_invalid_event(&error), "{error:#}");
+        assert!(error.to_string().contains(expected), "{error:#}");
+        assert_eq!(sent_transactions(&chain).await, 2);
+        assert!(server.received_requests().await.unwrap().iter().all(|request| {
+            request.url.path() == "/facilities"
+        }));
+        drop(topology);
+    }
+    handler
+        .handle(event("retry-ownership", vec![bid(), offer()]))
+        .await
+        .unwrap();
+    assert_eq!(placed_orders(&chain).await.len(), 2);
+    assert!(rejection_events(&server).await.is_empty());
+}
+
+#[tokio::test]
 async fn confirmed_orders_skip_validation_on_retry_after_topology_changes() {
     let chain = deploy_mock_order_registry().await;
     let id_service = mock_id_service().await;
@@ -655,7 +750,7 @@ async fn confirmed_orders_skip_validation_on_retry_after_topology_changes() {
     let validation = Mock::given(method("POST"))
         .and(path("/facilities/validate"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
-            "facility_id": "owner-1", "market_id": OPEN_MARKET, "eligible": false,
+            "facility_id": "facility-1", "market_id": OPEN_MARKET, "eligible": false,
             "reason": "site_not_in_community"
         }])))
         .with_priority(1)
@@ -681,7 +776,7 @@ async fn a_duplicate_ineligible_item_does_not_reject_an_order_placed_earlier_in_
                 let pairs: Vec<FacilityMarketValidationRequest> =
                     serde_json::from_slice(&request.body).unwrap();
                 let results: Vec<_> = pairs.into_iter().map(|pair| {
-                    let eligible = pair.facility_id == "owner-1";
+                    let eligible = pair.facility_id == "facility-1";
                     json!({"facility_id": pair.facility_id, "market_id": pair.market_id,
                         "eligible": eligible, "reason": if eligible { None } else { Some("unknown_facility") }})
                 }).collect();
@@ -831,14 +926,15 @@ async fn validates_over_ewds_before_resolving_ids_or_placing_orders() {
             let payload: Value = serde_json::from_str(&message.payload).unwrap();
             if let Some(operation) = payload["operation"].as_str() {
                 let data = match operation {
+                    "facilities.query" => facilities(),
                     "facilities.validate" => {
                         assert_eq!(payload["payload"], json!([
-                            {"facility_id": "owner-1", "market_id": OPEN_MARKET},
-                            {"facility_id": "owner-2", "market_id": OPEN_MARKET}
+                            {"facility_id": "facility-1", "market_id": OPEN_MARKET},
+                            {"facility_id": "facility-2", "market_id": OPEN_MARKET}
                         ]));
                         json!([
-                            {"facility_id": "owner-1", "market_id": OPEN_MARKET, "eligible": false, "reason": "unknown_facility"},
-                            {"facility_id": "owner-2", "market_id": OPEN_MARKET, "eligible": true}
+                            {"facility_id": "facility-1", "market_id": OPEN_MARKET, "eligible": false, "reason": "unknown_facility"},
+                            {"facility_id": "facility-2", "market_id": OPEN_MARKET, "eligible": true}
                         ])
                     }
                     "ids.query" => {
@@ -880,7 +976,7 @@ async fn validates_over_ewds_before_resolving_ids_or_placing_orders() {
     assert_rejection(
         &notifications[0],
         bid(),
-        &format!("Facility owner-1 cannot participate in market {OPEN_MARKET}: unknown_facility"),
+        &format!("Facility facility-1 of owner owner-1 cannot participate in market {OPEN_MARKET}: unknown_facility"),
     );
 }
 
@@ -943,9 +1039,19 @@ async fn rejects_the_whole_event_when_one_order_is_invalid() {
     let chain = deploy_mock_order_registry().await;
     let id_service = mock_id_service().await;
     let handler = handler(&chain, &id_service).await;
+    let mut topology = facilities();
+    topology.as_array_mut().unwrap().push(json!({
+        "facility_id": "unmapped-owner-facility", "facility_name": "unmapped",
+        "site_id": "site-1", "owner_id": "unknown-owner"
+    }));
+    Mock::given(method("GET"))
+        .and(path("/facilities"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(topology))
+        .with_priority(1)
+        .mount(&id_service)
+        .await;
 
-    // An ID the ID service doesn't know yet may be registered later, so that event is retried;
-    // invalid data is not.
+    // Ownership is known, but an unavailable ID mapping remains retryable; invalid data does not.
     for (field, value, expected, invalid_data) in [
         ("orderId", json!("order-1"), "is not a non-zero UUID", true),
         (
@@ -1227,7 +1333,7 @@ async fn order_registry_client_reports_why_the_contract_rejected_an_order() {
 
 #[tokio::test]
 #[serial_test::serial]
-async fn subscriber_places_submissions_but_not_status_notifications_from_the_order_topic() {
+async fn subscriber_places_submissions_but_not_status_notifications_from_the_events_channel() {
     let chain = deploy_mock_order_registry().await;
     let id_service = mock_id_service().await;
     let gateway = MockServer::start().await;
@@ -1240,11 +1346,17 @@ async fn subscriber_places_submissions_but_not_status_notifications_from_the_ord
     Mock::given(method("GET"))
         .and(path("/api/v2/messages"))
         .and(query_param("fqcn", "gsy.intelligent.events.sub"))
-        .and(query_param("topicName", "order"))
-        .and(query_param("clientId", "gsycommunityclientorder"))
+        .and(query_param_is_missing("topicName"))
+        .and(query_param("clientId", "gsycommunityclientevents"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-            {"payload": serde_json::to_string(&notification).unwrap()},
-            {"payload": serde_json::to_string(&event("event-1", vec![bid()])).unwrap()},
+            {
+                "topicName": "order",
+                "payload": serde_json::to_string(&notification).unwrap(),
+            },
+            {
+                "topicName": "order",
+                "payload": serde_json::to_string(&event("event-1", vec![bid()])).unwrap(),
+            },
         ])))
         .mount(&gateway)
         .await;
@@ -1323,7 +1435,7 @@ mod validate_order {
     }
 
     #[test]
-    fn canonicalizes_facility_and_partner_without_changing_the_submission() {
+    fn canonicalizes_owner_and_partner_without_changing_the_submission() {
         let mut submission = bid();
         submission["createdBy"] = json!("ABCDEFAB-1234-1234-1234-ABCDEFABCDEF");
         submission["preferredTradingPartner"] = json!("ABCDEFAB-1234-1234-1234-ABCDEFABCDE0");

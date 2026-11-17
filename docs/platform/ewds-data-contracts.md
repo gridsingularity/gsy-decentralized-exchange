@@ -20,7 +20,7 @@ Order submissions require non-zero order and market IDs. The raw byte parser
 still accepts zero for optional contract sentinels.
 
 The shared order schema serves both submissions and status notifications.
-Lifecycle notifications contain lowercase `0x` order IDs and on-chain facility
+Lifecycle notifications contain lowercase `0x` order IDs and on-chain owner
 hashes in `createdBy`; rejections retain the submitted identifiers. FOS must
 correlate equivalent order IDs by their 16 bytes, not their spelling.
 `preferredTradingPartner` remains an off-chain identity, even when hex-shaped.
@@ -39,12 +39,12 @@ Names and correlation IDs are not normalized.
 | Message/read | Identity representation |
 |---|---|
 | `market.event`, `markets.query` | Market/community IDs as lowercase hyphenated UUIDs |
-| `order.event` | UUID/hex order and market IDs; off-chain facility identity and preferred partner |
-| `orderStatus.event` lifecycle | Lowercase `0x` order/market IDs and facility hash; off-chain preferred partner |
+| `order.event` | UUID/hex order and market IDs; off-chain owner identity and preferred partner |
+| `orderStatus.event` lifecycle | Lowercase `0x` order/market IDs and owner hash; off-chain preferred partner |
 | `orderStatus.event` rejection | Submitted identifiers echoed without rewriting |
-| `trade.event`, `trades.query` | Lowercase `0x` trade/market/order IDs and facility hashes; absent residuals are null |
+| `trade.event`, `trades.query` | Lowercase `0x` trade/market/order IDs and owner hashes; absent residuals are null |
 | `clearingResult.event`, `clearing_results.query` | Lowercase `0x` market ID |
-| `ids.query` | Canonical off-chain identity and lowercase `0x` facility hash |
+| `ids.query` | Canonical off-chain identity and its lowercase `0x` hash |
 | `facilities.validate` | Exact request pairs, preserving order and cardinality |
 
 Deploy all services from the same DD-459 commit into a fresh environment. The
@@ -168,7 +168,8 @@ DD-453 changes the v1 `tradeStatus` values in place to `matched`, `executed`,
 `settled` and `penalized`; no new schema version was introduced. Consumers must
 use these values and the current lifecycle: listener-indexed block inclusion
 creates `matched`, verification produces `executed` or terminal `penalized`,
-and financial `settled` is reserved for a future integration.
+and `settled` means the trade has been processed in the Settlement market.
+The transition to `settled` is not yet implemented.
 
 | Ontology property | Schema field | Current runtime source |
 |---|---|---|
@@ -208,7 +209,7 @@ For an `order.event`, the community client builds the
 | Contract parameter | From |
 |---|---|
 | `orderId` | the 16 bytes of the `orderId` UUID |
-| `createdBy` | Facility ID, mapped to its on-chain ID by the ID service; not the owner ID or service wallet |
+| `createdBy` | Facility owner ID, mapped to its on-chain ID by the ID service; not the facility ID or service wallet |
 | `marketId` | the 16 bytes of `marketId` |
 | `timeSlot`, `creationTime` | `timeSlot`, `creationTime` as epoch seconds |
 | `energy`, `energyRate` | `quantity`, `priceLimit` × 10 000, rounded |
@@ -217,9 +218,9 @@ For an `order.event`, the community client builds the
 | `energyType` | the offer attributes (`energyType`) |
 
 Order and market IDs represent bytes16, not bytes32. Lifecycle `createdBy` is
-the bytes16 facility hash, not an EVM wallet address. The shared order DTO also
-serves legacy HTTP imports, which require this already-resolved facility hash;
-`order.event` submissions instead carry the off-chain facility identity.
+the bytes16 owner hash, not an EVM wallet address. The shared order DTO also
+serves legacy HTTP imports, which require this already-resolved owner hash;
+`order.event` submissions instead carry the off-chain owner identity.
 
 ## Validation Rules Applied from CSV
 

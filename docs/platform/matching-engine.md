@@ -40,8 +40,8 @@ ID-service failure aborts the cycle. This isolation applies to orders decoded
 from the response, not to unreadable MongoDB records or response envelopes.
 
 A failed or dropped transaction creates no trade record. `Settled` is reserved
-for financial settlement by the partner's future billing integration, not the
-on-chain match confirmation.
+for the time the trade has been processed in the Settlement market, not the
+on-chain match confirmation. This transition is not yet implemented.
 
 ## Matching Algorithms
 

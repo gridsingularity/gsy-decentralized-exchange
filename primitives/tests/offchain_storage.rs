@@ -1,7 +1,4 @@
-use primitives::db_api_schema::grid_topology::{
-    EnergyCommunitySchema, FacilityMarketValidationRequest, FacilityMarketValidationResult,
-    FacilitySchema,
-};
+use primitives::db_api_schema::grid_topology::{EnergyCommunitySchema, FacilitySchema};
 use primitives::db_api_schema::ids::IdMappingSchema;
 use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
 use primitives::db_api_schema::orders::{DbOrderSchema, OrderEnum, OrderStatus};
@@ -12,6 +9,7 @@ use primitives::db_api_schema::profiles::{
 use primitives::db_api_schema::trades::{DbTradeSchema, TradeParameters, TradeStatus};
 use primitives::ewds::dto::{
     EwdsCommunityDto, EwdsMarketDto, EwdsMeasurementDto, EwdsOrderDto, EwdsTradeDto,
+    FacilityMarketValidationRequest, FacilityMarketValidationResult,
 };
 use primitives::offchain_storage::{
     CommunityProvider, OffchainStorageClient, OffchainStorageTransport,
@@ -258,6 +256,10 @@ async fn fetches_facility_owner_mapping_over_http() {
     let facilities = vec![
         base_facility("AIS1-House-1", "owner 1"),
         base_facility("AIS1-House-2", "owner 2"),
+        base_facility(
+            "ABCDEFAB-ABCD-ABCD-ABCD-ABCDEFABCDEF",
+            "FEDCBAFE-DCBA-DCBA-DCBA-FEDCBAFEDCBA",
+        ),
     ];
     Mock::given(method("GET"))
         .and(path("/facilities"))
@@ -273,7 +275,13 @@ async fn fetches_facility_owner_mapping_over_http() {
     );
     let mapping = client.fetch_facility_owner_mapping().await.unwrap();
 
-    assert_eq!(mapping.len(), 2);
+    assert_eq!(mapping.len(), 3);
+    assert_eq!(
+        mapping
+            .get("abcdefab-abcd-abcd-abcd-abcdefabcdef")
+            .map(String::as_str),
+        Some("fedcbafe-dcba-dcba-dcba-fedcbafedcba")
+    );
     assert_eq!(
         mapping.get("AIS1-House-1").map(String::as_str),
         Some("owner 1")

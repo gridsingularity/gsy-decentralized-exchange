@@ -137,7 +137,7 @@ Purpose:
   delegation alone does not authorize either action.
 - Trusts authorized clients to validate facility/community membership off-chain.
   The role applies to all communities, not just orders placed by that client.
-  `createdBy` identifies the facility independently of the submitting wallet.
+  `createdBy` identifies the facility's owner independently of the submitting wallet.
 - Stores order requirements (bids and offers, including the preferred trading
   partner) and offer attributes used by matching.
 - Emits the complete order metadata in `OrderPlaced`, allowing the event

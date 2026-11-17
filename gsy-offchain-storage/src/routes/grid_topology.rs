@@ -1,10 +1,10 @@
 use crate::db::DbRef;
 use actix_web::{web::Json, web::Query, HttpResponse, Responder};
 use primitives::db_api_schema::grid_topology::{
-    AssetSchema, EnergyCommunitySchema, FacilityMarketValidationRequest, FacilitySchema,
-    PilotSiteSchema, SiteSchema,
+    AssetSchema, EnergyCommunitySchema, FacilitySchema, PilotSiteSchema, SiteSchema,
 };
 use primitives::db_api_schema::tariff::TariffSchema;
+use primitives::ewds::dto::FacilityMarketValidationRequest;
 use primitives::utils::normalize_community_id;
 use serde::Deserialize;
 

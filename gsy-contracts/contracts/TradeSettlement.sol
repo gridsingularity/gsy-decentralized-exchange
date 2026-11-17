@@ -204,13 +204,9 @@ contract TradeSettlement is Initializable, AccessControlUpgradeable {
 
             OrderRegistry.OrderParams memory bid = registry.getOrder(trade.bidId);
             OrderRegistry.OrderParams memory offer = registry.getOrder(trade.offerId);
-            if (bid.createdBy == offer.createdBy) {
-                _ensurePenaltyRecorded(bid.createdBy, bid.marketId, verification.tradeId,
-                    verification.buyerPenaltyEnergy + verification.sellerPenaltyEnergy);
-            } else {
-                _ensurePenaltyRecorded(bid.createdBy, bid.marketId, verification.tradeId, verification.buyerPenaltyEnergy);
-                _ensurePenaltyRecorded(offer.createdBy, offer.marketId, verification.tradeId, verification.sellerPenaltyEnergy);
-            }
+            if (bid.createdBy == offer.createdBy) revert InvalidOrderParams();
+            _ensurePenaltyRecorded(bid.createdBy, bid.marketId, verification.tradeId, verification.buyerPenaltyEnergy);
+            _ensurePenaltyRecorded(offer.createdBy, offer.marketId, verification.tradeId, verification.sellerPenaltyEnergy);
             // Widen before addition: two uint64 penalties can exceed uint64.
             if (penaltyEnergyByTrade[verification.tradeId] !=
                 uint256(verification.buyerPenaltyEnergy) + verification.sellerPenaltyEnergy) {

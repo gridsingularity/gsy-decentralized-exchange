@@ -14,7 +14,6 @@ use primitives::certificates::{
 use primitives::db_api_schema::grid_topology::{
     AssetSchema, AssetType, EnergyCommunitySchema, FacilitySchema,
 };
-use primitives::db_api_schema::ids::IdMappingSchema;
 use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
 use primitives::db_api_schema::profiles::{
     FlowDirection as PointDirection, MeasurementPointSchema, MeasurementPointType, TimeseriesSchema,
@@ -120,7 +119,6 @@ fn value(measurement_point: &str, time_slot: u64, value: f64) -> TimeseriesSchem
 /// Owned fixture data; [`Fixture::inputs`] borrows it as the builder's input.
 struct Fixture {
     facilities: Vec<FacilitySchema>,
-    facility_ids: Vec<IdMappingSchema>,
     communities: Vec<EnergyCommunitySchema>,
     assets: Vec<AssetSchema>,
     points: Vec<MeasurementPointSchema>,
@@ -132,14 +130,6 @@ impl Fixture {
     /// has a PV asset (linked by facility name) and one export and one import point.
     fn new() -> Self {
         Fixture {
-            facility_ids: [SELLER_FACILITY, BUYER_FACILITY, REMOTE_FACILITY]
-                .into_iter()
-                .map(|id| IdMappingSchema {
-                    offchain_id: id.to_string(),
-                    onchain_id: hash(id),
-                    creation_time: 1,
-                })
-                .collect(),
             facilities: vec![
                 facility(
                     SELLER_FACILITY,
@@ -190,7 +180,6 @@ impl Fixture {
     fn inputs<'a>(&'a self, markets: &'a [MarketSchema]) -> CertificateInputs<'a> {
         CertificateInputs {
             facilities: &self.facilities,
-            facility_ids: &self.facility_ids,
             communities: &self.communities,
             assets: &self.assets,
             measurement_points: &self.points,
@@ -235,7 +224,7 @@ fn markets_of(trades: &[DbTradeSchema]) -> Vec<MarketSchema> {
 
 fn trade(
     trade_uuid: &str,
-    seller_facility: &str,
+    seller_owner: &str,
     buyer: &str,
     time_slot: u64,
     energy_kwh: f64,
@@ -245,7 +234,7 @@ fn trade(
     DbTradeSchema {
         trade_uuid: trade_uuid.to_string(),
         status,
-        seller: hash(seller_facility),
+        seller: hash(seller_owner),
         buyer: buyer.to_string(),
         market_id: market_id(time_slot),
         creation_time,
@@ -265,8 +254,8 @@ fn trade(
 fn sale(trade_uuid: &str, energy_kwh: f64, creation_time: u64) -> DbTradeSchema {
     trade(
         trade_uuid,
-        SELLER_FACILITY,
-        &hash(BUYER_FACILITY),
+        SELLER_OWNER,
+        &hash(BUYER_OWNER),
         SLOT,
         energy_kwh,
         TradeStatus::Executed,
@@ -286,33 +275,26 @@ fn keys_of(value: &serde_json::Value) -> HashSet<String> {
 }
 
 #[test]
-fn facility_party_uses_the_stored_mapping_not_an_owner_or_a_recomputed_hash() {
-    let mut fixture = Fixture::exporting(4.0, 0.0);
+fn owner_party_resolves_the_facility_without_id_mapping_records() {
+    let fixture = Fixture::exporting(4.0, 0.0);
     let mut trade = sale("trade-1", 3.0, 100);
-    fixture.facility_ids[0].onchain_id = "0x11111111111111111111111111111111".into();
-    assert!(fixture.build(vec![trade.clone()]).is_empty());
     trade.seller = hash(SELLER_OWNER);
-    assert!(fixture.build(vec![trade.clone()]).is_empty());
-    trade.seller = fixture.facility_ids[0].onchain_id.clone();
     let records = fixture.build(vec![trade.clone()]);
     assert_eq!(records.len(), 1);
     assert_eq!(
         records[0].beneficiary_and_claim.owner_id,
         hash(SELLER_OWNER)
     );
-    fixture.facility_ids.clear();
+    trade.seller = hash(SELLER_FACILITY);
     assert!(fixture.build(vec![trade]).is_empty());
 }
 
 #[test]
-fn facilities_with_the_same_owner_do_not_share_export_or_assets() {
-    let mut fixture = Fixture::exporting(4.0, 0.0);
-    fixture.facilities[1].owner_id = SELLER_OWNER.into();
-    fixture.facilities[2].owner_id = SELLER_OWNER.into();
-    // A trade between different facilities of the same owner remains certifiable.
+fn another_owners_facility_does_not_supply_export_or_assets() {
+    let fixture = Fixture::exporting(4.0, 0.0);
     assert_eq!(fixture.build(vec![sale("trade-1", 3.0, 100)]).len(), 1);
     let mut other_sale = sale("trade-2", 3.0, 101);
-    other_sale.seller = hash(REMOTE_FACILITY);
+    other_sale.seller = hash(REMOTE_OWNER);
     assert!(fixture.build(vec![other_sale]).is_empty());
 }
 
@@ -430,8 +412,8 @@ fn only_executed_trades_yield_records() {
     ] {
         let t = trade(
             "trade-1",
-            SELLER_FACILITY,
-            &hash(BUYER_FACILITY),
+            SELLER_OWNER,
+            &hash(BUYER_OWNER),
             SLOT,
             3.0,
             status.clone(),
@@ -449,8 +431,8 @@ fn non_executed_trades_neither_yield_records_nor_consume_net_export() {
     let fixture = Fixture::exporting(4.0, 0.0);
     let settled = trade(
         "trade-a",
-        SELLER_FACILITY,
-        &hash(BUYER_FACILITY),
+        SELLER_OWNER,
+        &hash(BUYER_OWNER),
         SLOT,
         3.0,
         TradeStatus::Settled,
@@ -467,7 +449,7 @@ fn unresolved_seller_yields_no_record_and_does_not_panic() {
     let t = trade(
         "trade-1",
         "owner-nobody",
-        &hash(BUYER_FACILITY),
+        &hash(BUYER_OWNER),
         SLOT,
         3.0,
         TradeStatus::Executed,
@@ -519,8 +501,8 @@ fn off_boundary_time_slot_yields_no_record() {
     fixture.timeseries = vec![value(EXPORT_POINT, SLOT + 1, 4.0)];
     let t = trade(
         "trade-1",
-        SELLER_FACILITY,
-        &hash(BUYER_FACILITY),
+        SELLER_OWNER,
+        &hash(BUYER_OWNER),
         SLOT + 1,
         3.0,
         TradeStatus::Executed,
@@ -696,8 +678,8 @@ fn sales_of_other_facilities_do_not_consume_the_seller_net_export() {
         .push(asset("pv-remote", AssetType::PV, "Remote House"));
     let remote_sale = trade(
         "trade-a",
-        REMOTE_FACILITY,
-        &hash(BUYER_FACILITY),
+        REMOTE_OWNER,
+        &hash(BUYER_OWNER),
         SLOT,
         5.0,
         TradeStatus::Executed,
@@ -772,8 +754,8 @@ fn site_id_is_the_seller_facility_site() {
         .push(value(REMOTE_EXPORT_POINT, SLOT, 4.0));
     let remote_sale = trade(
         "trade-remote",
-        REMOTE_FACILITY,
-        &hash(BUYER_FACILITY),
+        REMOTE_OWNER,
+        &hash(BUYER_OWNER),
         SLOT,
         2.0,
         TradeStatus::Executed,
@@ -830,8 +812,8 @@ fn cross_community_trade_is_inter_community() {
     let fixture = Fixture::exporting(4.0, 0.0);
     let t = trade(
         "trade-1",
-        SELLER_FACILITY,
-        &hash(REMOTE_FACILITY),
+        SELLER_OWNER,
+        &hash(REMOTE_OWNER),
         SLOT,
         3.0,
         TradeStatus::Executed,
@@ -862,7 +844,7 @@ fn a_community_buyer_is_named_by_its_community_id() {
     let fixture = Fixture::exporting(4.0, 0.0);
     let t = trade(
         "trade-1",
-        SELLER_FACILITY,
+        SELLER_OWNER,
         &hash(OTHER_COMMUNITY),
         SLOT,
         3.0,
@@ -895,7 +877,7 @@ fn unresolvable_buyer_is_supplier_offtake() {
     let fixture = Fixture::exporting(4.0, 0.0);
     let t = trade(
         "trade-1",
-        SELLER_FACILITY,
+        SELLER_OWNER,
         "0xno_such_party",
         SLOT,
         3.0,
@@ -966,8 +948,8 @@ fn unrepresentable_time_slot_yields_no_record_and_does_not_panic() {
     fixture.timeseries = vec![value(EXPORT_POINT, absurd, 4.0)];
     let t = trade(
         "trade-1",
-        SELLER_FACILITY,
-        &hash(BUYER_FACILITY),
+        SELLER_OWNER,
+        &hash(BUYER_OWNER),
         absurd,
         3.0,
         TradeStatus::Executed,
@@ -982,8 +964,8 @@ fn records_sum_to_the_delivery_verified_energy_only() {
     let executed = sale("trade-executed", 3.0, 100);
     let settled = trade(
         "trade-settled",
-        SELLER_FACILITY,
-        &hash(BUYER_FACILITY),
+        SELLER_OWNER,
+        &hash(BUYER_OWNER),
         SLOT,
         2.0,
         TradeStatus::Settled,
@@ -1005,8 +987,8 @@ fn sort_records_is_deterministic() {
         .push(value(EXPORT_POINT, SLOT + 900, 4.0));
     let later_slot = trade(
         "trade-z",
-        SELLER_FACILITY,
-        &hash(BUYER_FACILITY),
+        SELLER_OWNER,
+        &hash(BUYER_OWNER),
         SLOT + 900,
         1.0,
         TradeStatus::Executed,

@@ -32,18 +32,25 @@ pub async fn complete_delivery_verification(
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
     let contract =
         SubmitPenaltiesContract::new(trade_settlement_address.parse::<Address>()?, client);
-    let processed = verifications.len();
+    let mut processed = 0;
     let mut pending = Vec::new();
     for verification in verifications {
-        let id = parse_uuid_or_hex_bytes16(&verification.trade_uuid)
-            .ok_or_else(|| anyhow!("Invalid trade ID: {}", verification.trade_uuid))?;
+        let Some(id) = parse_uuid_or_hex_bytes16(&verification.trade_uuid) else {
+            warn!(
+                "Skipping verification for invalid trade ID: {}",
+                verification.trade_uuid
+            );
+            continue;
+        };
         let (bid_id, _, verified) = contract.settled_trades(id).call().await?;
         if bid_id == [0; 16] {
-            return Err(anyhow!(
-                "Trade {} is not registered for verification",
+            warn!(
+                "Skipping unregistered trade {} for this cycle",
                 verification.trade_uuid
-            ));
+            );
+            continue;
         }
+        processed += 1;
         if !verified {
             pending.push((
                 id,

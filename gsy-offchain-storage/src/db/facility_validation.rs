@@ -3,10 +3,12 @@ use anyhow::{Context, Result};
 use futures::TryStreamExt;
 use mongodb::bson::doc;
 use primitives::db_api_schema::grid_topology::{
-    EnergyCommunitySchema, FacilityMarketValidationReason, FacilityMarketValidationRequest,
-    FacilityMarketValidationResult, FacilitySchema, SiteSchema,
+    EnergyCommunitySchema, FacilitySchema, SiteSchema,
 };
 use primitives::db_api_schema::market::MarketSchema;
+use primitives::ewds::dto::{
+    FacilityMarketValidationReason, FacilityMarketValidationRequest, FacilityMarketValidationResult,
+};
 use primitives::utils::{normalize_market_id, normalize_offchain_id};
 use std::collections::HashMap;
 
