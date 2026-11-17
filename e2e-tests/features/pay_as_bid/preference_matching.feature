@@ -10,7 +10,7 @@ Feature: Preference-Based Matching with Dedicated Pricing
     And "bob" submits an offer for 150 energy at a rate of 12 for the preferred partner "alice"
     And "charlie" submits a cheaper open-market offer for 100 energy at a rate of 9
 
-    Then a trade is settled on-chain between "alice" and "bob" for 100 energy
+    Then a trade is matched on-chain between "alice" and "bob" for 100 energy
     And the trade price is exactly 12, matching the preferred rate
     And the preferred trade records a residual offer of 50 energy
     And Charlie's cheaper offer remains untouched in this phase
@@ -23,6 +23,6 @@ Feature: Preference-Based Matching with Dedicated Pricing
     When "alice" submits a bid for 150 energy with a preferred rate of 12 for partner "bob"
     And "bob" submits an offer for 100 energy at a rate of 12
     And the next matching cycle is triggered
-    Then a trade is settled on-chain between "alice" and "bob" for 100 energy
+    Then a trade is matched on-chain between "alice" and "bob" for 100 energy
     And the trade price is exactly 12, matching the preferred rate
     And the preferred trade records a residual bid of 50 energy

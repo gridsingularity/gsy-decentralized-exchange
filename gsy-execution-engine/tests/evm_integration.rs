@@ -31,16 +31,16 @@ const PRIVATE_KEY: &str = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae7
 type TestClient = SignerMiddleware<Provider<Ws>, LocalWallet>;
 
 abigen!(
-    MockTradeSettlement,
+    MockTradeMatching,
     r#"[
         function penaltyEnergyByTrade(bytes16 tradeId) external view returns (uint256)
         function penaltyEnergyByActor(bytes16 actorId) external view returns (uint256)
-        function settledTrades(bytes16 tradeId) external view returns (bytes16 bidId, bytes16 offerId, bool verified)
+        function matchedTrades(bytes16 tradeId) external view returns (bytes16 bidId, bytes16 offerId, bool verified)
         function registerTrade(bytes16 tradeId, bytes16 bidId, bytes16 offerId, bytes16 buyer, bytes16 seller) external
     ]"#
 );
 
-async fn deploy_trade_settlement() -> (AnvilInstance, MockTradeSettlement<TestClient>) {
+async fn deploy_trade_matching() -> (AnvilInstance, MockTradeMatching<TestClient>) {
     let anvil = Anvil::new().spawn();
     let ws_endpoint = anvil.ws_endpoint();
     let wallet: LocalWallet = anvil.keys()[0].clone().into();
@@ -53,18 +53,18 @@ async fn deploy_trade_settlement() -> (AnvilInstance, MockTradeSettlement<TestCl
     let temp_dir = TempDir::new().unwrap();
     let contracts_dir = temp_dir.path().join("contracts");
     std::fs::create_dir(&contracts_dir).unwrap();
-    let source_path = contracts_dir.join("MockTradeSettlement.sol");
+    let source_path = contracts_dir.join("MockTradeMatching.sol");
     let source = r#"
         // SPDX-License-Identifier: MIT
         pragma solidity ^0.8.20;
 
-        contract MockTradeSettlement {
+        contract MockTradeMatching {
             bytes32 public constant EXECUTION_ENGINE_ROLE = keccak256("EXECUTION_ENGINE_ROLE");
             mapping(address => mapping(bytes32 => bool)) private roles;
             mapping(bytes16 => uint256) public penaltyEnergyByTrade;
             mapping(bytes16 => uint256) public penaltyEnergyByActor;
 
-            struct SettledTrade {
+            struct MatchedTrade {
                 bytes16 bidId;
                 bytes16 offerId;
                 bool verified;
@@ -74,12 +74,12 @@ async fn deploy_trade_settlement() -> (AnvilInstance, MockTradeSettlement<TestCl
                 uint64 buyerPenaltyEnergy;
                 uint64 sellerPenaltyEnergy;
             }
-            mapping(bytes16 => SettledTrade) public settledTrades;
+            mapping(bytes16 => MatchedTrade) public matchedTrades;
             mapping(bytes16 => bytes16) private buyers;
             mapping(bytes16 => bytes16) private sellers;
 
             function registerTrade(bytes16 tradeId, bytes16 bidId, bytes16 offerId, bytes16 buyer, bytes16 seller) external {
-                settledTrades[tradeId] = SettledTrade(bidId, offerId, false);
+                matchedTrades[tradeId] = MatchedTrade(bidId, offerId, false);
                 buyers[tradeId] = buyer;
                 sellers[tradeId] = seller;
             }
@@ -88,7 +88,7 @@ async fn deploy_trade_settlement() -> (AnvilInstance, MockTradeSettlement<TestCl
                 require(roles[msg.sender][EXECUTION_ENGINE_ROLE], "missing execution engine role");
                 for (uint256 i = 0; i < verifications.length; i++) {
                     DeliveryVerification calldata verification = verifications[i];
-                    SettledTrade storage trade = settledTrades[verification.tradeId];
+                    MatchedTrade storage trade = matchedTrades[verification.tradeId];
                     require(trade.bidId != bytes16(0), "unknown trade");
                     if (trade.verified) continue;
                     trade.verified = true;
@@ -153,9 +153,9 @@ async fn deploy_trade_settlement() -> (AnvilInstance, MockTradeSettlement<TestCl
         .contracts
         .values()
         .flat_map(|inner| inner.iter())
-        .find(|(name, _)| *name == "MockTradeSettlement")
+        .find(|(name, _)| *name == "MockTradeMatching")
         .map(|(_, artifact)| artifact)
-        .expect("MockTradeSettlement artifact not found");
+        .expect("MockTradeMatching artifact not found");
 
     let contract = &contract_list
         .first()
@@ -179,12 +179,12 @@ async fn deploy_trade_settlement() -> (AnvilInstance, MockTradeSettlement<TestCl
     let contract = factory.deploy(()).unwrap().send().await.unwrap();
     let contract_address = contract.address();
 
-    (anvil, MockTradeSettlement::new(contract_address, client))
+    (anvil, MockTradeMatching::new(contract_address, client))
 }
 
 #[tokio::test]
-async fn test_submit_penalties_persists_to_trade_settlement_contract() {
-    let (anvil, mock_contract) = deploy_trade_settlement().await;
+async fn test_submit_penalties_persists_to_trade_matching_contract() {
+    let (anvil, mock_contract) = deploy_trade_matching().await;
     let penalized = format!("0x{}", "aa".repeat(16));
     let trade_uuid = Uuid::new_v4().to_string();
     let penalties = vec![
@@ -307,7 +307,7 @@ async fn mount_slot_records(
 
 #[tokio::test]
 async fn unknown_trade_does_not_block_or_count_as_verified() {
-    let (anvil, contract) = deploy_trade_settlement().await;
+    let (anvil, contract) = deploy_trade_matching().await;
     contract
         .register_trade([1; 16], [2; 16], [3; 16], [4; 16], [5; 16])
         .send()
@@ -334,8 +334,8 @@ async fn unknown_trade_does_not_block_or_count_as_verified() {
             1
         );
     }
-    assert!(contract.settled_trades([1; 16]).call().await.unwrap().2);
-    assert!(!contract.settled_trades([9; 16]).call().await.unwrap().2);
+    assert!(contract.matched_trades([1; 16]).call().await.unwrap().2);
+    assert!(!contract.matched_trades([9; 16]).call().await.unwrap().2);
     assert_eq!(
         contract
             .penalty_energy_by_trade([1; 16])
@@ -353,7 +353,7 @@ async fn late_records_after_rollover_are_processed_once_without_blocking_the_cur
         OffchainStorageTransport::Http,
         "Run this HTTP regression test with OFFCHAIN_STORAGE_TRANSPORT=http"
     );
-    let (anvil, contract) = deploy_trade_settlement().await;
+    let (anvil, contract) = deploy_trade_matching().await;
     let client = contract.client();
     let server = MockServer::start().await;
     let slot_duration = GLOBAL_CONSTANTS.time_slot_sec;
@@ -499,7 +499,7 @@ async fn late_records_after_rollover_are_processed_once_without_blocking_the_cur
                 U256::from(expected)
             );
             assert_eq!(
-                contract.settled_trades([id; 16]).call().await.unwrap().2,
+                contract.matched_trades([id; 16]).call().await.unwrap().2,
                 verified,
                 "Zero-penalty trades must also be verified exactly once"
             );

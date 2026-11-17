@@ -27,7 +27,7 @@ fn timeslot_window(timeslot: u64, market_duration: u64) -> (u64, u64) {
 pub async fn run_execution_cycle(
     offchain_url: &str,
     evm_node_url: &str,
-    trade_settlement_address: &str,
+    trade_matching_address: &str,
     execution_engine_private_key: &str,
     timeslot: u64,
     penalty_rate: f64,
@@ -67,7 +67,6 @@ pub async fn run_execution_cycle(
     let facility_owner_mapping = offchain_storage_client
         .fetch_facility_owner_mapping()
         .await?;
-
     anyhow::ensure!(
         penalty_rate.is_finite() && penalty_rate >= 0.0,
         "Invalid penalty rate"
@@ -80,7 +79,7 @@ pub async fn run_execution_cycle(
 
     let processed = complete_delivery_verification(
         evm_node_url,
-        trade_settlement_address,
+        trade_matching_address,
         execution_engine_private_key,
         verifications,
     )

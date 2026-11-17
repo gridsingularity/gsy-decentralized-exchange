@@ -84,7 +84,7 @@ pub struct TradeService(pub Collection<DbTradeSchema>);
 impl TradeService {
     /// Index a match included in a block without overwriting details or later statuses.
     /// The listener does not wait for a confirmation depth.
-    pub async fn record_settlement(
+    pub async fn record_match(
         &self,
         mut trade: DbTradeSchema,
         block_timestamp: u64,
@@ -103,7 +103,7 @@ impl TradeService {
             .await
             .with_context(|| {
                 format!(
-                    "Failed to index settlement for trade {} with matching details",
+                    "Failed to index match for trade {} with matching details",
                     trade.trade_uuid
                 )
             })?;

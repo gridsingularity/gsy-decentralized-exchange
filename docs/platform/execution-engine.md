@@ -2,8 +2,8 @@
 
 ## Role in the System
 
-`gsy-execution-engine` computes imbalance penalties after trade settlement and
-records delivery verification in `TradeSettlement`.
+`gsy-execution-engine` computes imbalance penalties after trades are matched on-chain and
+records delivery verification in `TradeMatching`.
 
 ## Execution Cycle
 
@@ -41,7 +41,7 @@ success. HTTP and EWDS use the same calculation and on-chain completion path.
 
 ## Duplicate Submission Protection
 
-Before submitting, the engine checks `settledTrades(tradeId).verified` and skips
+Before submitting, the engine checks `matchedTrades(tradeId).verified` and skips
 completed trades. An invalid or unregistered trade ID is logged and excluded from
 that cycle, not counted as verified. An RPC error instead fails the cycle.
 The contract also ignores repeated verdicts, so receipt loss
@@ -106,7 +106,7 @@ zero/non-zero penalties, replay safety, timestamps, and independent residuals.
 
 - CLI: `web3 <offchain_host> <offchain_port> <node_host> <node_port> <polling_interval> <market_duration> <penalty_rate>`
 - Env:
-  - `TRADE_SETTLEMENT_ADDRESS`
+  - `TRADE_MATCHING_ADDRESS`
   - `EXECUTION_ENGINE_PRIVATE_KEY`
   - `EXECUTION_ENGINE_OFFSET_MIN`
   - `EXECUTION_ENGINE_ROLLOVER_GRACE_SECONDS` (default `900`; set `0` to disable)

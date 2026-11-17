@@ -86,18 +86,18 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
     let admin = client.address();
     let controller = deploy(client.clone(), "MarketController", admin).await?;
     let registry = deploy(client.clone(), "OrderRegistry", (admin, controller.address())).await?;
-    let settlement = deploy(
+    let trade_matching = deploy(
         client.clone(),
-        "TradeSettlement",
+        "TradeMatching",
         (admin, registry.address()),
     )
     .await?;
     for (contract, role, account) in [
         (&controller, "ORCHESTRATOR_ROLE", admin),
         (&registry, "COMMUNITY_CLIENT_ROLE", admin),
-        (&registry, "SETTLEMENT_ROLE", settlement.address()),
-        (&settlement, "OPERATOR_ROLE", admin),
-        (&settlement, "EXECUTION_ENGINE_ROLE", admin),
+        (&registry, "MATCHING_ROLE", trade_matching.address()),
+        (&trade_matching, "OPERATOR_ROLE", admin),
+        (&trade_matching, "EXECUTION_ENGINE_ROLE", admin),
     ] {
         send(contract, "grantRole", (keccak256(role), account)).await?;
     }
@@ -106,7 +106,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
         ListenerConfig {
             node_url: anvil.ws_endpoint(),
             order_registry_address: registry.address(),
-            trade_settlement_address: settlement.address(),
+            trade_matching_address: trade_matching.address(),
             market_controller_address: controller.address(),
         },
         OffchainStorageEvmHandler {
@@ -197,8 +197,8 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
             1u32,
         );
         send(
-            &settlement,
-            "settleBatch",
+            &trade_matching,
+            "submitMatches",
             (vec![(vec![matched], clearing)],),
         )
         .await?;
@@ -247,7 +247,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
             && trade.status_updated_at == Some(trade.creation_time)
     }));
     let endpoint = anvil.ws_endpoint();
-    let address = format!("{:?}", settlement.address());
+    let address = format!("{:?}", trade_matching.address());
     // Nothing measured: no completion. Only part measured: complete that part,
     // but keep the slot pending until the last measurement arrives.
     assert_eq!(
@@ -305,7 +305,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
     // A penalty submitted separately must not prevent the engine from finishing
     // verification later, or be counted a second time by that verification.
     send(
-        &settlement,
+        &trade_matching,
         "submitPenalties",
         (vec![(
             create_encrypted_bytes16_from_string("buyer-2"),
@@ -380,7 +380,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
         let trade_id = [index + 21; 16];
         let penalty = if index == 0 { 0u64 } else { 200 };
         assert_eq!(
-            settlement
+            trade_matching
                 .method::<_, U256>("penaltyEnergyByTrade", trade_id)?
                 .call()
                 .await?,
@@ -398,7 +398,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
                 TradeStatus::Penalized
             }
         );
-        let events = settlement
+        let events = trade_matching
             .event::<gsy_ethers_listener::DeliveryVerifiedFilter>()
             .from_block(0u64)
             .query_with_meta()
@@ -416,7 +416,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
         let verdict_timestamp = if index == 0 {
             timestamp
         } else {
-            let penalties = settlement
+            let penalties = trade_matching
                 .event::<gsy_ethers_listener::PenaltyRecordedFilter>()
                 .from_block(0u64)
                 .query_with_meta()

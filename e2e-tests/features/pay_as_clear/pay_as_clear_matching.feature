@@ -3,7 +3,7 @@ Feature: Two-Sided Pay-as-Clear Matching
   I want accepted merit-order trades to share one clearing price
   So that the market applies its configured pricing policy and scarcity rules
 
-  Scenario: Accepted bids and offers settle at a uniform clearing price
+  Scenario: Accepted bids and offers are matched at a uniform clearing price
     Given the GSY DEX services are running
     And the matching engine uses "pay_as_clear"
     And the DEX service accounts are authorized
@@ -12,7 +12,7 @@ Feature: Two-Sided Pay-as-Clear Matching
     And measurements for facilities are submitted
     And the pay-as-clear order book is submitted
     Then the standard market clears 7 energy at the configured price: max_offer 10, min_bid 17, midpoint 13.5
-    And the matching engine matches the bid and offer and a trade is settled on-chain
+    And the matching engine matches the bid and offer on-chain
     And unmatched orders remain open on-chain and in storage
     And the execution engine submits penalties for the trade
 
@@ -26,7 +26,7 @@ Feature: Two-Sided Pay-as-Clear Matching
     And a preferred bilateral pair and standard pay-as-clear order book are submitted
     Then the preferred bilateral trade clears 2 energy at a negotiated price of 11
     And the standard market clears 7 energy at the configured price: max_offer 10, min_bid 17, midpoint 13.5
-    And the matching engine matches the bid and offer and a trade is settled on-chain
+    And the matching engine matches the bid and offer on-chain
     And unmatched orders remain open on-chain and in storage
     And the execution engine submits penalties for the trade
 
@@ -39,7 +39,7 @@ Feature: Two-Sided Pay-as-Clear Matching
     And measurements for facilities are submitted
     And the pay-as-clear order book with "<book>" is submitted
     Then the standard market clears 7 energy at the configured price: max_offer <max_offer>, min_bid <min_bid>, midpoint <midpoint>
-    And the matching engine matches the bid and offer and a trade is settled on-chain
+    And the matching engine matches the bid and offer on-chain
     And unmatched orders remain open on-chain and in storage
     And the execution engine submits penalties for the trade
 

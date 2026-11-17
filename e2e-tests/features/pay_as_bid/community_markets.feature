@@ -9,8 +9,8 @@ Feature: Community-Aware Market Orchestration
     When two communities are submitted to off-chain storage
     Then the Market Orchestrator opens a distinct Spot market for each community
     When compatible orders are submitted to different community markets
-    Then no cross-community trade is settled
+    Then no cross-community trade is matched
     When matching counterpart orders are submitted within both community markets
-    Then each community market settles only its own bid and offer
+    Then each community market matches only its own bid and offer
     And measurements for both community markets are submitted
     And the execution engine submits penalties for the trade

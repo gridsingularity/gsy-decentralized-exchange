@@ -177,7 +177,7 @@ fn fill_order_pair(
         selected_energy: energy,
         energy_rate: rate,
     };
-    // The next fill must consume the residual registered by this settlement.
+    // The next fill must consume the residual registered by this match.
     match &matched.residual_bid {
         Some(residual) => *bid = residual.clone(),
         None => bid.energy = 0,

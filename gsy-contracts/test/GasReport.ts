@@ -19,7 +19,7 @@ describe("Gas report", function () {
       const overrides = {
         GAS_REPORT_PATH: join(output, "report.md"),
         GAS_REPORT_JSON_PATH: join(output, "report.json"),
-        GAS_REPORT_SETTLE_BATCH_SIZES: "1",
+        GAS_REPORT_MATCH_BATCH_SIZES: "1",
       };
       const savedEnv = Object.fromEntries(
         Object.keys(overrides).map((key) => [key, process.env[key]]),
@@ -69,7 +69,7 @@ describe("Gas report", function () {
         const report = JSON.parse(readFileSync(overrides.GAS_REPORT_JSON_PATH, "utf8"));
         const actions = report.entries.map((entry: { action: string }) => entry.action);
         expect(actions).to.include("completeDeliveryVerification(DeliveryVerification[1]) seller penalty");
-        expect(actions).to.include("settleBatch(Match[1]) preferred reciprocal");
+        expect(actions).to.include("submitMatches(Match[1]) preferred reciprocal");
         const end = (await ethers.provider.getBlock("latest"))!.timestamp;
         expect(end - start).to.be.greaterThan(900);
         const marketController = await ethers.getContractAt(

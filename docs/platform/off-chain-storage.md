@@ -12,7 +12,7 @@ Backend: MongoDB (version pinned in the Compose files).
 1. `gsy-ethers-listener` subscribes to:
    - `OrderPlaced`
    - `OrderCancelled`
-   - `TradeSettled`
+   - `TradeMatched`
    - `PenaltyRecorded`
    - `DeliveryVerified`
    - `NewMarketCreated`
@@ -28,7 +28,7 @@ order lifecycle. Orders are submitted through `placeOrder` (directly or through
 the community client's EWDS subscriber), then indexed by the EVM listener.
 The POST endpoints still accept caller-supplied statuses; their ownership and
 access policy remain to be clarified. Posting trades leaves referenced orders
-unchanged; settlement updates are handled by the EVM listener.
+unchanged; match updates are handled by the EVM listener.
 Restricting the order POST endpoints is a separate follow-up, not part of
 DD-423. Until then, listener ownership is the normal lifecycle path, not an
 enforced access-control boundary for those legacy write endpoints.
@@ -201,9 +201,9 @@ There is no reindexing tool. See the
   Missing reverse mappings cause an indexing error rather than fabricating an ID.
   Mappings must exist before order submission. A missing mapping fails the block;
   the listener logs the error and retries that block instead of skipping it.
-- Settlement events mark consumed orders `Filled`, or `PartiallyFilled` when a
+- `TradeMatched` events mark consumed orders `Filled`, or `PartiallyFilled` when a
   residual ID is emitted. Each residual is a separate `Submitted` order; filling
-  it later does not change its original's status. Settlement does not mark orders
+  it later does not change its original's status. Matching does not mark orders
   `Executed`; the later `DeliveryVerified` event does so for that trade and only
   its two consumed orders, including `PartiallyFilled` originals. Residuals are
   independent. Consumed orders use the verification block timestamp. A penalty-free
@@ -211,14 +211,14 @@ There is no reindexing tool. See the
   Replays preserve these timestamps. Separately penalized trades remain eligible
   for verification; the execution engine skips already verified trades on-chain.
   Verified, penalty-free trades are eligible for the status-time/GoO query.
-- Order placement, cancellation and settlement indexing use the event block's
+- Order placement, cancellation and match indexing use the event block's
   timestamp for `status_updated_at` (exposed as `updatedAt` in HTTP/EWDS DTOs),
   not the indexing time. Status and timestamp are updated together. Residual
   orders have independent status timestamps; their original creation time does
-  not change. A trade's `creation_time` is the settlement block's timestamp,
+  not change. A trade's `creation_time` is the match block's timestamp,
   not the wall-clock time of indexing or replay.
   Existing records without a status timestamp are not backfilled by this change.
-- Trade records include order IDs, residual IDs and selected settlement parameters.
+- Trade records include order IDs, residual IDs and selected match parameters.
 
 ## Operational Configuration
 
@@ -226,7 +226,7 @@ Key env variables:
 
 - `EVM_NODE_URL`
 - `CONTRACT_ORDER_REGISTRY`
-- `CONTRACT_TRADE_SETTLEMENT`
+- `CONTRACT_TRADE_MATCHING`
 - `CONTRACT_MARKET_CONTROLLER`
 - `DATABASE_*`
 - `EWDS_ENABLE_HANDLER`

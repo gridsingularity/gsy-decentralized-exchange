@@ -7,8 +7,8 @@
 | `gsy-contracts` | Deployable EVM contract suite | deployment config, signer keys | contract addresses, role assignments |
 | `gsy-market-orchestrator` | Market creation | wall-clock time, market rules, communities, `marketsExist` | `createMarkets` txs |
 | `gsy-community-client` | Publish forecasts/measurements and orders | external facility topology + profile streams | off-chain storage HTTP writes + `placeOrder` txs |
-| `gsy-matching-engine` | Build matches and settle trades | open orders + block progression | `settleBatch` txs |
-| `gsy-execution-engine` | Compute and submit penalties | settled trades + measurements | `submitPenalties` txs |
+| `gsy-matching-engine` | Build matches and submit them on-chain | open orders + block progression | `submitMatches` txs |
+| `gsy-execution-engine` | Compute and submit penalties | matched trades + measurements | `submitPenalties` txs |
 | `gsy-ethers-listener` | Contract event subscription | WS stream from EVM node | normalized callback events |
 | `gsy-offchain-storage` | Off-chain API and persistence | listener callbacks + HTTP writes | query APIs for orders/trades/profiles |
 | `EWDS (DDHub gateway)` | Inter-service transport and schema governance | service topics/channels | routed request/response messages |
@@ -32,15 +32,15 @@ When EWDS integration is enabled:
 - `MarketController.ORCHESTRATOR_ROLE` is held by orchestrator signer.
 - `ActorRegistry.ACTOR_REGISTRAR_ROLE` is held by the actor registrar signer.
 - `OrderRegistry.COMMUNITY_CLIENT_ROLE` authorizes service wallets to submit/cancel orders; facility/community eligibility is validated off-chain.
-- `TradeSettlement.OPERATOR_ROLE` is held by matching engine signer.
-- `TradeSettlement.EXECUTION_ENGINE_ROLE` is held by execution engine signer.
-- `OrderRegistry.SETTLEMENT_ROLE` is granted to settlement contract.
+- `TradeMatching.OPERATOR_ROLE` is held by matching engine signer.
+- `TradeMatching.EXECUTION_ENGINE_ROLE` is held by execution engine signer.
+- `OrderRegistry.MATCHING_ROLE` is granted to the `TradeMatching` contract.
 
-This ensures only dedicated components can register actor wallets, submit/cancel orders, create markets, settle matches, or submit penalties.
+This ensures only dedicated components can register actor wallets, submit/cancel orders, create markets, submit matches, or submit penalties.
 
 ## Data Planes
 
-- **On-chain plane**: actor authorization, market records (open by time), order status transitions, settlement events, penalty ledger.
+- **On-chain plane**: actor authorization, market records (open by time), order status transitions, match events, penalty ledger.
 - **Off-chain plane**: indexed orders/trades, forecasts/measurements, analytics and querying.
 - **Inter-service transport plane**: EWDS channels/topics for resilient authenticated messaging.
 

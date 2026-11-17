@@ -28,16 +28,16 @@ async fn main() -> anyhow::Result<()> {
             let offchain_url = env::var("OFFCHAIN_STORAGE_URL")
                 .unwrap_or_else(|_| default_offchain_storage_url.clone());
             let evm_node_url = format!("{}:{}", node_host, node_port);
-            let trade_settlement_address = env::var("TRADE_SETTLEMENT_ADDRESS")
+            let trade_matching_address = env::var("TRADE_MATCHING_ADDRESS")
                 .unwrap_or_else(|_| "0x0000000000000000000000000000000000000000".to_string());
             let execution_engine_private_key = env::var("EXECUTION_ENGINE_PRIVATE_KEY")
                 .unwrap_or_else(|_| {
                     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80".to_string()
                 });
 
-            if trade_settlement_address == "0x0000000000000000000000000000000000000000" {
+            if trade_matching_address == "0x0000000000000000000000000000000000000000" {
                 info!(
-                    "TRADE_SETTLEMENT_ADDRESS is zero; delivery verification will fail until configured."
+                    "TRADE_MATCHING_ADDRESS is zero; delivery verification will fail until configured."
                 );
             }
             info!("Using off-chain storage URL: {}", offchain_url);
@@ -54,7 +54,7 @@ async fn main() -> anyhow::Result<()> {
                 if let Err(e) = run_execution_cycle(
                     &offchain_url,
                     &evm_node_url,
-                    &trade_settlement_address,
+                    &trade_matching_address,
                     &execution_engine_private_key,
                     timeslot,
                     penalty_rate,

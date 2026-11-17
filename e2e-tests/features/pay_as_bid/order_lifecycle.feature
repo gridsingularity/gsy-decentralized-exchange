@@ -13,7 +13,7 @@ Feature: Confirmed order lifecycle
     And forecasts of 10 energy are submitted
     And "alice" submits a bid
     And "bob" submits an offer
-    Then the matching engine matches the bid and offer and a trade is settled on-chain
+    Then the matching engine matches the bid and offer on-chain
     And the trade is Matched before delivery verification
     When measurements of 10 energy for only "<participant>"'s facility are submitted
     Then delivery verification marks the trade and orders Executed without penalties
