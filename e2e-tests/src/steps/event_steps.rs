@@ -1,6 +1,6 @@
 use crate::steps::trade_steps::{
-    align_to_matching_window, market_id_as_hex, mine_until_matching_block, query_orders_for_market,
-    wait_for_order_in_offchain_storage, OrderRegistryContract,
+    align_to_matching_window, market_id_as_hex, matching_block_interval, mine_until_matching_block,
+    query_orders_for_market, wait_for_order_in_offchain_storage, OrderRegistryContract,
 };
 use crate::world::MyWorld;
 use cucumber::{given, then, when};
@@ -391,11 +391,7 @@ async fn publish_order_event(world: &mut MyWorld, buyer_name: String, seller_nam
         wait_for_order_in_offchain_storage(world, onchain_order_id.as_str()).await;
     }
 
-    mine_until_matching_block(
-        world,
-        primitives::matching::matching_block_interval() as usize + 1,
-    )
-    .await;
+    mine_until_matching_block(world, matching_block_interval(world) as usize + 1).await;
 }
 
 #[then("the off-chain storage stores the site and the facility")]

@@ -7,12 +7,19 @@ to `TradeSettlement`.
 
 ## Trigger Model
 
-In Web3 mode, the engine polls block numbers and triggers matching on block buckets:
+In Web3 mode, the engine polls block numbers every `2s`. Each market is matched
+on the block interval of its matching algorithm:
 
 - `pay_as_bid`: every `4` blocks by default
+  (`MATCHING_ENGINE_PAY_AS_BID_BLOCK_INTERVAL` overrides it)
 - `pay_as_clear`: every `64` blocks by default
-- `MATCHING_ENGINE_BLOCK_INTERVAL`: optional positive-integer override
-- Poll interval: `2s`
+  (`MATCHING_ENGINE_PAY_AS_CLEAR_BLOCK_INTERVAL` overrides it)
+
+An algorithm is due when one of the blocks mined since the previous poll is a
+multiple of its interval, so a boundary is not missed when several blocks are
+mined between two polls. If no algorithm is due, the engine does not fetch any
+orders. On a block that is a multiple of both intervals, markets of both
+algorithms are matched in the same cycle.
 
 The longer `pay_as_clear` interval allows the engine to aggregate the order
 book before calculating one clearing point. Clearing a partially submitted
@@ -24,10 +31,17 @@ longer represent one uniform-price auction.
 1. Fetch open orders from off-chain storage API (`/orders`).
 2. Convert DB schema into canonical matching primitives.
 3. Partition orders by `(market_id, time_slot)`.
-4. Run the configured matching algorithm independently for each partition,
+4. Look up the market record of each partition (`GET /market` or
+   `markets.query`) and group the partitions by the record's
+   `matchingAlgorithm`. Market records are cached, since a market never changes
+   after `MarketController` created it. Orders of a market without a record,
+   or with the unimplemented `amm` algorithm, are skipped with a warning; they
+   stay open and are retried in the next cycle.
+5. Run each due group's matching algorithm independently for each partition,
    with preference phase first.
-5. Build the `settleBatch` payload and submit it with the matching engine signer.
-6. The off-chain-storage listener creates `Matched` trades from confirmed
+6. Build one `settleBatch` payload for all groups and submit it with the
+   matching engine signer.
+7. The off-chain-storage listener creates `Matched` trades from confirmed
    `TradeSettled` events. The matching engine does not write trade records or
    publish trade-status notifications before confirmation.
 
@@ -37,9 +51,11 @@ on-chain match confirmation. This transition is not yet implemented.
 
 ## Matching Algorithms
 
-`MATCHING_ALGORITHM` selects the standard-market algorithm:
+The `matchingAlgorithm` of each market record selects the standard-market
+algorithm for that market. The market orchestrator writes it per market type:
+Spot markets use `pay_as_clear`, Flex and Settlement markets `pay_as_bid`.
 
-- `pay_as_bid` (default): each accepted standard match settles at the bid rate.
+- `pay_as_bid`: each accepted standard match settles at the bid rate.
 - `pay_as_clear`: bids are sorted by descending energy_rate and offers by ascending energy_rate, then the
   engine walks their cumulative energy tranches until the next bid price is
   lower than the next offer price. The accepted cumulative quantity is the
@@ -68,7 +84,7 @@ partition calculates its own clearing volume and price.
 The matching algorithm executes:
 
 1. **Preference phase**: eligible partner preferences are matched first.
-2. **Standard phase**: remaining bids/offers run through the configured
+2. **Standard phase**: remaining bids/offers run through the market's
    `pay_as_bid` or `pay_as_clear` algorithm.
 
 Self-trades (equal `created_by`) are rejected in both phases and on-chain.
@@ -115,7 +131,11 @@ selected the best available counterpart. See
   - `OFFCHAIN_STORAGE_TRANSPORT` (`http` or `ewds`)
   - `TRADE_SETTLEMENT_ADDRESS`
   - `MATCHING_ENGINE_PRIVATE_KEY`
-  - `MATCHING_ALGORITHM` (`pay_as_bid` by default; `pay_as_clear` supported)
-  - `PAY_AS_CLEAR_PRICING` (`max_offer` by default; `min_bid` and `midpoint` supported)
-  - `MATCHING_ENGINE_BLOCK_INTERVAL` (optional; defaults to `4` for
-    `pay_as_bid` and `64` for `pay_as_clear`)
+  - `PAY_AS_CLEAR_PRICING` (`max_offer` by default; `min_bid` and `midpoint`
+    supported). Applies to every pay-as-clear market and is validated at
+    startup, so an invalid value stops the engine.
+  - `MATCHING_ENGINE_PAY_AS_BID_BLOCK_INTERVAL` and
+    `MATCHING_ENGINE_PAY_AS_CLEAR_BLOCK_INTERVAL` (optional positive integers;
+    defaults `4` and `64`)
+- The algorithm is not configured on the engine: it comes from each market
+  record.

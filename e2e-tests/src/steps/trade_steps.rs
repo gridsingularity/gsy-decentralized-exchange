@@ -13,7 +13,6 @@ use primitives::db_api_schema::orders::{
 use primitives::db_api_schema::profiles::MeasurementSchema;
 use primitives::db_api_schema::trades::{DbTradeSchema, TradeStatus};
 use primitives::ewds::dto::FacilityMarketValidationRequest;
-use primitives::matching::matching_block_interval;
 use primitives::offchain_storage::{
     resolve_order_partner_ids, OffchainStorageClient, OffchainStorageTransport,
 };
@@ -144,8 +143,13 @@ async fn mine_empty_blocks(world: &MyWorld, count: usize) {
     }
 }
 
+/// Block interval of the scenario's markets.
+pub(crate) fn matching_block_interval(world: &MyWorld) -> u64 {
+    primitives::matching::matching_block_interval(world.matching_algorithm)
+}
+
 pub(crate) async fn mine_until_matching_block(world: &MyWorld, max_blocks: usize) {
-    let matching_block_interval = matching_block_interval();
+    let matching_block_interval = matching_block_interval(world);
     for _ in 0..max_blocks {
         mine_empty_blocks(world, 1).await;
         let latest_block = world
@@ -169,7 +173,7 @@ pub(crate) async fn mine_until_matching_block(world: &MyWorld, max_blocks: usize
 }
 
 pub(crate) async fn align_to_matching_window(world: &MyWorld, required_blocks: u64) {
-    let matching_block_interval = matching_block_interval();
+    let matching_block_interval = matching_block_interval(world);
     assert!(
         required_blocks < matching_block_interval,
         "A {}-block order submission cannot fit in a {}-block matching interval",
@@ -480,7 +484,7 @@ async fn submit_cross_community_orders(world: &mut MyWorld) {
     .await;
 
     world.cross_community_order_ids = Some((primary_bid, secondary_offer));
-    mine_until_matching_block(world, matching_block_interval() as usize + 1).await;
+    mine_until_matching_block(world, matching_block_interval(world) as usize + 1).await;
 }
 
 #[then("no cross-community trade is settled")]
@@ -575,7 +579,7 @@ async fn submit_community_market_counterparts(world: &mut MyWorld) {
             offer_id: secondary_offer,
         },
     ];
-    mine_until_matching_block(world, matching_block_interval() as usize + 1).await;
+    mine_until_matching_block(world, matching_block_interval(world) as usize + 1).await;
 }
 
 #[then("each community market settles only its own bid and offer")]
@@ -598,7 +602,7 @@ async fn verify_community_market_settlements(world: &mut MyWorld) {
             info!(
                 "Community-market trades are still pending; advancing to another matching boundary"
             );
-            mine_until_matching_block(world, matching_block_interval() as usize + 1).await;
+            mine_until_matching_block(world, matching_block_interval(world) as usize + 1).await;
         }
 
         let scenario_trades = query_community_market_trades(world)
@@ -766,7 +770,7 @@ async fn submit_offer(world: &mut MyWorld, user_name: String) {
 
     // Matching runs on block boundaries. Fast-forward local Anvil after both
     // orders are present in the registry.
-    mine_until_matching_block(world, matching_block_interval() as usize + 1).await;
+    mine_until_matching_block(world, matching_block_interval(world) as usize + 1).await;
 }
 
 // Offers name their preferred partner the same way bids do: in requirements.
@@ -853,12 +857,12 @@ async fn submit_pay_as_clear_order_book_with(world: &mut MyWorld, book: String) 
     align_to_matching_window(world, 8).await;
     world.pay_as_clear_scenario = Some(place_standard_pay_as_clear_order_book(world, &book).await);
 
-    mine_until_matching_block(world, matching_block_interval() as usize + 1).await;
+    mine_until_matching_block(world, matching_block_interval(world) as usize + 1).await;
 }
 
 #[when("the next matching cycle is triggered")]
 async fn trigger_matching_cycle(world: &mut MyWorld) {
-    mine_until_matching_block(world, matching_block_interval() as usize + 1).await;
+    mine_until_matching_block(world, matching_block_interval(world) as usize + 1).await;
 }
 
 async fn place_standard_pay_as_clear_order_book(world: &MyWorld, book: &str) -> PayAsClearScenario {
@@ -944,7 +948,7 @@ async fn submit_combined_pay_as_clear_order_book(world: &mut MyWorld) {
     scenario.preferred_order_ids = Some((preferred_bid, preferred_offer));
     world.pay_as_clear_scenario = Some(scenario);
 
-    mine_until_matching_block(world, matching_block_interval() as usize + 1).await;
+    mine_until_matching_block(world, matching_block_interval(world) as usize + 1).await;
 }
 
 #[when(expr = "measurements for facilities are submitted")]
@@ -1576,7 +1580,7 @@ async fn submit_preference_policy_pair(
     wait_for_order_in_offchain_storage(world, &bid_id).await;
     wait_for_order_in_offchain_storage(world, &offer_id).await;
     world.preference_order_ids = Some((bid_id, offer_id));
-    mine_until_matching_block(world, matching_block_interval() as usize + 1).await;
+    mine_until_matching_block(world, matching_block_interval(world) as usize + 1).await;
 }
 
 #[then(expr = "the pair settles as {string} at {float} for pay-as-bid or max_offer {float}, min_bid {float}, midpoint {float} for pay-as-clear")]
@@ -1593,8 +1597,7 @@ async fn verify_preference_policy_pair(
         "preferred" => 1,
         _ => panic!("Unknown expected match type: {match_type}"),
     };
-    let algorithm = env::var("MATCHING_ALGORITHM").unwrap_or_else(|_| "pay_as_bid".into());
-    let expected_price = match algorithm.parse::<primitives::MatchingAlgorithm>().unwrap() {
+    let expected_price = match world.matching_algorithm {
         primitives::MatchingAlgorithm::PayAsBid => pay_as_bid,
         primitives::MatchingAlgorithm::PayAsClear => {
             match env::var("PAY_AS_CLEAR_PRICING").unwrap_or_else(|_| "max_offer".into())
@@ -1701,7 +1704,7 @@ async fn verify_residual_lifecycle(world: &mut MyWorld, side: String, consumptio
         .expect("Failed to read original order");
 
     if later {
-        mine_until_matching_block(world, matching_block_interval() as usize + 1).await;
+        mine_until_matching_block(world, matching_block_interval(world) as usize + 1).await;
         verify_partner_trade(world, "alice".into(), "bob".into(), 2.0).await;
         verify_preferred_residual(world, side.clone(), 4.0).await;
         let first = world.last_trade.as_ref().unwrap();
@@ -1727,7 +1730,7 @@ async fn verify_residual_lifecycle(world: &mut MyWorld, side: String, consumptio
     // The second pair has no matching partner preference, so it uses the standard phase.
     let counter_id = place_custom_order(world, "charlie", !is_bid, 4.0, 12.0, None, None).await;
     wait_for_order_in_offchain_storage(world, &counter_id).await;
-    mine_until_matching_block(world, matching_block_interval() as usize + 1).await;
+    mine_until_matching_block(world, matching_block_interval(world) as usize + 1).await;
 
     let mut chain = None;
     for _ in 0..60 {

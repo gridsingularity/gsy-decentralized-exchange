@@ -1470,6 +1470,7 @@ dependencies = [
  "cucumber",
  "ethers",
  "gsy-community-client",
+ "gsy-market-orchestrator",
  "hex",
  "mongodb",
  "primitives",
@@ -2376,6 +2377,7 @@ name = "gsy-matching-engine"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "clap",
  "ethers",
  "ethers-solc",

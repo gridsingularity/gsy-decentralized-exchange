@@ -69,38 +69,28 @@ pub struct MarketRule {
     pub matching_algorithm: MatchingAlgorithm,
 }
 
-/// Algorithm written into every market record. It must match the one the
-/// matching engine runs, so both read `MATCHING_ALGORITHM`.
-fn configured_matching_algorithm() -> MatchingAlgorithm {
-    std::env::var("MATCHING_ALGORITHM")
-        .map(|value| {
-            value
-                .parse::<MatchingAlgorithm>()
-                .unwrap_or_else(|error| panic!("Invalid MATCHING_ALGORITHM: {}", error))
-        })
-        .unwrap_or_default()
-}
-
+/// One rule per market type. Its `matching_algorithm` is written into every
+/// market record of that type, and the matching engine clears each market
+/// with the algorithm of its record.
 pub static MARKET_RULES: Lazy<Vec<MarketRule>> = Lazy::new(|| {
-    let matching_algorithm = configured_matching_algorithm();
     vec![
         MarketRule {
             market_type: MarketType::Spot,
             open_offset_mins: GLOBAL_CONSTANTS.spot_market_open_offset_min,
             close_offset_mins: GLOBAL_CONSTANTS.spot_market_close_offset_min,
-            matching_algorithm: matching_algorithm.clone(),
+            matching_algorithm: MatchingAlgorithm::PayAsClear,
         },
         MarketRule {
             market_type: MarketType::Flex,
             open_offset_mins: GLOBAL_CONSTANTS.flex_market_open_offset_min,
             close_offset_mins: GLOBAL_CONSTANTS.flex_market_close_offset_min,
-            matching_algorithm: matching_algorithm.clone(),
+            matching_algorithm: MatchingAlgorithm::PayAsBid,
         },
         MarketRule {
             market_type: MarketType::Settlement,
             open_offset_mins: GLOBAL_CONSTANTS.settlement_market_open_offset_min,
             close_offset_mins: GLOBAL_CONSTANTS.settlement_market_close_offset_min,
-            matching_algorithm,
+            matching_algorithm: MatchingAlgorithm::PayAsBid,
         },
     ]
 });

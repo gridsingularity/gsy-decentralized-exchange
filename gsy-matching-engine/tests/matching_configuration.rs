@@ -22,7 +22,9 @@ fn pricing_names_parse_and_display_consistently() {
     }
 }
 
-fn startup_output(algorithm: &str, pricing: Option<&str>) -> (bool, String) {
+/// Starts the engine with `variables` on top of an environment without
+/// `MATCHING_ALGORITHM` and `PAY_AS_CLEAR_PRICING`.
+fn startup_output(variables: &[(&str, &str)]) -> (bool, String) {
     let mut command = Command::new(env!("CARGO_BIN_EXE_gsy-matching-engine"));
     // An invalid node URL stops after startup without contacting external services.
     command.args([
@@ -34,11 +36,9 @@ fn startup_output(algorithm: &str, pricing: Option<&str>) -> (bool, String) {
         "invalid-url",
         "0",
     ]);
-    command.env("MATCHING_ALGORITHM", algorithm);
+    command.env_remove("MATCHING_ALGORITHM");
     command.env_remove("PAY_AS_CLEAR_PRICING");
-    if let Some(pricing) = pricing {
-        command.env("PAY_AS_CLEAR_PRICING", pricing);
-    }
+    command.envs(variables.iter().copied());
     let output = command.output().expect("matching engine should start");
     (
         output.status.success(),
@@ -58,7 +58,11 @@ fn startup_defaults_and_selects_pricing() {
         (Some("min_bid"), "min_bid"),
         (Some("midpoint"), "midpoint"),
     ] {
-        let (_, output) = startup_output("pay_as_clear", configured);
+        let variables = configured
+            .map(|pricing| ("PAY_AS_CLEAR_PRICING", pricing))
+            .into_iter()
+            .collect::<Vec<_>>();
+        let (_, output) = startup_output(&variables);
         assert!(
             output.contains(&format!("Using pay-as-clear pricing: {expected}")),
             "{output}"
@@ -69,7 +73,7 @@ fn startup_defaults_and_selects_pricing() {
 
 #[test]
 fn invalid_pricing_fails_before_connecting() {
-    let (success, output) = startup_output("pay_as_clear", Some("unknown"));
+    let (success, output) = startup_output(&[("PAY_AS_CLEAR_PRICING", "unknown")]);
     assert!(!success);
     assert!(output.contains("Invalid PAY_AS_CLEAR_PRICING"), "{output}");
     assert!(
@@ -80,9 +84,9 @@ fn invalid_pricing_fails_before_connecting() {
 }
 
 #[test]
-fn pay_as_bid_ignores_clear_pricing_configuration() {
-    let (_, output) = startup_output("pay_as_bid", Some("unknown"));
-    assert!(!output.contains("Invalid PAY_AS_CLEAR_PRICING"), "{output}");
-    assert!(!output.contains("Using pay-as-clear pricing"), "{output}");
+fn matching_algorithm_variable_is_ignored() {
+    let (_, output) = startup_output(&[("MATCHING_ALGORITHM", "unknown")]);
+    assert!(!output.contains("MATCHING_ALGORITHM"), "{output}");
+    assert!(!output.contains("Using matching algorithm"), "{output}");
     assert!(output.contains("Connecting to EVM node"), "{output}");
 }
