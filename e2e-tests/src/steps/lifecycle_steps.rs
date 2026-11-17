@@ -326,3 +326,43 @@ async fn verify_trade_verdict(world: &mut MyWorld, status: String) {
         "Status notifications must not submit new orders"
     );
 }
+
+#[then(expr = "the trade records exactly {int} buyer and {int} seller penalty units")]
+async fn verify_party_penalties(world: &mut MyWorld, buyer_cost: u64, seller_cost: u64) {
+    let trade = world.last_trade.as_ref().expect("Missing settled trade");
+    let settlement =
+        TradeSettlementContract::new(world.trade_settlement_address, world.provider.clone());
+    let trade_id = parse_uuid_or_hex_bytes16(&trade.trade_uuid).unwrap();
+    let events = settlement
+        .event::<PenaltyRecordedFilter>()
+        .from_block(0u64)
+        .topic3(indexed_bytes16_topic(trade_id))
+        .query()
+        .await
+        .expect("Failed to query penalties");
+    assert_eq!(
+        events.len(),
+        usize::from(buyer_cost > 0) + usize::from(seller_cost > 0),
+        "Each penalized party must be recorded exactly once"
+    );
+    for (party, cost) in [(&trade.buyer, buyer_cost), (&trade.seller, seller_cost)] {
+        let party = parse_uuid_or_hex_bytes16(party).unwrap();
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.penalized_actor_id == party)
+                .map(|event| event.penalty_energy)
+                .sum::<u64>(),
+            cost,
+            "Incorrect allocation for trade party {party:?}"
+        );
+    }
+    assert_eq!(
+        settlement
+            .penalty_energy_by_trade(trade_id)
+            .call()
+            .await
+            .unwrap(),
+        U256::from(buyer_cost + seller_cost)
+    );
+}

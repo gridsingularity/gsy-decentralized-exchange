@@ -10,9 +10,14 @@ records delivery verification in `TradeSettlement`.
 Each cycle:
 
 1. Select the current target timeslot or an older slot still within its rollover grace period.
-2. Fetch trades plus measurement points/timeseries for that window from off-chain storage.
-3. Compute verdicts for `Matched` or `Penalized` trades with a usable measurement,
-   excluding trades whose on-chain verification is already complete.
+2. Fetch trades plus measurement points/timeseries for that delivery window from
+   off-chain storage. Resolve each distinct market once through the existing
+   HTTP/EWDS market lookup and group trades by its `delivery_start_time`, not
+   trade creation or settlement time.
+3. Compute facility totals and penalty allocations separately for each slot,
+   including `Executed` and `Settled` trades in the baseline. Only `Matched` or
+   `Penalized` trades with usable readings for both parties receive verdicts;
+   the connector skips trades whose on-chain verification is already complete.
 4. Submit `completeDeliveryVerification` and wait for a successful receipt.
    Penalties (if any) and completion are recorded atomically. Fully delivered
    trades also complete, without a separate penalty transaction.
@@ -21,30 +26,62 @@ Each cycle:
 
 Current penalty calculator logic:
 
-- `delta = measured_energy - traded_energy`
-- `delta > 0`: penalize buyer
-- `delta < 0`: penalize seller
+- For each facility and delivery slot, sum all its indexed purchases and sales,
+  across markets: `net_traded_energy = purchases - sales`. Measurements are
+  signed: consumption is positive and production negative. A facility that buys
+  10 kWh and sells 4 kWh is expected to consume 6 kWh net.
+- Select only readings whose `time_slot` equals the market's delivery start.
+  Readings from another slot never substitute for a missing one.
+- No penalty within `abs(net_traded_energy) * tolerance_percent / 100` of the
+  signed net baseline, including the boundaries. The default is 5%. A zero-net
+  position has zero tolerance; a nonzero meter reading is a deviation.
+- Penalize the buyer for either overconsumption or underconsumption.
+- Penalize the seller for either overproduction or underproduction.
 - Penalty scaled with `NODE_FLOAT_SCALING_FACTOR` (`10000`)
+- Allocate that facility's penalty to its trades in proportion to each trade's
+  quantity divided by all its purchases plus sales (not the net quantity).
+  This includes both buyer and seller roles, residual trades, and trades already
+  verified. Round the total once, then allocate integer units by largest remainder;
+  ties use trade ID order. Allocations sum exactly to the facility penalty and
+  do not depend on the order of query results.
+
+Outside the tolerance band, the existing `penalty_rate` applies to the **full**
+deviation, not only the excess beyond the band. For 100 kWh traded with 5%
+tolerance, 105 kWh incurs no penalty; 106 kWh incurs a penalty on 6 kWh. Tolerance
+is independent of `penalty_rate` (`0.10` means 10% of the deviation).
+For purchases of 4 and 6 kWh and consumption of 12 kWh, the 2 kWh deviation
+produces a 2,000-unit penalty at rate 0.10, allocated as 800 and 1,200 units.
 
 Measurements identify facilities. The engine reads the facility-to-owner mapping
 from off-chain storage and derives each owner's on-chain ID with the ID service's
 shared Blake2b-16 helper, without writing ID mappings. That owner ID is used in
 `OrderParams.createdBy` and the indexed trade parties; the submitting service
-wallet is separate. This deployment guarantees one facility per owner. The penalty policy is
-unchanged: the buyer's measurement is preferred, with the seller's as a
-fallback. This does not independently verify both sides. Multiple measurements
-for a facility overwrite each other, and allocation across multiple trades is not
-handled. These policy limitations need separate agreement; `Executed` records
-completion under this current policy, not proof that both meters were checked.
-Missing/unmapped or non-finite measurements produce no verdict, not a zero-penalty
-success. HTTP and EWDS use the same calculation and on-chain completion path.
+wallet is separate. This deployment guarantees one facility per owner.
+Missing/unmapped, non-finite, or conflicting readings for a facility/slot leave its trades pending;
+they do not produce a zero-penalty success. Identical readings are not counted
+twice. Multiple distinct readings are not summed or arbitrarily selected: they
+need an unambiguous net measurement before verification. Both parties' readings
+are required before atomic completion.
+HTTP and EWDS normalize direction-labelled export magnitudes to negative energy;
+compatibility profiles retain their original signed values, including when a
+point's direction has changed in a later slot. Both transports use the same
+calculation and on-chain completion path.
+
+Each trade keeps its own buyer/seller penalty on-chain. A missing counterparty
+reading does not remove that trade from the other facility's totals, and completing
+one trade does not shrink the baseline or redistribute its share onto pending trades.
+
+Totals reflect the currently indexed trade set. There is no slot-finalization
+snapshot or correction/reconciliation mechanism: a subsequently indexed trade
+or corrected reading can change calculated allocations, but verification cannot
+revise amounts already recorded on-chain. Defining finalization and handling such
+late changes remain follow-up work; slot-specific measurement selection alone
+does not solve this limitation.
 
 ## Duplicate Submission Protection
 
 Before submitting, the engine checks `settledTrades(tradeId).verified` and skips
-completed trades. An invalid or unregistered trade ID is logged and excluded from
-that cycle, not counted as verified. An RPC error instead fails the cycle.
-The contract also ignores repeated verdicts, so receipt loss
+completed trades. The contract also ignores repeated verdicts, so receipt loss
 or concurrent submissions cannot duplicate penalties or completion events.
 Matching pre-recorded penalties are reused; conflicting amounts reject the
 transaction. A successful receipt is required before reporting progress.
@@ -89,7 +126,7 @@ Residual order IDs remain independent.
 
 ## Focused Lifecycle Test
 
-The real-contract test is opt-in because it needs compiled Hardhat artifacts,
+The real-contract tests are opt-in because they need compiled Hardhat artifacts,
 Anvil on `PATH`, and MongoDB (`DATABASE_*`). After compiling `gsy-contracts` with
 `npx hardhat compile`, run from the workspace root:
 
@@ -99,14 +136,23 @@ OFFCHAIN_STORAGE_TRANSPORT=http cargo test --locked -p gsy-offchain-storage \
 ```
 
 `GSY_CONTRACT_ARTIFACTS` can point to artifacts compiled in another container.
-The test deploys isolated proxies and exercises missing/late measurements,
+The tests deploy isolated proxies and exercise missing/late measurements,
 zero/non-zero penalties, replay safety, timestamps, and independent residuals.
+They also verify exact allocations across several trades sharing a facility,
+including buying and selling in the same slot, and retain completed trades in
+the baseline when later counterparty readings arrive. Shared E2E coverage in
+`matching_algorithms/delivery_deviations.feature` checks the tolerance boundary
+and both directions of deviation over HTTP/EWDS with either matching algorithm.
 
 ## Key Config
 
-- CLI: `web3 <offchain_host> <offchain_port> <node_host> <node_port> <polling_interval> <market_duration> <penalty_rate>`
+- CLI: `web3 <offchain_host> <offchain_port> <node_host> <node_port> <polling_interval> <market_duration> <penalty_rate> [--penalty-tolerance-percent <percent>]`
 - Env:
   - `TRADE_SETTLEMENT_ADDRESS`
   - `EXECUTION_ENGINE_PRIVATE_KEY`
   - `EXECUTION_ENGINE_OFFSET_MIN`
   - `EXECUTION_ENGINE_ROLLOVER_GRACE_SECONDS` (default `900`; set `0` to disable)
+  - `EXECUTION_ENGINE_PENALTY_TOLERANCE_PERCENT` (default `5`; set `0` for strict comparison)
+
+Penalty tolerance must be a finite percentage between 0 and 100. Invalid values
+fail startup. The CLI option takes precedence over the environment variable.
