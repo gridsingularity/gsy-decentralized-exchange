@@ -2,6 +2,7 @@
 //! document of each id unless its `valid_until` has passed.
 
 use crate::helpers::{init_app, stop_app};
+use futures::future::join_all;
 use gsy_offchain_storage::db::grid_topology_service::NameConflict;
 use gsy_offchain_storage::db::DatabaseWrapper;
 use mongodb::bson::{doc, Document};
@@ -270,6 +271,37 @@ async fn the_rest_endpoints_store_versions_and_show_only_latest_entries() {
             .collect::<Vec<_>>(),
         vec!["fac-1"]
     );
+
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn concurrent_stores_check_and_write_one_after_another() {
+    let app = init_app().await;
+    let db = &app.db_wrapper;
+
+    // Each call checks the name before it writes, so at most one id may take it.
+    let results = join_all((0..5).map(|index| async move {
+        let entry = FacilitySchema {
+            facility_name: "Shared name".to_string(),
+            ..facility(&format!("facility-{index}"), "site-1")
+        };
+        db.facilities().store(vec![entry]).await
+    }))
+    .await;
+    assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+    assert_eq!(latest_facility_ids(db).await.len(), 1);
+    assert_eq!(documents(db, "facilities").await, 1);
+
+    // The same new entry sent twice at once is stored once.
+    let entry = facility("facility-new", "site-1");
+    let results = join_all((0..2).map(|_| {
+        let entry = entry.clone();
+        async move { db.facilities().store(vec![entry]).await }
+    }))
+    .await;
+    assert!(results.iter().all(|result| result.is_ok()));
+    assert_eq!(documents(db, "facilities").await, 2);
 
     stop_app(app).await;
 }

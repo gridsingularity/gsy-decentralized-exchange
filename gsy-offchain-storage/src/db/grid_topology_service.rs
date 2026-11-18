@@ -15,6 +15,7 @@ use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::ops::Deref;
+use std::sync::{Arc, LazyLock, Mutex, PoisonError};
 
 pub async fn init_assets(db: &DatabaseWrapper) -> Result<()> {
     let controller = db.assets();
@@ -267,6 +268,13 @@ impl fmt::Display for NameConflict {
 
 impl std::error::Error for NameConflict {}
 
+/// The lock of each collection, by namespace, that [`TopologyService::store`] holds from its
+/// checks to its last write. REST and the EWDS event subscriber store concurrently; without it,
+/// two calls could both pass the checks before either writes. It only orders the calls of this
+/// process.
+static STORE_LOCKS: LazyLock<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
+    LazyLock::new(Default::default);
+
 pub type EnergyCommunityService = TopologyService<EnergyCommunitySchema>;
 pub type SiteService = TopologyService<SiteSchema>;
 pub type FacilityService = TopologyService<FacilitySchema>;
@@ -324,7 +332,7 @@ impl<T: TopologyEntry> TopologyService<T> {
     /// name appears twice in `entries`, or if a name is used by a latest entry of another id
     /// ([`NameConflict`]). Entries of ids in `entries` do not count, so two entries can swap
     /// their names. Storing the same entries again changes nothing, so a failed call can be
-    /// retried.
+    /// retried. Calls for one collection run one after another.
     pub async fn store(&self, entries: Vec<T>) -> Result<Vec<T>> {
         let mut ids = HashSet::new();
         let mut names = HashSet::new();
@@ -344,6 +352,14 @@ impl<T: TopologyEntry> TopologyService<T> {
                 )));
             }
         }
+
+        let lock = STORE_LOCKS
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entry(self.0.namespace().to_string())
+            .or_default()
+            .clone();
+        let _guard = lock.lock().await;
 
         if let Some(other) = self
             .get()
