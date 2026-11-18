@@ -1,4 +1,4 @@
-use ::primitives::{log::setup_logging, utils::timestamp_to_datetime_string};
+use ::primitives::{log::setup_logging, utils::epoch_to_rfc3339};
 use clap::Parser;
 use gsy_execution_engine::{
     services::execution_orchestrator::run_execution_cycle,
@@ -49,7 +49,7 @@ async fn main() -> anyhow::Result<()> {
                 let timeslot = timeslot_scheduler.calculate_timeslot();
                 info!(
                     "Execution cycle for timeslot {} ({})",
-                    timestamp_to_datetime_string(timeslot),
+                    epoch_to_rfc3339(timeslot),
                     timeslot
                 );
                 if let Err(e) = run_execution_cycle(

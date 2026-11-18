@@ -1,9 +1,9 @@
-use crate::helpers::{init_app, stop_app};
+use crate::helpers::{init_app, stop_app, ts};
 use actix_web::web;
 use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
 use primitives::db_api_schema::orders::{DbOrderSchema, OrderEnum, OrderStatus};
 use primitives::ewds::dto::EwdsTradeDto;
-use primitives::utils::{epoch_to_rfc3339, timestamp_to_string_with_padding};
+use primitives::utils::epoch_to_rfc3339;
 
 fn make_order(order_id: &str, order_type: OrderEnum) -> DbOrderSchema {
     DbOrderSchema {
@@ -16,8 +16,8 @@ fn make_order(order_id: &str, order_type: OrderEnum) -> DbOrderSchema {
         energy_rate: 10.0,
         area_uuid: "0x0000000000000000000000000000000000000000000000000000000000000abc".to_string(),
         market_id: "0x00000000000000000000000000000def".to_string(),
-        time_slot: 1,
-        creation_time: 1_677_453_190,
+        time_slot: ts(1),
+        creation_time: ts(1_677_453_190),
         requirements: None,
         attributes: None,
     }
@@ -44,13 +44,13 @@ fn make_market(market_id: &str, delivery_start_time: u64) -> MarketSchema {
     MarketSchema {
         market_id: market_id.to_string(),
         community_id: "11111111-1111-4111-8111-111111111111".to_string(),
-        opening_time: timestamp_to_string_with_padding(delivery_start_time.saturating_sub(900)),
-        closing_time: timestamp_to_string_with_padding(delivery_start_time),
-        delivery_start_time: timestamp_to_string_with_padding(delivery_start_time),
-        delivery_end_time: timestamp_to_string_with_padding(delivery_start_time + 900),
+        opening_time: ts(delivery_start_time.saturating_sub(900)),
+        closing_time: ts(delivery_start_time),
+        delivery_start_time: ts(delivery_start_time),
+        delivery_end_time: ts(delivery_start_time + 900),
         market_type: MarketType::Spot,
         matching_algorithm: MatchingAlgorithm::PayAsBid,
-        created_at: timestamp_to_string_with_padding(delivery_start_time.saturating_sub(900)),
+        created_at: ts(delivery_start_time.saturating_sub(900)),
     }
 }
 
@@ -356,45 +356,51 @@ async fn filter_trades_time_boundaries_are_inclusive_start_exclusive_end() {
 
     // [20, 30): start inclusive, end exclusive -> {20, 29}.
     let both = trades_svc()
-        .filter_trades(None, Some(20), Some(30))
+        .filter_trades(None, Some(ts(20)), Some(ts(30)))
         .await
         .unwrap();
-    let mut got: Vec<u64> = both.iter().map(|t| t.creation_time).collect();
+    let mut got: Vec<i64> = both.iter().map(|t| t.creation_time.timestamp()).collect();
     got.sort_unstable();
     assert_eq!(got, vec![20, 29]); // 20 included ($gte), 30 excluded ($lt)
 
     // Start-only, start on a boundary value: delivery_start_time >= 20 -> {20, 29, 30}.
     let start_only = trades_svc()
-        .filter_trades(None, Some(20), None)
+        .filter_trades(None, Some(ts(20)), None)
         .await
         .unwrap();
-    let mut got: Vec<u64> = start_only.iter().map(|t| t.creation_time).collect();
+    let mut got: Vec<i64> = start_only
+        .iter()
+        .map(|t| t.creation_time.timestamp())
+        .collect();
     got.sort_unstable();
     assert_eq!(got, vec![20, 29, 30]); // 20 included, nothing below
 
     // End-only, end on a boundary value: delivery_start_time < 30 -> {19, 20, 29}.
     let end_only = trades_svc()
-        .filter_trades(None, None, Some(30))
+        .filter_trades(None, None, Some(ts(30)))
         .await
         .unwrap();
-    let mut got: Vec<u64> = end_only.iter().map(|t| t.creation_time).collect();
+    let mut got: Vec<i64> = end_only
+        .iter()
+        .map(|t| t.creation_time.timestamp())
+        .collect();
     got.sort_unstable();
     assert_eq!(got, vec![19, 20, 29]); // 30 excluded ($lt)
 
     // Empty range: start == end -> nothing (20 fails $lt 20).
     let empty = trades_svc()
-        .filter_trades(None, Some(20), Some(20))
+        .filter_trades(None, Some(ts(20)), Some(ts(20)))
         .await
         .unwrap();
     assert!(empty.is_empty()); // [20, 20) is empty
 
     // Single-slot range: [20, 21) -> exactly {20}.
     let single = trades_svc()
-        .filter_trades(None, Some(20), Some(21))
+        .filter_trades(None, Some(ts(20)), Some(ts(21)))
         .await
         .unwrap();
     assert_eq!(single.len(), 1);
-    assert_eq!(single[0].creation_time, 20);
+    assert_eq!(single[0].creation_time, ts(20));
 
     // No bounds: returns everything seeded here.
     let all = trades_svc().filter_trades(None, None, None).await.unwrap();
@@ -403,11 +409,15 @@ async fn filter_trades_time_boundaries_are_inclusive_start_exclusive_end() {
     // market_id takes precedence: the range [20, 30) is ignored, so the trade of the market
     // delivering at 19 is returned.
     let by_market = trades_svc()
-        .filter_trades(Some("0x00000000000000000000000000000000".to_string()), Some(20), Some(30))
+        .filter_trades(
+            Some("0x00000000000000000000000000000000".to_string()),
+            Some(ts(20)),
+            Some(ts(30)),
+        )
         .await
         .unwrap();
     assert_eq!(by_market.len(), 1);
-    assert_eq!(by_market[0].creation_time, 19);
+    assert_eq!(by_market[0].creation_time, ts(19));
 
     stop_app(app).await;
 }

@@ -7,7 +7,7 @@ use ethers::{prelude::*, utils::Anvil};
 use gsy_community_client::node_connector::orders::publish_orders;
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::profiles::ForecastSchema;
-use primitives::utils::parse_uuid_or_hex_bytes16;
+use primitives::utils::{epoch_to_datetime, parse_uuid_or_hex_bytes16};
 use primitives::{MarketType, MatchingAlgorithm};
 use std::sync::Arc;
 use wiremock::matchers::{method, path, query_param};
@@ -37,13 +37,13 @@ fn test_market() -> MarketSchema {
     MarketSchema {
         market_id: format!("0x{}", "11".repeat(16)),
         community_id: "community-1".to_string(),
-        opening_time: "00000000002700000000".to_string(),
-        closing_time: "00000000002800000000".to_string(),
-        delivery_start_time: "00000000001700000000".to_string(),
-        delivery_end_time: "00000000001800000000".to_string(),
+        opening_time: epoch_to_datetime(2_700_000_000).unwrap(),
+        closing_time: epoch_to_datetime(2_800_000_000).unwrap(),
+        delivery_start_time: epoch_to_datetime(1_700_000_000).unwrap(),
+        delivery_end_time: epoch_to_datetime(1_800_000_000).unwrap(),
         market_type: MarketType::Spot,
         matching_algorithm: MatchingAlgorithm::PayAsBid,
-        created_at: "00000000001699999000".to_string(),
+        created_at: epoch_to_datetime(1_699_999_000).unwrap(),
     }
 }
 
@@ -52,16 +52,16 @@ fn test_forecasts() -> Vec<ForecastSchema> {
         ForecastSchema {
             facility_id: "area-a".to_string(),
             community_uuid: "community-1".to_string(),
-            time_slot: 1_700_000_000,
-            creation_time: 1_699_999_000,
+            time_slot: epoch_to_datetime(1_700_000_000).unwrap(),
+            creation_time: epoch_to_datetime(1_699_999_000).unwrap(),
             energy_kwh: 12.0,
             confidence: 0.9,
         },
         ForecastSchema {
             facility_id: "area-b".to_string(),
             community_uuid: "community-1".to_string(),
-            time_slot: 1_700_000_000,
-            creation_time: 1_699_999_000,
+            time_slot: epoch_to_datetime(1_700_000_000).unwrap(),
+            creation_time: epoch_to_datetime(1_699_999_000).unwrap(),
             energy_kwh: -3.0,
             confidence: 0.7,
         },
@@ -138,15 +138,17 @@ async fn test_publish_orders_calls_evm_order_registry() {
             .up_to_n_times(1)
             .mount(&facilities_server)
             .await;
-        assert!(publish_orders(
-            ws_endpoint.clone(),
-            test_forecasts(),
-            test_market(),
-            format!("{:?}", contract_address),
-            TEST_PRIVATE_KEY.to_string(),
-        )
-        .await
-        .is_err());
+        assert!(
+            publish_orders(
+                ws_endpoint.clone(),
+                test_forecasts(),
+                test_market(),
+                format!("{:?}", contract_address),
+                TEST_PRIVATE_KEY.to_string(),
+            )
+            .await
+            .is_err()
+        );
         assert_eq!(
             mock_contract.placed_count().call().await.unwrap(),
             U256::zero()
@@ -243,12 +245,17 @@ async fn test_publish_orders_calls_evm_order_registry() {
         mock_contract.placed_count().call().await.unwrap(),
         U256::from(2)
     );
-    assert!(facilities_server
-        .received_requests()
-        .await
-        .unwrap()
-        .iter()
-        .all(|request| matches!(request.url.path(), "/facilities" | "/facilities/validate" | "/ids")));
+    assert!(
+        facilities_server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .all(|request| matches!(
+                request.url.path(),
+                "/facilities" | "/facilities/validate" | "/ids"
+            ))
+    );
 }
 
 #[tokio::test]
@@ -266,10 +273,11 @@ async fn test_publish_orders_returns_error_for_invalid_contract_address() {
     .await
     .unwrap_err();
 
-    assert!(err
-        .to_string()
-        .to_lowercase()
-        .contains("invalid order registry address"));
+    assert!(
+        err.to_string()
+            .to_lowercase()
+            .contains("invalid order registry address")
+    );
 }
 
 #[tokio::test]

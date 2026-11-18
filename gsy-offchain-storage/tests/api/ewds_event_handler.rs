@@ -1,6 +1,7 @@
 use crate::evm_integration::{expected_market, new_market_event};
 use crate::ewds_handler::{mock_gateway, test_config};
-use crate::helpers::{init_app, stop_app};
+use crate::helpers::{init_app, stop_app, ts};
+use chrono::{DateTime, Utc};
 use ethers::contract::LogMeta;
 use ethers::types::{Address, H256, U256, U64};
 use gsy_ethers_listener::{
@@ -25,7 +26,7 @@ use primitives::ewds::dto::{
     EwdsTradeDto,
 };
 use primitives::ewds::{is_invalid_event, EwdsEventType, EwdsOperation};
-use primitives::utils::{bytes16_to_hex, epoch_to_rfc3339, timestamp_to_string_with_padding};
+use primitives::utils::{bytes16_to_hex, epoch_to_rfc3339};
 use serde_json::{json, Value};
 use std::time::Duration;
 use uuid::Uuid;
@@ -149,7 +150,7 @@ async fn assert_trade_status_event(
     let stored = app.db_wrapper.trades().get_all_trades().await.unwrap();
     assert_eq!(stored.len(), 1);
     assert_eq!(stored[0].status, status);
-    assert_eq!(stored[0].status_updated_at, Some(timestamp));
+    assert_eq!(stored[0].status_updated_at, Some(ts(timestamp)));
     let expected = json!([EwdsTradeDto::from(stored[0].clone())]);
     assert_eq!(envelope["data"], expected);
     let client = reqwest::Client::new();
@@ -209,7 +210,7 @@ async fn assert_order_status_event(
             .unwrap()
             .unwrap();
         assert_eq!(&stored.status, status);
-        assert_eq!(stored.status_updated_at, Some(timestamp));
+        assert_eq!(stored.status_updated_at, Some(ts(timestamp)));
         let snapshot = data.iter().find(|order| order["orderId"] == id).unwrap();
         assert_eq!(
             *snapshot,
@@ -248,7 +249,7 @@ fn trade(trade_uuid: &str, creation_time: u64) -> DbTradeSchema {
         seller: "seller-1".to_string(),
         buyer: "buyer-1".to_string(),
         market_id: "market-1".to_string(),
-        creation_time,
+        creation_time: ts(creation_time),
         offer_hash: "offer-1".to_string(),
         bid_hash: "bid-1".to_string(),
         residual_offer_id: None,
@@ -292,7 +293,7 @@ async fn publish_trade_event_sends_several_trades_in_one_event() {
     let publisher = EwdsEventPublisher::new(test_config(server.uri()));
 
     let mut updated = trade("trade-1", 950);
-    updated.status_updated_at = Some(1_100);
+    updated.status_updated_at = Some(ts(1_100));
     publisher
         .publish_trade_event(vec![updated, trade("trade-2", 960)])
         .await
@@ -367,7 +368,7 @@ async fn verification_notifications_preserve_penalized_status_and_match_query_re
                     .find_one(mongodb::bson::doc! {"trade_uuid": bytes16_to_hex(settlement.trade_id)})
                     .await.unwrap().unwrap();
                 assert_eq!(stored.status, TradeStatus::Penalized);
-                assert_eq!(stored.status_updated_at, Some(1_200));
+                assert_eq!(stored.status_updated_at, Some(ts(1_200)));
             } else {
                 assert_trade_status_event(
                     &app,
@@ -433,7 +434,7 @@ async fn publish_clearing_result_event_sends_event_on_events_channel() {
         traded_quantity: 4.0,
         num_trades: 2,
         tx_hash: "0xabc".to_string(),
-        clearing_time: 1_100,
+        clearing_time: ts(1_100),
     };
 
     publisher
@@ -465,7 +466,7 @@ async fn publish_market_event_sends_event_on_events_channel() {
     let publisher = EwdsEventPublisher::new(test_config(server.uri()));
 
     publisher
-        .publish_market_event(vec![market_event_dto()], 1_200)
+        .publish_market_event(vec![market_event_dto()], ts(1_200))
         .await
         .unwrap();
 
@@ -507,7 +508,7 @@ async fn publish_does_not_retry_or_panic_when_gateway_rejects_event() {
 
     // The send error is logged inside the task; the task itself must still finish cleanly.
     publisher
-        .publish_market_event(vec![market_event_dto()], 1_200)
+        .publish_market_event(vec![market_event_dto()], ts(1_200))
         .await
         .expect("publish task should not panic on gateway errors");
 
@@ -620,10 +621,10 @@ async fn trade_settled_publishes_trade_event() {
     assert_eq!(event["data"][0]["residualBidId"], json!(null));
 
     let stored = app.db_wrapper.trades().get_all_trades().await.unwrap();
-    assert_eq!(stored[0].creation_time, 1_100);
+    assert_eq!(stored[0].creation_time, ts(1_100));
     assert_eq!(
         event["occurredAt"],
-        json!(epoch_to_rfc3339(stored[0].creation_time))
+        json!(stored[0].creation_time.to_rfc3339())
     );
 
     stop_app(app).await;
@@ -708,7 +709,7 @@ async fn trade_settled_preserves_replayed_statuses() {
         let event = trade_settled_event();
         let expected = DbTradeSchema {
             status: status.clone(),
-            status_updated_at: updated_at,
+            status_updated_at: updated_at.map(ts),
             buyer: bytes16_to_hex(event.buyer_id),
             seller: bytes16_to_hex(event.seller_id),
             market_id: bytes16_to_hex(event.market_id),
@@ -723,10 +724,17 @@ async fn trade_settled_preserves_replayed_statuses() {
             .unwrap();
         let executed = matches!(status, TradeStatus::Executed | TradeStatus::Penalized);
         if executed {
-            app.db_wrapper.orders().update_many(
-                mongodb::bson::doc! {},
-                mongodb::bson::doc! {"$set": {"status": "executed", "status_updated_at": 1_200i64}},
-            ).await.unwrap();
+            app.db_wrapper
+                .orders()
+                .update_many(
+                    mongodb::bson::doc! {},
+                    mongodb::bson::doc! {"$set": {
+                        "status": "executed",
+                        "status_updated_at": mongodb::bson::DateTime::from_millis(1_200_000),
+                    }},
+                )
+                .await
+                .unwrap();
         }
         for (index, timestamp) in [1_100, 1_300].into_iter().enumerate() {
             handler
@@ -734,10 +742,7 @@ async fn trade_settled_preserves_replayed_statuses() {
                 .await
                 .unwrap();
             let stored = app.db_wrapper.trades().get_all_trades().await.unwrap();
-            assert_eq!(
-                serde_json::to_value(stored).unwrap(),
-                json!([expected.clone()])
-            );
+            assert_eq!(stored, vec![expected.clone()]);
             let messages = wait_for_gateway_messages(&server, (index + 1) * 2).await;
             let new_messages = &messages[index * 2..];
             let order_status = if executed {
@@ -765,7 +770,10 @@ async fn trade_settled_preserves_replayed_statuses() {
             );
             assert_eq!(
                 event_payload(message)["occurredAt"],
-                epoch_to_rfc3339(expected.status_updated_at.unwrap_or(expected.creation_time))
+                expected
+                    .status_updated_at
+                    .unwrap_or(expected.creation_time)
+                    .to_rfc3339()
             );
         }
         stop_app(app).await;
@@ -792,7 +800,7 @@ async fn trade_settled_replay_completes_a_partially_persisted_fill() {
     let trades = app.db_wrapper.trades().get_all_trades().await.unwrap();
     assert_eq!(trades.len(), 1);
     assert_eq!(trades[0].status, TradeStatus::Matched);
-    assert_eq!(trades[0].status_updated_at, Some(1_100));
+    assert_eq!(trades[0].status_updated_at, Some(ts(1_100)));
     assert_no_further_gateway_messages(&server, 0).await;
     let quiet_handler = OffchainStorageEvmHandler {
         db: app.db_wrapper.clone(),
@@ -805,7 +813,7 @@ async fn trade_settled_replay_completes_a_partially_persisted_fill() {
     // Closure can be indexed before this delayed settlement is retried.
     app.db_wrapper
         .orders()
-        .expire_market_orders(&bytes16_to_hex(event.market_id), 1_150)
+        .expire_market_orders(&bytes16_to_hex(event.market_id), ts(1_150))
         .await
         .unwrap();
     for (index, timestamp) in [1_100, 1_101].into_iter().enumerate() {
@@ -921,11 +929,11 @@ async fn replay_recovers_partial_settlement_without_rewinding_verified_orders() 
     assert_eq!(orders.len(), 2);
     assert!(orders
         .iter()
-        .all(|o| o.status == OrderStatus::Executed && o.status_updated_at == Some(1_200)));
+        .all(|o| o.status == OrderStatus::Executed && o.status_updated_at == Some(ts(1_200))));
     let trades = app.db_wrapper.trades().get_all_trades().await.unwrap();
     assert_eq!(trades.len(), 1);
     assert_eq!(trades[0].status, TradeStatus::Executed);
-    assert_eq!(trades[0].status_updated_at, Some(1_200));
+    assert_eq!(trades[0].status_updated_at, Some(ts(1_200)));
     stop_app(app).await;
 }
 
@@ -1108,7 +1116,7 @@ async fn order_status_notifications_follow_consumed_orders_and_independent_resid
             .await;
             let trades = app.db_wrapper.trades().get_all_trades().await.unwrap();
             assert_eq!(trades[0].status, TradeStatus::Executed);
-            assert_eq!(trades[0].status_updated_at, Some(1_200));
+            assert_eq!(trades[0].status_updated_at, Some(ts(1_200)));
             let residual = app
                 .db_wrapper
                 .orders()
@@ -1172,7 +1180,7 @@ async fn market_closure_notifies_only_newly_expired_orders_in_that_market() {
             .unwrap();
         app.db_wrapper
             .orders()
-            .update_order_status_by_id(&bytes16_to_hex(id).into(), status.clone(), 950)
+            .update_order_status_by_id(&bytes16_to_hex(id).into(), status.clone(), ts(950))
             .await
             .unwrap();
     }
@@ -1210,7 +1218,7 @@ async fn market_closure_notifies_only_newly_expired_orders_in_that_market() {
         );
         assert_eq!(
             stored.status_updated_at,
-            Some(if index == 0 { 1_100 } else { 950 })
+            Some(ts(if index == 0 { 1_100 } else { 950 }))
         );
     }
     assert_no_further_gateway_messages(&server, 1).await;
@@ -1278,7 +1286,7 @@ fn measurement_data(facility_id: &str, time_slot: u64, energy_kwh: f64) -> Value
 }
 
 /// The stored timeseries values as (measurement point, timestamp, value), sorted.
-async fn stored_values(app: &crate::helpers::TestApp) -> Vec<(String, String, f64)> {
+async fn stored_values(app: &crate::helpers::TestApp) -> Vec<(String, DateTime<Utc>, f64)> {
     let mut values = app
         .db_wrapper
         .timeseries()
@@ -1292,10 +1300,10 @@ async fn stored_values(app: &crate::helpers::TestApp) -> Vec<(String, String, f6
     values
 }
 
-fn value(facility_id: &str, time_slot: u64, energy_kwh: f64) -> (String, String, f64) {
+fn value(facility_id: &str, time_slot: u64, energy_kwh: f64) -> (String, DateTime<Utc>, f64) {
     (
         format!("measurement:community-1:{}", facility_id),
-        timestamp_to_string_with_padding(time_slot),
+        ts(time_slot),
         energy_kwh,
     )
 }

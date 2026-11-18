@@ -1,9 +1,10 @@
 use super::{EwdsEventType, EwdsOperation};
 use crate::db_api_schema::{
     grid_topology::EnergyCommunitySchema,
+    ids::IdMappingSchema,
     market::{MarketSchema, MarketType, MatchingAlgorithm},
     orders::{DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus},
-    profiles::MeasurementSchema,
+    profiles::{MeasurementSchema, TimeseriesSchema},
     trades::{
         ClearingResultSchema, ClearingStatus, DbTradeSchema, NoBidReason, TradeParameters,
         TradeStatus,
@@ -11,10 +12,10 @@ use crate::db_api_schema::{
 };
 
 use crate::utils::{
-    bytes16_to_hex, bytes16_to_uuid_string, epoch_to_rfc3339, opt_rfc3339_to_epoch, parse_uuid_or_hex_bytes16,
-    rfc3339_to_epoch, string_to_timestamp, timestamp_to_string_with_padding,
+    bytes16_to_hex, bytes16_to_uuid_string, opt_rfc3339_to_datetime, parse_uuid_or_hex_bytes16,
+    rfc3339_to_datetime,
 };
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::str::FromStr;
@@ -222,7 +223,7 @@ impl From<DbOrderSchema> for EwdsOrderDto {
             market_id: order.market_id,
             order_type: order_type_to_ewds(&order.order_type).to_string(),
             order_status: order_status_to_ewds(&order.status).to_string(),
-            time_slot: epoch_to_rfc3339(order.time_slot),
+            time_slot: order.time_slot.to_rfc3339(),
             quantity: order.energy_kWh,
             price_limit: order.energy_rate,
             energy_source_preference: order
@@ -235,8 +236,8 @@ impl From<DbOrderSchema> for EwdsOrderDto {
                 .as_ref()
                 .map(|a| energy_type_to_ewds(&a.energy_type).to_string()),
             created_by: order.created_by,
-            creation_time: epoch_to_rfc3339(order.creation_time),
-            updated_at: order.status_updated_at.map(epoch_to_rfc3339),
+            creation_time: order.creation_time.to_rfc3339(),
+            updated_at: order.status_updated_at.map(|time| time.to_rfc3339()),
             reject_reason: None,
             preferred_trading_partner,
             preferred_energy_rate: order
@@ -279,12 +280,12 @@ impl TryFrom<EwdsOrderDto> for DbOrderSchema {
         Ok(Self {
             order_id: order.order_id,
             status: order_status_from_ewds(order.order_status.as_str())?,
-            status_updated_at: opt_rfc3339_to_epoch(order.updated_at.as_deref())?,
+            status_updated_at: opt_rfc3339_to_datetime(order.updated_at.as_deref())?,
             order_type,
             area_uuid: order.created_by.clone(),
             market_id: order.market_id,
-            time_slot: rfc3339_to_epoch(&order.time_slot)?,
-            creation_time: rfc3339_to_epoch(&order.creation_time)?,
+            time_slot: rfc3339_to_datetime(&order.time_slot)?,
+            creation_time: rfc3339_to_datetime(&order.creation_time)?,
             energy_kWh: order.quantity,
             energy_rate: order.price_limit,
             created_by: order.created_by,
@@ -409,7 +410,7 @@ impl From<DbTradeSchema> for EwdsTradeDto {
             trade_status: trade_status_to_ewds(&trade.status).to_string(),
             trade_quantity: trade.parameters.selected_energy_kWh,
             trade_price: trade.parameters.energy_rate,
-            timestamp: epoch_to_rfc3339(trade.creation_time),
+            timestamp: trade.creation_time.to_rfc3339(),
         }
     }
 }
@@ -424,7 +425,7 @@ impl TryFrom<EwdsTradeDto> for DbTradeSchema {
             seller: trade.seller_id,
             buyer: trade.buyer_id,
             market_id: trade.market_id,
-            creation_time: rfc3339_to_epoch(&trade.timestamp)?,
+            creation_time: rfc3339_to_datetime(&trade.timestamp)?,
             offer_hash: trade.offer_id,
             bid_hash: trade.bid_id,
             residual_offer_id: trade.residual_offer_id,
@@ -522,7 +523,7 @@ impl From<ClearingResultSchema> for EwdsClearingResultDto {
             trade_quantity: s.traded_quantity,
             num_trades: s.num_trades,
             tx_hash: s.tx_hash,
-            created_at: epoch_to_rfc3339(s.clearing_time),
+            created_at: s.clearing_time.to_rfc3339(),
         }
     }
 }
@@ -544,7 +545,7 @@ impl TryFrom<EwdsClearingResultDto> for ClearingResultSchema {
             traded_quantity: d.trade_quantity,
             num_trades: d.num_trades,
             tx_hash: d.tx_hash,
-            clearing_time: rfc3339_to_epoch(&d.created_at)?,
+            clearing_time: rfc3339_to_datetime(&d.created_at)?,
         })
     }
 }
@@ -576,21 +577,16 @@ impl TryFrom<MarketSchema> for EwdsMarketDto {
     type Error = anyhow::Error;
 
     fn try_from(m: MarketSchema) -> Result<Self> {
-        let time = |name: &str, value: &str| {
-            string_to_timestamp(value)
-                .map(epoch_to_rfc3339)
-                .with_context(|| format!("{} '{}' is not an epoch timestamp", name, value))
-        };
         Ok(EwdsMarketDto {
             market_id: bytes16_to_uuid_string(parse_market_id(&m.market_id)?),
             community_id: m.community_id,
-            opening_time: time("opening_time", &m.opening_time)?,
-            closing_time: time("closing_time", &m.closing_time)?,
-            delivery_start_time: time("delivery_start_time", &m.delivery_start_time)?,
-            delivery_end_time: time("delivery_end_time", &m.delivery_end_time)?,
+            opening_time: m.opening_time.to_rfc3339(),
+            closing_time: m.closing_time.to_rfc3339(),
+            delivery_start_time: m.delivery_start_time.to_rfc3339(),
+            delivery_end_time: m.delivery_end_time.to_rfc3339(),
             market_type: m.market_type,
             matching_algorithm: m.matching_algorithm,
-            created_at: time("created_at", &m.created_at)?,
+            created_at: m.created_at.to_rfc3339(),
         })
     }
 }
@@ -599,17 +595,16 @@ impl TryFrom<EwdsMarketDto> for MarketSchema {
     type Error = anyhow::Error;
 
     fn try_from(d: EwdsMarketDto) -> Result<Self> {
-        let time = |value: &str| rfc3339_to_epoch(value).map(timestamp_to_string_with_padding);
         Ok(MarketSchema {
             market_id: bytes16_to_hex(parse_market_id(&d.market_id)?),
             community_id: d.community_id,
-            opening_time: time(&d.opening_time)?,
-            closing_time: time(&d.closing_time)?,
-            delivery_start_time: time(&d.delivery_start_time)?,
-            delivery_end_time: time(&d.delivery_end_time)?,
+            opening_time: rfc3339_to_datetime(&d.opening_time)?,
+            closing_time: rfc3339_to_datetime(&d.closing_time)?,
+            delivery_start_time: rfc3339_to_datetime(&d.delivery_start_time)?,
+            delivery_end_time: rfc3339_to_datetime(&d.delivery_end_time)?,
             market_type: d.market_type,
             matching_algorithm: d.matching_algorithm,
-            created_at: time(&d.created_at)?,
+            created_at: rfc3339_to_datetime(&d.created_at)?,
         })
     }
 }
@@ -629,8 +624,8 @@ impl From<MeasurementSchema> for EwdsMeasurementDto {
         Self {
             facility_id: schema.facility_id,
             community_uuid: schema.community_uuid,
-            time_slot: epoch_to_rfc3339(schema.time_slot),
-            creation_time: epoch_to_rfc3339(schema.creation_time),
+            time_slot: schema.time_slot.to_rfc3339(),
+            creation_time: schema.creation_time.to_rfc3339(),
             energy_kwh: schema.energy_kwh,
         }
     }
@@ -643,9 +638,70 @@ impl TryFrom<EwdsMeasurementDto> for MeasurementSchema {
         Ok(Self {
             facility_id: measurement.facility_id,
             community_uuid: measurement.community_uuid,
-            time_slot: rfc3339_to_epoch(&measurement.time_slot)?,
-            creation_time: rfc3339_to_epoch(&measurement.creation_time)?,
+            time_slot: rfc3339_to_datetime(&measurement.time_slot)?,
+            creation_time: rfc3339_to_datetime(&measurement.creation_time)?,
             energy_kwh: measurement.energy_kwh,
+        })
+    }
+}
+
+/// A timeseries value on the HTTP API; `timestamp` is RFC 3339.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct TimeseriesDto {
+    pub measurement_point: String,
+    pub timestamp: String,
+    pub value: f64,
+}
+
+impl From<TimeseriesSchema> for TimeseriesDto {
+    fn from(value: TimeseriesSchema) -> Self {
+        Self {
+            measurement_point: value.measurement_point,
+            timestamp: value.timestamp.to_rfc3339(),
+            value: value.value,
+        }
+    }
+}
+
+impl TryFrom<TimeseriesDto> for TimeseriesSchema {
+    type Error = anyhow::Error;
+
+    fn try_from(value: TimeseriesDto) -> Result<Self> {
+        Ok(Self {
+            measurement_point: value.measurement_point,
+            timestamp: rfc3339_to_datetime(&value.timestamp)?,
+            value: value.value,
+        })
+    }
+}
+
+/// An off-chain → on-chain ID mapping as returned by `POST /ids` and `ids.query`;
+/// `creation_time` is RFC 3339.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct IdMappingDto {
+    pub offchain_id: String,
+    pub onchain_id: String,
+    pub creation_time: String,
+}
+
+impl From<IdMappingSchema> for IdMappingDto {
+    fn from(mapping: IdMappingSchema) -> Self {
+        Self {
+            offchain_id: mapping.offchain_id,
+            onchain_id: mapping.onchain_id,
+            creation_time: mapping.creation_time.to_rfc3339(),
+        }
+    }
+}
+
+impl TryFrom<IdMappingDto> for IdMappingSchema {
+    type Error = anyhow::Error;
+
+    fn try_from(mapping: IdMappingDto) -> Result<Self> {
+        Ok(Self {
+            offchain_id: mapping.offchain_id,
+            onchain_id: mapping.onchain_id,
+            creation_time: rfc3339_to_datetime(&mapping.creation_time)?,
         })
     }
 }

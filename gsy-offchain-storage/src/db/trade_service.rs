@@ -1,7 +1,8 @@
 use crate::db::DatabaseWrapper;
 use anyhow::{Context, Result};
+use chrono::{DateTime, Utc};
 use futures::TryStreamExt;
-use mongodb::bson::{doc, Bson};
+use mongodb::bson::{self, doc, Bson};
 use mongodb::options::IndexOptions;
 use mongodb::{Collection, IndexModel};
 use primitives::db_api_schema::trades::{
@@ -9,10 +10,6 @@ use primitives::db_api_schema::trades::{
 };
 use std::collections::HashMap;
 use std::ops::Deref;
-
-fn timestamp_bson(value: u64) -> Result<Bson> {
-    Ok(Bson::Int64(i64::try_from(value)?))
-}
 
 /// Match details must agree when the on-chain confirmation is replayed.
 fn trade_identity_filter(trade: &DbTradeSchema) -> Result<mongodb::bson::Document> {
@@ -87,7 +84,7 @@ impl TradeService {
     pub async fn record_settlement(
         &self,
         mut trade: DbTradeSchema,
-        block_timestamp: u64,
+        block_timestamp: DateTime<Utc>,
     ) -> Result<()> {
         trade.status = TradeStatus::Matched;
         trade.status_updated_at = Some(block_timestamp);
@@ -111,12 +108,16 @@ impl TradeService {
         Ok(())
     }
 
-    pub async fn mark_penalized(&self, trade_id: &str, block_timestamp: u64) -> Result<()> {
+    pub async fn mark_penalized(
+        &self,
+        trade_id: &str,
+        block_timestamp: DateTime<Utc>,
+    ) -> Result<()> {
         self.0.update_one(
             doc! {"trade_uuid": trade_id, "status": mongodb::bson::to_bson(&TradeStatus::Matched)?},
             doc! {"$set": {
                 "status": mongodb::bson::to_bson(&TradeStatus::Penalized)?,
-                "status_updated_at": timestamp_bson(block_timestamp)?,
+                "status_updated_at": bson::DateTime::from_chrono(block_timestamp),
             }},
         )
         .await?;
@@ -130,12 +131,16 @@ impl TradeService {
     }
 
     /// Verification completes the orders but must not replace a trade's penalty verdict.
-    pub async fn mark_executed(&self, trade_id: &str, block_timestamp: u64) -> Result<()> {
+    pub async fn mark_executed(
+        &self,
+        trade_id: &str,
+        block_timestamp: DateTime<Utc>,
+    ) -> Result<()> {
         self.0.update_one(
             doc! {"trade_uuid": trade_id, "status": mongodb::bson::to_bson(&TradeStatus::Matched)?},
             doc! {"$set": {
                 "status": mongodb::bson::to_bson(&TradeStatus::Executed)?,
-                "status_updated_at": timestamp_bson(block_timestamp)?,
+                "status_updated_at": bson::DateTime::from_chrono(block_timestamp),
             }},
         )
         .await?;
@@ -180,8 +185,8 @@ impl TradeService {
     pub async fn filter_trades(
         &self,
         market_id: Option<String>,
-        start_time: Option<u64>,
-        end_time: Option<u64>,
+        start_time: Option<DateTime<Utc>>,
+        end_time: Option<DateTime<Utc>>,
     ) -> Result<Vec<DbTradeSchema>> {
         let mut filter_params = doc! {};
         if let Some(market_id) = market_id {
@@ -204,8 +209,8 @@ impl TradeService {
         }
     }
 
-    /// Trades whose status last changed within `[start_time, end_time)` (unix seconds, end
-    /// exclusive; no upper bound when `end_time` is `None`), optionally restricted to `status`.
+    /// Trades whose status last changed within `[start_time, end_time)` (end exclusive; no
+    /// upper bound when `end_time` is `None`), optionally restricted to `status`.
     ///
     /// This windows on `status_updated_at` rather than the market's delivery slot: that says
     /// when the energy flowed, while the verdict arrives later and by a variable delay.
@@ -214,13 +219,13 @@ impl TradeService {
     #[tracing::instrument(name = "Filter trades by status change time", skip(self))]
     pub async fn filter_trades_by_status_change(
         &self,
-        start_time: u64,
-        end_time: Option<u64>,
+        start_time: DateTime<Utc>,
+        end_time: Option<DateTime<Utc>>,
         status: Option<TradeStatus>,
     ) -> Result<Vec<DbTradeSchema>> {
-        let mut bounds = doc! {"$gte": timestamp_bson(start_time)?};
+        let mut bounds = doc! {"$gte": bson::DateTime::from_chrono(start_time)};
         if let Some(end_time) = end_time {
-            bounds.insert("$lt", timestamp_bson(end_time)?);
+            bounds.insert("$lt", bson::DateTime::from_chrono(end_time));
         }
         let mut filter_params = doc! {"status_updated_at": bounds};
         if let Some(status) = &status {

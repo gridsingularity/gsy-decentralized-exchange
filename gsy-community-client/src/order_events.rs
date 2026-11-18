@@ -10,7 +10,9 @@ use primitives::db_api_schema::orders::{
 use primitives::ewds::dto::{EwdsEventEnvelope, EwdsOrderDto, FacilityMarketValidationRequest};
 use primitives::ewds::{env_var, invalid_event, parse_batch, EwdsClient, EwdsEventType};
 use primitives::offchain_storage::{resolve_order_partner_ids, OffchainStorageClient};
-use primitives::utils::{epoch_to_rfc3339, parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR};
+use primitives::utils::{
+    datetime_to_epoch, epoch_to_rfc3339, parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR,
+};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -572,8 +574,8 @@ pub fn order_params(order: &DbOrderSchema) -> Result<EvmOrderParamsTuple> {
         onchain_id("orderId", &order.order_id)?,
         onchain_id("createdBy", &order.created_by)?,
         onchain_id("marketId", &order.market_id)?,
-        order.time_slot,
-        order.creation_time,
+        datetime_to_epoch(&order.time_slot)?,
+        datetime_to_epoch(&order.creation_time)?,
         (order.energy_kWh * NODE_FLOAT_SCALING_FACTOR).round() as u64,
         (order.energy_rate * NODE_FLOAT_SCALING_FACTOR).round() as u64,
         metadata.energy_source_preference,

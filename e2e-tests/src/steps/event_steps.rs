@@ -10,7 +10,9 @@ use primitives::db_api_schema::profiles::MeasurementSchema;
 use primitives::db_api_schema::trades::TradeStatus;
 use primitives::ewds::dto::{EwdsEventEnvelope, EwdsMeasurementDto, EwdsOrderDto, EwdsTradeDto};
 use primitives::ewds::{EwdsClient, EwdsClientConfig, EwdsEventType};
-use primitives::utils::{bytes16_to_hex, epoch_to_rfc3339, parse_uuid_or_hex_bytes16};
+use primitives::utils::{
+    bytes16_to_hex, epoch_to_datetime, epoch_to_rfc3339, parse_uuid_or_hex_bytes16,
+};
 use std::time::Duration;
 use tokio::{
     sync::mpsc,
@@ -309,8 +311,8 @@ async fn publish_events(world: &mut MyWorld) {
         .map(|(time_slot, energy_kwh)| MeasurementSchema {
             facility_id: facility_id.clone(),
             community_uuid: world.community_id.clone(),
-            time_slot,
-            creation_time: time_slot + 60,
+            time_slot: epoch_to_datetime(time_slot).unwrap(),
+            creation_time: epoch_to_datetime(time_slot + 60).unwrap(),
             energy_kwh,
         })
         .collect::<Vec<_>>();

@@ -1,4 +1,6 @@
-use primitives::utils::{generate_market_id, normalize_community_id, normalize_market_id};
+use primitives::utils::{
+    epoch_to_rfc3339, generate_market_id, normalize_community_id, normalize_market_id,
+};
 use primitives::MarketType;
 
 const COMMUNITY_ID: &str = "11111111-1111-4111-8111-111111111111";
@@ -112,4 +114,13 @@ fn market_id_is_the_same_for_every_form_of_a_community_id() {
 #[test]
 fn market_id_rejects_a_non_uuid_community_id() {
     assert!(generate_market_id("community1", MarketType::Spot, 1_700_000_000).is_err());
+}
+
+#[test]
+fn epoch_to_rfc3339_formats_utc_and_is_empty_out_of_range() {
+    assert_eq!(epoch_to_rfc3339(0), "1970-01-01T00:00:00+00:00");
+    assert_eq!(epoch_to_rfc3339(1_774_692_000), "2026-03-28T10:00:00+00:00");
+    // Above `i64::MAX`, the value used to wrap to a date before 1970.
+    assert_eq!(epoch_to_rfc3339(u64::MAX), "");
+    assert_eq!(epoch_to_rfc3339(i64::MAX as u64), "");
 }

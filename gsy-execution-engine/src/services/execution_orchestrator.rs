@@ -1,5 +1,6 @@
-use ::primitives::utils::timestamp_to_datetime_string;
+use ::primitives::utils::{epoch_to_datetime, epoch_to_rfc3339};
 use anyhow::{ensure, Context, Result};
+use chrono::{DateTime, TimeDelta, Utc};
 use primitives::constants::GLOBAL_CONSTANTS;
 use primitives::db_api_schema::trades::TradeStatus;
 use primitives::offchain_storage::{OffchainStorageClient, OffchainStorageTransport};
@@ -60,10 +61,12 @@ pub async fn run_execution_cycle(
 
     // 1) fetch trades/measurements
     let (start_time, end_time) = timeslot_window(timeslot, market_duration)?;
+    let window = epoch_to_datetime(start_time)?..epoch_to_datetime(end_time)?;
     let (trades, measurements) = tokio::try_join!(
-        offchain_storage_client.fetch_trades(None, Some(start_time), Some(end_time)),
+        offchain_storage_client.fetch_trades(None, Some(window.start), Some(window.end)),
         // Measurements use an inclusive end; trade queries use an exclusive end.
-        offchain_storage_client.fetch_measurements(start_time, end_time - 1),
+        offchain_storage_client
+            .fetch_measurements(window.start, window.end - TimeDelta::seconds(1)),
     )?;
     // Completed trades still contribute to facility totals and allocation weights.
     // Penalized trades may not be verified yet; the connector checks on-chain.
@@ -75,13 +78,13 @@ pub async fn run_execution_cycle(
         "Fetched {} trades, {} measurements for timeslot {}.",
         trades.len(),
         measurements.len(),
-        timestamp_to_datetime_string(timeslot),
+        epoch_to_rfc3339(timeslot),
     );
 
     if pending_count == 0 || measurements.is_empty() {
         info!(
             "No pending trades or measurements for timeslot {}. Skipping execution cycle.",
-            timestamp_to_datetime_string(timeslot),
+            epoch_to_rfc3339(timeslot),
         );
         return Ok(0);
     }
@@ -94,7 +97,7 @@ pub async fn run_execution_cycle(
     // Resolve each market once, then isolate slots even when the query window
     // spans several slots. Creation times must never select a meter reading.
     let mut market_slots = HashMap::new();
-    let mut trades_by_slot: BTreeMap<u64, Vec<_>> = BTreeMap::new();
+    let mut trades_by_slot: BTreeMap<DateTime<Utc>, Vec<_>> = BTreeMap::new();
     for trade in trades {
         let slot = if let Some(slot) = market_slots.get(&trade.market_id) {
             *slot
@@ -112,11 +115,9 @@ pub async fn run_execution_cycle(
                 market.market_id == trade.market_id,
                 "Market lookup returned a different market"
             );
-            let slot = market.delivery_start_time.parse::<u64>().with_context(|| {
-                format!("Invalid delivery start for market {}", trade.market_id)
-            })?;
+            let slot = market.delivery_start_time;
             ensure!(
-                (start_time..end_time).contains(&slot),
+                window.contains(&slot),
                 "Market delivery slot outside requested window"
             );
             market_slots.insert(trade.market_id.clone(), slot);
