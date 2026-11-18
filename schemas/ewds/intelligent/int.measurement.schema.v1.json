@@ -9,7 +9,10 @@
     "communityUuid": { "type": "string", "minLength": 1 },
     "timeSlot": { "type": "string", "format": "date-time" },
     "creationTime": { "type": "string", "format": "date-time" },
-    "energyKwh": { "type": "number" }
+    "energyKwh": {
+      "type": "number",
+      "description": "Signed energy in kWh: positive for consumption/import, negative for production/export."
+    }
   },
   "required": ["facilityId", "communityUuid", "timeSlot", "creationTime", "energyKwh"]
 }

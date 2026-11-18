@@ -1,6 +1,10 @@
-use primitives::db_api_schema::{profiles::MeasurementSchema, trades::DbTradeSchema};
+use anyhow::{ensure, Result};
+use primitives::db_api_schema::{
+    profiles::MeasurementSchema,
+    trades::{DbTradeSchema, TradeStatus},
+};
 use primitives::utils::{derive_onchain_id, NODE_FLOAT_SCALING_FACTOR};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tracing::warn;
 
 #[derive(Debug)]
@@ -18,19 +22,21 @@ pub struct DeliveryVerification {
     pub seller_penalty_cost: u64,
 }
 
-/// Computes penalties for each trade based on the measured energy.
+/// Allocates each facility's delivery-slot penalty across its trades.
 ///
-/// Measurements are mapped through facility owners to the trade's buyer/seller IDs.
-/// The delta is computed as:
-///   delta = measured_energy - traded_energy
-/// If delta > 0.0, it indicates under-trading for consumption and the buyer is penalized.
-/// If delta < 0.0, it indicates under-trading for production and the seller is penalized.
+/// Measurements are mapped from facility IDs to the trade's buyer/seller owner IDs.
+/// Compare signed measurements against purchases minus sales, across all indexed
+/// trades in this slot (including completed trades). Allocate by absolute traded
+/// quantity. Both parties need a usable reading before their trade can complete.
 ///
 /// # Arguments
 ///
 /// * `trades` - A slice of DbTradeSchema records.
 /// * `measurements` - A slice of MeasurementSchema records.
+/// * `delivery_slot` - All supplied trades must belong to this delivery slot.
 /// * `penalty_rate` - The penalty rate as a f64 (e.g., 0.10 for 10%).
+/// * `penalty_tolerance_percent` - Allowed deviation, inclusive (e.g., 5.0 for 5%).
+///   Beyond this band, the penalty rate applies to the full deviation.
 ///
 /// # Returns
 ///
@@ -39,15 +45,23 @@ pub fn compute_penalties(
     trades: &[DbTradeSchema],
     measurements: &[MeasurementSchema],
     facility_owner_mapping: &HashMap<String, String>,
+    delivery_slot: u64,
     penalty_rate: f64,
-) -> Vec<Penalty> {
-    let verifications =
-        compute_delivery_verifications(trades, measurements, facility_owner_mapping, penalty_rate);
+    penalty_tolerance_percent: f64,
+) -> Result<Vec<Penalty>> {
+    let verifications = compute_delivery_verifications(
+        trades,
+        measurements,
+        facility_owner_mapping,
+        delivery_slot,
+        penalty_rate,
+        penalty_tolerance_percent,
+    )?;
     let trades_by_id: HashMap<_, _> = trades
         .iter()
         .map(|trade| (trade.trade_uuid.as_str(), trade))
         .collect();
-    verifications
+    Ok(verifications
         .into_iter()
         .flat_map(|verification| {
             let trade = trades_by_id[verification.trade_uuid.as_str()];
@@ -65,51 +79,174 @@ pub fn compute_penalties(
             })
             .collect::<Vec<_>>()
         })
-        .collect()
+        .collect())
 }
 
-/// A missing measurement is not a successful zero-penalty verification.
-/// Retains the existing buyer-first/seller-fallback policy pending a separate policy review.
+#[derive(Default)]
+struct FacilityTrades<'a> {
+    bought: u128,
+    sold: u128,
+    quantities: Vec<(&'a str, u64)>,
+}
+
+/// Calculate one slot only; the caller resolves each trade's slot from its market.
+/// Completed trades remain in the baseline, but receive no new verdict. Missing,
+/// conflicting or non-finite readings on either side leave a trade pending.
 pub fn compute_delivery_verifications(
     trades: &[DbTradeSchema],
     measurements: &[MeasurementSchema],
     facility_owner_mapping: &HashMap<String, String>,
+    delivery_slot: u64,
     penalty_rate: f64,
-) -> Vec<DeliveryVerification> {
-    let mut verifications = Vec::new();
+    penalty_tolerance_percent: f64,
+) -> Result<Vec<DeliveryVerification>> {
+    ensure!(
+        penalty_rate.is_finite() && penalty_rate >= 0.0,
+        "Invalid penalty rate"
+    );
+    ensure!(
+        penalty_tolerance_percent.is_finite() && (0.0..=100.0).contains(&penalty_tolerance_percent),
+        "Invalid penalty tolerance percentage"
+    );
+    let mut facilities: HashMap<&str, FacilityTrades<'_>> = HashMap::new();
+    let mut trade_ids = HashSet::new();
+    for trade in trades {
+        ensure!(
+            trade_ids.insert(&trade.trade_uuid),
+            "Duplicate trade {}",
+            trade.trade_uuid
+        );
+        ensure!(
+            trade.buyer != trade.seller,
+            "Self-trade {}",
+            trade.trade_uuid
+        );
+        let energy = (trade.parameters.selected_energy_kWh * NODE_FLOAT_SCALING_FACTOR).round();
+        ensure!(
+            energy.is_finite() && energy >= 1.0 && energy < u64::MAX as f64,
+            "Invalid traded energy for {}",
+            trade.trade_uuid
+        );
+        let energy = energy as u64;
+        let buyer = facilities.entry(&trade.buyer).or_default();
+        buyer.bought += u128::from(energy);
+        buyer.quantities.push((&trade.trade_uuid, energy));
+        let seller = facilities.entry(&trade.seller).or_default();
+        seller.sold += u128::from(energy);
+        seller.quantities.push((&trade.trade_uuid, energy));
+    }
 
-    // Measurements identify facilities; trades identify their owners (one facility per owner).
-    let mut measurement_map: HashMap<String, f64> = HashMap::new();
-    for meas in measurements {
-        if !meas.energy_kwh.is_finite() {
-            continue;
-        }
+    // This deployment guarantees one facility per owner; trade parties identify owners.
+    let mut measurement_map: HashMap<String, Option<f64>> = HashMap::new();
+    for meas in measurements
+        .iter()
+        .filter(|meas| meas.time_slot == delivery_slot)
+    {
         let Some(owner_id) = facility_owner_mapping.get(&meas.facility_id) else {
-            warn!("No owner mapping for facility_id={}", meas.facility_id);
+            warn!(
+                "No owner mapping supplied for facility_id={}",
+                meas.facility_id
+            );
             continue;
         };
-        measurement_map.insert(derive_onchain_id(owner_id), meas.energy_kwh);
+        let energy = meas.energy_kwh.is_finite().then_some(meas.energy_kwh);
+        measurement_map
+            .entry(derive_onchain_id(owner_id))
+            .and_modify(|previous| {
+                if *previous != energy {
+                    *previous = None;
+                }
+            })
+            .or_insert(energy);
     }
-    // TODO(DD-456): reconcile residual fills against the slot total; see DD-455's allocation.
-    for trade in trades {
-        if let Some(&measured_energy) = measurement_map
-            .get(&trade.buyer)
-            .or_else(|| measurement_map.get(&trade.seller))
-        {
-            let traded_energy = trade.parameters.selected_energy_kWh;
 
-            // Compute delta = measured_energy - traded_energy.
-            let delta = measured_energy - traded_energy;
-
-            let penalty_cost =
-                (delta.abs() * penalty_rate * NODE_FLOAT_SCALING_FACTOR).round() as u64;
-            verifications.push(DeliveryVerification {
-                trade_uuid: trade.trade_uuid.clone(),
-                buyer_penalty_cost: if delta > 0.0 { penalty_cost } else { 0 },
-                seller_penalty_cost: if delta < 0.0 { penalty_cost } else { 0 },
-            });
+    let mut allocations = HashMap::new();
+    for (facility, totals) in facilities {
+        let Some(measured) = measurement_map.get(facility) else {
+            continue;
+        };
+        let Some(measured) = measured else {
+            warn!(
+                "Invalid or conflicting measurements for owner {} in slot {}",
+                facility, delivery_slot
+            );
+            continue;
+        };
+        let net = if totals.bought >= totals.sold {
+            (totals.bought - totals.sold) as f64
+        } else {
+            -((totals.sold - totals.bought) as f64)
+        } / NODE_FLOAT_SCALING_FACTOR;
+        let cost = penalty_cost(net, *measured, penalty_rate, penalty_tolerance_percent)?;
+        for (trade_id, cost) in allocate_penalty(cost, &totals.quantities) {
+            allocations.insert((facility, trade_id), cost);
         }
     }
 
-    verifications
+    let mut verifications = Vec::new();
+    // Completion is atomic for both parties, so neither side can be a fallback.
+    for trade in trades
+        .iter()
+        .filter(|trade| matches!(trade.status, TradeStatus::Matched | TradeStatus::Penalized))
+    {
+        let (Some(&buyer_penalty_cost), Some(&seller_penalty_cost)) = (
+            allocations.get(&(trade.buyer.as_str(), trade.trade_uuid.as_str())),
+            allocations.get(&(trade.seller.as_str(), trade.trade_uuid.as_str())),
+        ) else {
+            continue;
+        };
+        verifications.push(DeliveryVerification {
+            trade_uuid: trade.trade_uuid.clone(),
+            buyer_penalty_cost,
+            seller_penalty_cost,
+        });
+    }
+
+    Ok(verifications)
+}
+
+/// Largest-remainder allocation in on-chain units preserves the total exactly.
+/// Trade ID breaks remainder ties so query order cannot change a retry's amounts.
+fn allocate_penalty<'a>(cost: u64, quantities: &[(&'a str, u64)]) -> Vec<(&'a str, u64)> {
+    let total: u128 = quantities
+        .iter()
+        .map(|(_, energy)| u128::from(*energy))
+        .sum();
+    let mut shares = quantities
+        .iter()
+        .map(|(id, energy)| {
+            let weighted = u128::from(cost) * u128::from(*energy);
+            (*id, (weighted / total) as u64, weighted % total)
+        })
+        .collect::<Vec<_>>();
+    let remainder = cost - shares.iter().map(|(_, share, _)| share).sum::<u64>();
+    shares.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.cmp(b.0)));
+    for (_, share, _) in shares.iter_mut().take(remainder as usize) {
+        *share += 1;
+    }
+    shares
+        .into_iter()
+        .map(|(id, share, _)| (id, share))
+        .collect()
+}
+
+fn penalty_cost(
+    traded_energy: f64,
+    measured_energy: f64,
+    rate: f64,
+    tolerance_percent: f64,
+) -> Result<u64> {
+    let tolerance = traded_energy.abs() * tolerance_percent / 100.0;
+    // Compare energy bounds to avoid subtraction round-off at the boundary.
+    if (traded_energy - tolerance..=traded_energy + tolerance).contains(&measured_energy) {
+        Ok(0)
+    } else {
+        let cost =
+            ((measured_energy - traded_energy).abs() * rate * NODE_FLOAT_SCALING_FACTOR).round();
+        ensure!(
+            cost.is_finite() && cost < u64::MAX as f64,
+            "Penalty exceeds on-chain range"
+        );
+        Ok(cost as u64)
+    }
 }
