@@ -11,7 +11,9 @@ use primitives::ewds::dto::EwdsOrderDto;
 use primitives::ewds::{EwdsClient, EwdsOperation};
 use primitives::matching::matching_block_interval;
 use primitives::offchain_storage::{resolve_order_partner_ids, OffchainStorageClient};
-use primitives::utils::{bytes16_to_hex, parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR};
+use primitives::utils::{
+    bytes16_to_hex, datetime_to_epoch, parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR,
+};
 use primitives::MatchingAlgorithm;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::env;
@@ -489,6 +491,8 @@ fn convert_db_order_to_canonical(order: &DbOrderSchema) -> Result<Order> {
     let market_id = normalize_bytes16_field("market_id", &order.market_id)?;
     let area_uuid = normalize_bytes16_field("area_uuid", &order.area_uuid)?;
     let created_by = normalize_bytes16_field("created_by", &order.created_by)?;
+    let time_slot = datetime_to_epoch(&order.time_slot)?;
+    let creation_time = datetime_to_epoch(&order.creation_time)?;
     Ok(match order.order_type {
         OrderEnum::Bid => Order {
             created_by,
@@ -497,8 +501,8 @@ fn convert_db_order_to_canonical(order: &DbOrderSchema) -> Result<Order> {
             status: order.status.clone(),
             area_uuid,
             market_id,
-            time_slot: order.time_slot,
-            creation_time: order.creation_time,
+            time_slot,
+            creation_time,
             energy: (order.energy_kWh * NODE_FLOAT_SCALING_FACTOR).round() as u64,
             energy_rate: (order.energy_rate * NODE_FLOAT_SCALING_FACTOR).round() as u64,
             requirements: convert_requirements(order.requirements.as_ref())?,
@@ -511,8 +515,8 @@ fn convert_db_order_to_canonical(order: &DbOrderSchema) -> Result<Order> {
             created_by,
             area_uuid,
             market_id,
-            time_slot: order.time_slot,
-            creation_time: order.creation_time,
+            time_slot,
+            creation_time,
             energy: (order.energy_kWh * NODE_FLOAT_SCALING_FACTOR).round() as u64,
             energy_rate: (order.energy_rate * NODE_FLOAT_SCALING_FACTOR).round() as u64,
             requirements: convert_requirements(order.requirements.as_ref())?,
@@ -538,8 +542,8 @@ fn to_evm_order_data(order: &DbOrderSchema, expected_type: OrderEnum) -> Result<
         order_id: parse_bytes16_field("order_id", order.order_id.as_str())?,
         created_by: parse_bytes16_field("created_by", order.created_by.as_str())?,
         market_id: parse_bytes16_field("market_id", order.market_id.as_str())?,
-        time_slot: order.time_slot,
-        creation_time: order.creation_time,
+        time_slot: datetime_to_epoch(&order.time_slot)?,
+        creation_time: datetime_to_epoch(&order.creation_time)?,
         energy: (order.energy_kWh * NODE_FLOAT_SCALING_FACTOR).round() as u64,
         energy_rate: (order.energy_rate * NODE_FLOAT_SCALING_FACTOR).round() as u64,
         energy_source_preference: metadata.energy_source_preference,

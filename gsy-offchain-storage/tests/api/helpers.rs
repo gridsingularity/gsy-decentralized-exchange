@@ -53,3 +53,8 @@ pub async fn stop_app(app: TestApp) {
         .await
         .unwrap();
 }
+
+/// A whole-second UTC time, as stored for chain timestamps.
+pub fn ts(epoch_secs: u64) -> chrono::DateTime<chrono::Utc> {
+    primitives::utils::epoch_to_datetime(epoch_secs).unwrap()
+}

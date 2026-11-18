@@ -1,4 +1,4 @@
-use crate::helpers::{init_app, stop_app};
+use crate::helpers::{init_app, stop_app, ts};
 use gsy_offchain_storage::db::DatabaseWrapper;
 use primitives::certificates::{DeliveryScope, LocalOriginRecord};
 use primitives::db_api_schema::grid_topology::{
@@ -9,9 +9,7 @@ use primitives::db_api_schema::profiles::{
     FlowDirection, MeasurementPointSchema, MeasurementPointType, TimeseriesSchema,
 };
 use primitives::db_api_schema::trades::{DbTradeSchema, TradeParameters, TradeStatus};
-use primitives::utils::{
-    bytes16_to_hex, create_encrypted_bytes16_from_string, timestamp_to_string_with_padding,
-};
+use primitives::utils::{bytes16_to_hex, create_encrypted_bytes16_from_string};
 
 pub const SLOT: u64 = 1_778_754_600; // 2026-05-14T10:30:00Z
 /// When the seeded trades reached `Executed` (their `status_updated_at`).
@@ -40,7 +38,7 @@ pub fn trade(
         seller: hash(SELLER_OWNER),
         buyer: hash(BUYER_OWNER),
         market_id: MARKET.to_string(),
-        creation_time: SLOT - 600,
+        creation_time: ts(SLOT - 600),
         offer_hash: format!("{trade_uuid}-offer"),
         bid_hash: format!("{trade_uuid}-bid"),
         residual_offer_id: None,
@@ -49,7 +47,7 @@ pub fn trade(
             selected_energy_kWh: 2.0,
             energy_rate: 0.2,
         },
-        status_updated_at,
+        status_updated_at: status_updated_at.map(ts),
     }
 }
 
@@ -60,13 +58,13 @@ pub async fn seed_topology(db: &DatabaseWrapper, export_kwh: f64) {
         .upsert(MarketSchema {
             market_id: MARKET.to_string(),
             community_id: COMMUNITY.to_string(),
-            opening_time: timestamp_to_string_with_padding(SLOT - 900),
-            closing_time: timestamp_to_string_with_padding(SLOT),
-            delivery_start_time: timestamp_to_string_with_padding(SLOT),
-            delivery_end_time: timestamp_to_string_with_padding(SLOT + 900),
+            opening_time: ts(SLOT - 900),
+            closing_time: ts(SLOT),
+            delivery_start_time: ts(SLOT),
+            delivery_end_time: ts(SLOT + 900),
             market_type: MarketType::Spot,
             matching_algorithm: MatchingAlgorithm::PayAsBid,
-            created_at: timestamp_to_string_with_padding(SLOT - 900),
+            created_at: ts(SLOT - 900),
         })
         .await
         .unwrap();
@@ -133,7 +131,7 @@ pub async fn seed_topology(db: &DatabaseWrapper, export_kwh: f64) {
     db.timeseries()
         .insert_values(vec![TimeseriesSchema {
             measurement_point: EXPORT_POINT.to_string(),
-            timestamp: timestamp_to_string_with_padding(SLOT),
+            timestamp: ts(SLOT),
             value: export_kwh,
         }])
         .await
@@ -180,7 +178,7 @@ async fn filter_trades_by_status_change_is_start_inclusive_end_exclusive() {
     // [100, 200), any status.
     let all = db
         .trades()
-        .filter_trades_by_status_change(100, Some(200), None)
+        .filter_trades_by_status_change(ts(100), Some(ts(200)), None)
         .await
         .unwrap();
     assert_eq!(sorted_uuids(all), vec!["t-100", "t-150"]);
@@ -188,7 +186,7 @@ async fn filter_trades_by_status_change_is_start_inclusive_end_exclusive() {
     // Restricted to Executed.
     let executed = db
         .trades()
-        .filter_trades_by_status_change(100, Some(200), Some(TradeStatus::Executed))
+        .filter_trades_by_status_change(ts(100), Some(ts(200)), Some(TradeStatus::Executed))
         .await
         .unwrap();
     assert_eq!(sorted_uuids(executed), vec!["t-100"]);
@@ -196,7 +194,7 @@ async fn filter_trades_by_status_change_is_start_inclusive_end_exclusive() {
     // The next back-to-back window picks up the boundary trade, and only once.
     let next = db
         .trades()
-        .filter_trades_by_status_change(200, Some(300), None)
+        .filter_trades_by_status_change(ts(200), Some(ts(300)), None)
         .await
         .unwrap();
     assert_eq!(sorted_uuids(next), vec!["t-200", "t-201"]);
@@ -204,7 +202,7 @@ async fn filter_trades_by_status_change_is_start_inclusive_end_exclusive() {
     // Open-ended upper bound.
     let open = db
         .trades()
-        .filter_trades_by_status_change(150, None, None)
+        .filter_trades_by_status_change(ts(150), None, None)
         .await
         .unwrap();
     assert_eq!(sorted_uuids(open), vec!["t-150", "t-200", "t-201"]);
@@ -228,14 +226,18 @@ async fn filter_trades_by_status_change_excludes_trades_without_a_verdict() {
     // Even the widest window never matches a trade without `status_updated_at`.
     let all = db
         .trades()
-        .filter_trades_by_status_change(0, None, None)
+        .filter_trades_by_status_change(ts(0), None, None)
         .await
         .unwrap();
     assert_eq!(sorted_uuids(all), vec!["t-verdict"]);
 
     let executed = db
         .trades()
-        .filter_trades_by_status_change(0, Some(u64::MAX >> 1), Some(TradeStatus::Executed))
+        .filter_trades_by_status_change(
+            ts(0),
+            Some(chrono::DateTime::<chrono::Utc>::MAX_UTC),
+            Some(TradeStatus::Executed),
+        )
         .await
         .unwrap();
     assert_eq!(sorted_uuids(executed), vec!["t-verdict"]);
@@ -373,7 +375,7 @@ async fn rest_allocation_counts_executed_sales_outside_the_window() {
         TradeStatus::Executed,
         Some(VERDICT_AT - 3_600),
     );
-    earlier.creation_time = SLOT - 900;
+    earlier.creation_time = ts(SLOT - 900);
     let later = trade("goo-later", TradeStatus::Executed, Some(VERDICT_AT));
     app.db_wrapper
         .trades()

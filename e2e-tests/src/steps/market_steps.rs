@@ -10,7 +10,7 @@ use primitives::db_api_schema::profiles::ForecastSchema;
 use primitives::ewds::dto::{EwdsCommunityDto, EwdsEventEnvelope};
 use primitives::ewds::{EwdsClient, EwdsEventType, EwdsOperation};
 use primitives::offchain_storage::OffchainStorageClient;
-use primitives::utils::{bytes16_to_hex, epoch_to_rfc3339, generate_market_id};
+use primitives::utils::{bytes16_to_hex, epoch_to_datetime, epoch_to_rfc3339, generate_market_id};
 use primitives::{MarketType, MatchingAlgorithm};
 use serde_json::json;
 use std::env;
@@ -76,8 +76,8 @@ async fn submit_market_forecasts_three_users(
         forecasts.push(ForecastSchema {
             facility_id: facility.facility_id.clone(),
             community_uuid: world.community_id.clone(),
-            time_slot: world.target_delivery_time,
-            creation_time: 1,
+            time_slot: epoch_to_datetime(world.target_delivery_time).unwrap(),
+            creation_time: epoch_to_datetime(1).unwrap(),
             energy_kwh: energy_value,
             confidence: 1.0,
         });

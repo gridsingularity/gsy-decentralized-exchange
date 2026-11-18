@@ -1,15 +1,17 @@
-use crate::helpers::{init_app, stop_app};
+use crate::helpers::{init_app, stop_app, ts};
+use futures::TryStreamExt;
+use mongodb::bson::{Bson, Document, doc};
 use primitives::db_api_schema::profiles::{
     FlowDirection, ForecastSchema, MeasurementPointSchema, MeasurementPointType, MeasurementSchema,
-    TimeseriesSchema,
 };
+use primitives::ewds::dto::TimeseriesDto;
 
 fn make_measurement(facility_id: &str, time_slot: u64, energy_kwh: f64) -> MeasurementSchema {
     MeasurementSchema {
         facility_id: facility_id.to_string(),
         community_uuid: "community1".to_string(),
-        time_slot,
-        creation_time: time_slot - 1,
+        time_slot: ts(time_slot),
+        creation_time: ts(time_slot - 1),
         energy_kwh,
     }
 }
@@ -18,8 +20,8 @@ fn make_forecast(facility_id: &str, time_slot: u64, energy_kwh: f64) -> Forecast
     ForecastSchema {
         facility_id: facility_id.to_string(),
         community_uuid: "community1".to_string(),
-        time_slot,
-        creation_time: time_slot - 100,
+        time_slot: ts(time_slot),
+        creation_time: ts(time_slot - 100),
         energy_kwh,
         confidence: 0.9,
     }
@@ -94,7 +96,7 @@ async fn post_and_filter_measurements() {
         .await
         .unwrap();
     assert_eq!(200, resp.status().as_u16());
-    let values: Vec<TimeseriesSchema> = resp.json().await.unwrap();
+    let values: Vec<TimeseriesDto> = resp.json().await.unwrap();
     assert_eq!(values.len(), 1);
     assert_eq!(values[0].value, 4.2);
     stop_app(app).await;
@@ -201,14 +203,14 @@ async fn post_and_filter_timeseries() {
     let client = reqwest::Client::new();
 
     let values = vec![
-        TimeseriesSchema {
+        TimeseriesDto {
             measurement_point: "MSMT-1".to_string(),
             timestamp: "2026-03-27T10:00:30Z".to_string(),
             value: 0.23,
         },
-        TimeseriesSchema {
+        TimeseriesDto {
             measurement_point: "MSMT-1".to_string(),
-            timestamp: "2026-03-27T10:15:30Z".to_string(),
+            timestamp: "2026-03-27T12:15:30+02:00".to_string(),
             value: 0.45,
         },
     ];
@@ -227,7 +229,7 @@ async fn post_and_filter_timeseries() {
         .await
         .unwrap();
     assert_eq!(200, resp.status().as_u16());
-    let returned: Vec<TimeseriesSchema> = resp.json().await.unwrap();
+    let returned: Vec<TimeseriesDto> = resp.json().await.unwrap();
     assert_eq!(returned.len(), 2);
 
     let resp = client
@@ -239,8 +241,107 @@ async fn post_and_filter_timeseries() {
         .await
         .unwrap();
     assert_eq!(200, resp.status().as_u16());
-    let after_window: Vec<TimeseriesSchema> = resp.json().await.unwrap();
+    let after_window: Vec<TimeseriesDto> = resp.json().await.unwrap();
     assert_eq!(after_window.len(), 1);
-    assert_eq!(after_window[0].timestamp, "2026-03-27T10:15:30Z");
+    // Any offset is accepted on input; the output is UTC.
+    assert_eq!(after_window[0].timestamp, "2026-03-27T10:15:30+00:00");
+
+    let stored = app
+        .db_wrapper
+        .collection::<Document>("timeseries")
+        .find(doc! {"measurement_point": "MSMT-1"})
+        .await
+        .unwrap();
+    let stored: Vec<Document> = stored.try_collect().await.unwrap();
+    assert_eq!(stored.len(), 2);
+    assert!(
+        stored
+            .iter()
+            .all(|value| matches!(value.get("timestamp"), Some(Bson::DateTime(_))))
+    );
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn timeseries_rejects_non_rfc3339_times() {
+    let app = init_app().await;
+    let client = reqwest::Client::new();
+
+    // The padded epoch strings the storage used to keep are rejected on input.
+    let resp = client
+        .post(format!("{}/timeseries", app.address))
+        .json(&vec![TimeseriesDto {
+            measurement_point: "MSMT-1".to_string(),
+            timestamp: "00000000001774605630".to_string(),
+            value: 0.23,
+        }])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(400, resp.status().as_u16());
+
+    let resp = client
+        .get(format!(
+            "{}/timeseries?measurement_point=MSMT-1&start_time=00000000001774605630",
+            app.address
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(400, resp.status().as_u16());
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn measurements_and_forecasts_carry_rfc3339_times() {
+    let app = init_app().await;
+    let client = reqwest::Client::new();
+    let measurement = |time_slot: serde_json::Value| {
+        serde_json::json!({
+            "facility_id": "area-1",
+            "community_uuid": "community1",
+            "time_slot": time_slot,
+            "creation_time": time_slot,
+            "energy_kwh": 4.2,
+            "confidence": 0.9,
+        })
+    };
+
+    // Epoch seconds, the previous form, are rejected on input.
+    for path in ["measurements", "forecasts"] {
+        let resp = client
+            .post(format!("{}/{path}", app.address))
+            .json(&vec![measurement(1_900_000_000.into())])
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(400, resp.status().as_u16(), "{path}");
+    }
+
+    // Any offset is accepted on input; the output is UTC.
+    for path in ["measurements", "forecasts"] {
+        let resp = client
+            .post(format!("{}/{path}", app.address))
+            .json(&vec![measurement("2030-03-17T19:46:40+02:00".into())])
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(200, resp.status().as_u16(), "{path}");
+
+        let returned: Vec<serde_json::Value> = client
+            .get(format!("{}/{path}?facility_id=area-1", app.address))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(returned.len(), 1, "{path}");
+        assert_eq!(returned[0]["time_slot"], "2030-03-17T17:46:40Z", "{path}");
+        assert_eq!(
+            returned[0]["creation_time"], "2030-03-17T17:46:40Z",
+            "{path}"
+        );
+    }
     stop_app(app).await;
 }

@@ -1,6 +1,7 @@
 use crate::db::DbRef;
 use actix_web::web::Query;
 use actix_web::{HttpResponse, Responder};
+use primitives::ewds::dto::IdMappingDto;
 use serde::Deserialize;
 
 #[derive(Deserialize, Debug)]
@@ -16,7 +17,7 @@ pub async fn get_or_create_ids(db: DbRef, query_params: Query<IdsParams>) -> imp
         .get_or_create(query_params.offchain_id.clone())
         .await
     {
-        Ok(id) => HttpResponse::Ok().json(id),
+        Ok(id) => HttpResponse::Ok().json(IdMappingDto::from(id)),
         Err(e) => {
             tracing::error!("Failed to execute query: {:?}", e);
             HttpResponse::InternalServerError().finish()

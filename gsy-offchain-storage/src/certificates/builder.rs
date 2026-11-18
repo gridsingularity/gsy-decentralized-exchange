@@ -47,7 +47,7 @@ use primitives::db_api_schema::profiles::{
     FlowDirection as PointDirection, MeasurementPointSchema, MeasurementPointType, TimeseriesSchema,
 };
 use primitives::db_api_schema::trades::{DbTradeSchema, TradeStatus};
-use primitives::utils::string_to_timestamp;
+use primitives::utils::datetime_to_epoch;
 
 use crate::certificates::config::PILOT;
 
@@ -63,13 +63,13 @@ pub struct CertificateInputs<'a> {
     pub markets: &'a [MarketSchema],
 }
 
-/// `market_id` → delivery slot (`delivery_start_time`, unix seconds). Markets with an
-/// unparsable `delivery_start_time` are left out, so their trades are skipped.
+/// `market_id` → delivery slot (`delivery_start_time`, unix seconds). Markets whose
+/// `delivery_start_time` is before 1970 are left out, so their trades are skipped.
 fn delivery_slots<'a>(markets: &'a [MarketSchema]) -> HashMap<&'a str, u64> {
     markets
         .iter()
         .filter_map(|market| {
-            let slot = string_to_timestamp(market.delivery_start_time.trim()).ok()?;
+            let slot = datetime_to_epoch(&market.delivery_start_time).ok()?;
             Some((market.market_id.as_str(), slot))
         })
         .collect()
@@ -178,7 +178,7 @@ fn split_flow(direction: &PointDirection, value: f64) -> (f64, f64) {
 }
 
 /// Keyed by `(facility_id, time_slot)`. Only `Measurement` points whose `asset_name`
-/// resolves to a facility, and only timeseries values with a numeric timestamp, count.
+/// resolves to a facility, and only timeseries values at or after 1970, count.
 fn map_measurements<'a>(
     topology: &Topology<'a>,
     inputs: &CertificateInputs<'a>,
@@ -199,7 +199,7 @@ fn map_measurements<'a>(
         let Some(&(point, facility)) = points.get(value.measurement_point.as_str()) else {
             continue;
         };
-        let Ok(timestamp) = value.timestamp.trim().parse::<u64>() else {
+        let Ok(timestamp) = datetime_to_epoch(&value.timestamp) else {
             continue;
         };
         // (measurement_point, timestamp) is unique in storage; guard anyway so a duplicate

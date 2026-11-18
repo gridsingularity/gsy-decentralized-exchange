@@ -10,7 +10,6 @@ use mongodb::{Collection, IndexModel};
 use primitives::db_api_schema::ids::IdMappingSchema;
 use primitives::utils::derive_onchain_id;
 use std::ops::Deref;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 pub async fn init_ids(db: &DatabaseWrapper) -> Result<()> {
     let controller = db.ids();
@@ -71,9 +70,7 @@ impl IdService {
                 doc! {"offchain_id": &offchain_id},
                 doc! {"$setOnInsert": {
                 "onchain_id": derive_onchain_id(&offchain_id),
-                "creation_time": SystemTime::now()
-                    .duration_since(UNIX_EPOCH)?
-                    .as_secs() as i64
+                "creation_time": mongodb::bson::DateTime::now(),
                 }},
             )
             .upsert(true)

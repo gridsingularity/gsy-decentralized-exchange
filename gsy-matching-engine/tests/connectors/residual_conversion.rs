@@ -1,5 +1,6 @@
 use super::*;
 use primitives::db_api_schema::orders::{DbAttributes, DbRequirements, EnergyType};
+use primitives::utils::epoch_to_datetime;
 
 fn db_order(id: u8, side: OrderEnum, energy: f64) -> DbOrderSchema {
     let id = bytes16_to_hex([id; 16]);
@@ -8,8 +9,8 @@ fn db_order(id: u8, side: OrderEnum, energy: f64) -> DbOrderSchema {
         created_by: id.clone(),
         area_uuid: id,
         market_id: bytes16_to_hex([99; 16]),
-        time_slot: 100,
-        creation_time: 90,
+        time_slot: epoch_to_datetime(100).unwrap(),
+        creation_time: epoch_to_datetime(90).unwrap(),
         energy_kWh: energy,
         energy_rate: if side == OrderEnum::Bid { 20.0 } else { 10.0 },
         order_type: side,

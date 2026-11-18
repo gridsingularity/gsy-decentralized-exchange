@@ -2,6 +2,7 @@ use crate::db::measurements_service::insert_measurements;
 use crate::db::DatabaseWrapper;
 use crate::ewds_handler::{send_message_with_fqcn, EwdsHandlerConfig};
 use anyhow::{anyhow, Context, Result};
+use chrono::{DateTime, Utc};
 use primitives::db_api_schema::{
     grid_topology::{EnergyCommunitySchema, FacilitySchema, SiteSchema},
     orders::DbOrderSchema,
@@ -13,7 +14,6 @@ use primitives::ewds::dto::{
     EwdsOrderDto, EwdsTradeDto,
 };
 use primitives::ewds::{invalid_event, parse_batch, EwdsClient, EwdsClientConfig, EwdsEventType};
-use primitives::utils::epoch_to_rfc3339;
 use reqwest::Client;
 use serde::Serialize;
 use serde_json::Value;
@@ -129,7 +129,7 @@ impl EwdsEventPublisher {
     pub fn publish_market_event(
         &self,
         markets: Vec<EwdsMarketDto>,
-        occurred_at: u64,
+        occurred_at: DateTime<Utc>,
     ) -> JoinHandle<()> {
         self.spawn_event(EwdsEventType::Market, occurred_at, markets)
     }
@@ -137,7 +137,7 @@ impl EwdsEventPublisher {
     fn spawn_event<T: Serialize + Send + 'static>(
         &self,
         event_type: EwdsEventType,
-        occurred_at: u64,
+        occurred_at: DateTime<Utc>,
         data: T,
     ) -> JoinHandle<()> {
         let event_id = Uuid::new_v4().to_string();
@@ -159,13 +159,13 @@ impl EwdsEventPublisher {
         &self,
         event_type: EwdsEventType,
         event_id: String,
-        occurred_at: u64,
+        occurred_at: DateTime<Utc>,
         data: T,
     ) -> Result<()> {
         let envelope = EwdsEventEnvelope {
             event_id: event_id.clone(),
             event_type,
-            occurred_at: epoch_to_rfc3339(occurred_at),
+            occurred_at: occurred_at.to_rfc3339(),
             data,
         };
 

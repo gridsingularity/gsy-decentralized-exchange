@@ -1,4 +1,4 @@
-use crate::helpers::{init_app, stop_app};
+use crate::helpers::{init_app, stop_app, ts};
 use anyhow::{Context, Result};
 use ethers::{
     abi::{Abi, Tokenize},
@@ -231,8 +231,8 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
         measurements.push(MeasurementSchema {
             facility_id: facility,
             community_uuid: "community".into(),
-            time_slot: slot,
-            creation_time: slot,
+            time_slot: ts(slot),
+            creation_time: ts(slot),
             energy_kwh: [1.0, 1.0, 1.2][index as usize],
         });
         app.db_wrapper
@@ -247,8 +247,8 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
         seller_measurements.push(MeasurementSchema {
             facility_id: seller_facility,
             community_uuid: "community".into(),
-            time_slot: slot,
-            creation_time: slot,
+            time_slot: ts(slot),
+            creation_time: ts(slot),
             energy_kwh: [-1.0, -0.8, -1.0][index as usize],
         });
     }
@@ -497,7 +497,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
                 .timestamp
                 .as_u64()
         };
-        assert_eq!(trade.status_updated_at, Some(verdict_timestamp));
+        assert_eq!(trade.status_updated_at, Some(ts(verdict_timestamp)));
         for id in [[index + 1; 16], [index + 11; 16]] {
             assert_eq!(registry.method::<_, u8>("getStatus", id)?.call().await?, 2);
             let order = app
@@ -507,7 +507,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
                 .await?
                 .unwrap();
             assert_eq!(order.status, OrderStatus::Executed);
-            assert_eq!(order.status_updated_at, Some(timestamp));
+            assert_eq!(order.status_updated_at, Some(ts(timestamp)));
         }
         for id in [[index + 31; 16], [index + 41; 16]] {
             assert_eq!(registry.method::<_, u8>("getStatus", id)?.call().await?, 1);
@@ -550,7 +550,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
     assert_eq!(
         app.db_wrapper
             .trades()
-            .filter_trades_by_status_change(0, None, Some(TradeStatus::Executed))
+            .filter_trades_by_status_change(ts(0), None, Some(TradeStatus::Executed))
             .await?
             .len(),
         1
@@ -558,7 +558,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
     assert_eq!(
         app.db_wrapper
             .trades()
-            .filter_trades_by_status_change(0, None, Some(TradeStatus::Penalized))
+            .filter_trades_by_status_change(ts(0), None, Some(TradeStatus::Penalized))
             .await?
             .len(),
         2
@@ -716,8 +716,8 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
         let measurement = |owner: &str, energy| MeasurementSchema {
             facility_id: format!("meter-{owner}"),
             community_uuid: "community".into(),
-            time_slot: slot,
-            creation_time: slot,
+            time_slot: ts(slot),
+            creation_time: ts(slot),
             energy_kwh: energy,
         };
         insert_measurements(

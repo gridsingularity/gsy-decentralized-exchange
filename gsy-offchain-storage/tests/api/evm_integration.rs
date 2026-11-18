@@ -1,4 +1,4 @@
-use crate::helpers::{init_app, stop_app};
+use crate::helpers::{init_app, stop_app, ts};
 use ethers::{
     prelude::*,
     solc::{Project, ProjectPathsConfig},
@@ -48,13 +48,13 @@ pub(crate) fn expected_market() -> MarketSchema {
     MarketSchema {
         market_id: "0xcccccccccccccccccccccccccccccccc".to_string(),
         community_id: "11111111-1111-4111-8111-111111111111".to_string(),
-        opening_time: "00000000001699998300".to_string(),
-        closing_time: "00000000001700000100".to_string(),
-        delivery_start_time: "00000000001700000100".to_string(),
-        delivery_end_time: "00000000001700001000".to_string(),
+        opening_time: ts(1_699_998_300),
+        closing_time: ts(1_700_000_100),
+        delivery_start_time: ts(1_700_000_100),
+        delivery_end_time: ts(1_700_001_000),
         market_type: MarketType::Flex,
         matching_algorithm: MatchingAlgorithm::PayAsClear,
-        created_at: "00000000001699998301".to_string(),
+        created_at: ts(1_699_998_301),
     }
 }
 
@@ -112,7 +112,7 @@ async fn test_new_market_event_overwrites_a_posted_market() {
     app.db_wrapper
         .markets()
         .upsert(MarketSchema {
-            opening_time: "00000000000000000001".to_string(),
+            opening_time: ts(1),
             market_type: MarketType::Spot,
             matching_algorithm: MatchingAlgorithm::PayAsBid,
             ..expected_market()
@@ -196,7 +196,7 @@ async fn test_evm_order_listener_persists_to_db() {
             .insert_one(IdMappingSchema {
                 offchain_id: offchain_id.to_string(),
                 onchain_id: onchain_id.to_string(),
-                creation_time: 1,
+                creation_time: ts(1),
             })
             .await
             .unwrap();
@@ -404,8 +404,8 @@ async fn test_evm_order_listener_persists_to_db() {
             assert_eq!(order.order_type, OrderEnum::Bid);
             assert_eq!(order.energy_kWh, 1.0);
             assert_eq!(order.energy_rate, 0.5);
-            assert_eq!(order.creation_time, 1234567890);
-            assert_eq!(order.status_updated_at, Some(block_timestamp));
+            assert_eq!(order.creation_time, ts(1234567890));
+            assert_eq!(order.status_updated_at, Some(ts(block_timestamp)));
             assert_eq!(order.area_uuid, format!("0x{}", hex::encode(created_by)));
             assert_eq!(
                 order
@@ -457,7 +457,7 @@ async fn test_evm_order_listener_persists_to_db() {
                 .unwrap()
                 .unwrap();
             if order.status == OrderStatus::Expired {
-                assert_eq!(order.status_updated_at, Some(closed_at));
+                assert_eq!(order.status_updated_at, Some(ts(closed_at)));
                 break;
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
@@ -501,9 +501,9 @@ async fn cancellation_uses_block_time_and_preserves_order_metadata() {
     let orders = app.db_wrapper.orders();
     let order_id = bytes16_to_hex([1; 16]).into();
     let mut expected = orders.get_order_by_id(&order_id).await.unwrap().unwrap();
-    assert_eq!(expected.status_updated_at, Some(950));
+    assert_eq!(expected.status_updated_at, Some(ts(950)));
     expected.status = OrderStatus::Cancelled;
-    expected.status_updated_at = Some(980);
+    expected.status_updated_at = Some(ts(980));
     // Reprocessing the same event must not replace chain time with wall-clock time.
     for _ in 0..2 {
         handler
@@ -551,7 +551,7 @@ async fn market_closure_expires_only_submitted_orders_and_preserves_expiry_on_la
                         .update_order_status_by_id(
                             &bytes16_to_hex(order_id).into(),
                             status.clone(),
-                            950,
+                            ts(950),
                         )
                         .await
                         .unwrap();
@@ -589,7 +589,7 @@ async fn market_closure_expires_only_submitted_orders_and_preserves_expiry_on_la
                     && order.status == OrderStatus::Submitted
                 {
                     expected.status = OrderStatus::Expired;
-                    expected.status_updated_at = Some(closed_at);
+                    expected.status_updated_at = Some(ts(closed_at));
                 }
                 assert_eq!(
                     orders
@@ -664,8 +664,8 @@ async fn settlement_indexes_fill_statuses_and_keeps_residuals_independent() {
                 .await
                 .unwrap()
                 .unwrap();
-            assert_eq!(submitted.status_updated_at, Some(950));
-            assert_eq!(submitted.creation_time, 900);
+            assert_eq!(submitted.status_updated_at, Some(ts(950)));
+            assert_eq!(submitted.creation_time, ts(900));
             if partial {
                 handler
                     .handle_order_placed(placed_order(residual, is_bid, 10000), 980)
@@ -695,8 +695,8 @@ async fn settlement_indexes_fill_statuses_and_keeps_residuals_independent() {
         let trades = app.db_wrapper.trades().get_all_trades().await.unwrap();
         assert_eq!(trades.len(), 1);
         assert_eq!(trades[0].status, TradeStatus::Matched);
-        assert_eq!(trades[0].creation_time, 980);
-        assert_eq!(trades[0].status_updated_at, Some(980));
+        assert_eq!(trades[0].creation_time, ts(980));
+        assert_eq!(trades[0].status_updated_at, Some(ts(980)));
         let orders = app.db_wrapper.orders();
         let indexed = orders.get_all_orders().await.unwrap();
         let returned = reqwest::Client::new()
@@ -725,8 +725,8 @@ async fn settlement_indexes_fill_statuses_and_keeps_residuals_independent() {
                 }
             );
             assert_eq!(original_order.energy_kWh, if partial { 2.0 } else { 1.0 });
-            assert_eq!(original_order.status_updated_at, Some(980));
-            assert_eq!(original_order.creation_time, 900);
+            assert_eq!(original_order.status_updated_at, Some(ts(980)));
+            assert_eq!(original_order.creation_time, ts(900));
             let dto = returned
                 .iter()
                 .find(|order| order.order_id == original_id)
@@ -777,7 +777,7 @@ async fn settlement_indexes_fill_statuses_and_keeps_residuals_independent() {
                 .unwrap();
 
             expected_residual.status = OrderStatus::Filled;
-            expected_residual.status_updated_at = Some(1000);
+            expected_residual.status_updated_at = Some(ts(1000));
             let stored_residual = orders
                 .get_order_by_id(&residual_id.into())
                 .await
@@ -796,7 +796,7 @@ async fn settlement_indexes_fill_statuses_and_keeps_residuals_independent() {
                 .unwrap()
                 .unwrap();
             assert_eq!(stored_counterpart.status, OrderStatus::Filled);
-            assert_eq!(stored_counterpart.status_updated_at, Some(1000));
+            assert_eq!(stored_counterpart.status_updated_at, Some(ts(1000)));
         }
         let trades = app.db_wrapper.trades().get_all_trades().await.unwrap();
         assert_eq!(
@@ -868,7 +868,7 @@ async fn settlement_indexes_fill_statuses_and_keeps_residuals_independent() {
         let before = orders.get_all_orders().await.unwrap();
         // Simulate retrying after the first order write, before trade completion.
         orders
-            .mark_executed(&bytes16_to_hex(event.bid_id), 1100)
+            .mark_executed(&bytes16_to_hex(event.bid_id), ts(1100))
             .await
             .unwrap();
         for timestamp in [1100, 1101] {
@@ -887,7 +887,7 @@ async fn settlement_indexes_fill_statuses_and_keeps_residuals_independent() {
                     .contains(&order.order_id)
                 {
                     expected.status = OrderStatus::Executed;
-                    expected.status_updated_at = Some(1100);
+                    expected.status_updated_at = Some(ts(1100));
                 }
                 assert_eq!(stored, expected);
             }
@@ -912,12 +912,16 @@ async fn settlement_indexes_fill_statuses_and_keeps_residuals_independent() {
         let verified = app
             .db_wrapper
             .trades()
-            .filter_trades_by_status_change(expected_timestamp, Some(1201), Some(expected_status))
+            .filter_trades_by_status_change(
+                ts(expected_timestamp),
+                Some(ts(1201)),
+                Some(expected_status),
+            )
             .await
             .unwrap();
         assert_eq!(verified.len(), 1);
         assert_eq!(verified[0].trade_uuid, bytes16_to_hex(event.trade_id));
-        assert_eq!(verified[0].status_updated_at, Some(expected_timestamp));
+        assert_eq!(verified[0].status_updated_at, Some(ts(expected_timestamp)));
         for invalid in [
             gsy_ethers_listener::DeliveryVerifiedFilter {
                 trade_id: [99; 16],

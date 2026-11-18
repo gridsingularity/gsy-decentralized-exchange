@@ -2,10 +2,13 @@
 //!
 //! `MeasurementPointSchema` and `TimeseriesSchema` are the canonical
 //! ontology-aligned storage records. `MeasurementSchema` and `ForecastSchema`
-//! remain compatibility DTOs for EVM callers and are converted at the API edge.
+//! remain compatibility DTOs for EVM callers and are converted at the API edge;
+//! they are never stored, and their times are RFC 3339 strings in JSON.
 
 #![allow(non_snake_case)]
 
+use bson::serde_helpers::chrono_datetime_as_bson_datetime;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -21,8 +24,8 @@ pub struct MeasurementMetadataSchema {
 pub struct MeasurementSchema {
     pub facility_id: String,
     pub community_uuid: String,
-    pub time_slot: u64,
-    pub creation_time: u64,
+    pub time_slot: DateTime<Utc>,
+    pub creation_time: DateTime<Utc>,
     pub energy_kwh: f64,
 }
 
@@ -93,8 +96,8 @@ pub struct TransformerMeasurementSchema {
 pub struct ForecastSchema {
     pub facility_id: String,
     pub community_uuid: String,
-    pub time_slot: u64,
-    pub creation_time: u64,
+    pub time_slot: DateTime<Utc>,
+    pub creation_time: DateTime<Utc>,
     pub energy_kwh: f64,
     pub confidence: f64,
 }
@@ -145,6 +148,7 @@ impl MeasurementPointSchema {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct TimeseriesSchema {
     pub measurement_point: String,
-    pub timestamp: String,
+    #[serde(with = "chrono_datetime_as_bson_datetime")]
+    pub timestamp: DateTime<Utc>,
     pub value: f64,
 }

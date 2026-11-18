@@ -3,6 +3,7 @@
 
 use std::collections::HashSet;
 
+use chrono::{DateTime, Utc};
 use gsy_offchain_storage::certificates::builder::{
     build_local_origin_records, build_local_origin_records_with_allocation,
     delivery_verification_reference, interval_bounds_utc, round_half_up_2dp, sort_records,
@@ -19,11 +20,13 @@ use primitives::db_api_schema::profiles::{
     FlowDirection as PointDirection, MeasurementPointSchema, MeasurementPointType, TimeseriesSchema,
 };
 use primitives::db_api_schema::trades::{DbTradeSchema, TradeParameters, TradeStatus};
-use primitives::utils::{
-    bytes16_to_hex, create_encrypted_bytes16_from_string, timestamp_to_string_with_padding,
-};
+use primitives::utils::{bytes16_to_hex, create_encrypted_bytes16_from_string, epoch_to_datetime};
 
 const SLOT: u64 = 1_778_754_600; // 2026-05-14T10:30:00Z, on a 900s boundary
+
+fn ts(epoch_secs: u64) -> DateTime<Utc> {
+    epoch_to_datetime(epoch_secs).unwrap()
+}
 
 const COMMUNITY: &str = "community-1";
 const OTHER_COMMUNITY: &str = "community-2";
@@ -111,7 +114,7 @@ fn point(
 fn value(measurement_point: &str, time_slot: u64, value: f64) -> TimeseriesSchema {
     TimeseriesSchema {
         measurement_point: measurement_point.to_string(),
-        timestamp: timestamp_to_string_with_padding(time_slot),
+        timestamp: ts(time_slot),
         value,
     }
 }
@@ -203,13 +206,13 @@ fn market(time_slot: u64) -> MarketSchema {
     MarketSchema {
         market_id: market_id(time_slot),
         community_id: COMMUNITY.to_string(),
-        opening_time: timestamp_to_string_with_padding(time_slot.saturating_sub(900)),
-        closing_time: timestamp_to_string_with_padding(time_slot),
-        delivery_start_time: timestamp_to_string_with_padding(time_slot),
-        delivery_end_time: timestamp_to_string_with_padding(time_slot.saturating_add(900)),
+        opening_time: ts(time_slot.saturating_sub(900)),
+        closing_time: ts(time_slot),
+        delivery_start_time: ts(time_slot),
+        delivery_end_time: ts(time_slot.saturating_add(900)),
         market_type: MarketType::Spot,
         matching_algorithm: MatchingAlgorithm::PayAsBid,
-        created_at: timestamp_to_string_with_padding(time_slot.saturating_sub(900)),
+        created_at: ts(time_slot.saturating_sub(900)),
     }
 }
 
@@ -237,7 +240,7 @@ fn trade(
         seller: hash(seller_owner),
         buyer: buyer.to_string(),
         market_id: market_id(time_slot),
-        creation_time,
+        creation_time: ts(creation_time),
         offer_hash: format!("{trade_uuid}-offer"),
         bid_hash: format!("{trade_uuid}-bid"),
         residual_offer_id: None,
@@ -246,7 +249,7 @@ fn trade(
             selected_energy_kWh: energy_kwh,
             energy_rate: 0.2,
         },
-        status_updated_at: Some(SLOT + 1800),
+        status_updated_at: Some(ts(SLOT + 1800)),
     }
 }
 
@@ -944,18 +947,28 @@ fn unrepresentable_time_slot_yields_no_record_and_does_not_panic() {
     assert_eq!(interval_bounds_utc(absurd, 900), None);
     assert_eq!(delivery_verification_reference(absurd, 900), None);
 
+    // Stored dates are always representable, but one before 1970 has no Unix-seconds
+    // slot: the trades of such a market are skipped.
+    let before_epoch = DateTime::<Utc>::from_timestamp(-900, 0).unwrap();
     let mut fixture = Fixture::new();
-    fixture.timeseries = vec![value(EXPORT_POINT, absurd, 4.0)];
+    fixture.timeseries = vec![TimeseriesSchema {
+        timestamp: before_epoch,
+        ..value(EXPORT_POINT, SLOT, 4.0)
+    }];
     let t = trade(
         "trade-1",
         SELLER_OWNER,
         &hash(BUYER_OWNER),
-        absurd,
+        SLOT,
         3.0,
         TradeStatus::Executed,
         100,
     );
-    assert!(fixture.build(vec![t]).is_empty());
+    let market = MarketSchema {
+        delivery_start_time: before_epoch,
+        ..market(SLOT)
+    };
+    assert!(build_local_origin_records(vec![t], &fixture.inputs(&[market])).is_empty());
 }
 
 #[test]

@@ -1,7 +1,7 @@
 use primitives::db_api_schema::market::{
     MarketChainRecord, MarketSchema, MarketType, MatchingAlgorithm,
 };
-use primitives::utils::{generate_market_id, parse_uuid_or_hex_bytes16};
+use primitives::utils::{epoch_to_datetime, generate_market_id, parse_uuid_or_hex_bytes16};
 
 const COMMUNITY_ID: &str = "11111111-1111-4111-8111-111111111111";
 
@@ -29,13 +29,13 @@ fn converts_chain_record_to_market_schema() {
         MarketSchema {
             market_id: format!("0x{}", hex::encode(record.market_id)),
             community_id: COMMUNITY_ID.to_string(),
-            opening_time: "00000000001699998300".to_string(),
-            closing_time: "00000000001700000100".to_string(),
-            delivery_start_time: "00000000001700000100".to_string(),
-            delivery_end_time: "00000000001700001000".to_string(),
+            opening_time: epoch_to_datetime(1_699_998_300).unwrap(),
+            closing_time: epoch_to_datetime(1_700_000_100).unwrap(),
+            delivery_start_time: epoch_to_datetime(1_700_000_100).unwrap(),
+            delivery_end_time: epoch_to_datetime(1_700_001_000).unwrap(),
             market_type: MarketType::Flex,
             matching_algorithm: MatchingAlgorithm::PayAsClear,
-            created_at: "00000000001699998301".to_string(),
+            created_at: epoch_to_datetime(1_699_998_301).unwrap(),
         }
     );
 }

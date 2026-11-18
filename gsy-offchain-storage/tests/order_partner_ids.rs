@@ -16,7 +16,11 @@ fn mapping(offchain_id: &str) -> Value {
         HEX_FACILITY_ID => "0x22222222222222222222222222222222",
         _ => "not-an-onchain-id",
     };
-    json!({"offchain_id": offchain_id, "onchain_id": onchain_id, "creation_time": 1})
+    json!({
+        "offchain_id": offchain_id,
+        "onchain_id": onchain_id,
+        "creation_time": "1970-01-01T00:00:01+00:00",
+    })
 }
 
 // Keep both transports in one test so environment overrides cannot race.

@@ -1,5 +1,6 @@
-use ::primitives::utils::timestamp_to_datetime_string;
+use ::primitives::utils::{epoch_to_datetime, timestamp_to_datetime_string};
 use anyhow::{ensure, Context, Result};
+use chrono::{DateTime, Utc};
 use primitives::constants::GLOBAL_CONSTANTS;
 use primitives::db_api_schema::trades::TradeStatus;
 use primitives::offchain_storage::{OffchainStorageClient, OffchainStorageTransport};
@@ -93,8 +94,9 @@ pub async fn run_execution_cycle(
 
     // Resolve each market once, then isolate slots even when the query window
     // spans several slots. Creation times must never select a meter reading.
+    let window = epoch_to_datetime(start_time)?..epoch_to_datetime(end_time)?;
     let mut market_slots = HashMap::new();
-    let mut trades_by_slot: BTreeMap<u64, Vec<_>> = BTreeMap::new();
+    let mut trades_by_slot: BTreeMap<DateTime<Utc>, Vec<_>> = BTreeMap::new();
     for trade in trades {
         let slot = if let Some(slot) = market_slots.get(&trade.market_id) {
             *slot
@@ -112,11 +114,9 @@ pub async fn run_execution_cycle(
                 market.market_id == trade.market_id,
                 "Market lookup returned a different market"
             );
-            let slot = market.delivery_start_time.parse::<u64>().with_context(|| {
-                format!("Invalid delivery start for market {}", trade.market_id)
-            })?;
+            let slot = market.delivery_start_time;
             ensure!(
-                (start_time..end_time).contains(&slot),
+                window.contains(&slot),
                 "Market delivery slot outside requested window"
             );
             market_slots.insert(trade.market_id.clone(), slot);

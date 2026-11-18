@@ -14,7 +14,7 @@ use primitives::ewds::{
     EwdsTopicConfig,
 };
 use primitives::offchain_storage::{OffchainStorageClient, OffchainStorageTransport};
-use primitives::utils::{parse_uuid_or_hex_bytes16, rfc3339_to_epoch};
+use primitives::utils::{epoch_to_datetime, parse_uuid_or_hex_bytes16, rfc3339_to_epoch};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
@@ -184,7 +184,7 @@ async fn mock_id_service() -> MockServer {
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "offchain_id": offchain_id,
                 "onchain_id": onchain_id,
-                "creation_time": 0,
+                "creation_time": "1970-01-01T00:00:00+00:00",
             })))
             .mount(&server)
             .await;
@@ -845,7 +845,7 @@ async fn validates_over_ewds_before_resolving_ids_or_placing_orders() {
                     }
                     "ids.query" => {
                         assert_eq!(payload["payload"]["offchain_id"], "owner-2");
-                        json!([{"offchain_id": "owner-2", "onchain_id": OWNER_2_ONCHAIN, "creation_time": 0}])
+                        json!([{"offchain_id": "owner-2", "onchain_id": OWNER_2_ONCHAIN, "creation_time": "1970-01-01T00:00:00+00:00"}])
                     }
                     other => panic!("unexpected query {other}"),
                 };
@@ -1281,8 +1281,8 @@ mod validate_order {
             order_type: OrderEnum::Bid,
             area_uuid: "owner-1".to_string(),
             market_id: format!("0x{}", "11".repeat(16)),
-            time_slot: 1_790_762_400,
-            creation_time: 1_790_761_212,
+            time_slot: epoch_to_datetime(1_790_762_400).unwrap(),
+            creation_time: epoch_to_datetime(1_790_761_212).unwrap(),
             energy_kWh: 1.5,
             energy_rate: 0.3,
             created_by: "owner-1".to_string(),
@@ -1365,8 +1365,8 @@ mod order_params {
             order_type: OrderEnum::Offer,
             area_uuid: format!("0x{}", "aa".repeat(16)),
             market_id: format!("0x{}", "11".repeat(16)),
-            time_slot: 1_790_762_400,
-            creation_time: 1_790_761_212,
+            time_slot: epoch_to_datetime(1_790_762_400).unwrap(),
+            creation_time: epoch_to_datetime(1_790_761_212).unwrap(),
             energy_kWh: 0.30005,
             energy_rate: 0.07,
             created_by: format!("0x{}", "aa".repeat(16)),

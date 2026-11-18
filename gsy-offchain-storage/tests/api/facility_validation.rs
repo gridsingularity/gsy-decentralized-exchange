@@ -1,4 +1,4 @@
-use crate::helpers::{init_app, stop_app};
+use crate::helpers::{init_app, stop_app, ts};
 use gsy_offchain_storage::db::DatabaseWrapper;
 use mongodb::{bson::doc, Client};
 use primitives::db_api_schema::grid_topology::{
@@ -58,13 +58,13 @@ async fn seed_community(db: &DatabaseWrapper, id: &str) {
         .insert_one(MarketSchema {
             market_id: format!("market-{id}"),
             community_id: community_id(id),
-            opening_time: "100".to_string(),
-            closing_time: "200".to_string(),
-            delivery_start_time: "300".to_string(),
-            delivery_end_time: "400".to_string(),
+            opening_time: ts(100),
+            closing_time: ts(200),
+            delivery_start_time: ts(300),
+            delivery_end_time: ts(400),
             market_type: MarketType::Spot,
             matching_algorithm: MatchingAlgorithm::PayAsBid,
-            created_at: "100".to_string(),
+            created_at: ts(100),
         })
         .await
         .unwrap();

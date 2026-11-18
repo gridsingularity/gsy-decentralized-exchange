@@ -1,26 +1,29 @@
+use chrono::{DateTime, Utc};
 use primitives::db_api_schema::grid_topology::{EnergyCommunitySchema, FacilitySchema};
-use primitives::db_api_schema::ids::IdMappingSchema;
 use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
 use primitives::db_api_schema::orders::{DbOrderSchema, OrderEnum, OrderStatus};
 use primitives::db_api_schema::profiles::{
     FlowDirection, MeasurementPointSchema, MeasurementPointType, MeasurementSchema,
-    TimeseriesSchema,
 };
 use primitives::db_api_schema::trades::{DbTradeSchema, TradeParameters, TradeStatus};
 use primitives::ewds::dto::{
     EwdsCommunityDto, EwdsMarketDto, EwdsMeasurementDto, EwdsOrderDto, EwdsTradeDto,
-    FacilityMarketValidationRequest, FacilityMarketValidationResult,
+    FacilityMarketValidationRequest, FacilityMarketValidationResult, IdMappingDto, TimeseriesDto,
 };
 use primitives::offchain_storage::{
     CommunityProvider, OffchainStorageClient, OffchainStorageTransport,
 };
-use primitives::utils::{epoch_to_rfc3339, timestamp_to_string_with_padding};
+use primitives::utils::{epoch_to_datetime, epoch_to_rfc3339};
 use serde_json::{json, Value};
 use std::env;
 use std::sync::{Arc, Mutex};
 use wiremock::http::Method;
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
+
+fn ts(epoch_secs: u64) -> DateTime<Utc> {
+    epoch_to_datetime(epoch_secs).unwrap()
+}
 
 // Env vars are process-global; serialize tests that mutate them.
 static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -358,11 +361,11 @@ async fn fetches_facility_owner_mapping_over_ewds() {
 
 // -- IdMappingProvider -------------------------------------------------------
 
-fn id_mapping(offchain_id: &str, onchain_id: &str) -> IdMappingSchema {
-    IdMappingSchema {
+fn id_mapping(offchain_id: &str, onchain_id: &str) -> IdMappingDto {
+    IdMappingDto {
         offchain_id: offchain_id.to_string(),
         onchain_id: onchain_id.to_string(),
-        creation_time: 1,
+        creation_time: epoch_to_rfc3339(1),
     }
 }
 
@@ -582,7 +585,7 @@ fn trade() -> DbTradeSchema {
         seller: "seller-1".to_string(),
         buyer: "buyer-1".to_string(),
         market_id: "market-1".to_string(),
-        creation_time: TIMESLOT + 60,
+        creation_time: ts(TIMESLOT + 60),
         offer_hash: "offer-1".to_string(),
         bid_hash: "bid-1".to_string(),
         residual_offer_id: None,
@@ -599,8 +602,8 @@ fn measurement() -> MeasurementSchema {
     MeasurementSchema {
         facility_id: "facility-1".to_string(),
         community_uuid: "community-1".to_string(),
-        time_slot: TIMESLOT,
-        creation_time: TIMESLOT,
+        time_slot: ts(TIMESLOT),
+        creation_time: ts(TIMESLOT),
         energy_kwh: 1.5,
     }
 }
@@ -743,12 +746,12 @@ fn order_dto() -> EwdsOrderDto {
     EwdsOrderDto::from(DbOrderSchema {
         order_id: "order-1".to_string(),
         status: OrderStatus::Filled,
-        status_updated_at: Some(TIMESLOT),
+        status_updated_at: Some(ts(TIMESLOT)),
         order_type: OrderEnum::Bid,
         area_uuid: "buyer-1".to_string(),
         market_id: "market-1".to_string(),
-        time_slot: TIMESLOT,
-        creation_time: TIMESLOT - 60,
+        time_slot: ts(TIMESLOT),
+        creation_time: ts(TIMESLOT - 60),
         energy_kWh: 2.0,
         energy_rate: 0.3,
         created_by: "buyer-1".to_string(),
@@ -835,9 +838,9 @@ async fn fetches_measurements_over_http() {
         asset_name: "facility-1".to_string(),
         datasource_name: Some("community-1".to_string()),
     };
-    let value = TimeseriesSchema {
+    let value = TimeseriesDto {
         measurement_point: measurement_id,
-        timestamp: timestamp_to_string_with_padding(TIMESLOT),
+        timestamp: epoch_to_rfc3339(TIMESLOT),
         value: 1.5,
     };
     Mock::given(method("GET"))
@@ -848,14 +851,8 @@ async fn fetches_measurements_over_http() {
         .await;
     Mock::given(method("GET"))
         .and(path("/timeseries"))
-        .and(query_param(
-            "start_time",
-            timestamp_to_string_with_padding(TIMESLOT),
-        ))
-        .and(query_param(
-            "end_time",
-            timestamp_to_string_with_padding(TIMESLOT_END),
-        ))
+        .and(query_param("start_time", epoch_to_rfc3339(TIMESLOT)))
+        .and(query_param("end_time", epoch_to_rfc3339(TIMESLOT_END)))
         .respond_with(ResponseTemplate::new(200).set_body_json(vec![value]))
         .mount(&server)
         .await;
@@ -919,13 +916,13 @@ fn market() -> MarketSchema {
     MarketSchema {
         market_id: MARKET_ID.to_string(),
         community_id: "11111111-1111-4111-8111-111111111111".to_string(),
-        opening_time: "00000000001699998300".to_string(),
-        closing_time: "00000000001700000100".to_string(),
-        delivery_start_time: "00000000001700000100".to_string(),
-        delivery_end_time: "00000000001700001000".to_string(),
+        opening_time: ts(1_699_998_300),
+        closing_time: ts(1_700_000_100),
+        delivery_start_time: ts(1_700_000_100),
+        delivery_end_time: ts(1_700_001_000),
         market_type: MarketType::Spot,
         matching_algorithm: MatchingAlgorithm::PayAsBid,
-        created_at: "00000000001699998301".to_string(),
+        created_at: ts(1_699_998_301),
     }
 }
 
@@ -946,7 +943,9 @@ async fn fetches_market_over_http() {
     Mock::given(method("GET"))
         .and(path("/market"))
         .and(query_param("market_id", MARKET_ID))
-        .respond_with(ResponseTemplate::new(200).set_body_json(market()))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(EwdsMarketDto::try_from(market()).unwrap()),
+        )
         .mount(&server)
         .await;
 

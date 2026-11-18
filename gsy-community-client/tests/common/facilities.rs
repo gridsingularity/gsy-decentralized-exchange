@@ -12,12 +12,20 @@ pub async fn setup_facilities_mock(facility_ids: [&str; 2]) -> MockServer {
     let known_ids = facility_ids.map(str::to_string);
     Mock::given(method("GET"))
         .and(path("/facilities"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(
-            facility_ids.iter().enumerate().map(|(index, facility_id)| json!({
-                "facility_id": facility_id, "facility_name": facility_id,
-                "site_id": "site-1", "owner_id": format!("owner-{}", index + 1)
-            })).collect::<Vec<_>>(),
-        ))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(
+                facility_ids
+                    .iter()
+                    .enumerate()
+                    .map(|(index, facility_id)| {
+                        json!({
+                            "facility_id": facility_id, "facility_name": facility_id,
+                            "site_id": "site-1", "owner_id": format!("owner-{}", index + 1)
+                        })
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+        )
         .mount(&server)
         .await;
     Mock::given(method("POST"))
@@ -42,13 +50,12 @@ pub async fn setup_facilities_mock(facility_ids: [&str; 2]) -> MockServer {
         .with_priority(10)
         .mount(&server)
         .await;
-    for (owner_id, onchain_id) in [("owner-1", OWNER_1_ONCHAIN), ("owner-2", OWNER_2_ONCHAIN)]
-    {
+    for (owner_id, onchain_id) in [("owner-1", OWNER_1_ONCHAIN), ("owner-2", OWNER_2_ONCHAIN)] {
         Mock::given(method("POST"))
             .and(path("/ids"))
             .and(query_param("offchain_id", owner_id))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "offchain_id": owner_id, "onchain_id": onchain_id, "creation_time": 0
+                "offchain_id": owner_id, "onchain_id": onchain_id, "creation_time": "1970-01-01T00:00:00+00:00"
             })))
             .mount(&server)
             .await;

@@ -18,7 +18,7 @@ use primitives::db_api_schema::{
     trades::{ClearingResultSchema, ClearingStatus, DbTradeSchema, TradeParameters, TradeStatus},
 };
 use primitives::ewds::dto::EwdsMarketDto;
-use primitives::utils::{bytes16_to_hex, timestamp_to_string_with_padding, NODE_FLOAT_SCALING_FACTOR};
+use primitives::utils::{bytes16_to_hex, epoch_to_datetime, NODE_FLOAT_SCALING_FACTOR};
 use tracing::info;
 
 fn scaled_u256_to_f64(value: U256) -> f64 {
@@ -84,6 +84,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
     }
 
     async fn handle_block(&self, block_timestamp: u64) -> Result<()> {
+        let block_timestamp = epoch_to_datetime(block_timestamp)?;
         let submitted = bson::to_bson(&OrderStatus::Submitted)?;
         let market_ids = self
             .db
@@ -98,7 +99,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             .markets()
             .find(doc! {
                 "market_id": {"$in": market_ids},
-                "closing_time": {"$lte": timestamp_to_string_with_padding(block_timestamp)},
+                "closing_time": {"$lte": bson::DateTime::from_chrono(block_timestamp)},
             })
             .await?
             .try_collect()
@@ -120,7 +121,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             // The deadline is immutable and remains stable even if indexing is delayed.
             self.db
                 .orders()
-                .expire_market_orders(&market.market_id, market.closing_time.parse()?)
+                .expire_market_orders(&market.market_id, market.closing_time)
                 .await?;
             self.publish_order_statuses(&order_ids).await?;
         }
@@ -132,6 +133,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         event: OrderPlacedFilter,
         block_timestamp: u64,
     ) -> Result<()> {
+        let block_timestamp = epoch_to_datetime(block_timestamp)?;
         info!(
             "Processing EVM OrderPlaced: {:?}",
             hex::encode(event.order_id)
@@ -176,8 +178,8 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             order_type: order_enum,
             area_uuid: created_by_str.clone(),
             market_id: market_id_str,
-            time_slot: event.time_slot,
-            creation_time: event.creation_time,
+            time_slot: epoch_to_datetime(event.time_slot)?,
+            creation_time: epoch_to_datetime(event.creation_time)?,
             energy_kWh: energy_f64,
             energy_rate: rate_f64,
             created_by: created_by_str,
@@ -201,6 +203,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         event: OrderCancelledFilter,
         block_timestamp: u64,
     ) -> Result<()> {
+        let block_timestamp = epoch_to_datetime(block_timestamp)?;
         info!(
             "Processing EVM OrderCancelled: {:?}",
             hex::encode(event.order_id)
@@ -229,6 +232,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         event: TradeSettledFilter,
         block_timestamp: u64,
     ) -> Result<()> {
+        let block_timestamp = epoch_to_datetime(block_timestamp)?;
         let trade_hash = bytes16_to_hex(event.trade_id);
         info!("Processing EVM TradeSettled: {:?}", trade_hash);
 
@@ -299,6 +303,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         event: PenaltyRecordedFilter,
         block_timestamp: u64,
     ) -> Result<()> {
+        let block_timestamp = epoch_to_datetime(block_timestamp)?;
         let trade_id = bytes16_to_hex(event.trade_id);
         let actor_id = bytes16_to_hex(event.penalized_actor_id);
         let trade = self
@@ -332,6 +337,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         event: DeliveryVerifiedFilter,
         block_timestamp: u64,
     ) -> Result<()> {
+        let block_timestamp = epoch_to_datetime(block_timestamp)?;
         let trade_id = bytes16_to_hex(event.trade_id);
         let bid_id = bytes16_to_hex(event.bid_id);
         let offer_id = bytes16_to_hex(event.offer_id);
@@ -426,9 +432,10 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
 
         // Publish only once the market is persisted.
         if let Some(publisher) = &self.event_publisher {
+            let created_at = market.created_at;
             let market = EwdsMarketDto::try_from(market)
                 .context("Failed to convert the market for its market.event")?;
-            publisher.publish_market_event(vec![market], event.created_at);
+            publisher.publish_market_event(vec![market], created_at);
         }
 
         Ok(())
@@ -440,6 +447,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         meta: LogMeta,
         block_timestamp: u64,
     ) -> Result<()> {
+        let block_timestamp = epoch_to_datetime(block_timestamp)?;
         info!(
             "Processing EVM MarketClearing: {:?}",
             hex::encode(event.market_id)

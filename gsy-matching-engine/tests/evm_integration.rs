@@ -8,7 +8,7 @@ use primitives::db_api_schema::orders::{
     DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus,
 };
 use primitives::db_api_schema::trades::ClearingStatus;
-use primitives::utils::{parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR};
+use primitives::utils::{epoch_to_datetime, parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR};
 use std::{collections::HashMap, fs::File, io::Write, sync::Arc};
 use tempfile::TempDir;
 
@@ -220,8 +220,8 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
         order_type: OrderEnum::Bid,
         area_uuid: bid_area.clone(),
         market_id: market_id.clone(),
-        time_slot: 1000,
-        creation_time: 900,
+        time_slot: epoch_to_datetime(1000).unwrap(),
+        creation_time: epoch_to_datetime(900).unwrap(),
         energy_kWh: 100.0,
         energy_rate: 50.0,
         created_by: bid_actor_id.clone(),
@@ -239,8 +239,8 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
         order_type: OrderEnum::Offer,
         area_uuid: ask_area.clone(),
         market_id: market_id.clone(),
-        time_slot: 1000,
-        creation_time: 900,
+        time_slot: epoch_to_datetime(1000).unwrap(),
+        creation_time: epoch_to_datetime(900).unwrap(),
         energy_kWh: 80.0,
         energy_rate: 40.0,
         created_by: ask_actor_id.clone(),

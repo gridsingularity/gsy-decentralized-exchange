@@ -1,11 +1,12 @@
 use crate::db::DatabaseWrapper;
 use anyhow::{bail, Result};
+use chrono::{DateTime, Utc};
 use futures::TryStreamExt;
 use mongodb::bson::doc;
 use mongodb::options::IndexOptions;
 use mongodb::{bson, Collection, IndexModel};
 use primitives::db_api_schema::market::MarketSchema;
-use primitives::utils::{normalize_community_id, timestamp_to_string_with_padding};
+use primitives::utils::normalize_community_id;
 use std::ops::Deref;
 
 pub async fn init_markets(db: &DatabaseWrapper) -> Result<()> {
@@ -43,8 +44,8 @@ impl MarketService {
         &self,
         market_id: Option<String>,
         community_id: Option<String>,
-        start_time: Option<String>,
-        end_time: Option<String>,
+        start_time: Option<DateTime<Utc>>,
+        end_time: Option<DateTime<Utc>>,
     ) -> Result<Vec<MarketSchema>> {
         let mut filter_params = doc! {};
         if let Some(market_id) = market_id {
@@ -53,17 +54,15 @@ impl MarketService {
         if let Some(community_id) = community_id {
             filter_params.insert("community_id", normalize_community_id(&community_id)?);
         }
-        match (start_time, end_time) {
-            (Some(start), Some(end)) => {
-                filter_params.insert("opening_time", doc! {"$gte": start, "$lte": end});
-            }
-            (Some(start), None) => {
-                filter_params.insert("opening_time", doc! {"$gte": start});
-            }
-            (None, Some(end)) => {
-                filter_params.insert("opening_time", doc! {"$lte": end});
-            }
-            (None, None) => {}
+        let mut opening_range = doc! {};
+        if let Some(start) = start_time {
+            opening_range.insert("$gte", bson::DateTime::from_chrono(start));
+        }
+        if let Some(end) = end_time {
+            opening_range.insert("$lte", bson::DateTime::from_chrono(end));
+        }
+        if !opening_range.is_empty() {
+            filter_params.insert("opening_time", opening_range);
         }
 
         Ok(self.0.find(filter_params).await?.try_collect().await?)
@@ -78,15 +77,15 @@ impl MarketService {
     #[tracing::instrument(name = "Fetching market ids by delivery start", skip(self))]
     pub async fn market_ids_by_delivery_start(
         &self,
-        start_time: Option<u64>,
-        end_time: Option<u64>,
+        start_time: Option<DateTime<Utc>>,
+        end_time: Option<DateTime<Utc>>,
     ) -> Result<Vec<String>> {
         let mut range = doc! {};
         if let Some(start) = start_time {
-            range.insert("$gte", timestamp_to_string_with_padding(start));
+            range.insert("$gte", bson::DateTime::from_chrono(start));
         }
         if let Some(end) = end_time {
-            range.insert("$lt", timestamp_to_string_with_padding(end));
+            range.insert("$lt", bson::DateTime::from_chrono(end));
         }
 
         let market_ids = self
