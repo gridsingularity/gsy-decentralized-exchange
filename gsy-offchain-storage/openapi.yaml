@@ -605,8 +605,6 @@ paths:
       description: |
         Stores the energy community as a new version, unless it equals the latest version of its
         `communityId` apart from `validFrom`. Older versions are kept for audit only.
-        `communityId` accepts a UUID or 16-byte hex value and is stored and returned as a
-        lowercase hyphenated UUID.
         `validFrom` is set to the time the request arrives; a value sent is ignored.
         Send the full energy community with `validUntil` to delete it from that time on, and again
         without `validUntil` to bring it back.
@@ -626,7 +624,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/EwdsCommunityDto"
         "400":
-          description: An invalid body, `communityId` (expected a UUID or 16-byte hex value), `validFrom` or `validUntil`.
+          description: An invalid body, `validFrom` or `validUntil`.
         "409":
           description: A valid energy community with another `communityId` already uses `communityName`.
         "500":
@@ -1222,10 +1220,7 @@ components:
       type: object
       required: [communityId, communityName, sites]
       properties:
-        communityId:
-          type: string
-          format: uuid
-          description: UUID or 16-byte hex on input; canonical lowercase hyphenated UUID on output.
+        communityId: { type: string, format: uuid }
         communityName: { type: string }
         sites:
           type: array

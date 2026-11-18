@@ -75,11 +75,6 @@ posts them any more.
 - `/facilities` (`GET`, `POST`)
 - `/facilities/validate` (`POST`) for read-only bulk facility/market validation
 
-Community writes through HTTP and EWDS accept UUID or 16-byte hex IDs and store
-lowercase hyphenated UUIDs. `GET /communities` and `communities.query` return that
-canonical form. Invalid IDs return HTTP 400 or cause the EWDS event to be dropped
-as invalid; they are not retried as storage failures.
-
 `POST /sites` and `/facilities` store a new version of the site or facility
 with that `site_id` or `facility_id`, like the EWDS events. Send complete
 records: a new version of a site's facility list removes omitted memberships and

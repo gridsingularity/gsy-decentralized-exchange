@@ -6,7 +6,7 @@ use primitives::db_api_schema::grid_topology::{
 };
 use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
 use primitives::ewds::dto::{
-    EwdsCommunityDto, EwdsFacilityDto, EwdsRequestEnvelope, EwdsSendMessageDto, EwdsSiteDto,
+    EwdsFacilityDto, EwdsRequestEnvelope, EwdsSendMessageDto, EwdsSiteDto,
     FacilityMarketValidationReason, FacilityMarketValidationRequest,
 };
 use primitives::ewds::EwdsOperation;
@@ -116,55 +116,6 @@ fn facility(facility_id: &str, site_id: &str) -> FacilitySchema {
         valid_from: EPOCH_RFC3339.to_string(),
         valid_until: None,
     }
-}
-
-#[tokio::test]
-async fn http_community_ids_are_canonical_and_remain_eligible() {
-    let app = init_app().await;
-    seed_community(&app.db_wrapper, "a").await;
-    let canonical = community_id("a");
-    for id in [
-        canonical.to_uppercase(),
-        format!("0x{}", canonical.replace('-', "").to_uppercase()),
-    ] {
-        let response = reqwest::Client::new()
-            .post(format!("{}/communities", app.address))
-            .json(&EwdsCommunityDto {
-                community_id: id,
-                ..EwdsCommunityDto::from(community("a", vec!["site-a".into()]))
-            })
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(response.status(), reqwest::StatusCode::OK);
-        assert_eq!(
-            response
-                .json::<EwdsCommunityDto>()
-                .await
-                .unwrap()
-                .community_id,
-            canonical
-        );
-        let result =
-            validate_via_ewds(&app.db_wrapper, json!([pair("facility-a", "market-a")])).await;
-        assert_eq!(result["data"][0]["eligible"], true);
-    }
-    assert_eq!(
-        app.db_wrapper
-            .communities()
-            .count_documents(doc! {})
-            .await
-            .unwrap(),
-        1
-    );
-    let response = reqwest::Client::new()
-        .post(format!("{}/communities", app.address))
-        .json(&json!({"communityId": "not-a-uuid", "communityName": "invalid", "sites": []}))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
-    stop_app(app).await;
 }
 
 #[tokio::test]

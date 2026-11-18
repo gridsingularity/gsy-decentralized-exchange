@@ -1543,44 +1543,6 @@ async fn handle_event_rejects_communities_with_names_of_other_entries_and_accept
 }
 
 #[tokio::test]
-async fn community_events_normalize_ids_and_drop_invalid_batches() {
-    let app = init_app().await;
-    for id in [
-        "ABCDEFAB-1234-1234-1234-ABCDEFABCDEF",
-        "0xabcdefab123412341234abcdefabcdef",
-    ] {
-        handle_event(
-            &app.db_wrapper,
-            event(
-                EwdsEventType::Community,
-                "canonical",
-                json!([
-                    {"communityId": id, "communityName": "Canonical", "sites": []}
-                ]),
-            ),
-        )
-        .await
-        .unwrap();
-    }
-    let communities = app.db_wrapper.communities().get().await.unwrap();
-    assert_eq!(communities.len(), 1);
-    assert_eq!(
-        communities[0].community_id,
-        "abcdefab-1234-1234-1234-abcdefabcdef"
-    );
-    let error = handle_event(&app.db_wrapper, event(EwdsEventType::Community, "invalid", json!([
-        {"communityId": "22222222-2222-4222-8222-222222222222", "communityName": "Not stored", "sites": []},
-        {"communityId": "invalid", "communityName": "Invalid", "sites": []}
-    ]))).await.unwrap_err();
-    assert!(is_invalid_event(&error));
-    assert_eq!(
-        app.db_wrapper.communities().get().await.unwrap(),
-        communities
-    );
-    stop_app(app).await;
-}
-
-#[tokio::test]
 async fn handle_event_saves_a_measurement_batch_across_facilities_and_slots() {
     let app = init_app().await;
 
