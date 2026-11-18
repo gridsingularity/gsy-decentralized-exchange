@@ -4,9 +4,7 @@ use primitives::db_api_schema::grid_topology::EnergyCommunitySchema;
 use primitives::offchain_storage::CommunityProvider;
 use primitives::{
     constants::GLOBAL_CONSTANTS,
-    utils::{
-        bytes16_to_hex, generate_market_id, parse_uuid_or_hex_bytes16, timestamp_to_datetime_string,
-    },
+    utils::{bytes16_to_hex, epoch_to_rfc3339, generate_market_id, parse_uuid_or_hex_bytes16},
 };
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
@@ -148,9 +146,9 @@ where
             debug!(
                 "Market {} for delivery at {} is missing. Opens {}, closes {}.",
                 bytes16_to_hex(market.market_id),
-                timestamp_to_datetime_string(market.delivery_start_time),
-                timestamp_to_datetime_string(market.opening_time),
-                timestamp_to_datetime_string(market.closing_time)
+                epoch_to_rfc3339(market.delivery_start_time),
+                epoch_to_rfc3339(market.opening_time),
+                epoch_to_rfc3339(market.closing_time)
             );
             new_markets.push(market.clone());
         }

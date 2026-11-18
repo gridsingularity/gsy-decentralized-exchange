@@ -28,8 +28,7 @@ use primitives::db_api_schema::profiles::{
 use primitives::db_api_schema::trades::{DbTradeSchema, TradeParameters, TradeStatus};
 use primitives::ewds::{EwdsClient, EwdsOperation};
 use primitives::utils::{
-    bytes16_to_hex, create_encrypted_bytes16_from_string, epoch_to_datetime,
-    timestamp_to_datetime_string,
+    bytes16_to_hex, create_encrypted_bytes16_from_string, epoch_to_datetime, epoch_to_rfc3339,
 };
 use serde_json::json;
 use std::env;
@@ -49,14 +48,6 @@ const REST_PATH: &str = "guarantees-of-origin";
 /// The on-chain party hash of an off-chain owner id, as stored in `DbTradeSchema::seller`.
 fn party_hash(owner_id: &str) -> String {
     bytes16_to_hex(create_encrypted_bytes16_from_string(owner_id))
-}
-
-/// `2026-05-14T10:30:00+00:00`, the format of `interval_start` / `interval_end`
-/// (chrono's `to_rfc3339` of a whole-second UTC instant).
-fn rfc3339_utc(timestamp: u64) -> String {
-    // `timestamp_to_datetime_string` is `%Y-%m-%d %H:%M:%S.%f`.
-    let datetime = timestamp_to_datetime_string(timestamp);
-    format!("{}+00:00", datetime[..19].replacen(' ', "T", 1))
 }
 
 fn window_around(instant: u64) -> (u64, u64) {
@@ -425,11 +416,11 @@ async fn record_fields(world: &mut MyWorld, energy_quantity: f64) {
     );
     assert_eq!(
         record.time_and_quantity.interval_start,
-        rfc3339_utc(seed.time_slot)
+        epoch_to_rfc3339(seed.time_slot)
     );
     assert_eq!(
         record.time_and_quantity.interval_end,
-        rfc3339_utc(seed.time_slot + SLOT_S)
+        epoch_to_rfc3339(seed.time_slot + SLOT_S)
     );
 
     assert_eq!(

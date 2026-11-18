@@ -1,4 +1,4 @@
-use ::primitives::utils::{epoch_to_datetime, timestamp_to_datetime_string};
+use ::primitives::utils::{epoch_to_datetime, epoch_to_rfc3339};
 use anyhow::{ensure, Context, Result};
 use chrono::{DateTime, Utc};
 use primitives::constants::GLOBAL_CONSTANTS;
@@ -76,13 +76,13 @@ pub async fn run_execution_cycle(
         "Fetched {} trades, {} measurements for timeslot {}.",
         trades.len(),
         measurements.len(),
-        timestamp_to_datetime_string(timeslot),
+        epoch_to_rfc3339(timeslot),
     );
 
     if pending_count == 0 || measurements.is_empty() {
         info!(
             "No pending trades or measurements for timeslot {}. Skipping execution cycle.",
-            timestamp_to_datetime_string(timeslot),
+            epoch_to_rfc3339(timeslot),
         );
         return Ok(0);
     }
