@@ -10,7 +10,9 @@ use primitives::db_api_schema::profiles::ForecastSchema;
 use primitives::ewds::dto::{EwdsCommunityDto, EwdsEventEnvelope};
 use primitives::ewds::{EwdsClient, EwdsEventType, EwdsOperation};
 use primitives::offchain_storage::OffchainStorageClient;
-use primitives::utils::{bytes16_to_hex, epoch_to_rfc3339, generate_market_id};
+use primitives::utils::{
+    bytes16_to_hex, derive_onchain_id, epoch_to_rfc3339, parse_uuid_or_hex_bytes16,
+};
 use primitives::{MarketType, MatchingAlgorithm};
 use serde_json::json;
 use std::env;
@@ -23,6 +25,8 @@ use uuid::Uuid;
 abigen!(
     MarketControllerContract,
     r#"[
+        struct MarketKey { bytes16 communityId; uint8 marketType; uint64 deliveryStartTime; }
+        function getMarketIds(MarketKey[] keys) external view returns (bytes16[])
         function isMarketOpen(bytes16 marketId) external view returns (bool)
         event NewMarketCreated(bytes16 indexed marketId, bytes16 indexed communityId, uint64 openingTime, uint64 closingTime, uint64 deliveryStartTime, uint64 deliveryEndTime, uint8 marketType, uint8 matchingAlgorithm, uint64 createdAt)
     ]"#
@@ -139,25 +143,41 @@ async fn wait_for_market_to_open(world: &mut MyWorld) {
     let (current_timeslot, _) = get_last_and_next_timeslot();
     world.target_delivery_time = current_timeslot;
 
-    let market_id = generate_market_id(
-        world.community_id.as_str(),
-        MarketType::Spot,
-        world.target_delivery_time,
-    )
-    .unwrap();
-    let market = wait_for_market(world, market_id).await;
+    let (market_id, market) = wait_for_market(world, &world.community_id).await;
 
     world.last_market_id = Some(market_id);
     world.market_schema = Some(market);
 }
 
-/// Waits until the market is open on-chain and stored off-chain, and checks
-/// that the stored market mirrors its `NewMarketCreated` event.
-async fn wait_for_market(world: &MyWorld, market_id: [u8; 16]) -> MarketSchema {
-    let market_id_hex = bytes16_to_hex(market_id);
+fn market_key(community_id: &str, delivery_start_time: u64) -> MarketKey {
+    MarketKey {
+        community_id: parse_uuid_or_hex_bytes16(&derive_onchain_id(community_id))
+            .expect("Derived community identity must fit bytes16"),
+        market_type: MarketType::Spot.to_evm(),
+        delivery_start_time,
+    }
+}
+
+async fn lookup_market_id<M: Middleware>(
+    market_controller: &MarketControllerContract<M>,
+    key: &MarketKey,
+) -> Option<[u8; 16]> {
+    let market_ids = market_controller
+        .get_market_ids(vec![key.clone()])
+        .call()
+        .await
+        .expect("Failed to look up market from MarketController");
+    assert_eq!(market_ids.len(), 1, "Expected one getMarketIds result");
+    (market_ids[0] != [0; 16]).then_some(market_ids[0])
+}
+
+/// Resolves the orchestrator's random ID by tuple, then waits for the market to
+/// be open and indexed, checking storage against its `NewMarketCreated` event.
+async fn wait_for_market(world: &MyWorld, community_id: &str) -> ([u8; 16], MarketSchema) {
+    let key = market_key(community_id, world.target_delivery_time);
     info!(
-        "Waiting for market {} (timeslot {}) on-chain and in off-chain storage",
-        market_id_hex, world.target_delivery_time
+        "Waiting for Spot market for community {} (timeslot {}) on-chain and in off-chain storage",
+        community_id, world.target_delivery_time
     );
 
     let market_controller =
@@ -165,6 +185,11 @@ async fn wait_for_market(world: &MyWorld, market_id: [u8; 16]) -> MarketSchema {
     let storage = OffchainStorageClient::from_env("E2E_TESTS_CLIENT_ID", "e2e_tests");
 
     for attempt in 0..MARKET_POLL_ATTEMPTS {
+        let Some(market_id) = lookup_market_id(&market_controller, &key).await else {
+            sleep(MARKET_POLL_INTERVAL).await;
+            continue;
+        };
+        let market_id_hex = bytes16_to_hex(market_id);
         let is_open = market_controller
             .is_market_open(market_id)
             .call()
@@ -194,7 +219,16 @@ async fn wait_for_market(world: &MyWorld, market_id: [u8; 16]) -> MarketSchema {
                 .expect("Failed to query NewMarketCreated events");
             assert_eq!(events.len(), 1, "Expected one NewMarketCreated event");
             let event = &events[0];
-            let expected = MarketSchema::try_from(MarketChainRecord {
+            assert_eq!(event.market_id, market_id);
+            assert_eq!(event.community_id, key.community_id);
+            assert_eq!(event.market_type, key.market_type);
+            assert_eq!(event.delivery_start_time, key.delivery_start_time);
+            assert_eq!(Uuid::from_bytes(market_id).get_version_num(), 4);
+            assert_eq!(
+                Uuid::from_bytes(market_id).get_variant(),
+                uuid::Variant::RFC4122
+            );
+            let expected = MarketChainRecord {
                 market_id: event.market_id,
                 community_id: event.community_id,
                 opening_time: event.opening_time,
@@ -204,29 +238,32 @@ async fn wait_for_market(world: &MyWorld, market_id: [u8; 16]) -> MarketSchema {
                 market_type: event.market_type,
                 matching_algorithm: event.matching_algorithm,
                 created_at: event.created_at,
-            })
+            }
+            .into_schema(community_id.to_string())
             .expect("Invalid NewMarketCreated event");
             assert_eq!(
                 stored, expected,
                 "Stored market differs from the NewMarketCreated event"
             );
+            assert_eq!(stored.market_id, market_id_hex);
             assert_eq!(stored.matching_algorithm, matching_algorithm_from_env());
-            return stored;
+            return (market_id, stored);
         }
 
         sleep(MARKET_POLL_INTERVAL).await;
     }
 
     panic!(
-        "Timeout: market {} was not created by the orchestrator",
-        market_id_hex
+        "Timeout: Spot market for community {} (timeslot {}) was not open and indexed",
+        community_id, world.target_delivery_time
     );
 }
 
 #[when("two communities are submitted to off-chain storage")]
 async fn submit_two_communities(world: &mut MyWorld) {
     world.community_id = unique_community_id();
-    world.secondary_community_id = unique_community_id();
+    // These opaque identities differ only in case and must remain distinct.
+    world.secondary_community_id = world.community_id.to_ascii_lowercase();
 
     let communities = [
         EnergyCommunitySchema {
@@ -264,34 +301,23 @@ async fn submit_two_communities(world: &mut MyWorld) {
 }
 
 fn unique_community_id() -> String {
-    Uuid::new_v4().to_string()
+    format!("E2E-Community-{}", Uuid::new_v4())
 }
 
 #[then("the Market Orchestrator opens a distinct Spot market for each community")]
 async fn wait_for_two_community_markets(world: &mut MyWorld) {
     let market_ids = [
-        generate_market_id(
-            world.community_id.as_str(),
-            MarketType::Spot,
-            world.target_delivery_time,
-        )
-        .unwrap(),
-        generate_market_id(
-            world.secondary_community_id.as_str(),
-            MarketType::Spot,
-            world.target_delivery_time,
-        )
-        .unwrap(),
+        wait_for_market(world, &world.community_id).await.0,
+        wait_for_market(world, &world.secondary_community_id)
+            .await
+            .0,
     ];
 
     assert_ne!(
         market_ids[0], market_ids[1],
-        "Different communities generated the same Spot market id"
+        "Different communities resolved to the same Spot market id"
     );
 
-    for market_id in market_ids {
-        wait_for_market(world, market_id).await;
-    }
     info!("Distinct Spot markets for both communities are open and stored");
     world.community_market_ids = Some(market_ids);
 }
@@ -350,10 +376,6 @@ async fn publish_community_via_ewds(community: &EnergyCommunitySchema) {
         .await
         .expect("Failed to publish E2E community through EWDS");
 
-    let mut community = community;
-    community.community_id =
-        primitives::utils::normalize_community_id(&community.community_id).unwrap();
-
     // Events get no reply, so wait until the off-chain storage has stored the community.
     for _ in 0..EWDS_COMMUNITY_POLL_ATTEMPTS {
         let communities = client
@@ -370,4 +392,99 @@ async fn publish_community_via_ewds(community: &EnergyCommunitySchema) {
         "Timeout: community {} was not stored after publishing it through EWDS",
         community.community_id
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethers::abi::{encode, Token};
+    use std::sync::Arc;
+
+    fn lookup_fixture() -> (
+        MarketControllerContract<Provider<MockProvider>>,
+        MockProvider,
+        MarketKey,
+    ) {
+        let (provider, mock) = Provider::mocked();
+        let controller = MarketControllerContract::new(Address::zero(), Arc::new(provider));
+        let key = MarketKey {
+            community_id: [0x11; 16],
+            market_type: MarketType::Spot.to_evm(),
+            delivery_start_time: 1_700_000_100,
+        };
+        (controller, mock, key)
+    }
+
+    fn push_market_ids(mock: &MockProvider, ids: Vec<[u8; 16]>) {
+        let encoded = encode(&[Token::Array(
+            ids.into_iter()
+                .map(|id| Token::FixedBytes(id.to_vec()))
+                .collect(),
+        )]);
+        mock.push::<Bytes, _>(Bytes::from(encoded)).unwrap();
+    }
+
+    #[test]
+    fn lookup_key_hashes_exact_opaque_community_spelling() {
+        for (first, second) in [
+            ("Community-A", "community-a"),
+            (
+                "ABCDEFAB-1234-4234-8234-ABCDEFABCDEF",
+                "abcdefab-1234-4234-8234-abcdefabcdef",
+            ),
+        ] {
+            let first_key = market_key(first, 1_700_000_100);
+            let second_key = market_key(second, 1_700_000_100);
+            assert_ne!(first_key.community_id, second_key.community_id);
+            for (identity, key) in [(first, first_key), (second, second_key)] {
+                assert_eq!(
+                    key.community_id,
+                    parse_uuid_or_hex_bytes16(&derive_onchain_id(identity)).unwrap()
+                );
+                assert_eq!(key.market_type, MarketType::Spot.to_evm());
+                assert_eq!(key.delivery_start_time, 1_700_000_100);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn lookup_binding_encodes_tuple_and_resolves_zero_then_existing_uuid() {
+        let (controller, mock, key) = lookup_fixture();
+        let call = controller.get_market_ids(vec![key.clone()]);
+        let mut expected_calldata =
+            ethers::utils::id("getMarketIds((bytes16,uint8,uint64)[])").to_vec();
+        expected_calldata.extend(encode(&[Token::Array(vec![Token::Tuple(vec![
+            Token::FixedBytes(key.community_id.to_vec()),
+            Token::Uint(key.market_type.into()),
+            Token::Uint(key.delivery_start_time.into()),
+        ])])]));
+        assert_eq!(call.calldata().unwrap().as_ref(), expected_calldata);
+
+        let market_id = *Uuid::new_v4().as_bytes();
+        for expected in [None, Some(market_id), Some(market_id)] {
+            push_market_ids(&mock, vec![expected.unwrap_or([0; 16])]);
+            assert_eq!(lookup_market_id(&controller, &key).await, expected);
+            mock.assert_request(
+                "eth_call",
+                (call.tx.clone(), BlockId::Number(BlockNumber::Latest)),
+            )
+            .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "Expected one getMarketIds result")]
+    async fn lookup_rejects_missing_result() {
+        let (controller, mock, key) = lookup_fixture();
+        push_market_ids(&mock, vec![]);
+        lookup_market_id(&controller, &key).await;
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "Expected one getMarketIds result")]
+    async fn lookup_rejects_extra_results() {
+        let (controller, mock, key) = lookup_fixture();
+        push_market_ids(&mock, vec![[0; 16], [0; 16]]);
+        lookup_market_id(&controller, &key).await;
+    }
 }

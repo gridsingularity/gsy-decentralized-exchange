@@ -1,14 +1,14 @@
 use primitives::db_api_schema::market::{
     MarketChainRecord, MarketSchema, MarketType, MatchingAlgorithm,
 };
-use primitives::utils::{generate_market_id, parse_uuid_or_hex_bytes16};
+use primitives::utils::{derive_onchain_id, parse_uuid_or_hex_bytes16};
 
-const COMMUNITY_ID: &str = "11111111-1111-4111-8111-111111111111";
+const COMMUNITY_ID: &str = "Community-LIC01";
 
 fn record() -> MarketChainRecord {
     MarketChainRecord {
-        market_id: generate_market_id(COMMUNITY_ID, MarketType::Flex, 1_700_000_100).unwrap(),
-        community_id: parse_uuid_or_hex_bytes16(COMMUNITY_ID).unwrap(),
+        market_id: *uuid::Uuid::new_v4().as_bytes(),
+        community_id: parse_uuid_or_hex_bytes16(&derive_onchain_id(COMMUNITY_ID)).unwrap(),
         opening_time: 1_699_998_300,
         closing_time: 1_700_000_100,
         delivery_start_time: 1_700_000_100,
@@ -22,7 +22,10 @@ fn record() -> MarketChainRecord {
 #[test]
 fn converts_chain_record_to_market_schema() {
     let record = record();
-    let market = MarketSchema::try_from(record.clone()).unwrap();
+    let market = record
+        .clone()
+        .into_schema(COMMUNITY_ID.to_string())
+        .unwrap();
 
     assert_eq!(
         market,
@@ -43,7 +46,10 @@ fn converts_chain_record_to_market_schema() {
 #[test]
 fn market_id_matches_the_parsed_form() {
     let record = record();
-    let market = MarketSchema::try_from(record.clone()).unwrap();
+    let market = record
+        .clone()
+        .into_schema(COMMUNITY_ID.to_string())
+        .unwrap();
 
     assert_eq!(
         parse_uuid_or_hex_bytes16(market.market_id.as_str()),
@@ -58,7 +64,7 @@ fn rejects_unknown_market_type() {
         ..record()
     };
 
-    let error = MarketSchema::try_from(record).unwrap_err();
+    let error = record.into_schema(COMMUNITY_ID.to_string()).unwrap_err();
 
     assert!(error.to_string().contains("Unknown market type 3"));
 }
@@ -70,7 +76,7 @@ fn rejects_unknown_matching_algorithm() {
         ..record()
     };
 
-    let error = MarketSchema::try_from(record).unwrap_err();
+    let error = record.into_schema(COMMUNITY_ID.to_string()).unwrap_err();
 
     assert!(error.to_string().contains("Unknown matching algorithm 7"));
 }

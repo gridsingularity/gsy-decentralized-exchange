@@ -19,6 +19,10 @@ INVALID = [
 ]
 
 
+def valid_actor_id(value):
+    return bool(value) and value == value.strip()
+
+
 def validator(filename):
     resources = Registry().with_resources(
         (path.as_uri(), Resource.from_contents(json.loads(path.read_text())))
@@ -76,8 +80,8 @@ class IdentifierSchemas(unittest.TestCase):
                 self.assertEqual(event.is_valid({
                     "eventId": "profile-event", "eventType": "measurements.event",
                     "occurredAt": "2026-11-04T10:01:00Z", "data": [measurement],
-                }), identifier in VALID)
-                self.assertEqual(forecast.is_valid({**measurement, "creationTime": 1, "confidence": 1}), identifier in VALID)
+                }), valid_actor_id(identifier))
+                self.assertEqual(forecast.is_valid({**measurement, "creationTime": 1, "confidence": 1}), valid_actor_id(identifier))
                 response.validate({"requestId": "profile-query", "success": True, "data": [measurement]})
 
     def test_measurement_query_filters_and_aliases(self):
@@ -87,7 +91,7 @@ class IdentifierSchemas(unittest.TestCase):
                 with self.subTest(key=key, identifier=identifier):
                     self.assertEqual(query.is_valid({
                         "requestId": "query", "operation": "measurements.query", "payload": {key: identifier},
-                    }), identifier in VALID)
+                    }), valid_actor_id(identifier))
         for key in ["facilityId", "facility_id", "areaUuid"]:
             query.validate({"requestId": "query", "operation": "measurements.query", "payload": {
                 key: UUID, "communityUuid": "0x" + HEX,
@@ -152,25 +156,28 @@ class IdentifierSchemas(unittest.TestCase):
                     "eventId": "opaque-event-id", "eventType": "community.event",
                     "occurredAt": "2026-11-04T10:01:00Z",
                     "data": [{"communityId": identifier, "communityName": "Test", "sites": []}],
-                }), identifier in VALID)
+                }), valid_actor_id(identifier))
                 self.assertEqual(query.is_valid({
                     "requestId": "opaque-request", "operation": "markets.query",
                     "payload": {"communityId": identifier},
-                }), identifier in VALID)
+                }), valid_actor_id(identifier))
 
-    def test_market_output_accepts_hash_uuids_and_rejects_nil(self):
+    def test_market_output_preserves_offchain_community(self):
         check = validator("int.market.schema.v1.json")
         payload = {
-            "marketId": "808f0603-acbe-6696-4d3d-a1cd0cb3f5f4",
-            "communityId": UUID.lower(), "marketType": "spot",
+            "marketId": "808f0603-acbe-4696-8d3d-a1cd0cb3f5f4",
+            "communityId": "Community-LIC01", "marketType": "spot",
             "matchingAlgorithm": "pay_as_bid",
             **{field: "2026-11-04T10:00:00Z" for field in [
                 "openingTime", "closingTime", "deliveryStartTime", "deliveryEndTime", "createdAt",
             ]},
         }
         check.validate(payload)
-        for field in ["marketId", "communityId"]:
-            self.assertFalse(check.is_valid({**payload, field: NIL[2]}))
+        self.assertFalse(check.is_valid({**payload, "marketId": NIL[2]}))
+        for community in ["Community-LIC01", UUID, "0x" + HEX, NIL[2]]:
+            check.validate({**payload, "communityId": community})
+        for community in ["", " ", " padded", "padded\n"]:
+            self.assertFalse(check.is_valid({**payload, "communityId": community}))
 
     def test_clearing_result_market_identifier(self):
         schema = validator("int.clearing-result.schema.v1.json").schema["properties"]["marketId"]

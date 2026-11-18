@@ -45,10 +45,14 @@ Until then, listener ownership is the normal lifecycle path, not an
 enforced access-control boundary for those legacy write endpoints.
 
 `NewMarketCreated` carries the full market record. The handler converts it to
-`MarketSchema` (`market_id` as `0x` + 32 hex digits, `community_id` as UUID,
-times as zero-padded epoch seconds) and upserts it by `market_id`, so a
-replayed event is harmless. The chain is the source of markets; no service
-posts them any more.
+`MarketSchema` (`market_id` as lowercase `0x` + 32 hex digits, `community_id` as
+the exact off-chain string, times as zero-padded epoch seconds). It reverse-resolves
+the event's community hash directly through the DB ID mapping registered by
+topology writes, without calling the IDs API or interpreting the hash as a UUID.
+A missing mapping fails indexing; the listener retries the block until the mapping
+is available. Durable pending-event handling is deferred to DD-459 step 5.
+The handler upserts by `market_id`, so a replayed event is harmless. The chain is
+the source of markets; no service posts them any more.
 
 ## HTTP API Surface
 
@@ -85,18 +89,20 @@ posts them any more.
 - `/facilities` (`GET`, `POST`)
 - `/facilities/validate` (`POST`) for read-only bulk facility/market validation
 
-Community writes through HTTP and EWDS accept nonzero UUID or 16-byte hex IDs and store
-lowercase hyphenated UUIDs. `GET /communities` and `communities.query` return that
-canonical form. Invalid IDs return HTTP 400 or cause the EWDS event to be dropped
+Community writes through HTTP and EWDS accept exact, nonempty, unpadded opaque IDs,
+including UUID-looking strings. `GET /communities` and `communities.query` preserve
+their spelling and case. Empty or padded IDs return HTTP 400 or cause the EWDS event to be dropped
 as invalid; they are not retried as storage failures.
 
 `GET /market`, `GET /markets`, `markets.query`, `POST /markets`, and
 `POST /clearing-results` normalize market IDs to lowercase `0x` bytes16.
 UUIDs, lowercase `0x`-prefixed hex and bare hex are accepted, with hexadecimal
 digits in either case. Whitespace, malformed IDs and all-zero IDs are rejected
-with HTTP 400 or EWDS `invalid_request`. Market writes also normalize community
-IDs. HTTP market reads return stored hex market IDs; EWDS market reads and
-events continue returning UUID market IDs. Neither format implies UUID v4.
+with HTTP 400 or EWDS `invalid_request`. Market writes and community filters
+preserve exact opaque community IDs. HTTP market reads return stored hex market
+IDs; EWDS market reads and events return UUID market IDs with the same bytes.
+The orchestrator generates UUIDv4 market IDs; the compatibility byte parser
+does not enforce UUID version or variant bits.
 Facility-validation responses still echo each requested pair exactly and report
 an invalid market ID as `unknown_market` for that pair only.
 
@@ -113,7 +119,7 @@ not interpreted as resolved on-chain IDs.
 Empty or padded identities return HTTP 400 or invalidate the entire inbound EWDS
 event before any writes. Site facility lists deduplicate identical references only.
 Names, site keys and arbitrary asset IDs are unchanged.
-This normalization targets fresh deployments with storage and consumers built
+These identity rules target fresh deployments with storage and consumers built
 from the same revision.
 
 ### Facility Participation Validation
@@ -122,7 +128,7 @@ from the same revision.
 `{"facility_id": "facility-a", "market_id": "0x..."}` pairs. Facility IDs are
 the original off-chain IDs, not owner IDs or generated on-chain IDs. Market IDs
 accept UUID or bytes16 hex; results echo the supplied IDs.
-Facility lookup uses the canonical off-chain identity, but responses preserve
+Facility lookup uses the exact off-chain identity, and responses preserve
 the requested spelling. Empty or padded facility IDs yield `unknown_facility`
 for that pair, without failing the other pairs.
 
@@ -161,7 +167,7 @@ by those trusted services, not by this read-only endpoint or an ID mapping alone
 
 HTTP and EWDS topology writes register mappings before making the topology record
 visible: facility ID and owner ID for facilities, `site_name` (the current site
-key) for sites, and the currently normalized community ID for communities.
+key) for sites, and the exact opaque community ID for communities.
 References to other entities do not register those entities. Replays reuse the
 mapping; topology updates retain earlier mappings for chain-event lookups.
 If mapping persistence fails, the topology write fails and EWDS can retry.
@@ -170,6 +176,10 @@ but mappings alone never establish eligibility. A mapping made with another key
 is rejected, not overwritten. Use a fresh deployment; do not rotate the key in place.
 See [actor key provisioning](../setup/contracts.md#actor-id-hashing-key).
 - `/ids` (`POST`) — get-or-create offchain↔onchain ID mappings
+
+`POST /ids` and EWDS `ids.query` remain available for current callers. This
+increment does not implement API authentication; access control is deferred
+to a separate ticket.
 
 Compatibility adapters for EVM JSON callers:
 
@@ -180,23 +190,27 @@ Compatibility adapters for EVM JSON callers:
 These adapters do not own separate collections. They read and write the same
 `markets`, `measurement_points`, and `timeseries` records as the canonical API.
 Measurement/forecast ingest and facility filters use the same facility rule.
-Typed profile ingestion also requires a nonzero community UUID or 16-byte hex ID,
-stored as a lowercase hyphenated UUID. Generated profile IDs include the canonical
-community ID and the exact facility ID. Invalid IDs reject the whole batch before writes
+Typed profile ingestion requires a nonempty, unpadded opaque community ID,
+preserved exactly even when UUID-looking. Generated profile IDs escape `%` to `%25`
+then `:` to `%3A` within each community/facility component before joining them with
+`:` separators, preventing component collisions. Ordinary UUID/plain IDs without
+these characters are unchanged; actor IDs and `asset_name`/`datasource_name` are
+not rewritten. Empty or padded IDs reject the whole batch before writes
 (HTTP 400 or an invalid EWDS measurement event). The community-client adapter
 applies the same checks before forwarding points and values.
 
 `GET /measurements` and `GET /forecasts` accept optional `facility_id` and
 `community_uuid` filters, individually or together, plus inclusive `start_time`
 and `end_time`. Aliases are `facilityId`/`areaUuid`, `communityUuid`, and
-`startTime`/`endTime`. Times are RFC 3339; community filters accept UUID or hex.
+`startTime`/`endTime`. Times are RFC 3339; community and facility filters match
+exact strings, with no UUID/hex equivalence or case folding.
 Invalid identifiers return HTTP 400. `measurements.query` applies the same
 filters and aliases, returning `invalid_request` rather than timing out.
 Specify each field only once, not together with one of its aliases.
 
-Direct `/measurement-points` writes preserve `asset_name` exactly and lowercase
-strict UUID-shaped `datasource_name` community references. Other labels (including hex-shaped labels),
-missing datasource metadata and caller-supplied point IDs are preserved.
+Direct `/measurement-points` writes preserve `asset_name` and `datasource_name`
+exactly, including UUID-looking community references. Other labels, missing
+datasource metadata and caller-supplied point IDs are preserved.
 Unfiltered profile reads still return these records; a community filter selects
 only matching community metadata. Shared read conversions do not validate it.
 
@@ -247,8 +261,10 @@ There is no reindexing tool. See the
   are validated before writing (400); duplicate canonical trade IDs in the batch
   or storage return 409. Unique indexes guard concurrent duplicates, but a
   concurrent conflict can still leave a batch partially inserted. No transaction
-  or migration is introduced. The seed script uses valid deterministic IDs and
-  deletes only the exact IDs listed in its dataset, not a prefix-wide selection.
+  or migration is introduced. The seed script assigns one random UUIDv4 market
+  ID per community/type/slot within its saved dataset; other fixture IDs are
+  unchanged. Queries reuse saved market IDs, and cleanup deletes only the exact
+  trade IDs in that dataset, not a prefix-wide selection.
 - With `EWDS_ENABLE_HANDLER=true`, indexed match confirmations, penalties and
   penalty-free delivery verifications publish persisted snapshots through `trade.event`.
   Penalized verification publishes only the consumed orders' status updates,

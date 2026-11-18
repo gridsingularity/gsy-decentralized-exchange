@@ -1,11 +1,7 @@
 use primitives::utils::{
-    bytes16_to_hex, bytes16_to_uuid_string, derive_onchain_id,
-    generate_market_id, normalize_community_id, normalize_market_id, normalize_offchain_id,
-    parse_nonzero_uuid_or_hex_bytes16, parse_uuid_or_hex_bytes16,
+    bytes16_to_hex, bytes16_to_uuid_string, derive_onchain_id, normalize_market_id,
+    normalize_offchain_id, parse_nonzero_uuid_or_hex_bytes16, parse_uuid_or_hex_bytes16,
 };
-use primitives::MarketType;
-
-const COMMUNITY_ID: &str = "11111111-1111-4111-8111-111111111111";
 
 #[test]
 fn identity_derivation_preserves_all_actor_spellings() {
@@ -42,7 +38,7 @@ fn identity_derivation_preserves_all_actor_spellings() {
 }
 
 #[test]
-fn profile_ids_canonicalize_uuid_community_references() {
+fn profile_ids_preserve_exact_community_references() {
     use primitives::db_api_schema::profiles::MeasurementPointType;
     use primitives::utils::profile_measurement_id;
     let community = "abcdefab-1234-1234-1234-abcdefabcdef";
@@ -50,7 +46,7 @@ fn profile_ids_canonicalize_uuid_community_references() {
         MeasurementPointType::Measurement,
         MeasurementPointType::Forecast,
     ] {
-        assert_eq!(
+        assert_ne!(
             profile_measurement_id(kind.clone(), community, "facility-a"),
             profile_measurement_id(kind, &community.to_uppercase(), "facility-a")
         );
@@ -61,12 +57,37 @@ fn profile_ids_canonicalize_uuid_community_references() {
 fn onchain_identity_derivation_is_keyed() {
     let hasher = primitives::actor_ids::ActorIdHasher::from_hex_key(
         &std::env::var("ACTOR_ID_HASH_KEY").unwrap(),
-    ).unwrap();
+    )
+    .unwrap();
     assert_eq!(derive_onchain_id("facility-a"), hasher.derive("facility-a"));
     assert_ne!(
         primitives::utils::derive_onchain_id("facility-a"),
         primitives::utils::derive_onchain_id("Facility-a")
     );
+}
+
+#[test]
+fn profile_ids_do_not_alias_opaque_components_with_separators() {
+    use primitives::db_api_schema::profiles::MeasurementPointType;
+    use primitives::utils::profile_measurement_id;
+    for kind in [
+        MeasurementPointType::Measurement,
+        MeasurementPointType::Forecast,
+    ] {
+        let ids = [
+            profile_measurement_id(kind.clone(), "A:B", "C"),
+            profile_measurement_id(kind.clone(), "A", "B:C"),
+            profile_measurement_id(kind.clone(), "A%3AB", "C"),
+        ];
+        assert_eq!(
+            ids.iter().collect::<std::collections::HashSet<_>>().len(),
+            3
+        );
+        assert_eq!(
+            profile_measurement_id(kind, "community", "facility"),
+            format!("{}:community:facility", ids[0].split(':').next().unwrap())
+        );
+    }
 }
 
 #[test]
@@ -93,15 +114,6 @@ fn market_id_normalization_rejects_invalid_values() {
     ] {
         assert!(normalize_market_id(id).is_err(), "{id}");
     }
-}
-
-#[test]
-fn market_id_is_deterministic_for_the_same_seed() {
-    let first = generate_market_id(COMMUNITY_ID, MarketType::Spot, 1_700_000_000).unwrap();
-    let second = generate_market_id(COMMUNITY_ID, MarketType::Spot, 1_700_000_000).unwrap();
-
-    assert_eq!(first, second);
-    assert_eq!(bytes16_to_hex(first), "0x808f0603acbe66964d3da1cd0cb3f5f4");
 }
 
 #[test]
@@ -143,9 +155,7 @@ fn required_ids_reject_zero_without_breaking_optional_sentinels() {
     ] {
         assert_eq!(parse_uuid_or_hex_bytes16(value), Some([0; 16]));
         assert_eq!(parse_nonzero_uuid_or_hex_bytes16(value), None);
-        assert!(normalize_community_id(value).is_err());
         assert!(normalize_market_id(value).is_err());
-        assert!(generate_market_id(value, MarketType::Spot, 1_700_000_000).is_err());
     }
 }
 
@@ -176,7 +186,7 @@ fn offchain_normalization_preserves_opaque_and_hex_shaped_identities() {
 
 #[test]
 fn canonical_outputs_round_trip_in_their_identifier_domains() {
-    let market = generate_market_id(COMMUNITY_ID, MarketType::Spot, 1_700_000_000).unwrap();
+    let market = *uuid::Uuid::new_v4().as_bytes();
     let facility = parse_uuid_or_hex_bytes16(&derive_onchain_id("facility-a")).unwrap();
     for bytes in [
         market,
@@ -188,75 +198,8 @@ fn canonical_outputs_round_trip_in_their_identifier_domains() {
             assert_eq!(parse_nonzero_uuid_or_hex_bytes16(&value), Some(bytes));
             let market = normalize_market_id(&value).unwrap();
             assert_eq!(normalize_market_id(&market).unwrap(), market);
-            let community = normalize_community_id(&value).unwrap();
-            assert_eq!(normalize_community_id(&community).unwrap(), community);
             let offchain = normalize_offchain_id(&value).unwrap();
             assert_eq!(normalize_offchain_id(&offchain).unwrap(), offchain);
         }
     }
-}
-
-#[test]
-fn market_id_changes_for_each_seed_component() {
-    let market_id = generate_market_id(COMMUNITY_ID, MarketType::Spot, 1_700_000_000).unwrap();
-
-    assert_ne!(
-        market_id,
-        generate_market_id(
-            "22222222-2222-4222-8222-222222222222",
-            MarketType::Spot,
-            1_700_000_000,
-        )
-        .unwrap()
-    );
-    assert_ne!(
-        market_id,
-        generate_market_id(COMMUNITY_ID, MarketType::Flex, 1_700_000_000).unwrap()
-    );
-    assert_ne!(
-        market_id,
-        generate_market_id(COMMUNITY_ID, MarketType::Spot, 1_700_000_001).unwrap()
-    );
-}
-
-#[test]
-fn community_id_normalizes_uuid_and_hex_forms_to_lowercase_uuid() {
-    let canonical = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
-    for community_id in [
-        canonical,
-        "3F2504E0-4F89-41D3-9A0C-0305E82C3301",
-        "0x3f2504e04f8941d39a0c0305e82c3301",
-        "3F2504E04F8941D39A0C0305E82C3301",
-    ] {
-        assert_eq!(
-            normalize_community_id(community_id).unwrap(),
-            canonical,
-            "{community_id}"
-        );
-    }
-}
-
-#[test]
-fn community_id_rejects_non_uuid_ids() {
-    assert!(normalize_community_id("community1").is_err());
-}
-
-#[test]
-fn market_id_is_the_same_for_every_form_of_a_community_id() {
-    let market_id = generate_market_id(COMMUNITY_ID, MarketType::Spot, 1_700_000_000).unwrap();
-
-    assert_eq!(
-        market_id,
-        generate_market_id(
-            "0x11111111111141118111111111111111",
-            MarketType::Spot,
-            1_700_000_000,
-        )
-        .unwrap()
-    );
-}
-
-#[test]
-fn market_id_rejects_a_non_uuid_community_id() {
-    assert!(generate_market_id("community1", MarketType::Spot, 1_700_000_000).is_err());
 }

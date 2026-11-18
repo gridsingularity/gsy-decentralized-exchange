@@ -17,7 +17,7 @@ use primitives::ewds::{
     remember_id, EwdsEventTopicConfig, EwdsEventType, EwdsOperation, EwdsTopicConfig,
 };
 use primitives::utils::{
-    normalize_community_id, normalize_market_id, normalize_offchain_id, opt_rfc3339_to_epoch,
+    normalize_market_id, normalize_offchain_id, opt_rfc3339_to_epoch,
     timestamp_to_string_with_padding,
 };
 use reqwest::Client;
@@ -517,7 +517,7 @@ pub async fn handle_request(
                     payload
                         .community_uuid
                         .as_deref()
-                        .map(normalize_community_id)
+                        .map(normalize_offchain_id)
                         .transpose()?,
                 ))
             })();
@@ -642,10 +642,8 @@ pub async fn handle_request(
                 request_id
             );
 
-            // The request uses the forms of the response (UUID or hex market
-            // and community IDs, RFC 3339 times); markets are stored with a
-            // `0x…` ID, a lowercase UUID community ID and zero-padded epoch
-            // seconds.
+            // Market IDs use canonical hex storage; community IDs are opaque
+            // and case-sensitive. Times are stored as zero-padded epoch seconds.
             let query = (|| -> Result<_> {
                 let payload: MarketsQueryPayload = serde_json::from_value(envelope.payload)?;
                 let market_id = payload
@@ -657,7 +655,7 @@ pub async fn handle_request(
                 let community_id = payload
                     .community_id
                     .as_deref()
-                    .map(normalize_community_id)
+                    .map(normalize_offchain_id)
                     .transpose()
                     .map_err(|e| anyhow!("markets.query payload parse error: {}", e))?;
                 let stored_time = |time: Option<String>| {

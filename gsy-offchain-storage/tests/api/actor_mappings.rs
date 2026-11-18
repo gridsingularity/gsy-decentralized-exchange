@@ -2,7 +2,10 @@ use crate::helpers::{init_app, stop_app};
 use gsy_offchain_storage::ewds_event_handler::handle_event;
 use mongodb::bson::doc;
 use primitives::{
-    db_api_schema::{grid_topology::FacilitySchema, ids::IdMappingSchema},
+    db_api_schema::{
+        grid_topology::{EnergyCommunitySchema, FacilitySchema},
+        ids::IdMappingSchema,
+    },
     ewds::{dto::EwdsEventEnvelope, EwdsEventType},
     utils::derive_onchain_id,
 };
@@ -10,7 +13,7 @@ use serde_json::json;
 
 #[tokio::test]
 async fn topology_registers_actor_mappings_over_http_and_ewds_before_orders_exist() {
-    let community = "11111111-1111-4111-8111-111111111111";
+    let community = "Community-MiXeD/LIC01";
     let owner = "ABCDEFAB-1234-4123-8123-ABCDEFABCDEF";
     for ewds in [false, true] {
         let app = init_app().await;
@@ -152,6 +155,43 @@ async fn mapping_failure_does_not_publish_topology_or_replace_existing_mapping()
             .unwrap()
             .len(),
         1
+    );
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn community_mapping_must_succeed_before_topology_is_written() {
+    let app = init_app().await;
+    let db = &app.db_wrapper;
+    let community = EnergyCommunitySchema {
+        community_id: "Community-MiXeD/LIC01".into(),
+        community_name: "Community".into(),
+        sites: vec![],
+    };
+    let wrong_mapping = IdMappingSchema {
+        offchain_id: community.community_id.clone(),
+        onchain_id: derive_onchain_id("different-community"),
+        creation_time: 1,
+    };
+    db.ids().insert_one(&wrong_mapping).await.unwrap();
+    for insert in [false, true] {
+        let error = if insert {
+            db.communities().insert(community.clone()).await
+        } else {
+            db.communities().upsert(community.clone()).await
+        }
+        .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("does not match ACTOR_ID_HASH_KEY"));
+    }
+    assert!(db.communities().get_all().await.unwrap().is_empty());
+    assert_eq!(
+        db.ids()
+            .filter(None, Some(community.community_id))
+            .await
+            .unwrap(),
+        vec![wrong_mapping]
     );
     stop_app(app).await;
 }

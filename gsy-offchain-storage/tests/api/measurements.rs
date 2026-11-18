@@ -69,22 +69,27 @@ fn make_measurement_point(measurement_id: &str, asset_name: &str) -> Measurement
 }
 
 #[tokio::test]
-async fn profile_community_variants_deduplicate_and_filters_combine_over_both_transports() {
+async fn profile_community_ids_are_exact_and_filters_combine_over_both_transports() {
     let app = init_app().await;
     let client = reqwest::Client::new();
     let facility = "abcdefab-abcd-abcd-abcd-abcdefabcdef";
-    let second_community = "fedcbafe-1234-1234-1234-fedcbafedcba";
+    let communities = [
+        COMMUNITY.to_string(),
+        COMMUNITY.to_uppercase(),
+        format!("0x{}", COMMUNITY.replace('-', "")),
+        COMMUNITY.replace('-', ""),
+        "Community-MiXeD/LIC01".into(),
+        "community-mixed/lic01".into(),
+        "00000000-0000-0000-0000-000000000000".into(),
+    ];
     for route in ["measurements", "forecasts"] {
-        for community in [COMMUNITY, second_community] {
-            for spelling in [
-                community.to_uppercase(),
-                format!("0x{}", community.replace('-', "")),
-                community.replace('-', ""),
-            ] {
+        for community in &communities {
+            // Only an exact replay deduplicates a profile identity.
+            for _ in 0..2 {
                 for id in [facility.to_uppercase(), "facility-b".into()] {
                     let mut row =
                         serde_json::to_value(make_forecast(&id, 1_900_000_000, 1.0)).unwrap();
-                    row["community_uuid"] = json!(spelling);
+                    row["community_uuid"] = json!(community);
                     if route == "measurements" {
                         row.as_object_mut().unwrap().remove("confidence");
                     }
@@ -103,9 +108,15 @@ async fn profile_community_variants_deduplicate_and_filters_combine_over_both_tr
             }
         }
         for (query, expected) in [
-            (json!({}), 4),
-            (json!({"facilityId": facility.to_uppercase()}), 2),
-            (json!({"areaUuid": facility.to_uppercase()}), 2),
+            (json!({}), communities.len() * 2),
+            (
+                json!({"facilityId": facility.to_uppercase()}),
+                communities.len(),
+            ),
+            (
+                json!({"areaUuid": facility.to_uppercase()}),
+                communities.len(),
+            ),
             (json!({"facility_id": facility}), 0),
             (json!({"communityUuid": COMMUNITY.to_uppercase()}), 2),
             (
@@ -117,8 +128,13 @@ async fn profile_community_variants_deduplicate_and_filters_combine_over_both_tr
                 1,
             ),
             (
-                json!({"community_uuid": second_community, "facility_id": "absent"}),
+                json!({"community_uuid": "Community-MiXeD/LIC01", "facility_id": "absent"}),
                 0,
+            ),
+            (json!({"community_uuid": "Community-MiXeD/LIC01"}), 2),
+            (
+                json!({"communityUuid": "community-mixed/lic01", "facilityId": "facility-b"}),
+                1,
             ),
             (json!({"startTime": "2030-03-17T17:46:41Z"}), 0),
         ] {
@@ -137,7 +153,13 @@ async fn profile_community_variants_deduplicate_and_filters_combine_over_both_tr
                 .iter()
                 .map(|row| {
                     let community = row["community_uuid"].as_str().unwrap();
-                    assert!([COMMUNITY, second_community].contains(&community));
+                    assert!(communities.iter().any(|id| id == community));
+                    if let Some(filter) = query
+                        .get("communityUuid")
+                        .or_else(|| query.get("community_uuid"))
+                    {
+                        assert_eq!(community, filter.as_str().unwrap());
+                    }
                     (
                         row["facility_id"].as_str().unwrap().to_string(),
                         community.to_string(),
@@ -163,12 +185,7 @@ async fn profile_community_variants_deduplicate_and_filters_combine_over_both_tr
                 assert_eq!(http_pairs, ewds_pairs);
             }
         }
-        for invalid in [
-            "",
-            "community-1",
-            " padded ",
-            "00000000-0000-0000-0000-000000000000",
-        ] {
+        for invalid in ["", " padded", "padded ", "\tcommunity", "community\n"] {
             let mut valid =
                 serde_json::to_value(make_forecast("not-written", 1_900_000_000, 1.0)).unwrap();
             if route == "measurements" {
@@ -206,14 +223,14 @@ async fn profile_community_variants_deduplicate_and_filters_combine_over_both_tr
             }
         }
     }
-    // Equivalent spellings must not create extra profile points or count exports twice.
+    // Both profile types preserve each exact community/facility pair, not replay duplicates.
     assert_eq!(
         app.db_wrapper
             .measurement_points()
             .count_documents(mongodb::bson::doc! {})
             .await
             .unwrap(),
-        8
+        (communities.len() * 4) as u64
     );
     assert_eq!(
         app.db_wrapper
@@ -221,28 +238,132 @@ async fn profile_community_variants_deduplicate_and_filters_combine_over_both_tr
             .count_documents(mongodb::bson::doc! {})
             .await
             .unwrap(),
-        8
+        (communities.len() * 4) as u64
     );
     stop_app(app).await;
 }
 
 #[tokio::test]
-async fn datasource_metadata_is_canonicalized_without_rejecting_labels_or_missing_values() {
-    use primitives::ewds::dto::EwdsMeasurementDto;
+async fn typed_profiles_escape_identity_components_without_changing_metadata() {
     let app = init_app().await;
     let client = reqwest::Client::new();
-    for (index, datasource) in [
+    let time_slot = 1_900_000_000;
+    let identities = [
+        ("A:B", "C", "A%3AB:C", 1.0),
+        ("A", "B:C", "A:B%3AC", 2.0),
+        ("A%3AB", "C", "A%253AB:C", 3.0),
+    ];
+    for (route, prefix, point_type) in [
+        (
+            "measurements",
+            "measurement",
+            MeasurementPointType::Measurement,
+        ),
+        ("forecasts", "forecast", MeasurementPointType::Forecast),
+    ] {
+        let payload = identities
+            .iter()
+            .map(|&(community, facility, _, energy)| {
+                if route == "measurements" {
+                    let mut row = make_measurement(facility, time_slot, energy);
+                    row.community_uuid = community.into();
+                    serde_json::to_value(row).unwrap()
+                } else {
+                    let mut row = make_forecast(facility, time_slot, energy);
+                    row.community_uuid = community.into();
+                    serde_json::to_value(row).unwrap()
+                }
+            })
+            .collect::<Vec<_>>();
+        // Replaying the batch must retain three distinct identities at the same timestamp.
+        for _ in 0..2 {
+            let response = client
+                .post(format!("{}/{route}", app.address))
+                .json(&payload)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status().as_u16(), 200, "{route}");
+        }
+
+        let points = app
+            .db_wrapper
+            .measurement_points()
+            .filter_points(None, Some(point_type))
+            .await
+            .unwrap();
+        assert_eq!(points.len(), identities.len(), "{route}");
+        for (community, facility, escaped, energy) in identities {
+            let key = format!("{prefix}:{escaped}");
+            let point = points
+                .iter()
+                .find(|point| point.measurement_id == key)
+                .unwrap();
+            assert_eq!(point.datasource_name.as_deref(), Some(community));
+            assert_eq!(point.asset_name, facility);
+            let values = app
+                .db_wrapper
+                .timeseries()
+                .filter_values(Some(key.clone()), None, None)
+                .await
+                .unwrap();
+            assert_eq!(values.len(), 1, "{key}");
+            assert_eq!(values[0].measurement_point, key);
+            assert_eq!(values[0].timestamp, format!("{time_slot:020}"));
+            assert_eq!(values[0].value, energy);
+
+            let rows: Vec<Value> = client
+                .get(format!("{}/{route}", app.address))
+                .query(&[("community_uuid", community), ("facility_id", facility)])
+                .send()
+                .await
+                .unwrap()
+                .error_for_status()
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            assert_eq!(rows.len(), 1, "{key}");
+            assert_eq!(rows[0]["community_uuid"], community);
+            assert_eq!(rows[0]["facility_id"], facility);
+            assert_eq!(rows[0]["energy_kwh"], energy);
+        }
+    }
+    assert_eq!(
+        app.db_wrapper
+            .measurement_points()
+            .count_documents(mongodb::bson::doc! {})
+            .await
+            .unwrap(),
+        6
+    );
+    assert_eq!(
+        app.db_wrapper
+            .timeseries()
+            .count_documents(mongodb::bson::doc! {})
+            .await
+            .unwrap(),
+        6
+    );
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn datasource_metadata_is_preserved_without_identity_validation() {
+    let app = init_app().await;
+    let client = reqwest::Client::new();
+    let datasources = [
         None,
         Some("DS-1-MQTT".to_string()),
         Some(COMMUNITY.to_uppercase()),
         Some("0xABCDEFAB123412341234ABCDEFABCDEF".to_string()),
-    ]
-    .into_iter()
-    .enumerate()
-    {
+        Some("".to_string()),
+        Some(" padded datasource ".to_string()),
+    ];
+    for (index, datasource) in datasources.iter().cloned().enumerate() {
         let id = format!("Custom-Point-{index}");
         let mut point = make_measurement_point(&id, &format!("facility-{index}"));
-        point.datasource_name = datasource;
+        point.datasource_name = datasource.clone();
         assert_eq!(
             client
                 .post(format!("{}/measurement-points", app.address))
@@ -271,15 +392,7 @@ async fn datasource_metadata_is_canonicalized_without_rejecting_labels_or_missin
             .unwrap()
             .unwrap();
         assert_eq!(stored.measurement_id, id);
-        assert_eq!(
-            stored.datasource_name.as_deref(),
-            [
-                None,
-                Some("DS-1-MQTT"),
-                Some(COMMUNITY),
-                Some("0xABCDEFAB123412341234ABCDEFABCDEF"),
-            ][index]
-        );
+        assert_eq!(stored.datasource_name, datasource);
     }
     let rows: Vec<MeasurementSchema> = client
         .get(format!("{}/measurements", app.address))
@@ -289,29 +402,39 @@ async fn datasource_metadata_is_canonicalized_without_rejecting_labels_or_missin
         .json()
         .await
         .unwrap();
-    assert_eq!(rows.len(), 4);
+    assert_eq!(rows.len(), datasources.len());
+    for row in &rows {
+        let index: usize = row
+            .facility_id
+            .strip_prefix("facility-")
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert_eq!(
+            row.community_uuid,
+            datasources[index].as_deref().unwrap_or_default()
+        );
+    }
     let response = query_measurements_via_ewds(&app, json!({})).await;
     assert_eq!(response["success"], true);
     let mut communities = response["data"]
         .as_array()
         .unwrap()
         .iter()
-        .map(|row| {
-            MeasurementSchema::try_from(
-                serde_json::from_value::<EwdsMeasurementDto>(row.clone()).unwrap(),
-            )
-            .unwrap()
-            .community_uuid
-        })
+        .map(|row| row["communityUuid"].as_str().unwrap().to_string())
         .collect::<Vec<_>>();
     communities.sort();
-    assert_eq!(
-        communities,
-        vec!["", "0xABCDEFAB123412341234ABCDEFABCDEF", "DS-1-MQTT", COMMUNITY]
-    );
+    let mut expected = datasources
+        .into_iter()
+        .map(Option::unwrap_or_default)
+        .collect::<Vec<_>>();
+    expected.sort();
+    assert_eq!(communities, expected);
     let filtered =
         query_measurements_via_ewds(&app, json!({"communityUuid": COMMUNITY.to_uppercase()})).await;
     assert_eq!(filtered["data"].as_array().unwrap().len(), 1);
+    let filtered = query_measurements_via_ewds(&app, json!({"communityUuid": COMMUNITY})).await;
+    assert!(filtered["data"].as_array().unwrap().is_empty());
     stop_app(app).await;
 }
 

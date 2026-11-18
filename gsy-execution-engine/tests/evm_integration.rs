@@ -1,7 +1,7 @@
 use ::primitives::{
     constants::GLOBAL_CONSTANTS,
     db_api_schema::{
-        market::{MarketChainRecord, MarketSchema},
+        market::MarketChainRecord,
         trades::{DbTradeSchema, TradeParameters, TradeStatus},
     },
     ewds::dto::EwdsTradeDto,
@@ -321,7 +321,7 @@ async fn mount_slot_records(
         .await;
 
     if let Some(trade) = trades.first() {
-        let market = MarketSchema::try_from(MarketChainRecord {
+        let market = MarketChainRecord {
             market_id: parse_uuid_or_hex_bytes16(&trade.market_id).unwrap(),
             community_id: [1; 16],
             opening_time: slot,
@@ -331,7 +331,8 @@ async fn mount_slot_records(
             market_type: 0,
             matching_algorithm: 0,
             created_at: slot,
-        })
+        }
+        .into_schema("community-1".to_string())
         .unwrap();
         Mock::given(method("GET"))
             .and(path("/market"))

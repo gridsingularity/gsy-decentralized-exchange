@@ -8,8 +8,7 @@ use primitives::db_api_schema::profiles::{
     TimeseriesSchema,
 };
 use primitives::utils::{
-    normalize_community_id, normalize_offchain_id, profile_measurement_id,
-    timestamp_to_string_with_padding,
+    normalize_offchain_id, profile_measurement_id, timestamp_to_string_with_padding,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -111,7 +110,7 @@ pub async fn post_measurements(
             Ok(id) => id,
             Err(error) => return HttpResponse::BadRequest().body(error.to_string()),
         };
-        measurement.community_uuid = match normalize_community_id(&measurement.community_uuid) {
+        measurement.community_uuid = match normalize_offchain_id(&measurement.community_uuid) {
             Ok(id) => id,
             Err(error) => return HttpResponse::BadRequest().body(error.to_string()),
         };
@@ -138,7 +137,7 @@ pub async fn get_measurements(
     let community_uuid = match query_params
         .community_uuid
         .as_deref()
-        .map(normalize_community_id)
+        .map(normalize_offchain_id)
         .transpose()
     {
         Ok(id) => id,
@@ -190,7 +189,7 @@ pub async fn post_forecasts(forecasts: Json<Vec<ForecastSchema>>, db: DbRef) -> 
             Ok(id) => id,
             Err(error) => return HttpResponse::BadRequest().body(error.to_string()),
         };
-        forecast.community_uuid = match normalize_community_id(&forecast.community_uuid) {
+        forecast.community_uuid = match normalize_offchain_id(&forecast.community_uuid) {
             Ok(id) => id,
             Err(error) => return HttpResponse::BadRequest().body(error.to_string()),
         };
@@ -232,7 +231,7 @@ pub async fn get_forecasts(db: DbRef, query_params: Query<ProfilesParameters>) -
     let community_uuid = match query_params
         .community_uuid
         .as_deref()
-        .map(normalize_community_id)
+        .map(normalize_offchain_id)
         .transpose()
     {
         Ok(id) => id,
@@ -289,20 +288,10 @@ pub async fn post_measurement_points(
     points: Json<Vec<MeasurementPointSchema>>,
     db: DbRef,
 ) -> impl Responder {
-    let mut points = points.into_inner();
-    for point in &mut points {
-        point.datasource_name = point.datasource_name.as_deref().map(|id| {
-            if id.len() == 36 {
-                normalize_community_id(id).unwrap_or_else(|_| id.to_string())
-            } else {
-                id.to_string()
-            }
-        });
-    }
     match db
         .get_ref()
         .measurement_points()
-        .insert_points(points)
+        .insert_points(points.into_inner())
         .await
     {
         Ok(ids) => HttpResponse::Ok().json(ids),

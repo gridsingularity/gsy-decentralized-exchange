@@ -543,18 +543,25 @@ export async function main() {
   );
 
   // Open now: the order placements below need an open market.
-  const newMarket = (id: string, marketType: number) => ({
+  const newMarket = (
+    id: string,
+    marketType: number,
+    deliveryStartTime = timeSlot,
+  ) => ({
     marketId: id,
     communityId: bytes16Id("gas:community"),
     openingTime: now,
     closingTime: timeSlot,
-    deliveryStartTime: timeSlot,
-    deliveryEndTime: timeSlot + 900,
+    deliveryStartTime,
+    deliveryEndTime: deliveryStartTime + 900,
     marketType,
     matchingAlgorithm: MATCHING_ALGORITHM_PAY_AS_BID,
   });
   const batchMarketIds = [0, 1, 2].map((index) =>
     bytes16Id(`gas:batch-market-${index}`),
+  );
+  const batchMarkets = batchMarketIds.map((id, marketType) =>
+    newMarket(id, marketType, timeSlot + 900),
   );
   await recordTx(
     "Mutating calls",
@@ -568,38 +575,35 @@ export async function main() {
     "Mutating calls",
     "createMarkets(3 markets)",
     "MarketController",
-    marketControllerContract.createMarkets(
-      batchMarketIds.map((id, marketType) => newMarket(id, marketType)),
-    ),
+    marketControllerContract.createMarkets(batchMarkets),
     "One community's spot, flex and settlement markets for one delivery slot.",
   );
   await recordTx(
     "Mutating calls",
     "createMarkets(3 markets, all existing)",
     "MarketController",
-    marketControllerContract.createMarkets(
-      batchMarketIds.map((id, marketType) => newMarket(id, marketType)),
-    ),
+    marketControllerContract.createMarkets(batchMarkets),
     "Existing markets are skipped; the cost of resending a window.",
   );
-  const resendMarketIds = Array.from({ length: 50 }, (_, index) =>
-    bytes16Id(`gas:resend-market-${index}`),
+  const resendMarkets = Array.from({ length: 50 }, (_, index) =>
+    newMarket(
+      bytes16Id(`gas:resend-market-${index}`),
+      MARKET_TYPE_SPOT,
+      timeSlot + (index + 2) * 900,
+    ),
   );
   await recordTx(
     "Mutating calls",
     "createMarkets(50 markets)",
     "MarketController",
-    marketControllerContract.createMarkets(
-      resendMarketIds.map((id) => newMarket(id, MARKET_TYPE_SPOT)),
-    ),
+    marketControllerContract.createMarkets(resendMarkets),
+    "One community's spot markets for 50 distinct delivery slots.",
   );
   await recordTx(
     "Mutating calls",
     "createMarkets(50 markets, all existing)",
     "MarketController",
-    marketControllerContract.createMarkets(
-      resendMarketIds.map((id) => newMarket(id, MARKET_TYPE_SPOT)),
-    ),
+    marketControllerContract.createMarkets(resendMarkets),
     "Existing markets are skipped; the cost of resending a window.",
   );
 
@@ -923,6 +927,19 @@ export async function main() {
     "marketsExist(3 markets)",
     "MarketController",
     marketControllerContract.marketsExist.estimateGas(batchMarketIds),
+  );
+  await recordEstimate(
+    "View estimates",
+    "getMarketIds(3 market keys)",
+    "MarketController",
+    marketControllerContract.getMarketIds.estimateGas(
+      batchMarkets.map(({ communityId, marketType, deliveryStartTime }) => ({
+        communityId,
+        marketType,
+        deliveryStartTime,
+      })),
+    ),
+    "Tuple lookup for one community's spot, flex and settlement markets.",
   );
   await recordEstimate(
     "View estimates",

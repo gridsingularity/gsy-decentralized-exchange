@@ -5,7 +5,7 @@ use primitives::db_api_schema::grid_topology::{
 };
 use primitives::db_api_schema::tariff::TariffSchema;
 use primitives::ewds::dto::FacilityMarketValidationRequest;
-use primitives::utils::normalize_community_id;
+use primitives::utils::normalize_offchain_id;
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -70,7 +70,7 @@ pub async fn get_pilot_sites(db: DbRef) -> impl Responder {
 
 pub async fn post_community(community: Json<EnergyCommunitySchema>, db: DbRef) -> impl Responder {
     let mut community = community.into_inner();
-    community.community_id = match normalize_community_id(&community.community_id) {
+    community.community_id = match normalize_offchain_id(&community.community_id) {
         Ok(id) => id,
         Err(error) => return HttpResponse::BadRequest().body(error.to_string()),
     };

@@ -1,21 +1,21 @@
-use crate::chain_connector::{MarketChainClient, NewMarket};
+use crate::chain_connector::{MarketChainClient, MarketKey, NewMarket};
 use crate::config::{Config, MarketRule, MARKET_RULES};
 use primitives::db_api_schema::grid_topology::EnergyCommunitySchema;
 use primitives::offchain_storage::CommunityProvider;
 use primitives::{
     constants::GLOBAL_CONSTANTS,
     utils::{
-        bytes16_to_hex, generate_market_id, normalize_community_id, parse_uuid_or_hex_bytes16,
+        bytes16_to_hex, derive_onchain_id, normalize_offchain_id, parse_uuid_or_hex_bytes16,
         timestamp_to_datetime_string,
     },
 };
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
+use uuid::Uuid;
 
-/// Market IDs per `marketsExist` call. Each lookup costs about one cold
-/// SLOAD (2.1k gas), so 500 IDs stay far below common `eth_call` gas caps.
-pub const MARKET_EXISTENCE_CHECK_BATCH_SIZE: usize = 500;
+/// Market keys per `getMarketIds` call, bounded to stay below `eth_call` gas caps.
+pub const MARKET_ID_LOOKUP_BATCH_SIZE: usize = 500;
 
 pub async fn run<C, S>(config: Config, client: C, community_source: S) -> anyhow::Result<()>
 where
@@ -100,8 +100,11 @@ where
     let communities = communities
         .iter()
         .filter_map(
-            |community| match normalize_community_id(&community.community_id) {
-                Ok(id) => parse_uuid_or_hex_bytes16(&id).map(|bytes| (community, bytes)),
+            |community| match normalize_offchain_id(&community.community_id) {
+                Ok(id) => Some(
+                    parse_uuid_or_hex_bytes16(&derive_onchain_id(&id))
+                        .expect("actor ID hashing produces bytes16"),
+                ),
                 Err(error) => {
                     warn!("Skipping community '{}': {}", community.community_id, error);
                     None
@@ -117,32 +120,41 @@ where
     // after downtime still gets every market it can trade in.
     for rule in MARKET_RULES.iter() {
         for delivery_start in delivery_slots_to_create(rule, now, look_ahead_horizon) {
-            for (community, community_bytes) in &communities {
-                let market_id = generate_market_id(
-                    community.community_id.as_str(),
-                    rule.market_type.clone(),
-                    delivery_start,
-                )?;
-                candidates.push(new_market(
-                    market_id,
-                    *community_bytes,
+            for community_id in &communities {
+                candidates.push((
+                    MarketKey {
+                        community_id: *community_id,
+                        market_type: rule.market_type.to_evm(),
+                        delivery_start_time: delivery_start,
+                    },
                     rule,
-                    delivery_start,
                 ));
             }
         }
     }
 
-    // The chain is the single source of truth for which markets exist; ask it
-    // for all candidates at once instead of one RPC call per market.
+    // Tuple lookup is the source of truth across ticks, restarts and competing
+    // orchestrators. Allocate a new UUID only for tuples reported as missing.
     let mut new_markets = Vec::new();
-    for chunk in candidates.chunks(MARKET_EXISTENCE_CHECK_BATCH_SIZE) {
-        let market_ids = chunk.iter().map(|market| market.market_id).collect();
-        let exists = client.markets_exist(market_ids).await?;
-        for (market, exists) in chunk.iter().zip(exists) {
-            if exists {
+    for chunk in candidates.chunks(MARKET_ID_LOOKUP_BATCH_SIZE) {
+        let keys = chunk.iter().map(|(key, _)| key.clone()).collect();
+        let market_ids = client.get_market_ids(keys).await?;
+        anyhow::ensure!(
+            market_ids.len() == chunk.len(),
+            "getMarketIds returned {} results for {} keys",
+            market_ids.len(),
+            chunk.len()
+        );
+        for ((key, rule), market_id) in chunk.iter().zip(market_ids) {
+            if market_id != [0; 16] {
                 continue;
             }
+            let market = new_market(
+                *Uuid::new_v4().as_bytes(),
+                key.community_id,
+                rule,
+                key.delivery_start_time,
+            );
             debug!(
                 "Market {} for delivery at {} is missing. Opens {}, closes {}.",
                 bytes16_to_hex(market.market_id),
@@ -150,7 +162,7 @@ where
                 timestamp_to_datetime_string(market.opening_time),
                 timestamp_to_datetime_string(market.closing_time)
             );
-            new_markets.push(market.clone());
+            new_markets.push(market);
         }
     }
 

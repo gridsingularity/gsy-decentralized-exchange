@@ -50,7 +50,7 @@ fn pair(facility_id: &str, market_id: &str) -> FacilityMarketValidationRequest {
 }
 
 fn community_id(id: &str) -> String {
-    uuid::Uuid::from_bytes(primitives::utils::create_encrypted_bytes16_from_string(id)).to_string()
+    format!("Community-{id}")
 }
 
 fn market_id(id: &str) -> String {
@@ -237,19 +237,37 @@ async fn facility_ingress_preserves_ids_and_validation_echoes_each_request() {
 }
 
 #[tokio::test]
-async fn http_community_ids_are_canonical_and_remain_eligible() {
+async fn http_community_ids_are_exact_and_eligibility_requires_the_same_identity() {
     let app = init_app().await;
     seed_community(&app.db_wrapper, "a").await;
-    let canonical = community_id("a");
-    for id in [
-        canonical.to_uppercase(),
-        format!("0x{}", canonical.replace('-', "").to_uppercase()),
-    ] {
+    let communities = [
+        "COMMUNITY-A",
+        "Community-MiXeD/LIC01",
+        "ABCDEFAB-1234-1234-1234-ABCDEFABCDEF",
+        "abcdefab-1234-1234-1234-abcdefabcdef",
+        "0xabcdefab123412341234abcdefabcdef",
+    ];
+    for id in communities {
+        app.db_wrapper
+            .markets()
+            .update_one(
+                doc! {"market_id": market_id("a")},
+                doc! {"$set": {"community_id": id}},
+            )
+            .await
+            .unwrap();
+        let result = validate_via_ewds(
+            &app.db_wrapper,
+            json!([pair("facility-a", &market_id("a"))]),
+        )
+        .await;
+        assert_eq!(result["data"][0]["eligible"], false);
+        assert_eq!(result["data"][0]["reason"], "unknown_community");
         let response = reqwest::Client::new()
             .post(format!("{}/communities", app.address))
             .json(&EnergyCommunitySchema {
-                community_id: id,
-                community_name: "a".into(),
+                community_id: id.into(),
+                community_name: format!("Community {id}"),
                 sites: vec!["site-a".into()],
             })
             .send()
@@ -262,7 +280,7 @@ async fn http_community_ids_are_canonical_and_remain_eligible() {
                 .await
                 .unwrap()
                 .community_id,
-            canonical
+            id
         );
         let result = validate_via_ewds(
             &app.db_wrapper,
@@ -277,11 +295,11 @@ async fn http_community_ids_are_canonical_and_remain_eligible() {
             .count_documents(doc! {})
             .await
             .unwrap(),
-        1
+        (communities.len() + 1) as u64
     );
     let response = reqwest::Client::new()
         .post(format!("{}/communities", app.address))
-        .json(&json!({"community_id": "not-a-uuid", "community_name": "invalid", "sites": []}))
+        .json(&json!({"community_id": " padded ", "community_name": "invalid", "sites": []}))
         .send()
         .await
         .unwrap();

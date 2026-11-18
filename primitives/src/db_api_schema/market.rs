@@ -2,7 +2,7 @@
 //!
 //! `MarketSchema` is the canonical ontology-aligned market-opening document.
 
-use crate::utils::{bytes16_to_hex, bytes16_to_uuid_string, timestamp_to_string_with_padding};
+use crate::utils::{bytes16_to_hex, timestamp_to_string_with_padding};
 pub use crate::{MarketTimeSeriesGranularity, MarketType, MatchingAlgorithm};
 use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
@@ -41,10 +41,10 @@ pub struct MarketChainRecord {
     pub created_at: u64,
 }
 
-impl TryFrom<MarketChainRecord> for MarketSchema {
-    type Error = anyhow::Error;
-
-    fn try_from(record: MarketChainRecord) -> Result<Self, Self::Error> {
+impl MarketChainRecord {
+    /// The caller resolves the community pseudonym through the private mapping.
+    pub fn into_schema(self, offchain_community_id: String) -> anyhow::Result<MarketSchema> {
+        let record = self;
         let market_type = MarketType::from_evm(record.market_type)
             .ok_or_else(|| anyhow!("Unknown market type {}", record.market_type))?;
         let matching_algorithm = MatchingAlgorithm::from_evm(record.matching_algorithm)
@@ -52,7 +52,7 @@ impl TryFrom<MarketChainRecord> for MarketSchema {
 
         Ok(MarketSchema {
             market_id: bytes16_to_hex(record.market_id),
-            community_id: bytes16_to_uuid_string(record.community_id),
+            community_id: offchain_community_id,
             opening_time: timestamp_to_string_with_padding(record.opening_time),
             closing_time: timestamp_to_string_with_padding(record.closing_time),
             delivery_start_time: timestamp_to_string_with_padding(record.delivery_start_time),

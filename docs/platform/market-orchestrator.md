@@ -17,41 +17,44 @@ closing time, so there is no open/close step.
    Markets are normally created before they open; markets that have already
    opened are included too, so a new community or a (re)start after downtime
    still gets every market it can trade in. Closed markets are never created.
-5. For each selected slot and community, compute the deterministic `marketId`
-   and build the full record: community UUID (as `bytes16`), opening/closing
-   time from the market-type offsets, delivery start and end
-   (`+ TIME_SLOT_SEC`), market type and matching algorithm.
-6. Ask `MarketController.marketsExist` which of these candidates exist, with
-   one `eth_call` per 500 IDs instead of one call per market. The chain is the
-   single source of truth; the orchestrator keeps no state between ticks.
-7. Send the missing markets through `createMarkets` in transactions of at most
-   `MARKET_CREATION_BATCH_SIZE` markets. The contract skips markets that
-   already exist, so a race with a pending transaction does not revert a batch.
+5. For each selected slot and community, build a `MarketKey` from the keyed
+   hash of the exact community ID (`bytes16`), market type and delivery start.
+6. Call `MarketController.getMarketIds(MarketKey[])` in batches of at most 500
+   tuples. Results preserve request order: the existing chain ID or zero when
+   absent. The chain is the single source of truth; no state is kept between ticks.
+7. Only for an absent tuple, generate a random UUIDv4 `marketId` once for the
+   candidate and build its record: community hash, opening/closing time from
+   the market-type offsets, delivery start/end (`+ TIME_SLOT_SEC`), market type
+   and matching algorithm. Send candidates through `createMarkets` in batches
+   of at most `MARKET_CREATION_BATCH_SIZE`. Duplicate tuples, including races
+   with pending transactions, are skipped; an ID collision with a different
+   tuple is rejected.
 
-A community whose ID is malformed or all-zero is skipped and logged, without
-blocking market creation for valid communities. The filter uses the same
-validation as market-ID generation.
+Community IDs are exact, nonempty, unpadded opaque strings, including UUID-looking
+values; case is preserved. Empty or padded IDs are skipped and logged without
+blocking valid communities. No UUID parsing or case normalization is applied.
 
 Communities are fetched on every tick so pilot-site updates are observed without
 restarting the orchestrator. A tick is skipped when no communities exist.
 
-## Deterministic Market ID
+## Market Identity
 
-`marketId` is generated from:
+Market IDs are random UUIDv4 values, not hashes derived from community and time.
+The on-chain uniqueness key is `(communityId, marketType, deliveryStartTime)`,
+where `communityId` is the `bytes16` encoding of `derive_onchain_id` on the exact
+off-chain community string, using the shared `ACTOR_ID_HASH_KEY`.
 
-- Community ID normalized to a lowercase hyphenated UUID (UTF-8)
-- `MarketType` string (`spot`, `flex`, `settlement`, UTF-8)
-- Delivery timestamp (`u64`, big-endian bytes)
-- Blake2b hash, 16-byte output
-
-The shared generator lives in `primitives::utils::generate_market_id`, allowing
-all services to derive the same contract-compatible identifier.
+Callers look up the existing tuple rather than reconstructing its market ID.
+Once created, that ID is reused across ticks and restarts. Storage represents
+it as lowercase `0x` bytes16 hex; EWDS market payloads format the same bytes as
+a UUID and preserve the original opaque community ID.
 
 ## Configurable Parameters
 
 - `EVM_NODE_URL`
 - `MARKET_CONTROLLER_ADDRESS`
 - `ORCHESTRATOR_SIGNER_PRIVATE_KEY`
+- `ACTOR_ID_HASH_KEY`: shared keyed community/actor hash configuration
 - `TICK_INTERVAL_SECONDS`
 - `LOOK_AHEAD_HOURS`: how far ahead opening times are considered
 - `MARKET_CREATION_BATCH_SIZE` (default `50`, must be greater than `0`)
@@ -70,8 +73,8 @@ all services to derive the same contract-compatible identifier.
 
 Each tick is isolated. Community-source, RPC, and transaction errors are logged
 and the next tick continues, so transient failures do not stop orchestration
-permanently. Markets of a failed batch are still missing on-chain and are
-sent again on the next tick.
+permanently. The next tick looks up each tuple again: confirmed markets reuse
+their chain IDs, and only tuples still absent receive new candidates.
 
 If the orchestrator is down when a market opens, the market is created on the
 first tick after the restart, as long as it has not closed yet. Markets that

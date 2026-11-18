@@ -230,7 +230,7 @@ pub async fn handle_event(db: &DatabaseWrapper, envelope: EwdsEventEnvelope<Valu
                 measurement.facility_id =
                     primitives::utils::normalize_offchain_id(&measurement.facility_id)?;
                 measurement.community_uuid =
-                    primitives::utils::normalize_community_id(&measurement.community_uuid)?;
+                    primitives::utils::normalize_offchain_id(&measurement.community_uuid)?;
                 Ok(measurement)
             })?;
             retry_db_write(|| insert_measurements(db, &measurements)).await?;
@@ -260,7 +260,7 @@ pub async fn handle_event(db: &DatabaseWrapper, envelope: EwdsEventEnvelope<Valu
             let communities = parse_batch(envelope.data, |community: EwdsCommunityDto| {
                 let mut community = EnergyCommunitySchema::from(community);
                 community.community_id =
-                    primitives::utils::normalize_community_id(&community.community_id)?;
+                    primitives::utils::normalize_offchain_id(&community.community_id)?;
                 Ok(community)
             })?;
             db.communities().check_for_duplicates(&communities).await?;

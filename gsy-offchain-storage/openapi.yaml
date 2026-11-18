@@ -311,13 +311,13 @@ paths:
               $ref: "#/components/schemas/MarketSchema"
       responses:
         "200":
-          description: Saved market, with canonical market and community IDs.
+          description: Saved market with a canonical market ID and the exact off-chain community ID.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/MarketSchema"
         "400":
-          description: Invalid or nil market or community ID.
+          description: Invalid or nil market ID, or empty or padded community ID.
         "500":
           $ref: "#/components/responses/InternalError"
     get:
@@ -328,13 +328,13 @@ paths:
         - in: query
           name: community_id
           required: false
-          description: Nonzero UUID, 0x-prefixed or bare bytes16 hex; no surrounding whitespace.
+          description: Nonempty, unpadded opaque off-chain community ID; exact and case-sensitive.
           schema: { type: string }
         - { $ref: "#/components/parameters/StartTimeQuery" }
         - { $ref: "#/components/parameters/EndTimeQuery" }
       responses:
         "200":
-          description: Matching markets with canonical IDs.
+          description: Matching markets with canonical market IDs and exact off-chain community IDs.
           content:
             application/json:
               schema:
@@ -342,7 +342,7 @@ paths:
                 items:
                   $ref: "#/components/schemas/MarketSchema"
         "400":
-          description: Invalid or nil market or community ID.
+          description: Invalid or nil market ID, or empty or padded community ID.
         "404":
           description: No matching markets.
         "500":
@@ -431,7 +431,7 @@ paths:
     post:
       tags: [Measurements]
       summary: Register measurement / forecast points.
-      description: Facility references in asset_name are preserved exactly. UUID-shaped community references in datasource_name are normalized; other labels, missing datasource metadata and client-supplied measurement_id values are preserved.
+      description: Facility references in asset_name and client-supplied measurement_id values are preserved exactly. datasource_name is generic metadata, not a validated actor ID; all labels (including empty, padded and UUID-shaped strings) and missing values are preserved exactly.
       requestBody:
         required: true
         content:
@@ -648,8 +648,8 @@ paths:
   /communities:
     post:
       tags: [Grid Topology]
-      summary: Create or replace an energy community by canonical community ID.
-      description: Accepts UUID or 16-byte hex IDs and returns lowercase hyphenated UUIDs.
+      summary: Create or replace an energy community by its exact off-chain ID.
+      description: Accepts nonempty, unpadded opaque community IDs, preserving case and UUID-like spellings. Registers the keyed actor mapping before writing the community; mapping failures prevent ingestion.
       requestBody:
         required: true
         content:
@@ -664,7 +664,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/EnergyCommunitySchema"
         "400":
-          description: Invalid community ID; expected a UUID or 16-byte hex value.
+          description: Invalid community ID; must be nonempty with no surrounding whitespace.
         "500":
           $ref: "#/components/responses/InternalError"
     get:
@@ -791,8 +791,8 @@ paths:
       tags: [Measurements]
       summary: Upsert measurement profiles and their values.
       description: |
-        Facility identities follow the off-chain identity rule. Community IDs must
-        be nonzero UUID/bytes16 values and are stored as lowercase hyphenated UUIDs.
+        Facility and community identities are nonempty, unpadded opaque strings,
+        preserved exactly and case-sensitive, including UUID-like spellings.
         The whole payload is validated before writing; writes are not transactional.
       requestBody:
         required: true
@@ -811,14 +811,14 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
     get:
       tags: [Measurements]
-      summary: Read measurement profiles using canonical identity filters.
+      summary: Read measurement profiles using exact identity filters.
       description: |
         Filters combine. Aliases facilityId/areaUuid, communityUuid, startTime and
         endTime are supported; send only one spelling per field. Stored points
         without datasource metadata return an empty community_uuid.
       parameters:
         - { in: query, name: facility_id, schema: { type: string } }
-        - { in: query, name: community_uuid, schema: { type: string }, description: Nonzero UUID or bytes16 hex. }
+        - { in: query, name: community_uuid, schema: { type: string }, description: "Nonempty, unpadded opaque community ID; exact and case-sensitive." }
         - { in: query, name: start_time, schema: { type: string, format: date-time } }
         - { in: query, name: end_time, schema: { type: string, format: date-time } }
       responses:
@@ -854,11 +854,11 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
     get:
       tags: [Measurements]
-      summary: Read forecast profiles using canonical identity filters.
+      summary: Read forecast profiles using exact identity filters.
       description: Same filters and aliases as GET /measurements; reconstructed confidence is 1.0.
       parameters:
         - { in: query, name: facility_id, schema: { type: string } }
-        - { in: query, name: community_uuid, schema: { type: string }, description: Nonzero UUID or bytes16 hex. }
+        - { in: query, name: community_uuid, schema: { type: string }, description: "Nonempty, unpadded opaque community ID; exact and case-sensitive." }
         - { in: query, name: start_time, schema: { type: string, format: date-time } }
         - { in: query, name: end_time, schema: { type: string, format: date-time } }
       responses:
@@ -881,7 +881,7 @@ paths:
         the site to list the facility and the community to list that site.
         An ID mapping alone does not establish eligibility. Does not check
         the market's opening/closing times or contract authorization.
-        Facility UUID lookup is case-insensitive, but each result echoes its
+        Facility and community identities match exactly, including case; each result echoes its
         requested identifiers exactly. Invalid facility identities return
         unknown_facility for that pair rather than failing the batch.
       requestBody:
@@ -1109,7 +1109,7 @@ components:
       required: [facility_id, community_uuid, time_slot, creation_time, energy_kwh]
       properties:
         facility_id: { type: string, description: Canonical off-chain facility identity. }
-        community_uuid: { type: string, description: Nonzero UUID/hex on ingress; lowercase UUID on typed-profile reads. Direct measurement points may carry free-text datasource labels or no metadata. }
+        community_uuid: { type: string, description: "Nonempty, unpadded opaque actor ID on typed-profile ingress; preserved exactly and case-sensitive. Direct measurement points may carry arbitrary datasource labels or no metadata." }
         time_slot: { type: integer, format: uint64, description: Unix seconds. }
         creation_time: { type: integer, format: uint64, description: Unix seconds. }
         energy_kwh: { type: number, format: double }
@@ -1236,7 +1236,7 @@ components:
           description: Nonzero UUID, 0x-prefixed or bare bytes16 hex on input; lowercase 0x hex on output.
         community_id:
           type: string
-          description: Nonzero UUID, 0x-prefixed or bare bytes16 hex on input; lowercase hyphenated UUID on output.
+          description: Nonempty, unpadded opaque off-chain community ID, preserved exactly. Chain events resolve the keyed community hash through a registered ID mapping; a missing mapping fails ingestion for retry instead of storing the hash as a UUID.
         opening_time: { type: string }
         closing_time: { type: string }
         delivery_start_time: { type: string }
@@ -1276,7 +1276,7 @@ components:
         datasource_name:
           type: string
           nullable: true
-          description: Strict UUID-shaped community references are lowercased on ingest. Other labels are preserved; absent metadata remains readable without a community filter.
+          description: Generic datasource label, preserved exactly without actor-ID validation, including empty, padded or UUID-shaped strings. Absent metadata remains readable without a community filter.
 
     TimeseriesSchema:
       type: object
@@ -1379,7 +1379,7 @@ components:
       properties:
         community_id:
           type: string
-          description: Nonzero UUID, 0x-prefixed or bare bytes16 hex on input; canonical lowercase hyphenated UUID on output.
+          description: Nonempty, unpadded opaque community ID, preserved exactly and case-sensitive, including UUID-shaped strings.
         community_name: { type: string }
         sites:
           type: array

@@ -4,20 +4,22 @@ use ethers::{
     utils::Anvil,
 };
 use gsy_market_orchestrator::{
-    chain_connector::{GsyMarketOrchestratorNodeClient, MarketChainClient, NewMarket},
+    chain_connector::{GsyMarketOrchestratorNodeClient, MarketChainClient, MarketKey, NewMarket},
     config::{Config, OffchainStorageTransport},
 };
 use primitives::{
-    utils::{generate_market_id, parse_uuid_or_hex_bytes16},
+    utils::{derive_onchain_id, parse_uuid_or_hex_bytes16},
     MarketType, MatchingAlgorithm,
 };
 use std::{fs::File, io::Write, sync::Arc};
 use tempfile::TempDir;
+use uuid::Uuid;
 
 abigen!(
     MockMarketControllerReader,
     r#"[
         function markets(bytes16 marketId) external view returns (bytes16, bytes16, uint64, uint64, uint64, uint64, uint8, uint8)
+        function setLookupResultDelta(int8 delta) external
     ]"#
 );
 
@@ -44,6 +46,12 @@ async fn test_evm_market_controller_client_creates_markets() {
             bytes32 public constant ORCHESTRATOR_ROLE = keccak256("ORCHESTRATOR_ROLE");
             mapping(address => mapping(bytes32 => bool)) private roles;
 
+            struct MarketKey {
+                bytes16 communityId;
+                uint8 marketType;
+                uint64 deliveryStartTime;
+            }
+
             struct NewMarket {
                 bytes16 marketId;
                 bytes16 communityId;
@@ -56,6 +64,8 @@ async fn test_evm_market_controller_client_creates_markets() {
             }
 
             mapping(bytes16 => NewMarket) public markets;
+            mapping(bytes32 => bytes16) private marketIds;
+            int8 private lookupResultDelta;
 
             constructor() {
                 roles[msg.sender][ORCHESTRATOR_ROLE] = true;
@@ -65,20 +75,29 @@ async fn test_evm_market_controller_client_creates_markets() {
                 return roles[account][role];
             }
 
-            function marketsExist(bytes16[] calldata marketIds) external view returns (bool[] memory exists) {
-                exists = new bool[](marketIds.length);
-                for (uint256 index = 0; index < marketIds.length; index++) {
-                    exists[index] = markets[marketIds[index]].marketId != bytes16(0);
+            function setLookupResultDelta(int8 delta) external {
+                lookupResultDelta = delta;
+            }
+
+            function getMarketIds(MarketKey[] calldata keys) external view returns (bytes16[] memory ids) {
+                ids = new bytes16[](uint256(int256(keys.length) + lookupResultDelta));
+                for (uint256 index = 0; index < keys.length && index < ids.length; index++) {
+                    ids[index] = marketIds[keccak256(abi.encode(
+                        keys[index].communityId, keys[index].marketType, keys[index].deliveryStartTime
+                    ))];
                 }
             }
 
             function createMarkets(NewMarket[] calldata newMarkets) external {
                 require(roles[msg.sender][ORCHESTRATOR_ROLE], "missing orchestrator role");
                 for (uint256 index = 0; index < newMarkets.length; index++) {
-                    if (markets[newMarkets[index].marketId].marketId != bytes16(0)) {
+                    NewMarket calldata market = newMarkets[index];
+                    bytes32 key = keccak256(abi.encode(market.communityId, market.marketType, market.deliveryStartTime));
+                    if (marketIds[key] != bytes16(0) || markets[market.marketId].marketId != bytes16(0)) {
                         continue;
                     }
-                    markets[newMarkets[index].marketId] = newMarkets[index];
+                    marketIds[key] = market.marketId;
+                    markets[market.marketId] = market;
                 }
             }
         }
@@ -155,14 +174,13 @@ async fn test_evm_market_controller_client_creates_markets() {
 
     assert!(orchestrator_client.is_operator_registered().await.unwrap());
 
-    let community_id = "11111111-1111-4111-8111-111111111111";
+    let community_id = "Community-A";
     let delivery_start = 1_700_000_100;
     let new_markets = [MarketType::Spot, MarketType::Flex]
         .into_iter()
         .map(|market_type| NewMarket {
-            market_id: generate_market_id(community_id, market_type.clone(), delivery_start)
-                .unwrap(),
-            community_id: parse_uuid_or_hex_bytes16(community_id).unwrap(),
+            market_id: *Uuid::new_v4().as_bytes(),
+            community_id: parse_uuid_or_hex_bytes16(&derive_onchain_id(community_id)).unwrap(),
             opening_time: delivery_start - 1800,
             closing_time: delivery_start + 1800,
             delivery_start_time: delivery_start,
@@ -175,27 +193,62 @@ async fn test_evm_market_controller_client_creates_markets() {
         .iter()
         .map(|market| market.market_id)
         .collect::<Vec<_>>();
-    let unknown_market_id = [0x42; 16];
+    let keys = new_markets
+        .iter()
+        .map(|market| MarketKey {
+            community_id: market.community_id,
+            market_type: market.market_type,
+            delivery_start_time: market.delivery_start_time,
+        })
+        .collect::<Vec<_>>();
     assert_eq!(
         orchestrator_client
-            .markets_exist(market_ids.clone())
+            .get_market_ids(keys.clone())
             .await
             .unwrap(),
-        vec![false, false]
+        vec![[0; 16], [0; 16]]
     );
+    assert!(orchestrator_client
+        .get_market_ids(vec![])
+        .await
+        .unwrap()
+        .is_empty());
 
     orchestrator_client
         .create_markets(new_markets.clone())
         .await
         .unwrap();
 
-    // One call answers for every ID, in request order.
+    // Lookup uses all three key fields and preserves request order, including repeats.
     assert_eq!(
         orchestrator_client
-            .markets_exist(vec![market_ids[1], unknown_market_id, market_ids[0]])
+            .get_market_ids(vec![
+                keys[1].clone(),
+                MarketKey {
+                    community_id: [0x42; 16],
+                    ..keys[0].clone()
+                },
+                MarketKey {
+                    market_type: MarketType::Settlement.to_evm(),
+                    ..keys[0].clone()
+                },
+                MarketKey {
+                    delivery_start_time: delivery_start + 900,
+                    ..keys[0].clone()
+                },
+                keys[0].clone(),
+                keys[1].clone(),
+            ])
             .await
             .unwrap(),
-        vec![true, false, true]
+        vec![
+            market_ids[1],
+            [0; 16],
+            [0; 16],
+            [0; 16],
+            market_ids[0],
+            market_ids[1]
+        ]
     );
 
     let reader = MockMarketControllerReader::new(contract_address, client.clone());
@@ -216,13 +269,16 @@ async fn test_evm_market_controller_client_creates_markets() {
         );
     }
 
-    // Resending succeeds and leaves the stored record unchanged.
+    // Another orchestrator may submit a fresh UUID for an existing tuple.
+    // Both exact resends and different IDs must leave the winning record unchanged.
+    let duplicate_id = *Uuid::new_v4().as_bytes();
     let resent = NewMarket {
+        market_id: duplicate_id,
         closing_time: delivery_start + 60,
         ..new_markets[0].clone()
     };
     orchestrator_client
-        .create_markets(vec![resent])
+        .create_markets(vec![resent.clone(), new_markets[0].clone(), resent])
         .await
         .unwrap();
     let stored = reader
@@ -231,4 +287,30 @@ async fn test_evm_market_controller_client_creates_markets() {
         .await
         .unwrap();
     assert_eq!(stored.3, new_markets[0].closing_time);
+    assert_eq!(
+        reader.markets(duplicate_id).call().await.unwrap().0,
+        [0; 16]
+    );
+    assert_eq!(
+        orchestrator_client
+            .get_market_ids(keys.clone())
+            .await
+            .unwrap(),
+        market_ids
+    );
+
+    for delta in [-1, 1] {
+        reader
+            .set_lookup_result_delta(delta)
+            .send()
+            .await
+            .unwrap()
+            .await
+            .unwrap();
+        let error = orchestrator_client
+            .get_market_ids(keys.clone())
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("getMarketIds returned"));
+    }
 }

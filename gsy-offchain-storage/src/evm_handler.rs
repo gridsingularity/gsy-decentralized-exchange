@@ -408,8 +408,20 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             hex::encode(event.market_id)
         );
 
+        // A community hash is not a UUID. Leave the event retryable until its
+        // original off-chain identity has been registered.
+        let community_hash = bytes16_to_hex(event.community_id);
+        let community = self
+            .db
+            .ids()
+            .filter(Some(community_hash.clone()), None)
+            .await?
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow!("No community ID mapping for on-chain hash {community_hash}"))?;
+
         // Upsert by market_id so a replayed event is harmless.
-        let market = MarketSchema::try_from(MarketChainRecord {
+        let market = MarketChainRecord {
             market_id: event.market_id,
             community_id: event.community_id,
             opening_time: event.opening_time,
@@ -419,7 +431,8 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             market_type: event.market_type,
             matching_algorithm: event.matching_algorithm,
             created_at: event.created_at,
-        })?;
+        }
+        .into_schema(community.offchain_id)?;
         let market = self.db.markets().upsert(market).await?;
 
         info!("Market persisted.");

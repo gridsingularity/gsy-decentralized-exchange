@@ -14,7 +14,9 @@ use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgori
 use primitives::db_api_schema::orders::{EnergyType, OrderEnum, OrderStatus};
 use primitives::db_api_schema::trades::TradeStatus;
 use primitives::ewds::dto::EwdsOrderDto;
-use primitives::utils::{bytes16_to_hex, epoch_to_rfc3339};
+use primitives::utils::{
+    bytes16_to_hex, derive_onchain_id, epoch_to_rfc3339, parse_nonzero_uuid_or_hex_bytes16,
+};
 use std::{fs::File, io::Write, sync::Arc, time::Duration};
 use tempfile::TempDir;
 
@@ -23,17 +25,28 @@ abigen!(
     r#"[
         event OrderPlaced(bytes16 indexed orderId, bytes16 indexed createdBy, bytes16 indexed marketId, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, uint8 energySourcePreference, uint8 energyType, bool isBid, bytes16 preferredTradingPartner, uint64 preferredEnergyRate)
         function emitOrderPlaced(bytes16 orderId, bytes16 createdBy, uint64 energy, uint64 rate) external
-        function emitNewMarket(uint64 closingTime) external
+        function emitNewMarket(bytes16 communityId, uint64 closingTime) external
     ]"#
 );
+
+pub(crate) const MARKET_COMMUNITY: &str = "Community-MiXeD/LIC01";
+
+fn community_hash(id: &str) -> [u8; 16] {
+    parse_nonzero_uuid_or_hex_bytes16(&derive_onchain_id(id)).unwrap()
+}
+
+pub(crate) async fn register_market_community(app: &crate::helpers::TestApp) {
+    app.db_wrapper
+        .ids()
+        .get_or_create(MARKET_COMMUNITY.into())
+        .await
+        .unwrap();
+}
 
 pub(crate) fn new_market_event() -> NewMarketCreatedFilter {
     NewMarketCreatedFilter {
         market_id: [0xcc; 16],
-        community_id: [
-            0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x41, 0x11, 0x81, 0x11, 0x11, 0x11, 0x11, 0x11,
-            0x11, 0x11,
-        ],
+        community_id: community_hash(MARKET_COMMUNITY),
         opening_time: 1_699_998_300,
         closing_time: 1_700_000_100,
         delivery_start_time: 1_700_000_100,
@@ -47,7 +60,7 @@ pub(crate) fn new_market_event() -> NewMarketCreatedFilter {
 pub(crate) fn expected_market() -> MarketSchema {
     MarketSchema {
         market_id: "0xcccccccccccccccccccccccccccccccc".to_string(),
-        community_id: "11111111-1111-4111-8111-111111111111".to_string(),
+        community_id: MARKET_COMMUNITY.to_string(),
         opening_time: "00000000001699998300".to_string(),
         closing_time: "00000000001700000100".to_string(),
         delivery_start_time: "00000000001700000100".to_string(),
@@ -69,6 +82,7 @@ async fn stored_markets(app: &crate::helpers::TestApp) -> Vec<MarketSchema> {
 #[tokio::test]
 async fn test_new_market_event_creates_market() {
     let app = init_app().await;
+    register_market_community(&app).await;
     let handler = OffchainStorageEvmHandler {
         db: app.db_wrapper.clone(),
         event_publisher: None,
@@ -86,6 +100,7 @@ async fn test_new_market_event_creates_market() {
 #[tokio::test]
 async fn test_replayed_new_market_event_keeps_one_market() {
     let app = init_app().await;
+    register_market_community(&app).await;
     let handler = OffchainStorageEvmHandler {
         db: app.db_wrapper.clone(),
         event_publisher: None,
@@ -105,6 +120,7 @@ async fn test_replayed_new_market_event_keeps_one_market() {
 #[tokio::test]
 async fn test_new_market_event_overwrites_a_posted_market() {
     let app = init_app().await;
+    register_market_community(&app).await;
     let handler = OffchainStorageEvmHandler {
         db: app.db_wrapper.clone(),
         event_publisher: None,
@@ -132,6 +148,7 @@ async fn test_new_market_event_overwrites_a_posted_market() {
 #[tokio::test]
 async fn test_new_market_event_with_unknown_enum_is_rejected() {
     let app = init_app().await;
+    register_market_community(&app).await;
     let handler = OffchainStorageEvmHandler {
         db: app.db_wrapper.clone(),
         event_publisher: None,
@@ -148,6 +165,91 @@ async fn test_new_market_event_with_unknown_enum_is_rejected() {
     assert!(error.to_string().contains("Unknown market type 9"));
     assert!(stored_markets(&app).await.is_empty());
     crate::helpers::stop_app(app).await;
+}
+
+#[tokio::test]
+async fn market_event_requires_mapping_and_retries_after_registration() {
+    let app = init_app().await;
+    let handler = OffchainStorageEvmHandler {
+        db: app.db_wrapper.clone(),
+        event_publisher: None,
+    };
+    // A differently cased actor is not a reverse mapping for this hash.
+    app.db_wrapper
+        .ids()
+        .get_or_create(MARKET_COMMUNITY.to_lowercase())
+        .await
+        .unwrap();
+    let error = handler
+        .handle_new_market_created(new_market_event())
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("No community ID mapping"));
+    assert!(error
+        .to_string()
+        .contains(&bytes16_to_hex(new_market_event().community_id)));
+    assert!(stored_markets(&app).await.is_empty());
+    assert!(app
+        .db_wrapper
+        .ids()
+        .filter(Some(bytes16_to_hex(new_market_event().community_id)), None)
+        .await
+        .unwrap()
+        .is_empty());
+
+    register_market_community(&app).await;
+    for _ in 0..2 {
+        handler
+            .handle_new_market_created(new_market_event())
+            .await
+            .unwrap();
+    }
+    assert_eq!(stored_markets(&app).await, vec![expected_market()]);
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn market_events_reverse_exact_opaque_and_uuid_shaped_communities() {
+    let app = init_app().await;
+    let handler = OffchainStorageEvmHandler {
+        db: app.db_wrapper.clone(),
+        event_publisher: None,
+    };
+    for community in [
+        MARKET_COMMUNITY,
+        "community-mixed/lic01",
+        "ABCDEFAB-1234-4123-8123-ABCDEFABCDEF",
+        "abcdefab-1234-4123-8123-abcdefabcdef",
+        "0xABCDEFAB123441238123ABCDEFABCDEF",
+    ] {
+        let mapping = app
+            .db_wrapper
+            .ids()
+            .get_or_create(community.into())
+            .await
+            .unwrap();
+        let mut event = new_market_event();
+        event.market_id = *uuid::Uuid::new_v4().as_bytes();
+        event.community_id = community_hash(community);
+        assert_eq!(mapping.onchain_id, bytes16_to_hex(event.community_id));
+        for _ in 0..2 {
+            handler
+                .handle_new_market_created(event.clone())
+                .await
+                .unwrap();
+        }
+        let markets = app
+            .db_wrapper
+            .markets()
+            .filter(None, Some(community.into()), None, None)
+            .await
+            .unwrap();
+        assert_eq!(markets.len(), 1);
+        assert_eq!(markets[0].community_id, community);
+        assert_eq!(markets[0].market_id, bytes16_to_hex(event.market_id));
+    }
+    assert_eq!(stored_markets(&app).await.len(), 5);
+    stop_app(app).await;
 }
 
 #[tokio::test]
@@ -186,6 +288,7 @@ async fn test_order_listener_rejects_unknown_partner_mapping() {
 #[tokio::test]
 async fn test_evm_order_listener_persists_to_db() {
     let app = init_app().await;
+    register_market_community(&app).await;
     let db = app.db_wrapper.clone();
     // Register external owner IDs independently of their on-chain representation.
     for (offchain_id, onchain_id) in [(
@@ -221,8 +324,8 @@ async fn test_evm_order_listener_persists_to_db() {
         pragma solidity ^0.8.0;
         contract MockEmitter {
             event NewMarketCreated(bytes16 indexed marketId, bytes16 indexed communityId, uint64 openingTime, uint64 closingTime, uint64 deliveryStartTime, uint64 deliveryEndTime, uint8 marketType, uint8 matchingAlgorithm, uint64 createdAt);
-            function emitNewMarket(uint64 closingTime) external {
-                emit NewMarketCreated(bytes16(uint128(1)), bytes16(uint128(1)), uint64(block.timestamp), closingTime, 1000, 1900, 0, 0, uint64(block.timestamp));
+            function emitNewMarket(bytes16 communityId, uint64 closingTime) external {
+                emit NewMarketCreated(bytes16(uint128(1)), communityId, uint64(block.timestamp), closingTime, 1000, 1900, 0, 0, uint64(block.timestamp));
             }
             event OrderPlaced(bytes16 indexed orderId, bytes16 indexed createdBy, bytes16 indexed marketId, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, uint8 energySourcePreference, uint8 energyType, bool isBid, bytes16 preferredTradingPartner, uint64 preferredEnergyRate);
             function emitOrderPlaced(bytes16 orderId, bytes16 createdBy, uint64 energy, uint64 rate) external {
@@ -341,7 +444,7 @@ async fn test_evm_order_listener_persists_to_db() {
         .as_u64()
         + 60;
     let market_receipt = mock_contract
-        .emit_new_market(closed_at)
+        .emit_new_market(community_hash(MARKET_COMMUNITY), closed_at)
         .send()
         .await
         .unwrap()
@@ -578,6 +681,7 @@ async fn market_closure_expires_only_submitted_orders_and_preserves_expiry_on_la
     // Closure, not the delivery slot (1000), determines expiry in both cases.
     for closed_at in [980, 1020] {
         let app = init_app().await;
+        register_market_community(&app).await;
         let handler = OffchainStorageEvmHandler {
             db: app.db_wrapper.clone(),
             event_publisher: None,

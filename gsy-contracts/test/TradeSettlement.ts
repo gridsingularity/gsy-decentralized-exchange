@@ -340,7 +340,9 @@ describe("TradeSettlement", function () {
     await time.increase(OPEN_MARKET_DURATION);
     await expect(settlement.connect(operator).settleBatch(asMarketBatch([matchData])))
       .to.be.revertedWithCustomError(settlement, "OrderNotOpen");
-    await createOpenMarket(controller, marketId);
+    await expect(createOpenMarket(controller, marketId))
+      .to.be.revertedWithCustomError(controller, "InvalidMarket")
+      .withArgs(marketId);
     await expect(settlement.connect(operator).settleBatch(asMarketBatch([matchData])))
       .to.be.revertedWithCustomError(settlement, "OrderNotOpen");
   });

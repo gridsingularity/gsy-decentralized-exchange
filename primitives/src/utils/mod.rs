@@ -1,8 +1,7 @@
-use crate::MarketType;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use blake2::digest::{Update, VariableOutput};
 use blake2::Blake2bVar;
-use chrono::{prelude::DateTime, Utc, TimeZone};
+use chrono::{prelude::DateTime, TimeZone, Utc};
 use std::env;
 use std::str::FromStr;
 use uuid::Uuid;
@@ -71,20 +70,6 @@ pub fn normalize_offchain_id(value: &str) -> Result<String> {
     Ok(value.to_string())
 }
 
-/// Canonical form of a community ID: the lowercase hyphenated UUID that
-/// chain-sourced markets are stored with. Fails unless the ID is a nonzero UUID or
-/// 16-byte hex value.
-pub fn normalize_community_id(value: &str) -> Result<String> {
-    parse_nonzero_uuid_or_hex_bytes16(value)
-        .map(bytes16_to_uuid_string)
-        .ok_or_else(|| {
-            anyhow!(
-                "community ID '{}' is not a nonzero UUID or 16-byte hex value",
-                value
-            )
-        })
-}
-
 /// Canonical stored market ID: lowercase `0x` hex for a nonzero UUID or bytes16 value.
 pub fn normalize_market_id(value: &str) -> Result<String> {
     parse_nonzero_uuid_or_hex_bytes16(value)
@@ -117,35 +102,13 @@ pub fn profile_measurement_id(
         MeasurementPointType::Measurement => "measurement",
         MeasurementPointType::Forecast => "forecast",
     };
+    // Actor IDs may contain the separator; escape components, not the stored IDs.
+    let component = |id: &str| id.replace('%', "%25").replace(':', "%3A");
     format!(
         "{prefix}:{}:{}",
-        if is_hyphenated_uuid(community_uuid) {
-            community_uuid.to_ascii_lowercase()
-        } else {
-            community_uuid.to_string()
-        },
-        facility_id
+        component(community_uuid),
+        component(facility_id)
     )
-}
-
-/// The community ID is normalized first, so every accepted form of one
-/// community ID yields the same market ID. Fails for a community ID that is
-/// not a nonzero UUID or 16-byte hex value.
-pub fn generate_market_id(
-    community_id: &str,
-    market_type: MarketType,
-    delivery_timestamp: u64,
-) -> Result<[u8; 16]> {
-    let community_id = normalize_community_id(community_id)?;
-    let mut market_id = [0u8; 16];
-    let mut hasher = Blake2bVar::new(market_id.len()).expect("valid market ID output size");
-    hasher.update(community_id.as_bytes());
-    hasher.update(market_type.as_str().as_bytes());
-    hasher.update(&delivery_timestamp.to_be_bytes());
-    hasher
-        .finalize_variable(&mut market_id)
-        .expect("valid market ID output buffer");
-    Ok(market_id)
 }
 
 pub fn timestamp_to_datetime_string(timestamp: u64) -> String {

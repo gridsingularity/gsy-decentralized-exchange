@@ -9,14 +9,14 @@ async fn test_forward_forecast_uses_facility_profile_endpoints() {
     let measurement_points_request = server.mock(|when, then| {
         when.method(POST)
             .path("/measurement-points")
-            .body_includes("forecast:abcdefab-1234-1234-1234-abcdefabcdef:facility_uuid")
-            .body_includes("\"datasource_name\":\"abcdefab-1234-1234-1234-abcdefabcdef\"");
+            .body_includes("forecast:0xABCDEFAB123412341234ABCDEFABCDEF:facility_uuid")
+            .body_includes("\"datasource_name\":\"0xABCDEFAB123412341234ABCDEFABCDEF\"");
         then.status(200);
     });
     let timeseries_request = server.mock(|when, then| {
         when.method(POST)
             .path("/timeseries")
-            .body_includes("forecast:abcdefab-1234-1234-1234-abcdefabcdef:facility_uuid");
+            .body_includes("forecast:0xABCDEFAB123412341234ABCDEFABCDEF:facility_uuid");
         then.status(200);
     });
 
@@ -34,7 +34,7 @@ async fn test_forward_forecast_uses_facility_profile_endpoints() {
         .await
         .unwrap();
     let invalid = ForecastSchema {
-        community_uuid: "community-1".into(),
+        community_uuid: " community-1".into(),
         ..forecast.clone()
     };
     assert!(adapter
@@ -53,14 +53,14 @@ async fn test_forward_measurement_uses_facility_profile_endpoints() {
     let measurement_points_request = server.mock(|when, then| {
         when.method(POST)
             .path("/measurement-points")
-            .body_includes("measurement:abcdefab-1234-1234-1234-abcdefabcdef:ABCDEFAB-ABCD-ABCD-ABCD-ABCDEFABCDEF")
+            .body_includes("measurement:ABCDEFAB-1234-1234-1234-ABCDEFABCDEF:ABCDEFAB-ABCD-ABCD-ABCD-ABCDEFABCDEF")
             .body_includes("\"asset_name\":\"ABCDEFAB-ABCD-ABCD-ABCD-ABCDEFABCDEF\"")
-            .body_includes("\"datasource_name\":\"abcdefab-1234-1234-1234-abcdefabcdef\"");
+            .body_includes("\"datasource_name\":\"ABCDEFAB-1234-1234-1234-ABCDEFABCDEF\"");
         then.status(200);
     });
     let timeseries_request = server.mock(|when, then| {
         when.method(POST).path("/timeseries").body_includes(
-            "measurement:abcdefab-1234-1234-1234-abcdefabcdef:ABCDEFAB-ABCD-ABCD-ABCD-ABCDEFABCDEF",
+            "measurement:ABCDEFAB-1234-1234-1234-ABCDEFABCDEF:ABCDEFAB-ABCD-ABCD-ABCD-ABCDEFABCDEF",
         );
         then.status(200);
     });
@@ -78,7 +78,7 @@ async fn test_forward_measurement_uses_facility_profile_endpoints() {
         .await
         .unwrap();
     let invalid = MeasurementSchema {
-        community_uuid: "00000000-0000-0000-0000-000000000000".into(),
+        community_uuid: "community-1 ".into(),
         ..measurement.clone()
     };
     assert!(adapter

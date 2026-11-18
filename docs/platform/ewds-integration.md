@@ -20,7 +20,7 @@ In-scope services for EWDS integration:
 
 Related participant service:
 
-- `gsy-community-client` (writes forecasts, measurements, and market records)
+- `gsy-community-client` (writes forecasts and measurements, submits orders)
 
 ## Current Refactored Runtime
 
@@ -164,9 +164,10 @@ an event envelope (`eventId`, `eventType`, `occurredAt`, `data`) whose `data` is
 a list of trades, clearing results or markets in their `EwdsTradeDto`,
 `EwdsClearingResultDto` or `EwdsMarketDto` form, so one event can carry several
 of them. Markets have the same form as in the `markets.query` response and
-follow `int.market.schema.v1.json`: UUID `marketId` and `communityId`, RFC 3339
+follow `int.market.schema.v1.json`: UUID `marketId` and exact opaque `communityId`, RFC 3339
 times, `marketType` `spot`, `flex` or `settlement` and `matchingAlgorithm`
-`pay_as_bid`, `pay_as_clear` or `amm`. The `marketId` is the same 16 bytes as the
+`pay_as_bid`, `pay_as_clear` or `amm`. The orchestrator generates UUIDv4 market
+IDs; `marketId` is the same 16 bytes as the
 `0x…` market ID in `trade.event` and orders, formatted as a UUID. The market
 carries its opening and closing times, so consumers derive whether it is open
 from them. The off-chain storage currently sends one item per EVM event. Every
@@ -183,6 +184,11 @@ progression, not arrival order. The provisional progression is `matched` to
 `executed` or `penalized`; do not regress either verdict to `matched` on a late
 notification. `penalized` is terminal; no transition to `settled` is
 implemented yet.
+
+Before publishing a market, storage reverse-resolves its on-chain community hash
+directly from the DB mappings registered by topology writes. Missing mappings
+currently fail indexing and cause block retry until available, not a fabricated
+community UUID. Durable pending handling is deferred to DD-459 step 5.
 
 Order, trade and clearing-result queries accept UUID or 16-byte hex market IDs.
 Invalid IDs receive `success: false` with `error.code: invalid_request`.
@@ -283,10 +289,10 @@ The envelope is the one GSY uses for its own events:
 - Measurements use camelCase fields with RFC 3339 times. `timeSlot` is the
   start of the 15-minute slot, and `energyKwh` is positive for consumed and
   negative for produced energy. A batch can mix facilities and slots.
-  `communityUuid` must be a nonzero UUID or bytes16 hex and is normalized to a
-  lowercase hyphenated UUID. Invalid identifiers drop the whole event before
+  `communityUuid` is an exact, nonempty, unpadded opaque string, including
+  UUID-looking values. Empty or padded identifiers drop the whole event before
   any records are written. Query filters `facilityId` and `communityUuid` are
-  applied together when both are supplied; malformed filters receive an
+  exact and case-sensitive, applied together when both are supplied; invalid filters receive an
   `invalid_request` response.
 - Facilities and sites use the snake_case fields of `FacilitySchema`
   (`facility_id`, `facility_name`, `site_id`, `owner_id`) and `SiteSchema`
@@ -294,6 +300,8 @@ The envelope is the one GSY uses for its own events:
   `facilities.query` returns. A facility's `site_id` refers to a `site_name`.
 - Communities use the camelCase fields of `EwdsCommunityDto` (`communityId`,
   `communityName`, `sites`), the same form `communities.query` returns.
+  Actor and community IDs preserve exact nonempty, unpadded strings; UUID-looking
+  values are not parsed or case-normalized.
 
 Handling rules:
 
@@ -474,8 +482,8 @@ Each `*.query` request payload accepts both snake_case and camelCase keys (via s
 |---|---|
 | `orders.query` | `market_id`/`marketId`, `start_time`/`startTime`, `end_time`/`endTime` |
 | `trades.query` | `market_id`/`marketId`, `start_time`/`startTime`, `end_time`/`endTime` (`market_id` alone is enough and takes precedence over the time range; without it, both `start_time` and `end_time` are required, span at most 1 day, and match the market `delivery_start_time`) |
-| `measurements.query` | `start_time`/`startTime`, `end_time`/`endTime`, `facility_id`/`areaUuid` (filters after fetch) |
-| `markets.query` | `market_id`/`marketId` (UUID or `0x…` hex), `community_id`/`communityId`, `start_time`/`startTime`, `end_time`/`endTime` (RFC 3339, match the market `opening_time`) |
+| `measurements.query` | `start_time`/`startTime`, `end_time`/`endTime`, `facility_id`/`facilityId`/`areaUuid`, `community_uuid`/`communityUuid` (exact facility/community filters) |
+| `markets.query` | `market_id`/`marketId` (UUID or `0x…` hex), `community_id`/`communityId` (exact opaque ID), `start_time`/`startTime`, `end_time`/`endTime` (RFC 3339, match the market `opening_time`) |
 | `ids.query` | `offchain_id`/`offchainId` (required) |
 
 ## DDHub API Surface Used by Integration
@@ -597,7 +605,7 @@ Validator requirements:
 
 ### gsy-community-client
 
-- Route facility-topology-derived market, forecast, and measurement writes through ontology-aligned off-chain storage APIs.
+- Route facility-topology-derived forecast and measurement writes through ontology-aligned off-chain storage APIs; markets are indexed from chain events.
 - Keep fallback transport via direct HTTP until cutover is complete.
 - Send the orders of `order.event` messages to `OrderRegistry.placeOrder`
   (see [Order Events](#order-events)). Runtime switch:
@@ -607,9 +615,13 @@ Validator requirements:
 
 - Fetch all communities before every scheduling tick through HTTP
   `/communities` or EWDS `communities.query`.
-- Derive each market ID from community UUID, market type, and delivery slot.
+- Hash each exact opaque community ID with `derive_onchain_id`, then look up
+  `(communityId, marketType, deliveryStartTime)` through `getMarketIds` in batches
+  of at most 500. Each result is the existing chain ID or zero for an absent tuple.
+- Generate one UUIDv4 candidate only for each absent tuple; never rederive market IDs.
 - Create the community/market-type markets before they open through batched
-  `createMarkets` calls, after checking `marketsExist` on-chain in batches.
+  `createMarkets` calls. Duplicate tuples, including races, are skipped;
+  reuse of an ID for a different tuple is rejected.
 - Runtime switch via `OFFCHAIN_STORAGE_TRANSPORT=http|ewds`.
 
 ## Docker and Local Testing Integration

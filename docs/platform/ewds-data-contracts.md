@@ -14,8 +14,9 @@ including `Community`, `Market`, `MarketTimeSeries`, `Order`, `Trade`, and
 The shared bytes16 parser accepts hyphenated UUIDs with the exact 8-4-4-4-12
 structure, `0x` followed by 32 hex digits, or bare 32 hex digits. Hex digits may
 be upper- or lowercase. Whitespace, uppercase `0X`, braces, `urn:uuid:` notation,
-misplaced hyphens and `0x`-prefixed hyphenated UUIDs are rejected. UUID version
-and variant bits are unrestricted: market IDs are hashes, not necessarily v4.
+misplaced hyphens and `0x`-prefixed hyphenated UUIDs are rejected. This byte parser
+does not enforce UUID version or variant bits; newly orchestrated market IDs are
+random UUIDv4 values, not hashes.
 Order submissions require non-zero order and market IDs. The raw byte parser
 still accepts zero for optional contract sentinels.
 
@@ -25,11 +26,11 @@ hashes in `createdBy`; rejections retain the submitted identifiers. FOS must
 correlate equivalent order IDs by their 16 bytes, not their spelling.
 `preferredTradingPartner` remains an off-chain identity, even when hex-shaped.
 
-Off-chain facility and owner IDs are not required to be UUIDs. All nonempty,
+Off-chain facility, owner and community IDs are not required to be UUIDs. All nonempty,
 unpadded strings are preserved exactly and remain case-sensitive, including
 UUID-shaped and bare/`0x` hex strings. This rule applies to topology, site facility
 references, ID mappings, order participants/preferences and measurement/forecast
-facility references. Stored actor reads return the submitted spelling;
+facility/community references and query filters. Stored actor/community reads return the submitted spelling;
 `facilities.validate` still echoes each requested pair exactly and reports invalid
 facility identities as `unknown_facility` per pair. Other invalid typed identities
 produce HTTP 400, `invalid_request` for queries, or invalidate the whole inbound
@@ -38,7 +39,7 @@ Names and correlation IDs are not normalized.
 
 | Message/read | Identity representation |
 |---|---|
-| `market.event`, `markets.query` | Market/community IDs as lowercase hyphenated UUIDs |
+| `market.event`, `markets.query` | Market ID as a lowercase hyphenated UUID; community ID as the exact opaque off-chain string |
 | `order.event` | UUID/hex order and market IDs; off-chain owner identity and preferred partner |
 | `orderStatus.event` lifecycle | Lowercase `0x` order/market IDs and owner hash; off-chain preferred partner |
 | `orderStatus.event` rejection | Submitted identifiers echoed without rewriting |
@@ -53,11 +54,15 @@ This does not migrate old mappings or relabel persisted records.
 
 Actor hashes use keyed Blake2b with 16-byte output and the shared
 `ACTOR_ID_HASH_KEY`; they are pseudonyms, not reversible encryption or UUIDv4.
-Topology writes register mappings for facilities, owners, site keys and stored
-community IDs. Lifecycle events still create order/trade records.
-This increment retains the existing market/community UUID representation and
-hash-derived market IDs; their coordinated conversion is a later DD-459 step.
-The dedicated UUIDv4 helper does not yet replace all legacy entity parsers.
+Topology writes register mappings for facilities, owners, site keys and exact
+community IDs. Market IDs are generated as UUIDv4 only when tuple lookup reports
+an absent market; stored IDs remain lowercase `0x` hex. The indexer restores the
+community's exact off-chain ID by direct DB reverse lookup before publication.
+Missing mappings currently fail indexing and trigger retry; durable pending
+handling remains DD-459 step 5. Lifecycle events still create order/trade records;
+future order/trade identity changes are not implemented by this market increment.
+Existing `POST /ids` and `ids.query` callers remain supported. API authentication
+is deferred to a separate ticket.
 
 ## Schema Package Location
 
@@ -143,9 +148,9 @@ Used by `measurements.query` responses and `measurements.event` messages.
 | `creationTime` | `MeasurementSchema.creation_time` (RFC 3339) |
 | `energyKwh` | `MeasurementSchema.energy_kwh` |
 
-Inbound measurement events require a nonzero `communityUuid` as UUID or bytes16
-hex; storage normalizes it to a lowercase hyphenated UUID before generating the
-profile-point ID. This is an ingress restriction, not a shared DTO conversion
+Inbound measurement events require `communityUuid` to be a nonempty, unpadded
+opaque string. Storage preserves its exact spelling in the profile-point ID,
+including UUID-looking values. This is an ingress restriction, not a shared DTO conversion
 rule: query responses can still carry an empty community or a datasource label
 from generic measurement points. The event schema adds the restriction separately
 from the shared measurement schema.
@@ -153,8 +158,8 @@ from the shared measurement schema.
 `measurements.query` supports optional `facilityId` and `communityUuid` filters,
 combined with inclusive RFC 3339 `startTime`/`endTime` bounds. Existing snake_case
 names and `areaUuid` remain accepted. Invalid filters receive `invalid_request`;
-specify only one spelling per field. Community UUID/hex variants address the same
-canonical community; facility IDs follow the off-chain identity rule above.
+specify only one spelling per field. Community and facility filters match exact
+strings; UUID/hex-looking variants or differently cased values are distinct identities.
 
 ### Facility and Site Mapping
 
@@ -234,7 +239,8 @@ serves legacy HTTP imports, which require this already-resolved owner hash;
 
 The first schema pack encodes the following validation intent from the spreadsheet:
 
-- UUID fields for Intelligent identifiers.
+- UUID/bytes16 fields for lifecycle entity IDs; actor/community IDs follow the
+  exact opaque-string rules above. Order/trade UUIDv4 migration remains future work.
 - ISO 8601 date-time fields for market, order, trade, clearing, measurement and
   event timestamps.
 - Positive numeric constraints for quantities.

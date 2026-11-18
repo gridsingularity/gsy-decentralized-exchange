@@ -1004,28 +1004,33 @@ async fn markets_query_filters_by_market_id_as_uuid_or_hex() {
 }
 
 #[tokio::test]
-async fn markets_query_filters_by_community_id_as_uuid_or_hex() {
-    for query_id in [
+async fn markets_query_filters_by_exact_opaque_community_id() {
+    let communities = [
         COMMUNITY_1,
         "3F2504E0-4F89-41D3-9A0C-0305E82C3301",
         "0x3f2504e04f8941d39a0c0305e82c3301",
-    ] {
+        "Community-MiXeD/LIC01",
+        "community-mixed/lic01",
+        "00000000-0000-0000-0000-000000000000",
+    ];
+    for query_id in communities {
         let data = run_markets_query(
-            vec![
-                make_market(0x01, COMMUNITY_1, "2026-03-27T18:00:00Z"),
-                make_market(0x02, COMMUNITY_2, "2026-03-27T19:00:00Z"),
-            ],
+            communities
+                .iter()
+                .enumerate()
+                .map(|(index, id)| make_market(index as u8 + 1, id, "2026-03-27T18:00:00Z"))
+                .collect(),
             json!({ "communityId": query_id }),
         )
         .await;
 
         assert_eq!(data.len(), 1, "{query_id}");
-        assert_eq!(data[0]["communityId"], json!(COMMUNITY_1));
+        assert_eq!(data[0]["communityId"], json!(query_id));
     }
 }
 
 #[tokio::test]
-async fn markets_query_rejects_a_non_uuid_community_id() {
+async fn markets_query_rejects_a_padded_community_id() {
     let app = init_app().await;
     let server = mock_gateway().await;
     let config = test_config(server.uri());
@@ -1034,7 +1039,7 @@ async fn markets_query_rejects_a_non_uuid_community_id() {
     let env = envelope(
         EwdsOperation::MarketsQuery,
         "req-markets-bad",
-        json!({ "communityId": "community1" }),
+        json!({ "communityId": " community1 " }),
     );
 
     handle_request(&app.db_wrapper, &client, &config, env)
@@ -1069,10 +1074,7 @@ async fn markets_query_bad_payload_errors() {
             "nil market id",
             json!({ "marketId": "00000000-0000-0000-0000-000000000000" }),
         ),
-        (
-            "nil community id",
-            json!({ "communityId": "0x00000000000000000000000000000000" }),
-        ),
+        ("empty community id", json!({ "communityId": "" })),
         (
             "epoch start time",
             json!({ "startTime": "00000000001774605600" }),

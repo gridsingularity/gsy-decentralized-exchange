@@ -6,12 +6,10 @@
   "type": "object",
   "properties": {
     "communityId": {
-      "description": "FK to Community. IRI: int:communityId. Lowercase hyphenated UUID; no version constraint.",
-      "type": "string",
-      "format": "uuid"
+      "$ref": "./int.community.schema.v1.json#/properties/communityId"
     },
     "marketIds": {
-      "description": "List of market IDs recorded in this time series. IRI: int:marketIds. Hash-derived UUIDs, with no version constraint.",
+      "description": "List of market UUIDs recorded in this time series. New markets use UUIDv4. IRI: int:marketIds.",
       "type": [
         "array",
         "null"

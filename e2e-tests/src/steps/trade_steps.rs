@@ -1009,7 +1009,7 @@ async fn submit_uuid_measurements(world: &mut MyWorld) {
         .into_iter()
         .map(|(user, energy_kwh)| MeasurementSchema {
             facility_id: world.facility_id_for_user(user).to_uppercase(),
-            community_uuid: world.community_id.to_uppercase(),
+            community_uuid: world.community_id.clone(),
             energy_kwh,
             time_slot: world.target_delivery_time,
             creation_time: 1,

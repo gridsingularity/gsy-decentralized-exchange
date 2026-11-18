@@ -6,16 +6,13 @@
   "type": "object",
   "properties": {
     "marketId": {
-      "description": "Nonzero market ID returned as a lowercase UUID; generated hashes have no UUID version constraint. IRI: int:marketId.",
+      "description": "Market ID returned as a lowercase UUID. New markets use random UUIDv4; uniqueness by community, type and delivery start is enforced on-chain. IRI: int:marketId.",
       "type": "string",
       "format": "uuid",
       "not": { "const": "00000000-0000-0000-0000-000000000000" }
     },
     "communityId": {
-      "description": "Nonzero community ID returned as a lowercase UUID. IRI: int:communityId.",
-      "type": "string",
-      "format": "uuid",
-      "not": { "const": "00000000-0000-0000-0000-000000000000" }
+      "$ref": "./int.community.schema.v1.json#/properties/communityId"
     },
     "openingTime": {
       "description": "Market opens for order submission. IRI: int:openingTime. ISO 8601 with timezone. Must be < closingTime.",

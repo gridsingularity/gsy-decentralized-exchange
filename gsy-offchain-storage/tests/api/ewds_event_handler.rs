@@ -1,4 +1,6 @@
-use crate::evm_integration::{expected_market, new_market_event};
+use crate::evm_integration::{
+    expected_market, new_market_event, register_market_community, MARKET_COMMUNITY,
+};
 use crate::ewds_handler::{mock_gateway, test_config};
 use crate::helpers::{init_app, stop_app};
 use ethers::contract::LogMeta;
@@ -483,7 +485,7 @@ async fn publish_market_event_sends_event_on_events_channel() {
         event["data"],
         json!([{
             "marketId": "cccccccc-cccc-cccc-cccc-cccccccccccc",
-            "communityId": "11111111-1111-4111-8111-111111111111",
+            "communityId": MARKET_COMMUNITY,
             "openingTime": epoch_to_rfc3339(1_699_998_300),
             "closingTime": epoch_to_rfc3339(1_700_000_100),
             "deliveryStartTime": epoch_to_rfc3339(1_700_000_100),
@@ -973,6 +975,7 @@ async fn market_clearing_does_not_publish_for_invalid_clearing_status() {
 #[tokio::test]
 async fn new_market_publishes_market_event() {
     let app = init_app().await;
+    register_market_community(&app).await;
     let server = mock_gateway().await;
     let handler = evm_handler(&app, &server);
 
@@ -992,6 +995,48 @@ async fn new_market_publishes_market_event() {
         json!(epoch_to_rfc3339(new_market_event().created_at))
     );
 
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn unmapped_market_event_is_not_stored_or_published_until_retry() {
+    let app = init_app().await;
+    let server = mock_gateway().await;
+    let handler = evm_handler(&app, &server);
+    let error = handler
+        .handle_new_market_created(new_market_event())
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("No community ID mapping"));
+    assert!(app
+        .db_wrapper
+        .markets()
+        .filter(None, None, None, None)
+        .await
+        .unwrap()
+        .is_empty());
+    assert_no_further_gateway_messages(&server, 0).await;
+
+    register_market_community(&app).await;
+    for count in 1..=2 {
+        handler
+            .handle_new_market_created(new_market_event())
+            .await
+            .unwrap();
+        let messages = wait_for_gateway_messages(&server, count).await;
+        assert_eq!(
+            event_payload(&messages[count - 1])["data"],
+            json!([market_event_dto()])
+        );
+        assert_eq!(
+            app.db_wrapper
+                .markets()
+                .filter(None, None, None, None)
+                .await
+                .unwrap(),
+            vec![expected_market()]
+        );
+    }
     stop_app(app).await;
 }
 
@@ -1145,6 +1190,7 @@ async fn order_status_notifications_follow_consumed_orders_and_independent_resid
 #[tokio::test]
 async fn market_closure_notifies_only_newly_expired_orders_in_that_market() {
     let app = init_app().await;
+    register_market_community(&app).await;
     let server = mock_gateway().await;
     let handler = evm_handler(&app, &server);
     let quiet_handler = OffchainStorageEvmHandler {
@@ -1307,41 +1353,57 @@ fn value(facility_id: &str, time_slot: u64, energy_kwh: f64) -> (String, String,
 async fn measurement_events_preserve_actor_case_before_writing_the_batch() {
     let app = init_app().await;
     let canonical = "abcdefab-abcd-abcd-abcd-abcdefabcdef";
+    let communities = [
+        "ABCDEFAB-1234-1234-1234-ABCDEFABCDEF",
+        "abcdefab-1234-1234-1234-abcdefabcdef",
+        "0xabcdefab123412341234abcdefabcdef",
+        "Community-MiXeD/LIC01",
+        "community-mixed/lic01",
+        "00000000-0000-0000-0000-000000000000",
+    ];
+    let mut expected = vec![];
     for id in [canonical.to_uppercase(), canonical.to_string()] {
-        for community in [
-            "ABCDEFAB-1234-1234-1234-ABCDEFABCDEF",
-            "0xabcdefab123412341234abcdefabcdef",
-        ] {
+        for community in communities {
             let mut measurement = measurement_data(&id, TIMESLOT, 2.0);
             measurement["communityUuid"] = json!(community);
-            handle_event(
-                &app.db_wrapper,
-                event(
-                    EwdsEventType::Measurements,
-                    "case-test",
-                    json!([measurement]),
-                ),
-            )
-            .await
-            .unwrap();
+            for _ in 0..2 {
+                handle_event(
+                    &app.db_wrapper,
+                    event(
+                        EwdsEventType::Measurements,
+                        "case-test",
+                        json!([measurement]),
+                    ),
+                )
+                .await
+                .unwrap();
+            }
+            expected.push((
+                format!("measurement:{community}:{id}"),
+                timestamp_to_string_with_padding(TIMESLOT),
+                2.0,
+            ));
         }
     }
-    assert_eq!(
-        stored_values(&app).await,
-        vec![value(&canonical.to_uppercase(), TIMESLOT, 2.0), value(canonical, TIMESLOT, 2.0)]
-    );
+    expected.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
+    assert_eq!(stored_values(&app).await, expected);
     let points = app
         .db_wrapper
         .measurement_points()
         .filter_points(None, None)
         .await
         .unwrap();
-    assert_eq!(points.len(), 2);
+    assert_eq!(points.len(), communities.len() * 2);
     assert!(points.iter().any(|point| point.asset_name == canonical));
-    assert_eq!(
-        points[0].datasource_name.as_deref(),
-        Some("abcdefab-1234-1234-1234-abcdefabcdef")
-    );
+    for community in communities {
+        assert_eq!(
+            points
+                .iter()
+                .filter(|point| point.datasource_name.as_deref() == Some(community))
+                .count(),
+            2
+        );
+    }
     let error = handle_event(
         &app.db_wrapper,
         event(
@@ -1356,10 +1418,7 @@ async fn measurement_events_preserve_actor_case_before_writing_the_batch() {
     .await
     .unwrap_err();
     assert!(is_invalid_event(&error));
-    assert_eq!(
-        stored_values(&app).await,
-        vec![value(&canonical.to_uppercase(), TIMESLOT, 2.0), value(canonical, TIMESLOT, 2.0)]
-    );
+    assert_eq!(stored_values(&app).await, expected);
     stop_app(app).await;
 }
 
@@ -1557,19 +1616,23 @@ async fn handle_event_rejects_communities_that_conflict_with_stored_ids_or_names
 }
 
 #[tokio::test]
-async fn community_events_normalize_ids_and_drop_invalid_batches() {
+async fn community_events_preserve_exact_ids_and_drop_invalid_batches() {
     let app = init_app().await;
     for id in [
         "ABCDEFAB-1234-1234-1234-ABCDEFABCDEF",
+        "abcdefab-1234-1234-1234-abcdefabcdef",
         "0xabcdefab123412341234abcdefabcdef",
+        "Community-MiXeD/LIC01",
+        "community-mixed/lic01",
+        "00000000-0000-0000-0000-000000000000",
     ] {
         handle_event(
             &app.db_wrapper,
             event(
                 EwdsEventType::Community,
-                "canonical",
+                "exact",
                 json!([
-                    {"communityId": id, "communityName": "Canonical", "sites": []}
+                    {"communityId": id, "communityName": format!("Community {id}"), "sites": []}
                 ]),
             ),
         )
@@ -1577,17 +1640,27 @@ async fn community_events_normalize_ids_and_drop_invalid_batches() {
         .unwrap();
     }
     let communities = app.db_wrapper.communities().get_all().await.unwrap();
-    assert_eq!(communities.len(), 1);
-    assert_eq!(
-        communities[0].community_id,
-        "abcdefab-1234-1234-1234-abcdefabcdef"
-    );
-    for id in [
-        "invalid",
-        "00000000-0000-0000-0000-000000000000",
-        "0x00000000000000000000000000000000",
-        "00000000000000000000000000000000",
-    ] {
+    assert_eq!(communities.len(), 6);
+    for community in &communities {
+        assert_eq!(
+            community.community_name,
+            format!("Community {}", community.community_id)
+        );
+        let mappings = app
+            .db_wrapper
+            .ids()
+            .filter(
+                Some(primitives::utils::derive_onchain_id(
+                    &community.community_id,
+                )),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(mappings.len(), 1);
+        assert_eq!(mappings[0].offchain_id, community.community_id);
+    }
+    for id in ["", " padded", "padded ", "\tcommunity", "community\n"] {
         let error = handle_event(&app.db_wrapper, event(EwdsEventType::Community, "invalid", json!([
         {"communityId": "22222222-2222-4222-8222-222222222222", "communityName": "Not stored", "sites": []},
         {"communityId": id, "communityName": "Invalid", "sites": []}
@@ -1654,12 +1727,9 @@ async fn handle_event_stores_nothing_from_a_batch_with_an_invalid_measurement() 
     let app = init_app().await;
     for (field, invalid_value) in [
         ("timeSlot", json!(TIMESLOT + 900)),
-        ("communityUuid", json!("community-1")),
+        ("communityUuid", json!(" community-1")),
         ("communityUuid", json!("")),
-        (
-            "communityUuid",
-            json!("00000000-0000-0000-0000-000000000000"),
-        ),
+        ("communityUuid", json!("community-1 ")),
     ] {
         let mut invalid = measurement_data("facility-1", TIMESLOT + 900, 2.0);
         invalid[field] = invalid_value;

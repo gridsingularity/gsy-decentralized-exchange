@@ -14,8 +14,8 @@ does not persist its replay cursor across restarts.
 ## Actor ID Hashing Key
 
 For a fresh DD-459 service deployment, provision one private `ACTOR_ID_HASH_KEY`
-(32 random bytes encoded as 64 hex characters, without `0x`). Storage and the
-execution engine require it at startup; every trusted local actor-hash consumer,
+(32 random bytes encoded as 64 hex characters, without `0x`). Storage, the
+execution engine and market orchestrator require it at startup; every trusted local actor-hash consumer,
 including test runners and the dummy trade generator, must use the same key.
 Generate it once using `openssl rand -hex 32`, distribute it through your secret
 manager or protected environment file, and keep it separate from wallet keys.
@@ -27,10 +27,17 @@ The integration/E2E Compose files supply a public test-only key for isolated loc
 tests. Never use that key on a shared or public chain. Staging reads the private
 value from its deployment environment (`.env.ewds.local`); building the image does
 not require a key. The mapping database also contains sensitive associations and
-must remain private. Mapping-API access restrictions are a subsequent DD-459 step.
+must remain private. Mapping-API authorization is deferred to a separate ticket;
+this change does not restrict the existing `/ids` or `ids.query` operations.
+Storage resolves on-chain community IDs directly through its own database,
+without a new reverse-lookup API or a remote conversion request.
 
-This increment does not alter contract ABIs or market-ID generation. Market
-uniqueness and UUIDv4 market IDs are a separate coordinated change.
+Deploy the updated `MarketController` and all services together into a fresh
+environment. Markets now use random UUIDv4 IDs; `getMarketIds` resolves the
+community/type/delivery-start tuple to its existing ID. The contract enforces
+tuple uniqueness even when concurrent orchestrators propose different UUIDs.
+Community IDs on-chain are keyed pseudonyms, resolved to their original spelling
+by the storage listener. Existing deterministic market IDs are not migrated.
 
 ## Supported Networks
 

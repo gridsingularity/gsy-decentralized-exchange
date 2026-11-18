@@ -7,10 +7,9 @@
   "additionalProperties": false,
   "properties": {
     "communityId": {
-      "description": "Nonzero community ID as UUID, 0x-prefixed or bare bytes16 hex. Stored and returned as a lowercase hyphenated UUID. IRI: int:communityId.",
+      "description": "Off-chain community identity, preserved exactly and case-sensitive, including UUID-shaped strings. Nonempty, with no surrounding whitespace. IRI: int:communityId.",
       "type": "string",
-      "pattern": "^(?:(?:0x)?[a-fA-F0-9]{32}|[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12})(?![\\s\\S])",
-      "not": { "enum": ["00000000-0000-0000-0000-000000000000","0x00000000000000000000000000000000","00000000000000000000000000000000"] }
+      "pattern": "^\\S(?:[\\s\\S]*\\S)?(?![\\s\\S])"
     },
     "communityName": {
       "description": "Human-readable community name. IRI: int:communityName.",

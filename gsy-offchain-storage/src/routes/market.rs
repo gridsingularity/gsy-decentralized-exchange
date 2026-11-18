@@ -3,7 +3,7 @@ use actix_web::{web::Json, web::Query, HttpResponse, Responder};
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::trades::{ClearingResultSchema, MarketRoleSchema};
 use primitives::ewds::dto::EwdsClearingResultDto;
-use primitives::utils::{normalize_community_id, normalize_market_id};
+use primitives::utils::{normalize_market_id, normalize_offchain_id};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -71,7 +71,7 @@ pub async fn get_markets(db: DbRef, params: Query<MarketsQuery>) -> impl Respond
     let community_id = match params
         .community_id
         .as_deref()
-        .map(normalize_community_id)
+        .map(normalize_offchain_id)
         .transpose()
     {
         Ok(community_id) => community_id,
@@ -104,7 +104,7 @@ pub async fn post_market(market: Json<MarketSchema>, db: DbRef) -> impl Responde
     if let Err(error) = normalize_market_id(&market.market_id) {
         return HttpResponse::BadRequest().body(error.to_string());
     }
-    if let Err(e) = normalize_community_id(&market.community_id) {
+    if let Err(e) = normalize_offchain_id(&market.community_id) {
         tracing::error!("Invalid market: {:?}", e);
         return HttpResponse::BadRequest().finish();
     }
