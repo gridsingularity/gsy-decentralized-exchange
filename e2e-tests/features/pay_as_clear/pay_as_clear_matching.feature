@@ -6,7 +6,7 @@ Feature: Two-Sided Pay-as-Clear Matching
   Scenario: Accepted bids and offers settle at a uniform clearing price
     Given the GSY DEX services are running
     And the matching engine uses "pay_as_clear"
-    And users "alice", "bob", and "charlie" the matching engine operator are registered
+    And the DEX service accounts are authorized
     When the Market Orchestrator opens the Spot market for the current delivery slot
     And forecasts of 10 energy are submitted
     And measurements for facilities are submitted
@@ -19,7 +19,7 @@ Feature: Two-Sided Pay-as-Clear Matching
   Scenario: A preferred bilateral trade is priced separately from the standard clearing market
     Given the GSY DEX services are running
     And the matching engine uses "pay_as_clear"
-    And users "alice", "bob", and "charlie" the matching engine operator are registered
+    And the DEX service accounts are authorized
     When the Market Orchestrator opens the Spot market for the current delivery slot
     And forecasts of 10 energy are submitted
     And measurements for facilities are submitted
@@ -33,7 +33,7 @@ Feature: Two-Sided Pay-as-Clear Matching
   Scenario Outline: Clearing with <book> uses the appropriate price
     Given the GSY DEX services are running
     And the matching engine uses "pay_as_clear"
-    And users "alice", "bob", and "charlie" the matching engine operator are registered
+    And the DEX service accounts are authorized
     When the Market Orchestrator opens the Spot market for the current delivery slot
     And forecasts of 10 energy are submitted
     And measurements for facilities are submitted

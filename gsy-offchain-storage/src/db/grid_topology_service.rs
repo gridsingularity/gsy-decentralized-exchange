@@ -1,7 +1,7 @@
 use crate::db::DatabaseWrapper;
 use anyhow::{anyhow, Result};
 use futures::TryStreamExt;
-use mongodb::bson::{doc, Bson};
+use mongodb::bson::{doc, Bson, Document};
 use mongodb::error::ErrorKind;
 use mongodb::options::IndexOptions;
 use mongodb::{Collection, IndexModel};
@@ -9,7 +9,7 @@ use primitives::db_api_schema::grid_topology::{
     AssetSchema, EnergyCommunitySchema, FacilitySchema, PilotSiteSchema, SiteSchema,
 };
 use primitives::ewds::invalid_event;
-use primitives::utils::{epoch_to_rfc3339, now_epoch_secs, EPOCH_RFC3339};
+use primitives::utils::{epoch_to_rfc3339, normalize_community_id, now_epoch_secs, EPOCH_RFC3339};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
@@ -196,6 +196,11 @@ pub trait TopologyEntry:
     fn name(&self) -> &str;
     fn valid_from(&self) -> &str;
     fn set_valid_from(&mut self, valid_from: String);
+
+    /// Brings the id into the form it is stored in. Fails if the id is invalid.
+    fn normalize_id(&mut self) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl TopologyEntry for EnergyCommunitySchema {
@@ -214,6 +219,11 @@ impl TopologyEntry for EnergyCommunitySchema {
     }
     fn set_valid_from(&mut self, valid_from: String) {
         self.valid_from = valid_from;
+    }
+    /// Community ids are stored as lowercase hyphenated UUIDs, like the markets refer to them.
+    fn normalize_id(&mut self) -> Result<()> {
+        self.community_id = normalize_community_id(&self.community_id)?;
+        Ok(())
     }
 }
 
@@ -278,8 +288,18 @@ impl<T: TopologyEntry> TopologyService<T> {
     /// The latest entries, ordered by id: the latest document of each id, unless its
     /// `valid_until` has passed. Only these are valid; older documents are kept for audit.
     pub async fn get(&self) -> Result<Vec<T>> {
+        self.latest(doc! {}).await
+    }
+
+    /// The latest entries of `ids`, like [`Self::get`]. Unknown and deleted ids are left out.
+    pub async fn get_by_ids(&self, ids: &[&str]) -> Result<Vec<T>> {
+        self.latest(doc! {T::ID_FIELD: {"$in": ids}}).await
+    }
+
+    async fn latest(&self, filter: Document) -> Result<Vec<T>> {
         let now = epoch_to_rfc3339(now_epoch_secs());
         let pipeline = [
+            doc! {"$match": filter},
             doc! {"$group": {
                 "_id": format!("${}", T::ID_FIELD),
                 "latest": {"$top": {"sortBy": {"valid_from": -1, "_id": -1}, "output": "$$ROOT"}},
@@ -310,12 +330,15 @@ impl<T: TopologyEntry> TopologyService<T> {
     /// of its id, apart from `valid_from`, is skipped. Returns the stored document of each
     /// entry, or the latest one if it was skipped.
     ///
-    /// Fails before writing anything, with an error marked by [`invalid_event`], if an id or a
-    /// name appears twice in `entries`, or if a name is used by a latest entry of another id
-    /// ([`NameConflict`]). Entries of ids in `entries` do not count, so two entries can swap
-    /// their names. Storing the same entries again changes nothing, so a failed call can be
-    /// retried.
-    pub async fn store(&self, entries: Vec<T>) -> Result<Vec<T>> {
+    /// Fails before writing anything, with an error marked by [`invalid_event`], if an id is
+    /// invalid ([`TopologyEntry::normalize_id`]), if an id or a name appears twice in
+    /// `entries`, or if a name is used by a latest entry of another id ([`NameConflict`]).
+    /// Entries of ids in `entries` do not count, so two entries can swap their names. Storing
+    /// the same entries again changes nothing, so a failed call can be retried.
+    pub async fn store(&self, mut entries: Vec<T>) -> Result<Vec<T>> {
+        for entry in &mut entries {
+            entry.normalize_id().map_err(invalid_event)?;
+        }
         let mut ids = HashSet::new();
         let mut names = HashSet::new();
         for entry in &entries {

@@ -22,6 +22,7 @@ async fn main() -> anyhow::Result<()> {
             polling_interval,
             market_duration,
             penalty_rate,
+            penalty_tolerance_percent,
         } => {
             info!("Starting engine...");
             let default_offchain_storage_url = format!("{}:{}", offchain_host, offchain_port);
@@ -59,6 +60,7 @@ async fn main() -> anyhow::Result<()> {
                     timeslot,
                     penalty_rate,
                     market_duration,
+                    penalty_tolerance_percent,
                 )
                 .await
                 {

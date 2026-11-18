@@ -31,7 +31,7 @@ use primitives::utils::{
 use serde_json::{json, Value};
 use std::time::Duration;
 use uuid::Uuid;
-use wiremock::matchers::{method, path, query_param};
+use wiremock::matchers::{method, path, query_param, query_param_is_missing};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 // --- Test helpers ---------------------------------------------------
@@ -1348,7 +1348,7 @@ async fn handle_event_saves_facilities_sites_and_communities() {
             EwdsEventType::Community,
             "community-event",
             json!([{
-                "communityId": "community-1",
+                "communityId": "11111111-1111-4111-8111-111111111111",
                 "communityName": "Community 1",
                 "sites": ["site-1"],
             }]),
@@ -1380,7 +1380,7 @@ async fn handle_event_saves_facilities_sites_and_communities() {
     assert_eq!(
         stored(db.communities()).await,
         vec![EnergyCommunitySchema {
-            community_id: "community-1".to_string(),
+            community_id: "11111111-1111-4111-8111-111111111111".to_string(),
             community_name: "Community 1".to_string(),
             sites: vec!["site-1".to_string()],
             valid_from: EPOCH_RFC3339.to_string(),
@@ -1408,22 +1408,38 @@ async fn assert_conflicting_batches_are_rejected<F, G>(
     let batch = |records: &[(&str, &str)]| {
         Value::Array(records.iter().map(|(id, name)| record(id, name)).collect())
     };
-    let initial = vec![("id-1".to_string(), "name-1".to_string())];
+    let initial = vec![(
+        "00000000-0000-4000-8000-000000000001".to_string(),
+        "name-1".to_string(),
+    )];
 
     handle_event(
         db,
-        event(event_type, "initial", batch(&[("id-1", "name-1")])),
+        event(
+            event_type,
+            "initial",
+            batch(&[("00000000-0000-4000-8000-000000000001", "name-1")]),
+        ),
     )
     .await
     .unwrap();
 
     let conflicting: [&[(&str, &str)]; 3] = [
         // A stored name under another id, after a valid record that must not be written.
-        &[("id-3", "name-3"), ("id-2", "name-1")],
+        &[
+            ("00000000-0000-4000-8000-000000000003", "name-3"),
+            ("00000000-0000-4000-8000-000000000002", "name-1"),
+        ],
         // One id with two names in the batch.
-        &[("id-4", "name-4"), ("id-4", "name-5")],
+        &[
+            ("00000000-0000-4000-8000-000000000004", "name-4"),
+            ("00000000-0000-4000-8000-000000000004", "name-5"),
+        ],
         // One name with two ids in the batch.
-        &[("id-5", "name-6"), ("id-6", "name-6")],
+        &[
+            ("00000000-0000-4000-8000-000000000005", "name-6"),
+            ("00000000-0000-4000-8000-000000000006", "name-6"),
+        ],
     ];
     for (index, records) in conflicting.into_iter().enumerate() {
         let error = handle_event(
@@ -1439,7 +1455,11 @@ async fn assert_conflicting_batches_are_rejected<F, G>(
     // Sending a stored record again is fine.
     handle_event(
         db,
-        event(event_type, "repeat", batch(&[("id-1", "name-1")])),
+        event(
+            event_type,
+            "repeat",
+            batch(&[("00000000-0000-4000-8000-000000000001", "name-1")]),
+        ),
     )
     .await
     .unwrap();
@@ -1448,18 +1468,35 @@ async fn assert_conflicting_batches_are_rejected<F, G>(
     // A rename is fine, and frees the old name.
     handle_event(
         db,
-        event(event_type, "rename", batch(&[("id-1", "name-1b")])),
+        event(
+            event_type,
+            "rename",
+            batch(&[("00000000-0000-4000-8000-000000000001", "name-1b")]),
+        ),
     )
     .await
     .unwrap();
-    handle_event(db, event(event_type, "reuse", batch(&[("id-2", "name-1")])))
-        .await
-        .unwrap();
+    handle_event(
+        db,
+        event(
+            event_type,
+            "reuse",
+            batch(&[("00000000-0000-4000-8000-000000000002", "name-1")]),
+        ),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         stored(db.clone()).await,
         vec![
-            ("id-1".to_string(), "name-1b".to_string()),
-            ("id-2".to_string(), "name-1".to_string()),
+            (
+                "00000000-0000-4000-8000-000000000001".to_string(),
+                "name-1b".to_string()
+            ),
+            (
+                "00000000-0000-4000-8000-000000000002".to_string(),
+                "name-1".to_string()
+            ),
         ]
     );
 
@@ -1503,6 +1540,44 @@ async fn handle_event_rejects_communities_with_names_of_other_entries_and_accept
         },
     )
     .await;
+}
+
+#[tokio::test]
+async fn community_events_normalize_ids_and_drop_invalid_batches() {
+    let app = init_app().await;
+    for id in [
+        "ABCDEFAB-1234-1234-1234-ABCDEFABCDEF",
+        "0xabcdefab123412341234abcdefabcdef",
+    ] {
+        handle_event(
+            &app.db_wrapper,
+            event(
+                EwdsEventType::Community,
+                "canonical",
+                json!([
+                    {"communityId": id, "communityName": "Canonical", "sites": []}
+                ]),
+            ),
+        )
+        .await
+        .unwrap();
+    }
+    let communities = app.db_wrapper.communities().get().await.unwrap();
+    assert_eq!(communities.len(), 1);
+    assert_eq!(
+        communities[0].community_id,
+        "abcdefab-1234-1234-1234-abcdefabcdef"
+    );
+    let error = handle_event(&app.db_wrapper, event(EwdsEventType::Community, "invalid", json!([
+        {"communityId": "22222222-2222-4222-8222-222222222222", "communityName": "Not stored", "sites": []},
+        {"communityId": "invalid", "communityName": "Invalid", "sites": []}
+    ]))).await.unwrap_err();
+    assert!(is_invalid_event(&error));
+    assert_eq!(
+        app.db_wrapper.communities().get().await.unwrap(),
+        communities
+    );
+    stop_app(app).await;
 }
 
 #[tokio::test]
@@ -1701,11 +1776,11 @@ async fn event_subscriber_skips_bad_messages_and_saves_the_next_one() {
     Mock::given(method("GET"))
         .and(path("/api/v2/messages"))
         .and(query_param("fqcn", "gsy.events.sub"))
-        .and(query_param("topicName", "facility"))
+        .and(query_param_is_missing("topicName"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-            {"payload": "not an event"},
-            {"payload": serde_json::to_string(&wrong_topic_event).unwrap()},
-            {"payload": serde_json::to_string(&facility_event).unwrap()},
+            {"topicName": "facility", "payload": "not an event"},
+            {"topicName": "facility", "payload": serde_json::to_string(&wrong_topic_event).unwrap()},
+            {"topicName": "facility", "payload": serde_json::to_string(&facility_event).unwrap()},
         ])))
         .mount(&server)
         .await;

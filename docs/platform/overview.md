@@ -22,7 +22,6 @@ This gives:
 ```mermaid
 flowchart LR
     MO["Market Orchestrator"] -->|createMarkets| MC["MarketController"]
-    AR["ActorRegistry"] -->|isAuthorized| OR["OrderRegistry"]
     CC["Community Client"] -->|placeOrder| OR["OrderRegistry"]
     ME["Matching Engine"] -->|settleBatch| TS["TradeSettlement"]
     EE["Execution Engine"] -->|submitPenalties| TS

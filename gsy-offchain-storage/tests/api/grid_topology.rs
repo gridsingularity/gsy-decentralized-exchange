@@ -122,6 +122,50 @@ async fn post_and_get_pilot_site() {
 }
 
 #[tokio::test]
+async fn community_writes_normalize_ids_and_reject_invalid_values() {
+    let app = init_app().await;
+    let client = reqwest::Client::new();
+    let post = |community_id: &str| {
+        client
+            .post(format!("{}/communities", app.address))
+            .json(&EwdsCommunityDto {
+                community_id: community_id.to_string(),
+                community_name: "Canonical".to_string(),
+                sites: vec![],
+                valid_from: None,
+                valid_until: None,
+            })
+            .send()
+    };
+
+    let response = post("ABCDEFAB-1234-1234-1234-ABCDEFABCDEF").await.unwrap();
+    assert_eq!(200, response.status().as_u16());
+    let saved: EwdsCommunityDto = response.json().await.unwrap();
+    assert_eq!(saved.community_id, "abcdefab-1234-1234-1234-abcdefabcdef");
+
+    // The hex form is the same community, so nothing new is stored.
+    let response = post("0xabcdefab123412341234abcdefabcdef").await.unwrap();
+    assert_eq!(200, response.status().as_u16());
+    assert_eq!(response.json::<EwdsCommunityDto>().await.unwrap(), saved);
+
+    let response = post("invalid").await.unwrap();
+    assert_eq!(400, response.status().as_u16());
+
+    assert_eq!(
+        app.db_wrapper
+            .communities()
+            .get()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(EwdsCommunityDto::from)
+            .collect::<Vec<_>>(),
+        vec![saved]
+    );
+    stop_app(app).await;
+}
+
+#[tokio::test]
 async fn post_and_get_communities() {
     let app = init_app().await;
     let address = app.address.clone();

@@ -56,6 +56,7 @@ Provider: `gsy-offchain-storage` (`gsy-offchain-storage/src/startup.rs`)
 | `/markets` | `GET/POST` | ontology-aligned market-opening API | `http://gsy-offchain-storage:8080/markets` |
 | `/clearing-results` | `GET/POST` | clearing-result API | `http://gsy-offchain-storage:8080/clearing-results` |
 | `/ids` | `POST` | offchain↔onchain ID mapping API | `http://gsy-offchain-storage:8080/ids` |
+| `/facilities/validate` | `POST` | community client's order event subscriber | `http://gsy-offchain-storage:8080/facilities/validate` |
 | `/measurement-points` | `GET/POST` | ontology-aligned profile metadata API | `http://gsy-offchain-storage:8080/measurement-points` |
 | `/timeseries` | `GET/POST` | ontology-aligned value API | `http://gsy-offchain-storage:8080/timeseries` |
 | `/measurements` | `GET/POST` | EVM JSON compatibility adapter | converts to/from `MeasurementPoint` + `Timeseries` |
@@ -90,6 +91,7 @@ Each service:
 | `clearing_results.query` over `clearingResultsQuery` / `clearingResultsQueryResponse` | matching/execution engine | off-chain storage service | off-chain storage service | requester | `GET /clearing-results` |
 | `markets.query` over `marketsQuery` / `marketsQueryResponse` | community client or e2e runner | off-chain storage service | off-chain storage service | requester | `GET /markets` |
 | `ids.query` over `idsQuery` / `idsQueryResponse` | requester service | off-chain storage service | off-chain storage service | requester | `POST /ids` (get-or-create) |
+| `facilities.validate` over `facilitiesValidate` / `facilitiesValidateResponse` | requester service | off-chain storage service | off-chain storage service | requester | `POST /facilities/validate` (read-only) |
 | `community.event` over `community` | other systems or e2e runner | off-chain storage service | none | none | `POST /communities` |
 | `order.event` over `order` | FOS or e2e runner | community client | none | none | none (the community client calls `OrderRegistry.placeOrder`) |
 | `communities.query` over `communitiesQuery` / `communitiesQueryResponse` | market orchestrator | off-chain storage service | off-chain storage service | market orchestrator | `GET /communities` |
@@ -112,6 +114,35 @@ Each service:
 | `gsy.intelligent.responses.sub` | Subscribe | `ordersQueryResponse`, `tradesQueryResponse`, `measurementsQueryResponse`, `clearingResultsQueryResponse`, `marketsQueryResponse`, `idsQueryResponse`, `communitiesQueryResponse` | `EWDS_RESPONSE_SUBSCRIBE_FQCN` |
 | `gsy.intelligent.events.pub` | Publish | `trade`, `clearingResult`, `market`, `measurements`, `facility`, `site`, `community`, `order` | `EWDS_EVENT_PUBLISH_FQCN` |
 | `gsy.intelligent.events.sub` | Subscribe | `trade`, `clearingResult`, `market`, `measurements`, `facility`, `site`, `community`, `order` | `EWDS_EVENT_SUBSCRIBE_FQCN` |
+
+Facility validation additionally requires `facilitiesValidate` on both request
+channels and `facilitiesValidateResponse` on both response channels, using the
+configured `EWDS_TOPIC_OWNER`. Their topic schemas are
+`int.facilities.validate.request.v1.json` and
+`int.facilities.validate.response.v1.json`. The topic setup script includes
+these names and their test equivalents; register the schemas in the gateway.
+Compose E2E uses `facilitiesValidateTest` / `facilitiesValidateTestResponse`;
+these must also be associated with the corresponding channels before EWDS runs.
+Override names through `EWDS_FACILITIES_VALIDATION_REQUEST_TOPIC` and
+`EWDS_FACILITIES_VALIDATION_RESPONSE_TOPIC` consistently on requester/responder.
+
+The `facilities.validate` request envelope uses the same array as the HTTP body:
+
+```json
+{
+  "requestId": "validation-1",
+  "operation": "facilities.validate",
+  "payload": [{"facility_id": "facility-a", "market_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}]
+}
+```
+
+`success: true` carries one result per pair in `data`, including ineligible
+pairs with their reason (see [facility validation](off-chain-storage.md#facility-participation-validation)).
+`success: false` with empty `data` indicates an invalid request (`invalid_request`)
+or a storage failure (`VALIDATION_UNAVAILABLE`), not a rejected facility.
+HTTP-only clients use `OFFCHAIN_STORAGE_TRANSPORT=http` and need no gateway;
+EWDS uses `OFFCHAIN_STORAGE_TRANSPORT=ewds` and the responder's existing
+`EWDS_ENABLE_HANDLER=true` / `EwdsHandlerConfig` setup.
 
 The events channels carry fire-and-forget domain events rather than
 request/reply traffic. When `EWDS_ENABLE_HANDLER` is on, the off-chain storage
@@ -169,12 +200,52 @@ off-chain-storage responder DID. If multiple qualified responders consume the
 same request topics, they can return different snapshots for the same request
 ID. The response publish channel can resolve to all GSY request clients.
 
+### Polling
+
+Every service polls each subscribe channel it reads as a whole. The
+`GET /api/v2/messages` call sends only `fqcn`, `amount` and `clientId`, with
+no `topicName` and no `topicOwner`, so the gateway returns the messages of
+every topic on the channel. The service then:
+
+- drops messages whose `topicOwner` is not `EWDS_TOPIC_OWNER`,
+- hands every other message to the queue of its `topicName`, in arrival order,
+- drops the messages of topics it doesn't consume. These are expected, because
+  a service also receives the topics meant for other services.
+
+Each message the gateway returns carries `topicName`, `topicOwner`,
+`topicVersion`, `id`, `transactionId` and `sender` next to `payload`. If a
+message ever has no `topicName`, it is routed by its payload instead: an
+event by `eventType`, a request by `operation`.
+
+| Channel | Polled by | `clientId` |
+|---|---|---|
+| `gsy.intelligent.requests.sub` | off-chain storage | `EWDS_REQUEST_CLIENT_ID` + `requests`, e.g. `gsyoffchainstoragerequests` |
+| `gsy.intelligent.events.sub` | off-chain storage | `EWDS_REQUEST_CLIENT_ID` + `events`, e.g. `gsyoffchainstorageevents` |
+| `gsy.intelligent.events.sub` | community client | `EWDS_COMMUNITY_CLIENT_ID` + `events`, e.g. `gsycommunityclientevents` |
+| `gsy.intelligent.responses.sub` | every query caller | client ID + response topic, e.g. `gsymatchingengineordersQueryResponse` |
+
+Query responses are the exception: they are still polled per response topic.
+Every topic has its own `clientId` cursor and the caller matches responses by
+`requestId`, so this works whether or not the gateway filters by topic.
+
+Gateway behaviour to keep in mind:
+
+- A `clientId` is a cursor of its own. Two pollers must never share one, or
+  they split the messages between them.
+- A new `clientId` receives everything the broker still keeps for the channel,
+  up to 24 hours.
+- The first poll of a new `clientId` can take more than 30 seconds while the
+  gateway sets up the consumer.
+- A poll returns at most `amount` messages over all topics of the channel.
+  When it returns a full batch, the service polls again at once instead of
+  waiting for the next interval.
+
 ### Inbound Events
 
 Other systems publish new or changed measurements, facilities, sites
 and communities on `gsy.intelligent.events.pub`. When `EWDS_ENABLE_HANDLER` is
-on, the off-chain storage polls these four topics on
-`gsy.intelligent.events.sub` and stores the data in the same collections the
+on, the off-chain storage takes these four topics from its poll of
+`gsy.intelligent.events.sub` (see [Polling](#polling)) and stores the data in the same collections the
 REST API uses. New orders go to the community client instead; see
 [Order Events](#order-events).
 
@@ -232,15 +303,16 @@ Handling rules:
 - A failed database write is tried up to three times in a row. Invalid data
   is not retried: a duplicate key, or a name that another valid facility, site
   or community already uses.
-- The gateway acknowledges a message when it is polled, so it never delivers a
-  failed event again. The subscriber therefore keeps a failed event and
+- The gateway acknowledges the messages of a poll at the next poll of the same
+  `clientId`, so it never delivers a failed event again. The subscriber therefore keeps a failed event and
   retries it, up to `EWDS_EVENT_HANDLE_ATTEMPTS` (default 8) attempts in
   total. The first retry waits `EWDS_EVENT_RETRY_DELAY_MS` (default 2 000 ms),
   and the delay doubles with every attempt up to 5 minutes, so the defaults
   cover an outage of about 4 minutes. Then the event is logged and dropped.
 - Events of one topic are handled in the order they arrive. While a failed
   event waits for its retry, the later events of its topic wait too, so an
-  older event is never stored after a newer one. Failed events are only
+  older event is never stored after a newer one. The other topics carry
+  on. Failed events are only
   kept in memory and are lost if the service restarts.
 - The broker keeps messages for 24 hours, so events sent while the off-chain
   storage is down for longer are lost.
@@ -282,8 +354,9 @@ e2e stack uses the `...Test` variants of the inbound topics
 
 FOS publishes new orders on the `order` topic
 (`EWDS_ORDER_EVENT_TOPIC`). When `EWDS_ENABLE_HANDLER` is on, the
-community client polls only this topic on `gsy.intelligent.events.sub`, with
-the client ID `EWDS_COMMUNITY_CLIENT_ID`, and sends each order to
+community client handles only this topic of `gsy.intelligent.events.sub`. It
+polls the channel with the client ID `EWDS_COMMUNITY_CLIENT_ID` + `events` and
+drops the other topics (see [Polling](#polling)). It sends each order to
 `OrderRegistry.placeOrder`. The off-chain storage doesn't subscribe to it.
 From there the usual flow takes over: the off-chain storage indexes
 `OrderPlaced`, the matching engine matches, and trades go out as
@@ -319,18 +392,25 @@ returns (`int.order.event.v1.json`):
 | Field | Rule |
 |---|---|
 | `orderId` | A UUID chosen by the publisher. Its 16 bytes become the on-chain order ID, so `orders.query` and the trades' `bidId`/`offerId` return it as `0x` plus 32 hex digits. |
-| `marketId` | The market's hex ID, e.g. from `markets.query`. The market must be open. |
-| `createdBy` | The off-chain actor ID, e.g. the facility owner. The ID service maps it to the on-chain actor ID. |
+| `marketId` | The market's non-zero UUID or bytes16 hex ID, e.g. from `markets.query`. The contract still checks that the market is open. |
+| `createdBy` | The original off-chain owner ID. The subscriber resolves its facility and validates that facility's market participation before mapping the owner to an on-chain ID. It is not the facility ID or service wallet. This deployment guarantees one facility per owner. |
 | `orderStatus` | Must be `submitted`. |
 | `quantity` | Greater than 0, in kWh. |
 | `priceLimit` | 0 or more, in EUR/kWh. |
-| `preferredTradingPartner` | The partner's off-chain ID, resolved like `createdBy`. Stored in requirements for both bids and offers. |
+| `preferredTradingPartner` | The partner's off-chain owner ID, resolved like `createdBy`. Stored in requirements for both bids and offers. |
 | `updatedAt`, `rejectReason` | Ignored. |
 
 Handling rules:
 
-- One invalid order rejects the whole event before anything is sent: parsing,
-  the rules above and resolving the IDs all have to pass.
+- Parsing and field validation must pass for the whole event. Already-confirmed
+  orders are skipped before checking eligibility. The remaining facility/market
+  pairs are validated in one HTTP or EWDS request before resolving any IDs.
+- Ineligible orders are reported through `orderStatus.event` with the reason,
+  without creating DB records or calling `placeOrder`. The client rechecks that
+  the order has not been placed meanwhile before reporting rejection.
+  Eligible orders continue; their IDs must all resolve before submission.
+- Validation-service errors and incomplete/inconsistent responses fail the event
+  without submission or rejection notifications and remain retryable.
 - The orders are then sent one at a time. The community client waits for
   each mined receipt and requires status `1` before confirming placement:
   - An order whose ID is already on-chain (`getStatus`) is skipped.
@@ -353,12 +433,13 @@ Handling rules:
 - Resending an event, even under a new `eventId`, doesn't place an order
   twice. A resend while the first transaction is still pending sends the
   order again, but that duplicate reverts with `OrderAlreadyExists`.
-- Definite contract rejections are reported through `orderStatus.event`.
+- Definite eligibility and contract rejections are reported through `orderStatus.event`.
   FOS sees placed orders through `orders.query` and `orderStatus.event`, and
   their trades through `trade.event`.
-- `placeOrder` only accepts an order if the community client's wallet is
-  authorized for the actor in the `ActorRegistry`. Registering it is up to
-  whoever publishes the orders.
+- `placeOrder` requires the caller to hold `OrderRegistry.COMMUNITY_CLIENT_ROLE`,
+  granted by the administrator. Multiple clients can hold this role; each
+  validates facility/community membership off-chain. FOS publishers and actor
+  wallets cannot submit directly without this service role.
 
 ##### Order Status Notification Contract
 
@@ -385,9 +466,10 @@ outbox or delivery-order guarantee. Replayed listener events may notify again;
 consumers must tolerate duplicates and must not assume arrival order. Query
 `orders.query` when reconciling the current state of stored orders.
 
-The community client reports a contract rejection during gas estimation or a
-failed mined receipt as `rejected`, with `rejectReason`. It preserves the
-original submission's IDs and fields; `updatedAt` and `occurredAt` identify when
+The community client reports an ineligible facility/market pair, a contract
+rejection during gas estimation or a failed mined receipt as `rejected`, with
+`rejectReason`. It preserves the original submission's IDs and fields;
+`updatedAt` and `occurredAt` identify when
 the rejection was observed. It does not create a rejected database order.
 Successful placements and `OrderAlreadyExists` produce no rejection; transport
 failures or unknown transaction outcomes remain retryable, not rejected.
@@ -403,7 +485,8 @@ existing batch validation and retry/drop behavior, with errors logged but no
 rejection messages. A separate message-format decision is needed to report them.
 
 FOS must use its own consumer client ID, distinct from the community client.
-Consumers sharing a topic must not share a polling cursor. Before enabling
+Both read the events channel, and consumers of one channel must not share a
+`clientId` (see [Polling](#polling)). Before enabling
 publication, update the configured order topic's schema to the expanded
 `int.order.event.v1.json`, which accepts both event types.
 
@@ -485,10 +568,13 @@ Validator requirements:
 - `EwdsClientConfig` resolves gateway, FQCN, topic, client-ID, and polling settings from the environment once when a client is created.
 - `EwdsOperation` maps each query operation to its configured request/response topic pair; callers pass only the operation and query payload.
 - `EwdsClient` separates request publishing from response polling behind its `query` method.
-- `EwdsClient::run_event_worker` polls one event type's topic on
-  `EWDS_EVENT_SUBSCRIBE_FQCN` (up to `EWDS_EVENT_BATCH_SIZE` messages) every
-  `EWDS_EVENT_POLL_INTERVAL_MS` (default 60 000 ms, 1 000 ms in the e2e
-  stack) and passes every new event to a handler, in arrival order. A failed
+- `ewds::channel::EwdsChannelPoller` polls one subscribe channel without a
+  topic filter and routes its messages to a queue per topic (see
+  [Polling](#polling)).
+- `EwdsClient::run_event_subscriber` polls `EWDS_EVENT_SUBSCRIBE_FQCN` (up to
+  `EWDS_EVENT_BATCH_SIZE` messages) every `EWDS_EVENT_POLL_INTERVAL_MS`
+  (default 1 000 ms). It passes every new event of
+  the given event types to a handler, in arrival order per topic. A failed
   event is retried (`EWDS_EVENT_HANDLE_ATTEMPTS`, `EWDS_EVENT_RETRY_DELAY_MS`)
   unless the handler marks it as invalid. The off-chain storage and the
   community client share it.
@@ -498,8 +584,17 @@ Validator requirements:
 
 - EWDS handlers are implemented for `orders.query`, `trades.query`,
   `measurements.query`, and `communities.query`.
-- Each operation has an independent bounded polling worker, so response retries
-  for one topic do not block request handling for unrelated topics.
+- One poller reads the request channel and every operation has its own worker,
+  so response retries for one operation do not block request handling for the
+  others. A request whose `operation` doesn't belong to its topic is answered
+  with an `OPERATION_TOPIC_MISMATCH` error. A request that fails is logged and
+  doesn't hold up the rest of its poll.
+- A request published longer ago than `EWDS_REQUEST_MAX_AGE_MS` (default:
+  `EWDS_RESPONSE_TIMEOUT_MS`) is skipped, using the gateway's `timestampNanos`.
+  Its sender has stopped waiting. Answering would only flood the response
+  topic, which every requester reads, so that the fresh responses arrive
+  minutes late. This matters after an outage or a new `clientId`, when a
+  backlog of up to 24 hours arrives at once.
 - An event subscriber stores the measurements, facilities, sites and
   communities that other systems publish on the events channel (see
   [Inbound Events](#inbound-events)).
@@ -572,7 +667,7 @@ Channel/topic setup notes:
   `communitiesQueryResponse`.
 - Topic creation requires `topiccreator`; channel creation requires gateway admin access.
 - The gateway API validates send requests against a `pub` channel and receive polling against a `sub` channel. The direction-specific FQCN env vars are the default integration path.
-- Gateway smoke testing confirmed that message payloads must be JSON-encoded strings, sends must include `topicVersion`, `transactionId`, and `anonymousRecipient`, and receive polling must use `GET /api/v2/messages` with an alphanumeric `clientId` cursor.
+- Gateway smoke testing confirmed that message payloads must be JSON-encoded strings, sends must include `topicVersion`, `transactionId`, and `anonymousRecipient`, and receive polling must use `GET /api/v2/messages` with an alphanumeric `clientId` cursor. Leaving out `topicName` and `topicOwner` on the `GET` returns the messages of all topics of the channel (see [Polling](#polling)).
 
 Validated e2e status:
 

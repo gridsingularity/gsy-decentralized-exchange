@@ -6,7 +6,10 @@ use primitives::db_api_schema::grid_topology::{
     AssetSchema, EnergyCommunitySchema, FacilitySchema, PilotSiteSchema, SiteSchema,
 };
 use primitives::db_api_schema::tariff::TariffSchema;
-use primitives::ewds::dto::{EwdsCommunityDto, EwdsFacilityDto, EwdsSiteDto};
+use primitives::ewds::dto::{
+    EwdsCommunityDto, EwdsErrorPayload, EwdsFacilityDto, EwdsSiteDto,
+    FacilityMarketValidationRequest,
+};
 use primitives::ewds::is_invalid_event;
 use serde::{Deserialize, Serialize};
 
@@ -146,6 +149,22 @@ async fn latest_response<T: TopologyEntry, D: Serialize>(
         Err(e) => {
             tracing::error!("Failed to execute query: {:?}", e);
             HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
+pub async fn validate_facility_markets(
+    requests: Json<Vec<FacilityMarketValidationRequest>>,
+    db: DbRef,
+) -> impl Responder {
+    match db.validate_facility_markets(&requests).await {
+        Ok(results) => HttpResponse::Ok().json(results),
+        Err(error) => {
+            tracing::error!("Facility validation failed: {error:#}");
+            HttpResponse::InternalServerError().json(EwdsErrorPayload {
+                code: "VALIDATION_UNAVAILABLE".to_string(),
+                message: "Facility validation could not read the stored topology".to_string(),
+            })
         }
     }
 }
