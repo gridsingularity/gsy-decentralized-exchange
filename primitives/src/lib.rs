@@ -116,16 +116,6 @@ impl FromStr for MatchingAlgorithm {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub enum MarketTimeSeriesGranularity {
-    #[serde(rename = "15min")]
-    FifteenMinutes,
-    #[serde(rename = "1h")]
-    OneHour,
-    #[serde(rename = "1d")]
-    OneDay,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

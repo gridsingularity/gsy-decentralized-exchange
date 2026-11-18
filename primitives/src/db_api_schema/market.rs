@@ -4,7 +4,7 @@
 //! Its times are stored as BSON `Date`s; `EwdsMarketDto` carries them as RFC 3339.
 
 use crate::utils::{bytes16_to_hex, bytes16_to_uuid_string, epoch_to_datetime};
-pub use crate::{MarketTimeSeriesGranularity, MarketType, MatchingAlgorithm};
+pub use crate::{MarketType, MatchingAlgorithm};
 use anyhow::anyhow;
 use bson::serde_helpers::chrono_datetime_as_bson_datetime;
 use chrono::{DateTime, Utc};
@@ -70,15 +70,4 @@ impl TryFrom<MarketChainRecord> for MarketSchema {
             created_at: epoch_to_datetime(record.created_at)?,
         })
     }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct MarketTimeSeriesSchema {
-    pub community_id: String,
-    #[serde(default)]
-    pub market_ids: Option<Vec<String>>,
-    pub period_from: String,
-    pub period_until: String,
-    pub granularity: MarketTimeSeriesGranularity,
 }
