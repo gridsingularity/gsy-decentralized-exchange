@@ -2,7 +2,7 @@ use crate::MarketType;
 use anyhow::{Result, anyhow};
 use blake2::digest::{Update, VariableOutput};
 use blake2::Blake2bVar;
-use chrono::{prelude::DateTime, Utc, TimeZone};
+use chrono::{Utc, prelude::DateTime};
 use std::env;
 use std::str::FromStr;
 use uuid::Uuid;
@@ -98,11 +98,10 @@ pub fn read_env_or<T: FromStr>(variable_name: &str, default_value: T) -> T {
 }
 
 /// Format epoch seconds as an ISO 8601 / RFC 3339 string in UTC (`+00:00`), the same
-/// form as `DateTime::<Utc>::to_rfc3339`, which the DTOs use.
+/// form as `DateTime::<Utc>::to_rfc3339`, which the DTOs use. Empty if out of range.
 pub fn epoch_to_rfc3339(epoch_secs: u64) -> String {
-    Utc.timestamp_opt(epoch_secs as i64, 0)
-        .single()
-        .map(|dt| dt.to_rfc3339())
+    epoch_to_datetime(epoch_secs)
+        .map(|datetime| datetime.to_rfc3339())
         .unwrap_or_default()
 }
 

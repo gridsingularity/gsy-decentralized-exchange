@@ -10,10 +10,11 @@ use crate::ewds::dto::{
 };
 use crate::ewds::{format_response_body, EwdsClient, EwdsOperation};
 use crate::utils::{
-    bytes16_to_hex, epoch_to_rfc3339, parse_uuid_or_hex_bytes16, rfc3339_to_datetime,
+    bytes16_to_hex, parse_uuid_or_hex_bytes16, rfc3339_to_datetime,
 };
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use reqwest::Client;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
@@ -333,8 +334,8 @@ impl OffchainStorageClient {
     pub async fn fetch_trades(
         &self,
         market_id: Option<&str>,
-        start_time: Option<u64>,
-        end_time: Option<u64>,
+        start_time: Option<DateTime<Utc>>,
+        end_time: Option<DateTime<Utc>>,
     ) -> Result<Vec<DbTradeSchema>> {
         let mut ewds_payload = serde_json::Map::new();
         let mut http_query = Vec::new();
@@ -343,12 +344,12 @@ impl OffchainStorageClient {
             http_query.push(("market_id", market_id.to_string()));
         }
         if let Some(start_time) = start_time {
-            ewds_payload.insert("startTime".to_string(), epoch_to_rfc3339(start_time).into());
-            http_query.push(("start_time", epoch_to_rfc3339(start_time)));
+            ewds_payload.insert("startTime".to_string(), start_time.to_rfc3339().into());
+            http_query.push(("start_time", start_time.to_rfc3339()));
         }
         if let Some(end_time) = end_time {
-            ewds_payload.insert("endTime".to_string(), epoch_to_rfc3339(end_time).into());
-            http_query.push(("end_time", epoch_to_rfc3339(end_time)));
+            ewds_payload.insert("endTime".to_string(), end_time.to_rfc3339().into());
+            http_query.push(("end_time", end_time.to_rfc3339()));
         }
 
         let trades: Vec<EwdsTradeDto> = self
@@ -366,22 +367,22 @@ impl OffchainStorageClient {
     pub async fn fetch_orders(
         &self,
         market_id: &str,
-        start_time: u64,
-        end_time: u64,
+        start_time: DateTime<Utc>,
+        end_time: DateTime<Utc>,
     ) -> Result<Vec<DbOrderSchema>> {
         let orders: Vec<EwdsOrderDto> = self
             .query_records(
                 EwdsOperation::OrdersQuery,
                 serde_json::json!({
                     "marketId": market_id,
-                    "startTime": epoch_to_rfc3339(start_time),
-                    "endTime": epoch_to_rfc3339(end_time),
+                    "startTime": start_time.to_rfc3339(),
+                    "endTime": end_time.to_rfc3339(),
                 }),
                 "orders",
                 &[
                     ("market_id", market_id.to_string()),
-                    ("start_time", epoch_to_rfc3339(start_time)),
-                    ("end_time", epoch_to_rfc3339(end_time)),
+                    ("start_time", start_time.to_rfc3339()),
+                    ("end_time", end_time.to_rfc3339()),
                 ],
             )
             .await?;
@@ -419,8 +420,8 @@ impl OffchainStorageClient {
     /// Measurements whose time slot lies in `[start_time, end_time]`.
     pub async fn fetch_measurements(
         &self,
-        start_time: u64,
-        end_time: u64,
+        start_time: DateTime<Utc>,
+        end_time: DateTime<Utc>,
     ) -> Result<Vec<MeasurementSchema>> {
         match self.transport {
             OffchainStorageTransport::Ewds => {
@@ -430,8 +431,8 @@ impl OffchainStorageClient {
                     .query(
                         EwdsOperation::MeasurementsQuery,
                         serde_json::json!({
-                            "startTime": epoch_to_rfc3339(start_time),
-                            "endTime": epoch_to_rfc3339(end_time),
+                            "startTime": start_time.to_rfc3339(),
+                            "endTime": end_time.to_rfc3339(),
                         }),
                     )
                     .await?;
@@ -449,8 +450,8 @@ impl OffchainStorageClient {
     /// Joins the measurement points with their timeseries values in the range.
     async fn fetch_measurements_via_http(
         &self,
-        start_time: u64,
-        end_time: u64,
+        start_time: DateTime<Utc>,
+        end_time: DateTime<Utc>,
     ) -> Result<Vec<MeasurementSchema>> {
         let points_url = self.endpoint_url("measurement-points");
         info!("Fetching measurement points for {}", points_url);
@@ -479,8 +480,8 @@ impl OffchainStorageClient {
             .http_client
             .get(&timeseries_url)
             .query(&[
-                ("start_time", epoch_to_rfc3339(start_time)),
-                ("end_time", epoch_to_rfc3339(end_time)),
+                ("start_time", start_time.to_rfc3339()),
+                ("end_time", end_time.to_rfc3339()),
             ])
             .send()
             .await?;

@@ -1,5 +1,6 @@
 use crate::utils::indexed_bytes16_topic;
 use crate::world::{CommunityMarketOrderPair, MyWorld, PayAsClearScenario};
+use chrono::{DateTime, Utc};
 use cucumber::{then, when};
 use ethers::abi::AbiDecode;
 use ethers::prelude::*;
@@ -213,10 +214,10 @@ pub(crate) fn market_id_as_hex(world: &MyWorld) -> String {
     bytes16_to_hex(world.last_market_id.expect("Missing market id"))
 }
 
-fn market_window(world: &MyWorld) -> (u64, u64) {
+fn market_window(world: &MyWorld) -> (DateTime<Utc>, DateTime<Utc>) {
     (
-        world.target_delivery_time as u64,
-        (world.target_delivery_time + 900) as u64,
+        epoch_to_datetime(world.target_delivery_time).unwrap(),
+        epoch_to_datetime(world.target_delivery_time + 900).unwrap(),
     )
 }
 

@@ -699,7 +699,7 @@ async fn measurement_queries_preserve_signed_energy_over_http_and_ewds() {
         "TEST_CLIENT_ID",
         "test",
     )
-    .fetch_measurements(TRADES_BASE_TIME, TRADES_BASE_TIME + 900)
+    .fetch_measurements(ts(TRADES_BASE_TIME), ts(TRADES_BASE_TIME + 900))
     .await
     .unwrap();
     handle_request(

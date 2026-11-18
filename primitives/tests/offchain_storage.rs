@@ -640,7 +640,7 @@ async fn fetches_trades_over_http() {
         "unused-default",
     );
     let trades = client
-        .fetch_trades(None, Some(TIMESLOT), Some(TIMESLOT_END))
+        .fetch_trades(None, Some(ts(TIMESLOT)), Some(ts(TIMESLOT_END)))
         .await
         .unwrap();
 
@@ -667,7 +667,7 @@ async fn fetches_trades_over_ewds_with_rfc3339_range() {
         "testtrades",
     );
     let trades = client
-        .fetch_trades(None, Some(TIMESLOT), Some(TIMESLOT_END))
+        .fetch_trades(None, Some(ts(TIMESLOT)), Some(ts(TIMESLOT_END)))
         .await
         .unwrap();
 
@@ -781,7 +781,7 @@ async fn fetches_orders_over_http() {
         "unused-default",
     );
     let orders = client
-        .fetch_orders("market-1", TIMESLOT, TIMESLOT_END)
+        .fetch_orders("market-1", ts(TIMESLOT), ts(TIMESLOT_END))
         .await
         .unwrap();
 
@@ -803,7 +803,7 @@ async fn fetches_orders_over_ewds() {
         "testorders",
     );
     let orders = client
-        .fetch_orders("market-1", TIMESLOT, TIMESLOT_END)
+        .fetch_orders("market-1", ts(TIMESLOT), ts(TIMESLOT_END))
         .await
         .unwrap();
 
@@ -864,7 +864,7 @@ async fn fetches_measurements_over_http() {
         "unused-default",
     );
     let measurements = client
-        .fetch_measurements(TIMESLOT, TIMESLOT_END)
+        .fetch_measurements(ts(TIMESLOT), ts(TIMESLOT_END))
         .await
         .unwrap();
 
@@ -892,7 +892,7 @@ async fn fetches_measurements_over_ewds() {
         "testmeasurements",
     );
     let measurements = client
-        .fetch_measurements(TIMESLOT, TIMESLOT_END)
+        .fetch_measurements(ts(TIMESLOT), ts(TIMESLOT_END))
         .await
         .unwrap();
 
