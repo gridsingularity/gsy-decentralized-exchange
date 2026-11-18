@@ -21,8 +21,8 @@ Order submissions require non-zero order and market IDs. The raw byte parser
 still accepts zero for optional contract sentinels.
 
 The shared order schema serves both submissions and status notifications.
-Lifecycle notifications contain lowercase `0x` order IDs and on-chain owner
-hashes in `createdBy`; rejections retain the submitted identifiers. FOS must
+Lifecycle notifications contain lowercase `0x` order IDs and the original
+off-chain owner ID in `createdBy`; rejections retain the submitted identifiers. FOS must
 correlate equivalent order IDs by their 16 bytes, not their spelling.
 `preferredTradingPartner` remains an off-chain identity, even when hex-shaped.
 
@@ -41,9 +41,9 @@ Names and correlation IDs are not normalized.
 |---|---|
 | `market.event`, `markets.query` | Market ID as a lowercase hyphenated UUID; community ID as the exact opaque off-chain string |
 | `order.event` | UUID/hex order and market IDs; off-chain owner identity and preferred partner |
-| `orderStatus.event` lifecycle | Lowercase `0x` order/market IDs and owner hash; off-chain preferred partner |
+| `orderStatus.event` lifecycle | Lowercase `0x` order/market IDs; off-chain owner and preferred partner |
 | `orderStatus.event` rejection | Submitted identifiers echoed without rewriting |
-| `trade.event`, `trades.query` | Lowercase `0x` trade/market/order IDs and owner hashes; absent residuals are null |
+| `trade.event`, `trades.query` | Lowercase `0x` trade/market/order IDs; off-chain buyer/seller IDs; absent residuals are null |
 | `clearingResult.event`, `clearing_results.query` | Lowercase `0x` market ID |
 | `ids.query` | Exact off-chain identity and its lowercase `0x` keyed hash |
 | `facilities.validate` | Exact request pairs, preserving order and cardinality |
@@ -58,9 +58,11 @@ Topology writes register mappings for facilities, owners, site keys and exact
 community IDs. Market IDs are generated as UUIDv4 only when tuple lookup reports
 an absent market; stored IDs remain lowercase `0x` hex. The indexer restores the
 community's exact off-chain ID by direct DB reverse lookup before publication.
-Missing mappings currently fail indexing and trigger retry; durable pending
-handling remains DD-459 step 5. Lifecycle events still create order/trade records;
-future order/trade identity changes are not implemented by this market increment.
+Missing actor mappings leave the original chain event in a durable pending collection.
+Dependent events wait in chain order; unrelated markets continue indexing. Resolved
+order/trade records and notifications use off-chain owner IDs. Storage retries pending
+events on subsequent blocks, including after restart. Queries touching known-incomplete
+projections fail explicitly rather than returning a partial order book or trade set.
 Existing `POST /ids` and `ids.query` callers remain supported. API authentication
 is deferred to a separate ticket.
 
@@ -230,10 +232,10 @@ For an `order.event`, the community client builds the
 | `energySourcePreference`, `preferredTradingPartner`, `preferredEnergyRate` | requirements for bids and offers (`energySourcePreference`, `preferredTradingPartner` mapped by the ID service, `preferredEnergyRate` × 10 000) |
 | `energyType` | the offer attributes (`energyType`) |
 
-Order and market IDs represent bytes16, not bytes32. Lifecycle `createdBy` is
-the bytes16 owner hash, not an EVM wallet address. The shared order DTO also
-serves legacy HTTP imports, which require this already-resolved owner hash;
-`order.event` submissions instead carry the off-chain owner identity.
+Order and market IDs represent bytes16, not bytes32. `createdBy` and preferred
+partners in submissions, imports, queries and lifecycle notifications are original
+off-chain owner IDs, not hashes or wallet addresses. Actor hashes are used only
+for contract interaction and retained in the private mapping/raw pending events.
 
 ## Validation Rules Applied from CSV
 

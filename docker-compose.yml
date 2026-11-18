@@ -95,6 +95,7 @@ services:
     entrypoint: ["/usr/local/bin/gsy-matching-engine"]
     command: ["web3", "http://gsy-offchain-storage", "8080", "${EVM_NODE_HOST:-ws://anvil}", "${EVM_NODE_PORT:-8545}"]
     environment:
+      ACTOR_ID_HASH_KEY: ${ACTOR_ID_HASH_KEY:-}
       <<: *gsy-ewds-env
       OFFCHAIN_STORAGE_TRANSPORT: ${OFFCHAIN_STORAGE_TRANSPORT:-http}
       OFFCHAIN_STORAGE_URL: "http://gsy-offchain-storage:8080"

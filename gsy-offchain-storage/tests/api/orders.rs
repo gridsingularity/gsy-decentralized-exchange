@@ -63,7 +63,10 @@ async fn imports_normalize_ids_and_reject_conflicts_before_writing() {
             .unwrap();
         assert_eq!(stored.order_id, bytes16_to_hex(*id.as_bytes()));
         assert_eq!(stored.market_id, bytes16_to_hex(*market.as_bytes()));
-        assert_eq!(stored.created_by, bytes16_to_hex(*creator.as_bytes()));
+        assert_eq!(
+            stored.created_by,
+            creator.simple().to_string().to_uppercase()
+        );
         assert_eq!(stored.area_uuid, stored.created_by);
         assert_eq!(
             stored
@@ -142,9 +145,8 @@ async fn malformed_import_identifiers_reject_the_entire_batch() {
             ("orderId", "0Xabcdefabcdefabcdefabcdefabcdefab"),
             ("marketId", "0x00000000000000000000000000000000"),
             ("marketId", "market-1"),
-            ("createdBy", "facility-a"),
-            ("createdBy", "0x0000000000000000000000000000000000000abc"),
-            ("createdBy", "00000000000000000000000000000000"),
+            ("createdBy", ""),
+            ("createdBy", "   "),
             ("createdBy", " abcdefab-abcd-abcd-abcd-abcdefabcdef"),
             ("preferredTradingPartner", ""),
             ("preferredTradingPartner", "facility-a "),

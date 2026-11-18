@@ -124,6 +124,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
     let listener_task = tokio::spawn(async move { listener.run().await });
     tokio::time::sleep(Duration::from_secs(1)).await;
 
+    app.db_wrapper.ids().get_or_create("community".into()).await?;
     let market_id = [0x99u8; 16];
     let slot = 1800u64;
     let now = client
@@ -139,7 +140,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
             .map(|index| {
                 (
                     [0x99 + index; 16],
-                    [0x77u8; 16],
+                    actor_bytes("community"),
                     now,
                     now + 3600,
                     slot + u64::from(index) * 900,
@@ -252,6 +253,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
             energy_kwh: [-1.0, -0.8, -1.0][index as usize],
         });
     }
+    client.provider().request::<_, serde_json::Value>("evm_mine", ()).await?;
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             if app
@@ -259,7 +261,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
                 .trades()
                 .get_all_trades()
                 .await
-                .unwrap()
+                .unwrap_or_default()
                 .len()
                 == 3
             {
@@ -333,7 +335,12 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
     );
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
-            let trades = app.db_wrapper.trades().get_all_trades().await.unwrap();
+            let trades = app
+                .db_wrapper
+                .trades()
+                .get_all_trades()
+                .await
+                .unwrap_or_default();
             if trades
                 .iter()
                 .filter(|trade| {
@@ -426,7 +433,12 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
     );
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
-            let orders = app.db_wrapper.orders().get_all_orders().await.unwrap();
+            let orders = app
+                .db_wrapper
+                .orders()
+                .get_all_orders()
+                .await
+                .unwrap_or_default();
             if orders
                 .iter()
                 .filter(|order| order.status == OrderStatus::Executed)
@@ -606,6 +618,7 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
         );
         let listener_task = tokio::spawn(async move { listener.run().await });
         tokio::time::sleep(Duration::from_secs(1)).await;
+        app.db_wrapper.ids().get_or_create("community".into()).await?;
         let market_id = [0x99u8; 16];
         let slot = 1800u64;
         let now = client
@@ -619,7 +632,7 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
             "createMarkets",
             (vec![(
                 market_id,
-                [0x77u8; 16],
+                actor_bytes("community"),
                 now,
                 now + 3600,
                 slot,
@@ -629,6 +642,17 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
             )],),
         )
         .await?;
+        for owner in ["a", "b", "c", "d"] {
+            app.db_wrapper
+                .facilities()
+                .upsert(FacilitySchema {
+                    facility_id: format!("meter-{owner}"),
+                    facility_name: format!("meter-{owner}"),
+                    site_id: "site".into(),
+                    owner_id: owner.into(),
+                })
+                .await?;
+        }
         let pairs = [("a", "b", 40000u64), ("a", "c", 60000), ("d", "a", 20000)];
         for (index, (buyer, seller, energy)) in pairs.iter().enumerate() {
             let index = index as u8;
@@ -694,7 +718,7 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
                 .trades()
                 .get_all_trades()
                 .await
-                .unwrap()
+                .unwrap_or_default()
                 .len()
                 != 3
             {
@@ -702,17 +726,6 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
             }
         })
         .await?;
-        for owner in ["a", "b", "c", "d"] {
-            app.db_wrapper
-                .facilities()
-                .upsert(FacilitySchema {
-                    facility_id: format!("meter-{owner}"),
-                    facility_name: format!("meter-{owner}"),
-                    site_id: "site".into(),
-                    owner_id: owner.into(),
-                })
-                .await?;
-        }
         let measurement = |owner: &str, energy| MeasurementSchema {
             facility_id: format!("meter-{owner}"),
             community_uuid: "community".into(),
@@ -747,7 +760,12 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
         };
         tokio::time::timeout(Duration::from_secs(10), async {
             loop {
-                let trades = app.db_wrapper.trades().get_all_trades().await.unwrap();
+                let trades = app
+                    .db_wrapper
+                    .trades()
+                    .get_all_trades()
+                    .await
+                    .unwrap_or_default();
                 if trades.iter().any(|trade| {
                     trade.trade_uuid == bytes16_to_hex([21; 16]) && trade.status == first_status
                 }) {
@@ -818,7 +836,7 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
                 .orders()
                 .get_all_orders()
                 .await
-                .unwrap()
+                .unwrap_or_default()
                 .iter()
                 .filter(|order| order.status == OrderStatus::Executed)
                 .count()

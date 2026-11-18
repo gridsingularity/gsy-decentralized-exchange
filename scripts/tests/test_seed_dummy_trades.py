@@ -14,11 +14,6 @@ spec.loader.exec_module(seed)
 
 
 class TradeSeedTests(unittest.TestCase):
-    def setUp(self):
-        env = patch.dict(seed.os.environ, {"ACTOR_ID_HASH_KEY": bytes(range(32)).hex()})
-        env.start()
-        self.addCleanup(env.stop)
-
     def dataset(self):
         start = seed.parse_date("2026-11-01")
         return seed.generate_dataset(start, start + seed.DAY_SECS, 3, 42, start)
@@ -53,8 +48,7 @@ class TradeSeedTests(unittest.TestCase):
         self.assertEqual(without_markets(trades), without_markets(self.dataset()))
         self.assertEqual(len({t["tradeId"] for t in trades}), len(trades))
         self.assertEqual(seed.schema_errors({"requestId": "test", "success": True, "data": trades}), [])
-        self.assertTrue({t["buyerId"] for t in trades} <= {seed.actor_id(name) for name in seed.ROSTER})
-        self.assertEqual(seed.actor_id("facility-a"), "0x2ac00d3252bb96aeba2e9500dd7f3d2c")
+        self.assertTrue({t["buyerId"] for t in trades} <= seed.ROSTER)
         markets = seed.market_ids_by_slot(trades)
         self.assertEqual(len(markets), seed.DAY_SECS // seed.SLOT_SECS)
         self.assertEqual(len(set(markets.values())), len(markets))
@@ -134,7 +128,6 @@ class TradeSeedTests(unittest.TestCase):
             path.write_text(json.dumps({"meta": {"community_id": seed.COMMUNITY_ID}, "trades": trades}))
             with patch.object(seed, "mongosh", return_value="1") as mongo, \
                     patch.object(seed, "bytes16_id", side_effect=AssertionError("must use saved IDs")), \
-                    patch.object(seed, "actor_id", side_effect=AssertionError("must use saved IDs")), \
                     patch.object(seed.uuid, "uuid4", side_effect=AssertionError("must use saved IDs")), \
                     contextlib.redirect_stdout(io.StringIO()):
                 seed.cmd_cleanup(SimpleNamespace(dataset=str(path)))
@@ -145,16 +138,9 @@ class TradeSeedTests(unittest.TestCase):
 
     def test_old_identifiers_require_regeneration(self):
         trade = self.dataset()[0]
-        for key, value in [("tradeId", "dummy-trade-1"), ("buyerId", "Load1"), ("bidId", "0x" + "0" * 32)]:
+        for key, value in [("tradeId", "dummy-trade-1"), ("buyerId", " Load1"), ("bidId", "0x" + "0" * 32)]:
             with self.subTest(key=key):
                 self.assertTrue(seed.schema_errors({"requestId": "test", "success": True, "data": [{**trade, key: value}]}))
-
-    def test_actor_hashing_requires_a_valid_shared_key(self):
-        for key in ["", "secret", "ab" * 31, "ab" * 33]:
-            with patch.dict(seed.os.environ, {"ACTOR_ID_HASH_KEY": key}):
-                with self.assertRaisesRegex(ValueError, "exactly 64 hexadecimal"):
-                    seed.actor_id("LIC01")
-
 
 if __name__ == "__main__":
     unittest.main()

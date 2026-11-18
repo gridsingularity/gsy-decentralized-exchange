@@ -65,9 +65,11 @@ Notes:
 - Facility-validation pairs/results use the shared HTTP API's `facility_id` and
   `market_id` names; these are validation records, not ontology entity DTOs.
 - Runtime service fields from GSY DEX are mapped in `docs/platform/ewds-data-contracts.md`.
-- The agreed Intelligent schemas use UUID identifiers and ISO 8601 timestamps.
+- Entity IDs use UUID/bytes16 forms and timestamps use ISO 8601; actor IDs remain opaque off-chain strings.
 - The active DEX EVM settlement path uses bytes16 IDs and owner hashes, and
   Unix timeslots. On-chain IDs are not EVM wallet addresses. Market events expose
-  UUIDs; order lifecycle, trade and clearing events expose lowercase `0x` bytes16.
+  UUIDs; order lifecycle, trade and clearing events expose lowercase `0x` entity IDs.
+  Their actor fields (`createdBy`, preferred partner, buyer/seller) expose the original
+  off-chain identities, not hashes. Missing mappings defer the event in storage.
 - These schemas are versioned as `v1` and should be registered as EWDS topic
   schemas when the corresponding topics are managed with `topiccreator`.

@@ -53,7 +53,7 @@ fn preserves_offer_requirements_and_attributes_during_conversion() {
     assert_eq!(
         converted.requirements,
         Some(Requirements {
-            trading_partner_id: Some("0x00000000000000000000000000000002".to_string()),
+            trading_partner_id: Some("00000000-0000-0000-0000-000000000002".to_string()),
             preferred_energy_rate: Some((12.5 * NODE_FLOAT_SCALING_FACTOR).round() as u64),
             energy_type: Some(EnergyType::Green),
         })
@@ -65,7 +65,7 @@ fn preserves_offer_requirements_and_attributes_during_conversion() {
         })
     );
 
-    offer.requirements.as_mut().unwrap().trading_partner_id = Some("invalid-id".to_string());
+    offer.requirements.as_mut().unwrap().trading_partner_id = Some(" padded-id".to_string());
     assert!(convert_db_order_to_canonical(&offer).is_err());
 }
 

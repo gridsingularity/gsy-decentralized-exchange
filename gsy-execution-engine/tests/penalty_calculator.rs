@@ -8,12 +8,8 @@ use primitives::db_api_schema::{
 };
 use std::collections::HashMap;
 
-fn onchain_id(id: &str) -> String {
-    primitives::utils::derive_onchain_id(id)
-}
-
 fn order(order_id: &str, owner_id: &str, is_bid: bool) -> DbOrderSchema {
-    let actor_id = primitives::utils::derive_onchain_id(owner_id);
+    let actor_id = owner_id.to_owned();
     DbOrderSchema {
         order_id: order_id.to_string(),
         status: OrderStatus::Executed,
@@ -92,10 +88,7 @@ fn compute_penalties_matches_facility_measurements_to_owner_ids() {
 
     assert_eq!(penalties.len(), 1);
     assert_eq!(penalties[0].penalty_cost, 2_000);
-    assert_eq!(
-        penalties[0].penalized_account,
-        primitives::utils::derive_onchain_id("alice")
-    );
+    assert_eq!(penalties[0].penalized_account, "alice".to_owned());
 }
 
 #[test]
@@ -177,7 +170,7 @@ fn verification_penalizes_each_partys_own_deviation_in_both_directions() {
         for (party, cost) in [("alice", expected_buyer), ("bob", expected_seller)] {
             let penalty = penalties
                 .iter()
-                .find(|penalty| penalty.penalized_account == onchain_id(party));
+                .find(|penalty| penalty.penalized_account == party.to_owned());
             assert_eq!(
                 penalty.map(|penalty| penalty.penalty_cost),
                 (cost > 0).then_some(cost)
@@ -191,7 +184,7 @@ fn verification_joins_exact_facility_readings_to_keyed_owner_parties() {
     let facility = "abcdefab-abcd-abcd-abcd-abcdefabcdef";
     let owner = "fedcbafe-dcba-dcba-dcba-fedcbafedcba";
     let mut matched = trade();
-    matched.buyer = primitives::utils::derive_onchain_id(owner);
+    matched.buyer = owner.to_owned();
     let mapping = HashMap::from([
         (facility.to_uppercase(), owner.to_string()),
         ("seller-meter".to_string(), "bob".to_string()),
@@ -215,7 +208,10 @@ fn verification_joins_exact_facility_readings_to_keyed_owner_parties() {
     // A differently spelled actor is not the registered facility.
     assert!(compute_delivery_verifications(
         &[matched],
-        &[measurement(facility, 12.0), measurement("seller-meter", -10.0)],
+        &[
+            measurement(facility, 12.0),
+            measurement("seller-meter", -10.0)
+        ],
         &mapping,
         1_000,
         0.1,
@@ -276,8 +272,8 @@ fn verification_ignores_unrelated_or_invalid_measurements() {
 #[test]
 fn verification_keeps_distinct_owners_measurements_separate() {
     // Each facility maps to one distinct owner in this deployment.
-    let first_id = onchain_id("owner-1");
-    let second_id = onchain_id("owner-2");
+    let first_id = "owner-1".to_owned();
+    let second_id = "owner-2".to_owned();
     let mapping = HashMap::from([
         ("first-meter".into(), "owner-1".into()),
         ("second-meter".into(), "owner-2".into()),
@@ -305,8 +301,8 @@ fn verification_keeps_distinct_owners_measurements_separate() {
 fn matched(id: &str, buyer: &str, seller: &str, energy: f64) -> DbTradeSchema {
     let mut trade = trade();
     trade.trade_uuid = id.into();
-    trade.buyer = onchain_id(buyer);
-    trade.seller = onchain_id(seller);
+    trade.buyer = buyer.to_owned();
+    trade.seller = seller.to_owned();
     trade.parameters.selected_energy_kWh = energy;
     trade
 }

@@ -153,6 +153,7 @@ impl TradeService {
 
     #[tracing::instrument(name = "Fetching trades from database", skip(self))]
     pub async fn get_all_trades(&self) -> Result<Vec<DbTradeSchema>> {
+        super::pending_events::ensure_ready(&self.0, None).await?;
         Ok(self.0.find(doc! {}).await?.try_collect().await?)
     }
 
@@ -183,6 +184,7 @@ impl TradeService {
         start_time: Option<u64>,
         end_time: Option<u64>,
     ) -> Result<Vec<DbTradeSchema>> {
+        super::pending_events::ensure_ready(&self.0, market_id.as_deref()).await?;
         let mut filter_params = doc! {};
         if let Some(market_id) = market_id {
             filter_params.insert("market_id", market_id);
@@ -218,6 +220,7 @@ impl TradeService {
         end_time: Option<u64>,
         status: Option<TradeStatus>,
     ) -> Result<Vec<DbTradeSchema>> {
+        super::pending_events::ensure_ready(&self.0, None).await?;
         let mut bounds = doc! {"$gte": timestamp_bson(start_time)?};
         if let Some(end_time) = end_time {
             bounds.insert("$lt", timestamp_bson(end_time)?);
@@ -262,7 +265,13 @@ impl ClearingResultService {
 
     #[tracing::instrument(name = "Fetching clearing result by market id", skip(self))]
     pub async fn get_by_market(&self, market_id: &str) -> Result<Vec<ClearingResultSchema>> {
-        Ok(self.0.find(doc! {"market_id": market_id}).await?.try_collect().await?)
+        super::pending_events::ensure_ready(&self.0, Some(market_id)).await?;
+        Ok(self
+            .0
+            .find(doc! {"market_id": market_id})
+            .await?
+            .try_collect()
+            .await?)
     }
 }
 

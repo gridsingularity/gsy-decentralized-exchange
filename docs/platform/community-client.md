@@ -167,9 +167,8 @@ steps and also validates facility participation. The matching engine compares
 preferred partners against owner IDs and blocks same-owner trades.
 Indexed trade parties and penalties retain the owner identity, independently
 of the service wallet. Delivery verification reads the facility-to-owner mapping
-and derives owner IDs with the ID service's shared keyed Blake2b-16 helper, without
-creating ID mappings. Certificate lookups resolve owner hashes to facilities
-under the one-facility-per-owner guarantee. Certificate `owner_id` retains the
-trade's owner hash, while `facility_id` identifies the associated facility.
+and compares off-chain owner IDs directly. Certificates use those same owner IDs
+to find facilities under the one-facility-per-owner guarantee. Certificate
+`owner_id` retains the original owner ID, while `facility_id` identifies the facility.
 Ownership history is not tracked; historical ownership changes remain a separate
 follow-up.

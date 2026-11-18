@@ -48,9 +48,11 @@ impl MarketService {
         start_time: Option<String>,
         end_time: Option<String>,
     ) -> Result<Vec<MarketSchema>> {
+        let market_id = market_id.as_deref().map(normalize_market_id).transpose()?;
+        super::pending_events::ensure_ready(&self.0, market_id.as_deref()).await?;
         let mut filter_params = doc! {};
         if let Some(market_id) = market_id {
-            filter_params.insert("market_id", normalize_market_id(&market_id)?);
+            filter_params.insert("market_id", market_id);
         }
         if let Some(community_id) = community_id {
             filter_params.insert("community_id", normalize_offchain_id(&community_id)?);
@@ -77,6 +79,9 @@ impl MarketService {
             .iter()
             .map(|id| normalize_market_id(id))
             .collect::<Result<Vec<_>>>()?;
+        for id in &market_ids {
+            super::pending_events::ensure_ready(&self.0, Some(id)).await?;
+        }
         Ok(self
             .0
             .find(doc! {"market_id": {"$in": market_ids}})
@@ -92,6 +97,7 @@ impl MarketService {
         start_time: Option<u64>,
         end_time: Option<u64>,
     ) -> Result<Vec<String>> {
+        super::pending_events::ensure_ready(&self.0, None).await?;
         let mut range = doc! {};
         if let Some(start) = start_time {
             range.insert("$gte", timestamp_to_string_with_padding(start));

@@ -205,7 +205,7 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
     let contract = factory.deploy(()).unwrap().send().await.unwrap();
     let contract_address = contract.address();
 
-    let bid_actor_id = format!("0x{}", "aa".repeat(16));
+    let bid_actor_id = "Owner-MiXeD/LIC01".to_owned();
     let ask_actor_id = format!("0x{}", "bb".repeat(16));
     let bid_order_id = format!("0x{}", "11".repeat(16));
     let ask_order_id = format!("0x{}", "22".repeat(16));
@@ -382,11 +382,13 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
     );
     assert_eq!(
         mock_contract.last_bid_created_by().call().await.unwrap(),
-        parse_uuid_or_hex_bytes16(&bid_actor_id).expect("Failed to parse uuid")
+        parse_uuid_or_hex_bytes16(&primitives::utils::derive_onchain_id(&bid_actor_id))
+            .expect("Failed to parse uuid")
     );
     assert_eq!(
         mock_contract.last_offer_created_by().call().await.unwrap(),
-        parse_uuid_or_hex_bytes16(&ask_actor_id).expect("Failed to parse uuid")
+        parse_uuid_or_hex_bytes16(&primitives::utils::derive_onchain_id(&ask_actor_id))
+            .expect("Failed to parse uuid")
     );
     assert_eq!(
         mock_contract.last_traded_quantity().call().await.unwrap(),
@@ -402,7 +404,8 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
             .call()
             .await
             .unwrap(),
-        parse_uuid_or_hex_bytes16(&ask_actor_id).expect("Invalid on-chain actor ID")
+        parse_uuid_or_hex_bytes16(&primitives::utils::derive_onchain_id(&ask_actor_id))
+            .expect("Invalid on-chain actor ID")
     );
     assert_eq!(
         mock_contract

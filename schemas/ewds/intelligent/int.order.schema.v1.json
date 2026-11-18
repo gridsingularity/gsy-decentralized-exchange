@@ -88,7 +88,7 @@
       "default": "NONE"
     },
     "createdBy": {
-      "description": "Owner identity, not its facility or submitting service wallet. The community client validates the owner's facility before submission. Submissions use an unpadded off-chain identity: all strings are preserved exactly and stay case-sensitive, including UUID-shaped strings. Rejections echo the input; indexed lifecycle notifications use its lowercase 0x bytes16 hash. IRI: int:createdby.",
+      "description": "Owner identity, not its facility or submitting service wallet. The community client validates the owner's facility before submission. Submissions use an unpadded off-chain identity: all strings are preserved exactly and stay case-sensitive, including UUID-shaped strings. Imports, queries and lifecycle notifications use the same original off-chain owner ID. Rejections echo the input. IRI: int:createdby.",
       "type": "string",
       "pattern": "^\\S(?:[\\s\\S]*\\S)?(?![\\s\\S])"
     },

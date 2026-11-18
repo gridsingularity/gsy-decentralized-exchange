@@ -9,9 +9,7 @@ use primitives::db_api_schema::profiles::{
     FlowDirection, MeasurementPointSchema, MeasurementPointType, TimeseriesSchema,
 };
 use primitives::db_api_schema::trades::{DbTradeSchema, TradeParameters, TradeStatus};
-use primitives::utils::{
-    bytes16_to_hex, timestamp_to_string_with_padding,
-};
+use primitives::utils::{bytes16_to_hex, timestamp_to_string_with_padding};
 
 pub const SLOT: u64 = 1_778_754_600; // 2026-05-14T10:30:00Z
 /// When the seeded trades reached `Executed` (their `status_updated_at`).
@@ -24,10 +22,6 @@ const COMMUNITY: &str = "60060060-0000-4000-8000-000000000001";
 const EXPORT_POINT: &str = "Measurement:goo-community:goo-seller";
 const MARKET: &str = "0x60060060000040008000000000000001";
 
-fn hash(offchain_id: &str) -> String {
-    primitives::utils::derive_onchain_id(offchain_id)
-}
-
 /// A 2 kWh sale from the seller facility to the buyer facility at `SLOT`.
 pub fn trade(
     trade_uuid: &str,
@@ -37,8 +31,8 @@ pub fn trade(
     DbTradeSchema {
         trade_uuid: trade_uuid.to_string(),
         status,
-        seller: hash(SELLER_OWNER),
-        buyer: hash(BUYER_OWNER),
+        seller: SELLER_OWNER.to_owned(),
+        buyer: BUYER_OWNER.to_owned(),
         market_id: MARKET.to_string(),
         creation_time: SLOT - 600,
         offer_hash: format!("{trade_uuid}-offer"),
@@ -257,9 +251,7 @@ async fn get_goo(address: &str, query: &[(&str, String)]) -> reqwest::Response {
 #[tokio::test]
 async fn certificates_join_exact_facilities_keyed_mappings_and_meter_references() {
     use mongodb::bson::doc;
-    use primitives::offchain_storage::{
-        OffchainStorageClient, OffchainStorageTransport,
-    };
+    use primitives::offchain_storage::{OffchainStorageClient, OffchainStorageTransport};
     use primitives::utils::derive_onchain_id;
 
     let app = init_app().await;
@@ -274,7 +266,11 @@ async fn certificates_join_exact_facilities_keyed_mappings_and_meter_references(
     let http = reqwest::Client::new();
     for (id, name, owner_id) in [
         (seller.to_uppercase(), SELLER_FACILITY, owner.to_uppercase()),
-        (BUYER_FACILITY.to_string(), BUYER_FACILITY, BUYER_OWNER.to_string()),
+        (
+            BUYER_FACILITY.to_string(),
+            BUYER_FACILITY,
+            BUYER_OWNER.to_string(),
+        ),
     ] {
         let response = http
             .post(format!("{}/facilities", app.address))
@@ -319,14 +315,13 @@ async fn certificates_join_exact_facilities_keyed_mappings_and_meter_references(
     );
     let id = bytes16_to_hex([0xab; 16]);
     let mut sale = trade(&id, TradeStatus::Matched, None);
-    sale.seller = party;
+    sale.seller = owner.to_uppercase();
     sale.bid_hash = bytes16_to_hex([0xbc; 16]);
     sale.offer_hash = bytes16_to_hex([0xcd; 16]);
     let mut imported = primitives::ewds::dto::EwdsTradeDto::from(sale);
     imported.trade_id = uuid::Uuid::from_bytes([0xab; 16])
         .to_string()
         .to_uppercase();
-    imported.seller_id = format!("0x{}", imported.seller_id[2..].to_uppercase());
     assert_eq!(
         http.post(format!("{}/trades", app.address))
             .json(&vec![imported])
@@ -351,7 +346,7 @@ async fn certificates_join_exact_facilities_keyed_mappings_and_meter_references(
     assert_eq!(records.len(), 1);
     assert_eq!(
         records[0].beneficiary_and_claim.owner_id,
-        derive_onchain_id(&owner.to_uppercase())
+        owner.to_uppercase()
     );
     stop_app(app).await;
 }

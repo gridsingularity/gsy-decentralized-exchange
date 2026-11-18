@@ -10,10 +10,9 @@ use primitives::db_api_schema::trades::ClearingStatus;
 use primitives::ewds::dto::{order_status_from_ewds, EwdsOrderDto};
 use primitives::ewds::{EwdsClient, EwdsOperation};
 use primitives::matching::matching_block_interval;
-use primitives::offchain_storage::{resolve_order_partner_ids, OffchainStorageClient};
 use primitives::utils::{
-    bytes16_to_hex, parse_nonzero_uuid_or_hex_bytes16, parse_uuid_or_hex_bytes16, rfc3339_to_epoch,
-    NODE_FLOAT_SCALING_FACTOR,
+    bytes16_to_hex, derive_onchain_id, normalize_offchain_id, parse_nonzero_uuid_or_hex_bytes16,
+    parse_uuid_or_hex_bytes16, rfc3339_to_epoch, NODE_FLOAT_SCALING_FACTOR,
 };
 use primitives::MatchingAlgorithm;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -348,15 +347,10 @@ pub async fn send_settle_batch_transaction(
 }
 
 async fn fetch_market_orders(body: Vec<EwdsOrderDto>) -> Result<PreparedOrders> {
-    let id_mapping_source =
-        OffchainStorageClient::from_env("EWDS_MATCHING_ENGINE_CLIENT_ID", "gsymatchingengine");
-    prepare_market_orders(body, &id_mapping_source).await
+    prepare_market_orders(body).await
 }
 
-async fn prepare_market_orders(
-    body: Vec<EwdsOrderDto>,
-    id_mapping_source: &OffchainStorageClient,
-) -> Result<PreparedOrders> {
+async fn prepare_market_orders(body: Vec<EwdsOrderDto>) -> Result<PreparedOrders> {
     let mut open_bids: Vec<Order> = Vec::new();
     let mut open_offers: Vec<Order> = Vec::new();
     let mut books: BTreeMap<(String, u64), Vec<DbOrderSchema>> = BTreeMap::new();
@@ -402,8 +396,7 @@ async fn prepare_market_orders(
         }
         // Publish a book only after every active order has converted successfully.
         let mut converted = Vec::with_capacity(orders.len());
-        for mut db_order in orders {
-            resolve_order_partner_ids(&mut db_order.requirements, id_mapping_source).await?;
+        for db_order in orders {
             match convert_db_order_to_canonical(&db_order) {
                 Ok(order) => converted.push((order, db_order)),
                 Err(error) => {
@@ -492,25 +485,17 @@ fn normalize_bytes16_field(field_name: &str, value: &str) -> Result<String> {
     Ok(bytes16_to_hex(parse_bytes16_field(field_name, value)?))
 }
 
-fn normalize_optional_bytes16_field(
-    field_name: &str,
-    value: Option<&str>,
-) -> Result<Option<String>> {
-    value
-        .map(|value| normalize_bytes16_field(field_name, value))
-        .transpose()
-}
-
 fn convert_requirements(
     requirements: Option<&primitives::db_api_schema::orders::DbRequirements>,
 ) -> Result<Option<Requirements>> {
     requirements
         .map(|requirements| -> Result<Requirements> {
             Ok(Requirements {
-                trading_partner_id: normalize_optional_bytes16_field(
-                    "requirements.trading_partner_id",
-                    requirements.trading_partner_id.as_deref(),
-                )?,
+                trading_partner_id: requirements
+                    .trading_partner_id
+                    .as_deref()
+                    .map(normalize_offchain_id)
+                    .transpose()?,
                 energy_type: requirements.energy_type.clone(),
                 preferred_energy_rate: requirements
                     .preferred_energy_rate
@@ -535,8 +520,8 @@ fn convert_attributes(
 fn convert_db_order_to_canonical(order: &DbOrderSchema) -> Result<Order> {
     let order_id = normalize_bytes16_field("order_id", &order.order_id)?;
     let market_id = normalize_bytes16_field("market_id", &order.market_id)?;
-    let area_uuid = normalize_bytes16_field("area_uuid", &order.area_uuid)?;
-    let created_by = normalize_bytes16_field("created_by", &order.created_by)?;
+    let area_uuid = normalize_offchain_id(&order.area_uuid)?;
+    let created_by = normalize_offchain_id(&order.created_by)?;
     Ok(match order.order_type {
         OrderEnum::Bid => Order {
             created_by,
@@ -579,12 +564,22 @@ fn to_evm_order_data(order: &DbOrderSchema, expected_type: OrderEnum) -> Result<
         ));
     }
 
-    let metadata =
-        order_metadata_to_contract(order.requirements.as_ref(), order.attributes.as_ref())?;
+    // Actor IDs remain off-chain throughout matching; derive pseudonyms only here.
+    let mut requirements = order.requirements.clone();
+    if let Some(partner) = requirements
+        .as_mut()
+        .and_then(|r| r.trading_partner_id.as_mut())
+    {
+        *partner = derive_onchain_id(&normalize_offchain_id(partner)?);
+    }
+    let metadata = order_metadata_to_contract(requirements.as_ref(), order.attributes.as_ref())?;
 
     Ok(OrderParams {
         order_id: parse_bytes16_field("order_id", order.order_id.as_str())?,
-        created_by: parse_bytes16_field("created_by", order.created_by.as_str())?,
+        created_by: parse_bytes16_field(
+            "created_by",
+            &derive_onchain_id(&normalize_offchain_id(&order.created_by)?),
+        )?,
         market_id: parse_bytes16_field("market_id", order.market_id.as_str())?,
         time_slot: order.time_slot,
         creation_time: order.creation_time,

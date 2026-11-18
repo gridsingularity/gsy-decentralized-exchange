@@ -12,4 +12,5 @@ mod actor_mappings;
 mod market;
 mod measurements;
 mod orders;
+mod pending_events;
 pub mod trades;

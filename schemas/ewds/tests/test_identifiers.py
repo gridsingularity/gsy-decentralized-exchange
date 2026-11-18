@@ -47,15 +47,24 @@ def order(identifier):
 class IdentifierSchemas(unittest.TestCase):
     def test_trade_import_ids_and_optional_residuals(self):
         check = validator("int.trade.schema.v1.json")
-        required = ["tradeId", "marketId", "bidId", "offerId", "buyerId", "sellerId"]
+        required = ["tradeId", "marketId", "bidId", "offerId"]
         trade = {key: UUID for key in required}
-        trade.update(tradeStatus="matched", tradeQuantity=1, tradePrice=10,
+        trade.update(buyerId="Owner-MiXeD/LIC01", sellerId="owner-b", tradeStatus="matched", tradeQuantity=1, tradePrice=10,
                      timestamp="2026-11-04T10:00:00Z")
         for key in required + ["residualBidId", "residualOfferId"]:
             for value in VALID + INVALID + NIL + [None]:
                 with self.subTest(key=key, value=value):
                     optional = key.startswith("residual") and value in NIL + ["", None]
                     self.assertEqual(check.is_valid({**trade, key: value}), value in VALID or optional)
+
+    def test_trade_parties_are_offchain_identities(self):
+        check = validator("int.trade.schema.v1.json")
+        trade = dict(tradeId=UUID, marketId=UUID, bidId=UUID, offerId=UUID,
+                     buyerId="owner-a", sellerId="owner-b", tradeStatus="matched",
+                     tradeQuantity=1, tradePrice=10, timestamp="2026-11-04T10:00:00Z")
+        for field in ["buyerId", "sellerId"]:
+            for value in VALID + INVALID + NIL + ["Owner-MiXeD/LIC01"]:
+                self.assertEqual(check.is_valid({**trade, field: value}), valid_actor_id(value))
 
     def test_id_mapping_requests(self):
         check = validator("int.ids.query.request.v1.json")
@@ -124,7 +133,7 @@ class IdentifierSchemas(unittest.TestCase):
                 with self.subTest(identifier=identifier, status=status):
                     payload = order(identifier)
                     payload["orderStatus"] = status
-                    payload["createdBy"] = "0x" + HEX.lower() if status == "executed" else "facility-a"
+                    payload["createdBy"] = "Owner-MiXeD/LIC01"
                     payload["preferredTradingPartner"] = "0x" + HEX
                     check.validate({
                         "eventId": "opaque-event-id", "eventType": event_type,

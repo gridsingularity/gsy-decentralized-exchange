@@ -18,8 +18,8 @@
       "$ref": "./int.order.schema.v1.json#/properties/orderId"
     },
     "buyerId": {
-      "description": "Nonzero on-chain bytes16 hash of the buying facility, not its owner or wallet. IRI: int:buyerId.",
-      "$ref": "./int.order.schema.v1.json#/properties/orderId"
+      "description": "Original off-chain owner ID of the buying facility, not an on-chain hash or wallet. Preserved exactly and case-sensitive. IRI: int:buyerId.",
+      "$ref": "./int.order.schema.v1.json#/properties/createdBy"
     },
     "residualBidId": {
       "description": "Residual bid ID; null, empty or all-zero inputs mean absence and are returned as null.",
@@ -34,8 +34,8 @@
       "$ref": "./int.order.schema.v1.json#/properties/orderId"
     },
     "sellerId": {
-      "description": "Nonzero on-chain bytes16 hash of the selling facility, not its owner or wallet. IRI: int:sellerId.",
-      "$ref": "./int.order.schema.v1.json#/properties/orderId"
+      "description": "Original off-chain owner ID of the selling facility, not an on-chain hash or wallet. Preserved exactly and case-sensitive. IRI: int:sellerId.",
+      "$ref": "./int.order.schema.v1.json#/properties/createdBy"
     },
     "residualOfferId": {
       "description": "Residual offer ID; null, empty or all-zero inputs mean absence and are returned as null.",

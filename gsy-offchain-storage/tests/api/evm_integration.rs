@@ -1,4 +1,4 @@
-use crate::helpers::{init_app, stop_app};
+use crate::helpers::stop_app;
 use ethers::{
     prelude::*,
     solc::{Project, ProjectPathsConfig},
@@ -28,6 +28,18 @@ abigen!(
         function emitNewMarket(bytes16 communityId, uint64 closingTime) external
     ]"#
 );
+
+async fn init_app() -> crate::helpers::TestApp {
+    let app = crate::helpers::init_app().await;
+    for owner in ["buyer-owner", "seller-owner"] {
+        app.db_wrapper
+            .ids()
+            .get_or_create(owner.into())
+            .await
+            .unwrap();
+    }
+    app
+}
 
 pub(crate) const MARKET_COMMUNITY: &str = "Community-MiXeD/LIC01";
 
@@ -184,7 +196,7 @@ async fn market_event_requires_mapping_and_retries_after_registration() {
         .handle_new_market_created(new_market_event())
         .await
         .unwrap_err();
-    assert!(error.to_string().contains("No community ID mapping"));
+    assert!(error.to_string().contains("No actor mapping"));
     assert!(error
         .to_string()
         .contains(&bytes16_to_hex(new_market_event().community_id)));
@@ -261,7 +273,7 @@ async fn test_order_listener_rejects_unknown_partner_mapping() {
     };
     let event = OrderPlacedFilter {
         order_id: [0xaa; 16],
-        created_by: [0xbb; 16],
+        created_by: community_hash("seller-owner"),
         market_id: [0xcc; 16],
         time_slot: 1000,
         creation_time: 900,
@@ -274,7 +286,7 @@ async fn test_order_listener_rejects_unknown_partner_mapping() {
         preferred_energy_rate: 4000,
     };
     let error = handler.handle_order_placed(event, 950).await.unwrap_err();
-    assert!(error.to_string().contains("No owner ID mapping"));
+    assert!(error.to_string().contains("No actor mapping"));
     assert!(app
         .db_wrapper
         .orders()
@@ -470,7 +482,7 @@ async fn test_evm_order_listener_persists_to_db() {
     task.abort();
     assert!(task.await.unwrap_err().is_cancelled());
 
-    let created_by = [0xBB; 16];
+    let created_by = community_hash("seller-owner");
     let energy_val = 10000; // 1.0 energy scaled
     let rate_val = 5000; // 0.5 rate scaled
 
@@ -509,7 +521,7 @@ async fn test_evm_order_listener_persists_to_db() {
             assert_eq!(order.energy_rate, 0.5);
             assert_eq!(order.creation_time, 1234567890);
             assert_eq!(order.status_updated_at, Some(block_timestamp));
-            assert_eq!(order.area_uuid, format!("0x{}", hex::encode(created_by)));
+            assert_eq!(order.area_uuid, "seller-owner");
             assert_eq!(
                 order
                     .requirements
@@ -576,7 +588,11 @@ async fn test_evm_order_listener_persists_to_db() {
 fn placed_order(order_id: [u8; 16], is_bid: bool, energy: u64) -> OrderPlacedFilter {
     OrderPlacedFilter {
         order_id,
-        created_by: if is_bid { [0xaa; 16] } else { [0xbb; 16] },
+        created_by: community_hash(if is_bid {
+            "buyer-owner"
+        } else {
+            "seller-owner"
+        }),
         market_id: [0xcc; 16],
         time_slot: 1000,
         creation_time: 900,
@@ -836,8 +852,8 @@ async fn settlement_indexes_fill_statuses_and_keeps_residuals_independent() {
             trade_id: [10; 16],
             bid_id: [1; 16],
             offer_id: [2; 16],
-            buyer_id: [0xaa; 16],
-            seller_id: [0xbb; 16],
+            buyer_id: community_hash("buyer-owner"),
+            seller_id: community_hash("seller-owner"),
             market_id: [0xcc; 16],
             time_slot: 1000,
             residual_bid_id: if partial_bid { [3; 16] } else { [0; 16] },

@@ -109,6 +109,13 @@ pub async fn delete_database(db_url: String, db_name: String) -> Result<()> {
 }
 
 async fn preload(db: &DatabaseWrapper) -> Result<()> {
+    db.collection::<mongodb::bson::Document>(super::pending_events::COLLECTION)
+        .create_index(
+            mongodb::IndexModel::builder()
+                .keys(mongodb::bson::doc! {"stream_id": 1, "block_number": 1, "log_index": 1})
+                .build(),
+        )
+        .await?;
     init_orders(db).await?;
     init_flexibility_orders(db).await?;
     init_tariffs(db).await?;

@@ -55,10 +55,6 @@ async fn post_ids_creates_new_mapping() {
     let body: IdMappingSchema = response.json().await.expect("Failed to parse body");
     assert_eq!(body.offchain_id, offchain);
     assert_eq!(body.onchain_id, derive_onchain_id(offchain));
-    assert_eq!(
-        body.onchain_id,
-        gsy_offchain_storage::certificates::builder::party_hash(offchain)
-    );
 
     stop_app(app).await;
 }
@@ -197,10 +193,7 @@ async fn post_ids_concurrent_same_id_yields_single_mapping() {
         "test",
     );
     assert_eq!(
-        storage
-            .fetch_onchain_id(offchain)
-            .await
-            .unwrap(),
+        storage.fetch_onchain_id(offchain).await.unwrap(),
         results[0].onchain_id
     );
     let onchain_uuid = primitives::utils::bytes16_to_uuid_string(

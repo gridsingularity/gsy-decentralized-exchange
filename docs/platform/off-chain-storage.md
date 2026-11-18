@@ -26,11 +26,9 @@ offer attributes, so the indexed order is complete without a follow-up
 insert-only imports, but neither is used by the E2E scenarios or production
 order lifecycle. Orders are submitted through `placeOrder` (directly or through
 the community client's EWDS subscriber), then indexed by the EVM listener.
-Imports validate the whole payload and canonicalize order IDs, market IDs and
-the already-resolved `createdBy` owner hash to lowercase `0x` bytes16. Each
-must be nonzero. `area_uuid` uses the same hash; the optional preferred partner
-remains an off-chain identity with its exact spelling preserved.
-Unlike `order.event`, these routes do not resolve owner IDs or place orders.
+Imports validate the whole payload and canonicalize nonzero order and market IDs
+to lowercase `0x` bytes16. `createdBy`, `area_uuid` and preferred partners contain
+original off-chain owner IDs, preserved exactly. These routes do not submit orders.
 Invalid identifiers return 400. Duplicate canonical IDs within the batch or
 already in storage return 409 before writes. Unique indexes also prevent
 concurrent imports from replacing records. A later `OrderPlaced` replaces an
@@ -49,8 +47,8 @@ enforced access-control boundary for those legacy write endpoints.
 the exact off-chain string, times as zero-padded epoch seconds). It reverse-resolves
 the event's community hash directly through the DB ID mapping registered by
 topology writes, without calling the IDs API or interpreting the hash as a UUID.
-A missing mapping fails indexing; the listener retries the block until the mapping
-is available. Durable pending-event handling is deferred to DD-459 step 5.
+A missing mapping retains the original event in the durable inbox described below.
+It delays dependent projections, not reception of later blocks or unrelated markets.
 The handler upserts by `market_id`, so a replayed event is harmless. The chain is
 the source of markets; no service posts them any more.
 
@@ -136,7 +134,8 @@ Each pair requires an existing market and facility, the facility's site to
 exist and list that facility, and the market's community to exist and list
 that site. The lookup uses the latest stored topology; an ID mapping alone
 does not establish participation. This does not validate market opening times
-or wallet permissions.
+or wallet permissions. A known-pending market projection returns a retryable
+storage error, not an `unknown_market` eligibility rejection.
 
 HTTP 200 returns one `{facility_id, market_id, eligible, reason?}` per pair,
 preserving order and duplicates. Ineligible pairs carry a reason:
@@ -156,14 +155,13 @@ publication performs the same check. The contract separately requires
 by those trusted services, not by this read-only endpoint or an ID mapping alone.
 
 ### ID Mapping
-- The ID service, execution engine and certificate metadata share the deterministic
-  keyed Blake2b-16 derivation using `ACTOR_ID_HASH_KEY`. Verification derives IDs
-  locally and never creates mappings. Hashing preserves the exact actor spelling.
-  ID-service lookup, insertion and reverse lookup use that same spelling.
-  `/ids` rejects empty/padded inputs with
-  HTTP 400; `ids.query` responds with `invalid_request`.
-  Certificate `owner_id` is the trade seller's owner hash; historical
-  ownership policy remains a separate follow-up.
+- Trusted services share keyed Blake2b-16 derivation using `ACTOR_ID_HASH_KEY`
+  at contract boundaries. ID-service lookup, insertion and reverse lookup preserve
+  exact off-chain strings. `/ids` rejects empty/padded inputs with HTTP 400;
+  `ids.query` responds with `invalid_request`. Verification and certificates join
+  off-chain owner IDs directly, without hashing or ID-service calls. Certificate
+  `owner_id` is the original seller owner ID; historical ownership policy remains
+  a separate follow-up.
 
 HTTP and EWDS topology writes register mappings before making the topology record
 visible: facility ID and owner ID for facilities, `site_name` (the current site
@@ -236,9 +234,11 @@ been removed. HTTP and EWDS use the same listener; order-status notifications
 are published only when EWDS is enabled. The first new confirmed block after startup
 also checks already-indexed markets for expiry. On first start for a chain and
 contract set, the listener records the current head + 1 in MongoDB, without
-backfilling older events. It advances this cursor only after all logs and expiry
-checks for a block succeed. After a reconnect or restart it resumes at the first
-unfinished block. Replays preserve lifecycle states and separate clearing logs;
+backfilling older events. It advances this cursor after the block's logs are
+durably received and projection/expiry processing succeeds. Unresolved identities
+or prerequisites remain in the inbox rather than preventing cursor advancement.
+After a reconnect or restart it resumes receipt at the first unfinished block
+and replays pending projections. Replays preserve lifecycle states and separate clearing logs;
 EWDS notifications can repeat. The cursor is not a chain-reorg recovery mechanism.
 There is no reindexing tool. See the
 [fresh-deployment requirements](../setup/contracts.md#fresh-deployments).
@@ -255,9 +255,8 @@ There is no reindexing tool. See the
 - Existing `POST /trades` and `/trades-normalized` endpoints retain insert-only
   import behavior. They do not update orders or publish lifecycle notifications;
   the matching engine does not use them.
-  Imports accept nonzero UUID or bytes16 hex for trade, market, bid/offer and
-  buyer/seller IDs, storing lowercase `0x` hex. Parties must already be resolved
-  on-chain owner hashes. Empty/zero residual IDs become null. All identifiers
+  Imports accept nonzero UUID or bytes16 hex for trade, market and bid/offer IDs,
+  storing lowercase `0x` hex. Buyer/seller IDs are original off-chain owner IDs. Empty/zero residual IDs become null. All identifiers
   are validated before writing (400); duplicate canonical trade IDs in the batch
   or storage return 409. Unique indexes guard concurrent duplicates, but a
   concurrent conflict can still leave a batch partially inserted. No transaction
@@ -285,11 +284,23 @@ There is no reindexing tool. See the
   partner owner ID; attributes carry no partner.
   Callers resolve these through `POST /ids` or EWDS `ids.query` before contract
   submission. The event indexer uses the ID mapping collection to recover the
-  owner IDs; the matcher resolves them back before comparing on-chain actors.
-  UUID-shaped owner IDs are mapping inputs, not already-encoded on-chain IDs.
-  Missing reverse mappings cause an indexing error rather than fabricating an ID.
-  Mappings must exist before order submission. A missing mapping fails the block;
-  the listener logs the error and retries that block instead of skipping it.
+  owner IDs. The matcher compares those exact off-chain identities and derives
+  their hashes locally only when building contract arguments. UUID-shaped owner
+  IDs remain opaque identities, not already-encoded on-chain IDs.
+- Missing actor mappings or prerequisite order/trade records are retained in
+  `evm_pending_events`, including the original log, block timestamp and chain/contract
+  stream. The listener checkpoints only after durable receipt. Dependent events
+  wait in chain order; unrelated markets continue indexing. Pending events retry
+  on each block and survive restart. Once resolved, the listener writes ordinary
+  records with off-chain actor IDs and the original event timestamps. Expiry waits
+  for pending events in its market. No actor hash is substituted into an off-chain
+  identity field. Database failures and invalid lifecycle transitions still fail
+  the block. Pending events have no automatic discard limit.
+- Order/trade/market/clearing reads fail with HTTP 500 or EWDS `STORAGE_UNAVAILABLE`
+  if their market has pending events. Unfiltered reads, and pending events with
+  unknown market scope, conservatively block complete-set queries. This prevents
+  matching, verification or certificate issuance using a known-incomplete projection.
+  Notification publishing remains best effort; this inbox is not a durable outbox.
 - Settlement events mark consumed orders `Filled`, or `PartiallyFilled` when a
   residual ID is emitted. Each residual is a separate `Submitted` order; filling
   it later does not change its original's status. Settlement does not mark orders

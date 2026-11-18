@@ -185,10 +185,13 @@ progression, not arrival order. The provisional progression is `matched` to
 notification. `penalized` is terminal; no transition to `settled` is
 implemented yet.
 
-Before publishing a market, storage reverse-resolves its on-chain community hash
-directly from the DB mappings registered by topology writes. Missing mappings
-currently fail indexing and cause block retry until available, not a fabricated
-community UUID. Durable pending handling is deferred to DD-459 step 5.
+Before publishing markets, orders or trades, storage reverse-resolves actor hashes
+directly from its DB mappings. Missing mappings retain the original chain events
+in a durable inbox for replay on subsequent blocks, without fabricating off-chain
+IDs or blocking unrelated market indexing. Dependent events wait in chain order.
+Queries touching an incomplete projection return `STORAGE_UNAVAILABLE`, not a
+partial book or trade set. Actor IDs in resolved records and events are the exact
+off-chain IDs; order, trade and market entity IDs keep their existing formats.
 
 Order, trade and clearing-result queries accept UUID or 16-byte hex market IDs.
 Invalid IDs receive `success: false` with `error.code: invalid_request`.

@@ -1,21 +1,11 @@
 use super::*;
-use primitives::offchain_storage::OffchainStorageTransport;
 use primitives::utils::bytes16_to_uuid_string;
-
-fn source() -> OffchainStorageClient {
-    OffchainStorageClient::new(
-        OffchainStorageTransport::Http,
-        "invalid-url",
-        "UNUSED",
-        "unused",
-    )
-}
 
 fn order(id: u8, market: u8, slot: u64, side: OrderEnum) -> EwdsOrderDto {
     EwdsOrderDto::from(DbOrderSchema {
         order_id: bytes16_to_hex([id; 16]),
-        created_by: bytes16_to_hex([id; 16]),
-        area_uuid: bytes16_to_hex([id; 16]),
+        created_by: format!("owner-{id}"),
+        area_uuid: format!("owner-{id}"),
         market_id: bytes16_to_hex([market; 16]),
         time_slot: slot,
         creation_time: 90,
@@ -66,7 +56,7 @@ fn assert_books(prepared: PreparedOrders, expected: Vec<(u8, u64)>) {
 #[tokio::test]
 async fn valid_listener_orders_remain_matchable() {
     assert_books(
-        prepare_market_orders(books(), &source()).await.unwrap(),
+        prepare_market_orders(books()).await.unwrap(),
         vec![(10, 100), (10, 200), (20, 100)],
     );
 }
@@ -89,7 +79,7 @@ async fn known_inactive_orders_are_ignored_before_conversion() {
         invalid.order_type = "invalid".into();
         body.push(invalid);
         assert_books(
-            prepare_market_orders(body, &source()).await.unwrap(),
+            prepare_market_orders(body).await.unwrap(),
             vec![(10, 100), (10, 200), (20, 100)],
         );
     }
@@ -104,7 +94,7 @@ async fn invalid_active_order_excludes_earlier_orders_in_its_book() {
         "order_id",
         "creation_time",
         "nil_order_id",
-        "nil_created_by",
+        "empty_created_by",
     ] {
         let mut body = books();
         let mut invalid = order(7, 10, 100, OrderEnum::Bid);
@@ -113,15 +103,15 @@ async fn invalid_active_order_excludes_earlier_orders_in_its_book() {
         match defect {
             "type" => invalid.order_type = "invalid".into(),
             "status" => invalid.order_status = "unknown".into(),
-            "created_by" => invalid.created_by = "invalid".into(),
+            "created_by" => invalid.created_by = " padded".into(),
             "order_id" => invalid.order_id = "invalid".into(),
             "nil_order_id" => invalid.order_id = bytes16_to_hex([0; 16]),
-            "nil_created_by" => invalid.created_by = bytes16_to_hex([0; 16]),
+            "empty_created_by" => invalid.created_by = String::new(),
             _ => invalid.creation_time = "invalid".into(),
         }
         body.push(invalid);
         assert_books(
-            prepare_market_orders(body, &source()).await.unwrap(),
+            prepare_market_orders(body).await.unwrap(),
             vec![(10, 200), (20, 100)],
         );
     }
@@ -140,10 +130,7 @@ async fn unreadable_slot_excludes_the_entire_market() {
         let mut invalid = order(7, 10, 100, OrderEnum::Bid);
         invalid.time_slot = slot.into();
         body.push(invalid);
-        assert_books(
-            prepare_market_orders(body, &source()).await.unwrap(),
-            vec![(20, 100)],
-        );
+        assert_books(prepare_market_orders(body).await.unwrap(), vec![(20, 100)]);
     }
 }
 
@@ -152,15 +139,15 @@ async fn unidentified_market_aborts_the_cycle() {
     for market in ["invalid", "0x00000000000000000000000000000000"] {
         let mut body = books();
         body[0].market_id = market.into();
-        assert!(prepare_market_orders(body, &source()).await.is_err());
+        assert!(prepare_market_orders(body).await.is_err());
     }
 }
 
 #[tokio::test]
-async fn id_service_failure_aborts_the_cycle() {
+async fn matching_keeps_offchain_partners_without_id_service_requests() {
     let mut body = books();
     body[4].preferred_trading_partner = Some("facility-a".into());
-    assert!(prepare_market_orders(body, &source()).await.is_err());
+    assert!(prepare_market_orders(body).await.is_ok());
 }
 
 #[tokio::test]

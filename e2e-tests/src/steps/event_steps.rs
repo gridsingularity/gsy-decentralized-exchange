@@ -418,7 +418,7 @@ async fn publish_order_pair(world: &mut MyWorld, bid: EwdsOrderDto, offer: EwdsO
         let stored = wait_for_order_in_offchain_storage(world, onchain_order_id.as_str()).await;
         assert_eq!(
             stored.created_by,
-            primitives::utils::derive_onchain_id(&order.created_by)
+            order.created_by
         );
         assert_eq!(
             stored.requirements.as_ref().and_then(|value| value.trading_partner_id.clone()),

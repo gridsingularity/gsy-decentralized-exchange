@@ -6,7 +6,7 @@ use primitives::ewds::dto::EwdsTradeDto;
 use primitives::utils::{epoch_to_rfc3339, timestamp_to_string_with_padding};
 
 #[tokio::test]
-async fn imports_normalize_trade_ids_and_parties_for_queries_and_penalties() {
+async fn imports_normalize_entity_ids_and_preserve_offchain_parties_for_queries_and_penalties() {
     use gsy_ethers_listener::{GsyEventHandler, PenaltyRecordedFilter};
     use gsy_offchain_storage::evm_handler::OffchainStorageEvmHandler;
     use primitives::offchain_storage::{OffchainStorageClient, OffchainStorageTransport};
@@ -61,8 +61,8 @@ async fn imports_normalize_trade_ids_and_parties_for_queries_and_penalties() {
         assert_eq!(stored.market_id, bytes16_to_hex([0xde; 16]));
         assert_eq!(stored.bid_hash, bytes16_to_hex([0xbc; 16]));
         assert_eq!(stored.offer_hash, bytes16_to_hex([0xcd; 16]));
-        assert_eq!(stored.buyer, bytes16_to_hex([0xef; 16]));
-        assert_eq!(stored.seller, "0xabcdefabcdefabcdefabcdefabcdefab");
+        assert_eq!(stored.buyer, uuid(0xef));
+        assert_eq!(stored.seller, "0xABCDEFABCDEFABCDEFABCDEFABCDEFAB");
         assert_eq!(stored.residual_bid_id, None);
         assert_eq!(stored.residual_offer_id, None);
         for market in [&trade.market_id, &stored.market_id] {
@@ -120,6 +120,11 @@ async fn imports_normalize_trade_ids_and_parties_for_queries_and_penalties() {
                 .len(),
             1
         );
+        app.db_wrapper
+            .ids()
+            .get_or_create(uuid(0xef))
+            .await
+            .unwrap();
         OffchainStorageEvmHandler {
             db: app.db_wrapper.clone(),
             event_publisher: None,
@@ -128,7 +133,10 @@ async fn imports_normalize_trade_ids_and_parties_for_queries_and_penalties() {
             PenaltyRecordedFilter {
                 trade_id: [0xab; 16],
                 market_id: [0xde; 16],
-                penalized_actor_id: [0xef; 16],
+                penalized_actor_id: primitives::utils::parse_uuid_or_hex_bytes16(
+                    &primitives::utils::derive_onchain_id(&uuid(0xef)),
+                )
+                .unwrap(),
                 penalty_energy: 1,
             },
             2000,
@@ -194,13 +202,27 @@ async fn trade_imports_validate_all_identifiers_before_writing() {
     );
     let valid = serde_json::to_value(trade).unwrap();
     for route in ["trades", "trades-normalized"] {
+        for field in ["buyerId", "sellerId"] {
+            for invalid in ["", " ", " padded", "padded "] {
+                let mut bad = valid.clone();
+                bad[field] = serde_json::json!(invalid);
+                assert_eq!(
+                    client
+                        .post(format!("{}/{route}", app.address))
+                        .json(&vec![valid.clone(), bad])
+                        .send()
+                        .await
+                        .unwrap()
+                        .status(),
+                    400
+                );
+            }
+        }
         for field in [
             "tradeId",
             "marketId",
             "bidId",
             "offerId",
-            "buyerId",
-            "sellerId",
             "residualBidId",
             "residualOfferId",
         ] {
@@ -329,7 +351,9 @@ async fn post_trade_requests_persist_trades_without_updating_orders() {
 
         let saved = db.get_ref().trades().get_all_trades().await.unwrap();
         assert_eq!(saved.len(), index + 1);
-        assert!(saved.iter().any(|stored| stored.trade_uuid == trade.trade_id));
+        assert!(saved
+            .iter()
+            .any(|stored| stored.trade_uuid == trade.trade_id));
 
         for order in [&bid, &offer] {
             let id = mongodb::bson::to_bson(&order.order_id).unwrap();
@@ -623,7 +647,11 @@ async fn filter_trades_time_boundaries_are_inclusive_start_exclusive_end() {
     // market_id takes precedence: the range [20, 30) is ignored, so the trade of the market
     // delivering at 19 is returned.
     let by_market = trades_svc()
-        .filter_trades(Some("0x00000000000000000000000000000001".to_string()), Some(20), Some(30))
+        .filter_trades(
+            Some("0x00000000000000000000000000000001".to_string()),
+            Some(20),
+            Some(30),
+        )
         .await
         .unwrap();
     assert_eq!(by_market.len(), 1);

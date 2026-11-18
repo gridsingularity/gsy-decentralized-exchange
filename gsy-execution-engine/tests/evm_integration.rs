@@ -20,7 +20,8 @@ use ethers_solc::{artifacts::Severity, Project, ProjectPathsConfig};
 use gsy_execution_engine::{
     connectors::evm_connector::{complete_delivery_verification, submit_penalties},
     primitives::penalty_calculator::{DeliveryVerification, Penalty},
-    services::execution_orchestrator::run_execution_cycle, timeslot_scheduler::TimeslotScheduler,
+    services::execution_orchestrator::run_execution_cycle,
+    timeslot_scheduler::TimeslotScheduler,
 };
 use serde_json::json;
 use std::{fs::File, io::Write, sync::Arc};
@@ -216,7 +217,8 @@ async fn test_submit_penalties_persists_to_trade_settlement_contract() {
     eprintln!("trade_uuid {:?}", trade_uuid);
     eprintln!("penalized {:?}", penalized);
     let expected_trade_id = parse_uuid_or_hex_bytes16(&trade_uuid).expect("Failed to parse uuid");
-    let expected_actor_id = parse_uuid_or_hex_bytes16(&penalized).expect("Failed to parse uuid");
+    let expected_actor_id =
+        parse_uuid_or_hex_bytes16(&derive_onchain_id(&penalized)).expect("Failed to parse uuid");
 
     assert_eq!(
         mock_contract
@@ -247,8 +249,8 @@ fn late_trade(id: u8, market: u8, creation_time: u64) -> DbTradeSchema {
         trade_uuid: bytes16_to_hex([id; 16]),
         status: TradeStatus::Matched,
         status_updated_at: None,
-        seller: derive_onchain_id(&format!("bob-{id}")),
-        buyer: derive_onchain_id(&format!("alice-{id}")),
+        seller: format!("bob-{id}"),
+        buyer: format!("alice-{id}"),
         market_id: bytes16_to_hex([market; 16]),
         creation_time,
         offer_hash: bytes16_to_hex([id + 10; 16]),
@@ -420,8 +422,8 @@ async fn late_records_after_rollover_are_processed_once_without_blocking_the_cur
                 parse_uuid_or_hex_bytes16(&trade.trade_uuid).unwrap(),
                 parse_uuid_or_hex_bytes16(&trade.bid_hash).unwrap(),
                 parse_uuid_or_hex_bytes16(&trade.offer_hash).unwrap(),
-                parse_uuid_or_hex_bytes16(&trade.buyer).unwrap(),
-                parse_uuid_or_hex_bytes16(&trade.seller).unwrap(),
+                parse_uuid_or_hex_bytes16(&derive_onchain_id(&trade.buyer)).unwrap(),
+                parse_uuid_or_hex_bytes16(&derive_onchain_id(&trade.seller)).unwrap(),
             )
             .send()
             .await
@@ -460,7 +462,7 @@ async fn late_records_after_rollover_are_processed_once_without_blocking_the_cur
                                 let facility = facility_id(party, id);
                                 json!({
                                     "type": "Measurement",
-                                    "measurement_id": derive_onchain_id(&format!("{party}-{id}")),
+                                    "measurement_id": format!("{party}-{id}"),
                                     "property_measured": "energy_measured",
                                     "unit": "kWh",
                                     "direction": "Import",
@@ -479,20 +481,22 @@ async fn late_records_after_rollover_are_processed_once_without_blocking_the_cur
             .await;
         Mock::given(method("GET"))
             .and(path("/facilities"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(
-                (1..=3)
-                    .flat_map(|id| {
-                        ["alice", "bob"].map(|party| {
-                            json!({
-                                "facility_id": facility_id(party, id),
-                                "facility_name": format!("facility-{party}-{id}"),
-                                "site_id": "site",
-                                "owner_id": format!("{party}-{id}"),
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(
+                    (1..=3)
+                        .flat_map(|id| {
+                            ["alice", "bob"].map(|party| {
+                                json!({
+                                    "facility_id": facility_id(party, id),
+                                    "facility_name": format!("facility-{party}-{id}"),
+                                    "site_id": "site",
+                                    "owner_id": format!("{party}-{id}"),
+                                })
                             })
                         })
-                    })
-                    .collect::<Vec<_>>(),
-            ))
+                        .collect::<Vec<_>>(),
+                ),
+            )
             .mount(&server)
             .await;
         mount_slot_records(

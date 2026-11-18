@@ -108,6 +108,7 @@ impl OrderService {
 
     #[tracing::instrument(name = "Fetching orders from database", skip(self))]
     pub async fn get_all_orders(&self) -> Result<Vec<DbOrderSchema>> {
+        super::pending_events::ensure_ready(&self.0, None).await?;
         Ok(self.0.find(doc! {}).await?.try_collect().await?)
     }
 
@@ -118,6 +119,7 @@ impl OrderService {
         start_time: Option<u64>,
         end_time: Option<u64>,
     ) -> Result<Vec<DbOrderSchema>> {
+        super::pending_events::ensure_ready(&self.0, market_id.as_deref()).await?;
         let mut filter_params = doc! {};
         if let Some(market_id) = market_id {
             filter_params.insert("market_id", market_id);

@@ -2,7 +2,7 @@ use crate::evm_integration::{
     expected_market, new_market_event, register_market_community, MARKET_COMMUNITY,
 };
 use crate::ewds_handler::{mock_gateway, test_config};
-use crate::helpers::{init_app, stop_app};
+use crate::helpers::stop_app;
 use ethers::contract::LogMeta;
 use ethers::types::{Address, H256, U256, U64};
 use gsy_ethers_listener::{
@@ -33,6 +33,23 @@ use std::time::Duration;
 use uuid::Uuid;
 use wiremock::matchers::{method, path, query_param, query_param_is_missing};
 use wiremock::{Mock, MockServer, ResponseTemplate};
+
+fn actor_hash(owner: &str) -> [u8; 16] {
+    primitives::utils::parse_uuid_or_hex_bytes16(&primitives::utils::derive_onchain_id(owner))
+        .unwrap()
+}
+
+async fn init_app() -> crate::helpers::TestApp {
+    let app = crate::helpers::init_app().await;
+    for owner in ["buyer-owner", "seller-owner"] {
+        app.db_wrapper
+            .ids()
+            .get_or_create(owner.into())
+            .await
+            .unwrap();
+    }
+    app
+}
 
 // --- Test helpers ---------------------------------------------------
 
@@ -92,8 +109,8 @@ fn trade_settled_event() -> TradeSettledFilter {
         trade_id: [0x01; 16],
         bid_id: [0x02; 16],
         offer_id: [0x03; 16],
-        buyer_id: [0x04; 16],
-        seller_id: [0x05; 16],
+        buyer_id: actor_hash("buyer-owner"),
+        seller_id: actor_hash("seller-owner"),
         market_id: [0x06; 16],
         time_slot: 1_000,
         residual_bid_id: [0; 16],
@@ -106,7 +123,11 @@ fn trade_settled_event() -> TradeSettledFilter {
 fn order_placed_event(order_id: [u8; 16], is_bid: bool) -> OrderPlacedFilter {
     OrderPlacedFilter {
         order_id,
-        created_by: if is_bid { [0x04; 16] } else { [0x05; 16] },
+        created_by: actor_hash(if is_bid {
+            "buyer-owner"
+        } else {
+            "seller-owner"
+        }),
         market_id: [0x06; 16],
         time_slot: 1_000,
         creation_time: 900,
@@ -637,6 +658,18 @@ async fn trade_settled_rejects_conflicting_details_without_publishing() {
     let server = mock_gateway().await;
     let handler = evm_handler(&app, &server);
     seed_settlement_orders(&app).await;
+    app.db_wrapper
+        .ids()
+        .get_or_create("other-owner".into())
+        .await
+        .unwrap();
+    OffchainStorageEvmHandler {
+        db: app.db_wrapper.clone(),
+        event_publisher: None,
+    }
+    .handle_order_placed(order_placed_event([0xff; 16], true), 950)
+    .await
+    .unwrap();
 
     handler
         .handle_trade_settled(trade_settled_event(), 1_100)
@@ -660,8 +693,8 @@ async fn trade_settled_rejects_conflicting_details_without_publishing() {
     ] {
         let mut event = trade_settled_event();
         match field {
-            "buyer" => event.buyer_id = [0xff; 16],
-            "seller" => event.seller_id = [0xff; 16],
+            "buyer" => event.buyer_id = actor_hash("other-owner"),
+            "seller" => event.seller_id = actor_hash("other-owner"),
             "market" => event.market_id = [0xff; 16],
             "bid" => event.bid_id = [0xff; 16],
             "offer" => event.offer_id = [0xff; 16],
@@ -711,8 +744,8 @@ async fn trade_settled_preserves_replayed_statuses() {
         let expected = DbTradeSchema {
             status: status.clone(),
             status_updated_at: updated_at,
-            buyer: bytes16_to_hex(event.buyer_id),
-            seller: bytes16_to_hex(event.seller_id),
+            buyer: "buyer-owner".into(),
+            seller: "seller-owner".into(),
             market_id: bytes16_to_hex(event.market_id),
             bid_hash: bytes16_to_hex(event.bid_id),
             offer_hash: bytes16_to_hex(event.offer_id),
@@ -781,10 +814,11 @@ async fn trade_settled_replay_completes_a_partially_persisted_fill() {
     let handler = evm_handler(&app, &server);
     seed_settlement_orders(&app).await;
     let event = trade_settled_event();
-    // Simulate an order that has not been indexed yet: the trade and bid write succeed.
+    // Fail the offer update after the trade and bid writes have succeeded.
     app.db_wrapper
-        .orders()
-        .delete_one(mongodb::bson::doc! {"order_id": bytes16_to_hex(event.offer_id)})
+        .run_command(doc! {"collMod": "orders", "validator": {"$or": [
+            {"order_id": {"$ne": bytes16_to_hex(event.offer_id)}}, {"status": {"$ne": "filled"}}
+        ]}})
         .await
         .unwrap();
     assert!(handler
@@ -796,12 +830,8 @@ async fn trade_settled_replay_completes_a_partially_persisted_fill() {
     assert_eq!(trades[0].status, TradeStatus::Matched);
     assert_eq!(trades[0].status_updated_at, Some(1_100));
     assert_no_further_gateway_messages(&server, 0).await;
-    let quiet_handler = OffchainStorageEvmHandler {
-        db: app.db_wrapper.clone(),
-        event_publisher: None,
-    };
-    quiet_handler
-        .handle_order_placed(order_placed_event(event.offer_id, false), 950)
+    app.db_wrapper
+        .run_command(doc! {"collMod": "orders", "validator": {}})
         .await
         .unwrap();
     // Closure can be indexed before this delayed settlement is retried.
@@ -866,7 +896,7 @@ async fn market_clearing_publishes_clearing_result_event() {
 }
 
 #[tokio::test]
-async fn replay_recovers_partial_settlement_without_rewinding_verified_orders() {
+async fn replay_resolves_missing_orders_without_rewinding_verified_orders() {
     let app = init_app().await;
     let handler = OffchainStorageEvmHandler {
         db: app.db_wrapper.clone(),
@@ -875,7 +905,7 @@ async fn replay_recovers_partial_settlement_without_rewinding_verified_orders() 
     let event = trade_settled_event();
     let bid = order_placed_event(event.bid_id, true);
     handler.handle_order_placed(bid.clone(), 950).await.unwrap();
-    // Fail after writing the trade and bid, then make the missing offer available.
+    // A missing offer defers the match before any trade/status write.
     assert!(handler
         .handle_trade_settled(event.clone(), 1_100)
         .await
@@ -886,7 +916,7 @@ async fn replay_recovers_partial_settlement_without_rewinding_verified_orders() 
             .count_documents(doc! {})
             .await
             .unwrap(),
-        1
+        0
     );
     // Even if a legacy import has claimed that ID, its first chain placement is authoritative.
     let orders = app.db_wrapper.orders();
@@ -1007,7 +1037,7 @@ async fn unmapped_market_event_is_not_stored_or_published_until_retry() {
         .handle_new_market_created(new_market_event())
         .await
         .unwrap_err();
-    assert!(error.to_string().contains("No community ID mapping"));
+    assert!(error.to_string().contains("No actor mapping"));
     assert!(app
         .db_wrapper
         .markets()

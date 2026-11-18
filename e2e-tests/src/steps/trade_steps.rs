@@ -202,13 +202,6 @@ fn address_to_full_hex(address: Address) -> String {
     format!("0x{}", hex::encode(address.as_bytes()))
 }
 
-async fn actor_id_as_hex(world: &MyWorld, user_name: &str) -> String {
-    format!(
-        "0x{}",
-        hex::encode(world.actor_id_for_user(user_name).await)
-    )
-}
-
 pub(crate) fn market_id_as_hex(world: &MyWorld) -> String {
     bytes16_to_hex(world.last_market_id.expect("Missing market id"))
 }
@@ -233,49 +226,75 @@ fn offchain_storage_client(world: &MyWorld) -> OffchainStorageClient {
     )
 }
 
+// Reads can fail briefly while a block is being projected. Do not mistake that
+// for an empty book, and still fail with the real error if indexing stays blocked.
+async fn read_projection<T, F, Fut>(mut read: F) -> T
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<T>>,
+{
+    for attempt in 0..10 {
+        match read().await {
+            Ok(value) => return value,
+            Err(error) if attempt < 9 => {
+                info!(%error, "Projection read unavailable; retrying");
+                sleep(Duration::from_millis(500)).await;
+            }
+            Err(error) => panic!("Projection read failed after retries: {error:#}"),
+        }
+    }
+    unreachable!()
+}
+
+#[cfg(test)]
+mod projection_tests {
+    #[tokio::test]
+    async fn a_transient_read_error_is_retried_without_becoming_an_empty_result() {
+        let calls = std::cell::Cell::new(0);
+        let rows = super::read_projection(|| {
+            let attempt = calls.replace(calls.get() + 1);
+            async move {
+                anyhow::ensure!(attempt > 0, "projection pending");
+                Ok(vec![42])
+            }
+        })
+        .await;
+        assert_eq!(rows, vec![42]);
+        assert_eq!(calls.get(), 2);
+    }
+}
+
 pub(crate) async fn query_orders_for_market(world: &MyWorld, market_id: &str) -> Vec<DbOrderSchema> {
     let (start_time, end_time) = market_window(world);
-    offchain_storage_client(world)
-        .fetch_orders(market_id, start_time, end_time)
-        .await
-        .expect("Failed to fetch orders from off-chain storage")
+    let client = offchain_storage_client(world);
+    read_projection(|| client.fetch_orders(market_id, start_time, end_time)).await
 }
 
 async fn query_market(world: &MyWorld, market_id: &str) -> MarketSchema {
-    let response = world
-        .http_client
-        .get(format!("{}/market", world.offchain_storage_url))
-        .query(&[("market_id", market_id)])
-        .send()
-        .await
-        .expect("Failed to query market endpoint");
-
-    assert!(
-        response.status().is_success(),
-        "Market query for {} failed with status {}",
-        market_id,
-        response.status()
-    );
-
-    response
-        .json::<MarketSchema>()
-        .await
-        .expect("Failed to parse market response")
+    read_projection(|| async {
+        Ok(world
+            .http_client
+            .get(format!("{}/market", world.offchain_storage_url))
+            .query(&[("market_id", market_id)])
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<MarketSchema>()
+            .await?)
+    })
+    .await
 }
 
 pub(crate) async fn query_market_trades(world: &MyWorld) -> Vec<DbTradeSchema> {
-    offchain_storage_client(world)
-        .fetch_trades(Some(&market_id_as_hex(world)), None, None)
-        .await
-        .expect("Failed to fetch market trades from off-chain storage")
+    let client = offchain_storage_client(world);
+    let market_id = market_id_as_hex(world);
+    read_projection(|| client.fetch_trades(Some(&market_id), None, None)).await
 }
 
 async fn query_community_market_trades(world: &MyWorld) -> Vec<DbTradeSchema> {
     let (start_time, end_time) = market_window(world);
-    offchain_storage_client(world)
-        .fetch_trades(None, Some(start_time), Some(end_time))
-        .await
-        .expect("Failed to fetch trades from off-chain storage")
+    let client = offchain_storage_client(world);
+    read_projection(|| client.fetch_trades(None, Some(start_time), Some(end_time))).await
 }
 
 pub(crate) async fn wait_for_order_in_offchain_storage(
@@ -1162,8 +1181,8 @@ async fn verify_trade_on_chain(world: &mut MyWorld) {
 #[then(expr = "the trade has {string} as buyer and {string} as seller")]
 async fn verify_trade_parties(world: &mut MyWorld, buyer_name: String, seller_name: String) {
     let trade = world.last_trade.clone().expect("Missing settled trade");
-    let expected_buyer = actor_id_as_hex(world, &buyer_name).await;
-    let expected_seller = actor_id_as_hex(world, &seller_name).await;
+    let expected_buyer = buyer_name.clone();
+    let expected_seller = seller_name.clone();
 
     assert!(
         trade.buyer == expected_buyer,
@@ -1193,16 +1212,16 @@ async fn verify_partner_trade(
     let order_registry =
         OrderRegistryContract::new(world.order_registry_address, world.provider.clone());
     let expected_market_id = market_id_as_hex(world).to_lowercase();
-    let expected_buyer = actor_id_as_hex(world, &buyer_name).await;
-    let expected_seller = actor_id_as_hex(world, &seller_name).await;
+    let expected_buyer = buyer_name.clone();
+    let expected_seller = seller_name.clone();
 
     for attempt in 0..60 {
         let trades = query_market_trades(world).await;
 
         if let Some(trade) = trades.into_iter().find(|trade| {
             trade.market_id.to_lowercase() == expected_market_id
-                && trade.buyer.eq_ignore_ascii_case(expected_buyer.as_str())
-                && trade.seller.eq_ignore_ascii_case(expected_seller.as_str())
+                && trade.buyer == expected_buyer
+                && trade.seller == expected_seller
                 && approx_eq(trade.parameters.selected_energy_kWh, energy)
         }) {
             world.last_trade = Some(trade.clone());

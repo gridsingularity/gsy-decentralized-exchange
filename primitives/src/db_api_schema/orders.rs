@@ -29,12 +29,14 @@ pub struct DbOrderSchema {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status_updated_at: Option<u64>,
     pub order_type: OrderEnum,
+    /// Original off-chain owner identity, matching `created_by` for indexed orders.
     pub area_uuid: String,
     pub market_id: String,
     pub time_slot: u64,
     pub creation_time: u64,
     pub energy_kWh: f64,
     pub energy_rate: f64,
+    /// Original off-chain owner ID; keyed pseudonyms are only used at contract boundaries.
     pub created_by: String,
     pub requirements: Option<DbRequirements>,
     pub attributes: Option<DbAttributes>,

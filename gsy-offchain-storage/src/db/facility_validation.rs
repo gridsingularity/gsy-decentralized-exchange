@@ -34,9 +34,7 @@ impl DatabaseWrapper {
             .collect();
         let markets: Vec<MarketSchema> = self
             .markets()
-            .find(doc! {"market_id": {"$in": market_ids.iter().flatten().collect::<Vec<_>>()}})
-            .await?
-            .try_collect()
+            .get_by_ids(market_ids.iter().flatten().cloned().collect())
             .await
             .context("Failed to read markets for facility validation")?;
         let facilities: Vec<FacilitySchema> = self

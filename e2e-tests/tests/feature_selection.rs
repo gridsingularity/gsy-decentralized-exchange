@@ -33,7 +33,7 @@ fn each_algorithm_parses_its_own_features_and_the_shared_policy_once() {
         let identifiers = features
             .iter()
             .filter(|feature| {
-                feature.name == "Canonical facility identities across the order lifecycle"
+                feature.name == "Stable actor identities and canonical entity IDs across the order lifecycle"
             })
             .collect::<Vec<_>>();
         assert_eq!(identifiers.len(), 1);

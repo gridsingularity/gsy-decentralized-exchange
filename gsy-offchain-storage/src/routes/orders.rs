@@ -17,10 +17,7 @@ fn normalize_imported_order(mut order: DbOrderSchema) -> Result<DbOrderSchema> {
         parse_nonzero_uuid_or_hex_bytes16(&order.order_id).context("Invalid orderId")?,
     );
     order.market_id = normalize_market_id(&order.market_id)?;
-    order.created_by = bytes16_to_hex(
-        parse_nonzero_uuid_or_hex_bytes16(&order.created_by)
-            .context("Imported createdBy must be a nonzero on-chain bytes16 ID")?,
-    );
+    order.created_by = normalize_offchain_id(&order.created_by).context("Invalid createdBy")?;
     order.area_uuid = order.created_by.clone();
     if let Some(partner) = order
         .requirements

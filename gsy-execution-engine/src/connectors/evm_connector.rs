@@ -1,5 +1,5 @@
 use crate::primitives::penalty_calculator::{DeliveryVerification, Penalty};
-use ::primitives::utils::parse_uuid_or_hex_bytes16;
+use ::primitives::utils::{derive_onchain_id, normalize_offchain_id, parse_uuid_or_hex_bytes16};
 use anyhow::{anyhow, Result};
 use ethers::prelude::*;
 use ethers::utils::keccak256;
@@ -88,14 +88,16 @@ fn to_evm_penalties(penalties: Vec<Penalty>) -> Vec<EvmPenaltyTuple> {
                 );
                 return None;
             }
-            let Some(penalized_account) = parse_uuid_or_hex_bytes16(&penalty.penalized_account)
-            else {
+            if normalize_offchain_id(&penalty.penalized_account).is_err() {
                 warn!(
-                    "Skipping penalty for trade '{}': penalized_account '{}' is not a UUID",
+                    "Skipping penalty for trade '{}': invalid off-chain actor ID '{}'",
                     penalty.trade_uuid, penalty.penalized_account
                 );
                 return None;
-            };
+            }
+            let penalized_account =
+                parse_uuid_or_hex_bytes16(&derive_onchain_id(&penalty.penalized_account))
+                    .expect("Actor hashing returns bytes16 hex");
 
             let Some(market_id) = parse_uuid_or_hex_bytes16(&penalty.market_id) else {
                 warn!(

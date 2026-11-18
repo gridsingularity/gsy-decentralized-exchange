@@ -108,6 +108,11 @@ order to preserve their indexed lifecycle.
 
 ## Contract Interaction
 
+Orders and preferences are compared using exact off-chain owner IDs. The engine
+derives keyed actor hashes locally only when building contract arguments, including
+preferred partners. It makes no ID-mapping requests. Known-incomplete storage
+projections return an error, so the cycle does not match a partial book.
+
 Before submission, engine checks `hasRole(OPERATOR_ROLE, signer)` on settlement contract.
 `settleBatch` transaction success is validated via receipt status.
 The contract validates the submitted match type, counterparties and price;
@@ -122,6 +127,7 @@ selected the best available counterpart. See
   - `OFFCHAIN_STORAGE_URL` (otherwise the CLI storage host/port)
   - `OFFCHAIN_STORAGE_TRANSPORT` (`http` or `ewds`)
   - `TRADE_SETTLEMENT_ADDRESS`
+  - `ACTOR_ID_HASH_KEY` (shared actor pseudonym key, required at startup)
   - `MATCHING_ENGINE_PRIVATE_KEY`
   - `MATCHING_ALGORITHM` (`pay_as_bid` by default; `pay_as_clear` supported)
   - `PAY_AS_CLEAR_PRICING` (`max_offer` by default; `min_bid` and `midpoint` supported)

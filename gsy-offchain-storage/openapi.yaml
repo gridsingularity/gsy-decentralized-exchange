@@ -17,13 +17,15 @@ info:
     the E2E scenarios or production order lifecycle, which submits orders
     on-chain and indexes the resulting events. Their access policy remains
     to be clarified. Trade insertion endpoints do not update referenced orders.
-    Order imports normalize nonzero order, market and already-resolved createdBy
-    IDs (UUID or bytes16 hex) to lowercase 0x hex. Invalid IDs return 400; duplicate
+    Order imports normalize nonzero order and market IDs (UUID or bytes16 hex)
+    to lowercase 0x hex. createdBy is the original off-chain owner ID. Invalid IDs return 400; duplicate
     IDs in the batch or storage return 409. Batches are not transactional under
     concurrent writes. Listener events remain authoritative and can replace imports.
-    Trade imports normalize all required IDs and parties by the same bytes16 rule;
+    Trade imports normalize entity IDs by the same bytes16 rule and preserve off-chain parties;
     empty or zero residual IDs become null. They reject invalid IDs with 400 and
     duplicate canonical trade IDs with 409, without updating orders or emitting events.
+    Reads of known-incomplete chain projections return 500 while unresolved actor
+    mappings or prerequisite events are pending, never a partial book or trade set.
   license:
     name: GPL-3.0-or-later
 servers:
@@ -56,8 +58,8 @@ paths:
       tags: [Order Book]
       summary: Import new orders without replacing existing records.
       description: |
-        Alias of POST /orders. Requires already-resolved on-chain facility IDs in
-        createdBy; does not resolve identities or submit on-chain. Preferred partners
+        Alias of POST /orders. Uses original off-chain owner IDs in
+        createdBy; does not submit on-chain. Preferred partners
         remain off-chain IDs. Validation and known-conflict checks precede writes,
         but batches are not transactional. New records retain caller-supplied statuses.
       requestBody:
@@ -1019,7 +1021,7 @@ components:
         energyType:
           $ref: "#/components/schemas/EnergyType"
           nullable: true
-        createdBy: { type: string, description: "For HTTP imports/reads, the nonzero on-chain bytes16 facility hash, not a wallet address. UUID/hex imports are canonicalized to lowercase 0x hex." }
+        createdBy: { type: string, description: "Original off-chain owner ID, not a facility ID, hash or wallet. Nonempty, unpadded strings are preserved exactly and remain case-sensitive in imports, queries and lifecycle notifications." }
         creationTime: { type: string, format: date-time }
         updatedAt:
           type: string
@@ -1127,9 +1129,9 @@ components:
         EWDS-side trade DTO. Field names are camelCase on the wire.
         `timestamp` is the RFC 3339 creation time, unchanged by lifecycle updates.
         Trade notifications carry the status-change time in the envelope's `occurredAt`.
-        Required IDs accept nonzero UUID or bytes16 hex on import; reads and events
-        use lowercase 0x hex. buyerId/sellerId are on-chain facility hashes, not wallet
-        addresses or off-chain names. Optional residual IDs accept null, empty or
+        Entity IDs accept nonzero UUID or bytes16 hex on import; reads and events
+        use lowercase 0x hex. buyerId/sellerId are original off-chain owner IDs,
+        preserved exactly and case-sensitive, not on-chain hashes or wallets. Optional residual IDs accept null, empty or
         all-zero values for absence and return null; nonzero values use the same ID rule.
       type: object
       required:
@@ -1465,7 +1467,7 @@ components:
           properties:
             consumption_asset_id:
               type: string
-              description: Buyer facility id, else buyer community id, else the raw buyer hash.
+              description: Buyer facility id, else buyer community id, else the original off-chain buyer ID.
             asset_registry_reference: { type: [string, "null"] }
             metering_point_id: { type: [string, "null"] }
             asset_class: { $ref: "#/components/schemas/GooAssetClass" }
@@ -1502,7 +1504,7 @@ components:
         beneficiary_and_claim:
           type: object
           properties:
-            owner_id: { type: string, description: Seller party hash. }
+            owner_id: { type: string, description: Original off-chain seller owner ID. }
             consumption_metering_point_id:
               type: [string, "null"]
               description: Buyer facility id; null when the buyer is not a facility.

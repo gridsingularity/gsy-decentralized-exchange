@@ -27,7 +27,9 @@ pub struct TradeParameters {
 pub struct DbTradeSchema {
     pub trade_uuid: String,
     pub status: TradeStatus,
+    /// Original off-chain seller owner ID, not its keyed on-chain pseudonym.
     pub seller: String,
+    /// Original off-chain buyer owner ID (or community identity for community trades).
     pub buyer: String,
     pub market_id: String,
     pub creation_time: u64,

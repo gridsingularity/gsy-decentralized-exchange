@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use ethers::prelude::*;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::time::{sleep, Duration};
 use tracing::{error, info};
@@ -29,8 +30,76 @@ pub struct ListenerConfig {
     pub market_controller_address: Address,
 }
 
+/// Original chain data retained when an off-chain projection cannot yet be resolved.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ChainEvent {
+    pub stream_id: String,
+    pub log: Log,
+    pub block_timestamp: u64,
+}
+
+impl ChainEvent {
+    pub fn decode(&self) -> Result<GsyContractsEvents> {
+        let raw = ethers::abi::RawLog {
+            topics: self.log.topics.clone(),
+            data: self.log.data.to_vec(),
+        };
+        Ok(<GsyContractsEvents as ethers::contract::EthLogDecode>::decode_log(&raw)?)
+    }
+
+    pub fn metadata(&self) -> Result<LogMeta> {
+        anyhow::ensure!(
+            self.log.block_hash.is_some()
+                && self.log.block_number.is_some()
+                && self.log.transaction_hash.is_some()
+                && self.log.transaction_index.is_some()
+                && self.log.log_index.is_some(),
+            "Contract log is missing mined-event metadata"
+        );
+        Ok(LogMeta::from(&self.log))
+    }
+
+    pub async fn dispatch<H: GsyEventHandler + ?Sized>(&self, handler: &H) -> Result<()> {
+        let timestamp = self.block_timestamp;
+        match self.decode()? {
+            GsyContractsEvents::OrderPlacedFilter(event) => {
+                handler.handle_order_placed(event, timestamp).await
+            }
+            GsyContractsEvents::OrderCancelledFilter(event) => {
+                handler.handle_order_cancelled(event, timestamp).await
+            }
+            GsyContractsEvents::TradeSettledFilter(event) => {
+                handler.handle_trade_settled(event, timestamp).await
+            }
+            GsyContractsEvents::DeliveryVerifiedFilter(event) => {
+                handler.handle_delivery_verified(event, timestamp).await
+            }
+            GsyContractsEvents::PenaltyRecordedFilter(event) => {
+                handler.handle_penalty_recorded(event, timestamp).await
+            }
+            GsyContractsEvents::NewMarketCreatedFilter(event) => {
+                handler.handle_new_market_created(event).await
+            }
+            GsyContractsEvents::MarketClearingFilter(event) => {
+                handler
+                    .handle_market_clearing(event, self.metadata()?, timestamp)
+                    .await
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
 #[async_trait]
 pub trait GsyEventHandler: Send + Sync + 'static {
+    async fn handle_event(&self, event: ChainEvent) -> Result<()> {
+        event.dispatch(self).await
+    }
+
+    /// Retry deferred projections before applying this block's time-based transitions.
+    async fn finish_block(&self, _stream_id: &str, block_timestamp: u64) -> Result<()> {
+        self.handle_block(block_timestamp).await
+    }
     /// Resume this chain/contract set, or initialize its first live-only boundary.
     async fn start_block(&self, _stream_id: &str, live_start: u64) -> Result<u64> {
         Ok(live_start)
@@ -56,7 +125,7 @@ pub trait GsyEventHandler: Send + Sync + 'static {
         event: TradeSettledFilter,
         block_timestamp: u64,
     ) -> Result<()>;
-    /// Called after all contract events in a confirmed block have been indexed.
+    /// Called after contract events in an observed block have been handled.
     async fn handle_block(&self, _block_timestamp: u64) -> Result<()> {
         Ok(())
     }
@@ -160,9 +229,9 @@ impl<H: GsyEventHandler> GsyEthersListener<H> {
                     .await?;
                 logs.sort_by_key(|log| log.log_index);
                 for log in logs {
-                    self.handle_log(log, timestamp).await?;
+                    self.handle_log(&stream_id, log, timestamp).await?;
                 }
-                self.handler.handle_block(timestamp).await?;
+                self.handler.finish_block(&stream_id, timestamp).await?;
                 self.handler.checkpoint(&stream_id, number + 1).await?;
                 number += 1;
                 *next_block = Some(number);
@@ -177,54 +246,26 @@ impl<H: GsyEventHandler> GsyEthersListener<H> {
         }
     }
 
-    async fn handle_log(&self, log: Log, timestamp: u64) -> Result<()> {
-        let raw = ethers::abi::RawLog {
-            topics: log.topics.clone(),
-            data: log.data.to_vec(),
+    async fn handle_log(&self, stream_id: &str, log: Log, timestamp: u64) -> Result<()> {
+        let event = ChainEvent {
+            stream_id: stream_id.to_owned(),
+            log,
+            block_timestamp: timestamp,
         };
-        let event = <GsyContractsEvents as ethers::contract::EthLogDecode>::decode_log(&raw)
-            .map_err(|error| anyhow!("Contract event decode error: {:?}", error))?;
-        match event {
-            GsyContractsEvents::OrderPlacedFilter(event)
-                if log.address == self.config.order_registry_address =>
-            {
-                self.handler.handle_order_placed(event, timestamp).await
-            }
-            GsyContractsEvents::OrderCancelledFilter(event)
-                if log.address == self.config.order_registry_address =>
-            {
-                self.handler.handle_order_cancelled(event, timestamp).await
-            }
-            GsyContractsEvents::TradeSettledFilter(event)
-                if log.address == self.config.trade_settlement_address =>
-            {
-                self.handler.handle_trade_settled(event, timestamp).await
-            }
-            GsyContractsEvents::PenaltyRecordedFilter(event)
-                if log.address == self.config.trade_settlement_address =>
-            {
-                self.handler.handle_penalty_recorded(event, timestamp).await
-            }
-            GsyContractsEvents::DeliveryVerifiedFilter(event)
-                if log.address == self.config.trade_settlement_address =>
-            {
-                self.handler
-                    .handle_delivery_verified(event, timestamp)
-                    .await
-            }
-            GsyContractsEvents::NewMarketCreatedFilter(event)
-                if log.address == self.config.market_controller_address =>
-            {
-                self.handler.handle_new_market_created(event).await
-            }
-            GsyContractsEvents::MarketClearingFilter(event)
-                if log.address == self.config.trade_settlement_address =>
-            {
-                self.handler
-                    .handle_market_clearing(event, LogMeta::from(&log), timestamp)
-                    .await
-            }
-            _ => Ok(()),
+        let expected_address = match event.decode()? {
+            GsyContractsEvents::OrderPlacedFilter(_)
+            | GsyContractsEvents::OrderCancelledFilter(_) => self.config.order_registry_address,
+            GsyContractsEvents::NewMarketCreatedFilter(_) => self.config.market_controller_address,
+            GsyContractsEvents::TradeSettledFilter(_)
+            | GsyContractsEvents::PenaltyRecordedFilter(_)
+            | GsyContractsEvents::DeliveryVerifiedFilter(_)
+            | GsyContractsEvents::MarketClearingFilter(_) => self.config.trade_settlement_address,
+            _ => return Ok(()),
+        };
+        if event.log.address == expected_address {
+            event.metadata()?;
+            self.handler.handle_event(event).await?;
         }
+        Ok(())
     }
 }

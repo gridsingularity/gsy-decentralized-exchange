@@ -8,15 +8,17 @@ services with the generated proxy addresses.
 
 The DD-453 trade lifecycle targets fresh contract deployments and an empty
 off-chain database. Start the listener before submitting orders. No migration
-or reindexing tool is provided for older lifecycle records, and the listener
-does not persist its replay cursor across restarts.
+or reindexing tool is provided for older lifecycle records. The first listener
+start is live-only; subsequent restarts resume its MongoDB checkpoint. Unresolved
+events also persist in MongoDB and are retried on later blocks.
 
 ## Actor ID Hashing Key
 
 For a fresh DD-459 service deployment, provision one private `ACTOR_ID_HASH_KEY`
 (32 random bytes encoded as 64 hex characters, without `0x`). Storage, the
-execution engine and market orchestrator require it at startup; every trusted local actor-hash consumer,
-including test runners and the dummy trade generator, must use the same key.
+matching engine, execution engine and market orchestrator require it at startup.
+Every trusted local actor-hash consumer, including test runners, must use the same
+key. Trade-only import tooling uses off-chain parties and does not need the key.
 Generate it once using `openssl rand -hex 32`, distribute it through your secret
 manager or protected environment file, and keep it separate from wallet keys.
 Do not commit or log it. Missing/malformed configuration fails closed; there is
