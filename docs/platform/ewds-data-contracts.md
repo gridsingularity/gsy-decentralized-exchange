@@ -224,18 +224,21 @@ For an `order.event`, the community client builds the
 | Contract parameter | From |
 |---|---|
 | `orderId` | the 16 bytes of the `orderId` UUID |
-| `createdBy` | Facility owner ID, mapped to its on-chain ID by the ID service; not the facility ID or service wallet |
+| `createdBy` | Facility owner ID, hashed locally with the shared actor key; not the facility ID or service wallet |
 | `marketId` | the 16 bytes of `marketId` |
 | `timeSlot`, `creationTime` | `timeSlot`, `creationTime` as epoch seconds |
 | `energy`, `energyRate` | `quantity`, `priceLimit` × 10 000, rounded |
 | `isBid` | `orderType` is `bid` |
-| `energySourcePreference`, `preferredTradingPartner`, `preferredEnergyRate` | requirements for bids and offers (`energySourcePreference`, `preferredTradingPartner` mapped by the ID service, `preferredEnergyRate` × 10 000) |
+| `energySourcePreference`, `preferredTradingPartner`, `preferredEnergyRate` | requirements for bids and offers (`energySourcePreference`, registered preferred owner hashed locally, `preferredEnergyRate` × 10 000) |
 | `energyType` | the offer attributes (`energyType`) |
 
 Order and market IDs represent bytes16, not bytes32. `createdBy` and preferred
 partners in submissions, imports, queries and lifecycle notifications are original
 off-chain owner IDs, not hashes or wallet addresses. Actor hashes are used only
 for contract interaction and retained in the private mapping/raw pending events.
+An explicitly supplied preferred partner must be an owner with a registered
+facility; otherwise the client sends an `unknown_preferred_partner` rejection
+without placing that order. This check does not validate partner market eligibility.
 
 ## Validation Rules Applied from CSV
 

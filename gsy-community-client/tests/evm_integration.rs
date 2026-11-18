@@ -10,7 +10,7 @@ use primitives::db_api_schema::profiles::ForecastSchema;
 use primitives::utils::parse_uuid_or_hex_bytes16;
 use primitives::{MarketType, MatchingAlgorithm};
 use std::sync::Arc;
-use wiremock::matchers::{method, path, query_param};
+use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
 abigen!(
@@ -126,13 +126,10 @@ async fn test_publish_orders_calls_evm_order_registry() {
         compile_and_deploy_contract(client.clone(), source, "MockOrderRegistry").await;
     let mock_contract = MockOrderRegistry::new(contract_address, client.clone());
 
-    // Validation or ID-service failures must abort preparation before the first transaction.
-    for endpoint in ["/facilities/validate", "/ids"] {
-        let mut failure = Mock::given(method("POST")).and(path(endpoint));
-        if endpoint == "/ids" {
-            failure = failure.and(query_param("offchain_id", "owner-2"));
-        }
-        failure
+    // Topology or validation failures must abort preparation before the first transaction.
+    for (verb, endpoint) in [("GET", "/facilities"), ("POST", "/facilities/validate")] {
+        Mock::given(method(verb))
+            .and(path(endpoint))
             .respond_with(ResponseTemplate::new(500))
             .with_priority(1)
             .up_to_n_times(1)
@@ -176,7 +173,7 @@ async fn test_publish_orders_calls_evm_order_registry() {
     );
     assert_eq!(
         mock_contract.last_created_by().call().await.unwrap(),
-        parse_uuid_or_hex_bytes16(facilities::OWNER_2_ONCHAIN).unwrap()
+        parse_uuid_or_hex_bytes16(&primitives::utils::derive_onchain_id("owner-2")).unwrap()
     );
     assert_eq!(
         mock_contract.last_market_id().call().await.unwrap(),
@@ -210,7 +207,7 @@ async fn test_publish_orders_calls_evm_order_registry() {
         0
     );
 
-    // A later cross-community denial must not submit another order, even with an ID mapping.
+    // A later cross-community denial must not submit another order for a registered owner.
     Mock::given(method("POST"))
         .and(path("/facilities/validate"))
         .respond_with(|request: &Request| {
@@ -248,7 +245,7 @@ async fn test_publish_orders_calls_evm_order_registry() {
         .await
         .unwrap()
         .iter()
-        .all(|request| matches!(request.url.path(), "/facilities" | "/facilities/validate" | "/ids")));
+        .all(|request| matches!(request.url.path(), "/facilities" | "/facilities/validate")));
 }
 
 #[tokio::test]

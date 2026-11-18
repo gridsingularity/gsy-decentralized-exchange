@@ -282,8 +282,10 @@ There is no reindexing tool. See the
 - The preferred trading partner of a bid or an offer is stored in its
   requirements (`requirements.trading_partner_id`) as the original off-chain
   partner owner ID; attributes carry no partner.
-  Callers resolve these through `POST /ids` or EWDS `ids.query` before contract
-  submission. The event indexer uses the ID mapping collection to recover the
+  The community client checks the partner is a registered owner with a facility
+  and derives its keyed hash locally before contract submission. Partner market
+  eligibility is unchanged. Topology ingestion registers the mappings; the
+  event indexer uses the ID mapping collection to recover the
   owner IDs. The matcher compares those exact off-chain identities and derives
   their hashes locally only when building contract arguments. UUID-shaped owner
   IDs remain opaque identities, not already-encoded on-chain IDs.

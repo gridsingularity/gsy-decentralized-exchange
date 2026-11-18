@@ -1,7 +1,7 @@
 use crate::db_api_schema::grid_topology::{EnergyCommunitySchema, FacilitySchema};
 use crate::db_api_schema::ids::IdMappingSchema;
 use crate::db_api_schema::market::MarketSchema;
-use crate::db_api_schema::orders::{DbOrderSchema, DbRequirements};
+use crate::db_api_schema::orders::DbOrderSchema;
 use crate::db_api_schema::profiles::{MeasurementPointSchema, MeasurementSchema, TimeseriesSchema};
 use crate::db_api_schema::trades::DbTradeSchema;
 use crate::ewds::dto::{
@@ -519,19 +519,4 @@ impl CommunityProvider for OffchainStorageClient {
             OffchainStorageTransport::Ewds => self.fetch_communities_via_ewds().await,
         }
     }
-}
-
-/// Resolve off-chain owner IDs before converting submission metadata for the contract.
-/// Input identifiers are always off-chain IDs, including UUID and hex-shaped strings.
-pub async fn resolve_order_partner_ids(
-    requirements: &mut Option<DbRequirements>,
-    id_mapping_source: &OffchainStorageClient,
-) -> Result<()> {
-    if let Some(partner) = requirements
-        .as_mut()
-        .and_then(|value| value.trading_partner_id.as_mut())
-    {
-        *partner = id_mapping_source.fetch_onchain_id(partner).await?;
-    }
-    Ok(())
 }

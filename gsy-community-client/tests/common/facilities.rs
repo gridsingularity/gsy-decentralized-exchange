@@ -1,11 +1,7 @@
 use primitives::ewds::dto::FacilityMarketValidationRequest;
 use serde_json::json;
-use wiremock::matchers::{method, path, query_param};
+use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
-
-// Deliberately different from locally hashed IDs: callers must use the ID service's result.
-pub const OWNER_1_ONCHAIN: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-pub const OWNER_2_ONCHAIN: &str = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
 pub async fn setup_facilities_mock(facility_ids: [&str; 2]) -> MockServer {
     let server = MockServer::start().await;
@@ -42,17 +38,12 @@ pub async fn setup_facilities_mock(facility_ids: [&str; 2]) -> MockServer {
         .with_priority(10)
         .mount(&server)
         .await;
-    for (owner_id, onchain_id) in [("owner-1", OWNER_1_ONCHAIN), ("owner-2", OWNER_2_ONCHAIN)]
-    {
-        Mock::given(method("POST"))
-            .and(path("/ids"))
-            .and(query_param("offchain_id", owner_id))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "offchain_id": owner_id, "onchain_id": onchain_id, "creation_time": 0
-            })))
-            .mount(&server)
-            .await;
-    }
+    Mock::given(method("POST"))
+        .and(path("/ids"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(0)
+        .mount(&server)
+        .await;
     std::env::set_var("OFFCHAIN_STORAGE_URL", server.uri());
     std::env::set_var("OFFCHAIN_STORAGE_TRANSPORT", "http");
     std::env::set_var("EWDS_ENABLE_HANDLER", "false");

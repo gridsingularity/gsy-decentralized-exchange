@@ -116,6 +116,7 @@ services:
         condition: service_started
     environment:
       <<: *gsy-ewds-env
+      ACTOR_ID_HASH_KEY: ${ACTOR_ID_HASH_KEY:-}
       OFFCHAIN_STORAGE_TRANSPORT: ${OFFCHAIN_STORAGE_TRANSPORT:-http}
       OFFCHAIN_STORAGE_URL: "http://gsy-offchain-storage:8080"
       EVM_NODE_URL: ${EVM_NODE_URL:-ws://anvil:8545}

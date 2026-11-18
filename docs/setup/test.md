@@ -402,7 +402,10 @@ than a fixed count. Both algorithms also run the shared matching scenarios.
 
 HTTP scenarios submit orders from the E2E runner using `COMMUNITY_CLIENT_PRIVATE_KEY`,
 the same service key provisioned by deployment. The community-client binary only
-runs its EWDS subscriber. The runner uses `gsye2ecommunityclient` for community-client
+runs its EWDS subscriber. Both paths derive actor hashes locally with the shared
+`ACTOR_ID_HASH_KEY`, without forward ID-service requests. Custom HTTP orders also
+check preferred-owner registration and use UUIDv4 bytes for generated order IDs.
+The runner uses `gsye2ecommunityclient` for community-client
 EWDS queries, separately from the live subscriber's consumer ID; the local gateway
 must accept that client ID on the response channels.
 

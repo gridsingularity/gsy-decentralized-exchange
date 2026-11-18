@@ -14,7 +14,7 @@ use primitives::ewds::{
     EwdsTopicConfig,
 };
 use primitives::offchain_storage::{OffchainStorageClient, OffchainStorageTransport};
-use primitives::utils::{parse_uuid_or_hex_bytes16, rfc3339_to_epoch};
+use primitives::utils::{derive_onchain_id, parse_uuid_or_hex_bytes16, rfc3339_to_epoch};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
@@ -104,9 +104,6 @@ const BID_ID: &str = "3f2c6d1e-8a4b-4c7d-9e2f-1a5b6c7d8e9f";
 const OFFER_ID: &str = "9a1b2c3d-4e5f-4a6b-8c7d-0e1f2a3b4c5d";
 const OPEN_MARKET: &str = "0x11111111111111111111111111111111";
 const CLOSED_MARKET: &str = "0x22222222222222222222222222222222";
-/// On-chain IDs the mocked ID service maps `owner-1` and `owner-2` to.
-const OWNER_1_ONCHAIN: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-const OWNER_2_ONCHAIN: &str = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 /// 2026-09-30T10:00:00Z and 2026-09-30T09:40:12Z.
 const TIME_SLOT: u64 = 1_790_762_400;
 const CREATION_TIME: u64 = 1_790_761_212;
@@ -156,7 +153,7 @@ fn facilities() -> Value {
     ])
 }
 
-/// Mocks ownership, eligibility, ID resolution and the gateway's outbound messages.
+/// Mocks ownership, eligibility and outbound messages; ID lookups must not be used.
 async fn mock_id_service() -> MockServer {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
@@ -177,21 +174,10 @@ async fn mock_id_service() -> MockServer {
         .with_priority(10)
         .mount(&server)
         .await;
-    for (offchain_id, onchain_id) in [("owner-1", OWNER_1_ONCHAIN), ("owner-2", OWNER_2_ONCHAIN)] {
-        Mock::given(method("POST"))
-            .and(path("/ids"))
-            .and(query_param("offchain_id", offchain_id))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "offchain_id": offchain_id,
-                "onchain_id": onchain_id,
-                "creation_time": 0,
-            })))
-            .mount(&server)
-            .await;
-    }
     Mock::given(method("POST"))
         .and(path("/ids"))
-        .respond_with(ResponseTemplate::new(404))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(0)
         .with_priority(10)
         .mount(&server)
         .await;
@@ -261,7 +247,7 @@ async fn rejection_events(server: &MockServer) -> Vec<EwdsEventEnvelope<Vec<Ewds
             // Rejections must never be written to the order database through HTTP.
             assert!(matches!(
                 request.url.path(),
-                "/ids" | "/facilities" | "/facilities/validate" | "/api/v2/messages"
+                "/facilities" | "/facilities/validate" | "/api/v2/messages"
             ));
             if request.url.path() != "/api/v2/messages"
                 || request.method == wiremock::http::Method::GET
@@ -412,7 +398,7 @@ async fn places_a_bid_and_an_offer_with_their_contract_params() {
         vec![
             OrderParams {
                 order_id: bytes16(BID_ID),
-                created_by: bytes16(OWNER_1_ONCHAIN),
+                created_by: bytes16(&derive_onchain_id("owner-1")),
                 market_id: bytes16(OPEN_MARKET),
                 time_slot: TIME_SLOT,
                 creation_time: CREATION_TIME,
@@ -421,12 +407,12 @@ async fn places_a_bid_and_an_offer_with_their_contract_params() {
                 energy_source_preference: 1, // GREEN
                 energy_type: 0,
                 is_bid: true,
-                preferred_trading_partner: bytes16(OWNER_2_ONCHAIN),
+                preferred_trading_partner: bytes16(&derive_onchain_id("owner-2")),
                 preferred_energy_rate: 2_500,
             },
             OrderParams {
                 order_id: bytes16(OFFER_ID),
-                created_by: bytes16(OWNER_2_ONCHAIN),
+                created_by: bytes16(&derive_onchain_id("owner-2")),
                 market_id: bytes16(OPEN_MARKET),
                 time_slot: TIME_SLOT,
                 creation_time: CREATION_TIME,
@@ -435,7 +421,7 @@ async fn places_a_bid_and_an_offer_with_their_contract_params() {
                 energy_source_preference: 0,
                 energy_type: 2, // PV
                 is_bid: false,
-                preferred_trading_partner: bytes16(OWNER_1_ONCHAIN),
+                preferred_trading_partner: bytes16(&derive_onchain_id("owner-1")),
                 preferred_energy_rate: 1_500,
             },
         ]
@@ -460,13 +446,6 @@ async fn uuid_shaped_parties_preserve_case_and_rejections_echo_original_ids() {
         ))
         .mount(&server)
         .await;
-    for id in [buyer, seller] {
-        Mock::given(method("POST")).and(path("/ids"))
-            .and(query_param("offchain_id", id))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "offchain_id": id, "onchain_id": primitives::utils::derive_onchain_id(id), "creation_time": 0
-            }))).mount(&server).await;
-    }
     let mut rejected = bid();
     rejected["orderId"] = json!(BID_ID.to_uppercase());
     rejected["createdBy"] = json!(buyer.to_uppercase());
@@ -562,11 +541,95 @@ async fn skips_orders_that_are_already_placed() {
 }
 
 #[tokio::test]
+async fn unknown_partner_is_rejected_and_can_be_resubmitted_after_registration() {
+    let chain = deploy_mock_order_registry().await;
+    let server = mock_id_service().await;
+    let handler = handler(&chain, &server).await;
+    // Even a hash-shaped string is an off-chain owner ID, not an already resolved partner.
+    let partner = "0xabcdefabcdefabcdefabcdefabcdefab";
+    let mut submission = bid();
+    submission["preferredTradingPartner"] = json!(partner);
+    handler
+        .handle(event("unknown-partner", vec![submission.clone(), offer()]))
+        .await
+        .unwrap();
+    assert_eq!(placed_orders(&chain).await[0].order_id, bytes16(OFFER_ID));
+    let rejections = rejection_events(&server).await;
+    assert_eq!(rejections.len(), 1);
+    assert_rejection(
+        &rejections[0],
+        submission.clone(),
+        &format!("Preferred partner {partner} has no associated facility: unknown_preferred_partner"),
+    );
+
+    let mut topology = facilities();
+    topology.as_array_mut().unwrap().push(json!({
+        "facility_id": "partner-facility", "facility_name": "partner",
+        "site_id": "another-site", "owner_id": partner
+    }));
+    Mock::given(method("GET"))
+        .and(path("/facilities"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(topology))
+        .mount(&server)
+        .await;
+    handler
+        .handle(event("registered-partner", vec![submission]))
+        .await
+        .unwrap();
+    let orders = placed_orders(&chain).await;
+    assert_eq!(orders.len(), 2);
+    assert_eq!(orders[1].order_id, bytes16(BID_ID));
+    assert_eq!(
+        orders[1].preferred_trading_partner,
+        bytes16(&derive_onchain_id(partner))
+    );
+    assert_ne!(orders[1].preferred_trading_partner, bytes16(partner));
+    assert_eq!(rejection_events(&server).await.len(), 1);
+    // Only the submitting facilities are market-validated, not the partner's facility.
+    let requests = server.received_requests().await.unwrap();
+    let validations: Vec<Value> = requests
+        .iter()
+        .filter(|request| request.url.path() == "/facilities/validate")
+        .map(|request| serde_json::from_slice(&request.body).unwrap())
+        .collect();
+    assert_eq!(
+        validations,
+        vec![
+            json!([{"facility_id": "facility-2", "market_id": OPEN_MARKET}]),
+            json!([{"facility_id": "facility-1", "market_id": OPEN_MARKET}]),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn an_unknown_partner_on_a_duplicate_does_not_reject_the_placed_order() {
+    for rejected_first in [true, false] {
+        let chain = deploy_mock_order_registry().await;
+        let server = mock_id_service().await;
+        let mut duplicate = bid();
+        duplicate["preferredTradingPartner"] = json!("unregistered-owner");
+        let orders = if rejected_first {
+            vec![duplicate, bid()]
+        } else {
+            vec![bid(), duplicate]
+        };
+        handler(&chain, &server)
+            .await
+            .handle(event("duplicates", orders))
+            .await
+            .unwrap();
+        assert_eq!(placed_orders(&chain).await.len(), 1);
+        assert_eq!(sent_transactions(&chain).await, 3);
+        assert!(rejection_events(&server).await.is_empty());
+    }
+}
+
+#[tokio::test]
 async fn rejects_ineligible_orders_before_id_resolution_and_places_eligible_orders() {
     let chain = deploy_mock_order_registry().await;
     let id_service = mock_id_service().await;
     let handler = handler(&chain, &id_service).await;
-    // owner-1 already has an ID mapping. That alone must not establish eligibility.
+    // A registered owner alone must not establish market eligibility.
     for (reason, label) in [
         ("unknown_facility", "unknown_facility"),
         ("unknown_market", "unknown_market"),
@@ -670,10 +733,10 @@ async fn validation_failures_remain_retryable_without_submission_or_rejection() 
 }
 
 #[tokio::test]
-async fn an_owner_mapping_without_a_facility_is_rejected_before_id_resolution() {
+async fn an_owner_without_a_facility_is_rejected_before_submission() {
     let chain = deploy_mock_order_registry().await;
     let server = mock_id_service().await;
-    // The ID service still knows owner-1, but topology no longer has its facility.
+    // Deriving an owner hash must not establish facility registration.
     Mock::given(method("GET"))
         .and(path("/facilities"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
@@ -747,6 +810,12 @@ async fn confirmed_orders_skip_validation_on_retry_after_topology_changes() {
     let id_service = mock_id_service().await;
     let handler = handler(&chain, &id_service).await;
     handler.handle(event("event-1", vec![bid()])).await.unwrap();
+    Mock::given(method("GET"))
+        .and(path("/facilities"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+        .expect(0)
+        .mount(&id_service)
+        .await;
     let validation = Mock::given(method("POST"))
         .and(path("/facilities/validate"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
@@ -914,7 +983,7 @@ async fn subscriber_refuses_to_start_without_the_service_role() {
 
 #[tokio::test]
 #[serial_test::serial]
-async fn validates_over_ewds_before_resolving_ids_or_placing_orders() {
+async fn validates_over_ewds_and_derives_ids_locally_before_placing_orders() {
     let chain = deploy_mock_order_registry().await;
     let gateway = MockServer::start().await;
     let pending = Arc::new(std::sync::Mutex::new(Value::Null));
@@ -937,10 +1006,6 @@ async fn validates_over_ewds_before_resolving_ids_or_placing_orders() {
                             {"facility_id": "facility-2", "market_id": OPEN_MARKET, "eligible": true}
                         ])
                     }
-                    "ids.query" => {
-                        assert_eq!(payload["payload"]["offchain_id"], "owner-2");
-                        json!([{"offchain_id": "owner-2", "onchain_id": OWNER_2_ONCHAIN, "creation_time": 0}])
-                    }
                     other => panic!("unexpected query {other}"),
                 };
                 *sent.lock().unwrap() = json!({"requestId": payload["requestId"], "success": true, "data": data});
@@ -960,9 +1025,15 @@ async fn validates_over_ewds_before_resolving_ids_or_placing_orders() {
     std::env::set_var("EWDS_GATEWAY_URL", gateway.uri());
     let mut eligible = offer();
     eligible["preferredTradingPartner"] = Value::Null;
+    let mut unknown_partner = bid();
+    unknown_partner["orderId"] = json!(uuid::Uuid::new_v4().to_string());
+    unknown_partner["preferredTradingPartner"] = json!("unregistered-owner");
     let result = handler_with_transport(&chain, &gateway, OffchainStorageTransport::Ewds)
         .await
-        .handle(event("event-1", vec![bid(), eligible]))
+        .handle(event(
+            "event-1",
+            vec![bid(), eligible, unknown_partner.clone()],
+        ))
         .await;
     match previous_gateway {
         Some(url) => std::env::set_var("EWDS_GATEWAY_URL", url),
@@ -972,12 +1043,38 @@ async fn validates_over_ewds_before_resolving_ids_or_placing_orders() {
     assert_eq!(placed_orders(&chain).await[0].order_id, bytes16(OFFER_ID));
     assert_eq!(sent_transactions(&chain).await, 3);
     let notifications = rejection_events(&gateway).await;
-    assert_eq!(notifications.len(), 1);
+    assert_eq!(notifications.len(), 2);
     assert_rejection(
         &notifications[0],
+        unknown_partner,
+        "Preferred partner unregistered-owner has no associated facility: unknown_preferred_partner",
+    );
+    assert_rejection(
+        &notifications[1],
         bid(),
         &format!("Facility facility-1 of owner owner-1 cannot participate in market {OPEN_MARKET}: unknown_facility"),
     );
+}
+
+#[test]
+fn subscriber_requires_a_valid_actor_hash_key_at_startup() {
+    for key in [None, Some("invalid")] {
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_gsy-community-client"));
+        command
+            .env("EWDS_ENABLE_HANDLER", "true")
+            .env_remove("ACTOR_ID_HASH_KEY");
+        if let Some(key) = key {
+            command.env("ACTOR_ID_HASH_KEY", key);
+        }
+        let output = command.output().unwrap();
+        assert!(!output.status.success());
+        let logs = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(logs.contains("ACTOR_ID_HASH_KEY"), "{logs}");
+    }
 }
 
 #[tokio::test]
@@ -1039,19 +1136,6 @@ async fn rejects_the_whole_event_when_one_order_is_invalid() {
     let chain = deploy_mock_order_registry().await;
     let id_service = mock_id_service().await;
     let handler = handler(&chain, &id_service).await;
-    let mut topology = facilities();
-    topology.as_array_mut().unwrap().push(json!({
-        "facility_id": "unmapped-owner-facility", "facility_name": "unmapped",
-        "site_id": "site-1", "owner_id": "unknown-owner"
-    }));
-    Mock::given(method("GET"))
-        .and(path("/facilities"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(topology))
-        .with_priority(1)
-        .mount(&id_service)
-        .await;
-
-    // Ownership is known, but an unavailable ID mapping remains retryable; invalid data does not.
     for (field, value, expected, invalid_data) in [
         ("orderId", json!("order-1"), "is not a non-zero UUID", true),
         (
@@ -1086,13 +1170,6 @@ async fn rejects_the_whole_event_when_one_order_is_invalid() {
             json!("owner-1 "),
             "preferredTradingPartner",
             true,
-        ),
-        ("createdBy", json!("unknown-owner"), "createdBy", false),
-        (
-            "preferredTradingPartner",
-            json!("unknown-owner"),
-            "preferredTradingPartner",
-            false,
         ),
         ("marketId", json!("market-1"), "marketId", true),
         (
@@ -1223,7 +1300,7 @@ async fn order_registry_client_waits_for_mining_and_detects_execution_reverts() 
         let mut order =
             DbOrderSchema::try_from(serde_json::from_value::<EwdsOrderDto>(offer()).unwrap())
                 .unwrap();
-        order.created_by = OWNER_2_ONCHAIN.to_string();
+        order.created_by = derive_onchain_id("owner-2");
         order.requirements = None;
         let params = order_params(&order).unwrap();
         let client = chain.contract.client();
@@ -1307,7 +1384,7 @@ async fn order_registry_client_reports_why_the_contract_rejected_an_order() {
     .unwrap();
     let mut order: DbOrderSchema =
         DbOrderSchema::try_from(serde_json::from_value::<EwdsOrderDto>(offer()).unwrap()).unwrap();
-    order.created_by = OWNER_2_ONCHAIN.to_string();
+    order.created_by = derive_onchain_id("owner-2");
     order.requirements = None;
     let params = order_params(&order).unwrap();
 

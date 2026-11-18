@@ -16,7 +16,8 @@ events also persist in MongoDB and are retried on later blocks.
 
 For a fresh DD-459 service deployment, provision one private `ACTOR_ID_HASH_KEY`
 (32 random bytes encoded as 64 hex characters, without `0x`). Storage, the
-matching engine, execution engine and market orchestrator require it at startup.
+matching engine, execution engine, market orchestrator and enabled community-client
+subscriber require it at startup. Forecast order creation also requires it.
 Every trusted local actor-hash consumer, including test runners, must use the same
 key. Trade-only import tooling uses off-chain parties and does not need the key.
 Generate it once using `openssl rand -hex 32`, distribute it through your secret

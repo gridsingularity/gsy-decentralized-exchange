@@ -9,10 +9,10 @@ use primitives::db_api_schema::orders::{
 };
 use primitives::ewds::dto::{EwdsEventEnvelope, EwdsOrderDto, FacilityMarketValidationRequest};
 use primitives::ewds::{env_var, invalid_event, parse_batch, EwdsClient, EwdsEventType};
-use primitives::offchain_storage::{resolve_order_partner_ids, OffchainStorageClient};
+use primitives::offchain_storage::OffchainStorageClient;
 use primitives::utils::{
-    bytes16_to_hex, epoch_to_rfc3339, normalize_offchain_id, parse_nonzero_uuid_or_hex_bytes16,
-    NODE_FLOAT_SCALING_FACTOR,
+    bytes16_to_hex, derive_onchain_id, epoch_to_rfc3339, normalize_offchain_id,
+    parse_nonzero_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR,
 };
 use serde_json::Value;
 use std::collections::HashMap;
@@ -34,6 +34,7 @@ const NODE_HEALTH_CHECK_TIMEOUT_MS: u64 = 10_000;
 /// task is dropped, and only returns early if the node or the configuration is unusable, or the
 /// connection to the node is lost for good.
 pub async fn start_order_event_subscriber() -> Result<()> {
+    primitives::actor_ids::initialize_actor_id_hashing()?;
     let evm_node_url = env_var("EVM_NODE_URL").unwrap_or_else(|| "ws://anvil:8545".to_string());
     let order_registry_address =
         env_var("ORDER_REGISTRY_ADDRESS").context("ORDER_REGISTRY_ADDRESS is not set")?;
@@ -123,11 +124,13 @@ impl OrderEventHandler {
     /// Sends the orders of an `order.event` to the `OrderRegistry`.
     ///
     /// Resolves owners to facilities and validates their market participation before submission.
-    /// Invalid input, unavailable validation or unresolved IDs fail the event before submission.
+    /// Preferred partners must also be registered owners, but are not market-validated here.
+    /// Invalid input or unavailable validation fails the event before submission.
     /// Ineligible orders and contract rejections are reported to the EWDS; eligible orders continue.
     /// Infrastructure failures remain retryable, with confirmed orders skipped on retry.
     /// A sent order succeeds only after its receipt confirms successful execution.
     pub async fn handle(&self, envelope: EwdsEventEnvelope<Value>) -> Result<()> {
+        primitives::actor_ids::initialize_actor_id_hashing()?;
         let event_id = envelope.event_id;
         let orders = parse_batch(envelope.data, |submission: EwdsOrderDto| {
             let order = DbOrderSchema::try_from(submission.clone()).and_then(validate_order)?;
@@ -180,20 +183,32 @@ impl OrderEventHandler {
             .await
             .context("Facility participation validation failed")?;
 
-        for ((index, submission, order, facility_id), result) in pending.into_iter().zip(validation) {
+        for ((index, submission, mut order, facility_id), result) in
+            pending.into_iter().zip(validation)
+        {
             if let Some(reason) = result.reason {
                 let reason = format!(
                     "Facility {} of owner {} cannot participate in market {}: {}",
-                    facility_id, order.created_by, order.market_id, reason.as_str()
+                    facility_id,
+                    order.created_by,
+                    order.market_id,
+                    reason.as_str()
                 );
                 params.push((submission, Err(reason)));
                 continue;
             }
             let order_id = order.order_id.clone();
-            let order = self
-                .resolve_ids(order)
-                .await
-                .and_then(|order| order_params(&order).map_err(invalid_event))
+            order.created_by = derive_onchain_id(&order.created_by);
+            order.area_uuid = order.created_by.clone();
+            if let Some(partner) = order
+                .requirements
+                .as_mut()
+                .and_then(|r| r.trading_partner_id.as_mut())
+            {
+                *partner = derive_onchain_id(partner);
+            }
+            let order = order_params(&order)
+                .map_err(invalid_event)
                 .with_context(|| format!("invalid order {} at index {}", order_id, index))?;
             // Keep the submitted IDs so a rejection can echo the original order to FOS.
             params.push((submission, Ok(order)));
@@ -274,7 +289,7 @@ impl OrderEventHandler {
     }
 
     /// Resolves pending orders to their owners' facilities and separates rejection candidates.
-    /// Missing facilities are rejected; unavailable or ambiguous ownership remains retryable.
+    /// Missing submitting/partner owners are rejected; unavailable or ambiguous ownership is retryable.
     async fn validate_owner_facilities(
         &self,
         pending: Vec<(usize, EwdsOrderDto, DbOrderSchema)>,
@@ -301,7 +316,23 @@ impl OrderEventHandler {
             .into_iter()
             .filter_map(|(index, submission, order)| {
                 match owner_facilities.get(&order.created_by) {
-                    Some(facility_id) => Some((index, submission, order, facility_id.clone())),
+                    Some(facility_id) => {
+                        if let Some(partner) = order
+                            .requirements
+                            .as_ref()
+                            .and_then(|r| r.trading_partner_id.as_ref())
+                        {
+                            if !owner_facilities.contains_key(partner) {
+                                let reason = format!(
+                                    "Preferred partner {} has no associated facility: unknown_preferred_partner",
+                                    partner
+                                );
+                                rejected.push((submission, reason));
+                                return None;
+                            }
+                        }
+                        Some((index, submission, order, facility_id.clone()))
+                    }
                     None => {
                         let reason = format!(
                             "Owner {} has no associated facility: unknown_facility",
@@ -314,20 +345,6 @@ impl OrderEventHandler {
             })
             .collect();
         Ok((pending, rejected))
-    }
-
-    /// Replaces the off-chain owner and preferred-owner IDs with their on-chain IDs.
-    async fn resolve_ids(&self, mut order: DbOrderSchema) -> Result<DbOrderSchema> {
-        order.created_by = self
-            .offchain_storage_client
-            .fetch_onchain_id(&order.created_by)
-            .await
-            .with_context(|| format!("createdBy '{}' could not be resolved", order.created_by))?;
-        order.area_uuid = order.created_by.clone();
-        resolve_order_partner_ids(&mut order.requirements, &self.offchain_storage_client)
-            .await
-            .context("preferredTradingPartner could not be resolved")?;
-        Ok(order)
     }
 
     /// Sends one order, retrying transport errors. An order that is already on-chain, or that

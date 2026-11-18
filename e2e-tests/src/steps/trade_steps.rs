@@ -14,11 +14,9 @@ use primitives::db_api_schema::profiles::MeasurementSchema;
 use primitives::db_api_schema::trades::{DbTradeSchema, TradeStatus};
 use primitives::ewds::dto::FacilityMarketValidationRequest;
 use primitives::matching::matching_block_interval;
-use primitives::offchain_storage::{
-    resolve_order_partner_ids, OffchainStorageClient, OffchainStorageTransport,
-};
+use primitives::offchain_storage::{OffchainStorageClient, OffchainStorageTransport};
 use primitives::utils::{
-    bytes16_to_hex, create_encrypted_bytes16_from_string, parse_uuid_or_hex_bytes16,
+    bytes16_to_hex, derive_onchain_id, parse_uuid_or_hex_bytes16,
     rfc3339_to_epoch, timestamp_to_string_with_padding, NODE_FLOAT_SCALING_FACTOR,
 };
 use std::collections::HashSet;
@@ -394,15 +392,8 @@ async fn place_custom_order_for_market(
     let owner_id = facility_owner_mapping
         .get(&facility_id)
         .expect("Missing facility owner");
-    let actor_id = parse_uuid_or_hex_bytes16(
-        &id_mapping_source
-            .fetch_onchain_id(owner_id)
-            .await
-            .unwrap(),
-    )
-    .unwrap();
-    let order_id = Uuid::new_v4().to_string();
-    let order_id_bytes = create_encrypted_bytes16_from_string(&order_id);
+    let actor_id = parse_uuid_or_hex_bytes16(&derive_onchain_id(owner_id)).unwrap();
+    let order_id_bytes = *Uuid::new_v4().as_bytes();
     let mut requirements = requirements;
     if let Some(partner) = requirements
         .as_mut()
@@ -417,9 +408,16 @@ async fn place_custom_order_for_market(
         }
     }
     let mut resolved_requirements = requirements.clone();
-    resolve_order_partner_ids(&mut resolved_requirements, &id_mapping_source)
-        .await
-        .expect("Failed to resolve order partner IDs");
+    if let Some(partner) = resolved_requirements
+        .as_mut()
+        .and_then(|r| r.trading_partner_id.as_mut())
+    {
+        assert!(
+            facility_owner_mapping.values().any(|owner| owner == partner),
+            "Unregistered preferred owner"
+        );
+        *partner = derive_onchain_id(partner);
+    }
     let metadata = order_metadata_to_contract(resolved_requirements.as_ref(), attributes.as_ref())
         .expect("Invalid resolved order metadata");
 

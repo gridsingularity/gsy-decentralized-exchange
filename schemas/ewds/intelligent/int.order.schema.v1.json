@@ -115,7 +115,7 @@
       "default": null
     },
     "preferredTradingPartner": {
-      "description": "Off-chain owner identity of the preferred counterparty of a bid or offer. Unpadded strings are preserved exactly and stay case-sensitive, including UUID-shaped strings. Hex-shaped strings are off-chain identities, not resolved hashes. Rejections echo the input. IRI: int:preferredTradingPartner. Nullable.",
+      "description": "Off-chain owner identity of the preferred counterparty of a bid or offer. For submission, the owner must have a registered facility; partner market eligibility is not checked. Unpadded strings are preserved exactly and stay case-sensitive, including UUID-shaped strings. Hex-shaped strings are off-chain identities, not resolved hashes. Rejections echo the input. IRI: int:preferredTradingPartner. Nullable.",
       "type": [
         "string",
         "null"

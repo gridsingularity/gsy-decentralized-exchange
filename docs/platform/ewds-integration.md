@@ -380,22 +380,22 @@ returns (`int.order.event.v1.json`):
 |---|---|
 | `orderId` | A non-zero bytes16 ID chosen by the publisher, as a hyphenated UUID, `0x` plus 32 hex digits, or bare 32 hex digits. Its bytes become the on-chain order ID; queries and lifecycle notifications use lowercase `0x` hex. Rejections echo the submitted spelling. |
 | `marketId` | The market's non-zero UUID or bytes16 hex ID, e.g. from `markets.query`. The contract still checks that the market is open. |
-| `createdBy` | The original off-chain owner ID. The subscriber resolves its facility and validates that facility's market participation before mapping the owner to an on-chain ID. It is not the facility ID or service wallet. This deployment guarantees one facility per owner. |
+| `createdBy` | The original off-chain owner ID. The subscriber resolves its facility and validates that facility's market participation before deriving the owner's keyed hash locally. It is not the facility ID or service wallet. This deployment guarantees one facility per owner. |
 | `orderStatus` | Must be `submitted`. |
 | `quantity` | Greater than 0, in kWh. |
 | `priceLimit` | 0 or more, in EUR/kWh. |
-| `preferredTradingPartner` | The partner's off-chain owner ID, resolved like `createdBy`. Stored in requirements for both bids and offers. |
+| `preferredTradingPartner` | A registered off-chain owner with a facility, hashed locally for the contract. Partner market eligibility is not checked. Stored in requirements for both bids and offers. |
 | `updatedAt`, `rejectReason` | Ignored. |
 
 Handling rules:
 
 - Parsing and field validation must pass for the whole event. Already-confirmed
   orders are skipped before checking eligibility. The remaining facility/market
-  pairs are validated in one HTTP or EWDS request before resolving any IDs.
+  pairs are validated in one HTTP or EWDS request before deriving actor hashes locally.
 - Ineligible orders are reported through `orderStatus.event` with the reason,
   without creating DB records or calling `placeOrder`. The client rechecks that
   the order has not been placed meanwhile before reporting rejection.
-  Eligible orders continue; their IDs must all resolve before submission.
+  Eligible orders continue; no forward ID-service requests are needed.
 - Validation-service errors and incomplete/inconsistent responses fail the event
   without submission or rejection notifications and remain retryable.
 - The orders are then sent one at a time. The community client waits for
@@ -415,8 +415,11 @@ Handling rules:
     community client retries it like the off-chain storage retries its events
     (see [Inbound Events](#inbound-events)). Orders already on-chain are
     skipped then.
-- An ID the ID service doesn't know may be registered later, so an event that
-  fails on it is retried as well; invalid order data is not.
+- An unknown submitting owner or preferred owner is rejected with
+  `unknown_facility` or `unknown_preferred_partner`, respectively. FOS can resubmit
+  after its facility is registered. Unavailable/ambiguous topology remains retryable;
+  malformed order data is not. Storage registers reverse mappings during topology
+  ingestion, not as a side effect of order submission.
 - Resending an event, even under a new `eventId`, doesn't place an order
   twice. A resend while the first transaction is still pending sends the
   order again, but that duplicate reverts with `OrderAlreadyExists`.

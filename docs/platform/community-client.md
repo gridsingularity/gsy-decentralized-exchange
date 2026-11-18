@@ -18,8 +18,8 @@ publication.
 The client uses the external facility topology to validate forecast and
 measurement facility IDs. It does not create markets: the orchestrator creates
 them on-chain and off-chain storage indexes them from `NewMarketCreated`. The
-client reads the market for a timeslot from off-chain storage; market IDs use
-the same deterministic scheme as the orchestrator.
+client reads the market for a timeslot from off-chain storage. Market UUIDs are
+assigned by the orchestrator; the contract enforces community/type/slot uniqueness.
 
 ## Order Publication Logic
 
@@ -31,9 +31,10 @@ For each forecast:
 
 Before submission, the client validates all non-zero forecasts' facility/market
 pairs through HTTP `/facilities/validate` or EWDS `facilities.validate`.
-The client reads the facility-to-owner mapping from stored topology. Only eligible
-facilities' owners are resolved through the ID service. `createdBy` uses that
-owner's on-chain ID, independently of the submitting service wallet.
+The client reads the facility-to-owner mapping from stored topology. It derives
+eligible owners' keyed hashes locally using `ACTOR_ID_HASH_KEY`, without ID-service
+requests. `createdBy` uses that owner's on-chain ID, independently of the submitting
+service wallet. Generated order IDs use UUIDv4 bytes directly, without hashing.
 This deployment guarantees one facility per owner and one owner per facility.
 
 Ineligible forecasts are skipped and logged. When `EWDS_ENABLE_HANDLER` is enabled,
@@ -41,7 +42,7 @@ they also produce the existing `orderStatus.event` rejection notification with a
 generated order ID, original owner ID and validation reason; no DB order is
 created. A forecast without a facility-to-owner mapping is only logged and skipped,
 because no owner identity is available for its notification.
-HTTP-only runs do not require a gateway. Topology/validation/ID-service errors
+HTTP-only runs do not require a gateway. Topology/validation errors
 propagate before any order is sent, allowing the caller to retry. All eligible
 orders are prepared before rejection notifications are published. The existing
 forecast quantity/rate calculations and transaction submission loop are unchanged.
@@ -70,9 +71,10 @@ the channel are dropped. For every event it:
 1. parses and checks all orders (non-zero UUID/hex `orderId` and `marketId`,
    `orderStatus` `submitted`, `quantity` above 0, `priceLimit` 0 or more);
 2. skips orders already placed on-chain (latest block), resolves each remaining
-   `createdBy` owner to its facility, then validates those facility/market pairs through
+   `createdBy` owner to its facility and checks any preferred partner is also a
+   registered owner with a facility, then validates the submitting facility/market pairs through
    HTTP `/facilities/validate` or EWDS `facilities.validate`;
-3. resolves IDs only for eligible orders. `createdBy` is the original owner
+3. derives actor hashes locally only for eligible orders. `createdBy` is the original owner
    ID, not the facility ID or the submitting wallet. Having an ID mapping does
    not establish eligibility. Ineligible orders receive a `rejected`
    `orderStatus.event` notification with the validation reason, without a DB
@@ -83,19 +85,23 @@ the channel are dropped. For every event it:
    orders are still processed.
 
 An owner without an associated facility receives an `unknown_facility` rejection.
+An unknown preferred owner receives an `unknown_preferred_partner` rejection.
+Partner registration uses the same topology lookup, with no extra request; it does
+not check the partner facility's market eligibility. An ID mapping alone does not
+establish registration. After registration, FOS can resubmit the rejected order ID.
 Unavailable topology or multiple facilities for one owner fail the event before
 submission, without rejecting individual orders; the event remains retryable.
 
-Malformed input or unresolved eligible-order IDs fail the event before any
+Malformed input fails the event before any
 submission. Unavailable validation or incomplete/inconsistent responses do
 the same, without rejection notifications. An event that fails for another
-reason than invalid data, e.g. because the node, validation service or ID
-service can't be reached, is retried with a growing delay
+reason than invalid data, e.g. because the node or validation service
+can't be reached, is retried with a growing delay
 (`EWDS_EVENT_HANDLE_ATTEMPTS`, `EWDS_EVENT_RETRY_DELAY_MS`), and later events
 wait for it.
 
 `createdBy` and an explicitly supplied `preferredTradingPartner` must be nonempty
-and unpadded. Actor spelling is preserved exactly before eligibility and ID lookup;
+and unpadded. Actor spelling is preserved exactly before eligibility and hashing;
 UUID-shaped and hex-shaped strings are also case-sensitive.
 An absent partner is allowed. A malformed identity invalidates the whole batch
 before any storage calls or submissions and is logged without a rejection
@@ -144,16 +150,19 @@ the role is restored, FOS can resubmit the same order ID; no rejected DB order e
 - `EVM_NODE_URL` (default `ws://anvil:8545`)
 - `ORDER_REGISTRY_ADDRESS` (required for order events)
 - `COMMUNITY_CLIENT_PRIVATE_KEY` (required for order events)
+- `ACTOR_ID_HASH_KEY`: shared actor-pseudonym key, separate from wallet keys; see
+  [key provisioning](../setup/contracts.md#actor-id-hashing-key). Required at subscriber
+  startup and by forecast order creation; missing/malformed values fail before submission.
 - `EWDS_ENABLE_HANDLER`: starts the order event subscriber
 - `EWDS_COMMUNITY_CLIENT_ID` (default `gsycommunityclient`): EWDS client ID.
-  The events channel is polled as `<id>events`; ID service queries over EWDS
+  The events channel is polled as `<id>events`; topology and validation queries over EWDS
   poll their response topic as `<id><responseTopic>`.
 - `EWDS_ORDER_EVENT_TOPIC`, `EWDS_EVENT_SUBSCRIBE_FQCN`,
   `EWDS_EVENT_BATCH_SIZE` (default 100), `EWDS_EVENT_POLL_INTERVAL_MS`
   (default 1 000 ms), `EWDS_EVENT_HANDLE_ATTEMPTS`
   (default 8), `EWDS_EVENT_RETRY_DELAY_MS` (default 2 000 ms) and the shared
   EWDS gateway settings
-- `OFFCHAIN_STORAGE_TRANSPORT` / `OFFCHAIN_STORAGE_URL` for eligibility and ID queries
+- `OFFCHAIN_STORAGE_TRANSPORT` / `OFFCHAIN_STORAGE_URL` for topology and eligibility queries
 - `EWDS_FACILITIES_VALIDATION_REQUEST_TOPIC` / `EWDS_FACILITIES_VALIDATION_RESPONSE_TOPIC`
   for eligibility queries when EWDS transport is selected
 - external source URLs for facility topology/forecasts/measurements
@@ -172,3 +181,8 @@ to find facilities under the one-facility-per-owner guarantee. Certificate
 `owner_id` retains the original owner ID, while `facility_id` identifies the facility.
 Ownership history is not tracked; historical ownership changes remain a separate
 follow-up.
+
+Topology ingestion registers the actor mappings in storage before orders are
+submitted. The client no longer creates mappings during submission. Lifecycle
+records still come only from indexed on-chain events; unresolved mappings are
+handled by storage's durable pending-event processing.

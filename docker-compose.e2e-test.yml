@@ -139,6 +139,7 @@ services:
         condition: service_healthy
     environment:
       <<: *gsy-ewds-env
+      ACTOR_ID_HASH_KEY: ${ACTOR_ID_HASH_KEY:-000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f}
       OFFCHAIN_STORAGE_TRANSPORT: ${OFFCHAIN_STORAGE_TRANSPORT:-http}
       OFFCHAIN_STORAGE_URL: "http://gsy-offchain-storage:8080"
       EVM_NODE_URL: ${EVM_NODE_URL:-ws://anvil:8545}
