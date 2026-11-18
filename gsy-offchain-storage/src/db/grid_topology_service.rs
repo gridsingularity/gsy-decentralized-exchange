@@ -1,3 +1,4 @@
+use crate::db::id_service::IdService;
 use crate::db::DatabaseWrapper;
 use anyhow::{anyhow, Result};
 use futures::TryStreamExt;
@@ -197,12 +198,12 @@ impl Deref for PilotSiteService {
     }
 }
 
-#[repr(transparent)]
-pub struct EnergyCommunityService(pub Collection<EnergyCommunitySchema>);
+pub struct EnergyCommunityService(pub Collection<EnergyCommunitySchema>, IdService);
 
 impl EnergyCommunityService {
     pub async fn insert(&self, mut community: EnergyCommunitySchema) -> Result<EnergyCommunitySchema> {
         community.community_id = normalize_community_id(&community.community_id)?;
+        self.1.get_or_create(community.community_id.clone()).await?;
         self.0.insert_one(community.clone()).await?;
         Ok(community)
     }
@@ -247,6 +248,7 @@ impl EnergyCommunityService {
 
     pub async fn upsert(&self, mut community: EnergyCommunitySchema) -> Result<EnergyCommunitySchema> {
         community.community_id = normalize_community_id(&community.community_id)?;
+        self.1.get_or_create(community.community_id.clone()).await?;
         let community_doc = bson::to_document(&community)?;
         self.0
             .update_one(
@@ -265,7 +267,7 @@ impl EnergyCommunityService {
 
 impl From<&DatabaseWrapper> for EnergyCommunityService {
     fn from(db: &DatabaseWrapper) -> Self {
-        EnergyCommunityService(db.collection("communities"))
+        EnergyCommunityService(db.collection("communities"), db.ids())
     }
 }
 
@@ -276,11 +278,12 @@ impl Deref for EnergyCommunityService {
     }
 }
 
-#[repr(transparent)]
-pub struct SiteService(pub Collection<SiteSchema>);
+pub struct SiteService(pub Collection<SiteSchema>, IdService);
 
 impl SiteService {
     pub async fn insert(&self, site: SiteSchema) -> Result<SiteSchema> {
+        let site = site.normalize_ids()?;
+        self.1.get_or_create(site.site_name.clone()).await?;
         self.0.insert_one(site.clone()).await?;
         Ok(site)
     }
@@ -290,6 +293,8 @@ impl SiteService {
     }
 
     pub async fn upsert(&self, site: SiteSchema) -> Result<SiteSchema> {
+        let site = site.normalize_ids()?;
+        self.1.get_or_create(site.site_name.clone()).await?;
         let site_doc = bson::to_document(&site)?;
         self.0
             .update_one(
@@ -308,7 +313,7 @@ impl SiteService {
 
 impl From<&DatabaseWrapper> for SiteService {
     fn from(db: &DatabaseWrapper) -> Self {
-        SiteService(db.collection("sites"))
+        SiteService(db.collection("sites"), db.ids())
     }
 }
 
@@ -319,11 +324,12 @@ impl Deref for SiteService {
     }
 }
 
-#[repr(transparent)]
-pub struct FacilityService(pub Collection<FacilitySchema>);
+pub struct FacilityService(pub Collection<FacilitySchema>, IdService);
 
 impl FacilityService {
     pub async fn insert(&self, facility: FacilitySchema) -> Result<FacilitySchema> {
+        let facility = facility.normalize_ids()?;
+        self.register_identities(&facility).await?;
         self.0.insert_one(facility.clone()).await?;
         Ok(facility)
     }
@@ -365,6 +371,8 @@ impl FacilityService {
     }
 
     pub async fn upsert(&self, facility: FacilitySchema) -> Result<FacilitySchema> {
+        let facility = facility.normalize_ids()?;
+        self.register_identities(&facility).await?;
         let facility_doc = bson::to_document(&facility)?;
         self.0
             .update_one(
@@ -379,11 +387,18 @@ impl FacilityService {
     pub async fn get_all(&self) -> Result<Vec<FacilitySchema>> {
         collect_all(&self.0).await
     }
+
+    // Mappings precede topology visibility. A mapping alone never grants eligibility.
+    async fn register_identities(&self, facility: &FacilitySchema) -> Result<()> {
+        self.1.get_or_create(facility.facility_id.clone()).await?;
+        self.1.get_or_create(facility.owner_id.clone()).await?;
+        Ok(())
+    }
 }
 
 impl From<&DatabaseWrapper> for FacilityService {
     fn from(db: &DatabaseWrapper) -> Self {
-        FacilityService(db.collection("facilities"))
+        FacilityService(db.collection("facilities"), db.ids())
     }
 }
 

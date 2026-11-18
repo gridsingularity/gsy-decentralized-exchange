@@ -249,11 +249,11 @@ fn forecast(facility_id: &str, energy_kwh: f64) -> ForecastSchema {
 
 #[tokio::test]
 #[serial_test::serial]
-async fn uuid_forecasts_resolve_the_owner_for_either_facility_spelling() {
+async fn uuid_forecasts_resolve_the_owner_for_the_registered_spelling() {
     let facility = "abcdefab-abcd-abcd-abcd-abcdefabcdef";
     let _server = facilities::setup_facilities_mock([&facility.to_uppercase(), "area2"]).await;
     let orders = create_input_orders(
-        vec![forecast(facility, 1.0), forecast(&facility.to_uppercase(), 2.0)],
+        vec![forecast(&facility.to_uppercase(), 1.0), forecast(&facility.to_uppercase(), 2.0)],
         test_market(),
     )
     .await

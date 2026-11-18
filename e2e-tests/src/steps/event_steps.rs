@@ -422,7 +422,7 @@ async fn publish_order_pair(world: &mut MyWorld, bid: EwdsOrderDto, offer: EwdsO
         );
         assert_eq!(
             stored.requirements.as_ref().and_then(|value| value.trading_partner_id.clone()),
-            order.preferred_trading_partner.as_deref().map(primitives::utils::canonical_offchain_id)
+            order.preferred_trading_partner.clone()
         );
     }
 

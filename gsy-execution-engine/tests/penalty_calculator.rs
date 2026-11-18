@@ -6,15 +6,14 @@ use primitives::db_api_schema::{
     profiles::MeasurementSchema,
     trades::{DbTradeSchema, TradeParameters, TradeStatus},
 };
-use primitives::utils::{bytes16_to_hex, create_encrypted_bytes16_from_string};
 use std::collections::HashMap;
 
 fn onchain_id(id: &str) -> String {
-    bytes16_to_hex(create_encrypted_bytes16_from_string(id))
+    primitives::utils::derive_onchain_id(id)
 }
 
 fn order(order_id: &str, owner_id: &str, is_bid: bool) -> DbOrderSchema {
-    let actor_id = bytes16_to_hex(create_encrypted_bytes16_from_string(owner_id));
+    let actor_id = primitives::utils::derive_onchain_id(owner_id);
     DbOrderSchema {
         order_id: order_id.to_string(),
         status: OrderStatus::Executed,
@@ -95,7 +94,7 @@ fn compute_penalties_matches_facility_measurements_to_owner_ids() {
     assert_eq!(penalties[0].penalty_cost, 2_000);
     assert_eq!(
         penalties[0].penalized_account,
-        bytes16_to_hex(create_encrypted_bytes16_from_string("alice"))
+        primitives::utils::derive_onchain_id("alice")
     );
 }
 
@@ -188,13 +187,13 @@ fn verification_penalizes_each_partys_own_deviation_in_both_directions() {
 }
 
 #[test]
-fn verification_joins_uuid_facility_readings_to_canonical_owner_parties() {
+fn verification_joins_exact_facility_readings_to_keyed_owner_parties() {
     let facility = "abcdefab-abcd-abcd-abcd-abcdefabcdef";
     let owner = "fedcbafe-dcba-dcba-dcba-fedcbafedcba";
     let mut matched = trade();
     matched.buyer = primitives::utils::derive_onchain_id(owner);
     let mapping = HashMap::from([
-        (facility.to_string(), owner.to_uppercase()),
+        (facility.to_uppercase(), owner.to_string()),
         ("seller-meter".to_string(), "bob".to_string()),
     ]);
     let measurements = [
@@ -202,7 +201,7 @@ fn verification_joins_uuid_facility_readings_to_canonical_owner_parties() {
         measurement("seller-meter", -10.0),
     ];
     let verdicts = compute_delivery_verifications(
-        &[matched],
+        &[matched.clone()],
         &measurements,
         &mapping,
         1_000,
@@ -213,6 +212,17 @@ fn verification_joins_uuid_facility_readings_to_canonical_owner_parties() {
     assert_eq!(verdicts.len(), 1);
     assert_eq!(verdicts[0].buyer_penalty_cost, 2_000);
     assert_eq!(verdicts[0].seller_penalty_cost, 0);
+    // A differently spelled actor is not the registered facility.
+    assert!(compute_delivery_verifications(
+        &[matched],
+        &[measurement(facility, 12.0), measurement("seller-meter", -10.0)],
+        &mapping,
+        1_000,
+        0.1,
+        5.0,
+    )
+    .unwrap()
+    .is_empty());
 }
 
 #[test]

@@ -25,11 +25,11 @@ hashes in `createdBy`; rejections retain the submitted identifiers. FOS must
 correlate equivalent order IDs by their 16 bytes, not their spelling.
 `preferredTradingPartner` remains an off-chain identity, even when hex-shaped.
 
-Off-chain facility and owner IDs are not required to be UUIDs. Strict hyphenated
-UUIDs are lowercased; other nonempty, unpadded strings remain case-sensitive,
-including bare/`0x` hex strings. This rule applies to topology, site facility
+Off-chain facility and owner IDs are not required to be UUIDs. All nonempty,
+unpadded strings are preserved exactly and remain case-sensitive, including
+UUID-shaped and bare/`0x` hex strings. This rule applies to topology, site facility
 references, ID mappings, order participants/preferences and measurement/forecast
-facility references. Stored entity reads return the canonical spelling;
+facility references. Stored actor reads return the submitted spelling;
 `facilities.validate` still echoes each requested pair exactly and reports invalid
 facility identities as `unknown_facility` per pair. Other invalid typed identities
 produce HTTP 400, `invalid_request` for queries, or invalidate the whole inbound
@@ -44,12 +44,20 @@ Names and correlation IDs are not normalized.
 | `orderStatus.event` rejection | Submitted identifiers echoed without rewriting |
 | `trade.event`, `trades.query` | Lowercase `0x` trade/market/order IDs and owner hashes; absent residuals are null |
 | `clearingResult.event`, `clearing_results.query` | Lowercase `0x` market ID |
-| `ids.query` | Canonical off-chain identity and its lowercase `0x` hash |
+| `ids.query` | Exact off-chain identity and its lowercase `0x` keyed hash |
 | `facilities.validate` | Exact request pairs, preserving order and cardinality |
 
 Deploy all services from the same DD-459 commit into a fresh environment. The
-ID service returns canonical identities and clients compare canonical forms.
+ID service preserves actor identities and clients compare their exact strings.
 This does not migrate old mappings or relabel persisted records.
+
+Actor hashes use keyed Blake2b with 16-byte output and the shared
+`ACTOR_ID_HASH_KEY`; they are pseudonyms, not reversible encryption or UUIDv4.
+Topology writes register mappings for facilities, owners, site keys and stored
+community IDs. Lifecycle events still create order/trade records.
+This increment retains the existing market/community UUID representation and
+hash-derived market IDs; their coordinated conversion is a later DD-459 step.
+The dedicated UUIDv4 helper does not yet replace all legacy entity parsers.
 
 ## Schema Package Location
 

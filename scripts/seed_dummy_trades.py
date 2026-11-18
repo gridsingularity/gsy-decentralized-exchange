@@ -24,6 +24,7 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import random
 import re
 import shlex
@@ -116,6 +117,13 @@ def bytes16_id(value):
     return "0x" + hashlib.blake2b(value.encode(), digest_size=16).hexdigest()
 
 
+def actor_id(value):
+    key = os.environ.get("ACTOR_ID_HASH_KEY", "")
+    if re.fullmatch(r"[0-9a-fA-F]{64}", key) is None:
+        raise ValueError("ACTOR_ID_HASH_KEY must contain exactly 64 hexadecimal characters")
+    return "0x" + hashlib.blake2b(value.encode(), key=bytes.fromhex(key), digest_size=16).hexdigest()
+
+
 def dataset_filters(trades):
     # Keep SSH/mongosh arguments bounded even for month-long datasets.
     for start in range(0, len(trades), 500):
@@ -180,10 +188,10 @@ def generate_dataset(start, end, per_slot, seed, as_of):
                     "tradeId": bytes16_id(f"dummy-trade-{num}"),
                     "marketId": market_id,
                     "bidId": bytes16_id(f"dummy-bid-{num}"),
-                    "buyerId": bytes16_id(buyer),
+                    "buyerId": actor_id(buyer),
                     "residualBidId": residual_bid,
                     "offerId": bytes16_id(f"dummy-offer-{num}"),
-                    "sellerId": bytes16_id(seller),
+                    "sellerId": actor_id(seller),
                     "residualOfferId": residual_offer,
                     "tradeStatus": pick_status(rng, slot, as_of),
                     "tradeQuantity": round(quantity, 4),
@@ -644,7 +652,7 @@ def cmd_validate(args):
         bad_slots = [s for s in range(start, end, SLOT_SECS) if per_slot.get(s) != meta["per_slot"]]
         report.check(f"{meta['per_slot']} trades per slot", not bad_slots, f"{len(bad_slots)} bad slots")
         actors = {t["buyerId"] for t in rest_all} | {t["sellerId"] for t in rest_all}
-        report.check("actors within roster", actors <= {bytes16_id(name) for name in ROSTER}, f"{sorted(actors)}")
+        report.check("actors within roster", actors <= {actor_id(name) for name in ROSTER}, f"{sorted(actors)}")
         self_trades = [t["tradeId"] for t in rest_all if t["buyerId"] == t["sellerId"]]
         report.check("buyer != seller", not self_trades, f"{len(self_trades)} self trades")
         bad_markets = [t["tradeId"] for t in rest_all if t["marketId"] != market_id_for_slot(parse_ts(t["timestamp"]))]

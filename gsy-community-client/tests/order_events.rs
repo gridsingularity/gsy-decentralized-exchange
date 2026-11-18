@@ -444,11 +444,11 @@ async fn places_a_bid_and_an_offer_with_their_contract_params() {
 }
 
 #[tokio::test]
-async fn uuid_parties_resolve_canonically_and_rejections_echo_original_ids() {
+async fn uuid_shaped_parties_preserve_case_and_rejections_echo_original_ids() {
     let chain = deploy_mock_order_registry().await;
     let server = mock_id_service().await;
-    let buyer = "abcdefab-abcd-abcd-abcd-abcdefabcdef";
-    let seller = "fedcbafe-dcba-dcba-dcba-fedcbafedcba";
+    let buyer = "ABCDEFAB-ABCD-ABCD-ABCD-ABCDEFABCDEF";
+    let seller = "FEDCBAFE-DCBA-DCBA-DCBA-FEDCBAFEDCBA";
     Mock::given(method("GET"))
         .and(path("/facilities"))
         .respond_with(ResponseTemplate::new(200).set_body_json(
@@ -1435,7 +1435,7 @@ mod validate_order {
     }
 
     #[test]
-    fn canonicalizes_owner_and_partner_without_changing_the_submission() {
+    fn preserves_owner_and_partner_spelling() {
         let mut submission = bid();
         submission["createdBy"] = json!("ABCDEFAB-1234-1234-1234-ABCDEFABCDEF");
         submission["preferredTradingPartner"] = json!("ABCDEFAB-1234-1234-1234-ABCDEFABCDE0");
@@ -1446,11 +1446,11 @@ mod validate_order {
             .unwrap(),
         )
         .unwrap();
-        assert_eq!(order.created_by, "abcdefab-1234-1234-1234-abcdefabcdef");
+        assert_eq!(order.created_by, "ABCDEFAB-1234-1234-1234-ABCDEFABCDEF");
         assert_eq!(order.area_uuid, order.created_by);
         assert_eq!(
             order.requirements.unwrap().trading_partner_id.as_deref(),
-            Some("abcdefab-1234-1234-1234-abcdefabcde0")
+            Some("ABCDEFAB-1234-1234-1234-ABCDEFABCDE0")
         );
         assert_eq!(
             submission["createdBy"],

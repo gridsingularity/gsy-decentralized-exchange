@@ -456,7 +456,7 @@ async fn late_records_after_rollover_are_processed_once_without_blocking_the_cur
                     (1..=3)
                         .flat_map(|id| {
                             ["alice", "bob"].map(|party| {
-                                let facility = facility_id(party, id).to_uppercase();
+                                let facility = facility_id(party, id);
                                 json!({
                                     "type": "Measurement",
                                     "measurement_id": derive_onchain_id(&format!("{party}-{id}")),

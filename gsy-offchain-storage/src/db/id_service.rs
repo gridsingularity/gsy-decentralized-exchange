@@ -1,6 +1,6 @@
 use crate::db::DatabaseWrapper;
 use anyhow::Context;
-use anyhow::{bail, Result};
+use anyhow::{bail, ensure, Result};
 use futures::TryStreamExt;
 use mongodb::bson::doc;
 use mongodb::error::{ErrorKind, WriteFailure};
@@ -70,12 +70,13 @@ impl IdService {
     )]
     pub async fn get_or_create(&self, offchain_id: String) -> Result<IdMappingSchema> {
         let offchain_id = normalize_offchain_id(&offchain_id)?;
+        let onchain_id = derive_onchain_id(&offchain_id);
         let result = self
             .0
             .find_one_and_update(
                 doc! {"offchain_id": &offchain_id},
                 doc! {"$setOnInsert": {
-                "onchain_id": derive_onchain_id(&offchain_id),
+                "onchain_id": &onchain_id,
                 "creation_time": SystemTime::now()
                     .duration_since(UNIX_EPOCH)?
                     .as_secs() as i64
@@ -85,7 +86,7 @@ impl IdService {
             .return_document(ReturnDocument::After)
             .await;
 
-        match result {
+        let mapping = match result {
             Ok(mapping) => mapping.context("upsert returned no document"),
             Err(error)
                 if matches!(error.kind.as_ref(), ErrorKind::Command(command) if command.code == 11000)
@@ -99,7 +100,12 @@ impl IdService {
                     .ok_or_else(|| error.into())
             }
             Err(error) => Err(error.into()),
-        }
+        }?;
+        ensure!(
+            mapping.onchain_id == onchain_id,
+            "Stored actor mapping does not match ACTOR_ID_HASH_KEY"
+        );
+        Ok(mapping)
     }
 }
 

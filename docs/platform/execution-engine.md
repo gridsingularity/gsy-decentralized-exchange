@@ -54,11 +54,10 @@ produces a 2,000-unit penalty at rate 0.10, allocated as 800 and 1,200 units.
 
 Measurements identify facilities. The engine reads the facility-to-owner mapping
 from off-chain storage and derives each owner's on-chain ID with the ID service's
-shared Blake2b-16 helper, without writing ID mappings. That owner ID is used in
+shared keyed Blake2b-16 helper (`ACTOR_ID_HASH_KEY`), without writing ID mappings. That owner ID is used in
 `OrderParams.createdBy` and the indexed trade parties; the submitting service
 wallet is separate. This deployment guarantees one facility per owner.
-Strict hyphenated UUID facility and owner IDs are canonicalized; opaque IDs
-remain case-sensitive.
+Facility and owner IDs are preserved exactly, including UUID-shaped strings.
 Missing/unmapped, non-finite, or conflicting readings for a facility/slot leave its trades pending;
 they do not produce a zero-penalty success. Identical readings are not counted
 twice. Multiple distinct readings are not summed or arbitrarily selected: they

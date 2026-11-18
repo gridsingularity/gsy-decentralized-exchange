@@ -95,8 +95,8 @@ service can't be reached, is retried with a growing delay
 wait for it.
 
 `createdBy` and an explicitly supplied `preferredTradingPartner` must be nonempty
-and unpadded. Strict hyphenated UUID identities are lowercased before eligibility
-and ID lookup; opaque IDs (including hex-shaped strings) remain case-sensitive.
+and unpadded. Actor spelling is preserved exactly before eligibility and ID lookup;
+UUID-shaped and hex-shaped strings are also case-sensitive.
 An absent partner is allowed. A malformed identity invalidates the whole batch
 before any storage calls or submissions and is logged without a rejection
 notification. In particular, empty/padded `createdBy` no longer produces a
@@ -167,7 +167,7 @@ steps and also validates facility participation. The matching engine compares
 preferred partners against owner IDs and blocks same-owner trades.
 Indexed trade parties and penalties retain the owner identity, independently
 of the service wallet. Delivery verification reads the facility-to-owner mapping
-and derives owner IDs with the ID service's shared Blake2b-16 helper, without
+and derives owner IDs with the ID service's shared keyed Blake2b-16 helper, without
 creating ID mappings. Certificate lookups resolve owner hashes to facilities
 under the one-facility-per-owner guarantee. Certificate `owner_id` retains the
 trade's owner hash, while `facility_id` identifies the associated facility.

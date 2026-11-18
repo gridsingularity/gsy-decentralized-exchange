@@ -9,7 +9,7 @@ use primitives::db_api_schema::profiles::{
     TimeseriesSchema,
 };
 use primitives::utils::{
-    canonical_offchain_id, profile_measurement_id, timestamp_to_string_with_padding,
+    profile_measurement_id, timestamp_to_string_with_padding,
 };
 use std::collections::HashMap;
 use std::ops::Deref;
@@ -36,8 +36,8 @@ fn measurement_point_from_measurement(measurement: &MeasurementSchema) -> Measur
         energy_accumulated: false,
         time_resolution: "PT15M".to_string(),
         phase: 0,
-        asset_name: canonical_offchain_id(&measurement.facility_id),
-        datasource_name: Some(canonical_offchain_id(&measurement.community_uuid)),
+        asset_name: measurement.facility_id.clone(),
+        datasource_name: Some(measurement.community_uuid.clone()),
     }
 }
 
@@ -148,7 +148,7 @@ impl MeasurementPointService {
     ) -> Result<Vec<MeasurementPointSchema>> {
         let mut filter = doc! {};
         if let Some(asset_name) = asset_name {
-            filter.insert("asset_name", canonical_offchain_id(&asset_name));
+            filter.insert("asset_name", asset_name);
         }
         if let Some(point_type) = point_type {
             filter.insert("type", mongodb::bson::to_bson(&point_type)?);

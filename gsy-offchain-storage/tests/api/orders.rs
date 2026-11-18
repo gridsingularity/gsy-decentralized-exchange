@@ -72,7 +72,7 @@ async fn imports_normalize_ids_and_reject_conflicts_before_writing() {
                 .unwrap()
                 .trading_partner_id
                 .as_deref(),
-            Some(partner)
+            Some(partner.to_uppercase().as_str())
         );
         let returned: Vec<EwdsOrderDto> = client
             .get(format!("{}/orders", app.address))

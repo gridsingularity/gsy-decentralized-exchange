@@ -8,6 +8,7 @@ mod guarantees_of_origin;
 mod health_check;
 mod helpers;
 mod ids;
+mod actor_mappings;
 mod market;
 mod measurements;
 mod orders;

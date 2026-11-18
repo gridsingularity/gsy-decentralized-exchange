@@ -278,9 +278,9 @@ async fn fetches_facility_owner_mapping_over_http() {
     assert_eq!(mapping.len(), 3);
     assert_eq!(
         mapping
-            .get("abcdefab-abcd-abcd-abcd-abcdefabcdef")
+            .get("ABCDEFAB-ABCD-ABCD-ABCD-ABCDEFABCDEF")
             .map(String::as_str),
-        Some("fedcbafe-dcba-dcba-dcba-fedcbafedcba")
+        Some("FEDCBAFE-DCBA-DCBA-DCBA-FEDCBAFEDCBA")
     );
     assert_eq!(
         mapping.get("AIS1-House-1").map(String::as_str),
@@ -398,7 +398,7 @@ async fn fetches_onchain_id_over_http() {
         "unused-default",
     );
     let onchain_id = client
-        .fetch_onchain_id("00112233-4455-6677-8899-AABBCCDDEEFF")
+        .fetch_onchain_id("00112233-4455-6677-8899-aabbccddeeff")
         .await
         .unwrap();
 
@@ -454,7 +454,7 @@ async fn fetches_onchain_id_over_ewds() {
         "testids",
     );
     let onchain_id = client
-        .fetch_onchain_id("00112233-4455-6677-8899-AABBCCDDEEFF")
+        .fetch_onchain_id("00112233-4455-6677-8899-aabbccddeeff")
         .await
         .unwrap();
 

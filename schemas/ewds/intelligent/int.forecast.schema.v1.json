@@ -5,7 +5,7 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "facilityId": { "type": "string", "pattern": "^\\S(?:[\\s\\S]*\\S)?(?![\\s\\S])", "description": "Off-chain facility ID: strict hyphenated UUIDs are lowercased; other unpadded identities remain case-sensitive." },
+    "facilityId": { "type": "string", "pattern": "^\\S(?:[\\s\\S]*\\S)?(?![\\s\\S])", "description": "Off-chain facility ID: unpadded identities are preserved exactly and are case-sensitive, including UUID-shaped strings." },
     "communityUuid": { "$ref": "./int.community.schema.v1.json#/properties/communityId" },
     "timeSlot": {
       "oneOf": [

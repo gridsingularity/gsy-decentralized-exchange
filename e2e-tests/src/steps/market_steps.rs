@@ -114,12 +114,6 @@ async fn submit_uuid_facility_forecasts(world: &mut MyWorld) {
         })
         .collect();
     submit_market_forecasts(world, 2.0).await;
-    // Submit orders using a different spelling from the registered topology/profiles.
-    for facility in &mut world.facilities_topology {
-        facility.facility_id.make_ascii_lowercase();
-    }
-    world.bid_forecast.as_mut().unwrap().facility_id.make_ascii_lowercase();
-    world.offer_forecast.as_mut().unwrap().facility_id.make_ascii_lowercase();
 }
 
 #[when(expr = "forecasts of {float} energy are submitted")]

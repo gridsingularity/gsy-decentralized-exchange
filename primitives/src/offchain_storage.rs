@@ -10,7 +10,7 @@ use crate::ewds::dto::{
 };
 use crate::ewds::{format_response_body, EwdsClient, EwdsOperation};
 use crate::utils::{
-    bytes16_to_hex, canonical_offchain_id, epoch_to_rfc3339, normalize_offchain_id,
+    bytes16_to_hex, epoch_to_rfc3339, normalize_offchain_id,
     parse_uuid_or_hex_bytes16, timestamp_to_string_with_padding,
 };
 use anyhow::{anyhow, Context, Result};
@@ -158,12 +158,7 @@ impl OffchainStorageClient {
 
         let mapping: HashMap<String, String> = facilities
             .into_iter()
-            .map(|f| {
-                (
-                    canonical_offchain_id(&f.facility_id),
-                    canonical_offchain_id(&f.owner_id),
-                )
-            })
+            .map(|f| (f.facility_id, f.owner_id))
             .collect();
         info!("returning mapping {:?}", mapping.clone());
         Ok(mapping)

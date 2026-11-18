@@ -2,7 +2,7 @@ use crate::helpers::{init_app, stop_app};
 use gsy_offchain_storage::db::id_service::init_ids;
 use mongodb::bson::doc;
 use primitives::db_api_schema::ids::IdMappingSchema;
-use primitives::utils::{bytes16_to_hex, create_encrypted_bytes16_from_string, derive_onchain_id};
+use primitives::utils::derive_onchain_id;
 use std::sync::Arc;
 use tokio::sync::Barrier;
 
@@ -54,8 +54,6 @@ async fn post_ids_creates_new_mapping() {
 
     let body: IdMappingSchema = response.json().await.expect("Failed to parse body");
     assert_eq!(body.offchain_id, offchain);
-    let expected = bytes16_to_hex(create_encrypted_bytes16_from_string(offchain));
-    assert_eq!(body.onchain_id, expected);
     assert_eq!(body.onchain_id, derive_onchain_id(offchain));
     assert_eq!(
         body.onchain_id,
@@ -158,15 +156,11 @@ async fn post_ids_concurrent_same_id_yields_single_mapping() {
     // Fire several requests for the same offchain_id at once. The unique index
     // is what keeps this from producing duplicate documents under the race.
     let mut handles = Vec::new();
-    for index in 0..8 {
+    for _ in 0..8 {
         let client = client.clone();
         let url = url.clone();
         let barrier = barrier.clone();
-        let submitted = if index % 2 == 0 {
-            offchain.to_uppercase()
-        } else {
-            offchain.to_string()
-        };
+        let submitted = offchain.to_string();
         handles.push(tokio::spawn(async move {
             barrier.wait().await;
             let response = client
@@ -204,7 +198,7 @@ async fn post_ids_concurrent_same_id_yields_single_mapping() {
     );
     assert_eq!(
         storage
-            .fetch_onchain_id(&offchain.to_uppercase())
+            .fetch_onchain_id(offchain)
             .await
             .unwrap(),
         results[0].onchain_id
@@ -223,7 +217,7 @@ async fn post_ids_concurrent_same_id_yields_single_mapping() {
     assert_eq!(
         app.db_wrapper
             .ids()
-            .filter(None, Some(offchain.to_uppercase()))
+            .filter(None, Some(offchain.to_string()))
             .await
             .unwrap(),
         vec![results[0].clone()]

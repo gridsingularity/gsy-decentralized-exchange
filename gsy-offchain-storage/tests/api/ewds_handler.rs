@@ -22,7 +22,7 @@ use primitives::ewds::dto::{EwdsMeasurementDto, EwdsRequestEnvelope, EwdsSendMes
 use primitives::ewds::{EwdsEventTopicConfig, EwdsOperation, EwdsTopicConfig};
 use primitives::offchain_storage::{OffchainStorageClient, OffchainStorageTransport};
 use primitives::utils::{
-    bytes16_to_hex, bytes16_to_uuid_string, create_encrypted_bytes16_from_string, epoch_to_rfc3339,
+    bytes16_to_hex, bytes16_to_uuid_string, epoch_to_rfc3339,
     rfc3339_to_epoch, timestamp_to_string_with_padding,
 };
 use serde_json::json;
@@ -1330,9 +1330,7 @@ async fn ids_query_success() {
     assert_eq!(data.len(), 1);
     assert_eq!(
         data[0]["onchain_id"],
-        json!(bytes16_to_hex(create_encrypted_bytes16_from_string(
-            "offchain-abc"
-        )))
+        json!(primitives::utils::derive_onchain_id("offchain-abc"))
     );
 
     stop_app(app).await;
@@ -1367,7 +1365,7 @@ async fn ids_query_get_or_create_is_idempotent() {
     let first_onchain = first[0]["onchain_id"].clone();
     assert_eq!(
         first[0]["offchain_id"],
-        "00112233-4455-6677-8899-aabbccddeeff"
+        "00112233-4455-6677-8899-AABBCCDDEEFF"
     );
 
     // A fresh server, so received_requests() counts only the second call.
@@ -1382,7 +1380,7 @@ async fn ids_query_get_or_create_is_idempotent() {
         envelope(
             EwdsOperation::IdsQuery,
             "req-ids-again",
-            json!({ "offchainId": "00112233-4455-6677-8899-aabbccddeeff" }),
+            json!({ "offchainId": "00112233-4455-6677-8899-AABBCCDDEEFF" }),
         ),
     )
     .await

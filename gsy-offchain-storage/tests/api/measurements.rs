@@ -106,7 +106,7 @@ async fn profile_community_variants_deduplicate_and_filters_combine_over_both_tr
             (json!({}), 4),
             (json!({"facilityId": facility.to_uppercase()}), 2),
             (json!({"areaUuid": facility.to_uppercase()}), 2),
-            (json!({"facility_id": facility}), 2),
+            (json!({"facility_id": facility}), 0),
             (json!({"communityUuid": COMMUNITY.to_uppercase()}), 2),
             (
                 json!({"community_uuid": format!("0x{}", COMMUNITY.replace('-', ""))}),
@@ -235,6 +235,7 @@ async fn datasource_metadata_is_canonicalized_without_rejecting_labels_or_missin
         None,
         Some("DS-1-MQTT".to_string()),
         Some(COMMUNITY.to_uppercase()),
+        Some("0xABCDEFAB123412341234ABCDEFABCDEF".to_string()),
     ]
     .into_iter()
     .enumerate()
@@ -272,7 +273,12 @@ async fn datasource_metadata_is_canonicalized_without_rejecting_labels_or_missin
         assert_eq!(stored.measurement_id, id);
         assert_eq!(
             stored.datasource_name.as_deref(),
-            [None, Some("DS-1-MQTT"), Some(COMMUNITY)][index]
+            [
+                None,
+                Some("DS-1-MQTT"),
+                Some(COMMUNITY),
+                Some("0xABCDEFAB123412341234ABCDEFABCDEF"),
+            ][index]
         );
     }
     let rows: Vec<MeasurementSchema> = client
@@ -283,7 +289,7 @@ async fn datasource_metadata_is_canonicalized_without_rejecting_labels_or_missin
         .json()
         .await
         .unwrap();
-    assert_eq!(rows.len(), 3);
+    assert_eq!(rows.len(), 4);
     let response = query_measurements_via_ewds(&app, json!({})).await;
     assert_eq!(response["success"], true);
     let mut communities = response["data"]
@@ -299,7 +305,10 @@ async fn datasource_metadata_is_canonicalized_without_rejecting_labels_or_missin
         })
         .collect::<Vec<_>>();
     communities.sort();
-    assert_eq!(communities, vec!["", "DS-1-MQTT", COMMUNITY]);
+    assert_eq!(
+        communities,
+        vec!["", "0xABCDEFAB123412341234ABCDEFABCDEF", "DS-1-MQTT", COMMUNITY]
+    );
     let filtered =
         query_measurements_via_ewds(&app, json!({"communityUuid": COMMUNITY.to_uppercase()})).await;
     assert_eq!(filtered["data"].as_array().unwrap().len(), 1);
@@ -307,7 +316,7 @@ async fn datasource_metadata_is_canonicalized_without_rejecting_labels_or_missin
 }
 
 #[tokio::test]
-async fn profile_ingress_and_filters_share_canonical_facility_ids() {
+async fn profile_ingress_and_filters_preserve_facility_spelling() {
     let app = init_app().await;
     let client = reqwest::Client::new();
     let canonical = "abcdefab-abcd-abcd-abcd-abcdefabcdef";
@@ -339,7 +348,7 @@ async fn profile_ingress_and_filters_share_canonical_facility_ids() {
                 .await
                 .unwrap();
             assert_eq!(rows.as_array().unwrap().len(), 1);
-            assert_eq!(rows[0]["facility_id"], canonical);
+            assert_eq!(rows[0]["facility_id"], id);
         }
         let mut valid =
             serde_json::to_value(make_forecast("new-facility", 1_900_000_000, 4.2)).unwrap();
@@ -369,7 +378,7 @@ async fn profile_ingress_and_filters_share_canonical_facility_ids() {
             .unwrap();
         assert_eq!(
             rows.as_array().unwrap().len(),
-            1,
+            2,
             "invalid batch must not be partly written"
         );
     }
@@ -395,7 +404,7 @@ async fn profile_ingress_and_filters_share_canonical_facility_ids() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(stored.asset_name, canonical);
+    assert_eq!(stored.asset_name, canonical.to_uppercase());
     assert_eq!(stored.datasource_name.as_deref(), Some("DS-1-MQTT"));
     assert_eq!(stored.measurement_id, "Custom-Point-ID");
     stop_app(app).await;

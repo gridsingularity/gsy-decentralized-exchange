@@ -93,6 +93,7 @@ impl Deref for DatabaseWrapper {
 }
 
 pub async fn init_database(db_url: String, db_name: String) -> Result<DatabaseWrapper> {
+    primitives::actor_ids::initialize_actor_id_hashing()?;
     let options = ClientOptions::parse(&db_url).await?;
     let client = mongodb::Client::with_options(options)?;
     let db = DatabaseWrapper(client.database(db_name.as_str()));

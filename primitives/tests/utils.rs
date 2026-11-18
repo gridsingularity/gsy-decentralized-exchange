@@ -1,5 +1,5 @@
 use primitives::utils::{
-    bytes16_to_hex, bytes16_to_uuid_string, canonical_offchain_id, derive_onchain_id,
+    bytes16_to_hex, bytes16_to_uuid_string, derive_onchain_id,
     generate_market_id, normalize_community_id, normalize_market_id, normalize_offchain_id,
     parse_nonzero_uuid_or_hex_bytes16, parse_uuid_or_hex_bytes16,
 };
@@ -8,13 +8,13 @@ use primitives::MarketType;
 const COMMUNITY_ID: &str = "11111111-1111-4111-8111-111111111111";
 
 #[test]
-fn identity_derivation_canonicalizes_uuids_but_preserves_opaque_ids() {
+fn identity_derivation_preserves_all_actor_spellings() {
     let lower = "abcdefab-1234-1234-1234-abcdefabcdef";
-    assert_eq!(
+    assert_ne!(
         derive_onchain_id(&lower.to_uppercase()),
         derive_onchain_id(lower)
     );
-    assert_eq!(
+    assert_ne!(
         derive_onchain_id(lower),
         bytes16_to_hex(primitives::utils::create_encrypted_bytes16_from_string(
             lower
@@ -34,7 +34,7 @@ fn identity_derivation_canonicalizes_uuids_but_preserves_opaque_ids() {
         primitives::db_api_schema::profiles::MeasurementPointType::Measurement,
         primitives::db_api_schema::profiles::MeasurementPointType::Forecast,
     ] {
-        assert_eq!(
+        assert_ne!(
             primitives::utils::profile_measurement_id(kind.clone(), "community", lower),
             primitives::utils::profile_measurement_id(kind, "community", &lower.to_uppercase())
         );
@@ -58,11 +58,11 @@ fn profile_ids_canonicalize_uuid_community_references() {
 }
 
 #[test]
-fn onchain_identity_derivation_is_pinned_to_blake2b_16() {
-    assert_eq!(
-        primitives::utils::derive_onchain_id("facility-a"),
-        "0x6bcb5f7af93a900ac5c3f27259bccc63"
-    );
+fn onchain_identity_derivation_is_keyed() {
+    let hasher = primitives::actor_ids::ActorIdHasher::from_hex_key(
+        &std::env::var("ACTOR_ID_HASH_KEY").unwrap(),
+    ).unwrap();
+    assert_eq!(derive_onchain_id("facility-a"), hasher.derive("facility-a"));
     assert_ne!(
         primitives::utils::derive_onchain_id("facility-a"),
         primitives::utils::derive_onchain_id("Facility-a")
@@ -152,10 +152,7 @@ fn required_ids_reject_zero_without_breaking_optional_sentinels() {
 #[test]
 fn offchain_normalization_preserves_opaque_and_hex_shaped_identities() {
     let uuid = "ABABABAB-ABAB-ABAB-ABAB-ABABABABABAB";
-    assert_eq!(
-        normalize_offchain_id(uuid).unwrap(),
-        uuid.to_ascii_lowercase()
-    );
+    assert_eq!(normalize_offchain_id(uuid).unwrap(), uuid);
     for value in [
         "facility-a",
         "Facility-A",
@@ -174,7 +171,6 @@ fn offchain_normalization_preserves_opaque_and_hex_shaped_identities() {
         "facility-a\u{a0}",
     ] {
         assert!(normalize_offchain_id(value).is_err(), "{value:?}");
-        assert_eq!(canonical_offchain_id(value), value);
     }
 }
 

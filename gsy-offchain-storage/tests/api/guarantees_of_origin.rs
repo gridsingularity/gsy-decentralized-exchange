@@ -10,7 +10,7 @@ use primitives::db_api_schema::profiles::{
 };
 use primitives::db_api_schema::trades::{DbTradeSchema, TradeParameters, TradeStatus};
 use primitives::utils::{
-    bytes16_to_hex, create_encrypted_bytes16_from_string, timestamp_to_string_with_padding,
+    bytes16_to_hex, timestamp_to_string_with_padding,
 };
 
 pub const SLOT: u64 = 1_778_754_600; // 2026-05-14T10:30:00Z
@@ -25,7 +25,7 @@ const EXPORT_POINT: &str = "Measurement:goo-community:goo-seller";
 const MARKET: &str = "0x60060060000040008000000000000001";
 
 fn hash(offchain_id: &str) -> String {
-    bytes16_to_hex(create_encrypted_bytes16_from_string(offchain_id))
+    primitives::utils::derive_onchain_id(offchain_id)
 }
 
 /// A 2 kWh sale from the seller facility to the buyer facility at `SLOT`.
@@ -255,7 +255,7 @@ async fn get_goo(address: &str, query: &[(&str, String)]) -> reqwest::Response {
 }
 
 #[tokio::test]
-async fn certificates_join_canonical_facilities_mappings_and_meter_references() {
+async fn certificates_join_exact_facilities_keyed_mappings_and_meter_references() {
     use mongodb::bson::doc;
     use primitives::offchain_storage::{
         OffchainStorageClient, OffchainStorageTransport,
@@ -299,7 +299,7 @@ async fn certificates_join_canonical_facilities_mappings_and_meter_references() 
         .fetch_onchain_id(&owner.to_uppercase())
         .await
         .unwrap();
-    assert_eq!(party, derive_onchain_id(owner));
+    assert_eq!(party, derive_onchain_id(&owner.to_uppercase()));
     let mut point = db
         .measurement_points()
         .find_one(doc! {"measurement_id": EXPORT_POINT})
@@ -351,7 +351,7 @@ async fn certificates_join_canonical_facilities_mappings_and_meter_references() 
     assert_eq!(records.len(), 1);
     assert_eq!(
         records[0].beneficiary_and_claim.owner_id,
-        derive_onchain_id(owner)
+        derive_onchain_id(&owner.to_uppercase())
     );
     stop_app(app).await;
 }

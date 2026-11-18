@@ -100,7 +100,7 @@ async fn seed_community(db: &DatabaseWrapper, id: &str) {
 }
 
 #[tokio::test]
-async fn facility_ingress_canonicalizes_ids_and_validation_echoes_each_request() {
+async fn facility_ingress_preserves_ids_and_validation_echoes_each_request() {
     use gsy_offchain_storage::ewds_event_handler::handle_event;
     use primitives::ewds::{dto::EwdsEventEnvelope, EwdsEventType};
 
@@ -112,7 +112,7 @@ async fn facility_ingress_canonicalizes_ids_and_validation_echoes_each_request()
         let client = reqwest::Client::new();
         for id in [facility_id.to_uppercase(), facility_id.to_string()] {
             let facility = json!({"facility_id": id, "owner_id": owner_id.to_uppercase(),
-                "facility_name": "UUID facility", "site_id": "site-a"});
+                "facility_name": format!("UUID facility {id}"), "site_id": "site-a"});
             let site = json!({"site_name": "site-a", "site_description": "Unchanged name",
                 "facilities": ["facility-a", facility_id.to_uppercase(), facility_id]});
             for (route, event_type, data) in [
@@ -149,14 +149,14 @@ async fn facility_ingress_canonicalizes_ids_and_validation_echoes_each_request()
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(facility.owner_id, owner_id);
+        assert_eq!(facility.owner_id, owner_id.to_uppercase());
         assert_eq!(
             app.db_wrapper
                 .facilities()
                 .count_documents(doc! {})
                 .await
                 .unwrap(),
-            2
+            3
         );
         let site = app
             .db_wrapper
@@ -165,7 +165,7 @@ async fn facility_ingress_canonicalizes_ids_and_validation_echoes_each_request()
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(site.facilities, vec!["facility-a", facility_id]);
+        assert_eq!(site.facilities, vec!["facility-a".to_string(), facility_id.to_uppercase(), facility_id.to_string()]);
         let requests = [
             pair(&facility_id.to_uppercase(), &market_id("a")),
             pair(" padded ", &market_id("a")),
@@ -376,6 +376,7 @@ async fn validates_mixed_pairs_in_input_order_without_writes() {
     seed_community(db, "b").await;
     // An existing ID mapping is not evidence that the facility exists.
     db.ids().get_or_create("missing".to_string()).await.unwrap();
+    let mappings_before = db.ids().count_documents(doc! {}).await.unwrap();
     let requests = vec![
         pair("facility-a", &market_id("a")),
         pair("facility-a", &market_id("b")),
@@ -412,7 +413,7 @@ async fn validates_mixed_pairs_in_input_order_without_writes() {
         assert_eq!(result.reason, reason);
     }
     assert!(db.validate_facility_markets(&[]).await.unwrap().is_empty());
-    assert_eq!(db.ids().count_documents(doc! {}).await.unwrap(), 1);
+    assert_eq!(db.ids().count_documents(doc! {}).await.unwrap(), mappings_before);
     assert_eq!(db.orders().count_documents(doc! {}).await.unwrap(), 0);
     stop_app(app).await;
 }
@@ -584,6 +585,7 @@ async fn http_and_ewds_return_the_same_bulk_validation_results() {
         )
         .await
         .unwrap();
+    let mappings_before = db.ids().count_documents(doc! {}).await.unwrap();
     let requests = vec![
         pair("facility-a", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
         pair("facility-a", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
@@ -614,7 +616,7 @@ async fn http_and_ewds_return_the_same_bulk_validation_results() {
         assert_eq!(ewds["success"], true);
         assert_eq!(ewds["data"], expected);
     }
-    assert_eq!(db.ids().count_documents(doc! {}).await.unwrap(), 0);
+    assert_eq!(db.ids().count_documents(doc! {}).await.unwrap(), mappings_before);
     assert_eq!(db.orders().count_documents(doc! {}).await.unwrap(), 0);
     stop_app(app).await;
 }

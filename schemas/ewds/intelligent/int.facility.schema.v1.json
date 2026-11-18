@@ -6,12 +6,12 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "facility_id": { "type": "string", "pattern": "^\\S(?:[\\s\\S]*\\S)?(?![\\s\\S])", "description": "Strict hyphenated UUIDs are lowercased; other unpadded identities remain case-sensitive, including hex-shaped strings." },
+    "facility_id": { "type": "string", "pattern": "^\\S(?:[\\s\\S]*\\S)?(?![\\s\\S])", "description": "Nonempty, unpadded actor IDs are preserved exactly and are case-sensitive, including UUID-shaped and hex-shaped strings." },
     "facility_name": { "type": "string", "minLength": 1 },
     "site_id": {
       "description": "The site_name of the site the facility belongs to.",
       "type": "string",
-      "minLength": 1
+      "pattern": "^\\S(?:[\\s\\S]*\\S)?(?![\\s\\S])"
     },
     "owner_id": { "type": "string", "pattern": "^\\S(?:[\\s\\S]*\\S)?(?![\\s\\S])", "description": "Uses the same off-chain identity normalization as facility_id." }
   },

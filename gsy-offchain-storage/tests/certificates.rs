@@ -19,9 +19,7 @@ use primitives::db_api_schema::profiles::{
     FlowDirection as PointDirection, MeasurementPointSchema, MeasurementPointType, TimeseriesSchema,
 };
 use primitives::db_api_schema::trades::{DbTradeSchema, TradeParameters, TradeStatus};
-use primitives::utils::{
-    bytes16_to_hex, create_encrypted_bytes16_from_string, timestamp_to_string_with_padding,
-};
+use primitives::utils::timestamp_to_string_with_padding;
 
 const SLOT: u64 = 1_778_754_600; // 2026-05-14T10:30:00Z, on a 900s boundary
 
@@ -40,7 +38,7 @@ const EXPORT_POINT: &str = "Measurement:community-1:fac-seller:export";
 const IMPORT_POINT: &str = "Measurement:community-1:fac-seller:import";
 
 fn hash(offchain_id: &str) -> String {
-    bytes16_to_hex(create_encrypted_bytes16_from_string(offchain_id))
+    primitives::utils::derive_onchain_id(offchain_id)
 }
 
 fn facility(

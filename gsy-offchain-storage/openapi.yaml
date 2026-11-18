@@ -431,7 +431,7 @@ paths:
     post:
       tags: [Measurements]
       summary: Register measurement / forecast points.
-      description: Strict UUID-shaped asset_name and datasource_name references are lowercased; other labels, missing datasource metadata and client-supplied measurement_id values are preserved.
+      description: Facility references in asset_name are preserved exactly. UUID-shaped community references in datasource_name are normalized; other labels, missing datasource metadata and client-supplied measurement_id values are preserved.
       requestBody:
         required: true
         content:
@@ -686,7 +686,7 @@ paths:
     post:
       tags: [Grid Topology]
       summary: Create or replace a site by site_name.
-      description: Send the complete facilities list. Omitted facilities lose their site membership. Facility UUIDs are lowercased and equivalent references deduplicated; other unpadded identities remain case-sensitive.
+      description: Send the complete facilities list. Omitted facilities lose their site membership. Unpadded facility IDs are preserved exactly, including UUID-shaped strings; identical references are deduplicated.
       requestBody:
         required: true
         content:
@@ -723,7 +723,7 @@ paths:
     post:
       tags: [Grid Topology]
       summary: Create or replace a facility by facility_id.
-      description: Replaces its topology fields; facility_name must remain unique across facility IDs. Facility and owner UUIDs are lowercased; other unpadded identities remain case-sensitive.
+      description: Replaces its topology fields; facility_name must remain unique across facility IDs. Unpadded facility and owner IDs are preserved exactly and remain case-sensitive, including UUID-shaped strings.
       requestBody:
         required: true
         content:
@@ -763,9 +763,9 @@ paths:
       tags: [Grid Topology]
       summary: Get or create an off-chain to on-chain identity mapping.
       description: |
-        Strict hyphenated UUIDs are lowercased before lookup and hashing; other
-        nonempty, unpadded identities remain case-sensitive, including hex-shaped
-        strings. A mapping does not establish facility existence or eligibility.
+        Nonempty, unpadded actor IDs are preserved exactly, including UUID-shaped
+        and hex-shaped strings. On-chain IDs use keyed Blake2b-16 with the shared
+        ACTOR_ID_HASH_KEY. A mapping does not establish facility existence or eligibility.
       parameters:
         - in: query
           name: offchain_id
@@ -1031,7 +1031,7 @@ components:
         preferredTradingPartner:
           type: string
           nullable: true
-          description: Optional off-chain preferred facility identity for bids and offers. Must be nonempty and unpadded; strict UUIDs are lowercased and opaque IDs stay case-sensitive.
+          description: Optional off-chain preferred facility identity for bids and offers. Must be nonempty and unpadded; all actor IDs remain case-sensitive, including UUID-shaped strings.
         preferredEnergyRate:
           type: number
           format: double
@@ -1387,7 +1387,7 @@ components:
 
     SiteSchema:
       type: object
-      description: Facility references lowercase strict hyphenated UUIDs; other unpadded identities remain case-sensitive. Equivalent references are deduplicated.
+      description: Unpadded facility references are preserved exactly, including UUID-shaped strings. Identical references are deduplicated.
       required: [site_name, site_description, facilities]
       properties:
         site_name: { type: string }
@@ -1398,7 +1398,7 @@ components:
 
     FacilitySchema:
       type: object
-      description: Facility and owner IDs lowercase strict hyphenated UUIDs. Other nonempty, unpadded identities remain case-sensitive, including bare or 0x hex strings. Names and site keys are unchanged.
+      description: Nonempty, unpadded facility and owner IDs are preserved exactly and remain case-sensitive, including UUID-shaped, bare or 0x hex strings. Names and site keys are unchanged.
       required:
         - facility_id
         - facility_name

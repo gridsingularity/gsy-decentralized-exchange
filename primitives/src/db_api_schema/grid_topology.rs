@@ -88,16 +88,18 @@ pub struct FacilitySchema {
 }
 
 impl FacilitySchema {
-    /// Validate and canonicalize identities at ingress, without changing names or site keys.
+    /// Validate actor identities at ingress without changing their spelling.
     pub fn normalize_ids(mut self) -> anyhow::Result<Self> {
         self.facility_id = crate::utils::normalize_offchain_id(&self.facility_id)?;
         self.owner_id = crate::utils::normalize_offchain_id(&self.owner_id)?;
+        self.site_id = crate::utils::normalize_offchain_id(&self.site_id)?;
         Ok(self)
     }
 }
 
 impl SiteSchema {
     pub fn normalize_ids(mut self) -> anyhow::Result<Self> {
+        self.site_name = crate::utils::normalize_offchain_id(&self.site_name)?;
         self.facilities = self
             .facilities
             .iter()

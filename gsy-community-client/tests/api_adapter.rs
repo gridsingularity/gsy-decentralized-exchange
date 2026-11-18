@@ -53,14 +53,14 @@ async fn test_forward_measurement_uses_facility_profile_endpoints() {
     let measurement_points_request = server.mock(|when, then| {
         when.method(POST)
             .path("/measurement-points")
-            .body_includes("measurement:abcdefab-1234-1234-1234-abcdefabcdef:abcdefab-abcd-abcd-abcd-abcdefabcdef")
-            .body_includes("\"asset_name\":\"abcdefab-abcd-abcd-abcd-abcdefabcdef\"")
+            .body_includes("measurement:abcdefab-1234-1234-1234-abcdefabcdef:ABCDEFAB-ABCD-ABCD-ABCD-ABCDEFABCDEF")
+            .body_includes("\"asset_name\":\"ABCDEFAB-ABCD-ABCD-ABCD-ABCDEFABCDEF\"")
             .body_includes("\"datasource_name\":\"abcdefab-1234-1234-1234-abcdefabcdef\"");
         then.status(200);
     });
     let timeseries_request = server.mock(|when, then| {
         when.method(POST).path("/timeseries").body_includes(
-            "measurement:abcdefab-1234-1234-1234-abcdefabcdef:abcdefab-abcd-abcd-abcd-abcdefabcdef",
+            "measurement:abcdefab-1234-1234-1234-abcdefabcdef:ABCDEFAB-ABCD-ABCD-ABCD-ABCDEFABCDEF",
         );
         then.status(200);
     });

@@ -1,11 +1,11 @@
-Feature: Canonical facility identities across the order lifecycle
+Feature: Stable actor identities and canonical entity IDs across the order lifecycle
   Background:
     Given the GSY DEX services are running
     And the DEX service accounts are authorized
     When the Market Orchestrator opens the Spot market for the current delivery slot
     And forecasts use facilities registered with uppercase UUIDs
 
-  Scenario: UUID spelling does not change preferred partners or delivery verification
+  Scenario: Registered actor spelling is preserved through matching and verification
     When a bid at 20 preferring "bob" at 15 and an offer at 5 preferring "alice" at 12 are submitted
     Then the pair settles as "preferred" at 15 for pay-as-bid or max_offer 15, min_bid 15, midpoint 15 for pay-as-clear
     And the trade has "alice" as buyer and "bob" as seller

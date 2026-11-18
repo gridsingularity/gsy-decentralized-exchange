@@ -1,5 +1,4 @@
 use primitives::ewds::dto::FacilityMarketValidationRequest;
-use primitives::utils::canonical_offchain_id;
 use serde_json::json;
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
@@ -10,7 +9,7 @@ pub const OWNER_2_ONCHAIN: &str = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
 pub async fn setup_facilities_mock(facility_ids: [&str; 2]) -> MockServer {
     let server = MockServer::start().await;
-    let known_ids = facility_ids.map(canonical_offchain_id);
+    let known_ids = facility_ids.map(str::to_owned);
     Mock::given(method("GET"))
         .and(path("/facilities"))
         .respond_with(ResponseTemplate::new(200).set_body_json(
@@ -30,7 +29,7 @@ pub async fn setup_facilities_mock(facility_ids: [&str; 2]) -> MockServer {
                 pairs
                     .into_iter()
                     .map(|pair| {
-                        let eligible = known_ids.contains(&canonical_offchain_id(&pair.facility_id));
+                        let eligible = known_ids.contains(&pair.facility_id);
                         json!({
                             "facility_id": pair.facility_id, "market_id": pair.market_id,
                             "eligible": eligible,

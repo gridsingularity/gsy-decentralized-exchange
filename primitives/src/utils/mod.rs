@@ -9,6 +9,20 @@ use uuid::Uuid;
 
 pub const NODE_FLOAT_SCALING_FACTOR: f64 = 10000.0;
 
+pub use crate::actor_ids::derive_onchain_id;
+
+/// Entity UUIDs are v4; actor pseudonyms must not pass through this validator.
+pub fn uuid_v4_to_bytes16(value: &str) -> Result<[u8; 16]> {
+    let id = Uuid::parse_str(value).map_err(|_| anyhow!("invalid UUIDv4"))?;
+    if !is_hyphenated_uuid(value)
+        || id.get_version() != Some(uuid::Version::Random)
+        || id.get_variant() != uuid::Variant::RFC4122
+    {
+        return Err(anyhow!("expected a hyphenated UUIDv4"));
+    }
+    Ok(*id.as_bytes())
+}
+
 pub fn bytes16_to_hex(value: [u8; 16]) -> String {
     format!("0x{}", hex::encode(value))
 }
@@ -47,23 +61,14 @@ pub fn parse_nonzero_uuid_or_hex_bytes16(value: &str) -> Option<[u8; 16]> {
     parse_uuid_or_hex_bytes16(value).filter(|bytes| *bytes != [0; 16])
 }
 
-/// Lowercases only strict hyphenated UUIDs; opaque identities remain byte-for-byte unchanged.
-pub fn canonical_offchain_id(value: &str) -> String {
-    if is_hyphenated_uuid(value) {
-        value.to_ascii_lowercase()
-    } else {
-        value.to_string()
-    }
-}
-
-/// Validates an incoming off-chain identity before applying UUID-only canonicalization.
+/// Validates an incoming actor identity without changing it.
 pub fn normalize_offchain_id(value: &str) -> Result<String> {
     if value.is_empty() || value.trim() != value {
         return Err(anyhow!(
             "off-chain ID must be nonempty and have no surrounding whitespace"
         ));
     }
-    Ok(canonical_offchain_id(value))
+    Ok(value.to_string())
 }
 
 /// Canonical form of a community ID: the lowercase hyphenated UUID that
@@ -102,13 +107,6 @@ pub fn create_encrypted_bytes16_from_string(input_string: &str) -> [u8; 16] {
     hash
 }
 
-/// The ID service's deterministic mapping: UUID spelling is canonicalized; opaque IDs stay case-sensitive.
-pub fn derive_onchain_id(offchain_id: &str) -> String {
-    bytes16_to_hex(create_encrypted_bytes16_from_string(
-        &canonical_offchain_id(offchain_id),
-    ))
-}
-
 pub fn profile_measurement_id(
     point_type: crate::db_api_schema::profiles::MeasurementPointType,
     community_uuid: &str,
@@ -121,8 +119,12 @@ pub fn profile_measurement_id(
     };
     format!(
         "{prefix}:{}:{}",
-        canonical_offchain_id(community_uuid),
-        canonical_offchain_id(facility_id)
+        if is_hyphenated_uuid(community_uuid) {
+            community_uuid.to_ascii_lowercase()
+        } else {
+            community_uuid.to_string()
+        },
+        facility_id
     )
 }
 

@@ -1,3 +1,4 @@
+# Public test-only key; never use this key outside isolated test deployments.
 services:
 
   mongodb:
@@ -32,6 +33,7 @@ services:
     working_dir: /var/www/primitives
     environment:
       - RUST_LOG=info
+      - ACTOR_ID_HASH_KEY=${ACTOR_ID_HASH_KEY:-000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f}
       - RUST_BACKTRACE=1
 
   gsy-contracts-tests:
@@ -69,6 +71,7 @@ services:
     environment:
       - RUST_BACKTRACE=1
       - RUST_LOG=info
+      - ACTOR_ID_HASH_KEY=${ACTOR_ID_HASH_KEY:-000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f}
       - DATABASE_HOST=mongodb
       - DATABASE_NAME=test_db
       - DATABASE_USERNAME=gsy
@@ -110,6 +113,7 @@ services:
     working_dir: /var/www/gsy-execution-engine
     environment:
       - RUST_LOG=info
+      - ACTOR_ID_HASH_KEY=${ACTOR_ID_HASH_KEY:-000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f}
 
   gsy-community-client-integration-test:
     container_name: gsy-community-client-integration-test
@@ -121,3 +125,4 @@ services:
     working_dir: /var/www/gsy-community-client
     environment:
       - RUST_LOG=info
+      - ACTOR_ID_HASH_KEY=${ACTOR_ID_HASH_KEY:-000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f}

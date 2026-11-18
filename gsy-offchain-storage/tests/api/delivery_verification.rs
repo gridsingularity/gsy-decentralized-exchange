@@ -19,7 +19,7 @@ use primitives::{
         grid_topology::FacilitySchema, orders::OrderStatus, profiles::MeasurementSchema,
         trades::TradeStatus,
     },
-    utils::{bytes16_to_hex, create_encrypted_bytes16_from_string},
+    utils::bytes16_to_hex,
 };
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
@@ -162,8 +162,8 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
         let market_id = if index == 2 { [0x9a; 16] } else { market_id };
         let slot = if index == 2 { slot + 900 } else { slot };
         let seller_facility = format!("seller-meter-{index}");
-        let buyer_id = create_encrypted_bytes16_from_string(&buyer);
-        let seller_id = create_encrypted_bytes16_from_string(&format!("seller-{index}"));
+        let buyer_id = actor_bytes(&buyer);
+        let seller_id = actor_bytes(&format!("seller-{index}"));
         let bid = (
             [index + 1; 16],
             buyer_id,
@@ -372,7 +372,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
         &settlement,
         "submitPenalties",
         (vec![(
-            create_encrypted_bytes16_from_string("buyer-0"),
+            actor_bytes("buyer-0"),
             [0x9au8; 16],
             [23u8; 16],
             200u64,
@@ -634,7 +634,7 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
             let index = index as u8;
             let bid = (
                 [index + 1; 16],
-                create_encrypted_bytes16_from_string(buyer),
+                actor_bytes(buyer),
                 market_id,
                 slot,
                 now,
@@ -648,7 +648,7 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
             );
             let offer = (
                 [index + 11; 16],
-                create_encrypted_bytes16_from_string(seller),
+                actor_bytes(seller),
                 market_id,
                 slot,
                 now,
@@ -866,7 +866,7 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
                         .iter()
                         .filter(|event| event.trade_id == trade_id
                             && event.penalized_actor_id
-                                == create_encrypted_bytes16_from_string(party))
+                                == actor_bytes(party))
                         .map(|event| event.penalty_energy)
                         .sum::<u64>(),
                     cost
@@ -905,7 +905,7 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
             penalties
                 .iter()
                 .filter(
-                    |event| event.penalized_actor_id == create_encrypted_bytes16_from_string("a")
+                    |event| event.penalized_actor_id == actor_bytes("a")
                 )
                 .map(|event| event.penalty_energy)
                 .sum::<u64>(),
@@ -945,4 +945,8 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
         stop_app(app).await;
     }
     Ok(())
+}
+
+fn actor_bytes(id: &str) -> [u8; 16] {
+    primitives::utils::parse_uuid_or_hex_bytes16(&primitives::utils::derive_onchain_id(id)).unwrap()
 }

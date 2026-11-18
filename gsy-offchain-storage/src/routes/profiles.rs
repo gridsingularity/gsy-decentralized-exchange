@@ -8,7 +8,7 @@ use primitives::db_api_schema::profiles::{
     TimeseriesSchema,
 };
 use primitives::utils::{
-    canonical_offchain_id, normalize_community_id, normalize_offchain_id, profile_measurement_id,
+    normalize_community_id, normalize_offchain_id, profile_measurement_id,
     timestamp_to_string_with_padding,
 };
 use serde::Deserialize;
@@ -291,8 +291,13 @@ pub async fn post_measurement_points(
 ) -> impl Responder {
     let mut points = points.into_inner();
     for point in &mut points {
-        point.asset_name = canonical_offchain_id(&point.asset_name);
-        point.datasource_name = point.datasource_name.as_deref().map(canonical_offchain_id);
+        point.datasource_name = point.datasource_name.as_deref().map(|id| {
+            if id.len() == 36 {
+                normalize_community_id(id).unwrap_or_else(|_| id.to_string())
+            } else {
+                id.to_string()
+            }
+        });
     }
     match db
         .get_ref()

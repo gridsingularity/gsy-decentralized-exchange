@@ -9,7 +9,7 @@ use primitives::ewds::dto::{EwdsOrderDto, FacilityMarketValidationRequest};
 use primitives::ewds::{env_var, EwdsClient};
 use primitives::offchain_storage::OffchainStorageClient;
 use primitives::utils::{
-    canonical_offchain_id, create_encrypted_bytes16_from_string, epoch_to_rfc3339,
+    create_encrypted_bytes16_from_string, epoch_to_rfc3339,
     parse_uuid_or_hex_bytes16, string_to_timestamp, NODE_FLOAT_SCALING_FACTOR,
 };
 
@@ -220,9 +220,7 @@ pub async fn create_input_orders(
     let mut input_orders = Vec::new();
     let mut rejected = Vec::new();
     for (forecast, result) in forecasts.into_iter().zip(validation) {
-        let Some(owner_id) =
-            facility_owner_mapping.get(&canonical_offchain_id(&forecast.facility_id))
-        else {
+        let Some(owner_id) = facility_owner_mapping.get(&forecast.facility_id) else {
             // No owner identity is available to construct an order or rejection notification.
             warn!("No owner mapping for facility_id={}", forecast.facility_id);
             continue;

@@ -29,7 +29,7 @@ the community client's EWDS subscriber), then indexed by the EVM listener.
 Imports validate the whole payload and canonicalize order IDs, market IDs and
 the already-resolved `createdBy` owner hash to lowercase `0x` bytes16. Each
 must be nonzero. `area_uuid` uses the same hash; the optional preferred partner
-remains an off-chain identity (UUID spelling lowercased, opaque strings preserved).
+remains an off-chain identity with its exact spelling preserved.
 Unlike `order.event`, these routes do not resolve owner IDs or place orders.
 Invalid identifiers return 400. Duplicate canonical IDs within the batch or
 already in storage return 409 before writes. Unique indexes also prevent
@@ -107,11 +107,11 @@ make those facilities ineligible. A facility name assigned to another ID returns
 409. These topology writes remain unauthenticated; restricting that write surface
 is a separate access-control follow-up.
 
-Facility IDs, owner IDs and site facility references lowercase strict hyphenated
-UUIDs (8-4-4-4-12). Other nonempty, unpadded identities remain case-sensitive,
-including bare or `0x` hex strings; they are not interpreted as resolved IDs.
+Facility IDs, owner IDs and site facility references preserve their exact spelling,
+including UUID-shaped, bare or `0x` hex strings; they are case-sensitive and are
+not interpreted as resolved on-chain IDs.
 Empty or padded identities return HTTP 400 or invalidate the entire inbound EWDS
-event before any writes. Site facility lists are deduplicated after normalization.
+event before any writes. Site facility lists deduplicate identical references only.
 Names, site keys and arbitrary asset IDs are unchanged.
 This normalization targets fresh deployments with storage and consumers built
 from the same revision.
@@ -151,13 +151,24 @@ by those trusted services, not by this read-only endpoint or an ID mapping alone
 
 ### ID Mapping
 - The ID service, execution engine and certificate metadata share the deterministic
-  Blake2b-16 derivation. Verification derives IDs locally and never creates mappings.
-  The helper canonicalizes strict hyphenated UUIDs before hashing; opaque IDs
-  retain their original hashes. ID-service lookup, insertion and reverse lookup
-  use the canonical off-chain spelling. `/ids` rejects empty/padded inputs with
+  keyed Blake2b-16 derivation using `ACTOR_ID_HASH_KEY`. Verification derives IDs
+  locally and never creates mappings. Hashing preserves the exact actor spelling.
+  ID-service lookup, insertion and reverse lookup use that same spelling.
+  `/ids` rejects empty/padded inputs with
   HTTP 400; `ids.query` responds with `invalid_request`.
   Certificate `owner_id` is the trade seller's owner hash; historical
   ownership policy remains a separate follow-up.
+
+HTTP and EWDS topology writes register mappings before making the topology record
+visible: facility ID and owner ID for facilities, `site_name` (the current site
+key) for sites, and the currently normalized community ID for communities.
+References to other entities do not register those entities. Replays reuse the
+mapping; topology updates retain earlier mappings for chain-event lookups.
+If mapping persistence fails, the topology write fails and EWDS can retry.
+These writes are not transactional: a failed topology write can leave mappings,
+but mappings alone never establish eligibility. A mapping made with another key
+is rejected, not overwritten. Use a fresh deployment; do not rotate the key in place.
+See [actor key provisioning](../setup/contracts.md#actor-id-hashing-key).
 - `/ids` (`POST`) — get-or-create offchain↔onchain ID mappings
 
 Compatibility adapters for EVM JSON callers:
@@ -170,8 +181,8 @@ These adapters do not own separate collections. They read and write the same
 `markets`, `measurement_points`, and `timeseries` records as the canonical API.
 Measurement/forecast ingest and facility filters use the same facility rule.
 Typed profile ingestion also requires a nonzero community UUID or 16-byte hex ID,
-stored as a lowercase hyphenated UUID. Generated profile IDs include both canonical
-community and facility IDs. Invalid IDs reject the whole batch before writes
+stored as a lowercase hyphenated UUID. Generated profile IDs include the canonical
+community ID and the exact facility ID. Invalid IDs reject the whole batch before writes
 (HTTP 400 or an invalid EWDS measurement event). The community-client adapter
 applies the same checks before forwarding points and values.
 
@@ -183,8 +194,8 @@ Invalid identifiers return HTTP 400. `measurements.query` applies the same
 filters and aliases, returning `invalid_request` rather than timing out.
 Specify each field only once, not together with one of its aliases.
 
-Direct `/measurement-points` writes lowercase strict UUID-shaped `asset_name`
-and `datasource_name` references. Other labels (including hex-shaped labels),
+Direct `/measurement-points` writes preserve `asset_name` exactly and lowercase
+strict UUID-shaped `datasource_name` community references. Other labels (including hex-shaped labels),
 missing datasource metadata and caller-supplied point IDs are preserved.
 Unfiltered profile reads still return these records; a community filter selects
 only matching community metadata. Shared read conversions do not validate it.

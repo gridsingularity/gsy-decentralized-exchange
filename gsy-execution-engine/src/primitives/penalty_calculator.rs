@@ -3,7 +3,7 @@ use primitives::db_api_schema::{
     profiles::MeasurementSchema,
     trades::{DbTradeSchema, TradeStatus},
 };
-use primitives::utils::{canonical_offchain_id, derive_onchain_id, NODE_FLOAT_SCALING_FACTOR};
+use primitives::utils::{derive_onchain_id, NODE_FLOAT_SCALING_FACTOR};
 use std::collections::{HashMap, HashSet};
 use tracing::warn;
 
@@ -142,7 +142,7 @@ pub fn compute_delivery_verifications(
         .iter()
         .filter(|meas| meas.time_slot == delivery_slot)
     {
-        let Some(owner_id) = facility_owner_mapping.get(&canonical_offchain_id(&meas.facility_id)) else {
+        let Some(owner_id) = facility_owner_mapping.get(&meas.facility_id) else {
             warn!(
                 "No owner mapping supplied for facility_id={}",
                 meas.facility_id

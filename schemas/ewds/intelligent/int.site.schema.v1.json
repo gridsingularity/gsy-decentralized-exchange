@@ -9,11 +9,11 @@
     "site_name": {
       "description": "Unique site name. Facilities refer to it as site_id.",
       "type": "string",
-      "minLength": 1
+      "pattern": "^\\S(?:[\\s\\S]*\\S)?(?![\\s\\S])"
     },
     "site_description": { "type": "string" },
     "facilities": {
-      "description": "Off-chain facility IDs: strict hyphenated UUIDs are lowercased; other unpadded identities remain case-sensitive. Equivalent references are deduplicated.",
+      "description": "Off-chain facility IDs: unpadded identities are preserved exactly and are case-sensitive, including UUID-shaped strings. Identical references are deduplicated.",
       "type": "array",
       "items": { "type": "string", "pattern": "^\\S(?:[\\s\\S]*\\S)?(?![\\s\\S])" },
       "uniqueItems": true
