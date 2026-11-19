@@ -1,0 +1,41 @@
+name: Staging off-chain storage check
+
+# Checks every night that the off-chain storage on staging answers EWDS queries through the
+# staging client gateway (scripts/check_offchain_storage_staging.py).
+on:
+  schedule:
+    # 01:07 UTC (GitHub cron uses UTC). Off the full hour, when scheduled runs are most often
+    # delayed.
+    - cron: "7 1 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # The first run of a new client ID can take several minutes (see the script).
+    timeout-minutes: 30
+    steps:
+      # Staging is deployed from GSYDEXv2 (deploy_staging.yml), so run that branch's script,
+      # also when this workflow is triggered from the default branch.
+      - uses: actions/checkout@v5
+        with:
+          ref: GSYDEXv2
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Check EWDS queries
+        env:
+          STAGING_IP: ${{ secrets.STAGING_SERVER_HOST }}
+          # Own gateway cursors, so that a manual run of the script at the same time doesn't
+          # take this run's responses.
+          EWDS_CHECK_CLIENT_ID: gsystagingchecknightly
+          PYTHONUNBUFFERED: "1"
+        run: python scripts/check_offchain_storage_staging.py
