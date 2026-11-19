@@ -28,7 +28,7 @@ use primitives::db_api_schema::profiles::{
 use primitives::db_api_schema::trades::{DbTradeSchema, TradeParameters, TradeStatus};
 use primitives::ewds::{EwdsClient, EwdsOperation};
 use primitives::utils::{
-    bytes16_to_hex, timestamp_to_datetime_string, timestamp_to_string_with_padding,
+    bytes16_to_uuid_string, timestamp_to_datetime_string, timestamp_to_string_with_padding,
 };
 use serde_json::json;
 use std::env;
@@ -96,8 +96,8 @@ async fn seed_executed_pv_sale(world: &mut MyWorld, energy_kwh: f64, export_kwh:
         pv_asset_uuid: format!("goo-e2e-pv-{run}"),
         measurement_id: export_kwh
             .map(|_| format!("Measurement:{community_id}:{seller_facility_id}")),
-        trade_uuid: bytes16_to_hex(*Uuid::new_v4().as_bytes()),
-        market_id: primitives::utils::bytes16_to_hex(*Uuid::new_v4().as_bytes()),
+        trade_uuid: bytes16_to_uuid_string(*Uuid::new_v4().as_bytes()),
+        market_id: primitives::utils::bytes16_to_uuid_string(*Uuid::new_v4().as_bytes()),
         time_slot,
         status_updated_at: now,
         energy_kwh,
@@ -218,8 +218,8 @@ async fn seed_executed_pv_sale(world: &mut MyWorld, energy_kwh: f64, export_kwh:
             buyer: seed.buyer_owner_id.clone(),
             market_id: seed.market_id.clone(),
             creation_time: time_slot - SLOT_S,
-            offer_hash: bytes16_to_hex(*Uuid::new_v4().as_bytes()),
-            bid_hash: bytes16_to_hex(*Uuid::new_v4().as_bytes()),
+            offer_hash: bytes16_to_uuid_string(*Uuid::new_v4().as_bytes()),
+            bid_hash: bytes16_to_uuid_string(*Uuid::new_v4().as_bytes()),
             residual_offer_id: None,
             residual_bid_id: None,
             parameters: TradeParameters {

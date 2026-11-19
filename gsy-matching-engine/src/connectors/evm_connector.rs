@@ -1,6 +1,6 @@
 use crate::algorithms::{MatchOrders, PayAsClearPricing};
 use crate::models::{Attributes, BidOfferMatch, MatchType, MatchingData, Order, Requirements};
-use anyhow::{anyhow, Error, Result};
+use anyhow::{anyhow, Context, Error, Result};
 use ethers::prelude::*;
 use ethers::utils::keccak256;
 use primitives::db_api_schema::orders::{
@@ -11,8 +11,7 @@ use primitives::ewds::dto::{order_status_from_ewds, EwdsOrderDto};
 use primitives::ewds::{EwdsClient, EwdsOperation};
 use primitives::matching::matching_block_interval;
 use primitives::utils::{
-    bytes16_to_hex, derive_onchain_id, normalize_offchain_id, parse_nonzero_uuid_or_hex_bytes16,
-    parse_uuid_or_hex_bytes16, rfc3339_to_epoch, NODE_FLOAT_SCALING_FACTOR,
+    bytes16_to_uuid_string, derive_onchain_id, normalize_offchain_id, normalize_uuid, hex_to_bytes16, uuid_v4_to_bytes16, rfc3339_to_epoch, NODE_FLOAT_SCALING_FACTOR,
 };
 use primitives::MatchingAlgorithm;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -361,9 +360,9 @@ async fn prepare_market_orders(body: Vec<EwdsOrderDto>) -> Result<PreparedOrders
             continue;
         }
         // An unknown market cannot safely be isolated from the other books.
-        let market_id = parse_nonzero_uuid_or_hex_bytes16(&dto.market_id)
-            .map(bytes16_to_hex)
-            .ok_or_else(|| {
+        let market_id = uuid_v4_to_bytes16(&dto.market_id)
+            .map(bytes16_to_uuid_string)
+            .map_err(|_| {
                 anyhow!(
                     "Cannot identify market for order {}: {}",
                     dto.order_id,
@@ -477,12 +476,11 @@ fn parse_query_params_from_url(url: &str) -> serde_json::Value {
 }
 
 fn parse_bytes16_field(field_name: &str, value: &str) -> Result<[u8; 16]> {
-    parse_nonzero_uuid_or_hex_bytes16(value)
-        .ok_or_else(|| anyhow!("{} must be a non-zero UUID or 16-byte hex ID", field_name))
+    uuid_v4_to_bytes16(value).with_context(|| format!("{} must be a UUIDv4", field_name))
 }
 
-fn normalize_bytes16_field(field_name: &str, value: &str) -> Result<String> {
-    Ok(bytes16_to_hex(parse_bytes16_field(field_name, value)?))
+fn normalize_entity_id(field_name: &str, value: &str) -> Result<String> {
+    normalize_uuid(value).with_context(|| format!("Invalid {}", field_name))
 }
 
 fn convert_requirements(
@@ -518,8 +516,8 @@ fn convert_attributes(
 }
 
 fn convert_db_order_to_canonical(order: &DbOrderSchema) -> Result<Order> {
-    let order_id = normalize_bytes16_field("order_id", &order.order_id)?;
-    let market_id = normalize_bytes16_field("market_id", &order.market_id)?;
+    let order_id = normalize_entity_id("order_id", &order.order_id)?;
+    let market_id = normalize_entity_id("market_id", &order.market_id)?;
     let area_uuid = normalize_offchain_id(&order.area_uuid)?;
     let created_by = normalize_offchain_id(&order.created_by)?;
     Ok(match order.order_type {
@@ -576,10 +574,7 @@ fn to_evm_order_data(order: &DbOrderSchema, expected_type: OrderEnum) -> Result<
 
     Ok(OrderParams {
         order_id: parse_bytes16_field("order_id", order.order_id.as_str())?,
-        created_by: parse_bytes16_field(
-            "created_by",
-            &derive_onchain_id(&normalize_offchain_id(&order.created_by)?),
-        )?,
+        created_by: hex_to_bytes16(&derive_onchain_id(&normalize_offchain_id(&order.created_by)?)).expect("actor hash is bytes16"),
         market_id: parse_bytes16_field("market_id", order.market_id.as_str())?,
         time_slot: order.time_slot,
         creation_time: order.creation_time,
@@ -601,8 +596,7 @@ fn optional_order_id_to_bytes16(order: Option<&Order>) -> Result<[u8; 16]> {
 }
 
 fn derive_trade_id() -> [u8; 16] {
-    let uuid = Uuid::new_v4().to_string();
-    parse_uuid_or_hex_bytes16(&uuid).expect("Error converting uuid to bytes")
+    *Uuid::new_v4().as_bytes()
 }
 
 fn to_evm_clearing_result(clearing_result: &ClearingResult) -> Result<EvmClearingResult> {

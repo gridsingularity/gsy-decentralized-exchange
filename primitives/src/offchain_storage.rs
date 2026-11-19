@@ -11,7 +11,7 @@ use crate::ewds::dto::{
 use crate::ewds::{format_response_body, EwdsClient, EwdsOperation};
 use crate::utils::{
     bytes16_to_hex, epoch_to_rfc3339, normalize_offchain_id,
-    parse_uuid_or_hex_bytes16, timestamp_to_string_with_padding,
+    hex_to_bytes16, timestamp_to_string_with_padding,
 };
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
@@ -254,7 +254,7 @@ impl OffchainStorageClient {
                 "ID service returned a mapping for a different facility"
             ));
         }
-        let bytes = parse_uuid_or_hex_bytes16(&mapping.onchain_id)
+        let bytes = hex_to_bytes16(&mapping.onchain_id)
             .filter(|bytes| *bytes != [0; 16])
             .ok_or_else(|| anyhow!("Invalid on-chain ID returned for facility {}", offchain_id))?;
         Ok(bytes16_to_hex(bytes))

@@ -17,7 +17,7 @@ use primitives::ewds::{
     remember_id, EwdsEventTopicConfig, EwdsEventType, EwdsOperation, EwdsTopicConfig,
 };
 use primitives::utils::{
-    normalize_market_id, normalize_offchain_id, opt_rfc3339_to_epoch,
+    normalize_uuid, normalize_offchain_id, opt_rfc3339_to_epoch,
     timestamp_to_string_with_padding,
 };
 use reqwest::Client;
@@ -405,7 +405,7 @@ pub async fn handle_request(
                     payload
                         .market_id
                         .as_deref()
-                        .map(normalize_market_id)
+                        .map(normalize_uuid)
                         .transpose()?,
                     opt_rfc3339_to_epoch(payload.start_time.as_deref())?,
                     opt_rfc3339_to_epoch(payload.end_time.as_deref())?,
@@ -446,7 +446,7 @@ pub async fn handle_request(
                     payload
                         .market_id
                         .as_deref()
-                        .map(normalize_market_id)
+                        .map(normalize_uuid)
                         .transpose()?,
                     opt_rfc3339_to_epoch(payload.start_time.as_deref())?,
                     opt_rfc3339_to_epoch(payload.end_time.as_deref())?,
@@ -607,7 +607,7 @@ pub async fn handle_request(
             let request_id = envelope.request_id;
             let query = (|| -> Result<_> {
                 let payload: ClearingResultsPayload = serde_json::from_value(envelope.payload)?;
-                normalize_market_id(&payload.market_id)
+                normalize_uuid(&payload.market_id)
             })();
             let market_id = match query {
                 Ok(id) => id,
@@ -649,7 +649,7 @@ pub async fn handle_request(
                 let market_id = payload
                     .market_id
                     .as_deref()
-                    .map(normalize_market_id)
+                    .map(normalize_uuid)
                     .transpose()
                     .map_err(|e| anyhow!("markets.query payload parse error: {}", e))?;
                 let community_id = payload

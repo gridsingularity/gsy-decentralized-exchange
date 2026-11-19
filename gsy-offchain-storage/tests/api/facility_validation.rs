@@ -54,7 +54,15 @@ fn community_id(id: &str) -> String {
 }
 
 fn market_id(id: &str) -> String {
-    primitives::utils::derive_onchain_id(&format!("market-{id}"))
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static IDS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    IDS.get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap()
+        .entry(id.to_string())
+        .or_insert_with(|| uuid::Uuid::new_v4().to_string())
+        .clone()
 }
 
 async fn seed_community(db: &DatabaseWrapper, id: &str) {
@@ -407,7 +415,7 @@ async fn validates_mixed_pairs_in_input_order_without_writes() {
         pair(
             "facility-a",
             &primitives::utils::bytes16_to_uuid_string(
-                primitives::utils::parse_uuid_or_hex_bytes16(&market_id("a")).unwrap(),
+                primitives::utils::uuid_v4_to_bytes16(&market_id("a")).unwrap(),
             )
             .to_uppercase(),
         ),
@@ -599,14 +607,14 @@ async fn http_and_ewds_return_the_same_bulk_validation_results() {
     db.markets()
         .update_one(
             doc! {"market_id": &market_id("a")},
-            doc! {"$set": {"market_id": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
+            doc! {"$set": {"market_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}},
         )
         .await
         .unwrap();
     let mappings_before = db.ids().count_documents(doc! {}).await.unwrap();
     let requests = vec![
-        pair("facility-a", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
-        pair("facility-a", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
+        pair("facility-a", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+        pair("facility-a", "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"),
         pair("facility-a", &market_id("b")),
         pair("missing", &market_id("b")),
         pair("facility-b", "missing"),

@@ -8,7 +8,7 @@ use primitives::db_api_schema::orders::{
     DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus,
 };
 use primitives::db_api_schema::trades::ClearingStatus;
-use primitives::utils::{parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR};
+use primitives::utils::{hex_to_bytes16, uuid_v4_to_bytes16, NODE_FLOAT_SCALING_FACTOR};
 use std::{collections::HashMap, fs::File, io::Write, sync::Arc};
 use tempfile::TempDir;
 
@@ -207,9 +207,9 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
 
     let bid_actor_id = "Owner-MiXeD/LIC01".to_owned();
     let ask_actor_id = format!("0x{}", "bb".repeat(16));
-    let bid_order_id = format!("0x{}", "11".repeat(16));
-    let ask_order_id = format!("0x{}", "22".repeat(16));
-    let market_id = format!("0x{}", "33".repeat(16));
+    let bid_order_id = "11111111-1111-4111-8111-111111111111".to_string();
+    let ask_order_id = "22222222-2222-4222-8222-222222222222".to_string();
+    let market_id = "33333333-3333-4333-8333-333333333333".to_string();
     let bid_area = bid_actor_id.clone();
     let ask_area = ask_actor_id.clone();
 
@@ -287,7 +287,7 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
         energy: bid_order.energy - selected_energy,
         ..bid_order.clone()
     };
-    let second_offer_id = format!("0x{}", "44".repeat(16));
+    let second_offer_id = "44444444-4444-4444-8444-444444444444".to_string();
     let second_offer_db = DbOrderSchema {
         order_id: second_offer_id.clone(),
         energy_kWh: 20.0,
@@ -382,12 +382,12 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
     );
     assert_eq!(
         mock_contract.last_bid_created_by().call().await.unwrap(),
-        parse_uuid_or_hex_bytes16(&primitives::utils::derive_onchain_id(&bid_actor_id))
+        hex_to_bytes16(&primitives::utils::derive_onchain_id(&bid_actor_id))
             .expect("Failed to parse uuid")
     );
     assert_eq!(
         mock_contract.last_offer_created_by().call().await.unwrap(),
-        parse_uuid_or_hex_bytes16(&primitives::utils::derive_onchain_id(&ask_actor_id))
+        hex_to_bytes16(&primitives::utils::derive_onchain_id(&ask_actor_id))
             .expect("Failed to parse uuid")
     );
     assert_eq!(
@@ -396,7 +396,7 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
     );
     assert_eq!(
         mock_contract.last_market_id().call().await.unwrap(),
-        parse_uuid_or_hex_bytes16(&market_id).expect("Failed to parse market id")
+        uuid_v4_to_bytes16(&market_id).expect("Failed to parse market id")
     );
     assert_eq!(
         mock_contract
@@ -404,7 +404,7 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
             .call()
             .await
             .unwrap(),
-        parse_uuid_or_hex_bytes16(&primitives::utils::derive_onchain_id(&ask_actor_id))
+        hex_to_bytes16(&primitives::utils::derive_onchain_id(&ask_actor_id))
             .expect("Invalid on-chain actor ID")
     );
     assert_eq!(

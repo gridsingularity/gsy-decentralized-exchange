@@ -16,7 +16,7 @@ use primitives::ewds::dto::FacilityMarketValidationRequest;
 use primitives::matching::matching_block_interval;
 use primitives::offchain_storage::{OffchainStorageClient, OffchainStorageTransport};
 use primitives::utils::{
-    bytes16_to_hex, derive_onchain_id, parse_uuid_or_hex_bytes16,
+    bytes16_to_uuid_string, derive_onchain_id, uuid_v4_to_bytes16,
     rfc3339_to_epoch, timestamp_to_string_with_padding, NODE_FLOAT_SCALING_FACTOR,
 };
 use std::collections::HashSet;
@@ -201,7 +201,7 @@ fn address_to_full_hex(address: Address) -> String {
 }
 
 pub(crate) fn market_id_as_hex(world: &MyWorld) -> String {
-    bytes16_to_hex(world.last_market_id.expect("Missing market id"))
+    bytes16_to_uuid_string(world.last_market_id.expect("Missing market id"))
 }
 
 fn market_window(world: &MyWorld) -> (u64, u64) {
@@ -307,14 +307,14 @@ async fn wait_for_order_in_market(
     market_id: &str,
     order_id: &str,
 ) -> DbOrderSchema {
-    let expected_id = parse_uuid_or_hex_bytes16(order_id).expect("Invalid expected order ID");
+    let expected_id = uuid_v4_to_bytes16(order_id).expect("Invalid expected order ID");
     for _ in 0..40 {
         let orders = query_orders_for_market(world, market_id).await;
         if let Some(order) = orders
             .into_iter()
-            .find(|order| parse_uuid_or_hex_bytes16(&order.order_id) == Some(expected_id))
+            .find(|order| uuid_v4_to_bytes16(&order.order_id).ok() == Some(expected_id))
         {
-            assert_eq!(order.order_id, bytes16_to_hex(expected_id));
+            assert_eq!(order.order_id, bytes16_to_uuid_string(expected_id));
             return order;
         }
 
@@ -376,7 +376,7 @@ async fn place_custom_order_for_market(
     let validation = id_mapping_source
         .validate_facility_markets(&[FacilityMarketValidationRequest {
             facility_id: facility_id.clone(),
-            market_id: bytes16_to_hex(market_id),
+            market_id: bytes16_to_uuid_string(market_id),
         }])
         .await
         .expect("Facility validation unavailable");
@@ -392,7 +392,7 @@ async fn place_custom_order_for_market(
     let owner_id = facility_owner_mapping
         .get(&facility_id)
         .expect("Missing facility owner");
-    let actor_id = parse_uuid_or_hex_bytes16(&derive_onchain_id(owner_id)).unwrap();
+    let actor_id = primitives::utils::hex_to_bytes16(&derive_onchain_id(owner_id)).unwrap();
     let order_id_bytes = *Uuid::new_v4().as_bytes();
     let mut requirements = requirements;
     if let Some(partner) = requirements
@@ -436,7 +436,7 @@ async fn place_custom_order_for_market(
         metadata.preferred_energy_rate,
     );
 
-    let order_id = bytes16_to_hex(order_id_bytes);
+    let order_id = bytes16_to_uuid_string(order_id_bytes);
 
     let place_order_call = order_registry.place_order(params);
     let pending_tx = place_order_call
@@ -453,7 +453,7 @@ async fn place_custom_order_for_market(
     );
 
     if requirements.is_some() || attributes.is_some() {
-        let market_id = bytes16_to_hex(market_id);
+        let market_id = bytes16_to_uuid_string(market_id);
         let indexed_order =
             wait_for_order_in_market(world, market_id.as_str(), order_id.as_str()).await;
         assert_eq!(
@@ -487,13 +487,13 @@ async fn submit_cross_community_orders(world: &mut MyWorld) {
 
     wait_for_order_in_market(
         world,
-        bytes16_to_hex(market_ids[0]).as_str(),
+        bytes16_to_uuid_string(market_ids[0]).as_str(),
         primary_bid.as_str(),
     )
     .await;
     wait_for_order_in_market(
         world,
-        bytes16_to_hex(market_ids[1]).as_str(),
+        bytes16_to_uuid_string(market_ids[1]).as_str(),
         secondary_offer.as_str(),
     )
     .await;
@@ -529,7 +529,7 @@ async fn verify_no_cross_community_trade(world: &mut MyWorld) {
     for order_id in [bid_id, offer_id] {
         let status = order_registry
             .get_status(
-                parse_uuid_or_hex_bytes16(order_id)
+                uuid_v4_to_bytes16(order_id)
                     .expect("Custom order ID is not a UUID or bytes16 hex value"),
             )
             .call()
@@ -571,13 +571,13 @@ async fn submit_community_market_counterparts(world: &mut MyWorld) {
 
     wait_for_order_in_market(
         world,
-        bytes16_to_hex(market_ids[0]).as_str(),
+        bytes16_to_uuid_string(market_ids[0]).as_str(),
         primary_offer.as_str(),
     )
     .await;
     wait_for_order_in_market(
         world,
-        bytes16_to_hex(market_ids[1]).as_str(),
+        bytes16_to_uuid_string(market_ids[1]).as_str(),
         secondary_bid.as_str(),
     )
     .await;
@@ -646,7 +646,7 @@ async fn verify_community_market_settlements(world: &mut MyWorld) {
         );
 
         for pair in &order_pairs {
-            let expected_market_id = bytes16_to_hex(pair.market_id);
+            let expected_market_id = bytes16_to_uuid_string(pair.market_id);
             let trade = scenario_trades
                 .iter()
                 .find(|trade| {
@@ -1042,11 +1042,11 @@ pub(crate) async fn delivery_verification_timestamp(world: &MyWorld, trade: &DbT
     let settlement = TradeSettlementContract::new(world.trade_settlement_address, world.provider.clone());
     let events = settlement.event::<DeliveryVerifiedFilter>()
         .from_block(0u64)
-        .topic1(indexed_bytes16_topic(parse_uuid_or_hex_bytes16(&trade.trade_uuid).unwrap()))
+        .topic1(indexed_bytes16_topic(uuid_v4_to_bytes16(&trade.trade_uuid).unwrap()))
         .query_with_meta().await.expect("Failed to query delivery verification");
     assert_eq!(events.len(), 1, "Executed orders require exactly one verification event");
-    assert_eq!(events[0].0.bid_id, parse_uuid_or_hex_bytes16(&trade.bid_hash).unwrap());
-    assert_eq!(events[0].0.offer_id, parse_uuid_or_hex_bytes16(&trade.offer_hash).unwrap());
+    assert_eq!(events[0].0.bid_id, uuid_v4_to_bytes16(&trade.bid_hash).unwrap());
+    assert_eq!(events[0].0.offer_id, uuid_v4_to_bytes16(&trade.offer_hash).unwrap());
     world.provider.get_block(events[0].1.block_hash).await.unwrap().unwrap().timestamp.as_u64()
 }
 
@@ -1054,8 +1054,8 @@ async fn assert_trade_settled_on_chain(world: &MyWorld, trade: &DbTradeSchema) {
     let order_registry =
         OrderRegistryContract::new(world.order_registry_address, world.provider.clone());
     let bid_id =
-        parse_uuid_or_hex_bytes16(trade.bid_hash.as_str()).expect("could not convert hex to bytes");
-    let offer_id = parse_uuid_or_hex_bytes16(trade.offer_hash.as_str())
+        uuid_v4_to_bytes16(trade.bid_hash.as_str()).expect("could not convert hex to bytes");
+    let offer_id = uuid_v4_to_bytes16(trade.offer_hash.as_str())
         .expect("could not convert hex to bytes");
     let bid_status = order_registry
         .get_status(bid_id)
@@ -1224,9 +1224,9 @@ async fn verify_partner_trade(
         }) {
             world.last_trade = Some(trade.clone());
 
-            let bid_id = parse_uuid_or_hex_bytes16(trade.bid_hash.as_str())
+            let bid_id = uuid_v4_to_bytes16(trade.bid_hash.as_str())
                 .expect("could not convert hex to bytes");
-            let offer_id = parse_uuid_or_hex_bytes16(trade.offer_hash.as_str())
+            let offer_id = uuid_v4_to_bytes16(trade.offer_hash.as_str())
                 .expect("could not convert hex to bytes");
 
             let bid_status = order_registry
@@ -1375,7 +1375,7 @@ async fn verify_pay_as_clear_result(
         let settlement =
             TradeSettlementContract::new(world.trade_settlement_address, world.provider.clone());
         for trade in &matching_trades {
-            let trade_id = parse_uuid_or_hex_bytes16(&trade.trade_uuid).expect("Invalid trade ID");
+            let trade_id = uuid_v4_to_bytes16(&trade.trade_uuid).expect("Invalid trade ID");
             let topic = indexed_bytes16_topic(trade_id);
             let events = settlement
                 .event::<TradeSettledFilter>()
@@ -1388,11 +1388,11 @@ async fn verify_pay_as_clear_result(
             let event = &events[0];
             assert_eq!(
                 event.bid_id,
-                parse_uuid_or_hex_bytes16(&trade.bid_hash).unwrap()
+                uuid_v4_to_bytes16(&trade.bid_hash).unwrap()
             );
             assert_eq!(
                 event.offer_id,
-                parse_uuid_or_hex_bytes16(&trade.offer_hash).unwrap()
+                uuid_v4_to_bytes16(&trade.offer_hash).unwrap()
             );
             assert_eq!(event.market_id, world.last_market_id.unwrap());
             assert_eq!(event.time_slot, world.target_delivery_time);
@@ -1487,7 +1487,7 @@ async fn verify_pay_as_clear_unmatched_orders(world: &mut MyWorld) {
             "Order {order_id} must remain open"
         );
         let status = registry
-            .get_status(parse_uuid_or_hex_bytes16(order_id).unwrap())
+            .get_status(uuid_v4_to_bytes16(order_id).unwrap())
             .call()
             .await
             .expect("Failed to read unmatched order status");
@@ -1529,7 +1529,7 @@ async fn verify_preferred_residual(
         .as_ref()
         .expect("No trade was recorded in the previous step");
 
-    let trade_id = parse_uuid_or_hex_bytes16(&trade.trade_uuid).expect("Invalid trade ID");
+    let trade_id = uuid_v4_to_bytes16(&trade.trade_uuid).expect("Invalid trade ID");
     let settlement =
         TradeSettlementContract::new(world.trade_settlement_address, world.provider.clone());
     let events = settlement
@@ -1541,8 +1541,8 @@ async fn verify_preferred_residual(
         .expect("Failed to query preferred settlement event");
     assert_eq!(events.len(), 1, "Expected one settlement event for the trade");
     let event = &events[0];
-    assert_eq!(event.bid_id, parse_uuid_or_hex_bytes16(&trade.bid_hash).unwrap());
-    assert_eq!(event.offer_id, parse_uuid_or_hex_bytes16(&trade.offer_hash).unwrap());
+    assert_eq!(event.bid_id, uuid_v4_to_bytes16(&trade.bid_hash).unwrap());
+    assert_eq!(event.offer_id, uuid_v4_to_bytes16(&trade.offer_hash).unwrap());
 
     let orders = query_market_orders(world).await;
     for (side, order_id, indexed_residual, emitted_residual) in [
@@ -1560,7 +1560,7 @@ async fn verify_preferred_residual(
         if side == residual_side {
             let indexed_id = indexed_residual.as_ref()
                 .unwrap_or_else(|| panic!("Missing indexed residual {side} ID"));
-            let indexed_id = parse_uuid_or_hex_bytes16(indexed_id).expect("Invalid residual ID");
+            let indexed_id = uuid_v4_to_bytes16(indexed_id).expect("Invalid residual ID");
             assert_ne!(emitted_residual, [0u8; 16], "Missing on-chain residual {side} ID");
             assert_eq!(indexed_id, emitted_residual, "Residual {side} ID differs from event");
             assert_ne!(indexed_id, event.bid_id, "Residual must have a new ID");
@@ -1660,7 +1660,7 @@ async fn verify_preference_policy_pair(
 }
 
 async fn assert_settlement_match_type(world: &MyWorld, trade: &DbTradeSchema, expected: u8) {
-    let trade_id = parse_uuid_or_hex_bytes16(&trade.trade_uuid).unwrap();
+    let trade_id = uuid_v4_to_bytes16(&trade.trade_uuid).unwrap();
     let topic = indexed_bytes16_topic(trade_id);
     let settlement =
         TradeSettlementContract::new(world.trade_settlement_address, world.provider.clone());
@@ -1672,8 +1672,8 @@ async fn assert_settlement_match_type(world: &MyWorld, trade: &DbTradeSchema, ex
         .unwrap();
     assert_eq!(events.len(), 1, "Expected exactly one settlement event");
     let event = &events[0].0;
-    assert_eq!(event.bid_id, parse_uuid_or_hex_bytes16(&trade.bid_hash).unwrap());
-    assert_eq!(event.offer_id, parse_uuid_or_hex_bytes16(&trade.offer_hash).unwrap());
+    assert_eq!(event.bid_id, uuid_v4_to_bytes16(&trade.bid_hash).unwrap());
+    assert_eq!(event.offer_id, uuid_v4_to_bytes16(&trade.offer_hash).unwrap());
     assert_eq!(
         event.energy.as_u64(),
         (trade.parameters.selected_energy_kWh * NODE_FLOAT_SCALING_FACTOR).round() as u64
@@ -1732,7 +1732,7 @@ async fn verify_residual_lifecycle(world: &mut MyWorld, side: String, consumptio
     let parent = wait_for_order_in_offchain_storage(world, parent_id).await;
     let registry = OrderRegistryContract::new(world.order_registry_address, world.provider.clone());
     let mut expected_params = registry
-        .get_order(parse_uuid_or_hex_bytes16(parent_id).unwrap())
+        .get_order(uuid_v4_to_bytes16(parent_id).unwrap())
         .call()
         .await
         .expect("Failed to read original order");
@@ -1752,7 +1752,7 @@ async fn verify_residual_lifecycle(world: &mut MyWorld, side: String, consumptio
         assert_eq!(residual.status, OrderStatus::Submitted);
         assert_eq!(
             registry
-                .get_status(parse_uuid_or_hex_bytes16(residual_id).unwrap())
+                .get_status(uuid_v4_to_bytes16(residual_id).unwrap())
                 .call()
                 .await
                 .unwrap(),
@@ -1810,7 +1810,7 @@ async fn verify_residual_lifecycle(world: &mut MyWorld, side: String, consumptio
     expected.order_id = residual_id.clone();
     expected.energy_kWh = 4.0;
     expected.status = OrderStatus::Filled;
-    let residual_bytes = parse_uuid_or_hex_bytes16(&residual_id).unwrap();
+    let residual_bytes = uuid_v4_to_bytes16(&residual_id).unwrap();
     expected_params.0 = residual_bytes;
     expected_params.5 = (4.0 * NODE_FLOAT_SCALING_FACTOR) as u64;
     assert_eq!(
@@ -1823,7 +1823,7 @@ async fn verify_residual_lifecycle(world: &mut MyWorld, side: String, consumptio
         TradeSettlementContract::new(world.trade_settlement_address, world.provider.clone());
     let mut transaction_hashes = Vec::new();
     for trade in [&first, &second] {
-        let topic = indexed_bytes16_topic(parse_uuid_or_hex_bytes16(&trade.trade_uuid).unwrap());
+        let topic = indexed_bytes16_topic(uuid_v4_to_bytes16(&trade.trade_uuid).unwrap());
         let events = settlement
             .event::<TradeSettledFilter>()
             .from_block(0u64)
@@ -1835,11 +1835,11 @@ async fn verify_residual_lifecycle(world: &mut MyWorld, side: String, consumptio
         let event = &events[0].0;
         assert_eq!(
             event.bid_id,
-            parse_uuid_or_hex_bytes16(&trade.bid_hash).unwrap()
+            uuid_v4_to_bytes16(&trade.bid_hash).unwrap()
         );
         assert_eq!(
             event.offer_id,
-            parse_uuid_or_hex_bytes16(&trade.offer_hash).unwrap()
+            uuid_v4_to_bytes16(&trade.offer_hash).unwrap()
         );
         assert_eq!(
             event.energy.as_u64(),
@@ -1952,7 +1952,7 @@ async fn verify_penalties_on_chain(world: &mut MyWorld) {
                 continue;
             }
 
-            let trade_id = parse_uuid_or_hex_bytes16(trade.trade_uuid.as_str())
+            let trade_id = uuid_v4_to_bytes16(trade.trade_uuid.as_str())
                 .expect("Could not convert trade ID to bytes16");
             let penalty = trade_settlement
                 .penalty_energy_by_trade(trade_id)

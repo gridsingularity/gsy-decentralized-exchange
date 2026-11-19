@@ -1,7 +1,7 @@
 use anyhow::{ensure, Result};
 use gsy_ethers_listener::{ChainEvent, GsyContractsEvents};
 use mongodb::{bson::doc, Collection};
-use primitives::utils::bytes16_to_hex;
+use primitives::utils::bytes16_to_uuid_string;
 use serde::{Deserialize, Serialize};
 
 pub(crate) const COLLECTION: &str = "evm_pending_events";
@@ -35,7 +35,7 @@ impl PendingEvent {
         let meta = event.metadata()?;
         let mut dependencies = Vec::new();
         let mut market_ids = Vec::new();
-        let mut order = |id| dependencies.push(format!("order:{}", bytes16_to_hex(id)));
+        let mut order = |id| dependencies.push(format!("order:{}", bytes16_to_uuid_string(id)));
         let market_id = match event.decode()? {
             GsyContractsEvents::OrderPlacedFilter(e) => {
                 order(e.order_id);
@@ -53,17 +53,17 @@ impl PendingEvent {
                         order(id);
                     }
                 }
-                dependencies.push(format!("trade:{}", bytes16_to_hex(e.trade_id)));
+                dependencies.push(format!("trade:{}", bytes16_to_uuid_string(e.trade_id)));
                 Some(e.market_id)
             }
             GsyContractsEvents::DeliveryVerifiedFilter(e) => {
                 order(e.bid_id);
                 order(e.offer_id);
-                dependencies.push(format!("trade:{}", bytes16_to_hex(e.trade_id)));
+                dependencies.push(format!("trade:{}", bytes16_to_uuid_string(e.trade_id)));
                 None
             }
             GsyContractsEvents::PenaltyRecordedFilter(e) => {
-                dependencies.push(format!("trade:{}", bytes16_to_hex(e.trade_id)));
+                dependencies.push(format!("trade:{}", bytes16_to_uuid_string(e.trade_id)));
                 Some(e.market_id)
             }
             GsyContractsEvents::NewMarketCreatedFilter(e) => Some(e.market_id),
@@ -71,7 +71,7 @@ impl PendingEvent {
             _ => None,
         };
         if let Some(id) = market_id {
-            let id = bytes16_to_hex(id);
+            let id = bytes16_to_uuid_string(id);
             dependencies.push(format!("market:{id}"));
             market_ids.push(id);
         }

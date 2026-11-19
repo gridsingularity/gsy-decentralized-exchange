@@ -1,14 +1,14 @@
 use primitives::db_api_schema::market::{
     MarketChainRecord, MarketSchema, MarketType, MatchingAlgorithm,
 };
-use primitives::utils::{derive_onchain_id, parse_uuid_or_hex_bytes16};
+use primitives::utils::{derive_onchain_id, hex_to_bytes16, bytes16_to_uuid_string, uuid_v4_to_bytes16};
 
 const COMMUNITY_ID: &str = "Community-LIC01";
 
 fn record() -> MarketChainRecord {
     MarketChainRecord {
         market_id: *uuid::Uuid::new_v4().as_bytes(),
-        community_id: parse_uuid_or_hex_bytes16(&derive_onchain_id(COMMUNITY_ID)).unwrap(),
+        community_id: hex_to_bytes16(&derive_onchain_id(COMMUNITY_ID)).unwrap(),
         opening_time: 1_699_998_300,
         closing_time: 1_700_000_100,
         delivery_start_time: 1_700_000_100,
@@ -30,7 +30,7 @@ fn converts_chain_record_to_market_schema() {
     assert_eq!(
         market,
         MarketSchema {
-            market_id: format!("0x{}", hex::encode(record.market_id)),
+            market_id: bytes16_to_uuid_string(record.market_id),
             community_id: COMMUNITY_ID.to_string(),
             opening_time: "00000000001699998300".to_string(),
             closing_time: "00000000001700000100".to_string(),
@@ -52,7 +52,7 @@ fn market_id_matches_the_parsed_form() {
         .unwrap();
 
     assert_eq!(
-        parse_uuid_or_hex_bytes16(market.market_id.as_str()),
+        uuid_v4_to_bytes16(market.market_id.as_str()).ok(),
         Some(record.market_id)
     );
 }

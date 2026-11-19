@@ -168,7 +168,7 @@ follow `int.market.schema.v1.json`: UUID `marketId` and exact opaque `communityI
 times, `marketType` `spot`, `flex` or `settlement` and `matchingAlgorithm`
 `pay_as_bid`, `pay_as_clear` or `amm`. The orchestrator generates UUIDv4 market
 IDs; `marketId` is the same 16 bytes as the
-`0x…` market ID in `trade.event` and orders, formatted as a UUID. The market
+UUIDv4 market ID in `trade.event` and orders. The market
 carries its opening and closing times, so consumers derive whether it is open
 from them. The off-chain storage currently sends one item per EVM event. Every
 event gets a random UUID as `eventId`, which is also its DDHub `transactionId`.
@@ -193,7 +193,7 @@ Queries touching an incomplete projection return `STORAGE_UNAVAILABLE`, not a
 partial book or trade set. Actor IDs in resolved records and events are the exact
 off-chain IDs; order, trade and market entity IDs keep their existing formats.
 
-Order, trade and clearing-result queries accept UUID or 16-byte hex market IDs.
+Order, trade and clearing-result queries accept hyphenated UUIDv4 market IDs in either letter case.
 Invalid IDs receive `success: false` with `error.code: invalid_request`.
 Database failures in read queries receive `STORAGE_UNAVAILABLE` and no partial
 data. Sending an error response keeps the rest of the already-polled request
@@ -360,7 +360,7 @@ returns (`int.order.event.v1.json`):
   "data": [
     {
       "orderId": "3f2c6d1e-8a4b-4c7d-9e2f-1a5b6c7d8e9f",
-      "marketId": "0x5b0f3c2a9d8e7f6a5b4c3d2e1f0a9b8c",
+      "marketId": "5b0f3c2a-9d8e-4f6a-9b4c-3d2e1f0a9b8c",
       "orderType": "bid",
       "orderStatus": "submitted",
       "timeSlot": "2026-09-30T10:00:00Z",
@@ -378,8 +378,8 @@ returns (`int.order.event.v1.json`):
 
 | Field | Rule |
 |---|---|
-| `orderId` | A non-zero bytes16 ID chosen by the publisher, as a hyphenated UUID, `0x` plus 32 hex digits, or bare 32 hex digits. Its bytes become the on-chain order ID; queries and lifecycle notifications use lowercase `0x` hex. Rejections echo the submitted spelling. |
-| `marketId` | The market's non-zero UUID or bytes16 hex ID, e.g. from `markets.query`. The contract still checks that the market is open. |
+| `orderId` | A hyphenated UUIDv4 chosen by the publisher. Its bytes become the on-chain order ID without hashing; queries and lifecycle notifications use lowercase UUID text. Rejections echo the submitted spelling. |
+| `marketId` | The market's UUIDv4 ID, e.g. from `markets.query`. The contract still checks that the market is open. |
 | `createdBy` | The original off-chain owner ID. The subscriber resolves its facility and validates that facility's market participation before deriving the owner's keyed hash locally. It is not the facility ID or service wallet. This deployment guarantees one facility per owner. |
 | `orderStatus` | Must be `submitted`. |
 | `quantity` | Greater than 0, in kWh. |
@@ -489,7 +489,7 @@ Each `*.query` request payload accepts both snake_case and camelCase keys (via s
 | `orders.query` | `market_id`/`marketId`, `start_time`/`startTime`, `end_time`/`endTime` |
 | `trades.query` | `market_id`/`marketId`, `start_time`/`startTime`, `end_time`/`endTime` (`market_id` alone is enough and takes precedence over the time range; without it, both `start_time` and `end_time` are required, span at most 1 day, and match the market `delivery_start_time`) |
 | `measurements.query` | `start_time`/`startTime`, `end_time`/`endTime`, `facility_id`/`facilityId`/`areaUuid`, `community_uuid`/`communityUuid` (exact facility/community filters) |
-| `markets.query` | `market_id`/`marketId` (UUID or `0x…` hex), `community_id`/`communityId` (exact opaque ID), `start_time`/`startTime`, `end_time`/`endTime` (RFC 3339, match the market `opening_time`) |
+| `markets.query` | `market_id`/`marketId` (hyphenated UUIDv4), `community_id`/`communityId` (exact opaque ID), `start_time`/`startTime`, `end_time`/`endTime` (RFC 3339, match the market `opening_time`) |
 | `ids.query` | `offchain_id`/`offchainId` (required) |
 
 ## DDHub API Surface Used by Integration

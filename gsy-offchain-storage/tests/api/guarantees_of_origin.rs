@@ -9,7 +9,7 @@ use primitives::db_api_schema::profiles::{
     FlowDirection, MeasurementPointSchema, MeasurementPointType, TimeseriesSchema,
 };
 use primitives::db_api_schema::trades::{DbTradeSchema, TradeParameters, TradeStatus};
-use primitives::utils::{bytes16_to_hex, timestamp_to_string_with_padding};
+use primitives::utils::{bytes16_to_uuid_string, timestamp_to_string_with_padding};
 
 pub const SLOT: u64 = 1_778_754_600; // 2026-05-14T10:30:00Z
 /// When the seeded trades reached `Executed` (their `status_updated_at`).
@@ -20,7 +20,7 @@ const BUYER_FACILITY: &str = "goo-buyer";
 const BUYER_OWNER: &str = "goo-owner-buyer";
 const COMMUNITY: &str = "60060060-0000-4000-8000-000000000001";
 const EXPORT_POINT: &str = "Measurement:goo-community:goo-seller";
-const MARKET: &str = "0x60060060000040008000000000000001";
+const MARKET: &str = "60060060-0000-4000-8000-000000000001";
 
 /// A 2 kWh sale from the seller facility to the buyer facility at `SLOT`.
 pub fn trade(
@@ -313,13 +313,13 @@ async fn certificates_join_exact_facilities_keyed_mappings_and_meter_references(
             .as_u16(),
         200
     );
-    let id = bytes16_to_hex([0xab; 16]);
+    let id = bytes16_to_uuid_string(crate::helpers::entity_bytes(0xab));
     let mut sale = trade(&id, TradeStatus::Matched, None);
     sale.seller = owner.to_uppercase();
-    sale.bid_hash = bytes16_to_hex([0xbc; 16]);
-    sale.offer_hash = bytes16_to_hex([0xcd; 16]);
+    sale.bid_hash = bytes16_to_uuid_string(crate::helpers::entity_bytes(0xbc));
+    sale.offer_hash = bytes16_to_uuid_string(crate::helpers::entity_bytes(0xcd));
     let mut imported = primitives::ewds::dto::EwdsTradeDto::from(sale);
-    imported.trade_id = uuid::Uuid::from_bytes([0xab; 16])
+    imported.trade_id = uuid::Uuid::from_bytes(crate::helpers::entity_bytes(0xab))
         .to_string()
         .to_uppercase();
     assert_eq!(

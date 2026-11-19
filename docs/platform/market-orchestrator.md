@@ -46,8 +46,7 @@ off-chain community string, using the shared `ACTOR_ID_HASH_KEY`.
 
 Callers look up the existing tuple rather than reconstructing its market ID.
 Once created, that ID is reused across ticks and restarts. Storage represents
-it as lowercase `0x` bytes16 hex; EWDS market payloads format the same bytes as
-a UUID and preserve the original opaque community ID.
+it as a lowercase UUIDv4; HTTP and EWDS use the same format and preserve the original opaque community ID.
 
 ## Configurable Parameters
 

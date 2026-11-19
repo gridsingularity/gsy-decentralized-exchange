@@ -6,15 +6,15 @@
   "type": "object",
   "properties": {
     "orderId": {
-      "description": "Non-zero bytes16 as UUID, 0x-prefixed hex or bare hex. Lifecycle notifications use lowercase 0x hex; rejections echo the submission. IRI: int:orderId.",
+      "description": "Hyphenated UUIDv4. Reads and lifecycle notifications use lowercase UUID text; rejections echo the submitted spelling. IRI: int:orderId.",
       "type": "string",
-      "pattern": "^(?:(?:0x)?[a-fA-F0-9]{32}|[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12})(?![\\s\\S])",
+      "pattern": "^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-4[a-fA-F0-9]{3}-[89aAbB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}(?![\\s\\S])",
       "not": { "enum": ["00000000-0000-0000-0000-000000000000", "0x00000000000000000000000000000000", "00000000000000000000000000000000"] }
     },
     "marketId": {
-      "description": "Non-zero market ID as UUID, 0x-prefixed hex or bare hex. IRI: int:marketId.",
+      "description": "Hyphenated UUIDv4 market ID, returned as lowercase UUID text. IRI: int:marketId.",
       "type": "string",
-      "pattern": "^(?:(?:0x)?[a-fA-F0-9]{32}|[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12})(?![\\s\\S])",
+      "pattern": "^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-4[a-fA-F0-9]{3}-[89aAbB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}(?![\\s\\S])",
       "not": { "enum": ["00000000-0000-0000-0000-000000000000", "0x00000000000000000000000000000000", "00000000000000000000000000000000"] }
     },
     "orderType": {

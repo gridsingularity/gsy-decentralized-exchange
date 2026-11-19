@@ -1,6 +1,6 @@
 use primitives::utils::{
-    bytes16_to_hex, bytes16_to_uuid_string, derive_onchain_id, normalize_market_id,
-    normalize_offchain_id, parse_nonzero_uuid_or_hex_bytes16, parse_uuid_or_hex_bytes16,
+    bytes16_to_hex, bytes16_to_uuid_string, derive_onchain_id, normalize_uuid,
+    normalize_offchain_id, hex_to_bytes16, uuid_v4_to_bytes16,
 };
 
 #[test]
@@ -9,12 +9,6 @@ fn identity_derivation_preserves_all_actor_spellings() {
     assert_ne!(
         derive_onchain_id(&lower.to_uppercase()),
         derive_onchain_id(lower)
-    );
-    assert_ne!(
-        derive_onchain_id(lower),
-        bytes16_to_hex(primitives::utils::create_encrypted_bytes16_from_string(
-            lower
-        ))
     );
     for opaque in [
         "Facility-A",
@@ -91,71 +85,43 @@ fn profile_ids_do_not_alias_opaque_components_with_separators() {
 }
 
 #[test]
-fn market_id_normalizes_uuid_and_hex_forms_to_lowercase_hex() {
-    let canonical = "0x3f2504e04f8941d39a0c0305e82c3301";
+fn entity_ids_normalize_uuid_case_only() {
+    let canonical = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
+    for id in [canonical.to_string(), canonical.to_uppercase()] {
+        assert_eq!(normalize_uuid(&id).unwrap(), canonical);
+    }
+}
+
+#[test]
+fn entity_parser_rejects_non_v4_and_alternate_notations() {
     for id in [
-        canonical,
-        "3F2504E0-4F89-41D3-9A0C-0305E82C3301",
-        "0x3F2504E04F8941D39A0C0305E82C3301",
-        "3F2504E04F8941D39A0C0305E82C3301",
-    ] {
-        assert_eq!(normalize_market_id(id).unwrap(), canonical);
-    }
-}
-
-#[test]
-fn market_id_normalization_rejects_invalid_values() {
-    for id in [
-        "",
-        "MARKET-1",
-        "0x1234",
-        "0xgggggggggggggggggggggggggggggggg",
-        "0x1111111111111111111111111111111111111111111111111111111111111111",
-    ] {
-        assert!(normalize_market_id(id).is_err(), "{id}");
-    }
-}
-
-#[test]
-fn bytes16_parser_accepts_only_the_explicit_grammar() {
-    let expected = [0xab; 16];
-    for value in [
-        "abababab-abab-abab-abab-abababababab",
-        "ABABABAB-ABAB-ABAB-ABAB-ABABABABABAB",
-        "0xABABABABABABABABABABABABABABABAB",
-        "abababababababababababababababab",
-    ] {
-        assert_eq!(parse_uuid_or_hex_bytes16(value), Some(expected), "{value}");
-    }
-    for value in [
-        "",
-        "0xab",
-        "0xgggggggggggggggggggggggggggggggg",
-        "0Xabababababababababababababababab",
-        " abababab-abab-abab-abab-abababababab",
-        "abababab-abab-abab-abab-abababababab\n",
-        "\tabababababababababababababababab",
-        "{abababab-abab-abab-abab-abababababab}",
-        "urn:uuid:abababab-abab-abab-abab-abababababab",
-        "0xabababab-abab-abab-abab-abababababab",
-        "abababababab-abab-abab-abab-abababab",
-        "abababababababababababababababab----",
-        "\u{e9}abababababababababababababababa",
-    ] {
-        assert_eq!(parse_uuid_or_hex_bytes16(value), None, "{value:?}");
-    }
-}
-
-#[test]
-fn required_ids_reject_zero_without_breaking_optional_sentinels() {
-    for value in [
+        "", "MARKET-1", "0x1234",
+        "0x3f2504e04f8941d39a0c0305e82c3301",
+        "3f2504e04f8941d39a0c0305e82c3301",
+        "0X3f2504e04f8941d39a0c0305e82c3301",
+        " 3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+        "3f2504e0-4f89-41d3-9a0c-0305e82c3301\n",
+        "{3f2504e0-4f89-41d3-9a0c-0305e82c3301}",
+        "urn:uuid:3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+        "0x3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+        "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+        "3f2504e0-4f89-41d3-7a0c-0305e82c3301",
+        "3f2504e04f89-41d3-9a0c-0305-e82c3301",
         "00000000-0000-0000-0000-000000000000",
-        "0x00000000000000000000000000000000",
-        "00000000000000000000000000000000",
     ] {
-        assert_eq!(parse_uuid_or_hex_bytes16(value), Some([0; 16]));
-        assert_eq!(parse_nonzero_uuid_or_hex_bytes16(value), None);
-        assert!(normalize_market_id(value).is_err());
+        assert!(normalize_uuid(id).is_err(), "{id:?}");
+    }
+}
+
+#[test]
+fn actor_hash_parser_accepts_only_prefixed_bytes16_hex() {
+    assert_eq!(hex_to_bytes16("0xABABABABABABABABABABABABABABABAB"), Some([0xab; 16]));
+    // Zero remains available for optional contract sentinels.
+    assert_eq!(hex_to_bytes16("0x00000000000000000000000000000000"), Some([0; 16]));
+    for id in ["abababababababababababababababab", "0Xabababababababababababababababab",
+        "abababab-abab-4bab-8bab-abababababab", "0x1234",
+        " 0xabababababababababababababababab", "0xabababababababababababababababab\n"] {
+        assert_eq!(hex_to_bytes16(id), None, "{id:?}");
     }
 }
 
@@ -186,20 +152,14 @@ fn offchain_normalization_preserves_opaque_and_hex_shaped_identities() {
 
 #[test]
 fn canonical_outputs_round_trip_in_their_identifier_domains() {
-    let market = *uuid::Uuid::new_v4().as_bytes();
-    let facility = parse_uuid_or_hex_bytes16(&derive_onchain_id("facility-a")).unwrap();
-    for bytes in [
-        market,
-        facility,
-        [0xff; 16],
-        *uuid::Uuid::new_v4().as_bytes(),
-    ] {
-        for value in [bytes16_to_hex(bytes), bytes16_to_uuid_string(bytes)] {
-            assert_eq!(parse_nonzero_uuid_or_hex_bytes16(&value), Some(bytes));
-            let market = normalize_market_id(&value).unwrap();
-            assert_eq!(normalize_market_id(&market).unwrap(), market);
-            let offchain = normalize_offchain_id(&value).unwrap();
-            assert_eq!(normalize_offchain_id(&offchain).unwrap(), offchain);
-        }
+    let bytes = *uuid::Uuid::new_v4().as_bytes();
+    let entity = bytes16_to_uuid_string(bytes);
+    assert_eq!(uuid_v4_to_bytes16(&entity).unwrap(), bytes);
+    assert_eq!(normalize_uuid(&normalize_uuid(&entity).unwrap()).unwrap(), entity);
+    let actor_hash = derive_onchain_id("facility-a");
+    assert_eq!(bytes16_to_hex(hex_to_bytes16(&actor_hash).unwrap()), actor_hash);
+    assert!(uuid_v4_to_bytes16(&actor_hash).is_err());
+    for actor in ["Facility-A", "ABABABAB-ABAB-4BAB-8BAB-ABABABABABAB", &actor_hash] {
+        assert_eq!(normalize_offchain_id(&normalize_offchain_id(actor).unwrap()).unwrap(), actor);
     }
 }

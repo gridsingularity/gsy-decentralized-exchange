@@ -1,5 +1,5 @@
 use crate::primitives::penalty_calculator::{DeliveryVerification, Penalty};
-use ::primitives::utils::{derive_onchain_id, normalize_offchain_id, parse_uuid_or_hex_bytes16};
+use ::primitives::utils::{derive_onchain_id, normalize_offchain_id, hex_to_bytes16, uuid_v4_to_bytes16};
 use anyhow::{anyhow, Result};
 use ethers::prelude::*;
 use ethers::utils::keccak256;
@@ -35,7 +35,7 @@ pub async fn complete_delivery_verification(
     let mut processed = 0;
     let mut pending = Vec::new();
     for verification in verifications {
-        let Some(id) = parse_uuid_or_hex_bytes16(&verification.trade_uuid) else {
+        let Ok(id) = uuid_v4_to_bytes16(&verification.trade_uuid) else {
             warn!(
                 "Skipping verification for invalid trade ID: {}",
                 verification.trade_uuid
@@ -96,10 +96,10 @@ fn to_evm_penalties(penalties: Vec<Penalty>) -> Vec<EvmPenaltyTuple> {
                 return None;
             }
             let penalized_account =
-                parse_uuid_or_hex_bytes16(&derive_onchain_id(&penalty.penalized_account))
+                hex_to_bytes16(&derive_onchain_id(&penalty.penalized_account))
                     .expect("Actor hashing returns bytes16 hex");
 
-            let Some(market_id) = parse_uuid_or_hex_bytes16(&penalty.market_id) else {
+            let Ok(market_id) = uuid_v4_to_bytes16(&penalty.market_id) else {
                 warn!(
                     "Skipping penalty for trade '{}': market_id '{}' is not a UUID",
                     penalty.trade_uuid, penalty.market_id
@@ -107,7 +107,7 @@ fn to_evm_penalties(penalties: Vec<Penalty>) -> Vec<EvmPenaltyTuple> {
                 return None;
             };
 
-            let Some(trade_uuid) = parse_uuid_or_hex_bytes16(&penalty.trade_uuid) else {
+            let Ok(trade_uuid) = uuid_v4_to_bytes16(&penalty.trade_uuid) else {
                 warn!(
                     "Skipping penalty for trade '{}': trade_uuid is not a UUID",
                     penalty.trade_uuid

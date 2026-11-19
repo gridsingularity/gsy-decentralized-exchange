@@ -14,9 +14,9 @@ Feature: Stable actor identities and canonical entity IDs across the order lifec
     Then delivery verification marks the trade Executed and both orders Executed
 
   @ewds
-  Scenario: FOS correlates canonical lifecycle IDs with mixed-format submissions
+  Scenario: FOS correlates canonical lifecycle IDs with mixed-case UUID submissions
     Given FOS listens for order status notifications
-    When orders with equivalent UUID and hex spellings are published on EWDS
+    When orders with mixed-case UUID spellings are published on EWDS
     Then the matching engine matches the bid and offer and a trade is settled on-chain
     And the trade has "alice" as buyer and "bob" as seller
     And FOS receives "submitted" notifications for both traded orders

@@ -1,12 +1,11 @@
 use super::*;
-use primitives::utils::bytes16_to_uuid_string;
 
 fn order(id: u8, market: u8, slot: u64, side: OrderEnum) -> EwdsOrderDto {
     EwdsOrderDto::from(DbOrderSchema {
-        order_id: bytes16_to_hex([id; 16]),
+        order_id: entity_id(id),
         created_by: format!("owner-{id}"),
         area_uuid: format!("owner-{id}"),
-        market_id: bytes16_to_hex([market; 16]),
+        market_id: entity_id(market),
         time_slot: slot,
         creation_time: 90,
         order_type: side,
@@ -41,7 +40,7 @@ fn assert_books(prepared: PreparedOrders, expected: Vec<(u8, u64)>) {
         keys,
         expected
             .into_iter()
-            .map(|(market, slot)| (bytes16_to_hex([market; 16]), slot))
+            .map(|(market, slot)| (entity_id(market), slot))
             .collect::<Vec<_>>()
     );
     // Excluded books must produce neither matches nor clearing results.
@@ -99,13 +98,13 @@ async fn invalid_active_order_excludes_earlier_orders_in_its_book() {
         let mut body = books();
         let mut invalid = order(7, 10, 100, OrderEnum::Bid);
         // A different spelling must still exclude the same book.
-        invalid.market_id = bytes16_to_uuid_string([10; 16]).to_uppercase();
+        invalid.market_id = entity_id(10).to_uppercase();
         match defect {
             "type" => invalid.order_type = "invalid".into(),
             "status" => invalid.order_status = "unknown".into(),
             "created_by" => invalid.created_by = " padded".into(),
             "order_id" => invalid.order_id = "invalid".into(),
-            "nil_order_id" => invalid.order_id = bytes16_to_hex([0; 16]),
+            "nil_order_id" => invalid.order_id = "00000000-0000-0000-0000-000000000000".to_string(),
             "empty_created_by" => invalid.created_by = String::new(),
             _ => invalid.creation_time = "invalid".into(),
         }
@@ -165,4 +164,8 @@ async fn http_failure_is_not_treated_as_an_empty_order_book() {
     });
     assert!(fetch_open_orders_from_orderbook_service(url).await.is_err());
     server.join().unwrap();
+}
+
+fn entity_id(seed: u8) -> String {
+    format!("00000000-0000-4000-8000-{seed:012x}")
 }

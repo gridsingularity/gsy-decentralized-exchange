@@ -44,8 +44,9 @@ class TradeSeedTests(unittest.TestCase):
 
     def test_dataset_uses_canonical_ids_and_preserves_other_seeded_values(self):
         trades = self.dataset()
-        without_markets = lambda items: [{k: v for k, v in t.items() if k != "marketId"} for t in items]
-        self.assertEqual(without_markets(trades), without_markets(self.dataset()))
+        entity_keys = {"tradeId", "marketId", "bidId", "offerId", "residualBidId", "residualOfferId"}
+        without_ids = lambda items: [{k: v for k, v in t.items() if k not in entity_keys} for t in items]
+        self.assertEqual(without_ids(trades), without_ids(self.dataset()))
         self.assertEqual(len({t["tradeId"] for t in trades}), len(trades))
         self.assertEqual(seed.schema_errors({"requestId": "test", "success": True, "data": trades}), [])
         self.assertTrue({t["buyerId"] for t in trades} <= seed.ROSTER)
@@ -54,10 +55,15 @@ class TradeSeedTests(unittest.TestCase):
         self.assertEqual(len(set(markets.values())), len(markets))
         for trade in trades:
             self.assertEqual(trade["marketId"], markets[seed.parse_ts(trade["timestamp"])])
-            market_uuid = seed.uuid.UUID(hex=trade["marketId"][2:])
+            market_uuid = seed.uuid.UUID(trade["marketId"])
             self.assertEqual(market_uuid.version, 4)
             self.assertEqual(market_uuid.variant, seed.uuid.RFC_4122)
-            self.assertEqual(trade["marketId"], "0x" + market_uuid.hex)
+            self.assertEqual(trade["marketId"], str(market_uuid))
+            for key in entity_keys:
+                if trade.get(key) is not None:
+                    identifier = seed.uuid.UUID(trade[key])
+                    self.assertEqual(identifier.version, 4)
+                    self.assertEqual(trade[key], str(identifier))
 
     def test_regeneration_assigns_fresh_market_ids(self):
         first = seed.market_ids_by_slot(self.dataset())
@@ -106,7 +112,7 @@ class TradeSeedTests(unittest.TestCase):
                 }, 0.1, 10)
 
             # Exercise the guard that keeps the negative-control ID outside the dataset.
-            duplicate_uuid = seed.uuid.UUID(hex=trades[0]["marketId"][2:])
+            duplicate_uuid = seed.uuid.UUID(trades[0]["marketId"])
             with patch.object(seed, "rest_get_trades", side_effect=lambda a, m: query_response(a, m)[0]["data"]) as rest, \
                     patch.object(seed, "ewds_trades_query", side_effect=query_response) as ewds, \
                     patch.object(seed, "collection_counts", return_value={"trades": len(trades)}), \
@@ -115,8 +121,8 @@ class TradeSeedTests(unittest.TestCase):
                 self.assertTrue(seed.cmd_validate(args))
             self.assertEqual({call.args[1] for call in rest.call_args_list}, market_ids)
             self.assertEqual({call.kwargs["market_id"] for call in ewds.call_args_list[:-1]}, market_ids)
-            self.assertEqual(ewds.call_args.kwargs["market_id"], "0x" + absent_uuid.hex)
-            self.assertNotIn("0x" + absent_uuid.hex, market_ids)
+            self.assertEqual(ewds.call_args.kwargs["market_id"], str(absent_uuid))
+            self.assertNotIn(str(absent_uuid), market_ids)
 
     def test_cleanup_only_targets_dataset_ids_in_bounded_batches(self):
         trades = self.dataset() * 4
@@ -127,7 +133,6 @@ class TradeSeedTests(unittest.TestCase):
             path = Path(directory) / "dataset.json"
             path.write_text(json.dumps({"meta": {"community_id": seed.COMMUNITY_ID}, "trades": trades}))
             with patch.object(seed, "mongosh", return_value="1") as mongo, \
-                    patch.object(seed, "bytes16_id", side_effect=AssertionError("must use saved IDs")), \
                     patch.object(seed.uuid, "uuid4", side_effect=AssertionError("must use saved IDs")), \
                     contextlib.redirect_stdout(io.StringIO()):
                 seed.cmd_cleanup(SimpleNamespace(dataset=str(path)))

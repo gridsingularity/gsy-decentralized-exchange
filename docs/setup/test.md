@@ -189,7 +189,7 @@ HTTP/EWDS x pay-as-bid/pay-as-clear matrix includes the shared
 keep that exact spelling when ordered and metered through the adapter's direct
 measurement-point path. Preferred matching and delivery verification must
 join the same facilities. Its `@ewds` scenario also checks canonical lifecycle
-IDs after mixed UUID/hex submissions; existing rejection checks require exact
+IDs after mixed-case UUIDv4 submissions; existing rejection checks require exact
 echoes of submitted IDs. Opaque-ID scenarios remain in both algorithm suites.
 
 Run GreenProof explicitly for both transports as well. With the corresponding

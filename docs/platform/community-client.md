@@ -68,7 +68,7 @@ and handles only the `order.event` messages of the `order` topic
 (`EWDS_ORDER_EVENT_TOPIC`, default `order`); messages of the other topics on
 the channel are dropped. For every event it:
 
-1. parses and checks all orders (non-zero UUID/hex `orderId` and `marketId`,
+1. parses and checks all orders (UUIDv4 `orderId` and `marketId`,
    `orderStatus` `submitted`, `quantity` above 0, `priceLimit` 0 or more);
 2. skips orders already placed on-chain (latest block), resolves each remaining
    `createdBy` owner to its facility and checks any preferred partner is also a
@@ -108,12 +108,12 @@ before any storage calls or submissions and is logged without a rejection
 notification. In particular, empty/padded `createdBy` no longer produces a
 per-order eligibility rejection while other orders proceed. Actual eligibility
 and contract rejections still echo the original submitted identifiers.
-Order and market IDs are canonicalized to lowercase `0x` bytes16 before
-eligibility checks. Duplicate/retry checks use their bytes, so UUID and hex
+Order and market IDs are canonicalized to lowercase UUIDv4 text before
+eligibility checks. Duplicate/retry checks use their bytes, so uppercase and lowercase UUID
 spellings of the same order cannot cause a second submission. Lifecycle status
-notifications use canonical hex IDs; FOS must correlate them with the submission
+notifications use canonical UUID IDs; FOS must correlate them with the submission
 by ID bytes rather than by exact text. Rejection notifications preserve the
-original order, market, facility and preferred-partner spellings.
+original order, market, owner and preferred-partner spellings.
 
 Already placed orders are excluded before validation on retry, so a topology change
 cannot turn them into rejected orders. Before publishing an eligibility

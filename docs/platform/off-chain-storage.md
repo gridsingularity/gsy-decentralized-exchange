@@ -26,8 +26,8 @@ offer attributes, so the indexed order is complete without a follow-up
 insert-only imports, but neither is used by the E2E scenarios or production
 order lifecycle. Orders are submitted through `placeOrder` (directly or through
 the community client's EWDS subscriber), then indexed by the EVM listener.
-Imports validate the whole payload and canonicalize nonzero order and market IDs
-to lowercase `0x` bytes16. `createdBy`, `area_uuid` and preferred partners contain
+Imports validate the whole payload and canonicalize UUIDv4 order and market IDs
+to lowercase UUID text. `createdBy`, `area_uuid` and preferred partners contain
 original off-chain owner IDs, preserved exactly. These routes do not submit orders.
 Invalid identifiers return 400. Duplicate canonical IDs within the batch or
 already in storage return 409 before writes. Unique indexes also prevent
@@ -43,7 +43,7 @@ Until then, listener ownership is the normal lifecycle path, not an
 enforced access-control boundary for those legacy write endpoints.
 
 `NewMarketCreated` carries the full market record. The handler converts it to
-`MarketSchema` (`market_id` as lowercase `0x` + 32 hex digits, `community_id` as
+`MarketSchema` (`market_id` as lowercase UUIDv4, `community_id` as
 the exact off-chain string, times as zero-padded epoch seconds). It reverse-resolves
 the event's community hash directly through the DB ID mapping registered by
 topology writes, without calling the IDs API or interpreting the hash as a UUID.
@@ -93,14 +93,11 @@ their spelling and case. Empty or padded IDs return HTTP 400 or cause the EWDS e
 as invalid; they are not retried as storage failures.
 
 `GET /market`, `GET /markets`, `markets.query`, `POST /markets`, and
-`POST /clearing-results` normalize market IDs to lowercase `0x` bytes16.
-UUIDs, lowercase `0x`-prefixed hex and bare hex are accepted, with hexadecimal
-digits in either case. Whitespace, malformed IDs and all-zero IDs are rejected
-with HTTP 400 or EWDS `invalid_request`. Market writes and community filters
-preserve exact opaque community IDs. HTTP market reads return stored hex market
-IDs; EWDS market reads and events return UUID market IDs with the same bytes.
-The orchestrator generates UUIDv4 market IDs; the compatibility byte parser
-does not enforce UUID version or variant bits.
+`POST /clearing-results` normalize market UUIDv4s to lowercase UUID text.
+Only hyphenated UUIDv4 values are accepted (either letter case). Hex, bare,
+padded, nil and non-v4 IDs return HTTP 400 or EWDS `invalid_request`.
+Market writes and community filters preserve exact opaque community IDs.
+HTTP and EWDS market reads and events use the same UUID format.
 Facility-validation responses still echo each requested pair exactly and report
 an invalid market ID as `unknown_market` for that pair only.
 
@@ -123,9 +120,9 @@ from the same revision.
 ### Facility Participation Validation
 
 `POST /facilities/validate` accepts an array of
-`{"facility_id": "facility-a", "market_id": "0x..."}` pairs. Facility IDs are
+`{"facility_id": "facility-a", "market_id": "808f0603-acbe-4696-8d3d-a1cd0cb3f5f4"}` pairs. Facility IDs are
 the original off-chain IDs, not owner IDs or generated on-chain IDs. Market IDs
-accept UUID or bytes16 hex; results echo the supplied IDs.
+accept UUIDv4; results echo the supplied IDs, with invalid markets reported per pair.
 Facility lookup uses the exact off-chain identity, and responses preserve
 the requested spelling. Empty or padded facility IDs yield `unknown_facility`
 for that pair, without failing the other pairs.
@@ -255,14 +252,14 @@ There is no reindexing tool. See the
 - Existing `POST /trades` and `/trades-normalized` endpoints retain insert-only
   import behavior. They do not update orders or publish lifecycle notifications;
   the matching engine does not use them.
-  Imports accept nonzero UUID or bytes16 hex for trade, market and bid/offer IDs,
-  storing lowercase `0x` hex. Buyer/seller IDs are original off-chain owner IDs. Empty/zero residual IDs become null. All identifiers
+  Imports accept hyphenated UUIDv4 for trade, market and bid/offer IDs,
+  storing lowercase UUID text. Buyer/seller IDs are original off-chain owner IDs. Absent residual IDs use null. All identifiers
   are validated before writing (400); duplicate canonical trade IDs in the batch
   or storage return 409. Unique indexes guard concurrent duplicates, but a
   concurrent conflict can still leave a batch partially inserted. No transaction
   or migration is introduced. The seed script assigns one random UUIDv4 market
-  ID per community/type/slot within its saved dataset; other fixture IDs are
-  unchanged. Queries reuse saved market IDs, and cleanup deletes only the exact
+  ID per community/type/slot within its saved dataset; trade, bid, offer and residual
+  IDs are random UUIDv4 too, while parties retain their roster names. Queries reuse saved market IDs, and cleanup deletes only the exact
   trade IDs in that dataset, not a prefix-wide selection.
 - With `EWDS_ENABLE_HANDLER=true`, indexed match confirmations, penalties and
   penalty-free delivery verifications publish persisted snapshots through `trade.event`.
@@ -273,9 +270,9 @@ There is no reindexing tool. See the
   for legacy records; the trade DTO's `timestamp` remains its RFC 3339 creation time.
   HTTP and EWDS queries return the same DTO. HTTP-only operation needs no gateway.
   Notification delivery remains best effort, without a durable outbox or ordering guarantee.
-- Order IDs and market IDs are stored as hex strings (`0x...`).
-  Market, trade, order and clearing-result queries accept nonzero market IDs as UUID or 16-byte
-  hex and normalize them to lowercase `0x` hex. Invalid IDs return HTTP 400 or
+- Order, trade and market IDs are stored as lowercase UUIDv4 strings.
+  Market, trade, order and clearing-result queries accept hyphenated UUIDv4
+  market IDs in either letter case and normalize them to lowercase. Invalid IDs return HTTP 400 or
   EWDS `invalid_request`. Storage read failures return HTTP 500 or EWDS
   `STORAGE_UNAVAILABLE`, never a partial list. A malformed stored document blocks
   queries that select it until corrected; the error is logged with query context.

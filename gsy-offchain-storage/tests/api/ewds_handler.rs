@@ -22,7 +22,7 @@ use primitives::ewds::dto::{EwdsMeasurementDto, EwdsRequestEnvelope, EwdsSendMes
 use primitives::ewds::{EwdsEventTopicConfig, EwdsOperation, EwdsTopicConfig};
 use primitives::offchain_storage::{OffchainStorageClient, OffchainStorageTransport};
 use primitives::utils::{
-    bytes16_to_hex, bytes16_to_uuid_string, epoch_to_rfc3339,
+    bytes16_to_uuid_string, epoch_to_rfc3339,
     rfc3339_to_epoch, timestamp_to_string_with_padding,
 };
 use serde_json::json;
@@ -181,7 +181,7 @@ async fn orders_query_success() {
     let env = envelope(
         EwdsOperation::OrdersQuery,
         "req-orders-1",
-        json!({ "marketId": "0x11111111111141118111111111111111" }),
+        json!({ "marketId": "11111111-1111-4111-8111-111111111111" }),
     );
 
     handle_request(&app.db_wrapper, &client, &config, env)
@@ -245,11 +245,11 @@ fn make_trade(trade_uuid: &str, market_id: &str) -> DbTradeSchema {
 }
 
 #[tokio::test]
-async fn market_queries_accept_uuid_and_hex_over_http_and_ewds() {
+async fn market_queries_accept_uuid_case_variants_over_http_and_ewds() {
     let app = init_app().await;
     let client = reqwest::Client::new();
-    let market_id = bytes16_to_hex([0xab; 16]);
-    for id in [&market_id, &bytes16_to_hex([0xcd; 16])] {
+    let market_id = bytes16_to_uuid_string(crate::helpers::entity_bytes(0xab));
+    for id in [&market_id, &bytes16_to_uuid_string(crate::helpers::entity_bytes(0xcd))] {
         app.db_wrapper
             .orders()
             .insert_orders(vec![DbOrderSchema {
@@ -300,8 +300,7 @@ async fn market_queries_accept_uuid_and_hex_over_http_and_ewds() {
         let mut expected = None;
         for query_id in [
             market_id.clone(),
-            bytes16_to_uuid_string([0xab; 16]),
-            format!("0x{}", "AB".repeat(16)),
+            market_id.to_uppercase(),
         ] {
             let response = client
                 .get(format!("{}/{endpoint}", app.address))
@@ -331,6 +330,9 @@ async fn market_queries_accept_uuid_and_hex_over_http_and_ewds() {
         }
         for query_id in [
             "garbage",
+            "0xabababababab4bab8bababababababab",
+            "abababababab4bab8bababababababab",
+            "abababab-abab-1bab-8bab-abababababab",
             "0x1234",
             "0x1111111111111111111111111111111111111111111111111111111111111111",
         ] {
@@ -362,7 +364,7 @@ async fn market_queries_accept_uuid_and_hex_over_http_and_ewds() {
 
 #[tokio::test]
 async fn each_read_query_answers_storage_failures() {
-    let market_id = "0x11111111111141118111111111111111";
+    let market_id = "11111111-1111-4111-8111-111111111111";
     for (operation, collection) in [
         (EwdsOperation::OrdersQuery, "orders"),
         (EwdsOperation::TradesQuery, "trades"),
@@ -415,7 +417,7 @@ async fn each_read_query_answers_storage_failures() {
 #[tokio::test]
 async fn malformed_trade_returns_http_and_ewds_errors_instead_of_partial_results() {
     let app = init_app().await;
-    let market_id = "0x11111111111141118111111111111111";
+    let market_id = "11111111-1111-4111-8111-111111111111";
     app.db_wrapper
         .trades()
         .insert_trades(vec![make_trade("valid", market_id)])
@@ -487,9 +489,9 @@ async fn run_trades_query(request_id: &str, payload: serde_json::Value) -> serde
     let client = reqwest::Client::new();
 
     for market in [
-        make_delivery_market("0x00000000000000000000000000000001", 0),
+        make_delivery_market("00000000-0000-4000-8000-000000000001", 0),
         make_delivery_market(
-            "0x00000000000000000000000000000002",
+            "00000000-0000-4000-8000-000000000002",
             MAX_TRADES_QUERY_RANGE_SECS,
         ),
     ] {
@@ -498,8 +500,8 @@ async fn run_trades_query(request_id: &str, payload: serde_json::Value) -> serde
     app.db_wrapper
         .trades()
         .insert_trades(vec![
-            make_trade("trade-day-start", "0x00000000000000000000000000000001"),
-            make_trade("trade-next-day", "0x00000000000000000000000000000002"),
+            make_trade("trade-day-start", "00000000-0000-4000-8000-000000000001"),
+            make_trade("trade-next-day", "00000000-0000-4000-8000-000000000002"),
         ])
         .await
         .unwrap();
@@ -614,7 +616,7 @@ fn validate_trades_query_range_boundaries() {
 
 #[test]
 fn validate_trades_query_range_needs_no_range_for_a_market() {
-    let market_id = Some("0xaaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa");
+    let market_id = Some("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
     assert_eq!(
         validate_trades_query_range(market_id, None, None).unwrap(),
         None
@@ -640,8 +642,8 @@ async fn trades_query_filters_by_market_id() {
     let client = reqwest::Client::new();
 
     for market_id in [
-        "0xaaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa",
-        "0xbbbbbbbbbbbb4bbb8bbbbbbbbbbbbbbb",
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
     ] {
         app.db_wrapper
             .markets()
@@ -652,8 +654,8 @@ async fn trades_query_filters_by_market_id() {
     app.db_wrapper
         .trades()
         .insert_trades(vec![
-            make_trade("TRADE-EWDS-A", "0xaaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa"),
-            make_trade("TRADE-EWDS-B", "0xbbbbbbbbbbbb4bbb8bbbbbbbbbbbbbbb"),
+            make_trade("TRADE-EWDS-A", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+            make_trade("TRADE-EWDS-B", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
         ])
         .await
         .unwrap();
@@ -661,11 +663,11 @@ async fn trades_query_filters_by_market_id() {
     // The time range is optional when a market is given.
     for payload in [
         json!({
-            "marketId": "0xaaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa",
+            "marketId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
             "startTime": trades_time(0),
             "endTime": trades_time(3_600),
         }),
-        json!({ "marketId": "0xaaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa" }),
+        json!({ "marketId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" }),
     ] {
         let server = mock_gateway().await;
         let config = test_config(server.uri());
@@ -855,7 +857,7 @@ async fn clearing_results_query_success() {
     let env = envelope(
         EwdsOperation::ClearingResultsQuery,
         "req-clearing-1",
-        json!({ "marketId": "0x11111111111141118111111111111111" }),
+        json!({ "marketId": "11111111-1111-4111-8111-111111111111" }),
     );
 
     handle_request(&app.db_wrapper, &client, &config, env)
@@ -898,7 +900,7 @@ const COMMUNITY_2: &str = "9b2c1f7a-5d3e-4c8b-a6f1-2e7d0c4b8a91";
 fn make_market(id_byte: u8, community_id: &str, opening_time: &str) -> MarketSchema {
     let epoch = |time: &str| timestamp_to_string_with_padding(rfc3339_to_epoch(time).unwrap());
     MarketSchema {
-        market_id: bytes16_to_hex([id_byte; 16]),
+        market_id: bytes16_to_uuid_string(crate::helpers::entity_bytes(id_byte)),
         community_id: community_id.to_string(),
         opening_time: epoch(opening_time),
         closing_time: epoch("2026-03-28T09:45:00Z"),
@@ -948,7 +950,7 @@ async fn markets_query_filters_by_community_and_serialises_camel_case() {
     assert_eq!(
         data[0],
         json!({
-            "marketId": bytes16_to_uuid_string([0x01; 16]),
+            "marketId": bytes16_to_uuid_string(crate::helpers::entity_bytes(0x01)),
             "communityId": COMMUNITY_1,
             "openingTime": "2026-03-27T18:00:00+00:00",
             "closingTime": "2026-03-28T09:45:00+00:00",
@@ -975,16 +977,15 @@ async fn markets_query_filters_by_opening_time_window() {
     assert_eq!(data.len(), 1);
     assert_eq!(
         data[0]["marketId"],
-        json!(bytes16_to_uuid_string([0x02; 16]))
+        json!(bytes16_to_uuid_string(crate::helpers::entity_bytes(0x02)))
     );
 }
 
 #[tokio::test]
-async fn markets_query_filters_by_market_id_as_uuid_or_hex() {
+async fn markets_query_filters_by_market_uuid_in_either_case() {
     for market_id in [
-        bytes16_to_uuid_string([0xab; 16]).to_uppercase(),
-        format!("0x{}", "AB".repeat(16)),
-        "ab".repeat(16),
+        bytes16_to_uuid_string(crate::helpers::entity_bytes(0xab)).to_uppercase(),
+        bytes16_to_uuid_string(crate::helpers::entity_bytes(0xab)),
     ] {
         let data = run_markets_query(
             vec![
@@ -998,7 +999,7 @@ async fn markets_query_filters_by_market_id_as_uuid_or_hex() {
         assert_eq!(data.len(), 1, "{market_id}");
         assert_eq!(
             data[0]["marketId"],
-            json!(bytes16_to_uuid_string([0xab; 16]))
+            json!(bytes16_to_uuid_string(crate::helpers::entity_bytes(0xab)))
         );
     }
 }
@@ -1008,7 +1009,7 @@ async fn markets_query_filters_by_exact_opaque_community_id() {
     let communities = [
         COMMUNITY_1,
         "3F2504E0-4F89-41D3-9A0C-0305E82C3301",
-        "0x3f2504e04f8941d39a0c0305e82c3301",
+        "3f2504e0-4f89-41d3-8a0c-0305e82c3301",
         "Community-MiXeD/LIC01",
         "community-mixed/lic01",
         "00000000-0000-0000-0000-000000000000",

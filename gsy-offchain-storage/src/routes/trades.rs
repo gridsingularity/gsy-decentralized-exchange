@@ -8,8 +8,7 @@ use mongodb::bson::doc;
 use primitives::db_api_schema::trades::DbTradeSchema;
 use primitives::ewds::dto::EwdsTradeDto;
 use primitives::utils::{
-    bytes16_to_hex, normalize_market_id, normalize_offchain_id, parse_nonzero_uuid_or_hex_bytes16,
-    parse_uuid_or_hex_bytes16,
+    normalize_uuid, normalize_offchain_id,
 };
 use serde::Deserialize;
 use std::collections::HashSet;
@@ -21,9 +20,7 @@ fn normalize_imported_trade(mut trade: DbTradeSchema) -> Result<DbTradeSchema> {
         ("bidId", &mut trade.bid_hash),
         ("offerId", &mut trade.offer_hash),
     ] {
-        *id = bytes16_to_hex(parse_nonzero_uuid_or_hex_bytes16(id).with_context(|| {
-            format!("Invalid {name}: expected a nonzero UUID or bytes16 hex ID")
-        })?);
+        *id = normalize_uuid(id).with_context(|| format!("Invalid {name}"))?;
     }
     trade.buyer = normalize_offchain_id(&trade.buyer).context("Invalid buyerId")?;
     trade.seller = normalize_offchain_id(&trade.seller).context("Invalid sellerId")?;
@@ -33,11 +30,8 @@ fn normalize_imported_trade(mut trade: DbTradeSchema) -> Result<DbTradeSchema> {
     ] {
         *residual = residual
             .as_deref()
-            .filter(|id| !id.is_empty())
-            .map(|id| parse_uuid_or_hex_bytes16(id).with_context(|| format!("Invalid {name}")))
-            .transpose()?
-            .filter(|id| *id != [0; 16])
-            .map(bytes16_to_hex);
+            .map(|id| normalize_uuid(id).with_context(|| format!("Invalid {name}")))
+            .transpose()?;
     }
     Ok(trade)
 }
@@ -108,7 +102,7 @@ pub async fn get_trades(db: DbRef, query_params: Query<GetTradesParams>) -> impl
     let market_id = match query_params
         .market_id
         .as_deref()
-        .map(normalize_market_id)
+        .map(normalize_uuid)
         .transpose()
     {
         Ok(id) => id,

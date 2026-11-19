@@ -9,7 +9,7 @@ use primitives::ewds::dto::{EwdsOrderDto, FacilityMarketValidationRequest};
 use primitives::ewds::{env_var, EwdsClient};
 use primitives::offchain_storage::OffchainStorageClient;
 use primitives::utils::{
-    derive_onchain_id, epoch_to_rfc3339, normalize_offchain_id, parse_uuid_or_hex_bytes16,
+    derive_onchain_id, epoch_to_rfc3339, normalize_offchain_id, hex_to_bytes16, uuid_v4_to_bytes16,
     string_to_timestamp, NODE_FLOAT_SCALING_FACTOR,
 };
 
@@ -167,14 +167,14 @@ fn build_order_param(
     let onchain_order_id = *Uuid::new_v4().as_bytes();
     let owner_id = derive_onchain_id(&normalize_offchain_id(owner_id)?);
     let onchain_owner_id =
-        parse_uuid_or_hex_bytes16(&owner_id).context("Invalid on-chain owner ID")?;
+        hex_to_bytes16(&owner_id).context("Invalid on-chain owner ID")?;
     let delivery_start: u64 =
         string_to_timestamp(&market.delivery_start_time).expect("invalid delivery_start_time");
     Ok((
         onchain_order_id,
         onchain_owner_id,
-        parse_uuid_or_hex_bytes16(market.market_id.as_str())
-            .expect("could not convert hex to bytes"),
+        uuid_v4_to_bytes16(market.market_id.as_str())
+            .context("Invalid marketId")?,
         delivery_start,
         now,
         (forecast.energy_kwh.abs() * NODE_FLOAT_SCALING_FACTOR) as u64,

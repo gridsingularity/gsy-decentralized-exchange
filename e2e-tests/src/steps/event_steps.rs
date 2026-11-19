@@ -10,7 +10,7 @@ use primitives::db_api_schema::profiles::MeasurementSchema;
 use primitives::db_api_schema::trades::TradeStatus;
 use primitives::ewds::dto::{EwdsEventEnvelope, EwdsMeasurementDto, EwdsOrderDto, EwdsTradeDto};
 use primitives::ewds::{EwdsClient, EwdsClientConfig, EwdsEventType};
-use primitives::utils::{bytes16_to_hex, epoch_to_rfc3339, parse_uuid_or_hex_bytes16};
+use primitives::utils::{bytes16_to_uuid_string, epoch_to_rfc3339, uuid_v4_to_bytes16};
 use std::time::Duration;
 use tokio::{
     sync::mpsc,
@@ -123,11 +123,11 @@ impl Drop for OrderStatusObserver {
 
 impl OrderStatusObserver {
     async fn wait_for(&mut self, id: &str, status: &str) -> EwdsOrderDto {
-        let id = parse_uuid_or_hex_bytes16(id).unwrap();
+        let id = uuid_v4_to_bytes16(id).unwrap();
         timeout(Duration::from_secs(180), async {
             loop {
                 if let Some(order) = self.received.iter().find(|order| {
-                    parse_uuid_or_hex_bytes16(&order.order_id) == Some(id)
+                    uuid_v4_to_bytes16(&order.order_id).ok() == Some(id)
                         && order.order_status == status
                 }) {
                     assert!(
@@ -144,7 +144,7 @@ impl OrderStatusObserver {
         .unwrap_or_else(|_| {
             panic!(
                 "Timeout: no {status} notification for {}",
-                bytes16_to_hex(id)
+                bytes16_to_uuid_string(id)
             )
         })
     }
@@ -195,7 +195,7 @@ async fn verify_order_notifications(world: &mut MyWorld, status: String) {
         assert_eq!(notification.market_id, trade.market_id);
         assert_eq!(
             &notification.order_id, id,
-            "Lifecycle order IDs must be canonical hex"
+            "Lifecycle order IDs must be canonical UUIDv4"
         );
         assert!(notification.reject_reason.is_none());
         if status == "executed" {
@@ -206,7 +206,7 @@ async fn verify_order_notifications(world: &mut MyWorld, status: String) {
     }
 }
 
-#[then("FOS receives rejections for unknown facilities, markets and cross-community orders without storing them")]
+#[then("FOS receives rejections for unknown facilities, markets, preferred partners and cross-community orders without storing them")]
 async fn verify_rejection_notification(world: &mut MyWorld) {
     let foreign_facility = format!("foreign-{}", Uuid::new_v4());
     let foreign_owner = format!("owner-{foreign_facility}");
@@ -228,13 +228,15 @@ async fn verify_rejection_notification(world: &mut MyWorld) {
         }])
         .await;
     let mut unknown_market = order_dto(world, "alice", true, 1.0, 20.0);
-    unknown_market.market_id = bytes16_to_hex(*Uuid::new_v4().as_bytes());
+    unknown_market.market_id = bytes16_to_uuid_string(*Uuid::new_v4().as_bytes());
     let mut unknown_facility = order_dto(world, "alice", true, 1.0, 20.0);
     unknown_facility.order_id.make_ascii_uppercase();
     unknown_facility.created_by = "unknown-facility".into();
     let mut cross_community = order_dto(world, "alice", true, 1.0, 20.0);
     cross_community.created_by = foreign_owner;
-    let orders = [unknown_market, unknown_facility, cross_community];
+    let mut unknown_partner = order_dto(world, "alice", true, 1.0, 20.0);
+    unknown_partner.preferred_trading_partner = Some("unregistered-partner-owner".into());
+    let orders = [unknown_market, unknown_facility, cross_community, unknown_partner];
     EwdsClient::from_env("EWDS_E2E_CLIENT_ID", "gsye2e", 60_000)
         .publish_event(&event(EwdsEventType::Order, orders.clone()))
         .await
@@ -242,7 +244,7 @@ async fn verify_rejection_notification(world: &mut MyWorld) {
     for (order, reason) in
         orders
             .into_iter()
-            .zip(["unknown_market", "unknown_facility", "site_not_in_community"])
+            .zip(["unknown_market", "unknown_facility", "site_not_in_community", "unknown_preferred_partner"])
     {
         let rejected = world
             .order_status_observer
@@ -267,7 +269,7 @@ async fn verify_rejection_notification(world: &mut MyWorld) {
             OrderRegistryContract::new(world.order_registry_address, world.provider.clone());
         assert_eq!(
             registry
-                .get_status(parse_uuid_or_hex_bytes16(&order.order_id).unwrap())
+                .get_status(uuid_v4_to_bytes16(&order.order_id).unwrap())
                 .call()
                 .await
                 .unwrap(),
@@ -278,7 +280,7 @@ async fn verify_rejection_notification(world: &mut MyWorld) {
                 .await
                 .iter()
                 .all(|stored| stored.order_id
-                    != bytes16_to_hex(parse_uuid_or_hex_bytes16(&order.order_id).unwrap())),
+                    != bytes16_to_uuid_string(uuid_v4_to_bytes16(&order.order_id).unwrap())),
             "Rejected orders must not be stored"
         );
     }
@@ -379,14 +381,14 @@ async fn publish_order_event(world: &mut MyWorld, buyer_name: String, seller_nam
     publish_order_pair(world, bid, offer).await;
 }
 
-#[when("orders with equivalent UUID and hex spellings are published on EWDS")]
+#[when("orders with mixed-case UUID spellings are published on EWDS")]
 async fn publish_uuid_orders(world: &mut MyWorld) {
     let mut bid = order_dto(world, "alice", true, 2.0, 20.0);
     let mut offer = order_dto(world, "bob", false, 2.0, 5.0);
     bid.order_id.make_ascii_uppercase();
-    offer.order_id = bytes16_to_hex(parse_uuid_or_hex_bytes16(&offer.order_id).unwrap());
+    offer.order_id.make_ascii_uppercase();
     for order in [&mut bid, &mut offer] {
-        order.market_id = Uuid::from_bytes(parse_uuid_or_hex_bytes16(&order.market_id).unwrap())
+        order.market_id = Uuid::from_bytes(uuid_v4_to_bytes16(&order.market_id).unwrap())
             .to_string()
             .to_uppercase();
     }
@@ -410,10 +412,10 @@ async fn publish_order_pair(world: &mut MyWorld, bid: EwdsOrderDto, offer: EwdsO
         .expect("Failed to publish the order event");
 
     // The community client uses the UUID as the on-chain order ID, so the off-chain storage
-    // indexes it as 0x plus the UUID's hex digits.
+    // indexes it as canonical lowercase UUID text.
     for order in [&bid, &offer] {
-        let onchain_order_id = bytes16_to_hex(
-            parse_uuid_or_hex_bytes16(order.order_id.as_str()).expect("order IDs are UUIDs"),
+        let onchain_order_id = bytes16_to_uuid_string(
+            uuid_v4_to_bytes16(order.order_id.as_str()).expect("order IDs are UUIDs"),
         );
         let stored = wait_for_order_in_offchain_storage(world, onchain_order_id.as_str()).await;
         assert_eq!(

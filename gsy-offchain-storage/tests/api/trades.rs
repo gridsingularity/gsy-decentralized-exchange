@@ -10,12 +10,12 @@ async fn imports_normalize_entity_ids_and_preserve_offchain_parties_for_queries_
     use gsy_ethers_listener::{GsyEventHandler, PenaltyRecordedFilter};
     use gsy_offchain_storage::evm_handler::OffchainStorageEvmHandler;
     use primitives::offchain_storage::{OffchainStorageClient, OffchainStorageTransport};
-    use primitives::utils::bytes16_to_hex;
+    use primitives::utils::bytes16_to_uuid_string;
     for route in ["trades", "trades-normalized"] {
         let app = init_app().await;
         let client = reqwest::Client::new();
         let uuid = |byte| {
-            uuid::Uuid::from_bytes([byte; 16])
+            uuid::Uuid::from_bytes(crate::helpers::entity_bytes(byte))
                 .to_string()
                 .to_uppercase()
         };
@@ -28,11 +28,11 @@ async fn imports_normalize_entity_ids_and_preserve_offchain_parties_for_queries_
         trade.buyer_id = uuid(0xef);
         trade.seller_id = "0xABCDEFABCDEFABCDEFABCDEFABCDEFAB".into();
         trade.trade_status = "matched".into();
-        trade.residual_bid_id = Some("00000000000000000000000000000000".into());
-        trade.residual_offer_id = Some("".into());
+        trade.residual_bid_id = None;
+        trade.residual_offer_id = None;
         app.db_wrapper
             .markets()
-            .upsert(make_market(&bytes16_to_hex([0xde; 16]), 1000))
+            .upsert(make_market(&bytes16_to_uuid_string(crate::helpers::entity_bytes(0xde)), 1000))
             .await
             .unwrap();
         assert_eq!(
@@ -57,10 +57,10 @@ async fn imports_normalize_entity_ids_and_preserve_offchain_parties_for_queries_
             .unwrap();
         assert_eq!(stored.len(), 1);
         let stored = &stored[0];
-        assert_eq!(stored.trade_uuid, bytes16_to_hex([0xab; 16]));
-        assert_eq!(stored.market_id, bytes16_to_hex([0xde; 16]));
-        assert_eq!(stored.bid_hash, bytes16_to_hex([0xbc; 16]));
-        assert_eq!(stored.offer_hash, bytes16_to_hex([0xcd; 16]));
+        assert_eq!(stored.trade_uuid, bytes16_to_uuid_string(crate::helpers::entity_bytes(0xab)));
+        assert_eq!(stored.market_id, bytes16_to_uuid_string(crate::helpers::entity_bytes(0xde)));
+        assert_eq!(stored.bid_hash, bytes16_to_uuid_string(crate::helpers::entity_bytes(0xbc)));
+        assert_eq!(stored.offer_hash, bytes16_to_uuid_string(crate::helpers::entity_bytes(0xcd)));
         assert_eq!(stored.buyer, uuid(0xef));
         assert_eq!(stored.seller, "0xABCDEFABCDEFABCDEFABCDEFABCDEFAB");
         assert_eq!(stored.residual_bid_id, None);
@@ -96,7 +96,7 @@ async fn imports_normalize_entity_ids_and_preserve_offchain_parties_for_queries_
 
         // Known conflicts must not leave the first, otherwise-new record behind.
         let mut new_trade = trade.clone();
-        new_trade.trade_id = bytes16_to_hex([0xaa; 16]);
+        new_trade.trade_id = bytes16_to_uuid_string(crate::helpers::entity_bytes(0xaa));
         let mut duplicate = new_trade.clone();
         duplicate.trade_id = uuid(0xaa);
         for batch in [vec![new_trade.clone(), duplicate], vec![new_trade, trade]] {
@@ -131,9 +131,9 @@ async fn imports_normalize_entity_ids_and_preserve_offchain_parties_for_queries_
         }
         .handle_penalty_recorded(
             PenaltyRecordedFilter {
-                trade_id: [0xab; 16],
-                market_id: [0xde; 16],
-                penalized_actor_id: primitives::utils::parse_uuid_or_hex_bytes16(
+                trade_id: crate::helpers::entity_bytes(0xab),
+                market_id: crate::helpers::entity_bytes(0xde),
+                penalized_actor_id: primitives::utils::hex_to_bytes16(
                     &primitives::utils::derive_onchain_id(&uuid(0xef)),
                 )
                 .unwrap(),
@@ -156,14 +156,14 @@ async fn concurrent_trade_imports_keep_one_record_with_canonical_residuals() {
     let app = init_app().await;
     let client = reqwest::Client::new();
     let mut trade = make_trade(
-        "ABCDEFAB-ABCD-ABCD-ABCD-ABCDEFABCDEF",
-        make_order("0x11111111111111111111111111111111", OrderEnum::Bid),
-        make_order("0x22222222222222222222222222222222", OrderEnum::Offer),
+        "ABCDEFAB-ABCD-4BCD-8BCD-ABCDEFABCDEF",
+        make_order("11111111-1111-4111-8111-111111111111", OrderEnum::Bid),
+        make_order("22222222-2222-4222-8222-222222222222", OrderEnum::Offer),
     );
-    trade.residual_bid_id = Some("BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB".into());
-    trade.residual_offer_id = Some("CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC".into());
+    trade.residual_bid_id = Some("BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB".into());
+    trade.residual_offer_id = Some("CCCCCCCC-CCCC-4CCC-8CCC-CCCCCCCCCCCC".into());
     let mut equivalent = trade.clone();
-    equivalent.trade_id = "0xabcdefababcdabcdabcdabcdefabcdef".into();
+    equivalent.trade_id = "abcdefab-abcd-4bcd-8bcd-abcdefabcdef".into();
     let first = client
         .post(format!("{}/trades", app.address))
         .json(&vec![trade]);
@@ -179,14 +179,14 @@ async fn concurrent_trade_imports_keep_one_record_with_canonical_residuals() {
     assert_eq!(statuses, [200, 409]);
     let trades = app.db_wrapper.trades().get_all_trades().await.unwrap();
     assert_eq!(trades.len(), 1);
-    assert_eq!(trades[0].trade_uuid, "0xabcdefababcdabcdabcdabcdefabcdef");
+    assert_eq!(trades[0].trade_uuid, "abcdefab-abcd-4bcd-8bcd-abcdefabcdef");
     assert_eq!(
         trades[0].residual_bid_id.as_deref(),
-        Some("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+        Some("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
     );
     assert_eq!(
         trades[0].residual_offer_id.as_deref(),
-        Some("0xcccccccccccccccccccccccccccccccc")
+        Some("cccccccc-cccc-4ccc-8ccc-cccccccccccc")
     );
     stop_app(app).await;
 }
@@ -196,9 +196,9 @@ async fn trade_imports_validate_all_identifiers_before_writing() {
     let app = init_app().await;
     let client = reqwest::Client::new();
     let trade = make_trade(
-        "abcdefab-abcd-abcd-abcd-abcdefabcdef",
-        make_order("0x11111111111111111111111111111111", OrderEnum::Bid),
-        make_order("0x22222222222222222222222222222222", OrderEnum::Offer),
+        "abcdefab-abcd-4bcd-8bcd-abcdefabcdef",
+        make_order("11111111-1111-4111-8111-111111111111", OrderEnum::Bid),
+        make_order("22222222-2222-4222-8222-222222222222", OrderEnum::Offer),
     );
     let valid = serde_json::to_value(trade).unwrap();
     for route in ["trades", "trades-normalized"] {
@@ -230,6 +230,11 @@ async fn trade_imports_validate_all_identifiers_before_writing() {
                 " padded ",
                 "0Xabcdefabcdefabcdefabcdefabcdefab",
                 "not-an-id",
+                "0xabcdefababcd4bcd8bcdabcdefabcdef",
+                "abcdefababcd4bcd8bcdabcdefabcdef",
+                "abcdefab-abcd-1bcd-8bcd-abcdefabcdef",
+                "00000000-0000-0000-0000-000000000000",
+                "",
             ] {
                 let mut bad = valid.clone();
                 bad[field] = serde_json::json!(invalid);
@@ -281,7 +286,7 @@ fn make_order(order_id: &str, order_type: OrderEnum) -> DbOrderSchema {
         energy_kWh: 100.0,
         energy_rate: 10.0,
         area_uuid: "0x00000000000000000000000000000abc".to_string(),
-        market_id: "0x00000000000000000000000000000def".to_string(),
+        market_id: "00000000-0000-4000-8000-000000000def".to_string(),
         time_slot: 1,
         creation_time: 1_677_453_190,
         requirements: None,
@@ -324,8 +329,8 @@ fn make_market(market_id: &str, delivery_start_time: u64) -> MarketSchema {
 async fn post_trade_requests_persist_trades_without_updating_orders() {
     let app = init_app().await;
     let address = app.address.clone();
-    let bid = make_order("0x00000000000000000000000000000b1d", OrderEnum::Bid);
-    let offer = make_order("0x00000000000000000000000000000a5c", OrderEnum::Offer);
+    let bid = make_order("00000000-0000-4000-8000-000000000b1d", OrderEnum::Bid);
+    let offer = make_order("00000000-0000-4000-8000-000000000a5c", OrderEnum::Offer);
     let db = web::Data::new(app.db_wrapper.clone());
     db.get_ref()
         .orders()
@@ -335,7 +340,7 @@ async fn post_trade_requests_persist_trades_without_updating_orders() {
 
     let client = reqwest::Client::new();
     for (index, endpoint) in ["/trades", "/trades-normalized"].into_iter().enumerate() {
-        let trade = make_trade(&format!("0x{:032x}", index + 1), bid.clone(), offer.clone());
+        let trade = make_trade(&format!("00000000-0000-4000-8000-{:012x}", index + 1), bid.clone(), offer.clone());
         let resp = client
             .post(format!("{address}{endpoint}"))
             .json(&vec![trade.clone()])
@@ -374,9 +379,9 @@ async fn post_trade_requests_persist_trades_without_updating_orders() {
 async fn post_normalized_trade_round_trips() {
     let app = init_app().await;
     let address = app.address.clone();
-    let bid = make_order("0x00000000000000000000000000000b2d", OrderEnum::Bid);
-    let offer = make_order("0x00000000000000000000000000000a6c", OrderEnum::Offer);
-    let trade = make_trade("0xabcdefabcdefabcdefabcdefabcdef01", bid, offer);
+    let bid = make_order("00000000-0000-4000-8000-000000000b2d", OrderEnum::Bid);
+    let offer = make_order("00000000-0000-4000-8000-000000000a6c", OrderEnum::Offer);
+    let trade = make_trade("abcdefab-cdef-4bcd-8fab-cdefabcdef01", bid, offer);
 
     let client = reqwest::Client::new();
     let resp = client
@@ -396,7 +401,7 @@ async fn post_normalized_trade_round_trips() {
     assert_eq!(200, resp.status().as_u16());
     let returned: Vec<EwdsTradeDto> = resp.json().await.unwrap();
     assert_eq!(returned.len(), 1);
-    assert_eq!(returned[0].trade_id, "0xabcdefabcdefabcdefabcdefabcdef01");
+    assert_eq!(returned[0].trade_id, "abcdefab-cdef-4bcd-8fab-cdefabcdef01");
     assert_eq!(returned[0].bid_id, trade.bid_id);
     stop_app(app).await;
 }
@@ -425,9 +430,9 @@ async fn post_trades_returns_400_for_invalid_payload() {
 async fn get_trades_filters_by_time_range() {
     let app = init_app().await;
     let address = app.address.clone();
-    let bid = make_order("0x00000000000000000000000000000b3d", OrderEnum::Bid);
-    let offer = make_order("0x00000000000000000000000000000a7c", OrderEnum::Offer);
-    let trade = make_trade("0xabcdefabcdefabcdefabcdefabcdef02", bid, offer);
+    let bid = make_order("00000000-0000-4000-8000-000000000b3d", OrderEnum::Bid);
+    let offer = make_order("00000000-0000-4000-8000-000000000a7c", OrderEnum::Offer);
+    let trade = make_trade("abcdefab-cdef-4bcd-8fab-cdefabcdef02", bid, offer);
 
     // The trade's market delivers at 2026-01-01T00:00:03Z.
     let db = web::Data::new(app.db_wrapper.clone());
@@ -459,7 +464,7 @@ async fn get_trades_filters_by_time_range() {
     assert_eq!(200, resp.status().as_u16());
     let returned: Vec<EwdsTradeDto> = resp.json().await.unwrap();
     assert_eq!(returned.len(), 1);
-    assert_eq!(returned[0].trade_id, "0xabcdefabcdefabcdefabcdefabcdef02");
+    assert_eq!(returned[0].trade_id, "abcdefab-cdef-4bcd-8fab-cdefabcdef02");
 
     // Filter by market_id
     let resp = client
@@ -471,7 +476,7 @@ async fn get_trades_filters_by_time_range() {
     assert_eq!(200, resp.status().as_u16());
     let returned: Vec<EwdsTradeDto> = resp.json().await.unwrap();
     assert_eq!(returned.len(), 1);
-    assert_eq!(returned[0].trade_id, "0xabcdefabcdefabcdefabcdefabcdef02");
+    assert_eq!(returned[0].trade_id, "abcdefab-cdef-4bcd-8fab-cdefabcdef02");
 
     // Range that excludes the market delivery start
     let resp = client
@@ -501,7 +506,7 @@ async fn get_trades_returns_400_without_market_id_or_full_range() {
         &[("start_time", "2026-01-01T00:00:00Z")],
         &[("end_time", "2026-01-01T00:00:00Z")],
         &[
-            ("market_id", "0x00000000000000000000000000000001"),
+            ("market_id", "00000000-0000-4000-8000-000000000001"),
             ("start_time", "2026-01-01T00:00:00Z"),
         ],
     ];
@@ -571,15 +576,15 @@ async fn filter_trades_time_boundaries_are_inclusive_start_exclusive_end() {
     let client = reqwest::Client::new();
     for (idx, ts) in slots.iter().enumerate() {
         let bid = make_order(
-            &format!("0x000000000000000000000000d0e5b{:03}", idx),
+            &format!("00000000-0000-4000-8000-0000d0e5b{:03}", idx),
             OrderEnum::Bid,
         );
         let offer = make_order(
-            &format!("0x000000000000000000000000d0e5a{:03}", idx),
+            &format!("00000000-0000-4000-8000-0000d0e5a{:03}", idx),
             OrderEnum::Offer,
         );
-        let mut trade = make_trade(&format!("0x{:032x}", idx + 1), bid, offer);
-        trade.market_id = format!("0x{:032x}", idx + 1);
+        let mut trade = make_trade(&format!("00000000-0000-4000-8000-{:012x}", idx + 1), bid, offer);
+        trade.market_id = format!("00000000-0000-4000-8000-{:012x}", idx + 1);
         trade.timestamp = epoch_to_rfc3339(*ts);
         db.get_ref()
             .markets()
@@ -648,7 +653,7 @@ async fn filter_trades_time_boundaries_are_inclusive_start_exclusive_end() {
     // delivering at 19 is returned.
     let by_market = trades_svc()
         .filter_trades(
-            Some("0x00000000000000000000000000000001".to_string()),
+            Some("00000000-0000-4000-8000-000000000001".to_string()),
             Some(20),
             Some(30),
         )

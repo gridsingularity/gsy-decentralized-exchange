@@ -927,7 +927,7 @@ async fn fetches_measurements_over_ewds() {
 
 // -- Markets ---------------------------------------------------------------
 
-const MARKET_ID: &str = "0xcccccccccccccccccccccccccccccccc";
+const MARKET_ID: &str = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 
 fn market() -> MarketSchema {
     MarketSchema {

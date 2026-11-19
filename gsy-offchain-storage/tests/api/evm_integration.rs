@@ -15,7 +15,7 @@ use primitives::db_api_schema::orders::{EnergyType, OrderEnum, OrderStatus};
 use primitives::db_api_schema::trades::TradeStatus;
 use primitives::ewds::dto::EwdsOrderDto;
 use primitives::utils::{
-    bytes16_to_hex, derive_onchain_id, epoch_to_rfc3339, parse_nonzero_uuid_or_hex_bytes16,
+    bytes16_to_hex, bytes16_to_uuid_string, derive_onchain_id, epoch_to_rfc3339, hex_to_bytes16,
 };
 use std::{fs::File, io::Write, sync::Arc, time::Duration};
 use tempfile::TempDir;
@@ -44,7 +44,7 @@ async fn init_app() -> crate::helpers::TestApp {
 pub(crate) const MARKET_COMMUNITY: &str = "Community-MiXeD/LIC01";
 
 fn community_hash(id: &str) -> [u8; 16] {
-    parse_nonzero_uuid_or_hex_bytes16(&derive_onchain_id(id)).unwrap()
+    hex_to_bytes16(&derive_onchain_id(id)).unwrap()
 }
 
 pub(crate) async fn register_market_community(app: &crate::helpers::TestApp) {
@@ -57,7 +57,7 @@ pub(crate) async fn register_market_community(app: &crate::helpers::TestApp) {
 
 pub(crate) fn new_market_event() -> NewMarketCreatedFilter {
     NewMarketCreatedFilter {
-        market_id: [0xcc; 16],
+        market_id: crate::helpers::entity_bytes(0xcc),
         community_id: community_hash(MARKET_COMMUNITY),
         opening_time: 1_699_998_300,
         closing_time: 1_700_000_100,
@@ -71,7 +71,7 @@ pub(crate) fn new_market_event() -> NewMarketCreatedFilter {
 
 pub(crate) fn expected_market() -> MarketSchema {
     MarketSchema {
-        market_id: "0xcccccccccccccccccccccccccccccccc".to_string(),
+        market_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc".to_string(),
         community_id: MARKET_COMMUNITY.to_string(),
         opening_time: "00000000001699998300".to_string(),
         closing_time: "00000000001700000100".to_string(),
@@ -258,7 +258,7 @@ async fn market_events_reverse_exact_opaque_and_uuid_shaped_communities() {
             .unwrap();
         assert_eq!(markets.len(), 1);
         assert_eq!(markets[0].community_id, community);
-        assert_eq!(markets[0].market_id, bytes16_to_hex(event.market_id));
+        assert_eq!(markets[0].market_id, bytes16_to_uuid_string(event.market_id));
     }
     assert_eq!(stored_markets(&app).await.len(), 5);
     stop_app(app).await;
@@ -272,9 +272,9 @@ async fn test_order_listener_rejects_unknown_partner_mapping() {
         event_publisher: None,
     };
     let event = OrderPlacedFilter {
-        order_id: [0xaa; 16],
+        order_id: crate::helpers::entity_bytes(0xaa),
         created_by: community_hash("seller-owner"),
-        market_id: [0xcc; 16],
+        market_id: crate::helpers::entity_bytes(0xcc),
         time_slot: 1000,
         creation_time: 900,
         energy: 10000,
@@ -337,7 +337,7 @@ async fn test_evm_order_listener_persists_to_db() {
         contract MockEmitter {
             event NewMarketCreated(bytes16 indexed marketId, bytes16 indexed communityId, uint64 openingTime, uint64 closingTime, uint64 deliveryStartTime, uint64 deliveryEndTime, uint8 marketType, uint8 matchingAlgorithm, uint64 createdAt);
             function emitNewMarket(bytes16 communityId, uint64 closingTime) external {
-                emit NewMarketCreated(bytes16(uint128(1)), communityId, uint64(block.timestamp), closingTime, 1000, 1900, 0, 0, uint64(block.timestamp));
+                emit NewMarketCreated(bytes16(0x01010101010141018101010101010101), communityId, uint64(block.timestamp), closingTime, 1000, 1900, 0, 0, uint64(block.timestamp));
             }
             event OrderPlaced(bytes16 indexed orderId, bytes16 indexed createdBy, bytes16 indexed marketId, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, uint8 energySourcePreference, uint8 energyType, bool isBid, bytes16 preferredTradingPartner, uint64 preferredEnergyRate);
             function emitOrderPlaced(bytes16 orderId, bytes16 createdBy, uint64 energy, uint64 rate) external {
@@ -345,7 +345,7 @@ async fn test_evm_order_listener_persists_to_db() {
                 emit OrderPlaced(
                     orderId,
                     createdBy,
-                    bytes16(uint128(1)),
+                    bytes16(0x01010101010141018101010101010101),
                     1000,
                     1234567890,
                     energy,
@@ -463,7 +463,7 @@ async fn test_evm_order_listener_persists_to_db() {
         .await
         .unwrap()
         .unwrap();
-    let order_id = [0xAA; 16];
+    let order_id = crate::helpers::entity_bytes(0xAA);
 
     // Stop after indexing the market. Miss the placement, then recover it from Mongo.
     let next_block = market_receipt.block_number.unwrap().as_u64() as i64 + 1;
@@ -502,7 +502,7 @@ async fn test_evm_order_listener_persists_to_db() {
         .timestamp
         .as_u64();
 
-    let expected_id = format!("0x{}", hex::encode(order_id));
+    let expected_id = bytes16_to_uuid_string(order_id);
 
     let handler = OffchainStorageEvmHandler {
         db: db.clone(),
@@ -593,7 +593,7 @@ fn placed_order(order_id: [u8; 16], is_bid: bool, energy: u64) -> OrderPlacedFil
         } else {
             "seller-owner"
         }),
-        market_id: [0xcc; 16],
+        market_id: crate::helpers::entity_bytes(0xcc),
         time_slot: 1000,
         creation_time: 900,
         energy,
@@ -613,7 +613,7 @@ async fn order_placed_replaces_an_import_and_remains_replayable() {
         db: app.db_wrapper.clone(),
         event_publisher: None,
     };
-    let event = placed_order([0xab; 16], true, 10000);
+    let event = placed_order(crate::helpers::entity_bytes(0xab), true, 10000);
     handler
         .handle_order_placed(event.clone(), 950)
         .await
@@ -669,11 +669,11 @@ async fn cancellation_uses_block_time_and_preserves_order_metadata() {
         event_publisher: None,
     };
     handler
-        .handle_order_placed(placed_order([1; 16], true, 10000), 950)
+        .handle_order_placed(placed_order(crate::helpers::entity_bytes(1), true, 10000), 950)
         .await
         .unwrap();
     let orders = app.db_wrapper.orders();
-    let order_id = bytes16_to_hex([1; 16]).into();
+    let order_id = bytes16_to_uuid_string(crate::helpers::entity_bytes(1)).into();
     let mut expected = orders.get_order_by_id(&order_id).await.unwrap().unwrap();
     assert_eq!(expected.status_updated_at, Some(950));
     expected.status = OrderStatus::Cancelled;
@@ -681,7 +681,7 @@ async fn cancellation_uses_block_time_and_preserves_order_metadata() {
     // Reprocessing the same event must not replace chain time with wall-clock time.
     for _ in 0..2 {
         handler
-            .handle_order_cancelled(OrderCancelledFilter { order_id: [1; 16] }, 980)
+            .handle_order_cancelled(OrderCancelledFilter { order_id: crate::helpers::entity_bytes(1) }, 980)
             .await
             .unwrap();
         assert_eq!(
@@ -703,8 +703,8 @@ async fn market_closure_expires_only_submitted_orders_and_preserves_expiry_on_la
             event_publisher: None,
         };
         let orders = app.db_wrapper.orders();
-        let market_id = [0xcc; 16];
-        let other_market = [0xdd; 16];
+        let market_id = crate::helpers::entity_bytes(0xcc);
+        let other_market = crate::helpers::entity_bytes(0xdd);
         for (index, status) in [
             OrderStatus::Submitted,
             OrderStatus::PartiallyFilled,
@@ -718,13 +718,13 @@ async fn market_closure_expires_only_submitted_orders_and_preserves_expiry_on_la
         {
             for (offset, market) in [(0, market_id), (10, other_market)] {
                 for (side, is_bid) in [(0, true), (20, false)] {
-                    let order_id = [(index + offset + side + 1) as u8; 16];
+                    let order_id = crate::helpers::entity_bytes((index + offset + side + 1) as u8);
                     let mut event = placed_order(order_id, is_bid, 10000);
                     event.market_id = market;
                     handler.handle_order_placed(event, 950).await.unwrap();
                     orders
                         .update_order_status_by_id(
-                            &bytes16_to_hex(order_id).into(),
+                            &bytes16_to_uuid_string(order_id).into(),
                             status.clone(),
                             950,
                         )
@@ -760,7 +760,7 @@ async fn market_closure_expires_only_submitted_orders_and_preserves_expiry_on_la
             handler.handle_block(timestamp).await.unwrap();
             for order in &before {
                 let mut expected = order.clone();
-                if order.market_id == bytes16_to_hex(market_id)
+                if order.market_id == bytes16_to_uuid_string(market_id)
                     && order.status == OrderStatus::Submitted
                 {
                     expected.status = OrderStatus::Expired;
@@ -787,7 +787,7 @@ async fn market_closure_expires_only_submitted_orders_and_preserves_expiry_on_la
             .unwrap();
         let expired = response
             .iter()
-            .find(|order| order.order_id == bytes16_to_hex([1; 16]))
+            .find(|order| order.order_id == bytes16_to_uuid_string(crate::helpers::entity_bytes(1)))
             .unwrap();
         assert_eq!(expired.order_status, "expired");
         assert_eq!(expired.updated_at, Some(epoch_to_rfc3339(closed_at)));
@@ -795,14 +795,14 @@ async fn market_closure_expires_only_submitted_orders_and_preserves_expiry_on_la
             .handle_order_placed(
                 OrderPlacedFilter {
                     market_id: other_market,
-                    ..placed_order([99; 16], true, 10000)
+                    ..placed_order(crate::helpers::entity_bytes(99), true, 10000)
                 },
                 closed_at + 3,
             )
             .await
             .unwrap();
         let new_order = orders
-            .get_order_by_id(&bytes16_to_hex([99; 16]).into())
+            .get_order_by_id(&bytes16_to_uuid_string(crate::helpers::entity_bytes(99)).into())
             .await
             .unwrap()
             .unwrap();
@@ -821,8 +821,8 @@ async fn settlement_indexes_fill_statuses_and_keeps_residuals_independent() {
             event_publisher: None,
         };
         let sides = [
-            (true, [1; 16], [3; 16], partial_bid),
-            (false, [2; 16], [4; 16], partial_offer),
+            (true, crate::helpers::entity_bytes(1), crate::helpers::entity_bytes(3), partial_bid),
+            (false, crate::helpers::entity_bytes(2), crate::helpers::entity_bytes(4), partial_offer),
         ];
         for (is_bid, original, residual, partial) in sides {
             handler
@@ -835,7 +835,7 @@ async fn settlement_indexes_fill_statuses_and_keeps_residuals_independent() {
             let submitted = app
                 .db_wrapper
                 .orders()
-                .get_order_by_id(&bytes16_to_hex(original).into())
+                .get_order_by_id(&bytes16_to_uuid_string(original).into())
                 .await
                 .unwrap()
                 .unwrap();
@@ -849,15 +849,15 @@ async fn settlement_indexes_fill_statuses_and_keeps_residuals_independent() {
             }
         }
         let event = TradeSettledFilter {
-            trade_id: [10; 16],
-            bid_id: [1; 16],
-            offer_id: [2; 16],
+            trade_id: crate::helpers::entity_bytes(10),
+            bid_id: crate::helpers::entity_bytes(1),
+            offer_id: crate::helpers::entity_bytes(2),
             buyer_id: community_hash("buyer-owner"),
             seller_id: community_hash("seller-owner"),
-            market_id: [0xcc; 16],
+            market_id: crate::helpers::entity_bytes(0xcc),
             time_slot: 1000,
-            residual_bid_id: if partial_bid { [3; 16] } else { [0; 16] },
-            residual_offer_id: if partial_offer { [4; 16] } else { [0; 16] },
+            residual_bid_id: if partial_bid { crate::helpers::entity_bytes(3) } else { [0; 16] },
+            residual_offer_id: if partial_offer { crate::helpers::entity_bytes(4) } else { [0; 16] },
             energy: U256::from(10000u64),
             price: U256::from(5000u64),
         };
@@ -886,7 +886,7 @@ async fn settlement_indexes_fill_statuses_and_keeps_residuals_independent() {
             .unwrap();
 
         for (is_bid, original, residual, partial) in sides {
-            let original_id = bytes16_to_hex(original);
+            let original_id = bytes16_to_uuid_string(original);
             let original_order = indexed
                 .iter()
                 .find(|order| order.order_id == original_id)
@@ -918,7 +918,7 @@ async fn settlement_indexes_fill_statuses_and_keeps_residuals_independent() {
             if !partial {
                 continue;
             }
-            let residual_id = bytes16_to_hex(residual);
+            let residual_id = bytes16_to_uuid_string(residual);
             let mut expected_residual = original_order.clone();
             expected_residual.order_id = residual_id.clone();
             expected_residual.energy_kWh = 1.0;
@@ -931,7 +931,7 @@ async fn settlement_indexes_fill_statuses_and_keeps_residuals_independent() {
                 &expected_residual
             );
 
-            let counterpart = if is_bid { [5; 16] } else { [6; 16] };
+            let counterpart = if is_bid { crate::helpers::entity_bytes(5) } else { crate::helpers::entity_bytes(6) };
             handler
                 .handle_order_placed(placed_order(counterpart, !is_bid, 10000), 990)
                 .await
@@ -939,7 +939,7 @@ async fn settlement_indexes_fill_statuses_and_keeps_residuals_independent() {
             handler
                 .handle_trade_settled(
                     TradeSettledFilter {
-                        trade_id: if is_bid { [11; 16] } else { [12; 16] },
+                        trade_id: if is_bid { crate::helpers::entity_bytes(11) } else { crate::helpers::entity_bytes(12) },
                         bid_id: if is_bid { residual } else { counterpart },
                         offer_id: if is_bid { counterpart } else { residual },
                         residual_bid_id: [0; 16],
@@ -966,7 +966,7 @@ async fn settlement_indexes_fill_statuses_and_keeps_residuals_independent() {
                 .unwrap();
             assert_eq!(&stored_original, original_order);
             let stored_counterpart = orders
-                .get_order_by_id(&bytes16_to_hex(counterpart).into())
+                .get_order_by_id(&bytes16_to_uuid_string(counterpart).into())
                 .await
                 .unwrap()
                 .unwrap();
@@ -982,10 +982,10 @@ async fn settlement_indexes_fill_statuses_and_keeps_residuals_independent() {
             .iter()
             .all(|trade| trade.status == TradeStatus::Matched));
         // Imports must not reset consumed orders before their delivery verification.
-        for (index, original) in [[1; 16], [2; 16]].into_iter().enumerate() {
+        for (index, original) in [crate::helpers::entity_bytes(1), crate::helpers::entity_bytes(2)].into_iter().enumerate() {
             let dto = returned
                 .iter()
-                .find(|order| order.order_id == bytes16_to_hex(original))
+                .find(|order| order.order_id == bytes16_to_uuid_string(original))
                 .unwrap();
             let mut overwrite = dto.clone();
             overwrite.order_id = uuid::Uuid::from_bytes(original).to_string().to_uppercase();
@@ -1019,15 +1019,15 @@ async fn settlement_indexes_fill_statuses_and_keeps_residuals_independent() {
         };
         for invalid in [
             PenaltyRecordedFilter {
-                trade_id: [99; 16],
+                trade_id: crate::helpers::entity_bytes(99),
                 ..penalty.clone()
             },
             PenaltyRecordedFilter {
-                market_id: [99; 16],
+                market_id: crate::helpers::entity_bytes(99),
                 ..penalty.clone()
             },
             PenaltyRecordedFilter {
-                penalized_actor_id: [99; 16],
+                penalized_actor_id: crate::helpers::entity_bytes(99),
                 ..penalty.clone()
             },
             PenaltyRecordedFilter {
@@ -1068,7 +1068,7 @@ async fn settlement_indexes_fill_statuses_and_keeps_residuals_independent() {
         let before = orders.get_all_orders().await.unwrap();
         // Simulate retrying after the first order write, before trade completion.
         orders
-            .mark_executed(&bytes16_to_hex(event.bid_id), 1100)
+            .mark_executed(&bytes16_to_uuid_string(event.bid_id), 1100)
             .await
             .unwrap();
         for timestamp in [1100, 1101] {
@@ -1083,7 +1083,7 @@ async fn settlement_indexes_fill_statuses_and_keeps_residuals_independent() {
                     .unwrap()
                     .unwrap();
                 let mut expected = order.clone();
-                if [bytes16_to_hex(event.bid_id), bytes16_to_hex(event.offer_id)]
+                if [bytes16_to_uuid_string(event.bid_id), bytes16_to_uuid_string(event.offer_id)]
                     .contains(&order.order_id)
                 {
                     expected.status = OrderStatus::Executed;
@@ -1116,15 +1116,15 @@ async fn settlement_indexes_fill_statuses_and_keeps_residuals_independent() {
             .await
             .unwrap();
         assert_eq!(verified.len(), 1);
-        assert_eq!(verified[0].trade_uuid, bytes16_to_hex(event.trade_id));
+        assert_eq!(verified[0].trade_uuid, bytes16_to_uuid_string(event.trade_id));
         assert_eq!(verified[0].status_updated_at, Some(expected_timestamp));
         for invalid in [
             gsy_ethers_listener::DeliveryVerifiedFilter {
-                trade_id: [99; 16],
+                trade_id: crate::helpers::entity_bytes(99),
                 ..verification.clone()
             },
             gsy_ethers_listener::DeliveryVerifiedFilter {
-                bid_id: [99; 16],
+                bid_id: crate::helpers::entity_bytes(99),
                 ..verification
             },
         ] {

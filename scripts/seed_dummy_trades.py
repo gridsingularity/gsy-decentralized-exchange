@@ -23,7 +23,6 @@ for the duration of the command.
 """
 
 import argparse
-import hashlib
 import json
 import math
 import random
@@ -119,10 +118,6 @@ def market_ids_by_slot(trades):
     return markets
 
 
-def bytes16_id(value):
-    return "0x" + hashlib.blake2b(value.encode(), digest_size=16).hexdigest()
-
-
 def dataset_filters(trades):
     # Keep SSH/mongosh arguments bounded even for month-long datasets.
     for start in range(0, len(trades), 500):
@@ -164,7 +159,7 @@ def generate_dataset(start, end, per_slot, seed, as_of):
         hour = (slot % DAY_SECS) // 3600
         daytime = hour in DAYTIME_HOURS
         # All trades for this community/type/slot share one synthetic market UUID.
-        market_id = "0x" + uuid.uuid4().hex
+        market_id = str(uuid.uuid4())
         buyers_pool = LOADS + [BATTERY] if daytime else LOADS
         buyers = rng.sample(buyers_pool, per_slot)
         for buyer in buyers:
@@ -180,17 +175,17 @@ def generate_dataset(start, end, per_slot, seed, as_of):
             residual_bid = residual_offer = None
             if rng.random() < 0.10:
                 if rng.random() < 0.5:
-                    residual_bid = bytes16_id(f"dummy-bid-{num}-r")
+                    residual_bid = str(uuid.uuid4())
                 else:
-                    residual_offer = bytes16_id(f"dummy-offer-{num}-r")
+                    residual_offer = str(uuid.uuid4())
             trades.append(
                 {
-                    "tradeId": bytes16_id(f"dummy-trade-{num}"),
+                    "tradeId": str(uuid.uuid4()),
                     "marketId": market_id,
-                    "bidId": bytes16_id(f"dummy-bid-{num}"),
+                    "bidId": str(uuid.uuid4()),
                     "buyerId": buyer,
                     "residualBidId": residual_bid,
-                    "offerId": bytes16_id(f"dummy-offer-{num}"),
+                    "offerId": str(uuid.uuid4()),
                     "sellerId": seller,
                     "residualOfferId": residual_offer,
                     "tradeStatus": pick_status(rng, slot, as_of),
@@ -444,8 +439,8 @@ def schema_errors(envelope):
             value = item.get(key)
             if key in ("residualBidId", "residualOfferId") and value is None:
                 continue
-            if not isinstance(value, str) or not re.fullmatch(r"0x[0-9a-f]{32}", value) or int(value[2:], 16) == 0:
-                errors.append(f"{tid}: {key} is not canonical nonzero bytes16 hex")
+            if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}", value):
+                errors.append(f"{tid}: {key} is not canonical UUIDv4")
         for key in ("buyerId", "sellerId"):
             value = item.get(key)
             if not isinstance(value, str) or not value or value.strip() != value:
@@ -679,9 +674,9 @@ def cmd_validate(args):
             slots = range(start, end, SLOT_SECS)
         for slot in sorted({s for s in slots if start <= s < end}):
             ewds_market_check(report, args, trades, f"slot {fmt_ts(slot)}", market_ids[slot])
-        absent_market_id = "0x" + uuid.uuid4().hex
+        absent_market_id = str(uuid.uuid4())
         while absent_market_id in expected_by_market:
-            absent_market_id = "0x" + uuid.uuid4().hex
+            absent_market_id = str(uuid.uuid4())
         ewds_market_check(report, args, trades, "market outside dataset", absent_market_id)
 
         if args.check_range_limit:

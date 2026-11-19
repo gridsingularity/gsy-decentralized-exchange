@@ -9,7 +9,7 @@ use primitives::db_api_schema::market::MarketSchema;
 use primitives::ewds::dto::{
     FacilityMarketValidationReason, FacilityMarketValidationRequest, FacilityMarketValidationResult,
 };
-use primitives::utils::{normalize_market_id, normalize_offchain_id};
+use primitives::utils::{normalize_uuid, normalize_offchain_id};
 use std::collections::HashMap;
 
 impl DatabaseWrapper {
@@ -26,7 +26,7 @@ impl DatabaseWrapper {
 
         let market_ids: Vec<Option<String>> = requests
             .iter()
-            .map(|pair| normalize_market_id(&pair.market_id).ok())
+            .map(|pair| normalize_uuid(&pair.market_id).ok())
             .collect();
         let facility_ids: Vec<String> = requests
             .iter()

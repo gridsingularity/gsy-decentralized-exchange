@@ -7,7 +7,7 @@ use ethers::{prelude::*, utils::Anvil};
 use gsy_community_client::node_connector::orders::publish_orders;
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::profiles::ForecastSchema;
-use primitives::utils::parse_uuid_or_hex_bytes16;
+use primitives::utils::{hex_to_bytes16, uuid_v4_to_bytes16};
 use primitives::{MarketType, MatchingAlgorithm};
 use std::sync::Arc;
 use wiremock::matchers::{method, path};
@@ -35,7 +35,7 @@ async fn setup_facilities_mock() -> MockServer {
 
 fn test_market() -> MarketSchema {
     MarketSchema {
-        market_id: format!("0x{}", "11".repeat(16)),
+        market_id: "11111111-1111-4111-8111-111111111111".to_string(),
         community_id: "community-1".to_string(),
         opening_time: "00000000002700000000".to_string(),
         closing_time: "00000000002800000000".to_string(),
@@ -173,11 +173,11 @@ async fn test_publish_orders_calls_evm_order_registry() {
     );
     assert_eq!(
         mock_contract.last_created_by().call().await.unwrap(),
-        parse_uuid_or_hex_bytes16(&primitives::utils::derive_onchain_id("owner-2")).unwrap()
+        hex_to_bytes16(&primitives::utils::derive_onchain_id("owner-2")).unwrap()
     );
     assert_eq!(
         mock_contract.last_market_id().call().await.unwrap(),
-        parse_uuid_or_hex_bytes16("0x11111111111111111111111111111111")
+        uuid_v4_to_bytes16("11111111-1111-4111-8111-111111111111")
             .expect("failed to parse uuid")
     );
     assert_eq!(

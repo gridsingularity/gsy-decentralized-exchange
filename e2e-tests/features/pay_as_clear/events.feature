@@ -18,7 +18,7 @@ Feature: Order lifecycle notifications over EWDS
     Then delivery verification marks the trade <verdict> and both orders Executed
     And FOS receives the <verdict> trade notification
     And FOS receives "executed" notifications for both traded orders
-    And FOS receives rejections for unknown facilities, markets and cross-community orders without storing them
+    And FOS receives rejections for unknown facilities, markets, preferred partners and cross-community orders without storing them
 
     Examples:
       | energy | verdict   |

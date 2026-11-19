@@ -27,7 +27,7 @@ request/reply topics:
 - query request/reply envelopes for orders, trades, measurements, and communities
 - `int.markets.query.request.v1.json` for market/community filters; malformed or
   nil IDs receive `invalid_request`. Market responses and events use UUID IDs,
-  without enforcing a UUID version. Stored market IDs use lowercase `0x` hex.
+  requiring UUIDv4. Stored market IDs use the same lowercase UUID text.
 - `int.facilities.validate.request.v1.json` / `int.facilities.validate.response.v1.json`
   for read-only facility/market eligibility (`facilitiesValidate` / `facilitiesValidateResponse`)
 - `int.ids.query.request.v1.json` and `int.clearing_results.query.request.v1.json`
@@ -65,10 +65,10 @@ Notes:
 - Facility-validation pairs/results use the shared HTTP API's `facility_id` and
   `market_id` names; these are validation records, not ontology entity DTOs.
 - Runtime service fields from GSY DEX are mapped in `docs/platform/ewds-data-contracts.md`.
-- Entity IDs use UUID/bytes16 forms and timestamps use ISO 8601; actor IDs remain opaque off-chain strings.
+- Entity IDs use hyphenated UUIDv4 and timestamps use ISO 8601; actor IDs remain opaque off-chain strings.
 - The active DEX EVM settlement path uses bytes16 IDs and owner hashes, and
   Unix timeslots. On-chain IDs are not EVM wallet addresses. Market events expose
-  UUIDs; order lifecycle, trade and clearing events expose lowercase `0x` entity IDs.
+  UUIDv4s; order lifecycle, trade and clearing events expose the same lowercase UUID format.
   Their actor fields (`createdBy`, preferred partner, buyer/seller) expose the original
   off-chain identities, not hashes. Missing mappings defer the event in storage.
 - These schemas are versioned as `v1` and should be registered as EWDS topic

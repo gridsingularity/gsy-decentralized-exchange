@@ -6,7 +6,7 @@ use mongodb::options::IndexOptions;
 use mongodb::{bson, Collection, IndexModel};
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::utils::{
-    normalize_market_id, normalize_offchain_id, timestamp_to_string_with_padding,
+    normalize_uuid, normalize_offchain_id, timestamp_to_string_with_padding,
 };
 use std::ops::Deref;
 
@@ -48,7 +48,7 @@ impl MarketService {
         start_time: Option<String>,
         end_time: Option<String>,
     ) -> Result<Vec<MarketSchema>> {
-        let market_id = market_id.as_deref().map(normalize_market_id).transpose()?;
+        let market_id = market_id.as_deref().map(normalize_uuid).transpose()?;
         super::pending_events::ensure_ready(&self.0, market_id.as_deref()).await?;
         let mut filter_params = doc! {};
         if let Some(market_id) = market_id {
@@ -77,7 +77,7 @@ impl MarketService {
     pub async fn get_by_ids(&self, market_ids: Vec<String>) -> Result<Vec<MarketSchema>> {
         let market_ids = market_ids
             .iter()
-            .map(|id| normalize_market_id(id))
+            .map(|id| normalize_uuid(id))
             .collect::<Result<Vec<_>>>()?;
         for id in &market_ids {
             super::pending_events::ensure_ready(&self.0, Some(id)).await?;
@@ -118,7 +118,7 @@ impl MarketService {
 
     #[tracing::instrument(name = "Saving market", skip(self, market), fields(market = ?market))]
     pub async fn upsert(&self, mut market: MarketSchema) -> Result<MarketSchema> {
-        market.market_id = normalize_market_id(&market.market_id)?;
+        market.market_id = normalize_uuid(&market.market_id)?;
         market.community_id = normalize_offchain_id(&market.community_id)?;
         let market_doc = bson::to_document(&market)?;
         match self

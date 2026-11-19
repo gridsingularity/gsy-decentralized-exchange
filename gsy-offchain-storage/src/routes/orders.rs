@@ -7,16 +7,14 @@ use mongodb::error::{ErrorKind, WriteFailure};
 use primitives::db_api_schema::orders::{DbOrderSchema, FlexibilityOrderSchema};
 use primitives::ewds::dto::EwdsOrderDto;
 use primitives::utils::{
-    bytes16_to_hex, normalize_market_id, normalize_offchain_id, parse_nonzero_uuid_or_hex_bytes16,
+    normalize_uuid, normalize_offchain_id,
 };
 use serde::Deserialize;
 use std::collections::HashSet;
 
 fn normalize_imported_order(mut order: DbOrderSchema) -> Result<DbOrderSchema> {
-    order.order_id = bytes16_to_hex(
-        parse_nonzero_uuid_or_hex_bytes16(&order.order_id).context("Invalid orderId")?,
-    );
-    order.market_id = normalize_market_id(&order.market_id)?;
+    order.order_id = normalize_uuid(&order.order_id).context("Invalid orderId")?;
+    order.market_id = normalize_uuid(&order.market_id)?;
     order.created_by = normalize_offchain_id(&order.created_by).context("Invalid createdBy")?;
     order.area_uuid = order.created_by.clone();
     if let Some(partner) = order
@@ -115,7 +113,7 @@ pub async fn get_orders(db: DbRef, orders_parameters: Query<OrdersParameters>) -
     let market_id = match orders_parameters
         .market_id
         .as_deref()
-        .map(normalize_market_id)
+        .map(normalize_uuid)
         .transpose()
     {
         Ok(id) => id,

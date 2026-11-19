@@ -2,7 +2,7 @@
 //!
 //! `MarketSchema` is the canonical ontology-aligned market-opening document.
 
-use crate::utils::{bytes16_to_hex, timestamp_to_string_with_padding};
+use crate::utils::{bytes16_to_uuid_string, timestamp_to_string_with_padding};
 pub use crate::{MarketTimeSeriesGranularity, MarketType, MatchingAlgorithm};
 use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
@@ -51,7 +51,7 @@ impl MarketChainRecord {
             .ok_or_else(|| anyhow!("Unknown matching algorithm {}", record.matching_algorithm))?;
 
         Ok(MarketSchema {
-            market_id: bytes16_to_hex(record.market_id),
+            market_id: bytes16_to_uuid_string(record.market_id),
             community_id: offchain_community_id,
             opening_time: timestamp_to_string_with_padding(record.opening_time),
             closing_time: timestamp_to_string_with_padding(record.closing_time),

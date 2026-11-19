@@ -36,7 +36,11 @@ Storage resolves on-chain community IDs directly through its own database,
 without a new reverse-lookup API or a remote conversion request.
 
 Deploy the updated `MarketController` and all services together into a fresh
-environment. Markets now use random UUIDv4 IDs; `getMarketIds` resolves the
+environment. Order, residual-order, trade and market IDs use lowercase UUIDv4
+text off-chain and the same 16 bytes on-chain, without hashing. Refresh the EWDS
+entity schemas with this deployment; hexadecimal/bare entity-ID inputs are no
+longer accepted. Actor identities and keyed pseudonyms remain separate.
+Markets now use random UUIDv4 IDs; `getMarketIds` resolves the
 community/type/delivery-start tuple to its existing ID. The contract enforces
 tuple uniqueness even when concurrent orchestrators propose different UUIDs.
 Community IDs on-chain are keyed pseudonyms, resolved to their original spelling

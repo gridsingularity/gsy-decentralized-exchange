@@ -75,7 +75,9 @@ describe("Gas report", function () {
         const marketController = await ethers.getContractAt(
           "MarketController", report.metadata.marketControllerProxy,
         );
-        const marketId = ethers.dataSlice(ethers.id("gas:market"), 0, 16);
+        const markets = await marketController.queryFilter(marketController.filters.NewMarketCreated());
+        const marketId = markets[0].args.marketId;
+        expect(marketId).to.match(/^0x[0-9a-f]{12}4[0-9a-f]{3}[89ab][0-9a-f]{15}$/);
         expect(await marketController.isMarketOpen(marketId)).to.equal(true);
       } finally {
         ethers.getSigners = originalGetSigners;

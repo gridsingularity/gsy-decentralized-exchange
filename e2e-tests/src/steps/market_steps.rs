@@ -11,7 +11,7 @@ use primitives::ewds::dto::{EwdsCommunityDto, EwdsEventEnvelope};
 use primitives::ewds::{EwdsClient, EwdsEventType, EwdsOperation};
 use primitives::offchain_storage::OffchainStorageClient;
 use primitives::utils::{
-    bytes16_to_hex, derive_onchain_id, epoch_to_rfc3339, parse_uuid_or_hex_bytes16,
+    bytes16_to_uuid_string, derive_onchain_id, epoch_to_rfc3339, hex_to_bytes16,
 };
 use primitives::{MarketType, MatchingAlgorithm};
 use serde_json::json;
@@ -151,7 +151,7 @@ async fn wait_for_market_to_open(world: &mut MyWorld) {
 
 fn market_key(community_id: &str, delivery_start_time: u64) -> MarketKey {
     MarketKey {
-        community_id: parse_uuid_or_hex_bytes16(&derive_onchain_id(community_id))
+        community_id: hex_to_bytes16(&derive_onchain_id(community_id))
             .expect("Derived community identity must fit bytes16"),
         market_type: MarketType::Spot.to_evm(),
         delivery_start_time,
@@ -189,7 +189,7 @@ async fn wait_for_market(world: &MyWorld, community_id: &str) -> ([u8; 16], Mark
             sleep(MARKET_POLL_INTERVAL).await;
             continue;
         };
-        let market_id_hex = bytes16_to_hex(market_id);
+        let market_id_string = bytes16_to_uuid_string(market_id);
         let is_open = market_controller
             .is_market_open(market_id)
             .call()
@@ -197,7 +197,7 @@ async fn wait_for_market(world: &MyWorld, community_id: &str) -> ([u8; 16], Mark
             .expect("Failed to read market status from MarketController");
         let stored = if is_open {
             storage
-                .fetch_market(market_id_hex.as_str())
+                .fetch_market(market_id_string.as_str())
                 .await
                 .expect("Failed to read market from off-chain storage")
         } else {
@@ -207,7 +207,7 @@ async fn wait_for_market(world: &MyWorld, community_id: &str) -> ([u8; 16], Mark
         if let Some(stored) = stored {
             info!(
                 "Market {} open and stored after {} checks",
-                market_id_hex,
+                market_id_string,
                 attempt + 1
             );
             let events = market_controller
@@ -245,7 +245,7 @@ async fn wait_for_market(world: &MyWorld, community_id: &str) -> ([u8; 16], Mark
                 stored, expected,
                 "Stored market differs from the NewMarketCreated event"
             );
-            assert_eq!(stored.market_id, market_id_hex);
+            assert_eq!(stored.market_id, market_id_string);
             assert_eq!(stored.matching_algorithm, matching_algorithm_from_env());
             return (market_id, stored);
         }
@@ -439,7 +439,7 @@ mod tests {
             for (identity, key) in [(first, first_key), (second, second_key)] {
                 assert_eq!(
                     key.community_id,
-                    parse_uuid_or_hex_bytes16(&derive_onchain_id(identity)).unwrap()
+                    hex_to_bytes16(&derive_onchain_id(identity)).unwrap()
                 );
                 assert_eq!(key.market_type, MarketType::Spot.to_evm());
                 assert_eq!(key.delivery_start_time, 1_700_000_100);

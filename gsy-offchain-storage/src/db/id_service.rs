@@ -9,7 +9,7 @@ use mongodb::options::ReturnDocument;
 use mongodb::{Collection, IndexModel};
 use primitives::db_api_schema::ids::IdMappingSchema;
 use primitives::utils::{
-    bytes16_to_hex, derive_onchain_id, normalize_offchain_id, parse_nonzero_uuid_or_hex_bytes16,
+    bytes16_to_hex, derive_onchain_id, normalize_offchain_id, hex_to_bytes16,
 };
 use std::ops::Deref;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -51,7 +51,7 @@ impl IdService {
         }
         if let Some(onchain_id) = onchain_id {
             let onchain_id =
-                parse_nonzero_uuid_or_hex_bytes16(&onchain_id).context("Invalid on-chain ID")?;
+                hex_to_bytes16(&onchain_id).filter(|id| *id != [0; 16]).context("Invalid on-chain ID")?;
             filter_params.insert("onchain_id", bytes16_to_hex(onchain_id));
         }
         if let Some(offchain_id) = offchain_id {

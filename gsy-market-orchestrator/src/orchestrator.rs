@@ -5,7 +5,7 @@ use primitives::offchain_storage::CommunityProvider;
 use primitives::{
     constants::GLOBAL_CONSTANTS,
     utils::{
-        bytes16_to_hex, derive_onchain_id, normalize_offchain_id, parse_uuid_or_hex_bytes16,
+        bytes16_to_uuid_string, derive_onchain_id, normalize_offchain_id, hex_to_bytes16,
         timestamp_to_datetime_string,
     },
 };
@@ -102,7 +102,7 @@ where
         .filter_map(
             |community| match normalize_offchain_id(&community.community_id) {
                 Ok(id) => Some(
-                    parse_uuid_or_hex_bytes16(&derive_onchain_id(&id))
+                    hex_to_bytes16(&derive_onchain_id(&id))
                         .expect("actor ID hashing produces bytes16"),
                 ),
                 Err(error) => {
@@ -157,7 +157,7 @@ where
             );
             debug!(
                 "Market {} for delivery at {} is missing. Opens {}, closes {}.",
-                bytes16_to_hex(market.market_id),
+                bytes16_to_uuid_string(market.market_id),
                 timestamp_to_datetime_string(market.delivery_start_time),
                 timestamp_to_datetime_string(market.opening_time),
                 timestamp_to_datetime_string(market.closing_time)

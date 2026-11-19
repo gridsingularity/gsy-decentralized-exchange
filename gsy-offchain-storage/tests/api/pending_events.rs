@@ -11,13 +11,13 @@ use gsy_offchain_storage::evm_handler::OffchainStorageEvmHandler;
 use mongodb::bson::{doc, Document};
 use primitives::{
     db_api_schema::{orders::OrderStatus, trades::TradeStatus},
-    utils::{bytes16_to_hex, derive_onchain_id, parse_uuid_or_hex_bytes16},
+    utils::{bytes16_to_uuid_string, derive_onchain_id, hex_to_bytes16},
 };
 
 const STREAM: &str = "test-chain-and-contracts";
 
 fn hash(id: &str) -> [u8; 16] {
-    parse_uuid_or_hex_bytes16(&derive_onchain_id(id)).unwrap()
+    hex_to_bytes16(&derive_onchain_id(id)).unwrap()
 }
 
 fn topic(id: [u8; 16]) -> H256 {
@@ -63,7 +63,7 @@ fn placed(
     event(
         number,
         OrderPlacedFilter::signature(),
-        &[[id; 16], hash(owner), [market; 16]],
+        &[crate::helpers::entity_bytes(id), hash(owner), crate::helpers::entity_bytes(market)],
         vec![
             uint(1000),
             uint(890),
@@ -109,7 +109,7 @@ async fn missing_actor_and_partner_survive_restart_without_blocking_unrelated_in
         .handle_event(event(
             2,
             OrderCancelledFilter::signature(),
-            &[[1; 16]],
+            &[crate::helpers::entity_bytes(1)],
             vec![],
         ))
         .await
@@ -124,14 +124,14 @@ async fn missing_actor_and_partner_survive_restart_without_blocking_unrelated_in
     assert!(app
         .db_wrapper
         .orders()
-        .get_order_by_id(&bytes16_to_hex([1; 16]).into())
+        .get_order_by_id(&bytes16_to_uuid_string(crate::helpers::entity_bytes(1)).into())
         .await
         .unwrap()
         .is_none());
     assert_eq!(
         app.db_wrapper
             .orders()
-            .filter_orders(Some(bytes16_to_hex([20; 16])), None, None)
+            .filter_orders(Some(bytes16_to_uuid_string(crate::helpers::entity_bytes(20))), None, None)
             .await
             .unwrap()
             .len(),
@@ -140,7 +140,7 @@ async fn missing_actor_and_partner_survive_restart_without_blocking_unrelated_in
     assert!(app
         .db_wrapper
         .orders()
-        .filter_orders(Some(bytes16_to_hex([10; 16])), None, None)
+        .filter_orders(Some(bytes16_to_uuid_string(crate::helpers::entity_bytes(10))), None, None)
         .await
         .is_err());
     assert!(app.db_wrapper.trades().get_all_trades().await.is_err());
@@ -156,7 +156,7 @@ async fn missing_actor_and_partner_survive_restart_without_blocking_unrelated_in
         primitives::ewds::dto::EwdsRequestEnvelope {
             request_id: "pending-book".into(),
             operation: primitives::ewds::EwdsOperation::OrdersQuery,
-            payload: serde_json::json!({"marketId": bytes16_to_hex([10; 16])}),
+            payload: serde_json::json!({"marketId": bytes16_to_uuid_string(crate::helpers::entity_bytes(10))}),
         },
     )
     .await
@@ -192,7 +192,7 @@ async fn missing_actor_and_partner_survive_restart_without_blocking_unrelated_in
     let order = app
         .db_wrapper
         .orders()
-        .get_order_by_id(&bytes16_to_hex([1; 16]).into())
+        .get_order_by_id(&bytes16_to_uuid_string(crate::helpers::entity_bytes(1)).into())
         .await
         .unwrap()
         .unwrap();
@@ -236,11 +236,11 @@ async fn deferred_match_penalty_and_verification_keep_chain_order_and_timestamps
         .handle_event(event(
             3,
             TradeSettledFilter::signature(),
-            &[[3; 16], [1; 16], [2; 16]],
+            &[crate::helpers::entity_bytes(3), crate::helpers::entity_bytes(1), crate::helpers::entity_bytes(2)],
             vec![
                 bytes(hash("buyer")),
                 bytes(hash("seller")),
-                bytes([10; 16]),
+                bytes(crate::helpers::entity_bytes(10)),
                 uint(1000),
                 bytes([0; 16]),
                 bytes([0; 16]),
@@ -254,7 +254,7 @@ async fn deferred_match_penalty_and_verification_keep_chain_order_and_timestamps
         .handle_event(event(
             4,
             PenaltyRecordedFilter::signature(),
-            &[hash("seller"), [10; 16], [3; 16]],
+            &[hash("seller"), crate::helpers::entity_bytes(10), crate::helpers::entity_bytes(3)],
             vec![uint(100)],
         ))
         .await
@@ -263,7 +263,7 @@ async fn deferred_match_penalty_and_verification_keep_chain_order_and_timestamps
         .handle_event(event(
             5,
             DeliveryVerifiedFilter::signature(),
-            &[[3; 16], [1; 16], [2; 16]],
+            &[crate::helpers::entity_bytes(3), crate::helpers::entity_bytes(1), crate::helpers::entity_bytes(2)],
             vec![],
         ))
         .await
@@ -349,7 +349,7 @@ async fn unresolved_market_mapping_defers_its_orders_and_expiry_only() {
         .handle_event(event(
             1,
             NewMarketCreatedFilter::signature(),
-            &[[10; 16], hash("Community-MiXeD")],
+            &[crate::helpers::entity_bytes(10), hash("Community-MiXeD")],
             vec![
                 uint(800),
                 uint(910),
@@ -373,7 +373,7 @@ async fn unresolved_market_mapping_defers_its_orders_and_expiry_only() {
         .db_wrapper
         .markets()
         .filter(
-            Some(uuid::Uuid::from_bytes([10; 16]).to_string()),
+            Some(uuid::Uuid::from_bytes(crate::helpers::entity_bytes(10)).to_string()),
             None,
             None,
             None
@@ -384,7 +384,7 @@ async fn unresolved_market_mapping_defers_its_orders_and_expiry_only() {
         .post(format!("{}/facilities/validate", app.address))
         .json(&serde_json::json!([{
             "facility_id": "facility",
-            "market_id": uuid::Uuid::from_bytes([10; 16]).to_string()
+            "market_id": uuid::Uuid::from_bytes(crate::helpers::entity_bytes(10)).to_string()
         }]))
         .send()
         .await
@@ -393,7 +393,7 @@ async fn unresolved_market_mapping_defers_its_orders_and_expiry_only() {
     assert!(app
         .db_wrapper
         .orders()
-        .get_order_by_id(&bytes16_to_hex([1; 16]).into())
+        .get_order_by_id(&bytes16_to_uuid_string(crate::helpers::entity_bytes(1)).into())
         .await
         .unwrap()
         .is_none());

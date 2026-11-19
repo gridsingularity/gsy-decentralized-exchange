@@ -1,6 +1,4 @@
 use anyhow::{anyhow, Result};
-use blake2::digest::{Update, VariableOutput};
-use blake2::Blake2bVar;
 use chrono::{prelude::DateTime, TimeZone, Utc};
 use std::env;
 use std::str::FromStr;
@@ -31,16 +29,15 @@ pub fn bytes16_to_uuid_string(value: [u8; 16]) -> String {
     Uuid::from_bytes(value).to_string()
 }
 
-/// Accepts UUID (8-4-4-4-12), lowercase `0x`-prefixed hex, or bare bytes16 hex.
-/// Does not trim, impose a UUID version, or reject optional all-zero sentinels.
-pub fn parse_uuid_or_hex_bytes16(value: &str) -> Option<[u8; 16]> {
-    let value = if is_hyphenated_uuid(value) {
-        value.replace('-', "")
-    } else {
-        value.strip_prefix("0x").unwrap_or(value).to_string()
-    };
+/// Canonical off-chain entity ID. Actor identities must not use this normalizer.
+pub fn normalize_uuid(value: &str) -> Result<String> {
+    uuid_v4_to_bytes16(value).map(bytes16_to_uuid_string)
+}
+
+/// Decodes an on-chain actor pseudonym, not an off-chain identity or entity UUID.
+pub fn hex_to_bytes16(value: &str) -> Option<[u8; 16]> {
     let mut bytes = [0; 16];
-    hex::decode_to_slice(value, &mut bytes).ok()?;
+    hex::decode_to_slice(value.strip_prefix("0x")?, &mut bytes).ok()?;
     Some(bytes)
 }
 
@@ -55,11 +52,6 @@ fn is_hyphenated_uuid(value: &str) -> bool {
         })
 }
 
-/// Parses a required bytes16 identity, excluding the optional all-zero sentinel.
-pub fn parse_nonzero_uuid_or_hex_bytes16(value: &str) -> Option<[u8; 16]> {
-    parse_uuid_or_hex_bytes16(value).filter(|bytes| *bytes != [0; 16])
-}
-
 /// Validates an incoming actor identity without changing it.
 pub fn normalize_offchain_id(value: &str) -> Result<String> {
     if value.is_empty() || value.trim() != value {
@@ -68,28 +60,6 @@ pub fn normalize_offchain_id(value: &str) -> Result<String> {
         ));
     }
     Ok(value.to_string())
-}
-
-/// Canonical stored market ID: lowercase `0x` hex for a nonzero UUID or bytes16 value.
-pub fn normalize_market_id(value: &str) -> Result<String> {
-    parse_nonzero_uuid_or_hex_bytes16(value)
-        .map(bytes16_to_hex)
-        .ok_or_else(|| {
-            anyhow!(
-                "market ID '{}' is not a nonzero UUID or 16-byte hex value",
-                value
-            )
-        })
-}
-
-pub fn create_encrypted_bytes16_from_string(input_string: &str) -> [u8; 16] {
-    let mut hash = [0u8; 16];
-    let mut hasher = Blake2bVar::new(16).expect("valid Blake2b output size");
-    hasher.update(input_string.as_bytes());
-    hasher
-        .finalize_variable(&mut hash)
-        .expect("valid Blake2b output buffer");
-    hash
 }
 
 pub fn profile_measurement_id(

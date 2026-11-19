@@ -8,7 +8,7 @@ use gsy_market_orchestrator::{
     config::{Config, OffchainStorageTransport},
 };
 use primitives::{
-    utils::{derive_onchain_id, parse_uuid_or_hex_bytes16},
+    utils::{derive_onchain_id, hex_to_bytes16},
     MarketType, MatchingAlgorithm,
 };
 use std::{fs::File, io::Write, sync::Arc};
@@ -180,7 +180,7 @@ async fn test_evm_market_controller_client_creates_markets() {
         .into_iter()
         .map(|market_type| NewMarket {
             market_id: *Uuid::new_v4().as_bytes(),
-            community_id: parse_uuid_or_hex_bytes16(&derive_onchain_id(community_id)).unwrap(),
+            community_id: hex_to_bytes16(&derive_onchain_id(community_id)).unwrap(),
             opening_time: delivery_start - 1800,
             closing_time: delivery_start + 1800,
             delivery_start_time: delivery_start,

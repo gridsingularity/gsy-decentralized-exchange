@@ -21,7 +21,7 @@ use primitives::db_api_schema::{
 };
 use primitives::ewds::dto::EwdsMarketDto;
 use primitives::utils::{
-    bytes16_to_hex, timestamp_to_string_with_padding, NODE_FLOAT_SCALING_FACTOR,
+    bytes16_to_hex, bytes16_to_uuid_string, timestamp_to_string_with_padding, NODE_FLOAT_SCALING_FACTOR,
 };
 use std::collections::HashSet;
 use tracing::{error, info};
@@ -258,8 +258,8 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         let energy_f64 = event.energy as f64 / NODE_FLOAT_SCALING_FACTOR;
         let rate_f64 = event.energy_rate as f64 / NODE_FLOAT_SCALING_FACTOR;
 
-        let market_id_str = bytes16_to_hex(event.market_id);
-        let order_id_str = bytes16_to_hex(event.order_id);
+        let market_id_str = bytes16_to_uuid_string(event.market_id);
+        let order_id_str = bytes16_to_uuid_string(event.order_id);
         let created_by_str = self.resolve_actor(event.created_by).await?;
 
         let order_enum = if event.is_bid {
@@ -316,7 +316,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             "Processing EVM OrderCancelled: {:?}",
             hex::encode(event.order_id)
         );
-        let order_id = bytes16_to_hex(event.order_id);
+        let order_id = bytes16_to_uuid_string(event.order_id);
         let id_bson = mongodb::bson::to_bson(&order_id)?;
         self.require_order(&order_id).await?;
 
@@ -341,25 +341,25 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         event: TradeSettledFilter,
         block_timestamp: u64,
     ) -> Result<()> {
-        let trade_hash = bytes16_to_hex(event.trade_id);
+        let trade_hash = bytes16_to_uuid_string(event.trade_id);
         info!("Processing EVM TradeSettled: {:?}", trade_hash);
 
         let energy_f64 = event.energy.as_u64() as f64 / NODE_FLOAT_SCALING_FACTOR;
         let price_f64 = event.price.as_u64() as f64 / NODE_FLOAT_SCALING_FACTOR;
 
-        let bid_hash_str = bytes16_to_hex(event.bid_id);
-        let offer_hash_str = bytes16_to_hex(event.offer_id);
+        let bid_hash_str = bytes16_to_uuid_string(event.bid_id);
+        let offer_hash_str = bytes16_to_uuid_string(event.offer_id);
         self.require_order(&bid_hash_str).await?;
         self.require_order(&offer_hash_str).await?;
-        let residual_bid_id = bytes16_to_optional_hex(event.residual_bid_id);
-        let residual_offer_id = bytes16_to_optional_hex(event.residual_offer_id);
+        let residual_bid_id = bytes16_to_optional_uuid(event.residual_bid_id);
+        let residual_offer_id = bytes16_to_optional_uuid(event.residual_offer_id);
         // TradeSettled indexes match inclusion, not finality or Settlement market completion.
         let trade = DbTradeSchema {
             trade_uuid: trade_hash.clone(),
             status: TradeStatus::Matched,
             seller: self.resolve_actor(event.seller_id).await?,
             buyer: self.resolve_actor(event.buyer_id).await?,
-            market_id: bytes16_to_hex(event.market_id),
+            market_id: bytes16_to_uuid_string(event.market_id),
             creation_time: block_timestamp,
             offer_hash: offer_hash_str,
             bid_hash: bid_hash_str,
@@ -413,7 +413,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         event: PenaltyRecordedFilter,
         block_timestamp: u64,
     ) -> Result<()> {
-        let trade_id = bytes16_to_hex(event.trade_id);
+        let trade_id = bytes16_to_uuid_string(event.trade_id);
         let actor_id = self.resolve_actor(event.penalized_actor_id).await?;
         let trade = self
             .db
@@ -427,7 +427,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             })?;
         anyhow::ensure!(
             event.penalty_energy > 0
-                && trade.market_id == bytes16_to_hex(event.market_id)
+                && trade.market_id == bytes16_to_uuid_string(event.market_id)
                 && (trade.buyer == actor_id || trade.seller == actor_id),
             "Penalty does not match trade {}",
             trade_id
@@ -450,9 +450,9 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         event: DeliveryVerifiedFilter,
         block_timestamp: u64,
     ) -> Result<()> {
-        let trade_id = bytes16_to_hex(event.trade_id);
-        let bid_id = bytes16_to_hex(event.bid_id);
-        let offer_id = bytes16_to_hex(event.offer_id);
+        let trade_id = bytes16_to_uuid_string(event.trade_id);
+        let bid_id = bytes16_to_uuid_string(event.bid_id);
+        let offer_id = bytes16_to_uuid_string(event.offer_id);
         let trade = self
             .db
             .trades()
@@ -564,7 +564,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             .ok_or_else(|| anyhow!("invalid clearing status byte: {}", event.clearing_status))?;
 
         let clearing_result = ClearingResultSchema {
-            market_id: bytes16_to_hex(event.market_id),
+            market_id: bytes16_to_uuid_string(event.market_id),
             clearing_status,
             no_bid_reason: None,
             clearing_price: scaled_u256_to_f64(event.clearing_price),
@@ -601,10 +601,10 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
     }
 }
 
-fn bytes16_to_optional_hex(value: [u8; 16]) -> Option<String> {
+fn bytes16_to_optional_uuid(value: [u8; 16]) -> Option<String> {
     if value == [0u8; 16] {
         None
     } else {
-        Some(bytes16_to_hex(value))
+        Some(bytes16_to_uuid_string(value))
     }
 }

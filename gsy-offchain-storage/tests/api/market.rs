@@ -5,8 +5,8 @@ use primitives::db_api_schema::trades::MarketRoleSchema;
 use primitives::ewds::dto::EwdsClearingResultDto;
 
 const COMMUNITY_ID: &str = "11111111-1111-4111-8111-111111111111";
-const MARKET_ID: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-const MARKET_UUID: &str = "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA";
+const MARKET_ID: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const MARKET_UUID: &str = "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA";
 
 fn make_market(market_id: &str, community_id: &str, opening_time: &str) -> MarketSchema {
     MarketSchema {
@@ -47,7 +47,7 @@ async fn post_market_succeeds() {
 async fn market_writes_and_queries_share_a_canonical_id() {
     let app = init_app().await;
     let client = reqwest::Client::new();
-    for id in [MARKET_UUID, MARKET_ID, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"] {
+    for id in [MARKET_UUID, MARKET_ID] {
         let response = client
             .post(format!("{}/markets", app.address))
             .json(&make_market(id, COMMUNITY_ID, "2026-03-27T18:00:00Z"))
@@ -102,7 +102,7 @@ async fn market_routes_reject_invalid_and_nil_ids_before_writing() {
         "00000000-0000-0000-0000-000000000000",
         "0x00000000000000000000000000000000",
         "00000000000000000000000000000000",
-        " AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA",
+        " AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
     ] {
         for route in ["market", "markets"] {
             assert_eq!(
@@ -144,7 +144,7 @@ async fn get_market_succeeds() {
 
     let market1 = make_market(MARKET_ID, COMMUNITY_ID, "2026-03-27T18:00:00Z");
     let market2 = make_market(
-        "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
         "22222222-2222-4222-8222-222222222222",
         "2026-03-27T19:00:00Z",
     );
@@ -157,7 +157,7 @@ async fn get_market_succeeds() {
     let client = reqwest::Client::new();
     let resp = client
         .get(&format!(
-            "{}/markets?market_id=0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "{}/markets?market_id=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
             &address
         ))
         .send()
@@ -227,7 +227,7 @@ async fn market_community_ids_preserve_exact_spelling() {
             assert_eq!(saved.community_id, community_id);
             assert_eq!(
                 saved.market_id,
-                primitives::utils::normalize_market_id(&market_id).unwrap()
+                primitives::utils::normalize_uuid(&market_id).unwrap()
             );
         }
     }
@@ -296,7 +296,7 @@ async fn get_market_returns_404_for_wrong_market_id() {
     let client = reqwest::Client::new();
     let resp = client
         .get(&format!(
-            "{}/markets?market_id=0xcccccccccccccccccccccccccccccccc",
+            "{}/markets?market_id=cccccccc-cccc-4ccc-8ccc-cccccccccccc",
             &address
         ))
         .send()
@@ -340,7 +340,7 @@ async fn post_and_get_clearing_result() {
         MARKET_ID
     );
 
-    for id in [MARKET_ID, MARKET_UUID, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"] {
+    for id in [MARKET_ID, MARKET_UUID] {
         let resp = client
             .get(&format!("{}/clearing-results", &address))
             .query(&[("market_id", id)])

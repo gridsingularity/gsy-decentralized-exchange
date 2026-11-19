@@ -11,17 +11,15 @@ including `Community`, `Market`, `MarketTimeSeries`, `Order`, `Trade`, and
 
 ## Identifier Syntax
 
-The shared bytes16 parser accepts hyphenated UUIDs with the exact 8-4-4-4-12
-structure, `0x` followed by 32 hex digits, or bare 32 hex digits. Hex digits may
-be upper- or lowercase. Whitespace, uppercase `0X`, braces, `urn:uuid:` notation,
-misplaced hyphens and `0x`-prefixed hyphenated UUIDs are rejected. This byte parser
-does not enforce UUID version or variant bits; newly orchestrated market IDs are
-random UUIDv4 values, not hashes.
-Order submissions require non-zero order and market IDs. The raw byte parser
-still accepts zero for optional contract sentinels.
+Order, residual-order, trade and market IDs must be hyphenated UUIDv4 values
+(exact 8-4-4-4-12 structure, version 4, RFC variant). Either letter case is
+accepted; storage, reads and lifecycle events use lowercase UUID text.
+Hex/bare IDs, whitespace, braces, URNs, nil and other versions are rejected.
+These entity IDs convert directly to/from their 16 bytes at the contract boundary,
+without hashing. Optional residuals use null off-chain and zero bytes16 on-chain.
 
 The shared order schema serves both submissions and status notifications.
-Lifecycle notifications contain lowercase `0x` order IDs and the original
+Lifecycle notifications contain lowercase UUID order IDs and the original
 off-chain owner ID in `createdBy`; rejections retain the submitted identifiers. FOS must
 correlate equivalent order IDs by their 16 bytes, not their spelling.
 `preferredTradingPartner` remains an off-chain identity, even when hex-shaped.
@@ -40,11 +38,11 @@ Names and correlation IDs are not normalized.
 | Message/read | Identity representation |
 |---|---|
 | `market.event`, `markets.query` | Market ID as a lowercase hyphenated UUID; community ID as the exact opaque off-chain string |
-| `order.event` | UUID/hex order and market IDs; off-chain owner identity and preferred partner |
-| `orderStatus.event` lifecycle | Lowercase `0x` order/market IDs; off-chain owner and preferred partner |
+| `order.event` | UUIDv4 order and market IDs; off-chain owner identity and preferred partner |
+| `orderStatus.event` lifecycle | Lowercase UUIDv4 order/market IDs; off-chain owner and preferred partner |
 | `orderStatus.event` rejection | Submitted identifiers echoed without rewriting |
-| `trade.event`, `trades.query` | Lowercase `0x` trade/market/order IDs; off-chain buyer/seller IDs; absent residuals are null |
-| `clearingResult.event`, `clearing_results.query` | Lowercase `0x` market ID |
+| `trade.event`, `trades.query` | Lowercase UUIDv4 trade/market/order IDs; off-chain buyer/seller IDs; absent residuals are null |
+| `clearingResult.event`, `clearing_results.query` | Lowercase UUIDv4 market ID |
 | `ids.query` | Exact off-chain identity and its lowercase `0x` keyed hash |
 | `facilities.validate` | Exact request pairs, preserving order and cardinality |
 
@@ -56,7 +54,7 @@ Actor hashes use keyed Blake2b with 16-byte output and the shared
 `ACTOR_ID_HASH_KEY`; they are pseudonyms, not reversible encryption or UUIDv4.
 Topology writes register mappings for facilities, owners, site keys and exact
 community IDs. Market IDs are generated as UUIDv4 only when tuple lookup reports
-an absent market; stored IDs remain lowercase `0x` hex. The indexer restores the
+an absent market; stored IDs use lowercase UUID text. The indexer restores the
 community's exact off-chain ID by direct DB reverse lookup before publication.
 Missing actor mappings leave the original chain event in a durable pending collection.
 Dependent events wait in chain order; unrelated markets continue indexing. Resolved
@@ -244,8 +242,8 @@ without placing that order. This check does not validate partner market eligibil
 
 The first schema pack encodes the following validation intent from the spreadsheet:
 
-- UUID/bytes16 fields for lifecycle entity IDs; actor/community IDs follow the
-  exact opaque-string rules above. Order/trade UUIDv4 migration remains future work.
+- UUIDv4 fields for lifecycle entity IDs; actor/community IDs follow the
+  exact opaque-string rules above.
 - ISO 8601 date-time fields for market, order, trade, clearing, measurement and
   event timestamps.
 - Positive numeric constraints for quantities.

@@ -3,7 +3,7 @@ use actix_web::{web::Json, web::Query, HttpResponse, Responder};
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::trades::{ClearingResultSchema, MarketRoleSchema};
 use primitives::ewds::dto::EwdsClearingResultDto;
-use primitives::utils::{normalize_market_id, normalize_offchain_id};
+use primitives::utils::{normalize_uuid, normalize_offchain_id};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -20,7 +20,7 @@ pub struct MarketQuery {
 }
 
 pub async fn get_market(db: DbRef, params: Query<MarketQuery>) -> impl Responder {
-    let market_id = match normalize_market_id(&params.market_id) {
+    let market_id = match normalize_uuid(&params.market_id) {
         Ok(id) => id,
         Err(error) => return HttpResponse::BadRequest().body(error.to_string()),
     };
@@ -62,7 +62,7 @@ pub async fn get_markets(db: DbRef, params: Query<MarketsQuery>) -> impl Respond
     let market_id = match params
         .market_id
         .as_deref()
-        .map(normalize_market_id)
+        .map(normalize_uuid)
         .transpose()
     {
         Ok(id) => id,
@@ -101,7 +101,7 @@ pub async fn get_markets(db: DbRef, params: Query<MarketsQuery>) -> impl Respond
 }
 
 pub async fn post_market(market: Json<MarketSchema>, db: DbRef) -> impl Responder {
-    if let Err(error) = normalize_market_id(&market.market_id) {
+    if let Err(error) = normalize_uuid(&market.market_id) {
         return HttpResponse::BadRequest().body(error.to_string());
     }
     if let Err(e) = normalize_offchain_id(&market.community_id) {
@@ -122,7 +122,7 @@ pub async fn post_clearing_result(
     db: DbRef,
 ) -> impl Responder {
     let mut result = result.into_inner();
-    result.market_id = match normalize_market_id(&result.market_id) {
+    result.market_id = match normalize_uuid(&result.market_id) {
         Ok(id) => id,
         Err(error) => return HttpResponse::BadRequest().body(error.to_string()),
     };
@@ -146,7 +146,7 @@ pub struct ClearingResultQuery {
 }
 
 pub async fn get_clearing_results(db: DbRef, params: Query<ClearingResultQuery>) -> impl Responder {
-    let market_id = match normalize_market_id(&params.market_id) {
+    let market_id = match normalize_uuid(&params.market_id) {
         Ok(id) => id,
         Err(error) => return HttpResponse::BadRequest().body(error.to_string()),
     };

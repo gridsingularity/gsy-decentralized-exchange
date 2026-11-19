@@ -1,4 +1,4 @@
-"""Validate UUID/hex forms against the actual order and query schemas."""
+"""Validate entity UUIDv4 and opaque actor IDs against the actual order and query schemas."""
 
 import json
 from pathlib import Path
@@ -8,11 +8,12 @@ from jsonschema import Draft202012Validator, FormatChecker
 from referencing import Registry, Resource
 
 SCHEMAS = Path(__file__).resolve().parents[1] / "intelligent"
-UUID = "ABABABAB-ABAB-ABAB-ABAB-ABABABABABAB"
+UUID = "ABABABAB-ABAB-4BAB-8BAB-ABABABABABAB"
 HEX = UUID.replace("-", "")
-VALID = [UUID, UUID.lower(), HEX, "0x" + HEX, "0x" + HEX.lower()]
+VALID = [UUID, UUID.lower()]
 NIL = ["0" * 32, "0x" + "0" * 32, "00000000-0000-0000-0000-000000000000"]
 INVALID = [
+    HEX, "0x" + HEX, UUID.replace("4BAB", "1BAB"), UUID.replace("8BAB", "7BAB"),
     "", "0x1234", "0X" + HEX, " " + UUID, UUID + "\n", UUID + " ",
     "{" + UUID + "}", "urn:uuid:" + UUID, "0x" + UUID,
     HEX + "----", "ABABABABABAB-ABAB-ABAB-ABAB-ABABABAB", "g" * 32,
@@ -54,7 +55,7 @@ class IdentifierSchemas(unittest.TestCase):
         for key in required + ["residualBidId", "residualOfferId"]:
             for value in VALID + INVALID + NIL + [None]:
                 with self.subTest(key=key, value=value):
-                    optional = key.startswith("residual") and value in NIL + ["", None]
+                    optional = key.startswith("residual") and value is None
                     self.assertEqual(check.is_valid({**trade, key: value}), value in VALID or optional)
 
     def test_trade_parties_are_offchain_identities(self):
@@ -194,6 +195,20 @@ class IdentifierSchemas(unittest.TestCase):
         for identifier in VALID + INVALID + NIL:
             with self.subTest(identifier=identifier):
                 self.assertEqual(check.is_valid(identifier), identifier in VALID)
+
+    def test_market_time_series_entity_ids(self):
+        check = validator("int.market-time-series.schema.v1.json")
+        payload = {
+            "communityId": "Community-LIC01",
+            "periodFrom": "2026-11-04T10:00:00Z",
+            "periodUntil": "2026-11-04T11:00:00Z",
+            "granularity": "15min",
+        }
+        for identifier in VALID + INVALID + NIL:
+            with self.subTest(identifier=identifier):
+                self.assertEqual(
+                    check.is_valid({**payload, "marketIds": [identifier]}), identifier in VALID
+                )
 
 
 if __name__ == "__main__":

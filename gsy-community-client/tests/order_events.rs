@@ -14,7 +14,7 @@ use primitives::ewds::{
     EwdsTopicConfig,
 };
 use primitives::offchain_storage::{OffchainStorageClient, OffchainStorageTransport};
-use primitives::utils::{derive_onchain_id, parse_uuid_or_hex_bytes16, rfc3339_to_epoch};
+use primitives::utils::{derive_onchain_id, hex_to_bytes16, uuid_v4_to_bytes16, rfc3339_to_epoch};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
@@ -102,8 +102,8 @@ const MOCK_ORDER_REGISTRY: &str = r#"
 const TEST_PRIVATE_KEY: &str = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 const BID_ID: &str = "3f2c6d1e-8a4b-4c7d-9e2f-1a5b6c7d8e9f";
 const OFFER_ID: &str = "9a1b2c3d-4e5f-4a6b-8c7d-0e1f2a3b4c5d";
-const OPEN_MARKET: &str = "0x11111111111111111111111111111111";
-const CLOSED_MARKET: &str = "0x22222222222222222222222222222222";
+const OPEN_MARKET: &str = "11111111-1111-4111-8111-111111111111";
+const CLOSED_MARKET: &str = "22222222-2222-4222-8222-222222222222";
 /// 2026-09-30T10:00:00Z and 2026-09-30T09:40:12Z.
 const TIME_SLOT: u64 = 1_790_762_400;
 const CREATION_TIME: u64 = 1_790_761_212;
@@ -285,7 +285,7 @@ fn assert_rejection(event: &EwdsEventEnvelope<Vec<EwdsOrderDto>>, original: Valu
 }
 
 fn bytes16(value: &str) -> [u8; 16] {
-    parse_uuid_or_hex_bytes16(value).unwrap()
+    hex_to_bytes16(value).or_else(|| uuid_v4_to_bytes16(value).ok()).unwrap()
 }
 
 fn bid() -> Value {
@@ -454,7 +454,7 @@ async fn uuid_shaped_parties_preserve_case_and_rejections_echo_original_ids() {
         .to_string()
         .to_uppercase());
     let mut accepted = offer();
-    accepted["orderId"] = json!(format!("0x{}", OFFER_ID.replace('-', "").to_uppercase()));
+    accepted["orderId"] = json!(OFFER_ID.to_uppercase());
     accepted["marketId"] = json!(uuid::Uuid::from_bytes(bytes16(OPEN_MARKET))
         .to_string()
         .to_uppercase());
@@ -494,15 +494,15 @@ async fn uuid_shaped_parties_preserve_case_and_rejections_echo_original_ids() {
     assert_eq!(pairs[1].facility_id, "facility-seller");
     assert_eq!(
         pairs[0].market_id,
-        primitives::utils::bytes16_to_hex(bytes16(CLOSED_MARKET))
+        primitives::utils::bytes16_to_uuid_string(bytes16(CLOSED_MARKET))
     );
     assert_eq!(
         pairs[1].market_id,
-        primitives::utils::bytes16_to_hex(bytes16(OPEN_MARKET))
+        primitives::utils::bytes16_to_uuid_string(bytes16(OPEN_MARKET))
     );
 
     // A retry with another spelling still identifies the already placed order.
-    accepted["orderId"] = json!(OFFER_ID.replace('-', ""));
+    accepted["orderId"] = json!(OFFER_ID.to_string());
     handler(&chain, &server)
         .await
         .handle(event("retry", vec![accepted]))
@@ -519,12 +519,12 @@ async fn skips_orders_that_are_already_placed() {
     let handler = handler(&chain, &id_service).await;
 
     let mut first = bid();
-    first["orderId"] = json!(primitives::utils::bytes16_to_hex(bytes16(BID_ID)));
+    first["orderId"] = json!(primitives::utils::bytes16_to_uuid_string(bytes16(BID_ID)));
     handler.handle(event("event-1", vec![first])).await.unwrap();
     wait_for_placed_orders(&chain, 1).await;
     // A resend under a new event ID sends only the new order.
     let mut second = offer();
-    second["orderId"] = json!(OFFER_ID.replace('-', "").to_uppercase());
+    second["orderId"] = json!(OFFER_ID.to_uppercase());
     handler
         .handle(event("event-2", vec![bid(), second]))
         .await
@@ -1137,7 +1137,7 @@ async fn rejects_the_whole_event_when_one_order_is_invalid() {
     let id_service = mock_id_service().await;
     let handler = handler(&chain, &id_service).await;
     for (field, value, expected, invalid_data) in [
-        ("orderId", json!("order-1"), "is not a non-zero UUID", true),
+        ("orderId", json!("order-1"), "Invalid orderId", true),
         (
             "orderId",
             json!("00000000-0000-0000-0000-000000000000"),
@@ -1493,7 +1493,7 @@ mod validate_order {
             status_updated_at: None,
             order_type: OrderEnum::Bid,
             area_uuid: "owner-1".to_string(),
-            market_id: format!("0x{}", "11".repeat(16)),
+            market_id: OPEN_MARKET.to_string(),
             time_slot: 1_790_762_400,
             creation_time: 1_790_761_212,
             energy_kWh: 1.5,
@@ -1507,7 +1507,7 @@ mod validate_order {
     #[test]
     fn accepts_a_valid_order() {
         let mut expected = order();
-        expected.order_id = primitives::utils::bytes16_to_hex(bytes16(&expected.order_id));
+        expected.order_id = primitives::utils::bytes16_to_uuid_string(bytes16(&expected.order_id));
         assert_eq!(validate_order(order()).unwrap(), expected);
     }
 
@@ -1539,21 +1539,22 @@ mod validate_order {
     fn accepts_all_supported_order_id_spellings() {
         for id in [
             "3F2C6D1E-8A4B-4C7D-9E2F-1A5B6C7D8E9F",
-            "0x3F2C6D1E8A4B4C7D9E2F1A5B6C7D8E9F",
-            "3f2c6d1e8a4b4c7d9e2f1a5b6c7d8e9f",
+            "3f2c6d1e-8a4b-4c7d-9e2f-1a5b6c7d8e9f",
         ] {
             let normalized = validate_order(DbOrderSchema {
                 order_id: id.into(),
                 ..order()
             })
             .unwrap();
-            assert_eq!(normalized.order_id, "0x3f2c6d1e8a4b4c7d9e2f1a5b6c7d8e9f");
+            assert_eq!(normalized.order_id, BID_ID);
         }
     }
 
     #[test]
     fn rejects_unsupported_and_nil_order_ids() {
         for id in [
+            "0x3f2c6d1e8a4b4c7d9e2f1a5b6c7d8e9f",
+            "3f2c6d1e8a4b4c7d9e2f1a5b6c7d8e9f",
             "{3f2c6d1e-8a4b-4c7d-9e2f-1a5b6c7d8e9f}",
             "urn:uuid:3f2c6d1e-8a4b-4c7d-9e2f-1a5b6c7d8e9f",
             "3f2c6d1e8a4b4c7d9e2f1a5b6c7d8e9f ",
@@ -1590,7 +1591,7 @@ mod validate_order {
                     order_id: "order-1".to_string(),
                     ..order()
                 },
-                "is not a non-zero UUID",
+                "Invalid orderId",
             ),
             (
                 DbOrderSchema {
@@ -1641,7 +1642,7 @@ mod order_params {
             status_updated_at: None,
             order_type: OrderEnum::Offer,
             area_uuid: format!("0x{}", "aa".repeat(16)),
-            market_id: format!("0x{}", "11".repeat(16)),
+            market_id: OPEN_MARKET.to_string(),
             time_slot: 1_790_762_400,
             creation_time: 1_790_761_212,
             energy_kWh: 0.30005,
@@ -1663,7 +1664,7 @@ mod order_params {
             "0x3f2c6d1e8a4b4c7d9e2f1a5b6c7d8e9f"
         );
         assert_eq!(params.1, [0xaa; 16]);
-        assert_eq!(params.2, [0x11; 16]);
+        assert_eq!(params.2, bytes16(OPEN_MARKET));
         assert_eq!((params.3, params.4), (1_790_762_400, 1_790_761_212));
         // Rounded, not truncated.
         assert_eq!((params.5, params.6), (3_001, 700));
@@ -1700,7 +1701,7 @@ mod order_params {
                     attributes: None,
                     ..order()
                 },
-                "resolved through the ID service",
+                "on-chain actor hash",
             ),
         ] {
             let error = order_params(&invalid).err().unwrap().to_string();

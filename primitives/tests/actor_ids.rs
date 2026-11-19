@@ -1,6 +1,6 @@
 use primitives::{
     actor_ids::ActorIdHasher,
-    utils::{bytes16_to_uuid_string, parse_uuid_or_hex_bytes16, uuid_v4_to_bytes16},
+    utils::{bytes16_to_uuid_string, hex_to_bytes16, uuid_v4_to_bytes16},
 };
 
 const KEY: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
@@ -40,7 +40,7 @@ fn keyed_blake2b_16_matches_independent_vector() {
         assert_ne!(hasher.derive(id), hasher.derive(&id.to_lowercase()));
     }
     let hash = hasher.derive("facility-a");
-    assert!(parse_uuid_or_hex_bytes16(&hash).is_some());
+    assert!(hex_to_bytes16(&hash).is_some());
     assert!(uuid_v4_to_bytes16(&hash).is_err());
 }
 

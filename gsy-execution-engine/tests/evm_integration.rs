@@ -6,8 +6,8 @@ use ::primitives::{
     },
     ewds::dto::EwdsTradeDto,
     offchain_storage::OffchainStorageTransport,
-    utils::{
-        bytes16_to_hex, derive_onchain_id, epoch_to_rfc3339, parse_uuid_or_hex_bytes16,
+    utils::{hex_to_bytes16,
+        bytes16_to_uuid_string, derive_onchain_id, epoch_to_rfc3339, uuid_v4_to_bytes16,
         timestamp_to_string_with_padding,
     },
 };
@@ -193,13 +193,13 @@ async fn test_submit_penalties_persists_to_trade_settlement_contract() {
     let penalties = vec![
         Penalty {
             penalized_account: penalized.clone(),
-            market_id: format!("0x{}", "11".repeat(16)),
+            market_id: "11111111-1111-4111-8111-111111111111".to_string(),
             trade_uuid: trade_uuid.clone(),
             penalty_cost: 100,
         },
         Penalty {
             penalized_account: penalized.clone(),
-            market_id: format!("0x{}", "11".repeat(16)),
+            market_id: "11111111-1111-4111-8111-111111111111".to_string(),
             trade_uuid: trade_uuid.clone(),
             penalty_cost: 150,
         },
@@ -216,9 +216,9 @@ async fn test_submit_penalties_persists_to_trade_settlement_contract() {
 
     eprintln!("trade_uuid {:?}", trade_uuid);
     eprintln!("penalized {:?}", penalized);
-    let expected_trade_id = parse_uuid_or_hex_bytes16(&trade_uuid).expect("Failed to parse uuid");
+    let expected_trade_id = uuid_v4_to_bytes16(&trade_uuid).expect("Failed to parse uuid");
     let expected_actor_id =
-        parse_uuid_or_hex_bytes16(&derive_onchain_id(&penalized)).expect("Failed to parse uuid");
+        hex_to_bytes16(&derive_onchain_id(&penalized)).expect("Failed to parse uuid");
 
     assert_eq!(
         mock_contract
@@ -240,21 +240,21 @@ async fn test_submit_penalties_persists_to_trade_settlement_contract() {
 
 fn facility_id(party: &str, id: u8) -> String {
     primitives::utils::bytes16_to_uuid_string(
-        parse_uuid_or_hex_bytes16(&derive_onchain_id(&format!("facility-{party}-{id}"))).unwrap(),
+        hex_to_bytes16(&derive_onchain_id(&format!("facility-{party}-{id}"))).unwrap(),
     )
 }
 
 fn late_trade(id: u8, market: u8, creation_time: u64) -> DbTradeSchema {
     DbTradeSchema {
-        trade_uuid: bytes16_to_hex([id; 16]),
+        trade_uuid: entity_id(id),
         status: TradeStatus::Matched,
         status_updated_at: None,
         seller: format!("bob-{id}"),
         buyer: format!("alice-{id}"),
-        market_id: bytes16_to_hex([market; 16]),
+        market_id: entity_id(market),
         creation_time,
-        offer_hash: bytes16_to_hex([id + 10; 16]),
-        bid_hash: bytes16_to_hex([id + 20; 16]),
+        offer_hash: entity_id(id + 10),
+        bid_hash: entity_id(id + 20),
         residual_offer_id: None,
         residual_bid_id: None,
         parameters: TradeParameters {
@@ -324,7 +324,7 @@ async fn mount_slot_records(
 
     if let Some(trade) = trades.first() {
         let market = MarketChainRecord {
-            market_id: parse_uuid_or_hex_bytes16(&trade.market_id).unwrap(),
+            market_id: uuid_v4_to_bytes16(&trade.market_id).unwrap(),
             community_id: [1; 16],
             opening_time: slot,
             closing_time: end,
@@ -349,7 +349,7 @@ async fn mount_slot_records(
 async fn unknown_trade_does_not_block_or_count_as_verified() {
     let (anvil, contract) = deploy_trade_settlement().await;
     contract
-        .register_trade([1; 16], [2; 16], [3; 16], [4; 16], [5; 16])
+        .register_trade(entity_bytes(1), entity_bytes(2), entity_bytes(3), [4; 16], [5; 16])
         .send()
         .await
         .unwrap()
@@ -357,7 +357,7 @@ async fn unknown_trade_does_not_block_or_count_as_verified() {
         .unwrap()
         .unwrap();
     let verdicts = [9, 1].map(|id| DeliveryVerification {
-        trade_uuid: bytes16_to_hex([id; 16]),
+        trade_uuid: entity_id(id),
         buyer_penalty_cost: 5,
         seller_penalty_cost: 0,
     });
@@ -374,11 +374,11 @@ async fn unknown_trade_does_not_block_or_count_as_verified() {
             1
         );
     }
-    assert!(contract.settled_trades([1; 16]).call().await.unwrap().2);
-    assert!(!contract.settled_trades([9; 16]).call().await.unwrap().2);
+    assert!(contract.settled_trades(entity_bytes(1)).call().await.unwrap().2);
+    assert!(!contract.settled_trades(entity_bytes(9)).call().await.unwrap().2);
     assert_eq!(
         contract
-            .penalty_energy_by_trade([1; 16])
+            .penalty_energy_by_trade(entity_bytes(1))
             .call()
             .await
             .unwrap(),
@@ -419,11 +419,11 @@ async fn late_records_after_rollover_are_processed_once_without_blocking_the_cur
     for trade in [&current_trade, &retained_trades[0], &retained_trades[1]] {
         contract
             .register_trade(
-                parse_uuid_or_hex_bytes16(&trade.trade_uuid).unwrap(),
-                parse_uuid_or_hex_bytes16(&trade.bid_hash).unwrap(),
-                parse_uuid_or_hex_bytes16(&trade.offer_hash).unwrap(),
-                parse_uuid_or_hex_bytes16(&derive_onchain_id(&trade.buyer)).unwrap(),
-                parse_uuid_or_hex_bytes16(&derive_onchain_id(&trade.seller)).unwrap(),
+                uuid_v4_to_bytes16(&trade.trade_uuid).unwrap(),
+                uuid_v4_to_bytes16(&trade.bid_hash).unwrap(),
+                uuid_v4_to_bytes16(&trade.offer_hash).unwrap(),
+                hex_to_bytes16(&derive_onchain_id(&trade.buyer)).unwrap(),
+                hex_to_bytes16(&derive_onchain_id(&trade.seller)).unwrap(),
             )
             .send()
             .await
@@ -545,7 +545,7 @@ async fn late_records_after_rollover_are_processed_once_without_blocking_the_cur
             }
             assert_eq!(
                 contract
-                    .penalty_energy_by_trade([3; 16])
+                    .penalty_energy_by_trade(entity_bytes(3))
                     .call()
                     .await
                     .unwrap(),
@@ -559,7 +559,7 @@ async fn late_records_after_rollover_are_processed_once_without_blocking_the_cur
         for (id, expected) in [(1, first_penalty), (2, second_penalty)] {
             assert_eq!(
                 contract
-                    .penalty_energy_by_trade([id; 16])
+                    .penalty_energy_by_trade(entity_bytes(id))
                     .call()
                     .await
                     .unwrap(),
@@ -568,7 +568,7 @@ async fn late_records_after_rollover_are_processed_once_without_blocking_the_cur
         }
         for (id, expected) in [(1, first_penalty), (2, second_penalty), (3, 5_000)] {
             let actor_id =
-                parse_uuid_or_hex_bytes16(&derive_onchain_id(&format!("alice-{id}"))).unwrap();
+                hex_to_bytes16(&derive_onchain_id(&format!("alice-{id}"))).unwrap();
             assert_eq!(
                 contract
                     .penalty_energy_by_actor(actor_id)
@@ -579,7 +579,7 @@ async fn late_records_after_rollover_are_processed_once_without_blocking_the_cur
                 "Repeated polls and restart must not charge an owner twice"
             );
             assert_eq!(
-                contract.settled_trades([id; 16]).call().await.unwrap().2,
+                contract.settled_trades(entity_bytes(id)).call().await.unwrap().2,
                 id == 3 || (id == 1 && elapsed >= 4) || (id == 2 && elapsed >= 5),
             );
         }
@@ -599,4 +599,15 @@ async fn late_records_after_rollover_are_processed_once_without_blocking_the_cur
     for _ in 0..4 {
         assert_eq!(scheduler.calculate_timeslot_at(deadline), current);
     }
+}
+
+fn entity_id(seed: u8) -> String {
+    bytes16_to_uuid_string(entity_bytes(seed))
+}
+
+fn entity_bytes(seed: u8) -> [u8; 16] {
+    let mut bytes = [seed; 16];
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    bytes
 }

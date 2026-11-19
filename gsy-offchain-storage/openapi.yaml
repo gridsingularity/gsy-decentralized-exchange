@@ -17,12 +17,12 @@ info:
     the E2E scenarios or production order lifecycle, which submits orders
     on-chain and indexes the resulting events. Their access policy remains
     to be clarified. Trade insertion endpoints do not update referenced orders.
-    Order imports normalize nonzero order and market IDs (UUID or bytes16 hex)
-    to lowercase 0x hex. createdBy is the original off-chain owner ID. Invalid IDs return 400; duplicate
+    Order imports normalize UUIDv4 order and market IDs
+    to lowercase UUID text. createdBy is the original off-chain owner ID. Invalid IDs return 400; duplicate
     IDs in the batch or storage return 409. Batches are not transactional under
     concurrent writes. Listener events remain authoritative and can replace imports.
-    Trade imports normalize entity IDs by the same bytes16 rule and preserve off-chain parties;
-    empty or zero residual IDs become null. They reject invalid IDs with 400 and
+    Trade imports normalize entity IDs by the same UUIDv4 rule and preserve off-chain parties;
+    optional residual IDs must be null or UUIDv4. They reject invalid IDs with 400 and
     duplicate canonical trade IDs with 409, without updating orders or emitting events.
     Reads of known-incomplete chain projections return 500 while unresolved actor
     mappings or prerequisite events are pending, never a partial book or trade set.
@@ -196,7 +196,7 @@ paths:
       summary: Import trades (alias of POST /trades).
       description: |
         Imports are insert-only and do not update orders or publish lifecycle notifications.
-        IDs accept UUID or bytes16 hex and are stored as lowercase 0x hex. All input is
+        IDs accept hyphenated UUIDv4 in either letter case and are stored as lowercase UUID text. All input is
         validated before writes; known duplicates return 409. Concurrent batches are not transactional.
       requestBody:
         required: true
@@ -226,7 +226,7 @@ paths:
       summary: Import trades using EWDS JSON.
       description: |
         Imports are insert-only and do not update orders or publish lifecycle notifications.
-        IDs accept UUID or bytes16 hex and are stored as lowercase 0x hex. All input is
+        IDs accept hyphenated UUIDv4 in either letter case and are stored as lowercase UUID text. All input is
         validated before writes; known duplicates return 409. Concurrent batches are not transactional.
       requestBody:
         required: true
@@ -259,7 +259,7 @@ paths:
       parameters:
         - in: query
           name: market_id
-          description: Nonzero market ID as UUID, 0x-prefixed or bare bytes16 hex; no surrounding whitespace.
+          description: Hyphenated UUIDv4 market ID in either letter case; no surrounding whitespace.
           schema: { type: string }
         - { $ref: "#/components/parameters/StartTimeQuery" }
         - { $ref: "#/components/parameters/EndTimeQuery" }
@@ -285,11 +285,11 @@ paths:
         - in: query
           name: market_id
           required: true
-          description: Nonzero UUID, 0x-prefixed or bare bytes16 hex; no surrounding whitespace.
+          description: Hyphenated UUIDv4 in either letter case; no surrounding whitespace.
           schema: { type: string }
       responses:
         "200":
-          description: Market matching the given ID, with a lowercase 0x market_id.
+          description: Market matching the given ID, with a lowercase UUIDv4 market_id.
           content:
             application/json:
               schema:
@@ -354,7 +354,7 @@ paths:
     post:
       tags: [Trades & Market]
       summary: Persist a clearing result for a market.
-      description: Normalizes marketId to lowercase 0x bytes16; accepts nonzero UUID, 0x-prefixed or bare hex.
+      description: Accepts hyphenated UUIDv4 marketId in either letter case and normalizes it to lowercase UUID text.
       requestBody:
         required: true
         content:
@@ -379,7 +379,7 @@ paths:
         - in: query
           name: market_id
           required: true
-          description: Nonzero market ID as UUID, 0x-prefixed or bare bytes16 hex; no surrounding whitespace.
+          description: Hyphenated UUIDv4 market ID in either letter case; no surrounding whitespace.
           schema: { type: string }
       responses:
         "200":
@@ -922,7 +922,7 @@ components:
       in: query
       name: market_id
       required: false
-      description: Nonzero market ID as UUID, 0x-prefixed or bare 16-byte hex; no surrounding whitespace.
+      description: Hyphenated UUIDv4 market ID in either letter case; no surrounding whitespace.
       schema: { type: string }
     StartTimeQuery:
       in: query
@@ -949,7 +949,7 @@ components:
           description: Original off-chain facility ID, not its owner or on-chain mapping.
         market_id:
           type: string
-          description: Market ID as UUID or bytes16 hex, with or without the 0x prefix.
+          description: Hyphenated UUIDv4 market ID.
 
     FacilityMarketValidationResult:
       type: object
@@ -1008,8 +1008,8 @@ components:
         - createdBy
         - creationTime
       properties:
-        orderId: { type: string, description: "Nonzero UUID or bytes16 hex; stored and returned as lowercase 0x hex." }
-        marketId: { type: string, description: "Nonzero UUID or bytes16 hex; stored and returned as lowercase 0x hex." }
+        orderId: { type: string, description: "Hyphenated UUIDv4; stored and returned as lowercase UUID text." }
+        marketId: { type: string, description: "Hyphenated UUIDv4; stored and returned as lowercase UUID text." }
         orderType: { $ref: "#/components/schemas/OrderType" }
         orderStatus: { $ref: "#/components/schemas/OrderStatus" }
         timeSlot: { type: string, format: date-time }
@@ -1033,7 +1033,7 @@ components:
         preferredTradingPartner:
           type: string
           nullable: true
-          description: Optional off-chain preferred facility identity for bids and offers. Must be nonempty and unpadded; all actor IDs remain case-sensitive, including UUID-shaped strings.
+          description: Optional registered off-chain preferred owner identity for bids and offers. Must be nonempty and unpadded; all actor IDs remain case-sensitive, including UUID-shaped strings.
         preferredEnergyRate:
           type: number
           format: double
@@ -1129,10 +1129,9 @@ components:
         EWDS-side trade DTO. Field names are camelCase on the wire.
         `timestamp` is the RFC 3339 creation time, unchanged by lifecycle updates.
         Trade notifications carry the status-change time in the envelope's `occurredAt`.
-        Entity IDs accept nonzero UUID or bytes16 hex on import; reads and events
-        use lowercase 0x hex. buyerId/sellerId are original off-chain owner IDs,
-        preserved exactly and case-sensitive, not on-chain hashes or wallets. Optional residual IDs accept null, empty or
-        all-zero values for absence and return null; nonzero values use the same ID rule.
+        Entity IDs accept hyphenated UUIDv4 in either letter case on import; reads and events
+        use lowercase UUID text. buyerId/sellerId are original off-chain owner IDs,
+        preserved exactly and case-sensitive, not on-chain hashes or wallets. Optional residual IDs use null for absence; other values follow the same UUIDv4 rule.
       type: object
       required:
         - tradeId
@@ -1235,7 +1234,7 @@ components:
       properties:
         market_id:
           type: string
-          description: Nonzero UUID, 0x-prefixed or bare bytes16 hex on input; lowercase 0x hex on output.
+          description: Hyphenated UUIDv4 in either letter case on input; lowercase UUID text on output.
         community_id:
           type: string
           description: Nonempty, unpadded opaque off-chain community ID, preserved exactly. Chain events resolve the keyed community hash through a registered ID mapping; a missing mapping fails ingestion for retry instead of storing the hash as a UUID.

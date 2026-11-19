@@ -6,7 +6,7 @@
   "type": "object",
   "properties": {
     "tradeId": {
-      "description": "Nonzero bytes16 trade ID. Imports accept UUID or hex; reads/events use lowercase 0x hex. IRI: int:tradeId.",
+      "description": "Hyphenated UUIDv4 trade ID. Imports accept either letter case; reads/events use lowercase UUID text. IRI: int:tradeId.",
       "$ref": "./int.order.schema.v1.json#/properties/orderId"
     },
     "marketId": {
@@ -22,10 +22,10 @@
       "$ref": "./int.order.schema.v1.json#/properties/createdBy"
     },
     "residualBidId": {
-      "description": "Residual bid ID; null, empty or all-zero inputs mean absence and are returned as null.",
+      "description": "Residual bid ID; null means absence; otherwise a hyphenated UUIDv4.",
       "anyOf": [
         { "$ref": "./int.order.schema.v1.json#/properties/orderId" },
-        { "enum": [null, "", "00000000000000000000000000000000", "0x00000000000000000000000000000000", "00000000-0000-0000-0000-000000000000"] }
+        { "type": "null" }
       ],
       "default": null
     },
@@ -38,10 +38,10 @@
       "$ref": "./int.order.schema.v1.json#/properties/createdBy"
     },
     "residualOfferId": {
-      "description": "Residual offer ID; null, empty or all-zero inputs mean absence and are returned as null.",
+      "description": "Residual offer ID; null means absence; otherwise a hyphenated UUIDv4.",
       "anyOf": [
         { "$ref": "./int.order.schema.v1.json#/properties/orderId" },
-        { "enum": [null, "", "00000000000000000000000000000000", "0x00000000000000000000000000000000", "00000000-0000-0000-0000-000000000000"] }
+        { "type": "null" }
       ],
       "default": null
     },

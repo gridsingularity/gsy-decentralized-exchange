@@ -9,14 +9,13 @@
       "$ref": "./int.community.schema.v1.json#/properties/communityId"
     },
     "marketIds": {
-      "description": "List of market UUIDs recorded in this time series. New markets use UUIDv4. IRI: int:marketIds.",
+      "description": "List of market UUIDv4 IDs recorded in this time series. IRI: int:marketIds.",
       "type": [
         "array",
         "null"
       ],
       "items": {
-        "type": "string",
-        "format": "uuid"
+        "$ref": "./int.market.schema.v1.json#/properties/marketId"
       },
       "default": []
     },

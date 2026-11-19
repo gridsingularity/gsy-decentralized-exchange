@@ -3,7 +3,7 @@ use actix_web::web;
 use mongodb::bson::{doc, to_bson, Bson};
 use primitives::db_api_schema::orders::{DbOrderSchema, OrderEnum, OrderStatus};
 use primitives::ewds::dto::{order_status_to_ewds, order_type_to_ewds, EwdsOrderDto};
-use primitives::utils::{bytes16_to_hex, epoch_to_rfc3339};
+use primitives::utils::{bytes16_to_uuid_string, epoch_to_rfc3339};
 use std::collections::HashMap;
 
 fn make_order(order_id: &str, market_id: &str, order_type: OrderEnum) -> EwdsOrderDto {
@@ -32,9 +32,9 @@ async fn imports_normalize_ids_and_reject_conflicts_before_writing() {
         let app = init_app().await;
         let client = reqwest::Client::new();
         let url = format!("{}/{route}", app.address);
-        let id = uuid::Uuid::from_bytes([0xab; 16]);
-        let market = uuid::Uuid::from_bytes([0xcd; 16]);
-        let creator = uuid::Uuid::from_bytes([0xef; 16]);
+        let id = uuid::Uuid::from_bytes(crate::helpers::entity_bytes(0xab));
+        let market = uuid::Uuid::from_bytes(crate::helpers::entity_bytes(0xcd));
+        let creator = uuid::Uuid::from_bytes(crate::helpers::entity_bytes(0xef));
         let partner = "abcdefab-abcd-abcd-abcd-abcdefabcdef";
         let mut order = make_order(
             &id.to_string().to_uppercase(),
@@ -61,8 +61,8 @@ async fn imports_normalize_ids_and_reject_conflicts_before_writing() {
             .unwrap()
             .pop()
             .unwrap();
-        assert_eq!(stored.order_id, bytes16_to_hex(*id.as_bytes()));
-        assert_eq!(stored.market_id, bytes16_to_hex(*market.as_bytes()));
+        assert_eq!(stored.order_id, bytes16_to_uuid_string(*id.as_bytes()));
+        assert_eq!(stored.market_id, bytes16_to_uuid_string(*market.as_bytes()));
         assert_eq!(
             stored.created_by,
             creator.simple().to_string().to_uppercase()
@@ -92,9 +92,9 @@ async fn imports_normalize_ids_and_reject_conflicts_before_writing() {
         );
 
         let mut new_order = order.clone();
-        new_order.order_id = bytes16_to_hex([0x12; 16]);
+        new_order.order_id = bytes16_to_uuid_string(crate::helpers::entity_bytes(0x12));
         let mut duplicate = new_order.clone();
-        duplicate.order_id = uuid::Uuid::from_bytes([0x12; 16]).to_string();
+        duplicate.order_id = uuid::Uuid::from_bytes(crate::helpers::entity_bytes(0x12)).to_string();
         assert_eq!(
             client
                 .post(&url)
@@ -132,14 +132,18 @@ async fn malformed_import_identifiers_reject_the_entire_batch() {
     let app = init_app().await;
     let client = reqwest::Client::new();
     let order = make_order(
-        &bytes16_to_hex([1; 16]),
-        &bytes16_to_hex([2; 16]),
+        &bytes16_to_uuid_string(crate::helpers::entity_bytes(1)),
+        &bytes16_to_uuid_string(crate::helpers::entity_bytes(2)),
         OrderEnum::Bid,
     );
     let valid = serde_json::to_value(&order).unwrap();
     for route in ["orders", "orders-normalized"] {
         for (field, value) in [
             ("orderId", "00000000-0000-0000-0000-000000000000"),
+            ("orderId", "0xabcdefababcd4bcd8bcdabcdefabcdef"),
+            ("orderId", "abcdefababcd4bcd8bcdabcdefabcdef"),
+            ("orderId", "abcdefab-abcd-1bcd-8bcd-abcdefabcdef"),
+            ("marketId", "abcdefab-abcd-4bcd-7bcd-abcdefabcdef"),
             ("orderId", "{abcdefab-abcd-abcd-abcd-abcdefabcdef}"),
             ("orderId", "urn:uuid:abcdefab-abcd-abcd-abcd-abcdefabcdef"),
             ("orderId", "0Xabcdefabcdefabcdefabcdefabcdefab"),
@@ -152,7 +156,7 @@ async fn malformed_import_identifiers_reject_the_entire_batch() {
             ("preferredTradingPartner", "facility-a "),
         ] {
             let mut invalid = valid.clone();
-            invalid["orderId"] = serde_json::json!(bytes16_to_hex([3; 16]));
+            invalid["orderId"] = serde_json::json!(bytes16_to_uuid_string(crate::helpers::entity_bytes(3)));
             invalid[field] = serde_json::json!(value);
             assert_eq!(
                 client
@@ -183,12 +187,12 @@ async fn concurrent_imports_of_equivalent_ids_do_not_overwrite() {
     let app = init_app().await;
     let client = reqwest::Client::new();
     let order = make_order(
-        &bytes16_to_hex([0xab; 16]),
-        &bytes16_to_hex([2; 16]),
+        &bytes16_to_uuid_string(crate::helpers::entity_bytes(0xab)),
+        &bytes16_to_uuid_string(crate::helpers::entity_bytes(2)),
         OrderEnum::Bid,
     );
     let mut duplicate = order.clone();
-    duplicate.order_id = uuid::Uuid::from_bytes([0xab; 16])
+    duplicate.order_id = uuid::Uuid::from_bytes(crate::helpers::entity_bytes(0xab))
         .to_string()
         .to_uppercase();
     duplicate.quantity = 200.0;
@@ -219,8 +223,8 @@ async fn post_orders_persists_order_to_the_db() {
     let app = init_app().await;
     let address = app.address.clone();
     let order = make_order(
-        "0x00000000000000000000000000000123",
-        "0x00000000000000000000000000000456",
+        "00000000-0000-4000-8000-000000000123",
+        "00000000-0000-4000-8000-000000000456",
         OrderEnum::Bid,
     );
     let orderlist = vec![order.clone()];
@@ -273,9 +277,9 @@ async fn post_orders_persists_order_to_the_db() {
 async fn post_normalized_order_round_trips() {
     let app = init_app().await;
     let address = app.address.clone();
-    let market_id = "0x000000000000000000000000d0e50001";
+    let market_id = "00000000-0000-4000-8000-0000d0e50001";
     let order = make_order(
-        "0x000000000000000000000000d0e50002",
+        "00000000-0000-4000-8000-0000d0e50002",
         market_id,
         OrderEnum::Offer,
     );
@@ -327,8 +331,8 @@ async fn filter_orders_by_market_and_time_range() {
     let app = init_app().await;
     let address = app.address.clone();
 
-    let market_a = "0x000000000000000000000000d0e5aaaa";
-    let market_b = "0x000000000000000000000000d0e5bbbb";
+    let market_a = "00000000-0000-4000-8000-0000d0e5aaaa";
+    let market_b = "00000000-0000-4000-8000-0000d0e5bbbb";
 
     // Three orders in market_a at time_slots 10, 20, 30; one in market_b at 20.
     let mut orders = Vec::new();
@@ -342,7 +346,7 @@ async fn filter_orders_by_market_and_time_range() {
     .enumerate()
     {
         let mut order = make_order(
-            &format!("0x000000000000000000000000d0e5{:04}", idx),
+            &format!("00000000-0000-4000-8000-0000d0e5{:04}", idx),
             market,
             OrderEnum::Bid,
         );
@@ -407,7 +411,7 @@ async fn filter_orders_time_boundaries_are_inclusive_start_exclusive_end() {
     let app = init_app().await;
     let address = app.address.clone();
 
-    let market = "0x000000000000000000000000d0e5cccc";
+    let market = "00000000-0000-4000-8000-0000d0e5cccc";
 
     // Orders at time_slots exactly on and around the boundaries 20 and 30.
     // Range under test will be [20, 30): 20 is included, 30 is excluded.
@@ -415,7 +419,7 @@ async fn filter_orders_time_boundaries_are_inclusive_start_exclusive_end() {
     let mut orders = Vec::new();
     for (idx, ts) in slots.iter().enumerate() {
         let mut order = make_order(
-            &format!("0x000000000000000000000000d0e5c{:03}", idx),
+            &format!("00000000-0000-4000-8000-0000d0e5c{:03}", idx),
             market,
             OrderEnum::Bid,
         );

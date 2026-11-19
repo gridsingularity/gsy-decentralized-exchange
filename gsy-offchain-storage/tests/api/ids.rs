@@ -196,13 +196,11 @@ async fn post_ids_concurrent_same_id_yields_single_mapping() {
         storage.fetch_onchain_id(offchain).await.unwrap(),
         results[0].onchain_id
     );
-    let onchain_uuid = primitives::utils::bytes16_to_uuid_string(
-        primitives::utils::parse_uuid_or_hex_bytes16(&results[0].onchain_id).unwrap(),
-    );
+    let onchain_hex = format!("0x{}", results[0].onchain_id[2..].to_uppercase());
     assert_eq!(
         app.db_wrapper
             .ids()
-            .filter(Some(onchain_uuid.to_uppercase()), None)
+            .filter(Some(onchain_hex), None)
             .await
             .unwrap(),
         vec![results[0].clone()]

@@ -8,7 +8,7 @@ use gsy_market_orchestrator::orchestrator::{
 use primitives::constants::GLOBAL_CONSTANTS;
 use primitives::db_api_schema::grid_topology::EnergyCommunitySchema;
 use primitives::offchain_storage::CommunityProvider;
-use primitives::utils::{derive_onchain_id, parse_uuid_or_hex_bytes16};
+use primitives::utils::{hex_to_bytes16, derive_onchain_id, uuid_v4_to_bytes16};
 use primitives::MarketType;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -198,7 +198,7 @@ fn community_bytes() -> [u8; 16] {
 }
 
 fn hashed_community_bytes(id: &str) -> [u8; 16] {
-    parse_uuid_or_hex_bytes16(&derive_onchain_id(id)).unwrap()
+    hex_to_bytes16(&derive_onchain_id(id)).unwrap()
 }
 
 fn test_config(look_ahead_hours: u64) -> Config {
@@ -725,7 +725,7 @@ async fn hashes_exact_opaque_community_ids_without_uuid_or_case_normalization() 
         hashed
     );
     for id in ids {
-        if let Some(raw_bytes) = parse_uuid_or_hex_bytes16(id) {
+        if let Ok(raw_bytes) = uuid_v4_to_bytes16(id) {
             assert_ne!(
                 hashed_community_bytes(id),
                 raw_bytes,

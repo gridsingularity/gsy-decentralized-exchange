@@ -2,7 +2,7 @@ use primitives::db_api_schema::orders::{
     order_metadata_from_contract, order_metadata_to_contract, ContractOrderMetadata, DbAttributes,
     DbRequirements, EnergyType,
 };
-use primitives::utils::{parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR};
+use primitives::utils::{hex_to_bytes16, NODE_FLOAT_SCALING_FACTOR};
 
 const PREFERRED_PARTNER: &str = "0x00112233445566778899aabbccddeeff";
 
@@ -23,7 +23,7 @@ fn converts_complete_order_metadata_to_and_from_contract_values() {
     assert_eq!(encoded.energy_type, 2);
     assert_eq!(
         encoded.preferred_trading_partner,
-        parse_uuid_or_hex_bytes16(PREFERRED_PARTNER).expect("Invalid on-chain actor ID")
+        hex_to_bytes16(PREFERRED_PARTNER).expect("Invalid on-chain actor ID")
     );
     assert_eq!(
         encoded.preferred_energy_rate,
