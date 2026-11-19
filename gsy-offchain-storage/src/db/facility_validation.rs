@@ -2,9 +2,6 @@ use super::DatabaseWrapper;
 use anyhow::{Context, Result};
 use futures::TryStreamExt;
 use mongodb::bson::doc;
-use primitives::db_api_schema::grid_topology::{
-    EnergyCommunitySchema, FacilitySchema, SiteSchema,
-};
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::ewds::dto::{
     FacilityMarketValidationReason, FacilityMarketValidationRequest, FacilityMarketValidationResult,
@@ -13,7 +10,8 @@ use primitives::utils::{bytes16_to_hex, parse_uuid_or_hex_bytes16};
 use std::collections::HashMap;
 
 impl DatabaseWrapper {
-    /// Checks the complete facility -> site -> market community chain without writing data.
+    /// Checks the complete facility -> site -> market community chain without writing data,
+    /// using the latest version of each facility, site and community; deleted ones are unknown.
     /// Results preserve request order and duplicates. Database errors fail the whole lookup,
     /// rather than being reported as confirmed eligibility failures for individual pairs.
     pub async fn validate_facility_markets(
@@ -43,11 +41,9 @@ impl DatabaseWrapper {
             .try_collect()
             .await
             .context("Failed to read markets for facility validation")?;
-        let facilities: Vec<FacilitySchema> = self
+        let facilities = self
             .facilities()
-            .find(doc! {"facility_id": {"$in": facility_ids}})
-            .await?
-            .try_collect()
+            .get_by_ids(&facility_ids)
             .await
             .context("Failed to read facilities for market validation")?;
 
@@ -59,18 +55,14 @@ impl DatabaseWrapper {
             .iter()
             .map(|facility| facility.site_id.as_str())
             .collect();
-        let communities: Vec<EnergyCommunitySchema> = self
+        let communities = self
             .communities()
-            .find(doc! {"community_id": {"$in": community_ids}})
-            .await?
-            .try_collect()
+            .get_by_ids(&community_ids)
             .await
             .context("Failed to read communities for facility validation")?;
-        let sites: Vec<SiteSchema> = self
+        let sites = self
             .sites()
-            .find(doc! {"site_name": {"$in": site_ids}})
-            .await?
-            .try_collect()
+            .get_by_ids(&site_ids)
             .await
             .context("Failed to read sites for facility validation")?;
 
@@ -86,7 +78,7 @@ impl DatabaseWrapper {
             .iter()
             .map(|community| (&community.community_id, community))
             .collect();
-        let sites: HashMap<_, _> = sites.iter().map(|site| (&site.site_name, site)).collect();
+        let sites: HashMap<_, _> = sites.iter().map(|site| (&site.site_id, site)).collect();
 
         let validate_pair = |pair: &FacilityMarketValidationRequest, market_id: &String| {
             use FacilityMarketValidationReason::*;
@@ -95,12 +87,11 @@ impl DatabaseWrapper {
             let community = communities
                 .get(&market.community_id)
                 .ok_or(UnknownCommunity)?;
-            // SiteSchema is keyed by site_name; FacilitySchema.site_id refers to that name.
             let site = sites.get(&facility.site_id).ok_or(UnknownSite)?;
             if !site.facilities.contains(&facility.facility_id) {
                 return Err(FacilityNotListedInSite);
             }
-            if !community.sites.contains(&site.site_name) {
+            if !community.sites.contains(&site.site_id) {
                 return Err(SiteNotInCommunity);
             }
             Ok(())

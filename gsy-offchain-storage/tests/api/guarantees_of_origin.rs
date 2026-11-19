@@ -10,7 +10,8 @@ use primitives::db_api_schema::profiles::{
 };
 use primitives::db_api_schema::trades::{DbTradeSchema, TradeParameters, TradeStatus};
 use primitives::utils::{
-    bytes16_to_hex, create_encrypted_bytes16_from_string, timestamp_to_string_with_padding,
+    bytes16_to_hex, create_encrypted_bytes16_from_string, epoch_to_rfc3339, now_epoch_secs,
+    timestamp_to_string_with_padding, EPOCH_RFC3339,
 };
 
 pub const SLOT: u64 = 1_778_754_600; // 2026-05-14T10:30:00Z
@@ -75,20 +76,24 @@ pub async fn seed_topology(db: &DatabaseWrapper, export_kwh: f64) {
         (BUYER_FACILITY, BUYER_OWNER),
     ] {
         db.facilities()
-            .insert(FacilitySchema {
+            .insert_one(FacilitySchema {
                 facility_id: facility_id.to_string(),
                 facility_name: format!("{facility_id}-name"),
                 site_id: "goo-site".to_string(),
                 owner_id: owner_id.to_string(),
+                valid_from: EPOCH_RFC3339.to_string(),
+                valid_until: None,
             })
             .await
             .unwrap();
     }
     db.communities()
-        .insert(EnergyCommunitySchema {
+        .insert_one(EnergyCommunitySchema {
             community_id: COMMUNITY.to_string(),
             community_name: "GoO Community".to_string(),
             sites: vec!["goo-site".to_string()],
+            valid_from: EPOCH_RFC3339.to_string(),
+            valid_until: None,
         })
         .await
         .unwrap();
@@ -334,6 +339,59 @@ async fn rest_returns_a_record_for_a_trade_executed_in_the_window() {
     assert_eq!(200, response.status().as_u16());
     let records: Vec<LocalOriginRecord> = response.json().await.unwrap();
     assert!(records.is_empty());
+
+    stop_app(app).await;
+}
+
+#[tokio::test]
+async fn certificates_use_the_latest_facilities_and_communities() {
+    let app = init_app().await;
+    let db = &app.db_wrapper;
+    seed_certifiable_trade(db, "goo-trade-1").await;
+    let window = [
+        ("start_time", (VERDICT_AT - 450).to_string()),
+        ("end_time", (VERDICT_AT + 450).to_string()),
+    ];
+    let community = |valid_until: Option<String>| EnergyCommunitySchema {
+        community_id: COMMUNITY.to_string(),
+        community_name: "GoO Community".to_string(),
+        sites: vec!["goo-site".to_string(), "goo-site-2".to_string()],
+        valid_from: EPOCH_RFC3339.to_string(),
+        valid_until,
+    };
+
+    // The seller facility moves to a new site, which the community now lists too.
+    db.facilities()
+        .store(vec![FacilitySchema {
+            facility_id: SELLER_FACILITY.to_string(),
+            facility_name: format!("{SELLER_FACILITY}-name"),
+            site_id: "goo-site-2".to_string(),
+            owner_id: SELLER_OWNER.to_string(),
+            valid_from: EPOCH_RFC3339.to_string(),
+            valid_until: None,
+        }])
+        .await
+        .unwrap();
+    db.communities().store(vec![community(None)]).await.unwrap();
+    let records: Vec<LocalOriginRecord> =
+        get_goo(&app.address, &window).await.json().await.unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].identity.site_id, "goo-site-2");
+    assert_eq!(
+        records[0].location.community_id_origin.as_deref(),
+        Some(COMMUNITY)
+    );
+
+    // Once the community is deleted, the certificate names no community.
+    let now = epoch_to_rfc3339(now_epoch_secs());
+    db.communities()
+        .store(vec![community(Some(now))])
+        .await
+        .unwrap();
+    let records: Vec<LocalOriginRecord> =
+        get_goo(&app.address, &window).await.json().await.unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].location.community_id_origin, None);
 
     stop_app(app).await;
 }

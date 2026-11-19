@@ -2,18 +2,28 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "int.facility.schema.v1",
   "title": "GSY Facility",
-  "description": "Mirrors the Rust FacilitySchema (snake_case wire form).",
+  "description": "Mirrors the Rust EwdsFacilityDto (snake_case wire form).",
   "type": "object",
   "additionalProperties": false,
   "properties": {
     "facility_id": { "type": "string", "minLength": 1 },
     "facility_name": { "type": "string", "minLength": 1 },
     "site_id": {
-      "description": "The site_name of the site the facility belongs to.",
+      "description": "The site_id of the site the facility belongs to.",
       "type": "string",
       "minLength": 1
     },
-    "owner_id": { "type": "string", "minLength": 1 }
+    "owner_id": { "type": "string", "minLength": 1 },
+    "valid_from": {
+      "description": "When GSY received this version of the entry, in UTC (RFC 3339, whole seconds). Set by the off-chain storage: a value sent with an event is ignored.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "valid_until": {
+      "description": "From when the entry counts as deleted (RFC 3339, any offset, stored in UTC). Leave it out to keep the entry valid. Send the full entry with this field to delete it, and again without it to bring it back.",
+      "type": "string",
+      "format": "date-time"
+    }
   },
   "required": ["facility_id", "facility_name", "site_id", "owner_id"]
 }
