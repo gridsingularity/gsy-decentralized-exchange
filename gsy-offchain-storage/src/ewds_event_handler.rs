@@ -228,25 +228,30 @@ pub async fn handle_event(db: &DatabaseWrapper, envelope: EwdsEventEnvelope<Valu
     match envelope.event_type {
         EwdsEventType::Measurements => {
             let measurements = parse_batch(envelope.data, |measurement: EwdsMeasurementDto| {
-                MeasurementSchema::try_from(measurement)
+                let mut measurement = MeasurementSchema::try_from(measurement)?;
+                measurement.facility_id =
+                    primitives::utils::normalize_offchain_id(&measurement.facility_id)?;
+                measurement.community_uuid =
+                    primitives::utils::normalize_offchain_id(&measurement.community_uuid)?;
+                Ok(measurement)
             })?;
             retry_db_write(|| insert_measurements(db, &measurements)).await?;
         }
         EwdsEventType::Facility => {
             let facilities = parse_batch(envelope.data, |dto: EwdsFacilityDto| {
-                FacilitySchema::try_from(dto)
+                FacilitySchema::try_from(dto).and_then(FacilitySchema::normalize_ids)
             })?;
             let store = db.facilities();
             retry_db_write(|| store.store(facilities.clone())).await?;
         }
         EwdsEventType::Site => {
-            let sites = parse_batch(envelope.data, |dto: EwdsSiteDto| SiteSchema::try_from(dto))?;
+            let sites = parse_batch(envelope.data, |dto: EwdsSiteDto| SiteSchema::try_from(dto).and_then(SiteSchema::normalize_ids))?;
             let store = db.sites();
             retry_db_write(|| store.store(sites.clone())).await?;
         }
         EwdsEventType::Community => {
             let communities = parse_batch(envelope.data, |dto: EwdsCommunityDto| {
-                EnergyCommunitySchema::try_from(dto)
+                EnergyCommunitySchema::try_from(dto).and_then(EnergyCommunitySchema::normalize_ids)
             })?;
             let store = db.communities();
             retry_db_write(|| store.store(communities.clone())).await?;

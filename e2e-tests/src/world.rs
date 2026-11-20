@@ -1,3 +1,4 @@
+use primitives::ewds::dto::EwdsSiteDto;
 use anyhow::{anyhow, Result};
 use cucumber::World;
 use ethers::prelude::*;
@@ -7,9 +8,6 @@ use primitives::db_api_schema::grid_topology::{FacilitySchema, SiteSchema};
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::profiles::{ForecastSchema, MeasurementSchema};
 use primitives::db_api_schema::trades::DbTradeSchema;
-use primitives::ewds::dto::EwdsSiteDto;
-use primitives::offchain_storage::OffchainStorageClient;
-use primitives::utils::parse_uuid_or_hex_bytes16;
 use reqwest::Client;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -207,19 +205,12 @@ impl MyWorld {
             .with_chain_id(self.chain_id)
     }
 
-    pub async fn actor_id_for_user(&self, user_name: &str) -> [u8; 16] {
-        if !self.users.contains_key(user_name) {
-            panic!("Unknown user '{}'", user_name);
-        }
-        let onchain_id = OffchainStorageClient::from_env("E2E_TESTS_CLIENT_ID", "e2e_tests")
-            .fetch_onchain_id(user_name)
-            .await
-            .expect("failed to fetch onchain id");
-        parse_uuid_or_hex_bytes16(&onchain_id).expect("failed to parse uuid")
-    }
-
     pub fn facility_id_for_user(&self, user_name: &str) -> String {
-        format!("area{user_name}")
+        self.facilities_topology
+            .iter()
+            .find(|facility| facility.owner_id == user_name && facility.site_id == "site-12345")
+            .map(|facility| facility.facility_id.clone())
+            .unwrap_or_else(|| format!("area{user_name}"))
     }
 
     pub fn facility_id_for_market_user(&self, market_id: [u8; 16], user_name: &str) -> String {

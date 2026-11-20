@@ -1,4 +1,5 @@
 pub mod db_api_schema;
+pub mod actor_ids;
 
 pub mod certificates;
 pub mod constants;

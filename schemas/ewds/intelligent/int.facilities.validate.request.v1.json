@@ -14,7 +14,7 @@
         "additionalProperties": false,
         "properties": {
           "facility_id": { "type": "string", "description": "Original off-chain facility ID, not its owner or on-chain mapping." },
-          "market_id": { "type": "string", "description": "Market ID as UUID or bytes16 hex." }
+          "market_id": { "type": "string", "description": "Hyphenated UUIDv4 market ID. Invalid IDs produce an ineligible result for that pair." }
         },
         "required": ["facility_id", "market_id"]
       }

@@ -7,8 +7,9 @@
 //! These API scenarios isolate certificate generation from delivery verification by seeding
 //! topology, measurements and an already-`Executed` trade into Mongo. Every id is unique per
 //! scenario run; the seeded documents are deleted by the last step (and the whole database
-//! is dropped after every scenario by `main.rs` anyway).
+//! is cleared after every scenario by `main.rs`, preserving its indexes).
 
+use primitives::utils::EPOCH_RFC3339;
 use crate::utils::test_database;
 use crate::world::{GreenProofSeed, MyWorld};
 use cucumber::{given, then, when};
@@ -28,8 +29,7 @@ use primitives::db_api_schema::profiles::{
 use primitives::db_api_schema::trades::{DbTradeSchema, TradeParameters, TradeStatus};
 use primitives::ewds::{EwdsClient, EwdsOperation};
 use primitives::utils::{
-    bytes16_to_hex, create_encrypted_bytes16_from_string, timestamp_to_datetime_string,
-    timestamp_to_string_with_padding, EPOCH_RFC3339,
+    bytes16_to_uuid_string, timestamp_to_datetime_string, timestamp_to_string_with_padding,
 };
 use serde_json::json;
 use std::env;
@@ -45,11 +45,6 @@ const SLOT_S: u64 = 900;
 const QUERY_RETRY_BUDGET: Duration = Duration::from_secs(60);
 const QUERY_RETRY_INTERVAL: Duration = Duration::from_secs(3);
 const REST_PATH: &str = "guarantees-of-origin";
-
-/// The on-chain party hash of an off-chain owner id, as stored in `DbTradeSchema::seller`.
-fn party_hash(owner_id: &str) -> String {
-    bytes16_to_hex(create_encrypted_bytes16_from_string(owner_id))
-}
 
 /// `2026-05-14T10:30:00+00:00`, the format of `interval_start` / `interval_end`
 /// (chrono's `to_rfc3339` of a whole-second UTC instant).
@@ -102,8 +97,8 @@ async fn seed_executed_pv_sale(world: &mut MyWorld, energy_kwh: f64, export_kwh:
         pv_asset_uuid: format!("goo-e2e-pv-{run}"),
         measurement_id: export_kwh
             .map(|_| format!("Measurement:{community_id}:{seller_facility_id}")),
-        trade_uuid: Uuid::new_v4().to_string(),
-        market_id: format!("0xgooe2e{run}"),
+        trade_uuid: bytes16_to_uuid_string(*Uuid::new_v4().as_bytes()),
+        market_id: primitives::utils::bytes16_to_uuid_string(*Uuid::new_v4().as_bytes()),
         time_slot,
         status_updated_at: now,
         energy_kwh,
@@ -227,12 +222,12 @@ async fn seed_executed_pv_sale(world: &mut MyWorld, energy_kwh: f64, export_kwh:
         .insert_one(DbTradeSchema {
             trade_uuid: seed.trade_uuid.clone(),
             status: TradeStatus::Executed,
-            seller: party_hash(&seed.seller_owner_id),
-            buyer: party_hash(&seed.buyer_owner_id),
+            seller: seed.seller_owner_id.clone(),
+            buyer: seed.buyer_owner_id.clone(),
             market_id: seed.market_id.clone(),
             creation_time: time_slot - SLOT_S,
-            offer_hash: format!("{}-offer", seed.trade_uuid),
-            bid_hash: format!("{}-bid", seed.trade_uuid),
+            offer_hash: bytes16_to_uuid_string(*Uuid::new_v4().as_bytes()),
+            bid_hash: bytes16_to_uuid_string(*Uuid::new_v4().as_bytes()),
             residual_offer_id: None,
             residual_bid_id: None,
             parameters: TradeParameters {

@@ -2327,6 +2327,7 @@ dependencies = [
  "async-trait",
  "ethers",
  "hex",
+ "serde",
  "tempfile",
  "tokio",
  "tracing",
@@ -2369,6 +2370,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid 1.26.0",
 ]
 
 [[package]]

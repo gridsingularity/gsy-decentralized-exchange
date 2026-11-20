@@ -10,7 +10,12 @@
     "occurredAt": { "type": "string", "format": "date-time" },
     "data": {
       "type": "array",
-      "items": { "$ref": "./int.measurement.schema.v1.json" },
+      "items": {
+        "$ref": "./int.measurement.schema.v1.json",
+        "properties": {
+          "communityUuid": { "$ref": "./int.community.schema.v1.json#/properties/communityId" }
+        }
+      },
       "minItems": 1
     }
   },

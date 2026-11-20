@@ -1,13 +1,12 @@
 #[path = "common/facilities.rs"]
 mod facilities;
 
-use facilities::{OWNER_1_ONCHAIN, OWNER_2_ONCHAIN};
 use gsy_community_client::node_connector::orders::create_input_orders;
 use gsy_community_client::time_utils::get_current_timestamp_in_secs;
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::profiles::ForecastSchema;
 use primitives::ewds::dto::EwdsSendMessageDto;
-use primitives::utils::{parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR};
+use primitives::utils::{derive_onchain_id, hex_to_bytes16, uuid_v4_to_bytes16, NODE_FLOAT_SCALING_FACTOR};
 use primitives::{MarketType, MatchingAlgorithm};
 use serde_json::{json, Value};
 use std::collections::HashSet;
@@ -21,7 +20,7 @@ async fn setup_facilities_mock() -> MockServer {
 
 fn test_market() -> MarketSchema {
     MarketSchema {
-        market_id: format!("0x{}", "11".repeat(16)),
+        market_id: "11111111-1111-4111-8111-111111111111".to_string(),
         community_id: "community-1".to_string(),
         opening_time: "00000000000000456446".to_string(),
         closing_time: "00000000000000456447".to_string(),
@@ -81,11 +80,11 @@ async fn test_orders_to_evm_params_are_created_correctly() {
     ) = input_orders[0];
     assert_eq!(
         bid_created_by,
-        parse_uuid_or_hex_bytes16(OWNER_1_ONCHAIN).unwrap()
+        hex_to_bytes16(&derive_onchain_id("owner-1")).unwrap()
     );
     assert_eq!(
         bid_market,
-        parse_uuid_or_hex_bytes16(market.market_id.as_str()).expect("failed to parse market id")
+        uuid_v4_to_bytes16(market.market_id.as_str()).expect("failed to parse market id")
     );
     // delivery_start_time from market drives the slot now, not forecast.time_slot
     assert_eq!(bid_slot, 456_456);
@@ -112,11 +111,11 @@ async fn test_orders_to_evm_params_are_created_correctly() {
     ) = input_orders[1];
     assert_eq!(
         offer_created_by,
-        parse_uuid_or_hex_bytes16(OWNER_2_ONCHAIN).unwrap()
+        hex_to_bytes16(&derive_onchain_id("owner-2")).unwrap()
     );
     assert_eq!(
         offer_market,
-        parse_uuid_or_hex_bytes16(market.market_id.as_str()).expect("failed to parse market id")
+        uuid_v4_to_bytes16(market.market_id.as_str()).expect("failed to parse market id")
     );
     assert_eq!(offer_slot, 456_456);
     assert!(current_time >= offer_creation && current_time - offer_creation <= 1);
@@ -234,6 +233,15 @@ async fn test_create_input_orders_assigns_unique_order_ids_and_stable_side_mappi
 
     let order_ids: HashSet<[u8; 16]> = orders.iter().map(|order| order.0).collect();
     assert_eq!(order_ids.len(), orders.len());
+    for id in order_ids {
+        let uuid = uuid::Uuid::from_bytes(id);
+        assert_eq!(uuid.get_version(), Some(uuid::Version::Random));
+        assert_eq!(uuid.get_variant(), uuid::Variant::RFC4122);
+        assert_eq!(
+            primitives::utils::uuid_v4_to_bytes16(&uuid.to_string()).unwrap(),
+            id
+        );
+    }
 }
 
 fn forecast(facility_id: &str, energy_kwh: f64) -> ForecastSchema {
@@ -244,6 +252,26 @@ fn forecast(facility_id: &str, energy_kwh: f64) -> ForecastSchema {
         energy_kwh,
         community_uuid: "community-1".to_string(),
         confidence: 0.9,
+    }
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn uuid_forecasts_resolve_the_owner_for_the_registered_spelling() {
+    let facility = "abcdefab-abcd-abcd-abcd-abcdefabcdef";
+    let _server = facilities::setup_facilities_mock([&facility.to_uppercase(), "area2"]).await;
+    let orders = create_input_orders(
+        vec![forecast(&facility.to_uppercase(), 1.0), forecast(&facility.to_uppercase(), 2.0)],
+        test_market(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(orders.len(), 2);
+    for order in orders {
+        assert_eq!(
+            order.1,
+            hex_to_bytes16(&derive_onchain_id("owner-1")).unwrap()
+        );
     }
 }
 
@@ -339,7 +367,7 @@ async fn validation_errors_fail_before_id_resolution_and_can_be_retried() {
     assert_eq!(orders.len(), 1);
     assert_eq!(
         orders[0].1,
-        parse_uuid_or_hex_bytes16(OWNER_1_ONCHAIN).unwrap()
+        hex_to_bytes16(&derive_onchain_id("owner-1")).unwrap()
     );
     std::env::set_var("EWDS_ENABLE_HANDLER", "false");
     match previous_gateway {
@@ -379,10 +407,6 @@ async fn forecast_validation_and_rejection_notifications_work_over_ewds() {
                             {"facility_id": "area2", "market_id": test_market().market_id, "eligible": true},
                         ])
                     }
-                    "ids.query" => {
-                        assert_eq!(payload["payload"]["offchain_id"], "owner-2");
-                        json!([{"offchain_id": "owner-2", "onchain_id": OWNER_2_ONCHAIN, "creation_time": 0}])
-                    }
                     other => panic!("unexpected query {other}"),
                 };
                 *response.lock().unwrap() = json!({"requestId": payload["requestId"], "success": true, "data": data});
@@ -421,7 +445,7 @@ async fn forecast_validation_and_rejection_notifications_work_over_ewds() {
     assert_eq!(orders.len(), 1);
     assert_eq!(
         orders[0].1,
-        parse_uuid_or_hex_bytes16(OWNER_2_ONCHAIN).unwrap()
+        hex_to_bytes16(&derive_onchain_id("owner-2")).unwrap()
     );
     let requests = gateway.received_requests().await.unwrap();
     assert!(requests

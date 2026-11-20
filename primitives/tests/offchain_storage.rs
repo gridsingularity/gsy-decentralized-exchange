@@ -267,6 +267,10 @@ async fn fetches_facility_owner_mapping_over_http() {
     let facilities = vec![
         base_facility("AIS1-House-1", "owner 1"),
         base_facility("AIS1-House-2", "owner 2"),
+        base_facility(
+            "ABCDEFAB-ABCD-ABCD-ABCD-ABCDEFABCDEF",
+            "FEDCBAFE-DCBA-DCBA-DCBA-FEDCBAFEDCBA",
+        ),
     ];
     Mock::given(method("GET"))
         .and(path("/facilities"))
@@ -282,7 +286,13 @@ async fn fetches_facility_owner_mapping_over_http() {
     );
     let mapping = client.fetch_facility_owner_mapping().await.unwrap();
 
-    assert_eq!(mapping.len(), 2);
+    assert_eq!(mapping.len(), 3);
+    assert_eq!(
+        mapping
+            .get("ABCDEFAB-ABCD-ABCD-ABCD-ABCDEFABCDEF")
+            .map(String::as_str),
+        Some("FEDCBAFE-DCBA-DCBA-DCBA-FEDCBAFEDCBA")
+    );
     assert_eq!(
         mapping.get("AIS1-House-1").map(String::as_str),
         Some("owner 1")
@@ -409,6 +419,10 @@ async fn fetches_onchain_id_over_http() {
         .unwrap();
 
     assert_eq!(onchain_id, "0x11111111111111111111111111111111");
+    for id in ["", " ", " facility-a", "facility-a "] {
+        assert!(client.fetch_onchain_id(id).await.is_err());
+    }
+    assert_eq!(server.received_requests().await.unwrap().len(), 1);
 }
 
 #[tokio::test]
@@ -943,7 +957,7 @@ async fn fetches_measurements_over_ewds() {
 
 // -- Markets ---------------------------------------------------------------
 
-const MARKET_ID: &str = "0xcccccccccccccccccccccccccccccccc";
+const MARKET_ID: &str = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 
 fn market() -> MarketSchema {
     MarketSchema {

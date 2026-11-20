@@ -1,5 +1,6 @@
 use anyhow::Result;
 use gsy_market_orchestrator::{chain_connector, config, orchestrator};
+use primitives::actor_ids::initialize_actor_id_hashing;
 use primitives::offchain_storage::OffchainStorageClient;
 use tracing::info;
 
@@ -10,6 +11,7 @@ async fn main() -> Result<()> {
         .init();
 
     info!("Starting GSY Market Orchestrator...");
+    initialize_actor_id_hashing()?;
     let config = config::get_config()?;
     // Resolve the rules now so an invalid MATCHING_ALGORITHM fails at startup.
     info!("Market rules: {:?}", *config::MARKET_RULES);

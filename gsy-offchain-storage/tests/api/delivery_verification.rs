@@ -20,7 +20,7 @@ use primitives::{
         grid_topology::FacilitySchema, orders::OrderStatus, profiles::MeasurementSchema,
         trades::TradeStatus,
     },
-    utils::{bytes16_to_hex, create_encrypted_bytes16_from_string},
+    utils::bytes16_to_uuid_string,
 };
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
@@ -125,7 +125,8 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
     let listener_task = tokio::spawn(async move { listener.run().await });
     tokio::time::sleep(Duration::from_secs(1)).await;
 
-    let market_id = [0x99u8; 16];
+    app.db_wrapper.ids().get_or_create("community".into()).await?;
+    let market_id = crate::helpers::entity_bytes(0x99u8);
     let slot = 1800u64;
     let now = client
         .get_block(BlockNumber::Latest)
@@ -139,8 +140,8 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
         ((0..2u8)
             .map(|index| {
                 (
-                    [0x99 + index; 16],
-                    [0x77u8; 16],
+                    crate::helpers::entity_bytes(0x99 + index),
+                    actor_bytes("community"),
                     now,
                     now + 3600,
                     slot + u64::from(index) * 900,
@@ -160,13 +161,13 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
         let buyer_index = if index == 2 { 0 } else { index };
         let buyer = format!("buyer-{buyer_index}");
         let facility = format!("meter-{buyer_index}");
-        let market_id = if index == 2 { [0x9a; 16] } else { market_id };
+        let market_id = if index == 2 { crate::helpers::entity_bytes(0x9a) } else { market_id };
         let slot = if index == 2 { slot + 900 } else { slot };
         let seller_facility = format!("seller-meter-{index}");
-        let buyer_id = create_encrypted_bytes16_from_string(&buyer);
-        let seller_id = create_encrypted_bytes16_from_string(&format!("seller-{index}"));
+        let buyer_id = actor_bytes(&buyer);
+        let seller_id = actor_bytes(&format!("seller-{index}"));
         let bid = (
-            [index + 1; 16],
+            crate::helpers::entity_bytes(index + 1),
             buyer_id,
             market_id,
             slot,
@@ -180,7 +181,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
             0u64,
         );
         let offer = (
-            [index + 11; 16],
+            crate::helpers::entity_bytes(index + 11),
             seller_id,
             market_id,
             slot,
@@ -196,11 +197,11 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
         send(&registry, "placeOrder", (bid,)).await?;
         send(&registry, "placeOrder", (offer,)).await?;
         let matched = (
-            [index + 21; 16],
+            crate::helpers::entity_bytes(index + 21),
             bid,
             offer,
-            [index + 31; 16],
-            [index + 41; 16],
+            crate::helpers::entity_bytes(index + 31),
+            crate::helpers::entity_bytes(index + 41),
             U256::from(10000),
             U256::from(150000),
             0u8, // Standard match.
@@ -222,14 +223,14 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
         .await?;
         app.db_wrapper
             .facilities()
-            .insert_one(FacilitySchema {
+            .store(vec![FacilitySchema {
                 facility_id: facility.clone(),
                 facility_name: facility.clone(),
                 site_id: "site".into(),
                 owner_id: buyer,
                 valid_from: EPOCH_RFC3339.to_string(),
                 valid_until: None,
-            })
+            }])
             .await?;
         measurements.push(MeasurementSchema {
             facility_id: facility,
@@ -257,6 +258,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
             energy_kwh: [-1.0, -0.8, -1.0][index as usize],
         });
     }
+    client.provider().request::<_, serde_json::Value>("evm_mine", ()).await?;
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             if app
@@ -264,7 +266,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
                 .trades()
                 .get_all_trades()
                 .await
-                .unwrap()
+                .unwrap_or_default()
                 .len()
                 == 3
             {
@@ -338,7 +340,12 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
     );
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
-            let trades = app.db_wrapper.trades().get_all_trades().await.unwrap();
+            let trades = app
+                .db_wrapper
+                .trades()
+                .get_all_trades()
+                .await
+                .unwrap_or_default();
             if trades
                 .iter()
                 .filter(|trade| {
@@ -365,7 +372,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
     );
     assert_eq!(
         registry
-            .method::<_, u8>("getStatus", [3u8; 16])?
+            .method::<_, u8>("getStatus", crate::helpers::entity_bytes(3u8))?
             .call()
             .await?,
         5
@@ -377,9 +384,9 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
         &settlement,
         "submitPenalties",
         (vec![(
-            create_encrypted_bytes16_from_string("buyer-0"),
-            [0x9au8; 16],
-            [23u8; 16],
+            actor_bytes("buyer-0"),
+            crate::helpers::entity_bytes(0x9au8),
+            crate::helpers::entity_bytes(23u8),
             200u64,
         )],),
     )
@@ -390,7 +397,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
                 .db_wrapper
                 .trades()
                 .find_one(mongodb::bson::doc! {
-                    "trade_uuid": bytes16_to_hex([23; 16])
+                    "trade_uuid": bytes16_to_uuid_string(crate::helpers::entity_bytes(23))
                 })
                 .await
                 .unwrap()
@@ -405,7 +412,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
     let pending_order = app
         .db_wrapper
         .orders()
-        .get_order_by_id(&bytes16_to_hex([3; 16]).into())
+        .get_order_by_id(&bytes16_to_uuid_string(crate::helpers::entity_bytes(3)).into())
         .await?
         .unwrap();
     assert_eq!(pending_order.status, OrderStatus::PartiallyFilled);
@@ -431,7 +438,12 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
     );
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
-            let orders = app.db_wrapper.orders().get_all_orders().await.unwrap();
+            let orders = app
+                .db_wrapper
+                .orders()
+                .get_all_orders()
+                .await
+                .unwrap_or_default();
             if orders
                 .iter()
                 .filter(|order| order.status == OrderStatus::Executed)
@@ -447,7 +459,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
     let trades = app.db_wrapper.trades().get_all_trades().await?;
     let mut replay = Vec::new();
     for index in 0..3u8 {
-        let trade_id = [index + 21; 16];
+        let trade_id = crate::helpers::entity_bytes(index + 21);
         let penalty = if index == 0 { 0u64 } else { 200 };
         assert_eq!(
             settlement
@@ -458,7 +470,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
         );
         let trade = trades
             .iter()
-            .find(|trade| trade.trade_uuid == bytes16_to_hex(trade_id))
+            .find(|trade| trade.trade_uuid == bytes16_to_uuid_string(trade_id))
             .unwrap();
         assert_eq!(
             trade.status,
@@ -503,29 +515,29 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
                 .as_u64()
         };
         assert_eq!(trade.status_updated_at, Some(verdict_timestamp));
-        for id in [[index + 1; 16], [index + 11; 16]] {
+        for id in [crate::helpers::entity_bytes(index + 1), crate::helpers::entity_bytes(index + 11)] {
             assert_eq!(registry.method::<_, u8>("getStatus", id)?.call().await?, 2);
             let order = app
                 .db_wrapper
                 .orders()
-                .get_order_by_id(&bytes16_to_hex(id).into())
+                .get_order_by_id(&bytes16_to_uuid_string(id).into())
                 .await?
                 .unwrap();
             assert_eq!(order.status, OrderStatus::Executed);
             assert_eq!(order.status_updated_at, Some(timestamp));
         }
-        for id in [[index + 31; 16], [index + 41; 16]] {
+        for id in [crate::helpers::entity_bytes(index + 31), crate::helpers::entity_bytes(index + 41)] {
             assert_eq!(registry.method::<_, u8>("getStatus", id)?.call().await?, 1);
             let order = app
                 .db_wrapper
                 .orders()
-                .get_order_by_id(&bytes16_to_hex(id).into())
+                .get_order_by_id(&bytes16_to_uuid_string(id).into())
                 .await?
                 .unwrap();
             assert_eq!(order.status, OrderStatus::Submitted);
         }
         replay.push(DeliveryVerification {
-            trade_uuid: bytes16_to_hex(trade_id),
+            trade_uuid: bytes16_to_uuid_string(trade_id),
             buyer_penalty_cost: if index == 2 { penalty } else { 0 },
             seller_penalty_cost: if index == 1 { penalty } else { 0 },
         });
@@ -611,7 +623,8 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
         );
         let listener_task = tokio::spawn(async move { listener.run().await });
         tokio::time::sleep(Duration::from_secs(1)).await;
-        let market_id = [0x99u8; 16];
+        app.db_wrapper.ids().get_or_create("community".into()).await?;
+        let market_id = crate::helpers::entity_bytes(0x99u8);
         let slot = 1800u64;
         let now = client
             .get_block(BlockNumber::Latest)
@@ -624,7 +637,7 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
             "createMarkets",
             (vec![(
                 market_id,
-                [0x77u8; 16],
+                actor_bytes("community"),
                 now,
                 now + 3600,
                 slot,
@@ -634,12 +647,25 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
             )],),
         )
         .await?;
+        for owner in ["a", "b", "c", "d"] {
+            app.db_wrapper
+                .facilities()
+                .store(vec![FacilitySchema {
+                    valid_from: primitives::utils::EPOCH_RFC3339.to_string(),
+                    valid_until: None,
+                    facility_id: format!("meter-{owner}"),
+                    facility_name: format!("meter-{owner}"),
+                    site_id: "site".into(),
+                    owner_id: owner.into(),
+                }])
+                .await?;
+        }
         let pairs = [("a", "b", 40000u64), ("a", "c", 60000), ("d", "a", 20000)];
         for (index, (buyer, seller, energy)) in pairs.iter().enumerate() {
             let index = index as u8;
             let bid = (
-                [index + 1; 16],
-                create_encrypted_bytes16_from_string(buyer),
+                crate::helpers::entity_bytes(index + 1),
+                actor_bytes(buyer),
                 market_id,
                 slot,
                 now,
@@ -652,8 +678,8 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
                 0u64,
             );
             let offer = (
-                [index + 11; 16],
-                create_encrypted_bytes16_from_string(seller),
+                crate::helpers::entity_bytes(index + 11),
+                actor_bytes(seller),
                 market_id,
                 slot,
                 now,
@@ -668,7 +694,7 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
             send(&registry, "placeOrder", (bid,)).await?;
             send(&registry, "placeOrder", (offer,)).await?;
             let matched = (
-                [index + 21; 16],
+                crate::helpers::entity_bytes(index + 21),
                 bid,
                 offer,
                 [0u8; 16],
@@ -699,7 +725,7 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
                 .trades()
                 .get_all_trades()
                 .await
-                .unwrap()
+                .unwrap_or_default()
                 .len()
                 != 3
             {
@@ -707,19 +733,6 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
             }
         })
         .await?;
-        for owner in ["a", "b", "c", "d"] {
-            app.db_wrapper
-                .facilities()
-                .store(vec![FacilitySchema {
-                    facility_id: format!("meter-{owner}"),
-                    facility_name: format!("meter-{owner}"),
-                    site_id: "site".into(),
-                    owner_id: owner.into(),
-                    valid_from: EPOCH_RFC3339.to_string(),
-                    valid_until: None,
-                }])
-                .await?;
-        }
         let measurement = |owner: &str, energy| MeasurementSchema {
             facility_id: format!("meter-{owner}"),
             community_uuid: "community".into(),
@@ -754,9 +767,14 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
         };
         tokio::time::timeout(Duration::from_secs(10), async {
             loop {
-                let trades = app.db_wrapper.trades().get_all_trades().await.unwrap();
+                let trades = app
+                    .db_wrapper
+                    .trades()
+                    .get_all_trades()
+                    .await
+                    .unwrap_or_default();
                 if trades.iter().any(|trade| {
-                    trade.trade_uuid == bytes16_to_hex([21; 16]) && trade.status == first_status
+                    trade.trade_uuid == bytes16_to_uuid_string(crate::helpers::entity_bytes(21)) && trade.status == first_status
                 }) {
                     assert_eq!(
                         trades
@@ -782,7 +800,7 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
         );
         assert_eq!(
             settlement
-                .method::<_, U256>("penaltyEnergyByTrade", [21u8; 16])?
+                .method::<_, U256>("penaltyEnergyByTrade", crate::helpers::entity_bytes(21u8))?
                 .call()
                 .await?,
             U256::from(a_shares[0])
@@ -825,7 +843,7 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
                 .orders()
                 .get_all_orders()
                 .await
-                .unwrap()
+                .unwrap_or_default()
                 .iter()
                 .filter(|order| order.status == OrderStatus::Executed)
                 .count()
@@ -859,7 +877,7 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
             pairs.iter().zip(costs).enumerate()
         {
             let index = index as u8;
-            let trade_id = [index + 21; 16];
+            let trade_id = crate::helpers::entity_bytes(index + 21);
             assert_eq!(
                 verifications
                     .iter()
@@ -873,7 +891,7 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
                         .iter()
                         .filter(|event| event.trade_id == trade_id
                             && event.penalized_actor_id
-                                == create_encrypted_bytes16_from_string(party))
+                                == actor_bytes(party))
                         .map(|event| event.penalty_energy)
                         .sum::<u64>(),
                     cost
@@ -889,7 +907,7 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
             assert_eq!(
                 trades
                     .iter()
-                    .find(|trade| trade.trade_uuid == bytes16_to_hex(trade_id))
+                    .find(|trade| trade.trade_uuid == bytes16_to_uuid_string(trade_id))
                     .unwrap()
                     .status,
                 if buyer_cost + seller_cost == 0 {
@@ -898,7 +916,7 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
                     TradeStatus::Penalized
                 }
             );
-            for order_id in [[index + 1; 16], [index + 11; 16]] {
+            for order_id in [crate::helpers::entity_bytes(index + 1), crate::helpers::entity_bytes(index + 11)] {
                 assert_eq!(
                     registry
                         .method::<_, u8>("getStatus", order_id)?
@@ -912,7 +930,7 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
             penalties
                 .iter()
                 .filter(
-                    |event| event.penalized_actor_id == create_encrypted_bytes16_from_string("a")
+                    |event| event.penalized_actor_id == actor_bytes("a")
                 )
                 .map(|event| event.penalty_energy)
                 .sum::<u64>(),
@@ -952,4 +970,8 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
         stop_app(app).await;
     }
     Ok(())
+}
+
+fn actor_bytes(id: &str) -> [u8; 16] {
+    primitives::utils::hex_to_bytes16(&primitives::utils::derive_onchain_id(id)).unwrap()
 }

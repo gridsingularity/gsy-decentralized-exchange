@@ -56,6 +56,14 @@ pub async fn stop_app(app: TestApp) {
         .unwrap();
 }
 
+/// Deterministic UUIDv4 bytes for entity fixtures, never actor identities.
+pub fn entity_bytes(seed: u8) -> [u8; 16] {
+    let mut bytes = [seed; 16];
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    bytes
+}
+
 /// The latest entries of `service`, with `valid_from` set to [`EPOCH_RFC3339`], so that tests
 /// can compare them with what they sent.
 pub async fn stored<T: TopologyEntry>(service: TopologyService<T>) -> Vec<T> {

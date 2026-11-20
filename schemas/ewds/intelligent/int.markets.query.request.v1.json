@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "int.markets.query.request.v1",
+  "title": "marketsQuery request",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "requestId": { "type": "string", "minLength": 1 },
+    "operation": { "const": "markets.query" },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "marketId": { "$ref": "./int.order.schema.v1.json#/properties/marketId" },
+        "communityId": { "$ref": "./int.community.schema.v1.json#/properties/communityId" },
+        "startTime": { "type": "string", "format": "date-time", "description": "Inclusive opening-time range start." },
+        "endTime": { "type": "string", "format": "date-time", "description": "Inclusive opening-time range end." }
+      }
+    }
+  },
+  "required": ["requestId", "operation", "payload"]
+}

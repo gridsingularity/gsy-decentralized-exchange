@@ -122,6 +122,55 @@ async fn post_and_get_pilot_site() {
 }
 
 #[tokio::test]
+async fn community_writes_preserve_exact_ids_and_reject_invalid_values() {
+    let app = init_app().await;
+    let mut community = EnergyCommunitySchema {
+        valid_from: primitives::utils::EPOCH_RFC3339.to_string(),
+        valid_until: None,
+        community_id: "ABCDEFAB-1234-1234-1234-ABCDEFABCDEF".into(),
+        community_name: "Exact".into(),
+        sites: vec![],
+    };
+    let saved = app
+        .db_wrapper
+        .communities()
+        .store(vec![community.clone()])
+        .await
+        .unwrap();
+    assert_eq!(saved[0].community_id, community.community_id);
+    assert_eq!(
+        app.db_wrapper
+            .communities()
+            .store(vec![community.clone()])
+            .await
+            .unwrap(),
+        saved
+    );
+    let client = reqwest::Client::new();
+    for id in ["", " padded", "padded ", "\tcommunity", "community\n"] {
+        community.community_id = id.into();
+        let response = client
+            .post(format!("{}/communities", app.address))
+            .json(&EwdsCommunityDto::from(community.clone()))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 400, "{id}");
+        assert!(app
+            .db_wrapper
+            .communities()
+            .store(vec![community.clone()])
+            .await
+            .is_err());
+    }
+    assert_eq!(
+        app.db_wrapper.communities().get().await.unwrap(),
+        saved
+    );
+    stop_app(app).await;
+}
+
+#[tokio::test]
 async fn post_and_get_communities() {
     let app = init_app().await;
     let address = app.address.clone();

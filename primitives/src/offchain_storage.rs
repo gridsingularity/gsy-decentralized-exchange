@@ -1,7 +1,7 @@
 use crate::db_api_schema::grid_topology::EnergyCommunitySchema;
 use crate::db_api_schema::ids::IdMappingSchema;
 use crate::db_api_schema::market::MarketSchema;
-use crate::db_api_schema::orders::{DbOrderSchema, DbRequirements};
+use crate::db_api_schema::orders::DbOrderSchema;
 use crate::db_api_schema::profiles::{MeasurementPointSchema, MeasurementSchema, TimeseriesSchema};
 use crate::db_api_schema::trades::DbTradeSchema;
 use crate::ewds::dto::{
@@ -10,7 +10,8 @@ use crate::ewds::dto::{
 };
 use crate::ewds::{format_response_body, EwdsClient, EwdsOperation};
 use crate::utils::{
-    bytes16_to_hex, epoch_to_rfc3339, parse_uuid_or_hex_bytes16, timestamp_to_string_with_padding,
+    bytes16_to_hex, epoch_to_rfc3339, normalize_offchain_id,
+    hex_to_bytes16, timestamp_to_string_with_padding,
 };
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
@@ -218,6 +219,7 @@ impl OffchainStorageClient {
     }
 
     pub async fn fetch_onchain_id(&self, offchain_id: &str) -> Result<String> {
+        let offchain_id = normalize_offchain_id(offchain_id)?;
         let mapping: IdMappingSchema = match self.transport {
             OffchainStorageTransport::Ewds => {
                 info!("Fetching onchain_id via EWDS transport");
@@ -237,7 +239,7 @@ impl OffchainStorageClient {
                 let response = self
                     .http_client
                     .post(&url)
-                    .query(&[("offchain_id", offchain_id)])
+                    .query(&[("offchain_id", &offchain_id)])
                     .send()
                     .await?;
                 if !response.status().is_success() {
@@ -250,12 +252,12 @@ impl OffchainStorageClient {
             }
         };
 
-        if mapping.offchain_id != offchain_id {
+        if normalize_offchain_id(&mapping.offchain_id)? != offchain_id {
             return Err(anyhow!(
                 "ID service returned a mapping for a different facility"
             ));
         }
-        let bytes = parse_uuid_or_hex_bytes16(&mapping.onchain_id)
+        let bytes = hex_to_bytes16(&mapping.onchain_id)
             .filter(|bytes| *bytes != [0; 16])
             .ok_or_else(|| anyhow!("Invalid on-chain ID returned for facility {}", offchain_id))?;
         Ok(bytes16_to_hex(bytes))
@@ -520,19 +522,4 @@ impl CommunityProvider for OffchainStorageClient {
             OffchainStorageTransport::Ewds => self.fetch_communities_via_ewds().await,
         }
     }
-}
-
-/// Resolve off-chain owner IDs before converting metadata or matching actor IDs.
-/// Input identifiers are always off-chain IDs, including UUID and hex-shaped strings.
-pub async fn resolve_order_partner_ids(
-    requirements: &mut Option<DbRequirements>,
-    id_mapping_source: &OffchainStorageClient,
-) -> Result<()> {
-    if let Some(partner) = requirements
-        .as_mut()
-        .and_then(|value| value.trading_partner_id.as_mut())
-    {
-        *partner = id_mapping_source.fetch_onchain_id(partner).await?;
-    }
-    Ok(())
 }

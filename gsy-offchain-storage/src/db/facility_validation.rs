@@ -1,12 +1,10 @@
 use super::DatabaseWrapper;
 use anyhow::{Context, Result};
-use futures::TryStreamExt;
-use mongodb::bson::doc;
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::ewds::dto::{
     FacilityMarketValidationReason, FacilityMarketValidationRequest, FacilityMarketValidationResult,
 };
-use primitives::utils::{bytes16_to_hex, parse_uuid_or_hex_bytes16};
+use primitives::utils::{normalize_offchain_id, normalize_uuid};
 use std::collections::HashMap;
 
 impl DatabaseWrapper {
@@ -22,28 +20,22 @@ impl DatabaseWrapper {
             return Ok(Vec::new());
         }
 
-        let market_ids: Vec<String> = requests
+        let market_ids: Vec<Option<String>> = requests
             .iter()
-            .map(|pair| {
-                parse_uuid_or_hex_bytes16(&pair.market_id)
-                    .map(bytes16_to_hex)
-                    .unwrap_or_else(|| pair.market_id.clone())
-            })
+            .map(|pair| normalize_uuid(&pair.market_id).ok())
             .collect();
-        let facility_ids: Vec<&str> = requests
+        let facility_ids: Vec<String> = requests
             .iter()
-            .map(|pair| pair.facility_id.as_str())
+            .filter_map(|pair| normalize_offchain_id(&pair.facility_id).ok())
             .collect();
         let markets: Vec<MarketSchema> = self
             .markets()
-            .find(doc! {"market_id": {"$in": &market_ids}})
-            .await?
-            .try_collect()
+            .get_by_ids(market_ids.iter().flatten().cloned().collect())
             .await
             .context("Failed to read markets for facility validation")?;
         let facilities = self
             .facilities()
-            .get_by_ids(&facility_ids)
+            .get_by_ids(&facility_ids.iter().map(String::as_str).collect::<Vec<_>>())
             .await
             .context("Failed to read facilities for market validation")?;
 
@@ -80,10 +72,14 @@ impl DatabaseWrapper {
             .collect();
         let sites: HashMap<_, _> = sites.iter().map(|site| (&site.site_id, site)).collect();
 
-        let validate_pair = |pair: &FacilityMarketValidationRequest, market_id: &String| {
+        let validate_pair = |pair: &FacilityMarketValidationRequest, market_id: &Option<String>| {
             use FacilityMarketValidationReason::*;
-            let market = markets.get(market_id).ok_or(UnknownMarket)?;
-            let facility = facilities.get(&pair.facility_id).ok_or(UnknownFacility)?;
+            let market = markets
+                .get(market_id.as_ref().ok_or(UnknownMarket)?)
+                .ok_or(UnknownMarket)?;
+            let facility_id =
+                normalize_offchain_id(&pair.facility_id).map_err(|_| UnknownFacility)?;
+            let facility = facilities.get(&facility_id).ok_or(UnknownFacility)?;
             let community = communities
                 .get(&market.community_id)
                 .ok_or(UnknownCommunity)?;
