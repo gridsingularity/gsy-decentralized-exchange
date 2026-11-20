@@ -17,7 +17,7 @@ pub struct Settings {
     #[serde(default = "default_address")]
     pub contract_order_registry: Address,
     #[serde(default = "default_address")]
-    pub contract_trade_settlement: Address,
+    pub contract_trade_matching: Address,
     #[serde(default = "default_address")]
     pub contract_market_controller: Address,
 }

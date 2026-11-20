@@ -32,7 +32,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let listener_config = ListenerConfig {
         node_url: configuration.evm_node_url.clone(),
         order_registry_address: configuration.contract_order_registry,
-        trade_settlement_address: configuration.contract_trade_settlement,
+        trade_matching_address: configuration.contract_trade_matching,
         market_controller_address: configuration.contract_market_controller,
     };
 

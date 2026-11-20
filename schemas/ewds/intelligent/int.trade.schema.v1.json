@@ -61,7 +61,7 @@
       "exclusiveMinimum": 0
     },
     "tradePrice": {
-      "description": "Settled trade price in EUR/kWh. IRI: int:tradePrice. Unit: EUR/kWh.",
+      "description": "Matched trade price in EUR/kWh. IRI: int:tradePrice. Unit: EUR/kWh.",
       "type": "number"
     },
     "timestamp": {

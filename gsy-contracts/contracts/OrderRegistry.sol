@@ -10,7 +10,7 @@ import "./MarketController.sol";
  * @notice Stores order commitments and validities using Intelligent UUID identities.
  */
 contract OrderRegistry is Initializable, AccessControlUpgradeable {
-    bytes32 public constant SETTLEMENT_ROLE = keccak256("SETTLEMENT_ROLE");
+    bytes32 public constant MATCHING_ROLE = keccak256("MATCHING_ROLE");
     bytes32 public constant COMMUNITY_CLIENT_ROLE = keccak256("COMMUNITY_CLIENT_ROLE");
 
     enum OrderStatus {
@@ -142,11 +142,11 @@ contract OrderRegistry is Initializable, AccessControlUpgradeable {
      * @notice Consume an open order and register its remaining quantity atomically.
      * @dev Residual metadata is inherited from the stored order, not supplied by the operator.
      */
-    function settleOrder(
+    function fillOrder(
         bytes16 orderId,
         uint64 selectedEnergy,
         bytes16 residualOrderId
-    ) external onlyRole(SETTLEMENT_ROLE) {
+    ) external onlyRole(MATCHING_ROLE) {
         if (orderStatus(orderId) != OrderStatus.Open) {
             revert OrderNotOpen();
         }
@@ -173,7 +173,7 @@ contract OrderRegistry is Initializable, AccessControlUpgradeable {
     }
 
     /// @notice Complete only the consumed quantity; residual order IDs remain independent.
-    function markExecuted(bytes16 orderId) external onlyRole(SETTLEMENT_ROLE) {
+    function markExecuted(bytes16 orderId) external onlyRole(MATCHING_ROLE) {
         OrderStatus status = storedOrderStatus[orderId];
         if (status != OrderStatus.Filled && status != OrderStatus.PartiallyFilled) {
             revert OrderNotFilled();
@@ -205,12 +205,12 @@ contract OrderRegistry is Initializable, AccessControlUpgradeable {
     }
 
     /**
-     * @notice Update status (called by TradeSettlement).
+     * @notice Update status (called by TradeMatching).
      */
     function updateStatus(
         bytes16 orderId,
         OrderStatus status
-    ) external onlyRole(SETTLEMENT_ROLE) {
+    ) external onlyRole(MATCHING_ROLE) {
         storedOrderStatus[orderId] = status;
         emit OrderStatusUpdated(orderId, status);
     }

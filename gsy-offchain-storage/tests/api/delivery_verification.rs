@@ -37,17 +37,17 @@ async fn deploy_verification_contracts(
         (admin, controller.address()),
     )
     .await?;
-    let settlement = deploy(client, "TradeSettlement", (admin, registry.address())).await?;
+    let trade_matching = deploy(client, "TradeMatching", (admin, registry.address())).await?;
     for (contract, role, account) in [
         (&controller, "ORCHESTRATOR_ROLE", admin),
         (&registry, "COMMUNITY_CLIENT_ROLE", admin),
-        (&registry, "SETTLEMENT_ROLE", settlement.address()),
-        (&settlement, "OPERATOR_ROLE", admin),
-        (&settlement, "EXECUTION_ENGINE_ROLE", admin),
+        (&registry, "MATCHING_ROLE", trade_matching.address()),
+        (&trade_matching, "OPERATOR_ROLE", admin),
+        (&trade_matching, "EXECUTION_ENGINE_ROLE", admin),
     ] {
         send(contract, "grantRole", (keccak256(role), account)).await?;
     }
-    Ok((controller, registry, settlement))
+    Ok((controller, registry, trade_matching))
 }
 
 fn artifact(path: &str) -> Result<(Abi, Bytes)> {
@@ -108,13 +108,13 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
         provider,
         wallet.with_chain_id(anvil.chain_id()),
     ));
-    let (controller, registry, settlement) = deploy_verification_contracts(client.clone()).await?;
+    let (controller, registry, trade_matching) = deploy_verification_contracts(client.clone()).await?;
 
     let listener = GsyEthersListener::new(
         ListenerConfig {
             node_url: anvil.ws_endpoint(),
             order_registry_address: registry.address(),
-            trade_settlement_address: settlement.address(),
+            trade_matching_address: trade_matching.address(),
             market_controller_address: controller.address(),
         },
         OffchainStorageEvmHandler {
@@ -215,8 +215,8 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
             1u32,
         );
         send(
-            &settlement,
-            "settleBatch",
+            &trade_matching,
+            "submitMatches",
             (vec![(vec![matched], clearing)],),
         )
         .await?;
@@ -285,7 +285,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
             && trade.status_updated_at == Some(trade.creation_time)
     }));
     let endpoint = anvil.ws_endpoint();
-    let address = format!("{:?}", settlement.address());
+    let address = format!("{:?}", trade_matching.address());
     // Nothing measured: no completion. Only part measured: complete that part,
     // but keep the slot pending until the last measurement arrives.
     assert_eq!(
@@ -315,7 +315,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
         .await?
         .iter()
         .all(|trade| trade.status == TradeStatus::Matched));
-    assert!(settlement
+    assert!(trade_matching
         .event::<gsy_ethers_listener::DeliveryVerifiedFilter>()
         .from_block(0u64)
         .query()
@@ -374,7 +374,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
     // A penalty submitted separately must not prevent the engine from finishing
     // verification later, or be counted a second time by that verification.
     send(
-        &settlement,
+        &trade_matching,
         "submitPenalties",
         (vec![(
             create_encrypted_bytes16_from_string("buyer-0"),
@@ -450,7 +450,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
         let trade_id = [index + 21; 16];
         let penalty = if index == 0 { 0u64 } else { 200 };
         assert_eq!(
-            settlement
+            trade_matching
                 .method::<_, U256>("penaltyEnergyByTrade", trade_id)?
                 .call()
                 .await?,
@@ -468,7 +468,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
                 TradeStatus::Penalized
             }
         );
-        let events = settlement
+        let events = trade_matching
             .event::<gsy_ethers_listener::DeliveryVerifiedFilter>()
             .from_block(0u64)
             .query_with_meta()
@@ -486,7 +486,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
         let verdict_timestamp = if index == 0 {
             timestamp
         } else {
-            let penalties = settlement
+            let penalties = trade_matching
                 .event::<gsy_ethers_listener::PenaltyRecordedFilter>()
                 .from_block(0u64)
                 .query_with_meta()
@@ -594,14 +594,14 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
             provider,
             wallet.with_chain_id(anvil.chain_id()),
         ));
-        let (controller, registry, settlement) =
+        let (controller, registry, trade_matching) =
             deploy_verification_contracts(client.clone()).await?;
-        let address = format!("{:?}", settlement.address());
+        let address = format!("{:?}", trade_matching.address());
         let listener = GsyEthersListener::new(
             ListenerConfig {
                 node_url: endpoint.clone(),
                 order_registry_address: registry.address(),
-                trade_settlement_address: settlement.address(),
+                trade_matching_address: trade_matching.address(),
                 market_controller_address: controller.address(),
             },
             OffchainStorageEvmHandler {
@@ -687,8 +687,8 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
                 1u32,
             );
             send(
-                &settlement,
-                "settleBatch",
+                &trade_matching,
+                "submitMatches",
                 (vec![(vec![matched], clearing)],),
             )
             .await?;
@@ -772,7 +772,7 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
         })
         .await?;
         assert_eq!(
-            settlement
+            trade_matching
                 .event::<gsy_ethers_listener::DeliveryVerifiedFilter>()
                 .from_block(0u64)
                 .query()
@@ -781,7 +781,7 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
             1
         );
         assert_eq!(
-            settlement
+            trade_matching
                 .method::<_, U256>("penaltyEnergyByTrade", [21u8; 16])?
                 .call()
                 .await?,
@@ -835,12 +835,12 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
             }
         })
         .await?;
-        let penalties = settlement
+        let penalties = trade_matching
             .event::<gsy_ethers_listener::PenaltyRecordedFilter>()
             .from_block(0u64)
             .query()
             .await?;
-        let verifications = settlement
+        let verifications = trade_matching
             .event::<gsy_ethers_listener::DeliveryVerifiedFilter>()
             .from_block(0u64)
             .query()
@@ -880,7 +880,7 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
                 );
             }
             assert_eq!(
-                settlement
+                trade_matching
                     .method::<_, U256>("penaltyEnergyByTrade", trade_id)?
                     .call()
                     .await?,
@@ -932,7 +932,7 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
         .await?;
         assert_eq!(client.get_block_number().await?, block);
         assert_eq!(
-            settlement
+            trade_matching
                 .event::<gsy_ethers_listener::PenaltyRecordedFilter>()
                 .from_block(0u64)
                 .query()
@@ -940,7 +940,7 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
             penalties
         );
         assert_eq!(
-            settlement
+            trade_matching
                 .event::<gsy_ethers_listener::DeliveryVerifiedFilter>()
                 .from_block(0u64)
                 .query()

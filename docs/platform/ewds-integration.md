@@ -29,7 +29,7 @@ Related participant service:
 - `anvil` (or target EVM) hosts contracts.
 - `gsy-market-orchestrator` creates markets on-chain.
 - `gsy-community-client` publishes orders.
-- `gsy-matching-engine` settles matched trades.
+- `gsy-matching-engine` submits matched trades on-chain.
 - `gsy-execution-engine` submits penalties.
 
 ### Off-chain Plane
@@ -146,8 +146,8 @@ EWDS uses `OFFCHAIN_STORAGE_TRANSPORT=ewds` and the responder's existing
 
 The events channels carry fire-and-forget domain events rather than
 request/reply traffic. When `EWDS_ENABLE_HANDLER` is on, the off-chain storage
-publishes a `trade.event` on `trade` after indexing `TradeSettled`,
-`PenaltyRecorded` or a penalty-free `DeliveryVerified`. `TradeSettled` creates
+publishes a `trade.event` on `trade` after indexing `TradeMatched`,
+`PenaltyRecorded` or a penalty-free `DeliveryVerified`. `TradeMatched` creates
 a `Matched` trade once included in a block indexed by the listener, without
 waiting for confirmation depth. No pre-inclusion trade records or notifications are generated. `Settled` is
 reserved for the time the trade has been processed in the Settlement market.

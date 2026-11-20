@@ -189,12 +189,12 @@
                                 "type": "uint256"
                             },
                             {
-                                "internalType": "enum TradeSettlement.MatchType",
+                                "internalType": "enum TradeMatching.MatchType",
                                 "name": "matchType",
                                 "type": "uint8"
                             }
                         ],
-                        "internalType": "struct TradeSettlement.Match[]",
+                        "internalType": "struct TradeMatching.Match[]",
                         "name": "matches",
                         "type": "tuple[]"
                     },
@@ -236,17 +236,17 @@
                                 "type": "uint32"
                             }
                         ],
-                        "internalType": "struct TradeSettlement.ClearingResult",
+                        "internalType": "struct TradeMatching.ClearingResult",
                         "name": "clearingResult",
                         "type": "tuple"
                     }
                 ],
-                "internalType": "struct TradeSettlement.MarketSettlement[]",
-                "name": "settlements",
+                "internalType": "struct TradeMatching.MarketMatchBatch[]",
+                "name": "batches",
                 "type": "tuple[]"
             }
         ],
-        "name": "settleBatch",
+        "name": "submitMatches",
         "outputs": [
 
         ],

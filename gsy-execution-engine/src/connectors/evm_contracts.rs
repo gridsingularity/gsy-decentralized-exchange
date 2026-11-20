@@ -1,7 +1,7 @@
 use ethers::prelude::abigen;
 
 abigen!(
-    TradeSettlementContract,
+    TradeMatchingContract,
     r#"[
         {
             "type": "function",
