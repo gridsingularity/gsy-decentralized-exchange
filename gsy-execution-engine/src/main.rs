@@ -1,7 +1,7 @@
 use ::primitives::{log::setup_logging, utils::timestamp_to_datetime_string};
 use clap::Parser;
 use gsy_execution_engine::{
-    services::execution_orchestrator::run_execution_cycle,
+    services::execution_orchestrator::{finalize_timeslot, run_execution_cycle},
     timeslot_scheduler::TimeslotScheduler,
     utils::cli::{Cli, Commands},
 };
@@ -44,6 +44,7 @@ async fn main() -> anyhow::Result<()> {
             info!("Using off-chain storage URL: {}", offchain_url);
 
             let mut timeslot_scheduler = TimeslotScheduler::from_env()?;
+            let mut finalized_timeslot = None;
 
             loop {
                 let timeslot = timeslot_scheduler.calculate_timeslot();
@@ -65,6 +66,37 @@ async fn main() -> anyhow::Result<()> {
                 .await
                 {
                     error!("Cycle failed for {}: {:?}", timeslot, e);
+                }
+                // Once a slot's grace period is over, close its remaining trades: a party
+                // still without a usable reading is penalized on its whole net position.
+                // Retried until complete, for as long as this is the latest expired slot.
+                if let Some(expired) = timeslot_scheduler
+                    .expired_timeslot()
+                    .filter(|expired| finalized_timeslot != Some(*expired))
+                {
+                    info!(
+                        "Finalizing timeslot {} ({}) after its grace period",
+                        timestamp_to_datetime_string(expired),
+                        expired
+                    );
+                    match finalize_timeslot(
+                        &offchain_url,
+                        &evm_node_url,
+                        &trade_settlement_address,
+                        &execution_engine_private_key,
+                        expired,
+                        penalty_rate,
+                        penalty_tolerance_percent,
+                    )
+                    .await
+                    {
+                        Ok(true) => finalized_timeslot = Some(expired),
+                        Ok(false) => info!(
+                            "Timeslot {} still has trades unknown to the contract; retrying",
+                            expired
+                        ),
+                        Err(e) => error!("Finalization failed for {}: {:?}", expired, e),
+                    }
                 }
                 info!("Sleeping for {}s...", polling_interval);
                 tokio::time::sleep(std::time::Duration::from_secs(polling_interval)).await;
