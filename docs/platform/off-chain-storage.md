@@ -5,7 +5,8 @@
 `gsy-offchain-storage` is the off-chain state API and persistence layer.
 It stores indexed on-chain events plus ontology-aligned market and profile data.
 
-Backend: MongoDB (version pinned in the Compose files).
+Backend: MongoDB (version pinned in the Compose files). Reading communities, sites
+and facilities needs MongoDB 5.2 or later, for the `$top` accumulator.
 
 ## Event Indexing Path
 
@@ -54,7 +55,7 @@ posts them any more.
 - `/trades-normalized` (`POST`)
 - `/trades` (`GET`, `POST`); `GET` follows the `trades.query` rules: `market_id` alone is enough, otherwise both `start_time` and `end_time` are required and span at most 1 day (`400` otherwise)
 - `/market` (`GET`) compatibility adapter for EVM JSON callers
-- `/communities` (`GET`, `POST`) for idempotent community query/upsert
+- `/communities` (`GET`, `POST`) for versioned communities (see Grid Topology)
 - `/markets` (`GET`, `POST`) for ontology-aligned market-opening records;
   records come from `NewMarketCreated`, `POST` remains for manual use
 - `/clearing-results` (`GET`, `POST`)
@@ -74,17 +75,12 @@ posts them any more.
 - `/facilities` (`GET`, `POST`)
 - `/facilities/validate` (`POST`) for read-only bulk facility/market validation
 
-Community writes through HTTP and EWDS accept UUID or 16-byte hex IDs and store
-lowercase hyphenated UUIDs. `GET /communities` and `communities.query` return that
-canonical form. Invalid IDs return HTTP 400 or cause the EWDS event to be dropped
-as invalid; they are not retried as storage failures.
-
-`POST /sites` and `/facilities` create or replace records by `site_name` and
-`facility_id`, respectively, matching the EWDS upsert behavior. Send complete
-records: replacing a site's facility list removes omitted memberships and can
-make those facilities ineligible. A facility name assigned to another ID returns
-409. These topology writes remain unauthenticated; restricting that write surface
-is a separate access-control follow-up.
+`POST /sites` and `/facilities` store a new version of the site or facility
+with that `site_id` or `facility_id`, like the EWDS events. Send complete
+records: a new version of a site's facility list removes omitted memberships and
+can make those facilities ineligible. A name that another valid entry uses
+returns 409. These topology writes remain unauthenticated; restricting that
+write surface is a separate access-control follow-up.
 
 ### Facility Participation Validation
 
@@ -95,8 +91,9 @@ accept UUID or bytes16 hex; results echo the supplied IDs.
 
 Each pair requires an existing market and facility, the facility's site to
 exist and list that facility, and the market's community to exist and list
-that site. The lookup uses the latest stored topology; an ID mapping alone
-does not establish participation. This does not validate market opening times
+that site. The lookup uses the latest version of each facility, site and
+community; deleted ones count as unknown. An ID mapping alone does not
+establish participation. This does not validate market opening times
 or wallet permissions.
 
 HTTP 200 returns one `{facility_id, market_id, eligible, reason?}` per pair,
@@ -115,6 +112,14 @@ orders through this API before resolving IDs and submitting them. Forecast-based
 publication performs the same check. The contract separately requires
 `COMMUNITY_CLIENT_ROLE` for submission and cancellation; eligibility is enforced
 by those trusted services, not by this read-only endpoint or an ID mapping alone.
+
+The `communities`, `sites` and `facilities` collections keep one document per
+version of an entry. `POST` stores a new version unless it equals the latest
+one, and `GET` returns the latest version of each entry without the deleted
+ones; see [Versions and Deletion](ewds-integration.md#versions-and-deletion).
+On startup the service drops the old unique indexes on ids and names, sets a
+missing `valid_from` to `1970-01-01T00:00:00+00:00`, and indexes each
+collection on its id and `valid_from`.
 
 ### ID Mapping
 - The ID service, execution engine and certificate metadata share the deterministic

@@ -46,7 +46,7 @@ jobs:
             RUSTSEC-2026-0368 # zip extraction follows symlinks outside the destination
             RUSTSEC-2026-0369 # zip extraction applies permissions through symlinks
             RUSTSEC-2026-0429 # zip symlink extraction can abort on an oversized allocation
-            RUSTSEC-2026-0545 # zip AES entries returned without an authentication code check
+            RUSTSEC-2026-0545 # zip AES entries returned without checking their authentication code
             RUSTSEC-2026-0548 # zip ZipStreamReader trusts local-header names over the central directory
             # The same inactive zip dependency locks zstd-safe 5.x; keep active versions >=8.2.0.
             RUSTSEC-2026-0403 # legacy streaming decompression can expose uninitialized memory

@@ -21,6 +21,7 @@ use primitives::db_api_schema::profiles::{
 use primitives::db_api_schema::trades::{DbTradeSchema, TradeParameters, TradeStatus};
 use primitives::utils::{
     bytes16_to_hex, create_encrypted_bytes16_from_string, timestamp_to_string_with_padding,
+    EPOCH_RFC3339,
 };
 
 const SLOT: u64 = 1_778_754_600; // 2026-05-14T10:30:00Z, on a 900s boundary
@@ -54,6 +55,8 @@ fn facility(
         facility_name: facility_name.to_string(),
         site_id: site_id.to_string(),
         owner_id: owner_id.to_string(),
+        valid_from: EPOCH_RFC3339.to_string(),
+        valid_until: None,
     }
 }
 
@@ -62,6 +65,8 @@ fn community(community_id: &str, sites: &[&str]) -> EnergyCommunitySchema {
         community_id: community_id.to_string(),
         community_name: format!("{community_id}-name"),
         sites: sites.iter().map(|site| site.to_string()).collect(),
+        valid_from: EPOCH_RFC3339.to_string(),
+        valid_until: None,
     }
 }
 

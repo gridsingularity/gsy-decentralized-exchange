@@ -85,9 +85,14 @@ Used by `measurements.query` responses and `measurements.event` messages.
 
 ### Facility and Site Mapping
 
-`facility.event` and `site.event` messages carry lists of
-`FacilitySchema` and `SiteSchema` unchanged, so their fields are snake_case
-(`facility_id`, `site_name`, ...), like `facilities.query` responses.
+`facility.event` and `site.event` messages carry lists of `EwdsFacilityDto`
+and `EwdsSiteDto`, the form `facilities.query` responses and the REST API use.
+Their fields are snake_case, like `FacilitySchema` and `SiteSchema`:
+
+- Facility: `facility_id`, `facility_name`, `site_id`, `owner_id`,
+  `valid_from`, `valid_until`. Its `site_id` is the `site_id` of its site.
+- Site: `site_id`, `site_name`, `site_description`, `facilities`,
+  `valid_from`, `valid_until`.
 
 ### Community Mapping
 
@@ -96,6 +101,19 @@ Used by `measurements.query` responses and `measurements.event` messages.
 | `int:communityId` | `communityId` | `EnergyCommunitySchema.community_id` |
 | `int:communityName` | `communityName` | `EnergyCommunitySchema.community_name` |
 | site membership | `sites` | `EnergyCommunitySchema.sites` |
+| version time | `validFrom` | `EnergyCommunitySchema.valid_from` |
+| deletion time | `validUntil` | `EnergyCommunitySchema.valid_until` |
+
+### Validity Times
+
+`valid_from` (`validFrom` for communities) is the time the off-chain storage
+received a version of a community, site or facility. It sets the value itself
+and ignores one that is sent. `valid_until` (`validUntil`) marks the entry as
+deleted from that time on. Both are RFC 3339 strings. A sent time may have any
+offset; it is stored and returned in UTC with whole seconds, e.g.
+`2026-12-01T00:00:00+00:00`, so that the stored times compare correctly as
+strings. An invalid time rejects the whole event. See
+[Versions and Deletion](ewds-integration.md#versions-and-deletion).
 
 ### Trade Mapping
 

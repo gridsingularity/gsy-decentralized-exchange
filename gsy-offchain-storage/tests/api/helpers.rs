@@ -1,8 +1,10 @@
 use gsy_offchain_storage::configuration::get_configuration;
+use gsy_offchain_storage::db::grid_topology_service::{TopologyEntry, TopologyService};
 use gsy_offchain_storage::db::{delete_database, init_database, DatabaseWrapper};
 use gsy_offchain_storage::http_server::run_http_server;
 use once_cell::sync::Lazy;
 use primitives::log::setup_logging;
+use primitives::utils::EPOCH_RFC3339;
 use std::net::TcpListener;
 use uuid::Uuid;
 
@@ -52,4 +54,14 @@ pub async fn stop_app(app: TestApp) {
     delete_database(configuration.get_connection_string(), app.db_name)
         .await
         .unwrap();
+}
+
+/// The latest entries of `service`, with `valid_from` set to [`EPOCH_RFC3339`], so that tests
+/// can compare them with what they sent.
+pub async fn stored<T: TopologyEntry>(service: TopologyService<T>) -> Vec<T> {
+    let mut entries = service.get().await.unwrap();
+    entries
+        .iter_mut()
+        .for_each(|entry| entry.set_valid_from(EPOCH_RFC3339.to_string()));
+    entries
 }

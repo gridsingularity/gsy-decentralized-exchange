@@ -8,7 +8,7 @@ use gsy_market_orchestrator::orchestrator::{
 use primitives::constants::GLOBAL_CONSTANTS;
 use primitives::db_api_schema::grid_topology::EnergyCommunitySchema;
 use primitives::offchain_storage::CommunityProvider;
-use primitives::utils::{generate_market_id, parse_uuid_or_hex_bytes16};
+use primitives::utils::{generate_market_id, parse_uuid_or_hex_bytes16, EPOCH_RFC3339};
 use primitives::MarketType;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
@@ -141,6 +141,8 @@ fn community_with_id(community_id: &str) -> EnergyCommunitySchema {
         community_id: community_id.to_string(),
         community_name: "Community One".to_string(),
         sites: vec!["site-one".to_string()],
+        valid_from: EPOCH_RFC3339.to_string(),
+        valid_until: None,
     }
 }
 

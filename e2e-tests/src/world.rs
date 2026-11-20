@@ -7,6 +7,7 @@ use primitives::db_api_schema::grid_topology::{FacilitySchema, SiteSchema};
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::profiles::{ForecastSchema, MeasurementSchema};
 use primitives::db_api_schema::trades::DbTradeSchema;
+use primitives::ewds::dto::EwdsSiteDto;
 use primitives::offchain_storage::OffchainStorageClient;
 use primitives::utils::parse_uuid_or_hex_bytes16;
 use reqwest::Client;
@@ -253,13 +254,16 @@ impl MyWorld {
                 .or_default()
                 .push(facility.facility_id.clone());
         }
-        for (site_name, facilities) in sites {
+        for (site_id, facilities) in sites {
             let response = self.http_client
                 .post(format!("{}/sites", self.offchain_storage_url))
-                .json(&SiteSchema {
-                    site_name,
+                .json(&EwdsSiteDto {
+                    site_name: site_id.clone(),
+                    site_id,
                     site_description: "E2E site".into(),
                     facilities,
+                    valid_from: None,
+                    valid_until: None,
                 })
                 .send()
                 .await
