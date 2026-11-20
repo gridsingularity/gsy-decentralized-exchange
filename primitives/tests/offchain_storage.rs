@@ -8,13 +8,13 @@ use primitives::db_api_schema::profiles::{
 };
 use primitives::db_api_schema::trades::{DbTradeSchema, TradeParameters, TradeStatus};
 use primitives::ewds::dto::{
-    EwdsCommunityDto, EwdsMarketDto, EwdsMeasurementDto, EwdsOrderDto, EwdsTradeDto,
-    FacilityMarketValidationRequest, FacilityMarketValidationResult,
+    EwdsCommunityDto, EwdsFacilityDto, EwdsMarketDto, EwdsMeasurementDto, EwdsOrderDto,
+    EwdsTradeDto, FacilityMarketValidationRequest, FacilityMarketValidationResult,
 };
 use primitives::offchain_storage::{
     CommunityProvider, OffchainStorageClient, OffchainStorageTransport,
 };
-use primitives::utils::{epoch_to_rfc3339, timestamp_to_string_with_padding};
+use primitives::utils::{epoch_to_rfc3339, timestamp_to_string_with_padding, EPOCH_RFC3339};
 use serde_json::{json, Value};
 use std::env;
 use std::sync::{Arc, Mutex};
@@ -31,7 +31,18 @@ fn base_facility(facility_id: &str, owner_id: &str) -> FacilitySchema {
         facility_name: facility_id.to_string(),
         site_id: "site 1".to_string(),
         owner_id: owner_id.to_string(),
+        valid_from: EPOCH_RFC3339.to_string(),
+        valid_until: None,
     }
+}
+
+/// `facilities` as the off-chain storage sends them.
+fn facility_dtos(facilities: &[FacilitySchema]) -> Vec<EwdsFacilityDto> {
+    facilities
+        .iter()
+        .cloned()
+        .map(EwdsFacilityDto::from)
+        .collect()
 }
 
 /// Mounts the EWDS gateway's send/poll endpoints on `server`, answering every
@@ -263,7 +274,7 @@ async fn fetches_facility_owner_mapping_over_http() {
     ];
     Mock::given(method("GET"))
         .and(path("/facilities"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(&facilities))
+        .respond_with(ResponseTemplate::new(200).set_body_json(facility_dtos(&facilities)))
         .mount(&server)
         .await;
 
@@ -346,7 +357,12 @@ async fn fetches_facility_owner_mapping_over_ewds() {
         base_facility("AIS1-House-1", "owner 1"),
         base_facility("AIS1-House-2", "owner 2"),
     ];
-    mount_ewds_query(&server, "facilities.query", json!(facilities)).await;
+    mount_ewds_query(
+        &server,
+        "facilities.query",
+        json!(facility_dtos(&facilities)),
+    )
+    .await;
     set_ewds_env(&server);
 
     let client = OffchainStorageClient::new(
@@ -475,16 +491,28 @@ async fn fetches_communities_over_http() {
             community_id: "11111111-1111-4111-8111-111111111111".to_string(),
             community_name: "Community One".to_string(),
             sites: vec!["site-one".to_string()],
+            valid_from: EPOCH_RFC3339.to_string(),
+            valid_until: None,
         },
         EnergyCommunitySchema {
             community_id: "22222222-2222-4222-8222-222222222222".to_string(),
             community_name: "Community Two".to_string(),
             sites: vec!["site-two".to_string()],
+            valid_from: EPOCH_RFC3339.to_string(),
+            valid_until: None,
         },
     ];
     Mock::given(method("GET"))
         .and(path("/communities"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(&communities))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(
+                communities
+                    .iter()
+                    .cloned()
+                    .map(EwdsCommunityDto::from)
+                    .collect::<Vec<_>>(),
+            ),
+        )
         .mount(&server)
         .await;
 
@@ -563,6 +591,8 @@ async fn fetches_communities_over_ewds() {
         community_id: "11111111-1111-4111-8111-111111111111".to_string(),
         community_name: "Community One".to_string(),
         sites: vec!["site-one".to_string()],
+        valid_from: None,
+        valid_until: None,
     }];
     mount_ewds_query(&server, "communities.query", json!(communities)).await;
     set_ewds_env(&server);

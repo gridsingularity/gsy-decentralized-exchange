@@ -70,13 +70,20 @@ pub struct EnergyCommunitySchema {
     pub community_id: String,
     pub community_name: String,
     pub sites: Vec<String>,
+    pub valid_from: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valid_until: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct SiteSchema {
+    pub site_id: String,
     pub site_name: String,
     pub site_description: String,
     pub facilities: Vec<String>,
+    pub valid_from: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valid_until: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -85,6 +92,9 @@ pub struct FacilitySchema {
     pub facility_name: String,
     pub site_id: String,
     pub owner_id: String,
+    pub valid_from: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valid_until: Option<String>,
 }
 
 impl FacilitySchema {
@@ -99,7 +109,7 @@ impl FacilitySchema {
 
 impl SiteSchema {
     pub fn normalize_ids(mut self) -> anyhow::Result<Self> {
-        self.site_name = crate::utils::normalize_offchain_id(&self.site_name)?;
+        self.site_id = crate::utils::normalize_offchain_id(&self.site_id)?;
         self.facilities = self
             .facilities
             .iter()
@@ -107,6 +117,18 @@ impl SiteSchema {
             .collect::<anyhow::Result<Vec<_>>>()?;
         let mut seen = std::collections::HashSet::new();
         self.facilities.retain(|id| seen.insert(id.clone()));
+        Ok(self)
+    }
+}
+
+impl EnergyCommunitySchema {
+    pub fn normalize_ids(mut self) -> anyhow::Result<Self> {
+        self.community_id = crate::utils::normalize_offchain_id(&self.community_id)?;
+        self.sites = self
+            .sites
+            .iter()
+            .map(|id| crate::utils::normalize_offchain_id(id))
+            .collect::<anyhow::Result<Vec<_>>>()?;
         Ok(self)
     }
 }

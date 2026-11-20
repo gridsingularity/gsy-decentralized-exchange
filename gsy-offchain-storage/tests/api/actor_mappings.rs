@@ -30,20 +30,16 @@ async fn topology_registers_actor_mappings_over_http_and_ewds_before_orders_exis
                 "sites",
                 EwdsEventType::Site,
                 json!({
-                    "site_name": "Site-A", "site_description": "Site", "facilities": ["LIC01", "not-yet-registered"]
+                    "site_id": "Site-A", "site_name": "Site display name", "site_description": "Site", "facilities": ["LIC01", "not-yet-registered"]
                 }),
             ),
             (
                 "communities",
                 EwdsEventType::Community,
-                if ewds {
-                    json!({"communityId": community, "communityName": "Community", "sites": ["Site-A"]})
-                } else {
-                    json!({"community_id": community, "community_name": "Community", "sites": ["Site-A"]})
-                },
+                json!({"communityId": community, "communityName": "Community", "sites": ["Site-A"]}),
             ),
         ] {
-            // Event replay and repeated HTTP upserts must not replace mappings.
+            // Event replay and repeated HTTP writes must not replace mappings or add versions.
             for _ in 0..2 {
                 if ewds {
                     handle_event(
@@ -84,6 +80,14 @@ async fn topology_registers_actor_mappings_over_http_and_ewds_before_orders_exis
             assert_eq!(mappings[0].offchain_id, id);
         }
         assert_eq!(db.ids().count_documents(doc! {}).await.unwrap(), 4);
+        assert_eq!(db.facilities().count_documents(doc! {}).await.unwrap(), 1);
+        assert_eq!(db.sites().count_documents(doc! {}).await.unwrap(), 1);
+        assert!(db
+            .ids()
+            .filter(None, Some("Site display name".into()))
+            .await
+            .unwrap()
+            .is_empty());
         assert_eq!(db.orders().count_documents(doc! {}).await.unwrap(), 0);
         assert!(db
             .ids()
@@ -92,9 +96,38 @@ async fn topology_registers_actor_mappings_over_http_and_ewds_before_orders_exis
             .unwrap()
             .is_empty());
 
-        let mut facility = db.facilities().get_by_name("PV").await.unwrap().unwrap();
+        let mut facility = db
+            .facilities()
+            .get_by_ids(&["LIC01"])
+            .await
+            .unwrap()
+            .remove(0);
         facility.owner_id = "new-owner".into();
-        db.facilities().upsert(facility).await.unwrap();
+        db.facilities().store(vec![facility.clone()]).await.unwrap();
+        let client = primitives::offchain_storage::OffchainStorageClient::new(
+            primitives::offchain_storage::OffchainStorageTransport::Http,
+            app.address.clone(),
+            "UNUSED",
+            "unused",
+        );
+        assert_eq!(
+            client.fetch_facility_owner_mapping().await.unwrap(),
+            std::collections::HashMap::from([("LIC01".into(), "new-owner".into())])
+        );
+        assert_eq!(db.facilities().count_documents(doc! {}).await.unwrap(), 2);
+        assert_eq!(
+            db.facilities().get().await.unwrap()[0].owner_id,
+            "new-owner"
+        );
+        facility.valid_until = Some(primitives::utils::EPOCH_RFC3339.to_string());
+        db.facilities().store(vec![facility]).await.unwrap();
+        assert!(db.facilities().get().await.unwrap().is_empty());
+        assert!(client
+            .fetch_facility_owner_mapping()
+            .await
+            .unwrap()
+            .is_empty());
+        assert_eq!(db.facilities().count_documents(doc! {}).await.unwrap(), 3);
         assert_eq!(
             db.ids()
                 .filter(None, Some(owner.into()))
@@ -116,6 +149,57 @@ async fn topology_registers_actor_mappings_over_http_and_ewds_before_orders_exis
 }
 
 #[tokio::test]
+async fn invalid_topology_batch_registers_neither_ids_nor_versions() {
+    for event_type in [EwdsEventType::Site, EwdsEventType::Community] {
+        let app = init_app().await;
+        let data = if event_type == EwdsEventType::Site {
+            json!([
+                {"site_id": "valid", "site_name": "Valid", "site_description": "", "facilities": []},
+                {"site_id": " invalid", "site_name": "Invalid", "site_description": "", "facilities": []}
+            ])
+        } else {
+            json!([
+                {"communityId": "valid", "communityName": "Valid", "sites": []},
+                {"communityId": "invalid-reference", "communityName": "Invalid", "sites": [" padded "]}
+            ])
+        };
+        let error = handle_event(
+            &app.db_wrapper,
+            EwdsEventEnvelope {
+                event_id: "invalid-topology".into(),
+                event_type,
+                occurred_at: "2026-11-19T00:00:00Z".into(),
+                data,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(primitives::ewds::is_invalid_event(&error));
+        assert_eq!(
+            app.db_wrapper.ids().count_documents(doc! {}).await.unwrap(),
+            0
+        );
+        assert_eq!(
+            app.db_wrapper
+                .sites()
+                .count_documents(doc! {})
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            app.db_wrapper
+                .communities()
+                .count_documents(doc! {})
+                .await
+                .unwrap(),
+            0
+        );
+        stop_app(app).await;
+    }
+}
+
+#[tokio::test]
 async fn mapping_failure_does_not_publish_topology_or_replace_existing_mapping() {
     let app = init_app().await;
     let db = &app.db_wrapper;
@@ -126,18 +210,19 @@ async fn mapping_failure_does_not_publish_topology_or_replace_existing_mapping()
     };
     db.ids().insert_one(&existing).await.unwrap();
     let facility = FacilitySchema {
+        valid_from: primitives::utils::EPOCH_RFC3339.to_string(),
+        valid_until: None,
         facility_id: "LIC01".into(),
         facility_name: "PV".into(),
         site_id: "Site-A".into(),
         owner_id: "owner".into(),
     };
-    for insert in [false, true] {
-        let error = if insert {
-            db.facilities().insert(facility.clone()).await
-        } else {
-            db.facilities().upsert(facility.clone()).await
-        }
-        .unwrap_err();
+    for _ in 0..2 {
+        let error = db
+            .facilities()
+            .store(vec![facility.clone()])
+            .await
+            .unwrap_err();
         assert!(error
             .to_string()
             .contains("does not match ACTOR_ID_HASH_KEY"));
@@ -164,6 +249,8 @@ async fn community_mapping_must_succeed_before_topology_is_written() {
     let app = init_app().await;
     let db = &app.db_wrapper;
     let community = EnergyCommunitySchema {
+        valid_from: primitives::utils::EPOCH_RFC3339.to_string(),
+        valid_until: None,
         community_id: "Community-MiXeD/LIC01".into(),
         community_name: "Community".into(),
         sites: vec![],
@@ -174,18 +261,17 @@ async fn community_mapping_must_succeed_before_topology_is_written() {
         creation_time: 1,
     };
     db.ids().insert_one(&wrong_mapping).await.unwrap();
-    for insert in [false, true] {
-        let error = if insert {
-            db.communities().insert(community.clone()).await
-        } else {
-            db.communities().upsert(community.clone()).await
-        }
-        .unwrap_err();
+    for _ in 0..2 {
+        let error = db
+            .communities()
+            .store(vec![community.clone()])
+            .await
+            .unwrap_err();
         assert!(error
             .to_string()
             .contains("does not match ACTOR_ID_HASH_KEY"));
     }
-    assert!(db.communities().get_all().await.unwrap().is_empty());
+    assert!(db.communities().get().await.unwrap().is_empty());
     assert_eq!(
         db.ids()
             .filter(None, Some(community.community_id))

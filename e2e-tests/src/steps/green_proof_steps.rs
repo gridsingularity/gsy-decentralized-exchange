@@ -9,6 +9,7 @@
 //! scenario run; the seeded documents are deleted by the last step (and the whole database
 //! is cleared after every scenario by `main.rs`, preserving its indexes).
 
+use primitives::utils::EPOCH_RFC3339;
 use crate::utils::test_database;
 use crate::world::{GreenProofSeed, MyWorld};
 use cucumber::{given, then, when};
@@ -112,18 +113,23 @@ async fn seed_executed_pv_sale(world: &mut MyWorld, energy_kwh: f64, export_kwh:
             community_id: seed.community_id.clone(),
             community_name: format!("GoO E2E Community {run}"),
             sites: vec![seed.site_id.clone()],
+            valid_from: EPOCH_RFC3339.to_string(),
+            valid_until: None,
         })
         .await
         .expect("Failed to seed the community");
 
     db.collection::<SiteSchema>("sites")
         .insert_one(SiteSchema {
+            site_id: seed.site_id.clone(),
             site_name: seed.site_id.clone(),
             site_description: "Guarantees-of-origin e2e site".to_string(),
             facilities: vec![
                 seed.seller_facility_id.clone(),
                 seed.buyer_facility_id.clone(),
             ],
+            valid_from: EPOCH_RFC3339.to_string(),
+            valid_until: None,
         })
         .await
         .expect("Failed to seed the site");
@@ -138,6 +144,8 @@ async fn seed_executed_pv_sale(world: &mut MyWorld, energy_kwh: f64, export_kwh:
         facility_name: format!("{facility_id}-name"),
         site_id: seed.site_id.clone(),
         owner_id: owner_id.clone(),
+        valid_from: EPOCH_RFC3339.to_string(),
+        valid_until: None,
     })
     .collect::<Vec<_>>();
     db.collection::<FacilitySchema>("facilities")

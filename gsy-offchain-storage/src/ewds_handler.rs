@@ -1,3 +1,4 @@
+use primitives::ewds::dto::EwdsFacilityDto;
 use crate::certificates::query::{guarantees_of_origin, validate_window};
 use crate::db::DatabaseWrapper;
 use anyhow::{anyhow, Result};
@@ -567,7 +568,7 @@ pub async fn handle_request(
                 request_id
             );
 
-            let data = db.communities().get_all().await.map(|rows| {
+            let data = db.communities().get().await.map(|rows| {
                 rows.into_iter()
                     .map(EwdsCommunityDto::from)
                     .collect::<Vec<_>>()
@@ -693,7 +694,11 @@ pub async fn handle_request(
         }
         EwdsOperation::FacilitiesQuery => {
             let request_id = envelope.request_id;
-            let data = db.facilities().get_all().await;
+            let data = db.facilities().get().await.map(|rows| {
+                rows.into_iter()
+                    .map(EwdsFacilityDto::from)
+                    .collect::<Vec<_>>()
+            });
 
             send_query_response(client, config, request_id, response_topic.as_str(), data).await
         }

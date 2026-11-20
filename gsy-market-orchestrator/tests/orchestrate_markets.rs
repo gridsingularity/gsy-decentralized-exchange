@@ -1,3 +1,4 @@
+use primitives::utils::EPOCH_RFC3339;
 use async_trait::async_trait;
 use ethers::types::Address;
 use gsy_market_orchestrator::chain_connector::{MarketChainClient, MarketKey, NewMarket};
@@ -186,6 +187,8 @@ fn community_with_id(community_id: &str) -> EnergyCommunitySchema {
         community_id: community_id.to_string(),
         community_name: "Community One".to_string(),
         sites: vec!["site-one".to_string()],
+        valid_from: EPOCH_RFC3339.to_string(),
+        valid_until: None,
     }
 }
 

@@ -1,3 +1,4 @@
+use primitives::ewds::dto::EwdsFacilityDto;
 use primitives::db_api_schema::grid_topology::FacilitySchema;
 use primitives::db_api_schema::profiles::{
     FlowDirection, ForecastSchema, MeasurementPointSchema, MeasurementPointType, MeasurementSchema,
@@ -126,7 +127,7 @@ impl AreaMarketInfoAdapter {
         let resp = self
             .client
             .post(&self.internal_facilities_url)
-            .json(&facilities)
+            .json(&EwdsFacilityDto::from(facilities))
             .send()
             .await?;
 

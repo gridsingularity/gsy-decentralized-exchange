@@ -1,6 +1,7 @@
 //! Builder cases for `local_origin_record`s, ported from fedecom to v2 fixtures.
 //! Pure: no database. `GOO_*` env vars must stay unset so the pilot defaults apply.
 
+use primitives::utils::EPOCH_RFC3339;
 use std::collections::HashSet;
 
 use gsy_offchain_storage::certificates::builder::{
@@ -48,6 +49,8 @@ fn facility(
         facility_name: facility_name.to_string(),
         site_id: site_id.to_string(),
         owner_id: owner_id.to_string(),
+        valid_from: EPOCH_RFC3339.to_string(),
+        valid_until: None,
     }
 }
 
@@ -56,6 +59,8 @@ fn community(community_id: &str, sites: &[&str]) -> EnergyCommunitySchema {
         community_id: community_id.to_string(),
         community_name: format!("{community_id}-name"),
         sites: sites.iter().map(|site| site.to_string()).collect(),
+        valid_from: EPOCH_RFC3339.to_string(),
+        valid_until: None,
     }
 }
 

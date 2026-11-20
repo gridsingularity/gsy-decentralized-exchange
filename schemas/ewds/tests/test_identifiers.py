@@ -114,11 +114,14 @@ class IdentifierSchemas(unittest.TestCase):
             ("int.order.schema.v1.json", "preferredTradingPartner"),
             ("int.facility.schema.v1.json", "facility_id"),
             ("int.facility.schema.v1.json", "owner_id"),
+            ("int.facility.schema.v1.json", "site_id"),
+            ("int.site.schema.v1.json", "site_id"),
             ("int.measurement.schema.v1.json", "facilityId"),
             ("int.forecast.schema.v1.json", "facilityId"),
         ]
         schemas = [validator(file).schema["properties"][field] for file, field in fields]
         schemas.append(validator("int.site.schema.v1.json").schema["properties"]["facilities"]["items"])
+        schemas.append(validator("int.community.schema.v1.json").schema["properties"]["sites"]["items"])
         for schema in schemas:
             check = Draft202012Validator(schema)
             for identity in VALID + ["facility-a", "Facility A", "0X" + HEX]:
@@ -126,6 +129,14 @@ class IdentifierSchemas(unittest.TestCase):
                     check.validate(identity)
             for identity in ["", " ", " padded", "padded ", "padded\n"]:
                 self.assertFalse(check.is_valid(identity))
+
+    def test_versioned_site_uses_an_id_separate_from_its_name(self):
+        validator("int.site.schema.v1.json").validate({
+            "site_id": "Site-MiXeD/LIC01", "site_name": " Display name ",
+            "site_description": "", "facilities": ["LIC01PV1"],
+            "valid_from": "2026-11-19T00:00:00+00:00",
+            "valid_until": "2026-12-01T00:00:00+00:00",
+        })
 
     def test_order_submission_lifecycle_and_rejection_forms(self):
         check = validator("int.order.event.v1.json")

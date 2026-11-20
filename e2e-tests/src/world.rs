@@ -1,3 +1,4 @@
+use primitives::ewds::dto::EwdsSiteDto;
 use anyhow::{anyhow, Result};
 use cucumber::World;
 use ethers::prelude::*;
@@ -244,13 +245,16 @@ impl MyWorld {
                 .or_default()
                 .push(facility.facility_id.clone());
         }
-        for (site_name, facilities) in sites {
+        for (site_id, facilities) in sites {
             let response = self.http_client
                 .post(format!("{}/sites", self.offchain_storage_url))
-                .json(&SiteSchema {
-                    site_name,
+                .json(&EwdsSiteDto {
+                    site_name: site_id.clone(),
+                    site_id,
                     site_description: "E2E site".into(),
                     facilities,
+                    valid_from: None,
+                    valid_until: None,
                 })
                 .send()
                 .await

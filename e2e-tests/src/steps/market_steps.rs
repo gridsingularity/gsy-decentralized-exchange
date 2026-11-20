@@ -1,3 +1,4 @@
+use primitives::utils::EPOCH_RFC3339;
 use crate::utils::indexed_bytes16_topic;
 use crate::world::MyWorld;
 use cucumber::{then, when};
@@ -52,18 +53,24 @@ async fn submit_market_forecasts_three_users(
             facility_name: format!("area{}", user1.clone()),
             site_id: "site-12345".to_string(),
             owner_id: user1.clone(),
+            valid_from: EPOCH_RFC3339.to_string(),
+            valid_until: None,
         },
         FacilitySchema {
             facility_id: world.facility_id_for_user(&user2),
             facility_name: format!("area{}", user2.clone()),
             site_id: "site-12345".to_string(),
             owner_id: user2.clone(),
+            valid_from: EPOCH_RFC3339.to_string(),
+            valid_until: None,
         },
         FacilitySchema {
             facility_id: world.facility_id_for_user(&user3),
             facility_name: format!("area{}", user3.clone()),
             site_id: "site-12345".to_string(),
             owner_id: user3.clone(),
+            valid_from: EPOCH_RFC3339.to_string(),
+            valid_until: None,
         },
     ];
     world.create_facilities(facilities.clone()).await;
@@ -111,6 +118,8 @@ async fn submit_uuid_facility_forecasts(world: &mut MyWorld) {
         .into_iter()
         .enumerate()
         .map(|(index, user)| FacilitySchema {
+            valid_from: primitives::utils::EPOCH_RFC3339.to_string(),
+            valid_until: None,
             facility_id: format!("ABCDEFAB-ABCD-ABCD-ABCD-{:012X}", index + 1),
             facility_name: format!("area{user}"),
             site_id: "site-12345".into(),
@@ -270,11 +279,15 @@ async fn submit_two_communities(world: &mut MyWorld) {
             community_id: world.community_id.clone(),
             community_name: format!("E2E Community {}", world.community_id),
             sites: vec!["site-12345".to_string()],
+            valid_from: EPOCH_RFC3339.to_string(),
+            valid_until: None,
         },
         EnergyCommunitySchema {
             community_id: world.secondary_community_id.clone(),
             community_name: format!("E2E Secondary Community {}", world.secondary_community_id),
             sites: vec!["site-12346".to_string()],
+            valid_from: EPOCH_RFC3339.to_string(),
+            valid_until: None,
         },
     ];
 
@@ -291,6 +304,8 @@ async fn submit_two_communities(world: &mut MyWorld) {
                     facility_name: format!("{prefix}area{user}"),
                     site_id: site.to_string(),
                     owner_id: format!("{prefix}{user}"),
+                    valid_from: EPOCH_RFC3339.to_string(),
+                    valid_until: None,
                 })
         })
         .collect();
@@ -327,6 +342,8 @@ async fn upsert_default_community(world: &MyWorld) {
         community_id: world.community_id.clone(),
         community_name: format!("E2E Community {}", world.community_id),
         sites: vec!["site-12345".to_string()],
+        valid_from: EPOCH_RFC3339.to_string(),
+        valid_until: None,
     };
 
     upsert_community(world, &community).await;
@@ -350,7 +367,7 @@ async fn upsert_community_via_http(world: &MyWorld, community: &EnergyCommunityS
     let response = world
         .http_client
         .post(format!("{}/communities", world.offchain_storage_url))
-        .json(community)
+        .json(&EwdsCommunityDto::from(community.clone()))
         .send()
         .await
         .expect("Failed to upsert E2E community");
@@ -364,7 +381,11 @@ async fn upsert_community_via_http(world: &MyWorld, community: &EnergyCommunityS
 
 async fn publish_community_via_ewds(community: &EnergyCommunitySchema) {
     let client = EwdsClient::from_env("EWDS_E2E_CLIENT_ID", "gsye2e", 60_000);
-    let community = EwdsCommunityDto::from(community.clone());
+    // valid_from is set by the off-chain storage.
+    let community = EwdsCommunityDto {
+        valid_from: None,
+        ..EwdsCommunityDto::from(community.clone())
+    };
     let event = EwdsEventEnvelope {
         event_id: Uuid::new_v4().to_string(),
         event_type: EwdsEventType::Community,
@@ -382,7 +403,11 @@ async fn publish_community_via_ewds(community: &EnergyCommunitySchema) {
             .query::<EwdsCommunityDto>(EwdsOperation::CommunitiesQuery, json!({}))
             .await
             .expect("Failed to query E2E communities through EWDS");
-        if communities.contains(&community) {
+        if communities.iter().any(|stored| {
+            stored.community_id == community.community_id
+                && stored.community_name == community.community_name
+                && stored.sites == community.sites
+        }) {
             return;
         }
         sleep(Duration::from_secs(2)).await;

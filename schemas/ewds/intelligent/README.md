@@ -71,5 +71,10 @@ Notes:
   UUIDv4s; order lifecycle, trade and clearing events expose the same lowercase UUID format.
   Their actor fields (`createdBy`, preferred partner, buyer/seller) expose the original
   off-chain identities, not hashes. Missing mappings defer the event in storage.
+- Communities, sites and facilities carry `valid_from` and `valid_until`
+  (`validFrom` and `validUntil` for communities) as RFC 3339 strings in UTC.
+  The off-chain storage sets `valid_from` to the time it received the entry. A
+  sender sets `valid_until` to delete an entry from that time on. Sites are
+  identified by `site_id`, which a facility's `site_id` refers to.
 - These schemas are versioned as `v1` and should be registered as EWDS topic
   schemas when the corresponding topics are managed with `topiccreator`.

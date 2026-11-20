@@ -14,6 +14,7 @@ use gsy_execution_engine::{
 use gsy_offchain_storage::{
     db::measurements_service::insert_measurements, evm_handler::OffchainStorageEvmHandler,
 };
+use primitives::utils::EPOCH_RFC3339;
 use primitives::{
     db_api_schema::{
         grid_topology::FacilitySchema, orders::OrderStatus, profiles::MeasurementSchema,
@@ -222,12 +223,14 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
         .await?;
         app.db_wrapper
             .facilities()
-            .upsert(FacilitySchema {
+            .store(vec![FacilitySchema {
                 facility_id: facility.clone(),
                 facility_name: facility.clone(),
                 site_id: "site".into(),
                 owner_id: buyer,
-            })
+                valid_from: EPOCH_RFC3339.to_string(),
+                valid_until: None,
+            }])
             .await?;
         measurements.push(MeasurementSchema {
             facility_id: facility,
@@ -238,12 +241,14 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
         });
         app.db_wrapper
             .facilities()
-            .upsert(FacilitySchema {
+            .store(vec![FacilitySchema {
                 facility_id: seller_facility.clone(),
                 facility_name: seller_facility.clone(),
                 site_id: "site".into(),
                 owner_id: format!("seller-{index}"),
-            })
+                valid_from: EPOCH_RFC3339.to_string(),
+                valid_until: None,
+            }])
             .await?;
         seller_measurements.push(MeasurementSchema {
             facility_id: seller_facility,
@@ -645,12 +650,14 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
         for owner in ["a", "b", "c", "d"] {
             app.db_wrapper
                 .facilities()
-                .upsert(FacilitySchema {
+                .store(vec![FacilitySchema {
+                    valid_from: primitives::utils::EPOCH_RFC3339.to_string(),
+                    valid_until: None,
                     facility_id: format!("meter-{owner}"),
                     facility_name: format!("meter-{owner}"),
                     site_id: "site".into(),
                     owner_id: owner.into(),
-                })
+                }])
                 .await?;
         }
         let pairs = [("a", "b", 40000u64), ("a", "c", 60000), ("d", "a", 20000)];
