@@ -114,6 +114,16 @@ contract MarketController is Initializable, AccessControlUpgradeable {
     /**
      * @notice Check if a market is open for trading at the current block time.
      */
+    /**
+     * @notice Matching algorithm recorded for a market.
+     * @dev A missing market reports the default, `PayAsBid`.
+     */
+    function getMatchingAlgorithm(
+        bytes16 marketId
+    ) external view returns (MatchingAlgorithm) {
+        return _markets[marketId].matchingAlgorithm;
+    }
+
     function isMarketOpen(bytes16 marketId) external view returns (bool) {
         Market storage market = _markets[marketId];
         return
