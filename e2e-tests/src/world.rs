@@ -211,7 +211,7 @@ impl MyWorld {
         if !self.users.contains_key(user_name) {
             panic!("Unknown user '{}'", user_name);
         }
-        let onchain_id = OffchainStorageClient::from_env("E2E_TESTS_CLIENT_ID", "e2e_tests")
+        let onchain_id = OffchainStorageClient::from_env("EWDS_E2E_CLIENT_ID", "gsye2e")
             .fetch_onchain_id(user_name)
             .await
             .expect("failed to fetch onchain id");

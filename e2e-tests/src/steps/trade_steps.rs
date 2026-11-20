@@ -1959,7 +1959,7 @@ async fn verify_penalties_on_chain(world: &mut MyWorld) {
 
 #[then("corresponding clearing results are written to the DB")]
 async fn verify_clearing_results(world: &mut MyWorld) {
-    let clearing_results = OffchainStorageClient::from_env("E2E_TESTS_CLIENT_ID", "e2e_tests")
+    let clearing_results = OffchainStorageClient::from_env("EWDS_E2E_CLIENT_ID", "gsye2e")
         .fetch_clearing_results(&market_id_as_hex(world).to_lowercase())
         .await
         .expect("failed to fetch clearing results");

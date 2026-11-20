@@ -153,7 +153,7 @@ async fn wait_for_market(world: &MyWorld, market_id: [u8; 16]) -> MarketSchema {
 
     let market_controller =
         MarketControllerContract::new(world.market_controller_address, world.provider.clone());
-    let storage = OffchainStorageClient::from_env("E2E_TESTS_CLIENT_ID", "e2e_tests");
+    let storage = OffchainStorageClient::from_env("EWDS_E2E_CLIENT_ID", "gsye2e");
 
     for attempt in 0..MARKET_POLL_ATTEMPTS {
         let is_open = market_controller
