@@ -55,7 +55,7 @@ Notes:
   The off-chain storage sets `valid_from` to the time it received the entry. A
   sender sets `valid_until` to delete an entry from that time on. Sites are
   identified by `site_id`, which a facility's `site_id` refers to.
-- The active DEX EVM settlement path still uses separate runtime DTOs for
+- The active DEX EVM matching path still uses separate runtime DTOs for
   bytes32 hashes, area UUID hashes, and unix timeslots.
 - These schemas are versioned as `v1` and should be registered as EWDS topic
   schemas when the corresponding topics are managed with `topiccreator`.

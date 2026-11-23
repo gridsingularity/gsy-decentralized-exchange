@@ -123,7 +123,7 @@ impl GsyEventHandler for OrderedHandler {
         block_timestamp: u64,
     ) -> Result<()> {
         let mut state = self.0.lock().unwrap();
-        state.events.push(("settled", event.trade_id));
+        state.events.push(("matched", event.trade_id));
         state.order_event_timestamps.push(block_timestamp);
         for id in [event.bid_id, event.offer_id] {
             if let Some((_, executed)) = state.orders.get_mut(&id) {
@@ -252,8 +252,8 @@ async fn residual_events_are_processed_in_chain_order_from_the_correct_contracts
                     ("placed", id(base + 1)),
                     ("placed", id(base + 2)),
                     ("placed", id(base + 3)),
-                    ("settled", id(base + 4)),
-                    ("settled", id(base + 5)),
+                    ("matched", id(base + 4)),
+                    ("matched", id(base + 5)),
                 ]
             );
             assert!(snapshot.missing_orders.is_empty());
