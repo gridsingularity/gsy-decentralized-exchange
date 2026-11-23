@@ -13,7 +13,7 @@ This gives:
 ## Core Building Blocks
 
 - **Target EVM chain**: local Anvil for Docker/e2e, or Energy Web Volta/EWC for remote deployment.
-- **Smart contracts** (`ActorRegistry`, `MarketController`, `OrderRegistry`, `TradeSettlement`).
+- **Smart contracts** (`ActorRegistry`, `MarketController`, `OrderRegistry`, `TradeMatching`).
 - **Event indexing layer** (`gsy-ethers-listener` + `gsy-offchain-storage`).
 - **Business services** (orchestrator, matching engine, execution engine, community client).
 
@@ -23,7 +23,7 @@ This gives:
 flowchart LR
     MO["Market Orchestrator"] -->|createMarkets| MC["MarketController"]
     CC["Community Client"] -->|placeOrder| OR["OrderRegistry"]
-    ME["Matching Engine"] -->|settleBatch| TS["TradeSettlement"]
+    ME["Matching Engine"] -->|submitMatches| TS["TradeMatching"]
     EE["Execution Engine"] -->|submitPenalties| TS
     OR -->|events| EL["gsy-ethers-listener"]
     TS -->|events| EL

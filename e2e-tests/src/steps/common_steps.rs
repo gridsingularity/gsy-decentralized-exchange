@@ -14,7 +14,7 @@ abigen!(
 );
 
 abigen!(
-    TradeSettlementContract,
+    TradeMatchingContract,
     r#"[
         function hasRole(bytes32 role, address account) external view returns (bool)
     ]"#
@@ -60,11 +60,11 @@ async fn services_are_running(world: &mut MyWorld) {
         .get_code(world.order_registry_address, None)
         .await
         .expect("Failed to read OrderRegistry bytecode");
-    let trade_settlement_code = world
+    let trade_matching_code = world
         .provider
-        .get_code(world.trade_settlement_address, None)
+        .get_code(world.trade_matching_address, None)
         .await
-        .expect("Failed to read TradeSettlement bytecode");
+        .expect("Failed to read TradeMatching bytecode");
 
     assert!(
         !market_controller_code.0.is_empty(),
@@ -79,8 +79,8 @@ async fn services_are_running(world: &mut MyWorld) {
         "OrderRegistry is not deployed"
     );
     assert!(
-        !trade_settlement_code.0.is_empty(),
-        "TradeSettlement is not deployed"
+        !trade_matching_code.0.is_empty(),
+        "TradeMatching is not deployed"
     );
 
     println!("Services are running. chain_id={}", chain_id);
@@ -137,8 +137,8 @@ async fn service_accounts_are_authorized(world: &mut MyWorld) {
 
     let market_controller =
         MarketControllerContract::new(world.market_controller_address, world.provider.clone());
-    let trade_settlement =
-        TradeSettlementContract::new(world.trade_settlement_address, world.provider.clone());
+    let trade_matching =
+        TradeMatchingContract::new(world.trade_matching_address, world.provider.clone());
 
     let orchestrator_role = keccak256("ORCHESTRATOR_ROLE");
     let operator_role = keccak256("OPERATOR_ROLE");
@@ -154,7 +154,7 @@ async fn service_accounts_are_authorized(world: &mut MyWorld) {
     );
 
     assert!(
-        trade_settlement
+        trade_matching
             .has_role(operator_role, matching_wallet.address())
             .call()
             .await
@@ -163,7 +163,7 @@ async fn service_accounts_are_authorized(world: &mut MyWorld) {
     );
 
     assert!(
-        trade_settlement
+        trade_matching
             .has_role(execution_role, execution_wallet.address())
             .call()
             .await

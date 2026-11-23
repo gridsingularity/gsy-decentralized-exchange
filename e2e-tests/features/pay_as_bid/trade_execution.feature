@@ -11,7 +11,7 @@ Feature: GSY DEX Trade Execution
     And "alice" submits a bid
     And "bob" submits an offer
     And measurements for facilities are submitted
-    Then the matching engine matches the bid and offer and a trade is settled on-chain
+    Then the matching engine matches the bid and offer on-chain
     And the trade has "alice" as buyer and "bob" as seller
     And the execution engine submits penalties for the trade
     And corresponding clearing results are written to the DB
