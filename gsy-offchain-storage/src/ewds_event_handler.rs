@@ -230,9 +230,9 @@ pub async fn handle_event(db: &DatabaseWrapper, envelope: EwdsEventEnvelope<Valu
             let measurements = parse_batch(envelope.data, |measurement: EwdsMeasurementDto| {
                 let mut measurement = MeasurementSchema::try_from(measurement)?;
                 measurement.facility_id =
-                    primitives::utils::normalize_offchain_id(&measurement.facility_id)?;
+                    primitives::utils::validate_offchain_actor_id(&measurement.facility_id)?;
                 measurement.community_uuid =
-                    primitives::utils::normalize_offchain_id(&measurement.community_uuid)?;
+                    primitives::utils::validate_offchain_actor_id(&measurement.community_uuid)?;
                 Ok(measurement)
             })?;
             retry_db_write(|| insert_measurements(db, &measurements)).await?;

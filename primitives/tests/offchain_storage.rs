@@ -789,7 +789,6 @@ fn order_dto() -> EwdsOrderDto {
         status: OrderStatus::Filled,
         status_updated_at: Some(TIMESLOT),
         order_type: OrderEnum::Bid,
-        area_uuid: "buyer-1".to_string(),
         market_id: "market-1".to_string(),
         time_slot: TIMESLOT,
         creation_time: TIMESLOT - 60,

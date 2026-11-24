@@ -29,8 +29,6 @@ pub struct DbOrderSchema {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status_updated_at: Option<u64>,
     pub order_type: OrderEnum,
-    /// Original off-chain owner identity, matching `created_by` for indexed orders.
-    pub area_uuid: String,
     pub market_id: String,
     pub time_slot: u64,
     pub creation_time: u64,

@@ -262,7 +262,6 @@ async fn market_queries_accept_uuid_case_variants_over_http_and_ewds() {
                 created_by: "buyer".to_string(),
                 energy_kWh: 1.0,
                 energy_rate: 10.0,
-                area_uuid: "facility".to_string(),
                 market_id: id.clone(),
                 time_slot: TRADES_BASE_TIME,
                 creation_time: TRADES_BASE_TIME,

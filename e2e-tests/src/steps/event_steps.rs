@@ -395,30 +395,12 @@ fn order_dto(
 /// places on-chain. Waits until both are indexed, then mines to the next matching block.
 #[when(expr = "a bid by {string} and an offer by {string} are published on EWDS")]
 async fn publish_order_event(world: &mut MyWorld, buyer_name: String, seller_name: String) {
-    let bid = order_dto(world, buyer_name.as_str(), true, 2.0, 20.0);
-    let offer = order_dto(world, seller_name.as_str(), false, 2.0, 5.0);
-    publish_order_pair(world, bid, offer).await;
-}
-
-#[when("orders with mixed-case UUID spellings are published on EWDS")]
-async fn publish_uuid_orders(world: &mut MyWorld) {
-    let mut bid = order_dto(world, "alice", true, 2.0, 20.0);
-    let mut offer = order_dto(world, "bob", false, 2.0, 5.0);
-    bid.order_id.make_ascii_uppercase();
-    offer.order_id.make_ascii_uppercase();
+    let mut bid = order_dto(world, &buyer_name, true, 2.0, 20.0);
+    let mut offer = order_dto(world, &seller_name, false, 2.0, 5.0);
     for order in [&mut bid, &mut offer] {
-        order.market_id = Uuid::from_bytes(uuid_v4_to_bytes16(&order.market_id).unwrap())
-            .to_string()
-            .to_uppercase();
+        order.order_id.make_ascii_uppercase();
+        order.market_id.make_ascii_uppercase();
     }
-    bid.preferred_trading_partner = Some("bob".to_string());
-    offer.preferred_trading_partner = Some("alice".to_string());
-    bid.preferred_energy_rate = Some(15.0);
-    offer.preferred_energy_rate = Some(12.0);
-    publish_order_pair(world, bid, offer).await;
-}
-
-async fn publish_order_pair(world: &mut MyWorld, bid: EwdsOrderDto, offer: EwdsOrderDto) {
     // Both orders take one block each, and must land in the same matching interval.
     align_to_matching_window(world, 2).await;
 
@@ -437,6 +419,8 @@ async fn publish_order_pair(world: &mut MyWorld, bid: EwdsOrderDto, offer: EwdsO
             uuid_v4_to_bytes16(order.order_id.as_str()).expect("order IDs are UUIDs"),
         );
         let stored = wait_for_order_in_offchain_storage(world, onchain_order_id.as_str()).await;
+        assert_eq!(stored.order_id, onchain_order_id);
+        assert_eq!(stored.market_id, order.market_id.to_ascii_lowercase());
         assert_eq!(
             stored.created_by,
             order.created_by

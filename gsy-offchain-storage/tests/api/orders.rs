@@ -67,7 +67,7 @@ async fn imports_normalize_ids_and_reject_conflicts_before_writing() {
             stored.created_by,
             creator.simple().to_string().to_uppercase()
         );
-        assert_eq!(stored.area_uuid, stored.created_by);
+        assert!(!mongodb::bson::to_document(&stored).unwrap().contains_key("area_uuid"));
         assert_eq!(
             stored
                 .requirements

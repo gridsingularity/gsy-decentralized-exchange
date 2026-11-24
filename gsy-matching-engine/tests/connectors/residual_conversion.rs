@@ -5,8 +5,7 @@ fn db_order(id: u8, side: OrderEnum, energy: f64) -> DbOrderSchema {
     let id = entity_id(id);
     DbOrderSchema {
         order_id: id.clone(),
-        created_by: id.clone(),
-        area_uuid: id,
+        created_by: id,
         market_id: entity_id(99),
         time_slot: 100,
         creation_time: 90,

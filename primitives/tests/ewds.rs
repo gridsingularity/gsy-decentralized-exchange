@@ -54,7 +54,6 @@ mod tests {
             status: OrderStatus::Submitted,
             status_updated_at: None,
             order_type: OrderEnum::Bid,
-            area_uuid: "actor-id".to_string(),
             market_id: "market-id".to_string(),
             time_slot: 10,
             creation_time: 9,

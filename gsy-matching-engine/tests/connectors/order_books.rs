@@ -4,7 +4,6 @@ fn order(id: u8, market: u8, slot: u64, side: OrderEnum) -> EwdsOrderDto {
     EwdsOrderDto::from(DbOrderSchema {
         order_id: entity_id(id),
         created_by: format!("owner-{id}"),
-        area_uuid: format!("owner-{id}"),
         market_id: entity_id(market),
         time_slot: slot,
         creation_time: 90,

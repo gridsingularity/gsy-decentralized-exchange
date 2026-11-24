@@ -11,7 +11,7 @@ use primitives::ewds::dto::{EwdsEventEnvelope, EwdsOrderDto, FacilityMarketValid
 use primitives::ewds::{env_var, invalid_event, parse_batch, EwdsClient, EwdsEventType};
 use primitives::offchain_storage::OffchainStorageClient;
 use primitives::utils::{
-    derive_onchain_id, epoch_to_rfc3339, normalize_offchain_id, normalize_uuid,
+    derive_onchain_id, epoch_to_rfc3339, validate_offchain_actor_id, normalize_uuid,
     hex_to_bytes16, uuid_v4_to_bytes16, NODE_FLOAT_SCALING_FACTOR,
 };
 use serde_json::Value;
@@ -62,7 +62,7 @@ pub async fn start_order_event_subscriber() -> Result<()> {
         OffchainStorageClient::from_env(CONSUMER_CLIENT_ID_ENV, CONSUMER_CLIENT_ID_DEFAULT),
         order_registry,
         ewds_client,
-    );
+    )?;
 
     info!(
         "Starting EWDS order event subscriber (order_registry={})",
@@ -113,12 +113,13 @@ impl OrderEventHandler {
         offchain_storage_client: OffchainStorageClient,
         order_registry: OrderRegistryClient,
         ewds_client: EwdsClient,
-    ) -> Self {
-        Self {
+    ) -> Result<Self> {
+        primitives::actor_ids::initialize_actor_id_hashing()?;
+        Ok(Self {
             offchain_storage_client,
             order_registry,
             ewds_client,
-        }
+        })
     }
 
     /// Sends the orders of an `order.event` to the `OrderRegistry`.
@@ -130,7 +131,6 @@ impl OrderEventHandler {
     /// Infrastructure failures remain retryable, with confirmed orders skipped on retry.
     /// A sent order succeeds only after its receipt confirms successful execution.
     pub async fn handle(&self, envelope: EwdsEventEnvelope<Value>) -> Result<()> {
-        primitives::actor_ids::initialize_actor_id_hashing()?;
         let event_id = envelope.event_id;
         let orders = parse_batch(envelope.data, |submission: EwdsOrderDto| {
             let order = DbOrderSchema::try_from(submission.clone()).and_then(validate_order)?;
@@ -198,7 +198,6 @@ impl OrderEventHandler {
             }
             let order_id = order.order_id.clone();
             order.created_by = derive_onchain_id(&order.created_by);
-            order.area_uuid = order.created_by.clone();
             if let Some(partner) = order
                 .requirements
                 .as_mut()
@@ -601,14 +600,13 @@ pub fn order_params(order: &DbOrderSchema) -> Result<EvmOrderParamsTuple> {
 
 /// The field rules an order from EWDS has to meet before it is placed.
 pub fn validate_order(mut order: DbOrderSchema) -> Result<DbOrderSchema> {
-    order.created_by = normalize_offchain_id(&order.created_by).context("Invalid createdBy")?;
-    order.area_uuid = order.created_by.clone();
+    order.created_by = validate_offchain_actor_id(&order.created_by).context("Invalid createdBy")?;
     if let Some(partner) = order
         .requirements
         .as_mut()
         .and_then(|requirements| requirements.trading_partner_id.as_mut())
     {
-        *partner = normalize_offchain_id(partner).context("Invalid preferredTradingPartner")?;
+        *partner = validate_offchain_actor_id(partner).context("Invalid preferredTradingPartner")?;
     }
     order.order_id = normalize_uuid(&order.order_id).context("Invalid orderId")?;
     order.market_id = normalize_uuid(&order.market_id).context("Invalid marketId")?;

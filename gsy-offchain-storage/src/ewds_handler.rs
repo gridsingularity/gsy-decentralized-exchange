@@ -18,7 +18,7 @@ use primitives::ewds::{
     remember_id, EwdsEventTopicConfig, EwdsEventType, EwdsOperation, EwdsTopicConfig,
 };
 use primitives::utils::{
-    normalize_uuid, normalize_offchain_id, opt_rfc3339_to_epoch,
+    normalize_uuid, validate_offchain_actor_id, opt_rfc3339_to_epoch,
     timestamp_to_string_with_padding,
 };
 use reqwest::Client;
@@ -513,12 +513,12 @@ pub async fn handle_request(
                     payload
                         .facility_id
                         .as_deref()
-                        .map(normalize_offchain_id)
+                        .map(validate_offchain_actor_id)
                         .transpose()?,
                     payload
                         .community_uuid
                         .as_deref()
-                        .map(normalize_offchain_id)
+                        .map(validate_offchain_actor_id)
                         .transpose()?,
                 ))
             })();
@@ -580,7 +580,7 @@ pub async fn handle_request(
             let request_id = envelope.request_id;
             let query = (|| -> Result<_> {
                 let payload: IdsQueryPayload = serde_json::from_value(envelope.payload)?;
-                normalize_offchain_id(&payload.offchain_id)
+                validate_offchain_actor_id(&payload.offchain_id)
             })();
             let offchain_id = match query {
                 Ok(id) => id,
@@ -656,7 +656,7 @@ pub async fn handle_request(
                 let community_id = payload
                     .community_id
                     .as_deref()
-                    .map(normalize_offchain_id)
+                    .map(validate_offchain_actor_id)
                     .transpose()
                     .map_err(|e| anyhow!("markets.query payload parse error: {}", e))?;
                 let stored_time = |time: Option<String>| {

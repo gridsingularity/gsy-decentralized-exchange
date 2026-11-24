@@ -1,5 +1,5 @@
 use crate::primitives::penalty_calculator::{DeliveryVerification, Penalty};
-use ::primitives::utils::{derive_onchain_id, normalize_offchain_id, hex_to_bytes16, uuid_v4_to_bytes16};
+use ::primitives::utils::{derive_onchain_id, validate_offchain_actor_id, hex_to_bytes16, uuid_v4_to_bytes16};
 use anyhow::{anyhow, Result};
 use ethers::prelude::*;
 use ethers::utils::keccak256;
@@ -88,7 +88,7 @@ fn to_evm_penalties(penalties: Vec<Penalty>) -> Vec<EvmPenaltyTuple> {
                 );
                 return None;
             }
-            if normalize_offchain_id(&penalty.penalized_account).is_err() {
+            if validate_offchain_actor_id(&penalty.penalized_account).is_err() {
                 warn!(
                     "Skipping penalty for trade '{}': invalid off-chain actor ID '{}'",
                     penalty.trade_uuid, penalty.penalized_account

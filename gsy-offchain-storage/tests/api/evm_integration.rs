@@ -521,7 +521,6 @@ async fn test_evm_order_listener_persists_to_db() {
             assert_eq!(order.energy_rate, 0.5);
             assert_eq!(order.creation_time, 1234567890);
             assert_eq!(order.status_updated_at, Some(block_timestamp));
-            assert_eq!(order.area_uuid, "seller-owner");
             assert_eq!(
                 order
                     .requirements

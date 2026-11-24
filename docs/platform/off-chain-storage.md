@@ -28,7 +28,7 @@ insert-only imports, but neither is used by the E2E scenarios or production
 order lifecycle. Orders are submitted through `placeOrder` (directly or through
 the community client's EWDS subscriber), then indexed by the EVM listener.
 Imports validate the whole payload and canonicalize UUIDv4 order and market IDs
-to lowercase UUID text. `createdBy`, `area_uuid` and preferred partners contain
+to lowercase UUID text. `createdBy` and preferred partners contain
 original off-chain owner IDs, preserved exactly. These routes do not submit orders.
 Invalid identifiers return 400. Duplicate canonical IDs within the batch or
 already in storage return 409 before writes. Unique indexes also prevent

@@ -8,7 +8,7 @@ use mongodb::bson::doc;
 use primitives::db_api_schema::trades::DbTradeSchema;
 use primitives::ewds::dto::EwdsTradeDto;
 use primitives::utils::{
-    normalize_uuid, normalize_offchain_id,
+    normalize_uuid, validate_offchain_actor_id,
 };
 use serde::Deserialize;
 use std::collections::HashSet;
@@ -22,8 +22,8 @@ fn normalize_imported_trade(mut trade: DbTradeSchema) -> Result<DbTradeSchema> {
     ] {
         *id = normalize_uuid(id).with_context(|| format!("Invalid {name}"))?;
     }
-    trade.buyer = normalize_offchain_id(&trade.buyer).context("Invalid buyerId")?;
-    trade.seller = normalize_offchain_id(&trade.seller).context("Invalid sellerId")?;
+    trade.buyer = validate_offchain_actor_id(&trade.buyer).context("Invalid buyerId")?;
+    trade.seller = validate_offchain_actor_id(&trade.seller).context("Invalid sellerId")?;
     for (name, residual) in [
         ("residualBidId", &mut trade.residual_bid_id),
         ("residualOfferId", &mut trade.residual_offer_id),

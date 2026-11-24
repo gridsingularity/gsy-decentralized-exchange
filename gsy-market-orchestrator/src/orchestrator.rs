@@ -5,7 +5,7 @@ use primitives::offchain_storage::CommunityProvider;
 use primitives::{
     constants::GLOBAL_CONSTANTS,
     utils::{
-        bytes16_to_uuid_string, derive_onchain_id, normalize_offchain_id, hex_to_bytes16,
+        bytes16_to_uuid_string, derive_onchain_id, validate_offchain_actor_id, hex_to_bytes16,
         timestamp_to_datetime_string,
     },
 };
@@ -100,7 +100,7 @@ where
     let communities = communities
         .iter()
         .filter_map(
-            |community| match normalize_offchain_id(&community.community_id) {
+            |community| match validate_offchain_actor_id(&community.community_id) {
                 Ok(id) => Some(
                     hex_to_bytes16(&derive_onchain_id(&id))
                         .expect("actor ID hashing produces bytes16"),

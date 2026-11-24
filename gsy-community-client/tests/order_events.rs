@@ -235,6 +235,7 @@ async fn handler_with_transport(
             event_topics: EwdsEventTopicConfig::default(),
         }),
     )
+    .unwrap()
 }
 
 async fn rejection_events(server: &MockServer) -> Vec<EwdsEventEnvelope<Vec<EwdsOrderDto>>> {
@@ -1492,7 +1493,6 @@ mod validate_order {
             status: OrderStatus::Submitted,
             status_updated_at: None,
             order_type: OrderEnum::Bid,
-            area_uuid: "owner-1".to_string(),
             market_id: OPEN_MARKET.to_string(),
             time_slot: 1_790_762_400,
             creation_time: 1_790_761_212,
@@ -1524,7 +1524,6 @@ mod validate_order {
         )
         .unwrap();
         assert_eq!(order.created_by, "ABCDEFAB-1234-1234-1234-ABCDEFABCDEF");
-        assert_eq!(order.area_uuid, order.created_by);
         assert_eq!(
             order.requirements.unwrap().trading_partner_id.as_deref(),
             Some("ABCDEFAB-1234-1234-1234-ABCDEFABCDE0")
@@ -1641,7 +1640,6 @@ mod order_params {
             status: OrderStatus::Submitted,
             status_updated_at: None,
             order_type: OrderEnum::Offer,
-            area_uuid: format!("0x{}", "aa".repeat(16)),
             market_id: OPEN_MARKET.to_string(),
             time_slot: 1_790_762_400,
             creation_time: 1_790_761_212,

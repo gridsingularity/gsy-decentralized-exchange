@@ -13,6 +13,8 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 
+pub(crate) const PRIMARY_SITE_ID: &str = "site-12345";
+
 const DEFAULT_PRIVATE_KEY: &str =
     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
@@ -208,7 +210,7 @@ impl MyWorld {
     pub fn facility_id_for_user(&self, user_name: &str) -> String {
         self.facilities_topology
             .iter()
-            .find(|facility| facility.owner_id == user_name && facility.site_id == "site-12345")
+            .find(|facility| facility.owner_id == user_name && facility.site_id == PRIMARY_SITE_ID)
             .map(|facility| facility.facility_id.clone())
             .unwrap_or_else(|| format!("area{user_name}"))
     }

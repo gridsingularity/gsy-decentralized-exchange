@@ -285,7 +285,6 @@ fn make_order(order_id: &str, order_type: OrderEnum) -> DbOrderSchema {
         created_by: "0x00000000000000000000000000000abc".to_string(),
         energy_kWh: 100.0,
         energy_rate: 10.0,
-        area_uuid: "0x00000000000000000000000000000abc".to_string(),
         market_id: "00000000-0000-4000-8000-000000000def".to_string(),
         time_slot: 1,
         creation_time: 1_677_453_190,

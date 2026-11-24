@@ -197,7 +197,6 @@ async fn missing_actor_and_partner_survive_restart_without_blocking_unrelated_in
         .unwrap()
         .unwrap();
     assert_eq!(order.created_by, "LIC01-owner");
-    assert_eq!(order.area_uuid, "LIC01-owner");
     assert_eq!(
         order.requirements.unwrap().trading_partner_id.as_deref(),
         Some("Partner-MiXeD")

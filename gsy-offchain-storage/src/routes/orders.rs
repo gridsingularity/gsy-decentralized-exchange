@@ -7,7 +7,7 @@ use mongodb::error::{ErrorKind, WriteFailure};
 use primitives::db_api_schema::orders::{DbOrderSchema, FlexibilityOrderSchema};
 use primitives::ewds::dto::EwdsOrderDto;
 use primitives::utils::{
-    normalize_uuid, normalize_offchain_id,
+    normalize_uuid, validate_offchain_actor_id,
 };
 use serde::Deserialize;
 use std::collections::HashSet;
@@ -15,14 +15,13 @@ use std::collections::HashSet;
 fn normalize_imported_order(mut order: DbOrderSchema) -> Result<DbOrderSchema> {
     order.order_id = normalize_uuid(&order.order_id).context("Invalid orderId")?;
     order.market_id = normalize_uuid(&order.market_id)?;
-    order.created_by = normalize_offchain_id(&order.created_by).context("Invalid createdBy")?;
-    order.area_uuid = order.created_by.clone();
+    order.created_by = validate_offchain_actor_id(&order.created_by).context("Invalid createdBy")?;
     if let Some(partner) = order
         .requirements
         .as_mut()
         .and_then(|requirements| requirements.trading_partner_id.as_mut())
     {
-        *partner = normalize_offchain_id(partner).context("Invalid preferredTradingPartner")?;
+        *partner = validate_offchain_actor_id(partner).context("Invalid preferredTradingPartner")?;
     }
     Ok(order)
 }

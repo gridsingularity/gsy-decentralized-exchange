@@ -14,7 +14,6 @@ fn order(
         order_id: id.into(),
         order_type: side,
         status: OrderStatus::Submitted,
-        area_uuid: id.into(),
         market_id: "market".into(),
         time_slot: 100,
         creation_time: 90,
@@ -102,7 +101,6 @@ fn self_trades_are_rejected_in_both_phases() {
         ] {
             let mut bid = order("bid", OrderEnum::Bid, 20, bid_partner, Some(15));
             let mut offer = order("offer", OrderEnum::Offer, 10, offer_partner, Some(15));
-            // Different areas must not bypass the same-actor check.
             bid.created_by = "actor".into();
             offer.created_by = "actor".into();
             assert!(run(&algorithm, vec![bid], vec![offer]).is_empty());

@@ -5,7 +5,7 @@ Feature: Delivery deviation penalties
     Given the GSY DEX services are running
     And the DEX service accounts are authorized
     When the Market Orchestrator opens the Spot market for the current delivery slot
-    And forecasts of 10 energy are submitted
+    And forecasts of 10 energy are submitted for facilities with uppercase UUIDs
     And "alice" submits a bid
     And "bob" submits an offer
     Then the matching engine matches the bid and offer and a trade is settled on-chain

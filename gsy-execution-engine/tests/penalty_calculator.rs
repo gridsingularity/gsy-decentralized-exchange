@@ -19,7 +19,6 @@ fn order(order_id: &str, owner_id: &str, is_bid: bool) -> DbOrderSchema {
         } else {
             OrderEnum::Offer
         },
-        area_uuid: actor_id.clone(),
         market_id: "market-1".to_string(),
         time_slot: 1_000,
         creation_time: 900,

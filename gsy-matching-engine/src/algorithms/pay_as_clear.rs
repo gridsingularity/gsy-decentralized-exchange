@@ -206,18 +206,17 @@ mod tests {
         format!("0x{value:032x}")
     }
 
-    fn order(id_value: u8, order_type: OrderEnum, area: u8, energy: u64, rate: u64) -> Order {
+    fn order(id_value: u8, order_type: OrderEnum, owner: u8, energy: u64, rate: u64) -> Order {
         Order {
             order_id: id(id_value),
             order_type,
             status: OrderStatus::Submitted,
-            area_uuid: id(area),
             market_id: id(99),
             time_slot: 1,
             creation_time: 1,
             energy,
             energy_rate: rate,
-            created_by: id(id_value),
+            created_by: id(owner),
             requirements: None,
             attributes: None,
         }

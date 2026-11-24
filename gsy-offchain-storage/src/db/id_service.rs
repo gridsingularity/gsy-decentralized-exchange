@@ -9,7 +9,7 @@ use mongodb::options::ReturnDocument;
 use mongodb::{Collection, IndexModel};
 use primitives::db_api_schema::ids::IdMappingSchema;
 use primitives::utils::{
-    bytes16_to_hex, derive_onchain_id, normalize_offchain_id, hex_to_bytes16,
+    bytes16_to_hex, derive_onchain_id, validate_offchain_actor_id, hex_to_bytes16,
 };
 use std::ops::Deref;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -55,7 +55,7 @@ impl IdService {
             filter_params.insert("onchain_id", bytes16_to_hex(onchain_id));
         }
         if let Some(offchain_id) = offchain_id {
-            filter_params.insert("offchain_id", normalize_offchain_id(&offchain_id)?);
+            filter_params.insert("offchain_id", validate_offchain_actor_id(&offchain_id)?);
         }
         if filter_params.is_empty() {
             bail!("at least one filter field must be provided");
@@ -69,7 +69,7 @@ impl IdService {
         fields(offchain_id = %offchain_id)
     )]
     pub async fn get_or_create(&self, offchain_id: String) -> Result<IdMappingSchema> {
-        let offchain_id = normalize_offchain_id(&offchain_id)?;
+        let offchain_id = validate_offchain_actor_id(&offchain_id)?;
         let onchain_id = derive_onchain_id(&offchain_id);
         let result = self
             .0

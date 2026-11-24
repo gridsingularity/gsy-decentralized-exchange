@@ -1,6 +1,6 @@
 use primitives::utils::EPOCH_RFC3339;
 use crate::utils::indexed_bytes16_topic;
-use crate::world::MyWorld;
+use crate::world::{MyWorld, PRIMARY_SITE_ID};
 use cucumber::{then, when};
 use ethers::prelude::*;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
@@ -51,7 +51,7 @@ async fn submit_market_forecasts_three_users(
         FacilitySchema {
             facility_id: world.facility_id_for_user(&user1),
             facility_name: format!("area{}", user1.clone()),
-            site_id: "site-12345".to_string(),
+            site_id: PRIMARY_SITE_ID.to_string(),
             owner_id: user1.clone(),
             valid_from: EPOCH_RFC3339.to_string(),
             valid_until: None,
@@ -59,7 +59,7 @@ async fn submit_market_forecasts_three_users(
         FacilitySchema {
             facility_id: world.facility_id_for_user(&user2),
             facility_name: format!("area{}", user2.clone()),
-            site_id: "site-12345".to_string(),
+            site_id: PRIMARY_SITE_ID.to_string(),
             owner_id: user2.clone(),
             valid_from: EPOCH_RFC3339.to_string(),
             valid_until: None,
@@ -67,7 +67,7 @@ async fn submit_market_forecasts_three_users(
         FacilitySchema {
             facility_id: world.facility_id_for_user(&user3),
             facility_name: format!("area{}", user3.clone()),
-            site_id: "site-12345".to_string(),
+            site_id: PRIMARY_SITE_ID.to_string(),
             owner_id: user3.clone(),
             valid_from: EPOCH_RFC3339.to_string(),
             valid_until: None,
@@ -112,21 +112,21 @@ fn matching_algorithm_from_env() -> MatchingAlgorithm {
         .unwrap_or_else(|error| panic!("Invalid MATCHING_ALGORITHM: {}", error))
 }
 
-#[when("forecasts use facilities registered with uppercase UUIDs")]
-async fn submit_uuid_facility_forecasts(world: &mut MyWorld) {
+#[when(expr = "forecasts of {float} energy are submitted for facilities with uppercase UUIDs")]
+async fn submit_uuid_facility_forecasts(world: &mut MyWorld, energy: f64) {
     world.facilities_topology = ["alice", "bob", "charlie"]
         .into_iter()
         .enumerate()
         .map(|(index, user)| FacilitySchema {
             valid_from: primitives::utils::EPOCH_RFC3339.to_string(),
             valid_until: None,
-            facility_id: format!("ABCDEFAB-ABCD-ABCD-ABCD-{:012X}", index + 1),
+            facility_id: format!("ABCDEFAB-ABCD-4BCD-ABCD-{:012X}", index + 1),
             facility_name: format!("area{user}"),
-            site_id: "site-12345".into(),
+            site_id: PRIMARY_SITE_ID.into(),
             owner_id: user.into(),
         })
         .collect();
-    submit_market_forecasts(world, 2.0).await;
+    submit_market_forecasts(world, energy).await;
 }
 
 #[when(expr = "forecasts of {float} energy are submitted")]
@@ -278,7 +278,7 @@ async fn submit_two_communities(world: &mut MyWorld) {
         EnergyCommunitySchema {
             community_id: world.community_id.clone(),
             community_name: format!("E2E Community {}", world.community_id),
-            sites: vec!["site-12345".to_string()],
+            sites: vec![PRIMARY_SITE_ID.to_string()],
             valid_from: EPOCH_RFC3339.to_string(),
             valid_until: None,
         },
@@ -297,7 +297,7 @@ async fn submit_two_communities(world: &mut MyWorld) {
     let facilities = ["alice", "bob", "charlie"]
         .into_iter()
         .flat_map(|user| {
-            [("", "site-12345"), ("secondary-", "site-12346")]
+            [("", PRIMARY_SITE_ID), ("secondary-", "site-12346")]
                 .into_iter()
                 .map(move |(prefix, site)| FacilitySchema {
                     facility_id: format!("{prefix}area{user}"),
@@ -341,7 +341,7 @@ async fn upsert_default_community(world: &MyWorld) {
     let community = EnergyCommunitySchema {
         community_id: world.community_id.clone(),
         community_name: format!("E2E Community {}", world.community_id),
-        sites: vec!["site-12345".to_string()],
+        sites: vec![PRIMARY_SITE_ID.to_string()],
         valid_from: EPOCH_RFC3339.to_string(),
         valid_until: None,
     };

@@ -4,7 +4,7 @@ use primitives::db_api_schema::market::MarketSchema;
 use primitives::ewds::dto::{
     FacilityMarketValidationReason, FacilityMarketValidationRequest, FacilityMarketValidationResult,
 };
-use primitives::utils::{normalize_offchain_id, normalize_uuid};
+use primitives::utils::{validate_offchain_actor_id, normalize_uuid};
 use std::collections::HashMap;
 
 impl DatabaseWrapper {
@@ -26,7 +26,7 @@ impl DatabaseWrapper {
             .collect();
         let facility_ids: Vec<String> = requests
             .iter()
-            .filter_map(|pair| normalize_offchain_id(&pair.facility_id).ok())
+            .filter_map(|pair| validate_offchain_actor_id(&pair.facility_id).ok())
             .collect();
         let markets: Vec<MarketSchema> = self
             .markets()
@@ -78,7 +78,7 @@ impl DatabaseWrapper {
                 .get(market_id.as_ref().ok_or(UnknownMarket)?)
                 .ok_or(UnknownMarket)?;
             let facility_id =
-                normalize_offchain_id(&pair.facility_id).map_err(|_| UnknownFacility)?;
+                validate_offchain_actor_id(&pair.facility_id).map_err(|_| UnknownFacility)?;
             let facility = facilities.get(&facility_id).ok_or(UnknownFacility)?;
             let community = communities
                 .get(&market.community_id)

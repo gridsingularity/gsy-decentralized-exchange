@@ -11,7 +11,7 @@ pub use crate::actor_ids::derive_onchain_id;
 /// Entity UUIDs are v4; actor pseudonyms must not pass through this validator.
 pub fn uuid_v4_to_bytes16(value: &str) -> Result<[u8; 16]> {
     let id = Uuid::parse_str(value).map_err(|_| anyhow!("invalid UUIDv4"))?;
-    if !is_hyphenated_uuid(value)
+    if value.len() != uuid::fmt::Hyphenated::LENGTH
         || id.get_version() != Some(uuid::Version::Random)
         || id.get_variant() != uuid::Variant::RFC4122
     {
@@ -41,19 +41,8 @@ pub fn hex_to_bytes16(value: &str) -> Option<[u8; 16]> {
     Some(bytes)
 }
 
-fn is_hyphenated_uuid(value: &str) -> bool {
-    value.len() == 36
-        && value.bytes().enumerate().all(|(index, byte)| {
-            if matches!(index, 8 | 13 | 18 | 23) {
-                byte == b'-'
-            } else {
-                byte.is_ascii_hexdigit()
-            }
-        })
-}
-
 /// Validates an incoming actor identity without changing it.
-pub fn normalize_offchain_id(value: &str) -> Result<String> {
+pub fn validate_offchain_actor_id(value: &str) -> Result<String> {
     if value.is_empty() || value.trim() != value {
         return Err(anyhow!(
             "off-chain ID must be nonempty and have no surrounding whitespace"

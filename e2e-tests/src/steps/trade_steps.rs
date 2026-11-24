@@ -1020,24 +1020,6 @@ async fn submit_single_facility_measurement(world: &mut MyWorld, energy: f64, us
         .expect("Failed to submit the single-facility measurement");
 }
 
-#[when("matching measurements use uppercase UUID references")]
-async fn submit_uuid_measurements(world: &mut MyWorld) {
-    let measurements = [("alice", 2.0), ("bob", -2.0)]
-        .into_iter()
-        .map(|(user, energy_kwh)| MeasurementSchema {
-            facility_id: world.facility_id_for_user(user).to_uppercase(),
-            community_uuid: world.community_id.clone(),
-            energy_kwh,
-            time_slot: world.target_delivery_time,
-            creation_time: 1,
-        })
-        .collect();
-    AreaMarketInfoAdapter::new(Some(world.offchain_storage_url.clone()))
-        .forward_measurement(measurements)
-        .await
-        .expect("Failed to submit UUID measurements");
-}
-
 pub(crate) async fn delivery_verification_timestamp(world: &MyWorld, trade: &DbTradeSchema) -> u64 {
     let settlement = TradeSettlementContract::new(world.trade_settlement_address, world.provider.clone());
     let events = settlement.event::<DeliveryVerifiedFilter>()

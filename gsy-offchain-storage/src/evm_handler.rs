@@ -285,7 +285,6 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             status: OrderStatus::Submitted,
             status_updated_at: Some(block_timestamp),
             order_type: order_enum,
-            area_uuid: created_by_str.clone(),
             market_id: market_id_str,
             time_slot: event.time_slot,
             creation_time: event.creation_time,

@@ -14,7 +14,6 @@ fn order(id: &str, order_type: OrderEnum, energy: u64, energy_rate: u64) -> Orde
         order_id: id.into(),
         order_type,
         status: OrderStatus::Submitted,
-        area_uuid: id.into(),
         market_id: "market".into(),
         time_slot: 1,
         creation_time: 1,

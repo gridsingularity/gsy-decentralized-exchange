@@ -396,7 +396,6 @@ impl TryFrom<EwdsOrderDto> for DbOrderSchema {
             status: order_status_from_ewds(order.order_status.as_str())?,
             status_updated_at: opt_rfc3339_to_epoch(order.updated_at.as_deref())?,
             order_type,
-            area_uuid: order.created_by.clone(),
             market_id: order.market_id,
             time_slot: rfc3339_to_epoch(&order.time_slot)?,
             creation_time: rfc3339_to_epoch(&order.creation_time)?,

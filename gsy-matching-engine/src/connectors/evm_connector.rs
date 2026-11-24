@@ -11,7 +11,7 @@ use primitives::ewds::dto::{order_status_from_ewds, EwdsOrderDto};
 use primitives::ewds::{EwdsClient, EwdsOperation};
 use primitives::matching::matching_block_interval;
 use primitives::utils::{
-    bytes16_to_uuid_string, derive_onchain_id, normalize_offchain_id, normalize_uuid, hex_to_bytes16, uuid_v4_to_bytes16, rfc3339_to_epoch, NODE_FLOAT_SCALING_FACTOR,
+    bytes16_to_uuid_string, derive_onchain_id, validate_offchain_actor_id, normalize_uuid, hex_to_bytes16, uuid_v4_to_bytes16, rfc3339_to_epoch, NODE_FLOAT_SCALING_FACTOR,
 };
 use primitives::MatchingAlgorithm;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -492,7 +492,7 @@ fn convert_requirements(
                 trading_partner_id: requirements
                     .trading_partner_id
                     .as_deref()
-                    .map(normalize_offchain_id)
+                    .map(validate_offchain_actor_id)
                     .transpose()?,
                 energy_type: requirements.energy_type.clone(),
                 preferred_energy_rate: requirements
@@ -518,15 +518,13 @@ fn convert_attributes(
 fn convert_db_order_to_canonical(order: &DbOrderSchema) -> Result<Order> {
     let order_id = normalize_entity_id("order_id", &order.order_id)?;
     let market_id = normalize_entity_id("market_id", &order.market_id)?;
-    let area_uuid = normalize_offchain_id(&order.area_uuid)?;
-    let created_by = normalize_offchain_id(&order.created_by)?;
+    let created_by = validate_offchain_actor_id(&order.created_by)?;
     Ok(match order.order_type {
         OrderEnum::Bid => Order {
             created_by,
             order_id,
             order_type: OrderEnum::Bid,
             status: order.status.clone(),
-            area_uuid,
             market_id,
             time_slot: order.time_slot,
             creation_time: order.creation_time,
@@ -540,7 +538,6 @@ fn convert_db_order_to_canonical(order: &DbOrderSchema) -> Result<Order> {
             order_type: order.order_type.clone(),
             status: order.status.clone(),
             created_by,
-            area_uuid,
             market_id,
             time_slot: order.time_slot,
             creation_time: order.creation_time,
@@ -568,13 +565,13 @@ fn to_evm_order_data(order: &DbOrderSchema, expected_type: OrderEnum) -> Result<
         .as_mut()
         .and_then(|r| r.trading_partner_id.as_mut())
     {
-        *partner = derive_onchain_id(&normalize_offchain_id(partner)?);
+        *partner = derive_onchain_id(&validate_offchain_actor_id(partner)?);
     }
     let metadata = order_metadata_to_contract(requirements.as_ref(), order.attributes.as_ref())?;
 
     Ok(OrderParams {
         order_id: parse_bytes16_field("order_id", order.order_id.as_str())?,
-        created_by: hex_to_bytes16(&derive_onchain_id(&normalize_offchain_id(&order.created_by)?)).expect("actor hash is bytes16"),
+        created_by: hex_to_bytes16(&derive_onchain_id(&validate_offchain_actor_id(&order.created_by)?)).expect("actor hash is bytes16"),
         market_id: parse_bytes16_field("market_id", order.market_id.as_str())?,
         time_slot: order.time_slot,
         creation_time: order.creation_time,

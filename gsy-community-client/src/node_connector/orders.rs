@@ -9,7 +9,7 @@ use primitives::ewds::dto::{EwdsOrderDto, FacilityMarketValidationRequest};
 use primitives::ewds::{env_var, EwdsClient};
 use primitives::offchain_storage::OffchainStorageClient;
 use primitives::utils::{
-    derive_onchain_id, epoch_to_rfc3339, normalize_offchain_id, hex_to_bytes16, uuid_v4_to_bytes16,
+    derive_onchain_id, epoch_to_rfc3339, validate_offchain_actor_id, hex_to_bytes16, uuid_v4_to_bytes16,
     string_to_timestamp, NODE_FLOAT_SCALING_FACTOR,
 };
 
@@ -165,7 +165,7 @@ fn build_order_param(
     let rate_multiplier = if is_bid { BID_RATE } else { OFFER_RATE };
     let metadata = order_metadata_to_contract(None, None)?;
     let onchain_order_id = *Uuid::new_v4().as_bytes();
-    let owner_id = derive_onchain_id(&normalize_offchain_id(owner_id)?);
+    let owner_id = derive_onchain_id(&validate_offchain_actor_id(owner_id)?);
     let onchain_owner_id =
         hex_to_bytes16(&owner_id).context("Invalid on-chain owner ID")?;
     let delivery_start: u64 =

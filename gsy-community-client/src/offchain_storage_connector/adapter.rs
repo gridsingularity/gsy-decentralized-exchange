@@ -5,7 +5,7 @@ use primitives::db_api_schema::profiles::{
     TimeseriesSchema,
 };
 use primitives::utils::{
-    normalize_offchain_id, profile_measurement_id, timestamp_to_string_with_padding,
+    validate_offchain_actor_id, profile_measurement_id, timestamp_to_string_with_padding,
 };
 use reqwest::Client;
 use std::env;
@@ -35,8 +35,8 @@ impl AreaMarketInfoAdapter {
 
     pub async fn forward_forecast(&self, mut forecasts: Vec<ForecastSchema>) -> anyhow::Result<()> {
         for forecast in &mut forecasts {
-            forecast.facility_id = normalize_offchain_id(&forecast.facility_id)?;
-            forecast.community_uuid = normalize_offchain_id(&forecast.community_uuid)?;
+            forecast.facility_id = validate_offchain_actor_id(&forecast.facility_id)?;
+            forecast.community_uuid = validate_offchain_actor_id(&forecast.community_uuid)?;
         }
         let measurement_points = forecasts
             .iter()
@@ -75,8 +75,8 @@ impl AreaMarketInfoAdapter {
         mut measurements: Vec<MeasurementSchema>,
     ) -> anyhow::Result<()> {
         for measurement in &mut measurements {
-            measurement.facility_id = normalize_offchain_id(&measurement.facility_id)?;
-            measurement.community_uuid = normalize_offchain_id(&measurement.community_uuid)?;
+            measurement.facility_id = validate_offchain_actor_id(&measurement.facility_id)?;
+            measurement.community_uuid = validate_offchain_actor_id(&measurement.community_uuid)?;
         }
         let measurement_points = measurements
             .iter()

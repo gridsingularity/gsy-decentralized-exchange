@@ -8,7 +8,7 @@ use primitives::db_api_schema::profiles::{
     TimeseriesSchema,
 };
 use primitives::utils::{
-    normalize_offchain_id, profile_measurement_id, timestamp_to_string_with_padding,
+    validate_offchain_actor_id, profile_measurement_id, timestamp_to_string_with_padding,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -106,11 +106,11 @@ pub async fn post_measurements(
 ) -> impl Responder {
     let mut measurements = measurements.into_inner();
     for measurement in &mut measurements {
-        measurement.facility_id = match normalize_offchain_id(&measurement.facility_id) {
+        measurement.facility_id = match validate_offchain_actor_id(&measurement.facility_id) {
             Ok(id) => id,
             Err(error) => return HttpResponse::BadRequest().body(error.to_string()),
         };
-        measurement.community_uuid = match normalize_offchain_id(&measurement.community_uuid) {
+        measurement.community_uuid = match validate_offchain_actor_id(&measurement.community_uuid) {
             Ok(id) => id,
             Err(error) => return HttpResponse::BadRequest().body(error.to_string()),
         };
@@ -128,7 +128,7 @@ pub async fn get_measurements(
     let facility_id = match query_params
         .facility_id
         .as_deref()
-        .map(normalize_offchain_id)
+        .map(validate_offchain_actor_id)
         .transpose()
     {
         Ok(id) => id,
@@ -137,7 +137,7 @@ pub async fn get_measurements(
     let community_uuid = match query_params
         .community_uuid
         .as_deref()
-        .map(normalize_offchain_id)
+        .map(validate_offchain_actor_id)
         .transpose()
     {
         Ok(id) => id,
@@ -185,11 +185,11 @@ pub async fn get_measurements(
 pub async fn post_forecasts(forecasts: Json<Vec<ForecastSchema>>, db: DbRef) -> impl Responder {
     let mut forecasts = forecasts.into_inner();
     for forecast in &mut forecasts {
-        forecast.facility_id = match normalize_offchain_id(&forecast.facility_id) {
+        forecast.facility_id = match validate_offchain_actor_id(&forecast.facility_id) {
             Ok(id) => id,
             Err(error) => return HttpResponse::BadRequest().body(error.to_string()),
         };
-        forecast.community_uuid = match normalize_offchain_id(&forecast.community_uuid) {
+        forecast.community_uuid = match validate_offchain_actor_id(&forecast.community_uuid) {
             Ok(id) => id,
             Err(error) => return HttpResponse::BadRequest().body(error.to_string()),
         };
@@ -222,7 +222,7 @@ pub async fn get_forecasts(db: DbRef, query_params: Query<ProfilesParameters>) -
     let facility_id = match query_params
         .facility_id
         .as_deref()
-        .map(normalize_offchain_id)
+        .map(validate_offchain_actor_id)
         .transpose()
     {
         Ok(id) => id,
@@ -231,7 +231,7 @@ pub async fn get_forecasts(db: DbRef, query_params: Query<ProfilesParameters>) -
     let community_uuid = match query_params
         .community_uuid
         .as_deref()
-        .map(normalize_offchain_id)
+        .map(validate_offchain_actor_id)
         .transpose()
     {
         Ok(id) => id,

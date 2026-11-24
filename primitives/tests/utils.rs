@@ -1,6 +1,6 @@
 use primitives::utils::{
     bytes16_to_hex, bytes16_to_uuid_string, derive_onchain_id, normalize_uuid,
-    normalize_offchain_id, hex_to_bytes16, uuid_v4_to_bytes16,
+    validate_offchain_actor_id, hex_to_bytes16, uuid_v4_to_bytes16,
 };
 
 #[test]
@@ -126,9 +126,9 @@ fn actor_hash_parser_accepts_only_prefixed_bytes16_hex() {
 }
 
 #[test]
-fn offchain_normalization_preserves_opaque_and_hex_shaped_identities() {
+fn actor_id_validation_preserves_opaque_and_hex_shaped_identities() {
     let uuid = "ABABABAB-ABAB-ABAB-ABAB-ABABABABABAB";
-    assert_eq!(normalize_offchain_id(uuid).unwrap(), uuid);
+    assert_eq!(validate_offchain_actor_id(uuid).unwrap(), uuid);
     for value in [
         "facility-a",
         "Facility-A",
@@ -136,7 +136,7 @@ fn offchain_normalization_preserves_opaque_and_hex_shaped_identities() {
         "ABABABABABABABABABABABABABABABAB",
         "DS-1-MQTT",
     ] {
-        assert_eq!(normalize_offchain_id(value).unwrap(), value);
+        assert_eq!(validate_offchain_actor_id(value).unwrap(), value);
     }
     for value in [
         "",
@@ -146,7 +146,7 @@ fn offchain_normalization_preserves_opaque_and_hex_shaped_identities() {
         "facility-a\n",
         "facility-a\u{a0}",
     ] {
-        assert!(normalize_offchain_id(value).is_err(), "{value:?}");
+        assert!(validate_offchain_actor_id(value).is_err(), "{value:?}");
     }
 }
 
@@ -160,6 +160,6 @@ fn canonical_outputs_round_trip_in_their_identifier_domains() {
     assert_eq!(bytes16_to_hex(hex_to_bytes16(&actor_hash).unwrap()), actor_hash);
     assert!(uuid_v4_to_bytes16(&actor_hash).is_err());
     for actor in ["Facility-A", "ABABABAB-ABAB-4BAB-8BAB-ABABABABABAB", &actor_hash] {
-        assert_eq!(normalize_offchain_id(&normalize_offchain_id(actor).unwrap()).unwrap(), actor);
+        assert_eq!(validate_offchain_actor_id(&validate_offchain_actor_id(actor).unwrap()).unwrap(), actor);
     }
 }

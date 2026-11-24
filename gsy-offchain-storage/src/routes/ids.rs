@@ -10,7 +10,7 @@ pub struct IdsParams {
 
 #[tracing::instrument(name = "get or create ids", skip(db))]
 pub async fn get_or_create_ids(db: DbRef, query_params: Query<IdsParams>) -> impl Responder {
-    let offchain_id = match primitives::utils::normalize_offchain_id(&query_params.offchain_id) {
+    let offchain_id = match primitives::utils::validate_offchain_actor_id(&query_params.offchain_id) {
         Ok(id) => id,
         Err(error) => return HttpResponse::BadRequest().body(error.to_string()),
     };
