@@ -412,8 +412,7 @@ async fn publish_order_event(world: &mut MyWorld, buyer_name: String, seller_nam
         .await
         .expect("Failed to publish the order event");
 
-    // The community client uses the UUID as the on-chain order ID, so the off-chain storage
-    // indexes it as canonical lowercase UUID text.
+    // FOS submits uppercase order IDs; storage indexes the same UUIDs in lowercase with hyphens.
     for order in [&bid, &offer] {
         let onchain_order_id = bytes16_to_uuid_string(
             uuid_v4_to_bytes16(order.order_id.as_str()).expect("order IDs are UUIDs"),
