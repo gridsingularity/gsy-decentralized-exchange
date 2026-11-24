@@ -364,9 +364,10 @@ than a fixed count. Both algorithms also run the shared matching scenarios.
 
 HTTP scenarios submit orders from the E2E runner using `COMMUNITY_CLIENT_PRIVATE_KEY`,
 the same service key provisioned by deployment. The community-client binary only
-runs its EWDS subscriber. The runner uses `gsye2ecommunityclient` for community-client
-EWDS queries, separately from the live subscriber's consumer ID; the local gateway
-must accept that client ID on the response channels.
+runs its EWDS subscriber. The runner uses `EWDS_E2E_COMMUNITY_CLIENT_ID` (default
+`gsye2ecommunityclient`) for community-client EWDS queries, separately from the live
+subscriber's consumer ID; the local gateway must accept that client ID on the response
+channels.
 
 Between scenarios, the runner clears collection contents without dropping unique
 indexes. Lifecycle examples measure only the buyer's facility or only the seller's
@@ -419,6 +420,7 @@ Important EWDS variables for test runs:
 - `EWDS_RATE_LIMIT_BACKOFF_MS`
 - `EWDS_RATE_LIMIT_MAX_BACKOFF_MS`
 - `EWDS_E2E_CLIENT_ID`
+- `EWDS_E2E_COMMUNITY_CLIENT_ID` (default `gsye2ecommunityclient`): the runner's community-client queries
 - `EWDS_COMMUNITY_CLIENT_ID`
 - `EWDS_EVENT_BATCH_SIZE`
 - `EWDS_EVENT_POLL_INTERVAL_MS` (default 1000)
