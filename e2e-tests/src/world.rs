@@ -79,7 +79,7 @@ pub struct MyWorld {
     pub secondary_community_id: String,
     pub market_controller_address: Address,
     pub order_registry_address: Address,
-    pub trade_settlement_address: Address,
+    pub trade_matching_address: Address,
     pub actor_registry_address: Address,
     pub last_market_id: Option<[u8; 16]>,
     pub target_delivery_time: u64,
@@ -138,7 +138,7 @@ impl MyWorld {
 
         let market_controller_address = Self::read_address_env("MARKET_CONTROLLER_ADDRESS")?;
         let order_registry_address = Self::read_address_env("ORDER_REGISTRY_ADDRESS")?;
-        let trade_settlement_address = Self::read_address_env("TRADE_SETTLEMENT_ADDRESS")?;
+        let trade_matching_address = Self::read_address_env("TRADE_MATCHING_ADDRESS")?;
         let actor_registry_address = Self::read_address_env("ACTOR_REGISTRY_ADDRESS")?;
 
         Ok(Self {
@@ -153,7 +153,7 @@ impl MyWorld {
             secondary_community_id: "22222222-2222-4222-8222-222222222222".to_string(),
             market_controller_address,
             order_registry_address,
-            trade_settlement_address,
+            trade_matching_address,
             actor_registry_address,
             last_market_id: None,
             target_delivery_time: 0,

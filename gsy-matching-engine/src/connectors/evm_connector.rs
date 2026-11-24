@@ -22,12 +22,12 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 abigen!(
-    SettleOrderBatchContract,
-    "src/connectors/abi/settle_order_batch.json"
+    SubmitMatchesContract,
+    "src/connectors/abi/submit_matches.json"
 );
 
 // The contract's ClearingResult struct collides with the local ClearingResult model.
-use settle_order_batch_contract::ClearingResult as EvmClearingResult;
+use submit_matches_contract::ClearingResult as EvmClearingResult;
 
 struct PreparedOrders {
     open_bids: Vec<Order>,
@@ -54,7 +54,7 @@ pub struct MarketMatches {
 pub async fn evm_subscribe(
     orderbook_url: String,
     node_url: String,
-    settle_order_batch_address: String,
+    trade_matching_address: String,
     matching_engine_private_key: String,
     matching_algorithm: MatchingAlgorithm,
     pay_as_clear_pricing: PayAsClearPricing,
@@ -87,7 +87,7 @@ pub async fn evm_subscribe(
                 if let Err(error) = run_matching_cycle(
                     orderbook_url.as_str(),
                     node_url.as_str(),
-                    settle_order_batch_address.as_str(),
+                    trade_matching_address.as_str(),
                     matching_engine_private_key.as_str(),
                     &matching_algorithm,
                     pay_as_clear_pricing,
@@ -110,7 +110,7 @@ pub async fn evm_subscribe(
 async fn run_matching_cycle(
     orderbook_url: &str,
     evm_node_url: &str,
-    settle_order_batch_address: &str,
+    trade_matching_address: &str,
     matching_engine_private_key: &str,
     matching_algorithm: &MatchingAlgorithm,
     pay_as_clear_pricing: PayAsClearPricing,
@@ -153,9 +153,9 @@ async fn run_matching_cycle(
         matches_per_market.len(),
         matching_algorithm
     );
-    send_settle_batch_transaction(
+    send_submit_matches_transaction(
         evm_node_url,
-        settle_order_batch_address,
+        trade_matching_address,
         matching_engine_private_key,
         matches_per_market,
         by_order_id,
@@ -270,23 +270,23 @@ pub fn partition_orders_by_market_slot(
         .collect()
 }
 
-pub async fn send_settle_batch_transaction(
+pub async fn send_submit_matches_transaction(
     evm_node_url: &str,
-    settle_order_batch_address: &str,
+    trade_matching_address: &str,
     matching_engine_private_key: &str,
     matches: Vec<MarketMatches>,
     order_lookup: HashMap<String, DbOrderSchema>,
 ) -> Result<()> {
     if matches.is_empty() {
-        info!("No matches to settle");
+        info!("No matches to submit");
         return Ok(());
     }
 
-    let settle_order_batch_address =
-        Address::from_str(settle_order_batch_address).map_err(|e| {
+    let trade_matching_address =
+        Address::from_str(trade_matching_address).map_err(|e| {
             anyhow!(
-                "Invalid trade settlement address '{}': {}",
-                settle_order_batch_address,
+                "Invalid trade matching address '{}': {}",
+                trade_matching_address,
                 e
             )
         })?;
@@ -300,24 +300,24 @@ pub async fn send_settle_batch_transaction(
         .with_chain_id(chain_id);
     let signer_address = wallet.address();
     let client = std::sync::Arc::new(SignerMiddleware::new(provider, wallet));
-    let settle_order_batch =
-        SettleOrderBatchContract::new(settle_order_batch_address, client.clone());
+    let trade_matching =
+        SubmitMatchesContract::new(trade_matching_address, client.clone());
 
     let operator_role = keccak256("OPERATOR_ROLE");
-    let has_role = settle_order_batch
+    let has_role = trade_matching
         .has_role(operator_role, signer_address)
         .call()
         .await?;
     if !has_role {
         warn!(
-            "Signer {:?} does not currently have OPERATOR_ROLE in TradeSettlement",
+            "Signer {:?} does not currently have OPERATOR_ROLE in TradeMatching",
             signer_address
         );
     }
 
-    info!("Submitting {} matches to settleBatch", evm_matches.len());
-    let settle_batch_call = settle_order_batch.settle_batch(evm_matches);
-    let pending_tx = settle_batch_call.send().await?;
+    info!("Submitting {} matches to submitMatches", evm_matches.len());
+    let submit_matches_call = trade_matching.submit_matches(evm_matches);
+    let pending_tx = submit_matches_call.send().await?;
     let tx_hash = pending_tx.tx_hash();
     let receipt = pending_tx.await?;
 
@@ -330,16 +330,16 @@ pub async fn send_settle_batch_transaction(
                 != 1
             {
                 return Err(anyhow!(
-                    "settleBatch transaction {:?} reverted with status {:?}",
+                    "submitMatches transaction {:?} reverted with status {:?}",
                     tx_hash,
                     receipt.status
                 ));
             }
-            info!("settleBatch successful. tx={:?}", tx_hash);
+            info!("submitMatches successful. tx={:?}", tx_hash);
             Ok(())
         }
         None => Err(anyhow!(
-            "settleBatch transaction {:?} dropped without receipt",
+            "submitMatches transaction {:?} dropped without receipt",
             tx_hash
         )),
     }
@@ -657,7 +657,7 @@ fn to_evm_match(
         || item.selected_energy > bid.energy
         || item.selected_energy > offer.energy
     {
-        return Err(anyhow!("Invalid selected energy for settlement"));
+        return Err(anyhow!("Invalid selected energy for match"));
     }
     let residual_bid_id = register_residual(
         &bid,
@@ -692,7 +692,7 @@ fn to_evm_match(
 fn to_evm_matches(
     matches: Vec<MarketMatches>,
     order_lookup: &HashMap<String, DbOrderSchema>,
-) -> Result<Vec<MarketSettlement>> {
+) -> Result<Vec<MarketMatchBatch>> {
     let mut available_orders = order_lookup
         .values()
         .map(|order| {
@@ -709,7 +709,7 @@ fn to_evm_matches(
                 .iter()
                 .map(|item| to_evm_match(item, &mut available_orders, &mut known_ids))
                 .collect::<Result<Vec<_>>>()?;
-            Ok(MarketSettlement {
+            Ok(MarketMatchBatch {
                 matches: bid_offer_matches,
                 clearing_result: to_evm_clearing_result(&market.clearing_result)?,
             })
@@ -735,7 +735,7 @@ fn register_residual(
         if !known_ids.insert(residual_id) {
             return Err(anyhow!("Residual order ID has already been used"));
         }
-        // Mirror OrderRegistry::settleOrder without a floating-point round trip.
+        // Mirror OrderRegistry::fillOrder without a floating-point round trip.
         let mut params = parent.clone();
         params.order_id = residual_id;
         params.energy = remaining_energy;

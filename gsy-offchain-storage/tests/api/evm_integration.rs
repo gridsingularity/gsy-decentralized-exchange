@@ -6,7 +6,7 @@ use ethers::{
 };
 use gsy_ethers_listener::{
     GsyEthersListener, GsyEventHandler, ListenerConfig, NewMarketCreatedFilter,
-    OrderCancelledFilter, OrderPlacedFilter, PenaltyRecordedFilter, TradeSettledFilter,
+    OrderCancelledFilter, OrderPlacedFilter, PenaltyRecordedFilter, TradeMatchedFilter,
 };
 use gsy_offchain_storage::evm_handler::OffchainStorageEvmHandler;
 use primitives::db_api_schema::ids::IdMappingSchema;
@@ -419,7 +419,7 @@ async fn test_evm_order_listener_persists_to_db() {
     let config = ListenerConfig {
         node_url: ws_endpoint.clone(),
         order_registry_address: contract_address,
-        trade_settlement_address: Address::zero(),
+        trade_matching_address: Address::zero(),
         market_controller_address: contract_address,
     };
 
@@ -811,7 +811,7 @@ async fn market_closure_expires_only_submitted_orders_and_preserves_expiry_on_la
 }
 
 #[tokio::test]
-async fn settlement_indexes_fill_statuses_and_keeps_residuals_independent() {
+async fn match_indexes_fill_statuses_and_keeps_residuals_independent() {
     for (partial_bid, partial_offer) in [(false, false), (true, false), (false, true), (true, true)]
     {
         let app = init_app().await;
@@ -847,7 +847,7 @@ async fn settlement_indexes_fill_statuses_and_keeps_residuals_independent() {
                     .unwrap();
             }
         }
-        let event = TradeSettledFilter {
+        let event = TradeMatchedFilter {
             trade_id: crate::helpers::entity_bytes(10),
             bid_id: crate::helpers::entity_bytes(1),
             offer_id: crate::helpers::entity_bytes(2),
@@ -862,7 +862,7 @@ async fn settlement_indexes_fill_statuses_and_keeps_residuals_independent() {
         };
         for timestamp in [980, 981] {
             handler
-                .handle_trade_settled(event.clone(), timestamp)
+                .handle_trade_matched(event.clone(), timestamp)
                 .await
                 .unwrap();
         }
@@ -936,8 +936,8 @@ async fn settlement_indexes_fill_statuses_and_keeps_residuals_independent() {
                 .await
                 .unwrap();
             handler
-                .handle_trade_settled(
-                    TradeSettledFilter {
+                .handle_trade_matched(
+                    TradeMatchedFilter {
                         trade_id: if is_bid { crate::helpers::entity_bytes(11) } else { crate::helpers::entity_bytes(12) },
                         bid_id: if is_bid { residual } else { counterpart },
                         offer_id: if is_bid { counterpart } else { residual },
@@ -1104,7 +1104,7 @@ async fn settlement_indexes_fill_statuses_and_keeps_residuals_independent() {
         }
         let completed_orders = orders.get_all_orders().await.unwrap();
         handler
-            .handle_trade_settled(event.clone(), 1_300)
+            .handle_trade_matched(event.clone(), 1_300)
             .await
             .unwrap();
         assert_eq!(orders.get_all_orders().await.unwrap(), completed_orders);

@@ -7,7 +7,7 @@ use ethers::{
 };
 use gsy_ethers_listener::{
     GsyEthersListener, GsyEventHandler, ListenerConfig, MarketClearingFilter,
-    NewMarketCreatedFilter, OrderCancelledFilter, OrderPlacedFilter, TradeSettledFilter,
+    NewMarketCreatedFilter, OrderCancelledFilter, OrderPlacedFilter, TradeMatchedFilter,
 };
 use std::collections::HashMap;
 use std::fs::File;
@@ -117,13 +117,13 @@ impl GsyEventHandler for OrderedHandler {
         Ok(())
     }
 
-    async fn handle_trade_settled(
+    async fn handle_trade_matched(
         &self,
-        event: TradeSettledFilter,
+        event: TradeMatchedFilter,
         block_timestamp: u64,
     ) -> Result<()> {
         let mut state = self.0.lock().unwrap();
-        state.events.push(("settled", event.trade_id));
+        state.events.push(("matched", event.trade_id));
         state.order_event_timestamps.push(block_timestamp);
         for id in [event.bid_id, event.offer_id] {
             if let Some((_, executed)) = state.orders.get_mut(&id) {
@@ -180,10 +180,10 @@ async fn residual_events_are_processed_in_chain_order_from_the_correct_contracts
         wallet.with_chain_id(anvil.chain_id()),
     ));
     let registry_address = deploy_emitter(client.clone()).await?;
-    let settlement_address = deploy_emitter(client.clone()).await?;
+    let matching_address = deploy_emitter(client.clone()).await?;
     let controller_address = deploy_emitter(client.clone()).await?;
     let registry = MockEmitter::new(registry_address, client.clone());
-    let settlement = MockEmitter::new(settlement_address, client.clone());
+    let trade_matching = MockEmitter::new(matching_address, client.clone());
     let controller = MockEmitter::new(controller_address, client.clone());
     // Do not replay an isolated historical event when starting without a replay cursor.
     registry.emit_cancellation(id(42)).send().await?.await?;
@@ -192,7 +192,7 @@ async fn residual_events_are_processed_in_chain_order_from_the_correct_contracts
         ListenerConfig {
             node_url: anvil.ws_endpoint(),
             order_registry_address: registry_address,
-            trade_settlement_address: settlement_address,
+            trade_matching_address: matching_address,
             market_controller_address: controller_address,
         },
         OrderedHandler(state.clone()),
@@ -205,7 +205,7 @@ async fn residual_events_are_processed_in_chain_order_from_the_correct_contracts
         for same_batch in [true, false] {
             *state.lock().unwrap() = Projection::default();
             let base = if residual_is_bid { 1 } else { 11 };
-            let receipt = settlement
+            let receipt = trade_matching
                 .emit_residual_batch(registry_address, residual_is_bid, same_batch)
                 .send()
                 .await?
@@ -225,7 +225,7 @@ async fn residual_events_are_processed_in_chain_order_from_the_correct_contracts
                     .provider()
                     .request::<_, ()>("evm_setNextBlockTimestamp", [timestamp + 30])
                     .await?;
-                let receipt = settlement
+                let receipt = trade_matching
                     .emit_followup(residual_is_bid)
                     .send()
                     .await?
@@ -252,8 +252,8 @@ async fn residual_events_are_processed_in_chain_order_from_the_correct_contracts
                     ("placed", id(base + 1)),
                     ("placed", id(base + 2)),
                     ("placed", id(base + 3)),
-                    ("settled", id(base + 4)),
-                    ("settled", id(base + 5)),
+                    ("matched", id(base + 4)),
+                    ("matched", id(base + 5)),
                 ]
             );
             assert!(snapshot.missing_orders.is_empty());
@@ -272,13 +272,13 @@ async fn residual_events_are_processed_in_chain_order_from_the_correct_contracts
     *state.lock().unwrap() = Projection::default();
     // Correct signatures from the wrong configured contract must not be dispatched.
     registry.emit_followup(true).send().await?.await?;
-    settlement
+    trade_matching
         .emit_order_placed(id(42), id(100))
         .send()
         .await?
         .await?;
     registry.emit_new_market().send().await?.await?;
-    settlement.emit_cancellation(id(42)).send().await?.await?;
+    trade_matching.emit_cancellation(id(42)).send().await?.await?;
     // A failed handler must retry this block before processing later blocks.
     state.lock().unwrap().fail_next_cancellation = true;
     let receipt = registry
@@ -320,7 +320,7 @@ async fn residual_events_are_processed_in_chain_order_from_the_correct_contracts
     for penalized in [false, true] {
         *state.lock().unwrap() = Projection::default();
         registry.emit_verification(penalized).send().await?.await?;
-        let receipt = settlement
+        let receipt = trade_matching
             .emit_verification(penalized)
             .send()
             .await?
@@ -362,7 +362,7 @@ async fn deploy_emitter(
         pragma solidity ^0.8.0;
         contract MockEmitter {
             event OrderPlaced(bytes16 indexed orderId, bytes16 indexed createdBy, bytes16 indexed marketId, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, uint8 energySourcePreference, uint8 energyType, bool isBid, bytes16 preferredTradingPartner, uint64 preferredEnergyRate);
-            event TradeSettled(bytes16 indexed tradeId, bytes16 indexed bidId, bytes16 indexed offerId, bytes16 buyerId, bytes16 sellerId, bytes16 marketId, uint64 timeSlot, bytes16 residualBidId, bytes16 residualOfferId, uint256 energy, uint256 price);
+            event TradeMatched(bytes16 indexed tradeId, bytes16 indexed bidId, bytes16 indexed offerId, bytes16 buyerId, bytes16 sellerId, bytes16 marketId, uint64 timeSlot, bytes16 residualBidId, bytes16 residualOfferId, uint256 energy, uint256 price);
             event NewMarketCreated(bytes16 indexed marketId, bytes16 indexed communityId, uint64 openingTime, uint64 closingTime, uint64 deliveryStartTime, uint64 deliveryEndTime, uint8 marketType, uint8 matchingAlgorithm, uint64 createdAt);
             event OrderCancelled(bytes16 indexed orderId);
             event PenaltyRecorded(bytes16 indexed penalizedActorId, bytes16 indexed marketId, bytes16 indexed tradeId, uint64 penaltyEnergy);
@@ -382,14 +382,14 @@ async fn deploy_emitter(
                 registry.place(base, residualIsBid ? 100 : 60, true);
                 registry.place(base + 1, residualIsBid ? 60 : 100, false);
                 registry.place(base + 2, 40, !residualIsBid);
-                // Registry emits the residual placement before the settlement event.
+                // Registry emits the residual placement before the TradeMatched event.
                 registry.place(base + 3, 40, residualIsBid);
-                emit TradeSettled(bytes16(base + 4), bytes16(base), bytes16(base + 1), bytes16(uint128(100)), bytes16(uint128(200)), bytes16(uint128(99)), 100, residualIsBid ? bytes16(base + 3) : bytes16(0), residualIsBid ? bytes16(0) : bytes16(base + 3), 60, 50);
+                emit TradeMatched(bytes16(base + 4), bytes16(base), bytes16(base + 1), bytes16(uint128(100)), bytes16(uint128(200)), bytes16(uint128(99)), 100, residualIsBid ? bytes16(base + 3) : bytes16(0), residualIsBid ? bytes16(0) : bytes16(base + 3), 60, 50);
                 if (consumeResidual) emitFollowup(residualIsBid);
             }
             function emitFollowup(bool residualIsBid) public {
                 uint128 base = residualIsBid ? 1 : 11;
-                emit TradeSettled(bytes16(base + 5), bytes16(base + (residualIsBid ? 3 : 2)), bytes16(base + (residualIsBid ? 2 : 3)), bytes16(uint128(100)), bytes16(uint128(200)), bytes16(uint128(99)), 100, bytes16(0), bytes16(0), 40, 50);
+                emit TradeMatched(bytes16(base + 5), bytes16(base + (residualIsBid ? 3 : 2)), bytes16(base + (residualIsBid ? 2 : 3)), bytes16(uint128(100)), bytes16(uint128(200)), bytes16(uint128(99)), 100, bytes16(0), bytes16(0), 40, 50);
             }
             function emitNewMarket() external {
                 emit NewMarketCreated(bytes16(uint128(99)), bytes16(uint128(7)), 1000, 1900, 2000, 2900, 1, 2, 900);

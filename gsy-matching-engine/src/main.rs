@@ -34,7 +34,7 @@ async fn main() -> anyhow::Result<()> {
                     offchain_storage_url.trim_end_matches('/')
                 );
                 let node_url = format!("{}:{}", node_host, node_port);
-                let trade_settlement_address = env::var("TRADE_SETTLEMENT_ADDRESS")
+                let trade_matching_address = env::var("TRADE_MATCHING_ADDRESS")
                     .unwrap_or_else(|_| "0x0000000000000000000000000000000000000000".to_string());
                 let matching_engine_private_key = env::var("MATCHING_ENGINE_PRIVATE_KEY")
                     .unwrap_or_else(|_| {
@@ -57,9 +57,9 @@ async fn main() -> anyhow::Result<()> {
                     PayAsClearPricing::default()
                 };
 
-                if trade_settlement_address == "0x0000000000000000000000000000000000000000" {
+                if trade_matching_address == "0x0000000000000000000000000000000000000000" {
                     info!(
-                        "TRADE_SETTLEMENT_ADDRESS is zero; settlement submissions will fail until configured."
+                        "TRADE_MATCHING_ADDRESS is zero; match submissions will fail until configured."
                     );
                 }
                 info!("Using off-chain storage URL: {}", offchain_storage_url);
@@ -72,7 +72,7 @@ async fn main() -> anyhow::Result<()> {
                     evm_subscribe(
                         orderbook_url.clone(),
                         node_url.clone(),
-                        trade_settlement_address.clone(),
+                        trade_matching_address.clone(),
                         matching_engine_private_key.clone(),
                         matching_algorithm.clone(),
                         pay_as_clear_pricing,
@@ -89,7 +89,7 @@ async fn main() -> anyhow::Result<()> {
                             evm_subscribe(
                                 orderbook_url.clone(),
                                 node_url.clone(),
-                                trade_settlement_address.clone(),
+                                trade_matching_address.clone(),
                                 matching_engine_private_key.clone(),
                                 matching_algorithm.clone(),
                                 pay_as_clear_pricing,

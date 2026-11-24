@@ -279,7 +279,7 @@ mod tests {
     }
 
     #[test]
-    fn settles_preferences_before_the_standard_market() {
+    fn matches_preferences_before_the_standard_market() {
         let mut preferred_bid = order(1, OrderEnum::Bid, 1, 2, 20);
         preferred_bid.requirements = Some(Requirements {
             trading_partner_id: Some(id(2)),

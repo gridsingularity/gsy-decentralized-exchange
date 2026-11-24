@@ -41,13 +41,13 @@ function entityId(): string {
   return `0x${randomUUID().replace(/-/g, "")}`;
 }
 
-function parseSettleBatchSizes(): number[] {
-  const raw = process.env.GAS_REPORT_SETTLE_BATCH_SIZES ?? "1,2,5";
+function parseMatchBatchSizes(): number[] {
+  const raw = process.env.GAS_REPORT_MATCH_BATCH_SIZES ?? "1,2,5";
   const sizes = raw.split(",").map((value) => {
     const parsed = Number(value.trim());
     if (!Number.isSafeInteger(parsed) || parsed <= 0) {
       throw new Error(
-        `Invalid GAS_REPORT_SETTLE_BATCH_SIZES value '${value}'. Expected comma-separated positive integers.`,
+        `Invalid GAS_REPORT_MATCH_BATCH_SIZES value '${value}'. Expected comma-separated positive integers.`,
       );
     }
     return parsed;
@@ -317,10 +317,10 @@ function writeReports(
     "",
     "- View functions are reported as `estimateGas` values only; they do not consume gas when called off-chain.",
     "- Proxy deployment rows include the `TransparentUpgradeableProxy`, the internally created `ProxyAdmin`, and initializer delegatecall gas.",
-    "- `settleBatch(Match[N])` rows are measured for `GAS_REPORT_SETTLE_BATCH_SIZES` values; prerequisite dummy order placements are reported as separate mutating calls.",
+    "- `submitMatches(Match[N])` rows are measured for `GAS_REPORT_MATCH_BATCH_SIZES` values; prerequisite dummy order placements are reported as separate mutating calls.",
     "- Standard (matchType=0) and preferred (matchType=1: buyer-only, seller-only, reciprocal) batches each fill 100000 of a 100000 bid and a 150000 offer per match, at price 12000. Each match includes on-chain creation of a 50000 residual offer.",
     "- Preferred benchmarks set both effective rates to 12000. The counterpart without a preferred partner uses its normal rate when no preferred rate is supplied. Differences include calldata and storage access costs, not just validation instructions.",
-    "- Direct `settleOrder` rows use a benchmark-only settlement role. Production `settleBatch` rows already include these internal calls; do not add their gas again when estimating a trade.",
+    "- Direct `fillOrder` rows use a benchmark-only matching role. Production `submitMatches` rows already include these internal calls; do not add their gas again when estimating a trade.",
     "- Totals include all benchmark fixtures and alternative cases, not the cost of a single production deployment/trading workflow. Local fees are illustrative, not remote-network price estimates.",
     "- Mainnet/Volta values depend on live gas price at execution time.",
     "",
@@ -419,8 +419,8 @@ export async function main() {
     [deployerAddress, marketController.proxyAddress],
     deployer,
   );
-  const tradeSettlement = await deployUpgradeableContract(
-    "TradeSettlement",
+  const tradeMatching = await deployUpgradeableContract(
+    "TradeMatching",
     deployerAddress,
     [deployerAddress, orderRegistry.proxyAddress],
     deployer,
@@ -429,10 +429,10 @@ export async function main() {
   const actorRegistryContract = actorRegistry.contract as any;
   const marketControllerContract = marketController.contract as any;
   const orderRegistryContract = orderRegistry.contract as any;
-  const tradeSettlementContract = tradeSettlement.contract as any;
+  const tradeMatchingContract = tradeMatching.contract as any;
 
   const ORCHESTRATOR_ROLE = ethers.id("ORCHESTRATOR_ROLE");
-  const SETTLEMENT_ROLE = ethers.id("SETTLEMENT_ROLE");
+  const MATCHING_ROLE = ethers.id("MATCHING_ROLE");
   const COMMUNITY_CLIENT_ROLE = ethers.id("COMMUNITY_CLIENT_ROLE");
   const OPERATOR_ROLE = ethers.id("OPERATOR_ROLE");
   const EXECUTION_ENGINE_ROLE = ethers.id("EXECUTION_ENGINE_ROLE");
@@ -452,31 +452,31 @@ export async function main() {
   );
   await recordTx(
     "Role setup",
-    "grantRole(SETTLEMENT_ROLE, TradeSettlement)",
+    "grantRole(MATCHING_ROLE, TradeMatching)",
     "OrderRegistry",
     orderRegistryContract.grantRole(
-      SETTLEMENT_ROLE,
-      tradeSettlement.proxyAddress,
+      MATCHING_ROLE,
+      tradeMatching.proxyAddress,
     ),
   );
   await recordTx(
     "Role setup",
-    "grantRole(SETTLEMENT_ROLE, benchmark signer)",
+    "grantRole(MATCHING_ROLE, benchmark signer)",
     "OrderRegistry",
-    orderRegistryContract.grantRole(SETTLEMENT_ROLE, deployerAddress),
-    "Benchmark-only grant used to measure updateStatus and settleOrder directly.",
+    orderRegistryContract.grantRole(MATCHING_ROLE, deployerAddress),
+    "Benchmark-only grant used to measure updateStatus and fillOrder directly.",
   );
   await recordTx(
     "Role setup",
     "grantRole(OPERATOR_ROLE)",
-    "TradeSettlement",
-    tradeSettlementContract.grantRole(OPERATOR_ROLE, deployerAddress),
+    "TradeMatching",
+    tradeMatchingContract.grantRole(OPERATOR_ROLE, deployerAddress),
   );
   await recordTx(
     "Role setup",
     "grantRole(EXECUTION_ENGINE_ROLE)",
-    "TradeSettlement",
-    tradeSettlementContract.grantRole(EXECUTION_ENGINE_ROLE, deployerAddress),
+    "TradeMatching",
+    tradeMatchingContract.grantRole(EXECUTION_ENGINE_ROLE, deployerAddress),
   );
   await recordTx(
     "Role setup",
@@ -488,7 +488,7 @@ export async function main() {
   const actorRegistryRegistrar = actorRegistryContract.connect(
     actorRegistrar,
   ) as any;
-  const settleBatchSizes = parseSettleBatchSizes();
+  const matchBatchSizes = parseMatchBatchSizes();
   const buyerActor = actorId("gas:buyer-actor");
   const sellerActor = actorId("gas:seller-actor");
   const revokedActor = actorId("gas:revoked-actor");
@@ -687,38 +687,38 @@ export async function main() {
     "updateStatus(bytes16,OrderStatus)",
     "OrderRegistry",
     orderRegistryContract.updateStatus(statusOrderId, 2),
-    "Measured with benchmark-only settlement role granted to deployer.",
+    "Measured with benchmark-only matching role granted to deployer.",
   );
 
   const directOrder = { ...bidOrder, orderId: entityId() };
   const directResidualId = entityId();
   await recordTx(
     "Mutating calls",
-    "placeOrder(OrderParams) settleOrder benchmark",
+    "placeOrder(OrderParams) fillOrder benchmark",
     "OrderRegistry",
     orderRegistryContract.placeOrder(directOrder),
   );
   await recordTx(
     "Mutating calls",
-    "settleOrder(bytes16,uint64,bytes16) partial fill",
+    "fillOrder(bytes16,uint64,bytes16) partial fill",
     "OrderRegistry",
-    orderRegistryContract.settleOrder(directOrder.orderId, 50_000, directResidualId),
+    orderRegistryContract.fillOrder(directOrder.orderId, 50_000, directResidualId),
     "Benchmark-only direct call; consumes parent and registers a 50000 residual bid with inherited metadata.",
   );
   await recordTx(
     "Mutating calls",
-    "settleOrder(bytes16,uint64,bytes16) consume residual",
+    "fillOrder(bytes16,uint64,bytes16) consume residual",
     "OrderRegistry",
-    orderRegistryContract.settleOrder(directResidualId, 50_000, ethers.ZeroHash.slice(0, 34)),
+    orderRegistryContract.fillOrder(directResidualId, 50_000, ethers.ZeroHash.slice(0, 34)),
     "Benchmark-only direct call; fully consumes the previously registered residual bid.",
   );
 
-  const settleBatchMatches = new Map<number, any[]>();
-  settleBatchMatches.set(1, [
+  const matchesByBatchSize = new Map<number, any[]>();
+  matchesByBatchSize.set(1, [
     buildMatch(tradeId, bidOrder, offerOrder, residualOfferId),
   ]);
 
-  for (const batchSize of settleBatchSizes.filter((size) => size !== 1)) {
+  for (const batchSize of matchBatchSizes.filter((size) => size !== 1)) {
     const matches = [];
     for (let index = 0; index < batchSize; index++) {
       const bid = {
@@ -734,17 +734,17 @@ export async function main() {
 
       await recordTx(
         "Mutating calls",
-        `placeOrder(OrderParams) settleBatch[${batchSize}] bid ${index + 1}`,
+        `placeOrder(OrderParams) submitMatches[${batchSize}] bid ${index + 1}`,
         "OrderRegistry",
         orderRegistryContract.placeOrder(bid),
-        "Prepares unique open bid for settleBatch gas benchmark.",
+        "Prepares unique open bid for submitMatches gas benchmark.",
       );
       await recordTx(
         "Mutating calls",
-        `placeOrder(OrderParams) settleBatch[${batchSize}] offer ${index + 1}`,
+        `placeOrder(OrderParams) submitMatches[${batchSize}] offer ${index + 1}`,
         "OrderRegistry",
         orderRegistryContract.placeOrder(offer),
-        "Prepares unique open offer for settleBatch gas benchmark.",
+        "Prepares unique open offer for submitMatches gas benchmark.",
       );
 
       matches.push(
@@ -756,7 +756,7 @@ export async function main() {
         ),
       );
     }
-    settleBatchMatches.set(batchSize, matches);
+    matchesByBatchSize.set(batchSize, matches);
   }
 
   const asMarketBatch = (matches: any[]) => [{
@@ -772,23 +772,23 @@ export async function main() {
     },
   }];
 
-  for (const batchSize of settleBatchSizes) {
-    const matches = settleBatchMatches.get(batchSize);
+  for (const batchSize of matchBatchSizes) {
+    const matches = matchesByBatchSize.get(batchSize);
     if (!matches) {
-      throw new Error(`Missing settleBatch matches for batch size ${batchSize}`);
+      throw new Error(`Missing matches for batch size ${batchSize}`);
     }
 
     await recordTx(
       "Mutating calls",
-      `settleBatch(Match[${batchSize}])`,
-      "TradeSettlement",
-      tradeSettlementContract.settleBatch(asMarketBatch(matches)),
+      `submitMatches(Match[${batchSize}])`,
+      "TradeMatching",
+      tradeMatchingContract.submitMatches(asMarketBatch(matches)),
       "Standard matchType=0; includes residual offer registration for each match. Order placement gas is separate.",
     );
   }
 
   for (const preference of ["buyer-only", "seller-only", "reciprocal"]) {
-    for (const batchSize of settleBatchSizes) {
+    for (const batchSize of matchBatchSizes) {
       const matches = [];
       for (let index = 0; index < batchSize; index++) {
         const buyerPrefers = preference !== "seller-only";
@@ -813,7 +813,7 @@ export async function main() {
             `placeOrder(OrderParams) preferred ${preference} [${batchSize}] ${side} ${index + 1}`,
             "OrderRegistry",
             orderRegistryContract.placeOrder(order),
-            "Prepares a unique open order for the preferred settlement benchmark.",
+            "Prepares a unique open order for the preferred match benchmark.",
           );
         }
         matches.push(buildMatch(
@@ -822,9 +822,9 @@ export async function main() {
       }
       await recordTx(
         "Mutating calls",
-        `settleBatch(Match[${batchSize}]) preferred ${preference}`,
-        "TradeSettlement",
-        tradeSettlementContract.settleBatch(asMarketBatch(matches)),
+        `submitMatches(Match[${batchSize}]) preferred ${preference}`,
+        "TradeMatching",
+        tradeMatchingContract.submitMatches(asMarketBatch(matches)),
         "Preferred matchType=1; includes residual offer registration for each match. Order placement gas is separate.",
       );
     }
@@ -833,8 +833,8 @@ export async function main() {
   await recordTx(
     "Mutating calls",
     "submitPenalties(TradePenalty[1])",
-    "TradeSettlement",
-    tradeSettlementContract.submitPenalties([
+    "TradeMatching",
+    tradeMatchingContract.submitPenalties([
       {
         penalizedActorId: sellerActor,
         marketId,
@@ -873,9 +873,9 @@ export async function main() {
     );
     await recordTx(
       "Mutating calls",
-      `settleBatch(Match[1]) verification ${label}`,
-      "TradeSettlement",
-      tradeSettlementContract.settleBatch([
+      `submitMatches(Match[1]) verification ${label}`,
+      "TradeMatching",
+      tradeMatchingContract.submitMatches([
         {
           matches: [match],
           clearingResult: {
@@ -894,15 +894,15 @@ export async function main() {
     await recordTx(
       "Mutating calls",
       `completeDeliveryVerification(DeliveryVerification[1]) ${label}`,
-      "TradeSettlement",
-      tradeSettlementContract.completeDeliveryVerification([
+      "TradeMatching",
+      tradeMatchingContract.completeDeliveryVerification([
         {
           tradeId: verificationTradeId,
           buyerPenaltyEnergy: 0,
           sellerPenaltyEnergy,
         },
       ]),
-      "Fresh settled trade with no existing trade penalties; prerequisite gas is reported separately.",
+      "Fresh matched trade with no existing trade penalties; prerequisite gas is reported separately.",
     );
   }
 
@@ -961,14 +961,14 @@ export async function main() {
   await recordEstimate(
     "View estimates",
     "penaltyEnergyByTrade(bytes16)",
-    "TradeSettlement",
-    tradeSettlementContract.penaltyEnergyByTrade.estimateGas(tradeId),
+    "TradeMatching",
+    tradeMatchingContract.penaltyEnergyByTrade.estimateGas(tradeId),
   );
   await recordEstimate(
     "View estimates",
     "penaltyEnergyByActor(bytes16)",
-    "TradeSettlement",
-    tradeSettlementContract.penaltyEnergyByActor.estimateGas(sellerActor),
+    "TradeMatching",
+    tradeMatchingContract.penaltyEnergyByActor.estimateGas(sellerActor),
   );
 
   const reportPath = process.env.GAS_REPORT_PATH ?? "/contracts/gas-report.md";
@@ -982,12 +982,12 @@ export async function main() {
       network: `${network.name} (${network.chainId})`,
       deployer: deployerAddress,
       nativeSymbol: symbol,
-      settleBatchSizes: settleBatchSizes.join(","),
+      matchBatchSizes: matchBatchSizes.join(","),
       matchTypes: "Standard=0,Preferred=1",
       actorRegistryProxy: actorRegistry.proxyAddress,
       marketControllerProxy: marketController.proxyAddress,
       orderRegistryProxy: orderRegistry.proxyAddress,
-      tradeSettlementProxy: tradeSettlement.proxyAddress,
+      tradeMatchingProxy: tradeMatching.proxyAddress,
     },
     symbol,
   );

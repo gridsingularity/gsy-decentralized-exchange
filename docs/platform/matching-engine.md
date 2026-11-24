@@ -2,8 +2,8 @@
 
 ## Role in the System
 
-`gsy-matching-engine` performs off-chain market matching and submits settlement batches
-to `TradeSettlement`.
+`gsy-matching-engine` performs off-chain market matching and submits match batches
+to `TradeMatching`.
 
 ## Trigger Model
 
@@ -26,17 +26,17 @@ longer represent one uniform-price auction.
 3. Partition orders by `(market_id, time_slot)`.
 4. Run the configured matching algorithm independently for each partition,
    with preference phase first.
-5. Build the `settleBatch` payload and submit it with the matching engine signer.
+5. Build the `submitMatches` payload and submit it with the matching engine signer.
 6. The off-chain-storage listener creates `Matched` trades from confirmed
-   `TradeSettled` events. The matching engine does not write trade records or
+   `TradeMatched` events. The matching engine does not write trade records or
    publish trade-status notifications before confirmation.
 
 Known non-Submitted orders are ignored before full conversion. A malformed
 Submitted order (or an unknown status) excludes its entire market/time-slot
 book, including otherwise valid orders; an unreadable slot excludes the whole
 market. No matches or clearing results are emitted for excluded books, while
-other books can proceed. An unidentifiable market, failed storage response or
-ID-service failure aborts the cycle. This isolation applies to orders decoded
+other books can proceed. An unidentifiable market or failed storage response
+aborts the cycle. This isolation applies to orders decoded
 from the response, not to unreadable MongoDB records or response envelopes.
 
 A failed or dropped transaction creates no trade record. `Settled` is reserved
@@ -47,7 +47,7 @@ on-chain match confirmation. This transition is not yet implemented.
 
 `MATCHING_ALGORITHM` selects the standard-market algorithm:
 
-- `pay_as_bid` (default): each accepted standard match settles at the bid rate.
+- `pay_as_bid` (default): each accepted standard match is priced at the bid rate.
 - `pay_as_clear`: bids are sorted by descending energy_rate and offers by ascending energy_rate, then the
   engine walks their cumulative energy tranches until the next bid price is
   lower than the next offer price. The accepted cumulative quantity is the
@@ -88,11 +88,11 @@ the actual counterparty: when both sides declare partners, they must be reciproc
 For each side, the effective rate is its non-zero `preferred_energy_rate`, or
 its normal `energy_rate` when the preferred rate is absent (zero on-chain).
 A preferred match requires the offer's effective rate to be no higher than
-the bid's effective rate and settles at the bid's effective rate (pay-as-bid),
+the bid's effective rate and is priced at the bid's effective rate (pay-as-bid),
 even when the standard phase uses pay-as-clear. Preferred rates supersede the
 normal price limits and may lie outside them.
 
-For example, a preferred bid of 15 and offer of 12 settle at 15. If the bid's
+For example, a preferred bid of 15 and offer of 12 are matched at 15. If the bid's
 effective rate is below the offer's, no preferred match is possible.
 The orders remain eligible for standard matching at their normal rates,
 as do orders whose preferred partners are missing or incompatible. A preference
@@ -101,10 +101,10 @@ guaranteed insertion order; there is no explicit preference price/time priority.
 
 Each result records `MatchType::Preferred` or `MatchType::Standard`. Residuals
 inherit the original metadata and receive new IDs. Subsequent fills consume
-those exact IDs, including across the preference/standard boundary. Settlement
-atomically registers residuals on-chain, so they can trade in the same batch or
-a later cycle. The listener processes placement and settlement events in chain
-order to preserve their indexed lifecycle.
+those exact IDs, including across the preference/standard boundary. Submitting
+the matches atomically registers residuals on-chain, so they can trade in the
+same batch or a later cycle. The listener processes placement and match events
+in chain order to preserve their indexed lifecycle.
 
 ## Contract Interaction
 
@@ -113,12 +113,12 @@ derives keyed actor hashes locally only when building contract arguments, includ
 preferred partners. It makes no ID-mapping requests. Known-incomplete storage
 projections return an error, so the cycle does not match a partial book.
 
-Before submission, engine checks `hasRole(OPERATOR_ROLE, signer)` on settlement contract.
-`settleBatch` transaction success is validated via receipt status.
+Before submission, engine checks `hasRole(OPERATOR_ROLE, signer)` on the `TradeMatching` contract.
+`submitMatches` transaction success is validated via receipt status.
 The contract validates the submitted match type, counterparties and price;
 it does not prove that the operator processed the preference phase first or
 selected the best available counterpart. See
-[settlement invariants](smart-contracts.md#settlement-invariants).
+[matching invariants](smart-contracts.md#matching-invariants).
 
 ## Key Config
 
@@ -126,7 +126,7 @@ selected the best available counterpart. See
 - Env:
   - `OFFCHAIN_STORAGE_URL` (otherwise the CLI storage host/port)
   - `OFFCHAIN_STORAGE_TRANSPORT` (`http` or `ewds`)
-  - `TRADE_SETTLEMENT_ADDRESS`
+  - `TRADE_MATCHING_ADDRESS`
   - `ACTOR_ID_HASH_KEY` (shared actor pseudonym key, required at startup)
   - `MATCHING_ENGINE_PRIVATE_KEY`
   - `MATCHING_ALGORITHM` (`pay_as_bid` by default; `pay_as_clear` supported)

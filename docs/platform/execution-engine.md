@@ -2,8 +2,8 @@
 
 ## Role in the System
 
-`gsy-execution-engine` computes imbalance penalties after trade settlement and
-records delivery verification in `TradeSettlement`.
+`gsy-execution-engine` computes imbalance penalties after trades are matched on-chain and
+records delivery verification in `TradeMatching`.
 
 ## Execution Cycle
 
@@ -13,7 +13,7 @@ Each cycle:
 2. Fetch trades plus measurement points/timeseries for that delivery window from
    off-chain storage. Resolve each distinct market once through the existing
    HTTP/EWDS market lookup and group trades by its `delivery_start_time`, not
-   trade creation or settlement time.
+   trade creation or matching time.
 3. Compute facility totals and penalty allocations separately for each slot,
    including `Executed` and `Settled` trades in the baseline. Only `Matched` or
    `Penalized` trades with usable readings for both parties receive verdicts;
@@ -81,8 +81,10 @@ does not solve this limitation.
 
 ## Duplicate Submission Protection
 
-Before submitting, the engine checks `settledTrades(tradeId).verified` and skips
-completed trades. The contract also ignores repeated verdicts, so receipt loss
+Before submitting, the engine checks `matchedTrades(tradeId).verified` and skips
+completed trades. An invalid or unregistered trade ID is logged and excluded from
+that cycle, not counted as verified. An RPC error instead fails the cycle.
+The contract also ignores repeated verdicts, so receipt loss
 or concurrent submissions cannot duplicate penalties or completion events.
 Matching pre-recorded penalties are reused; conflicting amounts reject the
 transaction. A successful receipt is required before reporting progress.
@@ -149,7 +151,7 @@ and both directions of deviation over HTTP/EWDS with either matching algorithm.
 
 - CLI: `web3 <offchain_host> <offchain_port> <node_host> <node_port> <polling_interval> <market_duration> <penalty_rate> [--penalty-tolerance-percent <percent>]`
 - Env:
-  - `TRADE_SETTLEMENT_ADDRESS`
+  - `TRADE_MATCHING_ADDRESS`
   - `EXECUTION_ENGINE_PRIVATE_KEY`
   - `EXECUTION_ENGINE_OFFSET_MIN`
   - `EXECUTION_ENGINE_ROLLOVER_GRACE_SECONDS` (default `900`; set `0` to disable)

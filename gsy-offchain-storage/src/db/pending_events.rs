@@ -45,7 +45,7 @@ impl PendingEvent {
                 order(e.order_id);
                 None
             }
-            GsyContractsEvents::TradeSettledFilter(e) => {
+            GsyContractsEvents::TradeMatchedFilter(e) => {
                 order(e.bid_id);
                 order(e.offer_id);
                 for id in [e.residual_bid_id, e.residual_offer_id] {

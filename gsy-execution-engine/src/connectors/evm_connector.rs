@@ -17,7 +17,7 @@ type EvmPenaltyTuple = ([u8; 16], [u8; 16], [u8; 16], u64);
 /// retries after a successful transaction whose receipt was lost by this process.
 pub async fn complete_delivery_verification(
     evm_node_url: &str,
-    trade_settlement_address: &str,
+    trade_matching_address: &str,
     execution_engine_private_key: &str,
     verifications: Vec<DeliveryVerification>,
 ) -> Result<usize> {
@@ -31,7 +31,7 @@ pub async fn complete_delivery_verification(
         .with_chain_id(chain_id);
     let client = Arc::new(SignerMiddleware::new(provider, wallet));
     let contract =
-        SubmitPenaltiesContract::new(trade_settlement_address.parse::<Address>()?, client);
+        SubmitPenaltiesContract::new(trade_matching_address.parse::<Address>()?, client);
     let mut processed = 0;
     let mut pending = Vec::new();
     for verification in verifications {
@@ -42,7 +42,7 @@ pub async fn complete_delivery_verification(
             );
             continue;
         };
-        let (bid_id, _, verified) = contract.settled_trades(id).call().await?;
+        let (bid_id, _, verified) = contract.matched_trades(id).call().await?;
         if bid_id == [0; 16] {
             warn!(
                 "Skipping unregistered trade {} for this cycle",
@@ -139,7 +139,7 @@ pub async fn submit_penalties(
     let submit_penalties_contract_address = Address::from_str(submit_penalties_contract_address)
         .map_err(|e| {
             anyhow!(
-                "Invalid trade settlement address '{}': {}",
+                "Invalid trade matching address '{}': {}",
                 submit_penalties_contract_address,
                 e
             )

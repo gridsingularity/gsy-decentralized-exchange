@@ -9,7 +9,7 @@ use futures::TryStreamExt;
 use gsy_ethers_listener::{
     ChainEvent, DeliveryVerifiedFilter, GsyEventHandler, MarketClearingFilter,
     NewMarketCreatedFilter, OrderCancelledFilter, OrderPlacedFilter, PenaltyRecordedFilter,
-    TradeSettledFilter,
+    TradeMatchedFilter,
 };
 use mongodb::bson::{self, doc};
 use primitives::db_api_schema::{
@@ -335,13 +335,13 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         Ok(())
     }
 
-    async fn handle_trade_settled(
+    async fn handle_trade_matched(
         &self,
-        event: TradeSettledFilter,
+        event: TradeMatchedFilter,
         block_timestamp: u64,
     ) -> Result<()> {
         let trade_hash = bytes16_to_uuid_string(event.trade_id);
-        info!("Processing EVM TradeSettled: {:?}", trade_hash);
+        info!("Processing EVM TradeMatched: {:?}", trade_hash);
 
         let energy_f64 = event.energy.as_u64() as f64 / NODE_FLOAT_SCALING_FACTOR;
         let price_f64 = event.price.as_u64() as f64 / NODE_FLOAT_SCALING_FACTOR;
@@ -352,7 +352,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
         self.require_order(&offer_hash_str).await?;
         let residual_bid_id = bytes16_to_optional_uuid(event.residual_bid_id);
         let residual_offer_id = bytes16_to_optional_uuid(event.residual_offer_id);
-        // TradeSettled indexes match inclusion, not finality or Settlement market completion.
+        // TradeMatched indexes match inclusion, not finality or Settlement market completion.
         let trade = DbTradeSchema {
             trade_uuid: trade_hash.clone(),
             status: TradeStatus::Matched,
@@ -373,7 +373,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
 
         self.db
             .trades()
-            .record_settlement(trade.clone(), block_timestamp)
+            .record_match(trade.clone(), block_timestamp)
             .await
             .with_context(|| format!("Failed to index trade {} into DB", trade_hash))?;
 
@@ -387,7 +387,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
                 .await
                 .with_context(|| {
                     format!(
-                        "Failed to update order {} after settlement of trade {}",
+                        "Failed to update order {} after match of trade {}",
                         order_id, trade_hash
                     )
                 })?;
@@ -575,7 +575,7 @@ impl GsyEventHandler for OffchainStorageEvmHandler {
             clearing_time: block_timestamp,
         };
 
-        // A settlement transaction can emit several clearing logs, even for the same market.
+        // A submitMatches transaction can emit several clearing logs, even for the same market.
         self.db
             .clearing_results()
             .update_one(

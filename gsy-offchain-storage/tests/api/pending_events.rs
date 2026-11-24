@@ -5,7 +5,7 @@ use ethers::{
 };
 use gsy_ethers_listener::{
     ChainEvent, DeliveryVerifiedFilter, GsyEventHandler, OrderCancelledFilter, OrderPlacedFilter,
-    PenaltyRecordedFilter, TradeSettledFilter,
+    PenaltyRecordedFilter, TradeMatchedFilter,
 };
 use gsy_offchain_storage::evm_handler::OffchainStorageEvmHandler;
 use mongodb::bson::{doc, Document};
@@ -234,7 +234,7 @@ async fn deferred_match_penalty_and_verification_keep_chain_order_and_timestamps
     handler
         .handle_event(event(
             3,
-            TradeSettledFilter::signature(),
+            TradeMatchedFilter::signature(),
             &[crate::helpers::entity_bytes(3), crate::helpers::entity_bytes(1), crate::helpers::entity_bytes(2)],
             vec![
                 bytes(hash("buyer")),

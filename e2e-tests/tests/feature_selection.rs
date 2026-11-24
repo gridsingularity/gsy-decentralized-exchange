@@ -26,7 +26,7 @@ fn each_algorithm_parses_its_own_features_and_the_shared_policy_once() {
         }));
         let policies = features
             .iter()
-            .filter(|feature| feature.name == "Preference settlement policy")
+            .filter(|feature| feature.name == "Preference matching policy")
             .collect::<Vec<_>>();
         assert_eq!(policies.len(), 1);
         assert_eq!(policies[0].scenarios.len(), 9);

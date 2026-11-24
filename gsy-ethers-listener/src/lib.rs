@@ -14,7 +14,7 @@ abigen!(
         event OrderPlaced(bytes16 indexed orderId, bytes16 indexed createdBy, bytes16 indexed marketId, uint64 timeSlot, uint64 creationTime, uint64 energy, uint64 energyRate, uint8 energySourcePreference, uint8 energyType, bool isBid, bytes16 preferredTradingPartner, uint64 preferredEnergyRate)
         event OrderCancelled(bytes16 indexed orderId)
         event OrderStatusUpdated(bytes16 indexed orderId, uint8 status)
-        event TradeSettled(bytes16 indexed tradeId, bytes16 indexed bidId, bytes16 indexed offerId, bytes16 buyerId, bytes16 sellerId, bytes16 marketId, uint64 timeSlot, bytes16 residualBidId, bytes16 residualOfferId, uint256 energy, uint256 price)
+        event TradeMatched(bytes16 indexed tradeId, bytes16 indexed bidId, bytes16 indexed offerId, bytes16 buyerId, bytes16 sellerId, bytes16 marketId, uint64 timeSlot, bytes16 residualBidId, bytes16 residualOfferId, uint256 energy, uint256 price)
         event DeliveryVerified(bytes16 indexed tradeId, bytes16 indexed bidId, bytes16 indexed offerId)
         event PenaltyRecorded(bytes16 indexed penalizedActorId, bytes16 indexed marketId, bytes16 indexed tradeId, uint64 penaltyEnergy)
         event NewMarketCreated(bytes16 indexed marketId, bytes16 indexed communityId, uint64 openingTime, uint64 closingTime, uint64 deliveryStartTime, uint64 deliveryEndTime, uint8 marketType, uint8 matchingAlgorithm, uint64 createdAt)
@@ -26,7 +26,7 @@ abigen!(
 pub struct ListenerConfig {
     pub node_url: String,
     pub order_registry_address: Address,
-    pub trade_settlement_address: Address,
+    pub trade_matching_address: Address,
     pub market_controller_address: Address,
 }
 
@@ -68,8 +68,8 @@ impl ChainEvent {
             GsyContractsEvents::OrderCancelledFilter(event) => {
                 handler.handle_order_cancelled(event, timestamp).await
             }
-            GsyContractsEvents::TradeSettledFilter(event) => {
-                handler.handle_trade_settled(event, timestamp).await
+            GsyContractsEvents::TradeMatchedFilter(event) => {
+                handler.handle_trade_matched(event, timestamp).await
             }
             GsyContractsEvents::DeliveryVerifiedFilter(event) => {
                 handler.handle_delivery_verified(event, timestamp).await
@@ -120,9 +120,9 @@ pub trait GsyEventHandler: Send + Sync + 'static {
         event: OrderCancelledFilter,
         block_timestamp: u64,
     ) -> Result<()>;
-    async fn handle_trade_settled(
+    async fn handle_trade_matched(
         &self,
-        event: TradeSettledFilter,
+        event: TradeMatchedFilter,
         block_timestamp: u64,
     ) -> Result<()>;
     /// Called after contract events in an observed block have been handled.
@@ -180,17 +180,17 @@ impl<H: GsyEventHandler> GsyEthersListener<H> {
         info!("Connecting to EVM Node at {}", self.config.node_url);
 
         let provider = Provider::<Ws>::connect(&self.config.node_url).await?;
-        // Fetch one block at a time so expiry cannot overtake settlement events.
+        // Fetch one block at a time so expiry cannot overtake match events.
         let filter = Filter::new()
             .address(vec![
                 self.config.order_registry_address,
-                self.config.trade_settlement_address,
+                self.config.trade_matching_address,
                 self.config.market_controller_address,
             ])
             .topic0(vec![
                 OrderPlacedFilter::signature(),
                 OrderCancelledFilter::signature(),
-                TradeSettledFilter::signature(),
+                TradeMatchedFilter::signature(),
                 DeliveryVerifiedFilter::signature(),
                 PenaltyRecordedFilter::signature(),
                 NewMarketCreatedFilter::signature(),
@@ -200,7 +200,7 @@ impl<H: GsyEventHandler> GsyEthersListener<H> {
             "{}:{:?}:{:?}:{:?}",
             provider.get_chainid().await?,
             self.config.order_registry_address,
-            self.config.trade_settlement_address,
+            self.config.trade_matching_address,
             self.config.market_controller_address
         );
         if next_block.is_none() {
@@ -256,10 +256,10 @@ impl<H: GsyEventHandler> GsyEthersListener<H> {
             GsyContractsEvents::OrderPlacedFilter(_)
             | GsyContractsEvents::OrderCancelledFilter(_) => self.config.order_registry_address,
             GsyContractsEvents::NewMarketCreatedFilter(_) => self.config.market_controller_address,
-            GsyContractsEvents::TradeSettledFilter(_)
+            GsyContractsEvents::TradeMatchedFilter(_)
             | GsyContractsEvents::PenaltyRecordedFilter(_)
             | GsyContractsEvents::DeliveryVerifiedFilter(_)
-            | GsyContractsEvents::MarketClearingFilter(_) => self.config.trade_settlement_address,
+            | GsyContractsEvents::MarketClearingFilter(_) => self.config.trade_matching_address,
             _ => return Ok(()),
         };
         if event.log.address == expected_address {

@@ -8,7 +8,7 @@ Feature: Delivery deviation penalties
     And forecasts of 10 energy are submitted for facilities with uppercase UUIDs
     And "alice" submits a bid
     And "bob" submits an offer
-    Then the matching engine matches the bid and offer and a trade is settled on-chain
+    Then the matching engine matches the bid and offer on-chain
     And the trade is Matched before delivery verification
     When measurements of <buyer_energy> energy for only "alice"'s facility are submitted
     And measurements of <seller_energy> energy for only "bob"'s facility are submitted

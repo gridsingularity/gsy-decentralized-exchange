@@ -72,7 +72,7 @@ async fn verify_trade_notification(world: &mut MyWorld, status: String) {
         "Penalized" => TradeStatus::Penalized,
         _ => panic!("Unexpected trade status: {status}"),
     };
-    let trade = world.last_trade.as_ref().expect("Missing settled trade");
+    let trade = world.last_trade.as_ref().expect("Missing matched trade");
     let occurred_at = super::lifecycle_steps::trade_status_timestamp(world, trade, &status).await;
     let mut expected = trade.clone();
     expected.status = status;
@@ -187,7 +187,7 @@ async fn verify_order_notifications(world: &mut MyWorld, status: String) {
     let trade = world
         .last_trade
         .as_ref()
-        .expect("Missing settled trade")
+        .expect("Missing matched trade")
         .clone();
     for id in [&trade.bid_hash, &trade.offer_hash] {
         let notification = world
