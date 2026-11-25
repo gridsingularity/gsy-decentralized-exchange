@@ -97,7 +97,7 @@ state variables.
 
 Purpose:
 
-- Maps Intelligent Actor UUIDs (`bytes16`) to authorized EVM wallets.
+- Maps keyed actor IDs (`bytes16` hashes of exact opaque off-chain identities) to authorized EVM wallets.
 - Supports registrar-managed wallet authorization (`registerActor`, `setActorWallet`).
 - Supports actor-managed delegate/proxy authorization (`setProxy`, `isProxy`).
 - Retains actor wallet/delegate mappings, but is no longer consulted by `OrderRegistry`.
@@ -109,21 +109,30 @@ Purpose:
 Purpose:
 
 - Stores one record per `marketId` that mirrors the off-chain `MarketSchema`:
-  community ID, opening/closing time, delivery start/end, market type,
+  keyed community hash, opening/closing time, delivery start/end, market type,
   matching algorithm and `createdAt` (block timestamp; `0` means missing).
+  The orchestrator supplies random UUIDv4 market IDs, not tuple-derived hashes.
+  Uniqueness is enforced by `(communityId, marketType, deliveryStartTime)`, with
+  `communityId` the keyed hash of the exact opaque off-chain community string.
 - `createMarkets(NewMarket[])` (`ORCHESTRATOR_ROLE` only) stores new markets
-  and emits `NewMarketCreated` with every field. Existing markets are skipped
-  without an event. `InvalidMarket` is raised for a zero market or community
-  ID, `closingTime <= openingTime` or `deliveryEndTime <= deliveryStartTime`;
-  one invalid entry reverts the whole batch.
+  and emits `NewMarketCreated` with every field. Duplicate tuples are skipped
+  without an event even if another orchestrator races with a different UUID.
+  Reusing a market ID for a different tuple raises `InvalidMarket`, including
+  when that tuple already exists; ID collision checks precede tuple deduplication.
+  Zero market IDs and invalid new records (zero community hash,
+  `closingTime <= openingTime` or `deliveryEndTime <= deliveryStartTime`) also
+  raise `InvalidMarket`; one rejected entry reverts the whole batch.
 - There is no open/closed flag and no update function: `isMarketOpen(bytes16)`
   is true while `openingTime <= block.timestamp < closingTime`.
-- Views: `marketsExist(bytes16[])` (existence of many markets in one call,
-  used by the orchestrator), `isMarketOpen(bytes16)` (used by
-  `OrderRegistry`) and `getMatchingAlgorithm(bytes16)` (used by
-  `TradeMatching` to decide whether a match batch must be uniformly priced;
-  a missing market reports `PayAsBid`). The full record is read from
-  `NewMarketCreated` or from off-chain storage; there is no record getter.
+- Views: `getMarketIds(MarketKey[])`, where `MarketKey` contains `bytes16 communityId`,
+  `uint8 marketType` and `uint64 deliveryStartTime`, returns existing chain IDs or
+  zero for absent tuples in request order. The orchestrator queries up to 500
+  keys per call. `marketsExist(bytes16[])` remains available for known IDs,
+  `isMarketOpen(bytes16)` is used by `OrderRegistry`, and
+  `getMatchingAlgorithm(bytes16)` is used by `TradeMatching` to decide whether
+  a match batch must be uniformly priced (a missing market reports `PayAsBid`).
+  The full record is read from `NewMarketCreated` or from
+  off-chain storage; there is no record getter.
 - Enum values: `MarketType` `Spot=0, Flex=1, Settlement=2`;
   `MatchingAlgorithm` `PayAsBid=0, PayAsClear=1, Amm=2` (same order as
   `primitives`).

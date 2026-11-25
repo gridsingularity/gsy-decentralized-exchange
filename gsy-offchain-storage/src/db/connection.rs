@@ -93,6 +93,7 @@ impl Deref for DatabaseWrapper {
 }
 
 pub async fn init_database(db_url: String, db_name: String) -> Result<DatabaseWrapper> {
+    primitives::actor_ids::initialize_actor_id_hashing()?;
     let options = ClientOptions::parse(&db_url).await?;
     let client = mongodb::Client::with_options(options)?;
     let db = DatabaseWrapper(client.database(db_name.as_str()));
@@ -108,6 +109,13 @@ pub async fn delete_database(db_url: String, db_name: String) -> Result<()> {
 }
 
 async fn preload(db: &DatabaseWrapper) -> Result<()> {
+    db.collection::<mongodb::bson::Document>(super::pending_events::COLLECTION)
+        .create_index(
+            mongodb::IndexModel::builder()
+                .keys(mongodb::bson::doc! {"stream_id": 1, "block_number": 1, "log_index": 1})
+                .build(),
+        )
+        .await?;
     init_orders(db).await?;
     init_flexibility_orders(db).await?;
     init_tariffs(db).await?;

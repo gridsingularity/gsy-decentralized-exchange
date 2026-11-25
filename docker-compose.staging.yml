@@ -58,6 +58,8 @@ services:
       - "8080:8080"
     environment:
       <<: *gsy-ewds-env
+      # Required at runtime. No default secret; image builds do not need the key.
+      ACTOR_ID_HASH_KEY: ${ACTOR_ID_HASH_KEY:-}
       APPLICATION_HOST: "0.0.0.0"
       APPLICATION_PORT: "8080"
       DATABASE_NAME: offchain_storage

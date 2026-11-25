@@ -53,10 +53,11 @@ For purchases of 4 and 6 kWh and consumption of 12 kWh, the 2 kWh deviation
 produces a 2,000-unit penalty at rate 0.10, allocated as 800 and 1,200 units.
 
 Measurements identify facilities. The engine reads the facility-to-owner mapping
-from off-chain storage and derives each owner's on-chain ID with the ID service's
-shared Blake2b-16 helper, without writing ID mappings. That owner ID is used in
-`OrderParams.createdBy` and the indexed trade parties; the submitting service
-wallet is separate. This deployment guarantees one facility per owner.
+from off-chain storage and compares the original owner ID with indexed trade
+parties directly. No ID-service conversion or hashing is needed for this join.
+Only contract-bound actor arguments (such as standalone penalties) use keyed
+hashes. The submitting service wallet is separate. This deployment guarantees one facility per owner.
+Facility and owner IDs are preserved exactly, including UUID-shaped strings.
 Missing/unmapped, non-finite, or conflicting readings for a facility/slot leave its trades pending;
 they do not produce a zero-penalty success. Identical readings are not counted
 twice. Multiple distinct readings are not summed or arbitrarily selected: they

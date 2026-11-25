@@ -10,7 +10,7 @@ use primitives::MatchingAlgorithm;
 use std::collections::{HashMap, HashSet};
 
 fn id(value: u8) -> String {
-    format!("0x{value:032x}")
+    format!("00000000-0000-4000-8000-{value:012x}")
 }
 
 fn order(id_value: u8, order_type: OrderEnum, market: u8, time_slot: u64) -> Order {
@@ -18,7 +18,6 @@ fn order(id_value: u8, order_type: OrderEnum, market: u8, time_slot: u64) -> Ord
         order_id: id(id_value),
         order_type,
         status: OrderStatus::Submitted,
-        area_uuid: id(id_value),
         market_id: id(market),
         time_slot,
         creation_time: 1,

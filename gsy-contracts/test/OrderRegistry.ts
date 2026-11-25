@@ -255,7 +255,9 @@ describe("OrderRegistry", function () {
       await loadFixture(deployRegistryFixture);
     await registry.connect(communityClient).placeOrder(baseOrder);
     await time.increase(OPEN_MARKET_DURATION);
-    await createOpenMarket(controller, marketId);
+    await expect(createOpenMarket(controller, marketId))
+      .to.be.revertedWithCustomError(controller, "InvalidMarket")
+      .withArgs(marketId);
     expect(await controller.isMarketOpen(marketId)).to.equal(false);
     expect(await registry.getStatus(baseOrder.orderId)).to.equal(4);
     expect(await registry.orderStatus(baseOrder.orderId)).to.equal(4);

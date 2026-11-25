@@ -118,10 +118,7 @@ impl MatchingData {
                     return matches;
                 }
 
-                if offer.area_uuid == bid.area_uuid
-                    || offer.created_by == bid.created_by
-                    || offer.energy_rate > bid.energy_rate
-                {
+                if offer.created_by == bid.created_by || offer.energy_rate > bid.energy_rate {
                     continue;
                 }
 

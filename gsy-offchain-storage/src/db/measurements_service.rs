@@ -8,21 +8,11 @@ use primitives::db_api_schema::profiles::{
     FlowDirection, MeasurementPointSchema, MeasurementPointType, MeasurementSchema,
     TimeseriesSchema,
 };
-use primitives::utils::timestamp_to_string_with_padding;
+use primitives::utils::{
+    profile_measurement_id, timestamp_to_string_with_padding,
+};
 use std::collections::HashMap;
 use std::ops::Deref;
-
-pub(crate) fn profile_measurement_id(
-    point_type: MeasurementPointType,
-    community_uuid: &str,
-    facility_id: &str,
-) -> String {
-    let prefix = match point_type {
-        MeasurementPointType::Measurement => "measurement",
-        MeasurementPointType::Forecast => "forecast",
-    };
-    format!("{prefix}:{community_uuid}:{facility_id}")
-}
 
 pub(crate) fn flow_direction(value: f64) -> FlowDirection {
     if value >= 0.0 {

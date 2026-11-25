@@ -1,4 +1,5 @@
 import { ethers } from "hardhat";
+import { randomUUID } from "crypto";
 import type { Signer } from "ethers";
 import { mkdirSync, writeFileSync } from "fs";
 import { dirname } from "path";
@@ -31,8 +32,13 @@ interface DeploymentResult {
 
 const entries: GasEntry[] = [];
 
-function bytes16Id(seed: string): string {
+// Synthetic actor pseudonyms for contract-only benchmarks, not production identities.
+function actorId(seed: string): string {
   return ethers.dataSlice(ethers.keccak256(ethers.toUtf8Bytes(seed)), 0, 16);
+}
+
+function entityId(): string {
+  return `0x${randomUUID().replace(/-/g, "")}`;
 }
 
 function parseMatchBatchSizes(): number[] {
@@ -483,16 +489,16 @@ export async function main() {
     actorRegistrar,
   ) as any;
   const matchBatchSizes = parseMatchBatchSizes();
-  const buyerActor = bytes16Id("gas:buyer-actor");
-  const sellerActor = bytes16Id("gas:seller-actor");
-  const revokedActor = bytes16Id("gas:revoked-actor");
-  const marketId = bytes16Id("gas:market");
-  const bidId = bytes16Id("gas:bid");
-  const offerId = bytes16Id("gas:offer");
-  const cancelOrderId = bytes16Id("gas:cancel-order");
-  const statusOrderId = bytes16Id("gas:status-order");
-  const tradeId = bytes16Id("gas:trade");
-  const residualOfferId = bytes16Id("gas:residual-offer");
+  const buyerActor = actorId("gas:buyer-actor");
+  const sellerActor = actorId("gas:seller-actor");
+  const revokedActor = actorId("gas:revoked-actor");
+  const marketId = entityId();
+  const bidId = entityId();
+  const offerId = entityId();
+  const cancelOrderId = entityId();
+  const statusOrderId = entityId();
+  const tradeId = entityId();
+  const residualOfferId = entityId();
   const block = await withTimeout(
     "Benchmark timestamp fetch",
     ethers.provider.getBlock("latest"),
@@ -543,18 +549,25 @@ export async function main() {
   );
 
   // Open now: the order placements below need an open market.
-  const newMarket = (id: string, marketType: number) => ({
+  const newMarket = (
+    id: string,
+    marketType: number,
+    deliveryStartTime = timeSlot,
+  ) => ({
     marketId: id,
-    communityId: bytes16Id("gas:community"),
+    communityId: actorId("gas:community"),
     openingTime: now,
     closingTime: timeSlot,
-    deliveryStartTime: timeSlot,
-    deliveryEndTime: timeSlot + 900,
+    deliveryStartTime,
+    deliveryEndTime: deliveryStartTime + 900,
     marketType,
     matchingAlgorithm: MATCHING_ALGORITHM_PAY_AS_BID,
   });
   const batchMarketIds = [0, 1, 2].map((index) =>
-    bytes16Id(`gas:batch-market-${index}`),
+    entityId(),
+  );
+  const batchMarkets = batchMarketIds.map((id, marketType) =>
+    newMarket(id, marketType, timeSlot + 900),
   );
   await recordTx(
     "Mutating calls",
@@ -568,38 +581,35 @@ export async function main() {
     "Mutating calls",
     "createMarkets(3 markets)",
     "MarketController",
-    marketControllerContract.createMarkets(
-      batchMarketIds.map((id, marketType) => newMarket(id, marketType)),
-    ),
+    marketControllerContract.createMarkets(batchMarkets),
     "One community's spot, flex and settlement markets for one delivery slot.",
   );
   await recordTx(
     "Mutating calls",
     "createMarkets(3 markets, all existing)",
     "MarketController",
-    marketControllerContract.createMarkets(
-      batchMarketIds.map((id, marketType) => newMarket(id, marketType)),
-    ),
+    marketControllerContract.createMarkets(batchMarkets),
     "Existing markets are skipped; the cost of resending a window.",
   );
-  const resendMarketIds = Array.from({ length: 50 }, (_, index) =>
-    bytes16Id(`gas:resend-market-${index}`),
+  const resendMarkets = Array.from({ length: 50 }, (_, index) =>
+    newMarket(
+      entityId(),
+      MARKET_TYPE_SPOT,
+      timeSlot + (index + 2) * 900,
+    ),
   );
   await recordTx(
     "Mutating calls",
     "createMarkets(50 markets)",
     "MarketController",
-    marketControllerContract.createMarkets(
-      resendMarketIds.map((id) => newMarket(id, MARKET_TYPE_SPOT)),
-    ),
+    marketControllerContract.createMarkets(resendMarkets),
+    "One community's spot markets for 50 distinct delivery slots.",
   );
   await recordTx(
     "Mutating calls",
     "createMarkets(50 markets, all existing)",
     "MarketController",
-    marketControllerContract.createMarkets(
-      resendMarketIds.map((id) => newMarket(id, MARKET_TYPE_SPOT)),
-    ),
+    marketControllerContract.createMarkets(resendMarkets),
     "Existing markets are skipped; the cost of resending a window.",
   );
 
@@ -680,8 +690,8 @@ export async function main() {
     "Measured with benchmark-only matching role granted to deployer.",
   );
 
-  const directOrder = { ...bidOrder, orderId: bytes16Id("gas:direct-fill") };
-  const directResidualId = bytes16Id("gas:direct-residual");
+  const directOrder = { ...bidOrder, orderId: entityId() };
+  const directResidualId = entityId();
   await recordTx(
     "Mutating calls",
     "placeOrder(OrderParams) fillOrder benchmark",
@@ -713,12 +723,12 @@ export async function main() {
     for (let index = 0; index < batchSize; index++) {
       const bid = {
         ...bidOrder,
-        orderId: bytes16Id(`gas:submit-matches-${batchSize}:bid:${index}`),
+        orderId: entityId(),
         creationTime: now + 10 + batchSize * 100 + index * 2,
       };
       const offer = {
         ...offerOrder,
-        orderId: bytes16Id(`gas:submit-matches-${batchSize}:offer:${index}`),
+        orderId: entityId(),
         creationTime: now + 11 + batchSize * 100 + index * 2,
       };
 
@@ -739,10 +749,10 @@ export async function main() {
 
       matches.push(
         buildMatch(
-          bytes16Id(`gas:submit-matches-${batchSize}:trade:${index}`),
+          entityId(),
           bid,
           offer,
-          bytes16Id(`gas:submit-matches-${batchSize}:residual-offer:${index}`),
+          entityId(),
         ),
       );
     }
@@ -781,19 +791,18 @@ export async function main() {
     for (const batchSize of matchBatchSizes) {
       const matches = [];
       for (let index = 0; index < batchSize; index++) {
-        const seed = `gas:preferred:${preference}:${batchSize}:${index}`;
         const buyerPrefers = preference !== "seller-only";
         const sellerPrefers = preference !== "buyer-only";
         const bid = {
           ...bidOrder,
-          orderId: bytes16Id(`${seed}:bid`),
+          orderId: entityId(),
           energyRate: buyerPrefers ? bidOrder.energyRate : 12_000,
           preferredTradingPartner: buyerPrefers ? sellerActor : ethers.ZeroHash.slice(0, 34),
           preferredEnergyRate: buyerPrefers ? 12_000 : 0,
         };
         const offer = {
           ...offerOrder,
-          orderId: bytes16Id(`${seed}:offer`),
+          orderId: entityId(),
           energyRate: sellerPrefers ? offerOrder.energyRate : 12_000,
           preferredTradingPartner: sellerPrefers ? buyerActor : ethers.ZeroHash.slice(0, 34),
           preferredEnergyRate: sellerPrefers ? 12_000 : 0,
@@ -808,7 +817,7 @@ export async function main() {
           );
         }
         matches.push(buildMatch(
-          bytes16Id(`${seed}:trade`), bid, offer, bytes16Id(`${seed}:residual-offer`), 1,
+          entityId(), bid, offer, entityId(), 1,
         ));
       }
       await recordTx(
@@ -838,14 +847,14 @@ export async function main() {
   // Use fresh trades so verification measures real state changes, not retries.
   for (const sellerPenaltyEnergy of [0, 12_345]) {
     const label = sellerPenaltyEnergy === 0 ? "zero penalties" : "seller penalty";
-    const verificationTradeId = bytes16Id(`gas:verification:${label}:trade`);
+    const verificationTradeId = entityId();
     const bid = {
       ...bidOrder,
-      orderId: bytes16Id(`gas:verification:${label}:bid`),
+      orderId: entityId(),
     };
     const offer = {
       ...offerOrder,
-      orderId: bytes16Id(`gas:verification:${label}:offer`),
+      orderId: entityId(),
     };
     for (const order of [bid, offer]) {
       await recordTx(
@@ -860,7 +869,7 @@ export async function main() {
       verificationTradeId,
       bid,
       offer,
-      bytes16Id(`gas:verification:${label}:residual-offer`),
+      entityId(),
     );
     await recordTx(
       "Mutating calls",
@@ -923,6 +932,19 @@ export async function main() {
     "marketsExist(3 markets)",
     "MarketController",
     marketControllerContract.marketsExist.estimateGas(batchMarketIds),
+  );
+  await recordEstimate(
+    "View estimates",
+    "getMarketIds(3 market keys)",
+    "MarketController",
+    marketControllerContract.getMarketIds.estimateGas(
+      batchMarkets.map(({ communityId, marketType, deliveryStartTime }) => ({
+        communityId,
+        marketType,
+        deliveryStartTime,
+      })),
+    ),
+    "Tuple lookup for one community's spot, flex and settlement markets.",
   );
   await recordEstimate(
     "View estimates",

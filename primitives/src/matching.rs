@@ -5,8 +5,8 @@
 //!
 //! A pay-as-clear engine clears each market a fixed number of times, spread
 //! evenly over the time the market is open. The last clearing takes place a
-//! lead time before the closing time, so that its settlement is processed
-//! while the market still accepts it.
+//! lead time before the closing time, so that its matches are recorded
+//! while the market still accepts them.
 
 use crate::MatchingAlgorithm;
 use std::env;

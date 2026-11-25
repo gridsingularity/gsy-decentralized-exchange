@@ -74,7 +74,7 @@ pub async fn get_pilot_sites(db: DbRef) -> impl Responder {
 }
 
 pub async fn post_community(community: Json<EwdsCommunityDto>, db: DbRef) -> impl Responder {
-    match EnergyCommunitySchema::try_from(community.into_inner()) {
+    match EnergyCommunitySchema::try_from(community.into_inner()).and_then(EnergyCommunitySchema::normalize_ids) {
         Ok(community) => store_response(
             db.get_ref().communities().store(vec![community]).await,
             EwdsCommunityDto::from,
@@ -88,7 +88,7 @@ pub async fn get_communities(db: DbRef) -> impl Responder {
 }
 
 pub async fn post_site(site: Json<EwdsSiteDto>, db: DbRef) -> impl Responder {
-    match SiteSchema::try_from(site.into_inner()) {
+    match SiteSchema::try_from(site.into_inner()).and_then(SiteSchema::normalize_ids) {
         Ok(site) => store_response(
             db.get_ref().sites().store(vec![site]).await,
             EwdsSiteDto::from,
@@ -102,7 +102,7 @@ pub async fn get_sites(db: DbRef) -> impl Responder {
 }
 
 pub async fn post_facility(facility: Json<EwdsFacilityDto>, db: DbRef) -> impl Responder {
-    match FacilitySchema::try_from(facility.into_inner()) {
+    match FacilitySchema::try_from(facility.into_inner()).and_then(FacilitySchema::normalize_ids) {
         Ok(facility) => store_response(
             db.get_ref().facilities().store(vec![facility]).await,
             EwdsFacilityDto::from,

@@ -3,7 +3,7 @@ use primitives::db_api_schema::{
     profiles::MeasurementSchema,
     trades::{DbTradeSchema, TradeStatus},
 };
-use primitives::utils::{derive_onchain_id, NODE_FLOAT_SCALING_FACTOR};
+use primitives::utils::NODE_FLOAT_SCALING_FACTOR;
 use std::collections::{HashMap, HashSet};
 use tracing::warn;
 
@@ -151,7 +151,7 @@ pub fn compute_delivery_verifications(
         };
         let energy = meas.energy_kwh.is_finite().then_some(meas.energy_kwh);
         measurement_map
-            .entry(derive_onchain_id(owner_id))
+            .entry(owner_id.clone())
             .and_modify(|previous| {
                 if *previous != energy {
                     *previous = None;

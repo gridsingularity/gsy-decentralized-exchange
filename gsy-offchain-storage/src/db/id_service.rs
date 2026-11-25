@@ -1,6 +1,6 @@
 use crate::db::DatabaseWrapper;
 use anyhow::Context;
-use anyhow::{bail, Result};
+use anyhow::{bail, ensure, Result};
 use futures::TryStreamExt;
 use mongodb::bson::doc;
 use mongodb::error::{ErrorKind, WriteFailure};
@@ -8,7 +8,9 @@ use mongodb::options::IndexOptions;
 use mongodb::options::ReturnDocument;
 use mongodb::{Collection, IndexModel};
 use primitives::db_api_schema::ids::IdMappingSchema;
-use primitives::utils::derive_onchain_id;
+use primitives::utils::{
+    bytes16_to_hex, derive_onchain_id, validate_offchain_actor_id, hex_to_bytes16,
+};
 use std::ops::Deref;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -48,10 +50,12 @@ impl IdService {
             bail!("onchain_id and offchain_id are mutually exclusive");
         }
         if let Some(onchain_id) = onchain_id {
-            filter_params.insert("onchain_id", onchain_id);
+            let onchain_id =
+                hex_to_bytes16(&onchain_id).filter(|id| *id != [0; 16]).context("Invalid on-chain ID")?;
+            filter_params.insert("onchain_id", bytes16_to_hex(onchain_id));
         }
         if let Some(offchain_id) = offchain_id {
-            filter_params.insert("offchain_id", offchain_id);
+            filter_params.insert("offchain_id", validate_offchain_actor_id(&offchain_id)?);
         }
         if filter_params.is_empty() {
             bail!("at least one filter field must be provided");
@@ -65,12 +69,14 @@ impl IdService {
         fields(offchain_id = %offchain_id)
     )]
     pub async fn get_or_create(&self, offchain_id: String) -> Result<IdMappingSchema> {
+        let offchain_id = validate_offchain_actor_id(&offchain_id)?;
+        let onchain_id = derive_onchain_id(&offchain_id);
         let result = self
             .0
             .find_one_and_update(
                 doc! {"offchain_id": &offchain_id},
                 doc! {"$setOnInsert": {
-                "onchain_id": derive_onchain_id(&offchain_id),
+                "onchain_id": &onchain_id,
                 "creation_time": SystemTime::now()
                     .duration_since(UNIX_EPOCH)?
                     .as_secs() as i64
@@ -80,7 +86,7 @@ impl IdService {
             .return_document(ReturnDocument::After)
             .await;
 
-        match result {
+        let mapping = match result {
             Ok(mapping) => mapping.context("upsert returned no document"),
             Err(error)
                 if matches!(error.kind.as_ref(), ErrorKind::Command(command) if command.code == 11000)
@@ -94,7 +100,12 @@ impl IdService {
                     .ok_or_else(|| error.into())
             }
             Err(error) => Err(error.into()),
-        }
+        }?;
+        ensure!(
+            mapping.onchain_id == onchain_id,
+            "Stored actor mapping does not match ACTOR_ID_HASH_KEY"
+        );
+        Ok(mapping)
     }
 }
 
