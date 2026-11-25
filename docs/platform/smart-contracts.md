@@ -127,8 +127,10 @@ Purpose:
 - Views: `getMarketIds(MarketKey[])`, where `MarketKey` contains `bytes16 communityId`,
   `uint8 marketType` and `uint64 deliveryStartTime`, returns existing chain IDs or
   zero for absent tuples in request order. The orchestrator queries up to 500
-  keys per call. `marketsExist(bytes16[])` remains available for known IDs, and
-  `isMarketOpen(bytes16)` is used by `OrderRegistry`.
+  keys per call. `marketsExist(bytes16[])` remains available for known IDs,
+  `isMarketOpen(bytes16)` is used by `OrderRegistry`, and
+  `getMatchingAlgorithm(bytes16)` is used by `TradeMatching` to decide whether
+  a match batch must be uniformly priced (a missing market reports `PayAsBid`).
   The full record is read from `NewMarketCreated` or from
   off-chain storage; there is no record getter.
 - Enum values: `MarketType` `Spot=0, Flex=1, Settlement=2`;
@@ -182,6 +184,11 @@ Purpose:
   values are `PartiallyFilled = 5` and `Filled = 6`.
 - Emits all match data needed by off-chain storage to create a Trade object.
 - Records penalties via `submitPenalties`.
+- Holds an optional market-wide price band (`priceFloor`, `priceCap`) that
+  every match must fall within. The admin sets it with
+  `setPriceBounds(floor, cap)`; `0` disables the respective bound, and
+  `PriceBoundsUpdated` is emitted on every change. Values are the scaled
+  integer rates used on-chain.
 - Stores the consumed order IDs for each new match; trade IDs cannot be reused.
 - Accepts idempotent `completeDeliveryVerification` batches from
   `EXECUTION_ENGINE_ROLE`. Penalties and `Executed` order statuses are recorded
@@ -257,6 +264,16 @@ Deployment script assigns:
 - Selected energy is positive and does not exceed either order's energy.
 - Each partially filled order has a fresh, non-zero residual ID; a fully filled
   order has no residual. Residual quantity and metadata come from the registry.
+- The match price lies within the configured price band
+  (`priceFloor <= clearingPrice <= priceCap`, each bound ignored when `0`),
+  for `Standard` and `Preferred` matches alike; otherwise `PriceOutOfBounds`.
+- Uniform pricing: when the batch's market was created with
+  `MatchingAlgorithm.PayAsClear`, every `Standard` match in that batch
+  must carry the same `clearingPrice`; otherwise `NonUniformClearingPrice`.
+  `Preferred` matches are bilateral and keep their own rate. The contract
+  reads the algorithm from `MarketController.getMatchingAlgorithm`, so the
+  check applies regardless of how the matching engine was configured. It does
+  not compare the match price with `ClearingResult.clearingPrice`.
 
 If checks pass, `submitMatches` marks consumed orders `Filled`/`PartiallyFilled` and
 emits `OrderPlaced` for their residuals and `TradeMatched` for the trade.

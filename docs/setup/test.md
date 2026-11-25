@@ -218,14 +218,22 @@ docker run --rm -e PYTHONDONTWRITEBYTECODE=1 -v "$PWD":/work:ro -w /work python:
 
 ### Matching Interval
 
-`pay_as_clear` defaults to a `64`-block matching interval so all scenario
-orders are collected before one clearing cycle. Override it with a positive
-`MATCHING_ENGINE_BLOCK_INTERVAL` value only when both the matching engine and
+For `pay_as_bid`, the E2E harness triggers matching by fast-forwarding local
+Anvil to the next matching boundary with empty-block RPC calls. Override
+`MATCHING_ENGINE_BLOCK_INTERVAL` only when both the matching engine and the
 E2E runner use the same value, as they do through the Compose configuration.
-If the current interval does not have enough capacity for the complete order
-book, the E2E harness first advances local Anvil to the next matching boundary.
-After the order book is indexed, it fast-forwards to the clearing boundary with
-empty-block RPC calls rather than waiting for one transaction per block.
+
+For `pay_as_clear`, the matching engine clears each market at times derived
+from its opening and closing time, so the harness waits for the wall clock
+instead of mining blocks. A scenario cannot wait for the single clearing at
+the end of a 60-minute market, so the E2E Compose file sets
+`PAY_AS_CLEAR_CLEARINGS_PER_MARKET` to `120`: one clearing every 30 seconds.
+The runner derives the same interval from that value and the spot market
+offsets, which the Compose file passes to it. Before it submits an order book
+that may not fit in the rest of the current interval, the harness waits for
+the next clearing; after the order book is indexed, it waits for the clearing
+that follows. The default of one clearing per market, 20 seconds before the
+close, is covered by unit tests only.
 
 Before waiting for the orchestrator, the E2E runner idempotently stores a new
 community using `OFFCHAIN_STORAGE_TRANSPORT`: over HTTP it calls

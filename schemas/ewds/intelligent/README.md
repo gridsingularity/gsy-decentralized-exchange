@@ -66,7 +66,7 @@ Notes:
   `market_id` names; these are validation records, not ontology entity DTOs.
 - Runtime service fields from GSY DEX are mapped in `docs/platform/ewds-data-contracts.md`.
 - Entity IDs use hyphenated UUIDv4 and timestamps use ISO 8601; actor IDs remain opaque off-chain strings.
-- The active DEX EVM settlement path uses bytes16 IDs and owner hashes, and
+- The active DEX EVM matching path uses bytes16 IDs and owner hashes, and
   Unix timeslots. On-chain IDs are not EVM wallet addresses. Market events expose
   UUIDv4s; order lifecycle, trade and clearing events expose the same lowercase UUID format.
   Their actor fields (`createdBy`, preferred partner, buyer/seller) expose the original

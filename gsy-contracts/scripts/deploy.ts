@@ -274,6 +274,16 @@ async function main() {
     await actorRegistry.grantRole(ACTOR_REGISTRAR_ROLE, actorRegistrarAddress),
   );
 
+  // Optional market-wide price band (scaled integer rates). Unset or 0 disables.
+  const priceFloor = BigInt(process.env.TRADE_MATCHING_PRICE_FLOOR ?? "0");
+  const priceCap = BigInt(process.env.TRADE_MATCHING_PRICE_CAP ?? "0");
+  if (priceFloor !== 0n || priceCap !== 0n) {
+    await waitForTransaction(
+      `Set TradeMatching price bounds (floor=${priceFloor}, cap=${priceCap})`,
+      await tradeMatching.setPriceBounds(priceFloor, priceCap),
+    );
+  }
+
   const envFilePath =
     process.env.CONTRACTS_ENV_PATH ?? "/contracts/addresses.env";
   const envFileContent = [
