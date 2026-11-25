@@ -191,7 +191,8 @@ async fn wait_for_market(world: &MyWorld, community_id: &str) -> ([u8; 16], Mark
 
     let market_controller =
         MarketControllerContract::new(world.market_controller_address, world.provider.clone());
-    let storage = OffchainStorageClient::from_env("E2E_TESTS_CLIENT_ID", "e2e_tests");
+    let offchain_storage_client =
+        OffchainStorageClient::from_env("E2E_TESTS_CLIENT_ID", "e2e_tests");
 
     for attempt in 0..MARKET_POLL_ATTEMPTS {
         let Some(market_id) = lookup_market_id(&market_controller, &key).await else {
@@ -205,7 +206,7 @@ async fn wait_for_market(world: &MyWorld, community_id: &str) -> ([u8; 16], Mark
             .await
             .expect("Failed to read market status from MarketController");
         let stored = if is_open {
-            storage
+            offchain_storage_client
                 .fetch_market(market_id_string.as_str())
                 .await
                 .expect("Failed to read market from off-chain storage")

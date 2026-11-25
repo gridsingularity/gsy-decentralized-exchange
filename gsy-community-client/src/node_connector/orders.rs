@@ -196,7 +196,8 @@ pub async fn create_input_orders(
     primitives::actor_ids::initialize_actor_id_hashing()?;
     let now: u64 = get_current_timestamp_in_secs();
 
-    let storage = OffchainStorageClient::from_env("EWDS_COMMUNITY_CLIENT_ID", "gsycommunityclient");
+    let offchain_storage_client =
+        OffchainStorageClient::from_env("EWDS_COMMUNITY_CLIENT_ID", "gsycommunityclient");
     let forecasts: Vec<_> = forecasts
         .into_iter()
         .filter(|forecast| forecast.energy_kwh > 0.0 || forecast.energy_kwh < 0.0)
@@ -204,7 +205,9 @@ pub async fn create_input_orders(
     if forecasts.is_empty() {
         return Ok(Vec::new());
     }
-    let facility_owner_mapping = storage.fetch_facility_owner_mapping().await?;
+    let facility_owner_mapping = offchain_storage_client
+        .fetch_facility_owner_mapping()
+        .await?;
     let requests: Vec<_> = forecasts
         .iter()
         .map(|forecast| FacilityMarketValidationRequest {
@@ -212,7 +215,7 @@ pub async fn create_input_orders(
             market_id: market.market_id.clone(),
         })
         .collect();
-    let validation = storage
+    let validation = offchain_storage_client
         .validate_facility_markets(&requests)
         .await
         .context("Facility participation validation failed")?;

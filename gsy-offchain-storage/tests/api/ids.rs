@@ -186,14 +186,17 @@ async fn post_ids_concurrent_same_id_yields_single_mapping() {
         assert_eq!(r.offchain_id, offchain);
     }
     assert_eq!(results[0].onchain_id, derive_onchain_id(offchain));
-    let storage = primitives::offchain_storage::OffchainStorageClient::new(
+    let offchain_storage_client = primitives::offchain_storage::OffchainStorageClient::new(
         primitives::offchain_storage::OffchainStorageTransport::Http,
         app.address.clone(),
         "UNUSED",
         "test",
     );
     assert_eq!(
-        storage.fetch_onchain_id(offchain).await.unwrap(),
+        offchain_storage_client
+            .fetch_onchain_id(offchain)
+            .await
+            .unwrap(),
         results[0].onchain_id
     );
     let onchain_hex = format!("0x{}", results[0].onchain_id[2..].to_uppercase());

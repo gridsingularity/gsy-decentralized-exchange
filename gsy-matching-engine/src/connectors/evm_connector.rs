@@ -248,7 +248,7 @@ async fn run_clearing_schedule(
     pay_as_clear_pricing: PayAsClearPricing,
     clearing_schedule: ClearingSchedule,
 ) -> Result<()> {
-    let storage =
+    let offchain_storage_client =
         OffchainStorageClient::from_env("EWDS_MATCHING_ENGINE_CLIENT_ID", "gsymatchingengine");
     let mut markets: HashMap<String, MarketWindow> = HashMap::new();
     // Clearing times before the start are not made up for.
@@ -266,7 +266,13 @@ async fn run_clearing_schedule(
                     // The first orders of a new market arrived after the
                     // previous discovery, so its clearing times since then
                     // are still due.
-                    discover_markets(&storage, &orders, &mut markets, last_discovery).await;
+                    discover_markets(
+                        &offchain_storage_client,
+                        &orders,
+                        &mut markets,
+                        last_discovery,
+                    )
+                    .await;
                     last_discovery = now;
                     prepared_orders = Some(orders);
                 }
@@ -325,7 +331,7 @@ async fn run_clearing_schedule(
 
 /// Adds the markets of `orders` that are not in `markets` yet.
 async fn discover_markets(
-    storage: &OffchainStorageClient,
+    offchain_storage_client: &OffchainStorageClient,
     orders: &PreparedOrders,
     markets: &mut HashMap<String, MarketWindow>,
     checked_until: u64,
@@ -339,7 +345,7 @@ async fn discover_markets(
         .collect();
 
     for market_id in unknown_market_ids {
-        let market = match storage.fetch_market(market_id).await {
+        let market = match offchain_storage_client.fetch_market(market_id).await {
             Ok(Some(market)) => market,
             Ok(None) => {
                 warn!("Market {} of an open order is not in the storage", market_id);
