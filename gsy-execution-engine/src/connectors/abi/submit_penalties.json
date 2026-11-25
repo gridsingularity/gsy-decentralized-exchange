@@ -12,7 +12,7 @@
   },
   {
     "type": "function",
-    "name": "settledTrades",
+    "name": "matchedTrades",
     "stateMutability": "view",
     "inputs": [{"name": "tradeId", "type": "bytes16"}],
     "outputs": [

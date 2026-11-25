@@ -108,8 +108,8 @@ pub async fn guarantees_of_origin(
         .collect::<Vec<_>>();
 
     let markets = db.markets().get_by_ids(market_ids(&slot_executed)).await?;
-    let facilities = db.facilities().get_all().await?;
-    let communities = db.communities().get_all().await?;
+    let facilities = db.facilities().get().await?;
+    let communities = db.communities().get().await?;
     let assets = db.assets().get_all().await?;
     let measurement_points = db
         .measurement_points()

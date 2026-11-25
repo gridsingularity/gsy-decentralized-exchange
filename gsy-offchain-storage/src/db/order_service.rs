@@ -77,6 +77,18 @@ pub async fn init_tariffs(db: &DatabaseWrapper) -> Result<()> {
 pub struct OrderService(pub Collection<DbOrderSchema>);
 
 impl OrderService {
+    /// Legacy imports may create records, but must never replace listener-owned state.
+    pub async fn import_orders(
+        &self,
+        orders: Vec<DbOrderSchema>,
+    ) -> mongodb::error::Result<HashMap<usize, Bson>> {
+        let mut inserted_ids = HashMap::new();
+        for (index, order) in orders.into_iter().enumerate() {
+            inserted_ids.insert(index, self.0.insert_one(order).await?.inserted_id);
+        }
+        Ok(inserted_ids)
+    }
+
     /// The first chain placement supersedes an import. Replays must not rewind lifecycle state.
     pub async fn record_placement(&self, order: &DbOrderSchema) -> Result<()> {
         let mut placement = bson::to_document(order)?;
@@ -96,6 +108,7 @@ impl OrderService {
 
     #[tracing::instrument(name = "Fetching orders from database", skip(self))]
     pub async fn get_all_orders(&self) -> Result<Vec<DbOrderSchema>> {
+        super::pending_events::ensure_ready(&self.0, None).await?;
         Ok(self.0.find(doc! {}).await?.try_collect().await?)
     }
 
@@ -106,6 +119,7 @@ impl OrderService {
         start_time: Option<u64>,
         end_time: Option<u64>,
     ) -> Result<Vec<DbOrderSchema>> {
+        super::pending_events::ensure_ready(&self.0, market_id.as_deref()).await?;
         let mut filter_params = doc! {};
         if let Some(market_id) = market_id {
             filter_params.insert("market_id", market_id);
@@ -183,29 +197,6 @@ impl OrderService {
         }
     }
 
-    pub async fn update_order_by_area_market_id(
-        &self,
-        area_uuid: String,
-        market_id: String,
-    ) -> Result<bool> {
-        let filter = doc! {
-            "area_uuid": area_uuid,
-            "market_id": market_id,
-        };
-        let update = doc! {
-            "$set": {
-                "status": bson::to_bson(&OrderStatus::Executed)?,
-            }
-        };
-        match self.0.update_many(filter, update).await {
-            Ok(_) => Ok(true),
-            Err(e) => {
-                tracing::error!("Failed to execute query: {:?}", e);
-                Err(anyhow::Error::from(e))
-            }
-        }
-    }
-
     #[tracing::instrument(name = "Update order status by id", skip(self, id, status))]
     pub async fn update_order_status_by_id(
         &self,
@@ -233,7 +224,7 @@ impl OrderService {
         }
     }
 
-    /// Record a settlement fill without resetting executed orders or replay timestamps.
+    /// Record a match fill without resetting executed orders or replay timestamps.
     pub async fn mark_filled(
         &self,
         order_id: &str,
@@ -248,7 +239,7 @@ impl OrderService {
         self.0.update_one(
             doc! {
                 "order_id": order_id,
-                // A delayed settlement event may arrive after market closure.
+                // A delayed match event may arrive after market closure.
                 "status": {"$in": [bson::to_bson(&OrderStatus::Submitted)?, bson::to_bson(&OrderStatus::Expired)?]},
             },
             doc! {"$set": {
@@ -263,7 +254,7 @@ impl OrderService {
             order.is_some_and(
                 |order| order.status == status || order.status == OrderStatus::Executed
             ),
-            "Cannot settle missing or conflicting order {}",
+            "Cannot fill missing or conflicting order {}",
             order_id
         );
         Ok(())

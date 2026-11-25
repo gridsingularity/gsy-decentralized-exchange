@@ -13,7 +13,7 @@ use crate::{
     },
 };
 
-/// Half-open delivery window, independent of trade creation/settlement times.
+/// Half-open delivery window, independent of trade creation/matching times.
 fn timeslot_window(timeslot: u64, market_duration: u64) -> Result<(u64, u64)> {
     ensure!(
         GLOBAL_CONSTANTS.time_slot_sec > 0,
@@ -38,7 +38,7 @@ fn timeslot_window(timeslot: u64, market_duration: u64) -> Result<(u64, u64)> {
 pub async fn run_execution_cycle(
     offchain_url: &str,
     evm_node_url: &str,
-    trade_settlement_address: &str,
+    trade_matching_address: &str,
     execution_engine_private_key: &str,
     timeslot: u64,
     penalty_rate: f64,
@@ -207,7 +207,7 @@ async fn run_cycle(
 
     let processed = complete_delivery_verification(
         evm_node_url,
-        trade_settlement_address,
+        trade_matching_address,
         execution_engine_private_key,
         verifications,
     )

@@ -1,5 +1,5 @@
 use primitives::db_api_schema::{
-    grid_topology::{EnergyCommunitySchema, FacilitySchema, SiteSchema},
+    grid_topology::EnergyCommunitySchema,
     market::{MarketSchema, MarketType, MatchingAlgorithm},
     orders::{DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus},
     profiles::MeasurementSchema,
@@ -10,8 +10,8 @@ use primitives::db_api_schema::{
 };
 use primitives::ewds::dto::{
     energy_type_from_ewds, energy_type_to_ewds, EwdsClearingResultDto, EwdsCommunityDto,
-    EwdsEventEnvelope, EwdsMarketDto, EwdsMeasurementDto, EwdsOrderDto, EwdsRequestEnvelope,
-    EwdsTradeDto,
+    EwdsEventEnvelope, EwdsFacilityDto, EwdsMarketDto, EwdsMeasurementDto, EwdsOrderDto,
+    EwdsRequestEnvelope, EwdsSiteDto, EwdsTradeDto,
 };
 use primitives::ewds::{
     empty_response_grace_elapsed, event_retry_delay_ms, invalid_event, is_invalid_event,
@@ -19,7 +19,7 @@ use primitives::ewds::{
     parse_gateway_delivery_summary, select_response_data, EwdsEventTopicConfig, EwdsEventType,
     EwdsOperation, EwdsTopicConfig, EwdsTopicPair,
 };
-use primitives::utils::epoch_to_rfc3339;
+use primitives::utils::{epoch_to_rfc3339, EPOCH_RFC3339};
 use serde_json::{json, Value};
 use std::str::FromStr;
 use std::time::Instant;
@@ -34,6 +34,8 @@ mod tests {
             community_id: "a5657b6e-b0b2-46ee-87d6-1e29470339a7".to_string(),
             community_name: "Test community".to_string(),
             sites: vec!["site-id".to_string()],
+            valid_from: EPOCH_RFC3339.to_string(),
+            valid_until: None,
         };
 
         let dto = EwdsCommunityDto::from(expected.clone());
@@ -43,7 +45,7 @@ mod tests {
             serialized.get("communityId").and_then(Value::as_str),
             Some(expected.community_id.as_str())
         );
-        assert_eq!(EnergyCommunitySchema::from(dto), expected);
+        assert_eq!(EnergyCommunitySchema::try_from(dto).unwrap(), expected);
     }
 
     fn order() -> DbOrderSchema {
@@ -52,7 +54,6 @@ mod tests {
             status: OrderStatus::Submitted,
             status_updated_at: None,
             order_type: OrderEnum::Bid,
-            area_uuid: "actor-id".to_string(),
             market_id: "market-id".to_string(),
             time_slot: 10,
             creation_time: 9,
@@ -512,8 +513,8 @@ mod tests {
     }
 
     #[test]
-    fn event_envelopes_carry_facility_and_site_schemas() {
-        let facility_event: EwdsEventEnvelope<Vec<FacilitySchema>> =
+    fn event_envelopes_carry_facility_and_site_dtos() {
+        let facility_event: EwdsEventEnvelope<Vec<EwdsFacilityDto>> =
             serde_json::from_value(json!({
                 "eventId": "facility-event",
                 "eventType": "facility.event",
@@ -529,19 +530,22 @@ mod tests {
         assert_eq!(facility_event.event_type, EwdsEventType::Facility);
         assert_eq!(
             facility_event.data,
-            vec![FacilitySchema {
+            vec![EwdsFacilityDto {
                 facility_id: "facility-id".to_string(),
                 facility_name: "Facility".to_string(),
                 site_id: "site-name".to_string(),
                 owner_id: "owner-id".to_string(),
+                valid_from: None,
+                valid_until: None,
             }]
         );
 
-        let site_event: EwdsEventEnvelope<Vec<SiteSchema>> = serde_json::from_value(json!({
+        let site_event: EwdsEventEnvelope<Vec<EwdsSiteDto>> = serde_json::from_value(json!({
             "eventId": "site-event",
             "eventType": "site.event",
             "occurredAt": "2026-09-29T10:16:02Z",
             "data": [{
+                "site_id": "site-id",
                 "site_name": "site-name",
                 "site_description": "Main building",
                 "facilities": ["facility-id"],
@@ -551,10 +555,13 @@ mod tests {
         assert_eq!(site_event.event_type, EwdsEventType::Site);
         assert_eq!(
             site_event.data,
-            vec![SiteSchema {
+            vec![EwdsSiteDto {
+                site_id: "site-id".to_string(),
                 site_name: "site-name".to_string(),
                 site_description: "Main building".to_string(),
                 facilities: vec!["facility-id".to_string()],
+                valid_from: None,
+                valid_until: None,
             }]
         );
     }
@@ -750,11 +757,11 @@ mod tests {
         assert!(NoBidReason::from_str("gremlins").is_err());
     }
 
-    /// A market as the off-chain storage stores it: `0x…` market ID and
+    /// A market as the off-chain storage stores it: UUIDv4 market ID and
     /// zero-padded epoch seconds.
     fn market() -> MarketSchema {
         MarketSchema {
-            market_id: "0xcccccccccccccccccccccccccccccccc".to_string(),
+            market_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc".to_string(),
             community_id: "11111111-1111-4111-8111-111111111111".to_string(),
             opening_time: "00000000001700000000".to_string(),
             closing_time: "00000000001700001800".to_string(),
@@ -773,7 +780,7 @@ mod tests {
         assert_eq!(
             json,
             json!({
-                "marketId": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+                "marketId": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
                 "communityId": "11111111-1111-4111-8111-111111111111",
                 "openingTime": epoch_to_rfc3339(1_700_000_000),
                 "closingTime": epoch_to_rfc3339(1_700_001_800),
@@ -794,9 +801,9 @@ mod tests {
     }
 
     #[test]
-    fn market_dto_accepts_a_hex_market_id() {
+    fn market_dto_accepts_uppercase_uuid_market_id() {
         let dto = EwdsMarketDto {
-            market_id: "0xcccccccccccccccccccccccccccccccc".to_string(),
+            market_id: "CCCCCCCC-CCCC-4CCC-8CCC-CCCCCCCCCCCC".to_string(),
             ..EwdsMarketDto::try_from(market()).unwrap()
         };
         assert_eq!(MarketSchema::try_from(dto).unwrap(), market());

@@ -1,6 +1,6 @@
-Feature: Preferred residual settlement lifecycle
+Feature: Preferred residual matching lifecycle
 
-  Scenario Outline: A residual <side> is consumed in a <consumption> settlement
+  Scenario Outline: A residual <side> is consumed in a <consumption> match
     Given the GSY DEX services are running
     And the DEX service accounts are authorized
     When the Market Orchestrator opens the Spot market for the current delivery slot

@@ -336,7 +336,7 @@ The services expect these deployed addresses:
 
 - `MARKET_CONTROLLER_ADDRESS`
 - `ORDER_REGISTRY_ADDRESS`
-- `TRADE_SETTLEMENT_ADDRESS`
+- `TRADE_MATCHING_ADDRESS`
 - `ACTOR_REGISTRY_ADDRESS`
 
 In default local setup, they are provisioned by `./scripts/contracts.sh local

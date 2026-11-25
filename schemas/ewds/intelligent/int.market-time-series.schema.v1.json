@@ -6,19 +6,16 @@
   "type": "object",
   "properties": {
     "communityId": {
-      "description": "FK to Community. IRI: int:communityId. UUID v4.",
-      "type": "string",
-      "format": "uuid"
+      "$ref": "./int.community.schema.v1.json#/properties/communityId"
     },
     "marketIds": {
-      "description": "List of market IDs recorded in this time series. IRI: int:marketIds. UUID v4 array.",
+      "description": "List of market UUIDv4 IDs recorded in this time series. IRI: int:marketIds.",
       "type": [
         "array",
         "null"
       ],
       "items": {
-        "type": "string",
-        "format": "uuid"
+        "$ref": "./int.market.schema.v1.json#/properties/marketId"
       },
       "default": []
     },

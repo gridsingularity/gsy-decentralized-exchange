@@ -2,8 +2,8 @@
 
 ## Role in the System
 
-`gsy-execution-engine` computes imbalance penalties after trade settlement and
-records delivery verification in `TradeSettlement`.
+`gsy-execution-engine` computes imbalance penalties after trades are matched on-chain and
+records delivery verification in `TradeMatching`.
 
 ## Execution Cycle
 
@@ -13,7 +13,7 @@ Each cycle:
 2. Fetch trades plus measurement points/timeseries for that delivery window from
    off-chain storage. Resolve each distinct market once through the existing
    HTTP/EWDS market lookup and group trades by its `delivery_start_time`, not
-   trade creation or settlement time.
+   trade creation or matching time.
 3. Compute facility totals and penalty allocations separately for each slot,
    including `Executed` and `Settled` trades in the baseline. Only `Matched` or
    `Penalized` trades with usable readings for both parties receive verdicts;
@@ -57,10 +57,11 @@ For purchases of 4 and 6 kWh and consumption of 12 kWh, the 2 kWh deviation
 produces a 2,000-unit penalty at rate 0.10, allocated as 800 and 1,200 units.
 
 Measurements identify facilities. The engine reads the facility-to-owner mapping
-from off-chain storage and derives each owner's on-chain ID with the ID service's
-shared Blake2b-16 helper, without writing ID mappings. That owner ID is used in
-`OrderParams.createdBy` and the indexed trade parties; the submitting service
-wallet is separate. This deployment guarantees one facility per owner.
+from off-chain storage and compares the original owner ID with indexed trade
+parties directly. No ID-service conversion or hashing is needed for this join.
+Only contract-bound actor arguments (such as standalone penalties) use keyed
+hashes. The submitting service wallet is separate. This deployment guarantees one facility per owner.
+Facility and owner IDs are preserved exactly, including UUID-shaped strings.
 Missing/unmapped, non-finite, or conflicting readings for a facility/slot leave its trades pending;
 they do not produce a zero-penalty success. Identical readings are not counted
 twice. Multiple distinct readings are not summed or arbitrarily selected: they
@@ -84,8 +85,10 @@ does not solve this limitation.
 
 ## Duplicate Submission Protection
 
-Before submitting, the engine checks `settledTrades(tradeId).verified` and skips
-completed trades. The contract also ignores repeated verdicts, so receipt loss
+Before submitting, the engine checks `matchedTrades(tradeId).verified` and skips
+completed trades. An invalid or unregistered trade ID is logged and excluded from
+that cycle, not counted as verified. An RPC error instead fails the cycle.
+The contract also ignores repeated verdicts, so receipt loss
 or concurrent submissions cannot duplicate penalties or completion events.
 Matching pre-recorded penalties are reused; conflicting amounts reject the
 transaction. A successful receipt is required before reporting progress.
@@ -172,7 +175,7 @@ and both directions of deviation over HTTP/EWDS with either matching algorithm.
 
 - CLI: `web3 <offchain_host> <offchain_port> <node_host> <node_port> <polling_interval> <market_duration> <penalty_rate> [--penalty-tolerance-percent <percent>]`
 - Env:
-  - `TRADE_SETTLEMENT_ADDRESS`
+  - `TRADE_MATCHING_ADDRESS`
   - `EXECUTION_ENGINE_PRIVATE_KEY`
   - `EXECUTION_ENGINE_OFFSET_MIN`
   - `EXECUTION_ENGINE_ROLLOVER_GRACE_SECONDS` (default `900`; set `0` to disable)

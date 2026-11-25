@@ -5,7 +5,7 @@
 //!
 //! # Identification
 //!
-//! * A trade party (`seller` / `buyer`) is the on-chain owner hash, resolved to the
+//! * A trade party (`seller` / `buyer`) is the original off-chain owner ID, linked to the
 //!   owner's facility. This deployment guarantees one facility per owner.
 //! * A measurement point's `asset_name` names a **facility**. It is matched against
 //!   `FacilitySchema::facility_id` first — that is what the community client and the
@@ -75,18 +75,15 @@ fn delivery_slots<'a>(markets: &'a [MarketSchema]) -> HashMap<&'a str, u64> {
         .collect()
 }
 
-/// On-chain owner/community identifier, using the same derivation as the ID service.
-pub use primitives::utils::derive_onchain_id as party_hash;
-
 /// Facilities and communities indexed the ways the builder looks them up.
 struct Topology<'a> {
-    /// On-chain owner ID → facility (one facility per owner).
+    /// Off-chain owner ID → facility (one facility per owner).
     facility_by_party: HashMap<String, &'a FacilitySchema>,
     /// `facility_id` and `facility_name` → facility; ids take precedence over names.
     facility_by_alias: HashMap<&'a str, &'a FacilitySchema>,
     /// `site_id` → community whose `sites` contains it.
     community_by_site: HashMap<&'a str, &'a EnergyCommunitySchema>,
-    /// Community party hash → community, for a buyer that is a community rather than a facility.
+    /// Off-chain community ID → community, for a community buyer.
     community_by_party: HashMap<String, &'a EnergyCommunitySchema>,
     /// `facility_id`s owning at least one `AssetType::PV` asset.
     pv_facilities: HashSet<&'a str>,
@@ -101,7 +98,7 @@ impl<'a> Topology<'a> {
         let mut facility_by_alias = HashMap::new();
         for facility in &facilities {
             facility_by_party
-                .entry(party_hash(&facility.owner_id))
+                .entry(facility.owner_id.clone())
                 .or_insert(*facility);
             facility_by_alias
                 .entry(facility.facility_id.as_str())
@@ -119,7 +116,7 @@ impl<'a> Topology<'a> {
         let mut community_by_party = HashMap::new();
         for community in communities {
             community_by_party
-                .entry(party_hash(&community.community_id))
+                .entry(community.community_id.clone())
                 .or_insert(community);
             for site in &community.sites {
                 community_by_site.entry(site.as_str()).or_insert(community);

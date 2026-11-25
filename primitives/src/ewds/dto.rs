@@ -1,6 +1,7 @@
+use crate::utils::EPOCH_RFC3339;
 use super::{EwdsEventType, EwdsOperation};
 use crate::db_api_schema::{
-    grid_topology::EnergyCommunitySchema,
+    grid_topology::{EnergyCommunitySchema, FacilitySchema, SiteSchema},
     market::{MarketSchema, MarketType, MatchingAlgorithm},
     orders::{DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus},
     profiles::MeasurementSchema,
@@ -11,7 +12,7 @@ use crate::db_api_schema::{
 };
 
 use crate::utils::{
-    bytes16_to_hex, bytes16_to_uuid_string, epoch_to_rfc3339, opt_rfc3339_to_epoch, parse_uuid_or_hex_bytes16,
+    epoch_to_rfc3339, opt_rfc3339_to_epoch, normalize_uuid,
     rfc3339_to_epoch, string_to_timestamp, timestamp_to_string_with_padding,
 };
 use anyhow::{anyhow, Context, Result};
@@ -182,12 +183,60 @@ pub struct EwdsOrderDto {
     pub preferred_energy_rate: Option<f64>,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+/// The wire form of a community, on EWDS and REST, in camelCase. `validFrom` and `validUntil` are RFC 3339
+/// strings. A `validFrom` sent to GSY is ignored: GSY sets it to the time it receives the entry.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct EwdsCommunityDto {
     pub community_id: String,
     pub community_name: String,
     pub sites: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valid_from: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valid_until: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct EwdsSiteDto {
+    pub site_id: String,
+    pub site_name: String,
+    pub site_description: String,
+    pub facilities: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valid_from: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valid_until: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct EwdsFacilityDto {
+    pub facility_id: String,
+    pub facility_name: String,
+    pub site_id: String,
+    pub owner_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valid_from: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valid_until: Option<String>,
+}
+
+fn validate_times(
+    valid_from: Option<String>,
+    valid_until: Option<String>,
+) -> Result<(String, Option<String>)> {
+    // Written back in UTC like every stored time, so that MongoDB compares them as strings.
+    let stored = |time: &str| rfc3339_to_epoch(time).map(epoch_to_rfc3339);
+    let valid_from = match valid_from {
+        Some(valid_from) => stored(&valid_from).context("invalid valid_from")?,
+        None => EPOCH_RFC3339.to_string(),
+    };
+    let valid_until = valid_until
+        .as_deref()
+        .map(stored)
+        .transpose()
+        .context("invalid valid_until")?;
+    Ok((valid_from, valid_until))
 }
 
 impl From<EnergyCommunitySchema> for EwdsCommunityDto {
@@ -196,17 +245,83 @@ impl From<EnergyCommunitySchema> for EwdsCommunityDto {
             community_id: community.community_id,
             community_name: community.community_name,
             sites: community.sites,
+            valid_from: Some(community.valid_from),
+            valid_until: community.valid_until,
         }
     }
 }
 
-impl From<EwdsCommunityDto> for EnergyCommunitySchema {
-    fn from(community: EwdsCommunityDto) -> Self {
-        Self {
+impl TryFrom<EwdsCommunityDto> for EnergyCommunitySchema {
+    type Error = anyhow::Error;
+
+    fn try_from(community: EwdsCommunityDto) -> Result<Self> {
+        let (valid_from, valid_until) =
+            validate_times(community.valid_from, community.valid_until)?;
+        Ok(Self {
             community_id: community.community_id,
             community_name: community.community_name,
             sites: community.sites,
+            valid_from,
+            valid_until,
+        })
+    }
+}
+
+impl From<SiteSchema> for EwdsSiteDto {
+    fn from(site: SiteSchema) -> Self {
+        Self {
+            site_id: site.site_id,
+            site_name: site.site_name,
+            site_description: site.site_description,
+            facilities: site.facilities,
+            valid_from: Some(site.valid_from),
+            valid_until: site.valid_until,
         }
+    }
+}
+
+impl TryFrom<EwdsSiteDto> for SiteSchema {
+    type Error = anyhow::Error;
+
+    fn try_from(site: EwdsSiteDto) -> Result<Self> {
+        let (valid_from, valid_until) = validate_times(site.valid_from, site.valid_until)?;
+        Ok(Self {
+            site_id: site.site_id,
+            site_name: site.site_name,
+            site_description: site.site_description,
+            facilities: site.facilities,
+            valid_from,
+            valid_until,
+        })
+    }
+}
+
+impl From<FacilitySchema> for EwdsFacilityDto {
+    fn from(facility: FacilitySchema) -> Self {
+        Self {
+            facility_id: facility.facility_id,
+            facility_name: facility.facility_name,
+            site_id: facility.site_id,
+            owner_id: facility.owner_id,
+            valid_from: Some(facility.valid_from),
+            valid_until: facility.valid_until,
+        }
+    }
+}
+
+impl TryFrom<EwdsFacilityDto> for FacilitySchema {
+    type Error = anyhow::Error;
+
+    fn try_from(facility: EwdsFacilityDto) -> Result<Self> {
+        let (valid_from, valid_until) = validate_times(facility.valid_from, facility.valid_until)?;
+        Ok(Self {
+            facility_id: facility.facility_id,
+            facility_name: facility.facility_name,
+            site_id: facility.site_id,
+            owner_id: facility.owner_id,
+            valid_from,
+            valid_until,
+        })
     }
 }
 
@@ -281,7 +396,6 @@ impl TryFrom<EwdsOrderDto> for DbOrderSchema {
             status: order_status_from_ewds(order.order_status.as_str())?,
             status_updated_at: opt_rfc3339_to_epoch(order.updated_at.as_deref())?,
             order_type,
-            area_uuid: order.created_by.clone(),
             market_id: order.market_id,
             time_slot: rfc3339_to_epoch(&order.time_slot)?,
             creation_time: rfc3339_to_epoch(&order.creation_time)?,
@@ -551,7 +665,7 @@ impl TryFrom<EwdsClearingResultDto> for ClearingResultSchema {
 
 /// A market in the form of `int.market.schema.v1.json`, as returned by
 /// `markets.query` and published in `market.event`: UUID market ID and
-/// RFC 3339 times. The market ID is the same 16 bytes as the stored `0x…` ID.
+/// RFC 3339 times. Market IDs use the same canonical UUID text in storage.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct EwdsMarketDto {
@@ -566,12 +680,6 @@ pub struct EwdsMarketDto {
     pub created_at: String,
 }
 
-/// Parses a market ID given as a UUID or as 16 hex bytes.
-pub fn parse_market_id(value: &str) -> Result<[u8; 16]> {
-    parse_uuid_or_hex_bytes16(value)
-        .ok_or_else(|| anyhow!("market ID '{}' is not a UUID or 16-byte hex value", value))
-}
-
 impl TryFrom<MarketSchema> for EwdsMarketDto {
     type Error = anyhow::Error;
 
@@ -582,7 +690,7 @@ impl TryFrom<MarketSchema> for EwdsMarketDto {
                 .with_context(|| format!("{} '{}' is not an epoch timestamp", name, value))
         };
         Ok(EwdsMarketDto {
-            market_id: bytes16_to_uuid_string(parse_market_id(&m.market_id)?),
+            market_id: normalize_uuid(&m.market_id)?,
             community_id: m.community_id,
             opening_time: time("opening_time", &m.opening_time)?,
             closing_time: time("closing_time", &m.closing_time)?,
@@ -601,7 +709,7 @@ impl TryFrom<EwdsMarketDto> for MarketSchema {
     fn try_from(d: EwdsMarketDto) -> Result<Self> {
         let time = |value: &str| rfc3339_to_epoch(value).map(timestamp_to_string_with_padding);
         Ok(MarketSchema {
-            market_id: bytes16_to_hex(parse_market_id(&d.market_id)?),
+            market_id: normalize_uuid(&d.market_id)?,
             community_id: d.community_id,
             opening_time: time(&d.opening_time)?,
             closing_time: time(&d.closing_time)?,
