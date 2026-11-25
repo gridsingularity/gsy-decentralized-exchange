@@ -491,6 +491,7 @@ impl EwdsClientConfig {
     }
 }
 
+#[derive(Clone)]
 pub struct EwdsClient {
     client: reqwest::Client,
     config: EwdsClientConfig,

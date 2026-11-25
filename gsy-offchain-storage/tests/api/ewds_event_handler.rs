@@ -191,10 +191,11 @@ async fn assert_trade_status_event(
         .unwrap();
     assert_eq!(http, expected);
     let server = mock_gateway().await;
+    let config = test_config(server.uri());
     handle_request(
         &app.db_wrapper,
-        &client,
-        &test_config(server.uri()),
+        &config.ewds_client(),
+        &config,
         EwdsRequestEnvelope {
             request_id: "status-query".into(),
             operation: EwdsOperation::TradesQuery,

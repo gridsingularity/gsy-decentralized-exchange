@@ -178,7 +178,6 @@ async fn orders_query_success() {
     let app = init_app().await;
     let server = mock_gateway().await;
     let config = test_config(server.uri());
-    let client = reqwest::Client::new();
 
     let env = envelope(
         EwdsOperation::OrdersQuery,
@@ -186,7 +185,7 @@ async fn orders_query_success() {
         json!({ "marketId": "11111111-1111-4111-8111-111111111111" }),
     );
 
-    handle_request(&app.db_wrapper, &client, &config, env)
+    handle_request(&app.db_wrapper, &config.ewds_client(), &config, env)
         .await
         .unwrap();
 
@@ -200,7 +199,6 @@ async fn orders_query_bad_payload_errors() {
     let app = init_app().await;
     let server = mock_gateway().await;
     let config = test_config(server.uri());
-    let client = reqwest::Client::new();
 
     let env = envelope(
         EwdsOperation::OrdersQuery,
@@ -208,7 +206,7 @@ async fn orders_query_bad_payload_errors() {
         json!({ "startTime": 0 }),
     );
 
-    handle_request(&app.db_wrapper, &client, &config, env)
+    handle_request(&app.db_wrapper, &config.ewds_client(), &config, env)
         .await
         .unwrap();
     let response = captured_envelope(&server).await;
@@ -319,10 +317,11 @@ async fn market_queries_accept_uuid_case_variants_over_http_and_ewds() {
             expected = Some(http_data.clone());
 
             let server = mock_gateway().await;
+            let config = test_config(server.uri());
             handle_request(
                 &app.db_wrapper,
-                &client,
-                &test_config(server.uri()),
+                &config.ewds_client(),
+                &config,
                 envelope(operation, "market-format", json!({"marketId": query_id})),
             )
             .await
@@ -345,10 +344,11 @@ async fn market_queries_accept_uuid_case_variants_over_http_and_ewds() {
                 .unwrap();
             assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
             let server = mock_gateway().await;
+            let config = test_config(server.uri());
             handle_request(
                 &app.db_wrapper,
-                &client,
-                &test_config(server.uri()),
+                &config.ewds_client(),
+                &config,
                 envelope(operation, "invalid-market", json!({"marketId": query_id})),
             )
             .await
@@ -398,10 +398,11 @@ async fn each_read_query_answers_storage_failures() {
             json!({"marketId": market_id})
         };
         let server = mock_gateway().await;
+        let config = test_config(server.uri());
         handle_request(
             &app.db_wrapper,
-            &reqwest::Client::new(),
-            &test_config(server.uri()),
+            &config.ewds_client(),
+            &config,
             envelope(operation, "storage-error", payload),
         )
         .await
@@ -447,7 +448,7 @@ async fn malformed_trade_returns_http_and_ewds_errors_instead_of_partial_results
     let config = test_config(server.uri());
     handle_request(
         &app.db_wrapper,
-        &client,
+        &config.ewds_client(),
         &config,
         envelope(
             EwdsOperation::TradesQuery,
@@ -487,7 +488,6 @@ async fn run_trades_query(request_id: &str, payload: serde_json::Value) -> serde
     let app = init_app().await;
     let server = mock_gateway().await;
     let config = test_config(server.uri());
-    let client = reqwest::Client::new();
 
     for market in [
         make_delivery_market("00000000-0000-4000-8000-000000000001", 0),
@@ -508,7 +508,7 @@ async fn run_trades_query(request_id: &str, payload: serde_json::Value) -> serde
         .unwrap();
 
     let env = envelope(EwdsOperation::TradesQuery, request_id, payload);
-    handle_request(&app.db_wrapper, &client, &config, env)
+    handle_request(&app.db_wrapper, &config.ewds_client(), &config, env)
         .await
         .unwrap();
     let response = captured_envelope(&server).await;
@@ -640,7 +640,6 @@ fn validate_trades_query_range_needs_no_range_for_a_market() {
 #[tokio::test]
 async fn trades_query_filters_by_market_id() {
     let app = init_app().await;
-    let client = reqwest::Client::new();
 
     for market_id in [
         "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -678,7 +677,7 @@ async fn trades_query_filters_by_market_id() {
             payload.clone(),
         );
 
-        handle_request(&app.db_wrapper, &client, &config, env)
+        handle_request(&app.db_wrapper, &config.ewds_client(), &config, env)
             .await
             .unwrap();
         let data = captured_data(&server).await;
@@ -694,7 +693,6 @@ async fn trades_query_bad_payload_errors() {
     let app = init_app().await;
     let server = mock_gateway().await;
     let config = test_config(server.uri());
-    let client = reqwest::Client::new();
 
     let env = envelope(
         EwdsOperation::TradesQuery,
@@ -702,7 +700,7 @@ async fn trades_query_bad_payload_errors() {
         json!({ "endTime": 9_999_999_999u64 }),
     );
 
-    handle_request(&app.db_wrapper, &client, &config, env)
+    handle_request(&app.db_wrapper, &config.ewds_client(), &config, env)
         .await
         .unwrap();
     let response = captured_envelope(&server).await;
@@ -719,7 +717,6 @@ async fn measurements_query_success() {
     let app = init_app().await;
     let server = mock_gateway().await;
     let config = test_config(server.uri());
-    let client = reqwest::Client::new();
 
     let env = envelope(
         EwdsOperation::MeasurementsQuery,
@@ -727,7 +724,7 @@ async fn measurements_query_success() {
         json!({ "startTime": "1970-01-01T00:00:00Z", "endTime": "2286-11-20T17:46:39Z", "areaUuid": "facility-1" }),
     );
 
-    handle_request(&app.db_wrapper, &client, &config, env)
+    handle_request(&app.db_wrapper, &config.ewds_client(), &config, env)
         .await
         .unwrap();
     let _data = captured_data(&server).await;
@@ -787,10 +784,11 @@ async fn measurement_queries_preserve_signed_energy_over_http_and_ewds() {
     .fetch_measurements(TRADES_BASE_TIME, TRADES_BASE_TIME + 900)
     .await
     .unwrap();
+    let config = test_config(server.uri());
     handle_request(
         &app.db_wrapper,
-        &reqwest::Client::new(),
-        &test_config(server.uri()),
+        &config.ewds_client(),
+        &config,
         envelope(
             EwdsOperation::MeasurementsQuery,
             "signed-measurements",
@@ -830,7 +828,6 @@ async fn measurements_query_bad_payload_errors() {
     let app = init_app().await;
     let server = mock_gateway().await;
     let config = test_config(server.uri());
-    let client = reqwest::Client::new();
 
     let env = envelope(
         EwdsOperation::MeasurementsQuery,
@@ -838,7 +835,7 @@ async fn measurements_query_bad_payload_errors() {
         json!({ "startTime": 0 }),
     );
 
-    handle_request(&app.db_wrapper, &client, &config, env)
+    handle_request(&app.db_wrapper, &config.ewds_client(), &config, env)
         .await
         .unwrap();
     assert_invalid_request(&server, "req-meas-bad").await;
@@ -853,7 +850,6 @@ async fn clearing_results_query_success() {
     let app = init_app().await;
     let server = mock_gateway().await;
     let config = test_config(server.uri());
-    let client = reqwest::Client::new();
 
     let env = envelope(
         EwdsOperation::ClearingResultsQuery,
@@ -861,7 +857,7 @@ async fn clearing_results_query_success() {
         json!({ "marketId": "11111111-1111-4111-8111-111111111111" }),
     );
 
-    handle_request(&app.db_wrapper, &client, &config, env)
+    handle_request(&app.db_wrapper, &config.ewds_client(), &config, env)
         .await
         .unwrap();
     let _data = captured_data(&server).await;
@@ -874,7 +870,6 @@ async fn clearing_results_query_bad_payload_errors() {
     let app = init_app().await;
     let server = mock_gateway().await;
     let config = test_config(server.uri());
-    let client = reqwest::Client::new();
 
     // market_id is required -> missing field errors
     let env = envelope(
@@ -883,7 +878,7 @@ async fn clearing_results_query_bad_payload_errors() {
         json!({}),
     );
 
-    handle_request(&app.db_wrapper, &client, &config, env)
+    handle_request(&app.db_wrapper, &config.ewds_client(), &config, env)
         .await
         .unwrap();
     let response = captured_envelope(&server).await;
@@ -921,13 +916,12 @@ async fn run_markets_query(
     let app = init_app().await;
     let server = mock_gateway().await;
     let config = test_config(server.uri());
-    let client = reqwest::Client::new();
     for market in markets {
         app.db_wrapper.markets().upsert(market).await.unwrap();
     }
 
     let env = envelope(EwdsOperation::MarketsQuery, "req-markets", payload);
-    handle_request(&app.db_wrapper, &client, &config, env)
+    handle_request(&app.db_wrapper, &config.ewds_client(), &config, env)
         .await
         .unwrap();
     let data = captured_data(&server).await;
@@ -1036,7 +1030,6 @@ async fn markets_query_rejects_a_padded_community_id() {
     let app = init_app().await;
     let server = mock_gateway().await;
     let config = test_config(server.uri());
-    let client = reqwest::Client::new();
 
     let env = envelope(
         EwdsOperation::MarketsQuery,
@@ -1044,7 +1037,7 @@ async fn markets_query_rejects_a_padded_community_id() {
         json!({ "communityId": " community1 " }),
     );
 
-    handle_request(&app.db_wrapper, &client, &config, env)
+    handle_request(&app.db_wrapper, &config.ewds_client(), &config, env)
         .await
         .unwrap();
     assert_invalid_request(&server, "req-markets-bad").await;
@@ -1085,11 +1078,10 @@ async fn markets_query_bad_payload_errors() {
         let app = init_app().await;
         let server = mock_gateway().await;
         let config = test_config(server.uri());
-        let client = reqwest::Client::new();
 
         let env = envelope(EwdsOperation::MarketsQuery, "req-markets-bad", payload);
 
-        handle_request(&app.db_wrapper, &client, &config, env)
+        handle_request(&app.db_wrapper, &config.ewds_client(), &config, env)
             .await
             .unwrap();
         assert_invalid_request(&server, "req-markets-bad").await;
@@ -1116,7 +1108,6 @@ async fn facilities_query_returns_all() {
     let app = init_app().await;
     let server = mock_gateway().await;
     let config = test_config(server.uri());
-    let client = reqwest::Client::new();
 
     let facilities = app.db_wrapper.facilities();
     facilities
@@ -1134,7 +1125,7 @@ async fn facilities_query_returns_all() {
         json!({}),
     );
 
-    handle_request(&app.db_wrapper, &client, &config, env)
+    handle_request(&app.db_wrapper, &config.ewds_client(), &config, env)
         .await
         .unwrap();
 
@@ -1156,7 +1147,6 @@ async fn facilities_query_empty_returns_empty() {
     let app = init_app().await;
     let server = mock_gateway().await;
     let config = test_config(server.uri());
-    let client = reqwest::Client::new();
 
     let env = envelope(
         EwdsOperation::FacilitiesQuery,
@@ -1164,7 +1154,7 @@ async fn facilities_query_empty_returns_empty() {
         json!({}),
     );
 
-    handle_request(&app.db_wrapper, &client, &config, env)
+    handle_request(&app.db_wrapper, &config.ewds_client(), &config, env)
         .await
         .unwrap();
 
@@ -1179,7 +1169,6 @@ async fn facilities_query_returns_only_the_latest_entries() {
     let app = init_app().await;
     let server = mock_gateway().await;
     let config = test_config(server.uri());
-    let client = reqwest::Client::new();
 
     let facilities = app.db_wrapper.facilities();
     facilities
@@ -1201,7 +1190,7 @@ async fn facilities_query_returns_only_the_latest_entries() {
         "req-facilities-latest",
         json!({}),
     );
-    handle_request(&app.db_wrapper, &client, &config, env)
+    handle_request(&app.db_wrapper, &config.ewds_client(), &config, env)
         .await
         .unwrap();
 
@@ -1230,7 +1219,6 @@ async fn communities_query_returns_only_the_latest_entries() {
     let app = init_app().await;
     let server = mock_gateway().await;
     let config = test_config(server.uri());
-    let client = reqwest::Client::new();
     let first = "70070070-0000-4000-8000-000000000001";
     let second = "70070070-0000-4000-8000-000000000002";
 
@@ -1255,7 +1243,7 @@ async fn communities_query_returns_only_the_latest_entries() {
         "req-communities-latest",
         json!({}),
     );
-    handle_request(&app.db_wrapper, &client, &config, env)
+    handle_request(&app.db_wrapper, &config.ewds_client(), &config, env)
         .await
         .unwrap();
 
@@ -1283,7 +1271,6 @@ async fn guarantees_of_origin_query_success() {
     let app = init_app().await;
     let server = mock_gateway().await;
     let config = test_config(server.uri());
-    let client = reqwest::Client::new();
     seed_certifiable_trade(&app.db_wrapper, "goo-ewds-trade-1").await;
 
     let env = envelope(
@@ -1291,7 +1278,7 @@ async fn guarantees_of_origin_query_success() {
         "req-goo-1",
         json!({ "startTime": GOO_VERDICT_AT - 450, "endTime": GOO_VERDICT_AT + 450 }),
     );
-    handle_request(&app.db_wrapper, &client, &config, env)
+    handle_request(&app.db_wrapper, &config.ewds_client(), &config, env)
         .await
         .unwrap();
 
@@ -1327,7 +1314,6 @@ async fn guarantees_of_origin_query_accepts_snake_case_and_default_end() {
     let app = init_app().await;
     let server = mock_gateway().await;
     let config = test_config(server.uri());
-    let client = reqwest::Client::new();
     seed_certifiable_trade(&app.db_wrapper, "goo-ewds-trade-2").await;
 
     // end_time defaults to start_time + 900.
@@ -1336,7 +1322,7 @@ async fn guarantees_of_origin_query_accepts_snake_case_and_default_end() {
         "req-goo-snake",
         json!({ "start_time": GOO_VERDICT_AT - 450 }),
     );
-    handle_request(&app.db_wrapper, &client, &config, env)
+    handle_request(&app.db_wrapper, &config.ewds_client(), &config, env)
         .await
         .unwrap();
 
@@ -1351,14 +1337,13 @@ async fn guarantees_of_origin_query_empty_returns_empty() {
     let app = init_app().await;
     let server = mock_gateway().await;
     let config = test_config(server.uri());
-    let client = reqwest::Client::new();
 
     let env = envelope(
         EwdsOperation::GuaranteesOfOriginQuery,
         "req-goo-empty",
         json!({ "startTime": 1_000 }),
     );
-    handle_request(&app.db_wrapper, &client, &config, env)
+    handle_request(&app.db_wrapper, &config.ewds_client(), &config, env)
         .await
         .unwrap();
 
@@ -1371,7 +1356,6 @@ async fn guarantees_of_origin_query_empty_returns_empty() {
 #[tokio::test]
 async fn guarantees_of_origin_query_invalid_window_replies_with_an_error() {
     let app = init_app().await;
-    let client = reqwest::Client::new();
 
     for (request_id, payload) in [
         ("req-goo-no-start", json!({})),
@@ -1390,7 +1374,7 @@ async fn guarantees_of_origin_query_invalid_window_replies_with_an_error() {
         let env = envelope(EwdsOperation::GuaranteesOfOriginQuery, request_id, payload);
 
         // Answered, not errored: an erroring worker would re-poll the message forever.
-        handle_request(&app.db_wrapper, &client, &config, env)
+        handle_request(&app.db_wrapper, &config.ewds_client(), &config, env)
             .await
             .unwrap();
 
@@ -1412,7 +1396,6 @@ async fn ids_query_success() {
     let app = init_app().await;
     let server = mock_gateway().await;
     let config = test_config(server.uri());
-    let client = reqwest::Client::new();
 
     let env = envelope(
         EwdsOperation::IdsQuery,
@@ -1420,7 +1403,7 @@ async fn ids_query_success() {
         json!({ "offchainId": "offchain-abc" }),
     );
 
-    handle_request(&app.db_wrapper, &client, &config, env)
+    handle_request(&app.db_wrapper, &config.ewds_client(), &config, env)
         .await
         .unwrap();
 
@@ -1440,12 +1423,11 @@ async fn ids_query_get_or_create_is_idempotent() {
     let app = init_app().await;
     let server = mock_gateway().await;
     let config = test_config(server.uri());
-    let client = reqwest::Client::new();
 
     // First request creates the mapping.
     handle_request(
         &app.db_wrapper,
-        &client,
+        &config.ewds_client(),
         &config,
         envelope(
             EwdsOperation::IdsQuery,
@@ -1474,7 +1456,7 @@ async fn ids_query_get_or_create_is_idempotent() {
     // Second request for the same offchain id returns the same mapping.
     handle_request(
         &app.db_wrapper,
-        &client,
+        &config2.ewds_client(),
         &config2,
         envelope(
             EwdsOperation::IdsQuery,
@@ -1494,7 +1476,6 @@ async fn ids_query_get_or_create_is_idempotent() {
 #[tokio::test]
 async fn ids_query_bad_payload_errors() {
     let app = init_app().await;
-    let client = reqwest::Client::new();
     for payload in [
         json!({}),
         json!({"offchainId": ""}),
@@ -1503,7 +1484,7 @@ async fn ids_query_bad_payload_errors() {
         let server = mock_gateway().await;
         let config = test_config(server.uri());
         let env = envelope(EwdsOperation::IdsQuery, "req-ids-bad", payload);
-        handle_request(&app.db_wrapper, &client, &config, env)
+        handle_request(&app.db_wrapper, &config.ewds_client(), &config, env)
             .await
             .unwrap();
         assert_invalid_request(&server, "req-ids-bad").await;

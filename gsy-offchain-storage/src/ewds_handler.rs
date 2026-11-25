@@ -1,7 +1,7 @@
 use primitives::ewds::dto::EwdsFacilityDto;
 use crate::certificates::query::{guarantees_of_origin, validate_window};
 use crate::db::DatabaseWrapper;
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use futures::future::{join, join_all};
 use primitives::db_api_schema::profiles::{MeasurementPointType, MeasurementSchema};
 use primitives::ewds::channel::{
@@ -9,25 +9,25 @@ use primitives::ewds::channel::{
 };
 use primitives::ewds::dto::{
     EwdsClearingResultDto, EwdsCommunityDto, EwdsErrorPayload, EwdsInboundMessage, EwdsMarketDto,
-    EwdsMeasurementDto, EwdsOrderDto, EwdsRequestEnvelope, EwdsResponseEnvelope,
-    EwdsSendMessageDto, EwdsTradeDto, FacilityMarketValidationRequest,
+    EwdsMeasurementDto, EwdsOrderDto, EwdsRequestEnvelope, EwdsResponseEnvelope, EwdsTradeDto,
+    FacilityMarketValidationRequest,
 };
 use primitives::ewds::{
-    client_id_for_suffix, env_var, ewds_rate_limit_backoff_ms, format_response_body,
-    is_rate_limited_response, is_transient_gateway_response, parse_gateway_delivery_summary,
-    remember_id, EwdsEventTopicConfig, EwdsEventType, EwdsOperation, EwdsTopicConfig,
+    client_id_for_suffix, env_var, remember_id, EwdsClient, EwdsClientConfig,
+    EwdsEventTopicConfig, EwdsEventType, EwdsOperation, EwdsTopicConfig,
 };
 use primitives::utils::{
     normalize_uuid, validate_offchain_actor_id, opt_rfc3339_to_epoch,
     timestamp_to_string_with_padding,
 };
-use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::time::{Instant, SystemTime};
+use std::fmt::Display;
+use std::time::SystemTime;
 use tokio::sync::mpsc::UnboundedReceiver;
-use tokio::time::{sleep, Duration};
-use tracing::{error, info, warn};
+use tokio::time::Duration;
+use tracing::{error, info, info_span, warn, Instrument};
 
 #[derive(Clone)]
 pub struct EwdsHandlerConfig {
@@ -120,6 +120,28 @@ impl EwdsHandlerConfig {
     /// The EWDS topic an event of the given type is published on.
     pub fn event_topic(&self, event_type: EwdsEventType) -> &str {
         self.event_topics.for_event_type(event_type)
+    }
+
+    /// The gateway client that publishes responses and events and polls events. The off-chain
+    /// storage sends no queries, so the query settings keep their defaults.
+    pub fn ewds_client(&self) -> EwdsClient {
+        EwdsClient::new(EwdsClientConfig {
+            gateway_base: self.gateway_url.clone(),
+            topic_owner: self.topic_owner.clone(),
+            topic_version: self.topic_version.clone(),
+            consumer_client_id: self.request_client_id.clone(),
+            timeout_ms: self.response_send_timeout_ms,
+            event_poll_interval_ms: self.event_poll_interval_ms,
+            event_publish_fqcn: self.event_publish_fqcn.clone(),
+            event_subscribe_fqcn: self.event_subscribe_fqcn.clone(),
+            event_batch_size: self.request_batch_size,
+            event_topics: self.event_topics.clone(),
+            ..EwdsClientConfig::from_env(
+                "EWDS_REQUEST_CLIENT_ID",
+                "gsyoffchainstorage",
+                self.response_send_timeout_ms,
+            )
+        })
     }
 }
 
@@ -253,17 +275,14 @@ struct MarketsQueryPayload {
 }
 
 pub async fn start_ewds_request_handler(db: DatabaseWrapper, config: EwdsHandlerConfig) {
-    if !config.enabled {
-        info!("EWDS request handler disabled");
-        return;
-    }
-
     info!(
-        "Starting EWDS request handler (gateway={}, request_fqcn={}, response_fqcn={})",
-        config.gateway_url, config.request_fqcn, config.response_fqcn
+        gateway = %config.gateway_url,
+        request_fqcn = %config.request_fqcn,
+        response_fqcn = %config.response_fqcn,
+        "Starting EWDS request handler"
     );
 
-    let client = Client::new();
+    let client = config.ewds_client();
     let mut poller = request_channel_poller(&config);
     let workers = EwdsOperation::ALL
         .into_iter()
@@ -292,7 +311,7 @@ fn request_channel_poller(config: &EwdsHandlerConfig) -> EwdsChannelPoller {
 /// Answers the requests the poller routes to the request topic of `operation`, in order.
 async fn run_operation_worker(
     db: &DatabaseWrapper,
-    client: &Client,
+    client: &EwdsClient,
     config: &EwdsHandlerConfig,
     operation: EwdsOperation,
     mut requests: UnboundedReceiver<EwdsInboundMessage>,
@@ -308,17 +327,17 @@ async fn run_operation_worker(
         {
             // Answering would only flood the response topic, which every requester reads.
             info!(
-                "Skipping stale EWDS {} request '{}' published {} s ago",
-                operation,
-                message.transaction_id.as_deref().unwrap_or_default(),
-                age.as_secs()
+                %operation,
+                transaction_id = message.transaction_id.as_deref().unwrap_or_default(),
+                age_secs = age.as_secs(),
+                "Skipping stale EWDS request"
             );
             continue;
         }
         let envelope = match serde_json::from_str::<EwdsRequestEnvelope>(&message.payload) {
             Ok(envelope) => envelope,
             Err(error) => {
-                warn!("Skipping malformed EWDS {} request: {}", operation, error);
+                warn!(%operation, %error, "Skipping malformed EWDS request");
                 continue;
             }
         };
@@ -327,19 +346,22 @@ async fn run_operation_worker(
         }
 
         let request_id = envelope.request_id.clone();
-        let result = if envelope.operation == operation {
-            handle_request(db, client, config, envelope).await
-        } else {
-            reject_mismatched_operation(client, config, operation, envelope).await
-        };
-        // The gateway has already acknowledged the request, so a failure cannot be redelivered;
-        // log it and carry on with the next request.
-        if let Err(error) = result {
-            error!(
-                "EWDS {} request handling failed (request_id={}): {:#}",
-                operation, request_id, error
-            );
+        // Every log line written while answering carries the request's ID and operation.
+        let span = info_span!("ewds_request", %request_id, operation = %envelope.operation);
+        async {
+            let result = if envelope.operation == operation {
+                handle_request(db, client, config, envelope).await
+            } else {
+                reject_mismatched_operation(client, config, operation, envelope).await
+            };
+            // The gateway has already acknowledged the request, so a failure cannot be
+            // redelivered; log it and carry on with the next request.
+            if let Err(error) = result {
+                error!(error = %format_args!("{error:#}"), "EWDS request handling failed");
+            }
         }
+        .instrument(span)
+        .await;
         remember_id(&request_id, &mut seen_request_ids, &mut seen_queue);
     }
 }
@@ -349,445 +371,245 @@ pub const OPERATION_TOPIC_MISMATCH: &str = "OPERATION_TOPIC_MISMATCH";
 /// Answers a request whose `operation` doesn't belong to the topic it arrived on with an error,
 /// on the response topic of its `operation`, where the requester waits.
 async fn reject_mismatched_operation(
-    client: &Client,
+    client: &EwdsClient,
     config: &EwdsHandlerConfig,
     topic_operation: EwdsOperation,
     envelope: EwdsRequestEnvelope,
 ) -> Result<()> {
-    let topic_name = config
-        .topics
-        .for_operation(topic_operation)
-        .request
-        .as_str();
-    warn!(
-        "Rejecting EWDS {} request on topic '{}' (request_id={})",
-        envelope.operation, topic_name, envelope.request_id
-    );
-    send_error_response(
+    let topics = config.topics.for_operation(envelope.operation);
+    let error = EwdsErrorPayload {
+        code: OPERATION_TOPIC_MISMATCH.to_string(),
+        message: format!(
+            "{} requests must be sent on topic '{}', not '{}'",
+            envelope.operation,
+            topics.request,
+            config.topics.for_operation(topic_operation).request
+        ),
+    };
+    send_response(
         client,
         config,
         envelope.request_id,
-        config
-            .topics
-            .for_operation(envelope.operation)
-            .response
-            .as_str(),
-        EwdsErrorPayload {
-            code: OPERATION_TOPIC_MISMATCH.to_string(),
-            message: format!(
-                "{} requests must be sent on topic '{}', not '{}'",
-                envelope.operation,
-                config.topics.for_operation(envelope.operation).request,
-                topic_name
-            ),
-        },
+        &topics.response,
+        Err(error),
     )
     .await
 }
 
+/// What a request is answered with: its records, or the error that rejects it.
+type Response = std::result::Result<Vec<Value>, EwdsErrorPayload>;
+
+/// Answers a request on the response topic of its operation.
 pub async fn handle_request(
     db: &DatabaseWrapper,
-    client: &Client,
+    client: &EwdsClient,
     config: &EwdsHandlerConfig,
     envelope: EwdsRequestEnvelope,
 ) -> Result<()> {
-    let response_topic = config
-        .topics
-        .for_operation(envelope.operation)
-        .response
-        .clone();
+    let EwdsRequestEnvelope {
+        request_id,
+        operation,
+        payload,
+    } = envelope;
+    info!("Handling EWDS request");
 
-    match envelope.operation {
-        EwdsOperation::OrdersQuery => {
-            let request_id = envelope.request_id;
-            let query = (|| -> Result<_> {
-                let payload: OrdersQueryPayload = serde_json::from_value(envelope.payload)?;
-                Ok((
-                    payload
-                        .market_id
-                        .as_deref()
-                        .map(normalize_uuid)
-                        .transpose()?,
-                    opt_rfc3339_to_epoch(payload.start_time.as_deref())?,
-                    opt_rfc3339_to_epoch(payload.end_time.as_deref())?,
-                ))
-            })();
-            let (market_id, start_time, end_time) = match query {
-                Ok(query) => query,
-                Err(error) => {
-                    return send_invalid_request_response(
-                        client,
-                        config,
-                        request_id,
-                        &response_topic,
-                        error,
-                    )
-                    .await
-                }
-            };
+    let response = match operation {
+        EwdsOperation::OrdersQuery => orders_query(db, payload).await,
+        EwdsOperation::TradesQuery => trades_query(db, payload).await,
+        EwdsOperation::MeasurementsQuery => measurements_query(db, payload).await,
+        EwdsOperation::CommunitiesQuery => communities_query(db).await,
+        EwdsOperation::IdsQuery => ids_query(db, payload).await,
+        EwdsOperation::ClearingResultsQuery => clearing_results_query(db, payload).await,
+        EwdsOperation::MarketsQuery => markets_query(db, payload).await,
+        EwdsOperation::FacilitiesQuery => facilities_query(db).await,
+        EwdsOperation::FacilitiesValidate => facilities_validate(db, payload).await,
+        EwdsOperation::GuaranteesOfOriginQuery => guarantees_of_origin_query(db, payload).await,
+    };
+    let response_topic = &config.topics.for_operation(operation).response;
+    send_response(client, config, request_id, response_topic, response).await
+}
 
-            info!(
-                "Handling EWDS orders.query request (request_id={})",
-                request_id
-            );
+async fn orders_query(db: &DatabaseWrapper, payload: Value) -> Response {
+    let query: OrdersQueryPayload = serde_json::from_value(payload).map_err(invalid_request)?;
+    let market_id = query
+        .market_id
+        .as_deref()
+        .map(normalize_uuid)
+        .transpose()
+        .map_err(invalid_request)?;
+    let start_time = opt_rfc3339_to_epoch(query.start_time.as_deref()).map_err(invalid_request)?;
+    let end_time = opt_rfc3339_to_epoch(query.end_time.as_deref()).map_err(invalid_request)?;
 
-            let data = db
-                .orders()
-                .filter_orders(market_id, start_time, end_time)
-                .await
-                .map(|rows| rows.into_iter().map(EwdsOrderDto::from).collect::<Vec<_>>());
+    let orders = db
+        .orders()
+        .filter_orders(market_id, start_time, end_time)
+        .await
+        .map_err(storage_unavailable)?;
+    records(orders.into_iter().map(EwdsOrderDto::from))
+}
 
-            send_query_response(client, config, request_id, response_topic.as_str(), data).await
-        }
-        EwdsOperation::TradesQuery => {
-            let request_id = envelope.request_id;
-            let query = (|| -> Result<_> {
-                let payload: TradesQueryPayload = serde_json::from_value(envelope.payload)?;
-                Ok((
-                    payload
-                        .market_id
-                        .as_deref()
-                        .map(normalize_uuid)
-                        .transpose()?,
-                    opt_rfc3339_to_epoch(payload.start_time.as_deref())?,
-                    opt_rfc3339_to_epoch(payload.end_time.as_deref())?,
-                ))
-            })();
-            let (market_id, start_time, end_time) = match query {
-                Ok(query) => query,
-                Err(error) => {
-                    return send_invalid_request_response(
-                        client,
-                        config,
-                        request_id,
-                        &response_topic,
-                        error,
-                    )
-                    .await
-                }
-            };
+async fn trades_query(db: &DatabaseWrapper, payload: Value) -> Response {
+    let query: TradesQueryPayload = serde_json::from_value(payload).map_err(invalid_request)?;
+    let market_id = query
+        .market_id
+        .as_deref()
+        .map(normalize_uuid)
+        .transpose()
+        .map_err(invalid_request)?;
+    let start_time = opt_rfc3339_to_epoch(query.start_time.as_deref()).map_err(invalid_request)?;
+    let end_time = opt_rfc3339_to_epoch(query.end_time.as_deref()).map_err(invalid_request)?;
+    let range = validate_trades_query_range(market_id.as_deref(), start_time, end_time)?;
 
-            info!(
-                "Handling EWDS trades.query request (request_id={})",
-                request_id
-            );
+    let trades = db
+        .trades()
+        .filter_trades(
+            market_id,
+            range.map(|(start, _)| start),
+            range.map(|(_, end)| end),
+        )
+        .await
+        .map_err(storage_unavailable)?;
+    records(trades.into_iter().map(EwdsTradeDto::from))
+}
 
-            let range =
-                match validate_trades_query_range(market_id.as_deref(), start_time, end_time) {
-                    Ok(range) => range,
-                    Err(error) => {
-                        warn!(
-                            "Rejecting EWDS trades.query request (request_id={}): {}: {}",
-                            request_id, error.code, error.message
-                        );
-                        return send_error_response(
-                            client,
-                            config,
-                            request_id,
-                            response_topic.as_str(),
-                            error,
-                        )
-                        .await;
-                    }
-                };
+async fn measurements_query(db: &DatabaseWrapper, payload: Value) -> Response {
+    let query: TimeRangePayload = serde_json::from_value(payload).map_err(invalid_request)?;
+    let start_time = opt_rfc3339_to_epoch(query.start_time.as_deref()).map_err(invalid_request)?;
+    let end_time = opt_rfc3339_to_epoch(query.end_time.as_deref()).map_err(invalid_request)?;
+    let facility_id = query
+        .facility_id
+        .as_deref()
+        .map(validate_offchain_actor_id)
+        .transpose()
+        .map_err(invalid_request)?;
+    let community_uuid = query
+        .community_uuid
+        .as_deref()
+        .map(validate_offchain_actor_id)
+        .transpose()
+        .map_err(invalid_request)?;
 
-            let data = db
-                .trades()
-                .filter_trades(
-                    market_id,
-                    range.map(|(start, _)| start),
-                    range.map(|(_, end)| end),
-                )
-                .await
-                .map(|rows| rows.into_iter().map(EwdsTradeDto::from).collect::<Vec<_>>());
+    let measurements = fetch_measurements_from_timeseries(db, start_time, end_time)
+        .await
+        .map_err(storage_unavailable)?;
+    records(
+        measurements
+            .into_iter()
+            .filter(|measurement| {
+                facility_id
+                    .as_ref()
+                    .is_none_or(|id| measurement.facility_id == *id)
+            })
+            .filter(|measurement| {
+                community_uuid
+                    .as_ref()
+                    .is_none_or(|id| measurement.community_uuid == *id)
+            })
+            .map(EwdsMeasurementDto::from),
+    )
+}
 
-            send_query_response(client, config, request_id, response_topic.as_str(), data).await
-        }
-        EwdsOperation::MeasurementsQuery => {
-            let request_id = envelope.request_id;
-            let query = (|| -> Result<_> {
-                let payload: TimeRangePayload = serde_json::from_value(envelope.payload)?;
-                Ok((
-                    opt_rfc3339_to_epoch(payload.start_time.as_deref())?,
-                    opt_rfc3339_to_epoch(payload.end_time.as_deref())?,
-                    payload
-                        .facility_id
-                        .as_deref()
-                        .map(validate_offchain_actor_id)
-                        .transpose()?,
-                    payload
-                        .community_uuid
-                        .as_deref()
-                        .map(validate_offchain_actor_id)
-                        .transpose()?,
-                ))
-            })();
-            let (start_time, end_time, facility_id, community_uuid) = match query {
-                Ok(query) => query,
-                Err(error) => {
-                    return send_invalid_request_response(
-                        client,
-                        config,
-                        request_id,
-                        &response_topic,
-                        error,
-                    )
-                    .await;
-                }
-            };
+async fn communities_query(db: &DatabaseWrapper) -> Response {
+    let communities = db.communities().get().await.map_err(storage_unavailable)?;
+    records(communities.into_iter().map(EwdsCommunityDto::from))
+}
 
-            info!(
-                "Handling EWDS measurements.query request (request_id={})",
-                request_id
-            );
+async fn ids_query(db: &DatabaseWrapper, payload: Value) -> Response {
+    let query: IdsQueryPayload = serde_json::from_value(payload).map_err(invalid_request)?;
+    let offchain_id = validate_offchain_actor_id(&query.offchain_id).map_err(invalid_request)?;
 
-            let data = fetch_measurements_from_timeseries(db, start_time, end_time)
-                .await
-                .map(|rows| {
-                    rows.into_iter()
-                        .filter(|measurement| match facility_id.as_ref() {
-                            Some(facility_id) => measurement.facility_id == *facility_id,
-                            None => true,
-                        })
-                        .filter(|measurement| {
-                            community_uuid
-                                .as_ref()
-                                .map_or(true, |id| measurement.community_uuid == *id)
-                        })
-                        .map(EwdsMeasurementDto::from)
-                        .collect::<Vec<_>>()
-                });
+    let mapping = db
+        .ids()
+        .get_or_create(offchain_id)
+        .await
+        .map_err(storage_unavailable)?;
+    records([mapping])
+}
 
-            send_query_response(client, config, request_id, response_topic.as_str(), data).await
-        }
-        EwdsOperation::CommunitiesQuery => {
-            let request_id = envelope.request_id;
+async fn clearing_results_query(db: &DatabaseWrapper, payload: Value) -> Response {
+    let query: ClearingResultsPayload = serde_json::from_value(payload).map_err(invalid_request)?;
+    let market_id = normalize_uuid(&query.market_id).map_err(invalid_request)?;
 
-            info!(
-                "Handling EWDS communities.query request (request_id={})",
-                request_id
-            );
+    let clearing_results = db
+        .clearing_results()
+        .get_by_market(&market_id)
+        .await
+        .map_err(storage_unavailable)?;
+    records(
+        clearing_results
+            .into_iter()
+            .map(EwdsClearingResultDto::from),
+    )
+}
 
-            let data = db.communities().get().await.map(|rows| {
-                rows.into_iter()
-                    .map(EwdsCommunityDto::from)
-                    .collect::<Vec<_>>()
-            });
+async fn markets_query(db: &DatabaseWrapper, payload: Value) -> Response {
+    let query: MarketsQueryPayload = serde_json::from_value(payload).map_err(invalid_request)?;
+    // Market IDs use canonical hex storage; community IDs are opaque
+    // and case-sensitive. Times are stored as zero-padded epoch seconds.
+    let market_id = query
+        .market_id
+        .as_deref()
+        .map(normalize_uuid)
+        .transpose()
+        .map_err(invalid_request)?;
+    let community_id = query
+        .community_id
+        .as_deref()
+        .map(validate_offchain_actor_id)
+        .transpose()
+        .map_err(invalid_request)?;
+    let stored_time = |time: Option<String>| {
+        opt_rfc3339_to_epoch(time.as_deref())
+            .map(|epoch| epoch.map(timestamp_to_string_with_padding))
+            .map_err(invalid_request)
+    };
+    let start_time = stored_time(query.start_time)?;
+    let end_time = stored_time(query.end_time)?;
 
-            send_query_response(client, config, request_id, response_topic.as_str(), data).await
-        }
-        EwdsOperation::IdsQuery => {
-            let request_id = envelope.request_id;
-            let query = (|| -> Result<_> {
-                let payload: IdsQueryPayload = serde_json::from_value(envelope.payload)?;
-                validate_offchain_actor_id(&payload.offchain_id)
-            })();
-            let offchain_id = match query {
-                Ok(id) => id,
-                Err(error) => {
-                    return send_invalid_request_response(
-                        client,
-                        config,
-                        request_id,
-                        &response_topic,
-                        error,
-                    )
-                    .await;
-                }
-            };
+    let markets = db
+        .markets()
+        .filter(market_id, community_id, start_time, end_time)
+        .await
+        .and_then(|rows| {
+            rows.into_iter()
+                .map(EwdsMarketDto::try_from)
+                .collect::<Result<Vec<_>>>()
+        })
+        .map_err(storage_unavailable)?;
+    records(markets)
+}
 
-            info!(
-                "Handling EWDS ids.query request (request_id={})",
-                request_id
-            );
+async fn facilities_query(db: &DatabaseWrapper) -> Response {
+    let facilities = db.facilities().get().await.map_err(storage_unavailable)?;
+    records(facilities.into_iter().map(EwdsFacilityDto::from))
+}
 
-            let data = db.ids().get_or_create(offchain_id).await.map(|id| vec![id]);
-            send_query_response(client, config, request_id, &response_topic, data).await
-        }
-        EwdsOperation::ClearingResultsQuery => {
-            let request_id = envelope.request_id;
-            let query = (|| -> Result<_> {
-                let payload: ClearingResultsPayload = serde_json::from_value(envelope.payload)?;
-                normalize_uuid(&payload.market_id)
-            })();
-            let market_id = match query {
-                Ok(id) => id,
-                Err(error) => {
-                    return send_invalid_request_response(
-                        client,
-                        config,
-                        request_id,
-                        &response_topic,
-                        error,
-                    )
-                    .await
-                }
-            };
-            let data = db
-                .clearing_results()
-                .get_by_market(&market_id)
-                .await
-                .map(|rows| {
-                    rows.into_iter()
-                        .map(EwdsClearingResultDto::from)
-                        .collect::<Vec<_>>()
-                });
+async fn facilities_validate(db: &DatabaseWrapper, payload: Value) -> Response {
+    let requests: Vec<FacilityMarketValidationRequest> =
+        serde_json::from_value(payload).map_err(invalid_request)?;
 
-            send_query_response(client, config, request_id, response_topic.as_str(), data).await
-        }
-        EwdsOperation::MarketsQuery => {
-            let request_id = envelope.request_id;
-
-            info!(
-                "Handling EWDS markets.query request (request_id={})",
-                request_id
-            );
-
-            // Market IDs use canonical hex storage; community IDs are opaque
-            // and case-sensitive. Times are stored as zero-padded epoch seconds.
-            let query = (|| -> Result<_> {
-                let payload: MarketsQueryPayload = serde_json::from_value(envelope.payload)?;
-                let market_id = payload
-                    .market_id
-                    .as_deref()
-                    .map(normalize_uuid)
-                    .transpose()
-                    .map_err(|e| anyhow!("markets.query payload parse error: {}", e))?;
-                let community_id = payload
-                    .community_id
-                    .as_deref()
-                    .map(validate_offchain_actor_id)
-                    .transpose()
-                    .map_err(|e| anyhow!("markets.query payload parse error: {}", e))?;
-                let stored_time = |time: Option<String>| {
-                    opt_rfc3339_to_epoch(time.as_deref())
-                        .map(|epoch| epoch.map(timestamp_to_string_with_padding))
-                        .map_err(|e| anyhow!("markets.query payload parse error: {}", e))
-                };
-                Ok((
-                    market_id,
-                    community_id,
-                    stored_time(payload.start_time)?,
-                    stored_time(payload.end_time)?,
-                ))
-            })();
-            let (market_id, community_id, start_time, end_time) = match query {
-                Ok(query) => query,
-                Err(error) => {
-                    return send_invalid_request_response(
-                        client,
-                        config,
-                        request_id,
-                        &response_topic,
-                        error,
-                    )
-                    .await;
-                }
-            };
-            let data = db
-                .markets()
-                .filter(market_id, community_id, start_time, end_time)
-                .await
-                .and_then(|rows| rows.into_iter().map(EwdsMarketDto::try_from).collect());
-
-            send_query_response(client, config, request_id, response_topic.as_str(), data).await
-        }
-        EwdsOperation::FacilitiesQuery => {
-            let request_id = envelope.request_id;
-            let data = db.facilities().get().await.map(|rows| {
-                rows.into_iter()
-                    .map(EwdsFacilityDto::from)
-                    .collect::<Vec<_>>()
-            });
-
-            send_query_response(client, config, request_id, response_topic.as_str(), data).await
-        }
-        EwdsOperation::FacilitiesValidate => {
-            let requests = match serde_json::from_value::<Vec<FacilityMarketValidationRequest>>(
-                envelope.payload,
-            ) {
-                Ok(requests) => requests,
-                Err(error) => {
-                    return send_error_response(
-                        client,
-                        config,
-                        envelope.request_id,
-                        &response_topic,
-                        EwdsErrorPayload {
-                            code: INVALID_REQUEST_ERROR_CODE.to_string(),
-                            message: format!("facilities.validate payload parse error: {error}"),
-                        },
-                    )
-                    .await
-                }
-            };
-            match db.validate_facility_markets(&requests).await {
-                Ok(data) => {
-                    send_success_response(
-                        client,
-                        config,
-                        envelope.request_id,
-                        &response_topic,
-                        data,
-                    )
-                    .await
-                }
-                Err(error) => {
-                    error!("Facility validation failed: {error:#}");
-                    send_error_response(
-                        client,
-                        config,
-                        envelope.request_id,
-                        &response_topic,
-                        EwdsErrorPayload {
-                            code: "VALIDATION_UNAVAILABLE".to_string(),
-                            message: "Facility validation could not read the stored topology"
-                                .to_string(),
-                        },
-                    )
-                    .await
-                }
+    let results = db
+        .validate_facility_markets(&requests)
+        .await
+        .map_err(|error| {
+            error!(error = %format_args!("{error:#}"), "EWDS facility validation failed");
+            EwdsErrorPayload {
+                code: "VALIDATION_UNAVAILABLE".to_string(),
+                message: "Facility validation could not read the stored topology".to_string(),
             }
-        }
-        EwdsOperation::GuaranteesOfOriginQuery => {
-            let request_id = envelope.request_id;
+        })?;
+    records(results)
+}
 
-            info!(
-                "Handling EWDS guarantees_of_origin.query request (request_id={})",
-                request_id
-            );
+async fn guarantees_of_origin_query(db: &DatabaseWrapper, payload: Value) -> Response {
+    let query: GuaranteesOfOriginPayload =
+        serde_json::from_value(payload).map_err(invalid_request)?;
+    let window = validate_window(query.start_time, query.end_time).map_err(invalid_request)?;
 
-            // An invalid request is answered with `success: false` rather than returned as an
-            // error: the request has already been acknowledged by the gateway.
-            let window = match serde_json::from_value::<GuaranteesOfOriginPayload>(envelope.payload)
-                .map_err(|e| format!("guarantees_of_origin.query payload parse error: {}", e))
-                .and_then(|payload| validate_window(payload.start_time, payload.end_time))
-            {
-                Ok(window) => window,
-                Err(reason) => {
-                    warn!(
-                        "Rejecting EWDS guarantees_of_origin.query request (request_id={}): {}",
-                        request_id, reason
-                    );
-                    return send_error_response(
-                        client,
-                        config,
-                        request_id,
-                        response_topic.as_str(),
-                        EwdsErrorPayload {
-                            code: INVALID_REQUEST_ERROR_CODE.to_string(),
-                            message: reason,
-                        },
-                    )
-                    .await;
-                }
-            };
-
-            let data = guarantees_of_origin(db, window).await;
-
-            send_query_response(client, config, request_id, response_topic.as_str(), data).await
-        }
-    }
+    let certificates = guarantees_of_origin(db, window)
+        .await
+        .map_err(storage_unavailable)?;
+    records(certificates)
 }
 
 async fn fetch_measurements_from_timeseries(
@@ -833,213 +655,73 @@ fn parse_timeseries_timestamp(timestamp: &str) -> Option<u64> {
     timestamp.parse::<u64>().ok()
 }
 
-async fn send_success_response<T: Serialize>(
-    client: &Client,
-    config: &EwdsHandlerConfig,
-    request_id: String,
-    topic_name: &str,
-    data: Vec<T>,
-) -> Result<()> {
-    let payload = EwdsResponseEnvelope {
-        request_id: request_id.clone(),
-        success: true,
-        data,
-        error: None,
-    };
-
-    send_message(
-        client,
-        config,
-        request_id,
-        topic_name.to_string(),
-        serde_json::to_string(&payload)?,
-    )
-    .await
+/// The records of a successful response.
+fn records<T: Serialize>(rows: impl IntoIterator<Item = T>) -> Response {
+    rows.into_iter()
+        .map(serde_json::to_value)
+        .collect::<serde_json::Result<_>>()
+        .map_err(|error| storage_unavailable(error.into()))
 }
 
-// Polling acknowledges requests. Report read failures to the caller rather than
-// aborting the handler and leaving this request (and the rest of its batch) unanswered.
-async fn send_query_response<T: Serialize>(
-    client: &Client,
+/// Rejects a request whose payload is invalid.
+fn invalid_request(error: impl Display) -> EwdsErrorPayload {
+    EwdsErrorPayload {
+        code: INVALID_REQUEST_ERROR_CODE.to_string(),
+        message: error.to_string(),
+    }
+}
+
+/// Rejects a request whose records cannot be read. The cause is only logged.
+fn storage_unavailable(error: anyhow::Error) -> EwdsErrorPayload {
+    error!(error = %format_args!("{error:#}"), "EWDS storage query failed");
+    EwdsErrorPayload {
+        code: "STORAGE_UNAVAILABLE".to_string(),
+        message: "Unable to read the requested records".to_string(),
+    }
+}
+
+/// Publishes the response to a request on `topic_name`. Polling has acknowledged the request,
+/// so it cannot be redelivered: a rejected request is answered too, with `success: false`,
+/// rather than left for its sender to time out on.
+async fn send_response(
+    client: &EwdsClient,
     config: &EwdsHandlerConfig,
     request_id: String,
     topic_name: &str,
-    result: Result<Vec<T>>,
+    response: Response,
 ) -> Result<()> {
-    match result {
+    let envelope = match response {
         Ok(data) => {
-            info!(
-                request_id,
-                topic_name,
-                records = data.len(),
-                "Publishing EWDS query response"
-            );
-            send_success_response(client, config, request_id, topic_name, data).await
+            info!(topic_name, records = data.len(), "Publishing EWDS response");
+            EwdsResponseEnvelope {
+                request_id: request_id.clone(),
+                success: true,
+                data,
+                error: None,
+            }
         }
         Err(error) => {
-            error!(request_id, topic_name, error = ?error, "EWDS storage query failed");
-            send_error_response(
-                client,
-                config,
-                request_id,
+            warn!(
                 topic_name,
-                EwdsErrorPayload {
-                    code: "STORAGE_UNAVAILABLE".to_string(),
-                    message: "Unable to read the requested records".to_string(),
-                },
-            )
-            .await
-        }
-    }
-}
-
-async fn send_invalid_request_response(
-    client: &Client,
-    config: &EwdsHandlerConfig,
-    request_id: String,
-    topic_name: &str,
-    error: anyhow::Error,
-) -> Result<()> {
-    warn!(request_id, topic_name, %error, "Rejecting invalid EWDS query");
-    send_error_response(
-        client,
-        config,
-        request_id,
-        topic_name,
-        EwdsErrorPayload {
-            code: INVALID_REQUEST_ERROR_CODE.to_string(),
-            message: error.to_string(),
-        },
-    )
-    .await
-}
-
-async fn send_error_response(
-    client: &Client,
-    config: &EwdsHandlerConfig,
-    request_id: String,
-    topic_name: &str,
-    error: EwdsErrorPayload,
-) -> Result<()> {
-    let payload = EwdsResponseEnvelope::<serde_json::Value> {
-        request_id: request_id.clone(),
-        success: false,
-        data: Vec::new(),
-        error: Some(error),
-    };
-
-    send_message(
-        client,
-        config,
-        request_id,
-        topic_name.to_string(),
-        serde_json::to_string(&payload)?,
-    )
-    .await
-}
-
-async fn send_message(
-    client: &Client,
-    config: &EwdsHandlerConfig,
-    request_id: String,
-    topic_name: String,
-    payload: String,
-) -> Result<()> {
-    send_message_with_fqcn(
-        client,
-        config,
-        config.response_fqcn.clone(),
-        request_id,
-        topic_name,
-        payload,
-    )
-    .await
-}
-
-pub(crate) async fn send_message_with_fqcn(
-    client: &Client,
-    config: &EwdsHandlerConfig,
-    fqcn: String,
-    transaction_id: String,
-    topic_name: String,
-    payload: String,
-) -> Result<()> {
-    let post_url = format!(
-        "{}/api/v2/messages",
-        config.gateway_url.trim_end_matches('/')
-    );
-    let request_body = EwdsSendMessageDto {
-        fqcn,
-        topic_name,
-        topic_version: config.topic_version.clone(),
-        topic_owner: config.topic_owner.clone(),
-        transaction_id,
-        payload,
-        anonymous_recipient: Vec::new(),
-    };
-
-    let started = Instant::now();
-    let mut delivery_attempt = 0u32;
-    loop {
-        if started.elapsed() > Duration::from_millis(config.response_send_timeout_ms) {
-            return Err(anyhow!(
-                "EWDS response send timed out for fqcn='{}', topic='{}'",
-                request_body.fqcn,
-                request_body.topic_name
-            ));
-        }
-
-        let response = client
-            .post(post_url.as_str())
-            .json(&request_body)
-            .send()
-            .await?;
-        let status = response.status();
-        let response_body = response.text().await.unwrap_or_default();
-        if status.is_success() {
-            let delivery = parse_gateway_delivery_summary(response_body.as_str())?;
-            if delivery.sent > 0 {
-                return Ok(());
+                code = %error.code,
+                reason = %error.message,
+                "Rejecting EWDS request"
+            );
+            EwdsResponseEnvelope {
+                request_id: request_id.clone(),
+                success: false,
+                data: Vec::new(),
+                error: Some(error),
             }
-
-            let delay_ms = ewds_rate_limit_backoff_ms(delivery_attempt);
-            warn!(
-                "EWDS gateway accepted response for topic '{}' but delivered it to no recipients (failed={}, total={}); retrying in {} ms",
-                request_body.topic_name, delivery.failed, delivery.total, delay_ms
-            );
-            delivery_attempt = delivery_attempt.saturating_add(1);
-            sleep(Duration::from_millis(delay_ms)).await;
-            continue;
         }
+    };
 
-        if is_rate_limited_response(status, response_body.as_str()) {
-            let delay_ms = ewds_rate_limit_backoff_ms(delivery_attempt);
-            warn!(
-                "EWDS rate limit while publishing response for topic '{}'; retrying in {} ms",
-                request_body.topic_name, delay_ms
-            );
-            delivery_attempt = delivery_attempt.saturating_add(1);
-            sleep(Duration::from_millis(delay_ms)).await;
-            continue;
-        }
-
-        if is_transient_gateway_response(status, response_body.as_str()) {
-            let delay_ms = ewds_rate_limit_backoff_ms(delivery_attempt);
-            warn!(
-                "EWDS transient gateway error while publishing response for topic '{}'; retrying in {} ms",
-                request_body.topic_name, delay_ms
-            );
-            delivery_attempt = delivery_attempt.saturating_add(1);
-            sleep(Duration::from_millis(delay_ms)).await;
-            continue;
-        }
-
-        return Err(anyhow!(
-            "EWDS message send failed for fqcn='{}', topic='{}': HTTP {}{}",
-            request_body.fqcn,
-            request_body.topic_name,
-            status,
-            format_response_body(&response_body)
-        ));
-    }
+    client
+        .publish(
+            &config.response_fqcn,
+            topic_name,
+            &request_id,
+            serde_json::to_string(&envelope)?,
+        )
+        .await
 }
