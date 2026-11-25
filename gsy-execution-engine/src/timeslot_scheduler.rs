@@ -45,8 +45,8 @@ impl TimeslotScheduler {
         self.calculate_timeslot_at(Utc::now())
     }
 
-    /// Select a slot at an explicit time, allowing rollover tests without sleeping.
-    pub fn calculate_timeslot_at(&mut self, now: DateTime<Utc>) -> u64 {
+    /// Current target slot and oldest slot still inside its grace window.
+    fn eligible_window_at(&self, now: DateTime<Utc>) -> (u64, u64) {
         let target_time = now - Duration::minutes(GLOBAL_CONSTANTS.execution_engine_offset_min);
         let target_timestamp = target_time.timestamp().max(0) as u64;
         let slot_duration = GLOBAL_CONSTANTS.time_slot_sec;
@@ -57,6 +57,34 @@ impl TimeslotScheduler {
         let oldest_eligible = (target_timestamp.saturating_sub(self.rollover_grace_seconds)
             / slot_duration)
             * slot_duration;
+        (current_target, oldest_eligible)
+    }
+
+    pub fn expired_timeslot(&self) -> Option<u64> {
+        self.expired_timeslot_at(Utc::now())
+    }
+
+    /// The slot whose grace period ended most recently, to be finalized: it is no
+    /// longer selected for retries, and its delivery ended at least one grace period
+    /// ago by the wall clock. The second condition matters for a negative execution
+    /// offset, where the target runs ahead of the clock and a slot leaves the
+    /// eligible window before it has been delivered.
+    pub fn expired_timeslot_at(&self, now: DateTime<Utc>) -> Option<u64> {
+        let slot_duration = GLOBAL_CONSTANTS.time_slot_sec;
+        let (_, oldest_eligible) = self.eligible_window_at(now);
+        let delivered_before = ((now.timestamp().max(0) as u64)
+            .saturating_sub(self.rollover_grace_seconds)
+            / slot_duration)
+            * slot_duration;
+        oldest_eligible
+            .min(delivered_before)
+            .checked_sub(slot_duration)
+    }
+
+    /// Select a slot at an explicit time, allowing rollover tests without sleeping.
+    pub fn calculate_timeslot_at(&mut self, now: DateTime<Utc>) -> u64 {
+        let slot_duration = GLOBAL_CONSTANTS.time_slot_sec;
+        let (current_target, oldest_eligible) = self.eligible_window_at(now);
 
         if self.latest_target_timeslot != Some(current_target)
             || !self.retained_turn

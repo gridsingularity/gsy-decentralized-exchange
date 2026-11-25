@@ -8,7 +8,9 @@ use tracing::info;
 
 use crate::{
     connectors::evm_connector::complete_delivery_verification,
-    primitives::penalty_calculator::compute_delivery_verifications,
+    primitives::penalty_calculator::{
+        compute_delivery_verifications, compute_final_delivery_verifications,
+    },
 };
 
 /// Half-open delivery window, independent of trade creation/matching times.
@@ -43,6 +45,65 @@ pub async fn run_execution_cycle(
     market_duration: u64,
     penalty_tolerance_percent: f64,
 ) -> Result<usize> {
+    let (processed, _, all_measured) = run_cycle(
+        offchain_url,
+        evm_node_url,
+        trade_matching_address,
+        execution_engine_private_key,
+        timeslot,
+        penalty_rate,
+        market_duration,
+        penalty_tolerance_percent,
+        false,
+    )
+    .await?;
+    // Do not release a retained slot just because a subset was verified.
+    Ok(if all_measured { processed } else { 0 })
+}
+
+/// Final cycle for one delivery slot whose grace period is over: every trade still
+/// pending receives a verdict, and a party without a usable reading is penalized on
+/// its whole net traded position. Measurements arriving later are not considered,
+/// because the slot is no longer selected. Returns whether every pending trade of
+/// the slot is now verified on-chain, so the caller knows when to stop retrying.
+pub async fn finalize_timeslot(
+    offchain_url: &str,
+    evm_node_url: &str,
+    trade_matching_address: &str,
+    execution_engine_private_key: &str,
+    timeslot: u64,
+    penalty_rate: f64,
+    penalty_tolerance_percent: f64,
+) -> Result<bool> {
+    // Only this slot has expired: never widen the window to a multi-slot market duration.
+    let (processed, pending_count, _) = run_cycle(
+        offchain_url,
+        evm_node_url,
+        trade_matching_address,
+        execution_engine_private_key,
+        timeslot,
+        penalty_rate,
+        0,
+        penalty_tolerance_percent,
+        true,
+    )
+    .await?;
+    Ok(processed == pending_count)
+}
+
+/// Returns (trades processed on-chain, trades pending verification, all pending trades had a verdict).
+#[allow(clippy::too_many_arguments)]
+async fn run_cycle(
+    offchain_url: &str,
+    evm_node_url: &str,
+    trade_matching_address: &str,
+    execution_engine_private_key: &str,
+    timeslot: u64,
+    penalty_rate: f64,
+    market_duration: u64,
+    penalty_tolerance_percent: f64,
+    grace_period_over: bool,
+) -> Result<(usize, usize, bool)> {
     anyhow::ensure!(
         penalty_tolerance_percent.is_finite() && (0.0..=100.0).contains(&penalty_tolerance_percent),
         "Invalid penalty tolerance percentage"
@@ -78,12 +139,13 @@ pub async fn run_execution_cycle(
         timestamp_to_datetime_string(timeslot),
     );
 
-    if pending_count == 0 || measurements.is_empty() {
+    // After the grace period, missing measurements no longer postpone the verdict.
+    if pending_count == 0 || (measurements.is_empty() && !grace_period_over) {
         info!(
             "No pending trades or measurements for timeslot {}. Skipping execution cycle.",
             timestamp_to_datetime_string(timeslot),
         );
-        return Ok(0);
+        return Ok((0, pending_count, false));
     }
 
     // Measurements identify facilities; trade parties identify their owners.
@@ -126,7 +188,12 @@ pub async fn run_execution_cycle(
     }
     let mut verifications = Vec::new();
     for (slot, trades) in trades_by_slot {
-        verifications.extend(compute_delivery_verifications(
+        let compute = if grace_period_over {
+            compute_final_delivery_verifications
+        } else {
+            compute_delivery_verifications
+        };
+        verifications.extend(compute(
             &trades,
             &measurements,
             &facility_owner_mapping,
@@ -145,6 +212,5 @@ pub async fn run_execution_cycle(
         verifications,
     )
     .await?;
-    // Do not release a retained slot just because a subset was verified.
-    Ok(if all_measured { processed } else { 0 })
+    Ok((processed, pending_count, all_measured))
 }

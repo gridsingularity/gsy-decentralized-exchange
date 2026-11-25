@@ -49,6 +49,10 @@ Outside the tolerance band, the existing `penalty_rate` applies to the **full**
 deviation, not only the excess beyond the band. For 100 kWh traded with 5%
 tolerance, 105 kWh incurs no penalty; 106 kWh incurs a penalty on 6 kWh. Tolerance
 is independent of `penalty_rate` (`0.10` means 10% of the deviation).
+The band is compared in integer on-chain units: the reading is rounded to
+0.0001 kWh and the tolerance percentage to 0.0001 percent, so a reading exactly
+on the inclusive limit (for example 1.995 kWh against 1.9 kWh traded at 5%) is
+not penalised through floating-point round-off.
 For purchases of 4 and 6 kWh and consumption of 12 kWh, the 2 kWh deviation
 produces a 2,000-unit penalty at rate 0.10, allocated as 800 and 1,200 units.
 
@@ -58,11 +62,11 @@ parties directly. No ID-service conversion or hashing is needed for this join.
 Only contract-bound actor arguments (such as standalone penalties) use keyed
 hashes. The submitting service wallet is separate. This deployment guarantees one facility per owner.
 Facility and owner IDs are preserved exactly, including UUID-shaped strings.
-Missing/unmapped, non-finite, or conflicting readings for a facility/slot leave its trades pending;
-they do not produce a zero-penalty success. Identical readings are not counted
-twice. Multiple distinct readings are not summed or arbitrarily selected: they
-need an unambiguous net measurement before verification. Both parties' readings
-are required before atomic completion.
+During the grace period, missing/unmapped, non-finite, or conflicting readings for a
+facility/slot leave its trades pending. Readings are compared at 0.0001 kWh
+precision: for example, 10.0 and 10.00001 kWh count as one reading, not a conflict.
+Distinct readings are not summed or arbitrarily selected. After the grace period,
+an unusable reading is treated as zero delivery during finalization.
 HTTP and EWDS normalize direction-labelled export magnitudes to negative energy;
 compatibility profiles retain their original signed values, including when a
 point's direction has changed in a later slot. Both transports use the same
@@ -108,8 +112,28 @@ Empty results, failures, and successful submissions do not remove a retained
 slot early: additional records can still arrive. The on-chain `verified` flag
 prevents resubmission for trades already processed, including zero-penalty trades.
 The eligible window is recalculated from time, including after restart or skipped polling intervals;
-neither restarts nor retries extend the deadline. Records arriving beyond that
-window require separate historical processing, which is not implemented here.
+neither restarts nor retries extend the deadline.
+
+### Finalization after the grace period
+
+Once a slot's grace period is over, the engine closes the trades of that slot
+that are still pending: every one of them receives a verdict. A party that still
+has no usable reading (missing, conflicting or non-finite) is treated as having
+delivered nothing and is penalized on its whole net traded position; its
+counterparties are charged from their own readings, so a missing reading of one
+party no longer postpones or waives the penalty of the other.
+
+The slot finalized is the one whose grace period ended most recently, provided
+its delivery also ended at least one grace period ago by the wall clock (this
+matters for a negative `EXECUTION_ENGINE_OFFSET_MIN`, where the target runs ahead
+of the clock). Finalization is retried on every polling cycle until all pending
+trades of the slot are verified on-chain, for as long as it remains the latest
+expired slot, i.e. for one slot duration. Only that single slot is finalized,
+regardless of the market duration. If the engine is not running during that time,
+the slot is not finalized.
+
+Records arriving after finalization are ignored: the trades are already verified
+on-chain and the slot is no longer selected.
 
 `EXECUTION_ENGINE_ROLLOVER_GRACE_SECONDS` replaces the cycle-count setting
 `EXECUTION_ENGINE_ROLLOVER_RETRY_LIMIT`; update existing environment overrides.
