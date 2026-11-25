@@ -75,7 +75,7 @@ async fn imports_normalize_entity_ids_and_preserve_offchain_parties_for_queries_
         let config = crate::ewds_handler::test_config(gateway.uri());
         gsy_offchain_storage::ewds_handler::handle_request(
             &app.db_wrapper,
-            &client,
+            &config.ewds_client(),
             &config,
             primitives::ewds::dto::EwdsRequestEnvelope {
                 request_id: "mixed-trade".into(),

@@ -149,10 +149,11 @@ async fn missing_actor_and_partner_survive_restart_without_blocking_unrelated_in
         .unwrap();
     assert_eq!(response.status(), 500);
     let gateway = crate::ewds_handler::mock_gateway().await;
+    let config = crate::ewds_handler::test_config(gateway.uri());
     gsy_offchain_storage::ewds_handler::handle_request(
         &app.db_wrapper,
-        &reqwest::Client::new(),
-        &crate::ewds_handler::test_config(gateway.uri()),
+        &config.ewds_client(),
+        &config,
         primitives::ewds::dto::EwdsRequestEnvelope {
             request_id: "pending-book".into(),
             operation: primitives::ewds::EwdsOperation::OrdersQuery,

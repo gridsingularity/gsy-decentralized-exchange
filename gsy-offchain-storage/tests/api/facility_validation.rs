@@ -19,7 +19,7 @@ async fn validate_via_ewds(db: &DatabaseWrapper, payload: Value) -> Value {
     let config = crate::ewds_handler::test_config(gateway.uri());
     gsy_offchain_storage::ewds_handler::handle_request(
         db,
-        &reqwest::Client::new(),
+        &config.ewds_client(),
         &config,
         EwdsRequestEnvelope {
             request_id: "validation-test".to_string(),

@@ -16,7 +16,7 @@ async fn query_measurements_via_ewds(app: &crate::helpers::TestApp, payload: Val
     let config = crate::ewds_handler::test_config(gateway.uri());
     gsy_offchain_storage::ewds_handler::handle_request(
         &app.db_wrapper,
-        &reqwest::Client::new(),
+        &config.ewds_client(),
         &config,
         EwdsRequestEnvelope {
             request_id: "profile-filter".into(),

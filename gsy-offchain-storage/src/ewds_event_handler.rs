@@ -1,6 +1,6 @@
 use crate::db::measurements_service::insert_measurements;
 use crate::db::DatabaseWrapper;
-use crate::ewds_handler::{send_message_with_fqcn, EwdsHandlerConfig};
+use crate::ewds_handler::EwdsHandlerConfig;
 use anyhow::{anyhow, Context, Result};
 use primitives::db_api_schema::{
     grid_topology::{EnergyCommunitySchema, FacilitySchema, SiteSchema},
@@ -12,11 +12,8 @@ use primitives::ewds::dto::{
     EwdsClearingResultDto, EwdsCommunityDto, EwdsEventEnvelope, EwdsFacilityDto, EwdsMarketDto,
     EwdsMeasurementDto, EwdsOrderDto, EwdsSiteDto, EwdsTradeDto,
 };
-use primitives::ewds::{
-    invalid_event, is_invalid_event, parse_batch, EwdsClient, EwdsClientConfig, EwdsEventType,
-};
+use primitives::ewds::{invalid_event, is_invalid_event, parse_batch, EwdsClient, EwdsEventType};
 use primitives::utils::epoch_to_rfc3339;
-use reqwest::Client;
 use serde::Serialize;
 use serde_json::Value;
 use std::future::Future;
@@ -43,15 +40,13 @@ const DB_RETRY_DELAY_MS: u64 = 500;
 /// to know that sending has finished, e.g. in tests.
 #[derive(Clone)]
 pub struct EwdsEventPublisher {
-    client: Client,
-    config: EwdsHandlerConfig,
+    client: EwdsClient,
 }
 
 impl EwdsEventPublisher {
     pub fn new(config: EwdsHandlerConfig) -> Self {
         Self {
-            client: Client::new(),
-            config,
+            client: config.ewds_client(),
         }
     }
 
@@ -93,7 +88,7 @@ impl EwdsEventPublisher {
         db: &DatabaseWrapper,
         trade_ids: &[String],
     ) -> Result<()> {
-        if !self.config.enabled || trade_ids.is_empty() {
+        if trade_ids.is_empty() {
             return Ok(());
         }
         let mut trades = Vec::with_capacity(trade_ids.len());
@@ -136,7 +131,7 @@ impl EwdsEventPublisher {
         self.spawn_event(EwdsEventType::Market, occurred_at, markets)
     }
 
-    fn spawn_event<T: Serialize + Send + 'static>(
+    fn spawn_event<T: Serialize + Send + Sync + 'static>(
         &self,
         event_type: EwdsEventType,
         occurred_at: u64,
@@ -171,57 +166,23 @@ impl EwdsEventPublisher {
             data,
         };
 
-        send_message_with_fqcn(
-            &self.client,
-            &self.config,
-            self.config.event_publish_fqcn.clone(),
-            event_id,
-            self.config.event_topic(event_type).to_string(),
-            serde_json::to_string(&envelope)?,
-        )
-        .await
+        self.client.publish_event(&envelope).await
     }
 }
 
 pub async fn start_ewds_event_subscriber(db: DatabaseWrapper, config: EwdsHandlerConfig) {
-    if !config.enabled {
-        info!("EWDS event subscriber disabled");
-        return;
-    }
-
     info!(
         "Starting EWDS event subscriber (gateway={}, fqcn={})",
         config.gateway_url, config.event_subscribe_fqcn
     );
 
-    let client = event_client(&config);
+    let client = config.ewds_client();
     let db = &db;
     client
         .run_event_subscriber(&SUBSCRIBED_EVENT_TYPES, |envelope| {
             handle_event(db, envelope)
         })
         .await;
-}
-
-/// The client the subscriber polls events with. It only polls, so the query settings keep their
-/// defaults.
-fn event_client(config: &EwdsHandlerConfig) -> EwdsClient {
-    EwdsClient::new(EwdsClientConfig {
-        gateway_base: config.gateway_url.clone(),
-        topic_owner: config.topic_owner.clone(),
-        topic_version: config.topic_version.clone(),
-        consumer_client_id: config.request_client_id.clone(),
-        event_poll_interval_ms: config.event_poll_interval_ms,
-        event_publish_fqcn: config.event_publish_fqcn.clone(),
-        event_subscribe_fqcn: config.event_subscribe_fqcn.clone(),
-        event_batch_size: config.request_batch_size,
-        event_topics: config.event_topics.clone(),
-        ..EwdsClientConfig::from_env(
-            "EWDS_REQUEST_CLIENT_ID",
-            "gsyoffchainstorage",
-            config.response_send_timeout_ms,
-        )
-    })
 }
 
 pub async fn handle_event(db: &DatabaseWrapper, envelope: EwdsEventEnvelope<Value>) -> Result<()> {
