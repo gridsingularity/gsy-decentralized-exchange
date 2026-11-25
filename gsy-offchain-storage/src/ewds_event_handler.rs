@@ -10,10 +10,12 @@ use primitives::db_api_schema::{
     trades::{ClearingResultSchema, DbTradeSchema},
 };
 use primitives::ewds::dto::{
-    EwdsClearingResultDto, EwdsCommunityDto, EwdsEventEnvelope, EwdsMarketDto, EwdsMeasurementDto,
-    EwdsOrderDto, EwdsTradeDto,
+    EwdsClearingResultDto, EwdsCommunityDto, EwdsEventEnvelope, EwdsFacilityDto, EwdsMarketDto,
+    EwdsMeasurementDto, EwdsOrderDto, EwdsSiteDto, EwdsTradeDto,
 };
-use primitives::ewds::{invalid_event, parse_batch, EwdsClient, EwdsClientConfig, EwdsEventType};
+use primitives::ewds::{
+    invalid_event, is_invalid_event, parse_batch, EwdsClient, EwdsClientConfig, EwdsEventType,
+};
 use reqwest::Client;
 use serde::Serialize;
 use serde_json::Value;
@@ -226,46 +228,33 @@ pub async fn handle_event(db: &DatabaseWrapper, envelope: EwdsEventEnvelope<Valu
     match envelope.event_type {
         EwdsEventType::Measurements => {
             let measurements = parse_batch(envelope.data, |measurement: EwdsMeasurementDto| {
-                MeasurementSchema::try_from(measurement)
+                let mut measurement = MeasurementSchema::try_from(measurement)?;
+                measurement.facility_id =
+                    primitives::utils::validate_offchain_actor_id(&measurement.facility_id)?;
+                measurement.community_uuid =
+                    primitives::utils::validate_offchain_actor_id(&measurement.community_uuid)?;
+                Ok(measurement)
             })?;
             retry_db_write(|| insert_measurements(db, &measurements)).await?;
         }
         EwdsEventType::Facility => {
-            let facilities = parse_batch(envelope.data, |facility: FacilitySchema| Ok(facility))?;
-            db.facilities().check_for_duplicates(&facilities).await?;
-            for facility in facilities {
-                retry_db_write(|| {
-                    let facility = facility.clone();
-                    async move { db.facilities().upsert(facility).await }
-                })
-                .await?;
-            }
+            let facilities = parse_batch(envelope.data, |dto: EwdsFacilityDto| {
+                FacilitySchema::try_from(dto).and_then(FacilitySchema::normalize_ids)
+            })?;
+            let store = db.facilities();
+            retry_db_write(|| store.store(facilities.clone())).await?;
         }
         EwdsEventType::Site => {
-            let sites = parse_batch(envelope.data, |site: SiteSchema| Ok(site))?;
-            for site in sites {
-                retry_db_write(|| {
-                    let site = site.clone();
-                    async move { db.sites().upsert(site).await }
-                })
-                .await?;
-            }
+            let sites = parse_batch(envelope.data, |dto: EwdsSiteDto| SiteSchema::try_from(dto).and_then(SiteSchema::normalize_ids))?;
+            let store = db.sites();
+            retry_db_write(|| store.store(sites.clone())).await?;
         }
         EwdsEventType::Community => {
-            let communities = parse_batch(envelope.data, |community: EwdsCommunityDto| {
-                let mut community = EnergyCommunitySchema::from(community);
-                community.community_id =
-                    primitives::utils::normalize_community_id(&community.community_id)?;
-                Ok(community)
+            let communities = parse_batch(envelope.data, |dto: EwdsCommunityDto| {
+                EnergyCommunitySchema::try_from(dto).and_then(EnergyCommunitySchema::normalize_ids)
             })?;
-            db.communities().check_for_duplicates(&communities).await?;
-            for community in communities {
-                retry_db_write(|| {
-                    let community = community.clone();
-                    async move { db.communities().upsert(community).await }
-                })
-                .await?;
-            }
+            let store = db.communities();
+            retry_db_write(|| store.store(communities.clone())).await?;
         }
         other => {
             return Err(invalid_event(anyhow!(
@@ -288,6 +277,7 @@ where
     loop {
         match write().await {
             Err(error) if is_duplicate_key(&error) => return Err(invalid_event(error)),
+            Err(error) if is_invalid_event(&error) => return Err(error),
             Err(error) if attempt < DB_WRITE_ATTEMPTS => {
                 warn!(
                     "EWDS event DB write failed (attempt {}): {:#}",

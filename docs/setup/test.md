@@ -147,7 +147,7 @@ the next offer, accepted trades share the marginal accepted-offer clearing
 price, and both orders beyond that crossing remain open. The combined scenario
 also verifies that a preferred bilateral trade keeps its negotiated rate while
 the remaining standard order book clears at one uniform price. Both scenarios
-verify on-chain settlement and non-zero execution-engine penalties for every
+verify on-chain matching and non-zero execution-engine penalties for every
 accepted trade.
 
 Both default algorithm runs also include the shared
@@ -155,11 +155,11 @@ Both default algorithm runs also include the shared
 still includes `residual_lifecycle.feature`. An explicit `E2E_FEATURE_PATH` override
 runs only the requested path. The policy cases cover buyer-only, seller-only and
 reciprocal preferences, absent preferred rates, preferred prices outside normal
-limits, pay-as-bid settlement for compatible unequal rates, and standard fallback
+limits, pay-as-bid matching for compatible unequal rates, and standard fallback
 for incompatible partners or rates. They verify indexed values, on-chain
-settlement and the match-type flag in transaction calldata. Residual cases cover
+matching and the match-type flag in transaction calldata. Residual cases cover
 bids and offers consumed in the same batch or a later cycle, checking ID
-continuity, metadata, statuses and exactly-once settlement. These focused cases
+continuity, metadata, statuses and exactly-once matching. These focused cases
 do not exercise penalty scheduling.
 
 Feature selection is independent of the transport configuration:
@@ -181,14 +181,59 @@ pass it explicitly to the runner container, for example through `docker compose 
 A focused selection is not a replacement for the HTTP/EWDS x pay-as-bid/pay-as-clear
 regression matrix, and that default matrix does not cover the opt-in green-proof tests.
 
-`pay_as_clear` defaults to a `64`-block matching interval so all scenario
-orders are collected before one clearing cycle. Override it with a positive
-`MATCHING_ENGINE_BLOCK_INTERVAL` value only when both the matching engine and
+### DD-459 Identifier Validation
+
+Deploy all services from the same commit into a fresh environment. The default
+HTTP/EWDS x pay-as-bid/pay-as-clear matrix checks uppercase facility IDs in
+`delivery_deviations.feature`: forecasts and measurements must join the same
+facilities during verification. The EWDS order scenarios in `events.feature`
+check lowercase lifecycle IDs after uppercase UUIDv4 submissions; rejection
+checks require exact echoes of submitted IDs. Opaque-ID scenarios remain in
+both algorithm suites.
+
+Run GreenProof explicitly for both transports as well. With the corresponding
+stack configured and started, pass the feature selection into the runner:
+
+```bash
+# HTTP; use the same MATCHING_ALGORITHM value as the running stack.
+OFFCHAIN_STORAGE_TRANSPORT=http EWDS_ENABLE_HANDLER=false MATCHING_ALGORITHM=pay_as_bid \
+docker compose --env-file contracts-output/addresses.env -f docker-compose.e2e-test.yml \
+  run --rm -e E2E_FEATURE_PATH=features/green_proofs e2e-tests
+
+# EWDS; requires the local gateway and the configured test topics.
+OFFCHAIN_STORAGE_TRANSPORT=ewds EWDS_ENABLE_HANDLER=true MATCHING_ALGORITHM=pay_as_bid \
+docker compose --env-file .env.ewds.local --env-file contracts-output/addresses.env \
+  -f docker-compose.e2e-test.yml run --rm -e E2E_FEATURE_PATH=features/green_proofs e2e-tests
+```
+
+These certificate API scenarios seed canonical records directly; they do not
+replace the lifecycle matrix. Update affected gateway schemas from
+`schemas/ewds/intelligent/` before EWDS runs. Local schema validation does not
+update the gateway. The retained trade seed script has offline tests:
+
+```bash
+docker run --rm -e PYTHONDONTWRITEBYTECODE=1 -v "$PWD":/work:ro -w /work python:3.12-slim \
+  python -m unittest discover -s scripts/tests -v
+```
+
+### Matching Interval
+
+For `pay_as_bid`, the E2E harness triggers matching by fast-forwarding local
+Anvil to the next matching boundary with empty-block RPC calls. Override
+`MATCHING_ENGINE_BLOCK_INTERVAL` only when both the matching engine and the
 E2E runner use the same value, as they do through the Compose configuration.
-If the current interval does not have enough capacity for the complete order
-book, the E2E harness first advances local Anvil to the next matching boundary.
-After the order book is indexed, it fast-forwards to the clearing boundary with
-empty-block RPC calls rather than waiting for one transaction per block.
+
+For `pay_as_clear`, the matching engine clears each market at times derived
+from its opening and closing time, so the harness waits for the wall clock
+instead of mining blocks. A scenario cannot wait for the single clearing at
+the end of a 60-minute market, so the E2E Compose file sets
+`PAY_AS_CLEAR_CLEARINGS_PER_MARKET` to `120`: one clearing every 30 seconds.
+The runner derives the same interval from that value and the spot market
+offsets, which the Compose file passes to it. Before it submits an order book
+that may not fit in the rest of the current interval, the harness waits for
+the next clearing; after the order book is indexed, it waits for the clearing
+that follows. The default of one clearing per market, 20 seconds before the
+close, is covered by unit tests only.
 
 Before waiting for the orchestrator, the E2E runner idempotently stores a new
 community using `OFFCHAIN_STORAGE_TRANSPORT`: over HTTP it calls
@@ -364,13 +409,16 @@ than a fixed count. Both algorithms also run the shared matching scenarios.
 
 HTTP scenarios submit orders from the E2E runner using `COMMUNITY_CLIENT_PRIVATE_KEY`,
 the same service key provisioned by deployment. The community-client binary only
-runs its EWDS subscriber. The runner uses `gsye2ecommunityclient` for community-client
+runs its EWDS subscriber. Both paths derive actor hashes locally with the shared
+`ACTOR_ID_HASH_KEY`, without forward ID-service requests. Custom HTTP orders also
+check preferred-owner registration and use UUIDv4 bytes for generated order IDs.
+The runner uses `gsye2ecommunityclient` for community-client
 EWDS queries, separately from the live subscriber's consumer ID; the local gateway
 must accept that client ID on the response channels.
 
 Between scenarios, the runner clears collection contents without dropping unique
-indexes. Lifecycle examples measure only the buyer's facility or only the seller's
-facility to test both identity paths independently. Eligibility rejection is covered
+indexes. Delivery verification requires measurements from both the buyer's and
+seller's facilities; a missing reading leaves the trade pending. Eligibility rejection is covered
 end-to-end; a real `MarketClosed` contract revert is covered by the client tests,
 not by a closed-market E2E scenario (an unknown market is rejected before submission).
 
@@ -393,7 +441,7 @@ EWDS_RATE_LIMIT_MAX_BACKOFF_MS=30000
 EXECUTION_ENGINE_ROLLOVER_GRACE_SECONDS=900
 ```
 
-Over EWDS a scenario can take several minutes, so its trades may only settle
+Over EWDS a scenario can take several minutes, so its trades may only be matched
 after the delivery slot has started. `EXECUTION_ENGINE_ROLLOVER_GRACE_SECONDS=900`
 keeps the execution engine querying that slot for 15 minutes after its target
 rollover, alternating with the current slot. This time-based setting replaces
@@ -427,7 +475,7 @@ Important EWDS variables for test runs:
 
 Current e2e suite validates:
 
-- Standard bid/offer matching and on-chain settlement.
+- Standard bid/offer matching, submitted on-chain.
 - Preference-based matching behavior and preferred price selection.
 - Two-sided pay-as-clear matching, including curve crossing, uniform price,
   and uncleared bid/offer assertions.
@@ -437,7 +485,7 @@ Current e2e suite validates:
   HTTP or EWDS transport.
 - Community-aware market ID derivation and on-chain market opening.
 - Distinct Spot market creation for multiple communities in the same delivery
-  slot, with end-to-end verification that matching, settlement, indexing, and
+  slot, with end-to-end verification that matching, on-chain submission, indexing, and
   penalties remain isolated per community market.
 
 ### DD-423 Order Lifecycle Validation
@@ -466,7 +514,7 @@ Coverage added for DD-423:
   cover expiry at market closure, without advancing the shared E2E chain clock.
   Full delivery reaches `Executed` for the trade and both consumed orders without
   a penalty.
-- Existing settlement/residual scenarios check `Filled`/`PartiallyFilled`
+- Existing matching/residual scenarios check `Filled`/`PartiallyFilled`
   and independent residual orders. Penalty scenarios require the trade to remain
   `Penalized` and its consumed orders to become `Executed` with the verification
   block's timestamp.

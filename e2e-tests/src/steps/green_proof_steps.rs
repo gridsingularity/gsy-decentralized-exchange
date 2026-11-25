@@ -7,8 +7,9 @@
 //! These API scenarios isolate certificate generation from delivery verification by seeding
 //! topology, measurements and an already-`Executed` trade into Mongo. Every id is unique per
 //! scenario run; the seeded documents are deleted by the last step (and the whole database
-//! is dropped after every scenario by `main.rs` anyway).
+//! is cleared after every scenario by `main.rs`, preserving its indexes).
 
+use chrono::DateTime;
 use crate::utils::test_database;
 use crate::world::{GreenProofSeed, MyWorld};
 use cucumber::{given, then, when};
@@ -28,7 +29,7 @@ use primitives::db_api_schema::profiles::{
 use primitives::db_api_schema::trades::{DbTradeSchema, TradeParameters, TradeStatus};
 use primitives::ewds::{EwdsClient, EwdsOperation};
 use primitives::utils::{
-    bytes16_to_hex, create_encrypted_bytes16_from_string, epoch_to_datetime, epoch_to_rfc3339,
+    epoch_to_datetime, epoch_to_rfc3339,
 };
 use serde_json::json;
 use std::env;
@@ -44,11 +45,6 @@ const SLOT_S: u64 = 900;
 const QUERY_RETRY_BUDGET: Duration = Duration::from_secs(60);
 const QUERY_RETRY_INTERVAL: Duration = Duration::from_secs(3);
 const REST_PATH: &str = "guarantees-of-origin";
-
-/// The on-chain party hash of an off-chain owner id, as stored in `DbTradeSchema::seller`.
-fn party_hash(owner_id: &str) -> String {
-    bytes16_to_hex(create_encrypted_bytes16_from_string(owner_id))
-}
 
 fn window_around(instant: u64) -> (u64, u64) {
     (instant - SLOT_S / 2, instant + SLOT_S / 2)
@@ -95,7 +91,7 @@ async fn seed_executed_pv_sale(world: &mut MyWorld, energy_kwh: f64, export_kwh:
         measurement_id: export_kwh
             .map(|_| format!("Measurement:{community_id}:{seller_facility_id}")),
         trade_uuid: Uuid::new_v4().to_string(),
-        market_id: format!("0xgooe2e{run}"),
+        market_id: Uuid::new_v4().to_string(),
         time_slot,
         status_updated_at: now,
         energy_kwh,
@@ -110,18 +106,23 @@ async fn seed_executed_pv_sale(world: &mut MyWorld, energy_kwh: f64, export_kwh:
             community_id: seed.community_id.clone(),
             community_name: format!("GoO E2E Community {run}"),
             sites: vec![seed.site_id.clone()],
+            valid_from: DateTime::UNIX_EPOCH,
+            valid_until: None,
         })
         .await
         .expect("Failed to seed the community");
 
     db.collection::<SiteSchema>("sites")
         .insert_one(SiteSchema {
+            site_id: seed.site_id.clone(),
             site_name: seed.site_id.clone(),
             site_description: "Guarantees-of-origin e2e site".to_string(),
             facilities: vec![
                 seed.seller_facility_id.clone(),
                 seed.buyer_facility_id.clone(),
             ],
+            valid_from: DateTime::UNIX_EPOCH,
+            valid_until: None,
         })
         .await
         .expect("Failed to seed the site");
@@ -136,6 +137,8 @@ async fn seed_executed_pv_sale(world: &mut MyWorld, energy_kwh: f64, export_kwh:
         facility_name: format!("{facility_id}-name"),
         site_id: seed.site_id.clone(),
         owner_id: owner_id.clone(),
+        valid_from: DateTime::UNIX_EPOCH,
+        valid_until: None,
     })
     .collect::<Vec<_>>();
     db.collection::<FacilitySchema>("facilities")
@@ -212,12 +215,12 @@ async fn seed_executed_pv_sale(world: &mut MyWorld, energy_kwh: f64, export_kwh:
         .insert_one(DbTradeSchema {
             trade_uuid: seed.trade_uuid.clone(),
             status: TradeStatus::Executed,
-            seller: party_hash(&seed.seller_owner_id),
-            buyer: party_hash(&seed.buyer_owner_id),
+            seller: seed.seller_owner_id.clone(),
+            buyer: seed.buyer_owner_id.clone(),
             market_id: seed.market_id.clone(),
             creation_time: ts(time_slot - SLOT_S),
-            offer_hash: format!("{}-offer", seed.trade_uuid),
-            bid_hash: format!("{}-bid", seed.trade_uuid),
+            offer_hash: Uuid::new_v4().to_string(),
+            bid_hash: Uuid::new_v4().to_string(),
             residual_offer_id: None,
             residual_bid_id: None,
             parameters: TradeParameters {

@@ -39,10 +39,21 @@ describe("MarketController", function () {
     ];
   }
 
+  function marketKey(market: any) {
+    return {
+      communityId: market.communityId,
+      marketType: market.marketType,
+      deliveryStartTime: market.deliveryStartTime,
+    };
+  }
+
   async function expectExist(controller: any, markets: any[]) {
     expect(
       await controller.marketsExist(markets.map((market) => market.marketId)),
     ).to.deep.equal(markets.map(() => true));
+    expect(await controller.getMarketIds(markets.map(marketKey))).to.deep.equal(
+      markets.map((market) => market.marketId),
+    );
   }
 
   /** A market that opens 100 s and closes 200 s after the latest block. */
@@ -142,10 +153,202 @@ describe("MarketController", function () {
       ]);
       const receipt = await (await createMarkets).wait();
       expect(receipt!.logs.length).to.equal(1);
+      await expectExist(controller, [market]);
 
       // The first entry won: the market is still open after the second one's closing time.
       await time.increaseTo(market.openingTime + 60);
       expect(await controller.isMarketOpen(market.marketId)).to.be.true;
+    });
+
+    it("Should keep the first ID for a duplicate tuple in one batch", async function () {
+      const { controller, orchestrator } = await loadFixture(
+        deployControllerFixture,
+      );
+      const first = await upcomingMarket(bytes16Id("first-proposal"));
+      const duplicate = {
+        ...first,
+        marketId: bytes16Id("second-proposal"),
+        openingTime: first.openingTime + 10,
+        closingTime: first.openingTime + 50,
+        deliveryEndTime: first.deliveryEndTime + 100,
+        matchingAlgorithm: MATCHING_ALGORITHM_AMM,
+      };
+      const fresh = newMarket(bytes16Id("fresh-market"));
+      const createdAt = await nextBlockTimestamp();
+      const createMarkets = controller
+        .connect(orchestrator)
+        .createMarkets([first, duplicate, fresh]);
+
+      for (const market of [first, fresh]) {
+        await expect(createMarkets)
+          .to.emit(controller, "NewMarketCreated")
+          .withArgs(...eventArgs(market, createdAt));
+      }
+      expect((await (await createMarkets).wait())!.logs.length).to.equal(2);
+      await expectExist(controller, [first, fresh]);
+      expect(await controller.getMarketIds([marketKey(duplicate)])).to.deep.equal([
+        first.marketId,
+      ]);
+      expect(await controller.marketsExist([duplicate.marketId])).to.deep.equal([
+        false,
+      ]);
+      await time.increaseTo(first.openingTime);
+      expect(await controller.isMarketOpen(first.marketId)).to.be.true;
+      await time.increaseTo(first.openingTime + 60);
+      expect(await controller.isMarketOpen(first.marketId)).to.be.true;
+      expect(await controller.isMarketOpen(duplicate.marketId)).to.be.false;
+
+      // A skipped proposal did not reserve its ID for the winning tuple.
+      const reused = { ...duplicate, marketType: MARKET_TYPE_FLEX };
+      await controller.connect(orchestrator).createMarkets([reused]);
+      await expectExist(controller, [first, reused]);
+    });
+
+    it("Should preserve the winner when two orchestrators propose different IDs sequentially", async function () {
+      const { controller, orchestrator, user } = await loadFixture(
+        deployControllerFixture,
+      );
+      await controller.grantRole(
+        await controller.ORCHESTRATOR_ROLE(),
+        user.address,
+      );
+      const first = await upcomingMarket(bytes16Id("orchestrator-1-proposal"));
+      const second = {
+        ...first,
+        marketId: bytes16Id("orchestrator-2-proposal"),
+        closingTime: first.openingTime + 50,
+      };
+
+      // Both orchestrators observed an absent tuple before either submitted.
+      for (const signer of [orchestrator, user]) {
+        expect(
+          await controller.connect(signer).getMarketIds([marketKey(first)]),
+        ).to.deep.equal([ZERO_BYTES16]);
+      }
+      await controller.connect(orchestrator).createMarkets([first]);
+      await expect(controller.connect(user).createMarkets([second])).not.to.emit(
+        controller,
+        "NewMarketCreated",
+      );
+      await expect(controller.connect(user).createMarkets([second])).not.to.emit(
+        controller,
+        "NewMarketCreated",
+      );
+      await expectExist(controller, [first]);
+      expect(await controller.marketsExist([second.marketId])).to.deep.equal([
+        false,
+      ]);
+      await time.increaseTo(first.openingTime + 60);
+      expect(await controller.isMarketOpen(first.marketId)).to.be.true;
+    });
+
+    const differentKeys: [string, any][] = [
+      ["community", { communityId: bytes16Id("community-2") }],
+      ["type", { marketType: MARKET_TYPE_FLEX }],
+      ["delivery slot", { deliveryStartTime: 2100 }],
+    ];
+    for (const [name, overrides] of differentKeys) {
+      it(`Should create distinct markets when only the ${name} changes`, async function () {
+        const { controller, orchestrator } = await loadFixture(
+          deployControllerFixture,
+        );
+        const markets = [
+          newMarket(bytes16Id("market-1")),
+          newMarket(bytes16Id("market-2"), overrides),
+        ];
+
+        await controller.connect(orchestrator).createMarkets(markets);
+        await expectExist(controller, markets);
+      });
+
+      for (const sameBatch of [true, false]) {
+        it(`Should reject the same ID with a different ${name} in ${sameBatch ? "one batch" : "a later batch"}`, async function () {
+          const { controller, orchestrator } = await loadFixture(
+            deployControllerFixture,
+          );
+          const first = newMarket(bytes16Id("market-1"));
+          const collision = { ...first, ...overrides };
+          if (!sameBatch) {
+            await controller.connect(orchestrator).createMarkets([first]);
+          }
+
+          await expect(
+            controller
+              .connect(orchestrator)
+              .createMarkets(sameBatch ? [first, collision] : [collision]),
+          )
+            .to.be.revertedWithCustomError(controller, "InvalidMarket")
+            .withArgs(first.marketId);
+          expect(
+            await controller.getMarketIds([
+              marketKey(first),
+              marketKey(collision),
+            ]),
+          ).to.deep.equal([
+            sameBatch ? ZERO_BYTES16 : first.marketId,
+            ZERO_BYTES16,
+          ]);
+          expect(await controller.marketsExist([first.marketId])).to.deep.equal([
+            !sameBatch,
+          ]);
+        });
+      }
+    }
+
+    it("Should reject an ID collision even when the proposed tuple already exists", async function () {
+      const { controller, orchestrator } = await loadFixture(
+        deployControllerFixture,
+      );
+      const first = newMarket(bytes16Id("market-1"));
+      const second = newMarket(bytes16Id("market-2"), {
+        marketType: MARKET_TYPE_FLEX,
+      });
+      await controller.connect(orchestrator).createMarkets([first, second]);
+      const fresh = newMarket(bytes16Id("market-3"), {
+        marketType: MARKET_TYPE_SETTLEMENT,
+      });
+
+      await expect(
+        controller
+          .connect(orchestrator)
+          .createMarkets([fresh, { ...second, marketId: first.marketId }]),
+      )
+        .to.be.revertedWithCustomError(controller, "InvalidMarket")
+        .withArgs(first.marketId);
+      await expectExist(controller, [first, second]);
+      expect(await controller.getMarketIds([marketKey(fresh)])).to.deep.equal([
+        ZERO_BYTES16,
+      ]);
+      expect(await controller.marketsExist([fresh.marketId])).to.deep.equal([
+        false,
+      ]);
+    });
+
+    it("Should accept a nonzero bytes16 ID without UUIDv4 constraints", async function () {
+      const { controller, orchestrator } = await loadFixture(
+        deployControllerFixture,
+      );
+      const market = newMarket("0x00000000000000000000000000000001");
+
+      await controller.connect(orchestrator).createMarkets([market]);
+      await expectExist(controller, [market]);
+    });
+
+    it("Should reject a zero ID even for an existing tuple", async function () {
+      const { controller, orchestrator } = await loadFixture(
+        deployControllerFixture,
+      );
+      const market = newMarket(bytes16Id("market-1"));
+      await controller.connect(orchestrator).createMarkets([market]);
+
+      await expect(
+        controller
+          .connect(orchestrator)
+          .createMarkets([{ ...market, marketId: ZERO_BYTES16 }]),
+      )
+        .to.be.revertedWithCustomError(controller, "InvalidMarket")
+        .withArgs(ZERO_BYTES16);
+      await expectExist(controller, [market]);
     });
 
     const invalidMarkets: [string, string, any][] = [
@@ -185,7 +388,10 @@ describe("MarketController", function () {
           .connect(orchestrator)
           .createMarkets([
             newMarket(validMarketId),
-            newMarket(invalidMarketId, { closingTime: 0 }),
+            newMarket(invalidMarketId, {
+              marketType: MARKET_TYPE_FLEX,
+              closingTime: 0,
+            }),
           ]),
       )
         .to.be.revertedWithCustomError(controller, "InvalidMarket")
@@ -193,6 +399,9 @@ describe("MarketController", function () {
       expect(await controller.marketsExist([validMarketId])).to.deep.equal([
         false,
       ]);
+      expect(
+        await controller.getMarketIds([marketKey(newMarket(validMarketId))]),
+      ).to.deep.equal([ZERO_BYTES16]);
     });
 
     it("Should prevent unauthorized users from creating markets", async function () {
@@ -214,6 +423,65 @@ describe("MarketController", function () {
       await expect(
         controller.connect(orchestrator).createMarkets([]),
       ).not.to.emit(controller, "NewMarketCreated");
+    });
+  });
+
+  describe("getMarketIds", function () {
+    it("Should return IDs and zeros in request order, including repeated keys", async function () {
+      const { controller, orchestrator, user } = await loadFixture(
+        deployControllerFixture,
+      );
+      const first = newMarket(bytes16Id("market-1"));
+      const second = newMarket(bytes16Id("market-2"), {
+        marketType: MARKET_TYPE_SETTLEMENT,
+        deliveryStartTime: (1n << 64n) - 2n,
+        deliveryEndTime: (1n << 64n) - 1n,
+      });
+      await controller.connect(orchestrator).createMarkets([first, second]);
+      const unknown = {
+        ...marketKey(first),
+        communityId: bytes16Id("unknown-community"),
+      };
+
+      expect(
+        await controller.connect(user).getMarketIds([
+          unknown,
+          marketKey(second),
+          marketKey(first),
+          unknown,
+          marketKey(second),
+        ]),
+      ).to.deep.equal([
+        ZERO_BYTES16,
+        second.marketId,
+        first.marketId,
+        ZERO_BYTES16,
+        second.marketId,
+      ]);
+    });
+
+    it("Should return zero for unknown communities, types and delivery slots", async function () {
+      const { controller, orchestrator } = await loadFixture(
+        deployControllerFixture,
+      );
+      const market = newMarket(bytes16Id("market-1"));
+      await controller.connect(orchestrator).createMarkets([market]);
+      const key = marketKey(market);
+
+      expect(
+        await controller.getMarketIds([
+          { ...key, communityId: bytes16Id("unknown-community") },
+          { ...key, marketType: MARKET_TYPE_FLEX },
+          { ...key, deliveryStartTime: market.deliveryStartTime + 1 },
+          { ...key, communityId: ZERO_BYTES16 },
+        ]),
+      ).to.deep.equal([ZERO_BYTES16, ZERO_BYTES16, ZERO_BYTES16, ZERO_BYTES16]);
+    });
+
+    it("Should return an empty list for no keys", async function () {
+      const { controller } = await loadFixture(deployControllerFixture);
+
+      expect(await controller.getMarketIds([])).to.deep.equal([]);
     });
   });
 
@@ -263,7 +531,11 @@ describe("MarketController", function () {
       const unknown = bytes16Id("unknown-market");
       await controller
         .connect(orchestrator)
-        .createMarkets(created.map((marketId) => newMarket(marketId)));
+        .createMarkets(
+          created.map((marketId, marketType) =>
+            newMarket(marketId, { marketType }),
+          ),
+        );
 
       expect(
         await controller.marketsExist([unknown, created[1], unknown, created[0]]),

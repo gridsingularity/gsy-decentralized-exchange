@@ -4,7 +4,7 @@ use actix_web::{web::Json, web::Query, HttpResponse, Responder};
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::trades::{ClearingResultSchema, MarketRoleSchema};
 use primitives::ewds::dto::{EwdsClearingResultDto, EwdsMarketDto};
-use primitives::utils::{normalize_community_id, normalize_market_id};
+use primitives::utils::{normalize_uuid, validate_offchain_actor_id};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -21,10 +21,14 @@ pub struct MarketQuery {
 }
 
 pub async fn get_market(db: DbRef, params: Query<MarketQuery>) -> impl Responder {
+    let market_id = match normalize_uuid(&params.market_id) {
+        Ok(id) => id,
+        Err(error) => return HttpResponse::BadRequest().body(error.to_string()),
+    };
     match db
         .get_ref()
         .markets()
-        .filter(Some(params.market_id.clone()), None, None, None)
+        .filter(Some(market_id), None, None, None)
         .await
     {
         Ok(markets) => get_only_one_market(
@@ -73,10 +77,19 @@ pub async fn get_markets(db: DbRef, params: Query<MarketsQuery>) -> impl Respond
             Ok(range) => range,
             Err(response) => return response,
         };
+    let market_id = match params
+        .market_id
+        .as_deref()
+        .map(normalize_uuid)
+        .transpose()
+    {
+        Ok(id) => id,
+        Err(error) => return HttpResponse::BadRequest().body(error.to_string()),
+    };
     let community_id = match params
         .community_id
         .as_deref()
-        .map(normalize_community_id)
+        .map(validate_offchain_actor_id)
         .transpose()
     {
         Ok(community_id) => community_id,
@@ -88,7 +101,7 @@ pub async fn get_markets(db: DbRef, params: Query<MarketsQuery>) -> impl Respond
     match db
         .get_ref()
         .markets()
-        .filter(params.market_id.clone(), community_id, start_time, end_time)
+        .filter(market_id, community_id, start_time, end_time)
         .await
     {
         Ok(markets) if markets.is_empty() => HttpResponse::NotFound().finish(),
@@ -106,14 +119,15 @@ pub async fn get_markets(db: DbRef, params: Query<MarketsQuery>) -> impl Respond
 }
 
 pub async fn post_market(market: Json<EwdsMarketDto>, db: DbRef) -> impl Responder {
+    // The conversion also normalizes the market ID to a UUIDv4.
     let market = match MarketSchema::try_from(market.into_inner()).and_then(|market| {
-        normalize_community_id(&market.community_id)?;
+        validate_offchain_actor_id(&market.community_id)?;
         Ok(market)
     }) {
         Ok(market) => market,
         Err(e) => {
             tracing::error!("Invalid market: {:?}", e);
-            return HttpResponse::BadRequest().finish();
+            return HttpResponse::BadRequest().body(e.to_string());
         }
     };
     match db.get_ref().markets().upsert(market).await {
@@ -129,7 +143,12 @@ pub async fn post_clearing_result(
     result: Json<EwdsClearingResultDto>,
     db: DbRef,
 ) -> impl Responder {
-    let db_result: ClearingResultSchema = match result.into_inner().try_into() {
+    let mut result = result.into_inner();
+    result.market_id = match normalize_uuid(&result.market_id) {
+        Ok(id) => id,
+        Err(error) => return HttpResponse::BadRequest().body(error.to_string()),
+    };
+    let db_result: ClearingResultSchema = match result.try_into() {
         Ok(r) => r,
         Err(e) => {
             tracing::error!("Failed to convert EWDS clearing result: {:?}", e);
@@ -149,7 +168,7 @@ pub struct ClearingResultQuery {
 }
 
 pub async fn get_clearing_results(db: DbRef, params: Query<ClearingResultQuery>) -> impl Responder {
-    let market_id = match normalize_market_id(&params.market_id) {
+    let market_id = match normalize_uuid(&params.market_id) {
         Ok(id) => id,
         Err(error) => return HttpResponse::BadRequest().body(error.to_string()),
     };

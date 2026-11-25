@@ -3,6 +3,7 @@ use gsy_matching_engine::algorithms::PayAsClearPricing;
 use gsy_matching_engine::connectors::evm_subscribe;
 use gsy_matching_engine::utils::{Cli, Commands};
 use primitives::log::setup_logging;
+use primitives::matching::ClearingSchedule;
 use primitives::MatchingAlgorithm;
 use std::env;
 use std::str::FromStr;
@@ -10,10 +11,11 @@ use std::{thread, time};
 use tracing::{error, info};
 
 #[tokio::main]
-async fn main() {
+async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     setup_logging("matching_engine", "info");
+    primitives::actor_ids::initialize_actor_id_hashing()?;
 
     // You can check for the existence of subcommands, and if found use their
     // matches just as you would the top level cmd
@@ -33,7 +35,7 @@ async fn main() {
                     offchain_storage_url.trim_end_matches('/')
                 );
                 let node_url = format!("{}:{}", node_host, node_port);
-                let trade_settlement_address = env::var("TRADE_SETTLEMENT_ADDRESS")
+                let trade_matching_address = env::var("TRADE_MATCHING_ADDRESS")
                     .unwrap_or_else(|_| "0x0000000000000000000000000000000000000000".to_string());
                 let matching_engine_private_key = env::var("MATCHING_ENGINE_PRIVATE_KEY")
                     .unwrap_or_else(|_| {
@@ -56,25 +58,37 @@ async fn main() {
                     PayAsClearPricing::default()
                 };
 
-                if trade_settlement_address == "0x0000000000000000000000000000000000000000" {
+                if trade_matching_address == "0x0000000000000000000000000000000000000000" {
                     info!(
-                        "TRADE_SETTLEMENT_ADDRESS is zero; settlement submissions will fail until configured."
+                        "TRADE_MATCHING_ADDRESS is zero; match submissions will fail until configured."
                     );
                 }
+                let clearing_schedule = if matches!(matching_algorithm, MatchingAlgorithm::PayAsClear) {
+                    ClearingSchedule::from_env().unwrap_or_else(|error| panic!("{}", error))
+                } else {
+                    ClearingSchedule::default()
+                };
+
                 info!("Using off-chain storage URL: {}", offchain_storage_url);
                 info!("Using matching algorithm: {}", matching_algorithm);
                 if matches!(matching_algorithm, MatchingAlgorithm::PayAsClear) {
                     info!("Using pay-as-clear pricing: {}", pay_as_clear_pricing);
+                    info!(
+                        "Clearing each market {} time(s) while it is open; the last clearing takes place {} s before the closing time",
+                        clearing_schedule.clearings_per_market,
+                        clearing_schedule.final_clearing_lead_seconds
+                    );
                 }
 
                 if let Err(error) =
                     evm_subscribe(
                         orderbook_url.clone(),
                         node_url.clone(),
-                        trade_settlement_address.clone(),
+                        trade_matching_address.clone(),
                         matching_engine_private_key.clone(),
                         matching_algorithm.clone(),
                         pay_as_clear_pricing,
+                        clearing_schedule,
                     )
                     .await
                 {
@@ -88,10 +102,11 @@ async fn main() {
                             evm_subscribe(
                                 orderbook_url.clone(),
                                 node_url.clone(),
-                                trade_settlement_address.clone(),
+                                trade_matching_address.clone(),
                                 matching_engine_private_key.clone(),
                                 matching_algorithm.clone(),
                                 pay_as_clear_pricing,
+                                clearing_schedule,
                             )
                             .await
                         {
@@ -104,4 +119,5 @@ async fn main() {
             .await
         }
     }
+    Ok(())
 }

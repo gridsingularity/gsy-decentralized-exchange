@@ -26,6 +26,13 @@ contract MarketController is Initializable, AccessControlUpgradeable {
         Amm
     }
 
+    // communityId is the community pseudonym, not its raw identifier.
+    struct MarketKey {
+        bytes16 communityId;
+        MarketType marketType;
+        uint64 deliveryStartTime;
+    }
+
     // Mirrors primitives::MarketSchema; the market ID is the mapping key.
     struct Market {
         bytes16 communityId;
@@ -53,6 +60,9 @@ contract MarketController is Initializable, AccessControlUpgradeable {
     // Market UUID (bytes16) => market record. createdAt == 0 means missing.
     mapping(bytes16 => Market) private _markets;
 
+    // keccak256(abi.encode(communityId, marketType, deliveryStartTime)) => market ID.
+    mapping(bytes32 => bytes16) private _marketIds;
+
     event NewMarketCreated(
         bytes16 indexed marketId,
         bytes16 indexed communityId,
@@ -78,8 +88,8 @@ contract MarketController is Initializable, AccessControlUpgradeable {
 
     /**
      * @notice Create multiple markets in one transaction.
-     * @dev Markets that already exist are skipped without an event, so a
-     *      resent or concurrently sent market does not revert the batch.
+     * @dev Existing tuples are skipped without an event, preserving the first ID
+     *      and record. Reusing an ID for a different tuple reverts the batch.
      * @param newMarkets Market records.
      */
     function createMarkets(
@@ -88,6 +98,26 @@ contract MarketController is Initializable, AccessControlUpgradeable {
         uint256 marketCount = newMarkets.length;
         for (uint256 index = 0; index < marketCount; ) {
             _createMarket(newMarkets[index]);
+            unchecked {
+                ++index;
+            }
+        }
+    }
+
+    /**
+     * @notice Look up market IDs by community, type and delivery start time.
+     * @return marketIds IDs in request order, or bytes16(0) for missing tuples.
+     */
+    function getMarketIds(
+        MarketKey[] calldata marketKeys
+    ) external view returns (bytes16[] memory marketIds) {
+        uint256 marketCount = marketKeys.length;
+        marketIds = new bytes16[](marketCount);
+        for (uint256 index = 0; index < marketCount; ) {
+            MarketKey calldata key = marketKeys[index];
+            marketIds[index] = _marketIds[
+                _marketKey(key.communityId, key.marketType, key.deliveryStartTime)
+            ];
             unchecked {
                 ++index;
             }
@@ -114,6 +144,16 @@ contract MarketController is Initializable, AccessControlUpgradeable {
     /**
      * @notice Check if a market is open for trading at the current block time.
      */
+    /**
+     * @notice Matching algorithm recorded for a market.
+     * @dev A missing market reports the default, `PayAsBid`.
+     */
+    function getMatchingAlgorithm(
+        bytes16 marketId
+    ) external view returns (MatchingAlgorithm) {
+        return _markets[marketId].matchingAlgorithm;
+    }
+
     function isMarketOpen(bytes16 marketId) external view returns (bool) {
         Market storage market = _markets[marketId];
         return
@@ -124,11 +164,32 @@ contract MarketController is Initializable, AccessControlUpgradeable {
 
     function _createMarket(NewMarket calldata newMarket) private {
         bytes16 marketId = newMarket.marketId;
-        if (_markets[marketId].createdAt != 0) {
+        if (marketId == bytes16(0)) {
+            revert InvalidMarket(marketId);
+        }
+
+        // Check ID collisions before tuple deduplication, even if both tuples exist.
+        Market storage existing = _markets[marketId];
+        if (existing.createdAt != 0) {
+            if (
+                existing.communityId != newMarket.communityId ||
+                existing.marketType != newMarket.marketType ||
+                existing.deliveryStartTime != newMarket.deliveryStartTime
+            ) {
+                revert InvalidMarket(marketId);
+            }
+            return;
+        }
+
+        bytes32 key = _marketKey(
+            newMarket.communityId,
+            newMarket.marketType,
+            newMarket.deliveryStartTime
+        );
+        if (_marketIds[key] != bytes16(0)) {
             return;
         }
         if (
-            marketId == bytes16(0) ||
             newMarket.communityId == bytes16(0) ||
             newMarket.closingTime <= newMarket.openingTime ||
             newMarket.deliveryEndTime <= newMarket.deliveryStartTime
@@ -147,6 +208,7 @@ contract MarketController is Initializable, AccessControlUpgradeable {
             marketType: newMarket.marketType,
             matchingAlgorithm: newMarket.matchingAlgorithm
         });
+        _marketIds[key] = marketId;
         emit NewMarketCreated(
             marketId,
             newMarket.communityId,
@@ -158,5 +220,13 @@ contract MarketController is Initializable, AccessControlUpgradeable {
             uint8(newMarket.matchingAlgorithm),
             createdAt
         );
+    }
+
+    function _marketKey(
+        bytes16 communityId,
+        MarketType marketType,
+        uint64 deliveryStartTime
+    ) private pure returns (bytes32) {
+        return keccak256(abi.encode(communityId, marketType, deliveryStartTime));
     }
 }

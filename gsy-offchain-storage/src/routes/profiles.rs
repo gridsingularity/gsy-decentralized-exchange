@@ -1,6 +1,4 @@
-use crate::db::measurements_service::{
-    flow_direction, insert_measurements, profile_measurement_id,
-};
+use crate::db::measurements_service::{flow_direction, insert_measurements};
 use crate::db::DbRef;
 use crate::routes::parse_time_range;
 use actix_web::{web::Json, web::Query, HttpResponse, Responder};
@@ -11,13 +9,19 @@ use primitives::db_api_schema::profiles::{
     TimeseriesSchema,
 };
 use primitives::ewds::dto::TimeseriesDto;
+use primitives::utils::{profile_measurement_id, validate_offchain_actor_id};
 use serde::Deserialize;
 use std::collections::HashMap;
 
 #[derive(Deserialize)]
 pub struct ProfilesParameters {
+    #[serde(alias = "facilityId", alias = "areaUuid")]
     facility_id: Option<String>,
+    #[serde(alias = "communityUuid")]
+    community_uuid: Option<String>,
+    #[serde(alias = "startTime")]
     start_time: Option<String>,
+    #[serde(alias = "endTime")]
     end_time: Option<String>,
 }
 
@@ -56,6 +60,7 @@ async fn fetch_profile_values(
     db: &crate::db::DatabaseWrapper,
     point_type: MeasurementPointType,
     facility_id: Option<String>,
+    community_uuid: Option<String>,
     start_time: Option<DateTime<Utc>>,
     end_time: Option<DateTime<Utc>>,
 ) -> Result<Vec<(MeasurementPointSchema, TimeseriesSchema)>> {
@@ -65,6 +70,11 @@ async fn fetch_profile_values(
         .await?;
     let points_by_id = points
         .into_iter()
+        .filter(|point| {
+            community_uuid
+                .as_ref()
+                .map_or(true, |id| point.datasource_name.as_ref() == Some(id))
+        })
         .map(|point| (point.measurement_id.clone(), point))
         .collect::<HashMap<_, _>>();
 
@@ -86,6 +96,17 @@ pub async fn post_measurements(
     measurements: Json<Vec<MeasurementSchema>>,
     db: DbRef,
 ) -> impl Responder {
+    let mut measurements = measurements.into_inner();
+    for measurement in &mut measurements {
+        measurement.facility_id = match validate_offchain_actor_id(&measurement.facility_id) {
+            Ok(id) => id,
+            Err(error) => return HttpResponse::BadRequest().body(error.to_string()),
+        };
+        measurement.community_uuid = match validate_offchain_actor_id(&measurement.community_uuid) {
+            Ok(id) => id,
+            Err(error) => return HttpResponse::BadRequest().body(error.to_string()),
+        };
+    }
     match insert_measurements(db.get_ref(), &measurements).await {
         Ok(ids) => HttpResponse::Ok().json(ids),
         Err(_) => HttpResponse::InternalServerError().finish(),
@@ -96,6 +117,24 @@ pub async fn get_measurements(
     db: DbRef,
     query_params: Query<ProfilesParameters>,
 ) -> impl Responder {
+    let facility_id = match query_params
+        .facility_id
+        .as_deref()
+        .map(validate_offchain_actor_id)
+        .transpose()
+    {
+        Ok(id) => id,
+        Err(error) => return HttpResponse::BadRequest().body(error.to_string()),
+    };
+    let community_uuid = match query_params
+        .community_uuid
+        .as_deref()
+        .map(validate_offchain_actor_id)
+        .transpose()
+    {
+        Ok(id) => id,
+        Err(error) => return HttpResponse::BadRequest().body(error.to_string()),
+    };
     let (start_time, end_time) = match parse_time_range(
         query_params.start_time.as_deref(),
         query_params.end_time.as_deref(),
@@ -106,7 +145,8 @@ pub async fn get_measurements(
     match fetch_profile_values(
         db.get_ref(),
         MeasurementPointType::Measurement,
-        query_params.facility_id.clone(),
+        facility_id,
+        community_uuid,
         start_time,
         end_time,
     )
@@ -132,6 +172,17 @@ pub async fn get_measurements(
 }
 
 pub async fn post_forecasts(forecasts: Json<Vec<ForecastSchema>>, db: DbRef) -> impl Responder {
+    let mut forecasts = forecasts.into_inner();
+    for forecast in &mut forecasts {
+        forecast.facility_id = match validate_offchain_actor_id(&forecast.facility_id) {
+            Ok(id) => id,
+            Err(error) => return HttpResponse::BadRequest().body(error.to_string()),
+        };
+        forecast.community_uuid = match validate_offchain_actor_id(&forecast.community_uuid) {
+            Ok(id) => id,
+            Err(error) => return HttpResponse::BadRequest().body(error.to_string()),
+        };
+    }
     let points = forecasts
         .iter()
         .map(measurement_point_from_forecast)
@@ -157,6 +208,24 @@ pub async fn post_forecasts(forecasts: Json<Vec<ForecastSchema>>, db: DbRef) -> 
 }
 
 pub async fn get_forecasts(db: DbRef, query_params: Query<ProfilesParameters>) -> impl Responder {
+    let facility_id = match query_params
+        .facility_id
+        .as_deref()
+        .map(validate_offchain_actor_id)
+        .transpose()
+    {
+        Ok(id) => id,
+        Err(error) => return HttpResponse::BadRequest().body(error.to_string()),
+    };
+    let community_uuid = match query_params
+        .community_uuid
+        .as_deref()
+        .map(validate_offchain_actor_id)
+        .transpose()
+    {
+        Ok(id) => id,
+        Err(error) => return HttpResponse::BadRequest().body(error.to_string()),
+    };
     let (start_time, end_time) = match parse_time_range(
         query_params.start_time.as_deref(),
         query_params.end_time.as_deref(),
@@ -167,7 +236,8 @@ pub async fn get_forecasts(db: DbRef, query_params: Query<ProfilesParameters>) -
     match fetch_profile_values(
         db.get_ref(),
         MeasurementPointType::Forecast,
-        query_params.facility_id.clone(),
+        facility_id,
+        community_uuid,
         start_time,
         end_time,
     )
@@ -207,7 +277,7 @@ pub async fn post_measurement_points(
     match db
         .get_ref()
         .measurement_points()
-        .insert_points(points.to_vec())
+        .insert_points(points.into_inner())
         .await
     {
         Ok(ids) => HttpResponse::Ok().json(ids),

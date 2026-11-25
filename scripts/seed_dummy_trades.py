@@ -7,13 +7,15 @@ These are synthetic imports, not lifecycle events; they do not populate the
 verification timestamp needed by guarantees-of-origin queries.
 Queries use market IDs: time-range queries require stored market records,
 which this trades-only fixture does not create.
+Market IDs are random UUIDv4 values shared by trades in a slot. Keep the saved
+dataset for queries and cleanup; regenerating it assigns new market IDs.
 
 Subcommands:
-  generate   build the deterministic dataset and write it to --dataset (no network)
+  generate   build the synthetic dataset and write it to --dataset (no network)
   preflight  EWDS trades.query round-trip for one market, expecting no dummy trades
   seed       POST the dataset in batches (aborts if dummy trades already exist)
   validate   REST full coverage + EWDS tradesQuery/tradesQueryResponse + isolation checks
-  cleanup    delete every trade whose trade_uuid starts with the dummy prefix
+  cleanup    delete only the exact trade IDs in --dataset
   counts     print document counts of every collection
 
 Unless --rest-url/--gateway-url are given, an SSH tunnel to --ssh-host is opened
@@ -21,10 +23,10 @@ for the duration of the command.
 """
 
 import argparse
-import hashlib
 import json
 import math
 import random
+import re
 import shlex
 import socket
 import subprocess
@@ -33,12 +35,12 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 
 SLOT_SECS = 900
 DAY_SECS = 86_400
-TRADE_PREFIX = "dummy-trade-"
 COMMUNITY_ID = "00000000-0000-4000-8000-000000000001"
 MARKET_TYPE = "spot"
 
@@ -103,13 +105,23 @@ def parse_ts(value):
     return int(parsed.timestamp())
 
 
-def market_id_for_slot(slot):
-    """Mirrors bytes16_to_hex(generate_market_id(community, MarketType::Spot, slot))."""
-    digest = hashlib.blake2b(
-        COMMUNITY_ID.encode() + MARKET_TYPE.encode() + slot.to_bytes(8, "big"),
-        digest_size=16,
-    ).hexdigest()
-    return "0x" + digest
+def market_ids_by_slot(trades):
+    """Read this single-community/type dataset's market references without deriving IDs."""
+    markets = {}
+    for trade in trades:
+        slot = parse_ts(trade["timestamp"])
+        previous = markets.setdefault(slot, trade["marketId"])
+        if previous != trade["marketId"]:
+            raise ValueError(f"Dataset has multiple market IDs for slot {slot}")
+    if len(set(markets.values())) != len(markets):
+        raise ValueError("Dataset reuses a market ID across delivery slots")
+    return markets
+
+
+def dataset_filters(trades):
+    # Keep SSH/mongosh arguments bounded even for month-long datasets.
+    for start in range(0, len(trades), 500):
+        yield json.dumps({"trade_uuid": {"$in": [t["tradeId"] for t in trades[start:start + 500]]}})
 
 
 def pick_status(rng, slot, as_of):
@@ -146,7 +158,8 @@ def generate_dataset(start, end, per_slot, seed, as_of):
     for slot in range(start, end, SLOT_SECS):
         hour = (slot % DAY_SECS) // 3600
         daytime = hour in DAYTIME_HOURS
-        market_id = market_id_for_slot(slot)
+        # All trades for this community/type/slot share one synthetic market UUID.
+        market_id = str(uuid.uuid4())
         buyers_pool = LOADS + [BATTERY] if daytime else LOADS
         buyers = rng.sample(buyers_pool, per_slot)
         for buyer in buyers:
@@ -158,21 +171,21 @@ def generate_dataset(start, end, per_slot, seed, as_of):
                 seller = BATTERY
                 quantity = rng.uniform(0.1, 2.0)
             assert buyer != seller
-            num = f"{counter:06d}"
+            num = f"{seed}:{slot}:{counter}"
             residual_bid = residual_offer = None
             if rng.random() < 0.10:
                 if rng.random() < 0.5:
-                    residual_bid = f"dummy-bid-{num}-r"
+                    residual_bid = str(uuid.uuid4())
                 else:
-                    residual_offer = f"dummy-offer-{num}-r"
+                    residual_offer = str(uuid.uuid4())
             trades.append(
                 {
-                    "tradeId": f"{TRADE_PREFIX}{num}",
+                    "tradeId": str(uuid.uuid4()),
                     "marketId": market_id,
-                    "bidId": f"dummy-bid-{num}",
+                    "bidId": str(uuid.uuid4()),
                     "buyerId": buyer,
                     "residualBidId": residual_bid,
-                    "offerId": f"dummy-offer-{num}",
+                    "offerId": str(uuid.uuid4()),
                     "sellerId": seller,
                     "residualOfferId": residual_offer,
                     "tradeStatus": pick_status(rng, slot, as_of),
@@ -197,7 +210,7 @@ def dataset_stats(meta, trades):
     price = [t["tradePrice"] for t in trades]
     print(f"quantity   : min={min(qty)} max={max(qty)} kWh")
     print(f"price      : min={min(price)} max={max(price)} EUR/kWh")
-    print(f"market ref : slot {meta['start']} -> {market_id_for_slot(meta['start'])}")
+    print(f"market ref : slot {meta['start']} -> {market_ids_by_slot(trades)[meta['start']]}")
     print(f"sample     : {json.dumps(trades[len(trades) // 2])}")
 
 
@@ -422,6 +435,16 @@ def schema_errors(envelope):
                 errors.append(f"{tid}: {key} has type {type(item[key]).__name__}")
         if item.get("tradeStatus") not in TRADE_STATUSES:
             errors.append(f"{tid}: tradeStatus {item.get('tradeStatus')!r}")
+        for key in ("tradeId", "marketId", "bidId", "offerId", "residualBidId", "residualOfferId"):
+            value = item.get(key)
+            if key in ("residualBidId", "residualOfferId") and value is None:
+                continue
+            if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}", value):
+                errors.append(f"{tid}: {key} is not canonical UUIDv4")
+        for key in ("buyerId", "sellerId"):
+            value = item.get(key)
+            if not isinstance(value, str) or not value or value.strip() != value:
+                errors.append(f"{tid}: {key} is not a nonempty, unpadded off-chain actor ID")
         if not isinstance(item.get("tradeQuantity"), (int, float)) or item["tradeQuantity"] <= 0:
             errors.append(f"{tid}: tradeQuantity not > 0")
         try:
@@ -527,6 +550,7 @@ def cmd_generate(args):
         "seed": args.seed,
         "as_of": as_of,
         "community_id": COMMUNITY_ID,
+        "market_type": MARKET_TYPE,
     }
     with open(args.dataset, "w") as fh:
         json.dump({"meta": meta, "trades": trades}, fh)
@@ -540,19 +564,19 @@ def cmd_counts(args):
 
 
 def cmd_cleanup(args):
-    script = (
-        f"const r=db.trades.deleteMany({{trade_uuid: /^{TRADE_PREFIX}/}});"
-        "print(JSON.stringify({deleted: r.deletedCount}));"
-    )
-    print(mongosh(args, script).splitlines()[-1])
+    _, trades = load_dataset(args.dataset)
+    deleted = sum(int(mongosh(args, f"print(db.trades.deleteMany({query}).deletedCount);")
+                      .splitlines()[-1]) for query in dataset_filters(trades))
+    print(json.dumps({"deleted": deleted}))
 
 
 def cmd_preflight(args):
-    meta, _ = ensure_dataset(args)
+    meta, trades = ensure_dataset(args)
+    trade_ids = {trade["tradeId"] for trade in trades}
     report = Report()
     with Tunnel(args):
         start = meta["start"]
-        market_id = market_id_for_slot(start)
+        market_id = market_ids_by_slot(trades)[start]
         print(f"EWDS preflight: trades.query market {market_id}")
         try:
             env, latency, size = ewds_trades_query(args, market_id=market_id)
@@ -561,7 +585,7 @@ def cmd_preflight(args):
             return report.summary()
         errors = schema_errors(env)
         report.check("EWDS preflight schema", not errors, "; ".join(errors[:5]))
-        dummies = [t for t in env.get("data", []) if t.get("tradeId", "").startswith(TRADE_PREFIX)]
+        dummies = [t for t in env.get("data", []) if t.get("tradeId") in trade_ids]
         report.check(
             "EWDS preflight round-trip",
             env.get("success") is True and not dummies,
@@ -574,9 +598,8 @@ def cmd_preflight(args):
 def cmd_seed(args):
     meta, trades = ensure_dataset(args)
     with Tunnel(args):
-        existing = int(mongosh(args,
-            f"print(db.trades.countDocuments({{trade_uuid: /^{TRADE_PREFIX}/}}));"
-        ).splitlines()[-1])
+        existing = sum(int(mongosh(args, f"print(db.trades.countDocuments({query}));")
+                           .splitlines()[-1]) for query in dataset_filters(trades))
         if existing:
             if not args.reset:
                 sys.exit(f"{existing} dummy trades already exist; rerun with --reset")
@@ -604,6 +627,7 @@ def cmd_seed(args):
 def cmd_validate(args):
     meta, trades = load_dataset(args.dataset)
     start, end = meta["start"], meta["end"]
+    market_ids = market_ids_by_slot(trades)
     report = Report()
     with Tunnel(args):
         print("V1 REST full coverage (per market)")
@@ -632,8 +656,8 @@ def cmd_validate(args):
         report.check("actors within roster", actors <= ROSTER, f"{sorted(actors)}")
         self_trades = [t["tradeId"] for t in rest_all if t["buyerId"] == t["sellerId"]]
         report.check("buyer != seller", not self_trades, f"{len(self_trades)} self trades")
-        bad_markets = [t["tradeId"] for t in rest_all if t["marketId"] != market_id_for_slot(parse_ts(t["timestamp"]))]
-        report.check("marketId derivation", not bad_markets, f"{len(bad_markets)} mismatches")
+        bad_markets = [t["tradeId"] for t in rest_all if t["marketId"] != market_ids.get(parse_ts(t["timestamp"]))]
+        report.check("marketId matches dataset slot", not bad_markets, f"{len(bad_markets)} mismatches")
         markets_per_slot = defaultdict(set)
         for t in rest_all:
             markets_per_slot[t["timestamp"]].add(t["marketId"])
@@ -649,10 +673,11 @@ def cmd_validate(args):
         if args.exhaustive:
             slots = range(start, end, SLOT_SECS)
         for slot in sorted({s for s in slots if start <= s < end}):
-            ewds_market_check(report, args, trades, f"slot {fmt_ts(slot)}", market_id_for_slot(slot))
-        ewds_market_check(
-            report, args, trades, "market before range", market_id_for_slot(start - SLOT_SECS)
-        )
+            ewds_market_check(report, args, trades, f"slot {fmt_ts(slot)}", market_ids[slot])
+        absent_market_id = str(uuid.uuid4())
+        while absent_market_id in expected_by_market:
+            absent_market_id = str(uuid.uuid4())
+        ewds_market_check(report, args, trades, "market outside dataset", absent_market_id)
 
         if args.check_range_limit:
             print("V4/V5 EWDS tradesQuery range limit")

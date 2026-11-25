@@ -6,42 +6,42 @@
   "type": "object",
   "properties": {
     "tradeId": {
-      "description": "Primary identifier. IRI: int:tradeId.",
-      "type": "string"
+      "description": "Hyphenated UUIDv4 trade ID. Imports accept either letter case; reads/events use lowercase UUID text. IRI: int:tradeId.",
+      "$ref": "./int.order.schema.v1.json#/properties/orderId"
     },
     "marketId": {
       "description": "FK to Market. IRI: int:marketId.",
-      "type": "string"
+      "$ref": "./int.order.schema.v1.json#/properties/marketId"
     },
     "bidId": {
       "description": "FK to bid Order. IRI: int:bidId.",
-      "type": "string"
+      "$ref": "./int.order.schema.v1.json#/properties/orderId"
     },
     "buyerId": {
-      "description": "FK to buying Actor. IRI: int:buyerId.",
-      "type": "string"
+      "description": "Original off-chain owner ID of the buying facility, not an on-chain hash or wallet. Preserved exactly and case-sensitive. IRI: int:buyerId.",
+      "$ref": "./int.order.schema.v1.json#/properties/createdBy"
     },
     "residualBidId": {
-      "description": "FK to residual bid Order. IRI: int:residualBidId. Nullable.",
-      "type": [
-        "string",
-        "null"
+      "description": "Residual bid ID; null means absence; otherwise a hyphenated UUIDv4.",
+      "anyOf": [
+        { "$ref": "./int.order.schema.v1.json#/properties/orderId" },
+        { "type": "null" }
       ],
       "default": null
     },
     "offerId": {
       "description": "FK to offer Order. IRI: int:offerId.",
-      "type": "string"
+      "$ref": "./int.order.schema.v1.json#/properties/orderId"
     },
     "sellerId": {
-      "description": "FK to selling Actor. IRI: int:sellerId.",
-      "type": "string"
+      "description": "Original off-chain owner ID of the selling facility, not an on-chain hash or wallet. Preserved exactly and case-sensitive. IRI: int:sellerId.",
+      "$ref": "./int.order.schema.v1.json#/properties/createdBy"
     },
     "residualOfferId": {
-      "description": "FK to residual offer Order. IRI: int:residualOfferId. Nullable.",
-      "type": [
-        "string",
-        "null"
+      "description": "Residual offer ID; null means absence; otherwise a hyphenated UUIDv4.",
+      "anyOf": [
+        { "$ref": "./int.order.schema.v1.json#/properties/orderId" },
+        { "type": "null" }
       ],
       "default": null
     },
@@ -61,7 +61,7 @@
       "exclusiveMinimum": 0
     },
     "tradePrice": {
-      "description": "Settled trade price in EUR/kWh. IRI: int:tradePrice. Unit: EUR/kWh.",
+      "description": "Matched trade price in EUR/kWh. IRI: int:tradePrice. Unit: EUR/kWh.",
       "type": "number"
     },
     "timestamp": {

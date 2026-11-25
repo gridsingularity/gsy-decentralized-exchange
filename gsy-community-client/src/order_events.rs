@@ -9,9 +9,10 @@ use primitives::db_api_schema::orders::{
 };
 use primitives::ewds::dto::{EwdsEventEnvelope, EwdsOrderDto, FacilityMarketValidationRequest};
 use primitives::ewds::{env_var, invalid_event, parse_batch, EwdsClient, EwdsEventType};
-use primitives::offchain_storage::{resolve_order_partner_ids, OffchainStorageClient};
+use primitives::offchain_storage::OffchainStorageClient;
 use primitives::utils::{
-    datetime_to_epoch, epoch_to_rfc3339, parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR,
+    datetime_to_epoch, derive_onchain_id, epoch_to_rfc3339, hex_to_bytes16, normalize_uuid,
+    uuid_v4_to_bytes16, validate_offchain_actor_id, NODE_FLOAT_SCALING_FACTOR,
 };
 use serde_json::Value;
 use std::collections::HashMap;
@@ -33,6 +34,7 @@ const NODE_HEALTH_CHECK_TIMEOUT_MS: u64 = 10_000;
 /// task is dropped, and only returns early if the node or the configuration is unusable, or the
 /// connection to the node is lost for good.
 pub async fn start_order_event_subscriber() -> Result<()> {
+    primitives::actor_ids::initialize_actor_id_hashing()?;
     let evm_node_url = env_var("EVM_NODE_URL").unwrap_or_else(|| "ws://anvil:8545".to_string());
     let order_registry_address =
         env_var("ORDER_REGISTRY_ADDRESS").context("ORDER_REGISTRY_ADDRESS is not set")?;
@@ -60,7 +62,7 @@ pub async fn start_order_event_subscriber() -> Result<()> {
         OffchainStorageClient::from_env(CONSUMER_CLIENT_ID_ENV, CONSUMER_CLIENT_ID_DEFAULT),
         order_registry,
         ewds_client,
-    );
+    )?;
 
     info!(
         "Starting EWDS order event subscriber (order_registry={})",
@@ -111,18 +113,20 @@ impl OrderEventHandler {
         offchain_storage_client: OffchainStorageClient,
         order_registry: OrderRegistryClient,
         ewds_client: EwdsClient,
-    ) -> Self {
-        Self {
+    ) -> Result<Self> {
+        primitives::actor_ids::initialize_actor_id_hashing()?;
+        Ok(Self {
             offchain_storage_client,
             order_registry,
             ewds_client,
-        }
+        })
     }
 
     /// Sends the orders of an `order.event` to the `OrderRegistry`.
     ///
     /// Resolves owners to facilities and validates their market participation before submission.
-    /// Invalid input, unavailable validation or unresolved IDs fail the event before submission.
+    /// Preferred partners must also be registered owners, but are not market-validated here.
+    /// Invalid input or unavailable validation fails the event before submission.
     /// Ineligible orders and contract rejections are reported to the EWDS; eligible orders continue.
     /// Infrastructure failures remain retryable, with confirmed orders skipped on retry.
     /// A sent order succeeds only after its receipt confirms successful execution.
@@ -139,7 +143,7 @@ impl OrderEventHandler {
         let mut pending = Vec::with_capacity(total);
         for (index, (submission, order)) in orders.into_iter().enumerate() {
             // Check before validation: topology changes must not reject an already placed order.
-            let order_id = *Uuid::parse_str(&order.order_id)?.as_bytes();
+            let order_id = uuid_v4_to_bytes16(&order.order_id).context("Invalid orderId")?;
             let already_placed = match self.order_registry.is_placed(order_id).await {
                 Ok(placed) => placed,
                 Err(error) => {
@@ -178,20 +182,31 @@ impl OrderEventHandler {
             .await
             .context("Facility participation validation failed")?;
 
-        for ((index, submission, order, facility_id), result) in pending.into_iter().zip(validation) {
+        for ((index, submission, mut order, facility_id), result) in
+            pending.into_iter().zip(validation)
+        {
             if let Some(reason) = result.reason {
                 let reason = format!(
                     "Facility {} of owner {} cannot participate in market {}: {}",
-                    facility_id, order.created_by, order.market_id, reason.as_str()
+                    facility_id,
+                    order.created_by,
+                    order.market_id,
+                    reason.as_str()
                 );
                 params.push((submission, Err(reason)));
                 continue;
             }
             let order_id = order.order_id.clone();
-            let order = self
-                .resolve_ids(order)
-                .await
-                .and_then(|order| order_params(&order).map_err(invalid_event))
+            order.created_by = derive_onchain_id(&order.created_by);
+            if let Some(partner) = order
+                .requirements
+                .as_mut()
+                .and_then(|r| r.trading_partner_id.as_mut())
+            {
+                *partner = derive_onchain_id(partner);
+            }
+            let order = order_params(&order)
+                .map_err(invalid_event)
                 .with_context(|| format!("invalid order {} at index {}", order_id, index))?;
             // Keep the submitted IDs so a rejection can echo the original order to FOS.
             params.push((submission, Ok(order)));
@@ -204,7 +219,7 @@ impl OrderEventHandler {
                 Ok(order) => order,
                 Err(reason) => {
                     // Another submission (including an earlier item in this batch) may have won.
-                    let order_id = *Uuid::parse_str(&submission.order_id)?.as_bytes();
+                    let order_id = uuid_v4_to_bytes16(&submission.order_id).context("Invalid orderId")?;
                     match self.order_registry.is_placed(order_id).await {
                         Ok(true) => sent += 1,
                         Ok(false) => {
@@ -271,7 +286,7 @@ impl OrderEventHandler {
     }
 
     /// Resolves pending orders to their owners' facilities and separates rejection candidates.
-    /// Missing facilities are rejected; unavailable or ambiguous ownership remains retryable.
+    /// Missing submitting/partner owners are rejected; unavailable or ambiguous ownership is retryable.
     async fn validate_owner_facilities(
         &self,
         pending: Vec<(usize, EwdsOrderDto, DbOrderSchema)>,
@@ -298,7 +313,23 @@ impl OrderEventHandler {
             .into_iter()
             .filter_map(|(index, submission, order)| {
                 match owner_facilities.get(&order.created_by) {
-                    Some(facility_id) => Some((index, submission, order, facility_id.clone())),
+                    Some(facility_id) => {
+                        if let Some(partner) = order
+                            .requirements
+                            .as_ref()
+                            .and_then(|r| r.trading_partner_id.as_ref())
+                        {
+                            if !owner_facilities.contains_key(partner) {
+                                let reason = format!(
+                                    "Preferred partner {} has no associated facility: unknown_preferred_partner",
+                                    partner
+                                );
+                                rejected.push((submission, reason));
+                                return None;
+                            }
+                        }
+                        Some((index, submission, order, facility_id.clone()))
+                    }
                     None => {
                         let reason = format!(
                             "Owner {} has no associated facility: unknown_facility",
@@ -311,20 +342,6 @@ impl OrderEventHandler {
             })
             .collect();
         Ok((pending, rejected))
-    }
-
-    /// Replaces the off-chain owner and preferred-owner IDs with their on-chain IDs.
-    async fn resolve_ids(&self, mut order: DbOrderSchema) -> Result<DbOrderSchema> {
-        order.created_by = self
-            .offchain_storage_client
-            .fetch_onchain_id(&order.created_by)
-            .await
-            .with_context(|| format!("createdBy '{}' could not be resolved", order.created_by))?;
-        order.area_uuid = order.created_by.clone();
-        resolve_order_partner_ids(&mut order.requirements, &self.offchain_storage_client)
-            .await
-            .context("preferredTradingPartner could not be resolved")?;
-        Ok(order)
     }
 
     /// Sends one order, retrying transport errors. An order that is already on-chain, or that
@@ -559,21 +576,16 @@ fn classify_contract_error(error: ContractError<OrderRegistrySigner>) -> PlaceOr
 /// The reason [`PlaceOrderError::Rejected`] carries when the order ID is already taken.
 pub const ORDER_ALREADY_EXISTS: &str = "OrderAlreadyExists";
 
-/// Contract parameters for an order whose order, actor, market and partner IDs are already
-/// on-chain IDs.
+/// Contract parameters from entity UUIDs and already-derived actor hashes.
 pub fn order_params(order: &DbOrderSchema) -> Result<EvmOrderParamsTuple> {
-    let onchain_id = |name: &str, value: &str| {
-        parse_uuid_or_hex_bytes16(value)
-            .filter(|bytes| *bytes != [0; 16])
-            .ok_or_else(|| anyhow!("{} '{}' is not a 16-byte UUID or hex ID", name, value))
-    };
     let metadata =
         order_metadata_to_contract(order.requirements.as_ref(), order.attributes.as_ref())?;
 
     Ok((
-        onchain_id("orderId", &order.order_id)?,
-        onchain_id("createdBy", &order.created_by)?,
-        onchain_id("marketId", &order.market_id)?,
+        uuid_v4_to_bytes16(&order.order_id).context("Invalid orderId")?,
+        hex_to_bytes16(&order.created_by).filter(|id| *id != [0; 16])
+            .context("createdBy must be an on-chain actor hash")?,
+        uuid_v4_to_bytes16(&order.market_id).context("Invalid marketId")?,
         datetime_to_epoch(&order.time_slot)?,
         datetime_to_epoch(&order.creation_time)?,
         (order.energy_kWh * NODE_FLOAT_SCALING_FACTOR).round() as u64,
@@ -587,15 +599,17 @@ pub fn order_params(order: &DbOrderSchema) -> Result<EvmOrderParamsTuple> {
 }
 
 /// The field rules an order from EWDS has to meet before it is placed.
-pub fn validate_order(order: DbOrderSchema) -> Result<DbOrderSchema> {
-    Uuid::parse_str(&order.order_id)
-        .map_err(|e| anyhow!("orderId '{}' is not a UUID: {}", order.order_id, e))?;
-    if parse_uuid_or_hex_bytes16(&order.market_id).is_none_or(|id| id == [0; 16]) {
-        bail!(
-            "marketId '{}' is not a non-zero 16-byte UUID or hex ID",
-            order.market_id
-        );
+pub fn validate_order(mut order: DbOrderSchema) -> Result<DbOrderSchema> {
+    order.created_by = validate_offchain_actor_id(&order.created_by).context("Invalid createdBy")?;
+    if let Some(partner) = order
+        .requirements
+        .as_mut()
+        .and_then(|requirements| requirements.trading_partner_id.as_mut())
+    {
+        *partner = validate_offchain_actor_id(partner).context("Invalid preferredTradingPartner")?;
     }
+    order.order_id = normalize_uuid(&order.order_id).context("Invalid orderId")?;
+    order.market_id = normalize_uuid(&order.market_id).context("Invalid marketId")?;
     if order.status != OrderStatus::Submitted {
         bail!("orderStatus must be 'submitted', got {:?}", order.status);
     }

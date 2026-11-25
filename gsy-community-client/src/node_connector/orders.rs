@@ -9,8 +9,8 @@ use primitives::ewds::dto::{EwdsOrderDto, FacilityMarketValidationRequest};
 use primitives::ewds::{env_var, EwdsClient};
 use primitives::offchain_storage::OffchainStorageClient;
 use primitives::utils::{
-    create_encrypted_bytes16_from_string, datetime_to_epoch, epoch_to_rfc3339,
-    parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR,
+    datetime_to_epoch, derive_onchain_id, epoch_to_rfc3339, hex_to_bytes16, uuid_v4_to_bytes16,
+    validate_offchain_actor_id, NODE_FLOAT_SCALING_FACTOR,
 };
 
 use std::str::FromStr;
@@ -155,28 +155,26 @@ abigen!(
     ]"#
 );
 
-async fn build_order_param(
+fn build_order_param(
     forecast: &ForecastSchema,
     owner_id: &str,
-    storage: &OffchainStorageClient,
     market: &MarketSchema,
     now: u64,
     is_bid: bool,
 ) -> Result<EvmOrderParamsTuple> {
     let rate_multiplier = if is_bid { BID_RATE } else { OFFER_RATE };
     let metadata = order_metadata_to_contract(None, None)?;
-    let offchain_order_id = Uuid::new_v4().to_string();
-    let onchain_order_id = create_encrypted_bytes16_from_string(&offchain_order_id);
-    let owner_id = storage.fetch_onchain_id(owner_id).await?;
+    let onchain_order_id = *Uuid::new_v4().as_bytes();
+    let owner_id = derive_onchain_id(&validate_offchain_actor_id(owner_id)?);
     let onchain_owner_id =
-        parse_uuid_or_hex_bytes16(&owner_id).context("Invalid on-chain owner ID")?;
+        hex_to_bytes16(&owner_id).context("Invalid on-chain owner ID")?;
     let delivery_start =
         datetime_to_epoch(&market.delivery_start_time).context("Invalid delivery_start_time")?;
     Ok((
         onchain_order_id,
         onchain_owner_id,
-        parse_uuid_or_hex_bytes16(market.market_id.as_str())
-            .expect("could not convert hex to bytes"),
+        uuid_v4_to_bytes16(market.market_id.as_str())
+            .context("Invalid marketId")?,
         delivery_start,
         now,
         (forecast.energy_kwh.abs() * NODE_FLOAT_SCALING_FACTOR) as u64,
@@ -189,15 +187,17 @@ async fn build_order_param(
     ))
 }
 
-/// Validate non-zero forecasts before resolving owner IDs or submitting any orders.
+/// Validate non-zero forecasts before hashing owner IDs or submitting any orders.
 /// Denials are skipped and reported when EWDS is enabled; infrastructure errors propagate.
 pub async fn create_input_orders(
     forecasts: Vec<ForecastSchema>,
     market: MarketSchema,
 ) -> Result<Vec<EvmOrderParamsTuple>> {
+    primitives::actor_ids::initialize_actor_id_hashing()?;
     let now: u64 = get_current_timestamp_in_secs();
 
-    let storage = OffchainStorageClient::from_env("EWDS_COMMUNITY_CLIENT_ID", "gsycommunityclient");
+    let offchain_storage_client =
+        OffchainStorageClient::from_env("EWDS_COMMUNITY_CLIENT_ID", "gsycommunityclient");
     let forecasts: Vec<_> = forecasts
         .into_iter()
         .filter(|forecast| forecast.energy_kwh > 0.0 || forecast.energy_kwh < 0.0)
@@ -205,7 +205,9 @@ pub async fn create_input_orders(
     if forecasts.is_empty() {
         return Ok(Vec::new());
     }
-    let facility_owner_mapping = storage.fetch_facility_owner_mapping().await?;
+    let facility_owner_mapping = offchain_storage_client
+        .fetch_facility_owner_mapping()
+        .await?;
     let requests: Vec<_> = forecasts
         .iter()
         .map(|forecast| FacilityMarketValidationRequest {
@@ -213,7 +215,7 @@ pub async fn create_input_orders(
             market_id: market.market_id.clone(),
         })
         .collect();
-    let validation = storage
+    let validation = offchain_storage_client
         .validate_facility_markets(&requests)
         .await
         .context("Facility participation validation failed")?;
@@ -233,17 +235,13 @@ pub async fn create_input_orders(
             warn!("{}", reason);
             rejected.push((forecast, owner_id.clone(), reason));
         } else {
-            input_orders.push(
-                build_order_param(
-                    &forecast,
-                    owner_id,
-                    &storage,
-                    &market,
-                    now,
-                    forecast.energy_kwh > 0.0,
-                )
-                .await?,
-            );
+            input_orders.push(build_order_param(
+                &forecast,
+                owner_id,
+                &market,
+                now,
+                forecast.energy_kwh > 0.0,
+            )?);
         }
     }
 

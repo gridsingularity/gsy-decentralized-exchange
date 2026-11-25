@@ -1,7 +1,7 @@
 use super::trade_steps::{
     delivery_verification_timestamp, place_custom_order, query_market_trades,
     query_orders_for_market, wait_for_order_in_offchain_storage, OrderRegistryContract,
-    PenaltyRecordedFilter, TradeSettledFilter, TradeSettlementContract,
+    PenaltyRecordedFilter, TradeMatchedFilter, TradeMatchingContract,
 };
 use crate::utils::indexed_bytes16_topic;
 use crate::world::MyWorld;
@@ -11,7 +11,7 @@ use primitives::db_api_schema::{
     orders::OrderStatus,
     trades::{DbTradeSchema, TradeStatus},
 };
-use primitives::utils::{bytes16_to_hex, epoch_to_datetime, parse_uuid_or_hex_bytes16};
+use primitives::utils::{bytes16_to_uuid_string, epoch_to_datetime, uuid_v4_to_bytes16};
 use std::{sync::Arc, time::Duration};
 use tokio::time::{sleep, timeout};
 abigen!(
@@ -50,7 +50,7 @@ async fn assert_order_status(
     let registry = OrderRegistryContract::new(world.order_registry_address, world.provider.clone());
     assert_eq!(
         registry
-            .get_status(parse_uuid_or_hex_bytes16(id).unwrap())
+            .get_status(uuid_v4_to_bytes16(id).unwrap())
             .call()
             .await
             .unwrap(),
@@ -89,7 +89,7 @@ async fn verify_cancellation(world: &mut MyWorld) {
     let cancelled = place_custom_order(world, "alice", true, 1.0, 20.0, None, None).await;
     assert_order_status(world, &cancelled, OrderStatus::Submitted, 1, None).await;
     let params = registry
-        .get_order(parse_uuid_or_hex_bytes16(&cancelled).unwrap())
+        .get_order(uuid_v4_to_bytes16(&cancelled).unwrap())
         .call()
         .await
         .unwrap();
@@ -143,25 +143,25 @@ pub(crate) async fn trade_status_timestamp(
     trade: &DbTradeSchema,
     status: &TradeStatus,
 ) -> u64 {
-    let settlement =
-        TradeSettlementContract::new(world.trade_settlement_address, world.provider.clone());
-    let topic = indexed_bytes16_topic(parse_uuid_or_hex_bytes16(&trade.trade_uuid).unwrap());
+    let trade_matching =
+        TradeMatchingContract::new(world.trade_matching_address, world.provider.clone());
+    let topic = indexed_bytes16_topic(uuid_v4_to_bytes16(&trade.trade_uuid).unwrap());
     let block_hash = match status {
         TradeStatus::Settled => panic!("The Settled status transition is not implemented"),
         TradeStatus::Executed => return delivery_verification_timestamp(world, trade).await,
         TradeStatus::Matched => {
-            let events = settlement
-                .event::<TradeSettledFilter>()
+            let events = trade_matching
+                .event::<TradeMatchedFilter>()
                 .from_block(0u64)
                 .topic1(topic)
                 .query_with_meta()
                 .await
                 .unwrap();
-            assert_eq!(events.len(), 1, "Trade must settle exactly once");
+            assert_eq!(events.len(), 1, "Trade must be matched exactly once");
             events[0].1.block_hash
         }
         TradeStatus::Penalized => {
-            let events = settlement
+            let events = trade_matching
                 .event::<PenaltyRecordedFilter>()
                 .from_block(0u64)
                 .topic3(topic)
@@ -190,7 +190,7 @@ pub(crate) async fn trade_status_timestamp(
 
 #[then("the trade is Matched before delivery verification")]
 async fn verify_matched_trade(world: &mut MyWorld) {
-    let trade = world.last_trade.as_ref().expect("Missing settled trade");
+    let trade = world.last_trade.as_ref().expect("Missing matched trade");
     let stored = query_market_trades(world)
         .await
         .into_iter()
@@ -263,7 +263,7 @@ pub(crate) async fn assert_trade_verified(
                 for id in [&trade.bid_hash, &trade.offer_hash] {
                     assert_eq!(
                         registry
-                            .get_status(parse_uuid_or_hex_bytes16(id).unwrap())
+                            .get_status(uuid_v4_to_bytes16(id).unwrap())
                             .call()
                             .await
                             .unwrap(),
@@ -278,12 +278,12 @@ pub(crate) async fn assert_trade_verified(
                         Some(epoch_to_datetime(timestamp).unwrap())
                     );
                 }
-                let settlement = TradeSettlementContract::new(
-                    world.trade_settlement_address,
+                let trade_matching = TradeMatchingContract::new(
+                    world.trade_matching_address,
                     world.provider.clone(),
                 );
-                let penalty = settlement
-                    .penalty_energy_by_trade(parse_uuid_or_hex_bytes16(&trade.trade_uuid).unwrap())
+                let penalty = trade_matching
+                    .penalty_energy_by_trade(uuid_v4_to_bytes16(&trade.trade_uuid).unwrap())
                     .call()
                     .await
                     .unwrap();
@@ -304,7 +304,7 @@ pub(crate) async fn assert_trade_verified(
 
 #[then("delivery verification marks the trade and orders Executed without penalties")]
 async fn verify_full_delivery(world: &mut MyWorld) {
-    let trade = world.last_trade.as_ref().expect("Missing settled trade");
+    let trade = world.last_trade.as_ref().expect("Missing matched trade");
     assert_trade_verified(world, trade, TradeStatus::Executed).await;
     assert_eq!(
         query_market_trades(world).await.len(),
@@ -312,7 +312,7 @@ async fn verify_full_delivery(world: &mut MyWorld) {
         "Status notifications must not submit new orders"
     );
     let orders =
-        query_orders_for_market(world, &bytes16_to_hex(world.last_market_id.unwrap())).await;
+        query_orders_for_market(world, &bytes16_to_uuid_string(world.last_market_id.unwrap())).await;
     assert_eq!(orders.len(), 2, "Expected exactly the two submitted orders");
 }
 
@@ -326,7 +326,7 @@ async fn verify_trade_verdict(world: &mut MyWorld, status: String) {
     assert_trade_verified(world, world.last_trade.as_ref().unwrap(), status).await;
     assert_eq!(query_market_trades(world).await.len(), 1);
     assert_eq!(
-        query_orders_for_market(world, &bytes16_to_hex(world.last_market_id.unwrap()))
+        query_orders_for_market(world, &bytes16_to_uuid_string(world.last_market_id.unwrap()))
             .await
             .len(),
         2,
@@ -336,11 +336,11 @@ async fn verify_trade_verdict(world: &mut MyWorld, status: String) {
 
 #[then(expr = "the trade records exactly {int} buyer and {int} seller penalty units")]
 async fn verify_party_penalties(world: &mut MyWorld, buyer_cost: u64, seller_cost: u64) {
-    let trade = world.last_trade.as_ref().expect("Missing settled trade");
-    let settlement =
-        TradeSettlementContract::new(world.trade_settlement_address, world.provider.clone());
-    let trade_id = parse_uuid_or_hex_bytes16(&trade.trade_uuid).unwrap();
-    let events = settlement
+    let trade = world.last_trade.as_ref().expect("Missing matched trade");
+    let trade_matching =
+        TradeMatchingContract::new(world.trade_matching_address, world.provider.clone());
+    let trade_id = uuid_v4_to_bytes16(&trade.trade_uuid).unwrap();
+    let events = trade_matching
         .event::<PenaltyRecordedFilter>()
         .from_block(0u64)
         .topic3(indexed_bytes16_topic(trade_id))
@@ -353,7 +353,7 @@ async fn verify_party_penalties(world: &mut MyWorld, buyer_cost: u64, seller_cos
         "Each penalized party must be recorded exactly once"
     );
     for (party, cost) in [(&trade.buyer, buyer_cost), (&trade.seller, seller_cost)] {
-        let party = parse_uuid_or_hex_bytes16(party).unwrap();
+        let party = primitives::utils::hex_to_bytes16(&primitives::utils::derive_onchain_id(party)).unwrap();
         assert_eq!(
             events
                 .iter()
@@ -365,7 +365,7 @@ async fn verify_party_penalties(world: &mut MyWorld, buyer_cost: u64, seller_cos
         );
     }
     assert_eq!(
-        settlement
+        trade_matching
             .penalty_energy_by_trade(trade_id)
             .call()
             .await

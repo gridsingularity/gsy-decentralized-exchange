@@ -1,16 +1,16 @@
-use crate::db_api_schema::grid_topology::{EnergyCommunitySchema, FacilitySchema};
+use crate::db_api_schema::grid_topology::EnergyCommunitySchema;
 use crate::db_api_schema::market::MarketSchema;
-use crate::db_api_schema::orders::{DbOrderSchema, DbRequirements};
+use crate::db_api_schema::orders::DbOrderSchema;
 use crate::db_api_schema::profiles::{MeasurementPointSchema, MeasurementSchema};
 use crate::db_api_schema::trades::DbTradeSchema;
 use crate::ewds::dto::{
-    EwdsClearingResultDto, EwdsCommunityDto, EwdsMarketDto, EwdsMeasurementDto, EwdsOrderDto,
-    EwdsTradeDto, FacilityMarketValidationRequest, FacilityMarketValidationResult, IdMappingDto,
-    TimeseriesDto,
+    EwdsClearingResultDto, EwdsCommunityDto, EwdsFacilityDto, EwdsMarketDto, EwdsMeasurementDto,
+    EwdsOrderDto, EwdsTradeDto, FacilityMarketValidationRequest, FacilityMarketValidationResult,
+    IdMappingDto, TimeseriesDto,
 };
 use crate::ewds::{format_response_body, EwdsClient, EwdsOperation};
 use crate::utils::{
-    bytes16_to_hex, parse_uuid_or_hex_bytes16, rfc3339_to_datetime,
+    bytes16_to_hex, hex_to_bytes16, rfc3339_to_datetime, validate_offchain_actor_id,
 };
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
@@ -116,9 +116,12 @@ impl OffchainStorageClient {
         }
 
         response
-            .json::<Vec<EnergyCommunitySchema>>()
+            .json::<Vec<EwdsCommunityDto>>()
             .await
-            .with_context(|| format!("Failed to deserialize communities from '{}'", url))
+            .with_context(|| format!("Failed to deserialize communities from '{}'", url))?
+            .into_iter()
+            .map(EnergyCommunitySchema::try_from)
+            .collect()
     }
 
     async fn fetch_communities_via_ewds(&self) -> Result<Vec<EnergyCommunitySchema>> {
@@ -127,14 +130,14 @@ impl OffchainStorageClient {
             .query(EwdsOperation::CommunitiesQuery, serde_json::json!({}))
             .await?;
 
-        Ok(communities
+        communities
             .into_iter()
-            .map(EnergyCommunitySchema::from)
-            .collect())
+            .map(EnergyCommunitySchema::try_from)
+            .collect()
     }
 
     pub async fn fetch_facility_owner_mapping(&self) -> Result<HashMap<String, String>> {
-        let facilities: Vec<FacilitySchema> = match self.transport {
+        let facilities: Vec<EwdsFacilityDto> = match self.transport {
             OffchainStorageTransport::Ewds => {
                 info!("Fetching facilities via EWDS transport");
                 self.ewds_client()
@@ -216,6 +219,7 @@ impl OffchainStorageClient {
     }
 
     pub async fn fetch_onchain_id(&self, offchain_id: &str) -> Result<String> {
+        let offchain_id = validate_offchain_actor_id(offchain_id)?;
         let mapping: IdMappingDto = match self.transport {
             OffchainStorageTransport::Ewds => {
                 info!("Fetching onchain_id via EWDS transport");
@@ -235,7 +239,7 @@ impl OffchainStorageClient {
                 let response = self
                     .http_client
                     .post(&url)
-                    .query(&[("offchain_id", offchain_id)])
+                    .query(&[("offchain_id", &offchain_id)])
                     .send()
                     .await?;
                 if !response.status().is_success() {
@@ -248,12 +252,12 @@ impl OffchainStorageClient {
             }
         };
 
-        if mapping.offchain_id != offchain_id {
+        if validate_offchain_actor_id(&mapping.offchain_id)? != offchain_id {
             return Err(anyhow!(
                 "ID service returned a mapping for a different facility"
             ));
         }
-        let bytes = parse_uuid_or_hex_bytes16(&mapping.onchain_id)
+        let bytes = hex_to_bytes16(&mapping.onchain_id)
             .filter(|bytes| *bytes != [0; 16])
             .ok_or_else(|| anyhow!("Invalid on-chain ID returned for facility {}", offchain_id))?;
         Ok(bytes16_to_hex(bytes))
@@ -518,19 +522,4 @@ impl CommunityProvider for OffchainStorageClient {
             OffchainStorageTransport::Ewds => self.fetch_communities_via_ewds().await,
         }
     }
-}
-
-/// Resolve off-chain owner IDs before converting metadata or matching actor IDs.
-/// Input identifiers are always off-chain IDs, including UUID and hex-shaped strings.
-pub async fn resolve_order_partner_ids(
-    requirements: &mut Option<DbRequirements>,
-    id_mapping_source: &OffchainStorageClient,
-) -> Result<()> {
-    if let Some(partner) = requirements
-        .as_mut()
-        .and_then(|value| value.trading_partner_id.as_mut())
-    {
-        *partner = id_mapping_source.fetch_onchain_id(partner).await?;
-    }
-    Ok(())
 }

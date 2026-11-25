@@ -210,24 +210,24 @@ describe("OrderRegistry", function () {
     }
   });
 
-  it("Should keep submission and settlement permissions independent", async function () {
+  it("Should keep submission and matching permissions independent", async function () {
     const { registry, communityClient, other, baseOrder } = await loadFixture(deployRegistryFixture);
-    const settlementRole = await registry.SETTLEMENT_ROLE();
-    await registry.grantRole(settlementRole, other.address);
+    const matchingRole = await registry.MATCHING_ROLE();
+    await registry.grantRole(matchingRole, other.address);
     await expect(registry.connect(other).placeOrder(baseOrder))
       .to.be.revertedWithCustomError(registry, "Unauthorized");
     await registry.connect(communityClient).placeOrder(baseOrder);
     await expect(registry.connect(other).cancelOrder(baseOrder))
       .to.be.revertedWithCustomError(registry, "Unauthorized");
     for (const action of [
-      () => registry.connect(communityClient).settleOrder(baseOrder.orderId, baseOrder.energy, ZERO_BYTES16),
+      () => registry.connect(communityClient).fillOrder(baseOrder.orderId, baseOrder.energy, ZERO_BYTES16),
       () => registry.connect(communityClient).markExecuted(baseOrder.orderId),
       () => registry.connect(communityClient).updateStatus(baseOrder.orderId, 2),
     ]) {
       await expect(action()).to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount")
-        .withArgs(communityClient.address, settlementRole);
+        .withArgs(communityClient.address, matchingRole);
     }
-    await registry.connect(other).settleOrder(baseOrder.orderId, baseOrder.energy, ZERO_BYTES16);
+    await registry.connect(other).fillOrder(baseOrder.orderId, baseOrder.energy, ZERO_BYTES16);
     expect(await registry.getStatus(baseOrder.orderId)).to.equal(6);
   });
 
@@ -255,13 +255,15 @@ describe("OrderRegistry", function () {
       await loadFixture(deployRegistryFixture);
     await registry.connect(communityClient).placeOrder(baseOrder);
     await time.increase(OPEN_MARKET_DURATION);
-    await createOpenMarket(controller, marketId);
+    await expect(createOpenMarket(controller, marketId))
+      .to.be.revertedWithCustomError(controller, "InvalidMarket")
+      .withArgs(marketId);
     expect(await controller.isMarketOpen(marketId)).to.equal(false);
     expect(await registry.getStatus(baseOrder.orderId)).to.equal(4);
     expect(await registry.orderStatus(baseOrder.orderId)).to.equal(4);
 
-    await registry.grantRole(await registry.SETTLEMENT_ROLE(), communityClient.address);
-    await expect(registry.connect(communityClient).settleOrder(baseOrder.orderId, baseOrder.energy, ZERO_BYTES16))
+    await registry.grantRole(await registry.MATCHING_ROLE(), communityClient.address);
+    await expect(registry.connect(communityClient).fillOrder(baseOrder.orderId, baseOrder.energy, ZERO_BYTES16))
       .to.be.revertedWithCustomError(registry, "OrderNotOpen");
     const newOrder = { ...baseOrder, orderId: bytes16Id("new-order") };
     await expect(registry.connect(communityClient).placeOrder(newOrder))
@@ -276,7 +278,7 @@ describe("OrderRegistry", function () {
     it(`Should expire a residual ${isBid ? "bid" : "offer"} without changing consumed or cancelled orders`, async function () {
       const { registry, controller, communityClient, baseOrder, marketId } =
         await loadFixture(deployRegistryFixture);
-      await registry.grantRole(await registry.SETTLEMENT_ROLE(), communityClient.address);
+      await registry.grantRole(await registry.MATCHING_ROLE(), communityClient.address);
       const partial = { ...baseOrder, isBid };
       const filled = { ...baseOrder, orderId: bytes16Id("filled") };
       const cancelled = { ...baseOrder, orderId: bytes16Id("cancelled") };
@@ -284,8 +286,8 @@ describe("OrderRegistry", function () {
         await registry.connect(communityClient).placeOrder(order);
       }
       const residualId = bytes16Id("residual");
-      await registry.connect(communityClient).settleOrder(partial.orderId, 40, residualId);
-      await registry.connect(communityClient).settleOrder(filled.orderId, 100, ZERO_BYTES16);
+      await registry.connect(communityClient).fillOrder(partial.orderId, 40, residualId);
+      await registry.connect(communityClient).fillOrder(filled.orderId, 100, ZERO_BYTES16);
       await registry.connect(communityClient).cancelOrder(cancelled);
       await time.increase(OPEN_MARKET_DURATION);
       expect(await registry.getStatus(partial.orderId)).to.equal(5); // PartiallyFilled

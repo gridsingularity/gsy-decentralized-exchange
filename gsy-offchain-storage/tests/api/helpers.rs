@@ -1,4 +1,6 @@
+use chrono::DateTime;
 use gsy_offchain_storage::configuration::get_configuration;
+use gsy_offchain_storage::db::grid_topology_service::{TopologyEntry, TopologyService};
 use gsy_offchain_storage::db::{delete_database, init_database, DatabaseWrapper};
 use gsy_offchain_storage::http_server::run_http_server;
 use once_cell::sync::Lazy;
@@ -57,4 +59,22 @@ pub async fn stop_app(app: TestApp) {
 /// A whole-second UTC time, as stored for chain timestamps.
 pub fn ts(epoch_secs: u64) -> chrono::DateTime<chrono::Utc> {
     primitives::utils::epoch_to_datetime(epoch_secs).unwrap()
+}
+
+/// Deterministic UUIDv4 bytes for entity fixtures, never actor identities.
+pub fn entity_bytes(seed: u8) -> [u8; 16] {
+    let mut bytes = [seed; 16];
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    bytes
+}
+
+/// The latest entries of `service`, with `valid_from` set to the Unix epoch, so that tests
+/// can compare them with what they sent.
+pub async fn stored<T: TopologyEntry>(service: TopologyService<T>) -> Vec<T> {
+    let mut entries = service.get().await.unwrap();
+    entries
+        .iter_mut()
+        .for_each(|entry| entry.set_valid_from(DateTime::UNIX_EPOCH));
+    entries
 }

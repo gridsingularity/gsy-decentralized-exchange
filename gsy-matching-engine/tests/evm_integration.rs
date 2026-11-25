@@ -1,21 +1,23 @@
 use ethers::{prelude::*, utils::Anvil};
 use ethers_solc::{artifacts::Severity, Project, ProjectPathsConfig};
 use gsy_matching_engine::connectors::evm_connector::{
-    send_settle_batch_transaction, ClearingResult, MarketMatches,
+    send_submit_matches_transaction, ClearingResult, MarketMatches,
 };
 use gsy_matching_engine::models::{BidOfferMatch, MatchType, Order};
 use primitives::db_api_schema::orders::{
     DbAttributes, DbOrderSchema, DbRequirements, EnergyType, OrderEnum, OrderStatus,
 };
 use primitives::db_api_schema::trades::ClearingStatus;
-use primitives::utils::{epoch_to_datetime, parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR};
+use primitives::utils::{
+    epoch_to_datetime, hex_to_bytes16, uuid_v4_to_bytes16, NODE_FLOAT_SCALING_FACTOR,
+};
 use std::{collections::HashMap, fs::File, io::Write, sync::Arc};
 use tempfile::TempDir;
 
 abigen!(
-    MockTradeSettlement,
+    MockTradeMatching,
     r#"[
-        function settledCount() external view returns (uint256)
+        function matchedCount() external view returns (uint256)
         function lastSelectedEnergy() external view returns (uint256)
         function lastClearingPrice() external view returns (uint256)
         function lastBidCreatedBy() external view returns (bytes16)
@@ -29,7 +31,7 @@ abigen!(
 );
 
 #[tokio::test]
-async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
+async fn test_submit_matches_sends_matches_to_trade_matching_contract() {
     let anvil = Anvil::new().spawn();
     let ws_endpoint = anvil.ws_endpoint();
     let wallet: LocalWallet = anvil.keys()[0].clone().into();
@@ -42,12 +44,12 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
     let temp_dir = TempDir::new().unwrap();
     let contracts_dir = temp_dir.path().join("contracts");
     std::fs::create_dir(&contracts_dir).unwrap();
-    let source_path = contracts_dir.join("MockTradeSettlement.sol");
+    let source_path = contracts_dir.join("MockTradeMatching.sol");
     let source = r#"
         // SPDX-License-Identifier: MIT
         pragma solidity ^0.8.20;
 
-        contract MockTradeSettlement {
+        contract MockTradeMatching {
             bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
             mapping(address => mapping(bytes32 => bool)) private roles;
 
@@ -89,12 +91,12 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
                 uint32 numTrades;
             }
 
-            struct MarketSettlement {
+            struct MarketMatchBatch {
                 Match[] matches;
                 ClearingResult clearingResult;
             }
 
-            uint256 public settledCount;
+            uint256 public matchedCount;
             uint256 public lastSelectedEnergy;
             uint256 public lastClearingPrice;
             bytes16 public lastBidCreatedBy;
@@ -119,20 +121,20 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
                 }
             }
 
-            function settleBatch(MarketSettlement[] calldata settlements) external {
+            function submitMatches(MarketMatchBatch[] calldata batches) external {
                 require(roles[msg.sender][OPERATOR_ROLE], "missing operator role");
-                for (uint256 m = 0; m < settlements.length; m++) {
-                    MarketSettlement calldata settlement = settlements[m];
+                for (uint256 m = 0; m < batches.length; m++) {
+                    MarketMatchBatch calldata batch = batches[m];
                     require(
-                        _sumSelectedEnergy(settlement.matches) == settlement.clearingResult.tradedQuantity,
+                        _sumSelectedEnergy(batch.matches) == batch.clearingResult.tradedQuantity,
                         "traded quantity mismatch"
                     );
-                    settledCount += settlement.matches.length;
-                    for (uint256 i = 0; i < settlement.matches.length; i++) {
-                        matchTypes.push(settlement.matches[i].matchType);
+                    matchedCount += batch.matches.length;
+                    for (uint256 i = 0; i < batch.matches.length; i++) {
+                        matchTypes.push(batch.matches[i].matchType);
                     }
-                    if (settlement.matches.length > 0) {
-                        Match calldata first = settlement.matches[0];
+                    if (batch.matches.length > 0) {
+                        Match calldata first = batch.matches[0];
                         require(first.bid.isBid, "bid must have isBid=true");
                         require(!first.offer.isBid, "offer must have isBid=false");
                         lastSelectedEnergy = first.selectedEnergy;
@@ -143,8 +145,8 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
                         lastBidPreferredEnergyRate = first.bid.preferredEnergyRate;
 
                     }
-                    lastTradedQuantity = settlement.clearingResult.tradedQuantity;
-                    lastMarketId = settlement.clearingResult.marketId;
+                    lastTradedQuantity = batch.clearingResult.tradedQuantity;
+                    lastMarketId = batch.clearingResult.marketId;
                 }
             }
         }
@@ -179,9 +181,9 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
         .contracts
         .values()
         .flat_map(|inner| inner.iter())
-        .find(|(name, _)| *name == "MockTradeSettlement")
+        .find(|(name, _)| *name == "MockTradeMatching")
         .map(|(_, artifact)| artifact)
-        .expect("MockTradeSettlement artifact not found");
+        .expect("MockTradeMatching artifact not found");
 
     let contract = &contract_list
         .first()
@@ -205,20 +207,17 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
     let contract = factory.deploy(()).unwrap().send().await.unwrap();
     let contract_address = contract.address();
 
-    let bid_actor_id = format!("0x{}", "aa".repeat(16));
+    let bid_actor_id = "Owner-MiXeD/LIC01".to_owned();
     let ask_actor_id = format!("0x{}", "bb".repeat(16));
-    let bid_order_id = format!("0x{}", "11".repeat(16));
-    let ask_order_id = format!("0x{}", "22".repeat(16));
-    let market_id = format!("0x{}", "33".repeat(16));
-    let bid_area = bid_actor_id.clone();
-    let ask_area = ask_actor_id.clone();
+    let bid_order_id = "11111111-1111-4111-8111-111111111111".to_string();
+    let ask_order_id = "22222222-2222-4222-8222-222222222222".to_string();
+    let market_id = "33333333-3333-4333-8333-333333333333".to_string();
 
     let bid_db = DbOrderSchema {
         order_id: bid_order_id.clone(),
         status: OrderStatus::Submitted,
         status_updated_at: None,
         order_type: OrderEnum::Bid,
-        area_uuid: bid_area.clone(),
         market_id: market_id.clone(),
         time_slot: epoch_to_datetime(1000).unwrap(),
         creation_time: epoch_to_datetime(900).unwrap(),
@@ -237,7 +236,6 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
         status: OrderStatus::Submitted,
         status_updated_at: None,
         order_type: OrderEnum::Offer,
-        area_uuid: ask_area.clone(),
         market_id: market_id.clone(),
         time_slot: epoch_to_datetime(1000).unwrap(),
         creation_time: epoch_to_datetime(900).unwrap(),
@@ -254,7 +252,6 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
         order_id: bid_order_id.clone(),
         order_type: OrderEnum::Bid,
         status: OrderStatus::Submitted,
-        area_uuid: bid_area.clone(),
         market_id: market_id.clone(),
         time_slot: 1000,
         creation_time: 900,
@@ -269,7 +266,6 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
         order_id: ask_order_id.clone(),
         order_type: OrderEnum::Offer,
         status: OrderStatus::Submitted,
-        area_uuid: ask_area.clone(),
         market_id: market_id.clone(),
         time_slot: 1000,
         creation_time: 900,
@@ -287,7 +283,7 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
         energy: bid_order.energy - selected_energy,
         ..bid_order.clone()
     };
-    let second_offer_id = format!("0x{}", "44".repeat(16));
+    let second_offer_id = "44444444-4444-4444-8444-444444444444".to_string();
     let second_offer_db = DbOrderSchema {
         order_id: second_offer_id.clone(),
         energy_kWh: 20.0,
@@ -344,7 +340,7 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
     lookup.insert(ask_order_id, ask_db);
     lookup.insert(second_offer_id, second_offer_db);
 
-    send_settle_batch_transaction(
+    send_submit_matches_transaction(
         &ws_endpoint,
         &format!("{:?}", contract_address),
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
@@ -354,7 +350,7 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
     .await
     .unwrap();
 
-    let mock_contract = MockTradeSettlement::new(contract_address, client.clone());
+    let mock_contract = MockTradeMatching::new(contract_address, client.clone());
     assert_eq!(
         mock_contract
             .match_types(U256::zero())
@@ -369,7 +365,7 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
     );
 
     assert_eq!(
-        mock_contract.settled_count().call().await.unwrap(),
+        mock_contract.matched_count().call().await.unwrap(),
         U256::from(2u64)
     );
     assert_eq!(
@@ -382,11 +378,13 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
     );
     assert_eq!(
         mock_contract.last_bid_created_by().call().await.unwrap(),
-        parse_uuid_or_hex_bytes16(&bid_actor_id).expect("Failed to parse uuid")
+        hex_to_bytes16(&primitives::utils::derive_onchain_id(&bid_actor_id))
+            .expect("Failed to parse uuid")
     );
     assert_eq!(
         mock_contract.last_offer_created_by().call().await.unwrap(),
-        parse_uuid_or_hex_bytes16(&ask_actor_id).expect("Failed to parse uuid")
+        hex_to_bytes16(&primitives::utils::derive_onchain_id(&ask_actor_id))
+            .expect("Failed to parse uuid")
     );
     assert_eq!(
         mock_contract.last_traded_quantity().call().await.unwrap(),
@@ -394,7 +392,7 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
     );
     assert_eq!(
         mock_contract.last_market_id().call().await.unwrap(),
-        parse_uuid_or_hex_bytes16(&market_id).expect("Failed to parse market id")
+        uuid_v4_to_bytes16(&market_id).expect("Failed to parse market id")
     );
     assert_eq!(
         mock_contract
@@ -402,7 +400,8 @@ async fn test_settle_batch_submits_matches_to_trade_settlement_contract() {
             .call()
             .await
             .unwrap(),
-        parse_uuid_or_hex_bytes16(&ask_actor_id).expect("Invalid on-chain actor ID")
+        hex_to_bytes16(&primitives::utils::derive_onchain_id(&ask_actor_id))
+            .expect("Invalid on-chain actor ID")
     );
     assert_eq!(
         mock_contract

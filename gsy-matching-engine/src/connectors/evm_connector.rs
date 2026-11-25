@@ -1,34 +1,37 @@
 use crate::algorithms::{MatchOrders, PayAsClearPricing};
 use crate::models::{Attributes, BidOfferMatch, MatchType, MatchingData, Order, Requirements};
-use anyhow::{anyhow, Error, Result};
+use anyhow::{anyhow, Context, Error, Result};
+use chrono::{DateTime, Utc};
 use ethers::prelude::*;
 use ethers::utils::keccak256;
 use primitives::db_api_schema::orders::{
     order_metadata_to_contract, DbOrderSchema, OrderEnum, OrderStatus,
 };
 use primitives::db_api_schema::trades::ClearingStatus;
-use primitives::ewds::dto::EwdsOrderDto;
+use primitives::ewds::dto::{order_status_from_ewds, EwdsOrderDto};
 use primitives::ewds::{EwdsClient, EwdsOperation};
-use primitives::matching::matching_block_interval;
-use primitives::offchain_storage::{resolve_order_partner_ids, OffchainStorageClient};
+use primitives::matching::{current_unix_time, matching_block_interval, ClearingSchedule};
+use primitives::offchain_storage::OffchainStorageClient;
 use primitives::utils::{
-    bytes16_to_hex, datetime_to_epoch, parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR,
+    bytes16_to_uuid_string, datetime_to_epoch, derive_onchain_id, hex_to_bytes16, normalize_uuid,
+    rfc3339_to_datetime, uuid_v4_to_bytes16, validate_offchain_actor_id,
+    NODE_FLOAT_SCALING_FACTOR,
 };
 use primitives::MatchingAlgorithm;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::env;
 use std::str::FromStr;
 use tokio::time::{sleep, Duration};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 abigen!(
-    SettleOrderBatchContract,
-    "src/connectors/abi/settle_order_batch.json"
+    SubmitMatchesContract,
+    "src/connectors/abi/submit_matches.json"
 );
 
 // The contract's ClearingResult struct collides with the local ClearingResult model.
-use settle_order_batch_contract::ClearingResult as EvmClearingResult;
+use submit_matches_contract::ClearingResult as EvmClearingResult;
 
 struct PreparedOrders {
     open_bids: Vec<Order>,
@@ -55,13 +58,28 @@ pub struct MarketMatches {
 pub async fn evm_subscribe(
     orderbook_url: String,
     node_url: String,
-    settle_order_batch_address: String,
+    trade_matching_address: String,
     matching_engine_private_key: String,
     matching_algorithm: MatchingAlgorithm,
     pay_as_clear_pricing: PayAsClearPricing,
+    clearing_schedule: ClearingSchedule,
 ) -> Result<(), Error> {
     info!("Connecting to EVM node {}", node_url);
     let provider = Provider::<Ws>::connect(node_url.as_str()).await?;
+    if matches!(matching_algorithm, MatchingAlgorithm::PayAsClear) {
+        // Pay-as-clear markets are cleared at times derived from their own
+        // opening and closing time, not on block boundaries.
+        drop(provider);
+        return run_clearing_schedule(
+            orderbook_url.as_str(),
+            node_url.as_str(),
+            trade_matching_address.as_str(),
+            matching_engine_private_key.as_str(),
+            pay_as_clear_pricing,
+            clearing_schedule,
+        )
+        .await;
+    }
     let matching_block_interval = matching_block_interval();
     info!(
         "Using {}-block matching interval for {}",
@@ -88,7 +106,7 @@ pub async fn evm_subscribe(
                 if let Err(error) = run_matching_cycle(
                     orderbook_url.as_str(),
                     node_url.as_str(),
-                    settle_order_batch_address.as_str(),
+                    trade_matching_address.as_str(),
                     matching_engine_private_key.as_str(),
                     &matching_algorithm,
                     pay_as_clear_pricing,
@@ -111,7 +129,7 @@ pub async fn evm_subscribe(
 async fn run_matching_cycle(
     orderbook_url: &str,
     evm_node_url: &str,
-    settle_order_batch_address: &str,
+    trade_matching_address: &str,
     matching_engine_private_key: &str,
     matching_algorithm: &MatchingAlgorithm,
     pay_as_clear_pricing: PayAsClearPricing,
@@ -121,6 +139,25 @@ async fn run_matching_cycle(
 
     let prepared_orders =
         fetch_open_orders_from_orderbook_service(orderbook_url.to_string()).await?;
+    match_and_submit(
+        prepared_orders,
+        evm_node_url,
+        trade_matching_address,
+        matching_engine_private_key,
+        matching_algorithm,
+        pay_as_clear_pricing,
+    )
+    .await
+}
+
+async fn match_and_submit(
+    prepared_orders: PreparedOrders,
+    evm_node_url: &str,
+    trade_matching_address: &str,
+    matching_engine_private_key: &str,
+    matching_algorithm: &MatchingAlgorithm,
+    pay_as_clear_pricing: PayAsClearPricing,
+) -> Result<()> {
     info!(
         "Prepared open orders: bids={}, offers={}",
         prepared_orders.open_bids.len(),
@@ -154,15 +191,198 @@ async fn run_matching_cycle(
         matches_per_market.len(),
         matching_algorithm
     );
-    send_settle_batch_transaction(
+    send_submit_matches_transaction(
         evm_node_url,
-        settle_order_batch_address,
+        trade_matching_address,
         matching_engine_private_key,
         matches_per_market,
         by_order_id,
     )
     .await?;
     Ok(())
+}
+
+/// How often the open orders are read to find markets that are not known yet.
+const MARKET_DISCOVERY_INTERVAL_SECONDS: u64 = 5;
+
+/// The open window of a market with open orders.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MarketWindow {
+    pub opening_time: u64,
+    pub closing_time: u64,
+    /// Clearing times up to this time were already handled.
+    pub checked_until: u64,
+}
+
+/// The markets that have a clearing time in `(checked_until, now]` and are
+/// still open at `now`.
+pub fn markets_due_for_clearing(
+    markets: &HashMap<String, MarketWindow>,
+    clearing_schedule: &ClearingSchedule,
+    now: u64,
+) -> HashSet<String> {
+    markets
+        .iter()
+        .filter(|(_, market)| {
+            now < market.closing_time
+                && clearing_schedule.is_clearing_due(
+                    market.opening_time,
+                    market.closing_time,
+                    market.checked_until,
+                    now,
+                )
+        })
+        .map(|(market_id, _)| market_id.clone())
+        .collect()
+}
+
+/// Clears every pay-as-clear market at the times `clearing_schedule` derives
+/// from the opening and closing time of the market.
+///
+/// The clock is checked every second. Markets are found through their open
+/// orders, so a market without orders is not cleared. A clearing whose orders
+/// cannot be read is retried on the next second; a clearing whose
+/// `submitMatches` transaction fails is not repeated.
+async fn run_clearing_schedule(
+    orderbook_url: &str,
+    evm_node_url: &str,
+    trade_matching_address: &str,
+    matching_engine_private_key: &str,
+    pay_as_clear_pricing: PayAsClearPricing,
+    clearing_schedule: ClearingSchedule,
+) -> Result<()> {
+    let offchain_storage_client =
+        OffchainStorageClient::from_env("EWDS_MATCHING_ENGINE_CLIENT_ID", "gsymatchingengine");
+    let mut markets: HashMap<String, MarketWindow> = HashMap::new();
+    // Clearing times before the start are not made up for.
+    let mut last_discovery = current_unix_time();
+    let mut next_discovery = last_discovery;
+
+    loop {
+        let now = current_unix_time();
+        let mut prepared_orders = None;
+
+        if now >= next_discovery {
+            next_discovery = now + MARKET_DISCOVERY_INTERVAL_SECONDS;
+            match fetch_open_orders_from_orderbook_service(orderbook_url.to_string()).await {
+                Ok(orders) => {
+                    // The first orders of a new market arrived after the
+                    // previous discovery, so its clearing times since then
+                    // are still due.
+                    discover_markets(
+                        &offchain_storage_client,
+                        &orders,
+                        &mut markets,
+                        last_discovery,
+                    )
+                    .await;
+                    last_discovery = now;
+                    prepared_orders = Some(orders);
+                }
+                Err(error) => error!("Failed to fetch open orders: {:?}", error),
+            }
+        }
+
+        markets.retain(|_, market| now < market.closing_time);
+        let due_markets = markets_due_for_clearing(&markets, &clearing_schedule, now);
+        for (market_id, market) in markets.iter_mut() {
+            if !due_markets.contains(market_id) {
+                market.checked_until = now;
+            }
+        }
+
+        if !due_markets.is_empty() {
+            let prepared_orders = match prepared_orders {
+                Some(orders) => Ok(orders),
+                None => fetch_open_orders_from_orderbook_service(orderbook_url.to_string()).await,
+            };
+            match prepared_orders {
+                Ok(mut orders) => {
+                    for market_id in &due_markets {
+                        if let Some(market) = markets.get_mut(market_id) {
+                            market.checked_until = now;
+                        }
+                    }
+                    info!("Clearing {} market(s): {:?}", due_markets.len(), due_markets);
+                    orders
+                        .open_bids
+                        .retain(|order| due_markets.contains(&order.market_id));
+                    orders
+                        .open_offers
+                        .retain(|order| due_markets.contains(&order.market_id));
+                    if let Err(error) = match_and_submit(
+                        orders,
+                        evm_node_url,
+                        trade_matching_address,
+                        matching_engine_private_key,
+                        &MatchingAlgorithm::PayAsClear,
+                        pay_as_clear_pricing,
+                    )
+                    .await
+                    {
+                        error!("Clearing failed: {:?}", error);
+                    }
+                }
+                // The markets stay due and are retried on the next second.
+                Err(error) => error!("Failed to fetch the orders to clear: {:?}", error),
+            }
+        }
+
+        sleep(Duration::from_secs(1)).await;
+    }
+}
+
+/// Adds the markets of `orders` that are not in `markets` yet.
+async fn discover_markets(
+    offchain_storage_client: &OffchainStorageClient,
+    orders: &PreparedOrders,
+    markets: &mut HashMap<String, MarketWindow>,
+    checked_until: u64,
+) {
+    let unknown_market_ids: HashSet<&String> = orders
+        .open_bids
+        .iter()
+        .chain(orders.open_offers.iter())
+        .map(|order| &order.market_id)
+        .filter(|market_id| !markets.contains_key(*market_id))
+        .collect();
+
+    for market_id in unknown_market_ids {
+        let market = match offchain_storage_client.fetch_market(market_id).await {
+            Ok(Some(market)) => market,
+            Ok(None) => {
+                warn!("Market {} of an open order is not in the storage", market_id);
+                continue;
+            }
+            Err(error) => {
+                error!("Failed to fetch market {}: {:?}", market_id, error);
+                continue;
+            }
+        };
+        match (
+            datetime_to_epoch(&market.opening_time),
+            datetime_to_epoch(&market.closing_time),
+        ) {
+            (Ok(opening_time), Ok(closing_time)) => {
+                info!(
+                    "Market {} is open from {} to {}",
+                    market_id, opening_time, closing_time
+                );
+                markets.insert(
+                    market_id.clone(),
+                    MarketWindow {
+                        opening_time,
+                        closing_time,
+                        checked_until,
+                    },
+                );
+            }
+            _ => error!(
+                "Market {} has an invalid opening or closing time: {} / {}",
+                market_id, market.opening_time, market.closing_time
+            ),
+        }
+    }
 }
 
 pub fn match_order_books(
@@ -271,23 +491,23 @@ pub fn partition_orders_by_market_slot(
         .collect()
 }
 
-pub async fn send_settle_batch_transaction(
+pub async fn send_submit_matches_transaction(
     evm_node_url: &str,
-    settle_order_batch_address: &str,
+    trade_matching_address: &str,
     matching_engine_private_key: &str,
     matches: Vec<MarketMatches>,
     order_lookup: HashMap<String, DbOrderSchema>,
 ) -> Result<()> {
     if matches.is_empty() {
-        info!("No matches to settle");
+        info!("No matches to submit");
         return Ok(());
     }
 
-    let settle_order_batch_address =
-        Address::from_str(settle_order_batch_address).map_err(|e| {
+    let trade_matching_address =
+        Address::from_str(trade_matching_address).map_err(|e| {
             anyhow!(
-                "Invalid trade settlement address '{}': {}",
-                settle_order_batch_address,
+                "Invalid trade matching address '{}': {}",
+                trade_matching_address,
                 e
             )
         })?;
@@ -301,24 +521,24 @@ pub async fn send_settle_batch_transaction(
         .with_chain_id(chain_id);
     let signer_address = wallet.address();
     let client = std::sync::Arc::new(SignerMiddleware::new(provider, wallet));
-    let settle_order_batch =
-        SettleOrderBatchContract::new(settle_order_batch_address, client.clone());
+    let trade_matching =
+        SubmitMatchesContract::new(trade_matching_address, client.clone());
 
     let operator_role = keccak256("OPERATOR_ROLE");
-    let has_role = settle_order_batch
+    let has_role = trade_matching
         .has_role(operator_role, signer_address)
         .call()
         .await?;
     if !has_role {
         warn!(
-            "Signer {:?} does not currently have OPERATOR_ROLE in TradeSettlement",
+            "Signer {:?} does not currently have OPERATOR_ROLE in TradeMatching",
             signer_address
         );
     }
 
-    info!("Submitting {} matches to settleBatch", evm_matches.len());
-    let settle_batch_call = settle_order_batch.settle_batch(evm_matches);
-    let pending_tx = settle_batch_call.send().await?;
+    info!("Submitting {} matches to submitMatches", evm_matches.len());
+    let submit_matches_call = trade_matching.submit_matches(evm_matches);
+    let pending_tx = submit_matches_call.send().await?;
     let tx_hash = pending_tx.tx_hash();
     let receipt = pending_tx.await?;
 
@@ -331,47 +551,86 @@ pub async fn send_settle_batch_transaction(
                 != 1
             {
                 return Err(anyhow!(
-                    "settleBatch transaction {:?} reverted with status {:?}",
+                    "submitMatches transaction {:?} reverted with status {:?}",
                     tx_hash,
                     receipt.status
                 ));
             }
-            info!("settleBatch successful. tx={:?}", tx_hash);
+            info!("submitMatches successful. tx={:?}", tx_hash);
             Ok(())
         }
         None => Err(anyhow!(
-            "settleBatch transaction {:?} dropped without receipt",
+            "submitMatches transaction {:?} dropped without receipt",
             tx_hash
         )),
     }
 }
 
 async fn fetch_market_orders(body: Vec<EwdsOrderDto>) -> Result<PreparedOrders> {
+    prepare_market_orders(body).await
+}
+
+async fn prepare_market_orders(body: Vec<EwdsOrderDto>) -> Result<PreparedOrders> {
     let mut open_bids: Vec<Order> = Vec::new();
     let mut open_offers: Vec<Order> = Vec::new();
-    let orders: Vec<DbOrderSchema> = body
-        .into_iter()
-        .map(|o| DbOrderSchema::try_from(o).expect("invalid EwdsOrderDto"))
-        .collect();
+    let mut books: BTreeMap<(String, DateTime<Utc>), Vec<DbOrderSchema>> = BTreeMap::new();
+    let mut excluded = HashSet::new();
+    for dto in body {
+        if matches!(order_status_from_ewds(&dto.order_status), Ok(status) if status != OrderStatus::Submitted)
+        {
+            continue;
+        }
+        // An unknown market cannot safely be isolated from the other books.
+        let market_id = uuid_v4_to_bytes16(&dto.market_id)
+            .map(bytes16_to_uuid_string)
+            .map_err(|_| {
+                anyhow!(
+                    "Cannot identify market for order {}: {}",
+                    dto.order_id,
+                    dto.market_id
+                )
+            })?;
+        let time_slot = rfc3339_to_datetime(&dto.time_slot).ok();
+        let order_id = dto.order_id.clone();
+        match DbOrderSchema::try_from(dto) {
+            Ok(mut order) => {
+                order.market_id = market_id.clone();
+                books
+                    .entry((market_id, order.time_slot))
+                    .or_default()
+                    .push(order);
+            }
+            Err(error) => {
+                error!(%order_id, %market_id, ?time_slot, %error, "Excluding invalid order's book; unreadable slot excludes the entire market");
+                excluded.insert((market_id, time_slot));
+            }
+        }
+    }
     let mut by_order_id: HashMap<String, DbOrderSchema> = HashMap::new();
-    let id_mapping_source =
-        OffchainStorageClient::from_env("EWDS_MATCHING_ENGINE_CLIENT_ID", "gsymatchingengine");
 
-    for mut db_order_schema in orders
-        .into_iter()
-        .filter(|order| order.status == OrderStatus::Submitted)
-    {
-        resolve_order_partner_ids(&mut db_order_schema.requirements, &id_mapping_source).await?;
-        match convert_db_order_to_canonical(&db_order_schema) {
-            Ok(order) => {
-                by_order_id.insert(order.order_id.clone(), db_order_schema);
-                match order.order_type {
-                    OrderEnum::Bid => open_bids.push(order),
-                    OrderEnum::Offer => open_offers.push(order),
+    for ((market_id, time_slot), orders) in books {
+        if excluded.contains(&(market_id.clone(), None))
+            || excluded.contains(&(market_id.clone(), Some(time_slot)))
+        {
+            continue;
+        }
+        // Publish a book only after every active order has converted successfully.
+        let mut converted = Vec::with_capacity(orders.len());
+        for db_order in orders {
+            match convert_db_order_to_canonical(&db_order) {
+                Ok(order) => converted.push((order, db_order)),
+                Err(error) => {
+                    error!(order_id = %db_order.order_id, %market_id, %time_slot, %error, "Excluding book with invalid canonical order");
+                    converted.clear();
+                    break;
                 }
             }
-            Err(e) => {
-                error!("Failed to convert DB order to canonical: {:?}", e);
+        }
+        for (order, db_order) in converted {
+            by_order_id.insert(order.order_id.clone(), db_order);
+            match order.order_type {
+                OrderEnum::Bid => open_bids.push(order),
+                OrderEnum::Offer => open_offers.push(order),
             }
         }
     }
@@ -392,9 +651,9 @@ async fn fetch_open_orders_from_orderbook_service(url: String) -> Result<Prepare
         return fetch_open_orders_via_ewds(url).await;
     }
 
-    let res = reqwest::get(url).await?;
-    info!("Response: {:?} {}", res.version(), res.status());
-    info!("Headers: {:#?}\n", res.headers());
+    let res = reqwest::get(url).await?.error_for_status()?;
+    debug!("Response: {:?} {}", res.version(), res.status());
+    debug!("Headers: {:#?}\n", res.headers());
 
     let body = res.json::<Vec<EwdsOrderDto>>().await?;
     info!("Fetched {} total orders from orderbook", body.len());
@@ -438,21 +697,11 @@ fn parse_query_params_from_url(url: &str) -> serde_json::Value {
 }
 
 fn parse_bytes16_field(field_name: &str, value: &str) -> Result<[u8; 16]> {
-    parse_uuid_or_hex_bytes16(value)
-        .ok_or_else(|| anyhow!("{} must be a UUID or 0x-prefixed 16-byte hex", field_name))
+    uuid_v4_to_bytes16(value).with_context(|| format!("{} must be a UUIDv4", field_name))
 }
 
-fn normalize_bytes16_field(field_name: &str, value: &str) -> Result<String> {
-    Ok(bytes16_to_hex(parse_bytes16_field(field_name, value)?))
-}
-
-fn normalize_optional_bytes16_field(
-    field_name: &str,
-    value: Option<&str>,
-) -> Result<Option<String>> {
-    value
-        .map(|value| normalize_bytes16_field(field_name, value))
-        .transpose()
+fn normalize_entity_id(field_name: &str, value: &str) -> Result<String> {
+    normalize_uuid(value).with_context(|| format!("Invalid {}", field_name))
 }
 
 fn convert_requirements(
@@ -461,10 +710,11 @@ fn convert_requirements(
     requirements
         .map(|requirements| -> Result<Requirements> {
             Ok(Requirements {
-                trading_partner_id: normalize_optional_bytes16_field(
-                    "requirements.trading_partner_id",
-                    requirements.trading_partner_id.as_deref(),
-                )?,
+                trading_partner_id: requirements
+                    .trading_partner_id
+                    .as_deref()
+                    .map(validate_offchain_actor_id)
+                    .transpose()?,
                 energy_type: requirements.energy_type.clone(),
                 preferred_energy_rate: requirements
                     .preferred_energy_rate
@@ -487,10 +737,9 @@ fn convert_attributes(
 }
 
 fn convert_db_order_to_canonical(order: &DbOrderSchema) -> Result<Order> {
-    let order_id = normalize_bytes16_field("order_id", &order.order_id)?;
-    let market_id = normalize_bytes16_field("market_id", &order.market_id)?;
-    let area_uuid = normalize_bytes16_field("area_uuid", &order.area_uuid)?;
-    let created_by = normalize_bytes16_field("created_by", &order.created_by)?;
+    let order_id = normalize_entity_id("order_id", &order.order_id)?;
+    let market_id = normalize_entity_id("market_id", &order.market_id)?;
+    let created_by = validate_offchain_actor_id(&order.created_by)?;
     let time_slot = datetime_to_epoch(&order.time_slot)?;
     let creation_time = datetime_to_epoch(&order.creation_time)?;
     Ok(match order.order_type {
@@ -499,7 +748,6 @@ fn convert_db_order_to_canonical(order: &DbOrderSchema) -> Result<Order> {
             order_id,
             order_type: OrderEnum::Bid,
             status: order.status.clone(),
-            area_uuid,
             market_id,
             time_slot,
             creation_time,
@@ -513,7 +761,6 @@ fn convert_db_order_to_canonical(order: &DbOrderSchema) -> Result<Order> {
             order_type: order.order_type.clone(),
             status: order.status.clone(),
             created_by,
-            area_uuid,
             market_id,
             time_slot,
             creation_time,
@@ -535,12 +782,19 @@ fn to_evm_order_data(order: &DbOrderSchema, expected_type: OrderEnum) -> Result<
         ));
     }
 
-    let metadata =
-        order_metadata_to_contract(order.requirements.as_ref(), order.attributes.as_ref())?;
+    // Actor IDs remain off-chain throughout matching; derive pseudonyms only here.
+    let mut requirements = order.requirements.clone();
+    if let Some(partner) = requirements
+        .as_mut()
+        .and_then(|r| r.trading_partner_id.as_mut())
+    {
+        *partner = derive_onchain_id(&validate_offchain_actor_id(partner)?);
+    }
+    let metadata = order_metadata_to_contract(requirements.as_ref(), order.attributes.as_ref())?;
 
     Ok(OrderParams {
         order_id: parse_bytes16_field("order_id", order.order_id.as_str())?,
-        created_by: parse_bytes16_field("created_by", order.created_by.as_str())?,
+        created_by: hex_to_bytes16(&derive_onchain_id(&validate_offchain_actor_id(&order.created_by)?)).expect("actor hash is bytes16"),
         market_id: parse_bytes16_field("market_id", order.market_id.as_str())?,
         time_slot: datetime_to_epoch(&order.time_slot)?,
         creation_time: datetime_to_epoch(&order.creation_time)?,
@@ -562,8 +816,7 @@ fn optional_order_id_to_bytes16(order: Option<&Order>) -> Result<[u8; 16]> {
 }
 
 fn derive_trade_id() -> [u8; 16] {
-    let uuid = Uuid::new_v4().to_string();
-    parse_uuid_or_hex_bytes16(&uuid).expect("Error converting uuid to bytes")
+    *Uuid::new_v4().as_bytes()
 }
 
 fn to_evm_clearing_result(clearing_result: &ClearingResult) -> Result<EvmClearingResult> {
@@ -627,7 +880,7 @@ fn to_evm_match(
         || item.selected_energy > bid.energy
         || item.selected_energy > offer.energy
     {
-        return Err(anyhow!("Invalid selected energy for settlement"));
+        return Err(anyhow!("Invalid selected energy for match"));
     }
     let residual_bid_id = register_residual(
         &bid,
@@ -662,7 +915,7 @@ fn to_evm_match(
 fn to_evm_matches(
     matches: Vec<MarketMatches>,
     order_lookup: &HashMap<String, DbOrderSchema>,
-) -> Result<Vec<MarketSettlement>> {
+) -> Result<Vec<MarketMatchBatch>> {
     let mut available_orders = order_lookup
         .values()
         .map(|order| {
@@ -679,7 +932,7 @@ fn to_evm_matches(
                 .iter()
                 .map(|item| to_evm_match(item, &mut available_orders, &mut known_ids))
                 .collect::<Result<Vec<_>>>()?;
-            Ok(MarketSettlement {
+            Ok(MarketMatchBatch {
                 matches: bid_offer_matches,
                 clearing_result: to_evm_clearing_result(&market.clearing_result)?,
             })
@@ -705,7 +958,7 @@ fn register_residual(
         if !known_ids.insert(residual_id) {
             return Err(anyhow!("Residual order ID has already been used"));
         }
-        // Mirror OrderRegistry::settleOrder without a floating-point round trip.
+        // Mirror OrderRegistry::fillOrder without a floating-point round trip.
         let mut params = parent.clone();
         params.order_id = residual_id;
         params.energy = remaining_energy;
@@ -717,3 +970,7 @@ fn register_residual(
 #[cfg(test)]
 #[path = "../../tests/connectors/residual_conversion.rs"]
 mod residual_conversion_tests;
+
+#[cfg(test)]
+#[path = "../../tests/connectors/order_books.rs"]
+mod order_book_tests;

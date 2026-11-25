@@ -3,7 +3,8 @@ use primitives::db_api_schema::grid_topology::FacilitySchema;
 use primitives::db_api_schema::profiles::{
     FlowDirection, ForecastSchema, MeasurementPointSchema, MeasurementPointType, MeasurementSchema,
 };
-use primitives::ewds::dto::TimeseriesDto;
+use primitives::ewds::dto::{EwdsFacilityDto, TimeseriesDto};
+use primitives::utils::{profile_measurement_id, validate_offchain_actor_id};
 use reqwest::Client;
 use std::env;
 
@@ -30,10 +31,11 @@ impl AreaMarketInfoAdapter {
         }
     }
 
-    pub async fn forward_forecast(
-        &self,
-        forecasts: Vec<ForecastSchema>,
-    ) -> Result<(), reqwest::Error> {
+    pub async fn forward_forecast(&self, mut forecasts: Vec<ForecastSchema>) -> anyhow::Result<()> {
+        for forecast in &mut forecasts {
+            forecast.facility_id = validate_offchain_actor_id(&forecast.facility_id)?;
+            forecast.community_uuid = validate_offchain_actor_id(&forecast.community_uuid)?;
+        }
         let measurement_points = forecasts
             .iter()
             .map(forecast_measurement_point)
@@ -68,8 +70,12 @@ impl AreaMarketInfoAdapter {
 
     pub async fn forward_measurement(
         &self,
-        measurements: Vec<MeasurementSchema>,
-    ) -> Result<(), reqwest::Error> {
+        mut measurements: Vec<MeasurementSchema>,
+    ) -> anyhow::Result<()> {
+        for measurement in &mut measurements {
+            measurement.facility_id = validate_offchain_actor_id(&measurement.facility_id)?;
+            measurement.community_uuid = validate_offchain_actor_id(&measurement.community_uuid)?;
+        }
         let measurement_points = measurements
             .iter()
             .map(measurement_point)
@@ -119,7 +125,7 @@ impl AreaMarketInfoAdapter {
         let resp = self
             .client
             .post(&self.internal_facilities_url)
-            .json(&facilities)
+            .json(&EwdsFacilityDto::from(facilities))
             .send()
             .await?;
 
@@ -130,18 +136,6 @@ impl AreaMarketInfoAdapter {
         }
         Ok(())
     }
-}
-
-fn profile_measurement_id(
-    point_type: MeasurementPointType,
-    community_uuid: &str,
-    facility_id: &str,
-) -> String {
-    let prefix = match point_type {
-        MeasurementPointType::Measurement => "measurement",
-        MeasurementPointType::Forecast => "forecast",
-    };
-    format!("{prefix}:{community_uuid}:{facility_id}")
 }
 
 fn forecast_measurement_point(forecast: &ForecastSchema) -> MeasurementPointSchema {

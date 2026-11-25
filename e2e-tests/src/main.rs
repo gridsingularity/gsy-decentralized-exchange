@@ -65,6 +65,7 @@ async fn wait_for_offchain_storage() {
 
 #[tokio::main]
 async fn main() {
+    primitives::actor_ids::initialize_actor_id_hashing().expect("invalid actor hashing configuration");
     let subscriber = FmtSubscriber::builder()
         .with_env_filter(EnvFilter::from_default_env())
         .finish();

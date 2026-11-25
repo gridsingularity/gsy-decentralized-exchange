@@ -14,7 +14,7 @@ use bson::serde_helpers::{
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::utils::{bytes16_to_hex, parse_uuid_or_hex_bytes16, NODE_FLOAT_SCALING_FACTOR};
+use crate::utils::{bytes16_to_hex, hex_to_bytes16, NODE_FLOAT_SCALING_FACTOR};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, PartialOrd)]
 #[serde(rename_all = "lowercase")]
@@ -37,7 +37,6 @@ pub struct DbOrderSchema {
     )]
     pub status_updated_at: Option<DateTime<Utc>>,
     pub order_type: OrderEnum,
-    pub area_uuid: String,
     pub market_id: String,
     #[serde(with = "chrono_datetime_as_bson_datetime")]
     pub time_slot: DateTime<Utc>,
@@ -45,6 +44,7 @@ pub struct DbOrderSchema {
     pub creation_time: DateTime<Utc>,
     pub energy_kWh: f64,
     pub energy_rate: f64,
+    /// Original off-chain owner ID; keyed pseudonyms are only used at contract boundaries.
     pub created_by: String,
     pub requirements: Option<DbRequirements>,
     pub attributes: Option<DbAttributes>,
@@ -154,7 +154,7 @@ pub struct ContractOrderMetadata {
     pub preferred_energy_rate: u64,
 }
 
-/// Encode metadata whose partner IDs have already been resolved by the ID service.
+/// Encode metadata whose partner IDs have already been converted to on-chain actor hashes.
 pub fn order_metadata_to_contract(
     requirements: Option<&DbRequirements>,
     attributes: Option<&DbAttributes>,
@@ -180,12 +180,10 @@ pub fn order_metadata_to_contract(
 }
 
 fn resolved_partner_id(id: &str) -> Result<[u8; 16]> {
-    id.strip_prefix("0x")
-        .filter(|value| value.len() == 32)
-        .and_then(parse_uuid_or_hex_bytes16)
+    hex_to_bytes16(id)
         .filter(|value| *value != [0; 16])
         .ok_or_else(|| {
-            anyhow!("Partner ID must be resolved through the ID service before encoding")
+            anyhow!("Partner ID must be an on-chain actor hash before encoding")
         })
 }
 

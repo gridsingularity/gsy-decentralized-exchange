@@ -20,7 +20,7 @@ In-scope services for EWDS integration:
 
 Related participant service:
 
-- `gsy-community-client` (writes forecasts, measurements, and market records)
+- `gsy-community-client` (writes forecasts and measurements, submits orders)
 
 ## Current Refactored Runtime
 
@@ -29,7 +29,7 @@ Related participant service:
 - `anvil` (or target EVM) hosts contracts.
 - `gsy-market-orchestrator` creates markets on-chain.
 - `gsy-community-client` publishes orders.
-- `gsy-matching-engine` settles matched trades.
+- `gsy-matching-engine` submits matched trades on-chain.
 - `gsy-execution-engine` submits penalties.
 
 ### Off-chain Plane
@@ -146,8 +146,8 @@ EWDS uses `OFFCHAIN_STORAGE_TRANSPORT=ewds` and the responder's existing
 
 The events channels carry fire-and-forget domain events rather than
 request/reply traffic. When `EWDS_ENABLE_HANDLER` is on, the off-chain storage
-publishes a `trade.event` on `trade` after indexing `TradeSettled`,
-`PenaltyRecorded` or a penalty-free `DeliveryVerified`. `TradeSettled` creates
+publishes a `trade.event` on `trade` after indexing `TradeMatched`,
+`PenaltyRecorded` or a penalty-free `DeliveryVerified`. `TradeMatched` creates
 a `Matched` trade once included in a block indexed by the listener, without
 waiting for confirmation depth. No pre-inclusion trade records or notifications are generated. `Settled` is
 reserved for the time the trade has been processed in the Settlement market.
@@ -164,10 +164,11 @@ an event envelope (`eventId`, `eventType`, `occurredAt`, `data`) whose `data` is
 a list of trades, clearing results or markets in their `EwdsTradeDto`,
 `EwdsClearingResultDto` or `EwdsMarketDto` form, so one event can carry several
 of them. Markets have the same form as in the `markets.query` response and
-follow `int.market.schema.v1.json`: UUID `marketId` and `communityId`, RFC 3339
+follow `int.market.schema.v1.json`: UUID `marketId` and exact opaque `communityId`, RFC 3339
 times, `marketType` `spot`, `flex` or `settlement` and `matchingAlgorithm`
-`pay_as_bid`, `pay_as_clear` or `amm`. The `marketId` is the same 16 bytes as the
-`0x…` market ID in `trade.event` and orders, formatted as a UUID. The market
+`pay_as_bid`, `pay_as_clear` or `amm`. The orchestrator generates UUIDv4 market
+IDs; `marketId` is the same 16 bytes as the
+UUIDv4 market ID in `trade.event` and orders. The market
 carries its opening and closing times, so consumers derive whether it is open
 from them. The off-chain storage currently sends one item per EVM event. Every
 event gets a random UUID as `eventId`, which is also its DDHub `transactionId`.
@@ -184,11 +185,22 @@ progression, not arrival order. The provisional progression is `matched` to
 notification. `penalized` is terminal; no transition to `settled` is
 implemented yet.
 
-Order, trade and clearing-result queries accept UUID or 16-byte hex market IDs.
+Before publishing markets, orders or trades, storage reverse-resolves actor hashes
+directly from its DB mappings. Missing mappings retain the original chain events
+in a durable inbox for replay on subsequent blocks, without fabricating off-chain
+IDs or blocking unrelated market indexing. Dependent events wait in chain order.
+Queries touching an incomplete projection return `STORAGE_UNAVAILABLE`, not a
+partial book or trade set. Actor IDs in resolved records and events are the exact
+off-chain IDs; order, trade and market entity IDs keep their existing formats.
+
+Order, trade and clearing-result queries accept hyphenated UUIDv4 market IDs in either letter case.
 Invalid IDs receive `success: false` with `error.code: invalid_request`.
 Database failures in read queries receive `STORAGE_UNAVAILABLE` and no partial
 data. Sending an error response keeps the rest of the already-polled request
 batch eligible for processing; callers can retry failed queries.
+This includes malformed `ids.query`, `markets.query` and `measurements.query`
+payloads and query timestamps. ID get-or-create failures also receive
+`STORAGE_UNAVAILABLE`, rather than leaving the requester waiting for a timeout.
 
 The same channels also carry the events other systems send to GSY; see
 [Inbound Events](#inbound-events).
@@ -252,9 +264,9 @@ REST API uses. New orders go to the community client instead; see
 | Topic | `eventType` | `data` | Stored with |
 |---|---|---|---|
 | `measurements` | `measurements.event` | array of 1..N measurements (`EwdsMeasurementDto`) | measurement points and timeseries, upserted by point and timestamp |
-| `facility` | `facility.event` | array of 1..N facilities (`FacilitySchema`) | upserted by `facility_id`; the whole batch is dropped if it would give a stored `facility_id` another name or a stored name another `facility_id` |
-| `site` | `site.event` | array of 1..N sites (`SiteSchema`) | upserted by `site_name` |
-| `community` | `community.event` | array of 1..N communities (`EwdsCommunityDto`) | upserted by `communityId`; the whole batch is dropped if it would give a stored `communityId` another name or a stored name another `communityId` |
+| `facility` | `facility.event` | array of 1..N facilities (`EwdsFacilityDto`) | a new version per changed `facility_id`, see [Versions and Deletion](#versions-and-deletion) |
+| `site` | `site.event` | array of 1..N sites (`EwdsSiteDto`) | a new version per changed `site_id` |
+| `community` | `community.event` | array of 1..N communities (`EwdsCommunityDto`) | a new version per changed `communityId` |
 
 The envelope is the one GSY uses for its own events:
 
@@ -266,7 +278,7 @@ The envelope is the one GSY uses for its own events:
   "data": [
     {
       "facilityId": "facility-1",
-      "communityUuid": "community-1",
+      "communityUuid": "abcdefab-1234-1234-1234-abcdefabcdef",
       "timeSlot": "2026-09-29T10:00:00Z",
       "creationTime": "2026-09-29T10:15:30Z",
       "energyKwh": 1.25
@@ -280,25 +292,36 @@ The envelope is the one GSY uses for its own events:
 - Measurements use camelCase fields with RFC 3339 times. `timeSlot` is the
   start of the 15-minute slot, and `energyKwh` is positive for consumed and
   negative for produced energy. A batch can mix facilities and slots.
-- Facilities and sites use the snake_case fields of `FacilitySchema`
-  (`facility_id`, `facility_name`, `site_id`, `owner_id`) and `SiteSchema`
-  (`site_name`, `site_description`, `facilities`), the same form
-  `facilities.query` returns. A facility's `site_id` refers to a `site_name`.
+  `communityUuid` is an exact, nonempty, unpadded opaque string, including
+  UUID-looking values. Empty or padded identifiers drop the whole event before
+  any records are written. Query filters `facilityId` and `communityUuid` are
+  exact and case-sensitive, applied together when both are supplied; invalid filters receive an
+  `invalid_request` response.
+- Facilities and sites use the snake_case fields of `EwdsFacilityDto`
+  (`facility_id`, `facility_name`, `site_id`, `owner_id`) and `EwdsSiteDto`
+  (`site_id`, `site_name`, `site_description`, `facilities`), the same form
+  `facilities.query` returns. A facility's `site_id` refers to a site's
+  `site_id`.
 - Communities use the camelCase fields of `EwdsCommunityDto` (`communityId`,
   `communityName`, `sites`), the same form `communities.query` returns.
+- Facilities, sites and communities may also carry `valid_until`
+  (`validUntil` for communities) to delete the entry.
+  Actor IDs preserve exact nonempty, unpadded strings; UUID-looking
+  values are not parsed or case-normalized.
 
 Handling rules:
 
 - `eventId` identifies an event. A re-sent event must keep its `eventId`; the
-  off-chain storage drops IDs it has already handled. Because all writes are
-  upserts, an event that arrives again only updates its record.
+  off-chain storage drops IDs it has already handled. Measurements are
+  upserted, and a facility, site or community equal to its latest version is
+  not stored again, so an event that arrives again changes nothing.
 - Events whose `eventType` doesn't match their topic, malformed messages and
   invalid data are logged and skipped, and the next message is still handled.
   One invalid item rejects the whole event, so nothing of it is stored; a
   corrected event needs a new `eventId`.
-- A failed database write is tried up to three times in a row. A duplicate
-  key, such as a facility or community name that is already taken, counts as
-  invalid data and is not retried.
+- A failed database write is tried up to three times in a row. Invalid data
+  is not retried: a duplicate key, or a name that another valid facility, site
+  or community already uses.
 - The gateway acknowledges the messages of a poll at the next poll of the same
   `clientId`, so it never delivers a failed event again. The subscriber therefore keeps a failed event and
   retries it, up to `EWDS_EVENT_HANDLE_ATTEMPTS` (default 8) attempts in
@@ -307,11 +330,39 @@ Handling rules:
   cover an outage of about 4 minutes. Then the event is logged and dropped.
 - Events of one topic are handled in the order they arrive. While a failed
   event waits for its retry, the later events of its topic wait too, so an
-  older event never overwrites the data of a newer one. The other topics carry
+  older event is never stored after a newer one. The other topics carry
   on. Failed events are only
   kept in memory and are lost if the service restarts.
 - The broker keeps messages for 24 hours, so events sent while the off-chain
   storage is down for longer are lost.
+
+#### Versions and Deletion
+
+Facilities, sites and communities keep their history. Every change is stored as
+a new version of the entry, and reads (`facilities.query`, `communities.query`,
+`GET /facilities`, `GET /sites`, `GET /communities` and the guarantees of
+origin) use only the latest version of each entry. Older versions are kept for
+audit.
+
+- `valid_from` is the time the off-chain storage stored the version. It sets
+  the value itself; one in the event is ignored. A failed event that is retried
+  gets the time of the retry.
+- A version equal to the latest one apart from `valid_from` is not stored
+  again, so resending the whole ontology stores only what changed.
+- An entry may get a new name, and two entries can swap their names in one
+  event. The whole event is dropped if another valid entry of the same type
+  already uses one of its names, or if it repeats an id or a name.
+- To delete an entry, send it in full with `valid_until`. It is hidden from that
+  time on, so a future time announces a deletion. Send it again without
+  `valid_until` to cancel the deletion or to bring the entry back.
+- Deleting a community or a site does not delete its sites or facilities.
+  Delete each of them as well.
+- Times may have any RFC 3339 offset. They are stored as dates to the
+  millisecond and returned in UTC, e.g. `2026-12-01T00:00:00+00:00`.
+
+`POST /communities`, `POST /sites` and `POST /facilities` follow the same
+rules for one entry. They answer `409` when another valid entry uses the name,
+and `400` for an invalid time.
 
 The event schemas are `int.<eventType>.event.v1.json` in
 `schemas/ewds/intelligent/`, e.g. `int.facility.event.v1.json`. The
@@ -341,7 +392,7 @@ returns (`int.order.event.v1.json`):
   "data": [
     {
       "orderId": "3f2c6d1e-8a4b-4c7d-9e2f-1a5b6c7d8e9f",
-      "marketId": "0x5b0f3c2a9d8e7f6a5b4c3d2e1f0a9b8c",
+      "marketId": "5b0f3c2a-9d8e-4f6a-9b4c-3d2e1f0a9b8c",
       "orderType": "bid",
       "orderStatus": "submitted",
       "timeSlot": "2026-09-30T10:00:00Z",
@@ -359,24 +410,24 @@ returns (`int.order.event.v1.json`):
 
 | Field | Rule |
 |---|---|
-| `orderId` | A UUID chosen by the publisher. Its 16 bytes become the on-chain order ID, so `orders.query` and the trades' `bidId`/`offerId` return it as `0x` plus 32 hex digits. |
-| `marketId` | The market's non-zero UUID or bytes16 hex ID, e.g. from `markets.query`. The contract still checks that the market is open. |
-| `createdBy` | The original off-chain owner ID. The subscriber resolves its facility and validates that facility's market participation before mapping the owner to an on-chain ID. It is not the facility ID or service wallet. This deployment guarantees one facility per owner. |
+| `orderId` | A hyphenated UUIDv4 chosen by the publisher. Its bytes become the on-chain order ID without hashing; queries and lifecycle notifications use lowercase UUID text. Rejections echo the submitted spelling. |
+| `marketId` | The market's UUIDv4 ID, e.g. from `markets.query`. The contract still checks that the market is open. |
+| `createdBy` | The original off-chain owner ID. The subscriber resolves its facility and validates that facility's market participation before deriving the owner's keyed hash locally. It is not the facility ID or service wallet. This deployment guarantees one facility per owner. |
 | `orderStatus` | Must be `submitted`. |
 | `quantity` | Greater than 0, in kWh. |
 | `priceLimit` | 0 or more, in EUR/kWh. |
-| `preferredTradingPartner` | The partner's off-chain owner ID, resolved like `createdBy`. Stored in requirements for both bids and offers. |
+| `preferredTradingPartner` | A registered off-chain owner with a facility, hashed locally for the contract. Partner market eligibility is not checked. Stored in requirements for both bids and offers. |
 | `updatedAt`, `rejectReason` | Ignored. |
 
 Handling rules:
 
 - Parsing and field validation must pass for the whole event. Already-confirmed
   orders are skipped before checking eligibility. The remaining facility/market
-  pairs are validated in one HTTP or EWDS request before resolving any IDs.
+  pairs are validated in one HTTP or EWDS request before deriving actor hashes locally.
 - Ineligible orders are reported through `orderStatus.event` with the reason,
   without creating DB records or calling `placeOrder`. The client rechecks that
   the order has not been placed meanwhile before reporting rejection.
-  Eligible orders continue; their IDs must all resolve before submission.
+  Eligible orders continue; no forward ID-service requests are needed.
 - Validation-service errors and incomplete/inconsistent responses fail the event
   without submission or rejection notifications and remain retryable.
 - The orders are then sent one at a time. The community client waits for
@@ -396,8 +447,11 @@ Handling rules:
     community client retries it like the off-chain storage retries its events
     (see [Inbound Events](#inbound-events)). Orders already on-chain are
     skipped then.
-- An ID the ID service doesn't know may be registered later, so an event that
-  fails on it is retried as well; invalid order data is not.
+- An unknown submitting owner or preferred owner is rejected with
+  `unknown_facility` or `unknown_preferred_partner`, respectively. FOS can resubmit
+  after its facility is registered. Unavailable/ambiguous topology remains retryable;
+  malformed order data is not. Storage registers reverse mappings during topology
+  ingestion, not as a side effect of order submission.
 - Resending an event, even under a new `eventId`, doesn't place an order
   twice. A resend while the first transaction is still pending sends the
   order again, but that duplicate reverts with `OrderAlreadyExists`.
@@ -466,8 +520,8 @@ Each `*.query` request payload accepts both snake_case and camelCase keys (via s
 |---|---|
 | `orders.query` | `market_id`/`marketId`, `start_time`/`startTime`, `end_time`/`endTime` |
 | `trades.query` | `market_id`/`marketId`, `start_time`/`startTime`, `end_time`/`endTime` (`market_id` alone is enough and takes precedence over the time range; without it, both `start_time` and `end_time` are required, span at most 1 day, and match the market `delivery_start_time`) |
-| `measurements.query` | `start_time`/`startTime`, `end_time`/`endTime`, `facility_id`/`areaUuid` (filters after fetch) |
-| `markets.query` | `market_id`/`marketId` (UUID or `0x…` hex), `community_id`/`communityId`, `start_time`/`startTime`, `end_time`/`endTime` (RFC 3339, match the market `opening_time`) |
+| `measurements.query` | `start_time`/`startTime`, `end_time`/`endTime`, `facility_id`/`facilityId`/`areaUuid`, `community_uuid`/`communityUuid` (exact facility/community filters) |
+| `markets.query` | `market_id`/`marketId` (hyphenated UUIDv4), `community_id`/`communityId` (exact opaque ID), `start_time`/`startTime`, `end_time`/`endTime` (RFC 3339, match the market `opening_time`) |
 | `ids.query` | `offchain_id`/`offchainId` (required) |
 
 ## DDHub API Surface Used by Integration
@@ -589,7 +643,7 @@ Validator requirements:
 
 ### gsy-community-client
 
-- Route facility-topology-derived market, forecast, and measurement writes through ontology-aligned off-chain storage APIs.
+- Route facility-topology-derived forecast and measurement writes through ontology-aligned off-chain storage APIs; markets are indexed from chain events.
 - Keep fallback transport via direct HTTP until cutover is complete.
 - Send the orders of `order.event` messages to `OrderRegistry.placeOrder`
   (see [Order Events](#order-events)). Runtime switch:
@@ -599,9 +653,13 @@ Validator requirements:
 
 - Fetch all communities before every scheduling tick through HTTP
   `/communities` or EWDS `communities.query`.
-- Derive each market ID from community UUID, market type, and delivery slot.
+- Hash each exact opaque community ID with `derive_onchain_id`, then look up
+  `(communityId, marketType, deliveryStartTime)` through `getMarketIds` in batches
+  of at most 500. Each result is the existing chain ID or zero for an absent tuple.
+- Generate one UUIDv4 candidate only for each absent tuple; never rederive market IDs.
 - Create the community/market-type markets before they open through batched
-  `createMarkets` calls, after checking `marketsExist` on-chain in batches.
+  `createMarkets` calls. Duplicate tuples, including races, are skipped;
+  reuse of an ID for a different tuple is rejected.
 - Runtime switch via `OFFCHAIN_STORAGE_TRANSPORT=http|ewds`.
 
 ## Docker and Local Testing Integration

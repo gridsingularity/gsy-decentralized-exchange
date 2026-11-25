@@ -31,7 +31,6 @@ def post_trade(trade_index, order_index, market_id, time_slot, creation_time, se
         "offer": {
             "seller": "Account2",
             "offer_component": {
-                "area_uuid": "areaid_" + str(seller_index),
                 "market_id": market_id,
                 "time_slot": time_slot,
                 "creation_time": creation_time,
@@ -43,7 +42,6 @@ def post_trade(trade_index, order_index, market_id, time_slot, creation_time, se
         "bid": {
             "buyer": "Account1",
             "bid_component": {
-                "area_uuid": "areaid_" + str(buyer_index),
                 "market_id": market_id,
                 "time_slot": time_slot,
                 "creation_time": creation_time,

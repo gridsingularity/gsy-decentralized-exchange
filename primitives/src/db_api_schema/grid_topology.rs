@@ -1,3 +1,7 @@
+use bson::serde_helpers::{
+    chrono_datetime_as_bson_datetime, chrono_datetime_as_bson_datetime_optional,
+};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -70,13 +74,30 @@ pub struct EnergyCommunitySchema {
     pub community_id: String,
     pub community_name: String,
     pub sites: Vec<String>,
+    #[serde(with = "chrono_datetime_as_bson_datetime")]
+    pub valid_from: DateTime<Utc>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "chrono_datetime_as_bson_datetime_optional"
+    )]
+    pub valid_until: Option<DateTime<Utc>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct SiteSchema {
+    pub site_id: String,
     pub site_name: String,
     pub site_description: String,
     pub facilities: Vec<String>,
+    #[serde(with = "chrono_datetime_as_bson_datetime")]
+    pub valid_from: DateTime<Utc>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "chrono_datetime_as_bson_datetime_optional"
+    )]
+    pub valid_until: Option<DateTime<Utc>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -85,4 +106,48 @@ pub struct FacilitySchema {
     pub facility_name: String,
     pub site_id: String,
     pub owner_id: String,
+    #[serde(with = "chrono_datetime_as_bson_datetime")]
+    pub valid_from: DateTime<Utc>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "chrono_datetime_as_bson_datetime_optional"
+    )]
+    pub valid_until: Option<DateTime<Utc>>,
+}
+
+impl FacilitySchema {
+    /// Validate actor identities at ingress without changing their spelling.
+    pub fn normalize_ids(mut self) -> anyhow::Result<Self> {
+        self.facility_id = crate::utils::validate_offchain_actor_id(&self.facility_id)?;
+        self.owner_id = crate::utils::validate_offchain_actor_id(&self.owner_id)?;
+        self.site_id = crate::utils::validate_offchain_actor_id(&self.site_id)?;
+        Ok(self)
+    }
+}
+
+impl SiteSchema {
+    pub fn normalize_ids(mut self) -> anyhow::Result<Self> {
+        self.site_id = crate::utils::validate_offchain_actor_id(&self.site_id)?;
+        self.facilities = self
+            .facilities
+            .iter()
+            .map(|id| crate::utils::validate_offchain_actor_id(id))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        let mut seen = std::collections::HashSet::new();
+        self.facilities.retain(|id| seen.insert(id.clone()));
+        Ok(self)
+    }
+}
+
+impl EnergyCommunitySchema {
+    pub fn normalize_ids(mut self) -> anyhow::Result<Self> {
+        self.community_id = crate::utils::validate_offchain_actor_id(&self.community_id)?;
+        self.sites = self
+            .sites
+            .iter()
+            .map(|id| crate::utils::validate_offchain_actor_id(id))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        Ok(self)
+    }
 }

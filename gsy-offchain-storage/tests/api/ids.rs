@@ -3,9 +3,7 @@ use gsy_offchain_storage::db::id_service::init_ids;
 use mongodb::bson::{doc, Bson, Document};
 use primitives::db_api_schema::ids::IdMappingSchema;
 use primitives::ewds::dto::IdMappingDto;
-use primitives::utils::{
-    bytes16_to_hex, create_encrypted_bytes16_from_string, derive_onchain_id, rfc3339_to_datetime,
-};
+use primitives::utils::{derive_onchain_id, rfc3339_to_datetime};
 use std::sync::Arc;
 use tokio::sync::Barrier;
 
@@ -57,13 +55,7 @@ async fn post_ids_creates_new_mapping() {
 
     let body: IdMappingDto = response.json().await.expect("Failed to parse body");
     assert_eq!(body.offchain_id, offchain);
-    let expected = bytes16_to_hex(create_encrypted_bytes16_from_string(offchain));
-    assert_eq!(body.onchain_id, expected);
     assert_eq!(body.onchain_id, derive_onchain_id(offchain));
-    assert_eq!(
-        body.onchain_id,
-        gsy_offchain_storage::certificates::builder::party_hash(offchain)
-    );
 
     // Stored as a BSON date, returned as RFC 3339.
     rfc3339_to_datetime(&body.creation_time).expect("creation_time is RFC 3339");
@@ -168,7 +160,7 @@ async fn post_ids_concurrent_same_id_yields_single_mapping() {
         .await
         .expect("Failed to init id mapping indexes");
     let client = reqwest::Client::new();
-    let offchain = "actor-concurrent";
+    let offchain = "abcdefab-1234-1234-1234-abcdefabcdef";
     let url = format!("{}/ids", app.address);
     let barrier = Arc::new(Barrier::new(8));
 
@@ -179,11 +171,12 @@ async fn post_ids_concurrent_same_id_yields_single_mapping() {
         let client = client.clone();
         let url = url.clone();
         let barrier = barrier.clone();
+        let submitted = offchain.to_string();
         handles.push(tokio::spawn(async move {
             barrier.wait().await;
             let response = client
                 .post(&url)
-                .query(&[("offchain_id", offchain)])
+                .query(&[("offchain_id", &submitted)])
                 .send()
                 .await
                 .expect("Failed to execute concurrent request");
@@ -207,6 +200,43 @@ async fn post_ids_concurrent_same_id_yields_single_mapping() {
         assert_eq!(r, &results[0]);
         assert_eq!(r.offchain_id, offchain);
     }
+    assert_eq!(results[0].onchain_id, derive_onchain_id(offchain));
+    let offchain_storage_client = primitives::offchain_storage::OffchainStorageClient::new(
+        primitives::offchain_storage::OffchainStorageTransport::Http,
+        app.address.clone(),
+        "UNUSED",
+        "test",
+    );
+    assert_eq!(
+        offchain_storage_client
+            .fetch_onchain_id(offchain)
+            .await
+            .unwrap(),
+        results[0].onchain_id
+    );
+    let onchain_hex = format!("0x{}", results[0].onchain_id[2..].to_uppercase());
+    assert_eq!(
+        app.db_wrapper
+            .ids()
+            .filter(Some(onchain_hex), None)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(IdMappingDto::from)
+            .collect::<Vec<_>>(),
+        vec![results[0].clone()]
+    );
+    assert_eq!(
+        app.db_wrapper
+            .ids()
+            .filter(None, Some(offchain.to_string()))
+            .await
+            .unwrap()
+            .into_iter()
+            .map(IdMappingDto::from)
+            .collect::<Vec<_>>(),
+        vec![results[0].clone()]
+    );
 
     // And exactly one document exists in the collection.
     let count = app
@@ -270,6 +300,23 @@ async fn post_ids_missing_param_is_rejected() {
 
     // Query<IdsParams> extraction fails when offchain_id is absent -> 400.
     assert_eq!(response.status().as_u16(), 400);
+
+    for invalid in ["", " ", "\t\n", " facility-a", "facility-a "] {
+        assert_eq!(
+            client
+                .post(format!("{}/ids", app.address))
+                .query(&[("offchain_id", invalid)])
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            400
+        );
+    }
+    assert_eq!(
+        app.db_wrapper.ids().count_documents(doc! {}).await.unwrap(),
+        0
+    );
 
     stop_app(app).await;
 }

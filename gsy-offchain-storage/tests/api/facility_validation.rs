@@ -1,3 +1,5 @@
+use chrono::DateTime;
+use primitives::ewds::dto::EwdsCommunityDto;
 use crate::helpers::{init_app, stop_app, ts};
 use gsy_offchain_storage::db::DatabaseWrapper;
 use mongodb::{bson::doc, Client};
@@ -6,8 +8,8 @@ use primitives::db_api_schema::grid_topology::{
 };
 use primitives::db_api_schema::market::{MarketSchema, MarketType, MatchingAlgorithm};
 use primitives::ewds::dto::{
-    EwdsRequestEnvelope, EwdsSendMessageDto, FacilityMarketValidationReason,
-    FacilityMarketValidationRequest,
+    EwdsFacilityDto, EwdsRequestEnvelope, EwdsSendMessageDto, EwdsSiteDto,
+    FacilityMarketValidationReason, FacilityMarketValidationRequest,
 };
 use primitives::ewds::EwdsOperation;
 use serde_json::{json, Value};
@@ -50,13 +52,25 @@ fn pair(facility_id: &str, market_id: &str) -> FacilityMarketValidationRequest {
 }
 
 fn community_id(id: &str) -> String {
-    uuid::Uuid::from_bytes(primitives::utils::create_encrypted_bytes16_from_string(id)).to_string()
+    format!("Community-{id}")
+}
+
+fn market_id(id: &str) -> String {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static IDS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    IDS.get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap()
+        .entry(id.to_string())
+        .or_insert_with(|| uuid::Uuid::new_v4().to_string())
+        .clone()
 }
 
 async fn seed_community(db: &DatabaseWrapper, id: &str) {
     db.markets()
         .insert_one(MarketSchema {
-            market_id: format!("market-{id}"),
+            market_id: market_id(id),
             community_id: community_id(id),
             opening_time: ts(100),
             closing_time: ts(200),
@@ -69,62 +83,206 @@ async fn seed_community(db: &DatabaseWrapper, id: &str) {
         .await
         .unwrap();
     db.communities()
-        .upsert(EnergyCommunitySchema {
-            community_id: community_id(id),
-            community_name: id.to_string(),
-            sites: vec![format!("site-{id}")],
-        })
+        .store(vec![community(id, vec![format!("site-{id}")])])
         .await
         .unwrap();
     db.sites()
-        .upsert(SiteSchema {
-            site_name: format!("site-{id}"),
-            site_description: String::new(),
-            facilities: vec![format!("facility-{id}")],
-        })
+        .store(vec![site(id, vec![format!("facility-{id}")])])
         .await
         .unwrap();
     db.facilities()
-        .upsert(FacilitySchema {
-            facility_id: format!("facility-{id}"),
-            facility_name: format!("facility-{id}"),
-            site_id: format!("site-{id}"),
-            owner_id: format!("owner-{id}"),
-        })
+        .store(vec![facility(
+            &format!("facility-{id}"),
+            &format!("site-{id}"),
+        )])
         .await
         .unwrap();
 }
 
 #[tokio::test]
-async fn http_community_ids_are_canonical_and_remain_eligible() {
+async fn facility_ingress_preserves_ids_and_validation_echoes_each_request() {
+    use gsy_offchain_storage::ewds_event_handler::handle_event;
+    use primitives::ewds::{dto::EwdsEventEnvelope, EwdsEventType};
+
+    let facility_id = "abcdefab-abcd-abcd-abcd-abcdefabcdef";
+    let owner_id = "fedcbafe-dcba-dcba-dcba-fedcbafedcba";
+    for ewds in [false, true] {
+        let app = init_app().await;
+        seed_community(&app.db_wrapper, "a").await;
+        let client = reqwest::Client::new();
+        for id in [facility_id.to_uppercase(), facility_id.to_string()] {
+            let facility = json!({"facility_id": id, "owner_id": owner_id.to_uppercase(),
+                "facility_name": format!("UUID facility {id}"), "site_id": "site-a"});
+            let site = json!({"site_id": "site-a", "site_name": "Renamed display name", "site_description": "Unchanged description",
+                "facilities": ["facility-a", facility_id.to_uppercase(), facility_id]});
+            for (route, event_type, data) in [
+                ("facilities", EwdsEventType::Facility, facility),
+                ("sites", EwdsEventType::Site, site),
+            ] {
+                if ewds {
+                    handle_event(
+                        &app.db_wrapper,
+                        EwdsEventEnvelope {
+                            event_id: "topology-test".into(),
+                            event_type,
+                            occurred_at: "2026-11-04T10:00:00Z".into(),
+                            data: json!([data]),
+                        },
+                    )
+                    .await
+                    .unwrap();
+                } else {
+                    let response = client
+                        .post(format!("{}/{route}", app.address))
+                        .json(&data)
+                        .send()
+                        .await
+                        .unwrap();
+                    assert_eq!(response.status(), reqwest::StatusCode::OK);
+                }
+            }
+        }
+        let facility = app
+            .db_wrapper
+            .facilities()
+            .find_one(doc! {"facility_id": facility_id})
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(facility.owner_id, owner_id.to_uppercase());
+        assert_eq!(
+            app.db_wrapper
+                .facilities()
+                .count_documents(doc! {})
+                .await
+                .unwrap(),
+            3
+        );
+        let site = app.db_wrapper.sites().get_by_ids(&["site-a"]).await.unwrap().remove(0);
+        assert_eq!(site.facilities, vec!["facility-a".to_string(), facility_id.to_uppercase(), facility_id.to_string()]);
+        let requests = [
+            pair(&facility_id.to_uppercase(), &market_id("a")),
+            pair(" padded ", &market_id("a")),
+            pair(facility_id, &market_id("a")),
+        ];
+        let response: Value = client
+            .post(format!("{}/facilities/validate", app.address))
+            .json(&requests)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let ewds_response = validate_via_ewds(&app.db_wrapper, json!(requests)).await;
+        assert_eq!(response, ewds_response["data"]);
+        assert_eq!(response.as_array().unwrap().len(), requests.len());
+        for (i, request) in requests.iter().enumerate() {
+            assert_eq!(response[i]["facility_id"], request.facility_id);
+            assert_eq!(response[i]["market_id"], request.market_id);
+            assert_eq!(response[i]["eligible"], i != 1);
+        }
+        assert_eq!(response[1]["reason"], "unknown_facility");
+        for (route, event_type, data) in [
+            (
+                "facilities",
+                EwdsEventType::Facility,
+                json!({"facility_id": "bad ",
+                "owner_id": owner_id, "facility_name": "Invalid", "site_id": "site-a"}),
+            ),
+            (
+                "facilities",
+                EwdsEventType::Facility,
+                json!({"facility_id": "valid",
+                "owner_id": "", "facility_name": "Invalid", "site_id": "site-a"}),
+            ),
+            (
+                "sites",
+                EwdsEventType::Site,
+                json!({"site_id": "site-a", "site_name": "site-a",
+                "site_description": "Invalid", "facilities": [" "]}),
+            ),
+        ] {
+            assert_eq!(
+                client
+                    .post(format!("{}/{route}", app.address))
+                    .json(&data)
+                    .send()
+                    .await
+                    .unwrap()
+                    .status(),
+                reqwest::StatusCode::BAD_REQUEST
+            );
+            let error = handle_event(
+                &app.db_wrapper,
+                EwdsEventEnvelope {
+                    event_id: "invalid-test".into(),
+                    event_type,
+                    occurred_at: "2026-11-04T10:00:00Z".into(),
+                    data: json!([data]),
+                },
+            )
+            .await
+            .unwrap_err();
+            assert!(primitives::ewds::is_invalid_event(&error));
+        }
+        stop_app(app).await;
+    }
+}
+
+#[tokio::test]
+async fn http_community_ids_are_exact_and_eligibility_requires_the_same_identity() {
     let app = init_app().await;
     seed_community(&app.db_wrapper, "a").await;
-    let canonical = community_id("a");
-    for id in [
-        canonical.to_uppercase(),
-        format!("0x{}", canonical.replace('-', "").to_uppercase()),
-    ] {
+    let communities = [
+        "COMMUNITY-A",
+        "Community-MiXeD/LIC01",
+        "ABCDEFAB-1234-1234-1234-ABCDEFABCDEF",
+        "abcdefab-1234-1234-1234-abcdefabcdef",
+        "0xabcdefab123412341234abcdefabcdef",
+    ];
+    for id in communities {
+        app.db_wrapper
+            .markets()
+            .update_one(
+                doc! {"market_id": market_id("a")},
+                doc! {"$set": {"community_id": id}},
+            )
+            .await
+            .unwrap();
+        let result = validate_via_ewds(
+            &app.db_wrapper,
+            json!([pair("facility-a", &market_id("a"))]),
+        )
+        .await;
+        assert_eq!(result["data"][0]["eligible"], false);
+        assert_eq!(result["data"][0]["reason"], "unknown_community");
         let response = reqwest::Client::new()
             .post(format!("{}/communities", app.address))
-            .json(&EnergyCommunitySchema {
-                community_id: id,
-                community_name: "a".into(),
+            .json(&EwdsCommunityDto::from(EnergyCommunitySchema {
+                valid_from: DateTime::UNIX_EPOCH,
+                valid_until: None,
+                community_id: id.into(),
+                community_name: format!("Community {id}"),
                 sites: vec!["site-a".into()],
-            })
+            }))
             .send()
             .await
             .unwrap();
         assert_eq!(response.status(), reqwest::StatusCode::OK);
         assert_eq!(
             response
-                .json::<EnergyCommunitySchema>()
+                .json::<EwdsCommunityDto>()
                 .await
                 .unwrap()
                 .community_id,
-            canonical
+            id
         );
-        let result =
-            validate_via_ewds(&app.db_wrapper, json!([pair("facility-a", "market-a")])).await;
+        let result = validate_via_ewds(
+            &app.db_wrapper,
+            json!([pair("facility-a", &market_id("a"))]),
+        )
+        .await;
         assert_eq!(result["data"][0]["eligible"], true);
     }
     assert_eq!(
@@ -133,16 +291,48 @@ async fn http_community_ids_are_canonical_and_remain_eligible() {
             .count_documents(doc! {})
             .await
             .unwrap(),
-        1
+        (communities.len() + 1) as u64
     );
     let response = reqwest::Client::new()
         .post(format!("{}/communities", app.address))
-        .json(&json!({"community_id": "not-a-uuid", "community_name": "invalid", "sites": []}))
+        .json(&json!({"communityId": " padded ", "communityName": "invalid", "sites": []}))
         .send()
         .await
         .unwrap();
     assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
     stop_app(app).await;
+}
+
+fn community(id: &str, sites: Vec<String>) -> EnergyCommunitySchema {
+    EnergyCommunitySchema {
+        community_id: community_id(id),
+        community_name: id.to_string(),
+        sites,
+        valid_from: DateTime::UNIX_EPOCH,
+        valid_until: None,
+    }
+}
+
+fn site(id: &str, facilities: Vec<String>) -> SiteSchema {
+    SiteSchema {
+        site_id: format!("site-{id}"),
+        site_name: format!("site-{id}"),
+        site_description: String::new(),
+        facilities,
+        valid_from: DateTime::UNIX_EPOCH,
+        valid_until: None,
+    }
+}
+
+fn facility(facility_id: &str, site_id: &str) -> FacilitySchema {
+    FacilitySchema {
+        facility_id: facility_id.to_string(),
+        facility_name: facility_id.to_string(),
+        site_id: site_id.to_string(),
+        owner_id: format!("owner-{}", facility_id.trim_start_matches("facility-")),
+        valid_from: DateTime::UNIX_EPOCH,
+        valid_until: None,
+    }
 }
 
 #[tokio::test]
@@ -151,28 +341,26 @@ async fn http_topology_replacements_update_eligibility_and_preserve_name_conflic
     seed_community(&app.db_wrapper, "a").await;
     let client = reqwest::Client::new();
     let mut facility = FacilitySchema {
-        facility_id: "facility-new".into(),
         facility_name: "New facility".into(),
-        site_id: "site-a".into(),
-        owner_id: "owner-new".into(),
+        ..facility("facility-new", "site-a")
     };
     for owner in ["owner-new", "owner-updated"] {
         facility.owner_id = owner.into();
         let response = client
             .post(format!("{}/facilities", app.address))
-            .json(&facility)
+            .json(&EwdsFacilityDto::from(facility.clone()))
             .send()
             .await
             .unwrap();
         assert_eq!(response.status(), reqwest::StatusCode::OK);
         assert_eq!(
-            response.json::<FacilitySchema>().await.unwrap().owner_id,
+            response.json::<EwdsFacilityDto>().await.unwrap().owner_id,
             owner
         );
     }
     let requests = [
-        pair("facility-new", "market-a"),
-        pair("facility-a", "market-a"),
+        pair("facility-new", &market_id("a")),
+        pair("facility-a", &market_id("a")),
     ];
     assert!(
         !app.db_wrapper
@@ -187,11 +375,10 @@ async fn http_topology_replacements_update_eligibility_and_preserve_name_conflic
     ] {
         let response = client
             .post(format!("{}/sites", app.address))
-            .json(&SiteSchema {
-                site_name: "site-a".into(),
+            .json(&EwdsSiteDto::from(SiteSchema {
                 site_description: "Updated".into(),
-                facilities,
-            })
+                ..site("a", facilities)
+            }))
             .send()
             .await
             .unwrap();
@@ -207,7 +394,7 @@ async fn http_topology_replacements_update_eligibility_and_preserve_name_conflic
     facility.facility_id = "conflicting-id".into();
     let response = client
         .post(format!("{}/facilities", app.address))
-        .json(&facility)
+        .json(&EwdsFacilityDto::from(facility))
         .send()
         .await
         .unwrap();
@@ -215,10 +402,10 @@ async fn http_topology_replacements_update_eligibility_and_preserve_name_conflic
     assert_eq!(
         app.db_wrapper
             .facilities()
-            .count_documents(doc! {})
+            .count_documents(doc! {"facility_id": "conflicting-id"})
             .await
             .unwrap(),
-        2
+        0
     );
     stop_app(app).await;
 }
@@ -232,14 +419,23 @@ async fn validates_mixed_pairs_in_input_order_without_writes() {
     seed_community(db, "b").await;
     // An existing ID mapping is not evidence that the facility exists.
     db.ids().get_or_create("missing".to_string()).await.unwrap();
+    let mappings_before = db.ids().count_documents(doc! {}).await.unwrap();
     let requests = vec![
-        pair("facility-a", "market-a"),
-        pair("facility-a", "market-b"),
-        pair("missing", "market-a"),
+        pair("facility-a", &market_id("a")),
+        pair("facility-a", &market_id("b")),
+        pair("missing", &market_id("a")),
         pair("facility-b", "missing"),
-        pair("facility-b", "market-b"),
-        pair("owner-a", "market-a"),
-        pair("facility-a", "market-a"),
+        pair("facility-b", &market_id("b")),
+        pair("owner-a", &market_id("a")),
+        pair("facility-a", &market_id("a")),
+        pair("facility-a", "00000000-0000-0000-0000-000000000000"),
+        pair(
+            "facility-a",
+            &primitives::utils::bytes16_to_uuid_string(
+                primitives::utils::uuid_v4_to_bytes16(&market_id("a")).unwrap(),
+            )
+            .to_uppercase(),
+        ),
     ];
     let results = db.validate_facility_markets(&requests).await.unwrap();
     assert_eq!(results.len(), requests.len());
@@ -251,6 +447,8 @@ async fn validates_mixed_pairs_in_input_order_without_writes() {
         None,
         Some(UnknownFacility),
         None,
+        Some(UnknownMarket),
+        None,
     ]) {
         assert_eq!(result.facility_id, request.facility_id);
         assert_eq!(result.market_id, request.market_id);
@@ -258,7 +456,7 @@ async fn validates_mixed_pairs_in_input_order_without_writes() {
         assert_eq!(result.reason, reason);
     }
     assert!(db.validate_facility_markets(&[]).await.unwrap().is_empty());
-    assert_eq!(db.ids().count_documents(doc! {}).await.unwrap(), 1);
+    assert_eq!(db.ids().count_documents(doc! {}).await.unwrap(), mappings_before);
     assert_eq!(db.orders().count_documents(doc! {}).await.unwrap(), 0);
     stop_app(app).await;
 }
@@ -280,7 +478,7 @@ async fn requires_every_link_in_the_topology_chain() {
         (
             "no-site",
             "sites",
-            "site_name",
+            "site_id",
             "site-no-site",
             doc! {},
             UnknownSite,
@@ -288,7 +486,7 @@ async fn requires_every_link_in_the_topology_chain() {
         (
             "no-facility-link",
             "sites",
-            "site_name",
+            "site_id",
             "site-no-facility-link",
             doc! {"$set": {"facilities": []}},
             FacilityNotListedInSite,
@@ -328,7 +526,7 @@ async fn requires_every_link_in_the_topology_chain() {
                 .unwrap();
         }
         let results = db
-            .validate_facility_markets(&[pair(&format!("facility-{id}"), &format!("market-{id}"))])
+            .validate_facility_markets(&[pair(&format!("facility-{id}"), &market_id(id))])
             .await
             .unwrap();
         assert!(!results[0].eligible);
@@ -341,15 +539,36 @@ async fn requires_every_link_in_the_topology_chain() {
 async fn sees_topology_updates_between_calls() {
     let app = init_app().await;
     let db = &app.db_wrapper;
-    let requests = [pair("facility-a", "market-a")];
+    let requests = [pair("facility-a", &market_id("a"))];
     assert!(!db.validate_facility_markets(&requests).await.unwrap()[0].eligible);
     seed_community(db, "a").await;
     assert!(db.validate_facility_markets(&requests).await.unwrap()[0].eligible);
+
+    // Only the latest version of an entry counts.
     db.communities()
-        .update_one(doc! {"community_id": community_id("a")}, doc! {"$set": {"sites": []}})
+        .store(vec![community("a", vec![])])
         .await
         .unwrap();
     assert!(!db.validate_facility_markets(&requests).await.unwrap()[0].eligible);
+    db.communities()
+        .store(vec![community("a", vec!["site-a".into()])])
+        .await
+        .unwrap();
+    assert!(db.validate_facility_markets(&requests).await.unwrap()[0].eligible);
+
+    // A deleted facility is unknown.
+    db.facilities()
+        .store(vec![FacilitySchema {
+            valid_until: Some(DateTime::UNIX_EPOCH),
+            ..facility("facility-a", "site-a")
+        }])
+        .await
+        .unwrap();
+    let result = &db.validate_facility_markets(&requests).await.unwrap()[0];
+    assert_eq!(
+        result.reason,
+        Some(FacilityMarketValidationReason::UnknownFacility)
+    );
     stop_app(app).await;
 }
 
@@ -357,7 +576,7 @@ async fn sees_topology_updates_between_calls() {
 async fn malformed_database_records_are_errors_not_rejections() {
     let app = init_app().await;
     let db = &app.db_wrapper;
-    for (id, collection, key, value, field) in [
+    let cases = [
         (
             "market",
             "markets",
@@ -372,7 +591,7 @@ async fn malformed_database_records_are_errors_not_rejections() {
             "facility-facility",
             "site_id",
         ),
-        ("site", "sites", "site_name", "site-site", "facilities"),
+        ("site", "sites", "site_id", "site-site", "facilities"),
         (
             "community",
             "communities",
@@ -380,10 +599,16 @@ async fn malformed_database_records_are_errors_not_rejections() {
             "community",
             "sites",
         ),
-    ] {
+    ];
+    // Seeded before any record is broken: storing reads all latest entries.
+    for (id, ..) in cases {
         seed_community(db, id).await;
+    }
+    for (id, collection, key, value, field) in cases {
         let value = if key == "community_id" {
             community_id(value)
+        } else if key == "market_id" {
+            market_id(id)
         } else {
             value.to_string()
         };
@@ -392,12 +617,9 @@ async fn malformed_database_records_are_errors_not_rejections() {
             .await
             .unwrap();
         assert!(
-            db.validate_facility_markets(&[pair(
-                &format!("facility-{id}"),
-                &format!("market-{id}")
-            )])
-            .await
-            .is_err(),
+            db.validate_facility_markets(&[pair(&format!("facility-{id}"), &market_id(id))])
+                .await
+                .is_err(),
             "malformed {collection} record was treated as ineligible"
         );
     }
@@ -413,7 +635,7 @@ async fn unavailable_database_is_an_error_not_a_rejection() {
     .unwrap();
     let db = DatabaseWrapper(client.database("facility_validation"));
     assert!(db
-        .validate_facility_markets(&[pair("facility-a", "market-a")])
+        .validate_facility_markets(&[pair("facility-a", &market_id("a"))])
         .await
         .is_err());
 }
@@ -426,19 +648,20 @@ async fn http_and_ewds_return_the_same_bulk_validation_results() {
     seed_community(db, "b").await;
     db.markets()
         .update_one(
-            doc! {"market_id": "market-a"},
-            doc! {"$set": {"market_id": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
+            doc! {"market_id": &market_id("a")},
+            doc! {"$set": {"market_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}},
         )
         .await
         .unwrap();
+    let mappings_before = db.ids().count_documents(doc! {}).await.unwrap();
     let requests = vec![
-        pair("facility-a", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
-        pair("facility-a", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
-        pair("facility-a", "market-b"),
-        pair("missing", "market-b"),
+        pair("facility-a", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+        pair("facility-a", "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"),
+        pair("facility-a", &market_id("b")),
+        pair("missing", &market_id("b")),
         pair("facility-b", "missing"),
-        pair("facility-b", "market-b"),
-        pair("facility-b", "market-b"),
+        pair("facility-b", &market_id("b")),
+        pair("facility-b", &market_id("b")),
     ];
     let expected = db.validate_facility_markets(&requests).await.unwrap();
     assert!(expected[0].eligible && expected[1].eligible);
@@ -461,7 +684,7 @@ async fn http_and_ewds_return_the_same_bulk_validation_results() {
         assert_eq!(ewds["success"], true);
         assert_eq!(ewds["data"], expected);
     }
-    assert_eq!(db.ids().count_documents(doc! {}).await.unwrap(), 0);
+    assert_eq!(db.ids().count_documents(doc! {}).await.unwrap(), mappings_before);
     assert_eq!(db.orders().count_documents(doc! {}).await.unwrap(), 0);
     stop_app(app).await;
 }
@@ -501,7 +724,7 @@ async fn both_transports_report_storage_errors_without_eligibility_results() {
         )
         .await
         .unwrap();
-    let payload = json!([pair("facility-a", "market-a")]);
+    let payload = json!([pair("facility-a", &market_id("a"))]);
     let http = reqwest::Client::new()
         .post(format!("{}/facilities/validate", app.address))
         .json(&payload)

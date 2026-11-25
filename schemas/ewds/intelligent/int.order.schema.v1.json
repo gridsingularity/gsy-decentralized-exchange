@@ -6,12 +6,16 @@
   "type": "object",
   "properties": {
     "orderId": {
-      "description": "Primary identifier. IRI: int:orderId.",
-      "type": "string"
+      "description": "Hyphenated UUIDv4. Reads and lifecycle notifications use lowercase UUID text; rejections echo the submitted spelling. IRI: int:orderId.",
+      "type": "string",
+      "pattern": "^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-4[a-fA-F0-9]{3}-[89aAbB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}(?![\\s\\S])",
+      "not": { "enum": ["00000000-0000-0000-0000-000000000000", "0x00000000000000000000000000000000", "00000000000000000000000000000000"] }
     },
     "marketId": {
-      "description": "FK to Market. IRI: int:marketId.",
-      "type": "string"
+      "description": "Hyphenated UUIDv4 market ID, returned as lowercase UUID text. IRI: int:marketId.",
+      "type": "string",
+      "pattern": "^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-4[a-fA-F0-9]{3}-[89aAbB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}(?![\\s\\S])",
+      "not": { "enum": ["00000000-0000-0000-0000-000000000000", "0x00000000000000000000000000000000", "00000000000000000000000000000000"] }
     },
     "orderType": {
       "description": "Buy or sell order. IRI: int:orderType.",
@@ -84,8 +88,9 @@
       "default": "NONE"
     },
     "createdBy": {
-      "description": "Owner identity represented by the order, not its facility or submitting service wallet. The community client validates the owner's facility and resolves the owner ID to its on-chain ID. IRI: int:createdby.",
-      "type": "string"
+      "description": "Owner identity, not its facility or submitting service wallet. The community client validates the owner's facility before submission. Submissions use an unpadded off-chain identity: all strings are preserved exactly and stay case-sensitive, including UUID-shaped strings. Imports, queries and lifecycle notifications use the same original off-chain owner ID. Rejections echo the input. IRI: int:createdby.",
+      "type": "string",
+      "pattern": "^\\S(?:[\\s\\S]*\\S)?(?![\\s\\S])"
     },
     "creationTime": {
       "description": "Order creation datetime. IRI: int:createdAt. RFC 3339 with timezone.",
@@ -110,12 +115,13 @@
       "default": null
     },
     "preferredTradingPartner": {
-      "description": "Preferred counterparty owner of a bid or an offer, taken from the order requirements. IRI: int:preferredTradingPartner. Nullable.",
+      "description": "Off-chain owner identity of the preferred counterparty of a bid or offer. For submission, the owner must have a registered facility; partner market eligibility is not checked. Unpadded strings are preserved exactly and stay case-sensitive, including UUID-shaped strings. Hex-shaped strings are off-chain identities, not resolved hashes. Rejections echo the input. IRI: int:preferredTradingPartner. Nullable.",
       "type": [
         "string",
         "null"
       ],
-      "default": null
+      "default": null,
+      "pattern": "^\\S(?:[\\s\\S]*\\S)?(?![\\s\\S])"
     },
     "preferredEnergyRate": {
       "description": "Preferred bilateral energy rate in EUR/kWh. IRI: int:preferredEnergyRate. Nullable.",
