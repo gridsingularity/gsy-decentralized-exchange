@@ -181,7 +181,7 @@ fn delivery_verifications(
     }
 
     // This deployment guarantees one facility per owner; trade parties identify owners.
-    let mut measurement_map: HashMap<String, Option<f64>> = HashMap::new();
+    let mut measurement_map: HashMap<String, Option<i128>> = HashMap::new();
     for meas in measurements
         .iter()
         .filter(|meas| meas.time_slot == delivery_slot)
@@ -193,7 +193,16 @@ fn delivery_verifications(
             );
             continue;
         };
-        let energy = meas.energy_kwh.is_finite().then_some(meas.energy_kwh);
+        if !facilities.contains_key(owner_id.as_str()) {
+            continue;
+        }
+        let energy = if meas.energy_kwh.is_finite() {
+            let units = (meas.energy_kwh * NODE_FLOAT_SCALING_FACTOR).round();
+            ensure!(units.abs() < u64::MAX as f64, "Measured energy exceeds on-chain range");
+            Some(units as i128)
+        } else {
+            None
+        };
         measurement_map
             .entry(owner_id.clone())
             .and_modify(|previous| {
@@ -221,7 +230,7 @@ fn delivery_verifications(
                      penalizing its whole net traded position",
                     facility, delivery_slot
                 );
-                0.0
+                0
             }
             None => continue,
         };
@@ -279,23 +288,16 @@ fn allocate_penalty<'a>(cost: u64, quantities: &[(&'a str, u64)]) -> Vec<(&'a st
         .collect()
 }
 
-const TOLERANCE_PERCENT_SCALING_FACTOR: f64 = 10_000.0;
-
 fn penalty_cost(
     traded_energy: i128,
-    measured_energy: f64,
+    measured_energy: i128,
     rate: f64,
     tolerance_percent: f64,
 ) -> Result<u64> {
-    let measured_energy = (measured_energy * NODE_FLOAT_SCALING_FACTOR).round();
-    ensure!(
-        measured_energy.is_finite() && measured_energy.abs() < u64::MAX as f64,
-        "Measured energy exceeds on-chain range"
-    );
-    let deviation = (measured_energy as i128 - traded_energy).unsigned_abs();
-    let tolerance_percent = (tolerance_percent * TOLERANCE_PERCENT_SCALING_FACTOR).round() as u128;
+    let deviation = (measured_energy - traded_energy).unsigned_abs();
+    let tolerance_percent = (tolerance_percent * NODE_FLOAT_SCALING_FACTOR).round() as u128;
     let within_band = deviation
-        .checked_mul(100 * TOLERANCE_PERCENT_SCALING_FACTOR as u128)
+        .checked_mul(100 * NODE_FLOAT_SCALING_FACTOR as u128)
         .zip(traded_energy.unsigned_abs().checked_mul(tolerance_percent))
         .map(|(deviation, band)| deviation <= band);
     let Some(within_band) = within_band else {

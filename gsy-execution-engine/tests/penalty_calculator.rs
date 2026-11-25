@@ -523,6 +523,30 @@ fn measurements_from_other_slots_cannot_verify_or_change_this_slot() {
 }
 
 #[test]
+fn duplicate_readings_are_compared_at_meter_precision_before_and_after_grace() {
+    let (mut measurements, mapping) = readings(&[
+        ("alice", 10.0),
+        ("alice", 10.00001),
+        ("bob", -10.0),
+        ("bob", -10.00001),
+    ]);
+    for calculate in [
+        compute_delivery_verifications,
+        compute_final_delivery_verifications,
+    ] {
+        for _ in 0..2 {
+            let verdicts = calculate(&[trade()], &measurements, &mapping, 1_000, 0.1, 5.0).unwrap();
+            assert_eq!(verdicts.len(), 1);
+            assert_eq!(
+                (verdicts[0].buyer_penalty_cost, verdicts[0].seller_penalty_cost),
+                (0, 0)
+            );
+            measurements.reverse();
+        }
+    }
+}
+
+#[test]
 fn duplicate_readings_cannot_double_charge_or_choose_a_conflicting_value() {
     let (mut measurements, mapping) = readings(&[("alice", 12.0), ("bob", -10.0)]);
     measurements.push(measurements[0].clone());
@@ -530,7 +554,7 @@ fn duplicate_readings_cannot_double_charge_or_choose_a_conflicting_value() {
         compute_delivery_verifications(&[trade()], &measurements, &mapping, 1_000, 0.1, 5.0)
             .unwrap();
     assert_eq!(verdicts[0].buyer_penalty_cost, 2000);
-    for invalid in [11.0, f64::NAN] {
+    for invalid in [12.0001, 11.0, f64::NAN] {
         measurements.push(measurement("alice", invalid));
         for _ in 0..2 {
             assert!(compute_delivery_verifications(

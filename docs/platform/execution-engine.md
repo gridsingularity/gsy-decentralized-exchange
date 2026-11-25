@@ -62,11 +62,11 @@ parties directly. No ID-service conversion or hashing is needed for this join.
 Only contract-bound actor arguments (such as standalone penalties) use keyed
 hashes. The submitting service wallet is separate. This deployment guarantees one facility per owner.
 Facility and owner IDs are preserved exactly, including UUID-shaped strings.
-Missing/unmapped, non-finite, or conflicting readings for a facility/slot leave its trades pending;
-they do not produce a zero-penalty success. Identical readings are not counted
-twice. Multiple distinct readings are not summed or arbitrarily selected: they
-need an unambiguous net measurement before verification. Both parties' readings
-are required before atomic completion.
+During the grace period, missing/unmapped, non-finite, or conflicting readings for a
+facility/slot leave its trades pending. Readings are compared at 0.0001 kWh
+precision: for example, 10.0 and 10.00001 kWh count as one reading, not a conflict.
+Distinct readings are not summed or arbitrarily selected. After the grace period,
+an unusable reading is treated as zero delivery during finalization.
 HTTP and EWDS normalize direction-labelled export magnitudes to negative energy;
 compatibility profiles retain their original signed values, including when a
 point's direction has changed in a later slot. Both transports use the same

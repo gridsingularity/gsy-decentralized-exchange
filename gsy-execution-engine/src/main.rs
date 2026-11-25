@@ -83,7 +83,7 @@ async fn main() -> anyhow::Result<()> {
                     match finalize_timeslot(
                         &offchain_url,
                         &evm_node_url,
-                        &trade_settlement_address,
+                        &trade_matching_address,
                         &execution_engine_private_key,
                         expired,
                         penalty_rate,

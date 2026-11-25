@@ -48,7 +48,7 @@ pub async fn run_execution_cycle(
     let (processed, _, all_measured) = run_cycle(
         offchain_url,
         evm_node_url,
-        trade_settlement_address,
+        trade_matching_address,
         execution_engine_private_key,
         timeslot,
         penalty_rate,
@@ -69,7 +69,7 @@ pub async fn run_execution_cycle(
 pub async fn finalize_timeslot(
     offchain_url: &str,
     evm_node_url: &str,
-    trade_settlement_address: &str,
+    trade_matching_address: &str,
     execution_engine_private_key: &str,
     timeslot: u64,
     penalty_rate: f64,
@@ -79,7 +79,7 @@ pub async fn finalize_timeslot(
     let (processed, pending_count, _) = run_cycle(
         offchain_url,
         evm_node_url,
-        trade_settlement_address,
+        trade_matching_address,
         execution_engine_private_key,
         timeslot,
         penalty_rate,
@@ -96,7 +96,7 @@ pub async fn finalize_timeslot(
 async fn run_cycle(
     offchain_url: &str,
     evm_node_url: &str,
-    trade_settlement_address: &str,
+    trade_matching_address: &str,
     execution_engine_private_key: &str,
     timeslot: u64,
     penalty_rate: f64,
