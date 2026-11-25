@@ -230,3 +230,50 @@ fn invalid_grace_configuration_fails_before_starting_execution_cycles() {
         );
     }
 }
+
+#[test]
+fn expired_slot_is_the_latest_one_past_its_grace_period_and_already_delivered() {
+    let slot = GLOBAL_CONSTANTS.time_slot_sec;
+    let offset_seconds = GLOBAL_CONSTANTS.execution_engine_offset_min * 60;
+    for grace in [0, slot / 2, slot, 3 * slot] {
+        let scheduler = TimeslotScheduler::new(grace);
+        for elapsed in [0, 1, slot / 2, slot - 1, slot, 2 * slot + 1] {
+            let now = time_for_target(initial_timeslot()) + Duration::seconds(elapsed as i64);
+            let now_seconds = now.timestamp() as u64;
+            let target = (now.timestamp() - offset_seconds) as u64;
+            let oldest_eligible = ((target - grace) / slot) * slot;
+            let is_expired = |candidate: u64| {
+                // No longer selected for retries, and delivered at least one grace period ago.
+                candidate < oldest_eligible && candidate + slot + grace <= now_seconds
+            };
+
+            let expired = scheduler.expired_timeslot_at(now).unwrap();
+            assert_eq!(expired % slot, 0);
+            assert!(is_expired(expired), "grace={grace}, elapsed={elapsed}");
+            assert!(
+                !is_expired(expired + slot),
+                "grace={grace}, elapsed={elapsed}"
+            );
+        }
+    }
+}
+
+#[test]
+fn expired_slot_is_never_selected_for_a_regular_cycle() {
+    let slot = GLOBAL_CONSTANTS.time_slot_sec;
+    let mut scheduler = TimeslotScheduler::new(2 * slot);
+    let now = time_for_target(initial_timeslot()) + Duration::seconds(1);
+    let expired = scheduler.expired_timeslot_at(now).unwrap();
+    for _ in 0..8 {
+        assert!(scheduler.calculate_timeslot_at(now) > expired);
+    }
+}
+
+#[test]
+fn no_slot_has_expired_near_the_epoch() {
+    let scheduler = TimeslotScheduler::new(GLOBAL_CONSTANTS.time_slot_sec);
+    assert_eq!(
+        scheduler.expired_timeslot_at(DateTime::from_timestamp(0, 0).unwrap()),
+        None
+    );
+}
