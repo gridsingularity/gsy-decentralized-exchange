@@ -1,11 +1,11 @@
 use crate::evm_integration::{expected_market, new_market_event};
 use crate::ewds_handler::{mock_gateway, test_config};
-use crate::helpers::{init_app, stop_app};
+use crate::helpers::{init_app, stop_app, stored};
 use ethers::contract::LogMeta;
 use ethers::types::{Address, H256, U256, U64};
 use gsy_ethers_listener::{
     DeliveryVerifiedFilter, GsyEventHandler, MarketClearingFilter, NewMarketCreatedFilter,
-    OrderCancelledFilter, OrderPlacedFilter, PenaltyRecordedFilter, TradeSettledFilter,
+    OrderCancelledFilter, OrderPlacedFilter, PenaltyRecordedFilter, TradeMatchedFilter,
 };
 use gsy_offchain_storage::db::DatabaseWrapper;
 use gsy_offchain_storage::evm_handler::OffchainStorageEvmHandler;
@@ -21,11 +21,13 @@ use primitives::db_api_schema::trades::{
     ClearingResultSchema, ClearingStatus, DbTradeSchema, TradeParameters, TradeStatus,
 };
 use primitives::ewds::dto::{
-    EwdsEventEnvelope, EwdsMarketDto, EwdsOrderDto, EwdsRequestEnvelope, EwdsSendMessageDto,
-    EwdsTradeDto,
+    EwdsEventEnvelope, EwdsFacilityDto, EwdsMarketDto, EwdsOrderDto, EwdsRequestEnvelope,
+    EwdsSendMessageDto, EwdsTradeDto,
 };
 use primitives::ewds::{is_invalid_event, EwdsEventType, EwdsOperation};
-use primitives::utils::{bytes16_to_hex, epoch_to_rfc3339, timestamp_to_string_with_padding};
+use primitives::utils::{
+    bytes16_to_hex, epoch_to_rfc3339, timestamp_to_string_with_padding, EPOCH_RFC3339,
+};
 use serde_json::{json, Value};
 use std::time::Duration;
 use uuid::Uuid;
@@ -85,8 +87,8 @@ fn evm_handler(app: &crate::helpers::TestApp, server: &MockServer) -> OffchainSt
     }
 }
 
-fn trade_settled_event() -> TradeSettledFilter {
-    TradeSettledFilter {
+fn trade_matched_event() -> TradeMatchedFilter {
+    TradeMatchedFilter {
         trade_id: [0x01; 16],
         bid_id: [0x02; 16],
         offer_id: [0x03; 16],
@@ -118,7 +120,7 @@ fn order_placed_event(order_id: [u8; 16], is_bid: bool) -> OrderPlacedFilter {
     }
 }
 
-async fn seed_settlement_orders(app: &crate::helpers::TestApp) {
+async fn seed_match_orders(app: &crate::helpers::TestApp) {
     let handler = OffchainStorageEvmHandler {
         db: app.db_wrapper.clone(),
         event_publisher: None,
@@ -316,18 +318,18 @@ async fn verification_notifications_preserve_penalized_status_and_match_query_re
         let app = init_app().await;
         let server = mock_gateway().await;
         let handler = evm_handler(&app, &server);
-        seed_settlement_orders(&app).await;
-        let settlement = trade_settled_event();
+        seed_match_orders(&app).await;
+        let matched_event = trade_matched_event();
         handler
-            .handle_trade_settled(settlement.clone(), 1_100)
+            .handle_trade_matched(matched_event.clone(), 1_100)
             .await
             .unwrap();
         let messages = wait_for_gateway_messages(&server, 2).await;
         assert_trade_status_event(&app, &messages, TradeStatus::Matched, 1_100).await;
         let mut count = 2;
         let mut penalty = PenaltyRecordedFilter {
-            trade_id: settlement.trade_id,
-            market_id: settlement.market_id,
+            trade_id: matched_event.trade_id,
+            market_id: matched_event.market_id,
             penalized_actor_id: [0xff; 16],
             penalty_energy: 10,
         };
@@ -336,7 +338,7 @@ async fn verification_notifications_preserve_penalized_status_and_match_query_re
             .await
             .is_err());
         if penalized {
-            penalty.penalized_actor_id = settlement.buyer_id;
+            penalty.penalized_actor_id = matched_event.buyer_id;
             for timestamp in [1_200, 1_201] {
                 handler
                     .handle_penalty_recorded(penalty.clone(), timestamp)
@@ -352,9 +354,9 @@ async fn verification_notifications_preserve_penalized_status_and_match_query_re
             handler
                 .handle_delivery_verified(
                     DeliveryVerifiedFilter {
-                        trade_id: settlement.trade_id,
-                        bid_id: settlement.bid_id,
-                        offer_id: settlement.offer_id,
+                        trade_id: matched_event.trade_id,
+                        bid_id: matched_event.bid_id,
+                        offer_id: matched_event.offer_id,
                     },
                     timestamp,
                 )
@@ -364,7 +366,7 @@ async fn verification_notifications_preserve_penalized_status_and_match_query_re
             let messages = wait_for_gateway_messages(&server, count + notification_count).await;
             if penalized {
                 let stored = app.db_wrapper.trades()
-                    .find_one(mongodb::bson::doc! {"trade_uuid": bytes16_to_hex(settlement.trade_id)})
+                    .find_one(mongodb::bson::doc! {"trade_uuid": bytes16_to_hex(matched_event.trade_id)})
                     .await.unwrap().unwrap();
                 assert_eq!(stored.status, TradeStatus::Penalized);
                 assert_eq!(stored.status_updated_at, Some(1_200));
@@ -381,8 +383,8 @@ async fn verification_notifications_preserve_penalized_status_and_match_query_re
                 &app,
                 &messages[count..],
                 &[
-                    (settlement.bid_id, OrderStatus::Executed),
-                    (settlement.offer_id, OrderStatus::Executed),
+                    (matched_event.bid_id, OrderStatus::Executed),
+                    (matched_event.offer_id, OrderStatus::Executed),
                 ],
                 1_250,
             )
@@ -579,14 +581,14 @@ fn handler_config_defaults_to_the_events_channels() {
 // --- EVM handler integration ----------------------------------------
 
 #[tokio::test]
-async fn trade_settled_publishes_trade_event() {
+async fn trade_matched_publishes_trade_event() {
     let app = init_app().await;
     let server = mock_gateway().await;
     let handler = evm_handler(&app, &server);
-    seed_settlement_orders(&app).await;
+    seed_match_orders(&app).await;
 
     handler
-        .handle_trade_settled(trade_settled_event(), 1_100)
+        .handle_trade_matched(trade_matched_event(), 1_100)
         .await
         .unwrap();
 
@@ -630,14 +632,14 @@ async fn trade_settled_publishes_trade_event() {
 }
 
 #[tokio::test]
-async fn trade_settled_rejects_conflicting_details_without_publishing() {
+async fn trade_matched_rejects_conflicting_details_without_publishing() {
     let app = init_app().await;
     let server = mock_gateway().await;
     let handler = evm_handler(&app, &server);
-    seed_settlement_orders(&app).await;
+    seed_match_orders(&app).await;
 
     handler
-        .handle_trade_settled(trade_settled_event(), 1_100)
+        .handle_trade_matched(trade_matched_event(), 1_100)
         .await
         .unwrap();
     wait_for_gateway_messages(&server, 2).await;
@@ -656,7 +658,7 @@ async fn trade_settled_rejects_conflicting_details_without_publishing() {
         "energy",
         "price",
     ] {
-        let mut event = trade_settled_event();
+        let mut event = trade_matched_event();
         match field {
             "buyer" => event.buyer_id = [0xff; 16],
             "seller" => event.seller_id = [0xff; 16],
@@ -670,7 +672,7 @@ async fn trade_settled_rejects_conflicting_details_without_publishing() {
             _ => unreachable!(),
         }
         let error = handler
-            .handle_trade_settled(event, 1_101)
+            .handle_trade_matched(event, 1_101)
             .await
             .unwrap_err();
         assert!(
@@ -692,7 +694,7 @@ async fn trade_settled_rejects_conflicting_details_without_publishing() {
 }
 
 #[tokio::test]
-async fn trade_settled_preserves_replayed_statuses() {
+async fn trade_matched_preserves_replayed_statuses() {
     for (status, updated_at) in [
         (TradeStatus::Matched, Some(960)),
         (TradeStatus::Matched, None),
@@ -704,8 +706,8 @@ async fn trade_settled_preserves_replayed_statuses() {
         let app = init_app().await;
         let server = mock_gateway().await;
         let handler = evm_handler(&app, &server);
-        seed_settlement_orders(&app).await;
-        let event = trade_settled_event();
+        seed_match_orders(&app).await;
+        let event = trade_matched_event();
         let expected = DbTradeSchema {
             status: status.clone(),
             status_updated_at: updated_at,
@@ -730,7 +732,7 @@ async fn trade_settled_preserves_replayed_statuses() {
         }
         for (index, timestamp) in [1_100, 1_300].into_iter().enumerate() {
             handler
-                .handle_trade_settled(event.clone(), timestamp)
+                .handle_trade_matched(event.clone(), timestamp)
                 .await
                 .unwrap();
             let stored = app.db_wrapper.trades().get_all_trades().await.unwrap();
@@ -773,12 +775,12 @@ async fn trade_settled_preserves_replayed_statuses() {
 }
 
 #[tokio::test]
-async fn trade_settled_replay_completes_a_partially_persisted_fill() {
+async fn trade_matched_replay_completes_a_partially_persisted_fill() {
     let app = init_app().await;
     let server = mock_gateway().await;
     let handler = evm_handler(&app, &server);
-    seed_settlement_orders(&app).await;
-    let event = trade_settled_event();
+    seed_match_orders(&app).await;
+    let event = trade_matched_event();
     // Simulate an order that has not been indexed yet: the trade and bid write succeed.
     app.db_wrapper
         .orders()
@@ -786,7 +788,7 @@ async fn trade_settled_replay_completes_a_partially_persisted_fill() {
         .await
         .unwrap();
     assert!(handler
-        .handle_trade_settled(event.clone(), 1_100)
+        .handle_trade_matched(event.clone(), 1_100)
         .await
         .is_err());
     let trades = app.db_wrapper.trades().get_all_trades().await.unwrap();
@@ -802,7 +804,7 @@ async fn trade_settled_replay_completes_a_partially_persisted_fill() {
         .handle_order_placed(order_placed_event(event.offer_id, false), 950)
         .await
         .unwrap();
-    // Closure can be indexed before this delayed settlement is retried.
+    // Closure can be indexed before this delayed match is retried.
     app.db_wrapper
         .orders()
         .expire_market_orders(&bytes16_to_hex(event.market_id), 1_150)
@@ -810,7 +812,7 @@ async fn trade_settled_replay_completes_a_partially_persisted_fill() {
         .unwrap();
     for (index, timestamp) in [1_100, 1_101].into_iter().enumerate() {
         handler
-            .handle_trade_settled(event.clone(), timestamp)
+            .handle_trade_matched(event.clone(), timestamp)
             .await
             .unwrap();
         let messages = wait_for_gateway_messages(&server, (index + 1) * 2).await;
@@ -864,18 +866,18 @@ async fn market_clearing_publishes_clearing_result_event() {
 }
 
 #[tokio::test]
-async fn replay_recovers_partial_settlement_without_rewinding_verified_orders() {
+async fn replay_recovers_partial_match_without_rewinding_verified_orders() {
     let app = init_app().await;
     let handler = OffchainStorageEvmHandler {
         db: app.db_wrapper.clone(),
         event_publisher: None,
     };
-    let event = trade_settled_event();
+    let event = trade_matched_event();
     let bid = order_placed_event(event.bid_id, true);
     handler.handle_order_placed(bid.clone(), 950).await.unwrap();
     // Fail after writing the trade and bid, then make the missing offer available.
     assert!(handler
-        .handle_trade_settled(event.clone(), 1_100)
+        .handle_trade_matched(event.clone(), 1_100)
         .await
         .is_err());
     assert_eq!(
@@ -901,7 +903,7 @@ async fn replay_recovers_partial_settlement_without_rewinding_verified_orders() 
         .await
         .unwrap();
     handler
-        .handle_trade_settled(event.clone(), 1_100)
+        .handle_trade_matched(event.clone(), 1_100)
         .await
         .unwrap();
     handler
@@ -916,7 +918,7 @@ async fn replay_recovers_partial_settlement_without_rewinding_verified_orders() 
         .await
         .unwrap();
     handler.handle_order_placed(bid, 950).await.unwrap();
-    handler.handle_trade_settled(event, 1_100).await.unwrap();
+    handler.handle_trade_matched(event, 1_100).await.unwrap();
     let orders = app.db_wrapper.orders().get_all_orders().await.unwrap();
     assert_eq!(orders.len(), 2);
     assert!(orders
@@ -1044,13 +1046,13 @@ async fn order_status_notifications_follow_consumed_orders_and_independent_resid
         assert_order_status_event(&app, &messages, &[(parent_id, OrderStatus::Submitted)], 960)
             .await;
 
-        let mut settled = trade_settled_event();
+        let mut matched_event = trade_matched_event();
         if residual_is_bid {
-            settled.residual_bid_id = [0x07; 16];
+            matched_event.residual_bid_id = [0x07; 16];
         } else {
-            settled.residual_offer_id = [0x07; 16];
+            matched_event.residual_offer_id = [0x07; 16];
         }
-        handler.handle_trade_settled(settled, 1_100).await.unwrap();
+        handler.handle_trade_matched(matched_event, 1_100).await.unwrap();
         let messages = wait_for_gateway_messages(&server, 3).await;
         let bid_status = if residual_is_bid {
             OrderStatus::PartiallyFilled
@@ -1264,7 +1266,14 @@ fn facility(facility_id: &str, owner_id: &str) -> FacilitySchema {
         facility_name: format!("Facility {}", facility_id),
         site_id: "site-1".to_string(),
         owner_id: owner_id.to_string(),
+        valid_from: EPOCH_RFC3339.to_string(),
+        valid_until: None,
     }
+}
+
+/// `facility` as a `facility.event` carries it.
+fn facility_json(facility_id: &str, owner_id: &str) -> Value {
+    json!(EwdsFacilityDto::from(facility(facility_id, owner_id)))
 }
 
 fn measurement_data(facility_id: &str, time_slot: u64, energy_kwh: f64) -> Value {
@@ -1311,8 +1320,8 @@ async fn handle_event_saves_facilities_sites_and_communities() {
             EwdsEventType::Facility,
             "facility-event",
             json!([
-                facility("facility-1", "owner-1"),
-                facility("facility-2", "owner-2")
+                facility_json("facility-1", "owner-1"),
+                facility_json("facility-2", "owner-2")
             ]),
         ),
     )
@@ -1324,6 +1333,7 @@ async fn handle_event_saves_facilities_sites_and_communities() {
             EwdsEventType::Site,
             "site-event",
             json!([{
+                "site_id": "site-1",
                 "site_name": "site-1",
                 "site_description": "Main building",
                 "facilities": ["facility-1", "facility-2"],
@@ -1347,7 +1357,7 @@ async fn handle_event_saves_facilities_sites_and_communities() {
     .await
     .unwrap();
 
-    let mut facilities = db.facilities().get_all().await.unwrap();
+    let mut facilities = stored(db.facilities()).await;
     facilities.sort_by(|a, b| a.facility_id.cmp(&b.facility_id));
     assert_eq!(
         facilities,
@@ -1357,28 +1367,34 @@ async fn handle_event_saves_facilities_sites_and_communities() {
         ]
     );
     assert_eq!(
-        db.sites().get_all().await.unwrap(),
+        stored(db.sites()).await,
         vec![SiteSchema {
+            site_id: "site-1".to_string(),
             site_name: "site-1".to_string(),
             site_description: "Main building".to_string(),
             facilities: vec!["facility-1".to_string(), "facility-2".to_string()],
+            valid_from: EPOCH_RFC3339.to_string(),
+            valid_until: None,
         }]
     );
     assert_eq!(
-        db.communities().get_all().await.unwrap(),
+        stored(db.communities()).await,
         vec![EnergyCommunitySchema {
             community_id: "11111111-1111-4111-8111-111111111111".to_string(),
             community_name: "Community 1".to_string(),
             sites: vec!["site-1".to_string()],
+            valid_from: EPOCH_RFC3339.to_string(),
+            valid_until: None,
         }]
     );
 
     stop_app(app).await;
 }
 
-/// Sends batches of `(id, name)` records as `event_type` events and returns the `(id, name)`
-/// pairs stored afterwards. The first batch is stored; every later one conflicts with it or
-/// with itself, so it must be rejected without writing anything.
+/// Sends batches of `(id, name)` records as `event_type` events and checks the `(id, name)`
+/// pairs stored afterwards. The first batch is stored. The next ones use the name of another
+/// latest entry, or repeat an id or a name, so they must be rejected without writing anything.
+/// Then a rename is stored, after which the old name is free for another id.
 async fn assert_conflicting_batches_are_rejected<F, G>(
     event_type: EwdsEventType,
     record: F,
@@ -1408,9 +1424,7 @@ async fn assert_conflicting_batches_are_rejected<F, G>(
     .await
     .unwrap();
 
-    let conflicting: [&[(&str, &str)]; 4] = [
-        // A stored id under another name.
-        &[("00000000-0000-4000-8000-000000000001", "name-2")],
+    let conflicting: [&[(&str, &str)]; 3] = [
         // A stored name under another id, after a valid record that must not be written.
         &[
             ("00000000-0000-4000-8000-000000000003", "name-3"),
@@ -1451,21 +1465,56 @@ async fn assert_conflicting_batches_are_rejected<F, G>(
     .unwrap();
     assert_eq!(stored(db.clone()).await, initial);
 
+    // A rename is fine, and frees the old name.
+    handle_event(
+        db,
+        event(
+            event_type,
+            "rename",
+            batch(&[("00000000-0000-4000-8000-000000000001", "name-1b")]),
+        ),
+    )
+    .await
+    .unwrap();
+    handle_event(
+        db,
+        event(
+            event_type,
+            "reuse",
+            batch(&[("00000000-0000-4000-8000-000000000002", "name-1")]),
+        ),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        stored(db.clone()).await,
+        vec![
+            (
+                "00000000-0000-4000-8000-000000000001".to_string(),
+                "name-1b".to_string()
+            ),
+            (
+                "00000000-0000-4000-8000-000000000002".to_string(),
+                "name-1".to_string()
+            ),
+        ]
+    );
+
     stop_app(app).await;
 }
 
 #[tokio::test]
-async fn handle_event_rejects_facilities_that_conflict_with_stored_ids_or_names() {
+async fn handle_event_rejects_facilities_with_names_of_other_entries_and_accepts_renames() {
     assert_conflicting_batches_are_rejected(
         EwdsEventType::Facility,
         |id, name| {
-            json!(FacilitySchema {
+            json!(EwdsFacilityDto::from(FacilitySchema {
                 facility_name: name.to_string(),
                 ..facility(id, "owner-1")
-            })
+            }))
         },
         |db| async move {
-            let mut facilities = db.facilities().get_all().await.unwrap();
+            let mut facilities = stored(db.facilities()).await;
             facilities.sort_by(|a, b| a.facility_id.cmp(&b.facility_id));
             facilities
                 .into_iter()
@@ -1477,12 +1526,12 @@ async fn handle_event_rejects_facilities_that_conflict_with_stored_ids_or_names(
 }
 
 #[tokio::test]
-async fn handle_event_rejects_communities_that_conflict_with_stored_ids_or_names() {
+async fn handle_event_rejects_communities_with_names_of_other_entries_and_accepts_renames() {
     assert_conflicting_batches_are_rejected(
         EwdsEventType::Community,
         |id, name| json!({"communityId": id, "communityName": name, "sites": []}),
         |db| async move {
-            let mut communities = db.communities().get_all().await.unwrap();
+            let mut communities = stored(db.communities()).await;
             communities.sort_by(|a, b| a.community_id.cmp(&b.community_id));
             communities
                 .into_iter()
@@ -1491,44 +1540,6 @@ async fn handle_event_rejects_communities_that_conflict_with_stored_ids_or_names
         },
     )
     .await;
-}
-
-#[tokio::test]
-async fn community_events_normalize_ids_and_drop_invalid_batches() {
-    let app = init_app().await;
-    for id in [
-        "ABCDEFAB-1234-1234-1234-ABCDEFABCDEF",
-        "0xabcdefab123412341234abcdefabcdef",
-    ] {
-        handle_event(
-            &app.db_wrapper,
-            event(
-                EwdsEventType::Community,
-                "canonical",
-                json!([
-                    {"communityId": id, "communityName": "Canonical", "sites": []}
-                ]),
-            ),
-        )
-        .await
-        .unwrap();
-    }
-    let communities = app.db_wrapper.communities().get_all().await.unwrap();
-    assert_eq!(communities.len(), 1);
-    assert_eq!(
-        communities[0].community_id,
-        "abcdefab-1234-1234-1234-abcdefabcdef"
-    );
-    let error = handle_event(&app.db_wrapper, event(EwdsEventType::Community, "invalid", json!([
-        {"communityId": "22222222-2222-4222-8222-222222222222", "communityName": "Not stored", "sites": []},
-        {"communityId": "invalid", "communityName": "Invalid", "sites": []}
-    ]))).await.unwrap_err();
-    assert!(is_invalid_event(&error));
-    assert_eq!(
-        app.db_wrapper.communities().get_all().await.unwrap(),
-        communities
-    );
-    stop_app(app).await;
 }
 
 #[tokio::test]
@@ -1621,7 +1632,7 @@ async fn handle_event_stores_nothing_from_a_batch_with_an_invalid_facility() {
             EwdsEventType::Facility,
             "facility-event",
             json!([
-                facility("facility-1", "owner-1"),
+                facility_json("facility-1", "owner-1"),
                 {"facility_id": "facility-2"}
             ]),
         ),
@@ -1631,13 +1642,7 @@ async fn handle_event_stores_nothing_from_a_batch_with_an_invalid_facility() {
 
     assert!(format!("{error:#}").contains("index 1"), "{error:#}");
     assert!(is_invalid_event(&error));
-    assert!(app
-        .db_wrapper
-        .facilities()
-        .get_all()
-        .await
-        .unwrap()
-        .is_empty());
+    assert!(stored(app.db_wrapper.facilities()).await.is_empty());
 
     stop_app(app).await;
 }
@@ -1653,7 +1658,7 @@ async fn handle_event_updates_the_record_when_an_event_arrives_again() {
             event(
                 EwdsEventType::Facility,
                 "facility-event",
-                json!([facility("facility-1", owner_id)]),
+                json!([facility_json("facility-1", owner_id)]),
             ),
         )
         .await
@@ -1673,7 +1678,7 @@ async fn handle_event_updates_the_record_when_an_event_arrives_again() {
     }
 
     assert_eq!(
-        db.facilities().get_all().await.unwrap(),
+        stored(db.facilities()).await,
         vec![facility("facility-1", "owner-2")]
     );
     assert_eq!(
@@ -1694,7 +1699,7 @@ async fn handle_event_rejects_invalid_data_and_events_gsy_publishes() {
         event(
             EwdsEventType::Facility,
             "facility-event",
-            json!(facility("facility-1", "owner-1")),
+            facility_json("facility-1", "owner-1"),
         ),
     )
     .await
@@ -1710,7 +1715,7 @@ async fn handle_event_rejects_invalid_data_and_events_gsy_publishes() {
             .await
             .is_err()
     );
-    assert!(db.facilities().get_all().await.unwrap().is_empty());
+    assert!(stored(db.facilities()).await.is_empty());
 
     stop_app(app).await;
 }
@@ -1723,12 +1728,12 @@ async fn event_subscriber_skips_bad_messages_and_saves_the_next_one() {
     let wrong_topic_event = event(
         EwdsEventType::Site,
         "site-event",
-        json!([{"site_name": "wrong-topic-site", "site_description": "", "facilities": []}]),
+        json!([{"site_id": "wrong-topic-site", "site_name": "wrong-topic-site", "site_description": "", "facilities": []}]),
     );
     let facility_event = event(
         EwdsEventType::Facility,
         "facility-event",
-        json!([facility("facility-1", "owner-1")]),
+        json!([facility_json("facility-1", "owner-1")]),
     );
     Mock::given(method("GET"))
         .and(path("/api/v2/messages"))
@@ -1754,7 +1759,7 @@ async fn event_subscriber_skips_bad_messages_and_saves_the_next_one() {
     ));
     let mut facilities = Vec::new();
     for _ in 0..100 {
-        facilities = app.db_wrapper.facilities().get_all().await.unwrap();
+        facilities = stored(app.db_wrapper.facilities()).await;
         if !facilities.is_empty() {
             break;
         }
@@ -1763,7 +1768,7 @@ async fn event_subscriber_skips_bad_messages_and_saves_the_next_one() {
     subscriber.abort();
 
     assert_eq!(facilities, vec![facility("facility-1", "owner-1")]);
-    assert!(app.db_wrapper.sites().get_all().await.unwrap().is_empty());
+    assert!(stored(app.db_wrapper.sites()).await.is_empty());
 
     stop_app(app).await;
 }

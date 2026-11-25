@@ -15,7 +15,18 @@ name = "gsy-offchain-storage"
 primitives = { workspace = true }
 gsy-ethers-listener = { workspace = true }
 anyhow = { workspace = true }
-actix-web = "4.5.1"
+# Default features minus `cookies`: the service sets no cookies, and actix-web 4.x pins
+# cookie 0.16, which has no fix for RUSTSEC-2026-0594.
+actix-web = { version = "4.18.2", default-features = false, features = [
+    "macros",
+    "compress-brotli",
+    "compress-gzip",
+    "compress-zstd",
+    "http2",
+    "unicode",
+    "compat",
+    "ws",
+] }
 chrono = { workspace = true }
 config = "0.15.18"
 dotenv = "0.15.0"

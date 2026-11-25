@@ -7,7 +7,7 @@ use ethers::{
 };
 use gsy_ethers_listener::{
     GsyEthersListener, GsyEventHandler, ListenerConfig, MarketClearingFilter,
-    NewMarketCreatedFilter, OrderCancelledFilter, OrderPlacedFilter, TradeSettledFilter,
+    NewMarketCreatedFilter, OrderCancelledFilter, OrderPlacedFilter, TradeMatchedFilter,
 };
 use std::fs::File;
 use std::io::Write;
@@ -44,7 +44,7 @@ impl GsyEventHandler for MockHandler {
     async fn handle_order_cancelled(&self, _: OrderCancelledFilter, _: u64) -> Result<()> {
         Ok(())
     }
-    async fn handle_trade_settled(&self, _: TradeSettledFilter, _: u64) -> Result<()> {
+    async fn handle_trade_matched(&self, _: TradeMatchedFilter, _: u64) -> Result<()> {
         Ok(())
     }
     async fn handle_new_market_created(&self, _: NewMarketCreatedFilter) -> Result<()> {
@@ -186,7 +186,7 @@ async fn start_listener_on_mock_chain() -> Result<TestChain> {
     let config = ListenerConfig {
         node_url: ws_endpoint.clone(),
         order_registry_address: contract_address,
-        trade_settlement_address: contract_address,
+        trade_matching_address: contract_address,
         market_controller_address: contract_address,
     };
 

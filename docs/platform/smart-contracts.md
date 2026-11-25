@@ -15,7 +15,7 @@ The contract suite uses the OpenZeppelin transparent proxy pattern:
 - Each proxy is controlled by a `ProxyAdmin` contract.
 - `PROXY_ADMIN_PRIVATE_KEY` controls the `ProxyAdmin` ownership during deployment.
 - Services must always use the proxy addresses (`ACTOR_REGISTRY_ADDRESS`,
-  `MARKET_CONTROLLER_ADDRESS`, `ORDER_REGISTRY_ADDRESS`, `TRADE_SETTLEMENT_ADDRESS`),
+  `MARKET_CONTROLLER_ADDRESS`, `ORDER_REGISTRY_ADDRESS`, `TRADE_MATCHING_ADDRESS`),
   not the implementation addresses.
 
 Implementations use OpenZeppelin upgradeable base contracts, `initialize(...)`
@@ -121,7 +121,7 @@ Purpose:
 - Views: `marketsExist(bytes16[])` (existence of many markets in one call,
   used by the orchestrator), `isMarketOpen(bytes16)` (used by
   `OrderRegistry`) and `getMatchingAlgorithm(bytes16)` (used by
-  `TradeSettlement` to decide whether a settlement must be uniformly priced;
+  `TradeMatching` to decide whether a match batch must be uniformly priced;
   a missing market reports `PayAsBid`). The full record is read from
   `NewMarketCreated` or from off-chain storage; there is no record getter.
 - Enum values: `MarketType` `Spot=0, Flex=1, Settlement=2`;
@@ -145,29 +145,42 @@ Purpose:
 - Emits the complete order metadata in `OrderPlaced`, allowing the event
   listener to reconstruct the off-chain order without a separate update.
 - Emits `OrderCancelled` and `OrderStatusUpdated` lifecycle events.
-- `settleOrder` consumes an open order and registers any residual atomically,
-  copying stored metadata and reducing only its energy. It requires `SETTLEMENT_ROLE`.
+- `fillOrder` consumes an open order and registers any residual atomically,
+  copying stored metadata and reducing only its energy. It requires `MATCHING_ROLE`.
+- Both `getStatus` and `orderStatus` derive `Expired` for an open order once its
+  market closes. This includes residuals. Matching and cancellation reject
+  these orders; consumed statuses remain unchanged. Market windows are immutable,
+  so recreating an existing market ID cannot reactivate expired orders.
+- Expiry requires no per-order transaction or `OrderStatusUpdated` event. Storage
+  derives it from confirmed block timestamps and the indexed `NewMarketCreated`
+  closing time, after indexing the block's contract events.
+
+DD-439 replaces the old boolean market mapping with full market records. This is
+not a storage-compatible upgrade of the old `MarketController`. Use a fresh,
+coordinated deployment and matching contract addresses for all services, and
+rebuild the corresponding off-chain market projection. Do not upgrade an existing
+boolean-mapping deployment in place without a separately designed migration.
 
 DD-457 also requires a fresh `OrderRegistry` deployment: its initializer now
 accepts only `(admin, marketController)`, and removing the `ActorRegistry` storage
 reference shifts subsequent slots. Do not upgrade an existing registry in place.
 
-### `TradeSettlement`
+### `TradeMatching`
 
 Purpose:
 
-- Validates and settles matched trades (`settleBatch`).
+- Validates and records matched trades (`submitMatches`).
 - Marks consumed orders `Filled` or `PartiallyFilled` and registers residuals as
   separate `Open` orders. Existing status enum values are preserved; the appended
   values are `PartiallyFilled = 5` and `Filled = 6`.
-- Emits all settlement data needed by off-chain storage to create a Trade object.
+- Emits all match data needed by off-chain storage to create a Trade object.
 - Records penalties via `submitPenalties`.
 - Holds an optional market-wide price band (`priceFloor`, `priceCap`) that
-  every settled match must fall within. The admin sets it with
+  every match must fall within. The admin sets it with
   `setPriceBounds(floor, cap)`; `0` disables the respective bound, and
   `PriceBoundsUpdated` is emitted on every change. Values are the scaled
   integer rates used on-chain.
-- Stores the consumed order IDs for each new settlement; trade IDs cannot be reused.
+- Stores the consumed order IDs for each new match; trade IDs cannot be reused.
 - Accepts idempotent `completeDeliveryVerification` batches from
   `EXECUTION_ENGINE_ROLE`. Penalties and `Executed` order statuses are recorded
   in the same transaction, followed by `DeliveryVerified(tradeId,bidId,offerId)`.
@@ -176,39 +189,39 @@ Purpose:
 
 The earlier delivery-verification change appended storage without changing existing
 proxy slots; DD-457's registry change requires the fresh deployment noted above.
-Trades settled before delivery verification was introduced have no stored order-ID
+Trades matched before delivery verification was introduced have no stored order-ID
 linkage and cannot use the completion call without a separate audited migration.
 No historical records or verdicts are fabricated/backfilled automatically.
 
-`TradeSettlement` does not move funds. Billing and payment are handled by external services.
+`TradeMatching` does not move funds. Billing and payment are handled by external services.
 
 ### Shared Order Parameters
 
 `OrderRegistry.OrderParams` is the single Solidity order definition used by
-`placeOrder`, `getOrder`, and both orders in `TradeSettlement.Match`. It includes
+`placeOrder`, `getOrder`, and both orders in `TradeMatching.Match`. It includes
 `isBid`, `preferredTradingPartner` and `preferredEnergyRate` alongside the
 identity, energy, and timing fields. There is no separate
-`TradeSettlement.OrderData` definition.
+`TradeMatching.OrderData` definition.
 
-Settlement verifies these fields against the stored orders and requires
+`submitMatches` verifies these fields against the stored orders and requires
 `isBid=true` for the bid and `isBid=false` for the offer. Contextual partner and
 price validation additionally depends on `Match.matchType`.
 
 ### Match Type and Compatibility
 
 `Match` ends with `MatchType matchType`: `Standard = 0`, `Preferred = 1`.
-Adding this field changes the `settleBatch` calldata ABI and function selector.
+Adding this field changes the `submitMatches` calldata ABI and function selector.
 The matcher and every direct caller must use the matching contract ABI; old
-calldata is not compatible. The flag is not added to `TradeSettled` or storage.
+calldata is not compatible. The flag is not added to `TradeMatched` or storage.
 It describes the submitted match, not the residual order's eligibility in a
 later phase.
 
-`settleBatch` accepts `MarketSettlement[]`: each entry contains `Match[] matches`
+`submitMatches` accepts `MarketMatchBatch[]`: each entry contains `Match[] matches`
 and a `ClearingResult`. The contract checks that `tradedQuantity` equals the sum
 of selected energy in that entry and emits `MarketClearing` after its trades.
 Callers must include this per-market envelope as well as each match's type.
 
-Deploy the registry and settlement implementations together with the
+Deploy the registry and `TradeMatching` implementations together with the
 updated matcher. For local validation, run `./scripts/contracts.sh local deploy`
 and restart services using the refreshed `contracts-output/addresses.env`.
 
@@ -220,13 +233,13 @@ Deployment script assigns:
 - `ACTOR_REGISTRAR_ROLE` on `ActorRegistry` -> actor registrar signer.
 - `ORCHESTRATOR_ROLE` on `MarketController` -> orchestrator signer.
 - `COMMUNITY_CLIENT_ROLE` on `OrderRegistry` -> community-client signer.
-- `SETTLEMENT_ROLE` on `OrderRegistry` -> `TradeSettlement`.
-- `OPERATOR_ROLE` on `TradeSettlement` -> matching engine signer.
-- `EXECUTION_ENGINE_ROLE` on `TradeSettlement` -> execution engine signer.
+- `MATCHING_ROLE` on `OrderRegistry` -> `TradeMatching`.
+- `OPERATOR_ROLE` on `TradeMatching` -> matching engine signer.
+- `EXECUTION_ENGINE_ROLE` on `TradeMatching` -> execution engine signer.
 
-## Settlement Invariants
+## Matching Invariants
 
-`settleBatch` enforces:
+`submitMatches` enforces:
 
 - Both order UUIDs are currently open.
 - Submitted order data matches the canonical `OrderRegistry` data.
@@ -245,16 +258,16 @@ Deployment script assigns:
 - The match price lies within the configured price band
   (`priceFloor <= clearingPrice <= priceCap`, each bound ignored when `0`),
   for `Standard` and `Preferred` matches alike; otherwise `PriceOutOfBounds`.
-- Uniform pricing: when the settlement's market was created with
-  `MatchingAlgorithm.PayAsClear`, every `Standard` match in that settlement
+- Uniform pricing: when the batch's market was created with
+  `MatchingAlgorithm.PayAsClear`, every `Standard` match in that batch
   must carry the same `clearingPrice`; otherwise `NonUniformClearingPrice`.
   `Preferred` matches are bilateral and keep their own rate. The contract
   reads the algorithm from `MarketController.getMatchingAlgorithm`, so the
   check applies regardless of how the matching engine was configured. It does
   not compare the match price with `ClearingResult.clearingPrice`.
 
-If checks pass, settlement marks consumed orders `Filled`/`PartiallyFilled` and
-emits `OrderPlaced` for their residuals and `TradeSettled` for the trade.
+If checks pass, `submitMatches` marks consumed orders `Filled`/`PartiallyFilled` and
+emits `OrderPlaced` for their residuals and `TradeMatched` for the trade.
 `Executed` is reserved for subsequent delivery verification. Later matches may
 consume residuals within the same batch or a subsequent transaction.
 An invalid match reverts the entire batch, including residual creation.

@@ -1,11 +1,14 @@
 use ::primitives::{
     constants::GLOBAL_CONSTANTS,
-    db_api_schema::trades::{DbTradeSchema, TradeParameters, TradeStatus},
+    db_api_schema::{
+        market::{MarketChainRecord, MarketSchema},
+        trades::{DbTradeSchema, TradeParameters, TradeStatus},
+    },
     ewds::dto::EwdsTradeDto,
     offchain_storage::OffchainStorageTransport,
     utils::{
-        bytes16_to_hex, derive_onchain_id, epoch_to_rfc3339,
-        parse_uuid_or_hex_bytes16, timestamp_to_string_with_padding,
+        bytes16_to_hex, derive_onchain_id, epoch_to_rfc3339, parse_uuid_or_hex_bytes16,
+        timestamp_to_string_with_padding,
     },
 };
 use chrono::{DateTime, Duration, Utc};
@@ -17,8 +20,7 @@ use ethers_solc::{artifacts::Severity, Project, ProjectPathsConfig};
 use gsy_execution_engine::{
     connectors::evm_connector::{complete_delivery_verification, submit_penalties},
     primitives::penalty_calculator::{DeliveryVerification, Penalty},
-    services::execution_orchestrator::run_execution_cycle,
-    timeslot_scheduler::TimeslotScheduler,
+    services::execution_orchestrator::run_execution_cycle, timeslot_scheduler::TimeslotScheduler,
 };
 use serde_json::json;
 use std::{fs::File, io::Write, sync::Arc};
@@ -31,16 +33,16 @@ const PRIVATE_KEY: &str = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae7
 type TestClient = SignerMiddleware<Provider<Ws>, LocalWallet>;
 
 abigen!(
-    MockTradeSettlement,
+    MockTradeMatching,
     r#"[
         function penaltyEnergyByTrade(bytes16 tradeId) external view returns (uint256)
         function penaltyEnergyByActor(bytes16 actorId) external view returns (uint256)
-        function settledTrades(bytes16 tradeId) external view returns (bytes16 bidId, bytes16 offerId, bool verified)
+        function matchedTrades(bytes16 tradeId) external view returns (bytes16 bidId, bytes16 offerId, bool verified)
         function registerTrade(bytes16 tradeId, bytes16 bidId, bytes16 offerId, bytes16 buyer, bytes16 seller) external
     ]"#
 );
 
-async fn deploy_trade_settlement() -> (AnvilInstance, MockTradeSettlement<TestClient>) {
+async fn deploy_trade_matching() -> (AnvilInstance, MockTradeMatching<TestClient>) {
     let anvil = Anvil::new().spawn();
     let ws_endpoint = anvil.ws_endpoint();
     let wallet: LocalWallet = anvil.keys()[0].clone().into();
@@ -53,18 +55,18 @@ async fn deploy_trade_settlement() -> (AnvilInstance, MockTradeSettlement<TestCl
     let temp_dir = TempDir::new().unwrap();
     let contracts_dir = temp_dir.path().join("contracts");
     std::fs::create_dir(&contracts_dir).unwrap();
-    let source_path = contracts_dir.join("MockTradeSettlement.sol");
+    let source_path = contracts_dir.join("MockTradeMatching.sol");
     let source = r#"
         // SPDX-License-Identifier: MIT
         pragma solidity ^0.8.20;
 
-        contract MockTradeSettlement {
+        contract MockTradeMatching {
             bytes32 public constant EXECUTION_ENGINE_ROLE = keccak256("EXECUTION_ENGINE_ROLE");
             mapping(address => mapping(bytes32 => bool)) private roles;
             mapping(bytes16 => uint256) public penaltyEnergyByTrade;
             mapping(bytes16 => uint256) public penaltyEnergyByActor;
 
-            struct SettledTrade {
+            struct MatchedTrade {
                 bytes16 bidId;
                 bytes16 offerId;
                 bool verified;
@@ -74,12 +76,12 @@ async fn deploy_trade_settlement() -> (AnvilInstance, MockTradeSettlement<TestCl
                 uint64 buyerPenaltyEnergy;
                 uint64 sellerPenaltyEnergy;
             }
-            mapping(bytes16 => SettledTrade) public settledTrades;
+            mapping(bytes16 => MatchedTrade) public matchedTrades;
             mapping(bytes16 => bytes16) private buyers;
             mapping(bytes16 => bytes16) private sellers;
 
             function registerTrade(bytes16 tradeId, bytes16 bidId, bytes16 offerId, bytes16 buyer, bytes16 seller) external {
-                settledTrades[tradeId] = SettledTrade(bidId, offerId, false);
+                matchedTrades[tradeId] = MatchedTrade(bidId, offerId, false);
                 buyers[tradeId] = buyer;
                 sellers[tradeId] = seller;
             }
@@ -88,7 +90,7 @@ async fn deploy_trade_settlement() -> (AnvilInstance, MockTradeSettlement<TestCl
                 require(roles[msg.sender][EXECUTION_ENGINE_ROLE], "missing execution engine role");
                 for (uint256 i = 0; i < verifications.length; i++) {
                     DeliveryVerification calldata verification = verifications[i];
-                    SettledTrade storage trade = settledTrades[verification.tradeId];
+                    MatchedTrade storage trade = matchedTrades[verification.tradeId];
                     require(trade.bidId != bytes16(0), "unknown trade");
                     if (trade.verified) continue;
                     trade.verified = true;
@@ -153,9 +155,9 @@ async fn deploy_trade_settlement() -> (AnvilInstance, MockTradeSettlement<TestCl
         .contracts
         .values()
         .flat_map(|inner| inner.iter())
-        .find(|(name, _)| *name == "MockTradeSettlement")
+        .find(|(name, _)| *name == "MockTradeMatching")
         .map(|(_, artifact)| artifact)
-        .expect("MockTradeSettlement artifact not found");
+        .expect("MockTradeMatching artifact not found");
 
     let contract = &contract_list
         .first()
@@ -179,12 +181,12 @@ async fn deploy_trade_settlement() -> (AnvilInstance, MockTradeSettlement<TestCl
     let contract = factory.deploy(()).unwrap().send().await.unwrap();
     let contract_address = contract.address();
 
-    (anvil, MockTradeSettlement::new(contract_address, client))
+    (anvil, MockTradeMatching::new(contract_address, client))
 }
 
 #[tokio::test]
-async fn test_submit_penalties_persists_to_trade_settlement_contract() {
-    let (anvil, mock_contract) = deploy_trade_settlement().await;
+async fn test_submit_penalties_persists_to_trade_matching_contract() {
+    let (anvil, mock_contract) = deploy_trade_matching().await;
     let penalized = format!("0x{}", "aa".repeat(16));
     let trade_uuid = Uuid::new_v4().to_string();
     let penalties = vec![
@@ -239,8 +241,8 @@ fn late_trade(id: u8, market: u8, creation_time: u64) -> DbTradeSchema {
         trade_uuid: bytes16_to_hex([id; 16]),
         status: TradeStatus::Matched,
         status_updated_at: None,
-        seller: derive_onchain_id("bob"),
-        buyer: derive_onchain_id("alice"),
+        seller: derive_onchain_id(&format!("bob-{id}")),
+        buyer: derive_onchain_id(&format!("alice-{id}")),
         market_id: bytes16_to_hex([market; 16]),
         creation_time,
         offer_hash: bytes16_to_hex([id + 10; 16]),
@@ -261,7 +263,7 @@ async fn mount_slot_records(
     measured_energy: Option<f64>,
     fail_query: bool,
 ) {
-    let end = slot + GLOBAL_CONSTANTS.time_slot_sec - 1;
+    let end = slot + GLOBAL_CONSTANTS.time_slot_sec;
     let response = if fail_query {
         ResponseTemplate::new(500)
     } else {
@@ -281,14 +283,22 @@ async fn mount_slot_records(
         .mount(server)
         .await;
     let timeseries: Vec<_> = measured_energy
-        .map(|value| {
-            json!({
-                "measurement_point": "measurement-alice",
-                "timestamp": timestamp_to_string_with_padding(slot),
-                "value": value,
+        .into_iter()
+        .flat_map(|value| {
+            trades.iter().flat_map(move |trade| {
+                [
+                    (&trade.buyer, value),
+                    (&trade.seller, -trade.parameters.selected_energy_kWh),
+                ]
+                .map(|(party, reading)| {
+                    json!({
+                        "measurement_point": party,
+                        "timestamp": timestamp_to_string_with_padding(slot),
+                        "value": reading,
+                    })
+                })
             })
         })
-        .into_iter()
         .collect();
     Mock::given(method("GET"))
         .and(path("/timeseries"))
@@ -298,16 +308,37 @@ async fn mount_slot_records(
         ))
         .and(query_param(
             "end_time",
-            timestamp_to_string_with_padding(end),
+            timestamp_to_string_with_padding(end - 1),
         ))
         .respond_with(ResponseTemplate::new(200).set_body_json(timeseries))
         .mount(server)
         .await;
+
+    if let Some(trade) = trades.first() {
+        let market = MarketSchema::try_from(MarketChainRecord {
+            market_id: parse_uuid_or_hex_bytes16(&trade.market_id).unwrap(),
+            community_id: [1; 16],
+            opening_time: slot,
+            closing_time: end,
+            delivery_start_time: slot,
+            delivery_end_time: end,
+            market_type: 0,
+            matching_algorithm: 0,
+            created_at: slot,
+        })
+        .unwrap();
+        Mock::given(method("GET"))
+            .and(path("/market"))
+            .and(query_param("market_id", &trade.market_id))
+            .respond_with(ResponseTemplate::new(200).set_body_json(market))
+            .mount(server)
+            .await;
+    }
 }
 
 #[tokio::test]
 async fn unknown_trade_does_not_block_or_count_as_verified() {
-    let (anvil, contract) = deploy_trade_settlement().await;
+    let (anvil, contract) = deploy_trade_matching().await;
     contract
         .register_trade([1; 16], [2; 16], [3; 16], [4; 16], [5; 16])
         .send()
@@ -334,8 +365,8 @@ async fn unknown_trade_does_not_block_or_count_as_verified() {
             1
         );
     }
-    assert!(contract.settled_trades([1; 16]).call().await.unwrap().2);
-    assert!(!contract.settled_trades([9; 16]).call().await.unwrap().2);
+    assert!(contract.matched_trades([1; 16]).call().await.unwrap().2);
+    assert!(!contract.matched_trades([9; 16]).call().await.unwrap().2);
     assert_eq!(
         contract
             .penalty_energy_by_trade([1; 16])
@@ -353,7 +384,7 @@ async fn late_records_after_rollover_are_processed_once_without_blocking_the_cur
         OffchainStorageTransport::Http,
         "Run this HTTP regression test with OFFCHAIN_STORAGE_TRANSPORT=http"
     );
-    let (anvil, contract) = deploy_trade_settlement().await;
+    let (anvil, contract) = deploy_trade_matching().await;
     let client = contract.client();
     let server = MockServer::start().await;
     let slot_duration = GLOBAL_CONSTANTS.time_slot_sec;
@@ -367,14 +398,17 @@ async fn late_records_after_rollover_are_processed_once_without_blocking_the_cur
         scheduler.calculate_timeslot_at(rollover - Duration::seconds(1)),
         retained
     );
-    let actor_id = parse_uuid_or_hex_bytes16(&derive_onchain_id("alice")).unwrap();
     let current_trade = late_trade(3, 11, current);
     // The retained-slot trades are created after rollover, not inside their delivery window.
-    let mut fully_delivered = late_trade(2, 10, current + 5);
-    fully_delivered.parameters.selected_energy_kWh = 12.0;
-    let retained_trades = [late_trade(1, 10, current + 3), fully_delivered];
-    for trade in std::iter::once(&current_trade).chain(&retained_trades) {
-        let receipt = contract
+    // Use distinct facilities so late indexing does not change an already verified baseline.
+    let mut retained_trades = [
+        late_trade(1, 10, current + 3),
+        late_trade(2, 10, current + 5),
+    ];
+    // A zero-penalty trade must also be finalized only once.
+    retained_trades[1].parameters.selected_energy_kWh = 12.0;
+    for trade in [&current_trade, &retained_trades[0], &retained_trades[1]] {
+        contract
             .register_trade(
                 parse_uuid_or_hex_bytes16(&trade.trade_uuid).unwrap(),
                 parse_uuid_or_hex_bytes16(&trade.bid_hash).unwrap(),
@@ -388,7 +422,6 @@ async fn late_records_after_rollover_are_processed_once_without_blocking_the_cur
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(receipt.status, Some(1u64.into()));
     }
     let initial_nonce = client
         .get_transaction_count(client.address(), None)
@@ -412,26 +445,47 @@ async fn late_records_after_rollover_are_processed_once_without_blocking_the_cur
         Mock::given(method("GET"))
             .and(path("/measurement-points"))
             .and(query_param("type", "Measurement"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
-                "type": "Measurement",
-                "measurement_id": "measurement-alice",
-                "property_measured": "energy_measured",
-                "unit": "kWh",
-                "direction": "Import",
-                "energy_accumulated": false,
-                "time_resolution": "PT15M",
-                "phase": 0,
-                "asset_name": "facility-alice",
-                "datasource_name": "community-1",
-            }])))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(
+                    (1..=3)
+                        .flat_map(|id| {
+                            ["alice", "bob"].map(|party| {
+                                let facility = format!("facility-{party}-{id}");
+                                json!({
+                                    "type": "Measurement",
+                                    "measurement_id": derive_onchain_id(&format!("{party}-{id}")),
+                                    "property_measured": "energy_measured",
+                                    "unit": "kWh",
+                                    "direction": "Import",
+                                    "energy_accumulated": false,
+                                    "time_resolution": "PT15M",
+                                    "phase": 0,
+                                    "asset_name": facility,
+                                    "datasource_name": "community-1",
+                                })
+                            })
+                        })
+                        .collect::<Vec<_>>(),
+                ),
+            )
             .mount(&server)
             .await;
         Mock::given(method("GET"))
             .and(path("/facilities"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-                {"facility_id": "facility-alice", "facility_name": "Alice meter", "site_id": "site-1", "owner_id": "alice"},
-                {"facility_id": "facility-bob", "facility_name": "Bob meter", "site_id": "site-1", "owner_id": "bob"}
-            ])))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                (1..=3)
+                    .flat_map(|id| {
+                        ["alice", "bob"].map(|party| {
+                            json!({
+                                "facility_id": format!("facility-{party}-{id}"),
+                                "facility_name": format!("facility-{party}-{id}"),
+                                "site_id": "site",
+                                "owner_id": format!("{party}-{id}"),
+                            })
+                        })
+                    })
+                    .collect::<Vec<_>>(),
+            ))
             .mount(&server)
             .await;
         mount_slot_records(
@@ -462,6 +516,7 @@ async fn late_records_after_rollover_are_processed_once_without_blocking_the_cur
                 timeslot,
                 0.10,
                 slot_duration,
+                5.0,
             )
             .await;
             if timeslot == retained && fail_query {
@@ -474,7 +529,7 @@ async fn late_records_after_rollover_are_processed_once_without_blocking_the_cur
                 } else {
                     0
                 };
-                // Both newly submitted and previously verified trades count as complete.
+                // The result counts existing on-chain verifications as well as new ones.
                 assert_eq!(result.unwrap(), expected_count);
             }
             assert_eq!(
@@ -489,7 +544,8 @@ async fn late_records_after_rollover_are_processed_once_without_blocking_the_cur
         }
 
         let first_penalty = if elapsed >= 4 { 2_000u64 } else { 0 };
-        for (id, expected, verified) in [(1, first_penalty, elapsed >= 4), (2, 0, elapsed >= 5)] {
+        let second_penalty = 0u64;
+        for (id, expected) in [(1, first_penalty), (2, second_penalty)] {
             assert_eq!(
                 contract
                     .penalty_energy_by_trade([id; 16])
@@ -498,21 +554,24 @@ async fn late_records_after_rollover_are_processed_once_without_blocking_the_cur
                     .unwrap(),
                 U256::from(expected)
             );
+        }
+        for (id, expected) in [(1, first_penalty), (2, second_penalty), (3, 5_000)] {
+            let actor_id =
+                parse_uuid_or_hex_bytes16(&derive_onchain_id(&format!("alice-{id}"))).unwrap();
             assert_eq!(
-                contract.settled_trades([id; 16]).call().await.unwrap().2,
-                verified,
-                "Zero-penalty trades must also be verified exactly once"
+                contract
+                    .penalty_energy_by_actor(actor_id)
+                    .call()
+                    .await
+                    .unwrap(),
+                U256::from(expected),
+                "Repeated polls and restart must not charge an owner twice"
+            );
+            assert_eq!(
+                contract.matched_trades([id; 16]).call().await.unwrap().2,
+                id == 3 || (id == 1 && elapsed >= 4) || (id == 2 && elapsed >= 5),
             );
         }
-        assert_eq!(
-            contract
-                .penalty_energy_by_actor(actor_id)
-                .call()
-                .await
-                .unwrap(),
-            U256::from(5_000 + first_penalty),
-            "Repeated polls and restart must not charge an actor twice"
-        );
         let expected_transactions = 1u64 + u64::from(elapsed >= 4) + u64::from(elapsed >= 5);
         assert_eq!(
             client
@@ -520,7 +579,7 @@ async fn late_records_after_rollover_are_processed_once_without_blocking_the_cur
                 .await
                 .unwrap(),
             initial_nonce + U256::from(expected_transactions),
-            "Already-verified trades must not generate another transaction"
+            "Already-recorded penalties must not generate another transaction"
         );
     }
 

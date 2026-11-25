@@ -2,12 +2,17 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "int.site.schema.v1",
   "title": "GSY Site",
-  "description": "Mirrors the Rust SiteSchema (snake_case wire form).",
+  "description": "Mirrors the Rust EwdsSiteDto (snake_case wire form).",
   "type": "object",
   "additionalProperties": false,
   "properties": {
+    "site_id": {
+      "description": "Unique site identifier. Facilities refer to it as site_id.",
+      "type": "string",
+      "minLength": 1
+    },
     "site_name": {
-      "description": "Unique site name. Facilities refer to it as site_id.",
+      "description": "Human-readable site name, unique among the latest sites.",
       "type": "string",
       "minLength": 1
     },
@@ -17,7 +22,17 @@
       "type": "array",
       "items": { "type": "string", "minLength": 1 },
       "uniqueItems": true
+    },
+    "valid_from": {
+      "description": "When GSY received this version of the entry, in UTC (RFC 3339, whole seconds). Set by the off-chain storage: a value sent with an event is ignored.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "valid_until": {
+      "description": "From when the entry counts as deleted (RFC 3339, any offset, stored in UTC). Leave it out to keep the entry valid. Send the full entry with this field to delete it, and again without it to bring it back.",
+      "type": "string",
+      "format": "date-time"
     }
   },
-  "required": ["site_name", "site_description", "facilities"]
+  "required": ["site_id", "site_name", "site_description", "facilities"]
 }

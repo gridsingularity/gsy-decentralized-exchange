@@ -147,7 +147,7 @@ the next offer, accepted trades share the marginal accepted-offer clearing
 price, and both orders beyond that crossing remain open. The combined scenario
 also verifies that a preferred bilateral trade keeps its negotiated rate while
 the remaining standard order book clears at one uniform price. Both scenarios
-verify on-chain settlement and non-zero execution-engine penalties for every
+verify on-chain matching and non-zero execution-engine penalties for every
 accepted trade.
 
 Both default algorithm runs also include the shared
@@ -155,11 +155,11 @@ Both default algorithm runs also include the shared
 still includes `residual_lifecycle.feature`. An explicit `E2E_FEATURE_PATH` override
 runs only the requested path. The policy cases cover buyer-only, seller-only and
 reciprocal preferences, absent preferred rates, preferred prices outside normal
-limits, pay-as-bid settlement for compatible unequal rates, and standard fallback
+limits, pay-as-bid matching for compatible unequal rates, and standard fallback
 for incompatible partners or rates. They verify indexed values, on-chain
-settlement and the match-type flag in transaction calldata. Residual cases cover
+matching and the match-type flag in transaction calldata. Residual cases cover
 bids and offers consumed in the same batch or a later cycle, checking ID
-continuity, metadata, statuses and exactly-once settlement. These focused cases
+continuity, metadata, statuses and exactly-once matching. These focused cases
 do not exercise penalty scheduling.
 
 Feature selection is independent of the transport configuration:
@@ -401,7 +401,7 @@ EWDS_RATE_LIMIT_MAX_BACKOFF_MS=30000
 EXECUTION_ENGINE_ROLLOVER_GRACE_SECONDS=900
 ```
 
-Over EWDS a scenario can take several minutes, so its trades may only settle
+Over EWDS a scenario can take several minutes, so its trades may only be matched
 after the delivery slot has started. `EXECUTION_ENGINE_ROLLOVER_GRACE_SECONDS=900`
 keeps the execution engine querying that slot for 15 minutes after its target
 rollover, alternating with the current slot. This time-based setting replaces
@@ -435,7 +435,7 @@ Important EWDS variables for test runs:
 
 Current e2e suite validates:
 
-- Standard bid/offer matching and on-chain settlement.
+- Standard bid/offer matching, submitted on-chain.
 - Preference-based matching behavior and preferred price selection.
 - Two-sided pay-as-clear matching, including curve crossing, uniform price,
   and uncleared bid/offer assertions.
@@ -445,7 +445,7 @@ Current e2e suite validates:
   HTTP or EWDS transport.
 - Community-aware market ID derivation and on-chain market opening.
 - Distinct Spot market creation for multiple communities in the same delivery
-  slot, with end-to-end verification that matching, settlement, indexing, and
+  slot, with end-to-end verification that matching, on-chain submission, indexing, and
   penalties remain isolated per community market.
 
 ### DD-423 Order Lifecycle Validation
@@ -474,9 +474,9 @@ Coverage added for DD-423:
   cover expiry at market closure, without advancing the shared E2E chain clock.
   Full delivery reaches `Executed` for the trade and both consumed orders without
   a penalty.
-- Existing settlement/residual scenarios check `Filled`/`PartiallyFilled`
-  and independent residual orders. Penalty scenarios now also require the
-  trade and its consumed orders to become `Executed` with the verification
+- Existing matching/residual scenarios check `Filled`/`PartiallyFilled`
+  and independent residual orders. Penalty scenarios require the trade to remain
+  `Penalized` and its consumed orders to become `Executed` with the verification
   block's timestamp.
 - EWDS order scenarios observe `submitted`, `filled` and `executed`
   notifications with an independent FOS consumer cursor. A closed-market
@@ -490,11 +490,30 @@ compiled Hardhat artifacts, Anvil and MongoDB:
 
 ```bash
 cargo test --locked -p gsy-offchain-storage --test api \
-  delivery_verification_runs_through_real_contracts_engine_and_storage -- --ignored
+  delivery_verification -- --ignored --test-threads=1
 ```
 
 Deliberate follow-ups: legacy order POST write permissions remain unchanged;
 malformed submissions are logged, not published as rejected order snapshots;
-verification keeps the current single-measurement policy; event publication
-is best effort, without a durable outbox. These limitations are not resolved
-by a passing validation matrix.
+event publication is best effort, without a durable outbox. These limitations
+are not resolved by a passing validation matrix.
+
+### DD-455 Delivery Deviation Validation
+
+The shared `matching_algorithms/delivery_deviations.feature` runs with both
+matching algorithms and transports. Use the default
+`EXECUTION_ENGINE_PENALTY_TOLERANCE_PERCENT=5` and the E2E Compose penalty rate
+`0.10`. For a 10 kWh trade, exactly 5% deviation is not penalized; a 1 kWh
+deviation costs 1,000 contract units (0.1 at scale 10,000). The scenarios check
+both parties' exact penalty events, trade totals and final lifecycle statuses,
+including buyer underconsumption and seller overproduction.
+
+The focused real-contract tests cover shared-facility trades, netting purchases
+against sales, integer allocation/rounding, delayed counterparty readings,
+completed trades retained in the baseline, delivery-slot isolation and retries
+without duplicate penalties. These deterministic cases need not be repeated as
+slow EWDS scenarios. The engine tests cover invalid/conflicting readings and
+the remaining allocation and tolerance edge cases.
+
+Late-indexed trades or corrected readings after verification remain a separate
+finalization-policy limitation; DD-455 does not revise recorded penalties.

@@ -5,14 +5,15 @@
 `gsy-offchain-storage` is the off-chain state API and persistence layer.
 It stores indexed on-chain events plus ontology-aligned market and profile data.
 
-Backend: MongoDB (version pinned in the Compose files).
+Backend: MongoDB (version pinned in the Compose files). Reading communities, sites
+and facilities needs MongoDB 5.2 or later, for the `$top` accumulator.
 
 ## Event Indexing Path
 
 1. `gsy-ethers-listener` subscribes to:
    - `OrderPlaced`
    - `OrderCancelled`
-   - `TradeSettled`
+   - `TradeMatched`
    - `PenaltyRecorded`
    - `DeliveryVerified`
    - `NewMarketCreated`
@@ -28,7 +29,7 @@ order lifecycle. Orders are submitted through `placeOrder` (directly or through
 the community client's EWDS subscriber), then indexed by the EVM listener.
 The POST endpoints still accept caller-supplied statuses; their ownership and
 access policy remain to be clarified. Posting trades leaves referenced orders
-unchanged; settlement updates are handled by the EVM listener.
+unchanged; match updates are handled by the EVM listener.
 Restricting the order POST endpoints is a separate follow-up, not part of
 DD-423. Until then, listener ownership is the normal lifecycle path, not an
 enforced access-control boundary for those legacy write endpoints.
@@ -54,7 +55,7 @@ posts them any more.
 - `/trades-normalized` (`POST`)
 - `/trades` (`GET`, `POST`); `GET` follows the `trades.query` rules: `market_id` alone is enough, otherwise both `start_time` and `end_time` are required and span at most 1 day (`400` otherwise)
 - `/market` (`GET`) compatibility adapter for EVM JSON callers
-- `/communities` (`GET`, `POST`) for idempotent community query/upsert
+- `/communities` (`GET`, `POST`) for versioned communities (see Grid Topology)
 - `/markets` (`GET`, `POST`) for ontology-aligned market-opening records;
   records come from `NewMarketCreated`, `POST` remains for manual use
 - `/clearing-results` (`GET`, `POST`)
@@ -74,17 +75,12 @@ posts them any more.
 - `/facilities` (`GET`, `POST`)
 - `/facilities/validate` (`POST`) for read-only bulk facility/market validation
 
-Community writes through HTTP and EWDS accept UUID or 16-byte hex IDs and store
-lowercase hyphenated UUIDs. `GET /communities` and `communities.query` return that
-canonical form. Invalid IDs return HTTP 400 or cause the EWDS event to be dropped
-as invalid; they are not retried as storage failures.
-
-`POST /sites` and `/facilities` create or replace records by `site_name` and
-`facility_id`, respectively, matching the EWDS upsert behavior. Send complete
-records: replacing a site's facility list removes omitted memberships and can
-make those facilities ineligible. A facility name assigned to another ID returns
-409. These topology writes remain unauthenticated; restricting that write surface
-is a separate access-control follow-up.
+`POST /sites` and `/facilities` store a new version of the site or facility
+with that `site_id` or `facility_id`, like the EWDS events. Send complete
+records: a new version of a site's facility list removes omitted memberships and
+can make those facilities ineligible. A name that another valid entry uses
+returns 409. These topology writes remain unauthenticated; restricting that
+write surface is a separate access-control follow-up.
 
 ### Facility Participation Validation
 
@@ -95,8 +91,9 @@ accept UUID or bytes16 hex; results echo the supplied IDs.
 
 Each pair requires an existing market and facility, the facility's site to
 exist and list that facility, and the market's community to exist and list
-that site. The lookup uses the latest stored topology; an ID mapping alone
-does not establish participation. This does not validate market opening times
+that site. The lookup uses the latest version of each facility, site and
+community; deleted ones count as unknown. An ID mapping alone does not
+establish participation. This does not validate market opening times
 or wallet permissions.
 
 HTTP 200 returns one `{facility_id, market_id, eligible, reason?}` per pair,
@@ -115,6 +112,14 @@ orders through this API before resolving IDs and submitting them. Forecast-based
 publication performs the same check. The contract separately requires
 `COMMUNITY_CLIENT_ROLE` for submission and cancellation; eligibility is enforced
 by those trusted services, not by this read-only endpoint or an ID mapping alone.
+
+The `communities`, `sites` and `facilities` collections keep one document per
+version of an entry. `POST` stores a new version unless it equals the latest
+one, and `GET` returns the latest version of each entry without the deleted
+ones; see [Versions and Deletion](ewds-integration.md#versions-and-deletion).
+On startup the service drops the old unique indexes on ids and names, sets a
+missing `valid_from` to `1970-01-01T00:00:00+00:00`, and indexes each
+collection on its id and `valid_from`.
 
 ### ID Mapping
 - The ID service, execution engine and certificate metadata share the deterministic
@@ -201,9 +206,9 @@ There is no reindexing tool. See the
   Missing reverse mappings cause an indexing error rather than fabricating an ID.
   Mappings must exist before order submission. A missing mapping fails the block;
   the listener logs the error and retries that block instead of skipping it.
-- Settlement events mark consumed orders `Filled`, or `PartiallyFilled` when a
+- `TradeMatched` events mark consumed orders `Filled`, or `PartiallyFilled` when a
   residual ID is emitted. Each residual is a separate `Submitted` order; filling
-  it later does not change its original's status. Settlement does not mark orders
+  it later does not change its original's status. Matching does not mark orders
   `Executed`; the later `DeliveryVerified` event does so for that trade and only
   its two consumed orders, including `PartiallyFilled` originals. Residuals are
   independent. Consumed orders use the verification block timestamp. A penalty-free
@@ -211,14 +216,14 @@ There is no reindexing tool. See the
   Replays preserve these timestamps. Separately penalized trades remain eligible
   for verification; the execution engine skips already verified trades on-chain.
   Verified, penalty-free trades are eligible for the status-time/GoO query.
-- Order placement, cancellation and settlement indexing use the event block's
+- Order placement, cancellation and match indexing use the event block's
   timestamp for `status_updated_at` (exposed as `updatedAt` in HTTP/EWDS DTOs),
   not the indexing time. Status and timestamp are updated together. Residual
   orders have independent status timestamps; their original creation time does
-  not change. A trade's `creation_time` is the settlement block's timestamp,
+  not change. A trade's `creation_time` is the match block's timestamp,
   not the wall-clock time of indexing or replay.
   Existing records without a status timestamp are not backfilled by this change.
-- Trade records include order IDs, residual IDs and selected settlement parameters.
+- Trade records include order IDs, residual IDs and selected match parameters.
 
 ## Operational Configuration
 
@@ -226,7 +231,7 @@ Key env variables:
 
 - `EVM_NODE_URL`
 - `CONTRACT_ORDER_REGISTRY`
-- `CONTRACT_TRADE_SETTLEMENT`
+- `CONTRACT_TRADE_MATCHING`
 - `CONTRACT_MARKET_CONTROLLER`
 - `DATABASE_*`
 - `EWDS_ENABLE_HANDLER`

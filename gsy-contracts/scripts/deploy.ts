@@ -229,18 +229,18 @@ async function main() {
     [deployerAddress, marketControllerAddress],
   );
   const [
-    tradeSettlement,
-    tradeSettlementAddress,
-    tradeSettlementImplementationAddress,
-    tradeSettlementProxyAdminAddress,
+    tradeMatching,
+    tradeMatchingAddress,
+    tradeMatchingImplementationAddress,
+    tradeMatchingProxyAdminAddress,
   ] = await deployUpgradeableContract(
-    "TradeSettlement",
+    "TradeMatching",
     proxyAdminOwnerAddress,
     [deployerAddress, orderRegistryAddress],
   );
 
   const ORCHESTRATOR_ROLE = ethers.id("ORCHESTRATOR_ROLE");
-  const SETTLEMENT_ROLE = ethers.id("SETTLEMENT_ROLE");
+  const MATCHING_ROLE = ethers.id("MATCHING_ROLE");
   const COMMUNITY_CLIENT_ROLE = ethers.id("COMMUNITY_CLIENT_ROLE");
   const OPERATOR_ROLE = ethers.id("OPERATOR_ROLE");
   const EXECUTION_ENGINE_ROLE = ethers.id("EXECUTION_ENGINE_ROLE");
@@ -255,16 +255,16 @@ async function main() {
     await orderRegistry.grantRole(COMMUNITY_CLIENT_ROLE, communityClientAddress),
   );
   await waitForTransaction(
-    "Grant OrderRegistry.SETTLEMENT_ROLE",
-    await orderRegistry.grantRole(SETTLEMENT_ROLE, tradeSettlementAddress),
+    "Grant OrderRegistry.MATCHING_ROLE",
+    await orderRegistry.grantRole(MATCHING_ROLE, tradeMatchingAddress),
   );
   await waitForTransaction(
-    "Grant TradeSettlement.OPERATOR_ROLE",
-    await tradeSettlement.grantRole(OPERATOR_ROLE, matchingEngineAddress),
+    "Grant TradeMatching.OPERATOR_ROLE",
+    await tradeMatching.grantRole(OPERATOR_ROLE, matchingEngineAddress),
   );
   await waitForTransaction(
-    "Grant TradeSettlement.EXECUTION_ENGINE_ROLE",
-    await tradeSettlement.grantRole(
+    "Grant TradeMatching.EXECUTION_ENGINE_ROLE",
+    await tradeMatching.grantRole(
       EXECUTION_ENGINE_ROLE,
       executionEngineAddress,
     ),
@@ -275,12 +275,12 @@ async function main() {
   );
 
   // Optional market-wide price band (scaled integer rates). Unset or 0 disables.
-  const priceFloor = BigInt(process.env.TRADE_SETTLEMENT_PRICE_FLOOR ?? "0");
-  const priceCap = BigInt(process.env.TRADE_SETTLEMENT_PRICE_CAP ?? "0");
+  const priceFloor = BigInt(process.env.TRADE_MATCHING_PRICE_FLOOR ?? "0");
+  const priceCap = BigInt(process.env.TRADE_MATCHING_PRICE_CAP ?? "0");
   if (priceFloor !== 0n || priceCap !== 0n) {
     await waitForTransaction(
-      `Set TradeSettlement price bounds (floor=${priceFloor}, cap=${priceCap})`,
-      await tradeSettlement.setPriceBounds(priceFloor, priceCap),
+      `Set TradeMatching price bounds (floor=${priceFloor}, cap=${priceCap})`,
+      await tradeMatching.setPriceBounds(priceFloor, priceCap),
     );
   }
 
@@ -298,10 +298,10 @@ async function main() {
     `ORDER_REGISTRY_IMPLEMENTATION_ADDRESS=${orderRegistryImplementationAddress}`,
     `ORDER_REGISTRY_PROXY_ADMIN_ADDRESS=${orderRegistryProxyAdminAddress}`,
     `CONTRACT_ORDER_REGISTRY=${orderRegistryAddress}`,
-    `TRADE_SETTLEMENT_ADDRESS=${tradeSettlementAddress}`,
-    `TRADE_SETTLEMENT_IMPLEMENTATION_ADDRESS=${tradeSettlementImplementationAddress}`,
-    `TRADE_SETTLEMENT_PROXY_ADMIN_ADDRESS=${tradeSettlementProxyAdminAddress}`,
-    `CONTRACT_TRADE_SETTLEMENT=${tradeSettlementAddress}`,
+    `TRADE_MATCHING_ADDRESS=${tradeMatchingAddress}`,
+    `TRADE_MATCHING_IMPLEMENTATION_ADDRESS=${tradeMatchingImplementationAddress}`,
+    `TRADE_MATCHING_PROXY_ADMIN_ADDRESS=${tradeMatchingProxyAdminAddress}`,
+    `CONTRACT_TRADE_MATCHING=${tradeMatchingAddress}`,
     `ACTOR_REGISTRAR_ADDRESS=${actorRegistrarAddress}`,
     `COMMUNITY_CLIENT_ADDRESS=${communityClientAddress}`,
     `PROXY_ADMIN_OWNER_ADDRESS=${proxyAdminOwnerAddress}`,
@@ -317,15 +317,15 @@ async function main() {
   console.log(`  actorRegistry          ${actorRegistryAddress}`);
   console.log(`  marketController       ${marketControllerAddress}`);
   console.log(`  orderRegistry          ${orderRegistryAddress}`);
-  console.log(`  tradeSettlement        ${tradeSettlementAddress}`);
+  console.log(`  tradeMatching        ${tradeMatchingAddress}`);
   console.log(`  actorRegistryImpl      ${actorRegistryImplementationAddress}`);
   console.log(`  marketControllerImpl   ${marketControllerImplementationAddress}`);
   console.log(`  orderRegistryImpl      ${orderRegistryImplementationAddress}`);
-  console.log(`  tradeSettlementImpl    ${tradeSettlementImplementationAddress}`);
+  console.log(`  tradeMatchingImpl    ${tradeMatchingImplementationAddress}`);
   console.log(`  actorRegistryAdmin     ${actorRegistryProxyAdminAddress}`);
   console.log(`  marketControllerAdmin  ${marketControllerProxyAdminAddress}`);
   console.log(`  orderRegistryAdmin     ${orderRegistryProxyAdminAddress}`);
-  console.log(`  tradeSettlementAdmin   ${tradeSettlementProxyAdminAddress}`);
+  console.log(`  tradeMatchingAdmin   ${tradeMatchingProxyAdminAddress}`);
   console.log(`  proxyAdminOwner        ${proxyAdminOwnerAddress}`);
   console.log(`  orchestratorRole       ${orchestratorAddress}`);
   console.log(`  operatorRole           ${matchingEngineAddress}`);
