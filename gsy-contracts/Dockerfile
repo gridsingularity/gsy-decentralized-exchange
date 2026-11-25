@@ -1,8 +1,6 @@
-FROM node:20-alpine
+FROM node:22-bookworm
 
 WORKDIR /app
-
-RUN apk add --no-cache git
 
 COPY package.json package-lock.json* ./
 
