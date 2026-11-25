@@ -31,6 +31,14 @@ longer represent one uniform-price auction.
    `TradeMatched` events. The matching engine does not write trade records or
    publish trade-status notifications before confirmation.
 
+Known non-Submitted orders are ignored before full conversion. A malformed
+Submitted order (or an unknown status) excludes its entire market/time-slot
+book, including otherwise valid orders; an unreadable slot excludes the whole
+market. No matches or clearing results are emitted for excluded books, while
+other books can proceed. An unidentifiable market or failed storage response
+aborts the cycle. This isolation applies to orders decoded
+from the response, not to unreadable MongoDB records or response envelopes.
+
 A failed or dropped transaction creates no trade record. `Settled` is reserved
 for the time the trade has been processed in the Settlement market, not the
 on-chain match confirmation. This transition is not yet implemented.
@@ -100,6 +108,11 @@ in chain order to preserve their indexed lifecycle.
 
 ## Contract Interaction
 
+Orders and preferences are compared using exact off-chain owner IDs. The engine
+derives keyed actor hashes locally only when building contract arguments, including
+preferred partners. It makes no ID-mapping requests. Known-incomplete storage
+projections return an error, so the cycle does not match a partial book.
+
 Before submission, engine checks `hasRole(OPERATOR_ROLE, signer)` on the `TradeMatching` contract.
 `submitMatches` transaction success is validated via receipt status.
 The contract validates the submitted match type, counterparties and price;
@@ -114,6 +127,7 @@ selected the best available counterpart. See
   - `OFFCHAIN_STORAGE_URL` (otherwise the CLI storage host/port)
   - `OFFCHAIN_STORAGE_TRANSPORT` (`http` or `ewds`)
   - `TRADE_MATCHING_ADDRESS`
+  - `ACTOR_ID_HASH_KEY` (shared actor pseudonym key, required at startup)
   - `MATCHING_ENGINE_PRIVATE_KEY`
   - `MATCHING_ALGORITHM` (`pay_as_bid` by default; `pay_as_clear` supported)
   - `PAY_AS_CLEAR_PRICING` (`max_offer` by default; `min_bid` and `midpoint` supported)

@@ -7,9 +7,9 @@
   "additionalProperties": false,
   "properties": {
     "communityId": {
-      "description": "Primary community identifier. IRI: int:communityId. UUID v4.",
+      "description": "Off-chain community identity, preserved exactly and case-sensitive, including UUID-shaped strings. Nonempty, with no surrounding whitespace. IRI: int:communityId.",
       "type": "string",
-      "format": "uuid"
+      "pattern": "^\\S(?:[\\s\\S]*\\S)?(?![\\s\\S])"
     },
     "communityName": {
       "description": "Human-readable community name. IRI: int:communityName.",
@@ -17,11 +17,11 @@
       "minLength": 1
     },
     "sites": {
-      "description": "Identifiers of sites assigned to the community.",
+      "description": "Exact off-chain site IDs assigned to the community, not site names.",
       "type": "array",
       "items": {
         "type": "string",
-        "minLength": 1
+        "pattern": "^\\S(?:[\\s\\S]*\\S)?(?![\\s\\S])"
       },
       "uniqueItems": true
     },

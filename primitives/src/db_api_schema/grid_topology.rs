@@ -96,3 +96,39 @@ pub struct FacilitySchema {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub valid_until: Option<String>,
 }
+
+impl FacilitySchema {
+    /// Validate actor identities at ingress without changing their spelling.
+    pub fn normalize_ids(mut self) -> anyhow::Result<Self> {
+        self.facility_id = crate::utils::validate_offchain_actor_id(&self.facility_id)?;
+        self.owner_id = crate::utils::validate_offchain_actor_id(&self.owner_id)?;
+        self.site_id = crate::utils::validate_offchain_actor_id(&self.site_id)?;
+        Ok(self)
+    }
+}
+
+impl SiteSchema {
+    pub fn normalize_ids(mut self) -> anyhow::Result<Self> {
+        self.site_id = crate::utils::validate_offchain_actor_id(&self.site_id)?;
+        self.facilities = self
+            .facilities
+            .iter()
+            .map(|id| crate::utils::validate_offchain_actor_id(id))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        let mut seen = std::collections::HashSet::new();
+        self.facilities.retain(|id| seen.insert(id.clone()));
+        Ok(self)
+    }
+}
+
+impl EnergyCommunitySchema {
+    pub fn normalize_ids(mut self) -> anyhow::Result<Self> {
+        self.community_id = crate::utils::validate_offchain_actor_id(&self.community_id)?;
+        self.sites = self
+            .sites
+            .iter()
+            .map(|id| crate::utils::validate_offchain_actor_id(id))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        Ok(self)
+    }
+}

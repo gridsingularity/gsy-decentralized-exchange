@@ -54,7 +54,6 @@ mod tests {
             status: OrderStatus::Submitted,
             status_updated_at: None,
             order_type: OrderEnum::Bid,
-            area_uuid: "actor-id".to_string(),
             market_id: "market-id".to_string(),
             time_slot: 10,
             creation_time: 9,
@@ -758,11 +757,11 @@ mod tests {
         assert!(NoBidReason::from_str("gremlins").is_err());
     }
 
-    /// A market as the off-chain storage stores it: `0x…` market ID and
+    /// A market as the off-chain storage stores it: UUIDv4 market ID and
     /// zero-padded epoch seconds.
     fn market() -> MarketSchema {
         MarketSchema {
-            market_id: "0xcccccccccccccccccccccccccccccccc".to_string(),
+            market_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc".to_string(),
             community_id: "11111111-1111-4111-8111-111111111111".to_string(),
             opening_time: "00000000001700000000".to_string(),
             closing_time: "00000000001700001800".to_string(),
@@ -781,7 +780,7 @@ mod tests {
         assert_eq!(
             json,
             json!({
-                "marketId": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+                "marketId": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
                 "communityId": "11111111-1111-4111-8111-111111111111",
                 "openingTime": epoch_to_rfc3339(1_700_000_000),
                 "closingTime": epoch_to_rfc3339(1_700_001_800),
@@ -802,9 +801,9 @@ mod tests {
     }
 
     #[test]
-    fn market_dto_accepts_a_hex_market_id() {
+    fn market_dto_accepts_uppercase_uuid_market_id() {
         let dto = EwdsMarketDto {
-            market_id: "0xcccccccccccccccccccccccccccccccc".to_string(),
+            market_id: "CCCCCCCC-CCCC-4CCC-8CCC-CCCCCCCCCCCC".to_string(),
             ..EwdsMarketDto::try_from(market()).unwrap()
         };
         assert_eq!(MarketSchema::try_from(dto).unwrap(), market());

@@ -7,9 +7,9 @@
   "additionalProperties": false,
   "properties": {
     "site_id": {
-      "description": "Unique site identifier. Facilities refer to it as site_id.",
+      "description": "Exact, case-sensitive off-chain site ID; not the site name. Facilities refer to it as site_id.",
       "type": "string",
-      "minLength": 1
+      "pattern": "^\\S(?:[\\s\\S]*\\S)?(?![\\s\\S])"
     },
     "site_name": {
       "description": "Human-readable site name, unique among the latest sites.",
@@ -18,9 +18,9 @@
     },
     "site_description": { "type": "string" },
     "facilities": {
-      "description": "Identifiers of the facilities at the site.",
+      "description": "Off-chain facility IDs: unpadded identities are preserved exactly and are case-sensitive, including UUID-shaped strings. Identical references are deduplicated.",
       "type": "array",
-      "items": { "type": "string", "minLength": 1 },
+      "items": { "type": "string", "pattern": "^\\S(?:[\\s\\S]*\\S)?(?![\\s\\S])" },
       "uniqueItems": true
     },
     "valid_from": {

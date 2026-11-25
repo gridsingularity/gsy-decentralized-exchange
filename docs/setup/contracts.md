@@ -8,8 +8,43 @@ services with the generated proxy addresses.
 
 The DD-453 trade lifecycle targets fresh contract deployments and an empty
 off-chain database. Start the listener before submitting orders. No migration
-or reindexing tool is provided for older lifecycle records, and the listener
-does not persist its replay cursor across restarts.
+or reindexing tool is provided for older lifecycle records. The first listener
+start is live-only; subsequent restarts resume its MongoDB checkpoint. Unresolved
+events also persist in MongoDB and are retried on later blocks.
+
+## Actor ID Hashing Key
+
+For a fresh DD-459 service deployment, provision one private `ACTOR_ID_HASH_KEY`
+(32 random bytes encoded as 64 hex characters, without `0x`). Storage, the
+matching engine, execution engine, market orchestrator and enabled community-client
+subscriber require it at startup. Forecast order creation also requires it.
+Every trusted local actor-hash consumer, including test runners, must use the same
+key. Trade-only import tooling uses off-chain parties and does not need the key.
+Generate it once using `openssl rand -hex 32`, distribute it through your secret
+manager or protected environment file, and keep it separate from wallet keys.
+Do not commit or log it. Missing/malformed configuration fails closed; there is
+no runtime default or unkeyed fallback. Do not rotate it within a deployment:
+changing it changes every actor's on-chain identity.
+
+The integration/E2E Compose files supply a public test-only key for isolated local
+tests. Never use that key on a shared or public chain. Staging reads the private
+value from its deployment environment (`.env.ewds.local`); building the image does
+not require a key. The mapping database also contains sensitive associations and
+must remain private. Mapping-API authorization is deferred to a separate ticket;
+this change does not restrict the existing `/ids` or `ids.query` operations.
+Storage resolves on-chain community IDs directly through its own database,
+without a new reverse-lookup API or a remote conversion request.
+
+Deploy the updated `MarketController` and all services together into a fresh
+environment. Order, residual-order, trade and market IDs use lowercase UUIDv4
+text off-chain and the same 16 bytes on-chain, without hashing. Refresh the EWDS
+entity schemas with this deployment; hexadecimal/bare entity-ID inputs are no
+longer accepted. Actor identities and keyed pseudonyms remain separate.
+Markets now use random UUIDv4 IDs; `getMarketIds` resolves the
+community/type/delivery-start tuple to its existing ID. The contract enforces
+tuple uniqueness even when concurrent orchestrators propose different UUIDs.
+Community IDs on-chain are keyed pseudonyms, resolved to their original spelling
+by the storage listener. Existing deterministic market IDs are not migrated.
 
 ## Supported Networks
 

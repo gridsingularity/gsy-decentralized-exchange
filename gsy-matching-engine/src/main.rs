@@ -10,10 +10,11 @@ use std::{thread, time};
 use tracing::{error, info};
 
 #[tokio::main]
-async fn main() {
+async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     setup_logging("matching_engine", "info");
+    primitives::actor_ids::initialize_actor_id_hashing()?;
 
     // You can check for the existence of subcommands, and if found use their
     // matches just as you would the top level cmd
@@ -104,4 +105,5 @@ async fn main() {
             .await
         }
     }
+    Ok(())
 }

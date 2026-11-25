@@ -1,3 +1,4 @@
+use super::id_service::IdService;
 use crate::db::DatabaseWrapper;
 use anyhow::{anyhow, Result};
 use futures::TryStreamExt;
@@ -132,7 +133,12 @@ impl AssetService {
     }
 
     pub async fn get_by_facility(&self, facility_name: &str) -> Result<Vec<AssetSchema>> {
-        Ok(self.0.find(doc! {"facility_name": facility_name}).await?.try_collect().await?)
+        Ok(self
+            .0
+            .find(doc! {"facility_name": facility_name})
+            .await?
+            .try_collect()
+            .await?)
     }
 
     pub async fn get_all(&self) -> Result<Vec<AssetSchema>> {
@@ -197,12 +203,21 @@ pub trait TopologyEntry:
     fn name(&self) -> &str;
     fn valid_from(&self) -> &str;
     fn set_valid_from(&mut self, valid_from: String);
+    fn normalize_ids(self) -> Result<Self>;
+
+    fn actor_ids(&self) -> Vec<&str> {
+        vec![self.id()]
+    }
 }
 
 impl TopologyEntry for EnergyCommunitySchema {
     const KIND: &'static str = "community";
     const COLLECTION: &'static str = "communities";
     const ID_FIELD: &'static str = "community_id";
+
+    fn normalize_ids(self) -> Result<Self> {
+        EnergyCommunitySchema::normalize_ids(self)
+    }
 
     fn id(&self) -> &str {
         &self.community_id
@@ -223,6 +238,10 @@ impl TopologyEntry for SiteSchema {
     const COLLECTION: &'static str = "sites";
     const ID_FIELD: &'static str = "site_id";
 
+    fn normalize_ids(self) -> Result<Self> {
+        SiteSchema::normalize_ids(self)
+    }
+
     fn id(&self) -> &str {
         &self.site_id
     }
@@ -241,6 +260,14 @@ impl TopologyEntry for FacilitySchema {
     const KIND: &'static str = "facility";
     const COLLECTION: &'static str = "facilities";
     const ID_FIELD: &'static str = "facility_id";
+
+    fn normalize_ids(self) -> Result<Self> {
+        FacilitySchema::normalize_ids(self)
+    }
+
+    fn actor_ids(&self) -> Vec<&str> {
+        vec![&self.facility_id, &self.owner_id]
+    }
 
     fn id(&self) -> &str {
         &self.facility_id
@@ -279,8 +306,7 @@ pub type EnergyCommunityService = TopologyService<EnergyCommunitySchema>;
 pub type SiteService = TopologyService<SiteSchema>;
 pub type FacilityService = TopologyService<FacilitySchema>;
 
-#[repr(transparent)]
-pub struct TopologyService<T: TopologyEntry>(pub Collection<T>);
+pub struct TopologyService<T: TopologyEntry>(pub Collection<T>, IdService);
 
 impl<T: TopologyEntry> TopologyService<T> {
     /// The latest entries, ordered by id: the latest document of each id, unless its
@@ -334,6 +360,10 @@ impl<T: TopologyEntry> TopologyService<T> {
     /// their names. Storing the same entries again changes nothing, so a failed call can be
     /// retried. Calls for one collection run one after another.
     pub async fn store(&self, entries: Vec<T>) -> Result<Vec<T>> {
+        let entries = entries
+            .into_iter()
+            .map(|entry| entry.normalize_ids().map_err(invalid_event))
+            .collect::<Result<Vec<_>>>()?;
         let mut ids = HashSet::new();
         let mut names = HashSet::new();
         for entry in &entries {
@@ -376,6 +406,14 @@ impl<T: TopologyEntry> TopologyService<T> {
             )))));
         }
 
+        // Mappings precede topology visibility and survive updates/deletion for chain replay.
+        // References alone never register another entity or grant eligibility.
+        for entry in &entries {
+            for actor_id in entry.actor_ids() {
+                self.1.get_or_create(actor_id.to_string()).await?;
+            }
+        }
+
         let valid_from = epoch_to_rfc3339(now_epoch_secs());
         let mut stored = Vec::with_capacity(entries.len());
         for mut entry in entries {
@@ -401,7 +439,7 @@ fn unchanged<T: TopologyEntry>(latest: &T, entry: &T) -> bool {
 
 impl<T: TopologyEntry> From<&DatabaseWrapper> for TopologyService<T> {
     fn from(db: &DatabaseWrapper) -> Self {
-        TopologyService(db.collection(T::COLLECTION))
+        TopologyService(db.collection(T::COLLECTION), db.ids())
     }
 }
 

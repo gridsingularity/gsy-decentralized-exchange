@@ -5,7 +5,7 @@
 | Component | Responsibility | Primary Inputs | Primary Outputs |
 |---|---|---|---|
 | `gsy-contracts` | Deployable EVM contract suite | deployment config, signer keys | contract addresses, role assignments |
-| `gsy-market-orchestrator` | Market creation | wall-clock time, market rules, communities, `marketsExist` | `createMarkets` txs |
+| `gsy-market-orchestrator` | Market creation | wall-clock time, market rules, exact community IDs, `getMarketIds` tuple lookups (batches of 500) | UUIDv4 candidates for absent tuples via `createMarkets` txs |
 | `gsy-community-client` | Publish forecasts/measurements and orders | external facility topology + profile streams | off-chain storage HTTP writes + `placeOrder` txs |
 | `gsy-matching-engine` | Build matches and submit them on-chain | open orders + block progression | `submitMatches` txs |
 | `gsy-execution-engine` | Compute and submit penalties | matched trades + measurements | `submitPenalties` txs |

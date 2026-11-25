@@ -1,3 +1,4 @@
+use crate::utils::EPOCH_RFC3339;
 use super::{EwdsEventType, EwdsOperation};
 use crate::db_api_schema::{
     grid_topology::{EnergyCommunitySchema, FacilitySchema, SiteSchema},
@@ -11,9 +12,8 @@ use crate::db_api_schema::{
 };
 
 use crate::utils::{
-    bytes16_to_hex, bytes16_to_uuid_string, epoch_to_rfc3339, opt_rfc3339_to_epoch,
-    parse_uuid_or_hex_bytes16, rfc3339_to_epoch, string_to_timestamp,
-    timestamp_to_string_with_padding, EPOCH_RFC3339,
+    epoch_to_rfc3339, opt_rfc3339_to_epoch, normalize_uuid,
+    rfc3339_to_epoch, string_to_timestamp, timestamp_to_string_with_padding,
 };
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -396,7 +396,6 @@ impl TryFrom<EwdsOrderDto> for DbOrderSchema {
             status: order_status_from_ewds(order.order_status.as_str())?,
             status_updated_at: opt_rfc3339_to_epoch(order.updated_at.as_deref())?,
             order_type,
-            area_uuid: order.created_by.clone(),
             market_id: order.market_id,
             time_slot: rfc3339_to_epoch(&order.time_slot)?,
             creation_time: rfc3339_to_epoch(&order.creation_time)?,
@@ -666,7 +665,7 @@ impl TryFrom<EwdsClearingResultDto> for ClearingResultSchema {
 
 /// A market in the form of `int.market.schema.v1.json`, as returned by
 /// `markets.query` and published in `market.event`: UUID market ID and
-/// RFC 3339 times. The market ID is the same 16 bytes as the stored `0x…` ID.
+/// RFC 3339 times. Market IDs use the same canonical UUID text in storage.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct EwdsMarketDto {
@@ -681,12 +680,6 @@ pub struct EwdsMarketDto {
     pub created_at: String,
 }
 
-/// Parses a market ID given as a UUID or as 16 hex bytes.
-pub fn parse_market_id(value: &str) -> Result<[u8; 16]> {
-    parse_uuid_or_hex_bytes16(value)
-        .ok_or_else(|| anyhow!("market ID '{}' is not a UUID or 16-byte hex value", value))
-}
-
 impl TryFrom<MarketSchema> for EwdsMarketDto {
     type Error = anyhow::Error;
 
@@ -697,7 +690,7 @@ impl TryFrom<MarketSchema> for EwdsMarketDto {
                 .with_context(|| format!("{} '{}' is not an epoch timestamp", name, value))
         };
         Ok(EwdsMarketDto {
-            market_id: bytes16_to_uuid_string(parse_market_id(&m.market_id)?),
+            market_id: normalize_uuid(&m.market_id)?,
             community_id: m.community_id,
             opening_time: time("opening_time", &m.opening_time)?,
             closing_time: time("closing_time", &m.closing_time)?,
@@ -716,7 +709,7 @@ impl TryFrom<EwdsMarketDto> for MarketSchema {
     fn try_from(d: EwdsMarketDto) -> Result<Self> {
         let time = |value: &str| rfc3339_to_epoch(value).map(timestamp_to_string_with_padding);
         Ok(MarketSchema {
-            market_id: bytes16_to_hex(parse_market_id(&d.market_id)?),
+            market_id: normalize_uuid(&d.market_id)?,
             community_id: d.community_id,
             opening_time: time(&d.opening_time)?,
             closing_time: time(&d.closing_time)?,

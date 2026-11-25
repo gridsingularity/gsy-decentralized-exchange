@@ -13,6 +13,7 @@ async fn main() -> anyhow::Result<()> {
     setup_logging("gsy-execution-engine", "info");
 
     let cli = Cli::parse();
+    ::primitives::actor_ids::initialize_actor_id_hashing()?;
     match cli.command {
         Commands::Web3 {
             offchain_host,

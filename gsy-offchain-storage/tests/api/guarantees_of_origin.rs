@@ -1,3 +1,5 @@
+use primitives::utils::EPOCH_RFC3339;
+use primitives::utils::{epoch_to_rfc3339, now_epoch_secs};
 use crate::helpers::{init_app, stop_app};
 use gsy_offchain_storage::db::DatabaseWrapper;
 use primitives::certificates::{DeliveryScope, LocalOriginRecord};
@@ -9,10 +11,7 @@ use primitives::db_api_schema::profiles::{
     FlowDirection, MeasurementPointSchema, MeasurementPointType, TimeseriesSchema,
 };
 use primitives::db_api_schema::trades::{DbTradeSchema, TradeParameters, TradeStatus};
-use primitives::utils::{
-    bytes16_to_hex, create_encrypted_bytes16_from_string, epoch_to_rfc3339, now_epoch_secs,
-    timestamp_to_string_with_padding, EPOCH_RFC3339,
-};
+use primitives::utils::{bytes16_to_uuid_string, timestamp_to_string_with_padding};
 
 pub const SLOT: u64 = 1_778_754_600; // 2026-05-14T10:30:00Z
 /// When the seeded trades reached `Executed` (their `status_updated_at`).
@@ -23,11 +22,7 @@ const BUYER_FACILITY: &str = "goo-buyer";
 const BUYER_OWNER: &str = "goo-owner-buyer";
 const COMMUNITY: &str = "60060060-0000-4000-8000-000000000001";
 const EXPORT_POINT: &str = "Measurement:goo-community:goo-seller";
-const MARKET: &str = "0xmarket";
-
-fn hash(offchain_id: &str) -> String {
-    bytes16_to_hex(create_encrypted_bytes16_from_string(offchain_id))
-}
+const MARKET: &str = "60060060-0000-4000-8000-000000000001";
 
 /// A 2 kWh sale from the seller facility to the buyer facility at `SLOT`.
 pub fn trade(
@@ -38,8 +33,8 @@ pub fn trade(
     DbTradeSchema {
         trade_uuid: trade_uuid.to_string(),
         status,
-        seller: hash(SELLER_OWNER),
-        buyer: hash(BUYER_OWNER),
+        seller: SELLER_OWNER.to_owned(),
+        buyer: BUYER_OWNER.to_owned(),
         market_id: MARKET.to_string(),
         creation_time: SLOT - 600,
         offer_hash: format!("{trade_uuid}-offer"),
@@ -257,6 +252,111 @@ async fn get_goo(address: &str, query: &[(&str, String)]) -> reqwest::Response {
         .send()
         .await
         .unwrap()
+}
+
+#[tokio::test]
+async fn certificates_join_exact_facilities_keyed_mappings_and_meter_references() {
+    use mongodb::bson::doc;
+    use primitives::offchain_storage::{OffchainStorageClient, OffchainStorageTransport};
+    use primitives::utils::derive_onchain_id;
+
+    let app = init_app().await;
+    let db = &app.db_wrapper;
+    seed_topology(db, 3.0).await;
+    let seller = "abcdefab-abcd-abcd-abcd-abcdefabcdef";
+    let owner = "fedcbafe-dcba-dcba-dcba-fedcbafedcba";
+    db.facilities()
+        .delete_one(doc! {"facility_id": SELLER_FACILITY})
+        .await
+        .unwrap();
+    let http = reqwest::Client::new();
+    for (id, name, owner_id) in [
+        (seller.to_uppercase(), SELLER_FACILITY, owner.to_uppercase()),
+        (
+            BUYER_FACILITY.to_string(),
+            BUYER_FACILITY,
+            BUYER_OWNER.to_string(),
+        ),
+    ] {
+        let response = http
+            .post(format!("{}/facilities", app.address))
+            .json(&FacilitySchema {
+                valid_from: primitives::utils::EPOCH_RFC3339.to_string(),
+                valid_until: None,
+                facility_id: id,
+                facility_name: format!("{name}-name"),
+                site_id: "goo-site".into(),
+                owner_id,
+            })
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status().as_u16(), 200);
+    }
+    let client = OffchainStorageClient::new(
+        OffchainStorageTransport::Http,
+        app.address.clone(),
+        "UNUSED",
+        "unused",
+    );
+    let party = client
+        .fetch_onchain_id(&owner.to_uppercase())
+        .await
+        .unwrap();
+    assert_eq!(party, derive_onchain_id(&owner.to_uppercase()));
+    let mut point = db
+        .measurement_points()
+        .find_one(doc! {"measurement_id": EXPORT_POINT})
+        .await
+        .unwrap()
+        .unwrap();
+    point.asset_name = seller.to_uppercase();
+    assert_eq!(
+        http.post(format!("{}/measurement-points", app.address))
+            .json(&vec![point])
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .as_u16(),
+        200
+    );
+    let id = bytes16_to_uuid_string(crate::helpers::entity_bytes(0xab));
+    let mut sale = trade(&id, TradeStatus::Matched, None);
+    sale.seller = owner.to_uppercase();
+    sale.bid_hash = bytes16_to_uuid_string(crate::helpers::entity_bytes(0xbc));
+    sale.offer_hash = bytes16_to_uuid_string(crate::helpers::entity_bytes(0xcd));
+    let mut imported = primitives::ewds::dto::EwdsTradeDto::from(sale);
+    imported.trade_id = uuid::Uuid::from_bytes(crate::helpers::entity_bytes(0xab))
+        .to_string()
+        .to_uppercase();
+    assert_eq!(
+        http.post(format!("{}/trades", app.address))
+            .json(&vec![imported])
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    // Imports do not invent a verification timestamp; the lifecycle supplies it.
+    db.trades().mark_executed(&id, VERDICT_AT).await.unwrap();
+    let response = get_goo(
+        &app.address,
+        &[
+            ("start_time", VERDICT_AT.to_string()),
+            ("end_time", (VERDICT_AT + 1).to_string()),
+        ],
+    )
+    .await;
+    assert_eq!(response.status().as_u16(), 200);
+    let records: Vec<LocalOriginRecord> = response.json().await.unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(
+        records[0].beneficiary_and_claim.owner_id,
+        owner.to_uppercase()
+    );
+    stop_app(app).await;
 }
 
 #[tokio::test]

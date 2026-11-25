@@ -181,6 +181,43 @@ pass it explicitly to the runner container, for example through `docker compose 
 A focused selection is not a replacement for the HTTP/EWDS x pay-as-bid/pay-as-clear
 regression matrix, and that default matrix does not cover the opt-in green-proof tests.
 
+### DD-459 Identifier Validation
+
+Deploy all services from the same commit into a fresh environment. The default
+HTTP/EWDS x pay-as-bid/pay-as-clear matrix checks uppercase facility IDs in
+`delivery_deviations.feature`: forecasts and measurements must join the same
+facilities during verification. The EWDS order scenarios in `events.feature`
+check lowercase lifecycle IDs after uppercase UUIDv4 submissions; rejection
+checks require exact echoes of submitted IDs. Opaque-ID scenarios remain in
+both algorithm suites.
+
+Run GreenProof explicitly for both transports as well. With the corresponding
+stack configured and started, pass the feature selection into the runner:
+
+```bash
+# HTTP; use the same MATCHING_ALGORITHM value as the running stack.
+OFFCHAIN_STORAGE_TRANSPORT=http EWDS_ENABLE_HANDLER=false MATCHING_ALGORITHM=pay_as_bid \
+docker compose --env-file contracts-output/addresses.env -f docker-compose.e2e-test.yml \
+  run --rm -e E2E_FEATURE_PATH=features/green_proofs e2e-tests
+
+# EWDS; requires the local gateway and the configured test topics.
+OFFCHAIN_STORAGE_TRANSPORT=ewds EWDS_ENABLE_HANDLER=true MATCHING_ALGORITHM=pay_as_bid \
+docker compose --env-file .env.ewds.local --env-file contracts-output/addresses.env \
+  -f docker-compose.e2e-test.yml run --rm -e E2E_FEATURE_PATH=features/green_proofs e2e-tests
+```
+
+These certificate API scenarios seed canonical records directly; they do not
+replace the lifecycle matrix. Update affected gateway schemas from
+`schemas/ewds/intelligent/` before EWDS runs. Local schema validation does not
+update the gateway. The retained trade seed script has offline tests:
+
+```bash
+docker run --rm -e PYTHONDONTWRITEBYTECODE=1 -v "$PWD":/work:ro -w /work python:3.12-slim \
+  python -m unittest discover -s scripts/tests -v
+```
+
+### Matching Interval
+
 `pay_as_clear` defaults to a `64`-block matching interval so all scenario
 orders are collected before one clearing cycle. Override it with a positive
 `MATCHING_ENGINE_BLOCK_INTERVAL` value only when both the matching engine and
@@ -364,13 +401,16 @@ than a fixed count. Both algorithms also run the shared matching scenarios.
 
 HTTP scenarios submit orders from the E2E runner using `COMMUNITY_CLIENT_PRIVATE_KEY`,
 the same service key provisioned by deployment. The community-client binary only
-runs its EWDS subscriber. The runner uses `gsye2ecommunityclient` for community-client
+runs its EWDS subscriber. Both paths derive actor hashes locally with the shared
+`ACTOR_ID_HASH_KEY`, without forward ID-service requests. Custom HTTP orders also
+check preferred-owner registration and use UUIDv4 bytes for generated order IDs.
+The runner uses `gsye2ecommunityclient` for community-client
 EWDS queries, separately from the live subscriber's consumer ID; the local gateway
 must accept that client ID on the response channels.
 
 Between scenarios, the runner clears collection contents without dropping unique
-indexes. Lifecycle examples measure only the buyer's facility or only the seller's
-facility to test both identity paths independently. Eligibility rejection is covered
+indexes. Delivery verification requires measurements from both the buyer's and
+seller's facilities; a missing reading leaves the trade pending. Eligibility rejection is covered
 end-to-end; a real `MarketClosed` contract revert is covered by the client tests,
 not by a closed-market E2E scenario (an unknown market is rejected before submission).
 

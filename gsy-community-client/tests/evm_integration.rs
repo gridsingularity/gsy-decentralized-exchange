@@ -7,10 +7,10 @@ use ethers::{prelude::*, utils::Anvil};
 use gsy_community_client::node_connector::orders::publish_orders;
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::profiles::ForecastSchema;
-use primitives::utils::parse_uuid_or_hex_bytes16;
+use primitives::utils::{hex_to_bytes16, uuid_v4_to_bytes16};
 use primitives::{MarketType, MatchingAlgorithm};
 use std::sync::Arc;
-use wiremock::matchers::{method, path, query_param};
+use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
 abigen!(
@@ -35,7 +35,7 @@ async fn setup_facilities_mock() -> MockServer {
 
 fn test_market() -> MarketSchema {
     MarketSchema {
-        market_id: format!("0x{}", "11".repeat(16)),
+        market_id: "11111111-1111-4111-8111-111111111111".to_string(),
         community_id: "community-1".to_string(),
         opening_time: "00000000002700000000".to_string(),
         closing_time: "00000000002800000000".to_string(),
@@ -126,13 +126,10 @@ async fn test_publish_orders_calls_evm_order_registry() {
         compile_and_deploy_contract(client.clone(), source, "MockOrderRegistry").await;
     let mock_contract = MockOrderRegistry::new(contract_address, client.clone());
 
-    // Validation or ID-service failures must abort preparation before the first transaction.
-    for endpoint in ["/facilities/validate", "/ids"] {
-        let mut failure = Mock::given(method("POST")).and(path(endpoint));
-        if endpoint == "/ids" {
-            failure = failure.and(query_param("offchain_id", "owner-2"));
-        }
-        failure
+    // Topology or validation failures must abort preparation before the first transaction.
+    for (verb, endpoint) in [("GET", "/facilities"), ("POST", "/facilities/validate")] {
+        Mock::given(method(verb))
+            .and(path(endpoint))
             .respond_with(ResponseTemplate::new(500))
             .with_priority(1)
             .up_to_n_times(1)
@@ -176,11 +173,11 @@ async fn test_publish_orders_calls_evm_order_registry() {
     );
     assert_eq!(
         mock_contract.last_created_by().call().await.unwrap(),
-        parse_uuid_or_hex_bytes16(facilities::OWNER_2_ONCHAIN).unwrap()
+        hex_to_bytes16(&primitives::utils::derive_onchain_id("owner-2")).unwrap()
     );
     assert_eq!(
         mock_contract.last_market_id().call().await.unwrap(),
-        parse_uuid_or_hex_bytes16("0x11111111111111111111111111111111")
+        uuid_v4_to_bytes16("11111111-1111-4111-8111-111111111111")
             .expect("failed to parse uuid")
     );
     assert_eq!(
@@ -210,7 +207,7 @@ async fn test_publish_orders_calls_evm_order_registry() {
         0
     );
 
-    // A later cross-community denial must not submit another order, even with an ID mapping.
+    // A later cross-community denial must not submit another order for a registered owner.
     Mock::given(method("POST"))
         .and(path("/facilities/validate"))
         .respond_with(|request: &Request| {
@@ -248,7 +245,7 @@ async fn test_publish_orders_calls_evm_order_registry() {
         .await
         .unwrap()
         .iter()
-        .all(|request| matches!(request.url.path(), "/facilities" | "/facilities/validate" | "/ids")));
+        .all(|request| matches!(request.url.path(), "/facilities" | "/facilities/validate")));
 }
 
 #[tokio::test]

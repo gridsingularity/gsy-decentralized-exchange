@@ -1,13 +1,24 @@
-use crate::MarketType;
-use anyhow::{Result, anyhow};
-use blake2::digest::{Update, VariableOutput};
-use blake2::Blake2bVar;
-use chrono::{prelude::DateTime, Utc, TimeZone};
+use anyhow::{anyhow, Result};
+use chrono::{prelude::DateTime, TimeZone, Utc};
 use std::env;
 use std::str::FromStr;
 use uuid::Uuid;
 
 pub const NODE_FLOAT_SCALING_FACTOR: f64 = 10000.0;
+
+pub use crate::actor_ids::derive_onchain_id;
+
+/// Entity UUIDs are v4; actor pseudonyms must not pass through this validator.
+pub fn uuid_v4_to_bytes16(value: &str) -> Result<[u8; 16]> {
+    let id = Uuid::parse_str(value).map_err(|_| anyhow!("invalid UUIDv4"))?;
+    if value.len() != uuid::fmt::Hyphenated::LENGTH
+        || id.get_version() != Some(uuid::Version::Random)
+        || id.get_variant() != uuid::Variant::RFC4122
+    {
+        return Err(anyhow!("expected a hyphenated UUIDv4"));
+    }
+    Ok(*id.as_bytes())
+}
 
 pub fn bytes16_to_hex(value: [u8; 16]) -> String {
     format!("0x{}", hex::encode(value))
@@ -18,76 +29,45 @@ pub fn bytes16_to_uuid_string(value: [u8; 16]) -> String {
     Uuid::from_bytes(value).to_string()
 }
 
-pub fn parse_uuid_or_hex_bytes16(value: &str) -> Option<[u8; 16]> {
-    let trimmed = value.trim();
-    let hex_value = if let Some(stripped) = trimmed.strip_prefix("0x") {
-        stripped.to_string()
-    } else {
-        trimmed.replace('-', "")
-    };
+/// Canonical off-chain entity ID. Actor identities must not use this normalizer.
+pub fn normalize_uuid(value: &str) -> Result<String> {
+    uuid_v4_to_bytes16(value).map(bytes16_to_uuid_string)
+}
 
-    if hex_value.len() != 32 || !hex_value.chars().all(|c| c.is_ascii_hexdigit()) {
-        return None;
+/// Decodes an on-chain actor pseudonym, not an off-chain identity or entity UUID.
+pub fn hex_to_bytes16(value: &str) -> Option<[u8; 16]> {
+    let mut bytes = [0; 16];
+    hex::decode_to_slice(value.strip_prefix("0x")?, &mut bytes).ok()?;
+    Some(bytes)
+}
+
+/// Validates an incoming actor identity without changing it.
+pub fn validate_offchain_actor_id(value: &str) -> Result<String> {
+    if value.is_empty() || value.trim() != value {
+        return Err(anyhow!(
+            "off-chain ID must be nonempty and have no surrounding whitespace"
+        ));
     }
-
-    let decoded = hex::decode(hex_value).ok()?;
-    decoded.try_into().ok()
+    Ok(value.to_string())
 }
 
-/// Canonical form of a community ID: the lowercase hyphenated UUID that
-/// chain-sourced markets are stored with. Fails unless the ID is a UUID or
-/// 16-byte hex value.
-pub fn normalize_community_id(value: &str) -> Result<String> {
-    parse_uuid_or_hex_bytes16(value)
-        .map(bytes16_to_uuid_string)
-        .ok_or_else(|| {
-            anyhow!(
-                "community ID '{}' is not a UUID or 16-byte hex value",
-                value
-            )
-        })
-}
-
-/// Canonical stored market ID: lowercase `0x` hex for a UUID or 16-byte hex value.
-pub fn normalize_market_id(value: &str) -> Result<String> {
-    parse_uuid_or_hex_bytes16(value)
-        .map(bytes16_to_hex)
-        .ok_or_else(|| anyhow!("market ID '{}' is not a UUID or 16-byte hex value", value))
-}
-
-pub fn create_encrypted_bytes16_from_string(input_string: &str) -> [u8; 16] {
-    let mut hash = [0u8; 16];
-    let mut hasher = Blake2bVar::new(16).expect("valid Blake2b output size");
-    hasher.update(input_string.as_bytes());
-    hasher
-        .finalize_variable(&mut hash)
-        .expect("valid Blake2b output buffer");
-    hash
-}
-
-/// The ID service's deterministic, case-sensitive mapping from an off-chain identity.
-pub fn derive_onchain_id(offchain_id: &str) -> String {
-    bytes16_to_hex(create_encrypted_bytes16_from_string(offchain_id))
-}
-
-/// The community ID is normalized first, so every accepted form of one
-/// community ID yields the same market ID. Fails for a community ID that is
-/// not a UUID or 16-byte hex value.
-pub fn generate_market_id(
-    community_id: &str,
-    market_type: MarketType,
-    delivery_timestamp: u64,
-) -> Result<[u8; 16]> {
-    let community_id = normalize_community_id(community_id)?;
-    let mut market_id = [0u8; 16];
-    let mut hasher = Blake2bVar::new(market_id.len()).expect("valid market ID output size");
-    hasher.update(community_id.as_bytes());
-    hasher.update(market_type.as_str().as_bytes());
-    hasher.update(&delivery_timestamp.to_be_bytes());
-    hasher
-        .finalize_variable(&mut market_id)
-        .expect("valid market ID output buffer");
-    Ok(market_id)
+pub fn profile_measurement_id(
+    point_type: crate::db_api_schema::profiles::MeasurementPointType,
+    community_uuid: &str,
+    facility_id: &str,
+) -> String {
+    use crate::db_api_schema::profiles::MeasurementPointType;
+    let prefix = match point_type {
+        MeasurementPointType::Measurement => "measurement",
+        MeasurementPointType::Forecast => "forecast",
+    };
+    // Actor IDs may contain the separator; escape components, not the stored IDs.
+    let component = |id: &str| id.replace('%', "%25").replace(':', "%3A");
+    format!(
+        "{prefix}:{}:{}",
+        component(community_uuid),
+        component(facility_id)
+    )
 }
 
 pub fn timestamp_to_datetime_string(timestamp: u64) -> String {

@@ -340,7 +340,9 @@ describe("TradeMatching", function () {
     await time.increase(OPEN_MARKET_DURATION);
     await expect(tradeMatching.connect(operator).submitMatches(asMarketBatch([matchData])))
       .to.be.revertedWithCustomError(tradeMatching, "OrderNotOpen");
-    await createOpenMarket(controller, marketId);
+    await expect(createOpenMarket(controller, marketId))
+      .to.be.revertedWithCustomError(controller, "InvalidMarket")
+      .withArgs(marketId);
     await expect(tradeMatching.connect(operator).submitMatches(asMarketBatch([matchData])))
       .to.be.revertedWithCustomError(tradeMatching, "OrderNotOpen");
   });
