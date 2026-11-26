@@ -1,47 +1,23 @@
 //! When the matching engine runs.
 //!
-//! A pay-as-bid engine matches the open orders every
-//! `MATCHING_ENGINE_BLOCK_INTERVAL` blocks.
-//!
-//! A pay-as-clear engine clears each market a fixed number of times, spread
-//! evenly over the time the market is open. The last clearing takes place a
-//! lead time before the closing time, so that its matches are recorded
-//! while the market still accepts them.
+//! The matching engine clears each market a fixed number of times, spread
+//! evenly over the time the market is open, whatever the market's matching
+//! algorithm. The last clearing takes place a lead time before the closing
+//! time, so that its matches are recorded while the market still accepts
+//! them.
 
-use crate::MatchingAlgorithm;
 use std::env;
 use std::fmt;
 use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub const MATCHING_ENGINE_BLOCK_INTERVAL: &str = "MATCHING_ENGINE_BLOCK_INTERVAL";
-pub const PAY_AS_CLEAR_CLEARINGS_PER_MARKET: &str = "PAY_AS_CLEAR_CLEARINGS_PER_MARKET";
-pub const PAY_AS_CLEAR_FINAL_CLEARING_LEAD_SECONDS: &str =
-    "PAY_AS_CLEAR_FINAL_CLEARING_LEAD_SECONDS";
+pub const CLEARINGS_PER_MARKET: &str = "CLEARINGS_PER_MARKET";
+pub const FINAL_CLEARING_LEAD_SECONDS: &str = "FINAL_CLEARING_LEAD_SECONDS";
 
-const DEFAULT_PAY_AS_BID_BLOCK_INTERVAL: u64 = 4;
-const DEFAULT_PAY_AS_CLEAR_BLOCK_INTERVAL: u64 = 64;
 const DEFAULT_CLEARINGS_PER_MARKET: u64 = 1;
 const DEFAULT_FINAL_CLEARING_LEAD_SECONDS: u64 = 20;
 
-/// The number of blocks between two pay-as-bid matching runs.
-pub fn matching_block_interval() -> u64 {
-    let matching_algorithm = env::var("MATCHING_ALGORITHM")
-        .ok()
-        .and_then(|value| value.parse::<MatchingAlgorithm>().ok())
-        .unwrap_or_default();
-
-    env::var(MATCHING_ENGINE_BLOCK_INTERVAL)
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(match matching_algorithm {
-            MatchingAlgorithm::PayAsClear => DEFAULT_PAY_AS_CLEAR_BLOCK_INTERVAL,
-            _ => DEFAULT_PAY_AS_BID_BLOCK_INTERVAL,
-        })
-}
-
-/// When the pay-as-clear markets are cleared.
+/// When the markets are cleared.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ClearingSchedule {
     /// How many times each market is cleared while it is open.
@@ -63,17 +39,16 @@ impl ClearingSchedule {
     /// Reads the schedule from the environment. An unset or empty variable
     /// takes its default.
     pub fn from_env() -> Result<Self, String> {
-        let clearings_per_market = read_env::<u64>(PAY_AS_CLEAR_CLEARINGS_PER_MARKET)?
-            .unwrap_or(DEFAULT_CLEARINGS_PER_MARKET);
+        let clearings_per_market =
+            read_env::<u64>(CLEARINGS_PER_MARKET)?.unwrap_or(DEFAULT_CLEARINGS_PER_MARKET);
         if clearings_per_market == 0 {
             return Err(format!(
                 "Invalid {}: must be greater than 0",
-                PAY_AS_CLEAR_CLEARINGS_PER_MARKET
+                CLEARINGS_PER_MARKET
             ));
         }
-        let final_clearing_lead_seconds =
-            read_env::<u64>(PAY_AS_CLEAR_FINAL_CLEARING_LEAD_SECONDS)?
-                .unwrap_or(DEFAULT_FINAL_CLEARING_LEAD_SECONDS);
+        let final_clearing_lead_seconds = read_env::<u64>(FINAL_CLEARING_LEAD_SECONDS)?
+            .unwrap_or(DEFAULT_FINAL_CLEARING_LEAD_SECONDS);
 
         Ok(Self {
             clearings_per_market,

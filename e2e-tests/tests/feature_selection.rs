@@ -5,39 +5,95 @@ use cucumber::{
     parser::{basic::Cli, Basic},
     Parser,
 };
-use feature_selection::configure_features;
+use feature_selection::{configure_features, matching_algorithm_of};
 use primitives::MatchingAlgorithm;
+use std::path::Path;
+
+fn default_features() -> Vec<cucumber::gherkin::Feature> {
+    let mut cli = Cli::default();
+    configure_features(&mut cli, None);
+    Basic::new()
+        .parse("features", cli)
+        .into_inner()
+        .map(Result::unwrap)
+        .collect()
+}
+
+fn directory(feature: &cucumber::gherkin::Feature) -> &std::ffi::OsStr {
+    feature
+        .path
+        .as_ref()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .file_name()
+        .unwrap()
+}
 
 #[test]
-fn each_algorithm_parses_its_own_features_and_the_shared_policy_once() {
-    for algorithm in [MatchingAlgorithm::PayAsBid, MatchingAlgorithm::PayAsClear] {
-        let mut cli = Cli::default();
-        configure_features(&mut cli, &algorithm, None);
-        let features = Basic::new()
-            .parse("features", cli)
-            .into_inner()
-            .map(Result::unwrap)
-            .collect::<Vec<_>>();
-        assert!(features.len() > 1);
-        assert!(features.iter().all(|feature| {
-            let directory = feature.path.as_ref().unwrap().parent().unwrap();
-            let directory = directory.file_name().unwrap();
-            directory == algorithm.as_str() || directory == "matching_algorithms"
-        }));
-        let policies = features
-            .iter()
-            .filter(|feature| feature.name == "Preference matching policy")
-            .collect::<Vec<_>>();
-        assert_eq!(policies.len(), 1);
-        assert_eq!(policies[0].scenarios.len(), 9);
+fn the_default_run_covers_every_algorithm_and_the_shared_policy_once() {
+    let features = default_features();
+    let directories = features
+        .iter()
+        .map(directory)
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        directories,
+        ["pay_as_bid", "pay_as_clear", "matching_algorithms"]
+            .map(std::ffi::OsStr::new)
+            .into_iter()
+            .collect()
+    );
+    let policies = features
+        .iter()
+        .filter(|feature| feature.name == "Preference matching policy")
+        .collect::<Vec<_>>();
+    assert_eq!(policies.len(), 1);
+    // Every case runs once per algorithm.
+    assert_eq!(policies[0].scenarios.len(), 18);
+}
+
+#[test]
+fn each_feature_uses_the_algorithm_of_its_directory() {
+    for feature in default_features() {
+        let expected = if directory(&feature) == "pay_as_clear" {
+            MatchingAlgorithm::PayAsClear
+        } else {
+            MatchingAlgorithm::PayAsBid
+        };
+        assert_eq!(
+            matching_algorithm_of(feature.path.as_deref()),
+            expected,
+            "{:?}",
+            feature.path
+        );
     }
+}
+
+#[test]
+fn features_outside_the_pay_as_clear_directory_use_pay_as_bid() {
+    for path in [
+        None,
+        Some(Path::new(
+            "features/green_proofs/guarantees_of_origin.feature",
+        )),
+        Some(Path::new("features/pay_as_clear_notes/x.feature")),
+    ] {
+        assert_eq!(matching_algorithm_of(path), MatchingAlgorithm::PayAsBid);
+    }
+    assert_eq!(
+        matching_algorithm_of(Some(Path::new(
+            "/usr/src/app/features/pay_as_clear/x.feature"
+        ))),
+        MatchingAlgorithm::PayAsClear
+    );
 }
 
 #[test]
 fn explicit_feature_path_does_not_add_shared_features() {
     let path = "features/green_proofs";
     let mut cli = Cli::default();
-    configure_features(&mut cli, &MatchingAlgorithm::PayAsBid, Some(path));
+    configure_features(&mut cli, Some(path));
     assert!(cli.features.is_none());
     let features = Basic::new()
         .parse(path, cli)
@@ -56,7 +112,7 @@ fn explicit_cli_input_is_preserved() {
     let mut cli = Cli {
         features: Some("features/pay_as_bid/trade_execution.feature".parse().unwrap()),
     };
-    configure_features(&mut cli, &MatchingAlgorithm::PayAsClear, None);
+    configure_features(&mut cli, None);
     let features = Basic::new()
         .parse("features", cli)
         .into_inner()
@@ -78,7 +134,7 @@ fn explicit_cli_input_can_select_multiple_feature_groups() {
                 .unwrap(),
         ),
     };
-    configure_features(&mut cli, &MatchingAlgorithm::PayAsBid, None);
+    configure_features(&mut cli, None);
     let features = Basic::new()
         .parse("features", cli)
         .into_inner()

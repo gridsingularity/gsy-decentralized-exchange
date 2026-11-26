@@ -1,6 +1,6 @@
 use chrono::DateTime;
 use crate::steps::trade_steps::{
-    align_to_matching_window, market_id_as_hex, mine_until_matching_block, query_orders_for_market,
+    align_to_matching_window, market_id_as_hex, query_orders_for_market, wait_for_next_clearing,
     wait_for_order_in_offchain_storage, OrderRegistryContract,
 };
 use crate::world::MyWorld;
@@ -403,8 +403,8 @@ async fn publish_order_event(world: &mut MyWorld, buyer_name: String, seller_nam
         order.order_id.make_ascii_uppercase();
         order.market_id.make_ascii_uppercase();
     }
-    // Both orders take one block each, and must land in the same matching interval.
-    align_to_matching_window(world, 2).await;
+    // Both orders must land in the same clearing.
+    align_to_matching_window(2).await;
 
     EwdsClient::from_env("EWDS_E2E_CLIENT_ID", "gsye2e", 60_000)
         .publish_event(&event(
@@ -432,11 +432,7 @@ async fn publish_order_event(world: &mut MyWorld, buyer_name: String, seller_nam
         );
     }
 
-    mine_until_matching_block(
-        world,
-        primitives::matching::matching_block_interval() as usize + 1,
-    )
-    .await;
+    wait_for_next_clearing().await;
 }
 
 #[then("the off-chain storage stores the site and the facility")]

@@ -126,22 +126,22 @@ Only then are the precompiled dependencies rebuilt. Clearing the build cache
 (e.g. `docker builder prune` or `docker system prune -a`) makes the next run
 compile everything again.
 
-The default `MATCHING_ALGORITHM=pay_as_bid` run executes the features under
-`e2e-tests/features/pay_as_bid`. To run the two-sided pay-as-clear scenarios,
-set the same value for the matching engine and e2e runner through
-Compose:
+One default run executes the features under `e2e-tests/features/pay_as_bid`,
+`e2e-tests/features/pay_as_clear` and `e2e-tests/features/matching_algorithms`.
+The matching engine takes the algorithm of each market from its market record,
+so markets of both algorithms are cleared side by side in the same stack. The
+features of a directory trade in markets of that directory's algorithm; the
+`matching_algorithms` features use pay-as-bid unless a scenario selects an
+algorithm with `the matching engine uses "<algorithm>"`.
 
-```bash
-MATCHING_ALGORITHM=pay_as_clear \
-docker compose --env-file contracts-output/addresses.env \
-  -f docker-compose.e2e-test.yml \
-  up --build --force-recreate \
-  --abort-on-container-exit \
-  --exit-code-from e2e-tests \
-  e2e-tests
-```
+The orchestrator creates every Spot market with `pay_as_clear`. For a
+pay-as-bid scenario, the runner therefore creates the current slot's Spot
+market itself, with `pay_as_bid`, before it registers the scenario's
+community. It signs with `ORCHESTRATOR_SIGNER_PRIVATE_KEY`, the only key with
+`ORCHESTRATOR_ROLE`, and builds the record from the orchestrator's Spot rule.
+The orchestrator then finds the market and does not create its own.
 
-The E2E runner selects `features/pay_as_clear` from this value. The first
+The two-sided pay-as-clear scenarios: the first
 scenario verifies that cumulative curves stop where the next bid drops below
 the next offer, accepted trades share the marginal accepted-offer clearing
 price, and both orders beyond that crossing remain open. The combined scenario
@@ -150,9 +150,10 @@ the remaining standard order book clears at one uniform price. Both scenarios
 verify on-chain matching and non-zero execution-engine penalties for every
 accepted trade.
 
-Both default algorithm runs also include the shared
-`features/matching_algorithms/preference_policy.feature`; each algorithm directory
-still includes `residual_lifecycle.feature`. An explicit `E2E_FEATURE_PATH` override
+The default run includes the shared
+`features/matching_algorithms/preference_policy.feature`, whose cases run once
+per algorithm; each algorithm directory still includes
+`residual_lifecycle.feature`. An explicit `E2E_FEATURE_PATH` override
 runs only the requested path. The policy cases cover buyer-only, seller-only and
 reciprocal preferences, absent preferred rates, preferred prices outside normal
 limits, pay-as-bid matching for compatible unequal rates, and standard fallback
@@ -166,25 +167,22 @@ Feature selection is independent of the transport configuration:
 
 | Selection | Features loaded |
 | --- | --- |
-| `MATCHING_ALGORITHM=pay_as_bid` (default) | `pay_as_bid` and `matching_algorithms` |
-| `MATCHING_ALGORITHM=pay_as_clear` | `pay_as_clear` and `matching_algorithms` |
+| Default | `pay_as_bid`, `pay_as_clear` and `matching_algorithms` |
 | `E2E_FEATURE_PATH` set in the runner container | Only that file or directory, unless `--input` is supplied |
 | Cucumber `--input '<glob>'` | Only files matching the glob; overrides the default selection and `E2E_FEATURE_PATH` |
 
-`green_proofs` is **not** included in either default algorithm run. To select
+`green_proofs` is **not** included in the default run. To select
 multiple groups explicitly, the existing CLI accepts a single glob, for example
 `./trade_executor --input 'features/{pay_as_bid,matching_algorithms,green_proofs}/**/*.feature'`
-inside the E2E container. Keep `MATCHING_ALGORITHM=pay_as_bid` for this selection
-in both the runner and matching engine; selecting files does not reconfigure the engine.
-The current Compose file does not forward `E2E_FEATURE_PATH` from the host shell;
+inside the E2E container. The current Compose file does not forward `E2E_FEATURE_PATH` from the host shell;
 pass it explicitly to the runner container, for example through `docker compose run -e`.
-A focused selection is not a replacement for the HTTP/EWDS x pay-as-bid/pay-as-clear
-regression matrix, and that default matrix does not cover the opt-in green-proof tests.
+A focused selection is not a replacement for the default HTTP and EWDS runs, which
+together cover both algorithms, and those runs do not cover the opt-in green-proof tests.
 
 ### DD-459 Identifier Validation
 
 Deploy all services from the same commit into a fresh environment. The default
-HTTP/EWDS x pay-as-bid/pay-as-clear matrix checks uppercase facility IDs in
+HTTP and EWDS runs check uppercase facility IDs in
 `delivery_deviations.feature`: forecasts and measurements must join the same
 facilities during verification. The EWDS order scenarios in `events.feature`
 check lowercase lifecycle IDs after uppercase UUIDv4 submissions; rejection
@@ -195,13 +193,13 @@ Run GreenProof explicitly for both transports as well. With the corresponding
 stack configured and started, pass the feature selection into the runner:
 
 ```bash
-# HTTP; use the same MATCHING_ALGORITHM value as the running stack.
-OFFCHAIN_STORAGE_TRANSPORT=http EWDS_ENABLE_HANDLER=false MATCHING_ALGORITHM=pay_as_bid \
+# HTTP
+OFFCHAIN_STORAGE_TRANSPORT=http EWDS_ENABLE_HANDLER=false \
 docker compose --env-file contracts-output/addresses.env -f docker-compose.e2e-test.yml \
   run --rm -e E2E_FEATURE_PATH=features/green_proofs e2e-tests
 
 # EWDS; requires the local gateway and the configured test topics.
-OFFCHAIN_STORAGE_TRANSPORT=ewds EWDS_ENABLE_HANDLER=true MATCHING_ALGORITHM=pay_as_bid \
+OFFCHAIN_STORAGE_TRANSPORT=ewds EWDS_ENABLE_HANDLER=true \
 docker compose --env-file .env.ewds.local --env-file contracts-output/addresses.env \
   -f docker-compose.e2e-test.yml run --rm -e E2E_FEATURE_PATH=features/green_proofs e2e-tests
 ```
@@ -218,22 +216,18 @@ docker run --rm -e PYTHONDONTWRITEBYTECODE=1 -v "$PWD":/work:ro -w /work python:
 
 ### Matching Interval
 
-For `pay_as_bid`, the E2E harness triggers matching by fast-forwarding local
-Anvil to the next matching boundary with empty-block RPC calls. Override
-`MATCHING_ENGINE_BLOCK_INTERVAL` only when both the matching engine and the
-E2E runner use the same value, as they do through the Compose configuration.
-
-For `pay_as_clear`, the matching engine clears each market at times derived
-from its opening and closing time, so the harness waits for the wall clock
+The matching engine clears every market at times derived from its opening and
+closing time, whatever its algorithm, so the harness waits for the wall clock
 instead of mining blocks. A scenario cannot wait for the single clearing at
 the end of a 60-minute market, so the E2E Compose file sets
-`PAY_AS_CLEAR_CLEARINGS_PER_MARKET` to `120`: one clearing every 30 seconds.
+`CLEARINGS_PER_MARKET` to `120`: one clearing every 30 seconds.
 The runner derives the same interval from that value and the spot market
-offsets, which the Compose file passes to it. Before it submits an order book
-that may not fit in the rest of the current interval, the harness waits for
-the next clearing; after the order book is indexed, it waits for the clearing
-that follows. The default of one clearing per market, 20 seconds before the
-close, is covered by unit tests only.
+offsets, which the Compose file passes to it. Before it submits orders that
+must be cleared together and may not fit in the rest of the current interval
+(3 seconds per order), the harness waits for the next clearing; after the
+orders are indexed, it waits for the clearing that follows. The default of one
+clearing per market, 20 seconds before the close, is covered by unit tests
+only.
 
 Before waiting for the orchestrator, the E2E runner idempotently stores a new
 community using `OFFCHAIN_STORAGE_TRANSPORT`: over HTTP it calls
@@ -245,8 +239,8 @@ including the current slot's Spot market, which closes 30 minutes after
 delivery start in this setup. The runner waits until the Spot market of the
 current slot is open on-chain (`isMarketOpen`) and stored in off-chain storage
 (`fetch_market`, HTTP or EWDS), and checks that the stored `MarketSchema`
-mirrors the market's `NewMarketCreated` event and the configured
-`MATCHING_ALGORITHM`.
+mirrors the market's `NewMarketCreated` event and has the scenario's matching
+algorithm.
 Because the suite trades the current slot, `docker-compose.e2e-test.yml` sets
 `EXECUTION_ENGINE_OFFSET_MIN` to `0` so the execution engine targets the same
 slot.
@@ -352,20 +346,7 @@ docker compose --env-file .env.ewds.local \
   e2e-tests
 ```
 
-To run the pay-as-clear scenario through the same gateway, prefix the e2e
-command with `MATCHING_ALGORITHM=pay_as_clear`. This selects the `64`-block
-default aggregation interval for both the matching engine and the E2E runner:
-
-```bash
-MATCHING_ALGORITHM=pay_as_clear \
-docker compose --env-file .env.ewds.local \
-  --env-file contracts-output/addresses.env \
-  -f docker-compose.e2e-test.yml \
-  up --build --force-recreate \
-  --abort-on-container-exit \
-  --exit-code-from e2e-tests \
-  e2e-tests
-```
+This run covers both algorithms, like the HTTP run.
 
 Configure the channels and topics from
 `scripts/ewds_channel_topic_handler.sh` before running the EWDS matrix:

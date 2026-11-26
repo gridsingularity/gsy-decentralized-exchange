@@ -169,7 +169,7 @@ They also verify exact allocations across several trades sharing a facility,
 including buying and selling in the same slot, and retain completed trades in
 the baseline when later counterparty readings arrive. Shared E2E coverage in
 `matching_algorithms/delivery_deviations.feature` checks the tolerance boundary
-and both directions of deviation over HTTP/EWDS with either matching algorithm.
+and both directions of deviation over HTTP/EWDS, in pay-as-bid markets.
 
 ## Key Config
 

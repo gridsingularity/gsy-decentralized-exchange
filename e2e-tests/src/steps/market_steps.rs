@@ -5,6 +5,11 @@ use cucumber::{then, when};
 use ethers::prelude::*;
 use gsy_community_client::offchain_storage_connector::adapter::AreaMarketInfoAdapter;
 use gsy_community_client::time_utils::{get_current_timestamp_in_secs, get_last_and_next_timeslot};
+use gsy_market_orchestrator::chain_connector::{
+    GsyMarketOrchestratorNodeClient, MarketChainClient,
+};
+use gsy_market_orchestrator::config::{get_config, MarketRule, MARKET_RULES};
+use gsy_market_orchestrator::orchestrator::new_market;
 use primitives::db_api_schema::grid_topology::{EnergyCommunitySchema, FacilitySchema};
 use primitives::db_api_schema::market::{MarketChainRecord, MarketSchema};
 use primitives::db_api_schema::profiles::ForecastSchema;
@@ -15,10 +20,9 @@ use primitives::utils::{
     bytes16_to_uuid_string, derive_onchain_id, epoch_to_datetime, epoch_to_rfc3339,
     hex_to_bytes16,
 };
-use primitives::{MarketType, MatchingAlgorithm};
+use primitives::MarketType;
 use serde_json::json;
 use std::env;
-use std::str::FromStr;
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{info, warn};
@@ -106,13 +110,6 @@ async fn submit_market_forecasts_three_users(
     world.facilities_topology = facilities;
 }
 
-fn matching_algorithm_from_env() -> MatchingAlgorithm {
-    let configured_value =
-        env::var("MATCHING_ALGORITHM").unwrap_or_else(|_| MatchingAlgorithm::default().to_string());
-    MatchingAlgorithm::from_str(configured_value.as_str())
-        .unwrap_or_else(|error| panic!("Invalid MATCHING_ALGORITHM: {}", error))
-}
-
 #[when(expr = "forecasts of {float} energy are submitted for facilities with uppercase UUIDs")]
 async fn submit_uuid_facility_forecasts(world: &mut MyWorld, energy: f64) {
     world.facilities_topology = ["alice", "bob", "charlie"]
@@ -145,18 +142,56 @@ async fn submit_market_forecasts(world: &mut MyWorld, energy: f64) {
 #[when("the Market Orchestrator opens the Spot market for the current delivery slot")]
 async fn wait_for_market_to_open(world: &mut MyWorld) {
     world.community_id = unique_community_id();
-    upsert_default_community(world).await;
-
     // The orchestrator creates every market of a new community that has not
     // closed. The e2e Spot market closes 30 min after delivery start, so the
     // current delivery slot's market is still open.
     let (current_timeslot, _) = get_last_and_next_timeslot();
     world.target_delivery_time = current_timeslot;
+    create_spot_market_with_scenario_algorithm(world, &world.community_id).await;
+    upsert_default_community(world).await;
 
     let (market_id, market) = wait_for_market(world, &world.community_id).await;
 
     world.last_market_id = Some(market_id);
     world.market_schema = Some(market);
+}
+
+/// Creates the current slot's Spot market of `community_id` with the
+/// scenario's matching algorithm, unless the orchestrator creates Spot markets
+/// with that algorithm anyway. It must run before the community is
+/// registered: the orchestrator then finds the market and does not create
+/// its own.
+async fn create_spot_market_with_scenario_algorithm(world: &MyWorld, community_id: &str) {
+    let spot_rule = MARKET_RULES
+        .iter()
+        .find(|rule| rule.market_type == MarketType::Spot)
+        .expect("The orchestrator has no Spot market rule");
+    if spot_rule.matching_algorithm == world.matching_algorithm {
+        return;
+    }
+    let rule = MarketRule {
+        market_type: MarketType::Spot,
+        open_offset_mins: spot_rule.open_offset_mins,
+        close_offset_mins: spot_rule.close_offset_mins,
+        matching_algorithm: world.matching_algorithm,
+    };
+    let market = new_market(
+        *Uuid::new_v4().as_bytes(),
+        market_key(community_id, world.target_delivery_time).community_id,
+        &rule,
+        world.target_delivery_time,
+    );
+    let config = get_config().expect("Invalid orchestrator configuration of the E2E runner");
+    GsyMarketOrchestratorNodeClient::new(&config)
+        .await
+        .expect("Failed to connect as the market orchestrator")
+        .create_markets(vec![market])
+        .await
+        .expect("Failed to create the scenario's Spot market");
+    info!(
+        "Created the {} Spot market of community {} (timeslot {})",
+        world.matching_algorithm, community_id, world.target_delivery_time
+    );
 }
 
 fn market_key(community_id: &str, delivery_start_time: u64) -> MarketKey {
@@ -270,7 +305,10 @@ async fn wait_for_market(world: &MyWorld, community_id: &str) -> ([u8; 16], Mark
                 "Stored market differs from the NewMarketCreated event"
             );
             assert_eq!(stored.market_id, market_id_string);
-            assert_eq!(stored.matching_algorithm, matching_algorithm_from_env());
+            assert_eq!(
+                stored.matching_algorithm, world.matching_algorithm,
+                "The scenario's market has another matching algorithm"
+            );
             return (market_id, stored);
         }
 
@@ -308,7 +346,10 @@ async fn submit_two_communities(world: &mut MyWorld) {
         },
     ];
 
+    let (current_timeslot, _) = get_last_and_next_timeslot();
+    world.target_delivery_time = current_timeslot;
     for community in &communities {
+        create_spot_market_with_scenario_algorithm(world, &community.community_id).await;
         upsert_community(world, community).await;
     }
     let facilities = ["alice", "bob", "charlie"]
@@ -327,9 +368,6 @@ async fn submit_two_communities(world: &mut MyWorld) {
         })
         .collect();
     world.create_facilities(facilities).await;
-
-    let (current_timeslot, _) = get_last_and_next_timeslot();
-    world.target_delivery_time = current_timeslot;
 }
 
 fn unique_community_id() -> String {

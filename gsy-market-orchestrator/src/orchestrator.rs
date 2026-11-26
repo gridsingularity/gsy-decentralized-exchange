@@ -196,7 +196,7 @@ fn delivery_slots_to_create(rule: &MarketRule, now: u64, until: u64) -> Vec<u64>
 }
 
 /// Market record for one community, rule and delivery slot.
-fn new_market(
+pub fn new_market(
     market_id: [u8; 16],
     community_id: [u8; 16],
     rule: &MarketRule,

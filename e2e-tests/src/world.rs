@@ -8,10 +8,12 @@ use primitives::db_api_schema::grid_topology::{FacilitySchema, SiteSchema};
 use primitives::db_api_schema::market::MarketSchema;
 use primitives::db_api_schema::profiles::{ForecastSchema, MeasurementSchema};
 use primitives::db_api_schema::trades::DbTradeSchema;
+use primitives::MatchingAlgorithm;
 use reqwest::Client;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 
 pub(crate) const PRIMARY_SITE_ID: &str = "site-12345";
 
@@ -89,6 +91,10 @@ pub struct MyWorld {
     pub preference_order_ids: Option<(String, String)>,
     pub last_charlie_offer_order_id: Option<String>,
     pub market_schema: Option<MarketSchema>,
+    /// The matching algorithm of the scenario's markets. The `before` hook
+    /// sets it from the feature directory; `the matching engine uses {string}`
+    /// overrides it.
+    pub matching_algorithm: MatchingAlgorithm,
     pub facilities_topology: Vec<FacilitySchema>,
     pub pay_as_clear_scenario: Option<PayAsClearScenario>,
     pub pay_as_clear_trades: Vec<DbTradeSchema>,
@@ -109,7 +115,14 @@ impl MyWorld {
     async fn new() -> Result<Self, anyhow::Error> {
         let evm_node_url =
             std::env::var("EVM_NODE_URL").unwrap_or_else(|_| "ws://127.0.0.1:8545".to_string());
-        let provider = Arc::new(Provider::<Ws>::connect(evm_node_url.as_str()).await?);
+        // Anvil mines every transaction at once. Without an interval, ethers polls
+        // for each receipt every 7 s, which makes an order take longer than the
+        // runner's per-order budget (`ORDER_SUBMISSION_SECONDS`).
+        let provider = Arc::new(
+            Provider::<Ws>::connect(evm_node_url.as_str())
+                .await?
+                .interval(Duration::from_millis(100)),
+        );
         let chain_id = provider.get_chainid().await?.as_u64();
 
         let default_private_key = std::env::var("COMMUNITY_CLIENT_PRIVATE_KEY")
@@ -163,6 +176,7 @@ impl MyWorld {
             preference_order_ids: None,
             last_charlie_offer_order_id: None,
             market_schema: None,
+            matching_algorithm: MatchingAlgorithm::default(),
             facilities_topology: vec![],
             pay_as_clear_scenario: None,
             pay_as_clear_trades: vec![],

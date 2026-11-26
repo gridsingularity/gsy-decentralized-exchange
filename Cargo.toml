@@ -19,6 +19,7 @@ exclude = [
 [workspace.dependencies]
 primitives = { path = "primitives" }
 gsy-community-client = { path = "gsy-community-client" }
+gsy-market-orchestrator = { path = "gsy-market-orchestrator" }
 gsy-ethers-listener = { path = "gsy-ethers-listener" }
 
 anyhow = "1"

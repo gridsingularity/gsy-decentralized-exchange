@@ -1,6 +1,7 @@
 use gsy_matching_engine::algorithms::PayAsClearPricing;
 use gsy_matching_engine::connectors::evm_connector::{
-    markets_due_for_clearing, match_order_books, partition_orders_by_market_slot, MarketWindow,
+    group_by_matching_algorithm, markets_due_for_clearing, match_order_books,
+    partition_orders_by_market_slot, TrackedMarket,
 };
 use gsy_matching_engine::models::Order;
 use primitives::db_api_schema::orders::{OrderEnum, OrderStatus};
@@ -288,21 +289,82 @@ fn clearing_is_partial_when_energy_is_left_on_both_sides() {
 
 const OPENING: u64 = 1_700_000_100;
 
-fn market_windows(checked_until: u64) -> HashMap<String, MarketWindow> {
-    // Market 1 is open for 15 minutes, market 2 for two hours.
-    [(1, 900), (2, 7200)]
-        .into_iter()
-        .map(|(market, duration)| {
-            (
-                id(market),
-                MarketWindow {
-                    opening_time: OPENING,
-                    closing_time: OPENING + duration,
-                    checked_until,
-                },
-            )
-        })
-        .collect()
+fn market_windows(checked_until: u64) -> HashMap<String, TrackedMarket> {
+    // Market 1 (pay-as-clear) is open for 15 minutes, market 2 (pay-as-bid)
+    // for two hours. The algorithm does not change the clearing times.
+    [
+        (1, MatchingAlgorithm::PayAsClear, 900),
+        (2, MatchingAlgorithm::PayAsBid, 7200),
+    ]
+    .into_iter()
+    .map(|(market, matching_algorithm, duration)| {
+        (
+            id(market),
+            TrackedMarket {
+                matching_algorithm,
+                opening_time: OPENING,
+                closing_time: OPENING + duration,
+                checked_until,
+            },
+        )
+    })
+    .collect()
+}
+
+fn tracked_market(matching_algorithm: MatchingAlgorithm) -> TrackedMarket {
+    TrackedMarket {
+        matching_algorithm,
+        opening_time: OPENING,
+        closing_time: OPENING + 900,
+        checked_until: OPENING,
+    }
+}
+
+#[test]
+fn every_algorithm_but_amm_is_cleared_at_the_clearing_times() {
+    let markets = HashMap::from([
+        (id(1), tracked_market(MatchingAlgorithm::PayAsBid)),
+        (id(2), tracked_market(MatchingAlgorithm::PayAsClear)),
+        (id(3), tracked_market(MatchingAlgorithm::AMM)),
+    ]);
+
+    assert_eq!(
+        markets_due_for_clearing(&markets, &ClearingSchedule::default(), OPENING + 880),
+        HashSet::from([id(1), id(2)])
+    );
+}
+
+#[test]
+fn order_books_are_grouped_by_the_algorithm_of_their_market() {
+    let order_books = partition_orders_by_market_slot(
+        (1..=4)
+            .map(|market| order(market, OrderEnum::Bid, market, 100))
+            .collect(),
+        (1..=4)
+            .map(|market| order(10 + market, OrderEnum::Offer, market, 100))
+            .collect(),
+    )
+    .expect("partitioned orders should be valid");
+    // Market 4 is not tracked.
+    let markets = HashMap::from([
+        (id(1), tracked_market(MatchingAlgorithm::PayAsBid)),
+        (id(2), tracked_market(MatchingAlgorithm::PayAsClear)),
+        (id(3), tracked_market(MatchingAlgorithm::PayAsBid)),
+    ]);
+
+    let groups = group_by_matching_algorithm(order_books, &markets);
+    let market_ids = |algorithm: MatchingAlgorithm| {
+        let mut market_ids = groups[&algorithm]
+            .iter()
+            .map(|order_book| order_book.market_id().to_string())
+            .collect::<Vec<_>>();
+        market_ids.sort();
+        market_ids
+    };
+
+    assert_eq!(groups.len(), 2);
+    assert_eq!(market_ids(MatchingAlgorithm::PayAsBid), vec![id(1), id(3)]);
+    assert_eq!(market_ids(MatchingAlgorithm::PayAsClear), vec![id(2)]);
 }
 
 #[test]

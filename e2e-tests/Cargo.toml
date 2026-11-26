@@ -18,6 +18,7 @@ chrono = { workspace = true }
 ethers = { workspace = true, features = ["ws", "rustls"] }
 primitives = { workspace = true }
 gsy-community-client = { workspace = true }
+gsy-market-orchestrator = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 hex = { workspace = true }

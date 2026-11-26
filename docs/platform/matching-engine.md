@@ -7,30 +7,20 @@ to `TradeMatching`.
 
 ## Trigger Model
 
-The trigger depends on the matching algorithm.
+Every market is cleared a fixed number of times while it is open, at times
+derived from its own opening and closing time, whatever its matching
+algorithm. The algorithm of the market decides only how its order books are
+matched (see [Matching Algorithms](#matching-algorithms)).
 
-### Pay-as-bid
-
-In Web3 mode, the engine polls block numbers every `2s` and matches the open
-orders on block buckets: every `4` blocks by default, or every
-`MATCHING_ENGINE_BLOCK_INTERVAL` blocks.
-
-### Pay-as-clear
-
-Each market is cleared a fixed number of times while it is open, at times
-derived from the opening and closing time of that market:
-
-- `PAY_AS_CLEAR_CLEARINGS_PER_MARKET` (default `1`): the open window is
-  divided into this many equal parts and the market is cleared at the end of
-  each part.
-- `PAY_AS_CLEAR_FINAL_CLEARING_LEAD_SECONDS` (default `20`): the last clearing
-  takes place this long before the closing time, so that its matches are
-  recorded while the market still accepts them. `TradeMatching` rejects
-  orders of a closed market.
+- `CLEARINGS_PER_MARKET` (default `1`): the open window is divided into this
+  many equal parts and the market is cleared at the end of each part.
+- `FINAL_CLEARING_LEAD_SECONDS` (default `20`): the last clearing takes place
+  this long before the closing time, so that its matches are recorded while
+  the market still accepts them. `TradeMatching` rejects orders of a closed
+  market.
 
 With the defaults a market is cleared once, 20 seconds before it closes, so it
-has one clearing result and one clearing price. Orders placed in the last 20
-seconds are not cleared.
+has one clearing result. Orders placed in the last 20 seconds are not cleared.
 
 | Market window | Clearings per market | Clearing times after opening |
 |---|---|---|
@@ -44,17 +34,20 @@ several would fall there, they are merged into the one at the lead time. A
 market that is open for no longer than the lead time is not cleared.
 
 The engine checks the wall clock every second and reads the open orders every
-`5s` to find the markets they belong to; the window of each market comes from
-off-chain storage. Consequently:
+`5s` to find the markets they belong to. The record of each market, with its
+window and matching algorithm, comes from off-chain storage. Consequently:
 
 - A market without open orders is not cleared and produces no clearing result.
 - The first orders of a market are noticed up to `5s` after they are stored, so
   a clearing of a market that had no orders before can run up to `5s` late.
+- A market whose record cannot be read is not cleared until a later discovery
+  reads it.
+- A market stays tracked while it has open orders, also after it closed, so
+  its record is read only once. A closed market is never cleared.
 - A clearing whose orders cannot be read is retried every second until the
   market closes. A clearing whose `submitMatches` transaction fails is not
   repeated.
 - Clearing times that pass while the engine is down are not made up for.
-- `MATCHING_ENGINE_BLOCK_INTERVAL` is not used.
 
 The schedule is enforced by the engine. The contracts do not limit how many
 times a market is cleared.
@@ -63,11 +56,14 @@ times a market is cleared.
 
 1. Fetch open orders from off-chain storage API (`/orders`).
 2. Convert DB schema into canonical matching primitives.
-3. Partition orders by `(market_id, time_slot)`.
-4. Run the configured matching algorithm independently for each partition,
-   with preference phase first.
-5. Build the `submitMatches` payload and submit it with the matching engine signer.
-6. The off-chain-storage listener creates `Matched` trades from confirmed
+3. Keep the orders of the markets that are due for clearing.
+4. Partition orders by `(market_id, time_slot)`.
+5. Group the partitions by the matching algorithm of their market record.
+6. Run each group's algorithm independently for each partition, with
+   preference phase first.
+7. Build one `submitMatches` payload for all due markets and submit it with
+   the matching engine signer.
+8. The off-chain-storage listener creates `Matched` trades from confirmed
    `TradeMatched` events. The matching engine does not write trade records or
    publish trade-status notifications before confirmation.
 
@@ -85,7 +81,17 @@ on-chain match confirmation. This transition is not yet implemented.
 
 ## Matching Algorithms
 
-`MATCHING_ALGORITHM` selects the standard-market algorithm:
+The `matchingAlgorithm` of each market record selects the market's
+standard-market algorithm, so one engine instance matches markets of different
+algorithms side by side. The [market orchestrator](market-orchestrator.md)
+creates Spot markets with `pay_as_clear`, and Flex and Settlement markets with
+`pay_as_bid`. The engine reads the record from off-chain storage, which
+indexes it from `NewMarketCreated`. `TradeMatching` reads the same algorithm
+from `MarketController` and reverts a batch of a pay-as-clear market whose
+standard matches do not share one price (`NonUniformClearingPrice`).
+Markets with `amm` are not cleared, because the engine does not implement it;
+their orders stay open.
+
 
 - `pay_as_bid` (default): each accepted standard match is priced at the bid rate.
 - `pay_as_clear`: bids are sorted by descending energy_rate and offers by ascending energy_rate, then the
@@ -169,14 +175,14 @@ selected the best available counterpart. See
   - `TRADE_MATCHING_ADDRESS`
   - `ACTOR_ID_HASH_KEY` (shared actor pseudonym key, required at startup)
   - `MATCHING_ENGINE_PRIVATE_KEY`
-  - `MATCHING_ALGORITHM` (`pay_as_bid` by default; `pay_as_clear` supported)
-  - `PAY_AS_CLEAR_PRICING` (`max_offer` by default; `min_bid` and `midpoint` supported)
-  - `MATCHING_ENGINE_BLOCK_INTERVAL` (optional; `pay_as_bid` only, defaults
-    to `4`)
-  - `PAY_AS_CLEAR_CLEARINGS_PER_MARKET` (optional; `pay_as_clear` only,
-    defaults to `1`, must be greater than `0`)
-  - `PAY_AS_CLEAR_FINAL_CLEARING_LEAD_SECONDS` (optional; `pay_as_clear`
-    only, defaults to `20`)
+  - `PAY_AS_CLEAR_PRICING` (`max_offer` by default; `min_bid` and `midpoint`
+    supported; used by every pay-as-clear market)
+  - `CLEARINGS_PER_MARKET` (optional; defaults to `1`, must be greater than
+    `0`)
+  - `FINAL_CLEARING_LEAD_SECONDS` (optional; defaults to `20`)
 
-An invalid value of a `PAY_AS_CLEAR_…` variable stops the engine at startup;
-an empty value takes the default.
+Any market can use pay-as-clear, so an invalid value of one of these three
+variables stops the engine at startup. An empty clearing variable takes its
+default. `MATCHING_ALGORITHM`, `MATCHING_ENGINE_BLOCK_INTERVAL`,
+`PAY_AS_CLEAR_CLEARINGS_PER_MARKET` and
+`PAY_AS_CLEAR_FINAL_CLEARING_LEAD_SECONDS` are no longer read.

@@ -22,15 +22,11 @@ fn pricing_names_parse_and_display_consistently() {
     }
 }
 
-fn startup_output(algorithm: &str, pricing: Option<&str>) -> (bool, String) {
-    startup_output_with(algorithm, pricing, &[])
+fn startup_output(pricing: Option<&str>) -> (bool, String) {
+    startup_output_with(pricing, &[])
 }
 
-fn startup_output_with(
-    algorithm: &str,
-    pricing: Option<&str>,
-    variables: &[(&str, &str)],
-) -> (bool, String) {
+fn startup_output_with(pricing: Option<&str>, variables: &[(&str, &str)]) -> (bool, String) {
     let mut command = Command::new(env!("CARGO_BIN_EXE_gsy-matching-engine"));
     // An invalid node URL stops after startup without contacting external services.
     command.args([
@@ -42,13 +38,13 @@ fn startup_output_with(
         "invalid-url",
         "0",
     ]);
-    command.env("MATCHING_ALGORITHM", algorithm);
+    command.env_remove("MATCHING_ALGORITHM");
     command.env_remove("PAY_AS_CLEAR_PRICING");
     if let Some(pricing) = pricing {
         command.env("PAY_AS_CLEAR_PRICING", pricing);
     }
-    command.env_remove("PAY_AS_CLEAR_CLEARINGS_PER_MARKET");
-    command.env_remove("PAY_AS_CLEAR_FINAL_CLEARING_LEAD_SECONDS");
+    command.env_remove("CLEARINGS_PER_MARKET");
+    command.env_remove("FINAL_CLEARING_LEAD_SECONDS");
     command.envs(variables.iter().copied());
     let output = command.output().expect("matching engine should start");
     (
@@ -69,7 +65,7 @@ fn startup_defaults_and_selects_pricing() {
         (Some("min_bid"), "min_bid"),
         (Some("midpoint"), "midpoint"),
     ] {
-        let (_, output) = startup_output("pay_as_clear", configured);
+        let (_, output) = startup_output(configured);
         assert!(
             output.contains(&format!("Using pay-as-clear pricing: {expected}")),
             "{output}"
@@ -80,7 +76,7 @@ fn startup_defaults_and_selects_pricing() {
 
 #[test]
 fn invalid_pricing_fails_before_connecting() {
-    let (success, output) = startup_output("pay_as_clear", Some("unknown"));
+    let (success, output) = startup_output(Some("unknown"));
     assert!(!success);
     assert!(output.contains("Invalid PAY_AS_CLEAR_PRICING"), "{output}");
     assert!(
@@ -91,10 +87,21 @@ fn invalid_pricing_fails_before_connecting() {
 }
 
 #[test]
-fn pay_as_bid_ignores_clear_pricing_configuration() {
-    let (_, output) = startup_output("pay_as_bid", Some("unknown"));
-    assert!(!output.contains("Invalid PAY_AS_CLEAR_PRICING"), "{output}");
-    assert!(!output.contains("Using pay-as-clear pricing"), "{output}");
+fn the_configured_matching_algorithm_is_ignored() {
+    // The algorithm comes from each market record, so a former pay-as-bid
+    // configuration no longer skips the pricing and schedule validation.
+    let (success, output) =
+        startup_output_with(Some("unknown"), &[("MATCHING_ALGORITHM", "pay_as_bid")]);
+    assert!(!success);
+    assert!(output.contains("Invalid PAY_AS_CLEAR_PRICING"), "{output}");
+
+    let (_, output) = startup_output_with(None, &[("MATCHING_ALGORITHM", "unknown")]);
+    assert!(!output.contains("MATCHING_ALGORITHM"), "{output}");
+    assert!(!output.contains("Using matching algorithm"), "{output}");
+    assert!(
+        output.contains("Matching each market with the matching algorithm of its market record"),
+        "{output}"
+    );
     assert!(output.contains("Connecting to EVM node"), "{output}");
 }
 
@@ -103,11 +110,11 @@ fn startup_defaults_to_one_clearing_per_market_20_seconds_before_the_close() {
     for variables in [
         vec![],
         vec![
-            ("PAY_AS_CLEAR_CLEARINGS_PER_MARKET", ""),
-            ("PAY_AS_CLEAR_FINAL_CLEARING_LEAD_SECONDS", ""),
+            ("CLEARINGS_PER_MARKET", ""),
+            ("FINAL_CLEARING_LEAD_SECONDS", ""),
         ],
     ] {
-        let (_, output) = startup_output_with("pay_as_clear", None, &variables);
+        let (_, output) = startup_output_with(None, &variables);
         assert!(
             output.contains(
                 "Clearing each market 1 time(s) while it is open; the last clearing takes place 20 s before the closing time"
@@ -121,11 +128,10 @@ fn startup_defaults_to_one_clearing_per_market_20_seconds_before_the_close() {
 #[test]
 fn startup_selects_the_clearing_schedule() {
     let (_, output) = startup_output_with(
-        "pay_as_clear",
         None,
         &[
-            ("PAY_AS_CLEAR_CLEARINGS_PER_MARKET", "3"),
-            ("PAY_AS_CLEAR_FINAL_CLEARING_LEAD_SECONDS", "30"),
+            ("CLEARINGS_PER_MARKET", "3"),
+            ("FINAL_CLEARING_LEAD_SECONDS", "30"),
         ],
     );
     assert!(
@@ -139,11 +145,11 @@ fn startup_selects_the_clearing_schedule() {
 #[test]
 fn invalid_clearing_schedule_fails_before_connecting() {
     for (name, value) in [
-        ("PAY_AS_CLEAR_CLEARINGS_PER_MARKET", "0"),
-        ("PAY_AS_CLEAR_CLEARINGS_PER_MARKET", "three"),
-        ("PAY_AS_CLEAR_FINAL_CLEARING_LEAD_SECONDS", "-1"),
+        ("CLEARINGS_PER_MARKET", "0"),
+        ("CLEARINGS_PER_MARKET", "three"),
+        ("FINAL_CLEARING_LEAD_SECONDS", "-1"),
     ] {
-        let (success, output) = startup_output_with("pay_as_clear", None, &[(name, value)]);
+        let (success, output) = startup_output_with(None, &[(name, value)]);
         assert!(!success);
         assert!(output.contains(&format!("Invalid {name}")), "{output}");
         assert!(!output.contains("Connecting to EVM node"), "{output}");
@@ -151,13 +157,20 @@ fn invalid_clearing_schedule_fails_before_connecting() {
 }
 
 #[test]
-fn pay_as_bid_ignores_the_clearing_schedule() {
+fn the_former_pay_as_clear_schedule_names_are_ignored() {
     let (_, output) = startup_output_with(
-        "pay_as_bid",
         None,
-        &[("PAY_AS_CLEAR_CLEARINGS_PER_MARKET", "0")],
+        &[
+            ("PAY_AS_CLEAR_CLEARINGS_PER_MARKET", "0"),
+            ("PAY_AS_CLEAR_FINAL_CLEARING_LEAD_SECONDS", "30"),
+        ],
     );
     assert!(!output.contains("Invalid"), "{output}");
-    assert!(!output.contains("Clearing each market"), "{output}");
+    assert!(
+        output.contains(
+            "Clearing each market 1 time(s) while it is open; the last clearing takes place 20 s before the closing time"
+        ),
+        "{output}"
+    );
     assert!(output.contains("Connecting to EVM node"), "{output}");
 }
