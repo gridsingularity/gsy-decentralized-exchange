@@ -49,6 +49,24 @@ pub async fn init_app() -> TestApp {
     }
 }
 
+/// Starts the service again on the same database, which runs the migrations it does not record.
+pub async fn restart(app: &TestApp) {
+    let configuration = get_configuration().unwrap();
+    init_database(configuration.get_connection_string(), app.db_name.clone())
+        .await
+        .unwrap();
+}
+
+/// Makes the database look like one from before any migration ran, so that the next start runs
+/// them all.
+pub async fn forget_migrations(app: &TestApp) {
+    app.db_wrapper
+        .collection::<mongodb::bson::Document>("migrations")
+        .drop()
+        .await
+        .unwrap();
+}
+
 pub async fn stop_app(app: TestApp) {
     let configuration = get_configuration().expect("Failed to read configuration");
     delete_database(configuration.get_connection_string(), app.db_name)

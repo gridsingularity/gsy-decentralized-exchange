@@ -109,6 +109,7 @@ pub async fn delete_database(db_url: String, db_name: String) -> Result<()> {
 }
 
 async fn preload(db: &DatabaseWrapper) -> Result<()> {
+    super::migrations::run(db).await?;
     db.collection::<mongodb::bson::Document>(super::pending_events::COLLECTION)
         .create_index(
             mongodb::IndexModel::builder()

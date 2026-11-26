@@ -4,7 +4,6 @@ use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
 use futures::TryStreamExt;
 use mongodb::bson::{self, doc, Bson, Document};
-use mongodb::error::ErrorKind;
 use mongodb::options::IndexOptions;
 use mongodb::{Collection, IndexModel};
 use primitives::db_api_schema::grid_topology::{
@@ -52,46 +51,20 @@ pub async fn init_pilot_sites(db: &DatabaseWrapper) -> Result<()> {
 }
 
 pub async fn init_communities(db: &DatabaseWrapper) -> Result<()> {
-    init_versioned(
-        &db.communities(),
-        "community_id",
-        &["community_id_1", "community_name_1"],
-    )
-    .await
+    init_versioned(&db.communities(), "community_id").await
 }
 
 pub async fn init_sites(db: &DatabaseWrapper) -> Result<()> {
-    init_versioned(&db.sites(), "site_id", &["site_name_1"]).await
+    init_versioned(&db.sites(), "site_id").await
 }
 
 pub async fn init_facilities(db: &DatabaseWrapper) -> Result<()> {
-    init_versioned(
-        &db.facilities(),
-        "facility_id",
-        &["facility_name_1", "facility_id_1"],
-    )
-    .await
+    init_versioned(&db.facilities(), "facility_id").await
 }
 
-async fn init_versioned<T: Send + Sync>(
-    collection: &Collection<T>,
-    id_field: &str,
-    unique_indexes: &[&str],
-) -> Result<()> {
-    for name in unique_indexes {
-        match collection.drop_index(*name).await {
-            Ok(()) => {}
-            Err(error) if is_missing(&error) => {}
-            Err(error) => return Err(error.into()),
-        }
-    }
-    // Documents from before versioning become the oldest document of their id.
-    collection
-        .update_many(
-            doc! {"valid_from": {"$exists": false}},
-            doc! {"$set": {"valid_from": bson::DateTime::from_chrono(DateTime::UNIX_EPOCH)}},
-        )
-        .await?;
+/// Indexes the versions of an entry by id, latest first. The `topology_versioning` migration
+/// prepares collections from before versioning.
+async fn init_versioned<T: Send + Sync>(collection: &Collection<T>, id_field: &str) -> Result<()> {
     collection
         .create_index(
             IndexModel::builder()
@@ -100,17 +73,6 @@ async fn init_versioned<T: Send + Sync>(
         )
         .await?;
     Ok(())
-}
-
-/// Whether `error` says that the index or the collection does not exist.
-fn is_missing(error: &mongodb::error::Error) -> bool {
-    const NAMESPACE_NOT_FOUND: i32 = 26;
-    const INDEX_NOT_FOUND: i32 = 27;
-    matches!(
-        error.kind.as_ref(),
-        ErrorKind::Command(command)
-            if command.code == NAMESPACE_NOT_FOUND || command.code == INDEX_NOT_FOUND
-    )
 }
 
 async fn collect_all<T>(collection: &Collection<T>) -> Result<Vec<T>>

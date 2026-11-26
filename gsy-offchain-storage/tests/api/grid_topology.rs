@@ -1,5 +1,5 @@
 use chrono::DateTime;
-use crate::helpers::{init_app, stop_app, stored};
+use crate::helpers::{forget_migrations, init_app, restart, stop_app, stored};
 use primitives::db_api_schema::grid_topology::{
     AssetSchema, AssetType, EnergyCommunitySchema, FacilitySchema, PilotSiteSchema, SiteSchema,
 };
@@ -376,7 +376,6 @@ async fn post_and_get_tariff() {
 
 #[tokio::test]
 async fn validity_fields_are_stored_as_dates_and_startup_fills_a_missing_valid_from() {
-    use gsy_offchain_storage::db::grid_topology_service::init_facilities;
     use mongodb::bson::{self, doc, Document};
 
     let app = init_app().await;
@@ -420,7 +419,8 @@ async fn validity_fields_are_stored_as_dates_and_startup_fills_a_missing_valid_f
     })
     .await
     .unwrap();
-    init_facilities(&app.db_wrapper).await.unwrap();
+    forget_migrations(&app).await;
+    restart(&app).await;
     let old = app
         .db_wrapper
         .collection::<FacilitySchema>("facilities")
@@ -463,9 +463,6 @@ async fn validity_fields_are_stored_as_dates_and_startup_fills_a_missing_valid_f
 
 #[tokio::test]
 async fn startup_replaces_the_unique_indexes_with_one_on_id_and_valid_from() {
-    use gsy_offchain_storage::db::grid_topology_service::{
-        init_communities, init_facilities, init_sites,
-    };
     use mongodb::bson::{doc, Document};
     use mongodb::options::IndexOptions;
     use mongodb::IndexModel;
@@ -493,11 +490,10 @@ async fn startup_replaces_the_unique_indexes_with_one_on_id_and_valid_from() {
         }
     }
 
-    // Twice, as on every restart.
+    // Twice, as when the migration is repeated before it is recorded.
     for _ in 0..2 {
-        init_communities(db).await.unwrap();
-        init_sites(db).await.unwrap();
-        init_facilities(db).await.unwrap();
+        forget_migrations(&app).await;
+        restart(&app).await;
     }
 
     for (collection, index) in [
