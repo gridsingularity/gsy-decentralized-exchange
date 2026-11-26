@@ -28,7 +28,9 @@
 //! # Delivery slot
 //!
 //! A trade's slot is its market's `delivery_start_time`; a trade whose market is not among
-//! the inputs is skipped.
+//! the inputs is skipped. A measurement value is evidence for a slot only if its timestamp
+//! equals the slot start exactly. Both are compared as `DateTime`s at their stored
+//! precision (milliseconds), so a value 500 ms after the start is not evidence for the slot.
 
 use std::collections::{HashMap, HashSet};
 
@@ -63,15 +65,11 @@ pub struct CertificateInputs<'a> {
     pub markets: &'a [MarketSchema],
 }
 
-/// `market_id` → delivery slot (`delivery_start_time`, unix seconds). Markets whose
-/// `delivery_start_time` is before 1970 are left out, so their trades are skipped.
-fn delivery_slots<'a>(markets: &'a [MarketSchema]) -> HashMap<&'a str, u64> {
+/// `market_id` → delivery slot (`delivery_start_time`).
+fn delivery_slots(markets: &[MarketSchema]) -> HashMap<&str, DateTime<Utc>> {
     markets
         .iter()
-        .filter_map(|market| {
-            let slot = datetime_to_epoch(&market.delivery_start_time).ok()?;
-            Some((market.market_id.as_str(), slot))
-        })
+        .map(|market| (market.market_id.as_str(), market.delivery_start_time))
         .collect()
 }
 
@@ -152,9 +150,9 @@ impl<'a> Topology<'a> {
 struct SlotEvidence<'a> {
     export_kwh: f64,
     import_kwh: f64,
-    /// The point contributing the largest export, with that export and its timeseries
-    /// timestamp (lowest `measurement_id` on ties).
-    export_point: Option<(&'a MeasurementPointSchema, f64, u64)>,
+    /// The point contributing the largest export, with that export (lowest
+    /// `measurement_id` on ties). Its value's timestamp is the slot start.
+    export_point: Option<(&'a MeasurementPointSchema, f64)>,
 }
 
 impl SlotEvidence<'_> {
@@ -174,12 +172,13 @@ fn split_flow(direction: &PointDirection, value: f64) -> (f64, f64) {
     }
 }
 
-/// Keyed by `(facility_id, time_slot)`. Only `Measurement` points whose `asset_name`
-/// resolves to a facility, and only timeseries values at or after 1970, count.
+/// Keyed by `(facility_id, timestamp)`; the timestamp is kept as stored, so it only matches
+/// a slot start exactly. Only `Measurement` points whose `asset_name` resolves to a facility
+/// count.
 fn map_measurements<'a>(
     topology: &Topology<'a>,
     inputs: &CertificateInputs<'a>,
-) -> HashMap<(&'a str, u64), SlotEvidence<'a>> {
+) -> HashMap<(&'a str, DateTime<Utc>), SlotEvidence<'a>> {
     let points: HashMap<&str, (&MeasurementPointSchema, &FacilitySchema)> = inputs
         .measurement_points
         .iter()
@@ -190,15 +189,13 @@ fn map_measurements<'a>(
         })
         .collect();
 
-    let mut seen: HashSet<(&str, u64)> = HashSet::new();
-    let mut index: HashMap<(&str, u64), SlotEvidence> = HashMap::new();
+    let mut seen: HashSet<(&str, DateTime<Utc>)> = HashSet::new();
+    let mut index: HashMap<(&str, DateTime<Utc>), SlotEvidence> = HashMap::new();
     for value in inputs.timeseries {
         let Some(&(point, facility)) = points.get(value.measurement_point.as_str()) else {
             continue;
         };
-        let Ok(timestamp) = datetime_to_epoch(&value.timestamp) else {
-            continue;
-        };
+        let timestamp = value.timestamp;
         // (measurement_point, timestamp) is unique in storage; guard anyway so a duplicate
         // in the input can never double-count.
         if !seen.insert((point.measurement_id.as_str(), timestamp)) {
@@ -217,14 +214,14 @@ fn map_measurements<'a>(
         if export > 0.0 {
             let better = match evidence.export_point {
                 None => true,
-                Some((current, current_export, _)) => {
+                Some((current, current_export)) => {
                     export > current_export
                         || (export == current_export
                             && point.measurement_id < current.measurement_id)
                 }
             };
             if better {
-                evidence.export_point = Some((point, export, timestamp));
+                evidence.export_point = Some((point, export));
             }
         }
     }
@@ -243,11 +240,12 @@ const ALLOCATION_TOLERANCE_KWH: f64 = 1e-9;
 /// walk, so no later sale is ever allocated from a partial remainder (strict time priority).
 fn net_export_allocation<'a>(
     topology: &Topology<'a>,
-    evidence: &HashMap<(&'a str, u64), SlotEvidence<'a>>,
-    slots: &HashMap<&str, u64>,
+    evidence: &HashMap<(&'a str, DateTime<Utc>), SlotEvidence<'a>>,
+    slots: &HashMap<&str, DateTime<Utc>>,
     slot_executed: &'a [DbTradeSchema],
-) -> HashSet<(&'a str, u64, &'a str)> {
-    let mut sales_by_facility_slot: HashMap<(&str, u64), Vec<&DbTradeSchema>> = HashMap::new();
+) -> HashSet<(&'a str, DateTime<Utc>, &'a str)> {
+    let mut sales_by_facility_slot: HashMap<(&str, DateTime<Utc>), Vec<&DbTradeSchema>> =
+        HashMap::new();
     // A duplicated `trade_uuid` must not consume the net export twice; the first copy wins.
     let mut seen_uuids: HashSet<&str> = HashSet::new();
     for trade in slot_executed
@@ -385,14 +383,18 @@ pub fn build_local_origin_records_with_allocation(
             continue;
         };
 
-        if time_slot % PILOT.interval_duration_s != 0 {
+        // The record carries the slot in whole unix seconds.
+        let slot_secs = datetime_to_epoch(&time_slot).ok().filter(|secs| {
+            time_slot.timestamp_subsec_nanos() == 0 && secs % PILOT.interval_duration_s == 0
+        });
+        let Some(slot_secs) = slot_secs else {
             tracing::info!(
                 trade_uuid = %trade.trade_uuid,
-                time_slot,
+                %time_slot,
                 "skipping trade: time_slot is not on an interval boundary"
             );
             continue;
-        }
+        };
 
         let energy = trade.parameters.selected_energy_kWh;
         if energy.is_nan() || energy <= 0.0 {
@@ -408,21 +410,20 @@ pub fn build_local_origin_records_with_allocation(
             tracing::info!(
                 trade_uuid = %trade.trade_uuid,
                 facility_id = seller_facility_id,
-                time_slot,
+                %time_slot,
                 "skipping trade: no measurement for seller facility at slot"
             );
             continue;
         };
 
         let net_export_kwh = slot_evidence.net_export_kwh();
-        let Some((export_point, _, measurement_timestamp)) =
-            slot_evidence.export_point.filter(|_| net_export_kwh > 0.0)
+        let Some((export_point, _)) = slot_evidence.export_point.filter(|_| net_export_kwh > 0.0)
         else {
             tracing::info!(
                 trade_uuid = %trade.trade_uuid,
                 facility_id = seller_facility_id,
                 net_export_kwh,
-                time_slot,
+                %time_slot,
                 "skipping trade: seller facility is not net exporting at slot"
             );
             continue;
@@ -437,19 +438,19 @@ pub fn build_local_origin_records_with_allocation(
                 trade_uuid = %trade.trade_uuid,
                 facility_id = seller_facility_id,
                 net_export_kwh,
-                time_slot,
+                %time_slot,
                 "skipping trade: sale not covered by the facility's net export"
             );
             continue;
         }
 
         let (Some((interval_start, interval_end)), Some(delivery_reference)) = (
-            interval_bounds_utc(time_slot, PILOT.interval_duration_s),
-            delivery_verification_reference(time_slot, PILOT.interval_duration_s),
+            interval_bounds_utc(slot_secs, PILOT.interval_duration_s),
+            delivery_verification_reference(slot_secs, PILOT.interval_duration_s),
         ) else {
             tracing::warn!(
                 trade_uuid = %trade.trade_uuid,
-                time_slot,
+                time_slot = slot_secs,
                 "skipping trade: time_slot is not a representable timestamp"
             );
             continue;
@@ -495,7 +496,7 @@ pub fn build_local_origin_records_with_allocation(
                 interval_start,
                 interval_end,
                 interval_duration_s: PILOT.interval_duration_s,
-                source_slot_timestamp: time_slot,
+                source_slot_timestamp: slot_secs,
                 energy_quantity: round_half_up_2dp(energy),
                 energy_unit: EnergyUnit::KWh,
                 rounding_rule: PILOT.rounding_rule.clone(),
@@ -534,8 +535,9 @@ pub fn build_local_origin_records_with_allocation(
                 source_of_record: SourceOfRecord::Platform,
                 data_record_class: DataRecordClass::Measurement,
                 // v2 timeseries carry no separate arrival time, so this is the value's
-                // timestamp. The query windows on the trade's `status_updated_at`, not on this.
-                measurement_recorded_at: measurement_timestamp,
+                // timestamp, which is the slot start. The query windows on the trade's
+                // `status_updated_at`, not on this.
+                measurement_recorded_at: slot_secs,
             },
             attribute_provenance: AttributeProvenance {
                 support_scheme_status: None,

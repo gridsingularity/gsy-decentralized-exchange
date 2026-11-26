@@ -3,7 +3,7 @@
 
 use std::collections::HashSet;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use gsy_offchain_storage::certificates::builder::{
     build_local_origin_records, build_local_origin_records_with_allocation,
     delivery_verification_reference, interval_bounds_utc, round_half_up_2dp, sort_records,
@@ -512,6 +512,44 @@ fn off_boundary_time_slot_yields_no_record() {
         100,
     );
     assert!(fixture.build(vec![t]).is_empty());
+}
+
+#[test]
+fn a_value_a_fraction_of_a_second_after_the_slot_start_is_not_evidence() {
+    // In whole seconds, 10:30:00.500 would be the slot start, 10:30:00.
+    let late = TimeseriesSchema {
+        timestamp: ts(SLOT) + TimeDelta::milliseconds(500),
+        ..value(EXPORT_POINT, SLOT, 4.0)
+    };
+    let mut fixture = Fixture::new();
+    fixture.timeseries = vec![late.clone()];
+    assert!(fixture.build(vec![sale("trade-1", 3.0, 100)]).is_empty());
+
+    // A value exactly at the slot start is evidence; the late one adds nothing to it.
+    fixture.timeseries = vec![late, value(EXPORT_POINT, SLOT, 3.0)];
+    let records = fixture.build(vec![sale("trade-1", 3.0, 100)]);
+    assert_eq!(trade_references(&records), vec!["trade-1"]);
+    assert_eq!(
+        records[0].measurement_provenance.measurement_recorded_at,
+        SLOT
+    );
+    assert!(fixture.build(vec![sale("trade-1", 3.5, 100)]).is_empty());
+}
+
+#[test]
+fn a_slot_that_starts_off_a_whole_second_yields_no_record() {
+    let start = ts(SLOT) + TimeDelta::milliseconds(500);
+    let mut fixture = Fixture::new();
+    fixture.timeseries = vec![TimeseriesSchema {
+        timestamp: start,
+        ..value(EXPORT_POINT, SLOT, 4.0)
+    }];
+    let markets = vec![MarketSchema {
+        delivery_start_time: start,
+        ..market(SLOT)
+    }];
+    let trades = vec![sale("trade-1", 3.0, 100)];
+    assert!(build_local_origin_records(trades, &fixture.inputs(&markets)).is_empty());
 }
 
 #[test]
