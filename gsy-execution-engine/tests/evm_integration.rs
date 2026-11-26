@@ -311,7 +311,10 @@ async fn mount_slot_records(
     Mock::given(method("GET"))
         .and(path("/timeseries"))
         .and(query_param("start_time", epoch_to_rfc3339(slot)))
-        .and(query_param("end_time", epoch_to_rfc3339(end - 1)))
+        .and(query_param(
+            "end_time",
+            (epoch_to_datetime(end).unwrap() - Duration::milliseconds(1)).to_rfc3339(),
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(timeseries))
         .mount(server)
         .await;

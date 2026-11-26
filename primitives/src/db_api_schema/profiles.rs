@@ -24,7 +24,9 @@ pub struct MeasurementMetadataSchema {
 pub struct MeasurementSchema {
     pub facility_id: String,
     pub community_uuid: String,
+    #[serde(with = "crate::utils::rfc3339")]
     pub time_slot: DateTime<Utc>,
+    #[serde(with = "crate::utils::rfc3339")]
     pub creation_time: DateTime<Utc>,
     pub energy_kwh: f64,
 }
@@ -96,7 +98,9 @@ pub struct TransformerMeasurementSchema {
 pub struct ForecastSchema {
     pub facility_id: String,
     pub community_uuid: String,
+    #[serde(with = "crate::utils::rfc3339")]
     pub time_slot: DateTime<Utc>,
+    #[serde(with = "crate::utils::rfc3339")]
     pub creation_time: DateTime<Utc>,
     pub energy_kwh: f64,
     pub confidence: f64,

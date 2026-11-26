@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use chrono::{prelude::DateTime, Utc};
+use chrono::{prelude::DateTime, SubsecRound, Utc};
 use std::env;
 use std::str::FromStr;
 use uuid::Uuid;
@@ -88,18 +88,36 @@ pub fn epoch_to_rfc3339(epoch_secs: u64) -> String {
 pub fn rfc3339_to_epoch(value: &str) -> Result<u64> {
     datetime_to_epoch(&rfc3339_to_datetime(value)?)
 }
-pub fn opt_rfc3339_to_epoch(value: Option<&str>) -> Result<Option<u64>> {
-    value.map(rfc3339_to_epoch).transpose()
-}
 
-/// Parses an ISO 8601 / RFC 3339 string with any offset into UTC.
+/// Parses an ISO 8601 / RFC 3339 string with any offset into UTC, truncated to milliseconds,
+/// the precision of a BSON date, so that a parsed time equals its stored value.
 pub fn rfc3339_to_datetime(value: &str) -> Result<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(value)
-        .map(|parsed| parsed.with_timezone(&Utc))
+        .map(|parsed| parsed.with_timezone(&Utc).trunc_subsecs(3))
         .map_err(|e| anyhow!("invalid ISO 8601 timestamp '{}': {}", value, e))
 }
 pub fn opt_rfc3339_to_datetime(value: Option<&str>) -> Result<Option<DateTime<Utc>>> {
     value.map(rfc3339_to_datetime).transpose()
+}
+
+/// Serde for a UTC date-time as an RFC 3339 string: written like `to_rfc3339` (`+00:00`), the
+/// form of the DTOs, and read with `rfc3339_to_datetime`.
+pub mod rfc3339 {
+    use chrono::{DateTime, Utc};
+    use serde::{de::Error, Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(
+        time: &DateTime<Utc>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&time.to_rfc3339())
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<DateTime<Utc>, D::Error> {
+        super::rfc3339_to_datetime(&String::deserialize(deserializer)?).map_err(D::Error::custom)
+    }
 }
 
 /// Epoch seconds (e.g. a block timestamp) as a UTC date-time.

@@ -13,7 +13,7 @@ use crate::db_api_schema::{
 
 use crate::utils::{normalize_uuid, opt_rfc3339_to_datetime, rfc3339_to_datetime};
 use anyhow::{anyhow, Context, Result};
-use chrono::{DateTime, SubsecRound, Utc};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::str::FromStr;
@@ -220,20 +220,18 @@ pub struct EwdsFacilityDto {
 }
 
 /// Parses the validity times of a topology entry. A missing `valid_from` is the oldest possible
-/// time. Both are truncated to milliseconds, the precision of a BSON date, so that an entry equals
-/// its stored document and resending it stores nothing new.
+/// time.
 fn validate_times(
     valid_from: Option<String>,
     valid_until: Option<String>,
 ) -> Result<(DateTime<Utc>, Option<DateTime<Utc>>)> {
-    let stored = |time: &str| rfc3339_to_datetime(time).map(|time| time.trunc_subsecs(3));
     let valid_from = match valid_from {
-        Some(valid_from) => stored(&valid_from).context("invalid valid_from")?,
+        Some(valid_from) => rfc3339_to_datetime(&valid_from).context("invalid valid_from")?,
         None => DateTime::UNIX_EPOCH,
     };
     let valid_until = valid_until
         .as_deref()
-        .map(stored)
+        .map(rfc3339_to_datetime)
         .transpose()
         .context("invalid valid_until")?;
     Ok((valid_from, valid_until))

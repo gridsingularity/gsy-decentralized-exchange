@@ -818,7 +818,7 @@ async fn measurements_and_forecasts_carry_rfc3339_times() {
         assert_eq!(400, resp.status().as_u16(), "{path}");
     }
 
-    // Any offset is accepted on input; the output is UTC.
+    // Any offset is accepted on input; the output is UTC as `+00:00`, like the DTOs.
     for path in ["measurements", "forecasts"] {
         let resp = client
             .post(format!("{}/{path}", app.address))
@@ -837,9 +837,12 @@ async fn measurements_and_forecasts_carry_rfc3339_times() {
             .await
             .unwrap();
         assert_eq!(returned.len(), 1, "{path}");
-        assert_eq!(returned[0]["time_slot"], "2030-03-17T17:46:40Z", "{path}");
         assert_eq!(
-            returned[0]["creation_time"], "2030-03-17T17:46:40Z",
+            returned[0]["time_slot"], "2030-03-17T17:46:40+00:00",
+            "{path}"
+        );
+        assert_eq!(
+            returned[0]["creation_time"], "2030-03-17T17:46:40+00:00",
             "{path}"
         );
     }

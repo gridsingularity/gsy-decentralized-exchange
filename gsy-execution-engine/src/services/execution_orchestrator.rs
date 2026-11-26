@@ -125,9 +125,10 @@ async fn run_cycle(
     let window = epoch_to_datetime(start_time)?..epoch_to_datetime(end_time)?;
     let (trades, measurements) = tokio::try_join!(
         offchain_storage_client.fetch_trades(None, Some(window.start), Some(window.end)),
-        // Measurements use an inclusive end; trade queries use an exclusive end.
+        // Measurements use an inclusive end; trade queries use an exclusive end. Stored
+        // times have millisecond precision.
         offchain_storage_client
-            .fetch_measurements(window.start, window.end - TimeDelta::seconds(1)),
+            .fetch_measurements(window.start, window.end - TimeDelta::milliseconds(1)),
     )?;
     // Completed trades still contribute to facility totals and allocation weights.
     // Penalized trades may not be verified yet; the connector checks on-chain.
