@@ -1,6 +1,7 @@
 use ::primitives::{log::setup_logging, utils::timestamp_to_datetime_string};
 use clap::Parser;
 use gsy_execution_engine::{
+    primitives::penalty_policy::PenaltyPolicy,
     services::execution_orchestrator::{finalize_timeslot, run_execution_cycle},
     timeslot_scheduler::TimeslotScheduler,
     utils::cli::{Cli, Commands},
@@ -23,8 +24,14 @@ async fn main() -> anyhow::Result<()> {
             polling_interval,
             market_duration,
             penalty_rate,
+            penalty_max_rate,
             penalty_tolerance_percent,
         } => {
+            let policy = PenaltyPolicy::new(
+                penalty_rate,
+                penalty_max_rate.unwrap_or(penalty_rate),
+                penalty_tolerance_percent,
+            )?;
             info!("Starting engine...");
             let default_offchain_storage_url = format!("{}:{}", offchain_host, offchain_port);
             let offchain_url = env::var("OFFCHAIN_STORAGE_URL")
@@ -60,9 +67,8 @@ async fn main() -> anyhow::Result<()> {
                     &trade_matching_address,
                     &execution_engine_private_key,
                     timeslot,
-                    penalty_rate,
                     market_duration,
-                    penalty_tolerance_percent,
+                    policy,
                 )
                 .await
                 {
@@ -86,8 +92,7 @@ async fn main() -> anyhow::Result<()> {
                         &trade_matching_address,
                         &execution_engine_private_key,
                         expired,
-                        penalty_rate,
-                        penalty_tolerance_percent,
+                        policy,
                     )
                     .await
                     {

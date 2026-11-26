@@ -1,5 +1,5 @@
 Feature: Delivery deviation penalties
-  # The E2E engine uses a 10% penalty rate and the default 5% tolerance.
+  # Rates rise from 0.10 to 0.20 currency/kWh between 5% and 100% deviation.
   # Penalties are contract units (10,000 units per whole penalty amount).
   Scenario Outline: Both facility deviations determine the delivery verdict
     Given the GSY DEX services are running
@@ -18,5 +18,5 @@ Feature: Delivery deviation penalties
     Examples:
       | buyer_energy | seller_energy | status    | buyer_penalty | seller_penalty |
       | 10.5         | -9.5          | Executed  | 0             | 0              |
-      | 11           | -9            | Penalized | 1000          | 1000           |
-      | 9            | -11           | Penalized | 1000          | 1000           |
+      | 11           | -8            | Penalized | 1053          | 2316           |
+      | 8            | -11           | Penalized | 2316          | 1053           |

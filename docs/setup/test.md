@@ -530,13 +530,14 @@ malformed submissions are logged, not published as rejected order snapshots;
 event publication is best effort, without a durable outbox. These limitations
 are not resolved by a passing validation matrix.
 
-### DD-455 Delivery Deviation Validation
+### Delivery Deviation Validation
 
 The shared `matching_algorithms/delivery_deviations.feature` runs with both
 matching algorithms and transports. Use the default
-`EXECUTION_ENGINE_PENALTY_TOLERANCE_PERCENT=5` and the E2E Compose penalty rate
-`0.10`. For a 10 kWh trade, exactly 5% deviation is not penalized; a 1 kWh
-deviation costs 1,000 contract units (0.1 at scale 10,000). The scenarios check
+`EXECUTION_ENGINE_PENALTY_TOLERANCE_PERCENT=5` and the E2E Compose penalty
+rates of 0.10 to 0.20 currency/kWh. For a 10 kWh trade, exactly 5% deviation
+is free; deviations of 1 and 2 kWh cost 1,053 and 2,316 contract units respectively.
+The scenarios check
 both parties' exact penalty events, trade totals and final lifecycle statuses,
 including buyer underconsumption and seller overproduction.
 

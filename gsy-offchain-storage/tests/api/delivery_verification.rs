@@ -9,6 +9,7 @@ use gsy_ethers_listener::{GsyEthersListener, ListenerConfig};
 use gsy_execution_engine::{
     connectors::evm_connector::complete_delivery_verification,
     primitives::penalty_calculator::DeliveryVerification,
+    primitives::penalty_policy::PenaltyPolicy,
     services::execution_orchestrator::run_execution_cycle,
 };
 use gsy_offchain_storage::{
@@ -97,6 +98,7 @@ async fn send(contract: &Contract<Client>, name: &str, args: impl Tokenize) -> R
 #[tokio::test]
 #[ignore = "requires compiled Hardhat contracts, Anvil and MongoDB; run with --ignored"]
 async fn delivery_verification_runs_through_real_contracts_engine_and_storage() -> Result<()> {
+    let policy = PenaltyPolicy::new(0.1, 0.1, 5.0)?;
     let app = init_app().await;
     let anvil = Anvil::new().spawn();
     let provider = Provider::<Ws>::connect(anvil.ws_endpoint())
@@ -297,9 +299,8 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
             &address,
             &private_key,
             slot,
-            0.1,
             1800,
-            5.0
+            policy
         )
         .await?,
         0
@@ -307,7 +308,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
     insert_measurements(&app.db_wrapper, &measurements[..2]).await?;
     // Buyers alone cannot complete either side of a trade.
     run_execution_cycle(
-        &app.address, &endpoint, &address, &private_key, slot, 0.1, 1800, 5.0,
+        &app.address, &endpoint, &address, &private_key, slot, 1800, policy,
     )
     .await?;
     assert!(app
@@ -331,9 +332,8 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
             &address,
             &private_key,
             slot,
-            0.1,
             1800,
-            5.0
+            policy
         )
         .await?,
         0
@@ -365,7 +365,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
     insert_measurements(&app.db_wrapper, &seller_measurements[2..]).await?;
     assert_eq!(
         run_execution_cycle(
-            &app.address, &endpoint, &address, &private_key, slot, 0.1, 1800, 5.0,
+            &app.address, &endpoint, &address, &private_key, slot, 1800, policy,
         )
         .await?,
         0
@@ -429,9 +429,8 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
             &address,
             &private_key,
             slot,
-            0.1,
             1800,
-            5.0
+            policy
         )
         .await?,
         2 // The already verified Penalized trade is skipped on-chain.
@@ -555,9 +554,8 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
             &address,
             &private_key,
             slot,
-            0.1,
             1800,
-            5.0
+            policy
         )
         .await?,
         2
@@ -589,6 +587,7 @@ async fn delivery_verification_runs_through_real_contracts_engine_and_storage() 
 #[ignore = "requires compiled Hardhat contracts, Anvil and MongoDB; run with --ignored"]
 async fn delivery_verification_allocates_net_slot_penalties_without_recharging_completed_trades(
 ) -> Result<()> {
+    let policy = PenaltyPolicy::new(0.1, 0.1, 5.0)?;
     // A buys 4 + 6 and sells 2: net consumption 8, gross allocation weight 12.
     // With a reading of 10, its 2,000 penalty units split 667 / 1,000 / 333.
     // With a reading of 8, the first trade becomes Executed (not Penalized),
@@ -752,9 +751,8 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
                 &address,
                 &private_key,
                 slot,
-                0.1,
                 900,
-                5.0,
+                policy,
             )
             .await?,
             0,
@@ -813,9 +811,8 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
             &address,
             &private_key,
             slot,
-            0.1,
             900,
-            5.0,
+            policy,
         )
         .await?;
         assert_eq!(client.get_block_number().await?, block);
@@ -832,9 +829,8 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
             &address,
             &private_key,
             slot,
-            0.1,
             900,
-            5.0,
+            policy,
         )
         .await?;
         tokio::time::timeout(Duration::from_secs(10), async {
@@ -943,9 +939,8 @@ async fn delivery_verification_allocates_net_slot_penalties_without_recharging_c
             &address,
             &private_key,
             slot,
-            0.1,
             900,
-            5.0,
+            policy,
         )
         .await?;
         assert_eq!(client.get_block_number().await?, block);
