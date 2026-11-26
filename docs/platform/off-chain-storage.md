@@ -99,6 +99,11 @@ Only hyphenated UUIDv4 values are accepted (either letter case). Hex, bare,
 padded, nil and non-v4 IDs return HTTP 400 or EWDS `invalid_request`.
 Market writes and community filters preserve exact opaque community IDs.
 HTTP and EWDS market reads and events use the same UUID format.
+They also use the same market JSON: `GET /market`, `GET /markets` and
+`POST /markets` read and write the camelCase form of `markets.query` and
+`market.event` (`marketId`, `openingTime`, …) with RFC 3339 times, not the
+stored snake_case document. `GET /markets` filters `openingTime` by the
+inclusive RFC 3339 query parameters `start_time` and `end_time`.
 Facility-validation responses still echo each requested pair exactly and report
 an invalid market ID as `unknown_market` for that pair only.
 
@@ -157,9 +162,10 @@ The `communities`, `sites` and `facilities` collections keep one document per
 version of an entry. `POST` stores a new version unless it equals the latest
 one, and `GET` returns the latest version of each entry without the deleted
 ones; see [Versions and Deletion](ewds-integration.md#versions-and-deletion).
-On startup the service drops the old unique indexes on ids and names, sets a
-missing `valid_from` to the Unix epoch, and indexes each collection on its id
-and `valid_from`. Both validity times are stored as BSON dates.
+The `topology_versioning` migration drops the old unique indexes on ids and
+names and sets a missing `valid_from` to the Unix epoch. The service indexes each
+collection on its id and `valid_from`. Both validity times are stored as BSON
+dates.
 
 ### ID Mapping
 - Trusted services share keyed Blake2b-16 derivation using `ACTOR_ID_HASH_KEY`
@@ -190,8 +196,10 @@ Compatibility adapters for EVM JSON callers:
 
 - `/measurements` (`GET`, `POST`) converts to/from `MeasurementPoint` + `Timeseries`
 - `/forecasts` (`GET`, `POST`) converts to/from `MeasurementPoint` + `Timeseries`
-- `/market` (`GET`) converts compatibility market JSON to/from `Market`
+- `/market` (`GET`) returns one `Market` as camelCase market JSON
 
+`/measurements` and `/forecasts` carry `time_slot` and `creation_time` as
+RFC 3339 strings, not epoch seconds, and return them in UTC (`+00:00`).
 These adapters do not own separate collections. They read and write the same
 `markets`, `measurement_points`, and `timeseries` records as the canonical API.
 Measurement/forecast ingest and facility filters use the same facility rule.
@@ -252,6 +260,17 @@ There is no reindexing tool. See the
 
 ## Data Model Notes
 
+- Migrations (`src/db/migrations`) change data stored by earlier versions. They
+  run in order on startup, before the collections are set up. Each runs once per
+  database and is then recorded by name in the `migrations` collection; each is
+  also safe to run again, in case a crash or a concurrent start repeats it before
+  it is recorded.
+- Every stored time is a BSON date, with millisecond precision. Times sent as
+  RFC 3339 may have any offset; digits below a millisecond are dropped. Responses
+  write times in UTC (`+00:00`). The `bson_dates` migration converts times stored
+  by earlier versions to dates: epoch seconds, as numbers or zero-padded strings,
+  and RFC 3339 strings. A value that is neither is logged and left as it is, and
+  its document cannot be read until it is corrected.
 - The listener creates `Matched` trades when the match is included in a block
   indexed by the listener (no confirmation depth).
   `DeliveryVerified` advances penalty-free trades to `Executed`;
